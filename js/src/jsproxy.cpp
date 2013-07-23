@@ -1920,7 +1920,7 @@ JS_FRIEND_DATA(Class) js::FunctionProxyClass = {
 
 JS_FRIEND_API(JSObject *)
 js::NewProxyObject(JSContext *cx, BaseProxyHandler *handler, const Value &priv_, JSObject *proto_,
-                   JSObject *parent_, JSObject *call_, JSObject *construct_)
+                   JSObject *parent_, JSObject *call_, JSObject *construct_, uint32_t extraSlots)
 {
     RootedValue priv(cx, priv_);
     RootedObject proto(cx, proto_), parent(cx, parent_), call(cx, call_), construct(cx, construct_);
@@ -1943,7 +1943,7 @@ js::NewProxyObject(JSContext *cx, BaseProxyHandler *handler, const Value &priv_,
     if (proto && !proto->setNewTypeUnknown(cx))
         return NULL;
 
-    RootedObject obj(cx, NewObjectWithGivenProto(cx, clasp, proto, parent));
+    RootedObject obj(cx, NewObjectWithGivenProto(cx, clasp, proto, parent, extraSlots));
     if (!obj)
         return NULL;
     obj->setSlot(JSSLOT_PROXY_HANDLER, PrivateValue(handler));

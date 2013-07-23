@@ -1408,9 +1408,9 @@ NewObjectWithGivenProto(JSContext *cx, js::Class *clasp, JSObject *proto, JSObje
                         gc::AllocKind kind);
 
 inline JSObject *
-NewObjectWithGivenProto(JSContext *cx, js::Class *clasp, JSObject *proto, JSObject *parent)
+NewObjectWithGivenProto(JSContext *cx, js::Class *clasp, JSObject *proto, JSObject *parent, uint32_t extraSlots = 0)
 {
-    gc::AllocKind kind = gc::GetGCObjectKind(clasp);
+    gc::AllocKind kind = gc::GetGCObjectKind(clasp, extraSlots);
     return NewObjectWithGivenProto(cx, clasp, proto, parent, kind);
 }
 

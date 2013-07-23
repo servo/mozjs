@@ -341,7 +341,7 @@ SetProxyExtra(RawObject obj, size_t n, const Value &extra)
 JS_FRIEND_API(JSObject *)
 NewProxyObject(JSContext *cx, BaseProxyHandler *handler, const Value &priv,
                JSObject *proto, JSObject *parent,
-               JSObject *call = NULL, JSObject *construct = NULL);
+               JSObject *call = NULL, JSObject *construct = NULL, uint32_t extraSlots = 0);
 
 } /* namespace js */
 

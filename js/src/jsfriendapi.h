@@ -467,6 +467,13 @@ GetObjectSlot(RawObject obj, size_t slot)
     return reinterpret_cast<const shadow::Object *>(obj)->slotRef(slot);
 }
 
+inline void*
+GetInlineStorage(JSObject *obj, uint32_t startingSlot)
+{
+    JS_ASSERT(GetObjectClass(obj)->flags & JSCLASS_IS_INLINE_DOMJSCLASS);
+    return &reinterpret_cast<const shadow::Object *>(obj)->fixedSlots()[startingSlot];
+}
+
 inline const jschar *
 GetAtomChars(JSAtom *atom)
 {
