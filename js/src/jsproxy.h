@@ -207,6 +207,8 @@ class JS_FRIEND_API(BaseProxyHandler)
     virtual bool slice(JSContext *cx, HandleObject proxy, uint32_t begin, uint32_t end,
                        HandleObject result);
 
+    virtual void trace(JSTracer *trc, JSObject *proxy);
+
     /* See comment for weakmapKeyDelegateOp in js/Class.h. */
     virtual JSObject *weakmapKeyDelegate(JSObject *proxy);
     virtual bool isScripted() { return false; }
@@ -333,6 +335,8 @@ class Proxy
 
     static bool slice(JSContext *cx, HandleObject obj, uint32_t begin, uint32_t end,
                       HandleObject result);
+
+    static void trace(JSTracer *trc, JSObject *obj);
 
     /* IC entry path for handling __noSuchMethod__ on access. */
     static bool callProp(JSContext *cx, HandleObject proxy, HandleObject reveiver, HandleId id,
