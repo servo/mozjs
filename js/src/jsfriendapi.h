@@ -230,6 +230,11 @@ struct JSFunctionSpecWithHelp {
 extern JS_FRIEND_API(bool)
 JS_DefineFunctionsWithHelp(JSContext *cx, JS::HandleObject obj, const JSFunctionSpecWithHelp *fs);
 
+/* Implemented in RootMarking.cpp. */
+
+extern JS_FRIEND_API(JSObject *)
+JS_GetAddressableObject(JSRuntime *rt, uintptr_t candidateObj);
+
 namespace js {
 
 /*
