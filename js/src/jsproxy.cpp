@@ -383,6 +383,11 @@ BaseProxyHandler::slice(JSContext *cx, HandleObject proxy, uint32_t begin, uint3
     return js::SliceSlowly(cx, proxy, proxy, begin, end, result);
 }
 
+void
+BaseProxyHandler::trace(JSTracer *trc, JSObject *proxy)
+{
+}
+
 bool
 DirectProxyHandler::getPropertyDescriptor(JSContext *cx, HandleObject proxy, HandleId id,
                                           MutableHandle<PropertyDescriptor> desc, unsigned flags)
@@ -2831,6 +2836,12 @@ Proxy::slice(JSContext *cx, HandleObject proxy, uint32_t begin, uint32_t end,
     return handler->slice(cx, proxy, begin, end, result);
 }
 
+void
+Proxy::trace(JSTracer *trc, JSObject *proxy)
+{
+    return GetProxyHandler(proxy)->trace(trc, proxy);
+}
+
 JSObject *
 js::proxy_innerObject(JSContext *cx, HandleObject obj)
 {
@@ -3047,6 +3058,8 @@ ProxyObject::trace(JSTracer *trc, JSObject *obj)
     unsigned numSlots = JSCLASS_RESERVED_SLOTS(proxy->getClass());
     for (unsigned i = PROXY_MINIMUM_SLOTS; i < numSlots; i++)
         MarkSlot(trc, proxy->slotOfClassSpecific(i), "class-specific");
+
+    Proxy::trace(trc, obj);
 }
 
 JSObject *
