@@ -4603,6 +4603,9 @@ JS_GetCurrentThread();
 extern JS_PUBLIC_API(void)
 JS_AbortIfWrongThread(JSRuntime *rt);
 
+extern JS_PUBLIC_API(void)
+JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t minValue, uintptr_t maxValue);
+
 /************************************************************************/
 
 /*

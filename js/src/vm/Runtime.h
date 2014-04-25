@@ -932,6 +932,9 @@ struct JSRuntime : public JS::shadow::Runtime,
     /* Base address of the native stack for the current thread. */
     uintptr_t           nativeStackBase;
 
+    /* End address of the native stack for the current thread. */
+    uintptr_t           nativeStackEnd;
+
     /* The native stack size limit that runtime should not exceed. */
     size_t              nativeStackQuota[js::StackKindCount];
 

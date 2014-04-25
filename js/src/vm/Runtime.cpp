@@ -150,6 +150,7 @@ JSRuntime::JSRuntime(JSRuntime *parentRuntime, JSUseHelperThreads useHelperThrea
     jitRuntime_(nullptr),
     selfHostingGlobal_(nullptr),
     nativeStackBase(0),
+    nativeStackEnd(0),
     cxCallback(nullptr),
     destroyCompartmentCallback(nullptr),
     destroyZoneCallback(nullptr),
