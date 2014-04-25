@@ -1,10 +1,11 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsclist_h___
-#define jsclist_h___
+#ifndef jsclist_h
+#define jsclist_h
 
 #include "jstypes.h"
 
@@ -103,4 +104,4 @@ typedef struct JSCListStr {
 #define JS_INIT_STATIC_CLIST(_l) \
     {(_l), (_l)}
 
-#endif /* jsclist_h___ */
+#endif /* jsclist_h */

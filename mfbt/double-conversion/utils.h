@@ -31,15 +31,15 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <assert.h>
+#include "mozilla/Assertions.h"
 #ifndef ASSERT
-#define ASSERT(condition)      (assert(condition))
+#define ASSERT(condition)      MOZ_ASSERT(condition)
 #endif
 #ifndef UNIMPLEMENTED
-#define UNIMPLEMENTED() (abort())
+#define UNIMPLEMENTED() MOZ_CRASH()
 #endif
 #ifndef UNREACHABLE
-#define UNREACHABLE()   (abort())
+#define UNREACHABLE()   MOZ_CRASH()
 #endif
 
 // Double operations detection based on target architecture.
@@ -55,10 +55,12 @@
 #if defined(_M_X64) || defined(__x86_64__) || \
     defined(__ARMEL__) || defined(__avr32__) || \
     defined(__hppa__) || defined(__ia64__) || \
-    defined(__mips__) || defined(__powerpc__) || \
+    defined(__mips__) || \
+    defined(__powerpc__) || defined(__ppc__) || defined(__ppc64__) || \
     defined(__sparc__) || defined(__sparc) || defined(__s390__) || \
     defined(__SH4__) || defined(__alpha__) || \
-    defined(_MIPS_ARCH_MIPS32R2)
+    defined(_MIPS_ARCH_MIPS32R2) || \
+    defined(__AARCH64EL__)
 #define DOUBLE_CONVERSION_CORRECT_DOUBLE_OPERATIONS 1
 #elif defined(_M_IX86) || defined(__i386__) || defined(__i386)
 #if defined(_WIN32)
@@ -72,7 +74,7 @@
 #endif
 
 
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 
 // The following macro works on both 32 and 64-bit platforms.
 // Usage: instead of writing 0x1234567890123456
@@ -278,9 +280,8 @@ class StringBuilder {
 // another thus avoiding the warning.
 template <class Dest, class Source>
 inline Dest BitCast(const Source& source) {
-  // Compile time assertion: sizeof(Dest) == sizeof(Source)
-  // A compile error here means your Dest and Source have different sizes.
-  typedef char VerifySizesAreEqual[sizeof(Dest) == sizeof(Source) ? 1 : -1];
+  static_assert(sizeof(Dest) == sizeof(Source),
+                "BitCast's source and destination types must be the same size");
 
   Dest dest;
   memmove(&dest, &source, sizeof(dest));

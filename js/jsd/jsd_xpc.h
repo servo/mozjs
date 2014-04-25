@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -37,7 +37,7 @@ struct PCMapEntry {
 class jsdObject MOZ_FINAL : public jsdIObject
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDIOBJECT
 
     /* you'll normally use use FromPtr() instead of directly constructing one */
@@ -69,7 +69,7 @@ class jsdObject MOZ_FINAL : public jsdIObject
 class jsdProperty : public jsdIProperty
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDIPROPERTY
     NS_DECL_JSDIEPHEMERAL
     
@@ -102,7 +102,7 @@ class jsdProperty : public jsdIProperty
 class jsdScript : public jsdIScript
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDISCRIPT
     NS_DECL_JSDIEPHEMERAL
 
@@ -159,7 +159,7 @@ uint32_t jsdScript::LastTag = 0;
 class jsdContext : public jsdIContext
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDICONTEXT
     NS_DECL_JSDIEPHEMERAL
 
@@ -175,6 +175,16 @@ class jsdContext : public jsdIContext
     jsdContext (const jsdContext&); /* no implementation */
 
     bool                   mValid;
+    // The API exposed by JSD here is problematic, because it allows for per-
+    // JSContext script disabling, which no longer exists in the platform.
+    // The only consumer here in practice is Firebug, which makes sure to re-
+    // enable any disabled script before navigation. But if some other consumer
+    // were to disable script, navigate, and try to re-enable it, we'd end up
+    // with an unmatched UnblockScript call, which violates platform invariants.
+    // So we make a half-hearted attempt to detect this by storing the Window ID
+    // of the scope for which we disabled script.
+    uint64_t               mScriptDisabledForWindowWithID;
+    bool IsScriptEnabled() { return !mScriptDisabledForWindowWithID; }
     LiveEphemeral          mLiveListEntry;
     uint32_t               mTag;
     JSDContext            *mJSDCx;
@@ -187,7 +197,7 @@ uint32_t jsdContext::LastTag = 0;
 class jsdStackFrame : public jsdIStackFrame
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDISTACKFRAME
     NS_DECL_JSDIEPHEMERAL
 
@@ -215,7 +225,7 @@ class jsdStackFrame : public jsdIStackFrame
 class jsdValue : public jsdIValue
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDIVALUE
     NS_DECL_JSDIEPHEMERAL
 
@@ -252,7 +262,9 @@ class jsdService : public jsdIDebuggerService
                    mNestedLoopLevel(0), mCx(0), mRuntime(0), mErrorHook(0),
                    mBreakpointHook(0), mDebugHook(0), mDebuggerHook(0),
                    mInterruptHook(0), mScriptHook(0), mThrowHook(0),
-                   mTopLevelHook(0), mFunctionHook(0)
+                   mTopLevelHook(0), mFunctionHook(0),
+                   mWarnedAboutDeprecation(false),
+                   mDeprecationAcknowledged(false)
     {
     }
 
@@ -282,6 +294,14 @@ class jsdService : public jsdIDebuggerService
     nsCOMPtr<jsdICallHook>      mTopLevelHook;
     nsCOMPtr<jsdICallHook>      mFunctionHook;
     nsCOMPtr<jsdIActivationCallback> mActivationCallback;
+
+    // True if we have ever printed a warning about JSD being deprecated.
+    // We only ever print the warning once.
+    bool mWarnedAboutDeprecation;
+
+    // True if the next call to asyncOn should not produce a warning,
+    // because the consumer called jsdIDebuggerService::acknowledgeDeprecation.
+    bool mDeprecationAcknowledged;
 };
 
 #endif /* JSDSERVICE_H___ */
@@ -294,7 +314,7 @@ class jsdService : public jsdIDebuggerService
 class jsdContext : public jsdIContext
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDICONTEXT
 
     /* you'll normally use use FromPtr() instead of directly constructing one */
@@ -334,7 +354,7 @@ class jsdContext : public jsdIContext
 class jsdThreadState : public jsdIThreadState
 {
   public:
-    NS_DECL_ISUPPORTS
+    NS_DECL_THREADSAFE_ISUPPORTS
     NS_DECL_JSDITHREADSTATE
 
     /* you'll normally use use FromPtr() instead of directly constructing one */

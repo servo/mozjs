@@ -1,14 +1,25 @@
 // String.prototype.iterator is generic.
 
 load(libdir + "asserts.js");
+load(libdir + "iteration.js");
+load(libdir + "string.js");
 
 function test(obj) {
-    var it = Array.prototype.iterator.call(obj);
-    for (var i = 0; i < (obj.length >>> 0); i++)
-        assertEq(it.next(), obj[i]);
-    assertThrowsValue(function () { it.next(); }, StopIteration);
+    var it = String.prototype[std_iterator].call(obj);
+    var s = String(obj);
+    for (var i = 0, length = s.length; i < length;) {
+        var r = s[i++];
+        if (isHighSurrogate(r) && i < length && isLowSurrogate(s[i])) {
+            r += s[i++];
+        }
+        assertIteratorNext(it, r);
+    }
+    assertIteratorDone(it, undefined);
 }
 
-test({length: 0});
-test(Object.create(['x', 'y', 'z']));
-test(Object.create({length: 2, 0: 'x', 1: 'y'}));
+test({toString: () => ""});
+test({toString: () => "xyz"});
+test({toString: () => "\ud808\udf45"});
+test({valueOf: () => ""});
+test({valueOf: () => "xyz"});
+test({valueOf: () => "\ud808\udf45"});

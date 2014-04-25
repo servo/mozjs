@@ -1,12 +1,15 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/*
- * PR time code.
- */
+/* PR time code. */
+
+#include "prmjtime.h"
+
+#include "mozilla/MathAlgorithms.h"
+
 #ifdef SOLARIS
 #define _REENTRANT 1
 #endif
@@ -16,31 +19,23 @@
 #include "jstypes.h"
 #include "jsutil.h"
 
-#include "jsprf.h"
-#include "jslock.h"
-#include "prmjtime.h"
-
 #define PRMJ_DO_MILLISECONDS 1
 
-#ifdef XP_OS2
-#include <sys/timeb.h>
-#endif
 #ifdef XP_WIN
 #include <windef.h>
 #include <winbase.h>
-#include <math.h>     /* for fabs */
 #include <mmsystem.h> /* for timeBegin/EndPeriod */
 /* VC++ 8.0 or later */
 #if _MSC_VER >= 1400
 #define NS_HAVE_INVALID_PARAMETER_HANDLER 1
 #endif
 #ifdef NS_HAVE_INVALID_PARAMETER_HANDLER
-#include <stdlib.h>   /* for _set_invalid_parameter_handler */
 #include <crtdbg.h>   /* for _CrtSetReportMode */
+#include <stdlib.h>   /* for _set_invalid_parameter_handler */
 #endif
 
 #ifdef JS_THREADSAFE
-#include <prinit.h>
+#include "prinit.h"
 #endif
 
 #endif
@@ -64,61 +59,6 @@ extern int gettimeofday(struct timeval *tv);
 #define PRMJ_YEAR_SECONDS (PRMJ_DAY_SECONDS * PRMJ_YEAR_DAYS)
 #define PRMJ_MAX_UNIX_TIMET 2145859200L /*time_t value equiv. to 12/31/2037 */
 
-/* Get the local time. localtime_r is preferred as it is reentrant. */
-static inline bool
-ComputeLocalTime(time_t local, struct tm *ptm)
-{
-#ifdef HAVE_LOCALTIME_R
-    return localtime_r(&local, ptm);
-#else
-    struct tm *otm = localtime(&local);
-    if (!otm)
-        return false;
-    *ptm = *otm;
-    return true;
-#endif
-}
-
-/*
- * get the difference in seconds between this time zone and UTC (GMT)
- */
-int32_t
-PRMJ_LocalGMTDifference()
-{
-#if defined(XP_WIN)
-    /* Windows does not follow POSIX. Updates to the
-     * TZ environment variable are not reflected
-     * immediately on that platform as they are
-     * on UNIX systems without this call.
-     */
-    _tzset();
-#endif
-
-    /*
-     * Get the difference between this time zone and GMT, by checking the local
-     * time for days 0 and 180 of 1970, using a date for which daylight savings
-     * time was not in effect.
-     */
-    int day = 0;
-    struct tm tm;
-
-    if (!ComputeLocalTime(0, &tm))
-        return 0;
-    if (tm.tm_isdst > 0) {
-        day = 180;
-        if (!ComputeLocalTime(PRMJ_DAY_SECONDS * day, &tm))
-            return 0;
-    }
-
-    int time = (tm.tm_hour * 3600) + (tm.tm_min * 60) + tm.tm_sec;
-    time = PRMJ_DAY_SECONDS - time;
-
-    if (tm.tm_yday == day)
-        time -= PRMJ_DAY_SECONDS;
-
-    return time;
-}
-
 /* Constants for GMT offset from 1970 */
 #define G1970GMTMICROHI        0x00dcdcad /* micro secs to 1970 hi */
 #define G1970GMTMICROLOW       0x8b3fa000 /* micro secs to 1970 low */
@@ -126,31 +66,11 @@ PRMJ_LocalGMTDifference()
 #define G2037GMTMICROHI        0x00e45fab /* micro secs to 2037 high */
 #define G2037GMTMICROLOW       0x7a238000 /* micro secs to 2037 low */
 
-#ifdef HAVE_SYSTEMTIMETOFILETIME
+#if defined(XP_WIN)
 
 static const int64_t win2un = 0x19DB1DED53E8000;
 
 #define FILETIME2INT64(ft) (((int64_t)ft.dwHighDateTime) << 32LL | (int64_t)ft.dwLowDateTime)
-
-#endif
-
-#if defined(HAVE_GETSYSTEMTIMEASFILETIME) || defined(HAVE_SYSTEMTIMETOFILETIME)
-
-#if defined(HAVE_GETSYSTEMTIMEASFILETIME)
-inline void
-LowResTime(LPFILETIME lpft)
-{
-    GetSystemTimeAsFileTime(lpft);
-}
-#elif defined(HAVE_SYSTEMTIMETOFILETIME)
-inline void
-LowResTime(LPFILETIME lpft)
-{
-    GetCurrentFT(lpft);
-}
-#else
-#error "No implementation of PRMJ_Now was selected."
-#endif
 
 typedef struct CalibrationData {
     long double freq;         /* The performance counter frequency */
@@ -160,7 +80,7 @@ typedef struct CalibrationData {
     /* The last high res time that we returned since recalibrating */
     int64_t last;
 
-    JSBool calibrated;
+    bool calibrated;
 
 #ifdef JS_THREADSAFE
     CRITICAL_SECTION data_lock;
@@ -190,9 +110,9 @@ NowCalibrate()
         /* By wrapping a timeBegin/EndPeriod pair of calls around this loop,
            the loop seems to take much less time (1 ms vs 15ms) on Vista. */
         timeBeginPeriod(1);
-        LowResTime(&ftStart);
+        GetSystemTimeAsFileTime(&ftStart);
         do {
-            LowResTime(&ft);
+            GetSystemTimeAsFileTime(&ft);
         } while (memcmp(&ftStart,&ft, sizeof(ft)) == 0);
         timeEndPeriod(1);
 
@@ -213,7 +133,7 @@ NowCalibrate()
         calibration.offset *= 0.1;
         calibration.last = 0;
 
-        calibration.calibrated = JS_TRUE;
+        calibration.calibrated = true;
     }
 }
 
@@ -255,19 +175,10 @@ static PRCallOnceType calibrationOnce = { 0 };
 
 #endif
 
-#endif /* HAVE_GETSYSTEMTIMEASFILETIME */
+#endif /* XP_WIN */
 
 
-#if defined(XP_OS2)
-int64_t
-PRMJ_Now(void)
-{
-    struct timeb b;
-    ftime(&b);
-    return (int64_t(b.time) * PRMJ_USEC_PER_SEC) + (int64_t(b.millitm) * PRMJ_USEC_PER_MSEC);
-}
-
-#elif defined(XP_UNIX)
+#if defined(XP_UNIX)
 int64_t
 PRMJ_Now(void)
 {
@@ -346,11 +257,6 @@ def PRMJ_Now():
 
 */
 
-// We parameterize the delay count just so that shell builds can
-// set it to 0 in order to get high-resolution benchmarking.
-// 10 seems to be the number of calls to load with a blank homepage.
-int CALIBRATION_DELAY_COUNT = 10;
-
 int64_t
 PRMJ_Now(void)
 {
@@ -358,20 +264,10 @@ PRMJ_Now(void)
     long double lowresTime, highresTimerValue;
     FILETIME ft;
     LARGE_INTEGER now;
-    JSBool calibrated = JS_FALSE;
-    JSBool needsCalibration = JS_FALSE;
+    bool calibrated = false;
+    bool needsCalibration = false;
     int64_t returnedTime;
     long double cachedOffset = 0.0;
-
-    /* To avoid regressing startup time (where high resolution is likely
-       not needed), give the old behavior for the first few calls.
-       This does not appear to be needed on Vista as the timeBegin/timeEndPeriod
-       calls seem to immediately take effect. */
-    int thiscall = JS_ATOMIC_INCREMENT(&nCalls);
-    if (thiscall <= CALIBRATION_DELAY_COUNT) {
-        LowResTime(&ft);
-        return (FILETIME2INT64(ft)-win2un)/10L;
-    }
 
     /* For non threadsafe platforms, NowInit is not necessary */
 #ifdef JS_THREADSAFE
@@ -390,7 +286,7 @@ PRMJ_Now(void)
 
                 NowCalibrate();
 
-                calibrated = JS_TRUE;
+                calibrated = true;
 
                 /* Restore spin count */
                 MUTEX_SETSPINCOUNT(&calibration.data_lock, DATALOCK_SPINCOUNT);
@@ -401,7 +297,7 @@ PRMJ_Now(void)
 
 
         /* Calculate a low resolution time */
-        LowResTime(&ft);
+        GetSystemTimeAsFileTime(&ft);
         lowresTime = 0.1*(long double)(FILETIME2INT64(ft) - win2un);
 
         if (calibration.freq > 0.0) {
@@ -448,7 +344,7 @@ PRMJ_Now(void)
                itself, but I have only seen it triggered by another program
                doing some kind of file I/O. The symptoms are a negative diff
                followed by an equally large positive diff. */
-            if (fabs(diff) > 2*skewThreshold) {
+            if (mozilla::Abs(diff) > 2 * skewThreshold) {
                 /*fprintf(stderr,"Clock skew detected (diff = %f)!\n", diff);*/
 
                 if (calibrated) {
@@ -462,7 +358,7 @@ PRMJ_Now(void)
                        future, the user will want the high resolution timer, so
                        we don't disable it entirely. */
                     returnedTime = int64_t(lowresTime);
-                    needsCalibration = JS_FALSE;
+                    needsCalibration = false;
                 } else {
                     /* It is possible that when we recalibrate, we will return a
                        value less than what we have returned before; this is
@@ -473,12 +369,12 @@ PRMJ_Now(void)
                        cannot maintain the invariant that Date.now() never
                        decreases; the old implementation has this behavior as
                        well. */
-                    needsCalibration = JS_TRUE;
+                    needsCalibration = true;
                 }
             } else {
                 /* No detectable clock skew */
                 returnedTime = int64_t(highresTime);
-                needsCalibration = JS_FALSE;
+                needsCalibration = false;
             }
         } else {
             /* No high resolution timer is available, so fall back */
@@ -507,7 +403,7 @@ size_t
 PRMJ_FormatTime(char *buf, int buflen, const char *fmt, PRMJTime *prtm)
 {
     size_t result = 0;
-#if defined(XP_UNIX) || defined(XP_WIN) || defined(XP_OS2)
+#if defined(XP_UNIX) || defined(XP_WIN)
     struct tm a;
     int fake_tm_year = 0;
 #ifdef NS_HAVE_INVALID_PARAMETER_HANDLER
@@ -622,130 +518,4 @@ PRMJ_FormatTime(char *buf, int buflen, const char *fmt, PRMJTime *prtm)
     }
 #endif
     return result;
-}
-
-int64_t
-DSTOffsetCache::computeDSTOffsetMilliseconds(int64_t localTimeSeconds)
-{
-    JS_ASSERT(localTimeSeconds >= 0);
-    JS_ASSERT(localTimeSeconds <= MAX_UNIX_TIMET);
-
-#if defined(XP_WIN)
-    /* Windows does not follow POSIX. Updates to the
-     * TZ environment variable are not reflected
-     * immediately on that platform as they are
-     * on UNIX systems without this call.
-     */
-    _tzset();
-#endif
-
-    struct tm tm;
-    if (!ComputeLocalTime(static_cast<time_t>(localTimeSeconds), &tm))
-        return 0;
-
-    int32_t base = PRMJ_LocalGMTDifference();
-
-    int32_t dayoff = int32_t((localTimeSeconds - base) % (SECONDS_PER_HOUR * 24));
-    int32_t tmoff = tm.tm_sec + (tm.tm_min * SECONDS_PER_MINUTE) +
-        (tm.tm_hour * SECONDS_PER_HOUR);
-
-    int32_t diff = tmoff - dayoff;
-
-    if (diff < 0)
-        diff += SECONDS_PER_DAY;
-
-    return diff * MILLISECONDS_PER_SECOND;
-}
-
-int64_t
-DSTOffsetCache::getDSTOffsetMilliseconds(int64_t localTimeMilliseconds, JSContext *cx)
-{
-    sanityCheck();
-
-    int64_t localTimeSeconds = localTimeMilliseconds / MILLISECONDS_PER_SECOND;
-
-    if (localTimeSeconds > MAX_UNIX_TIMET) {
-        localTimeSeconds = MAX_UNIX_TIMET;
-    } else if (localTimeSeconds < 0) {
-        /* Go ahead a day to make localtime work (does not work with 0). */
-        localTimeSeconds = SECONDS_PER_DAY;
-    }
-
-    /*
-     * NB: Be aware of the initial range values when making changes to this
-     *     code: the first call to this method, with those initial range
-     *     values, must result in a cache miss.
-     */
-
-    if (rangeStartSeconds <= localTimeSeconds &&
-        localTimeSeconds <= rangeEndSeconds) {
-        return offsetMilliseconds;
-    }
-
-    if (oldRangeStartSeconds <= localTimeSeconds &&
-        localTimeSeconds <= oldRangeEndSeconds) {
-        return oldOffsetMilliseconds;
-    }
-
-    oldOffsetMilliseconds = offsetMilliseconds;
-    oldRangeStartSeconds = rangeStartSeconds;
-    oldRangeEndSeconds = rangeEndSeconds;
-
-    if (rangeStartSeconds <= localTimeSeconds) {
-        int64_t newEndSeconds = js::Min(rangeEndSeconds + RANGE_EXPANSION_AMOUNT, MAX_UNIX_TIMET);
-        if (newEndSeconds >= localTimeSeconds) {
-            int64_t endOffsetMilliseconds = computeDSTOffsetMilliseconds(newEndSeconds);
-            if (endOffsetMilliseconds == offsetMilliseconds) {
-                rangeEndSeconds = newEndSeconds;
-                return offsetMilliseconds;
-            }
-
-            offsetMilliseconds = computeDSTOffsetMilliseconds(localTimeSeconds);
-            if (offsetMilliseconds == endOffsetMilliseconds) {
-                rangeStartSeconds = localTimeSeconds;
-                rangeEndSeconds = newEndSeconds;
-            } else {
-                rangeEndSeconds = localTimeSeconds;
-            }
-            return offsetMilliseconds;
-        }
-
-        offsetMilliseconds = computeDSTOffsetMilliseconds(localTimeSeconds);
-        rangeStartSeconds = rangeEndSeconds = localTimeSeconds;
-        return offsetMilliseconds;
-    }
-
-    int64_t newStartSeconds = js::Max(rangeStartSeconds - RANGE_EXPANSION_AMOUNT, int64_t(0));
-    if (newStartSeconds <= localTimeSeconds) {
-        int64_t startOffsetMilliseconds = computeDSTOffsetMilliseconds(newStartSeconds);
-        if (startOffsetMilliseconds == offsetMilliseconds) {
-            rangeStartSeconds = newStartSeconds;
-            return offsetMilliseconds;
-        }
-
-        offsetMilliseconds = computeDSTOffsetMilliseconds(localTimeSeconds);
-        if (offsetMilliseconds == startOffsetMilliseconds) {
-            rangeStartSeconds = newStartSeconds;
-            rangeEndSeconds = localTimeSeconds;
-        } else {
-            rangeStartSeconds = localTimeSeconds;
-        }
-        return offsetMilliseconds;
-    }
-
-    rangeStartSeconds = rangeEndSeconds = localTimeSeconds;
-    offsetMilliseconds = computeDSTOffsetMilliseconds(localTimeSeconds);
-    return offsetMilliseconds;
-}
-
-void
-DSTOffsetCache::sanityCheck()
-{
-    JS_ASSERT(rangeStartSeconds <= rangeEndSeconds);
-    JS_ASSERT_IF(rangeStartSeconds == INT64_MIN, rangeEndSeconds == INT64_MIN);
-    JS_ASSERT_IF(rangeEndSeconds == INT64_MIN, rangeStartSeconds == INT64_MIN);
-    JS_ASSERT_IF(rangeStartSeconds != INT64_MIN,
-                 rangeStartSeconds >= 0 && rangeEndSeconds >= 0);
-    JS_ASSERT_IF(rangeStartSeconds != INT64_MIN,
-                 rangeStartSeconds <= MAX_UNIX_TIMET && rangeEndSeconds <= MAX_UNIX_TIMET);
 }

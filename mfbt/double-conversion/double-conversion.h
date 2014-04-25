@@ -130,7 +130,7 @@ class DoubleToStringConverter {
   }
 
   // Returns a converter following the EcmaScript specification.
-  static MFBT_API(const DoubleToStringConverter&) EcmaScriptConverter();
+  static MFBT_API const DoubleToStringConverter& EcmaScriptConverter();
 
   // Computes the shortest string of digits that correctly represent the input
   // number. Depending on decimal_in_shortest_low and decimal_in_shortest_high
@@ -198,7 +198,7 @@ class DoubleToStringConverter {
   // The last two conditions imply that the result will never contain more than
   // 1 + kMaxFixedDigitsBeforePoint + 1 + kMaxFixedDigitsAfterPoint characters
   // (one additional character for the sign, and one for the decimal point).
-  MFBT_API(bool) ToFixed(double value,
+  MFBT_API bool ToFixed(double value,
                int requested_digits,
                StringBuilder* result_builder) const;
 
@@ -230,7 +230,7 @@ class DoubleToStringConverter {
   // kMaxExponentialDigits + 8 characters (the sign, the digit before the
   // decimal point, the decimal point, the exponent character, the
   // exponent's sign, and at most 3 exponent digits).
-  MFBT_API(bool) ToExponential(double value,
+  MFBT_API bool ToExponential(double value,
                      int requested_digits,
                      StringBuilder* result_builder) const;
 
@@ -268,8 +268,9 @@ class DoubleToStringConverter {
   // The last condition implies that the result will never contain more than
   // kMaxPrecisionDigits + 7 characters (the sign, the decimal point, the
   // exponent character, the exponent's sign, and at most 3 exponent digits).
-  MFBT_API(bool) ToPrecision(double value,
+  MFBT_API bool ToPrecision(double value,
                    int precision,
+                   bool* used_exponential_notation,
                    StringBuilder* result_builder) const;
 
   enum DtoaMode {
@@ -293,7 +294,7 @@ class DoubleToStringConverter {
   // kBase10MaximalLength.
   // Note that DoubleToAscii null-terminates its input. So the given buffer
   // should be at least kBase10MaximalLength + 1 characters long.
-  static const MFBT_DATA(int) kBase10MaximalLength = 17;
+  static const MFBT_DATA int kBase10MaximalLength = 17;
 
   // Converts the given double 'v' to ascii. 'v' must not be NaN, +Infinity, or
   // -Infinity. In SHORTEST_SINGLE-mode this restriction also applies to 'v'
@@ -333,7 +334,7 @@ class DoubleToStringConverter {
   // terminating null-character when computing the maximal output size.
   // The given length is only used in debug mode to ensure the buffer is big
   // enough.
-  static MFBT_API(void) DoubleToAscii(double v,
+  static MFBT_API void DoubleToAscii(double v,
                             DtoaMode mode,
                             int requested_digits,
                             char* buffer,
@@ -344,7 +345,7 @@ class DoubleToStringConverter {
 
  private:
   // Implementation for ToShortest and ToShortestSingle.
-  MFBT_API(bool) ToShortestIeeeNumber(double value,
+  MFBT_API bool ToShortestIeeeNumber(double value,
                             StringBuilder* result_builder,
                             DtoaMode mode) const;
 
@@ -352,15 +353,15 @@ class DoubleToStringConverter {
   // corresponding string using the configured infinity/nan-symbol.
   // If either of them is NULL or the value is not special then the
   // function returns false.
-  MFBT_API(bool) HandleSpecialValues(double value, StringBuilder* result_builder) const;
+  MFBT_API bool HandleSpecialValues(double value, StringBuilder* result_builder) const;
   // Constructs an exponential representation (i.e. 1.234e56).
   // The given exponent assumes a decimal point after the first decimal digit.
-  MFBT_API(void) CreateExponentialRepresentation(const char* decimal_digits,
+  MFBT_API void CreateExponentialRepresentation(const char* decimal_digits,
                                        int length,
                                        int exponent,
                                        StringBuilder* result_builder) const;
   // Creates a decimal representation (i.e 1234.5678).
-  MFBT_API(void) CreateDecimalRepresentation(const char* decimal_digits,
+  MFBT_API void CreateDecimalRepresentation(const char* decimal_digits,
                                    int length,
                                    int decimal_point,
                                    int digits_after_point,
@@ -503,7 +504,7 @@ class StringToDoubleConverter {
   // in the 'processed_characters_count'. Trailing junk is never included.
   double StringToDouble(const char* buffer,
                         int length,
-                        int* processed_characters_count) {
+                        int* processed_characters_count) const {
     return StringToIeee(buffer, length, processed_characters_count, true);
   }
 
@@ -512,7 +513,7 @@ class StringToDoubleConverter {
   // due to potential double-rounding.
   float StringToFloat(const char* buffer,
                       int length,
-                      int* processed_characters_count) {
+                      int* processed_characters_count) const {
     return static_cast<float>(StringToIeee(buffer, length,
                                            processed_characters_count, false));
   }
@@ -527,7 +528,7 @@ class StringToDoubleConverter {
   double StringToIeee(const char* buffer,
                       int length,
                       int* processed_characters_count,
-                      bool read_as_double);
+                      bool read_as_double) const;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(StringToDoubleConverter);
 };

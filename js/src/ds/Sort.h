@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef Sort_h__
-#define Sort_h__
+#ifndef ds_Sort_h
+#define ds_Sort_h
 
 #include "jstypes.h"
 
@@ -15,7 +14,7 @@ namespace js {
 namespace detail {
 
 template<typename T>
-JS_ALWAYS_INLINE void
+MOZ_ALWAYS_INLINE void
 CopyNonEmptyArray(T *dst, const T *src, size_t nelems)
 {
     JS_ASSERT(nelems != 0);
@@ -27,7 +26,7 @@ CopyNonEmptyArray(T *dst, const T *src, size_t nelems)
 
 /* Helper function for MergeSort. */
 template<typename T, typename Comparator>
-JS_ALWAYS_INLINE bool
+MOZ_ALWAYS_INLINE bool
 MergeArrayRuns(T *dst, const T *src, size_t run1, size_t run2, Comparator c)
 {
     JS_ASSERT(run1 >= 1);
@@ -135,4 +134,4 @@ MergeSort(T *array, size_t nelems, T *scratch, Comparator c)
 
 } /* namespace js */
 
-#endif
+#endif /* ds_Sort_h */

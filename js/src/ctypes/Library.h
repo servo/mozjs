@@ -3,11 +3,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef LIBRARY_H
-#define LIBRARY_H
+#ifndef ctypes_Library_h
+#define ctypes_Library_h
 
-#include "jsapi.h"
+#include "js/TypeDecls.h"
 
+struct JSCTypesCallbacks;
 struct PRLibrary;
 
 namespace js {
@@ -20,17 +21,17 @@ enum LibrarySlot {
 
 namespace Library
 {
-  JSBool Name(JSContext* cx, unsigned argc, jsval *vp);
+  bool Name(JSContext* cx, unsigned argc, JS::Value *vp);
 
-  JSObject* Create(JSContext* cx, jsval path, JSCTypesCallbacks* callbacks);
+  JSObject* Create(JSContext* cx, JS::Value path, JSCTypesCallbacks* callbacks);
 
   bool IsLibrary(JSObject* obj);
   PRLibrary* GetLibrary(JSObject* obj);
 
-  JSBool Open(JSContext* cx, unsigned argc, jsval* vp);
+  bool Open(JSContext* cx, unsigned argc, JS::Value* vp);
 }
 
 }
 }
 
-#endif
+#endif /* ctypes_Library_h */

@@ -4,31 +4,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-DEPTH		= @DEPTH@
-topsrcdir	= @top_srcdir@
-srcdir		= @srcdir@
-VPATH		= @srcdir@
-
-include $(DEPTH)/config/autoconf.mk
-
-PROGRAM         = js$(BIN_SUFFIX)
-CPPSRCS		= \
-  js.cpp \
-  jsoptparse.cpp \
-  jsheaptools.cpp \
-  $(NULL)
-
-DEFINES         += -DEXPORT_JS_API
-# Building against js_static requires that we declare mfbt sybols "exported"
-# on its behalf.
-DEFINES         += -DIMPL_MFBT
-
-LIBS      = $(NSPR_LIBS) $(EDITLINE_LIBS) $(DEPTH)/$(LIB_PREFIX)js_static.$(LIB_SUFFIX) $(MOZ_ZLIB_LIBS)
+LIBS      = $(NSPR_LIBS) $(EDITLINE_LIBS) ../$(LIB_PREFIX)js_static.$(LIB_SUFFIX) $(MOZ_ZLIB_LIBS)
 ifdef MOZ_NATIVE_FFI
 EXTRA_LIBS += $(MOZ_FFI_LIBS)
 endif
-
-LOCAL_INCLUDES += -I$(topsrcdir) -I..
+ifdef MOZ_SHARED_ICU
+EXTRA_LIBS += $(MOZ_ICU_LIBS)
+endif
 
 ifeq ($(OS_ARCH),Darwin)
 ifeq ($(TARGET_CPU),x86_64)
@@ -36,19 +18,31 @@ DARWIN_EXE_LDFLAGS += -pagezero_size 10000 -image_base 100000000
 endif
 endif
 
-include $(topsrcdir)/config/rules.mk
-
-ifdef MOZ_SHARK
-CFLAGS += -F/System/Library/PrivateFrameworks
-CXXFLAGS += -F/System/Library/PrivateFrameworks
-LDFLAGS += -F/System/Library/PrivateFrameworks -framework CHUD
+ifdef QEMU_EXE
+MOZ_POST_PROGRAM_COMMAND = $(topsrcdir)/build/qemu-wrap --qemu $(QEMU_EXE) --libdir $(CROSS_LIB)
 endif
+
+# Place a GDB Python auto-load file next to the shell executable, both in
+# the build directory and in the dist/bin directory.
+PP_TARGETS += SHELL_AUTOLOAD
+SHELL_AUTOLOAD := js-gdb.py.in
+SHELL_AUTOLOAD_FLAGS := -Dtopsrcdir=$(abspath $(srcdir)/..)
+
+INSTALL_TARGETS += SHELL_INSTALL_AUTOLOAD
+SHELL_INSTALL_AUTOLOAD_FILES := $(CURDIR)/js-gdb.py
+SHELL_INSTALL_AUTOLOAD_DEST := $(DIST)/bin
+
+INSTALL_TARGETS += SHELL_INSTALL_AUTOLOAD_SCRIPT
+SHELL_INSTALL_AUTOLOAD_SCRIPT_FILES := js-gdb.gdb
+SHELL_INSTALL_AUTOLOAD_SCRIPT_DEST := $(CURDIR)
+
+include $(topsrcdir)/config/rules.mk
 
 # People expect the js shell to wind up in the top-level JS dir.
 libs::
-	#$(INSTALL) $(IFLAGS2) $(PROGRAM) $(DEPTH)
+	$(INSTALL) $(IFLAGS2) $(PROGRAM) ..
 
-GARBAGE += $(DEPTH)/$(PROGRAM)
+GARBAGE += ../$(PROGRAM)
 
 install:: $(PROGRAM)
 	$(SYSINSTALL) $^ $(DESTDIR)$(bindir)

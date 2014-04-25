@@ -1,13 +1,19 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsarray.h"
-#include "jsnum.h"
 #include "jsonparser.h"
+
+#include "mozilla/RangedPtr.h"
+
+#include <ctype.h>
+
+#include "jsarray.h"
+#include "jscompartment.h"
+#include "jsnum.h"
+#include "jsprf.h"
 
 #include "vm/StringBuffer.h"
 
@@ -15,11 +21,79 @@
 
 using namespace js;
 
+using mozilla::RangedPtr;
+
+JSONParser::~JSONParser()
+{
+    for (size_t i = 0; i < stack.length(); i++) {
+        if (stack[i].state == FinishArrayElement)
+            js_delete(&stack[i].elements());
+        else
+            js_delete(&stack[i].properties());
+    }
+
+    for (size_t i = 0; i < freeElements.length(); i++)
+        js_delete(freeElements[i]);
+
+    for (size_t i = 0; i < freeProperties.length(); i++)
+        js_delete(freeProperties[i]);
+}
+
+void
+JSONParser::trace(JSTracer *trc)
+{
+    for (size_t i = 0; i < stack.length(); i++) {
+        if (stack[i].state == FinishArrayElement) {
+            ElementVector &elements = stack[i].elements();
+            for (size_t j = 0; j < elements.length(); j++)
+                gc::MarkValueRoot(trc, &elements[j], "JSONParser element");
+        } else {
+            PropertyVector &properties = stack[i].properties();
+            for (size_t j = 0; j < properties.length(); j++) {
+                gc::MarkValueRoot(trc, &properties[j].value, "JSONParser property value");
+                gc::MarkIdRoot(trc, &properties[j].id, "JSONParser property id");
+            }
+        }
+    }
+}
+
+void
+JSONParser::getTextPosition(uint32_t *column, uint32_t *line)
+{
+    ConstTwoByteChars ptr = begin;
+    uint32_t col = 1;
+    uint32_t row = 1;
+    for (; ptr < current; ptr++) {
+        if (*ptr == '\n' || *ptr == '\r') {
+            ++row;
+            col = 1;
+            // \r\n is treated as a single newline.
+            if (ptr + 1 < current && *ptr == '\r' && *(ptr + 1) == '\n')
+                ++ptr;
+        } else {
+            ++col;
+        }
+    }
+    *column = col;
+    *line = row;
+}
+
 void
 JSONParser::error(const char *msg)
 {
-    if (errorHandling == RaiseError)
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_JSON_BAD_PARSE, msg);
+    if (errorHandling == RaiseError) {
+        uint32_t column = 1, line = 1;
+        getTextPosition(&column, &line);
+
+        const size_t MaxWidth = sizeof("4294967295");
+        char columnNumber[MaxWidth];
+        JS_snprintf(columnNumber, sizeof columnNumber, "%lu", column);
+        char lineNumber[MaxWidth];
+        JS_snprintf(lineNumber, sizeof lineNumber, "%lu", line);
+
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_JSON_BAD_PARSE,
+                             msg, lineNumber, columnNumber);
+    }
 }
 
 bool
@@ -56,7 +130,7 @@ JSONParser::readString()
             current++;
             JSFlatString *str = (ST == JSONParser::PropertyName)
                                 ? AtomizeChars(cx, start.get(), length)
-                                : js_NewStringCopyN(cx, start.get(), length);
+                                : js_NewStringCopyN<CanGC>(cx, start.get(), length);
             if (!str)
                 return token(OOM);
             return stringToken(str);
@@ -95,6 +169,7 @@ JSONParser::readString()
         }
 
         if (c != '\\') {
+            --current;
             error("bad character in string literal");
             return token(Error);
         }
@@ -113,25 +188,37 @@ JSONParser::readString()
           case 't':  c = '\t'; break;
 
           case 'u':
-            if (end - current < 4) {
+            if (end - current < 4 ||
+                !(JS7_ISHEX(current[0]) &&
+                  JS7_ISHEX(current[1]) &&
+                  JS7_ISHEX(current[2]) &&
+                  JS7_ISHEX(current[3])))
+            {
+                // Point to the first non-hexadecimal character (which may be
+                // missing).
+                if (current == end || !JS7_ISHEX(current[0]))
+                    ; // already at correct location
+                else if (current + 1 == end || !JS7_ISHEX(current[1]))
+                    current += 1;
+                else if (current + 2 == end || !JS7_ISHEX(current[2]))
+                    current += 2;
+                else if (current + 3 == end || !JS7_ISHEX(current[3]))
+                    current += 3;
+                else
+                    MOZ_ASSUME_UNREACHABLE("logic error determining first erroneous character");
+
                 error("bad Unicode escape");
                 return token(Error);
             }
-            if (JS7_ISHEX(current[0]) &&
-                JS7_ISHEX(current[1]) &&
-                JS7_ISHEX(current[2]) &&
-                JS7_ISHEX(current[3]))
-            {
-                c = (JS7_UNHEX(current[0]) << 12)
-                  | (JS7_UNHEX(current[1]) << 8)
-                  | (JS7_UNHEX(current[2]) << 4)
-                  | (JS7_UNHEX(current[3]));
-                current += 4;
-                break;
-            }
-            /* FALL THROUGH */
+            c = (JS7_UNHEX(current[0]) << 12)
+              | (JS7_UNHEX(current[1]) << 8)
+              | (JS7_UNHEX(current[2]) << 4)
+              | (JS7_UNHEX(current[3]));
+            current += 4;
+            break;
 
           default:
+            current--;
             error("bad escaped character");
             return token(Error);
         }
@@ -184,8 +271,18 @@ JSONParser::readNumber()
 
     /* Fast path: no fractional or exponent part. */
     if (current == end || (*current != '.' && *current != 'e' && *current != 'E')) {
-        const jschar *dummy;
+        TwoByteChars chars(digitStart.get(), current - digitStart);
+        if (chars.length() < strlen("9007199254740992")) {
+            // If the decimal number is shorter than the length of 2**53, (the
+            // largest number a double can represent with integral precision),
+            // parse it using a decimal-only parser.  This comparison is
+            // conservative but faster than a fully-precise check.
+            double d = ParseDecimalNumber(chars);
+            return numberToken(negative ? -d : d);
+        }
+
         double d;
+        const jschar *dummy;
         if (!GetPrefixInteger(cx, digitStart.get(), current.get(), 10, &dummy, &d))
             return token(OOM);
         JS_ASSERT(current == dummy);
@@ -417,19 +514,6 @@ JSONParser::advancePropertyName()
     if (*current == '"')
         return readString<PropertyName>();
 
-    if (parsingMode == LegacyJSON && *current == '}') {
-        /*
-         * Previous JSON parsing accepted trailing commas in non-empty object
-         * syntax, and some users depend on this.  (Specifically, Places data
-         * serialization in versions of Firefox before 4.0.  We can remove this
-         * mode when profile upgrades from 3.6 become unsupported.)  Permit
-         * such trailing commas only when legacy parsing is specifically
-         * requested.
-         */
-        current++;
-        return token(ObjectClose);
-    }
-
     error("expected double-quoted property name");
     return token(Error);
 }
@@ -481,17 +565,91 @@ JSONParser::advanceAfterProperty()
     return token(Error);
 }
 
-/*
- * This enum is local to JSONParser::parse, below, but ISO C++98 doesn't allow
- * templates to depend on local types.  Boo-urns!
- */
-enum ParserState { FinishArrayElement, FinishObjectMember, JSONValue };
+JSObject *
+JSONParser::createFinishedObject(PropertyVector &properties)
+{
+    /*
+     * Look for an existing cached type and shape for objects with this set of
+     * properties.
+     */
+    {
+        JSObject *obj = cx->compartment()->types.newTypedObject(cx, properties.begin(),
+                                                                properties.length());
+        if (obj)
+            return obj;
+    }
+
+    /*
+     * Make a new object sized for the given number of properties and fill its
+     * shape in manually.
+     */
+    gc::AllocKind allocKind = gc::GetGCObjectKind(properties.length());
+    RootedObject obj(cx, NewBuiltinClassInstance(cx, &JSObject::class_, allocKind));
+    if (!obj)
+        return nullptr;
+
+    RootedId propid(cx);
+    RootedValue value(cx);
+
+    for (size_t i = 0; i < properties.length(); i++) {
+        propid = properties[i].id;
+        value = properties[i].value;
+        if (!DefineNativeProperty(cx, obj, propid, value, JS_PropertyStub, JS_StrictPropertyStub,
+                                  JSPROP_ENUMERATE, 0)) {
+            return nullptr;
+        }
+    }
+
+    /*
+     * Try to assign a new type to the object with type information for its
+     * properties, and update the initializer type object cache with this
+     * object's final shape.
+     */
+    cx->compartment()->types.fixObjectType(cx, obj);
+
+    return obj;
+}
+
+inline bool
+JSONParser::finishObject(MutableHandleValue vp, PropertyVector &properties)
+{
+    JS_ASSERT(&properties == &stack.back().properties());
+
+    JSObject *obj = createFinishedObject(properties);
+    if (!obj)
+        return false;
+
+    vp.setObject(*obj);
+    if (!freeProperties.append(&properties))
+        return false;
+    stack.popBack();
+    return true;
+}
+
+inline bool
+JSONParser::finishArray(MutableHandleValue vp, ElementVector &elements)
+{
+    JS_ASSERT(&elements == &stack.back().elements());
+
+    JSObject *obj = NewDenseCopiedArray(cx, elements.length(), elements.begin());
+    if (!obj)
+        return false;
+
+    /* Try to assign a new type to the array according to its elements. */
+    cx->compartment()->types.fixArrayType(cx, obj);
+
+    vp.setObject(*obj);
+    if (!freeElements.append(&elements))
+        return false;
+    stack.popBack();
+    return true;
+}
 
 bool
 JSONParser::parse(MutableHandleValue vp)
 {
-    Vector<ParserState> stateStack(cx);
-    AutoValueVector valueStack(cx);
+    RootedValue value(cx);
+    JS_ASSERT(stack.empty());
 
     vp.setUndefined();
 
@@ -500,18 +658,15 @@ JSONParser::parse(MutableHandleValue vp)
     while (true) {
         switch (state) {
           case FinishObjectMember: {
-            RootedValue v(cx, valueStack.popCopy());
-            RootedId propid(cx, AtomToId(&valueStack.popCopy().toString()->asAtom()));
-            RootedObject obj(cx, &valueStack.back().toObject());
-            if (!DefineNativeProperty(cx, obj, propid, v,
-                                      JS_PropertyStub, JS_StrictPropertyStub, JSPROP_ENUMERATE,
-                                      0, 0))
-            {
-                return false;
-            }
+            PropertyVector &properties = stack.back().properties();
+            properties.back().value = value;
+
             token = advanceAfterProperty();
-            if (token == ObjectClose)
+            if (token == ObjectClose) {
+                if (!finishObject(&value, properties))
+                    return false;
                 break;
+            }
             if (token != Comma) {
                 if (token == OOM)
                     return false;
@@ -525,21 +680,16 @@ JSONParser::parse(MutableHandleValue vp)
 
           JSONMember:
             if (token == String) {
-                if (!valueStack.append(atomValue()))
+                jsid id = AtomToId(atomValue());
+                PropertyVector &properties = stack.back().properties();
+                if (!properties.append(IdValuePair(id)))
                     return false;
                 token = advancePropertyColon();
                 if (token != Colon) {
                     JS_ASSERT(token == Error);
                     return errorReturn();
                 }
-                if (!stateStack.append(FinishObjectMember))
-                    return false;
                 goto JSONValue;
-            }
-            if (token == ObjectClose) {
-                JS_ASSERT(state == FinishObjectMember);
-                JS_ASSERT(parsingMode == LegacyJSON);
-                break;
             }
             if (token == OOM)
                 return false;
@@ -548,18 +698,17 @@ JSONParser::parse(MutableHandleValue vp)
             return errorReturn();
 
           case FinishArrayElement: {
-            Value v = valueStack.popCopy();
-            Rooted<JSObject*> obj(cx, &valueStack.back().toObject());
-            if (!js_NewbornArrayPush(cx, obj, v))
+            ElementVector &elements = stack.back().elements();
+            if (!elements.append(value.get()))
                 return false;
             token = advanceAfterArrayElement();
-            if (token == Comma) {
-                if (!stateStack.append(FinishArrayElement))
-                    return false;
+            if (token == Comma)
                 goto JSONValue;
-            }
-            if (token == ArrayClose)
+            if (token == ArrayClose) {
+                if (!finishArray(&value, elements))
+                    return false;
                 break;
+            }
             JS_ASSERT(token == Error);
             return errorReturn();
           }
@@ -570,66 +719,72 @@ JSONParser::parse(MutableHandleValue vp)
           JSONValueSwitch:
             switch (token) {
               case String:
+                value = stringValue();
+                break;
               case Number:
-                if (!valueStack.append(token == String ? stringValue() : numberValue()))
-                    return false;
+                value = numberValue();
                 break;
               case True:
-                if (!valueStack.append(BooleanValue(true)))
-                    return false;
+                value = BooleanValue(true);
                 break;
               case False:
-                if (!valueStack.append(BooleanValue(false)))
-                    return false;
+                value = BooleanValue(false);
                 break;
               case Null:
-                if (!valueStack.append(NullValue()))
-                    return false;
+                value = NullValue();
                 break;
 
               case ArrayOpen: {
-                JSObject *obj = NewDenseEmptyArray(cx);
-                if (!obj || !valueStack.append(ObjectValue(*obj)))
+                ElementVector *elements;
+                if (!freeElements.empty()) {
+                    elements = freeElements.popCopy();
+                    elements->clear();
+                } else {
+                    elements = cx->new_<ElementVector>(cx);
+                    if (!elements)
+                        return false;
+                }
+                if (!stack.append(elements))
                     return false;
+
                 token = advance();
-                if (token == ArrayClose)
+                if (token == ArrayClose) {
+                    if (!finishArray(&value, *elements))
+                        return false;
                     break;
-                if (!stateStack.append(FinishArrayElement))
-                    return false;
+                }
                 goto JSONValueSwitch;
               }
 
               case ObjectOpen: {
-                JSObject *obj = NewBuiltinClassInstance(cx, &ObjectClass);
-                if (!obj || !valueStack.append(ObjectValue(*obj)))
+                PropertyVector *properties;
+                if (!freeProperties.empty()) {
+                    properties = freeProperties.popCopy();
+                    properties->clear();
+                } else {
+                    properties = cx->new_<PropertyVector>(cx);
+                    if (!properties)
+                        return false;
+                }
+                if (!stack.append(properties))
                     return false;
+
                 token = advanceAfterObjectOpen();
-                if (token == ObjectClose)
+                if (token == ObjectClose) {
+                    if (!finishObject(&value, *properties))
+                        return false;
                     break;
+                }
                 goto JSONMember;
               }
 
               case ArrayClose:
-                if (parsingMode == LegacyJSON &&
-                    !stateStack.empty() &&
-                    stateStack.back() == FinishArrayElement) {
-                    /*
-                     * Previous JSON parsing accepted trailing commas in
-                     * non-empty array syntax, and some users depend on this.
-                     * (Specifically, Places data serialization in versions of
-                     * Firefox prior to 4.0.  We can remove this mode when
-                     * profile upgrades from 3.6 become unsupported.)  Permit
-                     * such trailing commas only when specifically
-                     * instructed to do so.
-                     */
-                    stateStack.popBack();
-                    break;
-                }
-                /* FALL THROUGH */
-
               case ObjectClose:
               case Colon:
               case Comma:
+                // Move the current pointer backwards so that the position
+                // reported in the error message is correct.
+                --current;
                 error("unexpected character");
                 return errorReturn();
 
@@ -642,9 +797,9 @@ JSONParser::parse(MutableHandleValue vp)
             break;
         }
 
-        if (stateStack.empty())
+        if (stack.empty())
             break;
-        state = stateStack.popCopy();
+        state = stack.back().state;
     }
 
     for (; current < end; current++) {
@@ -655,7 +810,8 @@ JSONParser::parse(MutableHandleValue vp)
     }
 
     JS_ASSERT(end == current);
-    JS_ASSERT(valueStack.length() == 1);
-    vp.set(valueStack[0]);
+    JS_ASSERT(stack.empty());
+
+    vp.set(value);
     return true;
 }

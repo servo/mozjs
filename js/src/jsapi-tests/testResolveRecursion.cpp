@@ -1,12 +1,11 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
-#include "tests.h"
+#include "jsapi-tests/tests.h"
 
 /*
  * Test that resolve hook recursion for the same object and property is
@@ -15,43 +14,54 @@
 
 BEGIN_TEST(testResolveRecursion)
 {
-    static JSClass my_resolve_class = {
+    static const JSClass my_resolve_class = {
         "MyResolve",
         JSCLASS_NEW_RESOLVE | JSCLASS_HAS_PRIVATE,
 
         JS_PropertyStub,       // add
-        JS_PropertyStub,       // delete
-        JS_PropertyStub,         // get
+        JS_DeletePropertyStub, // delete
+        JS_PropertyStub,       // get
         JS_StrictPropertyStub, // set
         JS_EnumerateStub,
         (JSResolveOp) my_resolve,
         JS_ConvertStub
     };
 
-    obj1 = JS_NewObject(cx, &my_resolve_class, NULL, NULL);
+    obj1 = obj2 = nullptr;
+    JS::AddObjectRoot(cx, &obj1);
+    JS::AddObjectRoot(cx, &obj2);
+
+    obj1 = JS_NewObject(cx, &my_resolve_class, JS::NullPtr(), JS::NullPtr());
     CHECK(obj1);
-    obj2 = JS_NewObject(cx, &my_resolve_class, NULL, NULL);
+    obj2 = JS_NewObject(cx, &my_resolve_class, JS::NullPtr(), JS::NullPtr());
     CHECK(obj2);
     JS_SetPrivate(obj1, this);
     JS_SetPrivate(obj2, this);
 
-    CHECK(JS_DefineProperty(cx, global, "obj1", OBJECT_TO_JSVAL(obj1), NULL, NULL, 0));
-    CHECK(JS_DefineProperty(cx, global, "obj2", OBJECT_TO_JSVAL(obj2), NULL, NULL, 0));
+    JS::RootedValue obj1Val(cx, ObjectValue(*obj1));
+    JS::RootedValue obj2Val(cx, ObjectValue(*obj2));
+    CHECK(JS_DefineProperty(cx, global, "obj1", obj1Val, 0));
+    CHECK(JS_DefineProperty(cx, global, "obj2", obj2Val, 0));
 
     resolveEntryCount = 0;
     resolveExitCount = 0;
 
     /* Start the essence of the test via invoking the first resolve hook. */
-    jsval v;
+    JS::RootedValue v(cx);
     EVAL("obj1.x", &v);
     CHECK_SAME(v, JSVAL_FALSE);
     CHECK_EQUAL(resolveEntryCount, 4);
     CHECK_EQUAL(resolveExitCount, 4);
+
+    obj1 = nullptr;
+    obj2 = nullptr;
+    JS::RemoveObjectRoot(cx, &obj1);
+    JS::RemoveObjectRoot(cx, &obj2);
     return true;
 }
 
-JSObject *obj1;
-JSObject *obj2;
+JS::Heap<JSObject *> obj1;
+JS::Heap<JSObject *> obj2;
 unsigned resolveEntryCount;
 unsigned resolveExitCount;
 
@@ -69,7 +79,7 @@ struct AutoIncrCounters {
 };
 
 bool
-doResolve(JSHandleObject obj, JSHandleId id, unsigned flags, JSMutableHandleObject objp)
+doResolve(JS::HandleObject obj, JS::HandleId id, unsigned flags, JS::MutableHandleObject objp)
 {
     CHECK_EQUAL(resolveExitCount, 0);
     AutoIncrCounters incr(this);
@@ -79,26 +89,26 @@ doResolve(JSHandleObject obj, JSHandleId id, unsigned flags, JSMutableHandleObje
 
     JSFlatString *str = JS_FlattenString(cx, JSID_TO_STRING(id));
     CHECK(str);
-    jsval v;
+    JS::RootedValue v(cx);
     if (JS_FlatStringEqualsAscii(str, "x")) {
         if (obj == obj1) {
             /* First resolve hook invocation. */
             CHECK_EQUAL(resolveEntryCount, 1);
             EVAL("obj2.y = true", &v);
             CHECK_SAME(v, JSVAL_TRUE);
-            CHECK(JS_DefinePropertyById(cx, obj, id, JSVAL_FALSE, NULL, NULL, 0));
+            CHECK(JS_DefinePropertyById(cx, obj, id, JSVAL_FALSE, nullptr, nullptr, 0));
             objp.set(obj);
             return true;
         }
         if (obj == obj2) {
             CHECK_EQUAL(resolveEntryCount, 4);
-            objp.set(NULL);
+            objp.set(nullptr);
             return true;
         }
     } else if (JS_FlatStringEqualsAscii(str, "y")) {
         if (obj == obj2) {
             CHECK_EQUAL(resolveEntryCount, 2);
-            CHECK(JS_DefinePropertyById(cx, obj, id, JSVAL_NULL, NULL, NULL, 0));
+            CHECK(JS_DefinePropertyById(cx, obj, id, JSVAL_NULL, nullptr, nullptr, 0));
             EVAL("obj1.x", &v);
             CHECK(JSVAL_IS_VOID(v));
             EVAL("obj1.y", &v);
@@ -126,9 +136,9 @@ doResolve(JSHandleObject obj, JSHandleId id, unsigned flags, JSMutableHandleObje
     return false;
 }
 
-static JSBool
-my_resolve(JSContext *cx, JSHandleObject obj, JSHandleId id, unsigned flags,
-           JSMutableHandleObject objp)
+static bool
+my_resolve(JSContext *cx, JS::HandleObject obj, JS::HandleId id, unsigned flags,
+           JS::MutableHandleObject objp)
 {
     return static_cast<cls_testResolveRecursion *>(JS_GetPrivate(obj))->
            doResolve(obj, id, flags, objp);

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "tests.h"
+#include "jsapi-tests/tests.h"
 
 /*
  * Bug 689101 - jsval is technically a non-POD type because it has a private
@@ -16,7 +16,7 @@
 
 extern "C" {
 
-extern JSBool
+extern bool
 C_ValueToObject(JSContext *cx, jsval v, JSObject **obj);
 
 extern jsval
@@ -29,11 +29,11 @@ C_jsvalAlignmentTest();
 
 BEGIN_TEST(testValueABI_retparam)
 {
-    JS::RootedObject obj(cx, JS_GetGlobalObject(cx));
+    JS::RootedObject obj(cx, JS::CurrentGlobalOrNull(cx));
     jsval v = OBJECT_TO_JSVAL(obj);
-    obj = NULL;
+    obj = nullptr;
     CHECK(C_ValueToObject(cx, v, obj.address()));
-    JSBool equal;
+    bool equal;
     CHECK(JS_StrictlyEqual(cx, v, OBJECT_TO_JSVAL(obj), &equal));
     CHECK(equal);
 

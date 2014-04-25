@@ -1,18 +1,18 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef MacroAssemblerSparc_h
-#define MacroAssemblerSparc_h
+#ifndef assembler_assembler_MacroAssemblerSparc_h
+#define assembler_assembler_MacroAssemblerSparc_h
 
-#include <assembler/wtf/Platform.h>
+#include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER && WTF_CPU_SPARC
 
-#include "SparcAssembler.h"
-#include "AbstractMacroAssembler.h"
+#include "assembler/assembler/SparcAssembler.h"
+#include "assembler/assembler/AbstractMacroAssembler.h"
 
 namespace JSC {
 
@@ -187,12 +187,12 @@ namespace JSC {
             // The last 5 bit of imm.m_value will be used anyway.
             m_assembler.sra_imm(dest, imm.m_value, dest);
         }
-    
+
         void urshift32(RegisterID shift_amount, RegisterID dest)
         {
             m_assembler.srl_r(dest, shift_amount, dest);
         }
-    
+
         void urshift32(Imm32 imm, RegisterID dest)
         {
             // No need to check if imm.m_value.
@@ -326,7 +326,7 @@ namespace JSC {
             add32(Imm32(address.offset), SparcRegisters::g2);
             m_assembler.lduh_r(address.base, SparcRegisters::g2, dest);
         }
-    
+
         void load16(ImplicitAddress address, RegisterID dest)
         {
             if (m_assembler.isimm13(address.offset))
@@ -1024,7 +1024,7 @@ namespace JSC {
             store32(SparcRegisters::g2, address.m_ptr);
         }
 
-        void load32(void* address, RegisterID dest)
+        void load32(const void* address, RegisterID dest)
         {
             m_assembler.move_nocheck((int)address, SparcRegisters::g3);
             m_assembler.lduw_r(SparcRegisters::g3, SparcRegisters::g0, dest);
@@ -1107,17 +1107,17 @@ namespace JSC {
         }
 
         // Floating point operators
-        bool supportsFloatingPoint() const
+        static bool supportsFloatingPoint()
         {
             return true;
         }
 
-        bool supportsFloatingPointTruncate() const
+        static bool supportsFloatingPointTruncate()
         {
             return true;
         }
 
-        bool supportsFloatingPointSqrt() const
+        static bool supportsFloatingPointSqrt()
         {
             return true;
         }
@@ -1458,4 +1458,4 @@ namespace JSC {
 
 #endif // ENABLE(ASSEMBLER) && CPU(SPARC)
 
-#endif // MacroAssemblerSparc_h
+#endif /* assembler_assembler_MacroAssemblerSparc_h */

@@ -1,12 +1,10 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- */
-/* This Source Code Form is subject to the terms of the Mozilla Public
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
-#include "tests.h"
+#include "jsapi-tests/tests.h"
 
 BEGIN_TEST(testContexts_IsRunning)
     {
@@ -15,13 +13,13 @@ BEGIN_TEST(testContexts_IsRunning)
         return true;
     }
 
-    static JSBool chk(JSContext *cx, unsigned argc, jsval *vp)
+    static bool chk(JSContext *cx, unsigned argc, jsval *vp)
     {
         JSRuntime *rt = JS_GetRuntime(cx);
         JSContext *acx = JS_NewContext(rt, 8192);
         if (!acx) {
             JS_ReportOutOfMemory(cx);
-            return JS_FALSE;
+            return false;
         }
 
         // acx should not be running
@@ -38,13 +36,12 @@ BEGIN_TEST(testContexts_bug563735)
     JSContext *cx2 = JS_NewContext(rt, 8192);
     CHECK(cx2);
 
-    JSBool ok;
+    bool ok;
     {
         JSAutoRequest req(cx2);
-        JSAutoEnterCompartment ac;
-        CHECK(ac.enter(cx2, global));
-        jsval v = JSVAL_NULL;
-        ok = JS_SetProperty(cx2, global, "x", &v);
+        JSAutoCompartment ac(cx2, global);
+        JS::RootedValue v(cx2);
+        ok = JS_SetProperty(cx2, global, "x", v);
     }
     CHECK(ok);
 

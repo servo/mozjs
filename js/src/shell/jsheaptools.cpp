@@ -1,25 +1,27 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "shell/jsheaptools.h"
+
+#include "mozilla/Move.h"
+
 #include <string.h>
 
-#include "jsapi.h"
-
 #include "jsalloc.h"
+#include "jsapi.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
-#include "jsfun.h"
 #include "jsobj.h"
 #include "jsprf.h"
-#include "jsutil.h"
 
 #include "jsobjinlines.h"
 
 using namespace js;
+
+using mozilla::Move;
 
 #ifdef DEBUG
 
@@ -47,14 +49,16 @@ using namespace js;
 /*
  * A JSTracer that produces a map of the heap with edges reversed.
  *
- * HeapReversers must be allocated in a stack frame. (They contain an AutoArrayRooter,
- * and those must be allocated and destroyed in a stack-like order.)
+ * HeapReversers must be allocated in a stack frame. (They are derived from
+ * CustomAutoRooter, and those must be allocated and destroyed in a stack-like
+ * order.)
  *
  * HeapReversers keep all the roots they find in their traversal alive until
  * they are destroyed. So you don't need to worry about nodes going away while
  * you're using them.
  */
-class HeapReverser : public JSTracer {
+class HeapReverser : public JSTracer, public JS::CustomAutoRooter
+{
   public:
     struct Edge;
 
@@ -70,12 +74,18 @@ class HeapReverser : public JSTracer {
          * incoming edge Vector in the hash table: Vectors support moves, but
          * not assignments or copy construction.
          */
-        Node(MoveRef<Node> rhs)
-          : kind(rhs->kind), incoming(Move(rhs->incoming)), marked(rhs->marked) { }
-        Node &operator=(MoveRef<Node> rhs) {
+        Node(Node &&rhs)
+          : kind(rhs.kind), incoming(Move(rhs.incoming)), marked(rhs.marked) { }
+        Node &operator=(Node &&rhs) {
+            MOZ_ASSERT(this != &rhs, "self-move assignment is prohibited");
             this->~Node();
-            new(this) Node(rhs);
+            new(this) Node(Move(rhs));
             return *this;
+        }
+
+        void trace(JSTracer *trc) {
+            for (Edge *e = incoming.begin(); e != incoming.end(); e++)
+                e->trace(trc);
         }
 
         /* What kind of Cell this is. */
@@ -92,8 +102,8 @@ class HeapReverser : public JSTracer {
         bool marked;
 
       private:
-        Node(const Node &);
-        Node &operator=(const Node &);
+        Node(const Node &) MOZ_DELETE;
+        Node &operator=(const Node &) MOZ_DELETE;
     };
 
     /* Metadata for a heap edge we have traversed. */
@@ -107,21 +117,27 @@ class HeapReverser : public JSTracer {
          * Vectors without needing to copy our name string when the vector is
          * resized.
          */
-        Edge(MoveRef<Edge> rhs) : name(rhs->name), origin(rhs->origin) {
-            rhs->name = NULL;
+        Edge(Edge &&rhs) : name(rhs.name), origin(rhs.origin) {
+            rhs.name = nullptr;
         }
-        Edge &operator=(MoveRef<Edge> rhs) {
+        Edge &operator=(Edge &&rhs) {
+            MOZ_ASSERT(this != &rhs, "self-move assignment is prohibited");
             this->~Edge();
-            new(this) Edge(rhs);
+            new(this) Edge(Move(rhs));
             return *this;
+        }
+
+        void trace(JSTracer *trc) {
+            if (origin)
+                gc::MarkGCThingRoot(trc, &origin, "HeapReverser::Edge");
         }
 
         /* The name of this heap edge. Owned by this Edge. */
         char *name;
 
         /*
-         * The Cell from which this edge originates. NULL means a root. This is
-         * a cell address instead of a Node * because Nodes live in HashMap
+         * The Cell from which this edge originates. nullptr means a root. This
+         * is a cell address instead of a Node * because Nodes live in HashMap
          * table entries; if the HashMap reallocates its table, all pointers to
          * the Nodes it contains would become invalid. You should look up the
          * address here in |map| to find its Node.
@@ -137,8 +153,13 @@ class HeapReverser : public JSTracer {
     Map map;
 
     /* Construct a HeapReverser for |context|'s heap. */
-    HeapReverser(JSContext *cx) : rooter(cx, 0, NULL), parent(NULL) {
-        JS_TracerInit(this, JS_GetRuntime(cx), traverseEdgeWithThis);
+    HeapReverser(JSContext *cx)
+      : JSTracer(cx->runtime(), traverseEdgeWithThis),
+        JS::CustomAutoRooter(cx),
+        noggc(JS_GetRuntime(cx)),
+        runtime(JS_GetRuntime(cx)),
+        parent(nullptr)
+    {
     }
 
     bool init() { return map.init(); }
@@ -147,32 +168,15 @@ class HeapReverser : public JSTracer {
     bool reverseHeap();
 
   private:
-    /*
-     * Once we've produced a reversed map of the heap, we need to keep the
-     * engine from freeing the objects we've found in it, until we're done using
-     * the map. Even if we're only using the map to construct a result object,
-     * and not rearranging the heap ourselves, any allocation could cause a
-     * garbage collection, which could free objects held internally by the
-     * engine (for example, JaegerMonkey object templates, used by jit scripts).
-     *
-     * So, each time reverseHeap reaches any object, we add it to 'roots', which
-     * is cited by 'rooter', so the object will stay alive long enough for us to
-     * include it in the results, if needed.
-     *
-     * Note that AutoArrayRooters must be constructed and destroyed in a
-     * stack-like order, so the same rule applies to this HeapReverser. The
-     * easiest way to satisfy this requirement is to only allocate HeapReversers
-     * as local variables in functions, or in types that themselves follow that
-     * rule. This is kind of dumb, but JSAPI doesn't provide any less restricted
-     * way to register arrays of roots.
-     */
-    Vector<jsval, 0, SystemAllocPolicy> roots;
-    AutoArrayRooter rooter;
+    JS::AutoDisableGenerationalGC noggc;
+
+    /* A runtime pointer for use by the destructor. */
+    JSRuntime *runtime;
 
     /*
      * Return the name of the most recent edge this JSTracer has traversed. The
      * result is allocated with malloc; if we run out of memory, raise an error
-     * in this HeapReverser's context and return NULL.
+     * in this HeapReverser's context and return nullptr.
      *
      * This may not be called after that edge's call to traverseEdge has
      * returned.
@@ -235,18 +239,23 @@ class HeapReverser : public JSTracer {
         JSObject *object = static_cast<JSObject *>(cell);
         return OBJECT_TO_JSVAL(object);
     }
+
+    /* Keep all tracked objects live across GC. */
+    virtual void trace(JSTracer *trc) MOZ_OVERRIDE {
+        if (!map.initialized())
+            return;
+        for (Map::Enum e(map); !e.empty(); e.popFront()) {
+            gc::MarkGCThingRoot(trc, const_cast<void **>(&e.front().key()), "HeapReverser::map::key");
+            e.front().value().trace(trc);
+        }
+        for (Child *c = work.begin(); c != work.end(); ++c)
+            gc::MarkGCThingRoot(trc, &c->cell, "HeapReverser::Child");
+    }
 };
 
 bool
 HeapReverser::traverseEdge(void *cell, JSGCTraceKind kind)
 {
-    jsval v = nodeToValue(cell, kind);
-    if (v.isObject()) {
-        if (!roots.append(v))
-            return false;
-        rooter.changeArray(roots.begin(), roots.length());
-    }
-
     /* Capture this edge before the JSTracer members get overwritten. */
     char *edgeDescription = getEdgeDescription();
     if (!edgeDescription)
@@ -271,7 +280,7 @@ HeapReverser::traverseEdge(void *cell, JSGCTraceKind kind)
     }
 
     /* Add this edge to the reversed map. */
-    return a->value.incoming.append(Move(e));
+    return a->value().incoming.append(Move(e));
 }
 
 bool
@@ -299,25 +308,25 @@ HeapReverser::reverseHeap()
 char *
 HeapReverser::getEdgeDescription()
 {
-    if (!debugPrinter && debugPrintIndex == (size_t) -1) {
-        const char *arg = static_cast<const char *>(debugPrintArg);
-        char *name = static_cast<char *>(js_malloc(strlen(arg) + 1));
+    if (!debugPrinter() && debugPrintIndex() == (size_t) -1) {
+        const char *arg = static_cast<const char *>(debugPrintArg());
+        char *name = js_pod_malloc<char>(strlen(arg) + 1);
         if (!name)
-            return NULL;
+            return nullptr;
         strcpy(name, arg);
         return name;
     }
 
     /* Lovely; but a fixed size is required by JSTraceNamePrinter. */
     static const int nameSize = 200;
-    char *name = static_cast<char *>(js_malloc(nameSize));
+    char *name = js_pod_malloc<char>(nameSize);
     if (!name)
-        return NULL;
-    if (debugPrinter)
-        debugPrinter(this, name, nameSize);
+        return nullptr;
+    if (debugPrinter())
+        debugPrinter()(this, name, nameSize);
     else
         JS_snprintf(name, nameSize, "%s[%lu]",
-                    static_cast<const char *>(debugPrintArg), debugPrintIndex);
+                    static_cast<const char *>(debugPrintArg()), debugPrintIndex());
 
     /* Shrink storage to fit. */
     return static_cast<char *>(js_realloc(name, strlen(name) + 1));
@@ -384,10 +393,11 @@ class ReferenceFinder {
             JSObject *object = static_cast<JSObject *>(cell);
 
             /* Certain classes of object are for internal use only. */
-            if (object->isBlock() ||
-                object->isCall() ||
-                object->isWith() ||
-                object->isDeclEnv()) {
+            if (object->is<BlockObject>() ||
+                object->is<CallObject>() ||
+                object->is<StaticWithObject>() ||
+                object->is<DynamicWithObject>() ||
+                object->is<DeclEnvObject>()) {
                 return JSVAL_VOID;
             }
 
@@ -417,10 +427,10 @@ ReferenceFinder::visit(void *cell, Path *path)
 
     HeapReverser::Map::Ptr p = reverser.map.lookup(cell);
     JS_ASSERT(p);
-    HeapReverser::Node *node = &p->value;
+    HeapReverser::Node *node = &p->value();
 
     /* Is |cell| a representable cell, reached via a non-empty path? */
-    if (path != NULL) {
+    if (path != nullptr) {
         jsval representation = representable(cell, node->kind);
         if (!JSVAL_IS_VOID(representation))
             return addReferrer(representation, path);
@@ -455,9 +465,9 @@ ReferenceFinder::Path::computeName(JSContext *cx)
         size += strlen(l->edge.name) + (l->next ? 2 : 0);
     size += 1;
 
-    char *path = static_cast<char *>(cx->malloc_(size));
+    char *path = cx->pod_malloc<char>(size);
     if (!path)
-        return NULL;
+        return nullptr;
 
     /*
      * Walk the edge list again, and copy the edge names into place, with
@@ -481,31 +491,29 @@ ReferenceFinder::Path::computeName(JSContext *cx)
 }
 
 bool
-ReferenceFinder::addReferrer(jsval referrer_, Path *path)
+ReferenceFinder::addReferrer(jsval referrerArg, Path *path)
 {
-    Rooted<jsval> referrer(context, referrer_);
+    RootedValue referrer(context, referrerArg);
 
-    if (!context->compartment->wrap(context, referrer.address()))
+    if (!context->compartment()->wrap(context, &referrer))
         return false;
 
-    char *pathName = path->computeName(context);
+    ScopedJSFreePtr<char> pathName(path->computeName(context));
     if (!pathName)
         return false;
-    AutoReleasePtr releasePathName(context, pathName);
 
     /* Find the property of the results object named |pathName|. */
-    JS::RootedValue valRoot(context);
-    Value &v = valRoot.get();
+    RootedValue v(context);
 
     if (!JS_GetProperty(context, result, pathName, &v))
         return false;
     if (v.isUndefined()) {
         /* Create an array to accumulate referents under this path. */
-        JSObject *array = JS_NewArrayObject(context, 1, referrer.address());
+        JSObject *array = JS_NewArrayObject(context, referrer);
         if (!array)
             return false;
         v.setObject(*array);
-        return !!JS_SetProperty(context, result, pathName, &v);
+        return !!JS_SetProperty(context, result, pathName, v);
     }
 
     /* The property's value had better be an array. */
@@ -515,34 +523,35 @@ ReferenceFinder::addReferrer(jsval referrer_, Path *path)
     /* Append our referrer to this array. */
     uint32_t length;
     return JS_GetArrayLength(context, array, &length) &&
-           JS_SetElement(context, array, length, referrer.address());
+           JS_SetElement(context, array, length, referrer);
 }
 
 JSObject *
 ReferenceFinder::findReferences(HandleObject target)
 {
-    result = JS_NewObject(context, NULL, NULL, NULL);
+    result = JS_NewObject(context, nullptr, JS::NullPtr(), JS::NullPtr());
     if (!result)
-        return NULL;
-    if (!visit(target, NULL))
-        return NULL;
+        return nullptr;
+    if (!visit(target, nullptr))
+        return nullptr;
 
     return result;
 }
 
 /* See help(findReferences). */
-JSBool
+bool
 FindReferences(JSContext *cx, unsigned argc, jsval *vp)
 {
-    if (argc < 1) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_MORE_ARGS_NEEDED,
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (args.length() < 1) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
                              "findReferences", "0", "s");
         return false;
     }
 
-    JS::Value target = JS_ARGV(cx, vp)[0];
+    RootedValue target(cx, args[0]);
     if (!target.isObject()) {
-        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_UNEXPECTED_TYPE,
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
                              "argument", "not an object");
         return false;
     }
@@ -559,7 +568,7 @@ FindReferences(JSContext *cx, unsigned argc, jsval *vp)
     if (!references)
         return false;
 
-    JS_SET_RVAL(cx, vp, OBJECT_TO_JSVAL(references));
+    args.rval().setObject(*references);
     return true;
 }
 

@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009 University of Szeged
@@ -25,16 +25,16 @@
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * ***** END LICENSE BLOCK ***** */
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER && WTF_CPU_ARM_TRADITIONAL
 
-#include "MacroAssemblerARM.h"
+#include "assembler/assembler/MacroAssemblerARM.h"
 
-#if WTF_OS_LINUX || WTF_OS_ANDROID
+#if (WTF_OS_LINUX || WTF_OS_ANDROID) && !defined(JS_ARM_SIMULATOR)
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -56,6 +56,9 @@ namespace JSC {
 
 static bool isVFPPresent()
 {
+#ifdef JS_ARM_SIMULATOR
+    return true;
+#else
 #if WTF_OS_LINUX
     int fd = open("/proc/self/auxv", O_RDONLY);
     if (fd > 0) {
@@ -85,8 +88,8 @@ static bool isVFPPresent()
     if (strstr(buf, "vfp"))
         return true;
 #endif
-
     return false;
+#endif // JS_ARM_SIMULATOR
 }
 
 const bool MacroAssemblerARM::s_isVFPPresent = isVFPPresent();

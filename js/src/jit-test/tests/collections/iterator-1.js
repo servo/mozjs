@@ -1,10 +1,12 @@
 // collection.iterator() returns an Iterator object.
 
-function test(obj) {
-    var iter = obj.iterator();
+load(libdir + "iteration.js");
+
+function test(obj, name) {
+    var iter = obj[std_iterator]();
     assertEq(typeof iter, "object");
     assertEq(iter instanceof Iterator, true);
-    assertEq(iter.toString(), "[object Iterator]");
+    assertEq(iter.toString(), "[object " + obj.constructor.name + " Iterator]");
 }
 
 test([]);

@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009 Apple Inc. All rights reserved.
@@ -24,20 +24,19 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef ARMAssembler_h
-#define ARMAssembler_h
+#ifndef assembler_assembler_ARMv7Assembler_h
+#define assembler_assembler_ARMv7Assembler_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE(ASSEMBLER) && CPU(ARM_THUMB2)
 
-#include "AssemblerBuffer.h"
+#include "assembler/assembler/AssemblerBuffer.h"
 #include "assembler/wtf/Assertions.h"
-#include "assembler/wtf/Vector.h"
 #include <stdint.h>
 
 namespace JSC {
@@ -231,7 +230,7 @@ class ARMThumbImmediate {
     {
         m_value.asInt = 0;
     }
-        
+
     ARMThumbImmediate(ThumbImmediateType type, ThumbImmediateValue value)
         : m_type(type)
         , m_value(value)
@@ -271,14 +270,14 @@ public:
         // zero.  count(B) == 8, so the count of bits to be checked is 24 - count(Z).
         int32_t rightShiftAmount = 24 - leadingZeros;
         if (value == ((value >> rightShiftAmount) << rightShiftAmount)) {
-            // Shift the value down to the low byte position.  The assign to 
+            // Shift the value down to the low byte position.  The assign to
             // shiftValue7 drops the implicit top bit.
             encoding.shiftValue7 = value >> rightShiftAmount;
             // The endoded shift amount is the magnitude of a right rotate.
             encoding.shiftAmount = 8 + leadingZeros;
             return ARMThumbImmediate(TypeEncoded, encoding);
         }
-        
+
         PatternBytes bytes;
         bytes.asInt = value;
 
@@ -325,7 +324,7 @@ public:
     {
         return ARMThumbImmediate(TypeUInt16, value);
     }
-    
+
     bool isValid()
     {
         return m_type != TypeInvalid;
@@ -380,16 +379,16 @@ public:
         m_u.type = (ARMShiftType)0;
         m_u.amount = 0;
     }
-    
+
     ShiftTypeAndAmount(ARMShiftType type, unsigned amount)
     {
         m_u.type = type;
         m_u.amount = amount & 31;
     }
-    
+
     unsigned lo4() { return m_u.lo4; }
     unsigned hi4() { return m_u.hi4; }
-    
+
 private:
     union {
         struct {
@@ -405,14 +404,14 @@ private:
 
 
 /*
-Some features of the Thumb instruction set are deprecated in ARMv7. Deprecated features affecting 
-instructions supported by ARMv7-M are as follows: 
-• use of the PC as <Rd> or <Rm> in a 16-bit ADD (SP plus register) instruction 
-• use of the SP as <Rm> in a 16-bit ADD (SP plus register) instruction 
-• use of the SP as <Rm> in a 16-bit CMP (register) instruction 
-• use of MOV (register) instructions in which <Rd> is the SP or PC and <Rm> is also the SP or PC. 
-• use of <Rn> as the lowest-numbered register in the register list of a 16-bit STM instruction with base 
-register writeback 
+Some features of the Thumb instruction set are deprecated in ARMv7. Deprecated features affecting
+instructions supported by ARMv7-M are as follows:
+• use of the PC as <Rd> or <Rm> in a 16-bit ADD (SP plus register) instruction
+• use of the SP as <Rm> in a 16-bit ADD (SP plus register) instruction
+• use of the SP as <Rm> in a 16-bit CMP (register) instruction
+• use of MOV (register) instructions in which <Rd> is the SP or PC and <Rm> is also the SP or PC.
+• use of <Rn> as the lowest-numbered register in the register list of a 16-bit STM instruction with base
+register writeback
 */
 
 class ARMv7Assembler {
@@ -457,6 +456,10 @@ public:
         {
         }
 
+        bool isSet() const {
+            return m_offset != -1;
+        }
+
     private:
         JmpSrc(int offset)
             : m_offset(offset)
@@ -465,7 +468,7 @@ public:
 
         int m_offset;
     };
-    
+
     class JmpDst {
         friend class ARMv7Assembler;
         friend class ARMInstructionFormatter;
@@ -868,7 +871,7 @@ public:
         m_formatter.twoWordOp16Op16(OP_B_T4a, OP_B_T4b);
         return JmpSrc(m_formatter.size());
     }
-    
+
     // Only allowed in IT (if then) block if last instruction.
     JmpSrc blx(RegisterID rm)
     {
@@ -1003,19 +1006,19 @@ public:
         ASSERT(rn != ARMRegisters::pc);
         ASSERT(index || wback);
         ASSERT(!wback | (rt != rn));
-    
+
         bool add = true;
         if (offset < 0) {
             add = false;
             offset = -offset;
         }
         ASSERT((offset & ~0xff) == 0);
-        
+
         offset |= (wback << 8);
         offset |= (add   << 9);
         offset |= (index << 10);
         offset |= (1 << 11);
-        
+
         m_formatter.twoWordOp12Reg4Reg4Imm12(OP_LDR_imm_T4, rn, rt, offset);
     }
 
@@ -1061,19 +1064,19 @@ public:
         ASSERT(rn != ARMRegisters::pc);
         ASSERT(index || wback);
         ASSERT(!wback | (rt != rn));
-    
+
         bool add = true;
         if (offset < 0) {
             add = false;
             offset = -offset;
         }
         ASSERT((offset & ~0xff) == 0);
-        
+
         offset |= (wback << 8);
         offset |= (add   << 9);
         offset |= (index << 10);
         offset |= (1 << 11);
-        
+
         m_formatter.twoWordOp12Reg4Reg4Imm12(OP_LDRH_imm_T3, rn, rt, offset);
     }
 
@@ -1173,7 +1176,7 @@ public:
         ASSERT(imm.isValid());
         ASSERT(!imm.isEncodedImm());
         ASSERT(!BadReg(rd));
-        
+
         m_formatter.twoWordOp5i6Imm4Reg4EncodedImm(OP_MOV_imm_T3, imm.m_value.imm4, rd, imm);
     }
 
@@ -1181,7 +1184,7 @@ public:
     {
         ASSERT(imm.isValid());
         ASSERT(!BadReg(rd));
-        
+
         if ((rd < 8) && imm.isUInt8())
             m_formatter.oneWordOp5Reg3Imm8(OP_MOV_imm_T1, rd, imm.getUInt8());
         else if (imm.isEncodedImm())
@@ -1206,7 +1209,7 @@ public:
     {
         ASSERT(imm.isEncodedImm());
         ASSERT(!BadReg(rd));
-        
+
         m_formatter.twoWordOp5i6Imm4Reg4EncodedImm(OP_MVN_imm, 0xf, rd, imm);
     }
 
@@ -1309,19 +1312,19 @@ public:
         ASSERT(rn != ARMRegisters::pc);
         ASSERT(index || wback);
         ASSERT(!wback | (rt != rn));
-    
+
         bool add = true;
         if (offset < 0) {
             add = false;
             offset = -offset;
         }
         ASSERT((offset & ~0xff) == 0);
-        
+
         offset |= (wback << 8);
         offset |= (add   << 9);
         offset |= (index << 10);
         offset |= (1 << 11);
-        
+
         m_formatter.twoWordOp12Reg4Reg4Imm12(OP_STR_imm_T4, rn, rt, offset);
     }
 
@@ -1513,7 +1516,7 @@ public:
     {
         return JmpDst(m_formatter.size());
     }
-    
+
     JmpDst align(int alignment)
     {
         while (!m_formatter.isAligned(alignment))
@@ -1521,36 +1524,36 @@ public:
 
         return label();
     }
-    
+
     static void* getRelocatedAddress(void* code, JmpSrc jump)
     {
         ASSERT(jump.m_offset != -1);
 
         return reinterpret_cast<void*>(reinterpret_cast<ptrdiff_t>(code) + jump.m_offset);
     }
-    
+
     static void* getRelocatedAddress(void* code, JmpDst destination)
     {
         ASSERT(destination.m_offset != -1);
 
         return reinterpret_cast<void*>(reinterpret_cast<ptrdiff_t>(code) + destination.m_offset);
     }
-    
+
     static int getDifferenceBetweenLabels(JmpDst src, JmpDst dst)
     {
         return dst.m_offset - src.m_offset;
     }
-    
+
     static int getDifferenceBetweenLabels(JmpDst src, JmpSrc dst)
     {
         return dst.m_offset - src.m_offset;
     }
-    
+
     static int getDifferenceBetweenLabels(JmpSrc src, JmpDst dst)
     {
         return dst.m_offset - src.m_offset;
     }
-    
+
     // Assembler admin methods:
 
     size_t size() const
@@ -1598,7 +1601,7 @@ public:
     static void linkJump(void* code, JmpSrc from, void* to)
     {
         ASSERT(from.m_offset != -1);
-        
+
         uint16_t* location = reinterpret_cast<uint16_t*>(reinterpret_cast<intptr_t>(code) + from.m_offset);
         linkJumpAbsolute(location, to);
     }
@@ -1633,7 +1636,7 @@ public:
     {
         return true;
     }
-    
+
     static void relinkCall(void* from, void* to)
     {
         ASSERT(!(reinterpret_cast<intptr_t>(from) & 1));
@@ -1647,7 +1650,7 @@ public:
     static void repatchInt32(void* where, int32_t value)
     {
         ASSERT(!(reinterpret_cast<intptr_t>(where) & 1));
-        
+
         setInt32(where, value);
 
         ExecutableAllocator::cacheFlush(reinterpret_cast<uint16_t*>(where) - 4, 4 * sizeof(uint16_t));
@@ -1656,7 +1659,7 @@ public:
     static void repatchPointer(void* where, void* value)
     {
         ASSERT(!(reinterpret_cast<intptr_t>(where) & 1));
-        
+
         setPointer(where, value);
 
         ExecutableAllocator::cacheFlush(reinterpret_cast<uint16_t*>(where) - 4, 4 * sizeof(uint16_t));
@@ -1835,7 +1838,7 @@ private:
         {
             m_buffer.putShort(op | (rd << 8) | imm);
         }
-        
+
         void oneWordOp5Imm5Reg3Reg3(OpcodeID op, uint8_t imm, RegisterID reg1, RegisterID reg2)
         {
             m_buffer.putShort(op | (imm << 6) | (reg1 << 3) | reg2);
@@ -1870,13 +1873,13 @@ private:
             m_buffer.putShort(op | reg);
             m_buffer.putShort(ff.m_u.value);
         }
-        
+
         void twoWordOp16FourFours(OpcodeID1 op, FourFours ff)
         {
             m_buffer.putShort(op);
             m_buffer.putShort(ff.m_u.value);
         }
-        
+
         void twoWordOp16Op16(OpcodeID1 op1, OpcodeID2 op2)
         {
             m_buffer.putShort(op1);
@@ -1925,4 +1928,4 @@ private:
 
 #endif // ENABLE(ASSEMBLER) && CPU(ARM_THUMB2)
 
-#endif // ARMAssembler_h
+#endif /* assembler_assembler_ARMv7Assembler_h */

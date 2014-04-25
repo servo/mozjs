@@ -3,7 +3,7 @@
 # This includes classes for representing and parsing JS manifests.
 
 import os, os.path, re, sys
-from subprocess import *
+from subprocess import Popen, PIPE
 
 from tests import TestCase
 
@@ -61,7 +61,7 @@ class XULInfo:
 
         # Read the values.
         val_re = re.compile(r'(TARGET_XPCOM_ABI|OS_TARGET|MOZ_DEBUG)\s*=\s*(.*)')
-        kw = {}
+        kw = { 'isdebug': False }
         for line in open(path):
             m = val_re.match(line)
             if m:
@@ -165,9 +165,6 @@ def _parse_one(testcase, xul_tester):
             if xul_tester.test("xulRuntime.OS == 'Darwin'"):
                 testcase.expect = testcase.enable = False
             pos += 1
-        elif parts[pos] == 'pref(javascript.options.xml.content,true)':
-            testcase.options += ['-e', 'options("allow_xml");']
-            pos += 1
         else:
             print 'warning: invalid manifest line element "%s"'%parts[pos]
             pos += 1
@@ -218,7 +215,7 @@ def _emit_manifest_at(location, relative, test_list, depth):
             _emit_manifest_at(fullpath, relpath, test_list, depth + 1)
         else:
             numTestFiles += 1
-            assert(len(test_list) == 1)
+            assert len(test_list) == 1
             line = _build_manifest_script_entry(k, test_list[0])
             manifest.append(line)
 
@@ -279,17 +276,82 @@ def _parse_test_header(fullpath, testcase, xul_tester):
 
     _parse_one(testcase, xul_tester)
 
+def _parse_external_manifest(filename, relpath):
+    """
+    Reads an external manifest file for test suites whose individual test cases
+    can't be decorated with reftest comments.
+    filename - str: name of the manifest file
+    relpath - str: relative path of the directory containing the manifest
+                   within the test suite
+    """
+    entries = []
+
+    with open(filename, 'r') as fp:
+        manifest_re = re.compile(r'^\s*(.*)\s+(include|script)\s+(\S+)$')
+        for line in fp:
+            line, _, comment = line.partition('#')
+            line = line.strip()
+            if not line:
+                continue
+            matches = manifest_re.match(line)
+            if not matches:
+                print('warning: unrecognized line in jstests.list: {0}'.format(line))
+                continue
+
+            path = os.path.normpath(os.path.join(relpath, matches.group(3)))
+            if matches.group(2) == 'include':
+                # The manifest spec wants a reference to another manifest here,
+                # but we need just the directory. We do need the trailing
+                # separator so we don't accidentally match other paths of which
+                # this one is a prefix.
+                assert(path.endswith('jstests.list'))
+                path = path[:-len('jstests.list')]
+
+            entries.append({'path': path, 'terms': matches.group(1), 'comment': comment.strip()})
+
+    # if one directory name is a prefix of another, we want the shorter one first
+    entries.sort(key=lambda x: x["path"])
+    return entries
+
+def _apply_external_manifests(filename, testcase, entries, xul_tester):
+    for entry in entries:
+        if filename.startswith(entry["path"]):
+            # The reftest spec would require combining the terms (failure types)
+            # that may already be defined in the test case with the terms
+            # specified in entry; for example, a skip overrides a random, which
+            # overrides a fails. Since we don't necessarily know yet in which
+            # environment the test cases will be run, we'd also have to
+            # consider skip-if, random-if, and fails-if with as-yet unresolved
+            # conditions.
+            # At this point, we use external manifests only for test cases
+            # that can't have their own failure type comments, so we simply
+            # use the terms for the most specific path.
+            testcase.terms = entry["terms"]
+            testcase.comment = entry["comment"]
+            _parse_one(testcase, xul_tester)
+
 def load(location, xul_tester, reldir = ''):
     """
     Locates all tests by walking the filesystem starting at |location|.
     Uses xul_tester to evaluate any test conditions in the test header.
+    Failure type and comment for a test case can come from
+    - an external manifest entry for the test case,
+    - an external manifest entry for a containing directory,
+    - most commonly: the header of the test case itself.
     """
     # The list of tests that we are collecting.
     tests = []
 
-    # Any file who's basename matches something in this set is ignored.
+    # Any file whose basename matches something in this set is ignored.
     EXCLUDED = set(('browser.js', 'shell.js', 'jsref.js', 'template.js',
-                    'user.js', 'js-test-driver-begin.js', 'js-test-driver-end.js'))
+                    'user.js', 'sta.js',
+                    'test262-browser.js', 'test262-shell.js',
+                    'test402-browser.js', 'test402-shell.js',
+                    'testBuiltInObject.js', 'testIntl.js',
+                    'js-test-driver-begin.js', 'js-test-driver-end.js'))
+
+    manifestFile = os.path.join(location, 'jstests.list')
+    externalManifestEntries = _parse_external_manifest(manifestFile, '')
 
     for root, basename in _find_all_js_files(location, location):
         # Skip js files in the root test directory.
@@ -309,9 +371,8 @@ def load(location, xul_tester, reldir = ''):
         if statbuf.st_size == 0:
             continue
 
-        # Parse the test header and load the test.
         testcase = TestCase(os.path.join(reldir, filename))
+        _apply_external_manifests(filename, testcase, externalManifestEntries, xul_tester)
         _parse_test_header(fullpath, testcase, xul_tester)
         tests.append(testcase)
     return tests
-

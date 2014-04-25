@@ -2,40 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "tests.h"
-#include "jsdbgapi.h"
-#include "jsobjinlines.h"
+#include "js/OldDebugAPI.h"
+#include "jsapi-tests/tests.h"
 
-JSPrincipals *sCurrentGlobalPrincipals = NULL;
-
-JSPrincipals *
-ObjectPrincipalsFinder(JSObject *)
-{
-    return sCurrentGlobalPrincipals;
-}
-
-static const JSSecurityCallbacks seccb = {
-    NULL,
-    NULL,
-    ObjectPrincipalsFinder,
-    NULL
-};
-
-JSPrincipals *sOriginPrincipalsInErrorReporter = NULL;
-
-static void
-ErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
-{
-    sOriginPrincipalsInErrorReporter = report->originPrincipals;
-}
-
-JSPrincipals prin1 = { 1 };
-JSPrincipals prin2 = { 1 };
+static JSPrincipals *sOriginPrincipalsInErrorReporter = nullptr;
+static TestJSPrincipals prin1(1);
+static TestJSPrincipals prin2(1);
 
 BEGIN_TEST(testOriginPrincipals)
 {
-    JS_SetSecurityCallbacks(rt, &seccb);
-
     /*
      * Currently, the only way to set a non-trivial originPrincipal is to use
      * JS_EvaluateUCScriptForPrincipalsVersionOrigin. This does not expose the
@@ -69,8 +44,14 @@ BEGIN_TEST(testOriginPrincipals)
     return true;
 }
 
+static void
+ErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
+{
+    sOriginPrincipalsInErrorReporter = report->originPrincipals;
+}
+
 bool
-eval(const char *asciiChars, JSPrincipals *principals, JSPrincipals *originPrincipals, jsval *rval)
+eval(const char *asciiChars, JSPrincipals *principals, JSPrincipals *originPrincipals, JS::MutableHandleValue rval)
 {
     size_t len = strlen(asciiChars);
     jschar *chars = new jschar[len+1];
@@ -78,12 +59,18 @@ eval(const char *asciiChars, JSPrincipals *principals, JSPrincipals *originPrinc
         chars[i] = asciiChars[i];
     chars[len] = 0;
 
-    JS::RootedObject global(cx, JS_GetGlobalObject(cx));
-    bool ok = JS_EvaluateUCScriptForPrincipalsVersionOrigin(cx, global,
-                                                            principals,
-                                                            originPrincipals,
-                                                            chars, len, "", 0, rval,
-                                                            JSVERSION_DEFAULT);
+    JS::RootedObject global(cx, JS_NewGlobalObject(cx, getGlobalClass(), principals, JS::FireOnNewGlobalHook));
+    CHECK(global);
+    JSAutoCompartment ac(cx, global);
+    CHECK(JS_InitStandardClasses(cx, global));
+
+
+    JS::CompileOptions options(cx);
+    options.setOriginPrincipals(originPrincipals)
+           .setFileAndLine("", 0);
+
+    bool ok = JS::Evaluate(cx, global, options, chars, len, rval);
+
     delete[] chars;
     return ok;
 }
@@ -99,12 +86,11 @@ testOuter(const char *asciiChars)
 bool
 testInner(const char *asciiChars, JSPrincipals *principal, JSPrincipals *originPrincipal)
 {
-    sCurrentGlobalPrincipals = principal;
-
-    jsval rval;
+    JS::RootedValue rval(cx);
     CHECK(eval(asciiChars, principal, originPrincipal, &rval));
 
-    JSScript *script = JS_GetFunctionScript(cx, JSVAL_TO_OBJECT(rval)->toFunction());
+    JS::RootedFunction fun(cx, &rval.toObject().as<JSFunction>());
+    JSScript *script = JS_GetFunctionScript(cx, fun);
     CHECK(JS_GetScriptPrincipals(script) == principal);
     CHECK(JS_GetScriptOriginPrincipals(script) == originPrincipal);
 
@@ -114,7 +100,7 @@ testInner(const char *asciiChars, JSPrincipals *principal, JSPrincipals *originP
 bool
 testError(const char *asciiChars)
 {
-    jsval rval;
+    JS::RootedValue rval(cx);
     CHECK(!eval(asciiChars, &prin1, &prin2 /* = originPrincipals */, &rval));
     CHECK(JS_ReportPendingException(cx));
     CHECK(sOriginPrincipalsInErrorReporter == &prin2);

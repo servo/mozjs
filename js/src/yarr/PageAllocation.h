@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp:
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2010 Apple Inc. All rights reserved.
@@ -23,16 +23,16 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef PageAllocation_h
-#define PageAllocation_h
+#ifndef yarr_PageAllocation_h
+#define yarr_PageAllocation_h
 
-#include "wtfbridge.h"
-#include "OSAllocator.h"
-#include "PageBlock.h"
+#include "yarr/wtfbridge.h"
+#include "yarr/OSAllocator.h"
+#include "yarr/PageBlock.h"
 #include "assembler/wtf/VMTags.h"
 
 #if WTF_OS_DARWIN
@@ -128,4 +128,4 @@ private:
 
 using WTF::PageAllocation;
 
-#endif // PageAllocation_h
+#endif /* yarr_PageAllocation_h */

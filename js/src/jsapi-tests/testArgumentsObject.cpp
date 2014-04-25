@@ -1,14 +1,15 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jsapi-tests/tests.h"
 
-#include "tests.h"
+#include "jsobjinlines.h"
 
-#include "vm/Stack-inl.h"
+#include "vm/ArgumentsObject-inl.h"
 
 using namespace js;
 
@@ -30,18 +31,8 @@ static const char STRICT_TWO[] =
 static const char STRICT_THREE[] =
     "function f() { 'use strict'; return arguments; }";
 
-static const char *CALL_CODES[] =
+static const char * const CALL_CODES[] =
     { "f()", "f(0)", "f(0, 1)", "f(0, 1, 2)", "f(0, 1, 2, 3)", "f(0, 1, 2, 3, 4)" };
-
-static const size_t MAX_ELEMS = 6;
-
-static void
-ClearElements(Value elems[MAX_ELEMS])
-{
-    for (size_t i = 0; i < MAX_ELEMS - 1; i++)
-        elems[i] = NullValue();
-    elems[MAX_ELEMS - 1] = Int32Value(42);
-}
 
 BEGIN_TEST(testArgumentsObject)
 {
@@ -83,21 +74,23 @@ BEGIN_TEST(testArgumentsObject)
            ExhaustiveTest<5>(STRICT_THREE);
 }
 
+static const size_t MAX_ELEMS = 6;
+
 template<size_t ArgCount> bool
 ExhaustiveTest(const char funcode[])
 {
-    jsval v;
+    RootedValue v(cx);
     EVAL(funcode, &v);
 
     EVAL(CALL_CODES[ArgCount], &v);
-    ArgumentsObject &argsobj = JSVAL_TO_OBJECT(v)->asArguments();
+    Rooted<ArgumentsObject*> argsobj(cx, &JSVAL_TO_OBJECT(v)->as<ArgumentsObject>());
 
-    Value elems[MAX_ELEMS];
+    JS::AutoValueArray<MAX_ELEMS> elems(cx);
 
     for (size_t i = 0; i <= ArgCount; i++) {
         for (size_t j = 0; j <= ArgCount - i; j++) {
             ClearElements(elems);
-            CHECK(argsobj.maybeGetElements(i, j, elems));
+            CHECK(argsobj->maybeGetElements(i, j, elems.begin()));
             for (size_t k = 0; k < j; k++)
                 CHECK_SAME(elems[k], INT_TO_JSVAL(i + k));
             for (size_t k = j; k < MAX_ELEMS - 1; k++)
@@ -107,5 +100,14 @@ ExhaustiveTest(const char funcode[])
     }
 
     return true;
+}
+
+template <size_t N>
+static void
+ClearElements(JS::AutoValueArray<N> &elems)
+{
+    for (size_t i = 0; i < elems.length() - 1; i++)
+        elems[i].setNull();
+    elems[elems.length() - 1].setInt32(42);
 }
 END_TEST(testArgumentsObject)

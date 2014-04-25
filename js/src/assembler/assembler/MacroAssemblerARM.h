@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2008 Apple Inc.
@@ -26,18 +26,18 @@
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef MacroAssemblerARM_h
-#define MacroAssemblerARM_h
+#ifndef assembler_assembler_MacroAssemblerARM_h
+#define assembler_assembler_MacroAssemblerARM_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER && WTF_CPU_ARM_TRADITIONAL
 
-#include "ARMAssembler.h"
-#include "AbstractMacroAssembler.h"
+#include "assembler/assembler/ARMAssembler.h"
+#include "assembler/assembler/AbstractMacroAssembler.h"
 
 namespace JSC {
 
@@ -190,16 +190,16 @@ public:
     {
         m_assembler.movs_r(dest, m_assembler.asr(dest, imm.m_value & 0x1f));
     }
-    
+
     void urshift32(RegisterID shift_amount, RegisterID dest)
     {
         ARMWord w = ARMAssembler::getOp2(0x1f);
         ASSERT(w != ARMAssembler::INVALID_IMM);
         m_assembler.and_r(ARMRegisters::S0, shift_amount, w);
-        
+
         m_assembler.movs_r(dest, m_assembler.lsr_r(dest, ARMRegisters::S0));
     }
-    
+
     void urshift32(Imm32 imm, RegisterID dest)
     {
         m_assembler.movs_r(dest, m_assembler.lsr(dest, imm.m_value & 0x1f));
@@ -250,10 +250,15 @@ public:
         m_assembler.eors_r(dest, dest, ARMRegisters::S1);
     }
 
+    void load8(BaseIndex address, RegisterID dest)
+    {
+        load8ZeroExtend(address, dest);
+    }
+
     void load8SignExtend(ImplicitAddress address, RegisterID dest)
     {
         m_assembler.dataTransferN(true, true, 8, dest, address.base, address.offset);
-    } 
+    }
 
     void load8ZeroExtend(ImplicitAddress address, RegisterID dest)
     {
@@ -277,11 +282,16 @@ public:
     {
         load8ZeroExtend(address, dest);
     }
-   
+
+    void load16Unaligned(BaseIndex address, RegisterID dest)
+    {
+        load16(address, dest);
+    }
+
     void load16SignExtend(ImplicitAddress address, RegisterID dest)
     {
         m_assembler.dataTransferN(true, true, 16, dest, address.base, address.offset);
-    } 
+    }
 
     void load16ZeroExtend(ImplicitAddress address, RegisterID dest)
     {
@@ -350,7 +360,7 @@ public:
         m_assembler.add_r(ARMRegisters::S1, address.base, m_assembler.lsl(address.index, address.scale));
         load16(Address(ARMRegisters::S1, address.offset), dest);
     }
-    
+
     void load16(ImplicitAddress address, RegisterID dest)
     {
         if (address.offset >= 0)
@@ -468,7 +478,7 @@ public:
     void store16(TrustedImm32 imm, BaseIndex address)
     {
         if (imm.m_isPointer)
-            JS_ASSERT("What are you trying to do with 16 bits of a pointer?");
+            MOZ_ASSUME_UNREACHABLE("What are you trying to do with 16 bits of a pointer?");
         else
             move(imm, ARMRegisters::S1);
         store16(ARMRegisters::S1, address);
@@ -476,7 +486,7 @@ public:
     void store16(TrustedImm32 imm, ImplicitAddress address)
     {
         if (imm.m_isPointer)
-            JS_ASSERT("What are you trying to do with 16 bits of a pointer?");
+            MOZ_ASSUME_UNREACHABLE("What are you trying to do with 16 bits of a pointer?");
         else
             move(imm, ARMRegisters::S1);
         store16(ARMRegisters::S1, address);
@@ -492,7 +502,7 @@ public:
     {
         m_assembler.ldr_un_imm(ARMRegisters::S0, reinterpret_cast<ARMWord>(address));
         if (imm.m_isPointer)
-            JS_ASSERT("What are you trying to do with 16 bits of a pointer?");
+            MOZ_ASSUME_UNREACHABLE("What are you trying to do with 16 bits of a pointer?");
         else
             m_assembler.moveImm(imm.m_value, ARMRegisters::S1);
         m_assembler.mem_imm_off(false, false, 16, true, ARMRegisters::S1, ARMRegisters::S0, 0);
@@ -500,7 +510,7 @@ public:
 
     void store8(RegisterID src, ImplicitAddress address)
     {
-        m_assembler.dataTransferN(false, false, 16,  src, address.base, address.offset);
+        m_assembler.dataTransferN(false, false, 8,  src, address.base, address.offset);
     }
 
     void store8(RegisterID src, BaseIndex address)
@@ -511,7 +521,7 @@ public:
     void store8(TrustedImm32 imm, BaseIndex address)
     {
         if (imm.m_isPointer)
-            JS_ASSERT("What are you trying to do with 8 bits of a pointer?");
+            MOZ_ASSUME_UNREACHABLE("What are you trying to do with 8 bits of a pointer?");
         else
             move(imm, ARMRegisters::S1);
         store8(ARMRegisters::S1, address);
@@ -520,7 +530,7 @@ public:
     void store8(TrustedImm32 imm, ImplicitAddress address)
     {
         if (imm.m_isPointer)
-            JS_ASSERT("What are you trying to do with 16 bits of a pointer?");
+            MOZ_ASSUME_UNREACHABLE("What are you trying to do with 16 bits of a pointer?");
         else
             move(imm, ARMRegisters::S1);
         store8(ARMRegisters::S1, address);
@@ -536,7 +546,7 @@ public:
     {
         m_assembler.ldr_un_imm(ARMRegisters::S0, reinterpret_cast<ARMWord>(address));
         if (imm.m_isPointer)
-            JS_ASSERT("What are you trying to do with 16 bits of a pointer?");
+            MOZ_ASSUME_UNREACHABLE("What are you trying to do with 16 bits of a pointer?");
         else
             m_assembler.moveImm(imm.m_value, ARMRegisters::S1);
         m_assembler.mem_imm_off(false, false, 8, true, ARMRegisters::S1, ARMRegisters::S0, 0);
@@ -1019,7 +1029,7 @@ public:
         m_assembler.dtr_u(false, ARMRegisters::S1, ARMRegisters::S0, 0);
     }
 
-    void load32(void* address, RegisterID dest)
+    void load32(const void* address, RegisterID dest)
     {
         m_assembler.ldr_un_imm(ARMRegisters::S0, reinterpret_cast<ARMWord>(address));
         m_assembler.dtr_u(true, dest, ARMRegisters::S0, 0);
@@ -1101,17 +1111,17 @@ public:
     }
 
     // Floating point operators
-    bool supportsFloatingPoint() const
+    static bool supportsFloatingPoint()
     {
         return s_isVFPPresent;
     }
 
-    bool supportsFloatingPointTruncate() const
+    static bool supportsFloatingPointTruncate()
     {
         return true;
     }
 
-    bool supportsFloatingPointSqrt() const
+    static bool supportsFloatingPointSqrt()
     {
         return s_isVFPPresent;
     }
@@ -1147,28 +1157,29 @@ public:
 
     void loadFloat(ImplicitAddress address, FPRegisterID dest)
     {
-        // as long as this is a sane mapping, (*2) should just work
-        dest = (FPRegisterID) (dest * 2);
         ASSERT((address.offset & 0x3) == 0);
-        m_assembler.floatTransfer(true, dest, address.base, address.offset);
-        m_assembler.vcvt(m_assembler.FloatReg32, m_assembler.FloatReg64, (FPRegisterID)(dest*2), dest);
+        // as long as this is a sane mapping, (*2) should just work
+        m_assembler.floatTransfer(true, floatShadow(dest), address.base, address.offset);
+        m_assembler.vcvt(m_assembler.FloatReg32, m_assembler.FloatReg64, floatShadow(dest), dest);
     }
     void loadFloat(BaseIndex address, FPRegisterID dest)
     {
-        m_assembler.baseIndexFloatTransfer(true, false, (FPRegisterID)(dest*2),
+        FPRegisterID dest_s = floatShadow(dest);
+        m_assembler.baseIndexFloatTransfer(true, false, dest_s,
                                            address.base, address.index,
                                            address.scale, address.offset);
-        m_assembler.vcvt(m_assembler.FloatReg32, m_assembler.FloatReg64, (FPRegisterID)(dest*2), dest);
+        m_assembler.vcvt(m_assembler.FloatReg32, m_assembler.FloatReg64, dest_s, dest);
     }
 
     DataLabelPtr loadFloat(const void* address, FPRegisterID dest)
     {
+        FPRegisterID dest_s = floatShadow(dest);
         DataLabelPtr label = moveWithPatch(ImmPtr(address), ARMRegisters::S0);
-        m_assembler.fmem_imm_off(true, false, true, (FPRegisterID)(dest*2), ARMRegisters::S0, 0);
-        m_assembler.vcvt(m_assembler.FloatReg32, m_assembler.FloatReg64, (FPRegisterID)(dest*2), dest);
+        m_assembler.fmem_imm_off(true, false, true, dest_s, ARMRegisters::S0, 0);
+        m_assembler.vcvt(m_assembler.FloatReg32, m_assembler.FloatReg64, dest_s, dest);
         return label;
     }
- 
+
     void storeDouble(FPRegisterID src, ImplicitAddress address)
     {
         // Store a double at base+offset.
@@ -1198,14 +1209,16 @@ public:
         m_assembler.vmov64(true, true, lo, hi, fpReg);
     }
 
+    // the StoreFloat functions take an FPRegisterID that is really of the corresponding Double register.
+    // but the double has already been converted into a float
     void storeFloat(FPRegisterID src, ImplicitAddress address)
     {
-        m_assembler.floatTransfer(false, src, address.base, address.offset);
+        m_assembler.floatTransfer(false, floatShadow(src), address.base, address.offset);
     }
 
     void storeFloat(FPRegisterID src, BaseIndex address)
     {
-        m_assembler.baseIndexFloatTransfer(false, false, src,
+        m_assembler.baseIndexFloatTransfer(false, false, floatShadow(src),
                                            address.base, address.index,
                                            address.scale, address.offset);
     }
@@ -1319,7 +1332,7 @@ public:
 
     void convertDoubleToFloat(FPRegisterID src, FPRegisterID dest)
     {
-        m_assembler.vcvt(m_assembler.FloatReg64, m_assembler.FloatReg32, src, dest);
+        m_assembler.vcvt(m_assembler.FloatReg64, m_assembler.FloatReg32, src, floatShadow(dest));
     }
 
     Jump branchDouble(DoubleCondition cond, FPRegisterID left, FPRegisterID right)
@@ -1529,4 +1542,4 @@ private:
 
 #endif // ENABLE(ASSEMBLER) && CPU(ARM_TRADITIONAL)
 
-#endif // MacroAssemblerARM_h
+#endif /* assembler_assembler_MacroAssemblerARM_h */

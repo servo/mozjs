@@ -1,11 +1,12 @@
 // Basic preventExtensions test.
 
-var g = newGlobal('new-compartment');
+var g = newGlobal();
 var obj = g.eval("({x: 1})");
 assertEq(g.Object.isExtensible(obj), true);
 
 var dbg = new Debugger;
-var objw = dbg.addDebuggee(obj);
+var gw = dbg.addDebuggee(g);
+var objw = gw.makeDebuggeeValue(obj);
 assertEq(objw.isExtensible(), true);
 
 assertEq(objw.preventExtensions(), undefined);

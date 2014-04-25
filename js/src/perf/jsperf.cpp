@@ -1,32 +1,31 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsperf.h"
+#include "perf/jsperf.h"
+
 #include "jscntxt.h" /* for error messages */
 #include "jsobj.h" /* for unwrapping without a context */
 
-#include "jsobjinlines.h"
-
-using JS::PerfMeasurement;
+using namespace JS;
 
 // You cannot forward-declare a static object in C++, so instead
-// we have to forward-declare the helper functions that refer to it.
-static PerfMeasurement* GetPM(JSContext* cx, JSHandleObject obj, const char* fname);
-static PerfMeasurement* GetPMFromThis(JSContext* cx, jsval* vp);
+// we have to forward-declare the helper function that refers to it.
+static PerfMeasurement* GetPM(JSContext* cx, JS::HandleValue value, const char* fname);
 
 // Property access
 
 #define GETTER(name)                                                    \
-    static JSBool                                                       \
-    pm_get_##name(JSContext* cx, JS::HandleObject obj, JS::HandleId /*unused*/, JS::MutableHandleValue vp) \
+    static bool                                                         \
+    pm_get_##name(JSContext* cx, unsigned argc, Value *vp)              \
     {                                                                   \
-        PerfMeasurement* p = GetPM(cx, obj, #name);                     \
+        CallArgs args = CallArgsFromVp(argc, vp);                       \
+        PerfMeasurement* p = GetPM(cx, args.thisv(), #name);            \
         if (!p)                                                         \
-            return JS_FALSE;                                            \
-        vp.set(JS_NumberValue(double(p->name)));                        \
-        return JS_TRUE;                                                 \
+            return false;                                               \
+        args.rval().setNumber(double(p->name));                         \
+        return true;                                                    \
     }
 
 GETTER(cpu_cycles)
@@ -46,52 +45,59 @@ GETTER(eventsMeasured)
 
 // Calls
 
-static JSBool
-pm_start(JSContext* cx, unsigned /*unused*/, jsval* vp)
+static bool
+pm_start(JSContext* cx, unsigned argc, jsval* vp)
 {
-    PerfMeasurement* p = GetPMFromThis(cx, vp);
+    CallArgs args = CallArgsFromVp(argc, vp);
+    PerfMeasurement* p = GetPM(cx, args.thisv(), "start");
     if (!p)
-        return JS_FALSE;
+        return false;
 
     p->start();
-    return JS_TRUE;
+    args.rval().setUndefined();
+    return true;
 }
 
-static JSBool
-pm_stop(JSContext* cx, unsigned /*unused*/, jsval* vp)
+static bool
+pm_stop(JSContext* cx, unsigned argc, jsval* vp)
 {
-    PerfMeasurement* p = GetPMFromThis(cx, vp);
+    CallArgs args = CallArgsFromVp(argc, vp);
+    PerfMeasurement* p = GetPM(cx, args.thisv(), "stop");
     if (!p)
-        return JS_FALSE;
+        return false;
 
     p->stop();
-    return JS_TRUE;
+    args.rval().setUndefined();
+    return true;
 }
 
-static JSBool
-pm_reset(JSContext* cx, unsigned /*unused*/, jsval* vp)
+static bool
+pm_reset(JSContext* cx, unsigned argc, jsval* vp)
 {
-    PerfMeasurement* p = GetPMFromThis(cx, vp);
+    CallArgs args = CallArgsFromVp(argc, vp);
+    PerfMeasurement* p = GetPM(cx, args.thisv(), "reset");
     if (!p)
-        return JS_FALSE;
+        return false;
 
     p->reset();
-    return JS_TRUE;
+    args.rval().setUndefined();
+    return true;
 }
 
-static JSBool
-pm_canMeasureSomething(JSContext* cx, unsigned /*unused*/, jsval* vp)
+static bool
+pm_canMeasureSomething(JSContext* cx, unsigned argc, jsval* vp)
 {
-    PerfMeasurement* p = GetPMFromThis(cx, vp);
+    CallArgs args = CallArgsFromVp(argc, vp);
+    PerfMeasurement* p = GetPM(cx, args.thisv(), "canMeasureSomething");
     if (!p)
-        return JS_FALSE;
+        return false;
 
-    JS_SET_RVAL(cx, vp, BOOLEAN_TO_JSVAL(p->canMeasureSomething()));
-    return JS_TRUE;
+    args.rval().setBoolean(p->canMeasureSomething());
+    return true;
 }
 
-const uint8_t PM_FATTRS = JSPROP_READONLY | JSPROP_PERMANENT | JSPROP_SHARED;
-static JSFunctionSpec pm_fns[] = {
+static const uint8_t PM_FATTRS = JSPROP_READONLY | JSPROP_PERMANENT;
+static const JSFunctionSpec pm_fns[] = {
     JS_FN("start",               pm_start,               0, PM_FATTRS),
     JS_FN("stop",                pm_stop,                0, PM_FATTRS),
     JS_FN("reset",               pm_reset,               0, PM_FATTRS),
@@ -99,13 +105,13 @@ static JSFunctionSpec pm_fns[] = {
     JS_FS_END
 };
 
-const uint8_t PM_PATTRS =
-    JSPROP_ENUMERATE | JSPROP_READONLY | JSPROP_PERMANENT | JSPROP_SHARED;
+static const uint8_t PM_PATTRS =
+    JSPROP_ENUMERATE | JSPROP_PERMANENT;
 
 #define GETTER(name)                            \
-    { #name, 0, PM_PATTRS, JSOP_WRAPPER(pm_get_##name), JSOP_NULLWRAPPER }
+    JS_PSG(#name, pm_get_##name, PM_PATTRS)
 
-static JSPropertySpec pm_props[] = {
+static const JSPropertySpec pm_props[] = {
     GETTER(cpu_cycles),
     GETTER(instructions),
     GETTER(cache_references),
@@ -118,14 +124,14 @@ static JSPropertySpec pm_props[] = {
     GETTER(context_switches),
     GETTER(cpu_migrations),
     GETTER(eventsMeasured),
-    {0,0,0,JSOP_NULLWRAPPER,JSOP_NULLWRAPPER}
+    JS_PS_END
 };
 
 #undef GETTER
 
 // If this were C++ these would be "static const" members.
 
-const uint8_t PM_CATTRS = JSPROP_ENUMERATE|JSPROP_READONLY|JSPROP_PERMANENT;
+static const uint8_t PM_CATTRS = JSPROP_ENUMERATE|JSPROP_READONLY|JSPROP_PERMANENT;
 
 #define CONSTANT(name) { #name, PerfMeasurement::name }
 
@@ -151,40 +157,46 @@ static const struct pm_const {
 
 #undef CONSTANT
 
-static JSBool pm_construct(JSContext* cx, unsigned argc, jsval* vp);
+static bool pm_construct(JSContext* cx, unsigned argc, jsval* vp);
 static void pm_finalize(JSFreeOp* fop, JSObject* obj);
 
-static JSClass pm_class = {
+static const JSClass pm_class = {
     "PerfMeasurement", JSCLASS_HAS_PRIVATE,
-    JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+    JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, pm_finalize
 };
 
 // Constructor and destructor
 
-static JSBool
+static bool
 pm_construct(JSContext* cx, unsigned argc, jsval* vp)
 {
-    uint32_t mask;
-    if (!JS_ConvertArguments(cx, argc, JS_ARGV(cx, vp), "u", &mask))
-        return JS_FALSE;
+    CallArgs args = CallArgsFromVp(argc, vp);
 
-    js::RootedObject obj(cx, JS_NewObjectForConstructor(cx, &pm_class, vp));
+    uint32_t mask;
+    if (!args.hasDefined(0)) {
+        js_ReportMissingArg(cx, args.calleev(), 0);
+        return false;
+    }
+    if (!JS::ToUint32(cx, args[0], &mask))
+        return false;
+
+    JS::RootedObject obj(cx, JS_NewObjectForConstructor(cx, &pm_class, args));
     if (!obj)
-        return JS_FALSE;
+        return false;
 
     if (!JS_FreezeObject(cx, obj))
-        return JS_FALSE;
+        return false;
 
     PerfMeasurement* p = cx->new_<PerfMeasurement>(PerfMeasurement::EventMask(mask));
     if (!p) {
         JS_ReportOutOfMemory(cx);
-        return JS_FALSE;
+        return false;
     }
 
     JS_SetPrivate(obj, p);
-    *vp = OBJECT_TO_JSVAL(obj);
-    return JS_TRUE;
+    args.rval().setObject(*obj);
+    return true;
 }
 
 static void
@@ -196,10 +208,15 @@ pm_finalize(JSFreeOp* fop, JSObject* obj)
 // Helpers (declared above)
 
 static PerfMeasurement*
-GetPM(JSContext* cx, JSHandleObject obj, const char* fname)
+GetPM(JSContext* cx, JS::HandleValue value, const char* fname)
 {
+    if (!value.isObject()) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, 0, JSMSG_NOT_NONNULL_OBJECT);
+        return nullptr;
+    }
+    RootedObject obj(cx, &value.toObject());
     PerfMeasurement* p = (PerfMeasurement*)
-        JS_GetInstancePrivate(cx, obj, &pm_class, 0);
+        JS_GetInstancePrivate(cx, obj, &pm_class, nullptr);
     if (p)
         return p;
 
@@ -207,39 +224,30 @@ GetPM(JSContext* cx, JSHandleObject obj, const char* fname)
     // is nonzero, so we have to do it by hand.
     JS_ReportErrorNumber(cx, js_GetErrorMessage, 0, JSMSG_INCOMPATIBLE_PROTO,
                          pm_class.name, fname, JS_GetClass(obj)->name);
-    return 0;
-}
-
-static PerfMeasurement*
-GetPMFromThis(JSContext* cx, jsval* vp)
-{
-    JSObject* this_ = JS_THIS_OBJECT(cx, vp);
-    if (!this_)
-        return 0;
-    return (PerfMeasurement*)
-        JS_GetInstancePrivate(cx, this_, &pm_class, JS_ARGV(cx, vp));
+    return nullptr;
 }
 
 namespace JS {
 
 JSObject*
-RegisterPerfMeasurement(JSContext *cx, JSRawObject global)
+RegisterPerfMeasurement(JSContext *cx, HandleObject globalArg)
 {
-    js::RootedObject prototype(cx);
-    prototype = JS_InitClass(cx, global, NULL /* parent */,
+    RootedObject global(cx, globalArg);
+    RootedObject prototype(cx);
+    prototype = JS_InitClass(cx, global, js::NullPtr() /* parent */,
                              &pm_class, pm_construct, 1,
                              pm_props, pm_fns, 0, 0);
     if (!prototype)
         return 0;
 
-    js::RootedObject ctor(cx);
+    RootedObject ctor(cx);
     ctor = JS_GetConstructor(cx, prototype);
     if (!ctor)
         return 0;
 
     for (const pm_const *c = pm_consts; c->name; c++) {
-        if (!JS_DefineProperty(cx, ctor, c->name, INT_TO_JSVAL(c->value),
-                               JS_PropertyStub, JS_StrictPropertyStub, PM_CATTRS))
+        if (!JS_DefineProperty(cx, ctor, c->name, c->value, PM_CATTRS,
+                               JS_PropertyStub, JS_StrictPropertyStub))
             return 0;
     }
 

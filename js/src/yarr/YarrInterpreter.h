@@ -1,7 +1,6 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp:
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
- * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009, 2010 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -23,14 +22,13 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- *
- * ***** END LICENSE BLOCK ***** */
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 
-#ifndef YarrInterpreter_h
-#define YarrInterpreter_h
+#ifndef yarr_YarrInterpreter_h
+#define yarr_YarrInterpreter_h
 
-#include "YarrPattern.h"
+#include "yarr/YarrPattern.h"
 
 namespace WTF {
 class BumpPointerAllocator;
@@ -72,7 +70,8 @@ struct ByteTerm {
         TypeParentheticalAssertionBegin,
         TypeParentheticalAssertionEnd,
         TypeCheckInput,
-        TypeUncheckInput
+        TypeUncheckInput,
+        TypeDotStarEnclosure
     } type;
     union {
         struct {
@@ -97,19 +96,18 @@ struct ByteTerm {
             int end;
             bool onceThrough;
         } alternative;
+        struct {
+            bool m_bol : 1;
+            bool m_eol : 1;
+        } anchors;
         unsigned checkInputCount;
     };
     unsigned frameLocation;
     bool m_capture : 1;
     bool m_invert : 1;
-    int inputPosition;
+    unsigned inputPosition;
 
-    // For js::Vector. Does not create a valid object.
-    ByteTerm()
-    {
-    }
-
-    ByteTerm(UChar ch, int inputPos, unsigned frameLocation, unsigned quantityCount, QuantifierType quantityType)
+    ByteTerm(UChar ch, int inputPos, unsigned frameLocation, Checked<unsigned> quantityCount, QuantifierType quantityType)
         : frameLocation(frameLocation)
         , m_capture(false)
         , m_invert(false)
@@ -128,11 +126,11 @@ struct ByteTerm {
 
         atom.patternCharacter = ch;
         atom.quantityType = quantityType;
-        atom.quantityCount = quantityCount;
+        atom.quantityCount = quantityCount.unsafeGet();
         inputPosition = inputPos;
     }
 
-    ByteTerm(UChar lo, UChar hi, int inputPos, unsigned frameLocation, unsigned quantityCount, QuantifierType quantityType)
+    ByteTerm(UChar lo, UChar hi, int inputPos, unsigned frameLocation, Checked<unsigned> quantityCount, QuantifierType quantityType)
         : frameLocation(frameLocation)
         , m_capture(false)
         , m_invert(false)
@@ -152,7 +150,7 @@ struct ByteTerm {
         atom.casedCharacter.lo = lo;
         atom.casedCharacter.hi = hi;
         atom.quantityType = quantityType;
-        atom.quantityCount = quantityCount;
+        atom.quantityCount = quantityCount.unsafeGet();
         inputPosition = inputPos;
     }
 
@@ -178,7 +176,7 @@ struct ByteTerm {
         atom.quantityCount = 1;
         inputPosition = inputPos;
     }
-    
+
     ByteTerm(Type type, bool invert = false)
         : type(type)
         , m_capture(false)
@@ -199,6 +197,11 @@ struct ByteTerm {
         inputPosition = inputPos;
     }
 
+    // For js::Vector. Does not create a valid object.
+    ByteTerm()
+    {
+    }
+
     static ByteTerm BOL(int inputPos)
     {
         ByteTerm term(TypeAssertionBOL);
@@ -206,20 +209,20 @@ struct ByteTerm {
         return term;
     }
 
-    static ByteTerm CheckInput(unsigned count)
+    static ByteTerm CheckInput(Checked<unsigned> count)
     {
         ByteTerm term(TypeCheckInput);
-        term.checkInputCount = count;
+        term.checkInputCount = count.unsafeGet();
         return term;
     }
 
-    static ByteTerm UncheckInput(unsigned count)
+    static ByteTerm UncheckInput(Checked<unsigned> count)
     {
         ByteTerm term(TypeUncheckInput);
-        term.checkInputCount = count;
+        term.checkInputCount = count.unsafeGet();
         return term;
     }
-    
+
     static ByteTerm EOL(int inputPos)
     {
         ByteTerm term(TypeAssertionEOL);
@@ -233,7 +236,7 @@ struct ByteTerm {
         term.inputPosition = inputPos;
         return term;
     }
-    
+
     static ByteTerm BackReference(unsigned subpatternId, int inputPos)
     {
         return ByteTerm(TypeBackReference, subpatternId, false, false, inputPos);
@@ -303,6 +306,14 @@ struct ByteTerm {
         return ByteTerm(TypeSubpatternEnd);
     }
 
+    static ByteTerm DotStarEnclosure(bool bolAnchor, bool eolAnchor)
+    {
+        ByteTerm term(TypeDotStarEnclosure);
+        term.anchors.m_bol = bolAnchor;
+        term.anchors.m_eol = eolAnchor;
+        return term;
+    }
+
     bool invert()
     {
         return m_invert;
@@ -315,7 +326,7 @@ struct ByteTerm {
 };
 
 class ByteDisjunction {
-    WTF_MAKE_FAST_ALLOCATED
+    WTF_MAKE_FAST_ALLOCATED;
 public:
     ByteDisjunction(unsigned numSubpatterns, unsigned frameSize)
         : m_numSubpatterns(numSubpatterns)
@@ -329,9 +340,9 @@ public:
 };
 
 struct BytecodePattern {
-    WTF_MAKE_FAST_ALLOCATED
+    WTF_MAKE_FAST_ALLOCATED;
 public:
-    BytecodePattern(PassOwnPtr<ByteDisjunction> body, const Vector<ByteDisjunction*> &allParenthesesInfo, YarrPattern& pattern, BumpPointerAllocator* allocator)
+    BytecodePattern(PassOwnPtr<ByteDisjunction> body, Vector<ByteDisjunction*> &allParenthesesInfo, YarrPattern& pattern, BumpPointerAllocator* allocator)
         : m_body(body)
         , m_ignoreCase(pattern.m_ignoreCase)
         , m_multiline(pattern.m_multiline)
@@ -340,12 +351,17 @@ public:
         newlineCharacterClass = pattern.newlineCharacterClass();
         wordcharCharacterClass = pattern.wordcharCharacterClass();
 
-        m_allParenthesesInfo.append(allParenthesesInfo);
-        m_userCharacterClasses.append(pattern.m_userCharacterClasses);
-        // 'Steal' the YarrPattern's CharacterClasses!  We clear its
-        // array, so that it won't delete them on destruction.  We'll
-        // take responsibility for that.
-        pattern.m_userCharacterClasses.clear();
+        // Trick: 'Steal' the YarrPattern's ParenthesesInfo!
+        // The input vector isn't used afterwards anymore,
+        // that way we don't have to copy the input.
+        JS_ASSERT(m_allParenthesesInfo.size() == 0);
+        m_allParenthesesInfo.swap(allParenthesesInfo);
+
+        // Trick: 'Steal' the YarrPattern's CharacterClasses!
+        // The input vector isn't used afterwards anymore,
+        // that way we don't have to copy the input.
+        JS_ASSERT(m_userCharacterClasses.size() == 0);
+        m_userCharacterClasses.swap(pattern.m_userCharacterClasses);
     }
 
     ~BytecodePattern()
@@ -369,6 +385,11 @@ private:
     Vector<CharacterClass*> m_userCharacterClasses;
 };
 
+JS_EXPORT_PRIVATE PassOwnPtr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*);
+JS_EXPORT_PRIVATE unsigned interpret(JSContext *cx, BytecodePattern*, const String& input, unsigned start, unsigned* output);
+unsigned interpret(JSContext *cx, BytecodePattern*, const LChar* input, unsigned length, unsigned start, unsigned* output);
+unsigned interpret(JSContext *cx, BytecodePattern*, const UChar* input, unsigned length, unsigned start, unsigned* output);
+
 } } // namespace JSC::Yarr
 
-#endif // YarrInterpreter_h
+#endif /* yarr_YarrInterpreter_h */
