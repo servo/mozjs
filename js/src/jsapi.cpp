@@ -6041,6 +6041,18 @@ JS_AbortIfWrongThread(JSRuntime *rt)
         MOZ_CRASH();
 }
 
+extern JS_PUBLIC_API(void)
+JS_SetNativeStackBounds(JSRuntime *rt, uintptr_t minValue, uintptr_t maxValue)
+{
+#if JS_STACK_GROWTH_DIRECTION < 0
+    rt->nativeStackBase = maxValue;
+    rt->nativeStackEnd = minValue;
+#else
+    rt->nativeStackBase = minValue;
+    rt->nativeStackEnd = maxValue;
+#endif
+}
+
 #ifdef JS_GC_ZEAL
 JS_PUBLIC_API(void)
 JS_SetGCZeal(JSContext *cx, uint8_t zeal, uint32_t frequency)
