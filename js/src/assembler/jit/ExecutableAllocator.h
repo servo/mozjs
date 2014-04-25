@@ -20,20 +20,19 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef ExecutableAllocator_h
-#define ExecutableAllocator_h
+#ifndef assembler_jit_ExecutableAllocator_h
+#define assembler_jit_ExecutableAllocator_h
 
 #include <stddef.h> // for ptrdiff_t
 #include <limits>
 
 #include "jsalloc.h"
-#include "jsapi.h"
-#include "jsprvtd.h"
 
-#include "assembler/wtf/Assertions.h"
+#include "assembler/wtf/Platform.h"
+#include "jit/arm/Simulator-arm.h"
 #include "js/HashTable.h"
 #include "js/Vector.h"
 
@@ -74,20 +73,25 @@ extern  "C" void sync_instruction_memory(caddr_t v, u_int len);
 #define INITIAL_PROTECTION_FLAGS (PROT_READ | PROT_WRITE | PROT_EXEC)
 #endif
 
+namespace JSC {
+  enum CodeKind { ION_CODE = 0, BASELINE_CODE, REGEXP_CODE, OTHER_CODE };
+}
+
 #if ENABLE_ASSEMBLER
 
 //#define DEBUG_STRESS_JSC_ALLOCATOR
+
+namespace JS {
+    struct CodeSizes;
+}
 
 namespace JSC {
 
   class ExecutableAllocator;
 
-  enum CodeKind { METHOD_CODE, REGEXP_CODE };
-
-  // These are reference-counted. A new one starts with a count of 1. 
+  // These are reference-counted. A new one starts with a count of 1.
   class ExecutablePool {
 
-    JS_DECLARE_ALLOCATION_FRIENDS_FOR_PRIVATE_CONSTRUCTOR;
     friend class ExecutableAllocator;
 private:
     struct Allocation {
@@ -105,28 +109,55 @@ private:
 
     // Reference count for automatic reclamation.
     unsigned m_refCount;
- 
+
     // Number of bytes currently used for Method and Regexp JIT code.
-    size_t m_mjitCodeMethod;
-    size_t m_mjitCodeRegexp;
+    size_t m_ionCodeBytes;
+    size_t m_baselineCodeBytes;
+    size_t m_regexpCodeBytes;
+    size_t m_otherCodeBytes;
 
 public:
-    // Flag for downstream use, whether to try to release references to this pool.
-    bool m_destroy;
-
-    // GC number in which the m_destroy flag was most recently set. Used downstream to
-    // remember whether m_destroy was computed for the currently active GC.
-    size_t m_gcNumber;
-
     void release(bool willDestroy = false)
-    { 
+    {
         JS_ASSERT(m_refCount != 0);
         // XXX: disabled, see bug 654820.
         //JS_ASSERT_IF(willDestroy, m_refCount == 1);
-        if (--m_refCount == 0) {
-            js::UnwantedForeground::delete_(this);
-        }
+        if (--m_refCount == 0)
+            js_delete(this);
     }
+    void release(size_t n, CodeKind kind)
+    {
+        switch (kind) {
+          case ION_CODE:
+            m_ionCodeBytes -= n;
+            MOZ_ASSERT(m_ionCodeBytes < m_allocation.size); // Shouldn't underflow.
+            break;
+          case BASELINE_CODE:
+            m_baselineCodeBytes -= n;
+            MOZ_ASSERT(m_baselineCodeBytes < m_allocation.size);
+            break;
+          case REGEXP_CODE:
+            m_regexpCodeBytes -= n;
+            MOZ_ASSERT(m_regexpCodeBytes < m_allocation.size);
+            break;
+          case OTHER_CODE:
+            m_otherCodeBytes -= n;
+            MOZ_ASSERT(m_otherCodeBytes < m_allocation.size);
+            break;
+          default:
+            MOZ_ASSUME_UNREACHABLE("bad code kind");
+        }
+
+        release();
+    }
+
+    ExecutablePool(ExecutableAllocator* allocator, Allocation a)
+      : m_allocator(allocator), m_freePtr(a.pages), m_end(m_freePtr + a.size), m_allocation(a),
+        m_refCount(1), m_ionCodeBytes(0), m_baselineCodeBytes(0), m_regexpCodeBytes(0),
+        m_otherCodeBytes(0)
+    { }
+
+    ~ExecutablePool();
 
 private:
     // It should be impossible for us to roll over, because only small
@@ -138,37 +169,32 @@ private:
         ++m_refCount;
     }
 
-    ExecutablePool(ExecutableAllocator* allocator, Allocation a)
-      : m_allocator(allocator), m_freePtr(a.pages), m_end(m_freePtr + a.size), m_allocation(a),
-        m_refCount(1), m_mjitCodeMethod(0), m_mjitCodeRegexp(0), m_destroy(false), m_gcNumber(0)
-    { }
-
-    ~ExecutablePool();
-
     void* alloc(size_t n, CodeKind kind)
     {
         JS_ASSERT(n <= available());
         void *result = m_freePtr;
         m_freePtr += n;
 
-        if ( kind == REGEXP_CODE )
-            m_mjitCodeRegexp += n;
-        else
-            m_mjitCodeMethod += n;
-
+        switch (kind) {
+          case ION_CODE:      m_ionCodeBytes      += n;        break;
+          case BASELINE_CODE: m_baselineCodeBytes += n;        break;
+          case REGEXP_CODE:   m_regexpCodeBytes   += n;        break;
+          case OTHER_CODE:    m_otherCodeBytes    += n;        break;
+          default:            MOZ_ASSUME_UNREACHABLE("bad code kind");
+        }
         return result;
     }
-    
-    size_t available() const { 
+
+    size_t available() const {
         JS_ASSERT(m_end >= m_freePtr);
         return m_end - m_freePtr;
     }
-};
 
-enum AllocationBehavior
-{
-    AllocationCanRandomize,
-    AllocationDeterministic
+    void toggleAllCodeAsAccessible(bool accessible);
+
+    bool codeContains(char* address) {
+        return address >= m_allocation.pages && address < m_freePtr;
+    }
 };
 
 class ExecutableAllocator {
@@ -176,12 +202,9 @@ class ExecutableAllocator {
     enum ProtectionSetting { Writable, Executable };
     DestroyCallback destroyCallback;
 
-    void initSeed();
-
 public:
-    explicit ExecutableAllocator(AllocationBehavior allocBehavior)
-      : destroyCallback(NULL),
-        allocBehavior(allocBehavior)
+    ExecutableAllocator()
+      : destroyCallback(NULL)
     {
         if (!pageSize) {
             pageSize = determinePageSize();
@@ -196,10 +219,6 @@ public:
             largeAllocSize = pageSize * 16;
         }
 
-#if WTF_OS_WINDOWS
-        initSeed();
-#endif
-
         JS_ASSERT(m_smallPools.empty());
     }
 
@@ -207,8 +226,16 @@ public:
     {
         for (size_t i = 0; i < m_smallPools.length(); i++)
             m_smallPools[i]->release(/* willDestroy = */true);
-        // XXX: temporarily disabled because it fails;  see bug 654820.
-        //JS_ASSERT(m_pools.empty());     // if this asserts we have a pool leak
+
+        // If this asserts we have a pool leak.
+        JS_ASSERT_IF(m_pools.initialized(), m_pools.empty());
+    }
+
+    void purge() {
+        for (size_t i = 0; i < m_smallPools.length(); i++)
+            m_smallPools[i]->release();
+
+        m_smallPools.clear();
     }
 
     // alloc() returns a pointer to some memory, and also (by reference) a
@@ -216,10 +243,11 @@ public:
     // pool; i.e. alloc() increments the count before returning the object.
     void* alloc(size_t n, ExecutablePool** poolp, CodeKind type)
     {
-        // Round 'n' up to a multiple of word size; if all allocations are of
-        // word sized quantities, then all subsequent allocations will be
+        // Caller must ensure 'n' is word-size aligned. If all allocations are
+        // of word sized quantities, then all subsequent allocations will be
         // aligned.
-        n = roundUpAllocationSize(n, sizeof(void*));
+        JS_ASSERT(roundUpAllocationSize(n, sizeof(void*)) == n);
+
         if (n == OVERSIZE_ALLOCATION) {
             *poolp = NULL;
             return NULL;
@@ -245,21 +273,19 @@ public:
         m_pools.remove(m_pools.lookup(pool));   // this asserts if |pool| is not in m_pools
     }
 
-    void sizeOfCode(size_t *method, size_t *regexp, size_t *unused) const;
+    void addSizeOfCode(JS::CodeSizes *sizes) const;
+    void toggleAllCodeAsAccessible(bool accessible);
+    bool codeContains(char* address);
 
     void setDestroyCallback(DestroyCallback destroyCallback) {
         this->destroyCallback = destroyCallback;
-    }
-
-    void setRandomize(bool enabled) {
-        allocBehavior = enabled ? AllocationCanRandomize : AllocationDeterministic;
     }
 
 private:
     static size_t pageSize;
     static size_t largeAllocSize;
 #if WTF_OS_WINDOWS
-    static int64_t rngSeed;
+    static uint64_t rngSeed;
 #endif
 
     static const size_t OVERSIZE_ALLOCATION = size_t(-1);
@@ -274,7 +300,7 @@ private:
 
         if ((std::numeric_limits<size_t>::max() - granularity) <= request)
             return OVERSIZE_ALLOCATION;
-        
+
         // Round up to next page boundary
         size_t size = request + (granularity - 1);
         size = size & ~(granularity - 1);
@@ -304,7 +330,7 @@ private:
         if (!a.pages)
             return NULL;
 
-        ExecutablePool *pool = js::OffTheBooks::new_<ExecutablePool>(this, a);
+        ExecutablePool *pool = js_new<ExecutablePool>(this, a);
         if (!pool) {
             systemRelease(a);
             return NULL;
@@ -342,7 +368,7 @@ public:
         ExecutablePool* pool = createPool(largeAllocSize);
         if (!pool)
             return NULL;
-  	    // At this point, local |pool| is the owner.
+        // At this point, local |pool| is the owner.
 
         if (m_smallPools.length() < maxSmallPools) {
             // We haven't hit the maximum number of live pools;  add the new pool.
@@ -368,7 +394,7 @@ public:
             }
         }
 
-   	    // Pass ownership to the caller.
+        // Pass ownership to the caller.
         return pool;
     }
 
@@ -391,6 +417,11 @@ public:
 #if WTF_CPU_X86 || WTF_CPU_X86_64
     static void cacheFlush(void*, size_t)
     {
+    }
+#elif defined(JS_ARM_SIMULATOR)
+    static void cacheFlush(void *code, size_t size)
+    {
+        js::jit::Simulator::FlushICache(code, size);
     }
 #elif WTF_CPU_MIPS
     static void cacheFlush(void* code, size_t size)
@@ -487,7 +518,6 @@ private:
     typedef js::HashSet<ExecutablePool *, js::DefaultHasher<ExecutablePool *>, js::SystemAllocPolicy>
             ExecPoolHashSet;
     ExecPoolHashSet m_pools;    // All pools, just for stats purposes.
-    AllocationBehavior allocBehavior;
 
     static size_t determinePageSize();
 };
@@ -496,4 +526,4 @@ private:
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // !defined(ExecutableAllocator)
+#endif /* assembler_jit_ExecutableAllocator_h */

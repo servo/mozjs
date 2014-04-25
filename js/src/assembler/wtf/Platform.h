@@ -25,8 +25,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef WTF_Platform_h
-#define WTF_Platform_h
+#ifndef assembler_wtf_Platform_h
+#define assembler_wtf_Platform_h
 
 /* ==== PLATFORM handles OS, operating environment, graphics API, and
    CPU. This macro will be phased out in favor of platform adaptation
@@ -42,7 +42,7 @@
 #define CPU(WTF_FEATURE) (defined WTF_CPU_##WTF_FEATURE  && WTF_CPU_##WTF_FEATURE)
 /* HAVE() - specific system features (headers, functions or similar) that are present or not */
 #define HAVE(WTF_FEATURE) (defined HAVE_##WTF_FEATURE  && HAVE_##WTF_FEATURE)
-/* OS() - underlying operating system; only to be used for mandated low-level services like 
+/* OS() - underlying operating system; only to be used for mandated low-level services like
    virtual memory, not to choose a GUI toolkit */
 #define OS(WTF_FEATURE) (defined WTF_OS_##WTF_FEATURE  && WTF_OS_##WTF_FEATURE)
 
@@ -165,15 +165,21 @@
     || defined(__POWERPC__) \
     || defined(_M_PPC)      \
     || defined(__PPC)
+#if !defined(__ppc64__) && !defined(__PPC64__)
 #define WTF_CPU_PPC 1
+#endif
+#if !defined(__LITTLE_ENDIAN__)
 #define WTF_CPU_BIG_ENDIAN 1
+#endif
 #endif
 
 /* WTF_CPU_PPC64 - PowerPC 64-bit */
 #if   defined(__ppc64__) \
     || defined(__PPC64__)
 #define WTF_CPU_PPC64 1
+#if !defined(__LITTLE_ENDIAN__)
 #define WTF_CPU_BIG_ENDIAN 1
+#endif
 #endif
 
 /* WTF_CPU_SH4 - SuperH SH-4 */
@@ -208,6 +214,13 @@
 #if defined(__s390__)
 #define WTF_CPU_S390 1
 #define WTF_CPU_BIG_ENDIAN 1
+#endif
+
+#if defined(__aarch64__)
+#define WTF_CPU_AARCH64 1
+#if defined(__AARCH64EB__)
+#define WTF_CPU_BIG_ENDIAN 1
+#endif
 #endif
 
 /* WTF_CPU_X86 - i386 / x86 32-bit */
@@ -245,6 +258,7 @@
 #endif
 
 #define WTF_ARM_ARCH_AT_LEAST(N) (CPU(ARM) && WTF_ARM_ARCH_VERSION >= N)
+#define WTF_ARM_ARCH_AT_LEAST_5 (WTF_CPU_ARM && WTF_ARM_ARCH_VERSION >= 5)
 
 /* Set WTF_ARM_ARCH_VERSION */
 #if   defined(__ARM_ARCH_4__) \
@@ -327,7 +341,7 @@
 
 
 /* WTF_CPU_ARMV5_OR_LOWER - ARM instruction set v5 or earlier */
-/* On ARMv5 and below the natural alignment is required. 
+/* On ARMv5 and below the natural alignment is required.
    And there are some other differences for v5 or earlier. */
 #if !defined(ARMV5_OR_LOWER) && WTF_CPU_ARM && !(WTF_ARM_ARCH_VERSION >= 6)
 #define WTF_CPU_ARMV5_OR_LOWER 1
@@ -358,11 +372,18 @@
 
 #endif /* ARM */
 
+#if defined(JS_ARM_SIMULATOR)
+#  undef WTF_CPU_X86
+#  undef WTF_CPU_X64
+#  define WTF_CPU_ARM_TRADITIONAL 1
+#  define WTF_CPU_ARM 1
+#endif
+
 #if WTF_CPU_ARM || WTF_CPU_MIPS
 #define WTF_CPU_NEEDS_ALIGNED_ACCESS 1
 #endif
 
-/* ==== OS() - underlying operating system; only to be used for mandated low-level services like 
+/* ==== OS() - underlying operating system; only to be used for mandated low-level services like
    virtual memory, not to choose a GUI toolkit ==== */
 
 /* WTF_OS_ANDROID - Android */
@@ -1176,6 +1197,11 @@
 #define WARN_UNUSED_RETURN
 #endif
 
+/* COMPILER(CLANG) - Clang  */
+#if defined(__clang__)
+#define WTF_COMPILER_CLANG 1
+#endif
+
 #if !ENABLE_NETSCAPE_PLUGIN_API || (ENABLE_NETSCAPE_PLUGIN_API && ((WTF_OS_UNIX && (WTF_PLATFORM_QT || WTF_PLATFORM_WX)) || WTF_PLATFORM_GTK))
 #define ENABLE_PLUGIN_PACKAGE_SIMPLE_HASH 1
 #endif
@@ -1214,10 +1240,10 @@
 #endif
 
 #if ENABLE_GLIB_SUPPORT
-#include "GTypedefs.h"
+//#include "GTypedefs.h"
 #endif
 
-/* FIXME: This define won't be needed once #27551 is fully landed. However, 
+/* FIXME: This define won't be needed once #27551 is fully landed. However,
    since most ports try to support sub-project independence, adding new headers
    to WTF causes many ports to break, and so this way we can address the build
    breakages one port at a time. */
@@ -1227,4 +1253,4 @@
 #define WTF_USE_UNIX_DOMAIN_SOCKETS 1
 #endif
 
-#endif /* WTF_Platform_h */
+#endif /* assembler_wtf_Platform_h */

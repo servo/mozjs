@@ -1,24 +1,22 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set sw=4 ts=8 et tw=80:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include <stddef.h>
 #include <assert.h>
+#include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <stdarg.h>
-#include <ctype.h>
 
-#include "jsversion.h"
+#include "vm/Keywords.h"
 
-const char * const keyword_list[] = {
-#define JS_KEYWORD(keyword, type, op, version) #keyword,
-#include "jskeyword.tbl"
-#undef JS_KEYWORD
+static const char * const keyword_list[] = {
+#define KEYWORD_STRING(keyword, name, type, version) #keyword,
+    FOR_EACH_JAVASCRIPT_KEYWORD(KEYWORD_STRING)
+#undef KEYWORD_STRING
 };
 
 struct gen_opt {

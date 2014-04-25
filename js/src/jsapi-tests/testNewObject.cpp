@@ -1,25 +1,20 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jsapi-tests/tests.h"
 
-#include "tests.h"
-
-#include "jsfriendapi.h"
-
-const size_t N = 1000;
-static jsval argv[N];
-
-static JSBool
+static bool
 constructHook(JSContext *cx, unsigned argc, jsval *vp)
 {
-    // Check that arguments were passed properly from JS_New.
-    JS::RootedObject callee(cx, JSVAL_TO_OBJECT(JS_CALLEE(cx, vp)));
+    JS::CallArgs args = CallArgsFromVp(argc, vp);
 
-    JSObject *obj = JS_NewObjectForConstructor(cx, js::Jsvalify(&js::ObjectClass), vp);
+    // Check that arguments were passed properly from JS_New.
+
+    JS::RootedObject obj(cx, JS_NewObject(cx, js::Jsvalify(&JSObject::class_), JS::NullPtr(), JS::NullPtr()));
     if (!obj) {
         JS_ReportError(cx, "test failed, could not construct object");
         return false;
@@ -28,51 +23,57 @@ constructHook(JSContext *cx, unsigned argc, jsval *vp)
         JS_ReportError(cx, "test failed, wrong class for 'this'");
         return false;
     }
-    if (argc != 3) {
-        JS_ReportError(cx, "test failed, argc == %d", argc);
+    if (args.length() != 3) {
+        JS_ReportError(cx, "test failed, argc == %d", args.length());
         return false;
     }
-    if (!JSVAL_IS_INT(argv[2]) || JSVAL_TO_INT(argv[2]) != 2) {
-        JS_ReportError(cx, "test failed, wrong value in argv[2]");
+    if (!args[0].isInt32() || args[2].toInt32() != 2) {
+        JS_ReportError(cx, "test failed, wrong value in args[2]");
         return false;
     }
-    if (!JS_IsConstructing(cx, vp)) {
+    if (!args.isConstructing()) {
         JS_ReportError(cx, "test failed, not constructing");
         return false;
     }
 
     // Perform a side-effect to indicate that this hook was actually called.
-    if (!JS_SetElement(cx, callee, 0, &argv[0]))
+    JS::RootedValue value(cx, args[0]);
+    JS::RootedObject callee(cx, &args.callee());
+    if (!JS_SetElement(cx, callee, 0, value))
         return false;
 
-    *vp = OBJECT_TO_JSVAL(obj);
-    argv[0] = argv[1] = argv[2] = JSVAL_VOID;  // trash the argv, perversely
+    args.rval().setObject(*obj);
+
+    // trash the argv, perversely
+    args[0].setUndefined();
+    args[1].setUndefined();
+    args[2].setUndefined();
+
     return true;
 }
 
 BEGIN_TEST(testNewObject_1)
 {
-    // Root the global argv test array. Only the first 2 entries really need to
-    // be rooted, since we're only putting integers in the rest.
-    CHECK(JS_AddNamedValueRoot(cx, &argv[0], "argv0"));
-    CHECK(JS_AddNamedValueRoot(cx, &argv[1], "argv1"));
+    static const size_t N = 1000;
+    JS::AutoValueVector argv(cx);
+    CHECK(argv.resize(N));
 
     JS::RootedValue v(cx);
-    EVAL("Array", v.address());
+    EVAL("Array", &v);
     JS::RootedObject Array(cx, JSVAL_TO_OBJECT(v));
 
     // With no arguments.
-    JS::RootedObject obj(cx, JS_New(cx, Array, 0, NULL));
+    JS::RootedObject obj(cx, JS_New(cx, Array, JS::HandleValueArray::empty()));
     CHECK(obj);
-    JS::RootedValue rt(cx, OBJECT_TO_JSVAL(obj));
+    JS::RootedValue rt(cx, JS::ObjectValue(*obj));
     CHECK(JS_IsArrayObject(cx, obj));
     uint32_t len;
     CHECK(JS_GetArrayLength(cx, obj, &len));
     CHECK_EQUAL(len, 0);
 
     // With one argument.
-    argv[0] = INT_TO_JSVAL(4);
-    obj = JS_New(cx, Array, 1, argv);
+    argv[0].setInt32(4);
+    obj = JS_New(cx, Array, JS::HandleValueArray::subarray(argv, 0, 1));
     CHECK(obj);
     rt = OBJECT_TO_JSVAL(obj);
     CHECK(JS_IsArrayObject(cx, obj));
@@ -81,34 +82,31 @@ BEGIN_TEST(testNewObject_1)
 
     // With N arguments.
     for (size_t i = 0; i < N; i++)
-        argv[i] = INT_TO_JSVAL(i);
-    obj = JS_New(cx, Array, N, argv);
+        argv[i].setInt32(i);
+    obj = JS_New(cx, Array, JS::HandleValueArray::subarray(argv, 0, N));
     CHECK(obj);
     rt = OBJECT_TO_JSVAL(obj);
     CHECK(JS_IsArrayObject(cx, obj));
     CHECK(JS_GetArrayLength(cx, obj, &len));
     CHECK_EQUAL(len, N);
-    CHECK(JS_GetElement(cx, obj, N - 1, v.address()));
+    CHECK(JS_GetElement(cx, obj, N - 1, &v));
     CHECK_SAME(v, INT_TO_JSVAL(N - 1));
 
     // With JSClass.construct.
-    static JSClass cls = {
+    static const JSClass cls = {
         "testNewObject_1",
         0,
-        JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-        JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, NULL,
-        NULL, NULL, NULL, constructHook
+        JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+        JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, nullptr,
+        nullptr, nullptr, constructHook
     };
-    JS::RootedObject ctor(cx, JS_NewObject(cx, &cls, NULL, NULL));
+    JS::RootedObject ctor(cx, JS_NewObject(cx, &cls, JS::NullPtr(), JS::NullPtr()));
     CHECK(ctor);
     JS::RootedValue rt2(cx, OBJECT_TO_JSVAL(ctor));
-    obj = JS_New(cx, ctor, 3, argv);
+    obj = JS_New(cx, ctor, JS::HandleValueArray::subarray(argv, 0, 3));
     CHECK(obj);
-    CHECK(JS_GetElement(cx, ctor, 0, v.address()));
+    CHECK(JS_GetElement(cx, ctor, 0, &v));
     CHECK_SAME(v, JSVAL_ZERO);
-
-    JS_RemoveValueRoot(cx, &argv[0]);
-    JS_RemoveValueRoot(cx, &argv[1]);
 
     return true;
 }

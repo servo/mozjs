@@ -2,8 +2,41 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 var gPageCompleted;
 var GLOBAL = this + '';
+
+// Variables local to jstests harness.
+var jstestsTestPassesUnlessItThrows = false;
+var jstestsRestoreFunction;
+var jstestsOptions;
+
+/*
+ * Signals to this script that the current test case should be considered to
+ * have passed if it doesn't throw an exception.
+ *
+ * Overrides the same-named function in shell.js.
+ */
+function testPassesUnlessItThrows() {
+  jstestsTestPassesUnlessItThrows = true;
+}
+
+/*
+ * Requests to load the given JavaScript file before the file containing the
+ * test case.
+ */
+function include(file) {
+  outputscripttag(file, {language: "type", mimetype: "text/javascript"});
+}
+
+/*
+ * Sets a restore function which restores the standard built-in ECMAScript
+ * properties after a destructive test case, and which will be called after
+ * the test case terminates.
+ */
+function setRestoreFunction(restore) {
+  jstestsRestoreFunction = restore;
+}
 
 function htmlesc(str) {
   if (str == '<')
@@ -75,7 +108,7 @@ function writeFormattedResult( expect, actual, string, passed ) {
   var s = "<tt>"+ string ;
   s += "<b>" ;
   s += ( passed ) ? "<font color=#009900> &nbsp;" + PASSED
-    : "<font color=#aa0000>&nbsp;" +  FAILED + expect + "</tt>";
+    : "<font color=#aa0000>&nbsp;" +  FAILED + expect;
 
   DocumentWrite( s + "</font></b></tt><br>" );
   return passed;
@@ -83,6 +116,16 @@ function writeFormattedResult( expect, actual, string, passed ) {
 
 window.onerror = function (msg, page, line)
 {
+  jstestsTestPassesUnlessItThrows = false;
+
+  // Restore options in case a test case used this common variable name.
+  options = jstestsOptions;
+
+  // Restore the ECMAScript environment after potentially destructive tests.
+  if (typeof jstestsRestoreFunction === "function") {
+    jstestsRestoreFunction();
+  }
+
   optionsPush();
 
   if (typeof DESCRIPTION == 'undefined')
@@ -113,8 +156,7 @@ function gc()
 {
   try
   {
-    netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
-    Components.utils.forceGC();
+    SpecialPowers.forceGC();
   }
   catch(ex)
   {
@@ -126,10 +168,8 @@ function jsdgc()
 {
   try
   {
-    // Thanks to dveditz
-    netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
-    var jsdIDebuggerService = Components.interfaces.jsdIDebuggerService;
-    var service = Components.classes['@mozilla.org/js/jsd/debugger-service;1'].
+    var jsdIDebuggerService = SpecialPowers.Ci.jsdIDebuggerService;
+    var service = SpecialPowers.Cc['@mozilla.org/js/jsd/debugger-service;1'].
       getService(jsdIDebuggerService);
     service.GC();
   }
@@ -158,13 +198,8 @@ function options(aOptionName)
     value = value.substring(0, value.length-1);
   }
 
-  if (aOptionName === 'moar_xml')
-    aOptionName = 'xml';
-
-  if (aOptionName && aOptionName !== 'allow_xml') {
-    netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
-    if (!(aOptionName in Components.utils))
-    {
+  if (aOptionName) {
+    if (!(aOptionName in SpecialPowers.Cu)) {
       // This test is trying to flip an unsupported option, so it's
       // likely no longer testing what it was supposed to.  Fail it
       // hard.
@@ -178,12 +213,17 @@ function options(aOptionName)
       // option is not set, toggle it to set
       options.currvalues[aOptionName] = true;
 
-    Components.utils[aOptionName] =
+    SpecialPowers.Cu[aOptionName] =
       options.currvalues.hasOwnProperty(aOptionName);
-  }  
+  }
 
   return value;
 }
+
+// Keep a reference to options around so that we can restore it after running
+// a test case, which may have used this common name for one of its own
+// variables.
+jstestsOptions = options;
 
 function optionsInit() {
 
@@ -191,11 +231,6 @@ function optionsInit() {
   options.currvalues = {
     strict:     true,
     werror:     true,
-    atline:     true,
-    moar_xml:   true,
-    relimit:    true,
-    methodjit:  true,
-    methodjit_always: true,
     strict_mode: true
   };
 
@@ -207,18 +242,15 @@ function optionsInit() {
   // and popping options
   options.stackvalues = [];
 
-  netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
   for (var optionName in options.currvalues)
   {
     var propName = optionName;
-    if (optionName === "moar_xml")
-      propName = "xml";
 
-    if (!(propName in Components.utils))
+    if (!(propName in SpecialPowers.Cu))
     {
       throw "options.currvalues is out of sync with Components.utils";
     }
-    if (!Components.utils[propName])
+    if (!SpecialPowers.Cu[propName])
     {
       delete options.currvalues[optionName];
     }
@@ -231,8 +263,7 @@ function optionsInit() {
 
 function gczeal(z)
 {
-  netscape.security.PrivilegeManager.enablePrivilege('UniversalXPConnect');
-  Components.utils.setGCZeal(z);
+  SpecialPowers.setGCZeal(z);
 }
 
 function jit(on)
@@ -292,12 +323,16 @@ function jsTestDriverBrowserInit()
     // If the version is not specified, and the browser is Gecko,
     // use the default version corresponding to the shell's version(0).
     // See https://bugzilla.mozilla.org/show_bug.cgi?id=522760#c11
-    // Otherwise adjust the version to match the suite version for 1.7,
-    // and later due to the use of let, yield, etc.
+    // Otherwise adjust the version to match the suite version for 1.6,
+    // and later due to the use of for-each, let, yield, etc.
     //
     // Note that js1_8, js1_8_1, and js1_8_5 are treated identically in
     // the browser.
-    if (properties.test.match(/^js1_7/))
+    if (properties.test.match(/^js1_6/))
+    {
+      properties.version = '1.6';
+    }
+    else if (properties.test.match(/^js1_7/))
     {
       properties.version = '1.7';
     }
@@ -326,8 +361,8 @@ function jsTestDriverBrowserInit()
    * since the default setting of jit changed from false to true
    * in http://hg.mozilla.org/tracemonkey/rev/685e00e68be9
    * bisections which depend upon jit settings can be thrown off.
-   * default jit(false) when not running jsreftests to make bisections 
-   * depending upon jit settings consistent over time. This is not needed 
+   * default jit(false) when not running jsreftests to make bisections
+   * depending upon jit settings consistent over time. This is not needed
    * in shell tests as the default jit setting has not changed there.
    */
 
@@ -341,40 +376,39 @@ function jsTestDriverBrowserInit()
     // must have at least suitepath/subsuite/testcase.js
     return;
   }
-  var suitepath = testpathparts.slice(0,testpathparts.length-2).join('/');
-  var subsuite = testpathparts[testpathparts.length - 2];
-  var test     = testpathparts[testpathparts.length - 1];
 
-  document.write('<title>' + suitepath + '/' + subsuite + '/' + test + '<\/title>');
+  document.write('<title>' + properties.test + '<\/title>');
 
   // XXX bc - the first document.written script is ignored if the protocol
   // is file:. insert an empty script tag, to work around it.
   document.write('<script></script>');
 
-  outputscripttag(suitepath + '/shell.js', properties);
-  outputscripttag(suitepath + '/browser.js', properties);
-  outputscripttag(suitepath + '/' + subsuite + '/shell.js', properties);
-  outputscripttag(suitepath + '/' + subsuite + '/browser.js', properties);
-  outputscripttag(suitepath + '/' + subsuite + '/' + test, properties,
-  	properties.e4x || /e4x\//.test(properties.test));
+  // Output script tags for shell.js, then browser.js, at each level of the
+  // test path hierarchy.
+  var prepath = "";
+  var i = 0;
+  for (end = testpathparts.length - 1; i < end; i++) {
+    prepath += testpathparts[i] + "/";
+    outputscripttag(prepath + "shell.js", properties);
+    outputscripttag(prepath + "browser.js", properties);
+  }
+
+  // Output the test script itself.
+  outputscripttag(prepath + testpathparts[i], properties);
+
+  // Finally output the driver-end script to advance to the next test.
   outputscripttag('js-test-driver-end.js', properties);
   return;
 }
 
-function outputscripttag(src, properties, e4x)
+function outputscripttag(src, properties)
 {
   if (!src)
   {
     return;
   }
 
-  if (e4x)
-  {
-    // e4x requires type=mimetype;e4x=1
-    properties.language = 'type';
-  }
-
-  var s = '<script src="' +  src + '" ';
+  var s = '<script src="' +  src + '" charset="utf-8" ';
 
   if (properties.language != 'type')
   {
@@ -390,10 +424,6 @@ function outputscripttag(src, properties, e4x)
     if (properties.version)
     {
       s += ';version=' + properties.version;
-    }
-    if (e4x)
-    {
-      s += ';e4x=1';
     }
   }
   s += '"><\/script>';
@@ -417,6 +447,20 @@ function jsTestDriverEnd()
   }
 
   window.onerror = null;
+
+  // Restore options in case a test case used this common variable name.
+  options = jstestsOptions;
+
+  // Restore the ECMAScript environment after potentially destructive tests.
+  if (typeof jstestsRestoreFunction === "function") {
+    jstestsRestoreFunction();
+  }
+
+  if (jstestsTestPassesUnlessItThrows) {
+    var testcase = new TestCase("unknown-test-name", "", true, true);
+    print(PASSED);
+    jstestsTestPassesUnlessItThrows = false;
+  }
 
   try
   {
@@ -459,47 +503,21 @@ var gDialogCloserObserver;
 
 function registerDialogCloser()
 {
-  dlog('registerDialogCloser: start');
-  try
-  {
-    netscape.security.PrivilegeManager.
-      enablePrivilege('UniversalXPConnect');
-  }
-  catch(excp)
-  {
-    print('registerDialogCloser: ' + excp);
-    return;
-  }
-
-  gDialogCloser = Components.
-    classes['@mozilla.org/embedcomp/window-watcher;1'].
-    getService(Components.interfaces.nsIWindowWatcher);
+  gDialogCloser = SpecialPowers.
+    Cc['@mozilla.org/embedcomp/window-watcher;1'].
+    getService(SpecialPowers.Ci.nsIWindowWatcher);
 
   gDialogCloserObserver = {observe: dialogCloser_observe};
 
   gDialogCloser.registerNotification(gDialogCloserObserver);
-
-  dlog('registerDialogCloser: complete');
 }
 
 function unregisterDialogCloser()
 {
-  dlog('unregisterDialogCloser: start');
-
   gczeal(0);
 
   if (!gDialogCloserObserver || !gDialogCloser)
   {
-    return;
-  }
-  try
-  {
-    netscape.security.PrivilegeManager.
-      enablePrivilege('UniversalXPConnect');
-  }
-  catch(excp)
-  {
-    print('unregisterDialogCloser: ' + excp);
     return;
   }
 
@@ -507,8 +525,6 @@ function unregisterDialogCloser()
 
   gDialogCloserObserver = null;
   gDialogCloser = null;
-
-  dlog('unregisterDialogCloser: stop');
 }
 
 // use an array to handle the case where multiple dialogs
@@ -517,55 +533,28 @@ var gDialogCloserSubjects = [];
 
 function dialogCloser_observe(subject, topic, data)
 {
-  try
-  {
-    netscape.security.PrivilegeManager.
-      enablePrivilege('UniversalXPConnect');
-
-    dlog('dialogCloser_observe: ' +
-         'subject: ' + subject + 
-         ', topic=' + topic + 
-         ', data=' + data + 
-         ', subject.document.documentURI=' + subject.document.documentURI +
-         ', subjects pending=' + gDialogCloserSubjects.length);
-  }
-  catch(excp)
-  {
-    print('dialogCloser_observe: ' + excp);
-    return;
-  }
-
   if (subject instanceof ChromeWindow && topic == 'domwindowopened' )
   {
     gDialogCloserSubjects.push(subject);
     // timeout of 0 needed when running under reftest framework.
     subject.setTimeout(closeDialog, 0);
   }
-  dlog('dialogCloser_observe: subjects pending: ' + gDialogCloserSubjects.length);
 }
 
 function closeDialog()
 {
   var subject;
-  dlog('closeDialog: subjects pending: ' + gDialogCloserSubjects.length);
 
   while ( (subject = gDialogCloserSubjects.pop()) != null)
   {
-    dlog('closeDialog: subject=' + subject);
-
-    dlog('closeDialog: subject.document instanceof XULDocument: ' + (subject.document instanceof XULDocument));
-    dlog('closeDialog: subject.document.documentURI: ' + subject.document.documentURI);
-
-    if (subject.document instanceof XULDocument && 
+    if (subject.document instanceof XULDocument &&
         subject.document.documentURI == 'chrome://global/content/commonDialog.xul')
     {
-      dlog('closeDialog: close XULDocument dialog?');
       subject.close();
     }
     else
     {
       // alerts inside of reftest framework are not XULDocument dialogs.
-      dlog('closeDialog: close chrome dialog?');
       subject.close();
     }
   }

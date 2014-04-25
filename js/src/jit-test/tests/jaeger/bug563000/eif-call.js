@@ -1,12 +1,10 @@
-// |jit-test| mjitalways;debug
+// |jit-test| debug
 setDebug(true);
 
 function callee() {
-  assertJit();
   evalInFrame(1, "x = 'success'");
 }
 function caller() {
-  assertJit();
   var x = "failure";
   callee();
   return x;

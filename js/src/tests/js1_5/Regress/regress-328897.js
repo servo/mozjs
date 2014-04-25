@@ -19,7 +19,7 @@ if (typeof window == 'undefined')
 }
 else
 {
-  expect = /NS_ERROR_XPC_NOT_ENOUGH_ARGS/;
+  expect = /TypeError: Not enough arguments to Window.showModalDialog./;
 
   window._onerror = window.onerror;
   window.onerror = (function (msg, page, line) { 
@@ -31,8 +31,8 @@ else
 
   gDelayTestDriverEnd = true;
 
-  // Trying to set call window.alert() without any arguments will throw.
-  window.alert();
+  // Trying to set call window.showModalDialog() without any arguments will throw.
+  window.showModalDialog();
   actual = 'No Error';
 }
 

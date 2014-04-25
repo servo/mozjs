@@ -40,6 +40,18 @@ function testSlice() {
     test("buffer.slice(-20, -8)", 12, 12);
     test("buffer.slice(-40, 16)", 0, 16);
     test("buffer.slice(-40, 40)", 0, 32);
+
+    gczeal(7, 100000);
+    var nurseryBuf = new ArrayBuffer(32);
+    var arr = new Int8Array(nurseryBuf);
+    arr[0] = 77;
+
+    // tenure nurseryBuf during the slice operation
+    nurseryBuf.slice; // Creates an object
+    schedulegc(1);
+    var newbuf = nurseryBuf.slice(0);
+    var arr2 = new Int8Array(newbuf);
+    assertEq(arr2[0], 77);
 }
 
 testSlice();

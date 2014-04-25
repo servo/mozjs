@@ -8,9 +8,8 @@ dnl Process this file with autoconf to produce a configure script.
 dnl ========================================================
 
 AC_PREREQ(2.13)
-AC_INIT(jsapi.h)
+AC_INIT(js/src/jsapi.h)
 AC_CONFIG_AUX_DIR(${srcdir}/build/autoconf)
-AC_CONFIG_HEADER(js-config.h)
 AC_CANONICAL_SYSTEM
 TARGET_CPU="${target_cpu}"
 TARGET_VENDOR="${target_vendor}"
@@ -51,11 +50,11 @@ _SUBDIR_CONFIG_ARGS="$ac_configure_args"
 dnl Set the version number of the libs included with mozilla
 dnl ========================================================
 NSPR_VERSION=4
+NSPR_MINVER=4.9.2
 
 dnl Set the minimum version of toolkit libs used by mozilla
 dnl ========================================================
 PERL_VERSION=5.006
-PYTHON_VERSION=2.5
 WINDRES_VERSION=2.14.90
 W32API_VERSION=3.14
 
@@ -74,7 +73,7 @@ _PTHREAD_LDFLAGS=""
 
 dnl Do not allow a separate objdir build if a srcdir build exists.
 dnl ==============================================================
-_topsrcdir=`cd \`dirname $0\`; pwd`
+_topsrcdir=`cd $srcdir; pwd`
 _objdir=`pwd`
 
 if test "$_topsrcdir" != "$_objdir"
@@ -125,6 +124,7 @@ MOZ_ARG_DISABLE_BOOL(compile-environment,
 [  --disable-compile-environment
                           Disable compiler/library checks.],
     COMPILE_ENVIRONMENT= )
+AC_SUBST(COMPILE_ENVIRONMENT)
 
 dnl Check for Perl first -- needed for win32 SDK checks
 MOZ_PATH_PROGS(PERL, $PERL perl5 perl )
@@ -138,12 +138,36 @@ MOZ_ARG_ENABLE_BOOL(shared-js,
     DISABLE_SHARED_JS=0,
     DISABLE_SHARED_JS=1)
 
+MOZ_ARG_DISABLE_BOOL(export-js,
+[  --disable-export-js
+                          Do not mark JS symbols as DLL exported/visible.],
+    DISABLE_EXPORT_JS=1,
+    DISABLE_SHARED_JS=)
+
 if test "$DISABLE_SHARED_JS" = "1" ; then
-  AC_DEFINE(STATIC_EXPORTABLE_JS_API)
+  if test "$DISABLE_EXPORT_JS" = "1"; then
+    AC_DEFINE(STATIC_JS_API)
+  else
+    AC_DEFINE(STATIC_EXPORTABLE_JS_API)
+  fi
 else
+  if test "$DISABLE_EXPORT_JS" = "1"; then
+    AC_MSG_ERROR([Must export JS symbols when building a shared library.])
+  fi
   JS_SHARED_LIBRARY=1
 fi
 AC_SUBST(JS_SHARED_LIBRARY)
+
+if test "$JS_STANDALONE" = no; then
+  autoconfmk=autoconf-js.mk
+  JS_STANDALONE=
+else
+  JS_STANDALONE=1
+  AC_DEFINE(JS_STANDALONE)
+fi
+AC_SUBST(JS_STANDALONE)
+BUILDING_JS=1
+AC_SUBST(autoconfmk)
 
 MOZ_ARG_WITH_STRING(gonk,
 [  --with-gonk=DIR
@@ -167,6 +191,7 @@ if test -n "$gonkdir" ; then
     AR="$gonk_toolchain_prefix"ar
     RANLIB="$gonk_toolchain_prefix"ranlib
     STRIP="$gonk_toolchain_prefix"strip
+    OBJCOPY="$gonk_toolchain_prefix"objcopy
 
     STLPORT_CPPFLAGS="-I$gonkdir/external/stlport/stlport"
     STLPORT_LIBS="-lstlport"
@@ -180,7 +205,7 @@ if test -n "$gonkdir" ; then
         ;;
     esac
 
-    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/system/core/include -isystem $gonkdir/bionic $CPPFLAGS"
+    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/system/core/include -isystem $gonkdir/bionic $CPPFLAGS -I$gonkdir/external/valgrind/fxos-include"
     CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions -Wno-psabi $CXXFLAGS $STLPORT_CPPFLAGS"
     LIBS="$LIBS $STLPORT_LIBS"
@@ -204,20 +229,61 @@ if test -n "$gonkdir" ; then
 
     AC_DEFINE(ANDROID)
     AC_DEFINE(GONK)
-    CROSS_COMPILE=1
 else
     MOZ_ANDROID_NDK
 fi
 
+dnl ==============================================================
+dnl Get mozilla version from central milestone file
+dnl ==============================================================
+MOZILLA_VERSION=`$PERL $srcdir/config/milestone.pl -topsrcdir $srcdir`
+MOZILLA_UAVERSION=`$PERL $srcdir/config/milestone.pl -topsrcdir $srcdir -uaversion`
+MOZILLA_SYMBOLVERSION=`$PERL $srcdir/config/milestone.pl -topsrcdir $srcdir -symbolversion`
+
+AC_DEFINE_UNQUOTED(MOZILLA_VERSION,"$MOZILLA_VERSION")
+AC_DEFINE_UNQUOTED(MOZILLA_VERSION_U,$MOZILLA_VERSION)
+AC_DEFINE_UNQUOTED(MOZILLA_UAVERSION,"$MOZILLA_UAVERSION")
+AC_SUBST(MOZILLA_SYMBOLVERSION)
+
+# Separate version into components for use in shared object naming etc
+changequote(,)
+MOZJS_MAJOR_VERSION=`echo $MOZILLA_VERSION | sed "s|\(^[0-9]*\)\.[0-9]*.*|\1|"`
+MOZJS_MINOR_VERSION=`echo $MOZILLA_VERSION | sed "s|^[0-9]*\.\([0-9]*\).*|\1|"`
+MOZJS_PATCH_VERSION=`echo $MOZILLA_VERSION | sed "s|^[0-9]*\.[0-9]*[^0-9]*||"`
+IS_ALPHA=`echo $MOZILLA_VERSION | grep '[ab]'`
+
+dnl XXX in a temporary bid to avoid developer anger at renaming files
+dnl XXX before "js" symlinks exist, don't change names.
+dnl
+dnl if test -n "$JS_STANDALONE"; then
+dnl JS_SHELL_NAME=js$MOZJS_MAJOR_VERSION
+dnl JS_CONFIG_NAME=js$MOZJS_MAJOR_VERSION-config
+dnl else
+JS_SHELL_NAME=js
+JS_CONFIG_NAME=js-config
+dnl fi
+
+changequote([,])
+if test -n "$IS_ALPHA"; then
+  changequote(,)
+  MOZJS_ALPHA=`echo $MOZILLA_VERSION | sed "s|^[0-9]*\.[0-9\.]*\([^0-9]\).*|\1|"`
+  changequote([,])
+fi
+AC_DEFINE_UNQUOTED(MOZJS_MAJOR_VERSION,$MOZJS_MAJOR_VERSION)
+AC_DEFINE_UNQUOTED(MOZJS_MINOR_VERSION,$MOZJS_MINOR_VERSION)
+AC_SUBST(JS_SHELL_NAME)
+AC_SUBST(JS_CONFIG_NAME)
+AC_SUBST(MOZJS_MAJOR_VERSION)
+AC_SUBST(MOZJS_MINOR_VERSION)
+AC_SUBST(MOZJS_PATCH_VERSION)
+AC_SUBST(MOZJS_ALPHA)
+
 dnl ========================================================
 dnl Checks for compilers.
 dnl ========================================================
-dnl Set CROSS_COMPILE in the environment when running configure
-dnl to use the cross-compile setup for now
-dnl ========================================================
 
 dnl AR_FLAGS set here so HOST_AR_FLAGS can be set correctly (see bug 538269)
-AR_FLAGS='cr $@'
+AR_FLAGS='crs $@'
 
 if test "$COMPILE_ENVIRONMENT"; then
 
@@ -231,80 +297,7 @@ if test "$COMPILE_ENVIRONMENT"; then
 #     - $target (in its correct usage) is for compilers who generate code for a
 #       different platform than $host, so it would not be used by Mozilla.
 if test "$target" != "$host"; then
-    echo "cross compiling from $host to $target"
-
-    _SAVE_CC="$CC"
-    _SAVE_CFLAGS="$CFLAGS"
-    _SAVE_LDFLAGS="$LDFLAGS"
-
-    AC_MSG_CHECKING([for host c compiler])
-    AC_CHECK_PROGS(HOST_CC, $HOST_CC gcc cc /usr/ucb/cc cl icc, "")
-    if test -z "$HOST_CC"; then
-        AC_MSG_ERROR([no acceptable c compiler found in \$PATH])
-    fi
-    AC_MSG_RESULT([$HOST_CC])
-    AC_MSG_CHECKING([for host c++ compiler])
-    AC_CHECK_PROGS(HOST_CXX, $HOST_CXX $CCC c++ g++ gcc CC cxx cc++ cl icc, "")
-    if test -z "$HOST_CXX"; then
-        AC_MSG_ERROR([no acceptable c++ compiler found in \$PATH])
-    fi
-    AC_MSG_RESULT([$HOST_CXX])
-
-    if test -z "$HOST_CFLAGS"; then
-        HOST_CFLAGS="$CFLAGS"
-    fi
-    if test -z "$HOST_CXXFLAGS"; then
-        HOST_CXXFLAGS="$CXXFLAGS"
-    fi
-    if test -z "$HOST_LDFLAGS"; then
-        HOST_LDFLAGS="$LDFLAGS"
-    fi
-    if test -z "$HOST_AR_FLAGS"; then
-        HOST_AR_FLAGS="$AR_FLAGS"
-    fi
-    AC_CHECK_PROGS(HOST_RANLIB, $HOST_RANLIB ranlib, ranlib, :)
-    AC_CHECK_PROGS(HOST_AR, $HOST_AR ar, ar, :)
-    CC="$HOST_CC"
-    CFLAGS="$HOST_CFLAGS"
-    LDFLAGS="$HOST_LDFLAGS"
-
-    AC_MSG_CHECKING([whether the host c compiler ($HOST_CC $HOST_CFLAGS $HOST_LDFLAGS) works])
-    AC_TRY_COMPILE([], [return(0);],
-	[ac_cv_prog_hostcc_works=1 AC_MSG_RESULT([yes])],
-	AC_MSG_ERROR([installation or configuration problem: host compiler $HOST_CC cannot create executables.]) )
-
-    CC="$HOST_CXX"
-    CFLAGS="$HOST_CXXFLAGS"
-
-    AC_MSG_CHECKING([whether the host c++ compiler ($HOST_CXX $HOST_CXXFLAGS $HOST_LDFLAGS) works])
-    AC_TRY_COMPILE([], [return(0);],
-	[ac_cv_prog_hostcxx_works=1 AC_MSG_RESULT([yes])],
-	AC_MSG_ERROR([installation or configuration problem: host compiler $HOST_CXX cannot create executables.]) )
-
-    CC=$_SAVE_CC
-    CFLAGS=$_SAVE_CFLAGS
-    LDFLAGS=$_SAVE_LDFLAGS
-
-    AC_CHECK_PROGS(CC, $CC "${target_alias}-gcc" "${target}-gcc", :)
-    unset ac_cv_prog_CC
-    AC_PROG_CC
-    AC_CHECK_PROGS(CXX, $CXX "${target_alias}-g++" "${target}-g++", :)
-    unset ac_cv_prog_CXX
-    AC_PROG_CXX
-
-    AC_CHECK_PROGS(RANLIB, $RANLIB "${target_alias}-ranlib" "${target}-ranlib", :)
-    AC_CHECK_PROGS(AR, $AR "${target_alias}-ar" "${target}-ar", :)
-    MOZ_PATH_PROGS(AS, $AS "${target_alias}-as" "${target}-as", :)
-    AC_CHECK_PROGS(LD, $LD "${target_alias}-ld" "${target}-ld", :)
-    AC_CHECK_PROGS(STRIP, $STRIP "${target_alias}-strip" "${target}-strip", :)
-    AC_CHECK_PROGS(WINDRES, $WINDRES "${target_alias}-windres" "${target}-windres", :)
-    AC_DEFINE(CROSS_COMPILE)
-
-    dnl If we cross compile for ppc on Mac OS X x86, cross_compiling will
-    dnl have erroneously been set to "no", because the x86 build host is
-    dnl able to run ppc code in a translated environment, making a cross
-    dnl compiler appear native.  So we override that here.
-    cross_compiling=yes
+    MOZ_CROSS_COMPILER
 else
     AC_PROG_CC
     AC_PROG_CXX
@@ -342,10 +335,18 @@ fi
 
 MOZ_TOOL_VARIABLES
 
+MOZ_CHECK_COMPILER_WRAPPER
+
+if test -n "$GNU_CC" -a -z "$CLANG_CC" ; then
+    if test "$GCC_MAJOR_VERSION" -eq 4 -a "$GCC_MINOR_VERSION" -lt 4 ||
+       test "$GCC_MAJOR_VERSION" -lt 4; then
+        AC_MSG_ERROR([Only GCC 4.4 or newer supported])
+    fi
+fi
+
 dnl Special win32 checks
 dnl ========================================================
 
-# With win8, sdk target=602, WINVER=602
 MOZ_ARG_ENABLE_BOOL(metro,
 [  --enable-metro           Enable Windows Metro build targets],
     MOZ_METRO=1,
@@ -354,22 +355,11 @@ if test -n "$MOZ_METRO"; then
     AC_DEFINE(MOZ_METRO)
     # Target the Windows 8 Kit
     WINSDK_TARGETVER=602
-    # Allow a higher api set
-    WINVER=602
+    WINVER=502
 else
     # Target the Windows 7 SDK by default
     WINSDK_TARGETVER=601
     WINVER=502
-fi
-
-if test -n "$MOZ_METRO"; then
-  case "$target" in
-  *-mingw*)
-    ;;
-  *)
-    AC_MSG_ERROR([Metro builds only valid on the windows platform.]);
-    ;;
-  esac
 fi
 
 MOZ_ARG_WITH_STRING(windows-version,
@@ -391,7 +381,7 @@ esac
 
 case "$target" in
 *-mingw*)
-    if test "$GCC" != "yes"; then
+    if test "$GCC" != "yes" -a -z "$CLANG_CC"; then
         # Check to see if we are really running in a msvc environemnt
         _WIN32_MSVC=1
 
@@ -399,9 +389,14 @@ case "$target" in
         CFLAGS="$CFLAGS -TC -nologo"
         CXXFLAGS="$CXXFLAGS -TP -nologo"
         # MSVC warning C4345 warns of newly conformant behavior as of VS2003.
+        # MSVC warning C4351 warns of newly conformant behavior as of VS2005.
+        # MSVC warning C4800 warns when a value is implicitly cast to bool,
+        # because this also forces narrowing to a single byte, which can be a
+        # perf hit.  But this matters so little in practice (and often we want
+        # that behavior) that it's better to turn it off.
         # _CRT_SECURE_NO_WARNINGS disables warnings about using MSVC-specific
         # secure CRT functions.
-        CXXFLAGS="$CXXFLAGS -wd4345 -D_CRT_SECURE_NO_WARNINGS"
+        CXXFLAGS="$CXXFLAGS -wd4345 -wd4351 -wd4800 -D_CRT_SECURE_NO_WARNINGS"
         AC_LANG_SAVE
         AC_LANG_C
         AC_TRY_COMPILE([#include <stdio.h>],
@@ -419,43 +414,29 @@ case "$target" in
         changequote([,])
 
         # Determine compiler version
-        CC_VERSION=`"${CC}" -v 2>&1 | sed -nre "$_MSVC_VER_FILTER"`
+        CC_VERSION=`${CC} -v 2>&1 | sed -nre "$_MSVC_VER_FILTER"`
         _CC_MAJOR_VERSION=`echo ${CC_VERSION} | $AWK -F\. '{ print $1 }'`
         _CC_MINOR_VERSION=`echo ${CC_VERSION} | $AWK -F\. '{ print $2 }'`
         _CC_RELEASE=`echo ${CC_VERSION} | $AWK -F\. '{ print $3 }'`
         _CC_BUILD=`echo ${CC_VERSION} | $AWK -F\. '{ print $4 }'`
         _MSC_VER=${_CC_MAJOR_VERSION}${_CC_MINOR_VERSION}
 
-        CXX_VERSION=`"${CXX}" -v 2>&1 | sed -nre "$_MSVC_VER_FILTER"`
+        CXX_VERSION=`${CXX} -v 2>&1 | sed -nre "$_MSVC_VER_FILTER"`
         _CXX_MAJOR_VERSION=`echo ${CXX_VERSION} | $AWK -F\. '{ print $1 }'`
 
         if test "$_CC_MAJOR_VERSION" != "$_CXX_MAJOR_VERSION"; then
             AC_MSG_ERROR([The major versions of \$CC and \$CXX do not match.])
         fi
 
-        if test "$_CC_MAJOR_VERSION" = "14"; then
-            dnl Require VC8SP1 or newer.
-            dnl VC8 is 14.00.50727.42, VC8SP1 is 14.00.50727.762.
-            if test "$_CC_RELEASE" -lt 50727 -o \
-                    \( "$_CC_RELEASE" -eq 50727 -a "$_CC_BUILD" -lt 762 \); then
-              AC_MSG_ERROR([This version ($CC_VERSION) of the MSVC compiler is unsupported. You probably need to install Service Pack 1 of Visual Studio 2005. See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
-            fi
+        AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
+        AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
 
-            _CC_SUITE=8
-            AC_DEFINE(_CRT_SECURE_NO_DEPRECATE)
-            AC_DEFINE(_CRT_NONSTDC_NO_DEPRECATE)
-        elif test "$_CC_MAJOR_VERSION" = "15"; then
-            _CC_SUITE=9
-            AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
-            AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
-        elif test "$_CC_MAJOR_VERSION" = "16"; then
+        if test "$_CC_MAJOR_VERSION" = "16"; then
             _CC_SUITE=10
-            AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
-            AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
         elif test "$_CC_MAJOR_VERSION" = "17"; then
             _CC_SUITE=11
-            AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
-            AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
+        elif test "$_CC_MAJOR_VERSION" = "18"; then
+            _CC_SUITE=12
         else
             AC_MSG_ERROR([This version ($CC_VERSION) of the MSVC compiler is unsupported. See https://developer.mozilla.org/en/Windows_Build_Prerequisites.])
         fi
@@ -487,40 +468,8 @@ case "$target" in
 
         INCREMENTAL_LINKER=1
 
-        # Identify which version of the SDK we're building with
-        # Windows Server 2008 and newer SDKs have WinSDKVer.h, get the version
-        # from there
-        MOZ_CHECK_HEADERS([winsdkver.h])
-        if test "$ac_cv_header_winsdkver_h" = "yes"; then
-            # Get the highest _WIN32_WINNT and NTDDI versions supported
-            # Take the higher of the two
-            # This is done because the Windows 7 beta SDK reports its
-            # NTDDI_MAXVER to be 0x06000100 instead of 0x06010000, as it should
-            AC_CACHE_CHECK(for highest Windows version supported by this SDK,
-                           ac_cv_winsdk_maxver,
-                           [cat > conftest.h <<EOF
-#include <winsdkver.h>
-#include <sdkddkver.h>
-
-#if (NTDDI_VERSION_FROM_WIN32_WINNT(_WIN32_WINNT_MAXVER) > NTDDI_MAXVER)
-#define WINSDK_MAXVER NTDDI_VERSION_FROM_WIN32_WINNT(_WIN32_WINNT_MAXVER)
-#else
-#define WINSDK_MAXVER NTDDI_MAXVER
-#endif
-
-WINSDK_MAXVER
-EOF
-                            ac_cv_winsdk_maxver=`$CPP conftest.h 2>/dev/null | tail -n1`
-                            rm -f conftest.h
-                           ])
-            MOZ_WINSDK_MAXVER=${ac_cv_winsdk_maxver}
-        else
-            # Any SDK which doesn't have WinSDKVer.h is too old.
-            AC_MSG_ERROR([Your SDK does not have WinSDKVer.h. It is probably too old. Please upgrade to a newer SDK or try running the Windows SDK Configuration Tool and selecting a newer SDK. See https://developer.mozilla.org/En/Windows_SDK_versions for more details on fixing this.])
-        fi
-
         unset _MSVC_VER_FILTER
-    else
+    elif test -z "$CLANG_CC"; then
         # Check w32api version
         _W32API_MAJOR_VERSION=`echo $W32API_VERSION | $AWK -F\. '{ print $1 }'`
         _W32API_MINOR_VERSION=`echo $W32API_VERSION | $AWK -F\. '{ print $2 }'`
@@ -559,6 +508,11 @@ EOF
         MOZ_WINSDK_MAXVER=0x06010000
     fi # !GNU_CC
 
+    # If MSVC or clang
+    if test "$GCC" != "yes" -o -n "$CLANG_CC" ; then
+        MOZ_FIND_WINSDK_VERSION
+    fi
+
     AC_DEFINE_UNQUOTED(WINVER,0x$WINVER)
     AC_DEFINE_UNQUOTED(_WIN32_WINNT,0x$WINVER)
     # Require OS features provided by IE 6.0 SP2 (XP SP2)
@@ -593,25 +547,11 @@ if test -n "$_WIN32_MSVC"; then
 
     # Common to all MSVC environments:
 
-    # Windows lacks <stdint.h>, but has __int8, and so on.
-    AC_DEFINE(JS_HAVE___INTN)
     AC_DEFINE(HAVE_LOCALECONV)
-    AC_DEFINE(HAVE_SYSTEMTIMETOFILETIME)
-    AC_DEFINE(HAVE_GETSYSTEMTIMEASFILETIME)
-
-    # Windows <stddef.h> defines intptr_t and uintptr_t.
-    # VS2005: http://msdn.microsoft.com/en-us/library/323b6b3k(VS.80).aspx
-    # VS2008: http://msdn.microsoft.com/en-us/library/323b6b3k.aspx
-    AC_DEFINE(JS_STDDEF_H_HAS_INTPTR_T)
+    AC_DEFINE(HAVE_HYPOT)
 fi
 
 fi # COMPILE_ENVIRONMENT
-
-if test "$cross_compiling"  = "yes"; then
-    CROSS_COMPILE=1
-else
-    CROSS_COMPILE=
-fi
 
 # Check to see if we are running in a broken QEMU scratchbox.
 # We know that anything below 1.0.16 is broken.
@@ -642,6 +582,14 @@ dnl ========================================================
 AC_PROG_INSTALL
 AC_PROG_LN_S
 
+AC_MSG_CHECKING([for tar archiver])
+AC_CHECK_PROGS(TAR, gnutar gtar tar, "")
+if test -z "$TAR"; then
+    AC_MSG_WARN([no tar archiver found in \$PATH])
+fi
+AC_MSG_RESULT([$TAR])
+AC_SUBST(TAR)
+
 if test -z "$TINDERBOX_SKIP_PERL_VERSION_CHECK"; then
 AC_MSG_CHECKING([for minimum required perl version >= $PERL_VERSION])
 _perl_version=`PERL_VERSION=$PERL_VERSION $PERL -e 'print "$]"; if ($] >= $ENV{PERL_VERSION}) { exit(0); } else { exit(1); }' 2>&5`
@@ -663,10 +611,7 @@ else
     AC_MSG_RESULT([yes])
 fi
 
-MOZ_PATH_PROGS(PYTHON, $PYTHON python2.7 python2.6 python2.5 python)
-if test -z "$PYTHON"; then
-    AC_MSG_ERROR([python was not found in \$PATH])
-fi
+MOZ_PYTHON
 
 if test -z "$COMPILE_ENVIRONMENT"; then
     NSINSTALL_BIN='$(PYTHON) $(topsrcdir)/config/nsinstall.py'
@@ -675,7 +620,6 @@ AC_SUBST(NSINSTALL_BIN)
 
 MOZ_PATH_PROG(DOXYGEN, doxygen, :)
 MOZ_PATH_PROG(AUTOCONF, autoconf, :)
-MOZ_PATH_PROG(MOZ_NATIVE_MAKEDEPEND, makedepend)
 MOZ_PATH_PROG(XARGS, xargs)
 if test -z "$XARGS" -o "$XARGS" = ":"; then
     AC_MSG_ERROR([xargs not found in \$PATH .])
@@ -686,42 +630,6 @@ if test "$COMPILE_ENVIRONMENT"; then
 dnl ========================================================
 dnl = Mac OS X toolchain support
 dnl ========================================================
-
-case "$target_os" in
-darwin*)
-    dnl Current known valid versions for GCC_VERSION are 2.95.2 3.1 3.3 4.0.
-    dnl 4.0 identifies itself as 4.0.x, so strip the decidecimal for
-    dnl the environment and includedir purposes (when using an SDK, below),
-    dnl but remember the full version number for the libdir (SDK).
-    changequote(,)
-    GCC_VERSION_FULL=`echo $CXX_VERSION | $PERL -pe 's/^.*gcc version ([^ ]*).*/$1/'`
-    GCC_VERSION=`echo $GCC_VERSION_FULL | $PERL -pe '(split(/\./))[0]>=4&&s/(^\d*\.\d*).*/$1/;'`
-    changequote([,])
-    if test "$GCC_VERSION_FULL" = "4.0.0" ; then
-        dnl Bug 280479, but this keeps popping up in bug 292530 too because
-        dnl 4.0.0/4061 is the default compiler in Tiger.
-        changequote(,)
-        GCC_BUILD=`echo $CXX_VERSION | $PERL -pe 's/^.*build ([^ )]*).*/$1/'`
-        changequote([,])
-        if test "$GCC_BUILD" = "4061" ; then
-            AC_MSG_ERROR([You are attempting to use Apple gcc 4.0 build 4061.
-This compiler was supplied with Xcode 2.0, and contains bugs that prevent it
-from building Mozilla. Upgrade to Xcode 2.1 or later.])
-        fi
-    fi
-
-    dnl xcodebuild needs GCC_VERSION defined in the environment, since it
-    dnl doesn't respect the CC/CXX setting.  With GCC_VERSION set, it will use
-    dnl /usr/bin/g(cc|++)-$GCC_VERSION.
-    MOZ_PATH_PROGS(PBBUILD_BIN, pbbuild xcodebuild pbxbuild)
-
-    dnl sdp was formerly in /Developer/Tools.  As of Mac OS X 10.4 (Darwin 8),
-    dnl it has moved into /usr/bin.
-    MOZ_PATH_PROG(SDP, sdp, :, [$PATH:/usr/bin:/Developer/Tools])
-    ;;
-esac
-
-AC_SUBST(GCC_VERSION)
 
 dnl The universal machinery sets UNIVERSAL_BINARY to inform packager.mk
 dnl that a universal binary is being produced and MOZ_CAN_RUN_PROGRAMS
@@ -759,15 +667,12 @@ dnl ========================================================
 dnl = Mac OS X SDK support
 dnl ========================================================
 MACOS_SDK_DIR=
-NEXT_ROOT=
 MOZ_ARG_WITH_STRING(macos-sdk,
 [  --with-macos-sdk=dir    Location of platform SDK to use (Mac OS X only)],
     MACOS_SDK_DIR=$withval)
 
 dnl MACOS_SDK_DIR will be set to the SDK location whenever one is in use.
-dnl NEXT_ROOT will be set and exported only if it's needed.
 AC_SUBST(MACOS_SDK_DIR)
-AC_SUBST(NEXT_ROOT)
 
 if test "$MACOS_SDK_DIR"; then
   dnl Sync this section with the ones in NSPR and NSS.
@@ -780,26 +685,12 @@ specify a valid SDK.  SDKs are installed when the optional cross-development
 tools are selected during the Xcode/Developer Tools installation.])
   fi
 
-  GCC_VERSION_MAJOR=`echo $GCC_VERSION_FULL | $PERL -pe 's/(^\d*).*/$1/;'`
-  if test "$GCC_VERSION_MAJOR" -lt "4" ; then
-    AC_MSG_ERROR([You need to upgrade the compiler version to 4.x])
-  else
-    CFLAGS="$CFLAGS -isysroot ${MACOS_SDK_DIR}"
-    CXXFLAGS="$CXXFLAGS -isysroot ${MACOS_SDK_DIR}"
+  CFLAGS="$CFLAGS -isysroot ${MACOS_SDK_DIR}"
+  CXXFLAGS="$CXXFLAGS -isysroot ${MACOS_SDK_DIR}"
 
-    dnl CPP/CXXCPP needs to be set for MOZ_CHECK_HEADER.
-    CPP="$CPP -isysroot ${MACOS_SDK_DIR}"
-    CXXCPP="$CXXCPP -isysroot ${MACOS_SDK_DIR}"
-
-    if test "$GCC_VERSION_FULL" = "4.0.0" ; then
-      dnl If gcc >= 4.0, we're guaranteed to be on Tiger, which has an ld
-      dnl that supports -syslibroot.  Don't set NEXT_ROOT because it will
-      dnl be ignored and cause warnings when -syslibroot is specified.
-      dnl gcc 4.0.1 will pass -syslibroot to ld automatically based on
-      dnl the -isysroot it receives, so this is only needed with 4.0.0.
-      LDFLAGS="$LDFLAGS -Wl,-syslibroot,${MACOS_SDK_DIR}"
-    fi
-  fi
+  dnl CPP/CXXCPP needs to be set for MOZ_CHECK_HEADER.
+  CPP="$CPP -isysroot ${MACOS_SDK_DIR}"
+  CXXCPP="$CXXCPP -isysroot ${MACOS_SDK_DIR}"
 
   AC_LANG_SAVE
   AC_MSG_CHECKING([for valid compiler/Mac OS X SDK combination])
@@ -869,7 +760,6 @@ TARGET_MD_ARCH=unix
 DIRENT_INO=d_ino
 MOZ_USER_DIR=".mozilla"
 
-MOZ_JS_LIBS='-L$(libdir) -lmozjs'
 MOZ_FIX_LINK_PATHS='-Wl,-rpath-link,$(LIBXUL_DIST)/bin -Wl,-rpath-link,$(prefix)/lib'
 
 MOZ_COMPONENT_NSPR_LIBS='-L$(LIBXUL_DIST)/bin $(NSPR_LIBS)'
@@ -884,11 +774,15 @@ if test -n "$CROSS_COMPILE"; then
     OS_RELEASE=
     case "${target_os}" in
         linux*)       OS_ARCH=Linux OS_TARGET=Linux ;;
-        kfreebsd*-gnu) OS_ARCH=GNU_kFreeBSD OS_TARGET=GNU_kFreeBSD ;;
+        kfreebsd*-gnu) OS_ARCH=GNU_kFreeBSD OS_TARGET=GNU/kFreeBSD ;;
         gnu*)         OS_ARCH=GNU ;;
         solaris*)     OS_ARCH=SunOS OS_RELEASE=5 ;;
         mingw*)       OS_ARCH=WINNT OS_TARGET=WINNT ;;
         darwin*)      OS_ARCH=Darwin OS_TARGET=Darwin ;;
+        dragonfly*)   OS_ARCH=DragonFly OS_TARGET=DragonFly ;;
+        freebsd*)     OS_ARCH=FreeBSD OS_TARGET=FreeBSD ;;
+        netbsd*)      OS_ARCH=NetBSD OS_TARGET=NetBSD ;;
+        openbsd*)     OS_ARCH=OpenBSD OS_TARGET=OpenBSD ;;
     esac
     case "${target}" in
         *-android*|*-linuxandroid*) OS_ARCH=Linux OS_TARGET=Android ;;
@@ -934,6 +828,24 @@ darwin*)
 linux*)
     HOST_OS_ARCH=Linux
     ;;
+kfreebsd*-gnu)
+    HOST_OS_ARCH=GNU_kFreeBSD
+    ;;
+gnu*)
+    HOST_OS_ARCH=GNU
+    ;;
+dragonfly*)
+    HOST_OS_ARCH=DragonFly
+    ;;
+freebsd*)
+    HOST_OS_ARCH=FreeBSD
+    ;;
+netbsd*)
+    HOST_OS_ARCH=NetBSD
+    ;;
+openbsd*)
+    HOST_OS_ARCH=OpenBSD
+    ;;
 solaris*)
     HOST_OS_ARCH=SunOS
     SOLARIS_SUNPRO_CC=
@@ -951,12 +863,6 @@ solaris*)
     fi
     AC_SUBST(SOLARIS_SUNPRO_CC)
     AC_SUBST(SOLARIS_SUNPRO_CXX)
-    ;;
-BSD_386)
-    HOST_OS_ARCH=BSD
-    ;;
-OS_2)
-    HOST_OS_ARCH=OS2
     ;;
 esac
 
@@ -1001,14 +907,6 @@ AIX)
         fi
     fi
     ;;
-BSD_386)
-    OS_ARCH=BSD
-    ;;
-OS_2)
-    OS_ARCH=OS2
-    OS_TARGET=OS2
-    OS_RELEASE=`uname -v`
-    ;;
 Darwin)
     case "${target_cpu}" in
     powerpc*)
@@ -1036,7 +934,7 @@ case "$OS_TEST" in
     CPU_ARCH=x86
     ;;
 
-powerpc64 | ppc64)
+powerpc64 | ppc64 | powerpc64le | ppc64le)
     CPU_ARCH=ppc64
     ;;
 
@@ -1075,6 +973,11 @@ arm*)
 mips|mipsel)
     CPU_ARCH="mips"
     ;;
+
+aarch64*)
+    CPU_ARCH=aarch64
+    ;;
+
 esac
 
 if test -z "$OS_TARGET"; then
@@ -1164,8 +1067,10 @@ MOZ_ARG_ENABLE_BOOL(address-sanitizer,
 if test -n "$MOZ_ASAN"; then
     MOZ_LLVM_HACKS=1
     AC_DEFINE(MOZ_ASAN)
+    MOZ_PATH_PROG(LLVM_SYMBOLIZER, llvm-symbolizer)
 fi
 AC_SUBST(MOZ_ASAN)
+AC_SUBST(LLVM_SYMBOLIZER)
 
 dnl ========================================================
 dnl = Enable hacks required for LLVM instrumentations
@@ -1182,8 +1087,16 @@ dnl ========================================================
 dnl GNU specific defaults
 dnl ========================================================
 if test "$GNU_CC"; then
-    MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$@ -o $@'
-    MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$@ -o $@'
+    # Per bug 719659 comment 2, some of the headers on ancient build machines
+    # may require gnu89 inline semantics.  But otherwise, we use C99.
+    # But on OS X we just use C99 plus GNU extensions, in order to fix
+    # bug 917526.
+    CFLAGS="$CFLAGS -std=gnu99"
+    if test "${OS_ARCH}" != Darwin; then
+        CFLAGS="$CFLAGS -fgnu89-inline"
+    fi
+    MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$(notdir $@) -o $@'
+    MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-h,$(notdir $@) -o $@'
     DSO_LDOPTS='-shared'
     if test "$GCC_USE_GNU_LD"; then
         # Some tools like ASan use a runtime library that is only
@@ -1194,28 +1107,58 @@ if test "$GNU_CC"; then
             DSO_LDOPTS="$DSO_LDOPTS -Wl,-z,defs"
         fi
     fi
-    WARNINGS_AS_ERRORS='-Werror -Wno-error=uninitialized'
+    WARNINGS_AS_ERRORS='-Werror'
     DSO_CFLAGS=''
     DSO_PIC_CFLAGS='-fPIC'
     ASFLAGS="$ASFLAGS -fPIC"
+    AC_MSG_CHECKING([for --noexecstack option to as])
+    _SAVE_CFLAGS=$CFLAGS
+    CFLAGS="$CFLAGS -Wa,--noexecstack"
+    AC_TRY_COMPILE(,,AC_MSG_RESULT([yes])
+                     [ASFLAGS="$ASFLAGS -Wa,--noexecstack"],
+                     AC_MSG_RESULT([no]))
+    CFLAGS=$_SAVE_CFLAGS
+    AC_MSG_CHECKING([for -z noexecstack option to ld])
+    _SAVE_LDFLAGS=$LDFLAGS
+    LDFLAGS="$LDFLAGS -Wl,-z,noexecstack"
+    AC_TRY_LINK(,,AC_MSG_RESULT([yes]),
+                  AC_MSG_RESULT([no])
+                  LDFLAGS=$_SAVE_LDFLAGS)
+
+    AC_MSG_CHECKING([for -z text option to ld])
+    _SAVE_LDFLAGS=$LDFLAGS
+    LDFLAGS="$LDFLAGS -Wl,-z,text"
+    AC_TRY_LINK(,,AC_MSG_RESULT([yes])
+                  [NSPR_LDFLAGS="$NSPR_LDFLAGS -Wl,-z,text"],
+                  AC_MSG_RESULT([no])
+                  LDFLAGS=$_SAVE_LDFLAGS)
+
+    AC_MSG_CHECKING([for --build-id option to ld])
+    _SAVE_LDFLAGS=$LDFLAGS
+    LDFLAGS="$LDFLAGS -Wl,--build-id"
+    AC_TRY_LINK(,,AC_MSG_RESULT([yes])
+                  [NSPR_LDFLAGS="$NSPR_LDFLAGS -Wl,--build-id"],
+                  AC_MSG_RESULT([no])
+                  LDFLAGS=$_SAVE_LDFLAGS)
 
     # Turn on GNU-specific warnings:
     # -Wall - turn on a lot of warnings
-    # -pedantic - this is turned on below
-    # -Wpointer-arith - enabled with -pedantic, but good to have even if not
+    # -Wpointer-arith - good to have
     # -Wdeclaration-after-statement - MSVC doesn't like these
     # -Werror=return-type - catches missing returns, zero false positives
+    # -Werror=int-to-pointer-cast - catches cast to pointer from integer of different size
     # -Wtype-limits - catches overflow bugs, few false positives
     # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
+    # -Wsign-compare - catches comparison of signed and unsigned types
     #
     _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wall -Wpointer-arith -Wdeclaration-after-statement"
     MOZ_C_SUPPORTS_WARNING(-W, error=return-type, ac_c_has_werror_return_type)
-    MOZ_C_SUPPORTS_WARNING(-W, type-limits, ac_c_has_wtype_limits)
+    MOZ_C_SUPPORTS_WARNING(-W, error=int-to-pointer-cast, ac_c_has_werror_int_to_pointer_cast)
     MOZ_C_SUPPORTS_WARNING(-W, empty-body, ac_c_has_wempty_body)
+    MOZ_C_SUPPORTS_WARNING(-W, sign-compare, ac_c_has_sign_compare)
 
-    # Turn off the following warnings that -Wall/-pedantic turn on:
+    # Turn off the following warnings that -Wall turns on:
     # -Wno-unused - lots of violations in third-party code
-    # -Wno-overlength-strings - we exceed the minimum maximum length frequently
     #
     _WARNINGS_CFLAGS="${_WARNINGS_CFLAGS} -Wno-unused"
     MOZ_C_SUPPORTS_WARNING(-Wno-, overlength-strings, ac_c_has_wno_overlength_strings)
@@ -1233,10 +1176,7 @@ if test "$GNU_CC"; then
        esac
     fi
 
-    dnl Turn pedantic on but disable the warnings for long long
-    _PEDANTIC=1
-
-    _DEFINES_CFLAGS='-include $(DEPTH)/js-confdefs.h -DMOZILLA_CLIENT'
+    _DEFINES_CFLAGS='-include $(DEPTH)/js/src/js-confdefs.h -DMOZILLA_CLIENT'
     _USE_CPP_INCLUDE_FLAG=1
 
 elif test "$SOLARIS_SUNPRO_CC"; then
@@ -1249,8 +1189,8 @@ elif test "$SOLARIS_SUNPRO_CC"; then
     fi
     _DEFINES_CFLAGS='$(ACDEFINES) -D_JS_CONFDEFS_H_ -DMOZILLA_CLIENT'
 else
-    MKSHLIB='$(LD) $(DSO_LDOPTS) -h $@ -o $@'
-    MKCSHLIB='$(LD) $(DSO_LDOPTS) -h $@ -o $@'
+    MKSHLIB='$(LD) $(DSO_LDOPTS) -h $(notdir $@) -o $@'
+    MKCSHLIB='$(LD) $(DSO_LDOPTS) -h $(notdir $@) -o $@'
 
     DSO_LDOPTS='-shared'
     if test "$GNU_LD"; then
@@ -1266,23 +1206,25 @@ fi
 if test "$GNU_CXX"; then
     # Turn on GNU-specific warnings:
     # -Wall - turn on a lot of warnings
-    # -pedantic - this is turned on below
-    # -Wpointer-arith - enabled with -pedantic, but good to have even if not
+    # -Wpointer-arith - good to have
     # -Woverloaded-virtual - ???
     # -Werror=return-type - catches missing returns, zero false positives
+    # -Werror=int-to-pointer-cast - catches cast to pointer from integer of different size
     # -Wtype-limits - catches overflow bugs, few false positives
     # -Wempty-body - catches bugs, e.g. "if (c); foo();", few false positives
+    # -Werror=conversion-null - catches conversions between NULL and non-pointer types
+    # -Wsign-compare - catches comparison of signed and unsigned types
     #
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wall -Wpointer-arith -Woverloaded-virtual"
     MOZ_CXX_SUPPORTS_WARNING(-W, error=return-type, ac_cxx_has_werror_return_type)
+    MOZ_CXX_SUPPORTS_WARNING(-W, error=int-to-pointer-cast, ac_cxx_has_werror_int_to_pointer_cast)
     MOZ_CXX_SUPPORTS_WARNING(-W, type-limits, ac_cxx_has_wtype_limits)
     MOZ_CXX_SUPPORTS_WARNING(-W, empty-body, ac_cxx_has_wempty_body)
+    MOZ_CXX_SUPPORTS_WARNING(-W, error=conversion-null, ac_cxx_has_werror_conversion_null)
+    MOZ_CXX_SUPPORTS_WARNING(-W, sign-compare, ac_cxx_has_sign_compare)
 
-    # Turn off the following warnings that -Wall/-pedantic turn on:
-    # -Wno-ctor-dtor-privacy - ???
-    # -Wno-overlength-strings - we exceed the minimum maximum length frequently
+    # Turn off the following warnings that -Wall turns on:
     # -Wno-invalid-offsetof - we use offsetof on non-POD types frequently
-    # -Wno-variadic-macros - ???
     #
     _WARNINGS_CXXFLAGS="${_WARNINGS_CXXFLAGS} -Wno-ctor-dtor-privacy"
     MOZ_CXX_SUPPORTS_WARNING(-Wno-, unused-local-typedefs, ac_cxx_has_wno_unused_local_typedefs)
@@ -1310,7 +1252,7 @@ if test "$GNU_CXX"; then
        esac
     fi
 
-    _DEFINES_CXXFLAGS='-DMOZILLA_CLIENT -include $(DEPTH)/js-confdefs.h'
+    _DEFINES_CXXFLAGS='-DMOZILLA_CLIENT -include $(DEPTH)/js/src/js-confdefs.h'
     _USE_CPP_INCLUDE_FLAG=1
 
     # Recent clang and gcc support C++11 deleted functions without warnings if
@@ -1388,16 +1330,6 @@ AC_LANG_RESTORE
 fi # COMPILE_ENVIRONMENT
 
 dnl ========================================================
-dnl Enable high-memory support on OS/2 by default.
-dnl ========================================================
-MOZ_OS2_HIGH_MEMORY=1
-MOZ_ARG_DISABLE_BOOL(os2-high-mem,
-[  --disable-os2-high-mem  Disable high-memory support on OS/2],
-    MOZ_OS2_HIGH_MEMORY=,
-    MOZ_OS2_HIGH_MEMORY=1 )
-AC_SUBST(MOZ_OS2_HIGH_MEMORY)
-
-dnl ========================================================
 dnl = Use profiling compile flags
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(profiling,
@@ -1410,12 +1342,10 @@ dnl System overrides of the defaults for host
 dnl ========================================================
 case "$host" in
 *mingw*)
-    # we need Python 2.5 on Windows
-    PYTHON_VERSION=2.5
     if test -n "$_WIN32_MSVC"; then
         HOST_AR=lib
-        HOST_AR_FLAGS='-NOLOGO -OUT:"$@"'
-        HOST_CFLAGS="$HOST_CFLAGS -TC -nologo -Fd\$(HOST_PDBFILE)"
+        HOST_AR_FLAGS='-NOLOGO -OUT:$@'
+        HOST_CFLAGS="$HOST_CFLAGS -TC -nologo"
         HOST_RANLIB='echo ranlib'
     else
         HOST_CFLAGS="$HOST_CFLAGS -mwindows"
@@ -1457,38 +1387,18 @@ case "$host" in
     HOST_OPTIMIZE_FLAGS="${HOST_OPTIMIZE_FLAGS=-O3}"
     ;;
 
-*os2*)
-    HOST_CFLAGS="$HOST_CFLAGS -DXP_OS2 -DNO_X11 -Zomf"
-    HOST_NSPR_MDCPUCFG='\"md/_os2.cfg\"'
-    HOST_OPTIMIZE_FLAGS="${HOST_OPTIMIZE_FLAGS=-O2}"
-    HOST_BIN_SUFFIX=.exe
-    MOZ_FIX_LINK_PATHS=
-    ;;
-
 *)
     HOST_CFLAGS="$HOST_CFLAGS -DXP_UNIX"
     HOST_OPTIMIZE_FLAGS="${HOST_OPTIMIZE_FLAGS=-O2}"
     ;;
 esac
 
-dnl We require version 2.4 or newer of Python to build,
-dnl and 2.5 or newer on Windows.
-AC_MSG_CHECKING([for Python version >= $PYTHON_VERSION but not 3.x])
-changequote(,)
-$PYTHON -c "import sys; sys.exit(sys.version[:3] < sys.argv[1] or sys.version[:2] != '2.')" $PYTHON_VERSION
-_python_res=$?
-changequote([,])
-if test "$_python_res" != 0; then
-    AC_MSG_ERROR([Python $PYTHON_VERSION or higher (but not Python 3.x) is required.])
-fi
-AC_MSG_RESULT([yes])
-
-dnl Check for using a custom <stdint.h> implementation
+dnl Check for using a custom <inttypes.h> implementation
 dnl ========================================================
-AC_MSG_CHECKING(for custom <stdint.h> implementation)
-if test "$MOZ_CUSTOM_STDINT_H"; then
-  AC_DEFINE_UNQUOTED(MOZ_CUSTOM_STDINT_H, "$MOZ_CUSTOM_STDINT_H")
-  AC_MSG_RESULT(using $MOZ_CUSTOM_STDINT_H)
+AC_MSG_CHECKING(for custom <inttypes.h> implementation)
+if test "$MOZ_CUSTOM_INTTYPES_H"; then
+  AC_DEFINE_UNQUOTED(MOZ_CUSTOM_INTTYPES_H, "$MOZ_CUSTOM_INTTYPES_H")
+  AC_MSG_RESULT(using $MOZ_CUSTOM_INTTYPES_H)
 else
   AC_MSG_RESULT(none specified)
 fi
@@ -1552,34 +1462,13 @@ case "$target" in
     if test "$COMPILE_ENVIRONMENT"; then
         MOZ_CHECK_HEADERS(sys/inttypes.h)
     fi
-    AC_DEFINE(JS_SYS_TYPES_H_DEFINES_EXACT_SIZE_TYPES)
     AC_DEFINE(NSCAP_DISABLE_DEBUG_PTR_TYPES)
-    ;;
-
-*-bsdi*)
-    dnl -pedantic doesn't play well with BSDI's _very_ modified gcc (shlicc2)
-    _PEDANTIC=
-    case $OS_RELEASE in
-	4.*|5.*)
-            STRIP="$STRIP -d"
-            ;;
-	*)
-	    DSO_CFLAGS=''
-	    DSO_LDOPTS='-r'
-	    _WARNINGS_CFLAGS="-Wall"
-	    _WARNINGS_CXXFLAGS="-Wall"
-	    # The test above doesn't work properly, at least on 3.1.
-	    MKSHLIB_FORCE_ALL=''
-	    MKSHLIB_UNFORCE_ALL=''
-	;;
-    esac
     ;;
 
 *-darwin*)
     MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
     MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
     MOZ_OPTIMIZE_FLAGS="-O3 -fno-stack-protector"
-    _PEDANTIC=
     CFLAGS="$CFLAGS -fno-common"
     CXXFLAGS="$CXXFLAGS -fno-common"
     DLL_SUFFIX=".dylib"
@@ -1588,7 +1477,6 @@ case "$target" in
     _PLATFORM_DEFAULT_TOOLKIT='cairo-cocoa'
     TARGET_NSPR_MDCPUCFG='\"md/_darwin.cfg\"'
     LDFLAGS="$LDFLAGS -lobjc"
-    LIBXUL_LIBS='$(XPCOM_FROZEN_LDOPTS) $(LIBXUL_DIST)/bin/XUL'
     # The ExceptionHandling framework is needed for Objective-C exception
     # logging code in nsObjCExceptions.h. Currently we only use that in debug
     # builds.
@@ -1643,7 +1531,6 @@ ia64*-hpux*)
        MKCSHLIB='$(LD) $(DSO_LDOPTS) -o $@'
     fi
     MOZ_FIX_LINK_PATHS=
-    MOZ_NATIVE_MAKEDEPEND=
     AC_DEFINE(NSCAP_DISABLE_DEBUG_PTR_TYPES)
     AC_DEFINE(_LARGEFILE64_SOURCE)
     ;;
@@ -1685,17 +1572,14 @@ ia64*-hpux*)
         # -Os has been broken on Intel's C/C++ compilers for quite a
         # while; Intel recommends against using it.
         MOZ_OPTIMIZE_FLAGS="-O2"
-        MOZ_DEBUG_FLAGS="-g"
     elif test "$GNU_CC" -o "$GNU_CXX"; then
-        GCC_VERSION=`$CC -v 2>&1 | awk '/^gcc version/ { print $3 }'`
         case $GCC_VERSION in
-        4.1.*|4.2.*|4.5.*)
-            # -Os is broken on gcc 4.1.x 4.2.x, 4.5.x we need to tweak it to get good results.
+        4.5.*)
+            # -Os is broken on gcc 4.5.x we need to tweak it to get good results.
             MOZ_OPTIMIZE_SIZE_TWEAK="-finline-limit=50"
         esac
         MOZ_PGO_OPTIMIZE_FLAGS="-O3"
         MOZ_OPTIMIZE_FLAGS="-O3 -freorder-blocks $MOZ_OPTIMIZE_SIZE_TWEAK"
-        MOZ_DEBUG_FLAGS="-g"
     fi
 
     TARGET_NSPR_MDCPUCFG='\"md/_linux.cfg\"'
@@ -1704,9 +1588,6 @@ ia64*-hpux*)
     alpha*)
     	CFLAGS="$CFLAGS -mieee"
     	CXXFLAGS="$CXXFLAGS -mieee"
-    ;;
-    mips*)
-        MOZ_DEBUG_FLAGS="-g" # We want inlining
     ;;
     esac
 
@@ -1721,10 +1602,7 @@ ia64*-hpux*)
     DLL_SUFFIX=.dll
     RC=rc.exe
     MC=mc.exe
-    # certain versions of cygwin's makedepend barf on the
-    # #include <string> vs -I./dist/include/string issue so don't use it
-    MOZ_NATIVE_MAKEDEPEND=
-    if test -n "$GNU_CC"; then
+    if test -n "$GNU_CC" -o -n "$CLANG_CC"; then
         CC="$CC -mwindows"
         CXX="$CXX -mwindows"
         CPP="$CPP -mwindows"
@@ -1734,17 +1612,20 @@ ia64*-hpux*)
         MKSHLIB='$(CXX) $(DSO_LDOPTS) -o $@'
         MKCSHLIB='$(CC) $(DSO_LDOPTS) -o $@'
         RC='$(WINDRES)'
+        # Use static libgcc and libstdc++
+        LDFLAGS="$LDFLAGS -static-libgcc -static-libstdc++"
         # Use temp file for windres (bug 213281)
         RCFLAGS='-O coff --use-temp-file'
         # mingw doesn't require kernel32, user32, and advapi32 explicitly
         LIBS="$LIBS -lgdi32 -lwinmm -lwsock32 -lpsapi"
-        MOZ_JS_LIBS='-L$(libdir) -lmozjs'
         MOZ_FIX_LINK_PATHS=
-        DYNAMIC_XPCOM_LIBS='-L$(LIBXUL_DIST)/lib -lxpcom -lxpcom_core -lmozalloc'
-        XPCOM_FROZEN_LDOPTS='-L$(LIBXUL_DIST)/lib -lxpcom -lmozalloc'
         DLL_PREFIX=
         IMPORT_LIB_SUFFIX=dll.a
-        GCC_VERSION=`$CC -v 2>&1 | awk '/^gcc version/ { print $3 }'`
+
+        # We use mix of both POSIX and Win32 printf format across the tree, so format
+        # warnings are useless on mingw.
+        MOZ_C_SUPPORTS_WARNING(-Wno-, format, ac_c_has_wno_format)
+        MOZ_CXX_SUPPORTS_WARNING(-Wno-, format, ac_cxx_has_wno_format)
     else
         TARGET_COMPILER_ABI=msvc
         HOST_CC='$(CC)'
@@ -1754,7 +1635,7 @@ ia64*-hpux*)
             AS="$(basename "$AS_BIN")"
         fi
         AR='lib'
-        AR_FLAGS='-NOLOGO -OUT:"$@"'
+        AR_FLAGS='-NOLOGO -OUT:$@'
         AR_EXTRACT=
         RANLIB='echo not_ranlib'
         STRIP='echo not_strip'
@@ -1773,44 +1654,54 @@ ia64*-hpux*)
         MKSHLIB_UNFORCE_ALL=
         DSO_LDOPTS=-SUBSYSTEM:WINDOWS
         _USE_CPP_INCLUDE_FLAG=1
-        _DEFINES_CFLAGS='-FI $(DEPTH)/js-confdefs.h -DMOZILLA_CLIENT'
-        _DEFINES_CXXFLAGS='-FI $(DEPTH)/js-confdefs.h -DMOZILLA_CLIENT'
-        CFLAGS="$CFLAGS -W3 -Gy -Fd\$(COMPILE_PDBFILE)"
-        CXXFLAGS="$CXXFLAGS -W3 -Gy -Fd\$(COMPILE_PDBFILE)"
-        # MSVC warnings C4244 and C4800 are ubiquitous, useless, and annoying.
-        CXXFLAGS="$CXXFLAGS -wd4244 -wd4800"
+        _DEFINES_CFLAGS='-FI $(DEPTH)/js/src/js-confdefs.h -DMOZILLA_CLIENT'
+        _DEFINES_CXXFLAGS='-FI $(DEPTH)/js/src/js-confdefs.h -DMOZILLA_CLIENT'
+        CFLAGS="$CFLAGS -W3 -Gy"
+        CXXFLAGS="$CXXFLAGS -W3 -Gy"
+        if test "$_CC_SUITE" -ge "12"; then
+            dnl VS2013+ requires -FS when parallel building by make -jN.
+            dnl If nothing, compiler sometimes causes C1041 error.
+            dnl
+            dnl Visual Studio 2013 supports -Gw flags
+            dnl http://blogs.msdn.com/b/vcblog/archive/2013/09/11/introducing-gw-compiler-switch.aspx
+            CFLAGS="$CFLAGS -FS -Gw"
+            CXXFLAGS="$CXXFLAGS -FS -Gw"
+        fi
+        # khuey says we can safely ignore MSVC warning C4251
+        # MSVC warning C4244 (implicit type conversion may lose data) warns
+        # and requires workarounds for perfectly valid code.  Also, GCC/clang
+        # don't warn about it by default. So for consistency/sanity, we turn
+        # it off on MSVC, too.
+        CFLAGS="$CFLAGS -wd4244"
+        CXXFLAGS="$CXXFLAGS -wd4244 -wd4251"
         # make 'foo == bar;' error out
         CFLAGS="$CFLAGS -we4553"
         CXXFLAGS="$CXXFLAGS -we4553"
         LIBS="$LIBS kernel32.lib user32.lib gdi32.lib winmm.lib wsock32.lib advapi32.lib psapi.lib"
-        MOZ_DEBUG_FLAGS='-Zi'
         MOZ_DEBUG_LDFLAGS='-DEBUG -DEBUGTYPE:CV'
         WARNINGS_AS_ERRORS='-WX'
         MOZ_OPTIMIZE_FLAGS="-O2"
-        MOZ_JS_LIBS='$(libdir)/mozjs.lib'
         MOZ_FIX_LINK_PATHS=
-        DYNAMIC_XPCOM_LIBS='$(LIBXUL_DIST)/lib/xpcom.lib $(LIBXUL_DIST)/lib/xpcom_core.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
-        XPCOM_FROZEN_LDOPTS='$(LIBXUL_DIST)/lib/xpcom.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
-        LIBXUL_LIBS='$(LIBXUL_DIST)/lib/xpcom.lib $(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
         MOZ_COMPONENT_NSPR_LIBS='$(NSPR_LIBS)'
-        if test $_MSC_VER -ge 1400; then
-            LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE -NXCOMPAT"
-            dnl For profile-guided optimization
-            PROFILE_GEN_CFLAGS="-GL"
-            PROFILE_GEN_LDFLAGS="-LTCG:PGINSTRUMENT"
-            dnl XXX: PGO builds can fail with warnings treated as errors,
-            dnl specifically "no profile data available" appears to be
-            dnl treated as an error sometimes. This might be a consequence
-            dnl of using WARNINGS_AS_ERRORS in some modules, combined
-            dnl with the linker doing most of the work in the whole-program
-            dnl optimization/PGO case. I think it's probably a compiler bug,
-            dnl but we work around it here.
-            PROFILE_USE_CFLAGS="-GL -wd4624 -wd4952"
-            dnl XXX: should be -LTCG:PGOPTIMIZE, but that fails on libxul.
-            dnl Probably also a compiler bug, but what can you do?
-            PROFILE_USE_LDFLAGS="-LTCG:PGUPDATE"
-            LDFLAGS="$LDFLAGS -DYNAMICBASE"
+        LDFLAGS="$LDFLAGS -LARGEADDRESSAWARE -NXCOMPAT"
+        if test -z "$DEVELOPER_OPTIONS"; then
+            LDFLAGS="$LDFLAGS -RELEASE"
         fi
+        dnl For profile-guided optimization
+        PROFILE_GEN_CFLAGS="-GL"
+        PROFILE_GEN_LDFLAGS="-LTCG:PGINSTRUMENT"
+        dnl XXX: PGO builds can fail with warnings treated as errors,
+        dnl specifically "no profile data available" appears to be
+        dnl treated as an error sometimes. This might be a consequence
+        dnl of using WARNINGS_AS_ERRORS in some modules, combined
+        dnl with the linker doing most of the work in the whole-program
+        dnl optimization/PGO case. I think it's probably a compiler bug,
+        dnl but we work around it here.
+        PROFILE_USE_CFLAGS="-GL -wd4624 -wd4952"
+        dnl XXX: should be -LTCG:PGOPTIMIZE, but that fails on libxul.
+        dnl Probably also a compiler bug, but what can you do?
+        PROFILE_USE_LDFLAGS="-LTCG:PGUPDATE"
+        LDFLAGS="$LDFLAGS -DYNAMICBASE"
     fi
     AC_DEFINE(HAVE_SNPRINTF)
     AC_DEFINE(_WINDOWS)
@@ -1819,7 +1710,6 @@ ia64*-hpux*)
     AC_DEFINE(XP_WIN32)
     AC_DEFINE(HW_THREADS)
     AC_DEFINE(STDC_HEADERS)
-    AC_DEFINE(NEW_H, <new>)
     AC_DEFINE(WIN32_LEAN_AND_MEAN)
     TARGET_MD_ARCH=win32
     _PLATFORM_DEFAULT_TOOLKIT='cairo-windows'
@@ -1867,18 +1757,15 @@ ia64*-hpux*)
             AC_MSG_ERROR([You are targeting i386 but using the 64-bit compiler.])
         fi
 
-        if test $_MSC_VER -ge 1400; then
-            LDFLAGS="$LDFLAGS -SAFESEH"
-        fi
-
         if test -n "$GNU_CC"; then
             CFLAGS="$CFLAGS -mstackrealign -fno-keep-inline-dllexport"
             CXXFLAGS="$CXXFLAGS -mstackrealign -fno-keep-inline-dllexport"
+            LDFLAGS="$LDFLAGS -Wl,--large-address-aware"
         else
             DSO_LDOPTS="$DSO_LDOPTS -MACHINE:X86"
+            LDFLAGS="$LDFLAGS -SAFESEH"
         fi
 
-        MOZ_CHECK_HEADERS(mmintrin.h)
     	AC_DEFINE(_X86_)
 	;;
     x86_64-*)
@@ -1891,10 +1778,6 @@ ia64*-hpux*)
     	AC_DEFINE(_CPU_ARCH_NOT_DEFINED)
 	;;
     esac
-
-    if test "$HAVE_64BIT_OS"; then
-    	AC_DEFINE(_WIN64)
-    fi
     ;;
 
 *-netbsd*)
@@ -1917,8 +1800,8 @@ ia64*-hpux*)
     if test "$LIBRUNPATH"; then
 	DSO_LDOPTS="-Wl,-R$LIBRUNPATH $DSO_LDOPTS"
     fi
-    MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-soname,lib$(LIBRARY_NAME)$(DLL_SUFFIX) -o $@'
-    MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-soname,lib$(LIBRARY_NAME)$(DLL_SUFFIX) -o $@'
+    MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-soname,$(notdir $@) -o $@'
+    MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -Wl,-soname,$(notdir $@) -o $@'
     ;;
 
 *-openbsd*)
@@ -1931,69 +1814,6 @@ ia64*-hpux*)
     fi
     ;;
 
-*-os2*)
-    MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
-    MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_CFLAGS) $(DSO_LDOPTS) -o $@'
-    AC_DEFINE(OS2)
-    AC_DEFINE(XP_OS2)
-    AC_DEFINE(OS2EMX_PLAIN_CHAR)
-    AC_DEFINE(TCPV40HDRS)
-    DLL_PREFIX=
-    LIB_PREFIX=
-    LIB_SUFFIX=lib
-    BIN_SUFFIX=".exe"
-    DLL_SUFFIX=".dll"
-    IMPORT_LIB_SUFFIX=lib
-    DSO_PIC_CFLAGS=
-    AR=emxomfar
-    AR_FLAGS='r $@'
-    CFLAGS="$CFLAGS -Zomf"
-    CXXFLAGS="$CXXFLAGS -Zomf"
-    DSO_LDOPTS='-Zdll'
-    BIN_FLAGS='-Zlinker /ST:0x100000'
-    IMPLIB='emximp -o'
-    FILTER='true'
-    LDFLAGS='-Zmap'
-    WARNINGS_AS_ERRORS='-Werror'
-    MOZ_DEBUG_FLAGS="-g -fno-inline"
-    MOZ_OPTIMIZE_FLAGS="-O2"
-    MOZ_OPTIMIZE_LDFLAGS="-s -Zlinker /EXEPACK:2 -Zlinker /PACKCODE -Zlinker /PACKDATA"
-    DYNAMIC_XPCOM_LIBS='-L$(LIBXUL_DIST)/lib $(LIBXUL_DIST)/lib/xpcom.lib $(LIBXUL_DIST)/lib/xpcom_core.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
-    LIBXUL_LIBS='-L$(LIBXUL_DIST)/lib $(LIBXUL_DIST)/lib/xpcom.lib $(LIBXUL_DIST)/lib/xul.lib $(LIBXUL_DIST)/lib/mozalloc.lib'
-    TARGET_MD_ARCH=os2
-    _PLATFORM_DEFAULT_TOOLKIT="cairo-os2"
-    RC=rc.exe
-    MC=mc.exe
-    RCFLAGS='-n'
-    MOZ_USER_DIR="Mozilla"
-
-    if test "$MOZTOOLS"; then
-        MOZ_TOOLS_DIR=`echo $MOZTOOLS | sed -e 's|\\\\|/|g'`
-    else
-        AC_MSG_ERROR([MOZTOOLS is not set])
-    fi
-    if test -n "$MOZ_OS2_HIGH_MEMORY"; then
-        DSO_LDOPTS="$DSO_LDOPTS -Zhigh-mem"
-        LDFLAGS="$LDFLAGS -Zhigh-mem"
-        MOZ_OPTIMIZE_LDFLAGS="$MOZ_OPTIMIZE_LDFLAGS -Zhigh-mem"
-        AC_DEFINE(MOZ_OS2_HIGH_MEMORY)
-    fi
-
-    # GCC for OS/2 currently predefines these, but we don't want them
-    _DEFINES_CFLAGS="$_DEFINES_CFLAGS -Uunix -U__unix -U__unix__"
-    _DEFINES_CXXFLAGS="$_DEFINES_CXXFLAGS -Uunix -U__unix -U__unix__"
-
-    AC_CACHE_CHECK(for __declspec(dllexport),
-        ac_os2_declspec,
-        [AC_TRY_COMPILE([__declspec(dllexport) void ac_os2_declspec(void) {}],
-                        [return 0;],
-                        ac_os2_declspec="yes",
-                        ac_os2_declspec="no")])
-    if test "$ac_os2_declspec" != "yes"; then
-        AC_MSG_ERROR([Compiler does not support __declspec(dllexport), install GCC-4.3.2 or newer])
-    fi
-    ;;
-
 *-solaris*)
     AC_DEFINE(SOLARIS)
     TARGET_NSPR_MDCPUCFG='\"md/_solaris.cfg\"'
@@ -2002,7 +1822,6 @@ ia64*-hpux*)
        NO_NSPR_CONFIG_SYSTEM_CFLAGS="-I/usr/include/mps"
        NO_NSPR_CONFIG_SYSTEM_VERSION=["`pkgparam SUNWpr SUNW_PRODVERS | sed -e 's/^[1-9][0-9]*\.[0-9][0-9]*$/&.0/'`"]
     fi
-    MOZ_NATIVE_MAKEDEPEND=
     MOZ_FIX_LINK_PATHS=
     # $ORIGIN/.. is for shared libraries under components/ to locate shared
     # libraries one level up (e.g. libnspr4.so)
@@ -2022,8 +1841,8 @@ ia64*-hpux*)
                        [LDFLAGS=$_SAVE_LDFLAGS])
        fi
        MOZ_OPTIMIZE_FLAGS="-xO4"
-       MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_FLAGS) $(DSO_LDOPTS) -h $@ -o $@'
-       MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_FLAGS) $(DSO_LDOPTS) -h $@ -o $@'
+       MKSHLIB='$(CXX) $(CXXFLAGS) $(DSO_PIC_FLAGS) $(DSO_LDOPTS) -h $(notdir $@) -o $@'
+       MKCSHLIB='$(CC) $(CFLAGS) $(DSO_PIC_FLAGS) $(DSO_LDOPTS) -h $(notdir $@) -o $@'
        MKSHLIB_FORCE_ALL='-z allextract'
        MKSHLIB_UNFORCE_ALL='-z defaultextract'
        DSO_LDOPTS='-G'
@@ -2095,10 +1914,6 @@ ia64*-hpux*)
     esac
     ;;
 
-*-os2*)
-    HOST_NSPR_MDCPUCFG='\"md/_os2.cfg\"'
-    ;;
-
 esac
 
 dnl Only one oddball right now (QNX), but this gives us flexibility
@@ -2119,9 +1934,6 @@ if test -z "$MKSHLIB_FORCE_ALL" -o -z "$MKSHLIB_UNFORCE_ALL"; then
     NO_LD_ARCHIVE_FLAGS=1
 fi
 case "$target" in
-*-os2*)
-    NO_LD_ARCHIVE_FLAGS=
-    ;;
 *-aix4.3*|*-aix5*)
     NO_LD_ARCHIVE_FLAGS=
     ;;
@@ -2170,86 +1982,62 @@ dnl Configure JIT support
 
 case "$target" in
 i?86-*)
-    ENABLE_METHODJIT=1
-    ENABLE_MONOIC=1
-    ENABLE_POLYIC=1
-    ENABLE_METHODJIT_TYPED_ARRAY=1
+    ENABLE_ION=1
+    ENABLE_YARR_JIT=1
     AC_DEFINE(JS_CPU_X86)
     AC_DEFINE(JS_NUNBOX32)
     ;;
 x86_64*-*)
-    ENABLE_METHODJIT=1
-    ENABLE_MONOIC=1
-    ENABLE_POLYIC=1
-    ENABLE_METHODJIT_TYPED_ARRAY=1
+    ENABLE_ION=1
+    ENABLE_YARR_JIT=1
     AC_DEFINE(JS_CPU_X64)
     AC_DEFINE(JS_PUNBOX64)
     ;;
 arm*-*)
-    ENABLE_METHODJIT=1
-    ENABLE_MONOIC=1
-    ENABLE_POLYIC=1
-    ENABLE_POLYIC_TYPED_ARRAY=1
+    ENABLE_ION=1
+    ENABLE_YARR_JIT=1
     AC_DEFINE(JS_CPU_ARM)
     AC_DEFINE(JS_NUNBOX32)
     ;;
 sparc*-*)
     if test ! "$HAVE_64BIT_OS" ; then
-    ENABLE_METHODJIT=1
-    ENABLE_MONOIC=1
-    ENABLE_POLYIC=1
-    ENABLE_METHODJIT_TYPED_ARRAY=1
+dnl ENABLE_ION=0
     AC_DEFINE(JS_CPU_SPARC)
     AC_DEFINE(JS_NUNBOX32)
     fi
     ;;
 mips*-*)
-    ENABLE_METHODJIT=1
-    ENABLE_MONOIC=1
-    ENABLE_POLYIC=1
-    ENABLE_METHODJIT_TYPED_ARRAY=1
     AC_DEFINE(JS_CPU_MIPS)
     AC_DEFINE(JS_NUNBOX32)
     ;;
 esac
 
-MOZ_ARG_DISABLE_BOOL(methodjit,
-[  --disable-methodjit           Disable method JIT support],
-  ENABLE_METHODJIT= )
+MOZ_ARG_DISABLE_BOOL(ion,
+[  --disable-ion      Disable use of the IonMonkey JIT],
+  ENABLE_ION= )
 
-MOZ_ARG_DISABLE_BOOL(monoic,
-[  --disable-monoic      Disable use of MICs by JIT compiler],
-  ENABLE_MONOIC= )
+MOZ_ARG_DISABLE_BOOL(yarr-jit,
+[  --disable-yarr-jit    Disable YARR JIT support],
+  ENABLE_YARR_JIT= )
 
-MOZ_ARG_DISABLE_BOOL(polyic,
-[  --disable-polyic      Disable use of PICs by JIT compiler],
-  ENABLE_POLYIC= )
-
-MOZ_ARG_ENABLE_BOOL(methodjit-spew,
-[  --enable-methodjit-spew      Enable method JIT spew support],
-  ENABLE_METHODJIT_SPEW=1,
-  ENABLE_METHODJIT_SPEW= )
-
-AC_SUBST(ENABLE_METHODJIT)
 AC_SUBST(ENABLE_METHODJIT_SPEW)
 
-if test "$ENABLE_METHODJIT"; then
-    AC_DEFINE(JS_METHODJIT)
+AC_SUBST(ENABLE_ION)
+
+if test "$ENABLE_ION"; then
+    AC_DEFINE(JS_ION)
 fi
 
-if test "$ENABLE_MONOIC"; then
-    AC_DEFINE(JS_MONOIC)
+AC_SUBST(ENABLE_YARR_JIT)
+
+if test "$ENABLE_YARR_JIT"; then
+    AC_DEFINE(ENABLE_YARR_JIT)
 fi
 
-if test "$ENABLE_POLYIC"; then
-    AC_DEFINE(JS_POLYIC)
+if test -n "$COMPILE_ENVIRONMENT"; then
+    MOZ_COMPILER_OPTS
 fi
 
-if test "$ENABLE_METHODJIT_TYPED_ARRAY"; then
-    AC_DEFINE(JS_METHODJIT_TYPED_ARRAY)
-fi
-
-MOZ_COMPILER_OPTS
 if test -z "$SKIP_COMPILER_CHECKS"; then
 dnl Checks for typedefs, structures, and compiler characteristics.
 dnl ========================================================
@@ -2260,20 +2048,6 @@ AC_TYPE_OFF_T
 AC_TYPE_PID_T
 AC_TYPE_SIZE_T
 AC_LANG_CPLUSPLUS
-AC_MSG_CHECKING(for __stdcall)
-AC_CACHE_VAL(ac_cv___stdcall,
- [AC_TRY_COMPILE([template <typename Method> struct foo;
-                  template <> struct foo<void (*)()> {};
-                  template <> struct foo<void (__stdcall*)()> {};],
-                 [],
-                 [ac_cv___stdcall=true],
-                 [ac_cv___stdcall=false])])
-if test "$ac_cv___stdcall" = true ; then
-  AC_DEFINE(HAVE_STDCALL)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
 AC_LANG_C
 AC_MSG_CHECKING(for ssize_t)
 AC_CACHE_VAL(ac_cv_type_ssize_t,
@@ -2303,18 +2077,6 @@ else
   AC_MSG_RESULT(no)
 fi
 
-MOZ_SIZE_OF_TYPE(JS_BYTES_PER_WORD, void*, 4 8)
-if test "$moz_cv_size_of_JS_BYTES_PER_WORD" -eq "4"; then
-  AC_DEFINE(JS_BITS_PER_WORD_LOG2, 5)
-elif test "$moz_cv_size_of_JS_BYTES_PER_WORD" -eq "8"; then
-  AC_DEFINE(JS_BITS_PER_WORD_LOG2, 6)
-else
-  AC_MSG_ERROR([Unexpected JS_BYTES_PER_WORD])
-fi
-
-MOZ_ALIGN_OF_TYPE(JS_ALIGN_OF_POINTER, void*, 2 4 8 16)
-MOZ_SIZE_OF_TYPE(JS_BYTES_PER_DOUBLE, double, 6 8 10 12 14)
-
 MOZ_CHECK_HEADERS(endian.h)
 if test "$ac_cv_header_endian_h" = yes; then
     AC_DEFINE(JS_HAVE_ENDIAN_H)
@@ -2330,71 +2092,9 @@ if test "$ac_cv_header_sys_isa_defs_h" = yes; then
     AC_DEFINE(JS_HAVE_SYS_ISA_DEFS_H)
 fi
 
-dnl Check for uint and uint_t.
-dnl ========================================================
-AC_MSG_CHECKING(for uint)
-AC_CACHE_VAL(ac_cv_uint,
- [AC_TRY_COMPILE([#include <stdio.h>
-                  #include <sys/types.h>],
-                 [uint foo = 0;],
-                 [ac_cv_uint=true],
-                 [ac_cv_uint=false])])
-if test "$ac_cv_uint" = true ; then
-  AC_DEFINE(HAVE_UINT)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
-AC_MSG_CHECKING(for uint_t)
-AC_CACHE_VAL(ac_cv_uint_t,
- [AC_TRY_COMPILE([#include <stdio.h>
-                  #include <sys/types.h>],
-                 [uint_t foo = 0;],
-                 [ac_cv_uint_t=true],
-                 [ac_cv_uint_t=false])])
-if test "$ac_cv_uint_t" = true ; then
-  AC_DEFINE(HAVE_UINT_T)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
-
-dnl On the gcc trunk (as of 2001-02-09) _GNU_SOURCE, and thus __USE_GNU,
-dnl are defined when compiling C++ but not C.  Since the result of this
-dnl test is used only in C++, do it in C++.
 AC_LANG_CPLUSPLUS
 
-AC_MSG_CHECKING(for uname.domainname)
-AC_CACHE_VAL(ac_cv_have_uname_domainname_field,
-    [AC_TRY_COMPILE([#include <sys/utsname.h>],
-        [ struct utsname *res; char *domain;
-            (void)uname(res);  if (res != 0) { domain = res->domainname; } ],
-        [ac_cv_have_uname_domainname_field=true],
-        [ac_cv_have_uname_domainname_field=false])])
-
-if test "$ac_cv_have_uname_domainname_field" = "true"; then
-    AC_DEFINE(HAVE_UNAME_DOMAINNAME_FIELD)
-    AC_MSG_RESULT(yes)
-else
-    AC_MSG_RESULT(no)
-fi
-
-AC_MSG_CHECKING(for uname.__domainname)
-AC_CACHE_VAL(ac_cv_have_uname_us_domainname_field,
-    [AC_TRY_COMPILE([#include <sys/utsname.h>],
-        [ struct utsname *res; char *domain;
-            (void)uname(res);  if (res != 0) { domain = res->__domainname; } ],
-        [ac_cv_have_uname_us_domainname_field=true],
-        [ac_cv_have_uname_us_domainname_field=false])])
-
-if test "$ac_cv_have_uname_us_domainname_field" = "true"; then
-    AC_DEFINE(HAVE_UNAME_US_DOMAINNAME_FIELD)
-    AC_MSG_RESULT(yes)
-else
-    AC_MSG_RESULT(no)
-fi
-
-AC_LANG_C
+MOZ_CXX11
 
 dnl Check for .hidden assembler directive and visibility attribute.
 dnl Borrowed from glibc configure.in
@@ -2498,7 +2198,7 @@ EOF
                        ])
         if test "$ac_cv_have_visibility_builtin_bug" = "no" -a \
                 "$ac_cv_have_visibility_class_bug" = "no"; then
-          VISIBILITY_FLAGS='-I$(DIST)/system_wrappers_js -include $(topsrcdir)/config/gcc_hidden.h'
+          VISIBILITY_FLAGS='-I$(DIST)/system_wrappers -include $(topsrcdir)/config/gcc_hidden.h'
           WRAP_SYSTEM_INCLUDES=1
         else
           VISIBILITY_FLAGS='-fvisibility=hidden'
@@ -2517,6 +2217,12 @@ AC_SUBST(WRAP_SYSTEM_INCLUDES)
 AC_SUBST(VISIBILITY_FLAGS)
 
 MOZ_GCC_PR49911
+MOZ_GCC_PR39608
+if test "$OS_TARGET" != WINNT; then
+    # Only run this test with clang on non-Windows platforms, because clang
+    # cannot do enough code gen for now to make this test work correctly.
+    MOZ_LLVM_PR8927
+fi
 
 dnl Checks for header files.
 dnl ========================================================
@@ -2535,19 +2241,6 @@ MOZ_CHECK_HEADERS(sys/statvfs.h sys/statfs.h sys/vfs.h sys/mount.h)
 dnl Quota support
 MOZ_CHECK_HEADERS(sys/quota.h)
 MOZ_CHECK_HEADERS(linux/quota.h)
-
-dnl Try for MMX support
-dnl NB - later gcc versions require -mmmx for this header to be successfully
-dnl included (or another option which implies it, such as -march=pentium-mmx)
-MOZ_CHECK_HEADERS(mmintrin.h)
-
-dnl Check whether the compiler supports the new-style C++ standard
-dnl library headers (i.e. <new>) or needs the old "new.h"
-AC_LANG_CPLUSPLUS
-NEW_H=new.h
-MOZ_CHECK_HEADER(new, [NEW_H=new])
-AC_DEFINE_UNQUOTED(NEW_H, <$NEW_H>)
-AC_LANG_C
 
 AC_ARG_ENABLE(dtrace,
               [  --enable-dtrace         build with dtrace support if available (default=no)],
@@ -2591,19 +2284,12 @@ dnl against libSystem causes issues when debugging (see bug 299601).
 case $target in
 *-darwin*)
     ;;
-*-os2*)
-    ;;
 *)
     AC_SEARCH_LIBS(dlopen, dl,
         MOZ_CHECK_HEADER(dlfcn.h,
         AC_DEFINE(HAVE_DLOPEN)))
     ;;
 esac
-
-_SAVE_CFLAGS="$CFLAGS"
-CFLAGS="$CFLAGS -D_GNU_SOURCE"
-AC_CHECK_FUNCS(dladdr)
-CFLAGS="$_SAVE_CFLAGS"
 
 if test ! "$GNU_CXX"; then
 
@@ -2617,13 +2303,7 @@ if test ! "$GNU_CXX"; then
      esac
 fi
 
-dnl OS/2 has socket in libc.
-case $target in
-*-os2*)
-    ;;
-*)
-    AC_CHECK_LIB(socket, socket)
-esac
+AC_CHECK_LIB(socket, socket)
 
 dnl ========================================================
 dnl = pthread support
@@ -2757,25 +2437,14 @@ dnl Checks for library functions.
 dnl ========================================================
 AC_PROG_GCC_TRADITIONAL
 AC_FUNC_MEMCMP
-AC_CHECK_FUNCS([fchmod flockfile getc_unlocked _getc_nolock getpagesize \
-                lchown localtime_r lstat64 memmove random rint sbrk snprintf \
-                stat64 statvfs statvfs64 strerror strtok_r truncate64])
+AC_CHECK_FUNCS([getc_unlocked _getc_nolock localtime_r])
 
-dnl Windows functions, for mingw.
-AC_TRY_LINK([#include <windows.h>],
-             [SYSTEMTIME st;FILETIME ft;SystemTimeToFileTime(&st,&ft);],
-             ac_cv_have_systemtimetofiletime="yes",
-             ac_cv_have_systemtimetofiletime="no")
-if test "$ac_cv_have_systemtimetofiletime" = "yes"; then
-    AC_DEFINE(HAVE_SYSTEMTIMETOFILETIME)
-fi
-AC_TRY_LINK([#include <windows.h>],
-             [FILETIME ft;GetSystemTimeAsFileTime(&ft);],
-             ac_cv_have_getsystemtimeasfiletime="yes",
-             ac_cv_have_getsystemtimeasfiletime="no")
-if test "$ac_cv_have_getsystemtimeasfiletime" = "yes"; then
-    AC_DEFINE(HAVE_GETSYSTEMTIMEASFILETIME)
-fi
+
+dnl Checks for math functions.
+dnl ========================================================
+AC_CHECK_LIB(m, sin)
+AC_CHECK_FUNCS([log2 log1p expm1 sqrt1pm1 acosh asinh atanh trunc cbrt])
+
 
 dnl check for wcrtomb/mbrtowc
 dnl =======================================================================
@@ -2806,15 +2475,23 @@ fi
 AC_CACHE_CHECK(
     [for res_ninit()],
     ac_cv_func_res_ninit,
-    [AC_TRY_LINK([
-        #ifdef linux
-        #define _BSD_SOURCE 1
-        #endif
-        #include <resolv.h>
-        ],
-        [int foo = res_ninit(&_res);],
-        [ac_cv_func_res_ninit=yes],
-        [ac_cv_func_res_ninit=no])
+    [if test "$OS_TARGET" = NetBSD -o "$OS_TARGET" = OpenBSD; then
+        dnl no need for res_ninit() on NetBSD and OpenBSD
+        ac_cv_func_res_ninit=no
+     else
+       AC_TRY_LINK([
+            #ifdef linux
+            #define _BSD_SOURCE 1
+            #endif
+            #include <sys/types.h>
+            #include <netinet/in.h>
+            #include <arpa/nameser.h>
+            #include <resolv.h>
+            ],
+            [int foo = res_ninit(&_res);],
+            [ac_cv_func_res_ninit=yes],
+            [ac_cv_func_res_ninit=no])
+     fi
     ])
 
 if test "$ac_cv_func_res_ninit" = "yes"; then
@@ -2825,35 +2502,17 @@ dnl    AC_CHECK_LIB(bind, res_ninit, AC_DEFINE(HAVE_RES_NINIT),
 dnl        AC_CHECK_LIB(resolv, res_ninit, AC_DEFINE(HAVE_RES_NINIT)))
 fi
 
-AC_LANG_CPLUSPLUS
-AC_CACHE_CHECK(
-    [for gnu_get_libc_version()],
-    ac_cv_func_gnu_get_libc_version,
-    [AC_TRY_LINK([
-        #ifdef HAVE_GNU_LIBC_VERSION_H
-        #include <gnu/libc-version.h>
-        #endif
-        ],
-        [const char *glibc_version = gnu_get_libc_version();],
-        [ac_cv_func_gnu_get_libc_version=yes],
-        [ac_cv_func_gnu_get_libc_version=no]
-        )]
-    )
+AM_LANGINFO_CODESET
 
-if test "$ac_cv_func_gnu_get_libc_version" = "yes"; then
-    AC_DEFINE(HAVE_GNU_GET_LIBC_VERSION)
-fi
 AC_LANG_C
 
 dnl **********************
 dnl *** va_copy checks ***
 dnl **********************
-dnl we currently check for all three va_copy possibilities, so we get
-dnl all results in config.log for bug reports.
-AC_MSG_CHECKING(for an implementation of va_copy())
-AC_CACHE_VAL(ac_cv_va_copy,[
-    AC_TRY_RUN([
-        #include <stdarg.h>
+AC_CACHE_CHECK([for an implementation of va_copy()],
+               ac_cv_va_copy,
+    [AC_TRY_COMPILE([#include <stdarg.h>
+                     #include <stdlib.h>
         void f (int i, ...) {
             va_list args1, args2;
             va_start (args1, i);
@@ -2861,37 +2520,16 @@ AC_CACHE_VAL(ac_cv_va_copy,[
             if (va_arg (args2, int) != 42 || va_arg (args1, int) != 42)
                 exit (1);
             va_end (args1); va_end (args2);
-        }
-        int main() { f (0, 42); return 0; }],
-        ac_cv_va_copy=yes,
-        ac_cv_va_copy=no,
-        ac_cv_va_copy=no
-    )
-])
-AC_MSG_RESULT($ac_cv_va_copy)
-AC_MSG_CHECKING(for an implementation of __va_copy())
-AC_CACHE_VAL(ac_cv___va_copy,[
-    AC_TRY_RUN([
-        #include <stdarg.h>
-        void f (int i, ...) {
-            va_list args1, args2;
-            va_start (args1, i);
-            __va_copy (args2, args1);
-            if (va_arg (args2, int) != 42 || va_arg (args1, int) != 42)
-                exit (1);
-            va_end (args1); va_end (args2);
-        }
-        int main() { f (0, 42); return 0; }],
-        ac_cv___va_copy=yes,
-        ac_cv___va_copy=no,
-        ac_cv___va_copy=no
-    )
-])
-AC_MSG_RESULT($ac_cv___va_copy)
-AC_MSG_CHECKING(whether va_lists can be copied by value)
-AC_CACHE_VAL(ac_cv_va_val_copy,[
-    AC_TRY_RUN([
-        #include <stdarg.h>
+        }],
+        [f(0, 42); return 0],
+        [ac_cv_va_copy=yes],
+        [ac_cv_va_copy=no]
+    )]
+)
+AC_CACHE_CHECK([whether va_list can be copied by value],
+               ac_cv_va_val_copy,
+    [AC_TRY_COMPILE([#include <stdarg.h>
+                     #include <stdlib.h>
         void f (int i, ...) {
             va_list args1, args2;
             va_start (args1, i);
@@ -2899,25 +2537,20 @@ AC_CACHE_VAL(ac_cv_va_val_copy,[
             if (va_arg (args2, int) != 42 || va_arg (args1, int) != 42)
                 exit (1);
             va_end (args1); va_end (args2);
-        }
-        int main() { f (0, 42); return 0; }],
-        ac_cv_va_val_copy=yes,
-        ac_cv_va_val_copy=no,
-        ac_cv_va_val_copy=yes
-    )
-])
+        }],
+        [f(0, 42); return 0],
+        [ac_cv_va_val_copy=yes],
+        [ac_cv_va_val_copy=no],
+    )]
+)
 if test "x$ac_cv_va_copy" = "xyes"; then
     AC_DEFINE(VA_COPY, va_copy)
-    AC_DEFINE(HAVE_VA_COPY)
-elif test "x$ac_cv___va_copy" = "xyes"; then
-    AC_DEFINE(VA_COPY, __va_copy)
     AC_DEFINE(HAVE_VA_COPY)
 fi
 
 if test "x$ac_cv_va_val_copy" = "xno"; then
    AC_DEFINE(HAVE_VA_LIST_AS_ARRAY)
 fi
-AC_MSG_RESULT($ac_cv_va_val_copy)
 
 dnl ===================================================================
 dnl ========================================================
@@ -2949,34 +2582,6 @@ if test "$GNU_CC"; then
   fi
 
   TARGET_COMPILER_ABI="${TARGET_COMPILER_ABI-${ARM_ABI_PREFIX}gcc3}"
-fi
-
-dnl Check for support of modern template specialization syntax
-dnl Test code and requirement from scc@netscape.com.
-dnl Autoconf cut-and-paste job by waterson@netscape.com
-AC_CACHE_CHECK(for modern C++ template specialization syntax support,
-               ac_cv_cpp_modern_specialize_template_syntax,
-               [AC_TRY_COMPILE(template <class T> struct X { int a; };
-                               class Y {};
-                               template <> struct X<Y> { double a; };,
-                               X<int> int_x;
-                               X<Y> y_x;,
-                               ac_cv_cpp_modern_specialize_template_syntax=yes,
-                               ac_cv_cpp_modern_specialize_template_syntax=no)])
-if test "$ac_cv_cpp_modern_specialize_template_syntax" = no ; then
-  AC_MSG_ERROR([The C++ compiler does not support template specialization])
-fi
-
-dnl Some compilers support only full specialization, and some don't.
-AC_CACHE_CHECK(whether partial template specialization works,
-               ac_cv_cpp_partial_specialization,
-               [AC_TRY_COMPILE(template <class T> class Foo {};
-                               template <class T> class Foo<T*> {};,
-                               return 0;,
-                               ac_cv_cpp_partial_specialization=yes,
-                               ac_cv_cpp_partial_specialization=no)])
-if test "$ac_cv_cpp_partial_specialization" = yes ; then
-  AC_DEFINE(HAVE_CPP_PARTIAL_SPECIALIZATION)
 fi
 
 dnl Check to see if we can resolve ambiguity with |using|.
@@ -3085,23 +2690,6 @@ if test "$ac_cv_thread_keyword" = yes; then
   esac
 fi
 
-dnl Check for the existence of various allocation headers/functions
-
-MALLOC_H=
-MOZ_CHECK_HEADER(malloc.h,        [MALLOC_H=malloc.h])
-if test "$MALLOC_H" = ""; then
-  MOZ_CHECK_HEADER(malloc/malloc.h, [MALLOC_H=malloc/malloc.h])
-  if test "$MALLOC_H" = ""; then
-    MOZ_CHECK_HEADER(sys/malloc.h,    [MALLOC_H=sys/malloc.h])
-  fi
-fi
-if test "$MALLOC_H" != ""; then
-   AC_DEFINE_UNQUOTED(MALLOC_H, <$MALLOC_H>)
-fi
-
-MOZ_ALLOCATING_FUNCS="strndup posix_memalign memalign valloc"
-AC_CHECK_FUNCS(strndup posix_memalign memalign valloc)
-
 dnl See if compiler supports some gcc-style attributes
 
 AC_CACHE_CHECK(for __attribute__((always_inline)),
@@ -3162,12 +2750,6 @@ dnl are defined in build/autoconf/altoptions.m4.
 
 dnl If the compiler supports these attributes, define them as
 dnl convenience macros.
-if test "$ac_cv_attribute_always_inline" = yes ; then
-  AC_DEFINE(NS_ALWAYS_INLINE, [__attribute__((always_inline))])
-else
-  AC_DEFINE(NS_ALWAYS_INLINE,)
-fi
-
 if test "$ac_cv_attribute_malloc" = yes ; then
   AC_DEFINE(NS_ATTR_MALLOC, [__attribute__((malloc))])
 else
@@ -3189,6 +2771,64 @@ if test -n "$SKIP_COMPILER_CHECKS"; then
    AC_DEFINE(HAVE_FORCEINLINE)
    AC_DEFINE(HAVE_LOCALECONV)
 fi # SKIP_COMPILER_CHECKS
+
+dnl ========================================================
+dnl = Mozilla update channel, used for disabling features
+dnl = not wanted for release.
+dnl ========================================================
+
+# app update channel is 'default' when not supplied.
+MOZ_ARG_ENABLE_STRING([update-channel],
+[  --enable-update-channel=CHANNEL
+                          Select application update channel (default=default)],
+    MOZ_UPDATE_CHANNEL=`echo $enableval | tr A-Z a-z`)
+
+if test -z "$MOZ_UPDATE_CHANNEL"; then
+    MOZ_UPDATE_CHANNEL=default
+fi
+AC_DEFINE_UNQUOTED(MOZ_UPDATE_CHANNEL, $MOZ_UPDATE_CHANNEL)
+AC_SUBST(MOZ_UPDATE_CHANNEL)
+
+
+dnl set GRE_MILESTONE
+dnl ========================================================
+GRE_MILESTONE=`tail -n 1 "$_topsrcdir"/config/milestone.txt 2>/dev/null || tail -1 "$_topsrcdir"/config/milestone.txt`
+AC_SUBST(GRE_MILESTONE)
+
+dnl set RELEASE_BUILD and NIGHTLY_BUILD variables depending on the cycle we're in
+dnl The logic works like this:
+dnl - if we have "a1" in GRE_MILESTONE, we're building Nightly (define NIGHTLY_BUILD)
+dnl - otherwise, if we have "a" in GRE_MILESTONE, we're building Nightly or Aurora
+dnl - otherwise, we're building Release/Beta (define RELEASE_BUILD)
+case "$GRE_MILESTONE" in
+  *a1*)
+      NIGHTLY_BUILD=1
+      AC_DEFINE(NIGHTLY_BUILD)
+      ;;
+  *a*)
+      ;;
+  *)
+      RELEASE_BUILD=1
+      AC_DEFINE(RELEASE_BUILD)
+      ;;
+esac
+AC_SUBST(NIGHTLY_BUILD)
+AC_SUBST(RELEASE_BUILD)
+
+dnl ========================================================
+dnl Disable compiling sources in unified mode.
+dnl ========================================================
+
+if test -z "$NIGHTLY_BUILD"; then
+    MOZ_DISABLE_UNIFIED_COMPILATION=1
+fi
+
+MOZ_ARG_DISABLE_BOOL(unified-compilation,
+[  --disable-unified-compilation
+                          Disable unified compilation of some C/C++ sources],
+    MOZ_DISABLE_UNIFIED_COMPILATION=1,
+    MOZ_DISABLE_UNIFIED_COMPILATION=)
+AC_SUBST(MOZ_DISABLE_UNIFIED_COMPILATION)
 
 dnl ========================================================
 dnl =
@@ -3225,6 +2865,39 @@ MOZ_ARG_WITH_STRING(nspr-libs,
 AC_SUBST(NSPR_CFLAGS)
 AC_SUBST(NSPR_LIBS)
 
+JS_THREADSAFE=1
+MOZ_ARG_DISABLE_BOOL(threadsafe,
+[  --disable-threadsafe    Disable support for multiple threads.],
+    JS_THREADSAFE= ,
+    JS_THREADSAFE=1 )
+if test -n "$JS_THREADSAFE"; then
+    AC_DEFINE(JS_THREADSAFE)
+fi
+
+if test "$_USE_SYSTEM_NSPR" || (test "$NSPR_CFLAGS" -o "$NSPR_LIBS"); then
+  _HAS_NSPR=1
+fi
+
+case "$target" in
+  *linux*|*darwin*|*dragonfly*|*freebsd*|*netbsd*|*openbsd*)
+    if test -z "$_HAS_NSPR" && test "$JS_THREADSAFE"; then
+      JS_POSIX_NSPR_DEFAULT=1
+    fi
+    ;;
+esac
+
+MOZ_ARG_ENABLE_BOOL(posix-nspr-emulation,
+[  --enable-posix-nspr-emulation
+                          Enable emulation of NSPR for POSIX systems],
+    JS_POSIX_NSPR=1,
+    JS_POSIX_NSPR=,
+    JS_POSIX_NSPR="$JS_POSIX_NSPR_DEFAULT" )
+if test -n "$JS_POSIX_NSPR"; then
+    AC_DEFINE(JS_POSIX_NSPR)
+fi
+
+AC_SUBST(JS_POSIX_NSPR)
+
 dnl Pass either --with-system-nspr or (--with-nspr-cflags and
 dnl --with-nspr-libs), but not both.
 if test "$_USE_SYSTEM_NSPR" && (test "$NSPR_CFLAGS" -o "$NSPR_LIBS"); then
@@ -3232,13 +2905,22 @@ if test "$_USE_SYSTEM_NSPR" && (test "$NSPR_CFLAGS" -o "$NSPR_LIBS"); then
 See 'configure --help'.])
 fi
 
-dnl Top-level Mozilla switched to requiring NSPR 4.8.6 (bug 560582), but we don't need it in JS.
-if test -n "$_USE_SYSTEM_NSPR"; then
-    MOZ_NATIVE_NSPR=
-    AM_PATH_NSPR(4.7.0, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
+dnl Can't use --enable-posix-nspr-emulation if compiling with NSPR.
+if test "$_HAS_NSPR" && test "$JS_POSIX_NSPR"; then
+    AC_MSG_ERROR([--enable-posix-nspr-emulation is mututally exclusive with --with-system-nspr
+and --with-nspr-libs/cflags. See 'configure --help'.])
 fi
 
+if test -n "$_USE_SYSTEM_NSPR"; then
+    MOZ_NATIVE_NSPR=
+    AM_PATH_NSPR($NSPR_MINVER, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
+fi
+
+NSPR_PKGCONF_CHECK="nspr"
 if test -n "$MOZ_NATIVE_NSPR"; then
+    # piggy back on $MOZ_NATIVE_NSPR to set a variable for the nspr check for js.pc
+    NSPR_PKGCONF_CHECK="nspr >= $NSPR_MINVER"
+
     _SAVE_CFLAGS=$CFLAGS
     CFLAGS="$CFLAGS $NSPR_CFLAGS"
     AC_TRY_COMPILE([#include "prlog.h"],
@@ -3249,6 +2931,7 @@ if test -n "$MOZ_NATIVE_NSPR"; then
                 AC_MSG_ERROR([system NSPR does not support PR_STATIC_ASSERT]))
     CFLAGS=$_SAVE_CFLAGS
 fi
+AC_SUBST(NSPR_PKGCONF_CHECK)
 
 dnl ========================================================
 dnl system zlib Support
@@ -3258,24 +2941,14 @@ ZLIB_DIR=yes
 
 MOZ_ZLIB_CHECK([1.2.3])
 
+if test -n "$ZLIB_IN_MOZGLUE"; then
+    AC_DEFINE(ZLIB_IN_MOZGLUE)
+fi
+
 dnl ========================================================
 dnl system libffi Support
 dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(system-ffi,
-[  --enable-system-ffi       Use system libffi (located with pkgconfig)],
-    MOZ_NATIVE_FFI=1 )
-
-if test -n "$MOZ_NATIVE_FFI"; then
-    # Vanilla libffi 3.0.9 needs a few patches from upcoming version 3.0.10
-    # for non-GCC compilers.
-    if test -z "$GNU_CC"; then
-        PKG_CHECK_MODULES(MOZ_FFI, libffi > 3.0.9)
-    else
-        PKG_CHECK_MODULES(MOZ_FFI, libffi >= 3.0.9)
-    fi
-fi
-
-AC_SUBST(MOZ_NATIVE_FFI)
+MOZ_CONFIG_FFI()
 
 dnl ========================================================
 dnl =
@@ -3344,58 +3017,6 @@ dnl =
 dnl ========================================================
 MOZ_ARG_HEADER(Debugging and Optimizations)
 
-dnl ========================================================
-dnl = Disable building with debug info.
-dnl = Debugging is OFF by default
-dnl ========================================================
-if test -z "$MOZ_DEBUG_FLAGS"; then
-  MOZ_DEBUG_FLAGS="-g"
-fi
-
-MOZ_ARG_ENABLE_STRING(debug,
-[  --enable-debug[=DBG]    Enable building with developer debug info
-                           (using compiler flags DBG)],
-[ if test "$enableval" != "no"; then
-    MOZ_DEBUG=1
-    if test "$ENABLE_METHODJIT"; then
-         # needs MethodJIT or YarrJIT
-         ENABLE_METHODJIT_SPEW=1
-    fi
-    if test -n "$enableval" -a "$enableval" != "yes"; then
-        MOZ_DEBUG_FLAGS=`echo $enableval | sed -e 's|\\\ | |g'`
-        _MOZ_DEBUG_FLAGS_SET=1
-    fi
-  else
-    MOZ_DEBUG=
-  fi ],
-  MOZ_DEBUG=)
-
-MOZ_DEBUG_ENABLE_DEFS="-DDEBUG -D_DEBUG -DTRACING"
-MOZ_ARG_WITH_STRING(debug-label,
-[  --with-debug-label=LABELS
-                          Define DEBUG_<value> for each comma-separated
-                          value given.],
-[ for option in `echo $withval | sed 's/,/ /g'`; do
-    MOZ_DEBUG_ENABLE_DEFS="$MOZ_DEBUG_ENABLE_DEFS -DDEBUG_${option}"
-done])
-
-MOZ_DEBUG_DISABLE_DEFS="-DNDEBUG -DTRIMMED"
-
-if test -n "$MOZ_DEBUG"; then
-    AC_MSG_CHECKING([for valid debug flags])
-    _SAVE_CFLAGS=$CFLAGS
-    CFLAGS="$CFLAGS $MOZ_DEBUG_FLAGS"
-    AC_TRY_COMPILE([#include <stdio.h>],
-        [printf("Hello World\n");],
-        _results=yes,
-        _results=no)
-    AC_MSG_RESULT([$_results])
-    if test "$_results" = "no"; then
-        AC_MSG_ERROR([These compiler flags are invalid: $MOZ_DEBUG_FLAGS])
-    fi
-    CFLAGS=$_SAVE_CFLAGS
-fi
-
 if test "$ENABLE_METHODJIT_SPEW"; then
     AC_DEFINE(JS_METHODJIT_SPEW)
 fi
@@ -3447,28 +3068,17 @@ AC_SUBST(MOZ_OPTIMIZE_SIZE_TWEAK)
 AC_SUBST(MOZ_PGO_OPTIMIZE_FLAGS)
 
 dnl ========================================================
-dnl = Enable generation of debug symbols
+dnl = Enable trace logging
 dnl ========================================================
-MOZ_ARG_ENABLE_STRING(debug-symbols,
-[  --enable-debug-symbols[=DBG]
-                          Enable debugging symbols (using compiler flags DBG)],
-[ if test "$enableval" != "no"; then
-      MOZ_DEBUG_SYMBOLS=1
-      if test -n "$enableval" -a "$enableval" != "yes"; then
-          if test -z "$_MOZ_DEBUG_FLAGS_SET"; then
-              MOZ_DEBUG_FLAGS=`echo $enableval | sed -e 's|\\\ | |g'`
-          else
-              AC_MSG_ERROR([--enable-debug-symbols flags cannot be used with --enable-debug flags])
-          fi
-      fi
-  else
-      MOZ_DEBUG_SYMBOLS=
-  fi ],
-  MOZ_DEBUG_SYMBOLS=1)
+MOZ_ARG_ENABLE_BOOL(trace-logging,
+[  --enable-trace-logging   Enable trace logging],
+    ENABLE_TRACE_LOGGING=1,
+    ENABLE_TRACE_LOGGING= )
 
-if test -n "$MOZ_DEBUG" -o -n "$MOZ_DEBUG_SYMBOLS"; then
-    AC_DEFINE(MOZ_DEBUG_SYMBOLS)
-    export MOZ_DEBUG_SYMBOLS
+AC_SUBST(ENABLE_TRACE_LOGGING)
+
+if test "$ENABLE_TRACE_LOGGING"; then
+    AC_DEFINE(JS_TRACE_LOGGING)
 fi
 
 dnl ========================================================
@@ -3481,6 +3091,18 @@ MOZ_ARG_DISABLE_BOOL(warnings-as-errors,
     MOZ_ENABLE_WARNINGS_AS_ERRORS=)
 if test -z "$MOZ_ENABLE_WARNINGS_AS_ERRORS"; then
    WARNINGS_AS_ERRORS=''
+elif test "$GNU_CC"; then
+    # Prevent the following GCC warnings from being treated as errors:
+    # -Wuninitialized - too many false positives
+    # -Wmaybe-uninitialized - too many false positives
+    # -Wdeprecated-declarations - we don't want our builds held hostage when a
+    #   platform-specific API becomes deprecated.
+    MOZ_C_SUPPORTS_WARNING(-W, no-error=uninitialized, ac_c_has_noerror_uninitialized)
+    MOZ_CXX_SUPPORTS_WARNING(-W, no-error=uninitialized, ac_cxx_has_noerror_uninitialized)
+    MOZ_C_SUPPORTS_WARNING(-W, no-error=maybe-uninitialized, ac_c_has_noerror_maybe_uninitialized)
+    MOZ_CXX_SUPPORTS_WARNING(-W, no-error=maybe-uninitialized, ac_cxx_has_noerror_maybe_uninitialized)
+    MOZ_C_SUPPORTS_WARNING(-W, no-error=deprecated-declarations, ac_c_has_noerror_deprecated_declarations)
+    MOZ_CXX_SUPPORTS_WARNING(-W, no-error=deprecated-declarations, ac_cxx_has_noerror_deprecated_declarations)
 fi
 
 dnl ========================================================
@@ -3494,6 +3116,7 @@ MOZ_ARG_ENABLE_BOOL(sm-fail-on-warnings,
 
 AC_SUBST(FAIL_ON_WARNINGS)
 
+dnl ========================================================
 dnl = Enable trace malloc
 dnl ========================================================
 NS_TRACE_MALLOC=${MOZ_TRACE_MALLOC}
@@ -3509,6 +3132,27 @@ fi
 AC_SUBST(NS_TRACE_MALLOC)
 
 dnl ========================================================
+dnl = Enable DMD
+dnl ========================================================
+
+MOZ_ARG_ENABLE_BOOL(dmd,
+[  --enable-dmd            Enable DMD; also enables jemalloc and replace-malloc],
+    MOZ_DMD=1,
+    MOZ_DMD= )
+
+if test "$NS_TRACE_MALLOC"; then        # trace-malloc disables DMD
+    MOZ_DMD=
+fi
+if test "$MOZ_DMD"; then
+    AC_DEFINE(MOZ_DMD)
+
+    if test "${CPU_ARCH}" = "arm"; then
+        CFLAGS="$CFLAGS -funwind-tables"
+        CXXFLAGS="$CXXFLAGS -funwind-tables"
+    fi
+fi
+
+dnl ========================================================
 dnl = Enable jemalloc
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(jemalloc,
@@ -3521,29 +3165,6 @@ if test "$NS_TRACE_MALLOC"; then
 fi
 
 if test "$MOZ_MEMORY"; then
-
-  dnl Don't try to run compiler tests on Windows
-  if test "$OS_ARCH" = "WINNT"; then
-    if test -z "$HAVE_64BIT_OS"; then
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 2)
-    else
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 3)
-    fi
-  else
-    AC_CHECK_SIZEOF([int *], [4])
-    case "${ac_cv_sizeof_int_p}" in
-    4)
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 2)
-      ;;
-    8)
-      AC_DEFINE_UNQUOTED([MOZ_MEMORY_SIZEOF_PTR_2POW], 3)
-      ;;
-    *)
-      AC_MSG_ERROR([Unexpected pointer size])
-      ;;
-    esac
-  fi
-
   AC_DEFINE(MOZ_MEMORY)
   if test "x$MOZ_DEBUG" = "x1"; then
     AC_DEFINE(MOZ_MEMORY_DEBUG)
@@ -3639,32 +3260,29 @@ fi
 dnl ========================================================
 dnl = Use generational GC
 dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(gcgenerational,
-[  --enable-gcgenerational Enable generational GC],
-    JSGC_GENERATIONAL=1,
-    JSGC_GENERATIONAL= )
+dnl Use generational GC by default in all shell builds. The top-level mozilla
+dnl configure.in will configure SpiderMonkey with --disable-gcgenerational as
+dnl needed on a per-platform basis.
+JSGC_GENERATIONAL=1
+MOZ_ARG_DISABLE_BOOL(gcgenerational,
+[  --disable-gcgenerational Disable generational GC],
+    JSGC_GENERATIONAL= ,
+    JSGC_GENERATIONAL=1 )
 if test -n "$JSGC_GENERATIONAL"; then
     AC_DEFINE(JSGC_GENERATIONAL)
 fi
 
 dnl ========================================================
-dnl = Perform moving GC stack rooting analysis
-dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(root-analysis,
-[  --enable-root-analysis  Enable moving GC stack root analysis],
-    JSGC_ROOT_ANALYSIS=1,
-    JSGC_ROOT_ANALYSIS= )
-if test -n "$JSGC_ROOT_ANALYSIS"; then
-    AC_DEFINE(JSGC_ROOT_ANALYSIS)
-fi
-
-dnl ========================================================
 dnl = Use exact stack rooting for GC
 dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(exact-rooting,
-[  --enable-exact-rooting  Enable use of exact stack roots for GC],
-    JSGC_USE_EXACT_ROOTING=1,
-    JSGC_USE_EXACT_ROOTING= )
+dnl Use exact rooting by default in all shell builds. The top-level mozilla
+dnl configure.in will configure SpiderMonkey with --disable-exact-rooting as
+dnl needed on a per-platform basis.
+JSGC_USE_EXACT_ROOTING=1
+MOZ_ARG_DISABLE_BOOL(exact-rooting,
+[  --disable-exact-rooting  Enable use of conservative stack scanning for GC],
+    JSGC_USE_EXACT_ROOTING= ,
+    JSGC_USE_EXACT_ROOTING=1 )
 if test -n "$JSGC_USE_EXACT_ROOTING"; then
     AC_DEFINE(JSGC_USE_EXACT_ROOTING)
 fi
@@ -3684,6 +3302,38 @@ if test -n "$MOZ_VALGRIND"; then
     MOZ_VALGRIND=1
 fi
 AC_SUBST(MOZ_VALGRIND)
+
+dnl ========================================================
+dnl = Use ARM JIT code simulator. Requires an x86 build.
+dnl ========================================================
+dnl Also define JS_CODEGEN_ARM in this case. If the simulator is not used,
+dnl JS_CODEGEN_foo is defined if JS_CPU_foo is defined.
+MOZ_ARG_ENABLE_BOOL(arm-simulator,
+[  --enable-arm-simulator Enable ARM simulator for JIT code],
+    JS_ARM_SIMULATOR=1,
+    JS_ARM_SIMULATOR= )
+if test -n "$JS_ARM_SIMULATOR"; then
+    if test "$CPU_ARCH" != "x86"; then
+        AC_MSG_ERROR([The ARM simulator only works on x86.])
+    fi
+    AC_DEFINE(JS_ARM_SIMULATOR)
+    AC_DEFINE(JS_CODEGEN_ARM)
+    JS_CODEGEN_ARM=1
+elif test "$CPU_ARCH" = "x86"; then
+    AC_DEFINE(JS_CODEGEN_X86)
+    JS_CODEGEN_X86=1
+elif test "$CPU_ARCH" = "x86_64"; then
+    AC_DEFINE(JS_CODEGEN_X64)
+    JS_CODEGEN_X64=1
+elif test "$CPU_ARCH" = "arm"; then
+    AC_DEFINE(JS_CODEGEN_ARM)
+    JS_CODEGEN_ARM=1
+fi
+
+AC_SUBST(JS_ARM_SIMULATOR)
+AC_SUBST(JS_CODEGEN_ARM)
+AC_SUBST(JS_CODEGEN_X86)
+AC_SUBST(JS_CODEGEN_X64)
 
 dnl ========================================================
 dnl jprof
@@ -3710,6 +3360,19 @@ if test -n "$MOZ_SHARK"; then
 fi
 
 dnl ========================================================
+dnl instruments
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(instruments,
+[  --enable-instruments    Enable instruments remote profiling. Implies --enable-profiling.],
+    MOZ_INSTRUMENTS=1,
+    MOZ_INSTRUMENTS= )
+if test -n "$MOZ_INSTRUMENTS"; then
+    MOZ_PROFILING=1
+    AC_DEFINE(MOZ_INSTRUMENTS)
+    LIBS="$LIBS -framework CoreFoundation"
+fi
+
+dnl ========================================================
 dnl callgrind
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(callgrind,
@@ -3728,27 +3391,12 @@ MOZ_ARG_ENABLE_BOOL(vtune,
 [  --enable-vtune          Enable vtune profiling. Implies --enable-profiling.],
     MOZ_VTUNE=1,
     MOZ_VTUNE= )
-if test -n "$MOZ_VTUNE"; then
-    MOZ_PROFILING=1
-    AC_DEFINE(MOZ_VTUNE)
-fi
 
 dnl ========================================================
-dnl ETW - Event Tracing for Windows
+dnl Debug (see Bug 939505)
 dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(ETW,
-[  --enable-ETW            Enable ETW (Event Tracing for Windows) event reporting],
-    MOZ_ETW=1,
-    MOZ_ETW= )
-if test -n "$MOZ_ETW"; then
-    AC_DEFINE(MOZ_ETW)
-    WINVER=600
-fi
-
-if test -n "$MOZ_ETW"; then
-    if test -z "$MOZ_WINSDK_TARGETVER"; then
-        AC_MSG_ERROR([--enable-ETW is only valid on Windows])
-    fi
+if test -n "$MOZ_DEBUG"; then
+    AC_DEFINE(JS_DEBUG)
 fi
 
 dnl ========================================================
@@ -3756,6 +3404,15 @@ dnl Profiling
 dnl ========================================================
 if test -n "$MOZ_PROFILING"; then
     AC_DEFINE(MOZ_PROFILING)
+
+    case "$OS_TARGET" in
+        Linux) MOZ_VTUNE=1 ;;
+        WINNT) MOZ_VTUNE=1 ;;
+    esac
+fi
+
+if test -n "$MOZ_VTUNE"; then
+    AC_DEFINE(MOZ_VTUNE)
 fi
 
 dnl ========================================================
@@ -3767,6 +3424,18 @@ MOZ_ARG_ENABLE_BOOL(gczeal,
     JS_GC_ZEAL= )
 if test -n "$JS_GC_ZEAL" -o -n "$MOZ_DEBUG"; then
     AC_DEFINE(JS_GC_ZEAL)
+fi
+
+dnl ========================================================
+dnl = Enable perf logging for ion.
+dnl = Perf logging is OFF by default
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(perf,
+[  --enable-perf           Enable Linux perf integration],
+  JS_ION_PERF=1,
+  JS_ION_PERF= )
+if test -n "$JS_ION_PERF"; then
+    AC_DEFINE(JS_ION_PERF)
 fi
 
 dnl ========================================================
@@ -3794,15 +3463,15 @@ if test -n "$JS_MORE_DETERMINISTIC"; then
 fi
 
 dnl ========================================================
-dnl Enable output of backtraces on artificial OOMs
+dnl Enable breakpoint for artificial OOMs
 dnl ========================================================
-MOZ_ARG_ENABLE_BOOL(oom-backtrace,
-[  --enable-oom-backtrace
-                          Enable output of backtraces on artificial OOMs (-A)],
-    JS_OOM_DO_BACKTRACES=1,
-    JS_OOM_DO_BACKTRACES= )
-if test -n "$JS_OOM_DO_BACKTRACES"; then
-    AC_DEFINE(JS_OOM_DO_BACKTRACES)
+MOZ_ARG_ENABLE_BOOL(oom-breakpoint,
+[  --enable-oom-breakpoint
+                          Enable a breakpoint function for artificial OOMs],
+    JS_OOM_BREAKPOINT=1,
+    JS_OOM_BREAKPOINT= )
+if test -n "$JS_OOM_BREAKPOINT"; then
+    AC_DEFINE(JS_OOM_BREAKPOINT)
 fi
 
 MOZ_CHECK_CCACHE
@@ -3824,6 +3493,40 @@ if test -n "$DEHYDRA_PATH"; then
     AC_DEFINE(NS_STATIC_CHECKING)
 fi
 AC_SUBST(DEHYDRA_PATH)
+
+dnl ========================================================
+dnl = Enable using the clang plugin to build
+dnl ========================================================
+
+MOZ_ARG_ENABLE_BOOL(clang-plugin,
+[  --enable-clang-plugin   Enable building with the mozilla clang plugin ],
+   ENABLE_CLANG_PLUGIN=1,
+   ENABLE_CLANG_PLUGIN= )
+if test -n "$ENABLE_CLANG_PLUGIN"; then
+    if test -z "$CLANG_CC"; then
+        AC_MSG_ERROR([Can't use clang plugin without clang.])
+    fi
+    AC_DEFINE(MOZ_CLANG_PLUGIN)
+fi
+
+AC_SUBST(ENABLE_CLANG_PLUGIN)
+
+dnl ========================================================
+dnl = Enable static checking using sixgill
+dnl ========================================================
+
+MOZ_ARG_WITH_STRING(sixgill,
+[  --with-sixgill=path/to/sixgill
+                          Enable static checking of code using sixgill],
+    SIXGILL_PATH=$withval,
+    SIXGILL_PATH= )
+
+if test -n "$SIXGILL_PATH"; then
+    if test ! -x "$SIXGILL_PATH/bin/xdbfind" || test ! -f "$SIXGILL_PATH/gcc/xgill.so" || test ! -x "$SIXGILL_PATH/scripts/wrap_gcc/g++"; then
+        AC_MSG_ERROR([The sixgill plugin and binaries are not at the specified path.])
+    fi
+fi
+AC_SUBST(SIXGILL_PATH)
 
 dnl ========================================================
 dnl = Enable stripping of libs & executables
@@ -3858,20 +3561,13 @@ if test -z "$SKIP_LIBRARY_CHECKS"; then
     AC_LANG_RESTORE
 fi
 
-# Demangle only for debug or trace-malloc builds
+# Demangle only for debug or trace-malloc or DMD builds
 MOZ_DEMANGLE_SYMBOLS=
-if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_DEMANGLE_SYMBOLS=1
     AC_DEFINE(MOZ_DEMANGLE_SYMBOLS)
 fi
 AC_SUBST(MOZ_DEMANGLE_SYMBOLS)
-
-dnl ========================================================
-dnl = Support for gcc stack unwinding (from gcc 3.3)
-dnl ========================================================
-if test -z "$SKIP_LIBRARY_CHECKS"; then
-    MOZ_CHECK_HEADER(unwind.h, AC_CHECK_FUNCS(_Unwind_Backtrace))
-fi
 
 dnl ========================================================
 dnl JIT observers
@@ -3889,15 +3585,6 @@ MOZ_ARG_WITH_STRING(jitreport-granularity,
   JITREPORT_GRANULARITY=3)
 
 AC_DEFINE_UNQUOTED(JS_DEFAULT_JITREPORT_GRANULARITY, $JITREPORT_GRANULARITY)
-
-dnl ========================================================
-dnl = E4X support (ECMA-357)
-dnl ========================================================
-JS_HAS_XML_SUPPORT=1
-MOZ_ARG_DISABLE_BOOL(e4x,
-[  --disable-e4x           Disable JS support for XML (ECMA-357)],
-    JS_HAS_XML_SUPPORT=0 )
-AC_DEFINE_UNQUOTED(JS_HAS_XML_SUPPORT, $JS_HAS_XML_SUPPORT)
 
 dnl ========================================================
 dnl =
@@ -3981,33 +3668,6 @@ AC_SUBST(PROFILE_USE_LDFLAGS)
 AC_LANG_CPLUSPLUS
 
 dnl ========================================================
-dnl Test for -pedantic bustage
-dnl ========================================================
-MOZ_ARG_DISABLE_BOOL(pedantic,
-[  --disable-pedantic      Issue all warnings demanded by strict ANSI C ],
-_PEDANTIC= )
-if test "$_PEDANTIC"; then
-    _SAVE_CXXFLAGS=$CXXFLAGS
-    CXXFLAGS="$CXXFLAGS -pedantic ${_WARNINGS_CXXFLAGS} -Wno-long-long"
-    AC_MSG_CHECKING([whether C++ compiler has -pedantic long long bug])
-    AC_TRY_COMPILE([$configure_static_assert_macros],
-                   [CONFIGURE_STATIC_ASSERT(sizeof(long long) == 8)],
-                   result="no", result="yes" )
-    AC_MSG_RESULT([$result])
-    CXXFLAGS="$_SAVE_CXXFLAGS"
-
-    case "$result" in
-    no)
-        _WARNINGS_CFLAGS="-pedantic ${_WARNINGS_CFLAGS} -Wno-long-long"
-        _WARNINGS_CXXFLAGS="-pedantic ${_WARNINGS_CXXFLAGS} -Wno-long-long"
-        ;;
-    yes)
-        AC_MSG_ERROR([Your compiler appears to have a known bug where long long is miscompiled when using -pedantic.  Reconfigure using --disable-pedantic. ])
-        ;;
-    esac
-fi
-
-dnl ========================================================
 dnl Autoconf test for gcc 2.7.2.x (and maybe others?) so that we don't
 dnl provide non-const forms of the operator== for comparing nsCOMPtrs to
 dnl raw pointers in nsCOMPtr.h.  (VC++ has the same bug.)
@@ -4075,41 +3735,12 @@ dnl =
 dnl ========================================================
 MOZ_ARG_HEADER(Build dependencies)
 
-dnl ========================================================
-dnl = Do not auto generate dependency info
-dnl ========================================================
-MOZ_AUTO_DEPS=1
-MOZ_ARG_DISABLE_BOOL(auto-deps,
-[  --disable-auto-deps     Do not automatically generate dependency info],
-    MOZ_AUTO_DEPS=,
-    MOZ_AUTO_DEPS=1)
-
-if test -n "$MOZ_AUTO_DEPS"; then
-dnl ========================================================
-dnl = Use mkdepend instead of $CC -MD for dependency generation
-dnl ========================================================
-_cpp_md_flag=
-MOZ_ARG_DISABLE_BOOL(md,
-[  --disable-md            Do not use compiler-based dependencies ],
-  [_cpp_md_flag=],
-  [_cpp_md_flag=1],
-  [dnl Default is to turn on -MD if using GNU-compatible compilers
-   if test "$GNU_CC" -a "$GNU_CXX"; then
-     _cpp_md_flag=1
-   fi
-  dnl Default is to use -xM if using Sun Studio on Solaris
-   if test "$SOLARIS_SUNPRO_CC"; then
-     _cpp_md_flag=1
-   fi])
-if test "$_cpp_md_flag"; then
-  COMPILER_DEPEND=1
-  _DEPEND_CFLAGS='$(filter-out %/.pp,-MMD -MF $(MDDEPDIR)/$(@F).pp)'
-  dnl Sun Studio on Solaris use -xM instead of -MD, see config/rules.mk
-  if test "$SOLARIS_SUNPRO_CC"; then
-    _DEPEND_CFLAGS=
-  fi
+if test "$GNU_CC" -a "$GNU_CXX"; then
+  _DEPEND_CFLAGS='-MD -MP -MF $(MDDEPDIR)/$(@F).pp'
+dnl Sun Studio on Solaris use -xM instead of -MD, see config/rules.mk
+elif test "$SOLARIS_SUNPRO_CC"; then
+  _DEPEND_CFLAGS=
 else
-  COMPILER_DEPEND=
   dnl Don't override this for MSVC
   if test -z "$_WIN32_MSVC"; then
     _USE_CPP_INCLUDE_FLAG=
@@ -4118,21 +3749,39 @@ else
   else
     echo '#include <stdio.h>' > dummy-hello.c
     changequote(,)
-    CL_INCLUDES_PREFIX=`${CC} -showIncludes -c -Fonul dummy-hello.c 2>&1 | sed -ne 's/^\([^:]*:[^:]*:\).*stdio.h$/\1/p'`
+    dnl This output is localized, split at the first double space or colon and space.
+    _CL_PREFIX_REGEX="^\([^:]*:.*[ :] \)\(.*stdio.h\)$"
+    CL_INCLUDES_PREFIX=`${CC} -showIncludes -c -Fonul dummy-hello.c 2>&1 | sed -ne 's/'"$_CL_PREFIX_REGEX"'/\1/p'`
+    _CL_STDIO_PATH=`${CC} -showIncludes -c -Fonul dummy-hello.c 2>&1 | sed -ne 's/'"$_CL_PREFIX_REGEX"'/\2/p'`
     changequote([,])
+    if ! test -e "$_CL_STDIO_PATH"; then
+        AC_MSG_ERROR([Unable to parse cl -showIncludes prefix. This compiler's locale has an unsupported formatting.])
+    fi
     if test -z "$CL_INCLUDES_PREFIX"; then
         AC_MSG_ERROR([Cannot find cl -showIncludes prefix.])
     fi
     AC_SUBST(CL_INCLUDES_PREFIX)
     rm -f dummy-hello.c
-    COMPILER_DEPEND=1
   fi
 fi
-fi # MOZ_AUTO_DEPS
-MDDEPDIR='.deps'
-AC_SUBST(MOZ_AUTO_DEPS)
-AC_SUBST(COMPILER_DEPEND)
-AC_SUBST(MDDEPDIR)
+
+dnl Make sure that the build system can handle non-ASCII characters
+dnl in environment variables to prevent it from breking silently on
+dnl non-English systems.
+NONASCII=$'\241\241'
+AC_SUBST(NONASCII)
+
+dnl ========================================================
+dnl = Disable -fstrict-aliasing with GCC 4.4 and earlier.
+dnl = See bugs 821502 and 832623.
+dnl ========================================================
+if test -n "$GNU_CC" -a -z "$CLANG_CC"; then
+    dnl GCC 3.x isn't supported, so we don't need to check for that.
+    if test "$GCC_MAJOR_VERSION" -eq "4" -a "$GCC_MINOR_VERSION" -lt "5" ; then
+        CFLAGS="$CFLAGS -fno-strict-aliasing"
+        CXXFLAGS="$CXXFLAGS -fno-strict-aliasing"
+    fi
+fi
 
 dnl ========================================================
 dnl = Link js shell to system readline
@@ -4162,7 +3811,7 @@ if test -z "$SKIP_LIBRARY_CHECKS" -a -z "$NO_EDITLINE"; then
   else
     dnl By default, we use editline
     JS_NATIVE_EDITLINE=1
-    EDITLINE_LIBS='$(DEPTH)/editline/$(LIB_PREFIX)editline.$(LIB_SUFFIX)'
+    EDITLINE_LIBS='$(DEPTH)/js/src/editline/$(LIB_PREFIX)editline.$(LIB_SUFFIX)'
   fi
 
   dnl Either way, we want to build with line editing support.
@@ -4184,9 +3833,11 @@ dnl = Build jsctypes if it's enabled
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(ctypes,
 [  --enable-ctypes         Enable js-ctypes (default=no)],
-    JS_HAS_CTYPES=1,
-    JS_HAS_CTYPES= )
+    BUILD_CTYPES=1,
+    BUILD_CTYPES= )
+JS_HAS_CTYPES=$BUILD_CTYPES
 AC_SUBST(JS_HAS_CTYPES)
+AC_SUBST(BUILD_CTYPES)
 if test "$JS_HAS_CTYPES"; then
   dnl Error out if we're on MSVC and MASM is unavailable.
   if test -n "$_MSC_VER" -a \( "$AS" != "ml.exe" -a "$AS" != "ml64.exe" \); then
@@ -4195,10 +3846,25 @@ if test "$JS_HAS_CTYPES"; then
   AC_DEFINE(JS_HAS_CTYPES)
 fi
 
-if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS=
 fi
 
+dnl ========================================================
+dnl =
+dnl = Options for generating the shell as a script
+dnl =
+dnl ========================================================
+
+MOZ_ARG_WITH_STRING(qemu-exe,
+[  --with-qemu-exe=path   Use path as an arm emulator on host platforms],
+    QEMU_EXE=$withval)
+AC_SUBST(QEMU_EXE)
+MOZ_ARG_WITH_STRING(cross-lib,
+[  --with-cross-lib=dir   Use dir as the location for arm libraries],
+    CROSS_LIB=$withval,
+    CROSS_LIB=/usr/$target)
+AC_SUBST(CROSS_LIB)
 dnl ========================================================
 dnl =
 dnl = Maintainer debug option (no --enable equivalent)
@@ -4221,19 +3887,17 @@ AC_SUBST(WINDRES)
 AC_SUBST(IMPLIB)
 AC_SUBST(FILTER)
 AC_SUBST(BIN_FLAGS)
-AC_SUBST(MOZ_JS_LIBS)
 AC_SUBST(MOZ_DEBUG)
 AC_SUBST(MOZ_DEBUG_SYMBOLS)
 AC_SUBST(MOZ_DEBUG_ENABLE_DEFS)
 AC_SUBST(MOZ_DEBUG_DISABLE_DEFS)
-AC_SUBST(MOZ_DEBUG_FLAGS)
 AC_SUBST(MOZ_DEBUG_LDFLAGS)
 AC_SUBST(WARNINGS_AS_ERRORS)
 AC_SUBST(MOZ_JPROF)
 AC_SUBST(MOZ_SHARK)
+AC_SUBST(MOZ_INSTRUMENTS)
 AC_SUBST(MOZ_CALLGRIND)
 AC_SUBST(MOZ_VTUNE)
-AC_SUBST(MOZ_ETW)
 AC_SUBST(MOZ_PROFILING)
 AC_SUBST(LIBICONV)
 
@@ -4250,7 +3914,6 @@ AC_SUBST(MOZ_FIX_LINK_PATHS)
 AC_SUBST(USE_DEPENDENT_LIBS)
 
 AC_SUBST(MOZ_BUILD_ROOT)
-AC_SUBST(MOZ_OS2_TOOLS)
 
 AC_SUBST(MOZ_POST_DSO_LIB_COMMAND)
 AC_SUBST(MOZ_POST_PROGRAM_COMMAND)
@@ -4264,10 +3927,8 @@ AC_SUBST(MOZ_PKG_SPECIAL)
 AC_SUBST(MOZILLA_OFFICIAL)
 
 dnl win32 options
-AC_SUBST(MOZ_MAPINFO)
 AC_SUBST(MOZ_BROWSE_INFO)
 AC_SUBST(MOZ_TOOLS_DIR)
-AC_SUBST(PYTHON)
 
 dnl Echo the CFLAGS to remove extra whitespace.
 CFLAGS=`echo \
@@ -4288,11 +3949,21 @@ COMPILE_CXXFLAGS=`echo \
 	$_DEPEND_CFLAGS \
     $COMPILE_CXXFLAGS`
 
-AC_SUBST(MOZ_NATIVE_MAKEDEPEND)
+HOST_CFLAGS=`echo \
+    $HOST_CFLAGS \
+    $_DEPEND_CFLAGS`
+
+HOST_CXXFLAGS=`echo \
+    $HOST_CXXFLAGS \
+    $_DEPEND_CFLAGS`
 
 AC_SUBST(NSPR_CFLAGS)
 AC_SUBST(NSPR_LIBS)
 AC_SUBST(MOZ_NATIVE_NSPR)
+
+if test -n "$MOZ_NUWA_PROCESS"; then
+    AC_DEFINE(MOZ_NUWA_PROCESS)
+fi
 
 OS_CFLAGS="$CFLAGS"
 OS_CXXFLAGS="$CXXFLAGS"
@@ -4359,20 +4030,9 @@ AC_SUBST(USE_N32)
 AC_SUBST(CC_VERSION)
 AC_SUBST(CXX_VERSION)
 AC_SUBST(MSMANIFEST_TOOL)
+AC_SUBST(MOZ_LINKER)
 
-AC_MSG_CHECKING([for posix_fallocate])
-AC_TRY_LINK([#define _XOPEN_SOURCE 600
-  #include <fcntl.h>],
-                 [posix_fallocate(0, 0, 0);],
-                 [ac_cv___posix_fallocate=true],
-                 [ac_cv___posix_fallocate=false])
-
-if test "$ac_cv___posix_fallocate" = true ; then
-  AC_DEFINE(HAVE_POSIX_FALLOCATE)
-  AC_MSG_RESULT(yes)
-else
-  AC_MSG_RESULT(no)
-fi
+AC_CHECK_FUNCS(posix_fadvise posix_fallocate)
 
 dnl Check for missing components
 if test "$COMPILE_ENVIRONMENT"; then
@@ -4395,7 +4055,7 @@ if test "$MOZ_X11"; then
             exit(1);
         }
     ], [],
-    [ AC_MSG_ERROR([Could not compile basic X program.]) ])
+    [ AC_MSG_ERROR([Can't find X headers (install libxt-dev (Debian/Ubuntu), libXt-devel (Fedora), or xorg-x11-libXt-devel (SuSE)).]) ])
     CFLAGS="$_SAVE_CFLAGS"
 
     if test -n "$MISSING_X"; then
@@ -4411,22 +4071,16 @@ dnl ========================================================
 if test "$OS_ARCH" = "Darwin"; then
   AC_DEFINE(XP_MACOSX)
   AC_DEFINE(XP_UNIX)
-elif test "$OS_ARCH" != "WINNT" -a "$OS_ARCH" != "OS2"; then
+elif test "$OS_ARCH" != "WINNT"; then
   AC_DEFINE(XP_UNIX)
 fi
-
-AC_ARG_ENABLE(threadsafe,
-    [  --enable-threadsafe     Enable support for multiple threads.],
-    [if test "x$enableval" = "xyes"; then
-        AC_DEFINE(JS_THREADSAFE)
-    fi],)
 
 if test "$MOZ_DEBUG"; then
     AC_DEFINE(MOZ_REFLOW_PERF)
     AC_DEFINE(MOZ_REFLOW_PERF_DSP)
 fi
 
-if test "$ACCESSIBILITY" -a "$MOZ_ENABLE_GTK2" ; then
+if test "$ACCESSIBILITY" -a "$MOZ_ENABLE_GTK" ; then
     AC_DEFINE(MOZ_ACCESSIBILITY_ATK)
     ATK_FULL_VERSION=`$PKG_CONFIG --modversion atk`
     ATK_MAJOR_VERSION=`echo ${ATK_FULL_VERSION} | $AWK -F\. '{ print $1 }'`
@@ -4436,6 +4090,18 @@ if test "$ACCESSIBILITY" -a "$MOZ_ENABLE_GTK2" ; then
     AC_DEFINE_UNQUOTED(ATK_MINOR_VERSION, $ATK_MINOR_VERSION)
     AC_DEFINE_UNQUOTED(ATK_REV_VERSION, $ATK_REV_VERSION)
 fi
+
+
+dnl ========================================================
+dnl ECMAScript Internationalization API Support (uses ICU)
+dnl ========================================================
+
+dnl top-level configure may override this with --without-intl-api
+_INTL_API=yes
+
+MOZ_CONFIG_ICU()
+
+MOZ_SUBCONFIGURE_ICU()
 
 dnl ========================================================
 dnl JavaScript shell
@@ -4448,114 +4114,30 @@ AC_SUBST(MOZILLA_VERSION)
 
 AC_SUBST(ac_configure_args)
 
+AC_SUBST(TOOLCHAIN_PREFIX)
+
+
+if test -n "$JS_STANDALONE"; then
+JS_LIBRARY_NAME="mozjs-$MOZILLA_SYMBOLVERSION"
+else
+JS_LIBRARY_NAME="mozjs"
+fi
+JS_CONFIG_LIBS="$NSPR_LIBS $LIBS"
+if test -n "$GNU_CC"; then
+JS_CONFIG_MOZ_JS_LIBS='-L${libdir} -l${JS_LIBRARY_NAME}'
+else
+JS_CONFIG_MOZ_JS_LIBS='${libdir}/${JS_LIBRARY_NAME}.lib'
+fi
+AC_SUBST(JS_LIBRARY_NAME)
+AC_SUBST(JS_CONFIG_MOZ_JS_LIBS)
+AC_SUBST(JS_CONFIG_LIBS)
+
+MOZ_SUBCONFIGURE_FFI()
+
 dnl Spit out some output
 dnl ========================================================
+MOZ_CREATE_CONFIG_STATUS()
 
-MAKEFILES="
-  js-confdefs.h
-  Makefile
-  shell/Makefile
-  config/Makefile
-  config/autoconf.mk
-  config/expandlibs_config.py
-"
-
-if test "$JS_NATIVE_EDITLINE"; then
-  MAKEFILES="$MAKEFILES
-    editline/Makefile
-  "
+if test "$JS_STANDALONE"; then
+  MOZ_RUN_CONFIG_STATUS()
 fi
-
-if test ! "$COMPILER_DEPEND" -a ! "$MOZ_NATIVE_MAKEDEPEND"; then
-  MAKEFILES="$MAKEFILES
-    config/mkdepend/Makefile
-  "
-fi
-
-if test "$ENABLE_TESTS"; then
-  MAKEFILES="$MAKEFILES
-    jsapi-tests/Makefile
-    tests/Makefile
-  "
-fi
-
-echo $MAKEFILES > unallmakefiles
-
-AC_OUTPUT($MAKEFILES)
-
-# Produce the js-config script at configure time; see the comments for
-# 'js-config' in Makefile.in.
-AC_MSG_RESULT(invoking $MAKE to create js-config script)
-$MAKE js-config
-
-# Build jsctypes if it's enabled.
-if test "$JS_HAS_CTYPES" -a -z "$MOZ_NATIVE_FFI"; then
-  # Run the libffi 'configure' script.
-  ac_configure_args="--disable-shared --enable-static --disable-raw-api"
-  if test "$MOZ_DEBUG"; then
-    ac_configure_args="$ac_configure_args --enable-debug"
-  fi
-  if test "$DSO_PIC_CFLAGS"; then
-    ac_configure_args="$ac_configure_args --with-pic"
-  fi
-  if test "$CROSS_COMPILE"; then
-    case "$target" in
-    *-android*|*-linuxandroid*)
-      export AS CC CXX CPP LD AR RANLIB STRIP CPPFLAGS CFLAGS LDFLAGS
-
-      ac_configure_args="$ac_configure_args --build=$build --host=$target HOST_CC=\"$HOST_CC\""
-      ;;
-    *)
-      ac_configure_args="$ac_configure_args --build=$build --host=$target HOST_CC=\"$HOST_CC\" CC=\"$CC\""
-      ;;
-    esac
-  fi
-  if test "$_MSC_VER"; then
-    # Use a wrapper script for cl and ml that looks more like gcc.
-    # autotools can't quite handle an MSVC build environment yet.
-    LDFLAGS=
-    CFLAGS=
-    ac_configure_args="$ac_configure_args LD=link CPP=\"cl -nologo -EP\" SHELL=sh.exe"
-    case "${target_cpu}" in
-    x86_64)
-      # Need target since MSYS tools into mozilla-build may be 32bit
-      ac_configure_args="$ac_configure_args CC=\"$_topsrcdir/ctypes/libffi/msvcc.sh -m64\" --build=$build --host=$target"
-      ;;
-    *)
-      ac_configure_args="$ac_configure_args CC=$_topsrcdir/ctypes/libffi/msvcc.sh"
-      ;;
-    esac
-  fi
-  if test "$SOLARIS_SUNPRO_CC"; then
-    # Always use gcc for libffi on Solaris
-    if test ! "$HAVE_64BIT_OS"; then
-      ac_configure_args="$ac_configure_args CC=gcc CFLAGS=-m32 LD= LDFLAGS="
-    else
-      ac_configure_args="$ac_configure_args CC=gcc CFLAGS=-m64 LD= LDFLAGS="
-    fi
-  fi
-  if test "$AIX_IBM_XLC"; then
-    # Always use gcc for libffi on IBM AIX5/AIX6
-    if test ! "$HAVE_64BIT_OS"; then
-      ac_configure_args="$ac_configure_args CC=gcc CFLAGS=-maix32"
-    else
-      ac_configure_args="$ac_configure_args CC=gcc CFLAGS=-maix64"
-    fi
-  fi
-  if test "$OS_ARCH" = "OS2"; then
-    ac_configure_args="$ac_configure_args CFLAGS=-Zomf AR=emxomfar"
-  fi
-
-  # Use a separate cache file for libffi, since it does things differently
-  # from our configure.
-  mkdir -p $_objdir/ctypes/libffi
-  old_cache_file=$cache_file
-  cache_file=$_objdir/ctypes/libffi/config.cache
-  old_config_files=$CONFIG_FILES
-  unset CONFIG_FILES
-  AC_OUTPUT_SUBDIRS(ctypes/libffi)
-  cache_file=$old_cache_file
-  ac_configure_args="$_SUBDIR_CONFIG_ARGS"
-  CONFIG_FILES=$old_config_files
-fi
-

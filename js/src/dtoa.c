@@ -164,15 +164,15 @@ typedef unsigned Long ULong;
 #endif
 
 #ifdef DEBUG
-#include "stdio.h"
+#include <stdio.h>
 #define Bug(x) {fprintf(stderr, "%s\n", x); exit(1);}
 #endif
 
-#include "stdlib.h"
-#include "string.h"
+#include <stdlib.h>
+#include <string.h>
 
 #ifdef USE_LOCALE
-#include "locale.h"
+#include <locale.h>
 #endif
 
 #ifdef MALLOC
@@ -205,7 +205,7 @@ extern void *MALLOC(size_t);
 #define IEEE_Arith
 #endif
 
-#include "errno.h"
+#include <errno.h>
 
 #ifdef Bad_float_h
 
@@ -237,15 +237,11 @@ extern void *MALLOC(size_t);
 #endif
 
 #else /* ifndef Bad_float_h */
-#include "float.h"
+#include <float.h>
 #endif /* Bad_float_h */
 
 #ifndef __MATH_H__
-#include "math.h"
-#endif
-
-#ifdef __cplusplus
-extern "C" {
+#include <math.h>
 #endif
 
 #ifndef CONST
@@ -702,12 +698,12 @@ s2b
  static int
 hi0bits
 #ifdef KR_headers
-	(x) register ULong x;
+	(x) ULong x;
 #else
-	(register ULong x)
+	(ULong x)
 #endif
 {
-	register int k = 0;
+	int k = 0;
 
 	if (!(x & 0xffff0000)) {
 		k = 16;
@@ -741,8 +737,8 @@ lo0bits
 	(ULong *y)
 #endif
 {
-	register int k;
-	register ULong x = *y;
+	int k;
+	ULong x = *y;
 
 	if (x & 7) {
 		if (x & 1)
@@ -1160,7 +1156,7 @@ ulp
 	(U x)
 #endif
 {
-	register Long L;
+	Long L;
 	U a;
 
 	L = (word0(x) & Exp_mask) - (P-1)*Exp_msk1;
@@ -3250,6 +3246,3 @@ dtoa
 		*rve = s;
 	return s0;
 	}
-#ifdef __cplusplus
-}
-#endif

@@ -1,125 +1,33 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Various JS utility functions. */
 
+#include "jsutil.h"
+
 #include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
+#include "mozilla/MathAlgorithms.h"
+#include "mozilla/PodOperations.h"
 
 #include <stdio.h>
-#include <stdlib.h>
+
 #include "jstypes.h"
-#include "jsutil.h"
 
 #ifdef WIN32
 #    include "jswin.h"
-#else
-#    include <signal.h>
 #endif
 
-#include "js/TemplateLib.h"
 #include "js/Utility.h"
-
-#if USE_ZLIB
-#include "zlib.h"
-#endif
 
 using namespace js;
 
-#if USE_ZLIB
-static void *
-zlib_alloc(void *cx, uInt items, uInt size)
-{
-    return OffTheBooks::malloc_(items * size);
-}
+using mozilla::CeilingLog2Size;
+using mozilla::PodArrayZero;
 
-static void
-zlib_free(void *cx, void *addr)
-{
-    Foreground::free_(addr);
-}
-
-bool
-Compressor::init()
-{
-    if (inplen >= UINT32_MAX)
-        return false;
-    zs.zalloc = zlib_alloc;
-    zs.zfree = zlib_free;
-    int ret = deflateInit(&zs, Z_DEFAULT_COMPRESSION);
-    if (ret != Z_OK) {
-        JS_ASSERT(ret == Z_MEM_ERROR);
-        return false;
-    }
-    return true;
-}
-
-bool
-Compressor::compressMore()
-{
-    uInt left = inplen - (zs.next_in - inp);
-    bool done = left <= CHUNKSIZE;
-    if (done)
-        zs.avail_in = left;
-    else if (zs.avail_in == 0)
-        zs.avail_in = CHUNKSIZE;
-    int ret = deflate(&zs, done ? Z_FINISH : Z_NO_FLUSH);
-    if (ret == Z_MEM_ERROR) {
-        zs.avail_out = 0;
-        return false;
-    }
-    if (ret == Z_BUF_ERROR || (done && ret == Z_OK)) {
-        JS_ASSERT(zs.avail_out == 0);
-        return false;
-    }
-    JS_ASSERT_IF(!done, ret == Z_OK);
-    JS_ASSERT_IF(done, ret == Z_STREAM_END);
-    return !done;
-}
-
-size_t
-Compressor::finish()
-{
-    size_t outlen = inplen - zs.avail_out;
-    int ret = deflateEnd(&zs);
-    if (ret != Z_OK) {
-        // If we finished early, we can get a Z_DATA_ERROR.
-        JS_ASSERT(ret == Z_DATA_ERROR);
-        JS_ASSERT(uInt(zs.next_in - inp) < inplen || !zs.avail_out);
-    }
-    return outlen;
-}
-
-bool
-js::DecompressString(const unsigned char *inp, size_t inplen, unsigned char *out, size_t outlen)
-{
-    JS_ASSERT(inplen <= UINT32_MAX);
-    z_stream zs;
-    zs.zalloc = zlib_alloc;
-    zs.zfree = zlib_free;
-    zs.opaque = NULL;
-    zs.next_in = (Bytef *)inp;
-    zs.avail_in = inplen;
-    zs.next_out = out;
-    JS_ASSERT(outlen);
-    zs.avail_out = outlen;
-    int ret = inflateInit(&zs);
-    if (ret != Z_OK) {
-        JS_ASSERT(ret == Z_MEM_ERROR);
-        return false;
-    }
-    ret = inflate(&zs, Z_FINISH);
-    JS_ASSERT(ret == Z_STREAM_END);
-    ret = inflateEnd(&zs);
-    JS_ASSERT(ret == Z_OK);
-    return true;
-}
-#endif
-
-#ifdef DEBUG
+#if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
 /* For JS_OOM_POSSIBLY_FAIL in jsutil.h. */
 JS_PUBLIC_DATA(uint32_t) OOM_maxAllocations = UINT32_MAX;
 JS_PUBLIC_DATA(uint32_t) OOM_counter = 0;
@@ -138,10 +46,52 @@ JS_Assert(const char *s, const char *file, int ln)
     MOZ_CRASH();
 }
 
+#ifdef __linux__
+
+#include <malloc.h>
+#include <stdlib.h>
+
+namespace js {
+
+// This function calls all the vanilla heap allocation functions.  It is never
+// called, and exists purely to help config/check_vanilla_allocations.py.  See
+// that script for more details.
+extern void
+AllTheNonBasicVanillaNewAllocations()
+{
+    // posix_memalign and aligned_alloc aren't available on all Linux
+    // configurations.
+    //char *q;
+    //posix_memalign((void**)&q, 16, 16);
+
+    intptr_t p =
+        intptr_t(malloc(16)) +
+        intptr_t(calloc(1, 16)) +
+        intptr_t(realloc(nullptr, 16)) +
+        intptr_t(new char) +
+        intptr_t(new char) +
+        intptr_t(new char) +
+        intptr_t(new char[16]) +
+        intptr_t(memalign(16, 16)) +
+        //intptr_t(q) +
+        //intptr_t(aligned_alloc(16, 16)) +
+        intptr_t(valloc(4096)) +
+        intptr_t(strdup("dummy"));
+
+    printf("%u\n", uint32_t(p));  // make sure |p| is not optimized away
+
+    free((int*)p);      // this would crash if ever actually called
+
+    MOZ_CRASH();
+}
+
+} // namespace js
+
+#endif // __linux__
+
 #ifdef JS_BASIC_STATS
 
 #include <math.h>
-#include <string.h>
 
 /*
  * Histogram bins count occurrences of values <= the bin label, as follows:
@@ -175,7 +125,7 @@ ValToBin(unsigned logscale, uint32_t val)
     bin = (logscale == 10)
         ? (unsigned) ceil(log10((double) val))
         : (logscale == 2)
-        ? (unsigned) JS_CEILING_LOG2W(val)
+        ? (unsigned) CeilingLog2Size(val)
         : val;
     return Min(bin, 10U);
 }
@@ -276,7 +226,7 @@ JS_DumpHistogram(JSBasicStats *bs, FILE *fp)
             if (max > 1e6 && mean > 1e3)
                 cnt = uint32_t(ceil(log10((double) cnt)));
             else if (max > 16 && mean > 8)
-                cnt = JS_CEILING_LOG2W(cnt);
+                cnt = CeilingLog2Size(cnt);
             for (unsigned i = 0; i < cnt; i++)
                 putc('*', fp);
         }

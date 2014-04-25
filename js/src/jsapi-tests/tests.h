@@ -1,22 +1,22 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
-
-#include "jsapi.h"
-#include "jsprvtd.h"
-#include "jsalloc.h"
-
-#include "js/Vector.h"
+#ifndef jsapi_tests_tests_h
+#define jsapi_tests_tests_h
 
 #include <errno.h>
-#include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+#include "jsalloc.h"
+#include "jscntxt.h"
+#include "jsgc.h"
+
+#include "js/Vector.h"
 
 /* Note: Aborts on OOM. */
 class JSAPITestString {
@@ -54,12 +54,13 @@ class JSAPITest
 
     JSRuntime *rt;
     JSContext *cx;
-    JSObject *global;
+    JS::Heap<JSObject *> global;
     bool knownFail;
     JSAPITestString msgs;
-    JSCrossCompartmentCall *call;
+    JSCompartment *oldCompartment;
 
-    JSAPITest() : rt(NULL), cx(NULL), global(NULL), knownFail(false), call(NULL) {
+    JSAPITest() : rt(nullptr), cx(nullptr), global(nullptr),
+                  knownFail(false), oldCompartment(nullptr) {
         next = list;
         list = this;
     }
@@ -69,19 +70,21 @@ class JSAPITest
     virtual bool init();
 
     virtual void uninit() {
-        if (call) {
-            JS_LeaveCrossCompartmentCall(call);
-            call = NULL;
+        if (oldCompartment) {
+            JS_LeaveCompartment(cx, oldCompartment);
+            oldCompartment = nullptr;
         }
+        global = nullptr;
         if (cx) {
-            JS_RemoveObjectRoot(cx, &global);
+            JS::RemoveObjectRoot(cx, &global);
+            JS_LeaveCompartment(cx, nullptr);
             JS_EndRequest(cx);
             JS_DestroyContext(cx);
-            cx = NULL;
+            cx = nullptr;
         }
         if (rt) {
             destroyRuntime();
-            rt = NULL;
+            rt = nullptr;
         }
     }
 
@@ -94,9 +97,9 @@ class JSAPITest
 
 #define EVAL(s, vp) do { if (!evaluate(s, __FILE__, __LINE__, vp)) return false; } while (false)
 
-    bool evaluate(const char *bytes, const char *filename, int lineno, jsval *vp);
+    bool evaluate(const char *bytes, const char *filename, int lineno, JS::MutableHandleValue vp);
 
-    JSAPITestString jsvalToSource(jsval v) {
+    JSAPITestString jsvalToSource(JS::HandleValue v) {
         JSString *str = JS_ValueToSource(cx, v);
         if (str) {
             JSAutoByteString bytes(cx, str);
@@ -144,7 +147,8 @@ class JSAPITest
     }
 
     JSAPITestString toSource(JSAtom *v) {
-        return jsvalToSource(STRING_TO_JSVAL((JSString*)v));
+        JS::RootedValue val(cx, JS::StringValue((JSString *)v));
+        return jsvalToSource(val);
     }
 
     JSAPITestString toSource(JSVersion v) {
@@ -179,10 +183,11 @@ class JSAPITest
             return false; \
     } while (false)
 
-    bool checkSame(jsval actual, jsval expected,
+    bool checkSame(jsval actualArg, jsval expectedArg,
                    const char *actualExpr, const char *expectedExpr,
                    const char *filename, int lineno) {
-        JSBool same;
+        bool same;
+        JS::RootedValue actual(cx, actualArg), expected(cx, expectedArg);
         return (JS_SameValue(cx, actual, expected, &same) && same) ||
                fail(JSAPITestString("CHECK_SAME failed: expected JS_SameValue(cx, ") +
                     actualExpr + ", " + expectedExpr + "), got !JS_SameValue(cx, " +
@@ -203,10 +208,11 @@ class JSAPITest
 
     bool fail(JSAPITestString msg = JSAPITestString(), const char *filename = "-", int lineno = 0) {
         if (JS_IsExceptionPending(cx)) {
+            js::gc::AutoSuppressGC gcoff(cx);
             JS::RootedValue v(cx);
-            JS_GetPendingException(cx, v.address());
+            JS_GetPendingException(cx, &v);
             JS_ClearPendingException(cx);
-            JSString *s = JS_ValueToString(cx, v);
+            JSString *s = JS::ToString(cx, v);
             if (s) {
                 JSAutoByteString bytes(cx, s);
                 if (!!bytes)
@@ -220,44 +226,44 @@ class JSAPITest
 
     JSAPITestString messages() const { return msgs; }
 
-    static JSClass * basicGlobalClass() {
-        static JSClass c = {
+    static const JSClass * basicGlobalClass() {
+        static const JSClass c = {
             "global", JSCLASS_GLOBAL_FLAGS,
-            JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
-            JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
+            JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+            JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, nullptr,
+            nullptr, nullptr, nullptr,
+            JS_GlobalObjectTraceHook
         };
         return &c;
     }
 
   protected:
-    static JSBool
+    static bool
     print(JSContext *cx, unsigned argc, jsval *vp)
     {
-        jsval *argv = JS_ARGV(cx, vp);
-        for (unsigned i = 0; i < argc; i++) {
-            JSString *str = JS_ValueToString(cx, argv[i]);
+        JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+
+        for (unsigned i = 0; i < args.length(); i++) {
+            JSString *str = JS::ToString(cx, args[i]);
             if (!str)
-                return JS_FALSE;
+                return false;
             char *bytes = JS_EncodeString(cx, str);
             if (!bytes)
-                return JS_FALSE;
+                return false;
             printf("%s%s", i ? " " : "", bytes);
             JS_free(cx, bytes);
         }
 
         putchar('\n');
         fflush(stdout);
-        JS_SET_RVAL(cx, vp, JSVAL_VOID);
-        return JS_TRUE;
+        args.rval().setUndefined();
+        return true;
     }
 
     bool definePrint();
 
-    virtual JSRuntime * createRuntime() {
-        JSRuntime *rt = JS_NewRuntime(8L * 1024 * 1024);
-        if (!rt)
-            return NULL;
-
+    static void setNativeStackQuota(JSRuntime *rt)
+    {
         const size_t MAX_STACK_SIZE =
 /* Assume we can't use more than 5e5 bytes of C stack by default. */
 #if (defined(DEBUG) && defined(__SUNPRO_CC))  || defined(JS_CPU_SPARC)
@@ -272,6 +278,13 @@ class JSAPITest
         ;
 
         JS_SetNativeStackQuota(rt, MAX_STACK_SIZE);
+    }
+
+    virtual JSRuntime * createRuntime() {
+        JSRuntime *rt = JS_NewRuntime(8L * 1024 * 1024, JS_USE_HELPER_THREADS);
+        if (!rt)
+            return nullptr;
+        setNativeStackQuota(rt);
         return rt;
     }
 
@@ -291,18 +304,17 @@ class JSAPITest
     virtual JSContext * createContext() {
         JSContext *cx = JS_NewContext(rt, 8192);
         if (!cx)
-            return NULL;
-        JS_SetOptions(cx, JSOPTION_VAROBJFIX);
-        JS_SetVersion(cx, JSVERSION_LATEST);
+            return nullptr;
+        JS::ContextOptionsRef(cx).setVarObjFix(true);
         JS_SetErrorReporter(cx, &reportError);
         return cx;
     }
 
-    virtual JSClass * getGlobalClass() {
+    virtual const JSClass * getGlobalClass() {
         return basicGlobalClass();
     }
 
-    virtual JSObject * createGlobal(JSPrincipals *principals = NULL);
+    virtual JSObject * createGlobal(JSPrincipals *principals = nullptr);
 };
 
 #define BEGIN_TEST(testname)                                            \
@@ -378,7 +390,7 @@ class TempFile {
                     name, strerror(errno));
             exit(1);
         }
-        stream = NULL;
+        stream = nullptr;
     }
 
     /* Delete the temporary file. */
@@ -388,6 +400,19 @@ class TempFile {
                     name, strerror(errno));
             exit(1);
         }
-        name = NULL;
+        name = nullptr;
     }
 };
+
+// Just a wrapper around JSPrincipals that allows static construction.
+class TestJSPrincipals : public JSPrincipals
+{
+  public:
+    TestJSPrincipals(int rc = 0)
+      : JSPrincipals()
+    {
+        refcount = rc;
+    }
+};
+
+#endif /* jsapi_tests_tests_h */

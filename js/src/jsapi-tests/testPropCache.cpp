@@ -1,26 +1,25 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
-#include "tests.h"
+#include "jsapi-tests/tests.h"
 
 static int g_counter;
 
-static JSBool
+static bool
 CounterAdd(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleValue vp)
 {
     g_counter++;
-    return JS_TRUE;
+    return true;
 }
 
-static JSClass CounterClass = {
+static const JSClass CounterClass = {
     "Counter",  /* name */
     0,  /* flags */
-    CounterAdd, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+    CounterAdd, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
@@ -28,7 +27,7 @@ BEGIN_TEST(testPropCache_bug505798)
 {
     g_counter = 0;
     EXEC("var x = {};");
-    CHECK(JS_DefineObject(cx, global, "y", &CounterClass, NULL, JSPROP_ENUMERATE));
+    CHECK(JS_DefineObject(cx, global, "y", &CounterClass, nullptr, JSPROP_ENUMERATE));
     EXEC("var arr = [x, y];\n"
          "for (var i = 0; i < arr.length; i++)\n"
          "    arr[i].p = 1;\n");

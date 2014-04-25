@@ -1,52 +1,48 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=79 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "vm/String-inl.h"
+
+#include "mozilla/MathAlgorithms.h"
+#include "mozilla/MemoryReporting.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/RangedPtr.h"
 
 #include "gc/Marking.h"
 
-#include "String.h"
-#include "String-inl.h"
+#include "jscntxtinlines.h"
+#include "jscompartmentinlines.h"
 
-#include "jsobjinlines.h"
-
-using namespace mozilla;
 using namespace js;
 
-bool
-JSString::isShort() const
-{
-    bool is_short = (getAllocKind() == gc::FINALIZE_SHORT_STRING);
-    JS_ASSERT_IF(is_short, isFixed());
-    return is_short;
-}
+using mozilla::PodCopy;
+using mozilla::RangedPtr;
+using mozilla::RoundUpPow2;
 
 bool
-JSString::isFixed() const
+JSString::isFatInline() const
 {
-    return isFlat() && !isExtensible();
-}
-
-bool
-JSString::isInline() const
-{
-    return isFixed() && (d.u1.chars == d.inlineStorage || isShort());
+    // It's possible for fat-inline strings to be converted to flat strings;
+    // as a result, checking just for the arena isn't enough to determine if a
+    // string is fat-inline.  Hence the isInline() check.
+    bool is_FatInline = (getAllocKind() == gc::FINALIZE_FAT_INLINE_STRING) && isInline();
+    JS_ASSERT_IF(is_FatInline, isFlat());
+    return is_FatInline;
 }
 
 bool
 JSString::isExternal() const
 {
     bool is_external = (getAllocKind() == gc::FINALIZE_EXTERNAL_STRING);
-    JS_ASSERT_IF(is_external, isFixed());
+    JS_ASSERT_IF(is_external, isFlat());
     return is_external;
 }
 
 size_t
-JSString::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf)
+JSString::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
 {
     // JSRope: do nothing, we'll count all children chars when we hit the leaf strings.
     if (isRope())
@@ -66,33 +62,55 @@ JSString::sizeOfExcludingThis(JSMallocSizeOfFun mallocSizeOf)
         return mallocSizeOf(extensible.chars());
     }
 
-    JS_ASSERT(isFixed());
-
     // JSExternalString: don't count, the chars could be stored anywhere.
     if (isExternal())
         return 0;
 
-    // JSInlineString, JSShortString, JSInlineAtom, JSShortAtom: the chars are inline.
+    // JSInlineString, JSFatInlineString [JSInlineAtom, JSFatInlineAtom]: the chars are inline.
     if (isInline())
         return 0;
 
-    // JSAtom, JSFixedString, JSUndependedString: measure the space for the
-    // chars.  For JSUndependedString, there is no need to count the base
-    // string, for the same reason as JSDependentString above.
-    JSFixedString &fixed = asFixed();
-    return mallocSizeOf(fixed.chars());
+    // JSAtom, JSUndependedString: measure the space for the chars.  For
+    // JSUndependedString, there is no need to count the base string, for the
+    // same reason as JSDependentString above.
+    JSFlatString &flat = asFlat();
+    return mallocSizeOf(flat.chars());
 }
 
 #ifdef DEBUG
+
+void
+JSString::dumpChars(const jschar *s, size_t n)
+{
+    if (n == SIZE_MAX) {
+        n = 0;
+        while (s[n])
+            n++;
+    }
+
+    fputc('"', stderr);
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == '\n')
+            fprintf(stderr, "\\n");
+        else if (s[i] == '\t')
+            fprintf(stderr, "\\t");
+        else if (s[i] >= 32 && s[i] < 127)
+            fputc(s[i], stderr);
+        else if (s[i] <= 255)
+            fprintf(stderr, "\\x%02x", (unsigned int) s[i]);
+        else
+            fprintf(stderr, "\\u%04x", (unsigned int) s[i]);
+    }
+    fputc('"', stderr);
+}
+
 void
 JSString::dump()
 {
-    if (const jschar *chars = getChars(NULL)) {
+    if (const jschar *chars = getChars(nullptr)) {
         fprintf(stderr, "JSString* (%p) = jschar * (%p) = ",
                 (void *) this, (void *) chars);
-
-        extern void DumpChars(const jschar *s, size_t n);
-        DumpChars(chars, length());
+        dumpChars(chars, length());
     } else {
         fprintf(stderr, "(oom in JSString::dump)");
     }
@@ -102,7 +120,7 @@ JSString::dump()
 bool
 JSString::equals(const char *s)
 {
-    const jschar *c = getChars(NULL);
+    const jschar *c = getChars(nullptr);
     if (!c) {
         fprintf(stderr, "OOM in JSString::equals!\n");
         return false;
@@ -117,8 +135,8 @@ JSString::equals(const char *s)
 }
 #endif /* DEBUG */
 
-static JS_ALWAYS_INLINE bool
-AllocChars(JSContext *maybecx, size_t length, jschar **chars, size_t *capacity)
+static MOZ_ALWAYS_INLINE bool
+AllocChars(ThreadSafeContext *maybecx, size_t length, jschar **chars, size_t *capacity)
 {
     /*
      * String length doesn't include the null char, so include it here before
@@ -140,13 +158,69 @@ AllocChars(JSContext *maybecx, size_t length, jschar **chars, size_t *capacity)
 
     JS_STATIC_ASSERT(JSString::MAX_LENGTH * sizeof(jschar) < UINT32_MAX);
     size_t bytes = numChars * sizeof(jschar);
-    *chars = (jschar *)(maybecx ? maybecx->malloc_(bytes) : OffTheBooks::malloc_(bytes));
-    return *chars != NULL;
+    *chars = (jschar *)(maybecx ? maybecx->malloc_(bytes) : js_malloc(bytes));
+    return *chars != nullptr;
+}
+
+bool
+JSRope::copyNonPureChars(ThreadSafeContext *cx, ScopedJSFreePtr<jschar> &out) const
+{
+    return copyNonPureCharsInternal(cx, out, false);
+}
+
+bool
+JSRope::copyNonPureCharsZ(ThreadSafeContext *cx, ScopedJSFreePtr<jschar> &out) const
+{
+    return copyNonPureCharsInternal(cx, out, true);
+}
+
+bool
+JSRope::copyNonPureCharsInternal(ThreadSafeContext *cx, ScopedJSFreePtr<jschar> &out,
+                                 bool nullTerminate) const
+{
+    /*
+     * Perform non-destructive post-order traversal of the rope, splatting
+     * each node's characters into a contiguous buffer.
+     */
+
+    size_t n = length();
+    if (cx)
+        out.reset(cx->pod_malloc<jschar>(n + 1));
+    else
+        out.reset(js_pod_malloc<jschar>(n + 1));
+
+    if (!out)
+        return false;
+
+    Vector<const JSString *, 8, SystemAllocPolicy> nodeStack;
+    const JSString *str = this;
+    jschar *pos = out;
+    while (true) {
+        if (str->isRope()) {
+            if (!nodeStack.append(str->asRope().rightChild()))
+                return false;
+            str = str->asRope().leftChild();
+        } else {
+            size_t len = str->length();
+            PodCopy(pos, str->asLinear().chars(), len);
+            pos += len;
+            if (nodeStack.empty())
+                break;
+            str = nodeStack.popCopy();
+        }
+    }
+
+    JS_ASSERT(pos == out + n);
+
+    if (nullTerminate)
+        out[n] = 0;
+
+    return true;
 }
 
 template<JSRope::UsingBarrier b>
 JSFlatString *
-JSRope::flattenInternal(JSContext *maybecx)
+JSRope::flattenInternal(ExclusiveContext *maybecx)
 {
     /*
      * Perform a depth-first dag traversal, splatting each node's characters
@@ -186,15 +260,36 @@ JSRope::flattenInternal(JSContext *maybecx)
     JSString *str = this;
     jschar *pos;
 
-    if (this->leftChild()->isExtensible()) {
-        JSExtensibleString &left = this->leftChild()->asExtensible();
+    /* Find the left most string, containing the first string. */
+    JSRope *leftMostRope = this;
+    while (leftMostRope->leftChild()->isRope())
+        leftMostRope = &leftMostRope->leftChild()->asRope();
+
+    if (leftMostRope->leftChild()->isExtensible()) {
+        JSExtensibleString &left = leftMostRope->leftChild()->asExtensible();
         size_t capacity = left.capacity();
         if (capacity >= wholeLength) {
-            if (b == WithIncrementalBarrier) {
-                JSString::writeBarrierPre(d.u1.left);
-                JSString::writeBarrierPre(d.s.u2.right);
+            /*
+             * Simulate a left-most traversal from the root to leftMost->leftChild()
+             * via first_visit_node
+             */
+            while (str != leftMostRope) {
+                JS_ASSERT(str->isRope());
+                if (b == WithIncrementalBarrier) {
+                    JSString::writeBarrierPre(str->d.u1.left);
+                    JSString::writeBarrierPre(str->d.s.u2.right);
+                }
+                JSString *child = str->d.u1.left;
+                str->d.u1.chars = left.chars();
+                child->d.s.u3.parent = str;
+                child->d.lengthAndFlags = 0x200;
+                str = child;
             }
-
+            if (b == WithIncrementalBarrier) {
+                JSString::writeBarrierPre(str->d.u1.left);
+                JSString::writeBarrierPre(str->d.s.u2.right);
+            }
+            str->d.u1.chars = left.chars();
             wholeCapacity = capacity;
             wholeChars = const_cast<jschar *>(left.chars());
             size_t bits = left.d.lengthAndFlags;
@@ -202,13 +297,14 @@ JSRope::flattenInternal(JSContext *maybecx)
             JS_STATIC_ASSERT(!(EXTENSIBLE_FLAGS & DEPENDENT_FLAGS));
             left.d.lengthAndFlags = bits ^ (EXTENSIBLE_FLAGS | DEPENDENT_FLAGS);
             left.d.s.u2.base = (JSLinearString *)this;  /* will be true on exit */
-            JSString::writeBarrierPost(left.d.s.u2.base, &left.d.s.u2.base);
+            StringWriteBarrierPostRemove(maybecx, &left.d.u1.left);
+            StringWriteBarrierPost(maybecx, (JSString **)&left.d.s.u2.base);
             goto visit_right_child;
         }
     }
 
     if (!AllocChars(maybecx, wholeLength, &wholeChars, &wholeCapacity))
-        return NULL;
+        return nullptr;
 
     pos = wholeChars;
     first_visit_node: {
@@ -219,6 +315,7 @@ JSRope::flattenInternal(JSContext *maybecx)
 
         JSString &left = *str->d.u1.left;
         str->d.u1.chars = pos;
+        StringWriteBarrierPostRemove(maybecx, &str->d.u1.left);
         if (left.isRope()) {
             left.d.s.u3.parent = str;          /* Return to this when 'left' done, */
             left.d.lengthAndFlags = 0x200;     /* but goto visit_right_child. */
@@ -248,12 +345,14 @@ JSRope::flattenInternal(JSContext *maybecx)
             str->d.lengthAndFlags = buildLengthAndFlags(wholeLength, EXTENSIBLE_FLAGS);
             str->d.u1.chars = wholeChars;
             str->d.s.u2.capacity = wholeCapacity;
+            StringWriteBarrierPostRemove(maybecx, &str->d.u1.left);
+            StringWriteBarrierPostRemove(maybecx, &str->d.s.u2.right);
             return &this->asFlat();
         }
         size_t progress = str->d.lengthAndFlags;
         str->d.lengthAndFlags = buildLengthAndFlags(pos - str->d.u1.chars, DEPENDENT_FLAGS);
         str->d.s.u2.base = (JSLinearString *)this;       /* will be true on exit */
-        JSString::writeBarrierPost(str->d.s.u2.base, &str->d.s.u2.base);
+        StringWriteBarrierPost(maybecx, (JSString **)&str->d.s.u2.base);
         str = str->d.s.u3.parent;
         if (progress == 0x200)
             goto visit_right_child;
@@ -263,10 +362,10 @@ JSRope::flattenInternal(JSContext *maybecx)
 }
 
 JSFlatString *
-JSRope::flatten(JSContext *maybecx)
+JSRope::flatten(ExclusiveContext *maybecx)
 {
 #if JSGC_INCREMENTAL
-    if (compartment()->needsBarrier())
+    if (zone()->needsBarrier())
         return flattenInternal<WithIncrementalBarrier>(maybecx);
     else
         return flattenInternal<NoBarrier>(maybecx);
@@ -275,11 +374,14 @@ JSRope::flatten(JSContext *maybecx)
 #endif
 }
 
-JSString * JS_FASTCALL
-js_ConcatStrings(JSContext *cx, HandleString left, HandleString right)
+template <AllowGC allowGC>
+JSString *
+js::ConcatStrings(ThreadSafeContext *cx,
+                  typename MaybeRooted<JSString*, allowGC>::HandleType left,
+                  typename MaybeRooted<JSString*, allowGC>::HandleType right)
 {
-    JS_ASSERT_IF(!left->isAtom(), left->compartment() == cx->compartment);
-    JS_ASSERT_IF(!right->isAtom(), right->compartment() == cx->compartment);
+    JS_ASSERT_IF(!left->isAtom(), cx->isInsideCurrentZone(left));
+    JS_ASSERT_IF(!right->isAtom(), cx->isInsideCurrentZone(right));
 
     size_t leftLen = left->length();
     if (leftLen == 0)
@@ -291,31 +393,54 @@ js_ConcatStrings(JSContext *cx, HandleString left, HandleString right)
 
     size_t wholeLength = leftLen + rightLen;
     if (!JSString::validateLength(cx, wholeLength))
-        return NULL;
+        return nullptr;
 
-    if (JSShortString::lengthFits(wholeLength)) {
-        JSShortString *str = js_NewGCShortString(cx);
+    if (JSFatInlineString::lengthFits(wholeLength) && cx->isJSContext()) {
+        JSFatInlineString *str = js_NewGCFatInlineString<allowGC>(cx);
         if (!str)
-            return NULL;
-        const jschar *leftChars = left->getChars(cx);
-        if (!leftChars)
-            return NULL;
-        const jschar *rightChars = right->getChars(cx);
-        if (!rightChars)
-            return NULL;
+            return nullptr;
+
+        ScopedThreadSafeStringInspector leftInspector(left);
+        ScopedThreadSafeStringInspector rightInspector(right);
+        if (!leftInspector.ensureChars(cx) || !rightInspector.ensureChars(cx))
+            return nullptr;
 
         jschar *buf = str->init(wholeLength);
-        PodCopy(buf, leftChars, leftLen);
-        PodCopy(buf + leftLen, rightChars, rightLen);
+        PodCopy(buf, leftInspector.chars(), leftLen);
+        PodCopy(buf + leftLen, rightInspector.chars(), rightLen);
+
         buf[wholeLength] = 0;
         return str;
     }
 
-    return JSRope::new_(cx, left, right, wholeLength);
+    return JSRope::new_<allowGC>(cx, left, right, wholeLength);
 }
 
-JSFixedString *
-JSDependentString::undepend(JSContext *cx)
+template JSString *
+js::ConcatStrings<CanGC>(ThreadSafeContext *cx, HandleString left, HandleString right);
+
+template JSString *
+js::ConcatStrings<NoGC>(ThreadSafeContext *cx, JSString *left, JSString *right);
+
+bool
+JSDependentString::copyNonPureCharsZ(ThreadSafeContext *cx, ScopedJSFreePtr<jschar> &out) const
+{
+    JS_ASSERT(JSString::isDependent());
+
+    size_t n = length();
+    jschar *s = cx->pod_malloc<jschar>(n + 1);
+    if (!s)
+        return false;
+
+    PodCopy(s, chars(), n);
+    s[n] = 0;
+
+    out.reset(s);
+    return true;
+}
+
+JSFlatString *
+JSDependentString::undepend(ExclusiveContext *cx)
 {
     JS_ASSERT(JSString::isDependent());
 
@@ -330,7 +455,7 @@ JSDependentString::undepend(JSContext *cx)
     size_t size = (n + 1) * sizeof(jschar);
     jschar *s = (jschar *) cx->malloc_(size);
     if (!s)
-        return NULL;
+        return nullptr;
 
     PodCopy(s, chars(), n);
     s[n] = 0;
@@ -342,7 +467,7 @@ JSDependentString::undepend(JSContext *cx)
      */
     d.lengthAndFlags = buildLengthAndFlags(n, UNDEPENDED_FLAGS);
 
-    return &this->asFixed();
+    return &this->asFlat();
 }
 
 bool
@@ -394,6 +519,31 @@ JSFlatString::isIndexSlow(uint32_t *indexp) const
     return false;
 }
 
+bool
+ScopedThreadSafeStringInspector::ensureChars(ThreadSafeContext *cx)
+{
+    if (chars_)
+        return true;
+
+    if (cx->isExclusiveContext()) {
+        JSLinearString *linear = str_->ensureLinear(cx->asExclusiveContext());
+        if (!linear)
+            return false;
+        chars_ = linear->chars();
+    } else {
+        if (str_->hasPureChars()) {
+            chars_ = str_->pureChars();
+        } else {
+            if (!str_->copyNonPureChars(cx, scopedChars_))
+                return false;
+            chars_ = scopedChars_;
+        }
+    }
+
+    JS_ASSERT(chars_);
+    return true;
+}
+
 /*
  * Set up some tools to make it easier to generate large tables. After constant
  * folding, for each n, Rn(0) is the comma-separated list R(0), R(1), ..., R(2^n-1).
@@ -431,22 +581,23 @@ const StaticStrings::SmallChar StaticStrings::toSmallChar[] = { R7(0) };
 bool
 StaticStrings::init(JSContext *cx)
 {
-    SwitchToCompartment sc(cx, cx->runtime->atomsCompartment);
+    AutoLockForExclusiveAccess lock(cx);
+    AutoCompartment ac(cx, cx->runtime()->atomsCompartment());
 
     for (uint32_t i = 0; i < UNIT_STATIC_LIMIT; i++) {
         jschar buffer[] = { jschar(i), '\0' };
-        JSFixedString *s = js_NewStringCopyN(cx, buffer, 1);
+        JSFlatString *s = js_NewStringCopyN<NoGC>(cx, buffer, 1);
         if (!s)
             return false;
-        unitStaticTable[i] = s->morphAtomizedStringIntoAtom();
+        unitStaticTable[i] = s->morphAtomizedStringIntoPermanentAtom();
     }
 
     for (uint32_t i = 0; i < NUM_SMALL_CHARS * NUM_SMALL_CHARS; i++) {
         jschar buffer[] = { FROM_SMALL_CHAR(i >> 6), FROM_SMALL_CHAR(i & 0x3F), '\0' };
-        JSFixedString *s = js_NewStringCopyN(cx, buffer, 2);
+        JSFlatString *s = js_NewStringCopyN<NoGC>(cx, buffer, 2);
         if (!s)
             return false;
-        length2StaticTable[i] = s->morphAtomizedStringIntoAtom();
+        length2StaticTable[i] = s->morphAtomizedStringIntoPermanentAtom();
     }
 
     for (uint32_t i = 0; i < INT_STATIC_LIMIT; i++) {
@@ -461,10 +612,10 @@ StaticStrings::init(JSContext *cx)
                                 jschar('0' + ((i / 10) % 10)),
                                 jschar('0' + (i % 10)),
                                 '\0' };
-            JSFixedString *s = js_NewStringCopyN(cx, buffer, 3);
+            JSFlatString *s = js_NewStringCopyN<NoGC>(cx, buffer, 3);
             if (!s)
                 return false;
-            intStaticTable[i] = s->morphAtomizedStringIntoAtom();
+            intStaticTable[i] = s->morphAtomizedStringIntoPermanentAtom();
         }
     }
 
@@ -476,21 +627,15 @@ StaticStrings::trace(JSTracer *trc)
 {
     /* These strings never change, so barriers are not needed. */
 
-    for (uint32_t i = 0; i < UNIT_STATIC_LIMIT; i++) {
-        if (unitStaticTable[i])
-            MarkStringUnbarriered(trc, &unitStaticTable[i], "unit-static-string");
-    }
+    for (uint32_t i = 0; i < UNIT_STATIC_LIMIT; i++)
+        MarkPermanentAtom(trc, unitStaticTable[i], "unit-static-string");
 
-    for (uint32_t i = 0; i < NUM_SMALL_CHARS * NUM_SMALL_CHARS; i++) {
-        if (length2StaticTable[i])
-            MarkStringUnbarriered(trc, &length2StaticTable[i], "length2-static-string");
-    }
+    for (uint32_t i = 0; i < NUM_SMALL_CHARS * NUM_SMALL_CHARS; i++)
+        MarkPermanentAtom(trc, length2StaticTable[i], "length2-static-string");
 
     /* This may mark some strings more than once, but so be it. */
-    for (uint32_t i = 0; i < INT_STATIC_LIMIT; i++) {
-        if (intStaticTable[i])
-            MarkStringUnbarriered(trc, &intStaticTable[i], "int-static-string");
-    }
+    for (uint32_t i = 0; i < INT_STATIC_LIMIT; i++)
+        MarkPermanentAtom(trc, intStaticTable[i], "int-static-string");
 }
 
 bool
@@ -499,9 +644,9 @@ StaticStrings::isStatic(JSAtom *atom)
     const jschar *chars = atom->chars();
     switch (atom->length()) {
       case 1:
-        return (chars[0] < UNIT_STATIC_LIMIT);
+        return chars[0] < UNIT_STATIC_LIMIT;
       case 2:
-        return (fitsInSmallChar(chars[0]) && fitsInSmallChar(chars[1]));
+        return fitsInSmallChar(chars[0]) && fitsInSmallChar(chars[1]);
       case 3:
         if ('1' <= chars[0] && chars[0] <= '9' &&
             '0' <= chars[1] && chars[1] <= '9' &&
@@ -510,7 +655,7 @@ StaticStrings::isStatic(JSAtom *atom)
                       (chars[1] - '0') * 10 +
                       (chars[2] - '0');
 
-            return (unsigned(i) < INT_STATIC_LIMIT);
+            return unsigned(i) < INT_STATIC_LIMIT;
         }
         return false;
       default:

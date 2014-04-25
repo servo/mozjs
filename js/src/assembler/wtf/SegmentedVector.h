@@ -26,10 +26,10 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef SegmentedVector_h
-#define SegmentedVector_h
+#ifndef assembler_wtf_SegmentedVector_h
+#define assembler_wtf_SegmentedVector_h
 
-#include "jsprvtd.h"
+#include "js/Utility.h"
 #include "js/Vector.h"
 
 namespace WTF {
@@ -150,7 +150,7 @@ namespace WTF {
             }
 
             if (!segmentExistsFor(m_size - 1))
-                m_segments.append(new Segment);
+                m_segments.append(js_new<Segment>());
             //segmentFor(m_size - 1)->uncheckedAppend(value);
             segmentFor(m_size - 1)->append(value);
         }
@@ -248,7 +248,7 @@ namespace WTF {
         {
             ASSERT(segmentIndex <= m_segments.size());
             if (segmentIndex == m_segments.size())
-                m_segments.append(new Segment);
+                m_segments.append(js_new<Segment>());
             m_segments[segmentIndex]->grow(size);
         }
 
@@ -261,4 +261,4 @@ namespace WTF {
 
 using WTF::SegmentedVector;
 
-#endif // SegmentedVector_h
+#endif /* assembler_wtf_SegmentedVector_h */

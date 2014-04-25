@@ -5,15 +5,17 @@
 
 prefix='@prefix@'
 mozilla_version='@MOZILLA_VERSION@'
-LIBRARY_NAME='@LIBRARY_NAME@'
+JS_LIBRARY_NAME='@JS_LIBRARY_NAME@'
 NSPR_CFLAGS='@NSPR_CFLAGS@'
 JS_CONFIG_LIBS='@JS_CONFIG_LIBS@'
-MOZ_JS_LIBS='@MOZ_JS_LIBS@'
+MOZ_JS_LIBS='@JS_CONFIG_MOZ_JS_LIBS@'
+
+FILENAME=`basename "$0"`
 
 usage()
 {
 	cat <<EOF
-Usage: js-config [OPTIONS]
+Usage: $FILENAME [OPTIONS]
 Options:
 	[--prefix[=DIR]]
 	[--exec-prefix[=DIR]]
@@ -106,7 +108,7 @@ if test "$echo_libdir" = "yes"; then
 fi
 
 if test "$echo_cflags" = "yes"; then
-    echo "-I$includedir/js $NSPR_CFLAGS"
+    echo "-std=gnu++0x -include $includedir/$JS_LIBRARY_NAME/js/RequiredDefines.h -I$includedir/$JS_LIBRARY_NAME $NSPR_CFLAGS"
 fi
 
 if test "$echo_libs" = "yes"; then

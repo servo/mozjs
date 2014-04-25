@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2008 Apple Inc. All rights reserved.
@@ -23,26 +23,19 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef MacroAssemblerX86Common_h
-#define MacroAssemblerX86Common_h
+#ifndef assembler_assembler_MacroAssemblerX86Common_h
+#define assembler_assembler_MacroAssemblerX86Common_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER
 
-#include "X86Assembler.h"
-#include "AbstractMacroAssembler.h"
-
-#if WTF_COMPILER_MSVC
-#if WTF_CPU_X86_64
-/* for __cpuid */
-#include <intrin.h>
-#endif
-#endif
+#include "assembler/assembler/X86Assembler.h"
+#include "assembler/assembler/AbstractMacroAssembler.h"
 
 namespace JSC {
 
@@ -127,7 +120,7 @@ public:
     {
         m_assembler.addl_ir(imm.m_value, dest);
     }
-    
+
     void add32(Address src, RegisterID dest)
     {
         m_assembler.addl_mr(src.offset, src.base, dest);
@@ -137,7 +130,7 @@ public:
     {
         m_assembler.addl_rm(src, dest.offset, dest.base);
     }
-    
+
     void and32(RegisterID src, RegisterID dest)
     {
         m_assembler.andl_rr(src, dest);
@@ -167,7 +160,7 @@ public:
     {
         m_assembler.shll_i8r(imm.m_value, dest);
     }
-    
+
     void lshift32(RegisterID shift_amount, RegisterID dest)
     {
         // On x86 we can only shift by ecx; if asked to shift by another register we'll
@@ -184,12 +177,12 @@ public:
             // E.g. transform "shll %eax, %ebx" -> "xchgl %eax, %ecx; shll %ecx, %ebx; xchgl %eax, %ecx"
             else
                 m_assembler.shll_CLr(dest);
-        
+
             swap(shift_amount, X86Registers::ecx);
         } else
             m_assembler.shll_CLr(dest);
     }
-    
+
     void mul32(RegisterID src, RegisterID dest)
     {
         m_assembler.imull_rr(src, dest);
@@ -199,7 +192,7 @@ public:
     {
         m_assembler.imull_mr(src.offset, src.base, dest);
     }
-    
+
     void mul32(Imm32 imm, RegisterID src, RegisterID dest)
     {
         m_assembler.imull_i32r(src, imm.m_value, dest);
@@ -230,7 +223,7 @@ public:
     {
         m_assembler.notl_m(srcDest.offset, srcDest.base);
     }
-    
+
     void or32(RegisterID src, RegisterID dest)
     {
         m_assembler.orl_rr(src, dest);
@@ -272,7 +265,7 @@ public:
             // E.g. transform "shll %eax, %ebx" -> "xchgl %eax, %ecx; shll %ecx, %ebx; xchgl %eax, %ecx"
             else
                 m_assembler.sarl_CLr(dest);
-        
+
             swap(shift_amount, X86Registers::ecx);
         } else
             m_assembler.sarl_CLr(dest);
@@ -282,14 +275,14 @@ public:
     {
         m_assembler.sarl_i8r(imm.m_value, dest);
     }
-    
+
     void urshift32(RegisterID shift_amount, RegisterID dest)
     {
         // On x86 we can only shift by ecx; if asked to shift by another register we'll
         // need rejig the shift amount into ecx first, and restore the registers afterwards.
         if (shift_amount != X86Registers::ecx) {
             swap(shift_amount, X86Registers::ecx);
-            
+
             // E.g. transform "shrl %eax, %eax" -> "xchgl %eax, %ecx; shrl %ecx, %ecx; xchgl %eax, %ecx"
             if (dest == shift_amount)
                 m_assembler.shrl_CLr(X86Registers::ecx);
@@ -299,12 +292,12 @@ public:
             // E.g. transform "shrl %eax, %ebx" -> "xchgl %eax, %ecx; shrl %ecx, %ebx; xchgl %eax, %ecx"
             else
                 m_assembler.shrl_CLr(dest);
-            
+
             swap(shift_amount, X86Registers::ecx);
         } else
             m_assembler.shrl_CLr(dest);
     }
-    
+
     void urshift32(Imm32 imm, RegisterID dest)
     {
         m_assembler.shrl_i8r(imm.m_value, dest);
@@ -314,12 +307,12 @@ public:
     {
         m_assembler.subl_rr(src, dest);
     }
-    
+
     void sub32(TrustedImm32 imm, RegisterID dest)
     {
         m_assembler.subl_ir(imm.m_value, dest);
     }
-    
+
     void sub32(TrustedImm32 imm, Address address)
     {
         m_assembler.subl_im(imm.m_value, address.offset, address.base);
@@ -360,7 +353,7 @@ public:
     {
         m_assembler.xorl_mr(src.offset, src.base, dest);
     }
-    
+
     void sqrtDouble(FPRegisterID src, FPRegisterID dst)
     {
         m_assembler.sqrtsd_rr(src, dst);
@@ -414,11 +407,16 @@ public:
         m_assembler.movw_rm(src, address.offset, address.base, address.index, address.scale);
     }
 
+    void load8(BaseIndex address, RegisterID dest)
+    {
+        load8ZeroExtend(address, dest);
+    }
+
     void load8ZeroExtend(BaseIndex address, RegisterID dest)
     {
         m_assembler.movzbl_mr(address.offset, address.base, address.index, address.scale, dest);
     }
-    
+
     void load8ZeroExtend(Address address, RegisterID dest)
     {
         m_assembler.movzbl_mr(address.offset, address.base, dest);
@@ -426,32 +424,37 @@ public:
 
     void load8SignExtend(BaseIndex address, RegisterID dest)
     {
-        m_assembler.movxbl_mr(address.offset, address.base, address.index, address.scale, dest);
+        m_assembler.movsbl_mr(address.offset, address.base, address.index, address.scale, dest);
     }
-    
+
     void load8SignExtend(Address address, RegisterID dest)
     {
-        m_assembler.movxbl_mr(address.offset, address.base, dest);
+        m_assembler.movsbl_mr(address.offset, address.base, dest);
     }
 
     void load16SignExtend(BaseIndex address, RegisterID dest)
     {
-        m_assembler.movxwl_mr(address.offset, address.base, address.index, address.scale, dest);
+        m_assembler.movswl_mr(address.offset, address.base, address.index, address.scale, dest);
     }
-    
+
     void load16SignExtend(Address address, RegisterID dest)
     {
-        m_assembler.movxwl_mr(address.offset, address.base, dest);
+        m_assembler.movswl_mr(address.offset, address.base, dest);
     }
 
     void load16(BaseIndex address, RegisterID dest)
     {
         m_assembler.movzwl_mr(address.offset, address.base, address.index, address.scale, dest);
     }
-    
+
     void load16(Address address, RegisterID dest)
     {
         m_assembler.movzwl_mr(address.offset, address.base, dest);
+    }
+
+    void load16Unaligned(BaseIndex address, RegisterID dest)
+    {
+        load16(address, dest);
     }
 
     DataLabel32 store32WithAddressOffsetPatch(RegisterID src, Address address)
@@ -713,7 +716,7 @@ public:
     void branchConvertDoubleToInt32(FPRegisterID src, RegisterID dest, JumpList& failureCases, FPRegisterID fpTemp)
     {
         ASSERT(isSSE2Present());
-        ASSERT(src != fpTemp); 
+        ASSERT(src != fpTemp);
         m_assembler.cvttsd2si_rr(src, dest);
 
         // If the result is zero, it might have been -0.0, and the double comparison won't catch this!
@@ -740,7 +743,7 @@ public:
     // operations add and remove a single register sized unit of data
     // to or from the stack.  Peek and poke operations read or write
     // values on the stack, without moving the current stack position.
-    
+
     void pop(RegisterID dest)
     {
         m_assembler.pop_r(dest);
@@ -878,7 +881,7 @@ public:
             m_assembler.cmpl_ir(right.m_value, left);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     // Branch based on a 32-bit comparison, forcing the size of the
     // immediate operand to 32 bits in the native code stream to ensure that
     // the length of code emitted by this instruction is consistent.
@@ -909,7 +912,7 @@ public:
         m_assembler.cmpl_mr(right.offset, right.base, left);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     Jump branch32(Condition cond, Address left, RegisterID right)
     {
         m_assembler.cmpl_rm(right, left.offset, left.base);
@@ -986,7 +989,7 @@ public:
             m_assembler.testl_i32m(mask.m_value, address.offset, address.base, address.index, address.scale);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     Jump branchTest8(Condition cond, Address address, Imm32 mask = Imm32(-1))
     {
         ASSERT((cond == Zero) || (cond == NonZero));
@@ -996,7 +999,7 @@ public:
             m_assembler.testb_im(mask.m_value, address.offset, address.base);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     Jump branchTest8(Condition cond, BaseIndex address, Imm32 mask = Imm32(-1))
     {
         ASSERT((cond == Zero) || (cond == NonZero));
@@ -1037,7 +1040,7 @@ public:
     // * jz operations branch if the result is zero.
     // * jo operations branch if the (signed) arithmetic
     //   operation caused an overflow to occur.
-    
+
     Jump branchAdd32(Condition cond, RegisterID src, RegisterID dest)
     {
         ASSERT((cond == Overflow) || (cond == Signed) || (cond == Zero) || (cond == NonZero));
@@ -1051,7 +1054,7 @@ public:
         add32(imm, dest);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     Jump branchAdd32(Condition cond, Imm32 src, Address dest)
     {
         ASSERT((cond == Overflow) || (cond == Zero) || (cond == NonZero));
@@ -1086,21 +1089,21 @@ public:
         mul32(src, dest);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     Jump branchMul32(Condition cond, Imm32 imm, RegisterID src, RegisterID dest)
     {
         ASSERT(cond == Overflow);
         mul32(imm, src, dest);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     Jump branchSub32(Condition cond, RegisterID src, RegisterID dest)
     {
         ASSERT((cond == Overflow) || (cond == Signed) || (cond == Zero) || (cond == NonZero));
         sub32(src, dest);
         return Jump(m_assembler.jCC(x86Condition(cond)));
     }
-    
+
     Jump branchSub32(Condition cond, Imm32 imm, RegisterID dest)
     {
         ASSERT((cond == Overflow) || (cond == Signed) || (cond == Zero) || (cond == NonZero));
@@ -1290,120 +1293,15 @@ private:
 
     static SSECheckState s_sseCheckState;
 
-    static void setSSECheckState()
-    {
-        // Default the flags value to zero; if the compiler is
-        // not MSVC or GCC we will read this as SSE2 not present.
-        volatile int flags_edx = 0;
-        volatile int flags_ecx = 0;
-#if WTF_COMPILER_MSVC
-#if WTF_CPU_X86_64
-        int cpuinfo[4];
+    static void setSSECheckState();
 
-        __cpuid(cpuinfo, 1);
-        flags_ecx = cpuinfo[2];
-        flags_edx = cpuinfo[3];
-#else
-        _asm {
-            mov eax, 1 // cpuid function 1 gives us the standard feature set
-            cpuid;
-            mov flags_ecx, ecx;
-            mov flags_edx, edx;
-        }
-#endif
-#elif WTF_COMPILER_GCC
-#if WTF_CPU_X86_64
-        asm (
-             "movl $0x1, %%eax;"
-             "pushq %%rbx;"
-             "cpuid;"
-             "popq %%rbx;"
-             "movl %%ecx, %0;"
-             "movl %%edx, %1;"
-             : "=g" (flags_ecx), "=g" (flags_edx)
-             :
-             : "%eax", "%ecx", "%edx"
-             );
-#else
-        asm (
-             "movl $0x1, %%eax;"
-             "pushl %%ebx;"
-             "cpuid;"
-             "popl %%ebx;"
-             "movl %%ecx, %0;"
-             "movl %%edx, %1;"
-             : "=g" (flags_ecx), "=g" (flags_edx)
-             :
-             : "%eax", "%ecx", "%edx"
-             );
-#endif
-#elif WTF_COMPILER_SUNCC
-#if WTF_CPU_X86_64
-        asm (
-             "movl $0x1, %%eax;"
-             "pushq %%rbx;"
-             "cpuid;"
-             "popq %%rbx;"
-             "movl %%ecx, (%rsi);"
-             "movl %%edx, (%rdi);"
-             :
-             : "S" (&flags_ecx), "D" (&flags_edx)
-             : "%eax", "%ecx", "%edx"
-             );
-#else
-        asm (
-             "movl $0x1, %eax;"
-             "pushl %ebx;"
-             "cpuid;"
-             "popl %ebx;"
-             "movl %ecx, (%esi);"
-             "movl %edx, (%edi);"
-             :
-             : "S" (&flags_ecx), "D" (&flags_edx)
-             : "%eax", "%ecx", "%edx"
-             );
-#endif
-#endif
-        static const int SSEFeatureBit = 1 << 25;
-        static const int SSE2FeatureBit = 1 << 26;
-        static const int SSE3FeatureBit = 1 << 0;
-        static const int SSSE3FeatureBit = 1 << 9;
-        static const int SSE41FeatureBit = 1 << 19;
-        static const int SSE42FeatureBit = 1 << 20;
-        if (flags_ecx & SSE42FeatureBit)
-            s_sseCheckState = HasSSE4_2;
-        else if (flags_ecx & SSE41FeatureBit)
-            s_sseCheckState = HasSSE4_1;
-        else if (flags_ecx & SSSE3FeatureBit)
-            s_sseCheckState = HasSSSE3;
-        else if (flags_ecx & SSE3FeatureBit)
-            s_sseCheckState = HasSSE3;
-        else if (flags_edx & SSE2FeatureBit)
-            s_sseCheckState = HasSSE2;
-        else if (flags_edx & SSEFeatureBit)
-            s_sseCheckState = HasSSE;
-        else
-            s_sseCheckState = NoSSE;
-    }
-
+  public:
 #if WTF_CPU_X86
-#if WTF_OS_MAC_OS_X
-
-    // All X86 Macs are guaranteed to support at least SSE2
     static bool isSSEPresent()
     {
+#if defined(__SSE__) && !defined(DEBUG)
         return true;
-    }
-
-    static bool isSSE2Present()
-    {
-        return true;
-    }
-
-#else // OS(MAC_OS_X)
-
-    static bool isSSEPresent()
-    {
+#else
         if (s_sseCheckState == NotCheckedSSE) {
             setSSECheckState();
         }
@@ -1411,10 +1309,14 @@ private:
         ASSERT(s_sseCheckState != NotCheckedSSE);
 
         return s_sseCheckState >= HasSSE;
+#endif
     }
 
     static bool isSSE2Present()
     {
+#if defined(__SSE2__) && !defined(DEBUG)
+        return true;
+#else
         if (s_sseCheckState == NotCheckedSSE) {
             setSSECheckState();
         }
@@ -1422,10 +1324,9 @@ private:
         ASSERT(s_sseCheckState != NotCheckedSSE);
 
         return s_sseCheckState >= HasSSE2;
+#endif
     }
-    
 
-#endif // PLATFORM(MAC)
 #elif !defined(NDEBUG) // CPU(X86)
 
     // On x86-64 we should never be checking for SSE2 in a non-debug build,
@@ -1438,6 +1339,9 @@ private:
 #endif
     static bool isSSE3Present()
     {
+#if defined(__SSE3__) && !defined(DEBUG)
+        return true;
+#else
         if (s_sseCheckState == NotCheckedSSE) {
             setSSECheckState();
         }
@@ -1445,10 +1349,14 @@ private:
         ASSERT(s_sseCheckState != NotCheckedSSE);
 
         return s_sseCheckState >= HasSSE3;
+#endif
     }
 
     static bool isSSSE3Present()
     {
+#if defined(__SSSE3__) && !defined(DEBUG)
+        return true;
+#else
         if (s_sseCheckState == NotCheckedSSE) {
             setSSECheckState();
         }
@@ -1456,10 +1364,14 @@ private:
         ASSERT(s_sseCheckState != NotCheckedSSE);
 
         return s_sseCheckState >= HasSSSE3;
+#endif
     }
 
     static bool isSSE41Present()
     {
+#if defined(__SSE4_1__) && !defined(DEBUG)
+        return true;
+#else
         if (s_sseCheckState == NotCheckedSSE) {
             setSSECheckState();
         }
@@ -1467,10 +1379,14 @@ private:
         ASSERT(s_sseCheckState != NotCheckedSSE);
 
         return s_sseCheckState >= HasSSE4_1;
+#endif
     }
 
     static bool isSSE42Present()
     {
+#if defined(__SSE4_2__) && !defined(DEBUG)
+        return true;
+#else
         if (s_sseCheckState == NotCheckedSSE) {
             setSSECheckState();
         }
@@ -1478,11 +1394,30 @@ private:
         ASSERT(s_sseCheckState != NotCheckedSSE);
 
         return s_sseCheckState >= HasSSE4_2;
+#endif
     }
+
+  private:
+#ifdef DEBUG
+    static bool s_floatingPointDisabled;
+    static bool s_SSE3Disabled;
+    static bool s_SSE4Disabled;
+
+  public:
+    static void SetFloatingPointDisabled() {
+        s_floatingPointDisabled = true;
+    }
+    static void SetSSE3Disabled() {
+        s_SSE3Disabled = true;
+    }
+    static void SetSSE4Disabled() {
+        s_SSE4Disabled = true;
+    }
+#endif
 };
 
 } // namespace JSC
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // MacroAssemblerX86Common_h
+#endif /* assembler_assembler_MacroAssemblerX86Common_h */

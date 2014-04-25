@@ -1,44 +1,21 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Provides checked integers, detecting integer overflow and divide-by-0. */
 
-#ifndef mozilla_CheckedInt_h_
-#define mozilla_CheckedInt_h_
+#ifndef mozilla_CheckedInt_h
+#define mozilla_CheckedInt_h
 
-/*
- * Build options. Comment out these #defines to disable the corresponding
- * optional feature. Disabling features may be useful for code using
- * CheckedInt outside of Mozilla (e.g. WebKit)
- */
-
-// Enable usage of MOZ_STATIC_ASSERT to check for unsupported types.
-// If disabled, static asserts are replaced by regular assert().
-#define MOZ_CHECKEDINT_ENABLE_MOZ_ASSERTS
-
-/*
- * End of build options
- */
-
-
-#ifdef MOZ_CHECKEDINT_ENABLE_MOZ_ASSERTS
-#  include "mozilla/Assertions.h"
-#else
-#  ifndef MOZ_STATIC_ASSERT
-#    include <cassert>
-#    define MOZ_STATIC_ASSERT(cond, reason) assert((cond) && reason)
-#    define MOZ_ASSERT(cond, reason) assert((cond) && reason)
-#  endif
-#endif
-
-#include "mozilla/StandardInteger.h"
-
-#include <climits>
-#include <cstddef>
+#include <stdint.h>
+#include "mozilla/Assertions.h"
+#include "mozilla/IntegerTypeTraits.h"
 
 namespace mozilla {
+
+template<typename T> class CheckedInt;
 
 namespace detail {
 
@@ -105,6 +82,10 @@ struct IsSupportedPass2<char>
 { static const bool value = true; };
 
 template<>
+struct IsSupportedPass2<signed char>
+{ static const bool value = true; };
+
+template<>
 struct IsSupportedPass2<unsigned char>
 { static const bool value = true; };
 
@@ -132,64 +113,24 @@ template<>
 struct IsSupportedPass2<unsigned long>
 { static const bool value = true; };
 
+template<>
+struct IsSupportedPass2<long long>
+{ static const bool value = true; };
+
+template<>
+struct IsSupportedPass2<unsigned long long>
+{ static const bool value = true; };
 
 /*
- * Step 2: some integer-traits kind of stuff.
+ * Step 2: Implement the actual validity checks.
+ *
+ * Ideas taken from IntegerLib, code different.
  */
-
-template<size_t Size, bool Signedness>
-struct StdintTypeForSizeAndSignedness
-{};
-
-template<>
-struct StdintTypeForSizeAndSignedness<1, true>
-{ typedef int8_t   Type; };
-
-template<>
-struct StdintTypeForSizeAndSignedness<1, false>
-{ typedef uint8_t  Type; };
-
-template<>
-struct StdintTypeForSizeAndSignedness<2, true>
-{ typedef int16_t  Type; };
-
-template<>
-struct StdintTypeForSizeAndSignedness<2, false>
-{ typedef uint16_t Type; };
-
-template<>
-struct StdintTypeForSizeAndSignedness<4, true>
-{ typedef int32_t  Type; };
-
-template<>
-struct StdintTypeForSizeAndSignedness<4, false>
-{ typedef uint32_t Type; };
-
-template<>
-struct StdintTypeForSizeAndSignedness<8, true>
-{ typedef int64_t  Type; };
-
-template<>
-struct StdintTypeForSizeAndSignedness<8, false>
-{ typedef uint64_t Type; };
-
-template<typename IntegerType>
-struct UnsignedType
-{
-    typedef typename StdintTypeForSizeAndSignedness<sizeof(IntegerType),
-                                                    false>::Type Type;
-};
-
-template<typename IntegerType>
-struct IsSigned
-{
-    static const bool value = IntegerType(-1) <= IntegerType(0);
-};
 
 template<typename IntegerType, size_t Size = sizeof(IntegerType)>
 struct TwiceBiggerType
 {
-    typedef typename StdintTypeForSizeAndSignedness<
+    typedef typename detail::StdintTypeForSizeAndSignedness<
                        sizeof(IntegerType) * 2,
                        IsSigned<IntegerType>::value
                      >::Type Type;
@@ -201,47 +142,6 @@ struct TwiceBiggerType<IntegerType, 8>
     typedef UnsupportedType Type;
 };
 
-template<typename IntegerType>
-struct PositionOfSignBit
-{
-    static const size_t value = CHAR_BIT * sizeof(IntegerType) - 1;
-};
-
-template<typename IntegerType>
-struct MinValue
-{
-  private:
-    typedef typename UnsignedType<IntegerType>::Type UnsignedIntegerType;
-    static const size_t PosOfSignBit = PositionOfSignBit<IntegerType>::value;
-
-  public:
-    // Bitwise ops may return a larger type, that's why we cast explicitly.
-    // In C++, left bit shifts on signed values is undefined by the standard
-    // unless the shifted value is representable.
-    // Notice that signed-to-unsigned conversions are always well-defined in
-    // the standard as the value congruent to 2**n, as expected. By contrast,
-    // unsigned-to-signed is only well-defined if the value is representable.
-    static const IntegerType value =
-        IsSigned<IntegerType>::value
-        ? IntegerType(UnsignedIntegerType(1) << PosOfSignBit)
-        : IntegerType(0);
-};
-
-template<typename IntegerType>
-struct MaxValue
-{
-    // Tricksy, but covered by the unit test.
-    // Relies heavily on the type of MinValue<IntegerType>::value
-    // being IntegerType.
-    static const IntegerType value = ~MinValue<IntegerType>::value;
-};
-
-/*
- * Step 3: Implement the actual validity checks.
- *
- * Ideas taken from IntegerLib, code different.
- */
-
 template<typename T>
 inline bool
 HasSignBit(T x)
@@ -250,8 +150,7 @@ HasSignBit(T x)
   // Notice that signed-to-unsigned conversions are always well-defined in the
   // standard, as the value congruent modulo 2**n as expected. By contrast,
   // unsigned-to-signed is only well-defined if the value is representable.
-  return bool(typename UnsignedType<T>::Type(x)
-                >> PositionOfSignBit<T>::value);
+  return bool(typename MakeUnsigned<T>::Type(x) >> PositionOfSignBit<T>::value);
 }
 
 // Bitwise ops may return a larger type, so it's good to use this inline
@@ -360,9 +259,9 @@ IsAddValid(T x, T y)
   // Beware! These bitwise operations can return a larger integer type,
   // if T was a small type like int8_t, so we explicitly cast to T.
 
-  typename UnsignedType<T>::Type ux = x;
-  typename UnsignedType<T>::Type uy = y;
-  typename UnsignedType<T>::Type result = ux + uy;
+  typename MakeUnsigned<T>::Type ux = x;
+  typename MakeUnsigned<T>::Type uy = y;
+  typename MakeUnsigned<T>::Type result = ux + uy;
   return IsSigned<T>::value
          ? HasSignBit(BinaryComplement(T((result ^ x) & (result ^ y))))
          : BinaryComplement(x) >= y;
@@ -375,9 +274,9 @@ IsSubValid(T x, T y)
   // Subtraction is valid if either x and y have same sign, or x-y and x have
   // same sign. Since the value of x-y is undefined if we have a signed type,
   // we compute it using the unsigned type of the same size.
-  typename UnsignedType<T>::Type ux = x;
-  typename UnsignedType<T>::Type uy = y;
-  typename UnsignedType<T>::Type result = ux - uy;
+  typename MakeUnsigned<T>::Type ux = x;
+  typename MakeUnsigned<T>::Type uy = y;
+  typename MakeUnsigned<T>::Type result = ux - uy;
 
   return IsSigned<T>::value
          ? HasSignBit(BinaryComplement(T((result ^ x) & (x ^ y))))
@@ -385,13 +284,13 @@ IsSubValid(T x, T y)
 }
 
 template<typename T,
-         bool IsSigned = IsSigned<T>::value,
+         bool IsTSigned = IsSigned<T>::value,
          bool TwiceBiggerTypeIsSupported =
            IsSupported<typename TwiceBiggerType<T>::Type>::value>
 struct IsMulValidImpl {};
 
-template<typename T, bool IsSigned>
-struct IsMulValidImpl<T, IsSigned, true>
+template<typename T, bool IsTSigned>
+struct IsMulValidImpl<T, IsTSigned, true>
 {
     static bool run(T x, T y)
     {
@@ -450,29 +349,76 @@ IsDivValid(T x, T y)
          !(IsSigned<T>::value && x == MinValue<T>::value && y == T(-1));
 }
 
-// This is just to shut up msvc warnings about negating unsigned ints.
-template<typename T, bool IsSigned = IsSigned<T>::value>
-struct OppositeIfSignedImpl
-{
-    static T run(T x) { return -x; }
-};
+template<typename T, bool IsTSigned = IsSigned<T>::value>
+struct IsModValidImpl;
+
 template<typename T>
-struct OppositeIfSignedImpl<T, false>
+inline bool
+IsModValid(T x, T y)
 {
-    static T run(T x) { return x; }
-};
-template<typename T>
-inline T
-OppositeIfSigned(T x)
-{
-  return OppositeIfSignedImpl<T>::run(x);
+  return IsModValidImpl<T>::run(x, y);
 }
+
+/*
+ * Mod is pretty simple.
+ * For now, let's just use the ANSI C definition:
+ * If x or y are negative, the results are implementation defined.
+ *   Consider these invalid.
+ * Undefined for y=0.
+ * The result will never exceed either x or y.
+ *
+ * Checking that x>=0 is a warning when T is unsigned.
+ */
+
+template<typename T>
+struct IsModValidImpl<T, false> {
+  static inline bool run(T x, T y) {
+    return y >= 1;
+  }
+};
+
+template<typename T>
+struct IsModValidImpl<T, true> {
+  static inline bool run(T x, T y) {
+    if (x < 0)
+      return false;
+
+    return y >= 1;
+  }
+};
+
+template<typename T, bool IsSigned = IsSigned<T>::value>
+struct NegateImpl;
+
+template<typename T>
+struct NegateImpl<T, false>
+{
+    static CheckedInt<T> negate(const CheckedInt<T>& val)
+    {
+      // Handle negation separately for signed/unsigned, for simpler code and to
+      // avoid an MSVC warning negating an unsigned value.
+      return CheckedInt<T>(0, val.isValid() && val.mValue == 0);
+    }
+};
+
+template<typename T>
+struct NegateImpl<T, true>
+{
+    static CheckedInt<T> negate(const CheckedInt<T>& val)
+    {
+      // Watch out for the min-value, which (with twos-complement) can't be
+      // negated as -min-value is then (max-value + 1).
+      if (!val.isValid() || val.mValue == MinValue<T>::value)
+        return CheckedInt<T>(val.mValue, false);
+      return CheckedInt<T>(-val.mValue, true);
+    }
+};
 
 } // namespace detail
 
 
 /*
- * Step 4: Now define the CheckedInt class.
+ * Step 3: Now define the CheckedInt class.
  */
 
 /**
@@ -519,7 +465,7 @@ OppositeIfSigned(T x)
    CheckedInt<int8_t> x(-1);
    // 1000 is of type int16_t, is found not to be in range for int8_t,
    // x is invalid
-   CheckedInt<int8_t> x(int16_t(1000)); 
+   CheckedInt<int8_t> x(int16_t(1000));
    // 3123456789 is of type uint32_t, is found not to be in range for int32_t,
    // x is invalid
    CheckedInt<int32_t> x(uint32_t(3123456789));
@@ -550,11 +496,14 @@ class CheckedInt
     bool mIsValid;
 
     template<typename U>
-    CheckedInt(U value, bool isValid) : mValue(value), mIsValid(isValid)
+    CheckedInt(U aValue, bool aIsValid) : mValue(aValue), mIsValid(aIsValid)
     {
-      MOZ_STATIC_ASSERT(detail::IsSupported<T>::value,
-                        "This type is not supported by CheckedInt");
+      static_assert(detail::IsSupported<T>::value &&
+                    detail::IsSupported<U>::value,
+                    "This type is not supported by CheckedInt");
     }
+
+    friend struct detail::NegateImpl<T>;
 
   public:
     /**
@@ -569,19 +518,31 @@ class CheckedInt
      * argument is valid.
      */
     template<typename U>
-    CheckedInt(U value)
-      : mValue(T(value)),
-        mIsValid(detail::IsInRange<T>(value))
+    CheckedInt(U aValue)
+      : mValue(T(aValue)),
+        mIsValid(detail::IsInRange<T>(aValue))
     {
-      MOZ_STATIC_ASSERT(detail::IsSupported<T>::value,
-                        "This type is not supported by CheckedInt");
+      static_assert(detail::IsSupported<T>::value &&
+                    detail::IsSupported<U>::value,
+                    "This type is not supported by CheckedInt");
+    }
+
+    template<typename U>
+    friend class CheckedInt;
+
+    template<typename U>
+    CheckedInt<U> toChecked() const
+    {
+      CheckedInt<U> ret(mValue);
+      ret.mIsValid = ret.mIsValid && mIsValid;
+      return ret;
     }
 
     /** Constructs a valid checked integer with initial value 0 */
     CheckedInt() : mValue(0), mIsValid(true)
     {
-      MOZ_STATIC_ASSERT(detail::IsSupported<T>::value,
-                        "This type is not supported by CheckedInt");
+      static_assert(detail::IsSupported<T>::value,
+                    "This type is not supported by CheckedInt");
     }
 
     /** @returns the actual value */
@@ -606,32 +567,34 @@ class CheckedInt
                                     const CheckedInt<U>& rhs);
     template<typename U>
     CheckedInt& operator +=(U rhs);
+
     template<typename U>
     friend CheckedInt<U> operator -(const CheckedInt<U>& lhs,
-                                    const CheckedInt<U> &rhs);
+                                    const CheckedInt<U>& rhs);
     template<typename U>
     CheckedInt& operator -=(U rhs);
+
     template<typename U>
     friend CheckedInt<U> operator *(const CheckedInt<U>& lhs,
-                                    const CheckedInt<U> &rhs);
+                                    const CheckedInt<U>& rhs);
     template<typename U>
     CheckedInt& operator *=(U rhs);
+
     template<typename U>
     friend CheckedInt<U> operator /(const CheckedInt<U>& lhs,
-                                    const CheckedInt<U> &rhs);
+                                    const CheckedInt<U>& rhs);
     template<typename U>
     CheckedInt& operator /=(U rhs);
 
+    template<typename U>
+    friend CheckedInt<U> operator %(const CheckedInt<U>& lhs,
+                                    const CheckedInt<U>& rhs);
+    template<typename U>
+    CheckedInt& operator %=(U rhs);
+
     CheckedInt operator -() const
     {
-      // Circumvent msvc warning about - applied to unsigned int.
-      // if we're unsigned, the only valid case anyway is 0
-      // in which case - is a no-op.
-      T result = detail::OppositeIfSigned(mValue);
-      /* Help the compiler perform RVO (return value optimization). */
-      return CheckedInt(result,
-                        mIsValid && detail::IsSubValid(T(0),
-                                                       mValue));
+      return detail::NegateImpl<T>::negate(*this);
     }
 
     /**
@@ -720,6 +683,7 @@ MOZ_CHECKEDINT_BASIC_BINARY_OPERATOR(Add, +)
 MOZ_CHECKEDINT_BASIC_BINARY_OPERATOR(Sub, -)
 MOZ_CHECKEDINT_BASIC_BINARY_OPERATOR(Mul, *)
 MOZ_CHECKEDINT_BASIC_BINARY_OPERATOR(Div, /)
+MOZ_CHECKEDINT_BASIC_BINARY_OPERATOR(Mod, %)
 
 #undef MOZ_CHECKEDINT_BASIC_BINARY_OPERATOR
 
@@ -751,6 +715,9 @@ template<typename T, typename U>
 inline typename detail::CastToCheckedIntImpl<T, U>::ReturnType
 castToCheckedInt(U u)
 {
+  static_assert(detail::IsSupported<T>::value &&
+                detail::IsSupported<U>::value,
+                "This type is not supported by CheckedInt");
   return detail::CastToCheckedIntImpl<T, U>::run(u);
 }
 
@@ -777,6 +744,7 @@ MOZ_CHECKEDINT_CONVENIENCE_BINARY_OPERATORS(+, +=)
 MOZ_CHECKEDINT_CONVENIENCE_BINARY_OPERATORS(*, *=)
 MOZ_CHECKEDINT_CONVENIENCE_BINARY_OPERATORS(-, -=)
 MOZ_CHECKEDINT_CONVENIENCE_BINARY_OPERATORS(/, /=)
+MOZ_CHECKEDINT_CONVENIENCE_BINARY_OPERATORS(%, %=)
 
 #undef MOZ_CHECKEDINT_CONVENIENCE_BINARY_OPERATORS
 
@@ -806,4 +774,4 @@ typedef CheckedInt<uint64_t> CheckedUint64;
 
 } // namespace mozilla
 
-#endif /* mozilla_CheckedInt_h_ */
+#endif /* mozilla_CheckedInt_h */

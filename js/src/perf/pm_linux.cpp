@@ -1,25 +1,23 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-#include "jsperf.h"
-#include "jsutil.h"
-
-using namespace js;
 
 /* This variant of nsIPerfMeasurement uses the perf_event interface
  * added in Linux 2.6.31.  We key compilation of this file off the
  * existence of <linux/perf_event.h>.
  */
 
-#include <linux/perf_event.h>
-#include <new>
-#include <sys/syscall.h>
-#include <sys/ioctl.h>
 #include <errno.h>
-#include <unistd.h>
+#include <linux/perf_event.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+#include "perf/jsperf.h"
+
+using namespace js;
 
 // As of July 2010, this system call has not been added to the
 // C library, so we have to provide our own wrapper function.
@@ -234,7 +232,7 @@ namespace JS {
 #define initCtr(flag) ((eventsMeasured & flag) ? 0 : -1)
 
 PerfMeasurement::PerfMeasurement(PerfMeasurement::EventMask toMeasure)
-  : impl(OffTheBooks::new_<Impl>()),
+  : impl(js_new<Impl>()),
     eventsMeasured(impl ? static_cast<Impl*>(impl)->init(toMeasure)
                    : EventMask(0)),
     cpu_cycles(initCtr(CPU_CYCLES)),
@@ -255,7 +253,7 @@ PerfMeasurement::PerfMeasurement(PerfMeasurement::EventMask toMeasure)
 
 PerfMeasurement::~PerfMeasurement()
 {
-    js::Foreground::delete_(static_cast<Impl*>(impl));
+    js_delete(static_cast<Impl*>(impl));
 }
 
 void

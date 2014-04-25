@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009 University of Szeged
@@ -25,21 +25,19 @@
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- * 
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef AssemblerBufferWithConstantPool_h
-#define AssemblerBufferWithConstantPool_h
+#ifndef assembler_assembler_AssemblerBufferWithConstantPool_h
+#define assembler_assembler_AssemblerBufferWithConstantPool_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER
 
-#include "AssemblerBuffer.h"
+#include "assembler/assembler/AssemblerBuffer.h"
 #include "assembler/wtf/SegmentedVector.h"
 #include "assembler/wtf/Assertions.h"
-
-#include "methodjit/Logging.h"
 
 #define ASSEMBLER_HAS_CONSTANT_POOL 1
 
@@ -108,14 +106,14 @@ public:
         , m_lastConstDelta(0)
         , m_flushCount(0)
     {
-        m_pool = static_cast<uint32_t*>(malloc(maxPoolSize));
-        m_mask = static_cast<char*>(malloc(maxPoolSize / sizeof(uint32_t)));
+        m_pool = static_cast<uint32_t*>(js_malloc(maxPoolSize));
+        m_mask = static_cast<char*>(js_malloc(maxPoolSize / sizeof(uint32_t)));
     }
 
     ~AssemblerBufferWithConstantPool()
     {
-        free(m_mask);
-        free(m_pool);
+        js_free(m_mask);
+        js_free(m_pool);
     }
 
     void ensureSpace(int space)
@@ -162,19 +160,21 @@ public:
         correctDeltas(2);
     }
 
+    // Puts 1 word worth of data into the instruction stream
     void putIntUnchecked(int value)
     {
         AssemblerBuffer::putIntUnchecked(value);
         correctDeltas(4);
     }
-
+    // Puts one word worth of data into the instruction stream, and makes sure
+    // there is enough space to place it, dumping the constant pool if there isn't
     void putInt(int value)
     {
         flushIfNoSpaceFor(4);
         AssemblerBuffer::putInt(value);
         correctDeltas(4);
     }
-
+    // puts 64 bits worth of data into the instruction stream
     void putInt64Unchecked(int64_t value)
     {
         AssemblerBuffer::putInt64Unchecked(value);
@@ -187,17 +187,25 @@ public:
         return AssemblerBuffer::size();
     }
 
-    int uncheckedSize()
+    int uncheckedSize() const
     {
         return AssemblerBuffer::size();
     }
 
+    // copy all of our instructions and pools into their final location
     void* executableAllocAndCopy(ExecutableAllocator* allocator, ExecutablePool** poolp, CodeKind kind)
     {
         flushConstantPool(false);
         return AssemblerBuffer::executableAllocAndCopy(allocator, poolp, kind);
     }
 
+    // places 1 int worth of data into a pool, and mashes an instruction into place to
+    // hold this offset.
+    // the caller of putIntWithConstantInt passes in some token that represents an
+    // instruction, as well as the raw data that is to be placed in the pool.
+    // Traditionally, this 'token' has been the instruction that we wish to encode
+    // in the end, however, I have started encoding it in a much simpler manner,
+    // using bitfields and a fairly flat representation.
     void putIntWithConstantInt(uint32_t insn, uint32_t constant, bool isReusable = false)
     {
         flushIfNoSpaceFor(4, 4);
@@ -221,6 +229,37 @@ public:
         correctDeltas(4, 4);
     }
 
+    void putIntWithConstantDouble(uint32_t insn, double constant)
+    {
+        flushIfNoSpaceFor(4, 8);
+
+        m_loadOffsets.append(AssemblerBuffer::size());
+        bool isReusable = false;
+
+        union DoublePun {
+            struct {
+#if defined(IS_LITTLE_ENDIAN)
+                uint32_t lo, hi;
+#else
+                uint32_t hi, lo;
+#endif
+            } s;
+            double d;
+        } dpun;
+
+        dpun.d = constant;
+
+        m_pool[m_numConsts] = dpun.s.lo;
+        m_pool[m_numConsts+1] = dpun.s.hi;
+        m_mask[m_numConsts] = static_cast<char>(isReusable ? ReusableConst : UniqueConst);
+        m_mask[m_numConsts+1] = static_cast<char>(isReusable ? ReusableConst : UniqueConst);
+
+        AssemblerBuffer::putInt(AssemblerType::patchConstantPoolLoad(insn, m_numConsts));
+        m_numConsts+=2;
+
+        correctDeltas(4, 8);
+    }
+
     // This flushing mechanism can be called after any unconditional jumps.
     void flushWithoutBarrier(bool isForced = false)
     {
@@ -229,11 +268,13 @@ public:
             flushConstantPool(false);
     }
 
+    // return the address of the pool; we really shouldn't be using this.
     uint32_t* poolAddress()
     {
         return m_pool;
     }
 
+    // how many constants have been placed into the pool thusfar?
     int sizeOfConstantPool()
     {
         return m_numConsts;
@@ -263,10 +304,12 @@ private:
         m_lastConstDelta = constSize;
     }
 
+    // place a constant pool after the last instruction placed, and
+    // optionally place a jump to ensure we don't start executing the pool.
     void flushConstantPool(bool useBarrier = true)
     {
-        js::JaegerSpew(js::JSpew_Insns, " -- FLUSHING CONSTANT POOL WITH %d CONSTANTS --\n",
-                       m_numConsts);
+        GenericAssembler::staticSpew(" -- FLUSHING CONSTANT POOL WITH %d CONSTANTS --\n",
+                                     m_numConsts);
         if (m_numConsts == 0)
             return;
         m_flushCount++;
@@ -340,4 +383,4 @@ private:
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // AssemblerBufferWithConstantPool_h
+#endif /* assembler_assembler_AssemblerBufferWithConstantPool_h */

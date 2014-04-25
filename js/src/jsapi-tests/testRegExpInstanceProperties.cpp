@@ -1,18 +1,15 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-
-#include "tests.h"
-
 #include "jscompartment.h"
 #include "jsgc.h"
-#include "jsscope.h"
 
-#include "jsscopeinlines.h"
+#include "jsapi-tests/tests.h"
+#include "vm/Shape.h"
 
 BEGIN_TEST(testRegExpInstanceProperties)
 {
@@ -26,7 +23,7 @@ BEGIN_TEST(testRegExpInstanceProperties)
 
     JS_GC(cx);
 
-    CHECK_EQUAL(regexpProto->compartment()->initialRegExpShape, NULL);
+    CHECK_EQUAL(regexpProto->compartment()->initialRegExpShape, nullptr);
 
     jsval regexp;
     EVAL("/foopy/", &regexp);
@@ -42,7 +39,7 @@ BEGIN_TEST(testRegExpInstanceProperties)
  * Do this all in a nested function evaluation so as (hopefully) not to get
  * screwed up by the conservative stack scanner when GCing.
  */
-JS_NEVER_INLINE bool helper(JSObject *regexpProto)
+MOZ_NEVER_INLINE bool helper(JSObject *regexpProto)
 {
     CHECK(!regexpProto->inDictionaryMode());
 
@@ -56,10 +53,10 @@ JS_NEVER_INLINE bool helper(JSObject *regexpProto)
          CHECK(!r.empty());
     }
 
-    jsval v = INT_TO_JSVAL(17);
-    CHECK(JS_SetProperty(cx, regexpProto, "foopy", &v));
+    JS::RootedValue v(cx, INT_TO_JSVAL(17));
+    CHECK(JS_SetProperty(cx, regexpProto, "foopy", v));
     v = INT_TO_JSVAL(42);
-    CHECK(JS_SetProperty(cx, regexpProto, "bunky", &v));
+    CHECK(JS_SetProperty(cx, regexpProto, "bunky", v));
     CHECK(JS_DeleteProperty(cx, regexpProto, "foopy"));
     CHECK(regexpProto->inDictionaryMode());
 

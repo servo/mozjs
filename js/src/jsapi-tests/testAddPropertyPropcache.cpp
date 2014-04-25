@@ -1,30 +1,26 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jsapi-tests/tests.h"
 
-#include "tests.h"
-
-/* Do the test a bunch of times, because sometimes we seem to randomly
-   miss the propcache */
-static const int expectedCount = 100;
 static int callCount = 0;
 
-static JSBool
-addProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleValue vp)
+static bool
+AddProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleValue vp)
 {
-  callCount++;
-  return true;
+    callCount++;
+    return true;
 }
 
-JSClass addPropertyClass = {
+static const JSClass AddPropertyClass = {
     "AddPropertyTester",
     0,
-    addProperty,
-    JS_PropertyStub,         /* delProperty */
+    AddProperty,
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,
@@ -34,22 +30,27 @@ JSClass addPropertyClass = {
 
 BEGIN_TEST(testAddPropertyHook)
 {
-    JS::RootedObject obj(cx, JS_NewObject(cx, NULL, NULL, NULL));
+    /*
+     * Do the test a bunch of times, because sometimes we seem to randomly
+     * miss the propcache.
+     */
+    static const int ExpectedCount = 100;
+
+    JS::RootedObject obj(cx, JS_NewObject(cx, nullptr, JS::NullPtr(), JS::NullPtr()));
     CHECK(obj);
     JS::RootedValue proto(cx, OBJECT_TO_JSVAL(obj));
-    JS_InitClass(cx, global, obj, &addPropertyClass, NULL, 0, NULL, NULL, NULL,
-                 NULL);
+    JS_InitClass(cx, global, obj, &AddPropertyClass, nullptr, 0, nullptr, nullptr, nullptr,
+                 nullptr);
 
-    obj = JS_NewArrayObject(cx, 0, NULL);
+    obj = JS_NewArrayObject(cx, 0);
     CHECK(obj);
     JS::RootedValue arr(cx, OBJECT_TO_JSVAL(obj));
 
-    CHECK(JS_DefineProperty(cx, global, "arr", arr,
-                            JS_PropertyStub, JS_StrictPropertyStub,
-                            JSPROP_ENUMERATE));
+    CHECK(JS_DefineProperty(cx, global, "arr", arr, JSPROP_ENUMERATE,
+                            JS_PropertyStub, JS_StrictPropertyStub));
 
-    for (int i = 0; i < expectedCount; ++i) {
-        obj = JS_NewObject(cx, &addPropertyClass, NULL, NULL);
+    for (int i = 0; i < ExpectedCount; ++i) {
+        obj = JS_NewObject(cx, &AddPropertyClass, JS::NullPtr(), JS::NullPtr());
         CHECK(obj);
         JS::RootedValue vobj(cx, OBJECT_TO_JSVAL(obj));
         JS::RootedObject arrObj(cx, JSVAL_TO_OBJECT(arr));
@@ -65,7 +66,7 @@ BEGIN_TEST(testAddPropertyHook)
          "  arr[i].prop = 42;                               \n"
          );
 
-    CHECK(callCount == expectedCount);
+    CHECK(callCount == ExpectedCount);
 
     return true;
 }

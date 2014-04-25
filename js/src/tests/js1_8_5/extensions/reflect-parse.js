@@ -1,4 +1,4 @@
-// |reftest| pref(javascript.options.xml.content,true) skip-if(!xulRuntime.shell)
+// |reftest| skip-if(!xulRuntime.shell)
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /*
  * Any copyright is dedicated to the Public Domain.
@@ -63,7 +63,7 @@ function switchStmt(disc, cases) Pattern({ type: "SwitchStatement", discriminant
 function caseClause(test, stmts) Pattern({ type: "SwitchCase", test: test, consequent: stmts })
 function defaultClause(stmts) Pattern({ type: "SwitchCase", test: null, consequent: stmts })
 function catchClause(id, guard, body) Pattern({ type: "CatchClause", param: id, guard: guard, body: body })
-function tryStmt(body, catches, fin) Pattern({ type: "TryStatement", block: body, handlers: catches, finalizer: fin })
+function tryStmt(body, guarded, unguarded, fin) Pattern({ type: "TryStatement", block: body, guardedHandlers: guarded, handler: unguarded, finalizer: fin })
 function letStmt(head, body) Pattern({ type: "LetStatement", head: head, body: body })
 function funExpr(id, args, body, gen) Pattern({ type: "FunctionExpression",
                                                 id: id,
@@ -75,6 +75,9 @@ function genFunExpr(id, args, body) Pattern({ type: "FunctionExpression",
                                               params: args,
                                               body: body,
                                               generator: true })
+function arrowExpr(args, body) Pattern({ type: "ArrowExpression",
+                                         params: args,
+                                         body: body })
 
 function unExpr(op, arg) Pattern({ type: "UnaryExpression", operator: op, argument: arg })
 function binExpr(op, left, right) Pattern({ type: "BinaryExpression", operator: op, left: left, right: right })
@@ -94,8 +97,9 @@ function graphExpr(idx, body) Pattern({ type: "GraphExpression", index: idx, exp
 function letExpr(head, body) Pattern({ type: "LetExpression", head: head, body: body })
 function idxExpr(idx) Pattern({ type: "GraphIndexExpression", index: idx })
 
-function compBlock(left, right) Pattern({ type: "ComprehensionBlock", left: left, right: right, each: false })
-function compEachBlock(left, right) Pattern({ type: "ComprehensionBlock", left: left, right: right, each: true })
+function compBlock(left, right) Pattern({ type: "ComprehensionBlock", left: left, right: right, each: false, of: false })
+function compEachBlock(left, right) Pattern({ type: "ComprehensionBlock", left: left, right: right, each: true, of: false })
+function compOfBlock(left, right) Pattern({ type: "ComprehensionBlock", left: left, right: right, each: false, of: true })
 
 function arrPatt(elts) Pattern({ type: "ArrayPattern", elements: elts })
 function objPatt(elts) Pattern({ type: "ObjectPattern", properties: elts })
@@ -104,25 +108,6 @@ function localSrc(src) "(function(){ " + src + " })"
 function localPatt(patt) program([exprStmt(funExpr(null, [], blockStmt([patt])))])
 function blockSrc(src) "(function(){ { " + src + " } })"
 function blockPatt(patt) program([exprStmt(funExpr(null, [], blockStmt([blockStmt([patt])])))])
-
-var xmlAnyName = Pattern({ type: "XMLAnyName" });
-
-function xmlQualId(left, right, computed) Pattern({ type: "XMLQualifiedIdentifier", left: left, right: right, computed: computed })
-function xmlFuncQualId(right, computed) Pattern({ type: "XMLFunctionQualifiedIdentifier", right: right, computed: computed })
-function xmlAttrSel(id, computed) Pattern({ type: "XMLAttributeSelector", attribute: id, computed: !!computed })
-function xmlFilter(left, right) Pattern({ type: "XMLFilterExpression", left: left, right: right })
-function xmlPointTag(contents) Pattern({ type: "XMLPointTag", contents: contents })
-function xmlStartTag(contents) Pattern({ type: "XMLStartTag", contents: contents })
-function xmlEndTag(contents) Pattern({ type: "XMLEndTag", contents: contents })
-function xmlEscape(expr) Pattern({ type: "XMLEscape", expression: expr })
-function xmlElt(contents) Pattern({ type: "XMLElement", contents: contents })
-function xmlAttr(value) Pattern({ type: "XMLAttribute", value: value })
-function xmlText(text) Pattern({ type: "XMLText", text: text })
-function xmlPI(target, contents) Pattern({ type: "XMLProcessingInstruction", target: target, contents: contents })
-function xmlDefNS(ns) Pattern({ type: "XMLDefaultDeclaration", namespace: ns })
-function xmlName(name) Pattern({ type: "XMLName", contents: name })
-function xmlComment(contents) Pattern({ type: "XMLComment", contents: contents })
-function xmlCdata(cdata) Pattern({ type: "XMLCdata", contents: cdata })
 
 function assertBlockStmt(src, patt) {
     blockPatt(patt).assert(Reflect.parse(blockSrc(src)));
@@ -226,6 +211,9 @@ assertDecl("function foo(a=4) { }", funDecl(ident("foo"), [ident("a")], blockStm
 assertDecl("function foo(a, b=4) { }", funDecl(ident("foo"), [ident("a"), ident("b")], blockStmt([]), [lit(4)]));
 assertDecl("function foo(a, b=4, ...rest) { }",
            funDecl(ident("foo"), [ident("a"), ident("b")], blockStmt([]), [lit(4)], ident("rest")));
+assertDecl("function foo(a=(function () {})) { function a() {} }",
+           funDecl(ident("foo"), [ident("a")], blockStmt([funDecl(ident("a"), [], blockStmt([]))]),
+                   [funExpr(ident("a"), [], blockStmt([]))]));
 
 
 // Bug 591437: rebound args have their defs turned into uses
@@ -237,6 +225,9 @@ assertDecl("function f(a,[x,y]) { function a() { } }",
            funDecl(ident("f"),
                    [ident("a"), arrPatt([ident("x"), ident("y")])],
                    blockStmt([funDecl(ident("a"), [], blockStmt([]))])));
+
+// Bug 632027: array holes should reflect as null
+assertExpr("[,]=[,]", aExpr("=", arrPatt([null]), arrExpr([null])));
 
 // Bug 591450: this test currently crashes because of a bug in jsparse
 // assertDecl("function f(a,[x,y],b,[w,z],c) { function b() { } }",
@@ -255,9 +246,18 @@ assertExpr("this", thisExpr);
 assertExpr("foo", ident("foo"));
 assertExpr("foo.bar", dotExpr(ident("foo"), ident("bar")));
 assertExpr("foo[bar]", memExpr(ident("foo"), ident("bar")));
+assertExpr("foo['bar']", memExpr(ident("foo"), lit("bar")));
+assertExpr("foo[42]", memExpr(ident("foo"), lit(42)));
 assertExpr("(function(){})", funExpr(null, [], blockStmt([])));
 assertExpr("(function f() {})", funExpr(ident("f"), [], blockStmt([])));
 assertExpr("(function f(x,y,z) {})", funExpr(ident("f"), [ident("x"),ident("y"),ident("z")], blockStmt([])));
+assertExpr("a => a", arrowExpr([ident("a")], ident("a")));
+assertExpr("(a) => a", arrowExpr([ident("a")], ident("a")));
+assertExpr("a => b => a", arrowExpr([ident("a")], arrowExpr([ident("b")], ident("a"))));
+assertExpr("a => {}", arrowExpr([ident("a")], blockStmt([])));
+assertExpr("a => ({})", arrowExpr([ident("a")], objExpr([])));
+assertExpr("(a, b, c) => {}", arrowExpr([ident("a"), ident("b"), ident("c")], blockStmt([])));
+assertExpr("([a, b]) => {}", arrowExpr([arrPatt([ident("a"), ident("b")])], blockStmt([])));
 assertExpr("(++x)", updExpr("++", ident("x"), true));
 assertExpr("(x++)", updExpr("++", ident("x"), false));
 assertExpr("(+x)", unExpr("+", ident("x")));
@@ -320,19 +320,21 @@ assertExpr("[]", arrExpr([]));
 assertExpr("[1]", arrExpr([lit(1)]));
 assertExpr("[1,2]", arrExpr([lit(1),lit(2)]));
 assertExpr("[1,2,3]", arrExpr([lit(1),lit(2),lit(3)]));
-assertExpr("[1,,2,3]", arrExpr([lit(1),,lit(2),lit(3)]));
-assertExpr("[1,,,2,3]", arrExpr([lit(1),,,lit(2),lit(3)]));
-assertExpr("[1,,,2,,3]", arrExpr([lit(1),,,lit(2),,lit(3)]));
-assertExpr("[1,,,2,,,3]", arrExpr([lit(1),,,lit(2),,,lit(3)]));
-assertExpr("[,1,2,3]", arrExpr([,lit(1),lit(2),lit(3)]));
-assertExpr("[,,1,2,3]", arrExpr([,,lit(1),lit(2),lit(3)]));
-assertExpr("[,,,1,2,3]", arrExpr([,,,lit(1),lit(2),lit(3)]));
-assertExpr("[,,,1,2,3,]", arrExpr([,,,lit(1),lit(2),lit(3),]));
-assertExpr("[,,,1,2,3,,]", arrExpr([,,,lit(1),lit(2),lit(3),,]));
-assertExpr("[,,,1,2,3,,,]", arrExpr([,,,lit(1),lit(2),lit(3),,,]));
-assertExpr("[,,,,,]", arrExpr([,,,,,]));
+assertExpr("[1,,2,3]", arrExpr([lit(1),null,lit(2),lit(3)]));
+assertExpr("[1,,,2,3]", arrExpr([lit(1),null,null,lit(2),lit(3)]));
+assertExpr("[1,,,2,,3]", arrExpr([lit(1),null,null,lit(2),null,lit(3)]));
+assertExpr("[1,,,2,,,3]", arrExpr([lit(1),null,null,lit(2),null,null,lit(3)]));
+assertExpr("[,1,2,3]", arrExpr([null,lit(1),lit(2),lit(3)]));
+assertExpr("[,,1,2,3]", arrExpr([null,null,lit(1),lit(2),lit(3)]));
+assertExpr("[,,,1,2,3]", arrExpr([null,null,null,lit(1),lit(2),lit(3)]));
+assertExpr("[,,,1,2,3,]", arrExpr([null,null,null,lit(1),lit(2),lit(3)]));
+assertExpr("[,,,1,2,3,,]", arrExpr([null,null,null,lit(1),lit(2),lit(3),null]));
+assertExpr("[,,,1,2,3,,,]", arrExpr([null,null,null,lit(1),lit(2),lit(3),null,null]));
+assertExpr("[,,,,,]", arrExpr([null,null,null,null,null]));
 assertExpr("[1, ...a, 2]", arrExpr([lit(1), spread(ident("a")), lit(2)]));
-assertExpr("[,, ...a,, ...b, 42]", arrExpr([,, spread(ident("a")),, spread(ident("b")), lit(42)]));
+assertExpr("[,, ...a,, ...b, 42]", arrExpr([null,null, spread(ident("a")),, spread(ident("b")), lit(42)]));
+assertExpr("[1,(2,3)]", arrExpr([lit(1),seqExpr([lit(2),lit(3)])]));
+assertExpr("[,(2,3)]", arrExpr([null,seqExpr([lit(2),lit(3)])]));
 assertExpr("({})", objExpr([]));
 assertExpr("({x:1})", objExpr([{ key: ident("x"), value: lit(1) }]));
 assertExpr("({x:1, y:2})", objExpr([{ key: ident("x"), value: lit(1) },
@@ -414,26 +416,30 @@ assertStmt("switch (foo) { case 1: 1; break; case 2: 2; break; default: 3; case 
                         caseClause(lit(42), [ exprStmt(lit(42)) ]) ]));
 assertStmt("try { } catch (e) { }",
            tryStmt(blockStmt([]),
-                   [ catchClause(ident("e"), null, blockStmt([])) ],
+                   [],
+		   catchClause(ident("e"), null, blockStmt([])),
                    null));
 assertStmt("try { } catch (e) { } finally { }",
            tryStmt(blockStmt([]),
-                   [ catchClause(ident("e"), null, blockStmt([])) ],
+                   [],
+		   catchClause(ident("e"), null, blockStmt([])),
                    blockStmt([])));
 assertStmt("try { } finally { }",
            tryStmt(blockStmt([]),
                    [],
+		   null,
                    blockStmt([])));
 assertStmt("try { } catch (e if foo) { } catch (e if bar) { } finally { }",
            tryStmt(blockStmt([]),
                    [ catchClause(ident("e"), ident("foo"), blockStmt([])),
                      catchClause(ident("e"), ident("bar"), blockStmt([])) ],
+		   null,
                    blockStmt([])));
 assertStmt("try { } catch (e if foo) { } catch (e if bar) { } catch (e) { } finally { }",
            tryStmt(blockStmt([]),
                    [ catchClause(ident("e"), ident("foo"), blockStmt([])),
-                     catchClause(ident("e"), ident("bar"), blockStmt([])),
-                     catchClause(ident("e"), null, blockStmt([])) ],
+                     catchClause(ident("e"), ident("bar"), blockStmt([])) ],
+                   catchClause(ident("e"), null, blockStmt([])),
                    blockStmt([])));
 
 // Bug 632028: yield outside of a function should throw
@@ -675,8 +681,6 @@ assertError("for each (const [x,y,z] in foo);", SyntaxError);
 
 assertStmt("for (var {a:x,b:y,c:z} = 22 in foo);", forInStmt(varDecl([{ id: axbycz, init: lit(22) }]), ident("foo"), emptyStmt));
 assertStmt("for (var [x,y,z] = 22 in foo);", forInStmt(varDecl([{ id: xyz, init: lit(22) }]), ident("foo"), emptyStmt));
-assertStmt("for (var {a:x,b:y,c:z} = 22 of foo);", forOfStmt(varDecl([{ id: axbycz, init: lit(22) }]), ident("foo"), emptyStmt));
-assertStmt("for (var [x,y,z] = 22 of foo);", forOfStmt(varDecl([{ id: xyz, init: lit(22) }]), ident("foo"), emptyStmt));
 assertStmt("for each (var {a:x,b:y,c:z} = 22 in foo);", forEachInStmt(varDecl([{ id: axbycz, init: lit(22) }]), ident("foo"), emptyStmt));
 assertStmt("for each (var [x,y,z] = 22 in foo);", forEachInStmt(varDecl([{ id: xyz, init: lit(22) }]), ident("foo"), emptyStmt));
 assertError("for (x = 22 in foo);", SyntaxError);
@@ -750,6 +754,24 @@ assertExpr("[ [x,y,z] for each (x in foo) for each (y in bar) for each (z in baz
                     [compEachBlock(ident("x"), ident("foo")), compEachBlock(ident("y"), ident("bar")), compEachBlock(ident("z"), ident("baz"))],
                     ident("p")));
 
+assertExpr("[ x         for (x of foo)]",
+           compExpr(ident("x"), [compOfBlock(ident("x"), ident("foo"))], null));
+assertExpr("[ [x,y]     for (x of foo) for (y of bar)]",
+           compExpr(arrExpr([ident("x"), ident("y")]), [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar"))], null));
+assertExpr("[ [x,y,z] for (x of foo) for (y of bar) for (z of baz)]",
+           compExpr(arrExpr([ident("x"), ident("y"), ident("z")]),
+                    [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar")), compOfBlock(ident("z"), ident("baz"))],
+                    null));
+
+assertExpr("[ x         for (x of foo) if (p)]",
+           compExpr(ident("x"), [compOfBlock(ident("x"), ident("foo"))], ident("p")));
+assertExpr("[ [x,y]     for (x of foo) for (y of bar) if (p)]",
+           compExpr(arrExpr([ident("x"), ident("y")]), [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar"))], ident("p")));
+assertExpr("[ [x,y,z] for (x of foo) for (y of bar) for (z of baz) if (p) ]",
+           compExpr(arrExpr([ident("x"), ident("y"), ident("z")]),
+                    [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar")), compOfBlock(ident("z"), ident("baz"))],
+                    ident("p")));
+
 // generator expressions
 
 assertExpr("( x         for (x in foo))",
@@ -786,6 +808,24 @@ assertExpr("( [x,y]     for each (x in foo) for each (y in bar) if (p))",
 assertExpr("( [x,y,z] for each (x in foo) for each (y in bar) for each (z in baz) if (p) )",
            genExpr(arrExpr([ident("x"), ident("y"), ident("z")]),
                    [compEachBlock(ident("x"), ident("foo")), compEachBlock(ident("y"), ident("bar")), compEachBlock(ident("z"), ident("baz"))],
+                   ident("p")));
+
+assertExpr("( x         for (x of foo))",
+           genExpr(ident("x"), [compOfBlock(ident("x"), ident("foo"))], null));
+assertExpr("( [x,y]     for (x of foo) for (y of bar))",
+           genExpr(arrExpr([ident("x"), ident("y")]), [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar"))], null));
+assertExpr("( [x,y,z] for (x of foo) for (y of bar) for (z of baz))",
+           genExpr(arrExpr([ident("x"), ident("y"), ident("z")]),
+                   [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar")), compOfBlock(ident("z"), ident("baz"))],
+                   null));
+
+assertExpr("( x         for (x of foo) if (p))",
+           genExpr(ident("x"), [compOfBlock(ident("x"), ident("foo"))], ident("p")));
+assertExpr("( [x,y]     for (x of foo) for (y of bar) if (p))",
+           genExpr(arrExpr([ident("x"), ident("y")]), [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar"))], ident("p")));
+assertExpr("( [x,y,z] for (x of foo) for (y of bar) for (z of baz) if (p) )",
+           genExpr(arrExpr([ident("x"), ident("y"), ident("z")]),
+                   [compOfBlock(ident("x"), ident("foo")), compOfBlock(ident("y"), ident("bar")), compOfBlock(ident("z"), ident("baz"))],
                    ident("p")));
 
 // NOTE: it would be good to test generator expressions both with and without upvars, just like functions above.
@@ -842,123 +882,6 @@ assertError("let (x = 1, x = 2) { }", TypeError);
 try {
     Reflect.parse(Array(3000).join("x + y - ") + "z")
 } catch (e) { }
-
-
-// E4X
-
-assertExpr("x..tagName", binExpr("..", ident("x"), lit("tagName")));
-assertExpr("x.*", memExpr(ident("x"), xmlAnyName));
-assertExpr("x[*]", memExpr(ident("x"), xmlAnyName));
-assertExpr("x::y", xmlQualId(ident("x"), ident("y"), false));
-assertExpr("x::[foo]", xmlQualId(ident("x"), ident("foo"), true));
-assertExpr("x::[foo()]", xmlQualId(ident("x"), callExpr(ident("foo"), []), true));
-assertExpr("*::*", xmlQualId(xmlAnyName, ident("*"), false));
-assertExpr("*::[foo]", xmlQualId(xmlAnyName, ident("foo"), true));
-assertExpr("*::[foo()]", xmlQualId(xmlAnyName, callExpr(ident("foo"), []), true));
-assertExpr("x.y::z", memExpr(ident("x"), xmlQualId(ident("y"), ident("z"), false)));
-assertExpr("x[y::z]", memExpr(ident("x"), xmlQualId(ident("y"), ident("z"), false)));
-assertExpr("x[y::[z]]", memExpr(ident("x"), xmlQualId(ident("y"), ident("z"), true)));
-assertExpr("function::x", xmlFuncQualId(ident("x"), false));
-assertExpr("function::[foo]", xmlFuncQualId(ident("foo"), true));
-assertExpr("@foo", xmlAttrSel(ident("foo"), false));
-assertExpr("@[foo]", xmlAttrSel(ident("foo"), true));
-assertExpr("x.@foo", memExpr(ident("x"), xmlAttrSel(ident("foo"), false)));
-assertExpr("x.@[foo]", memExpr(ident("x"), xmlAttrSel(ident("foo"), true)));
-assertExpr("x[@foo]", memExpr(ident("x"), xmlAttrSel(ident("foo"), false)));
-assertExpr("x[@[foo]]", memExpr(ident("x"), xmlAttrSel(ident("foo"), true)));
-assertExpr("x.(p)", xmlFilter(ident("x"), ident("p")));
-assertExpr("<{foo}/>", xmlPointTag([xmlEscape(ident("foo"))]));
-assertExpr("<{foo}></{foo}>", xmlElt([xmlStartTag([xmlEscape(ident("foo"))]),
-                                      xmlEndTag([xmlEscape(ident("foo"))])]));
-assertExpr("<{foo} {attr}='attr'/>", xmlPointTag([xmlEscape(ident("foo")),
-                                                  xmlEscape(ident("attr")),
-                                                  xmlAttr("attr")]));
-assertExpr("<{foo}>text</{foo}>", xmlElt([xmlStartTag([xmlEscape(ident("foo"))]),
-                                          xmlText("text"),
-                                          xmlEndTag([xmlEscape(ident("foo"))])]));
-assertExpr("<?xml?>", xmlPI("xml", ""));
-assertExpr("<?xml version='1.0'?>", xmlPI("xml", "version='1.0'"));
-assertDecl("default xml namespace = 'js';", xmlDefNS(lit("js")));
-assertDecl("default xml namespace = foo;", xmlDefNS(ident("foo")));
-
-// The parser turns these into TOK_UNARY nodes with pn_op == JSOP_SETXMLNAME.
-
-assertExpr("x::y = foo", aExpr("=", xmlQualId(ident("x"), ident("y"), false), ident("foo")));
-assertExpr("function::x = foo", aExpr("=", xmlFuncQualId(ident("x"), false), ident("foo")));
-assertExpr("@x = foo", aExpr("=", xmlAttrSel(ident("x")), ident("foo")));
-assertExpr("x::* = foo", aExpr("=", xmlQualId(ident("x"), ident("*"), false), ident("foo")));
-assertExpr("*::* = foo", aExpr("=", xmlQualId(xmlAnyName, ident("*"), false), ident("foo")));
-assertExpr("x.* = foo", aExpr("=", memExpr(ident("x"), xmlAnyName), ident("foo")));
-assertExpr("x[*] = foo", aExpr("=", memExpr(ident("x"), xmlAnyName), ident("foo")));
-
-assertExpr("x::y += foo", aExpr("+=", xmlQualId(ident("x"), ident("y"), false), ident("foo")));
-assertExpr("function::x += foo", aExpr("+=", xmlFuncQualId(ident("x"), false), ident("foo")));
-assertExpr("@x += foo", aExpr("+=", xmlAttrSel(ident("x")), ident("foo")));
-assertExpr("x::* += foo", aExpr("+=", xmlQualId(ident("x"), ident("*"), false), ident("foo")));
-assertExpr("*::* += foo", aExpr("+=", xmlQualId(xmlAnyName, ident("*"), false), ident("foo")));
-assertExpr("x.* += foo", aExpr("+=", memExpr(ident("x"), xmlAnyName), ident("foo")));
-assertExpr("x[*] += foo", aExpr("+=", memExpr(ident("x"), xmlAnyName), ident("foo")));
-
-assertExpr("x::y++", updExpr("++", xmlQualId(ident("x"), ident("y"), false), false));
-assertExpr("function::x++", updExpr("++", xmlFuncQualId(ident("x"), false), false));
-assertExpr("@x++", updExpr("++", xmlAttrSel(ident("x")), false));
-assertExpr("x::*++", updExpr("++", xmlQualId(ident("x"), ident("*"), false), false));
-assertExpr("*::*++", updExpr("++", xmlQualId(xmlAnyName, ident("*"), false), false));
-assertExpr("x.*++", updExpr("++", memExpr(ident("x"), xmlAnyName), false));
-assertExpr("x[*]++", updExpr("++", memExpr(ident("x"), xmlAnyName), false));
-
-assertExpr("++x::y", updExpr("++", xmlQualId(ident("x"), ident("y"), false), true));
-assertExpr("++function::x", updExpr("++", xmlFuncQualId(ident("x"), false), true));
-assertExpr("++@x", updExpr("++", xmlAttrSel(ident("x")), true));
-assertExpr("++x::*", updExpr("++", xmlQualId(ident("x"), ident("*"), false), true));
-assertExpr("++*::*", updExpr("++", xmlQualId(xmlAnyName, ident("*"), false), true));
-assertExpr("++x.*", updExpr("++", memExpr(ident("x"), xmlAnyName), true));
-assertExpr("++x[*]", updExpr("++", memExpr(ident("x"), xmlAnyName), true));
-
-
-// The parser turns these into TOK_UNARY nodes with pn_op == JSOP_BINDXMLNAME.
-
-function singletonObjPatt(name, val) objPatt([{ key: ident(name), value: val }])
-
-assertExpr("({a:x::y}) = foo", aExpr("=", singletonObjPatt("a", xmlQualId(ident("x"), ident("y"), false)), ident("foo")));
-assertExpr("({a:function::x}) = foo", aExpr("=", singletonObjPatt("a", xmlFuncQualId(ident("x"), false)), ident("foo")));
-assertExpr("({a:@x}) = foo", aExpr("=", singletonObjPatt("a", xmlAttrSel(ident("x"))), ident("foo")));
-assertExpr("({a:x::*}) = foo", aExpr("=", singletonObjPatt("a", xmlQualId(ident("x"), ident("*"), false)), ident("foo")));
-assertExpr("({a:*::*}) = foo", aExpr("=", singletonObjPatt("a", xmlQualId(xmlAnyName, ident("*"), false)), ident("foo")));
-assertExpr("({a:x.*}) = foo", aExpr("=", singletonObjPatt("a", memExpr(ident("x"), xmlAnyName)), ident("foo")));
-assertExpr("({a:x[*]}) = foo", aExpr("=", singletonObjPatt("a", memExpr(ident("x"), xmlAnyName)), ident("foo")));
-
-function emptyForInPatt(val, rhs) forInStmt(val, rhs, emptyStmt)
-
-assertStmt("for (x::y in foo);", emptyForInPatt(xmlQualId(ident("x"), ident("y"), false), ident("foo")));
-assertStmt("for (function::x in foo);", emptyForInPatt(xmlFuncQualId(ident("x"), false), ident("foo")));
-assertStmt("for (@x in foo);", emptyForInPatt(xmlAttrSel(ident("x")), ident("foo")));
-assertStmt("for (x::* in foo);", emptyForInPatt(xmlQualId(ident("x"), ident("*"), false), ident("foo")));
-assertStmt("for (*::* in foo);", emptyForInPatt(xmlQualId(xmlAnyName, ident("*"), false), ident("foo")));
-assertStmt("for (x.* in foo);", emptyForInPatt(memExpr(ident("x"), xmlAnyName), ident("foo")));
-assertStmt("for (x[*] in foo);", emptyForInPatt(memExpr(ident("x"), xmlAnyName), ident("foo")));
-
-
-// I'm not quite sure why, but putting XML in the callee of a call expression is
-// the only way I've found to be able to preserve TOK_XMLNAME, TOK_XMLSPACE,
-// TOK_XMLCDATA, and TOK_XMLCOMMENT parse nodes.
-
-assertExpr("(<x> </x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]),
-                                            xmlText(" "),
-                                            xmlEndTag([xmlName("x")])]),
-                                    []));
-assertExpr("(<x>    </x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]),
-                                               xmlText("    "),
-                                               xmlEndTag([xmlName("x")])]),
-                                       []));
-assertExpr("(<x><![CDATA[hello, world]]></x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]),
-                                                                   xmlCdata("hello, world"),
-                                                                   xmlEndTag([xmlName("x")])]),
-                                                           []));
-assertExpr("(<x><!-- hello, world --></x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]),
-                                                                xmlComment(" hello, world "),
-                                                                xmlEndTag([xmlName("x")])]),
-                                                        []));
 
 
 // Source location information
@@ -1037,28 +960,17 @@ assertGlobalExpr("(function() { yield 42 })", genFunExpr(null, [], blockStmt([ex
 assertGlobalExpr("(let (x) x)", 20, { letExpression: function() 20 });
 
 assertGlobalStmt("switch (x) { case y: }", switchStmt(ident("x"), [1]), { switchCase: function() 1 });
-assertGlobalStmt("try { } catch (e) { }", tryStmt(blockStmt([]), [2], null), { catchClause: function() 2 });
+assertGlobalStmt("try { } catch (e) { }", 2, { tryStatement: (function(b, g, u, f) u), catchClause: function() 2 });
+assertGlobalStmt("try { } catch (e if e instanceof A) { } catch (e if e instanceof B) { }", [2, 2], { tryStatement: (function(b, g, u, f) g), catchClause: function() 2 });
+assertGlobalStmt("try { } catch (e) { }", tryStmt(blockStmt([]), [], 2, null), { catchClause: function() 2 });
 assertGlobalStmt("try { } catch (e if e instanceof A) { } catch (e if e instanceof B) { }",
-                 tryStmt(blockStmt([]), [2, 2], null),
+                 tryStmt(blockStmt([]), [2, 2], null, null),
                  { catchClause: function() 2 });
 assertGlobalExpr("[x for (y in z) for (x in y)]", compExpr(ident("x"), [3, 3], null), { comprehensionBlock: function() 3 });
 
 assertGlobalExpr("({ x: y } = z)", aExpr("=", 1, ident("z")), { objectPattern: function() 1 });
 assertGlobalExpr("({ x: y } = z)", aExpr("=", objPatt([2]), ident("z")), { propertyPattern: function() 2 });
 assertGlobalExpr("[ x ] = y", aExpr("=", 3, ident("y")), { arrayPattern: function() 3 });
-
-assertGlobalExpr("({a:x::y}) = foo", aExpr("=", singletonObjPatt("a", 1), ident("foo")), { xmlQualifiedIdentifier: function() 1 });
-assertGlobalExpr("({a:function::x}) = foo", aExpr("=", singletonObjPatt("a", 2), ident("foo")), { xmlFunctionQualifiedIdentifier: function() 2 });
-assertGlobalExpr("({a:@x}) = foo", aExpr("=", singletonObjPatt("a", 3), ident("foo")), { xmlAttributeSelector: function() 3 });
-assertGlobalExpr("({a:x.*}) = foo", aExpr("=", singletonObjPatt("a", memExpr(ident("x"), 4)), ident("foo")), { xmlAnyName: function() 4 });
-
-assertGlobalExpr("(<x> </x>)()", callExpr(xmlElt([5, xmlText(" "), xmlEndTag([xmlName("x")])]), []), { xmlStartTag: function() 5 });
-assertGlobalExpr("(<x> </x>)()", callExpr(xmlElt([xmlStartTag([6]), xmlText(" "), xmlEndTag([6])]), []), { xmlName: function() 6 });
-assertGlobalExpr("(<x> </x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]), 7, xmlEndTag([xmlName("x")])]), []), { xmlText: function() 7 });
-assertGlobalExpr("(<x> </x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]), xmlText(" "), 8]), []), { xmlEndTag: function() 8 });
-assertGlobalExpr("(<x><![CDATA[hello, world]]></x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]), 9, xmlEndTag([xmlName("x")])]), []), { xmlCdata: function() 9 });
-assertGlobalExpr("(<x><!-- hello, world --></x>)()", callExpr(xmlElt([xmlStartTag([xmlName("x")]), 10, xmlEndTag([xmlName("x")])]), []), { xmlComment: function() 10 });
-
 
 // Ensure that exceptions thrown by builder methods propagate.
 var thrown = false;
@@ -1278,25 +1190,6 @@ return {
     arrayPattern: reject,
     objectPattern: reject,
     propertyPattern: reject,
-
-    xmlAnyName: reject,
-    xmlAttributeSelector: reject,
-    xmlEscape: reject,
-    xmlFilterExpression: reject,
-    xmlDefaultDeclaration: reject,
-    xmlQualifiedIdentifier: reject,
-    xmlFunctionQualifiedIdentifier: reject,
-    xmlElement: reject,
-    xmlText: reject,
-    xmlList: reject,
-    xmlStartTag: reject,
-    xmlEndTag: reject,
-    xmlPointTag: reject,
-    xmlName: reject,
-    xmlAttribute: reject,
-    xmlCdata: reject,
-    xmlComment: reject,
-    xmlProcessingInstruction: reject
 };
 })();
 

@@ -1,5 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp:
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2007, 2008, 2009 Apple Inc. All rights reserved.
@@ -9,13 +9,13 @@
  * are met:
  *
  * 1.  Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer. 
+ *     notice, this list of conditions and the following disclaimer.
  * 2.  Redistributions in binary form must reproduce the above copyright
  *     notice, this list of conditions and the following disclaimer in the
- *     documentation and/or other materials provided with the distribution. 
+ *     documentation and/or other materials provided with the distribution.
  * 3.  Neither the name of Apple Computer, Inc. ("Apple") nor the names of
  *     its contributors may be used to endorse or promote products derived
- *     from this software without specific prior written permission. 
+ *     from this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY APPLE AND ITS CONTRIBUTORS "AS IS" AND ANY
  * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
@@ -30,8 +30,8 @@
  *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef WTF_ASCIICType_h
-#define WTF_ASCIICType_h
+#ifndef yarr_ASCIICType_h
+#define yarr_ASCIICType_h
 
 #include "assembler/wtf/Assertions.h"
 
@@ -180,4 +180,4 @@ using WTF::toASCIIHexValue;
 using WTF::toASCIILower;
 using WTF::toASCIIUpper;
 
-#endif
+#endif /* yarr_ASCIICType_h */

@@ -1,15 +1,17 @@
 // findScripts can filter scripts by global.
-var g1 = newGlobal('new-compartment');
-var g2 = newGlobal('new-compartment');
-var g3 = newGlobal('new-compartment');
+var g1 = newGlobal();
+var g2 = newGlobal();
+var g3 = newGlobal();
 
-var dbg = new Debugger(g1, g2);
+var dbg = new Debugger();
+var g1w = dbg.addDebuggee(g1);
+var g2w = dbg.addDebuggee(g2);
 
 g1.eval('function f() {}');
 g2.eval('function g() {}');
 g2.eval('function h() {}');
-var g1fw = dbg.addDebuggee(g1.f);
-var g2gw = dbg.addDebuggee(g2.g);
+var g1fw = g1w.makeDebuggeeValue(g1.f);
+var g2gw = g2w.makeDebuggeeValue(g2.g);
 
 var scripts;
 

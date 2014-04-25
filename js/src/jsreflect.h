@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,11 +7,8 @@
 /*
  * JS reflection package.
  */
-#ifndef jsreflect_h___
-#define jsreflect_h___
-
-#include <stdlib.h>
-#include "jspubtd.h"
+#ifndef jsreflect_h
+#define jsreflect_h
 
 namespace js {
 
@@ -54,8 +50,6 @@ enum BinaryOperator {
     BINOP_BITOR, BINOP_BITXOR, BINOP_BITAND,
     /* misc */
     BINOP_IN, BINOP_INSTANCEOF,
-    /* xml */
-    BINOP_DBLDOT,
 
     BINOP_LIMIT
 };
@@ -91,12 +85,11 @@ enum PropKind {
     PROP_LIMIT
 };
 
-extern char const *aopNames[];
-extern char const *binopNames[];
-extern char const *unopNames[];
-extern char const *nodeTypeNames[];
+extern char const * const aopNames[];
+extern char const * const binopNames[];
+extern char const * const unopNames[];
+extern char const * const nodeTypeNames[];
 
 } /* namespace js */
 
-
-#endif /* jsreflect_h___ */
+#endif /* jsreflect_h */

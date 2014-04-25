@@ -20,16 +20,19 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "ExecutableAllocator.h"
+#include "assembler/jit/ExecutableAllocator.h"
 
 #if ENABLE_ASSEMBLER && WTF_OS_UNIX && !WTF_OS_SYMBIAN
 
 #include <sys/mman.h>
 #include <unistd.h>
-#include <wtf/VMTags.h>
+
+#include "assembler/wtf/Assertions.h"
+#include "assembler/wtf/VMTags.h"
+#include "js/Utility.h"
 
 namespace JSC {
 
@@ -40,7 +43,7 @@ size_t ExecutableAllocator::determinePageSize()
 
 ExecutablePool::Allocation ExecutableAllocator::systemAlloc(size_t n)
 {
-    void* allocation = mmap(NULL, n, INITIAL_PROTECTION_FLAGS, MAP_PRIVATE | MAP_ANON, VM_TAG_FOR_EXECUTABLEALLOCATOR_MEMORY, 0);
+    void *allocation = mmap(NULL, n, INITIAL_PROTECTION_FLAGS, MAP_PRIVATE | MAP_ANON, VM_TAG_FOR_EXECUTABLEALLOCATOR_MEMORY, 0);
     if (allocation == MAP_FAILED)
         allocation = NULL;
     ExecutablePool::Allocation alloc = { reinterpret_cast<char*>(allocation), n };
@@ -48,7 +51,7 @@ ExecutablePool::Allocation ExecutableAllocator::systemAlloc(size_t n)
 }
 
 void ExecutableAllocator::systemRelease(const ExecutablePool::Allocation& alloc)
-{ 
+{
     int result = munmap(alloc.pages, alloc.size);
     ASSERT_UNUSED(result, !result);
 }
@@ -88,6 +91,22 @@ __asm void ExecutableAllocator::cacheFlush(void* code, size_t size)
     bx lr
 }
 #endif
+
+void
+ExecutablePool::toggleAllCodeAsAccessible(bool accessible)
+{
+    char* begin = m_allocation.pages;
+    size_t size = m_freePtr - begin;
+
+    if (size) {
+        // N.B. Some systems, like 32bit Mac OS 10.6, implicitly add PROT_EXEC
+        // when mprotect'ing memory with any flag other than PROT_NONE. Be
+        // sure to use PROT_NONE when making inaccessible.
+        int flags = accessible ? PROT_READ | PROT_WRITE | PROT_EXEC : PROT_NONE;
+        if (mprotect(begin, size, flags))
+            MOZ_CRASH();
+    }
+}
 
 }
 
