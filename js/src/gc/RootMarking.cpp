@@ -810,3 +810,26 @@ js::gc::BufferGrayRoots(GCMarker *gcmarker)
         (*op)(gcmarker, rt->gcGrayRootTracer.data);
     gcmarker->endBufferingGrayRoots();
 }
+
+/*
+ * Returns the object that the given candidate pointer points to, if it points
+ * to a valid object in this runtime.
+ */
+JS_FRIEND_API(JSObject *)
+JS_GetAddressableObject(JSRuntime *rt, uintptr_t candidateObj)
+{
+    gc::AllocKind kind;
+    void *thing;
+    if (IsAddressableGCThing(rt,
+                             candidateObj,
+                             false,
+                             &kind,
+                             NULL,
+                             &thing) != CGCT_VALID) {
+        return NULL;
+    }
+    if (MapAllocToTraceKind(kind) != JSTRACE_OBJECT) {
+        return NULL;
+    }
+    return reinterpret_cast<JSObject *>(thing);
+}
