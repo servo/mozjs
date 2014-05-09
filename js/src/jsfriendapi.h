@@ -43,6 +43,8 @@ template <class T>
 class Heap;
 } /* namespace JS */
 
+extern "C" {
+
 extern JS_FRIEND_API(void)
 JS_SetGrayGCRootsTracer(JSRuntime *rt, JSTraceDataOp traceOp, void *data);
 
@@ -152,6 +154,8 @@ js_ObjectClassIs(JSContext *cx, JS::HandleObject obj, js::ESClassValue classValu
 JS_FRIEND_API(const char *)
 js_ObjectClassName(JSContext *cx, JS::HandleObject obj);
 
+}
+
 namespace js {
 
 JS_FRIEND_API(bool)
@@ -161,6 +165,8 @@ JS_FRIEND_API(void)
 RemoveRawValueRoot(JSContext *cx, JS::Value *vp);
 
 } /* namespace js */
+
+extern "C" {
 
 #ifdef JS_DEBUG
 
@@ -234,6 +240,8 @@ JS_DefineFunctionsWithHelp(JSContext *cx, JS::HandleObject obj, const JSFunction
 
 extern JS_FRIEND_API(JSObject *)
 JS_GetAddressableObject(JSRuntime *rt, uintptr_t candidateObj);
+
+}
 
 namespace js {
 

@@ -65,6 +65,7 @@ template <JSThreadSafeNative threadSafeNative>
 inline bool
 JSParallelNativeThreadSafeWrapper(js::ForkJoinContext *cx, unsigned argc, JS::Value *vp);
 
+extern "C" {
 /*
  * Compute |this| for the |vp| inside a JSNative, either boxing primitives or
  * replacing with the global object as necessary.
@@ -76,6 +77,7 @@ JSParallelNativeThreadSafeWrapper(js::ForkJoinContext *cx, unsigned argc, JS::Va
  */
 extern JS_PUBLIC_API(JS::Value)
 JS_ComputeThis(JSContext *cx, JS::Value *vp);
+}
 
 namespace JS {
 
