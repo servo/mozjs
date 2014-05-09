@@ -154,6 +154,7 @@ class JS_PUBLIC_API(JSTracer)
 // address is used as a key in a hashtable, then the object must be removed
 // and re-inserted with the correct hash.
 //
+extern "C" {
 extern JS_PUBLIC_API(void)
 JS_CallValueTracer(JSTracer *trc, JS::Value *valuep, const char *name);
 
@@ -186,6 +187,7 @@ JS_CallHeapScriptTracer(JSTracer *trc, JS::Heap<JSScript *> *scriptp, const char
 
 extern JS_PUBLIC_API(void)
 JS_CallHeapFunctionTracer(JSTracer *trc, JS::Heap<JSFunction *> *funp, const char *name);
+}
 
 template <typename HashSetEnum>
 inline void
