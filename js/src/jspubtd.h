@@ -221,6 +221,7 @@ struct Runtime
     mozilla::LinkedList<PersistentRootedString>   stringPersistentRooteds;
     mozilla::LinkedList<PersistentRootedValue>    valuePersistentRooteds;
 
+  public: //jdm +public
     /* Specializations of this return references to the appropriate list. */
     template<typename Referent>
     inline mozilla::LinkedList<PersistentRooted<Referent> > &getPersistentRootedList();
