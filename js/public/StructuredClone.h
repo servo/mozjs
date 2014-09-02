@@ -132,6 +132,7 @@ struct JSStructuredCloneCallbacks {
     FreeTransferStructuredCloneOp freeTransfer;
 };
 
+extern "C" {
 // Note: if the *data contains transferable objects, it can be read only once.
 JS_PUBLIC_API(bool)
 JS_ReadStructuredClone(JSContext *cx, uint64_t *data, size_t nbytes, uint32_t version,
@@ -144,6 +145,7 @@ JS_PUBLIC_API(bool)
 JS_WriteStructuredClone(JSContext *cx, JS::HandleValue v, uint64_t **datap, size_t *nbytesp,
                         const JSStructuredCloneCallbacks *optionalCallbacks,
                         void *closure, JS::HandleValue transferable);
+}
 
 JS_PUBLIC_API(bool)
 JS_ClearStructuredClone(uint64_t *data, size_t nbytes,
