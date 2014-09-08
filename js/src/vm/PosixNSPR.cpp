@@ -37,6 +37,12 @@ class nspr::Thread
 static pthread_key_t gSelfThreadIndex;
 static nspr::Thread gMainThread(nullptr, nullptr, false);
 
+pthread_key_t*
+GetThreadKey()
+{
+    return &gSelfThreadIndex;
+}
+
 void *
 nspr::Thread::ThreadRoutine(void *arg)
 {

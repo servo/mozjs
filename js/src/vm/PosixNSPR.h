@@ -66,8 +66,11 @@ typedef enum { PR_FAILURE = -1, PR_SUCCESS = 0 } PRStatus;
 PRStatus
 PR_JoinThread(PRThread *thread);
 
+extern "C" { //jdm extern "C"
 PRThread *
 PR_GetCurrentThread();
+pthread_key_t* GetThreadKey(); //jdm all new
+}
 
 PRStatus
 PR_SetCurrentThreadName(const char *name);

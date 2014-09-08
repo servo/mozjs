@@ -97,8 +97,10 @@ JS_FRIEND_API(void) js_DumpId(jsid id);
 JS_FRIEND_API(void) js_DumpInterpreterFrame(JSContext *cx, js::InterpreterFrame *start = nullptr);
 # endif
 
+extern "C" {
 JS_FRIEND_API(void)
 js_DumpBacktrace(JSContext *cx);
+}
 
 typedef enum JSTrapStatus {
     JSTRAP_ERROR,
