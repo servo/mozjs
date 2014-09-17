@@ -935,8 +935,10 @@ struct JSDOMCallbacks {
 };
 typedef struct JSDOMCallbacks DOMCallbacks;
 
+extern "C" {
 extern JS_FRIEND_API(void)
 SetDOMCallbacks(JSRuntime *rt, const DOMCallbacks *callbacks);
+}
 
 extern JS_FRIEND_API(const DOMCallbacks *)
 GetDOMCallbacks(JSRuntime *rt);
