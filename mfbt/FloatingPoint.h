@@ -1,16 +1,23 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* Various predicates and operations on IEEE-754 floating point types. */
 
-#ifndef mozilla_FloatingPoint_h_
-#define mozilla_FloatingPoint_h_
+#ifndef mozilla_FloatingPoint_h
+#define mozilla_FloatingPoint_h
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/StandardInteger.h"
+#include "mozilla/Casting.h"
+#include "mozilla/MathAlgorithms.h"
+#include "mozilla/Types.h"
+
+#include <stdint.h>
+
+namespace mozilla {
 
 /*
  * It's reasonable to ask why we have this header at all.  Don't isnan,
@@ -25,220 +32,378 @@
  * For the aforementioned reasons, be very wary of making changes to any of
  * these algorithms.  If you must make changes, keep a careful eye out for
  * compiler bustage, particularly PGO-specific bustage.
+ */
+
+struct FloatTypeTraits
+{
+    typedef uint32_t Bits;
+
+    static const unsigned ExponentBias = 127;
+    static const unsigned ExponentShift = 23;
+
+    static const Bits SignBit         = 0x80000000UL;
+    static const Bits ExponentBits    = 0x7F800000UL;
+    static const Bits SignificandBits = 0x007FFFFFUL;
+};
+
+struct DoubleTypeTraits
+{
+    typedef uint64_t Bits;
+
+    static const unsigned ExponentBias = 1023;
+    static const unsigned ExponentShift = 52;
+
+    static const Bits SignBit         = 0x8000000000000000ULL;
+    static const Bits ExponentBits    = 0x7ff0000000000000ULL;
+    static const Bits SignificandBits = 0x000fffffffffffffULL;
+};
+
+template<typename T> struct SelectTrait;
+template<> struct SelectTrait<float> : public FloatTypeTraits {};
+template<> struct SelectTrait<double> : public DoubleTypeTraits {};
+
+/*
+ *  This struct contains details regarding the encoding of floating-point
+ *  numbers that can be useful for direct bit manipulation. As of now, the
+ *  template parameter has to be float or double.
  *
- * Some users require that this file be C-compatible.  Unfortunately, this means
- * no mozilla namespace to contain everything, no detail namespace clarifying
- * MozDoublePun to be an internal data structure, and so on.
+ *  The nested typedef |Bits| is the unsigned integral type with the same size
+ *  as T: uint32_t for float and uint64_t for double (static assertions
+ *  double-check these assumptions).
+ *
+ *  ExponentBias is the offset that is subtracted from the exponent when
+ *  computing the value, i.e. one plus the opposite of the mininum possible
+ *  exponent.
+ *  ExponentShift is the shift that one needs to apply to retrieve the exponent
+ *  component of the value.
+ *
+ *  SignBit contains a bits mask. Bit-and-ing with this mask will result in
+ *  obtaining the sign bit.
+ *  ExponentBits contains the mask needed for obtaining the exponent bits and
+ *  SignificandBits contains the mask needed for obtaining the significand bits.
+ *
+ *  Full details of how floating point number formats are encoded are beyond the
+ *  scope of this comment. For more information, see
+ *  http://en.wikipedia.org/wiki/IEEE_floating_point
+ *  http://en.wikipedia.org/wiki/Floating_point#IEEE_754:_floating_point_in_modern_computers
  */
+template<typename T>
+struct FloatingPoint : public SelectTrait<T>
+{
+    typedef SelectTrait<T> Base;
+    typedef typename Base::Bits Bits;
 
-/*
- * These implementations all assume |double| is a 64-bit double format number
- * type, compatible with the IEEE-754 standard.  C/C++ don't require this to be
- * the case.  But we required this in implementations of these algorithms that
- * preceded this header, so we shouldn't break anything if we continue doing so.
- */
-MOZ_STATIC_ASSERT(sizeof(double) == sizeof(uint64_t), "double must be 64 bits");
+    static_assert((Base::SignBit & Base::ExponentBits) == 0,
+                  "sign bit shouldn't overlap exponent bits");
+    static_assert((Base::SignBit & Base::SignificandBits) == 0,
+                  "sign bit shouldn't overlap significand bits");
+    static_assert((Base::ExponentBits & Base::SignificandBits) == 0,
+                  "exponent bits shouldn't overlap significand bits");
 
-/*
- * Constant expressions in C can't refer to consts, unfortunately, so #define
- * these rather than use |const uint64_t|.
- */
-#define MOZ_DOUBLE_SIGN_BIT          0x8000000000000000ULL
-#define MOZ_DOUBLE_EXPONENT_BITS     0x7ff0000000000000ULL
-#define MOZ_DOUBLE_SIGNIFICAND_BITS  0x000fffffffffffffULL
-
-#define MOZ_DOUBLE_EXPONENT_BIAS   1023
-#define MOZ_DOUBLE_EXPONENT_SHIFT  52
-
-MOZ_STATIC_ASSERT((MOZ_DOUBLE_SIGN_BIT & MOZ_DOUBLE_EXPONENT_BITS) == 0,
-                  "sign bit doesn't overlap exponent bits");
-MOZ_STATIC_ASSERT((MOZ_DOUBLE_SIGN_BIT & MOZ_DOUBLE_SIGNIFICAND_BITS) == 0,
-                  "sign bit doesn't overlap significand bits");
-MOZ_STATIC_ASSERT((MOZ_DOUBLE_EXPONENT_BITS & MOZ_DOUBLE_SIGNIFICAND_BITS) == 0,
-                  "exponent bits don't overlap significand bits");
-
-MOZ_STATIC_ASSERT((MOZ_DOUBLE_SIGN_BIT | MOZ_DOUBLE_EXPONENT_BITS | MOZ_DOUBLE_SIGNIFICAND_BITS)
-                  == ~(uint64_t)0,
+    static_assert((Base::SignBit | Base::ExponentBits | Base::SignificandBits) ==
+                  ~Bits(0),
                   "all bits accounted for");
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-/*
- * This union is NOT a public data structure, and it is not to be used outside
- * this file!
- */
-union MozDoublePun {
     /*
-     * Every way to pun the bits of a double introduces an additional layer of
-     * complexity, across a multitude of platforms, architectures, and ABIs.
-     * Use *only* uint64_t to reduce complexity.  Don't add new punning here
-     * without discussion!
+     * These implementations assume float/double are 32/64-bit single/double format
+     * number types compatible with the IEEE-754 standard.  C++ don't require this
+     * to be the case.  But we required this in implementations of these algorithms
+     * that preceded this header, so we shouldn't break anything if we keep doing so.
      */
-    uint64_t u;
-    double d;
+    static_assert(sizeof(T) == sizeof(Bits), "Bits must be same size as T");
 };
 
 /** Determines whether a double is NaN. */
-static MOZ_ALWAYS_INLINE int
-MOZ_DOUBLE_IS_NaN(double d)
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+IsNaN(T t)
 {
-  union MozDoublePun pun;
-  pun.d = d;
-
   /*
-   * A double is NaN if all exponent bits are 1 and the significand contains at
+   * A float/double is NaN if all exponent bits are 1 and the significand contains at
    * least one non-zero bit.
    */
-  return (pun.u & MOZ_DOUBLE_EXPONENT_BITS) == MOZ_DOUBLE_EXPONENT_BITS &&
-         (pun.u & MOZ_DOUBLE_SIGNIFICAND_BITS) != 0;
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  Bits bits = BitwiseCast<Bits>(t);
+  return (bits & Traits::ExponentBits) == Traits::ExponentBits &&
+         (bits & Traits::SignificandBits) != 0;
 }
 
-/** Determines whether a double is +Infinity or -Infinity. */
-static MOZ_ALWAYS_INLINE int
-MOZ_DOUBLE_IS_INFINITE(double d)
+/** Determines whether a float/double is +Infinity or -Infinity. */
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+IsInfinite(T t)
 {
-  union MozDoublePun pun;
-  pun.d = d;
-
   /* Infinities have all exponent bits set to 1 and an all-0 significand. */
-  return (pun.u & ~MOZ_DOUBLE_SIGN_BIT) == MOZ_DOUBLE_EXPONENT_BITS;
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  Bits bits = BitwiseCast<Bits>(t);
+  return (bits & ~Traits::SignBit) == Traits::ExponentBits;
 }
 
-/** Determines whether a double is not NaN or infinite. */
-static MOZ_ALWAYS_INLINE int
-MOZ_DOUBLE_IS_FINITE(double d)
+/** Determines whether a float/double is not NaN or infinite. */
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+IsFinite(T t)
 {
-  union MozDoublePun pun;
-  pun.d = d;
-
   /*
-   * NaN and Infinities are the only non-finite doubles, and both have all
+   * NaN and Infinities are the only non-finite floats/doubles, and both have all
    * exponent bits set to 1.
    */
-  return (pun.u & MOZ_DOUBLE_EXPONENT_BITS) != MOZ_DOUBLE_EXPONENT_BITS;
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  Bits bits = BitwiseCast<Bits>(t);
+  return (bits & Traits::ExponentBits) != Traits::ExponentBits;
 }
 
 /**
- * Determines whether a double is negative.  It is an error to call this method
- * on a double which is NaN.
+ * Determines whether a float/double is negative.  It is an error to call this method
+ * on a float/double which is NaN.
  */
-static MOZ_ALWAYS_INLINE int
-MOZ_DOUBLE_IS_NEGATIVE(double d)
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+IsNegative(T t)
 {
-  union MozDoublePun pun;
-  pun.d = d;
-
-  MOZ_ASSERT(!MOZ_DOUBLE_IS_NaN(d), "NaN does not have a sign");
+  MOZ_ASSERT(!IsNaN(t), "NaN does not have a sign");
 
   /* The sign bit is set if the double is negative. */
-  return (pun.u & MOZ_DOUBLE_SIGN_BIT) != 0;
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  Bits bits = BitwiseCast<Bits>(t);
+  return (bits & Traits::SignBit) != 0;
 }
 
-/** Determines whether a double represents -0. */
-static MOZ_ALWAYS_INLINE int
-MOZ_DOUBLE_IS_NEGATIVE_ZERO(double d)
+/** Determines whether a float/double represents -0. */
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+IsNegativeZero(T t)
 {
-  union MozDoublePun pun;
-  pun.d = d;
-
-  /* Only the sign bit is set if the double is -0. */
-  return pun.u == MOZ_DOUBLE_SIGN_BIT;
+  /* Only the sign bit is set if the value is -0. */
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  Bits bits = BitwiseCast<Bits>(t);
+  return bits == Traits::SignBit;
 }
 
-/** Returns the exponent portion of the double. */
+/**
+ * Returns the exponent portion of the float/double.
+ *
+ * Zero is not special-cased, so ExponentComponent(0.0) is
+ * -int_fast16_t(Traits::ExponentBias).
+ */
+template<typename T>
 static MOZ_ALWAYS_INLINE int_fast16_t
-MOZ_DOUBLE_EXPONENT(double d)
+ExponentComponent(T t)
 {
-  union MozDoublePun pun;
-  pun.d = d;
-
   /*
-   * The exponent component of a double is an unsigned number, biased from its
+   * The exponent component of a float/double is an unsigned number, biased from its
    * actual value.  Subtract the bias to retrieve the actual exponent.
    */
-  return (int_fast16_t)((pun.u & MOZ_DOUBLE_EXPONENT_BITS) >> MOZ_DOUBLE_EXPONENT_SHIFT) -
-                        MOZ_DOUBLE_EXPONENT_BIAS;
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  Bits bits = BitwiseCast<Bits>(t);
+  return int_fast16_t((bits & Traits::ExponentBits) >> Traits::ExponentShift) -
+         int_fast16_t(Traits::ExponentBias);
 }
 
 /** Returns +Infinity. */
-static MOZ_ALWAYS_INLINE double
-MOZ_DOUBLE_POSITIVE_INFINITY()
+template<typename T>
+static MOZ_ALWAYS_INLINE T
+PositiveInfinity()
 {
-  union MozDoublePun pun;
-
   /*
    * Positive infinity has all exponent bits set, sign bit set to 0, and no
    * significand.
    */
-  pun.u = MOZ_DOUBLE_EXPONENT_BITS;
-  return pun.d;
+  typedef FloatingPoint<T> Traits;
+  return BitwiseCast<T>(Traits::ExponentBits);
 }
 
 /** Returns -Infinity. */
-static MOZ_ALWAYS_INLINE double
-MOZ_DOUBLE_NEGATIVE_INFINITY()
+template<typename T>
+static MOZ_ALWAYS_INLINE T
+NegativeInfinity()
 {
-  union MozDoublePun pun;
-
   /*
    * Negative infinity has all exponent bits set, sign bit set to 1, and no
    * significand.
    */
-  pun.u = MOZ_DOUBLE_SIGN_BIT | MOZ_DOUBLE_EXPONENT_BITS;
-  return pun.d;
+  typedef FloatingPoint<T> Traits;
+  return BitwiseCast<T>(Traits::SignBit | Traits::ExponentBits);
 }
 
+
 /** Constructs a NaN value with the specified sign bit and significand bits. */
-static MOZ_ALWAYS_INLINE double
-MOZ_DOUBLE_SPECIFIC_NaN(int signbit, uint64_t significand)
+template<typename T>
+static MOZ_ALWAYS_INLINE T
+SpecificNaN(int signbit, typename FloatingPoint<T>::Bits significand)
 {
-  union MozDoublePun pun;
-
+  typedef FloatingPoint<T> Traits;
   MOZ_ASSERT(signbit == 0 || signbit == 1);
-  MOZ_ASSERT((significand & ~MOZ_DOUBLE_SIGNIFICAND_BITS) == 0);
-  MOZ_ASSERT(significand & MOZ_DOUBLE_SIGNIFICAND_BITS);
+  MOZ_ASSERT((significand & ~Traits::SignificandBits) == 0);
+  MOZ_ASSERT(significand & Traits::SignificandBits);
 
-  pun.u = (signbit ? MOZ_DOUBLE_SIGN_BIT : 0) |
-          MOZ_DOUBLE_EXPONENT_BITS |
-          significand;
-  MOZ_ASSERT(MOZ_DOUBLE_IS_NaN(pun.d));
-  return pun.d;
+  T t = BitwiseCast<T>((signbit ? Traits::SignBit : 0) |
+                       Traits::ExponentBits |
+                       significand);
+  MOZ_ASSERT(IsNaN(t));
+  return t;
+}
+
+/** Computes the smallest non-zero positive float/double value. */
+template<typename T>
+static MOZ_ALWAYS_INLINE T
+MinNumberValue()
+{
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  return BitwiseCast<T>(Bits(1));
+}
+
+/**
+ * If t is equal to some int32_t value, set *i to that value and return true;
+ * otherwise return false.
+ *
+ * Note that negative zero is "equal" to zero here. To test whether a value can
+ * be losslessly converted to int32_t and back, use NumberIsInt32 instead.
+ */
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+NumberEqualsInt32(T t, int32_t* i)
+{
+  /*
+   * XXX Casting a floating-point value that doesn't truncate to int32_t, to
+   *     int32_t, induces undefined behavior.  We should definitely fix this
+   *     (bug 744965), but as apparently it "works" in practice, it's not a
+   *     pressing concern now.
+   */
+  return t == (*i = int32_t(t));
+}
+
+/**
+ * If d can be converted to int32_t and back to an identical double value,
+ * set *i to that value and return true; otherwise return false.
+ *
+ * The difference between this and NumberEqualsInt32 is that this method returns
+ * false for negative zero.
+ */
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+NumberIsInt32(T t, int32_t* i)
+{
+  return !IsNegativeZero(t) && NumberEqualsInt32(t, i);
 }
 
 /**
  * Computes a NaN value.  Do not use this method if you depend upon a particular
  * NaN value being returned.
  */
-static MOZ_ALWAYS_INLINE double
-MOZ_DOUBLE_NaN()
-{
-  return MOZ_DOUBLE_SPECIFIC_NaN(0, 0xfffffffffffffULL);
-}
-
-/** Computes the smallest non-zero positive double value. */
-static MOZ_ALWAYS_INLINE double
-MOZ_DOUBLE_MIN_VALUE()
-{
-  union MozDoublePun pun;
-  pun.u = 1;
-  return pun.d;
-}
-
-static MOZ_ALWAYS_INLINE int
-MOZ_DOUBLE_IS_INT32(double d, int32_t* i)
+template<typename T>
+static MOZ_ALWAYS_INLINE T
+UnspecifiedNaN()
 {
   /*
-   * XXX Casting a double that doesn't truncate to int32_t, to int32_t, induces
-   *     undefined behavior.  We should definitely fix this (bug 744965), but as
-   *     apparently it "works" in practice, it's not a pressing concern now.
+   * If we can use any quiet NaN, we might as well use the all-ones NaN,
+   * since it's cheap to materialize on common platforms (such as x64, where
+   * this value can be represented in a 32-bit signed immediate field, allowing
+   * it to be stored to memory in a single instruction).
    */
-  return !MOZ_DOUBLE_IS_NEGATIVE_ZERO(d) && d == (*i = (int32_t)d);
+  typedef FloatingPoint<T> Traits;
+  return SpecificNaN<T>(1, Traits::SignificandBits);
 }
 
-#ifdef __cplusplus
-} /* extern "C" */
-#endif
+/**
+ * Compare two doubles for equality, *without* equating -0 to +0, and equating
+ * any NaN value to any other NaN value.  (The normal equality operators equate
+ * -0 with +0, and they equate NaN to no other value.)
+ */
+template<typename T>
+static inline bool
+NumbersAreIdentical(T t1, T t2)
+{
+  typedef FloatingPoint<T> Traits;
+  typedef typename Traits::Bits Bits;
+  if (IsNaN(t1))
+    return IsNaN(t2);
+  return BitwiseCast<Bits>(t1) == BitwiseCast<Bits>(t2);
+}
 
-#endif  /* mozilla_FloatingPoint_h_ */
+namespace detail {
+
+template<typename T>
+struct FuzzyEqualsEpsilon;
+
+template<>
+struct FuzzyEqualsEpsilon<float>
+{
+  // A number near 1e-5 that is exactly representable in
+  // floating point
+  static const float value() { return 1.0f / (1 << 17); }
+};
+
+template<>
+struct FuzzyEqualsEpsilon<double>
+{
+  // A number near 1e-12 that is exactly representable in
+  // a double
+  static const double value() { return 1.0 / (1LL << 40); }
+};
+
+} // namespace detail
+
+/**
+ * Compare two floating point values for equality, modulo rounding error. That
+ * is, the two values are considered equal if they are both not NaN and if they
+ * are less than or equal to epsilon apart. The default value of epsilon is near
+ * 1e-5.
+ *
+ * For most scenarios you will want to use FuzzyEqualsMultiplicative instead,
+ * as it is more reasonable over the entire range of floating point numbers.
+ * This additive version should only be used if you know the range of the numbers
+ * you are dealing with is bounded and stays around the same order of magnitude.
+ */
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+FuzzyEqualsAdditive(T val1, T val2, T epsilon = detail::FuzzyEqualsEpsilon<T>::value())
+{
+  static_assert(IsFloatingPoint<T>::value, "floating point type required");
+  return Abs(val1 - val2) <= epsilon;
+}
+
+/**
+ * Compare two floating point values for equality, allowing for rounding error
+ * relative to the magnitude of the values. That is, the two values are
+ * considered equal if they are both not NaN and they are less than or equal to
+ * some epsilon apart, where the epsilon is scaled by the smaller of the two
+ * argument values.
+ *
+ * In most cases you will want to use this rather than FuzzyEqualsAdditive, as
+ * this function effectively masks out differences in the bottom few bits of
+ * the floating point numbers being compared, regardless of what order of magnitude
+ * those numbers are at.
+ */
+template<typename T>
+static MOZ_ALWAYS_INLINE bool
+FuzzyEqualsMultiplicative(T val1, T val2, T epsilon = detail::FuzzyEqualsEpsilon<T>::value())
+{
+  static_assert(IsFloatingPoint<T>::value, "floating point type required");
+  // can't use std::min because of bug 965340
+  T smaller = Abs(val1) < Abs(val2) ? Abs(val1) : Abs(val2);
+  return Abs(val1 - val2) <= epsilon * smaller;
+}
+
+/**
+ * Returns true if the given value can be losslessly represented as an IEEE-754
+ * single format number, false otherwise.  All NaN values are considered
+ * representable (notwithstanding that the exact bit pattern of a double format
+ * NaN value can't be exactly represented in single format).
+ *
+ * This function isn't inlined to avoid buggy optimizations by MSVC.
+ */
+MOZ_WARN_UNUSED_RESULT
+extern MFBT_API bool
+IsFloat32Representable(double x);
+
+} /* namespace mozilla */
+
+#endif /* mozilla_FloatingPoint_h */

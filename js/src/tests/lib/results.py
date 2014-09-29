@@ -1,6 +1,10 @@
 import re
-from subprocess import list2cmdline
 from progressbar import NullProgressBar, ProgressBar
+import pipes
+
+# subprocess.list2cmdline does not properly escape for sh-like shells
+def escape_cmdline(args):
+    return ' '.join([ pipes.quote(a) for a in args ])
 
 class TestOutput:
     """Output from a test run."""
@@ -12,6 +16,16 @@ class TestOutput:
         self.rc = rc       # int:   return code
         self.dt = dt       # float: run time
         self.timed_out = timed_out # bool: did the test time out
+
+    def describe_failure(self):
+        if self.timed_out:
+            return "Timeout"
+        lines = self.err.splitlines()
+        for line in lines:
+            # Skip the asm.js compilation success message.
+            if "Successfully compiled asm.js code" not in line:
+                return line
+        return "Unknown"
 
 class NullTestOutput:
     """Variant of TestOutput that indicates a test was not run."""
@@ -106,20 +120,29 @@ class ResultsSink:
             self.counts['SKIP'] += 1
             self.n += 1
         else:
-            if self.options.show_cmd:
-                print >> self.fp, list2cmdline(output.cmd)
-
-            if self.options.show_output:
-                print >> self.fp, '    rc = %d, run time = %f' % (output.rc, output.dt)
-                self.fp.write(output.out)
-                self.fp.write(output.err)
-
             result = TestResult.from_output(output)
             tup = (result.result, result.test.expect, result.test.random)
             dev_label = self.LABELS[tup][1]
             if output.timed_out:
                 dev_label = 'TIMEOUTS'
             self.groups.setdefault(dev_label, []).append(result.test.path)
+
+            show = self.options.show
+            if self.options.failed_only and dev_label not in ('REGRESSIONS', 'TIMEOUTS'):
+                show = False
+            if show:
+                self.pb.beginline()
+
+            if show:
+                if self.options.show_output:
+                    print >> self.fp, '## %s: rc = %d, run time = %f' % (output.test.path, output.rc, output.dt)
+
+                if self.options.show_cmd:
+                    print >> self.fp, escape_cmdline(output.cmd)
+
+                if self.options.show_output:
+                    self.fp.write(output.out)
+                    self.fp.write(output.err)
 
             self.n += 1
 

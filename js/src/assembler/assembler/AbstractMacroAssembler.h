@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2008 Apple Inc. All rights reserved.
@@ -23,12 +23,12 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef AbstractMacroAssembler_h
-#define AbstractMacroAssembler_h
+#ifndef assembler_assembler_AbstractMacroAssembler_h
+#define assembler_assembler_AbstractMacroAssembler_h
 
 #include "assembler/wtf/Platform.h"
 #include "assembler/assembler/MacroAssemblerCodeRef.h"
@@ -98,7 +98,7 @@ public:
             , offset(offset)
         {
         }
-        
+
         RegisterID base;
         intptr_t offset;
     };
@@ -157,12 +157,12 @@ public:
     // Describes an memory operand given by a pointer.  For regular load & store
     // operations an unwrapped void* will be used, rather than using this.
     struct AbsoluteAddress {
-        explicit AbsoluteAddress(void* ptr)
+        explicit AbsoluteAddress(const void* ptr)
             : m_ptr(ptr)
         {
         }
 
-        void* m_ptr;
+        const void* m_ptr;
     };
 
     // TrustedImmPtr:
@@ -190,7 +190,7 @@ public:
         {
         }
     };
- 
+
     // TrustedImm32:
     //
     // A 32bit immediate operand to an instruction - this is wrapped in a
@@ -289,7 +289,7 @@ public:
             : m_label(masm->m_assembler.label())
         {
         }
-        
+
         bool isUsed() const { return m_label.isUsed(); }
         void used() { m_label.used(); }
         bool isSet() const { return m_label.isValid(); }
@@ -314,7 +314,7 @@ public:
             : m_label(masm->m_assembler.label())
         {
         }
-        
+
         bool isSet() const { return m_label.isValid(); }
 
     private:
@@ -365,7 +365,7 @@ public:
             : m_flags(None)
         {
         }
-        
+
         Call(JmpSrc jmp, Flags flags)
             : m_jmp(jmp)
             , m_flags(flags)
@@ -402,21 +402,23 @@ public:
         Jump()
         {
         }
-        
-        Jump(JmpSrc jmp)    
+
+        Jump(JmpSrc jmp)
             : m_jmp(jmp)
         {
         }
-        
-        void link(AbstractMacroAssembler<AssemblerType>* masm)
+
+        void link(AbstractMacroAssembler<AssemblerType>* masm) const
         {
             masm->m_assembler.linkJump(m_jmp, masm->m_assembler.label());
         }
-        
-        void linkTo(Label label, AbstractMacroAssembler<AssemblerType>* masm)
+
+        void linkTo(Label label, AbstractMacroAssembler<AssemblerType>* masm) const
         {
             masm->m_assembler.linkJump(m_jmp, label.m_label);
         }
+
+        bool isSet() const { return m_jmp.isSet(); }
 
     private:
         JmpSrc m_jmp;
@@ -436,7 +438,7 @@ public:
 
         JumpList(const JumpList &other)
         {
-            m_jumps.append(other.m_jumps);
+            m_jumps.appendAll(other.m_jumps);
         }
 
         JumpList &operator=(const JumpList &other)
@@ -453,7 +455,7 @@ public:
                 m_jumps[i].link(masm);
             m_jumps.clear();
         }
-        
+
         void linkTo(Label label, AbstractMacroAssembler<AssemblerType>* masm)
         {
             size_t size = m_jumps.length();
@@ -461,12 +463,12 @@ public:
                 m_jumps[i].linkTo(label, masm);
             m_jumps.clear();
         }
-        
+
         void append(Jump jump)
         {
             m_jumps.append(jump);
         }
-        
+
         void append(const JumpList& other)
         {
             m_jumps.append(other.m_jumps.begin(), other.m_jumps.length());
@@ -481,7 +483,7 @@ public:
         {
             return !m_jumps.length();
         }
-        
+
         const JumpVector& jumps() const { return m_jumps; }
 
     private:
@@ -526,7 +528,7 @@ public:
     {
         return DataLabel32(this);
     }
-    
+
     Label align()
     {
         m_assembler.align(16);
@@ -654,4 +656,4 @@ protected:
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // AbstractMacroAssembler_h
+#endif /* assembler_assembler_AbstractMacroAssembler_h */

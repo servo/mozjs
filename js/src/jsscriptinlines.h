@@ -1,134 +1,129 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79 ft=cpp:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsscriptinlines_h___
-#define jsscriptinlines_h___
+#ifndef jsscriptinlines_h
+#define jsscriptinlines_h
 
-#include "jsautooplen.h"
-#include "jscntxt.h"
-#include "jsfun.h"
-#include "jsopcode.h"
 #include "jsscript.h"
-#include "jsscope.h"
 
-#include "vm/GlobalObject.h"
-#include "vm/RegExpObject.h"
+#include "jit/AsmJSLink.h"
+#include "jit/BaselineJIT.h"
+#include "vm/ScopeObject.h"
 
-#include "jsscopeinlines.h"
+#include "jscompartmentinlines.h"
+
+#include "vm/Shape-inl.h"
 
 namespace js {
 
 inline
 Bindings::Bindings()
-    : callObjShape_(NULL), bindingArrayAndFlag_(TEMPORARY_STORAGE_BIT), numArgs_(0), numVars_(0)
+    : callObjShape_(nullptr), bindingArrayAndFlag_(TEMPORARY_STORAGE_BIT),
+      numArgs_(0), numBlockScoped_(0), numVars_(0)
 {}
 
 inline
 AliasedFormalIter::AliasedFormalIter(JSScript *script)
-  : begin_(script->bindings.bindingArray()),
+  : begin_(script->bindingArray()),
     p_(begin_),
-    end_(begin_ + (script->funHasAnyAliasedFormal ? script->bindings.numArgs() : 0)),
+    end_(begin_ + (script->funHasAnyAliasedFormal() ? script->numArgs() : 0)),
     slot_(CallObject::RESERVED_SLOTS)
 {
     settle();
-}
-
-extern void
-CurrentScriptFileLineOriginSlow(JSContext *cx, const char **file, unsigned *linenop, JSPrincipals **origin);
-
-inline void
-CurrentScriptFileLineOrigin(JSContext *cx, const char **file, unsigned *linenop, JSPrincipals **origin,
-                            LineOption opt = NOT_CALLED_FROM_JSOP_EVAL)
-{
-    if (opt == CALLED_FROM_JSOP_EVAL) {
-        JS_ASSERT(JSOp(*cx->regs().pc) == JSOP_EVAL);
-        JS_ASSERT(*(cx->regs().pc + JSOP_EVAL_LENGTH) == JSOP_LINENO);
-        JSScript *script = cx->fp()->script();
-        *file = script->filename;
-        *linenop = GET_UINT16(cx->regs().pc + JSOP_EVAL_LENGTH);
-        *origin = script->originPrincipals;
-        return;
-    }
-
-    CurrentScriptFileLineOriginSlow(cx, file, linenop, origin);
 }
 
 inline void
 ScriptCounts::destroy(FreeOp *fop)
 {
     fop->free_(pcCountsVector);
+    fop->delete_(ionCounts);
 }
 
-inline void
-MarkScriptFilename(JSRuntime *rt, const char *filename)
+void
+SetFrameArgumentsObject(JSContext *cx, AbstractFramePtr frame,
+                        HandleScript script, JSObject *argsobj);
+
+inline JSFunction *
+LazyScript::functionDelazifying(JSContext *cx) const
 {
-    /*
-     * As an invariant, a ScriptFilenameEntry should not be 'marked' outside of
-     * a GC. Since SweepScriptFilenames is only called during a full gc,
-     * to preserve this invariant, only mark during a full gc.
-     */
-    if (rt->gcIsFull)
-        ScriptFilenameEntry::fromFilename(filename)->marked = true;
+    if (function_ && !function_->getOrCreateScript(cx))
+        return nullptr;
+    return function_;
 }
 
 } // namespace js
 
+inline JSFunction *
+JSScript::functionDelazifying() const
+{
+    if (function_ && function_->isInterpretedLazy()) {
+        function_->setUnlazifiedScript(const_cast<JSScript *>(this));
+        // If this script has a LazyScript, make sure the LazyScript has a
+        // reference to the script when delazifying its canonical function.
+        if (lazyScript && !lazyScript->maybeScript())
+            lazyScript->initScript(const_cast<JSScript *>(this));
+    }
+    return function_;
+}
+
 inline void
 JSScript::setFunction(JSFunction *fun)
 {
+    JS_ASSERT(fun->isTenured());
     function_ = fun;
+}
+
+inline void
+JSScript::ensureNonLazyCanonicalFunction(JSContext *cx)
+{
+    // Infallibly delazify the canonical script.
+    if (function_ && function_->isInterpretedLazy())
+        functionDelazifying();
 }
 
 inline JSFunction *
 JSScript::getFunction(size_t index)
 {
-    JSObject *funobj = getObject(index);
-    JS_ASSERT(funobj->isFunction() && funobj->toFunction()->isInterpreted());
-    return funobj->toFunction();
+    JSFunction *fun = &getObject(index)->as<JSFunction>();
+    JS_ASSERT_IF(fun->isNative(), IsAsmJSModuleNative(fun->native()));
+    return fun;
 }
 
 inline JSFunction *
 JSScript::getCallerFunction()
 {
-    JS_ASSERT(savedCallerFun);
+    JS_ASSERT(savedCallerFun());
     return getFunction(0);
 }
 
-inline JSObject *
+inline JSFunction *
+JSScript::functionOrCallerFunction()
+{
+    if (functionNonDelazifying())
+        return functionNonDelazifying();
+    if (savedCallerFun())
+        return getCallerFunction();
+    return nullptr;
+}
+
+inline js::RegExpObject *
 JSScript::getRegExp(size_t index)
 {
     js::ObjectArray *arr = regexps();
     JS_ASSERT(uint32_t(index) < arr->length);
     JSObject *obj = arr->vector[index];
-    JS_ASSERT(obj->isRegExp());
-    return obj;
+    JS_ASSERT(obj->is<js::RegExpObject>());
+    return (js::RegExpObject *) obj;
 }
 
-inline bool
-JSScript::isEmpty() const
+inline js::RegExpObject *
+JSScript::getRegExp(jsbytecode *pc)
 {
-    if (length > 3)
-        return false;
-
-    jsbytecode *pc = code;
-    if (noScriptRval && JSOp(*pc) == JSOP_FALSE)
-        ++pc;
-    return JSOp(*pc) == JSOP_STOP;
-}
-
-inline bool
-JSScript::hasGlobal() const
-{
-    /*
-     * Make sure that we don't try to query information about global objects
-     * which have had their scopes cleared. compileAndGo code should not run
-     * anymore against such globals.
-     */
-    return compileAndGo && !global().isCleared();
+    JS_ASSERT(containsPC(pc) && containsPC(pc + sizeof(uint32_t)));
+    return getRegExp(GET_UINT32_INDEX(pc));
 }
 
 inline js::GlobalObject &
@@ -141,51 +136,41 @@ JSScript::global() const
     return *compartment()->maybeGlobal();
 }
 
-inline bool
-JSScript::hasClearedGlobal() const
+inline JSPrincipals *
+JSScript::principals()
 {
-    JS_ASSERT(types);
-    return global().isCleared();
+    return compartment()->principals;
 }
 
-#ifdef JS_METHODJIT
-inline bool
-JSScript::ensureHasMJITInfo(JSContext *cx)
+inline JSFunction *
+JSScript::donorFunction() const
 {
-    if (mJITInfo)
-        return true;
-    mJITInfo = cx->new_<JITScriptSet>();
-    return mJITInfo != NULL;
+    if (!isCallsiteClone())
+        return nullptr;
+    return &enclosingScopeOrOriginalFunction_->as<JSFunction>();
 }
 
 inline void
-JSScript::destroyMJITInfo(js::FreeOp *fop)
+JSScript::setIsCallsiteClone(JSObject *fun)
 {
-    fop->delete_(mJITInfo);
-    mJITInfo = NULL;
+    JS_ASSERT(shouldCloneAtCallsite());
+    shouldCloneAtCallsite_ = false;
+    isCallsiteClone_ = true;
+    JS_ASSERT(isCallsiteClone());
+    JS_ASSERT(fun->is<JSFunction>());
+    enclosingScopeOrOriginalFunction_ = fun;
 }
-#endif /* JS_METHODJIT */
 
 inline void
-JSScript::writeBarrierPre(JSScript *script)
+JSScript::setBaselineScript(JSContext *maybecx, js::jit::BaselineScript *baselineScript)
 {
-#ifdef JSGC_INCREMENTAL
-    if (!script)
-        return;
-
-    JSCompartment *comp = script->compartment();
-    if (comp->needsBarrier()) {
-        JS_ASSERT(!comp->rt->isHeapBusy());
-        JSScript *tmp = script;
-        MarkScriptUnbarriered(comp->barrierTracer(), &tmp, "write barrier");
-        JS_ASSERT(tmp == script);
-    }
+#ifdef JS_ION
+    if (hasBaselineScript())
+        js::jit::BaselineScript::writeBarrierPre(tenuredZone(), baseline);
 #endif
+    MOZ_ASSERT(!hasIonScript());
+    baseline = baselineScript;
+    updateBaselineOrIonRaw();
 }
 
-inline void
-JSScript::writeBarrierPost(JSScript *script, void *addr)
-{
-}
-
-#endif /* jsscriptinlines_h___ */
+#endif /* jsscriptinlines_h */

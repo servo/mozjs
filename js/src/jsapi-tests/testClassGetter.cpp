@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * Tests the JSClass::getProperty hook
  */
@@ -7,27 +7,26 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jsapi-tests/tests.h"
 
-#include "tests.h"
+static int called_test_fn;
+static int called_test_prop_get;
 
-int called_test_fn;
-int called_test_prop_get;
-
-static JSBool test_prop_get( JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleValue vp )
+static bool test_prop_get( JSContext *cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandleValue vp )
 {
     called_test_prop_get++;
-    return JS_TRUE;
+    return true;
 }
 
-static JSBool
+static bool
 PTest(JSContext* cx, unsigned argc, jsval *vp);
 
-static JSClass ptestClass = {
+static const JSClass ptestClass = {
     "PTest",
     JSCLASS_HAS_PRIVATE,
 
     JS_PropertyStub,       // add
-    JS_PropertyStub,       // delete
+    JS_DeletePropertyStub, // delete
     test_prop_get,         // get
     JS_StrictPropertyStub, // set
     JS_EnumerateStub,
@@ -35,36 +34,38 @@ static JSClass ptestClass = {
     JS_ConvertStub
 };
 
-static JSBool
+static bool
 PTest(JSContext* cx, unsigned argc, jsval *vp)
 {
-    JSObject *obj = JS_NewObjectForConstructor(cx, &ptestClass, vp);
+    JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
+    JSObject *obj = JS_NewObjectForConstructor(cx, &ptestClass, args);
     if (!obj)
-        return JS_FALSE;
-    JS_SET_RVAL(cx, vp, OBJECT_TO_JSVAL(obj));
-    return JS_TRUE;
+        return false;
+    args.rval().setObject(*obj);
+    return true;
 }
-static JSBool test_fn(JSContext *cx, unsigned argc, jsval *vp)
+static bool test_fn(JSContext *cx, unsigned argc, jsval *vp)
 {
     called_test_fn++;
-    return JS_TRUE;
+    return true;
 }
 
-static JSFunctionSpec ptestFunctions[] = {
+static const JSFunctionSpec ptestFunctions[] = {
     JS_FS( "test_fn", test_fn, 0, 0 ),
     JS_FS_END
 };
 
 BEGIN_TEST(testClassGetter_isCalled)
 {
-    CHECK(JS_InitClass(cx, global, NULL, &ptestClass, PTest, 0,
-                       NULL, ptestFunctions, NULL, NULL));
+    CHECK(JS_InitClass(cx, global, js::NullPtr(), &ptestClass, PTest, 0,
+                       nullptr, ptestFunctions, nullptr, nullptr));
 
     EXEC("function check() { var o = new PTest(); o.test_fn(); o.test_value1; o.test_value2; o.test_value1; }");
 
     for (int i = 1; i < 9; i++) {
         JS::RootedValue rval(cx);
-        CHECK(JS_CallFunctionName(cx, global, "check", 0, NULL, rval.address()));
+        CHECK(JS_CallFunctionName(cx, global, "check", JS::HandleValueArray::empty(),
+                                  &rval));
         CHECK_SAME(INT_TO_JSVAL(called_test_fn), INT_TO_JSVAL(i));
         CHECK_SAME(INT_TO_JSVAL(called_test_prop_get), INT_TO_JSVAL(4 * i));
     }

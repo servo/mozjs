@@ -5,7 +5,7 @@
 // case identifies the expected innermost shared scope by the name of a
 // variable in it.
 
-var g = newGlobal('new-compartment');
+var g = newGlobal();
 g.eval("function h() { debugger; }");
 var dbg = Debugger(g);
 var hits, name, shared, unshared;
@@ -55,9 +55,6 @@ test("q", 2, "var q = function (a) { h(); }; q(1); q(2);");
 test("a", 2, "q = function (a) { (function (b) { h(); a = b; })(2); h(); }; q(1);");
 test("a", 2, "q = function (a) { h(); return function (b) { h(); a = b; }; }; q(1)(2);");
 test("n", 3, "q = function (n) { for (var i = 0; i < n; i++) { let (j = i) { h(); } } }; q(3);");
-
-// Don't crash in E4X filter scopes.
-test("x", 2, "q = function () { var x = <><y/><z/></>.(function (e) { h(); }(this)); }; q();");
 
 // A function with long dynamic and static chains.
 var N = 80;

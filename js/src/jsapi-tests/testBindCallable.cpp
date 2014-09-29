@@ -2,15 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "tests.h"
+#include "jsapi-tests/tests.h"
 
 BEGIN_TEST(test_BindCallable)
 {
-  jsval v;
+  JS::RootedValue v(cx);
   EVAL("({ somename : 1717 })", &v);
   CHECK(v.isObject());
 
-  jsval func;
+  JS::RootedValue func(cx);
   EVAL("(function() { return this.somename; })", &func);
   CHECK(func.isObject());
 
@@ -19,9 +19,9 @@ BEGIN_TEST(test_BindCallable)
   JSObject* newCallable = JS_BindCallable(cx, funcObj, vObj);
   CHECK(newCallable);
 
-  jsval retval;
-  bool called = JS_CallFunctionValue(cx, NULL, OBJECT_TO_JSVAL(newCallable),
-                                     0, NULL, &retval);
+  JS::RootedValue retval(cx);
+  JS::RootedValue fun(cx, JS::ObjectValue(*newCallable));
+  bool called = JS_CallFunctionValue(cx, JS::NullPtr(), fun, JS::HandleValueArray::empty(), &retval);
   CHECK(called);
 
   CHECK(JSVAL_IS_INT(retval));

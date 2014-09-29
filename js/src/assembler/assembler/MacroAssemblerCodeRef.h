@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009 Apple Inc. All rights reserved.
@@ -23,17 +23,20 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef MacroAssemblerCodeRef_h
-#define MacroAssemblerCodeRef_h
+#ifndef assembler_assembler_MacroAssemblerCodeRef_h
+#define assembler_assembler_MacroAssemblerCodeRef_h
 
+#include "assembler/wtf/Assertions.h"
 #include "assembler/wtf/Platform.h"
 #include "assembler/jit/ExecutableAllocator.h"
 
 #if ENABLE_ASSEMBLER
+
+#include "jsutil.h"
 
 // ASSERT_VALID_CODE_POINTER checks that ptr is a non-null pointer, and that it is a valid
 // instruction address on the platform (for example, check any alignment requirements).
@@ -156,7 +159,7 @@ public:
     void* dataLocation() const { ASSERT_VALID_CODE_POINTER(m_value); return m_value; }
 #endif
 
-    bool operator!()
+    bool operator!() const
     {
         return !m_value;
     }
@@ -181,14 +184,14 @@ class MacroAssemblerCodeRef {
 public:
     MacroAssemblerCodeRef()
         : m_executablePool(NULL),
-          m_size(0)
+          m_allocSize(0)
     {
     }
 
-    MacroAssemblerCodeRef(void* code, ExecutablePool* executablePool, size_t size)
+    MacroAssemblerCodeRef(void* code, ExecutablePool* executablePool, size_t allocSize)
         : m_code(code)
         , m_executablePool(executablePool)
-        , m_size(size)
+        , m_allocSize(allocSize)
     {
     }
 
@@ -198,21 +201,29 @@ public:
         if (!m_executablePool)
             return;
 
-#if defined DEBUG && (defined WTF_CPU_X86 || defined WTF_CPU_X86_64) 
-        void *addr = m_code.executableAddress();
-        memset(addr, 0xcc, m_size);
-#endif
-        m_executablePool->release();
-        m_executablePool = NULL;
+        JS_POISON(m_code.executableAddress(), JS_SWEPT_CODE_PATTERN, m_allocSize);
+
+        m_code = MacroAssemblerCodePtr();
+
+        // MacroAssemblerCodeRef is only used by Yarr.
+        m_executablePool->release(m_allocSize, REGEXP_CODE);
+        m_executablePool = nullptr;
+    }
+
+    MacroAssemblerCodePtr code() const {
+        return m_code;
+    }
+    size_t allocSize() const {
+        return m_allocSize;
     }
 
     MacroAssemblerCodePtr m_code;
     ExecutablePool* m_executablePool;
-    size_t m_size;
+    size_t m_allocSize;
 };
 
 } // namespace JSC
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // MacroAssemblerCodeRef_h
+#endif /* assembler_assembler_MacroAssemblerCodeRef_h */

@@ -1,12 +1,13 @@
-/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef InlineMap_h__
-#define InlineMap_h__
+#ifndef ds_InlineMap_h
+#define ds_InlineMap_h
+
+#include "jsalloc.h"
 
 #include "js/HashTable.h"
 
@@ -23,7 +24,7 @@ template <typename K, typename V, size_t InlineElems>
 class InlineMap
 {
   public:
-    typedef HashMap<K, V, DefaultHasher<K>, TempAllocPolicy> WordMap;
+    typedef HashMap<K, V, DefaultHasher<K>, SystemAllocPolicy> WordMap;
 
     struct InlineElem
     {
@@ -71,7 +72,7 @@ class InlineMap
         return true;
     }
 
-    JS_NEVER_INLINE
+    MOZ_NEVER_INLINE
     bool switchAndAdd(const K &key, const V &value) {
         if (!switchToMap())
             return false;
@@ -80,8 +81,8 @@ class InlineMap
     }
 
   public:
-    explicit InlineMap(JSContext *cx)
-      : inlNext(0), inlCount(0), map(cx) {
+    explicit InlineMap()
+      : inlNext(0), inlCount(0) {
         checkStaticInvariants(); /* Force the template to instantiate the static invariants. */
     }
 
@@ -133,12 +134,12 @@ class InlineMap
 
         K &key() {
             JS_ASSERT(found());
-            return isInlinePtr ? inlPtr->key : mapPtr->key;
+            return isInlinePtr ? inlPtr->key : mapPtr->key();
         }
 
         V &value() {
             JS_ASSERT(found());
-            return isInlinePtr ? inlPtr->value : mapPtr->value;
+            return isInlinePtr ? inlPtr->value : mapPtr->value();
         }
     }; /* class Ptr */
 
@@ -177,7 +178,7 @@ class InlineMap
             JS_ASSERT(found());
             if (isInlinePtr)
                 return inlAddPtr->value;
-            return mapAddPtr->value;
+            return mapAddPtr->value();
         }
     }; /* class AddPtr */
 
@@ -213,7 +214,7 @@ class InlineMap
         return inl + inlNext;
     }
 
-    JS_ALWAYS_INLINE
+    MOZ_ALWAYS_INLINE
     Ptr lookup(const K &key) {
         if (usingMap())
             return Ptr(map.lookup(key));
@@ -223,10 +224,10 @@ class InlineMap
                 return Ptr(it);
         }
 
-        return Ptr(NULL);
+        return Ptr(nullptr);
     }
 
-    JS_ALWAYS_INLINE
+    MOZ_ALWAYS_INLINE
     AddPtr lookupForAdd(const K &key) {
         if (usingMap())
             return AddPtr(map.lookupForAdd(key));
@@ -244,7 +245,7 @@ class InlineMap
         return AddPtr(inl + inlNext, false);
     }
 
-    JS_ALWAYS_INLINE
+    MOZ_ALWAYS_INLINE
     bool add(AddPtr &p, const K &key, const V &value) {
         JS_ASSERT(!p);
 
@@ -268,7 +269,7 @@ class InlineMap
         return map.add(p.mapAddPtr, key, value);
     }
 
-    JS_ALWAYS_INLINE
+    MOZ_ALWAYS_INLINE
     bool put(const K &key, const V &value) {
         AddPtr p = lookupForAdd(key);
         if (p) {
@@ -282,8 +283,8 @@ class InlineMap
         JS_ASSERT(p);
         if (p.isInlinePtr) {
             JS_ASSERT(inlCount > 0);
-            JS_ASSERT(p.inlPtr->key != NULL);
-            p.inlPtr->key = NULL;
+            JS_ASSERT(p.inlPtr->key != nullptr);
+            p.inlPtr->key = nullptr;
             --inlCount;
             return;
         }
@@ -306,7 +307,7 @@ class InlineMap
         bool            isInline;
 
         explicit Range(WordMapRange r)
-          : cur(NULL), end(NULL), /* Avoid GCC 4.3.3 over-warning. */
+          : cur(nullptr), end(nullptr), /* Avoid GCC 4.3.3 over-warning. */
             isInline(false) {
             mapRange = r;
             JS_ASSERT(!isInlineRange());
@@ -322,7 +323,7 @@ class InlineMap
 
         bool checkInlineRangeInvariants() const {
             JS_ASSERT(uintptr_t(cur) <= uintptr_t(end));
-            JS_ASSERT_IF(cur != end, cur->key != NULL);
+            JS_ASSERT_IF(cur != end, cur->key != nullptr);
             return true;
         }
 
@@ -333,7 +334,7 @@ class InlineMap
 
         void advancePastNulls(InlineElem *begin) {
             InlineElem *newCur = begin;
-            while (newCur < end && NULL == newCur->key)
+            while (newCur < end && nullptr == newCur->key)
                 ++newCur;
             JS_ASSERT(uintptr_t(newCur) <= uintptr_t(end));
             cur = newCur;
@@ -355,7 +356,7 @@ class InlineMap
             JS_ASSERT(!empty());
             if (isInlineRange())
                 return Entry(cur->key, cur->value);
-            return Entry(mapRange.front().key, mapRange.front().value);
+            return Entry(mapRange.front().key(), mapRange.front().value());
         }
 
         void popFront() {
@@ -374,4 +375,4 @@ class InlineMap
 
 } /* namespace js */
 
-#endif
+#endif /* ds_InlineMap_h */

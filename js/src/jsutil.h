@@ -1,5 +1,5 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,21 +8,29 @@
  * PR assertion checker.
  */
 
-#ifndef jsutil_h___
-#define jsutil_h___
+#ifndef jsutil_h
+#define jsutil_h
 
-#include "mozilla/Attributes.h"
+#include "mozilla/Assertions.h"
+#include "mozilla/Compiler.h"
+#include "mozilla/GuardObjects.h"
+
+#include <limits.h>
 
 #include "js/Utility.h"
 
-#ifdef USE_ZLIB
-#include "zlib.h"
+#define JS_ALWAYS_TRUE(expr)      MOZ_ALWAYS_TRUE(expr)
+#define JS_ALWAYS_FALSE(expr)     MOZ_ALWAYS_FALSE(expr)
+
+#if defined(JS_DEBUG)
+# define JS_DIAGNOSTICS_ASSERT(expr) MOZ_ASSERT(expr)
+#elif defined(JS_CRASH_DIAGNOSTICS)
+# define JS_DIAGNOSTICS_ASSERT(expr) do { if (MOZ_UNLIKELY(!(expr))) MOZ_CRASH(); } while(0)
+#else
+# define JS_DIAGNOSTICS_ASSERT(expr) ((void) 0)
 #endif
 
-/* Forward declarations. */
-struct JSContext;
-
-static JS_ALWAYS_INLINE void *
+static MOZ_ALWAYS_INLINE void *
 js_memcpy(void *dst_, const void *src_, size_t len)
 {
     char *dst = (char *) dst_;
@@ -33,7 +41,6 @@ js_memcpy(void *dst_, const void *src_, size_t len)
     return memcpy(dst, src, len);
 }
 
-#ifdef __cplusplus
 namespace js {
 
 template <class T>
@@ -53,9 +60,9 @@ class AlignedPtrAndFlag
     uintptr_t bits;
 
   public:
-    AlignedPtrAndFlag(T *t, bool flag) {
+    AlignedPtrAndFlag(T *t, bool aFlag) {
         JS_ASSERT((uintptr_t(t) & 1) == 0);
-        bits = uintptr_t(t) | uintptr_t(flag);
+        bits = uintptr_t(t) | uintptr_t(aFlag);
     }
 
     T *ptr() const {
@@ -79,9 +86,9 @@ class AlignedPtrAndFlag
         bits &= ~uintptr_t(1);
     }
 
-    void set(T *t, bool flag) {
+    void set(T *t, bool aFlag) {
         JS_ASSERT((uintptr_t(t) & 1) == 0);
-        bits = uintptr_t(t) | flag;
+        bits = uintptr_t(t) | aFlag;
     }
 };
 
@@ -148,7 +155,7 @@ InitConst(const T &t)
 }
 
 template <class T, class U>
-JS_ALWAYS_INLINE T &
+MOZ_ALWAYS_INLINE T &
 ImplicitCast(U &u)
 {
     T &t = u;
@@ -158,141 +165,67 @@ ImplicitCast(U &u)
 template<typename T>
 class AutoScopedAssign
 {
-  private:
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
-    T *addr;
-    T old;
-
   public:
-    AutoScopedAssign(T *addr, const T &value JS_GUARD_OBJECT_NOTIFIER_PARAM)
-        : addr(addr), old(*addr)
+    AutoScopedAssign(T *addr, const T &value
+                     MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+        : addr_(addr), old(*addr_)
     {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
-        *addr = value;
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+        *addr_ = value;
     }
 
-    ~AutoScopedAssign() { *addr = old; }
+    ~AutoScopedAssign() { *addr_ = old; }
+
+  private:
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+    T *addr_;
+    T old;
 };
 
-template <class T>
-JS_ALWAYS_INLINE static void
-PodZero(T *t)
+template <typename T>
+static inline bool
+IsPowerOfTwo(T t)
 {
-    memset(t, 0, sizeof(T));
+    return t && !(t & (t - 1));
 }
 
-template <class T>
-JS_ALWAYS_INLINE static void
-PodZero(T *t, size_t nelem)
+template <typename T, typename U>
+static inline U
+ComputeByteAlignment(T bytes, U alignment)
 {
-    /*
-     * This function is often called with 'nelem' small; we use an
-     * inline loop instead of calling 'memset' with a non-constant
-     * length.  The compiler should inline the memset call with constant
-     * size, though.
-     */
-    for (T *end = t + nelem; t != end; ++t)
-        memset(t, 0, sizeof(T));
+    JS_ASSERT(IsPowerOfTwo(alignment));
+    return (alignment - (bytes % alignment)) % alignment;
 }
 
-/*
- * Arrays implicitly convert to pointers to their first element, which is
- * dangerous when combined with the above PodZero definitions. Adding an
- * overload for arrays is ambiguous, so we need another identifier. The
- * ambiguous overload is left to catch mistaken uses of PodZero; if you get a
- * compile error involving PodZero and array types, use PodArrayZero instead.
- */
-template <class T, size_t N> static void PodZero(T (&)[N]);          /* undefined */
-template <class T, size_t N> static void PodZero(T (&)[N], size_t);  /* undefined */
-
-template <class T, size_t N>
-JS_ALWAYS_INLINE static void
-PodArrayZero(T (&t)[N])
+template <typename T, typename U>
+static inline T
+AlignBytes(T bytes, U alignment)
 {
-    memset(t, 0, N * sizeof(T));
+    return bytes + ComputeByteAlignment(bytes, alignment);
 }
 
-template <class T>
-JS_ALWAYS_INLINE static void
-PodAssign(T *dst, const T *src)
-{
-    js_memcpy((char *) dst, (const char *) src, sizeof(T));
-}
-
-template <class T>
-JS_ALWAYS_INLINE static void
-PodCopy(T *dst, const T *src, size_t nelem)
-{
-    /* Cannot find portable word-sized abs(). */
-    JS_ASSERT_IF(dst >= src, size_t(dst - src) >= nelem);
-    JS_ASSERT_IF(src >= dst, size_t(src - dst) >= nelem);
-
-    if (nelem < 128) {
-        /*
-         * Avoid using operator= in this loop, as it may have been
-         * intentionally deleted by the POD type.
-         */
-        for (const T *srcend = src + nelem; src != srcend; ++src, ++dst)
-            PodAssign(dst, src);
-    } else {
-        memcpy(dst, src, nelem * sizeof(T));
-    }
-}
-
-template <class T>
-JS_ALWAYS_INLINE static bool
-PodEqual(T *one, T *two, size_t len)
-{
-    if (len < 128) {
-        T *p1end = one + len;
-        for (T *p1 = one, *p2 = two; p1 != p1end; ++p1, ++p2) {
-            if (*p1 != *p2)
-                return false;
-        }
-        return true;
-    }
-
-    return !memcmp(one, two, len * sizeof(T));
-}
-
-template <class T>
-JS_ALWAYS_INLINE static void
-Swap(T &t, T &u)
-{
-    T tmp(Move(t));
-    t = Move(u);
-    u = Move(tmp);
-}
-
-JS_ALWAYS_INLINE static size_t
+static MOZ_ALWAYS_INLINE size_t
 UnsignedPtrDiff(const void *bigger, const void *smaller)
 {
     return size_t(bigger) - size_t(smaller);
 }
 
-/*
- * Ordinarily, a function taking a JSContext* 'cx' parameter reports errors on
- * the context. In some cases, functions optionally report and indicate this by
- * taking a nullable 'maybecx' parameter. In some cases, though, a function
- * always needs a 'cx', but optionally reports. This option is presented by the
- * MaybeReportError.
- */
-enum MaybeReportError { REPORT_ERROR = true, DONT_REPORT_ERROR = false };
-
 /*****************************************************************************/
 
 /* A bit array is an array of bits represented by an array of words (size_t). */
 
+static const size_t BitArrayElementBits = sizeof(size_t) * CHAR_BIT;
+
 static inline unsigned
 NumWordsForBitArrayOfLength(size_t length)
 {
-    return (length + (JS_BITS_PER_WORD - 1)) / JS_BITS_PER_WORD;
+    return (length + (BitArrayElementBits - 1)) / BitArrayElementBits;
 }
 
 static inline unsigned
 BitArrayIndexToWordIndex(size_t length, size_t bitIndex)
 {
-    unsigned wordIndex = bitIndex / JS_BITS_PER_WORD;
+    unsigned wordIndex = bitIndex / BitArrayElementBits;
     JS_ASSERT(wordIndex < length);
     return wordIndex;
 }
@@ -300,7 +233,7 @@ BitArrayIndexToWordIndex(size_t length, size_t bitIndex)
 static inline size_t
 BitArrayIndexToWordMask(size_t i)
 {
-    return size_t(1) << (i % JS_BITS_PER_WORD);
+    return size_t(1) << (i % BitArrayElementBits);
 }
 
 static inline bool
@@ -339,53 +272,20 @@ ClearAllBitArrayElements(size_t *array, size_t length)
         array[i] = 0;
 }
 
-#ifdef USE_ZLIB
-class Compressor
-{
-    /* Number of bytes we should hand to zlib each compressMore() call. */
-    static const size_t CHUNKSIZE = 2048;
-    z_stream zs;
-    const unsigned char *inp;
-    size_t inplen;
-  public:
-    Compressor(const unsigned char *inp, size_t inplen, unsigned char *out)
-        : inp(inp),
-        inplen(inplen)
-    {
-        JS_ASSERT(inplen > 0);
-        zs.opaque = NULL;
-        zs.next_in = (Bytef *)inp;
-        zs.avail_in = 0;
-        zs.next_out = out;
-        zs.avail_out = inplen;
-    }
-    bool init();
-    /* Compress some of the input. Return true if it should be called again. */
-    bool compressMore();
-    /* Finalize compression. Return the length of the compressed input. */
-    size_t finish();
-};
-
-/*
- * Decompress a string. The caller must know the length of the output and
- * allocate |out| to a string of that length.
- */
-bool DecompressString(const unsigned char *inp, size_t inplen,
-                      unsigned char *out, size_t outlen);
-#endif
-
 }  /* namespace js */
-#endif  /* __cplusplus */
 
 /* Crash diagnostics */
 #ifdef DEBUG
 # define JS_CRASH_DIAGNOSTICS 1
 #endif
-#ifdef JS_CRASH_DIAGNOSTICS
+#if defined(JS_CRASH_DIAGNOSTICS) || defined(JS_GC_ZEAL)
 # define JS_POISON(p, val, size) memset((p), (val), (size))
 #else
 # define JS_POISON(p, val, size) ((void) 0)
 #endif
+
+/* Bug 984101: Disable labeled poisoning until we have poison checking. */
+#define JS_EXTRA_POISON(p, val, size) ((void) 0)
 
 /* Basic stats */
 #ifdef DEBUG
@@ -421,23 +321,27 @@ JS_DumpHistogram(JSBasicStats *bs, FILE *fp);
 
 /* A jsbitmap_t is a long integer that can be used for bitmaps. */
 typedef size_t jsbitmap;
-#define JS_TEST_BIT(_map,_bit)  ((_map)[(_bit)>>JS_BITS_PER_WORD_LOG2] &      \
-                                 ((jsbitmap)1<<((_bit)&(JS_BITS_PER_WORD-1))))
-#define JS_SET_BIT(_map,_bit)   ((_map)[(_bit)>>JS_BITS_PER_WORD_LOG2] |=     \
-                                 ((jsbitmap)1<<((_bit)&(JS_BITS_PER_WORD-1))))
-#define JS_CLEAR_BIT(_map,_bit) ((_map)[(_bit)>>JS_BITS_PER_WORD_LOG2] &=     \
-                                 ~((jsbitmap)1<<((_bit)&(JS_BITS_PER_WORD-1))))
+#define JS_BITMAP_NBITS (sizeof(jsbitmap) * CHAR_BIT)
+#define JS_TEST_BIT(_map,_bit)  ((_map)[(_bit)/JS_BITMAP_NBITS] &             \
+                                 (jsbitmap(1)<<((_bit)%JS_BITMAP_NBITS)))
+#define JS_SET_BIT(_map,_bit)   ((_map)[(_bit)/JS_BITMAP_NBITS] |=            \
+                                 (jsbitmap(1)<<((_bit)%JS_BITMAP_NBITS)))
+#define JS_CLEAR_BIT(_map,_bit) ((_map)[(_bit)/JS_BITMAP_NBITS] &=            \
+                                 ~(jsbitmap(1)<<((_bit)%JS_BITMAP_NBITS)))
 
 /* Wrapper for various macros to stop warnings coming from their expansions. */
 #if defined(__clang__)
 # define JS_SILENCE_UNUSED_VALUE_IN_EXPR(expr)                                \
     JS_BEGIN_MACRO                                                            \
-        _Pragma("(clang diagnostic push)")                                    \
-        _Pragma("(clang diagnostic ignored \"-Wunused-value\")")              \
-        {expr;}                                                               \
-        _Pragma("(clang diagnostic pop)")                                     \
+        _Pragma("clang diagnostic push")                                      \
+        /* If these _Pragmas cause warnings for you, try disabling ccache. */ \
+        _Pragma("clang diagnostic ignored \"-Wunused-value\"")                \
+        { expr; }                                                             \
+        _Pragma("clang diagnostic pop")                                       \
     JS_END_MACRO
-#elif (__GNUC__ >= 5) || (__GNUC__ == 4 && __GNUC_MINOR__ >= 6)
+#elif MOZ_IS_GCC
+
+#if MOZ_GCC_VERSION_AT_LEAST(4, 6, 0)
 # define JS_SILENCE_UNUSED_VALUE_IN_EXPR(expr)                                \
     JS_BEGIN_MACRO                                                            \
         _Pragma("GCC diagnostic push")                                        \
@@ -445,11 +349,14 @@ typedef size_t jsbitmap;
         expr;                                                                 \
         _Pragma("GCC diagnostic pop")                                         \
     JS_END_MACRO
-#else
+#endif
+#endif
+
+#if !defined(JS_SILENCE_UNUSED_VALUE_IN_EXPR)
 # define JS_SILENCE_UNUSED_VALUE_IN_EXPR(expr)                                \
     JS_BEGIN_MACRO                                                            \
         expr;                                                                 \
     JS_END_MACRO
 #endif
 
-#endif /* jsutil_h___ */
+#endif /* jsutil_h */

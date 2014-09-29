@@ -1,8 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "vm/StringBuffer.h"
 
@@ -20,17 +20,17 @@ StringBuffer::extractWellSized()
 
     jschar *buf = cb.extractRawBuffer();
     if (!buf)
-        return NULL;
+        return nullptr;
 
     /* For medium/big buffers, avoid wasting more than 1/4 of the memory. */
     JS_ASSERT(capacity >= length);
     if (length > CharBuffer::sMaxInlineStorage && capacity - length > length / 4) {
         size_t bytes = sizeof(jschar) * (length + 1);
-        JSContext *cx = context();
+        ExclusiveContext *cx = context();
         jschar *tmp = (jschar *)cx->realloc_(buf, bytes);
         if (!tmp) {
-            cx->free_(buf);
-            return NULL;
+            js_free(buf);
+            return nullptr;
         }
         buf = tmp;
     }
@@ -38,42 +38,42 @@ StringBuffer::extractWellSized()
     return buf;
 }
 
-JSFixedString *
+JSFlatString *
 StringBuffer::finishString()
 {
-    JSContext *cx = context();
+    ExclusiveContext *cx = context();
     if (cb.empty())
-        return cx->runtime->atomState.emptyAtom;
+        return cx->names().empty;
 
     size_t length = cb.length();
     if (!JSString::validateLength(cx, length))
-        return NULL;
+        return nullptr;
 
-    JS_STATIC_ASSERT(JSShortString::MAX_SHORT_LENGTH < CharBuffer::InlineLength);
-    if (JSShortString::lengthFits(length))
-        return NewShortString(cx, cb.begin(), length);
+    JS_STATIC_ASSERT(JSFatInlineString::MAX_FAT_INLINE_LENGTH < CharBuffer::InlineLength);
+    if (JSFatInlineString::lengthFits(length))
+        return NewFatInlineString<CanGC>(cx, TwoByteChars(cb.begin(), length));
 
     if (!cb.append('\0'))
-        return NULL;
+        return nullptr;
 
     jschar *buf = extractWellSized();
     if (!buf)
-        return NULL;
+        return nullptr;
 
-    JSFixedString *str = js_NewString(cx, buf, length);
+    JSFlatString *str = js_NewString<CanGC>(cx, buf, length);
     if (!str)
-        cx->free_(buf);
+        js_free(buf);
     return str;
 }
 
 JSAtom *
 StringBuffer::finishAtom()
 {
-    JSContext *cx = context();
+    ExclusiveContext *cx = context();
 
     size_t length = cb.length();
     if (length == 0)
-        return cx->runtime->atomState.emptyAtom;
+        return cx->names().empty;
 
     JSAtom *atom = AtomizeChars(cx, cb.begin(), length);
     cb.clear();
@@ -83,7 +83,7 @@ StringBuffer::finishAtom()
 bool
 js::ValueToStringBufferSlow(JSContext *cx, const Value &arg, StringBuffer &sb)
 {
-    Value v = arg;
+    RootedValue v(cx, arg);
     if (!ToPrimitive(cx, JSTYPE_STRING, &v))
         return false;
 
@@ -92,9 +92,9 @@ js::ValueToStringBufferSlow(JSContext *cx, const Value &arg, StringBuffer &sb)
     if (v.isNumber())
         return NumberValueToStringBuffer(cx, v, sb);
     if (v.isBoolean())
-        return BooleanToStringBuffer(cx, v.toBoolean(), sb);
+        return BooleanToStringBuffer(v.toBoolean(), sb);
     if (v.isNull())
-        return sb.append(cx->runtime->atomState.nullAtom);
+        return sb.append(cx->names().null);
     JS_ASSERT(v.isUndefined());
-    return sb.append(cx->runtime->atomState.typeAtoms[JSTYPE_VOID]);
+    return sb.append(cx->names().undefined);
 }

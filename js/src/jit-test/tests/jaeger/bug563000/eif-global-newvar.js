@@ -1,8 +1,7 @@
-// |jit-test| mjitalways;debug
+// |jit-test| debug
 setDebug(true);
 
 function callee() {
-  assertJit();
   evalInFrame(1, "var x = 'success'");
 }
 callee();

@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009 Apple Inc. All rights reserved.
@@ -24,19 +24,19 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef MacroAssemblerARMv7_h
-#define MacroAssemblerARMv7_h
+#ifndef assembler_assembler_MacroAssemblerARMv7_h
+#define assembler_assembler_MacroAssemblerARMv7_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE(ASSEMBLER)
 
-#include "ARMv7Assembler.h"
-#include "AbstractMacroAssembler.h"
+#include "assembler/assembler/ARMv7Assembler.h"
+#include "assembler/assembler/AbstractMacroAssembler.h"
 
 namespace JSC {
 
@@ -62,14 +62,14 @@ class MacroAssemblerARMv7 : public AbstractMacroAssembler<ARMv7Assembler> {
                 Scale scale;
             };
         } u;
-        
+
         explicit ArmAddress(RegisterID base, int32_t offset = 0)
             : type(HasOffset)
             , base(base)
         {
             u.offset = offset;
         }
-        
+
         explicit ArmAddress(RegisterID base, RegisterID index, Scale scale = TimesOne)
             : type(HasIndex)
             , base(base)
@@ -78,7 +78,7 @@ class MacroAssemblerARMv7 : public AbstractMacroAssembler<ARMv7Assembler> {
             u.scale = scale;
         }
     };
-    
+
 public:
 
     static const Scale ScalePtr = TimesFour;
@@ -264,17 +264,17 @@ public:
     {
         m_assembler.asr(dest, dest, imm.m_value & 0x1f);
     }
-    
+
     void urshift32(RegisterID shift_amount, RegisterID dest)
     {
         // Clamp the shift to the range 0..31
         ARMThumbImmediate armImm = ARMThumbImmediate::makeEncodedImm(0x1f);
         ASSERT(armImm.isValid());
         m_assembler.ARM_and(dataTempRegister, shift_amount, armImm);
-        
+
         m_assembler.lsr(dest, dest, dataTempRegister);
     }
-    
+
     void urshift32(Imm32 imm, RegisterID dest)
     {
         m_assembler.lsr(dest, dest, imm.m_value & 0x1f);
@@ -351,7 +351,6 @@ public:
             m_assembler.eor(dest, dest, dataTempRegister);
         }
     }
-    
 
     // Memory access operations:
     //
@@ -433,7 +432,7 @@ public:
         load32(setupArmAddress(address), dest);
     }
 
-    void load32(void* address, RegisterID dest)
+    void load32(const void* address, RegisterID dest)
     {
         move(ImmPtr(address), addressTempRegister);
         m_assembler.ldr(dest, addressTempRegister, ARMThumbImmediate::makeUInt16(0));
@@ -463,7 +462,7 @@ public:
     {
         m_assembler.ldrh(dest, makeBaseIndexBase(address), address.index, address.scale);
     }
-    
+
     void load16(ImplicitAddress address, RegisterID dest)
     {
         m_assembler.ldrh(dest, address.base, address.offset);
@@ -507,7 +506,7 @@ public:
 
     // Floating-point operations:
 
-    bool supportsFloatingPoint() const { return true; }
+    static bool supportsFloatingPoint() { return true; }
     // On x86(_64) the MacroAssembler provides an interface to truncate a double to an integer.
     // If a value is not representable as an integer, and possibly for some values that are,
     // (on x86 INT_MIN, since this is indistinguishable from results for out-of-range/NaN input)
@@ -519,9 +518,9 @@ public:
     // generic, or decide that the MacroAssembler cannot practically be used to abstracted these
     // operations, and make clients go directly to the m_assembler to plant truncation instructions.
     // In short, FIXME:.
-    bool supportsFloatingPointTruncate() const { return false; }
+    static bool supportsFloatingPointTruncate() { return false; }
 
-    bool supportsFloatingPointSqrt() const
+    static bool supportsFloatingPointSqrt()
     {
         return false;
     }
@@ -537,7 +536,7 @@ public:
             base = addressTempRegister;
             offset = 0;
         }
-        
+
         m_assembler.vldr(dest, base, offset);
     }
 
@@ -552,7 +551,7 @@ public:
             base = addressTempRegister;
             offset = 0;
         }
-        
+
         m_assembler.vstr(src, base, offset);
     }
 
@@ -638,7 +637,7 @@ public:
     // operations add and remove a single register sized unit of data
     // to or from the stack.  Peek and poke operations read or write
     // values on the stack, without moving the current stack position.
-    
+
     void pop(RegisterID dest)
     {
         // store postindexed with writeback
@@ -933,7 +932,7 @@ public:
     // * jz operations branch if the result is zero.
     // * jo operations branch if the (signed) arithmetic
     //   operation caused an overflow to occur.
-    
+
     Jump branchAdd32(Condition cond, RegisterID src, RegisterID dest)
     {
         ASSERT((cond == Overflow) || (cond == Signed) || (cond == Zero) || (cond == NonZero));
@@ -990,7 +989,7 @@ public:
         }
         return Jump(makeBranch(cond));
     }
-    
+
 
     // Miscellaneous operations:
 
@@ -1220,4 +1219,4 @@ private:
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // MacroAssemblerARMv7_h
+#endif /* assembler_assembler_MacroAssemblerARMv7_h */

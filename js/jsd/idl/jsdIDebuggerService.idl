@@ -44,8 +44,12 @@ interface jsdIActivationCallback;
 /**
  * Debugger service. It is not a good idea to have more than one active client
  * of the debugger service.
+ *
+ * Note that all the APIs in this file are deprecated. All consumers of
+ * these interfaces should switch to using the new Debugger API, documented
+ * here: https://wiki.mozilla.org/Debugger
  */
-[scriptable, uuid(9be5b327-6818-464d-9695-f33885fd8377)]
+[scriptable, uuid(39609752-2d73-4019-a324-a374dee16d3c)]
 interface jsdIDebuggerService : nsISupports
 {
     /** Internal use only. */
@@ -87,29 +91,6 @@ interface jsdIDebuggerService : nsISupports
      * Called before and after a function is called.
      */
     attribute jsdICallHook      functionHook;
-
-
-    /**
-     * VERSION_* values must be kept in sync with the JSVersion enumeration in
-     * jspubtd.h.
-     */
-
-    /**
-     * Possible values for jsdIScript::version and jsdIContext::version.
-     */
-    const long VERSION_1_0     = 100;
-    const long VERSION_1_1     = 110;
-    const long VERSION_1_2     = 120;
-    const long VERSION_1_3     = 130;
-    const long VERSION_1_4     = 140;
-    const long VERSION_1_5     = 150;
-    const long VERSION_DEFAULT = 0;
-    const long VERSION_UNKNOWN = -1;
-
-    /**
-     * These flags need to be kept in sync with the context flags defined in
-     * jsdebug.h
-     */
 
     /**
      * Link native frames in call stacks.
@@ -371,6 +352,16 @@ interface jsdIDebuggerService : nsISupports
      * @param fileName Filename to dump the heap into.
      */
     void dumpHeap(in AUTF8String fileName);
+
+    /**
+     * Suppress console warnings about using JSD, which is a deprecated API.
+     *
+     * This applies only to the next call to asyncOn; any subsequent calls
+     * will elicit the warning, unless you call 'acknowledgeDeprecation'
+     * before each of them, too. This arrangement ensures that one add-on's
+     * acknowledgement doesn't suppress warnings for other add-ons.
+     */
+    void acknowledgeDeprecation();
 };
 
 /* callback interfaces */
@@ -380,7 +371,7 @@ interface jsdIDebuggerService : nsISupports
  * ignore. The debugger service itself will not modify properties of these
  * objects.
  */
-[scriptable, uuid(0c9189d9-4287-47a4-bca6-6ed65aaf737f)]
+[scriptable, uuid(9ae587cd-b78c-47f0-a612-4b3a211a6a71)]
 interface jsdIFilter : nsISupports
 {
     /**
@@ -403,17 +394,7 @@ interface jsdIFilter : nsISupports
      * FLAG_* values from above, OR'd together.
      */
     attribute unsigned long flags;
-    
-    /**
-     * An nsISupports version of the global object to be filtered. A null glob
-     * matches all hooks. This attribute must be QI'able to the
-     * (non-scriptable) nsIScriptGlobalObject interface.
-     *
-     * The jsdIService caches this value internally, so if it changes you must
-     * swap the filter with itself using jsdIService::swapFilters.
-     */
-    attribute nsISupports globalObject;
-    
+
     /**
      * String representing the url pattern to be filtered. Supports limited
      * glob matching, at the beginning and end of the pattern only. For example,
@@ -731,13 +712,6 @@ interface jsdIContext : jsdIEphemeral
      * OPT_* values above, OR'd together.
      */
     attribute unsigned long          options;
-
-    /**
-     * Last version set on this context.
-     * Scripts typically select this with the "language" attribute.
-     * See the VERSION_* consts on jsdIDebuggerService.
-     */
-    attribute long                   version;
 
     /**
      * Unique tag among all valid jsdIContext objects, useful as a hash key.
@@ -1243,7 +1217,7 @@ interface jsdIProperty : jsdIEphemeral
     const unsigned long FLAG_VARIABLE  = 0x20;
     /** exception occurred looking up property, value is exception */
     const unsigned long FLAG_EXCEPTION = 0x40;
-    /** native getter returned JS_FALSE without throwing an exception */
+    /** native getter returned false without throwing an exception */
     const unsigned long FLAG_ERROR     = 0x80;
     /** found via explicit lookup (property defined elsewhere.) */
     const unsigned long FLAG_HINTED    = 0x800;

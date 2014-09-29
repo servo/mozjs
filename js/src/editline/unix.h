@@ -1,8 +1,10 @@
 /* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#ifndef editline_unix_h
+#define editline_unix_h
 
 /*
  * Copyright 1992,1993 Simmule Turner and Rich Salz.  All rights reserved.
@@ -47,3 +49,4 @@ typedef struct direct	DIRENTRY;
 #define S_ISDIR(m)		(((m) & S_IFMT) == S_IFDIR)
 #endif	/* !defined(S_ISDIR) */
 
+#endif /* editline_unix_h */

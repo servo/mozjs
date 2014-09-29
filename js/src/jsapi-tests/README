@@ -49,7 +49,7 @@ The BEGIN_TEST and END_TEST macros bracket each test. By convention, the test
 name is <testFilename>_<detail>. (The above test is in testIntString.cpp.)
 
 The curly braces are required. This block is the body of a C++ member function
-that returns JSBool. The test harness calls this member function
+that returns bool. The test harness calls this member function
 automatically. If the function returns true, the test passes. False, it fails.
 
 JSAPI tests often need extra global C/C++ code: a JSClass, a getter or setter
@@ -120,8 +120,6 @@ tests.h:
         SameValue(-0, 0) is false.
         Otherwise SameValue(a, b) iff a === b.
 
-And see class jsvalRoot, also defined in tests.h.
-
 
 --- Custom test setup
 
@@ -131,12 +129,12 @@ function, which populates the rt, cx, and global member variables.
 A test can customize the test setup process by overloading virtual member
 functions, like this:
 
-    JSClass globalClassWithResolve = { ... };
+    const JSClass globalClassWithResolve = { ... };
 
     BEGIN_TEST(testGlobalResolveHook)
         {
-            jsvalRoot v;
-            EVAL("v", v.addr());
+            RootedValue v;
+            EVAL("v", v.address());
             CHECK_SAME(v, JSVAL_VOID);
             return true;
         }

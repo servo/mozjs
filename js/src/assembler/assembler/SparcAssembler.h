@@ -1,38 +1,28 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99: */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef SparcAssembler_h
-#define SparcAssembler_h
+#ifndef assembler_assembler_SparcAssembler_h
+#define assembler_assembler_SparcAssembler_h
 
-#include <assembler/wtf/Platform.h>
+#include "assembler/wtf/Platform.h"
 
 // Some debug code uses s(n)printf for instruction logging.
 #include <stdio.h>
 
 #if ENABLE_ASSEMBLER && WTF_CPU_SPARC
 
-#include "AssemblerBufferWithConstantPool.h"
-#include <assembler/wtf/Assertions.h>
+#include "assembler/assembler/AssemblerBufferWithConstantPool.h"
+#include "assembler/wtf/Assertions.h"
 
-#include "methodjit/Logging.h"
 #define IPFX  "        %s"
 #define ISPFX "        "
 #ifdef JS_METHODJIT_SPEW
 # define MAYBE_PAD (isOOLPath ? ">  " : "")
-# define PRETTY_PRINT_OFFSET(os) (((os)<0)?"-":""), (((os)<0)?-(os):(os))
-# define FIXME_INSN_PRINTING                                \
-    do {                                                    \
-        js::JaegerSpew(js::JSpew_Insns,                     \
-                       ISPFX "FIXME insn printing %s:%d\n", \
-                       __FILE__, __LINE__);                 \
-    } while (0)
 #else
 # define MAYBE_PAD ""
-# define FIXME_INSN_PRINTING ((void) 0)
-# define PRETTY_PRINT_OFFSET(os) "", 0
 #endif
 
 namespace JSC {
@@ -118,19 +108,12 @@ namespace JSC {
 
     } // namespace SparcRegisters
 
-    class SparcAssembler {
+    class SparcAssembler : public GenericAssembler {
     public:
         typedef SparcRegisters::RegisterID RegisterID;
         typedef SparcRegisters::FPRegisterID FPRegisterID;
         AssemblerBuffer m_buffer;
         bool oom() const { return m_buffer.oom(); }
-
-#ifdef JS_METHODJIT_SPEW
-        bool isOOLPath;
-        SparcAssembler() : isOOLPath(false) { }
-#else
-        SparcAssembler() { }
-#endif
 
         // Sparc conditional constants
         typedef enum {
@@ -980,12 +963,12 @@ namespace JSC {
         {
             return dst.m_offset - src.m_offset;
         }
-    
+
         static int getDifferenceBetweenLabels(JmpDst src, JmpSrc dst)
         {
             return dst.m_offset - src.m_offset;
         }
-    
+
         static int getDifferenceBetweenLabels(JmpSrc src, JmpDst dst)
         {
             return dst.m_offset - src.m_offset;
@@ -1002,7 +985,7 @@ namespace JSC {
 
             return reinterpret_cast<void*>(reinterpret_cast<ptrdiff_t>(code) + jump.m_offset);
         }
-    
+
         static void* getRelocatedAddress(void* code, JmpDst destination)
         {
             ASSERT(destination.m_offset != -1);
@@ -1052,7 +1035,7 @@ namespace JSC {
                            from, to);
 
             int value = ((int)to - (int)from) / 4;
-            if (isimm22(value)) 
+            if (isimm22(value))
                 patchbranch(from, value);
             else {
                 patchbranch(from, 4);
@@ -1121,7 +1104,7 @@ namespace JSC {
         }
 
         static void repatchPointer(void* where, void* value)
-        { 
+        {
             js::JaegerSpew(js::JSpew_Insns,
                            ISPFX "##repatchPointer ((where = %p)) points to ((%p))\n",
                            where, value);
@@ -1156,7 +1139,7 @@ namespace JSC {
         {
             ASSERT(reg <= 31);
             ASSERT(reg >= 0);
-            static char const * names[] = {
+            static char const * const names[] = {
                 "%g0", "%g1", "%g2", "%g3",
                 "%g4", "%g5", "%g6", "%g7",
                 "%o0", "%o1", "%o2", "%o3",
@@ -1173,7 +1156,7 @@ namespace JSC {
         {
             ASSERT(reg <= 31);
             ASSERT(reg >= 0);
-            static char const * names[] = {
+            static char const * const names[] = {
                 "%f0",   "%f1",   "%f2",   "%f3",
                 "%f4",   "%f5",   "%f6",   "%f7",
                 "%f8",   "%f9",  "%f10",  "%f11",
@@ -1192,7 +1175,7 @@ namespace JSC {
             ASSERT(cc >= 0);
 
             uint32_t    ccIndex = cc;
-            static char const * inames[] = {
+            static char const * const inames[] = {
                 "   ", "e  ",
                 "le ", "l  ",
                 "leu", "cs ",
@@ -1211,7 +1194,7 @@ namespace JSC {
             ASSERT(cc >= 0);
 
             uint32_t    ccIndex = cc;
-            static char const * fnames[] = {
+            static char const * const fnames[] = {
                 "   ", "ne ",
                 "   ", "ul ",
                 "l  ", "ug ",
@@ -1231,4 +1214,4 @@ namespace JSC {
 
 #endif // ENABLE(ASSEMBLER) && CPU(SPARC)
 
-#endif // SparcAssembler_h
+#endif /* assembler_assembler_SparcAssembler_h */

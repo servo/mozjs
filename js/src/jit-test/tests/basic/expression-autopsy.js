@@ -1,3 +1,5 @@
+load(libdir + "asserts.js");
+
 function check_one(expected, f, err) {
     var failed = true;
     try {
@@ -6,7 +8,7 @@ function check_one(expected, f, err) {
     } catch (ex) {
         var s = ex.toString();
         assertEq(s.slice(0, 11), "TypeError: ");
-        assertEq(s.slice(-err.length), err);
+        assertEq(s.slice(-err.length), err, "" + f);
         assertEq(s.slice(11, -err.length), expected);
     }
     if (!failed)
@@ -44,8 +46,6 @@ function check(expr, expected=expr) {
             Function("o", "undef", "let (o, undef) { " + statement + " }"),
             // Let in a switch
             Function("var x = 4; switch (x) { case 4: let o, undef;" + statement + "\ncase 6: break;}"),
-            // Let in for-in
-            Function("var undef, o; for (let z in [1, 2]) { " + statement + " }"),
             // The more lets the merrier
             Function("let (x=4, y=5) { x + y; }\nlet (a, b, c) { a + b - c; }\nlet (o, undef) {" + statement + " }"),
             // Let destructuring
@@ -53,6 +53,22 @@ function check(expr, expected=expr) {
             // Try-catch blocks
             Function("o", "undef", "try { let q = 4; try { let p = 4; } catch (e) {} } catch (e) {} let (o, undef) { " + statement + " }")
         ];
+
+        try {
+            // Let in for-in
+            check_one(expected,
+                      Function("var undef, o; for (let z in [1, 2]) { " + statement + " }"),
+                      err);
+        } catch (ex) {
+            // Bug 831120.  See bug 942804 comment 5.
+            if (expected == 'undef' && err == ' is undefined')
+                check_one(expected + end,
+                          Function("var undef, o; for (let z in [1, 2]) { " + statement + " }"),
+                          err);
+            else
+                throw ex;
+        }
+
         for (var f of cases) {
             check_one(expected, f, err);
         }
@@ -76,6 +92,9 @@ check("o[4 + 'h']", "o['4h']");
 check("this.x");
 check("ieval(undef)", "ieval(...)");
 check("ieval.call()", "ieval.call(...)");
+check("ieval(...[])", "ieval(...)");
+check("ieval(...[undef])", "ieval(...)");
+check("ieval(...[undef, undef])", "ieval(...)");
 
 for (let tok of ["|", "^", "&", "==", "!==", "===", "!==", "<", "<=", ">", ">=",
                  ">>", "<<", ">>>", "+", "-", "*", "/", "%"]) {
@@ -94,4 +113,4 @@ check_one("null", function () { var [{ x }] = [null, {}]; }, " has no properties
 check_one("x", function () { ieval("let (x) { var [a, b, [c0, c1]] = [x, x, x]; }") }, " is undefined");
 
 // Check fallback behavior
-check_one("undefined", (function () { for (let x of undefined) {} }), " has no properties");
+assertThrowsInstanceOf(function () { for (let x of undefined) {} }, TypeError);

@@ -1,26 +1,24 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 et sw=4 tw=80:
- */
-/* This Source Code Form is subject to the terms of the Mozilla Public
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include <stdlib.h>
-#include "jstypes.h"
 #include "jsnativestack.h"
 
 #ifdef XP_WIN
 # include "jswin.h"
 
-#elif defined(XP_OS2)
-# define INCL_DOSPROCESS
-# include <os2.h>
-
 #elif defined(XP_MACOSX) || defined(DARWIN) || defined(XP_UNIX)
 # include <pthread.h>
 
-# if defined(__FreeBSD__) || defined(__OpenBSD__)
+# if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__DragonFly__)
 #  include <pthread_np.h>
+# endif
+
+# if defined(ANDROID)
+#  include <sys/types.h>
+#  include <unistd.h>
 # endif
 
 #else
@@ -28,12 +26,10 @@
 
 #endif
 
-namespace js {
-
 #if defined(XP_WIN)
 
 void *
-GetNativeStackBaseImpl()
+js::GetNativeStackBaseImpl()
 {
 # if defined(_M_IX86) && defined(_MSC_VER)
     /*
@@ -66,7 +62,7 @@ GetNativeStackBaseImpl()
 JS_STATIC_ASSERT(JS_STACK_GROWTH_DIRECTION < 0);
 
 void *
-GetNativeStackBaseImpl()
+js::GetNativeStackBaseImpl()
 {
     stack_t st;
     stack_getbounds(&st);
@@ -80,7 +76,7 @@ GetNativeStackBaseImpl()
 JS_STATIC_ASSERT(JS_STACK_GROWTH_DIRECTION < 0);
 
 void *
-GetNativeStackBaseImpl()
+js::GetNativeStackBaseImpl()
 {
     ucontext_t context;
     getcontext(&context);
@@ -88,22 +84,10 @@ GetNativeStackBaseImpl()
         context.uc_stack.ss_size;
 }
 
-#elif defined(XP_OS2)
-
-void *
-GetNativeStackBaseImpl()
-{
-    PTIB  ptib;
-    PPIB  ppib;
-
-    DosGetInfoBlocks(&ptib, &ppib);
-    return ptib->tib_pstacklimit;
-}
-
 #else /* XP_UNIX */
 
 void *
-GetNativeStackBaseImpl()
+js::GetNativeStackBaseImpl()
 {
     pthread_t thread = pthread_self();
 # if defined(XP_MACOSX) || defined(DARWIN)
@@ -127,17 +111,43 @@ GetNativeStackBaseImpl()
 
     void *stackBase = 0;
     size_t stackSize = 0;
-#  ifdef DEBUG
-    int rc =
-#  endif
+    int rc;
 # if defined(__OpenBSD__)
-        pthread_stackseg_np(pthread_self(), &ss);
+    rc = pthread_stackseg_np(pthread_self(), &ss);
     stackBase = (void*)((size_t) ss.ss_sp - ss.ss_size);
     stackSize = ss.ss_size;
+# elif defined(ANDROID)
+    if (gettid() == getpid()) {
+        // bionic's pthread_attr_getstack doesn't tell the truth for the main
+        // thread (see bug 846670). So we scan /proc/self/maps to find the
+        // segment which contains the stack.
+        rc = -1;
+        FILE *fs = fopen("/proc/self/maps", "r");
+        if (fs) {
+            char line[100];
+            unsigned long stackAddr = (unsigned long)&sattr;
+            while (fgets(line, sizeof(line), fs) != nullptr) {
+                unsigned long stackStart;
+                unsigned long stackEnd;
+                if (sscanf(line, "%lx-%lx ", &stackStart, &stackEnd) == 2 &&
+                    stackAddr >= stackStart && stackAddr < stackEnd) {
+                    stackBase = (void *)stackStart;
+                    stackSize = stackEnd - stackStart;
+                    rc = 0;
+                    break;
+                }
+            }
+            fclose(fs);
+        }
+    } else
+        // For non main-threads pthread allocates the stack itself so it tells
+        // the truth.
+        rc = pthread_attr_getstack(&sattr, &stackBase, &stackSize);
 # else
-        pthread_attr_getstack(&sattr, &stackBase, &stackSize);
+    rc = pthread_attr_getstack(&sattr, &stackBase, &stackSize);
 # endif
-    JS_ASSERT(!rc);
+    if (rc)
+        MOZ_CRASH();
     JS_ASSERT(stackBase);
     pthread_attr_destroy(&sattr);
 
@@ -150,5 +160,3 @@ GetNativeStackBaseImpl()
 }
 
 #endif /* !XP_WIN */
-
-} /* namespace js */

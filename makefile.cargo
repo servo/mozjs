@@ -16,7 +16,7 @@ CC ?= gcc
 CXX ?= g++
 AR ?= ar
 
-CONFIGURE_FLAGS =
+CONFIGURE_FLAGS = --enable-debug=-g --enable-optimize=-O0
 
 endif
 
@@ -24,6 +24,7 @@ SRC_DIR = $(shell pwd)
 
 .PHONY : all
 all:
+	touch $(SRC_DIR)/js/src/configure
 	cd $(OUT_DIR) && $(SRC_DIR)/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
-	cd $(OUT_DIR) && make -f Makefile -j4
+	cd $(OUT_DIR) && make -f Makefile -j4 && cp ./dist/lib/libjs_static.a $(OUT_DIR)
 

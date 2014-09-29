@@ -1,4 +1,6 @@
-/*
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ *
  * Copyright (C) 2009 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -20,14 +22,14 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef VMTags_h
-#define VMTags_h
+#ifndef yarr_VMTags_h
+#define yarr_VMTags_h
 
 // On Mac OS X, the VM subsystem allows tagging memory requested from mmap and vm_map
-// in order to aid tools that inspect system memory use. 
+// in order to aid tools that inspect system memory use.
 #if WTF_OS_DARWIN
 
 #include <mach/vm_statistics.h>
@@ -87,4 +89,4 @@
 
 #endif // OS(DARWIN)
 
-#endif // VMTags_h
+#endif /* yarr_VMTags_h */

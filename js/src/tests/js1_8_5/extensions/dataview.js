@@ -1558,12 +1558,12 @@ function test() {
     assertEq(view.getUint8(0), 1);
 
     // Test WebIDL-specific class and prototype class names
-    assertEq(Object.prototype.toString.apply(Uint8Array(0)), "[object Uint8Array]");
-    assertEq(Object.prototype.toString.apply(Float32Array(0)), "[object Float32Array]");
+    assertEq(Object.prototype.toString.apply(new Uint8Array(0)), "[object Uint8Array]");
+    assertEq(Object.prototype.toString.apply(new Float32Array(0)), "[object Float32Array]");
     assertEq(Object.prototype.toString.apply(Uint8Array.prototype), "[object Uint8ArrayPrototype]");
     assertEq(Object.prototype.toString.apply(Float32Array.prototype), "[object Float32ArrayPrototype]");
-    assertEq(Object.prototype.toString.apply(ArrayBuffer()), "[object ArrayBuffer]");
-    assertEq(Object.prototype.toString.apply(DataView(view.buffer)), "[object DataView]");
+    assertEq(Object.prototype.toString.apply(new ArrayBuffer()), "[object ArrayBuffer]");
+    assertEq(Object.prototype.toString.apply(new DataView(view.buffer)), "[object DataView]");
     assertEq(Object.prototype.toString.apply(DataView.prototype), "[object DataViewPrototype]");
 
     // Accessing DataView fields on DataView.prototype should crash
@@ -1572,7 +1572,7 @@ function test() {
     checkThrow(function () DataView.prototype.buffer, TypeError);
 
     // Protos and proxies, oh my!
-    var alien = newGlobal('new-compartment');
+    var alien = newGlobal();
     var alien_data = alien.eval('data = ' + data1.toSource());
     var alien_buffer = alien.eval('buffer = new Uint8Array(data).buffer');
     var alien_view = alien.eval('view = new DataView(buffer, 0, 16)');
@@ -1638,6 +1638,12 @@ function test() {
     var local_buffer = (new Int8Array(3)).buffer;
     var foreign_exchange_student_1 = alien_constructor(local_buffer);
     var foreign_exchange_student_2 = new alien_constructor(local_buffer);
+
+    // gc bug 787775
+    var ab = new ArrayBuffer(4);
+    var dv = new DataView(ab);
+    dv = 1;
+    gc();
 
     reportCompare(0, 0, 'done.');
     exitFunc ('test');

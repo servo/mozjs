@@ -1,24 +1,26 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef NameFunctions_h__
-#define NameFunctions_h__
+#ifndef frontend_NameFunctions_h
+#define frontend_NameFunctions_h
 
-struct JSContext;
+#include "js/TypeDecls.h"
 
 namespace js {
+
+class ExclusiveContext;
+
 namespace frontend {
 
-struct ParseNode;
+class ParseNode;
 
 bool
-NameFunctions(JSContext *cx, ParseNode *pn);
+NameFunctions(ExclusiveContext *cx, ParseNode *pn);
 
 } /* namespace frontend */
 } /* namespace js */
 
-#endif /* NameFunctions_h__ */
+#endif /* frontend_NameFunctions_h */

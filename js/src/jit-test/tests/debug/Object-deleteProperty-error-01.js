@@ -1,6 +1,6 @@
 // Don't crash when a scripted proxy handler throws Error.prototype.
 
-var g = newGlobal('new-compartment');
+var g = newGlobal();
 var dbg = Debugger(g);
 dbg.onDebuggerStatement = function (frame) {
     try {
@@ -11,6 +11,6 @@ dbg.onDebuggerStatement = function (frame) {
     throw new Error("deleteProperty should throw");
 };
 
-g.eval("function h(x) { debugger; }");
+g.eval("function h(obj) { debugger; }");
 g.eval("h(Proxy.create({delete: function () { throw Error.prototype; }}));");
 

@@ -1,12 +1,15 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsperf_h___
-#define jsperf_h___
+#ifndef perf_jsperf_h
+#define perf_jsperf_h
 
-#include "jsapi.h"
+#include "jstypes.h"
+
+#include "js/TypeDecls.h"
+#include "js/Utility.h"
 
 namespace JS {
 
@@ -115,16 +118,16 @@ class JS_FRIEND_API(PerfMeasurement)
  * global object).  The JS-visible API is identical to the C++ API.
  */
 extern JS_FRIEND_API(JSObject*)
-    RegisterPerfMeasurement(JSContext *cx, JSRawObject global);
+    RegisterPerfMeasurement(JSContext *cx, JS::HandleObject global);
 
 /*
- * Given a jsval which contains an instance of the aforementioned
- * wrapper class, extract the C++ object.  Returns NULL if the
- * jsval is not an instance of the wrapper.
+ * Given a Value which contains an instance of the aforementioned
+ * wrapper class, extract the C++ object.  Returns nullptr if the
+ * Value is not an instance of the wrapper.
  */
 extern JS_FRIEND_API(PerfMeasurement*)
-    ExtractPerfMeasurement(jsval wrapper);
+    ExtractPerfMeasurement(Value wrapper);
 
 } // namespace JS
 
-#endif // jsperf_h___
+#endif /* perf_jsperf_h */

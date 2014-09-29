@@ -1,5 +1,5 @@
-/* -*- Mode: C; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,10 +11,10 @@
  * API to portable hash table code.
  */
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
-#include "jstypes.h"
 
-JS_BEGIN_EXTERN_C
+extern "C" {
 
 typedef uint32_t JSHashNumber;
 typedef struct JSHashEntry JSHashEntry;
@@ -56,7 +56,7 @@ struct JSHashTable {
     JSHashFunction      keyHash;        /* key hash function */
     JSHashComparator    keyCompare;     /* key comparison function */
     JSHashComparator    valueCompare;   /* value comparison function */
-    JSHashAllocOps      *allocOps;      /* allocation operations */
+    const JSHashAllocOps *allocOps;     /* allocation operations */
     void                *allocPriv;     /* allocation private data */
 #ifdef JS_HASHMETER
     uint32_t            nlookups;       /* total number of lookups */
@@ -73,7 +73,7 @@ struct JSHashTable {
 extern JSHashTable * 
 JS_NewHashTable(uint32_t n, JSHashFunction keyHash,
                 JSHashComparator keyCompare, JSHashComparator valueCompare,
-                JSHashAllocOps *allocOps, void *allocPriv);
+                const JSHashAllocOps *allocOps, void *allocPriv);
 
 extern void
 JS_HashTableDestroy(JSHashTable *ht);
@@ -82,11 +82,9 @@ JS_HashTableDestroy(JSHashTable *ht);
 extern JSHashEntry **
 JS_HashTableRawLookup(JSHashTable *ht, JSHashNumber keyHash, const void *key);
 
-#ifdef __cplusplus
 extern JSHashEntry *
 JS_HashTableRawAdd(JSHashTable *ht, JSHashEntry **&hep, JSHashNumber keyHash,
                    const void *key, void *value);
-#endif
 
 extern void
 JS_HashTableRawRemove(JSHashTable *ht, JSHashEntry **hep, JSHashEntry *he);
@@ -95,7 +93,7 @@ JS_HashTableRawRemove(JSHashTable *ht, JSHashEntry **hep, JSHashEntry *he);
 extern JSHashEntry *
 JS_HashTableAdd(JSHashTable *ht, const void *key, void *value);
 
-extern JSBool
+extern bool
 JS_HashTableRemove(JSHashTable *ht, const void *key);
 
 extern int
@@ -115,6 +113,6 @@ JS_HashString(const void *key);
 extern int
 JS_CompareValues(const void *v1, const void *v2);
 
-JS_END_EXTERN_C
+} // extern "C"
 
 #endif /* jshash_h___ */

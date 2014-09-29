@@ -1,22 +1,25 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp: */
-/* This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jswtfbridge_h__
-#define jswtfbridge_h__
+#ifndef yarr_wtfbridge_h
+#define yarr_wtfbridge_h
 
 /*
  * WTF compatibility layer. This file provides various type and data
  * definitions for use by Yarr.
  */
 
+#include <stdio.h>
+#include <stdarg.h>
+#include "jscntxt.h"
 #include "jsstr.h"
-#include "jsprvtd.h"
 #include "vm/String.h"
 #include "assembler/wtf/Platform.h"
 #include "assembler/jit/ExecutableAllocator.h"
+#include "yarr/CheckedArithmetic.h"
 
 namespace JSC { namespace Yarr {
 
@@ -24,15 +27,16 @@ namespace JSC { namespace Yarr {
  * Basic type definitions.
  */
 
+typedef char LChar;
 typedef jschar UChar;
 typedef JSLinearString UString;
+typedef JSLinearString String;
 
-using namespace js::unicode;
 
 class Unicode {
   public:
-    static UChar toUpper(UChar c) { return ToUpperCase(c); }
-    static UChar toLower(UChar c) { return ToLowerCase(c); }
+    static UChar toUpper(UChar c) { return js::unicode::ToUpperCase(c); }
+    static UChar toLower(UChar c) { return js::unicode::ToLowerCase(c); }
 };
 
 /*
@@ -79,8 +83,7 @@ class OwnPtr {
     OwnPtr(PassOwnPtr<T> p) : ptr(p.get()) { }
 
     ~OwnPtr() {
-        if (ptr)
-            js::Foreground::delete_(ptr);
+        js_delete(ptr);
     }
 
     OwnPtr<T> &operator=(PassOwnPtr<T> p) {
@@ -105,7 +108,8 @@ PassRefPtr<T> adoptRef(T *p) { return PassRefPtr<T>(p); }
 template<typename T>
 PassOwnPtr<T> adoptPtr(T *p) { return PassOwnPtr<T>(p); }
 
-#define WTF_MAKE_FAST_ALLOCATED
+// Dummy wrapper.
+#define WTF_MAKE_FAST_ALLOCATED void make_fast_allocated_()
 
 template<typename T>
 class Ref {
@@ -127,8 +131,7 @@ class Vector {
     Vector() {}
 
     Vector(const Vector &v) {
-        // XXX yarr-oom
-        (void) append(v);
+        append(v);
     }
 
     size_t size() const {
@@ -161,19 +164,19 @@ class Vector {
 
     template <typename U>
     void append(const U &u) {
-        // XXX yarr-oom
-        (void) impl.append(static_cast<T>(u));
+        if (!impl.append(static_cast<T>(u)))
+            js::CrashAtUnhandlableOOM("Yarr");
     }
 
     template <size_t M>
     void append(const Vector<T,M> &v) {
-        // XXX yarr-oom
-        (void) impl.append(v.impl);
+        if (!impl.appendAll(v.impl))
+            js::CrashAtUnhandlableOOM("Yarr");
     }
 
     void insert(size_t i, const T& t) {
-        // XXX yarr-oom
-        (void) impl.insert(&impl[i], t);
+        if (!impl.insert(&impl[i], t))
+            js::CrashAtUnhandlableOOM("Yarr");
     }
 
     void remove(size_t i) {
@@ -185,14 +188,22 @@ class Vector {
     }
 
     void shrink(size_t newLength) {
-        // XXX yarr-oom
         JS_ASSERT(newLength <= impl.length());
-        (void) impl.resize(newLength);
+        if (!impl.resize(newLength))
+            js::CrashAtUnhandlableOOM("Yarr");
+    }
+
+    void swap(Vector &other) {
+        impl.swap(other.impl);
     }
 
     void deleteAllValues() {
         for (T *p = impl.begin(); p != impl.end(); ++p)
-            js::Foreground::delete_(*p);
+            js_delete(*p);
+    }
+
+    bool reserve(size_t capacity) {
+        return impl.reserve(capacity);
     }
 };
 
@@ -208,8 +219,8 @@ class Vector<OwnPtr<T> > {
     }
 
     void append(T *t) {
-        // XXX yarr-oom
-        (void) impl.append(t);
+        if (!impl.append(t))
+            js::CrashAtUnhandlableOOM("Yarr");
     }
 
     PassOwnPtr<T> operator[](size_t i) {
@@ -218,8 +229,13 @@ class Vector<OwnPtr<T> > {
 
     void clear() {
         for (T **p = impl.begin(); p != impl.end(); ++p)
-            js::Foreground::delete_(*p);
+            delete_(*p);
         return impl.clear();
+    }
+
+    void reserve(size_t capacity) {
+        if (!impl.reserve(capacity))
+            js::CrashAtUnhandlableOOM("Yarr");
     }
 };
 
@@ -227,6 +243,15 @@ template <typename T, size_t N>
 inline void
 deleteAllValues(Vector<T, N> &v) {
     v.deleteAllValues();
+}
+
+static inline void
+dataLogF(const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
 }
 
 #if ENABLE_YARR_JIT
@@ -244,21 +269,67 @@ class JSGlobalData {
 
 #endif
 
-/*
- * Sentinel value used in Yarr.
- */
-const size_t notFound = size_t(-1);
-
  /*
   * Do-nothing version of a macro used by WTF to avoid unused
   * parameter warnings.
   */
 #define UNUSED_PARAM(e)
 
+/*
+ * Like SpiderMonkey's allocation templates, but with more crashing.
+ */
+template <class T>
+T *newOrCrash()
+{
+    T *t = js_new<T>();
+    if (!t)
+        js::CrashAtUnhandlableOOM("Yarr");
+    return t;
+}
+
+template <class T, class P1>
+T *newOrCrash(P1 &&p1)
+{
+    T *t = js_new<T>(mozilla::Forward<P1>(p1));
+    if (!t)
+        js::CrashAtUnhandlableOOM("Yarr");
+    return t;
+}
+
+template <class T, class P1, class P2>
+T *newOrCrash(P1 &&p1, P2 &&p2)
+{
+    T *t = js_new<T>(mozilla::Forward<P1>(p1), mozilla::Forward<P2>(p2));
+    if (!t)
+        js::CrashAtUnhandlableOOM("Yarr");
+    return t;
+}
+
+template <class T, class P1, class P2, class P3>
+T *newOrCrash(P1 &&p1, P2 &&p2, P3 &&p3)
+{
+    T *t = js_new<T>(mozilla::Forward<P1>(p1), mozilla::Forward<P2>(p2), mozilla::Forward<P3>(p3));
+    if (!t)
+        js::CrashAtUnhandlableOOM("Yarr");
+    return t;
+}
+
+template <class T, class P1, class P2, class P3, class P4>
+T *newOrCrash(P1 &&p1, P2 &&p2, P3 &&p3, P4 &&p4)
+{
+    T *t = js_new<T>(mozilla::Forward<P1>(p1),
+                     mozilla::Forward<P2>(p2),
+                     mozilla::Forward<P3>(p3),
+                     mozilla::Forward<P4>(p4));
+    if (!t)
+        js::CrashAtUnhandlableOOM("Yarr");
+    return t;
+}
+
 } /* namespace Yarr */
 
 /*
- * Replacements for std:: functions used in Yarr. We put them in 
+ * Replacements for std:: functions used in Yarr. We put them in
  * namespace JSC::std so that they can still be called as std::X
  * in Yarr.
  */
@@ -272,6 +343,8 @@ namespace std {
 # undef min
 # undef max
 #endif
+
+#define NO_RETURN_DUE_TO_ASSERT
 
 template<typename T>
 inline T
@@ -299,4 +372,15 @@ swap(T &t1, T &t2)
 
 } /* namespace JSC */
 
-#endif
+namespace WTF {
+
+/*
+ * Sentinel value used in Yarr.
+ */
+const size_t notFound = size_t(-1);
+
+}
+
+#define JS_EXPORT_PRIVATE
+
+#endif /* yarr_wtfbridge_h */

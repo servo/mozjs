@@ -96,6 +96,116 @@ function test()
         checkThrows(fun, type, true);
     }
 
+    function testBufferManagement() {
+        // Single buffer
+        var buffer = new ArrayBuffer(128);
+        buffer = null;
+        gc();
+
+        // Buffer with single view, kill the view first
+        buffer = new ArrayBuffer(128);
+        var v1 = new Uint8Array(buffer);
+        gc();
+        v1 = null;
+        gc();
+        buffer = null;
+        gc();
+
+        // Buffer with single view, kill the buffer first
+        buffer = new ArrayBuffer(128);
+        v1 = new Uint8Array(buffer);
+        gc();
+        buffer = null;
+        gc();
+        v1 = null;
+        gc();
+
+        // Buffer with multiple views, kill first view first
+        buffer = new ArrayBuffer(128);
+        v1 = new Uint8Array(buffer);
+        v2 = new Uint8Array(buffer);
+        gc();
+        v1 = null;
+        gc();
+        v2 = null;
+        gc();
+
+        // Buffer with multiple views, kill second view first
+        buffer = new ArrayBuffer(128);
+        v1 = new Uint8Array(buffer);
+        v2 = new Uint8Array(buffer);
+        gc();
+        v2 = null;
+        gc();
+        v1 = null;
+        gc();
+
+        // Buffer with multiple views, kill all possible subsets of views
+        buffer = new ArrayBuffer(128);
+        for (let order = 0; order < 16; order++) {
+            var views = [ new Uint8Array(buffer),
+                          new Uint8Array(buffer),
+                          new Uint8Array(buffer),
+                          new Uint8Array(buffer) ];
+            gc();
+
+            // Kill views according to the bits set in 'order'
+            for (let i = 0; i < 4; i++) {
+                if (order & (1 << i))
+                    views[i] = null;
+            }
+
+            gc();
+
+            views = null;
+            gc();
+        }
+
+        // Similar: multiple views, kill them one at a time in every possible order
+        buffer = new ArrayBuffer(128);
+        for (let order = 0; order < 4*3*2*1; order++) {
+            var views = [ new Uint8Array(buffer),
+                          new Uint8Array(buffer),
+                          new Uint8Array(buffer),
+                          new Uint8Array(buffer) ];
+            gc();
+
+            var sequence = [ 0, 1, 2, 3 ];
+            let groupsize = 4*3*2*1;
+            let o = order;
+            for (let i = 4; i > 0; i--) {
+                groupsize = groupsize / i;
+                let which = Math.floor(o/groupsize);
+                [ sequence[i-1], sequence[which] ] = [ sequence[which], sequence[i-1] ];
+                o = o % groupsize;
+            }
+
+            for (let i = 0; i < 4; i++) {
+                views[i] = null;
+                gc();
+            }
+        }
+
+        // Multiple buffers with multiple views
+        var views = [];
+        for (let numViews of [ 1, 2, 0, 3, 2, 1 ]) {
+            buffer = new ArrayBuffer(128);
+            for (let viewNum = 0; viewNum < numViews; viewNum++) {
+                views.push(new Int8Array(buffer));
+            }
+        }
+
+        gcparam('markStackLimit', 200);
+        var forceOverflow = [ buffer ];
+        for (let i = 0; i < 1000; i++) {
+            forceOverflow = [ forceOverflow ];
+        }
+        gc();
+        buffer = null;
+        views = null;
+        gcslice(2); gcslice(2); gcslice(2); gcslice(2); gcslice(2); gcslice(2); gc();
+    }
+
     var buf, buf2;
 
     buf = new ArrayBuffer(100);
@@ -427,7 +537,7 @@ function test()
         check(function() b[90] == 5)
 
     // Protos and proxies, oh my!
-    var alien = newGlobal('new-compartment');
+    var alien = newGlobal();
 
     var alien_view = alien.eval('view = new Uint8Array(7)');
     var alien_buffer = alien.eval('buffer = view.buffer');
@@ -516,6 +626,8 @@ function test()
     checkMove(2, -5000,    3, 1,     [ 2, 2, 3, 4, 6, 7, 8 ]);
     checkMove(2,     1, 6000, 0,     [ 3, 4, 5, 6, 7, 8, 8 ]);
     checkMove(2,     1, 6000, -4000, [ 3, 4, 5, 6, 7, 8, 8 ]);
+
+    testBufferManagement();
 
     print ("done");
 

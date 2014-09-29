@@ -1,4 +1,6 @@
-/*
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ *
  * Copyright (C) 2008 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -20,14 +22,14 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "ExecutableAllocator.h"
+#include "assembler/jit/ExecutableAllocator.h"
+
+#include "js/MemoryMetrics.h"
 
 #if ENABLE_ASSEMBLER
-
-#include "prmjtime.h"
 
 namespace JSC {
 
@@ -36,24 +38,57 @@ size_t ExecutableAllocator::largeAllocSize = 0;
 
 ExecutablePool::~ExecutablePool()
 {
+    MOZ_ASSERT(m_ionCodeBytes == 0);
+    MOZ_ASSERT(m_baselineCodeBytes == 0);
+    MOZ_ASSERT(m_regexpCodeBytes == 0);
+    MOZ_ASSERT(m_otherCodeBytes == 0);
+
     m_allocator->releasePoolPages(this);
 }
 
 void
-ExecutableAllocator::sizeOfCode(size_t *method, size_t *regexp, size_t *unused) const
+ExecutableAllocator::addSizeOfCode(JS::CodeSizes *sizes) const
 {
-    *method = 0;
-    *regexp = 0;
-    *unused = 0;
-
     if (m_pools.initialized()) {
         for (ExecPoolHashSet::Range r = m_pools.all(); !r.empty(); r.popFront()) {
             ExecutablePool* pool = r.front();
-            *method += pool->m_mjitCodeMethod;
-            *regexp += pool->m_mjitCodeRegexp;
-            *unused += pool->m_allocation.size - pool->m_mjitCodeMethod - pool->m_mjitCodeRegexp;
+            sizes->ion      += pool->m_ionCodeBytes;
+            sizes->baseline += pool->m_baselineCodeBytes;
+            sizes->regexp   += pool->m_regexpCodeBytes;
+            sizes->other    += pool->m_otherCodeBytes;
+            sizes->unused   += pool->m_allocation.size - pool->m_ionCodeBytes
+                                                       - pool->m_baselineCodeBytes
+                                                       - pool->m_regexpCodeBytes
+                                                       - pool->m_otherCodeBytes;
         }
     }
+}
+
+void
+ExecutableAllocator::toggleAllCodeAsAccessible(bool accessible)
+{
+    if (!m_pools.initialized())
+        return;
+
+    for (ExecPoolHashSet::Range r = m_pools.all(); !r.empty(); r.popFront()) {
+        ExecutablePool* pool = r.front();
+        pool->toggleAllCodeAsAccessible(accessible);
+    }
+}
+
+bool
+ExecutableAllocator::codeContains(char* address)
+{
+    if (!m_pools.initialized())
+        return false;
+
+    for (ExecPoolHashSet::Range r = m_pools.all(); !r.empty(); r.popFront()) {
+        ExecutablePool* pool = r.front();
+        if (pool->codeContains(address))
+            return true;
+    }
+
+    return false;
 }
 
 }

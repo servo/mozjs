@@ -2,27 +2,43 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "tests.h"
-
 /*
  * This test exercises the full, deliberately-exposed JSAPI interface to ensure
  * that no internal integer typedefs leak out.  Include every intentionally
  * public header file (and those headers included by them, for completeness),
  * even the ones tests.h itself included, to verify this.
  */
-#include "js-config.h"
-#include "jsapi.h"
-#include "jsclass.h"
+
 #include "jscpucfg.h"
 #include "jspubtd.h"
 #include "jstypes.h"
-#include "jsval.h"
 
+#include "js/Anchor.h"
+#include "js/CallArgs.h"
+#include "js/CallNonGenericMethod.h"
+#include "js/CharacterEncoding.h"
+#include "js/Class.h"
+#include "js/Date.h"
+#include "js/GCAPI.h"
 #include "js/HashTable.h"
+#include "js/HeapAPI.h"
+#include "js/Id.h"
+/* LegacyIntTypes.h is deliberately exempted from this requirement */
 #include "js/MemoryMetrics.h"
-#include "js/TemplateLib.h"
+#include "js/OldDebugAPI.h"
+#include "js/ProfilingStack.h"
+#include "js/PropertyKey.h"
+#include "js/RequiredDefines.h"
+#include "js/RootingAPI.h"
+#include "js/SliceBudget.h"
+#include "js/StructuredClone.h"
+#include "js/TracingAPI.h"
+#include "js/TypeDecls.h"
 #include "js/Utility.h"
+#include "js/Value.h"
 #include "js/Vector.h"
+#include "js/WeakMapPtr.h"
+#include "jsapi-tests/tests.h"
 
 /*
  * Verify that our public (and intended to be public, versus being that way

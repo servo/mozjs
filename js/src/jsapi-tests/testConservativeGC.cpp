@@ -2,26 +2,28 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "tests.h"
+#if !defined(JSGC_USE_EXACT_ROOTING)
+
 #include "jsobj.h"
+
+#include "jsapi-tests/tests.h"
 #include "vm/String.h"
 
 BEGIN_TEST(testConservativeGC)
 {
-#ifndef JSGC_USE_EXACT_ROOTING
     JS::RootedValue v2(cx);
-    EVAL("({foo: 'bar'});", v2.address());
+    EVAL("({foo: 'bar'});", &v2);
     CHECK(v2.isObject());
     char objCopy[sizeof(JSObject)];
     js_memcpy(&objCopy, JSVAL_TO_OBJECT(v2), sizeof(JSObject));
 
     JS::RootedValue v3(cx);
-    EVAL("String(Math.PI);", v3.address());
+    EVAL("String(Math.PI);", &v3);
     CHECK(JSVAL_IS_STRING(v3));
     char strCopy[sizeof(JSString)];
     js_memcpy(&strCopy, JSVAL_TO_STRING(v3), sizeof(JSString));
 
-    jsval tmp;
+    JS::RootedValue tmp(cx);
     EVAL("({foo2: 'bar2'});", &tmp);
     CHECK(tmp.isObject());
     JS::RootedObject obj2(cx, JSVAL_TO_OBJECT(tmp));
@@ -50,7 +52,6 @@ BEGIN_TEST(testConservativeGC)
 
     checkObjectFields((JSObject *)obj2Copy, obj2);
     CHECK(!memcmp(str2Copy, str2, sizeof(str2Copy)));
-#endif /* JSGC_USE_EXACT_ROOTING */
 
     return true;
 }
@@ -59,7 +60,6 @@ bool checkObjectFields(JSObject *savedCopy, JSObject *obj)
 {
     /* Ignore fields which are unstable across GCs. */
     CHECK(savedCopy->lastProperty() == obj->lastProperty());
-    CHECK(savedCopy->getProto() == obj->getProto());
     return true;
 }
 
@@ -71,7 +71,7 @@ BEGIN_TEST(testDerivedValues)
   JS::Anchor<JSString *> str_anchor(str);
   static const jschar expected[] = { 'o', 'n', 'c', 'e' };
   const jschar *ch = JS_GetStringCharsZ(cx, str);
-  str = NULL;
+  str = nullptr;
 
   /* Do a lot of allocation and collection. */
   for (int i = 0; i < 3; i++) {
@@ -84,3 +84,5 @@ BEGIN_TEST(testDerivedValues)
   return true;
 }
 END_TEST(testDerivedValues)
+
+#endif /* !defined(JSGC_USE_EXACT_ROOTING) */

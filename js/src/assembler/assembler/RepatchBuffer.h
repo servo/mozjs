@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009 Apple Inc. All rights reserved.
@@ -23,19 +23,19 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef RepatchBuffer_h
-#define RepatchBuffer_h
+#ifndef assembler_assembler_RepatchBuffer_h
+#define assembler_assembler_RepatchBuffer_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER
 
-#include <assembler/MacroAssembler.h>
-#include <moco/MocoStubs.h> //MOCO
+#include "assembler/assembler/MacroAssembler.h"
+#include "assembler/moco/MocoStubs.h" //MOCO
 
 namespace JSC {
 
@@ -129,7 +129,7 @@ public:
     {
         relink(CodeLocationCall(CodePtr(returnAddress)), label);
     }
-    
+
     void relinkCallerToTrampoline(ReturnAddressPtr returnAddress, CodePtr newCalleeFunction)
     {
         relinkCallerToTrampoline(returnAddress, CodeLocationLabel(newCalleeFunction));
@@ -139,12 +139,12 @@ public:
     {
         relink(CodeLocationCall(CodePtr(returnAddress)), function);
     }
-    
+
     void relinkNearCallerToTrampoline(ReturnAddressPtr returnAddress, CodeLocationLabel label)
     {
         relink(CodeLocationNearCall(CodePtr(returnAddress)), label);
     }
-    
+
     void relinkNearCallerToTrampoline(ReturnAddressPtr returnAddress, CodePtr newCalleeFunction)
     {
         relinkNearCallerToTrampoline(returnAddress, CodeLocationLabel(newCalleeFunction));
@@ -160,4 +160,4 @@ protected:
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // RepatchBuffer_h
+#endif /* assembler_assembler_RepatchBuffer_h */

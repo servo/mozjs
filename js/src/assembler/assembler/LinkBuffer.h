@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2009 Apple Inc. All rights reserved.
@@ -23,18 +23,18 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef LinkBuffer_h
-#define LinkBuffer_h
+#ifndef assembler_assembler_LinkBuffer_h
+#define assembler_assembler_LinkBuffer_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER
 
-#include <assembler/MacroAssembler.h>
+#include "assembler/assembler/MacroAssembler.h"
 
 namespace JSC {
 
@@ -66,36 +66,17 @@ public:
     LinkBuffer(MacroAssembler* masm, ExecutableAllocator* executableAllocator,
                ExecutablePool** poolp, bool* ok, CodeKind codeKind)
     {
+        // LinkBuffer is only used by Yarr. MacroAssemblerCodeRef::release relies on this.
+        MOZ_ASSERT(codeKind == REGEXP_CODE);
         m_codeKind = codeKind;
         m_code = executableAllocAndCopy(*masm, executableAllocator, poolp);
         m_executablePool = *poolp;
         m_size = masm->m_assembler.size();  // must come after call to executableAllocAndCopy()!
+        m_allocSize = masm->m_assembler.allocSize();
 #ifndef NDEBUG
         m_completed = false;
 #endif
         *ok = !!m_code;
-    }
-
-    LinkBuffer(CodeKind kind)
-        : m_executablePool(NULL)
-        , m_code(NULL)
-        , m_size(0)
-        , m_codeKind(kind)
-#ifndef NDEBUG
-        , m_completed(false)
-#endif
-    {
-    }
-
-    LinkBuffer(uint8_t* ncode, size_t size, CodeKind kind)
-        : m_executablePool(NULL)
-        , m_code(ncode)
-        , m_size(size)
-        , m_codeKind(kind)
-#ifndef NDEBUG
-        , m_completed(false)
-#endif
-    {
     }
 
     ~LinkBuffer()
@@ -110,7 +91,7 @@ public:
         ASSERT(call.isFlagSet(Call::Linkable));
         MacroAssembler::linkCall(code(), call, function);
     }
-    
+
     void link(Jump jump, CodeLocationLabel label)
     {
         MacroAssembler::linkJump(code(), jump, label);
@@ -183,7 +164,8 @@ public:
     {
         performFinalization();
 
-        return CodeRef(m_code, m_executablePool, m_size);
+        MOZ_ASSERT(m_allocSize >= m_size);
+        return CodeRef(m_code, m_executablePool, m_allocSize);
     }
     CodeLocationLabel finalizeCodeAddendum()
     {
@@ -192,8 +174,13 @@ public:
         return CodeLocationLabel(code());
     }
 
+    // Useful as a proxy to detect OOM.
+    void* unsafeCode() {
+        return code();
+    }
+
 protected:
-    // Keep this private! - the underlying code should only be obtained externally via 
+    // Keep this private! - the underlying code should only be obtained externally via
     // finalizeCode() or finalizeCodeAddendum().
     void* code()
     {
@@ -220,6 +207,7 @@ protected:
     ExecutablePool* m_executablePool;
     void* m_code;
     size_t m_size;
+    size_t m_allocSize;
     CodeKind m_codeKind;
 #ifndef NDEBUG
     bool m_completed;
@@ -230,4 +218,4 @@ protected:
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // LinkBuffer_h
+#endif /* assembler_assembler_LinkBuffer_h */

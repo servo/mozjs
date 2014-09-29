@@ -1,4 +1,5 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,12 +9,15 @@
  * construction.
  */
 
-#ifndef mozilla_RangedPtr_h_
-#define mozilla_RangedPtr_h_
+#ifndef mozilla_RangedPtr_h
+#define mozilla_RangedPtr_h
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/Util.h"
+#include "mozilla/NullPtr.h"
+
+#include <stdint.h>
 
 namespace mozilla {
 
@@ -46,19 +50,24 @@ class RangedPtr
     T* const rangeEnd;
 #endif
 
+    typedef void (RangedPtr::* ConvertibleToBool)();
+    void nonNull() {}
+
     void checkSanity() {
       MOZ_ASSERT(rangeStart <= ptr);
       MOZ_ASSERT(ptr <= rangeEnd);
     }
 
-    /* Creates a new pointer for |ptr|, restricted to this pointer's range. */
-    RangedPtr<T> create(T *ptr) const {
+    /* Creates a new pointer for |p|, restricted to this pointer's range. */
+    RangedPtr<T> create(T *p) const {
 #ifdef DEBUG
-      return RangedPtr<T>(ptr, rangeStart, rangeEnd);
+      return RangedPtr<T>(p, rangeStart, rangeEnd);
 #else
-      return RangedPtr<T>(ptr, NULL, size_t(0));
+      return RangedPtr<T>(p, nullptr, size_t(0));
 #endif
     }
+
+    uintptr_t asUintptr() const { return uintptr_t(ptr); }
 
   public:
     RangedPtr(T* p, T* start, T* end)
@@ -95,7 +104,7 @@ class RangedPtr
 
     /* Equivalent to RangedPtr(arr, arr, N). */
     template<size_t N>
-    RangedPtr(T arr[N])
+    RangedPtr(T (&arr)[N])
       : ptr(arr)
 #ifdef DEBUG
       , rangeStart(arr), rangeEnd(arr + N)
@@ -107,6 +116,8 @@ class RangedPtr
     T* get() const {
       return ptr;
     }
+
+    operator ConvertibleToBool() const { return ptr ? &RangedPtr::nonNull : 0; }
 
     /*
      * You can only assign one RangedPtr into another if the two pointers have
@@ -128,13 +139,13 @@ class RangedPtr
 
     RangedPtr<T> operator+(size_t inc) {
       MOZ_ASSERT(inc <= size_t(-1) / sizeof(T));
-      MOZ_ASSERT(ptr + inc > ptr);
+      MOZ_ASSERT(asUintptr() + inc * sizeof(T) >= asUintptr());
       return create(ptr + inc);
     }
 
     RangedPtr<T> operator-(size_t dec) {
       MOZ_ASSERT(dec <= size_t(-1) / sizeof(T));
-      MOZ_ASSERT(ptr - dec < ptr);
+      MOZ_ASSERT(asUintptr() - dec * sizeof(T) <= asUintptr());
       return create(ptr - dec);
     }
 
@@ -193,6 +204,8 @@ class RangedPtr
     }
 
     T& operator*() const {
+      MOZ_ASSERT(ptr >= rangeStart);
+      MOZ_ASSERT(ptr < rangeEnd);
       return *ptr;
     }
 
@@ -240,9 +253,8 @@ class RangedPtr
   private:
     RangedPtr() MOZ_DELETE;
     T* operator&() MOZ_DELETE;
-    operator T*() const MOZ_DELETE;
 };
 
 } /* namespace mozilla */
 
-#endif  /* mozilla_RangedPtr_h_ */
+#endif /* mozilla_RangedPtr_h */

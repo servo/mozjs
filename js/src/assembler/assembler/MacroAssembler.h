@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79:
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  *
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2008 Apple Inc. All rights reserved.
@@ -23,39 +23,39 @@
  * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
  * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
- * 
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ *
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef MacroAssembler_h
-#define MacroAssembler_h
+#ifndef assembler_assembler_MacroAssembler_h
+#define assembler_assembler_MacroAssembler_h
 
 #include "assembler/wtf/Platform.h"
 
 #if ENABLE_ASSEMBLER
 
 #if WTF_CPU_ARM_THUMB2
-#include "MacroAssemblerARMv7.h"
+#include "assembler/assembler/MacroAssemblerARMv7.h"
 namespace JSC { typedef MacroAssemblerARMv7 MacroAssemblerBase; }
 
 #elif WTF_CPU_ARM_TRADITIONAL
-#include "MacroAssemblerARM.h"
+#include "assembler/assembler/MacroAssemblerARM.h"
 namespace JSC { typedef MacroAssemblerARM MacroAssemblerBase; }
 
 #elif WTF_CPU_MIPS
-#include "MacroAssemblerMIPS.h"
+#include "assembler/assembler/MacroAssemblerMIPS.h"
 namespace JSC { typedef MacroAssemblerMIPS MacroAssemblerBase; }
 
 #elif WTF_CPU_X86
-#include "MacroAssemblerX86.h"
+#include "assembler/assembler/MacroAssemblerX86.h"
 namespace JSC { typedef MacroAssemblerX86 MacroAssemblerBase; }
 
 #elif WTF_CPU_X86_64
-#include "MacroAssemblerX86_64.h"
+#include "assembler/assembler/MacroAssemblerX86_64.h"
 namespace JSC { typedef MacroAssemblerX86_64 MacroAssemblerBase; }
 
 #elif WTF_CPU_SPARC
-#include "MacroAssemblerSparc.h"
+#include "assembler/assembler/MacroAssemblerSparc.h"
 namespace JSC { typedef MacroAssemblerSparc MacroAssemblerBase; }
 
 #else
@@ -84,7 +84,7 @@ public:
     {
         addPtr(Imm32(sizeof(void*)), stackPointerRegister);
     }
-    
+
     void peek(RegisterID dest, int index = 0)
     {
         loadPtr(Address(stackPointerRegister, (index * sizeof(void*))), dest);
@@ -131,7 +131,7 @@ public:
     {
         branch16(cond, left, right).linkTo(target, this);
     }
-    
+
     void branchTestPtr(Condition cond, RegisterID reg, Label target)
     {
         branchTestPtr(cond, reg).linkTo(target, this);
@@ -216,12 +216,12 @@ public:
     {
         sub32(src, dest);
     }
-    
+
     void subPtr(Imm32 imm, RegisterID dest)
     {
         sub32(imm, dest);
     }
-    
+
     void subPtr(ImmPtr imm, RegisterID dest)
     {
         sub32(Imm32(imm), dest);
@@ -393,4 +393,4 @@ public:
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // MacroAssembler_h
+#endif /* assembler_assembler_MacroAssembler_h */
