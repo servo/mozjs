@@ -6,6 +6,8 @@ authors = ["Mozilla"]
 
 build = "make -f makefile.cargo"
 
+exclude = ["js/src/configure"]
+
 [lib]
 
 name = "mozjs-sys"
