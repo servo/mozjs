@@ -111,6 +111,18 @@ JS_NewObjectWithUniqueType(JSContext *cx, JSClass *clasp, JSObject *protoArg, JS
     return obj;
 }
 
+JS_FRIEND_API(JSBool)
+JS_IdVectorAppend(js::AutoIdVector *vector, jsid id)
+{
+    return vector->append(id);
+}
+
+JS_FRIEND_API(bool)
+JS_GetPropertyNames(JSContext *cx, JSObject *obj, unsigned flags, js::AutoIdVector *props)
+{
+    return js::GetPropertyNames(cx, obj, flags, props);
+}
+
 JS_FRIEND_API(void)
 js::PrepareCompartmentForGC(JSCompartment *comp)
 {

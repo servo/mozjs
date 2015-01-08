@@ -36,6 +36,12 @@ JS_SplicePrototype(JSContext *cx, JSObject *obj, JSObject *proto);
 extern JS_FRIEND_API(JSObject *)
 JS_NewObjectWithUniqueType(JSContext *cx, JSClass *clasp, JSObject *proto, JSObject *parent);
 
+extern JS_FRIEND_API(JSBool)
+JS_IdVectorAppend(js::AutoIdVector *vector, jsid id);
+
+extern JS_FRIEND_API(bool)
+JS_GetPropertyNames(JSContext *cx, JSObject *obj, unsigned flags, js::AutoIdVector *props);
+
 extern JS_FRIEND_API(uint32_t)
 JS_ObjectCountDynamicSlots(JSHandleObject obj);
 
