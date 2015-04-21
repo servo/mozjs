@@ -6,7 +6,8 @@ use std::env;
 use std::process::{Command, Stdio};
 
 fn main() {
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let mut out_dir = env::var("OUT_DIR").unwrap();
+    out_dir.push_str("/dist/lib");
     let result = Command::new("make")
         .args(&["-f", "makefile.cargo"])
         .stdout(Stdio::inherit())
