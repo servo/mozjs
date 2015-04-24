@@ -13475,7 +13475,7 @@ Android|WINNT|Darwin)
   MOZ_GLUE_IN_PROGRAM=
   ;;
 *)
-    MOZ_GLUE_IN_PROGRAM=1
+    MOZ_GLUE_IN_PROGRAM=
   ;;
 esac
 
