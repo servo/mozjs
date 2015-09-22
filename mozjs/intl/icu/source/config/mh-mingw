@@ -72,7 +72,7 @@ A = a
 ## An import library is needed for z/OS and MSVC
 IMPORT_LIB_EXT = .dll.a
 
-LIBPREFIX=
+LIBPREFIX=lib
 
 # Change the stubnames so that poorly working FAT disks and installation programs can work.
 # This is also for backwards compatibility.

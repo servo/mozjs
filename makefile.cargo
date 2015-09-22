@@ -38,16 +38,32 @@ ifeq (windows,$(findstring windows,$(TARGET)))
 	# cargo uses Windows native path. msys2 make unfortunately doesn't understand it.
 	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
 	# on windows, SM requires moztools which contains prebuilt libraries like glib and libIDL.
-	# we don't need them, so just set any fake path.
-	MOZ_TOOLS=$(OUT_DIR)
+	# we don't need them, so just set / -- configure will check that $(MOZ_TOOLS)/bin exists
+	# and that it's in the path.
+	MOZ_TOOLS=/
+	FORCE_NATIVE_WIN32_PYTHON=1
+
+	# we build with system nspr, expecting a msys2 mingw64 build
+	# the mingw64 nspr-config gives -lplc4 for example, but only libplc4.dll.a and libplc4_s.a exist.
+	#CONFIGURE_FLAGS += --with-system-nspr
+	CONFIGURE_FLAGS += --with-nspr-cflags="-I/mingw64/include/nspr" --with-nspr-libs="-lplds4.dll -lplc4.dll -lnspr4.dll"
 endif
 
 SRC_DIR = $(shell pwd)
 
 .PHONY : all
+ifeq (1,$(FORCE_NATIVE_WIN32_PYTHON))
+all:
+	cd $(OUT_DIR) && \
+	PYTHON="/c/python27/python.exe" \
+	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	$(SRC_DIR)/mozjs/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
+	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
+else
 all:
 	cd $(OUT_DIR) && \
 	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
 	$(SRC_DIR)/mozjs/js/src/configure --enable-gczeal $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
+endif
 

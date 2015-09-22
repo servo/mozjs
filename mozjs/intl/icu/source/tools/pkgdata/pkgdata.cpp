@@ -856,20 +856,9 @@ static int32_t initializePkgDataFlags(UPKGOptions *o) {
  * Depending on the configuration, the library name may either end with version number or shared object suffix.
  */
 static void createFileNames(UPKGOptions *o, const char mode, const char *version_major, const char *version, const char *libName, UBool reverseExt, UBool noVersion) {
-#if U_PLATFORM == U_PF_MINGW
-        /* MinGW does not need the library prefix when building in dll mode. */
-        if (IN_DLL_MODE(mode)) {
-            sprintf(libFileNames[LIB_FILE], "%s", libName);
-        } else {
-            sprintf(libFileNames[LIB_FILE], "%s%s",
-                    pkgDataFlags[LIBPREFIX],
-                    libName);
-        }
-#else
         sprintf(libFileNames[LIB_FILE], "%s%s",
                 pkgDataFlags[LIBPREFIX],
                 libName);
-#endif
 
         if(o->verbose) {
           fprintf(stdout, "# libFileName[LIB_FILE] = %s\n", libFileNames[LIB_FILE]);
