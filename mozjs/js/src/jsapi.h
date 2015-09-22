@@ -676,7 +676,7 @@ typedef void
 (* JSFinalizeCallback)(JSFreeOp *fop, JSFinalizeStatus status, bool isCompartment, void *data);
 
 typedef void
-(* JSWeakPointerCallback)(JSRuntime *rt, void *data);
+(* JSWeakPointerCallback)(
 
 typedef bool
 (* JSInterruptCallback)(JSContext *cx);
