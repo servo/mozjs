@@ -114,8 +114,8 @@ class LinkedListElement
    */
 
 private:
-  LinkedListElement* mNext;
-  LinkedListElement* mPrev;
+  LinkedListElement<T>* mNext;
+  LinkedListElement<T>* mPrev;
   const bool mIsSentinel;
 
 public:
@@ -233,6 +233,7 @@ public:
 private:
   friend class LinkedList<T>;
 
+  /// <div rustbindgen opaque></div>
   enum NodeKind {
     NODE_KIND_NORMAL,
     NODE_KIND_SENTINEL

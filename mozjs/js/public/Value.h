@@ -287,7 +287,7 @@ typedef union jsval_layout
 typedef union jsval_layout
 {
     uint64_t asBits;
-#if !defined(_WIN64)
+#if !defined(_WIN64) && !RUST_BINDGEN
     /* MSVC does not pack these correctly :-( */
     struct {
         uint64_t           payload47 : 47;
@@ -335,10 +335,12 @@ typedef union jsval_layout
 typedef union jsval_layout
 {
     uint64_t asBits;
+#ifndef RUST_BINDGEN
     struct {
         JSValueTag         tag : 17;
         uint64_t           payload47 : 47;
     } debugView;
+#endif
     struct {
         uint32_t           padding;
         union {
