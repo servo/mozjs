@@ -1,6 +1,7 @@
 *.pyc
 *.so
 *~
+mozjs/js/src/configure
 js/src/config/Expression.pyc
 js/src/config/expandlibs.pyc
 js/src/builtin/js2c.pyc
