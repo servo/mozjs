@@ -23,8 +23,6 @@
 #include "jsobjinlines.h"
 #include "jsscriptinlines.h"
 
-#include <pthread.h>
-
 using namespace js;
 
 using mozilla::ArrayLength;
@@ -474,7 +472,7 @@ GlobalHelperThreadState::GlobalHelperThreadState()
    asmJSCompilationInProgress(false),
    helperLock(nullptr),
 #ifdef DEBUG
-   lockOwner(0),
+   lockOwner(nullptr),
 #endif
    consumerWakeup(nullptr),
    producerWakeup(nullptr),
@@ -518,7 +516,7 @@ GlobalHelperThreadState::lock()
     AssertCurrentThreadCanLock(HelperThreadStateLock);
     PR_Lock(helperLock);
 #ifdef DEBUG
-    lockOwner = pthread_self();
+    lockOwner = PR_GetCurrentThread();
 #endif
 }
 
@@ -527,7 +525,7 @@ GlobalHelperThreadState::unlock()
 {
     MOZ_ASSERT(isLocked());
 #ifdef DEBUG
-    lockOwner = 0;
+    lockOwner = nullptr;
 #endif
     PR_Unlock(helperLock);
 }
@@ -536,7 +534,7 @@ GlobalHelperThreadState::unlock()
 bool
 GlobalHelperThreadState::isLocked()
 {
-    return lockOwner == pthread_self();
+    return lockOwner == PR_GetCurrentThread();
 }
 #endif
 
@@ -545,14 +543,14 @@ GlobalHelperThreadState::wait(CondVar which, uint32_t millis)
 {
     MOZ_ASSERT(isLocked());
 #ifdef DEBUG
-    lockOwner = 0;
+    lockOwner = nullptr;
 #endif
     DebugOnly<PRStatus> status =
         PR_WaitCondVar(whichWakeup(which),
                        millis ? PR_MillisecondsToInterval(millis) : PR_INTERVAL_NO_TIMEOUT);
     MOZ_ASSERT(status == PR_SUCCESS);
 #ifdef DEBUG
-    lockOwner = pthread_self();
+    lockOwner = PR_GetCurrentThread();
 #endif
 }
 
