@@ -7,6 +7,7 @@ use std::process::{Command, Stdio};
 
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
+    let target = env::var("TARGET").unwrap();
     let result = Command::new("make")
         .args(&["-R", "-f", "makefile.cargo"])
         .stdout(Stdio::inherit())
@@ -16,6 +17,11 @@ fn main() {
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/dist/lib", out_dir);
     println!("cargo:rustc-link-lib=static=js_static");
+    if target.contains("windows") {
+       println!("cargo:rustc-link-lib=plc4.dll");
+       println!("cargo:rustc-link-lib=plds4.dll");
+       println!("cargo:rustc-link-lib=nspr4.dll");
+    }
     println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:outdir={}", out_dir);
 }
