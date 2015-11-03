@@ -1,4 +1,4 @@
-CONFIGURE_FLAGS := --disable-jemalloc
+CONFIGURE_FLAGS := --enable-jemalloc
 
 ifneq ($(HOST),$(TARGET))
 
