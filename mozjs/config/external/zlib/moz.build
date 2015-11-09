@@ -17,5 +17,5 @@ else:
         # ]
         pass
     DIRS += [
-        '../../../modules/zlib/src',
+        '../../../modules/zlib',
     ]
