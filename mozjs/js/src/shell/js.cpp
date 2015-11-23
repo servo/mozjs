@@ -473,6 +473,13 @@ RunFile(JSContext *cx, const char *filename, FILE *file, bool compileOnly)
     }
 }
 
+static void
+RunSelfHosted(JSContext* cx, const char* filename)
+{
+    if (!JS::EvaluateSelfHosted(cx->runtime(), filename))
+        gExitCode = EXITCODE_RUNTIME_ERROR;
+}
+
 static bool
 EvalAndPrint(JSContext *cx, const char *bytes, size_t length,
              int lineno, bool compileOnly, FILE *out)
@@ -4024,23 +4031,6 @@ ObjectEmulatingUndefined(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-static bool
-GetSelfHostedValue(JSContext *cx, unsigned argc, jsval *vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    if (args.length() != 1 || !args[0].isString()) {
-        JS_ReportErrorNumber(cx, my_GetErrorMessage, nullptr, JSSMSG_INVALID_ARGS,
-                             "getSelfHostedValue");
-        return false;
-    }
-    RootedAtom srcAtom(cx, ToAtom<CanGC>(cx, args[0]));
-    if (!srcAtom)
-        return false;
-    RootedPropertyName srcName(cx, srcAtom->asPropertyName());
-    return cx->runtime()->cloneSelfHostedValue(cx, srcName, args.rval());
-}
-
 class ShellSourceHook: public SourceHook {
     // The function we should call to lazily retrieve source code.
     PersistentRootedFunction fun;
@@ -4858,11 +4848,6 @@ static const JSFunctionSpecWithHelp fuzzing_unsafe_functions[] = {
     JS_FN_HELP("clone", Clone, 1, 0,
 "clone(fun[, scope])",
 "  Clone function object."),
-
-    JS_FN_HELP("getSelfHostedValue", GetSelfHostedValue, 1, 0,
-"getSelfHostedValue()",
-"  Get a self-hosted value by its name. Note that these values don't get \n"
-"  cached, so repeatedly getting the same value creates multiple distinct clones."),
 
     JS_FN_HELP("line2pc", LineToPC, 0, 0,
 "line2pc([fun,] line)",
@@ -5992,6 +5977,15 @@ Shell(JSContext *cx, OptionParser *op, char **envp)
     else
         fuzzingSafe = (getenv("MOZ_FUZZING_SAFE") && getenv("MOZ_FUZZING_SAFE")[0] != '0');
 
+    MultiStringRange selfHostedPaths = op->getMultiStringOption("self-hosted");
+    while (!selfHostedPaths.empty()) {
+        char* path = selfHostedPaths.front();
+        RunSelfHosted(cx, path);
+        if (gExitCode)
+            return gExitCode;
+        selfHostedPaths.popFront();
+    }
+
     RootedObject glob(cx);
     JS::CompartmentOptions options;
     options.setVersion(JSVERSION_LATEST);
@@ -6096,6 +6090,7 @@ main(int argc, char **argv, char **envp)
     op.setVersion(JS_GetImplementationVersion());
 
     if (!op.addMultiStringOption('f', "file", "PATH", "File path to run")
+        || !op.addMultiStringOption('\0', "self-hosted", "PATH", "File path to run as self-hosted")
         || !op.addMultiStringOption('e', "execute", "CODE", "Inline code to run")
         || !op.addBoolOption('i', "shell", "Enter prompt after running code")
         || !op.addBoolOption('c', "compileonly", "Only compile, don't run (syntax checking mode)")
