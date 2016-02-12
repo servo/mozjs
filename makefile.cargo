@@ -1,4 +1,7 @@
-CONFIGURE_FLAGS := --disable-jemalloc
+SRC_DIR := $(shell pwd)
+
+CONFIGURE_FLAGS := --disable-jemalloc --disable-shared-js
+CPPFLAGS := -DJS_USE_CUSTOM_ALLOCATOR=1 -I$(SRC_DIR)/rust_mem
 
 ifneq ($(HOST),$(TARGET))
 
@@ -63,25 +66,26 @@ ifeq ($(MSYSTEM),MINGW64)
 	$(error Can't find native Win32 python)
 	endif
 
-	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js
+	CONFIGURE_FLAGS += --disable-export-js
 
 endif
-
-SRC_DIR = $(shell pwd)
 
 .PHONY : all
 ifneq (,$(FORCED_PYTHON))
-all:
+all: $(OUT_DIR)/fake_rustalloc.o
 	cd $(OUT_DIR) && \
 	PYTHON="$(FORCED_PYTHON)" \
-	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" CPPFLAGS="$(CPPFLAGS)" LDFLAGS="$(LDFLAGS)" \
 	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
 else
-all:
+all: $(OUT_DIR)/fake_rustalloc.o
 	cd $(OUT_DIR) && \
-	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" CPPFLAGS="$(CPPFLAGS)" LDFLAGS="$(LDFLAGS)" \
 	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS))
 	cd $(OUT_DIR) && make -f Makefile -j$(NUM_JOBS)
 endif
 
+LDFLAGS := $(OUT_DIR)/fake_rustalloc.o
+$(OUT_DIR)/fake_rustalloc.o: rust_mem/fake_rustalloc.cpp
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $< -o $@ -c
