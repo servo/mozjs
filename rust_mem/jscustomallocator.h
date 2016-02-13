@@ -31,6 +31,18 @@ static inline void* js_calloc(size_t nmemb, size_t size)
 {
     size_t bytes = size * nmemb;
     void* buf = __rust_allocate(bytes, 0);
+    // TODO: Do overflow checking when we have gcc >= 5
+#if 0
+    size_t bytes = 0;
+    void* buf;
+    if (__builtin_umull_overflow(nmemb, size, &bytes)) {
+        buf = NULL;
+        errno = ENOMEM;
+    } else {
+        buf = __rust_allocate(bytes, 0);
+    }
+#endif
+
     if (bytes && buf) {
         memset(buf, 0, bytes);
     }
