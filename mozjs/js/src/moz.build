@@ -508,6 +508,12 @@ if CONFIG['ENABLE_INTL_API']:
         'icu',
     ]
 
+# https://bugzilla.mozilla.org/show_bug.cgi?id=1134039
+if CONFIG['MOZ_MEMORY']:
+    USE_LIBS += [
+        'memory',
+    ]
+
 USE_LIBS += [
     'nspr',
     'zlib',
