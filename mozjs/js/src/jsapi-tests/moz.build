@@ -26,6 +26,7 @@ UNIFIED_SOURCES += [
     'testDefinePropertyIgnoredAttributes.cpp',
     'testEnclosingFunction.cpp',
     'testErrorCopying.cpp',
+    'testEvaluateSelfHosted.cpp',
     'testException.cpp',
     'testExternalStrings.cpp',
     'testFindSCCs.cpp',
