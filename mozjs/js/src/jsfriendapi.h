@@ -429,6 +429,7 @@ class SourceHook {
     virtual bool load(JSContext *cx, const char *filename, char16_t **src, size_t *length) = 0;
 };
 
+#ifndef RUST_BINDGEN
 /*
  * Have |rt| use |hook| to retrieve lazily-retrieved source code. See the
  * comments for SourceHook. The runtime takes ownership of the hook, and
@@ -441,6 +442,7 @@ SetSourceHook(JSRuntime *rt, mozilla::UniquePtr<SourceHook> hook);
 /* Remove |rt|'s source hook, and return it. The caller now owns the hook. */
 extern JS_FRIEND_API(mozilla::UniquePtr<SourceHook>)
 ForgetSourceHook(JSRuntime *rt);
+#endif
 
 extern JS_FRIEND_API(JS::Zone *)
 GetCompartmentZone(JSCompartment *comp);
@@ -2303,10 +2305,17 @@ struct JSJitInfo {
     }
 
     union {
+#ifdef RUST_BINDGEN
+        const void *call;
+#endif
+        /// <div rustbindgen hide></div>
         JSJitGetterOp getter;
+        /// <div rustbindgen hide></div>
         JSJitSetterOp setter;
+        /// <div rustbindgen hide></div>
         JSJitMethodOp method;
         /* A DOM static method, used for Promise wrappers */
+        /// <div rustbindgen hide></div>
         JSNative staticMethod;
     };
 

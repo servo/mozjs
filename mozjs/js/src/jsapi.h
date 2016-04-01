@@ -94,6 +94,7 @@ class AutoValueArray : public AutoGCRooter
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
+/// <div rustbindgen opaque></div>
 template<class T>
 class AutoVectorRooter : protected AutoGCRooter
 {
@@ -191,6 +192,7 @@ class AutoVectorRooter : protected AutoGCRooter
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
+#ifndef RUST_BINDGEN
 template<class Key, class Value>
 class AutoHashMapRooter : protected AutoGCRooter
 {
@@ -423,6 +425,7 @@ class AutoHashSetRooter : protected AutoGCRooter
 
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
+#endif
 
 class MOZ_STACK_CLASS AutoValueVector : public AutoVectorRooter<Value>
 {
@@ -972,6 +975,7 @@ JS_GetEmptyStringValue(JSContext *cx);
 extern JS_PUBLIC_API(JSString *)
 JS_GetEmptyString(JSRuntime *rt);
 
+#ifndef RUST_BINDGEN
 struct CompartmentTimeStats {
     char compartmentName[1024];
     JSAddonId *addonId;
@@ -984,6 +988,7 @@ typedef js::Vector<CompartmentTimeStats, 0, js::SystemAllocPolicy> CompartmentSt
 
 extern JS_PUBLIC_API(bool)
 JS_GetCompartmentStats(JSRuntime *rt, CompartmentStatsVector &stats);
+#endif
 
 extern JS_PUBLIC_API(bool)
 JS_ValueToObject(JSContext *cx, JS::HandleValue v, JS::MutableHandleObject objp);
@@ -2036,10 +2041,12 @@ struct JSPropertySpec {
     uint8_t                     flags;
     union {
         JSNativeWrapper     native;
+        /// <div rustbindgen hide></div>
         SelfHostedWrapper   selfHosted;
     } getter;
     union {
         JSNativeWrapper           native;
+        /// <div rustbindgen hide></div>
         SelfHostedWrapper         selfHosted;
     } setter;
 
@@ -4988,8 +4995,10 @@ typedef void
 /* The list of reasons why an asm.js module may not be stored in the cache. */
 enum AsmJSCacheResult
 {
-    AsmJSCache_MIN,
-    AsmJSCache_Success = AsmJSCache_MIN,
+    AsmJSCache_Success,
+#ifndef RUST_BINDGEN
+    AsmJSCache_MIN = AsmJSCache_Success,
+#endif
     AsmJSCache_ModuleTooSmall,
     AsmJSCache_SynchronousScript,
     AsmJSCache_QuotaExceeded,

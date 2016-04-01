@@ -238,6 +238,7 @@ AssertGCThingMustBeTenured(JSObject *obj) {}
  *
  * Type T must be one of: JS::Value, jsid, JSObject*, JSString*, JSScript*
  */
+/// <div rustbindgen hide></div>
 template <typename T>
 class Heap : public js::HeapBase<T>
 {
@@ -397,6 +398,7 @@ class TenuredHeap : public js::HeapBase<T>
     }
 
   private:
+    /// <div rustbindgen opaque></div>
     enum {
         maskBits = 3,
         flagsMask = (1 << maskBits) - 1,

@@ -29,6 +29,7 @@ namespace JS {
 
 struct TabSizes
 {
+    /// <div rustbindgen opaque></div>
     enum Kind {
         Objects,
         Strings,
@@ -766,6 +767,7 @@ struct CompartmentStats
 typedef js::Vector<CompartmentStats, 0, js::SystemAllocPolicy> CompartmentStatsVector;
 typedef js::Vector<ZoneStats, 0, js::SystemAllocPolicy> ZoneStatsVector;
 
+/// <div rustbindgen opaque></div>
 struct RuntimeStats
 {
     // |gcHeapChunkTotal| is ignored because it's the sum of all the other

@@ -29,8 +29,10 @@ enum TransferableOwnership {
     // Structured clone buffer does not yet own the data
     SCTAG_TMO_UNOWNED = 1,
 
+#ifndef RUST_BINDGEN
     // All values at least this large are owned by the clone buffer
     SCTAG_TMO_FIRST_OWNED = 2,
+#endif
 
     // Data is a pointer that can be freed
     SCTAG_TMO_ALLOC_DATA = 2,

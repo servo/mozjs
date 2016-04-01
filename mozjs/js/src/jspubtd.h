@@ -58,7 +58,9 @@ enum JSVersion {
     JSVERSION_ECMA_5  = 185,
     JSVERSION_DEFAULT = 0,
     JSVERSION_UNKNOWN = -1,
+#ifndef RUST_BINDGEN
     JSVERSION_LATEST  = JSVERSION_ECMA_5
+#endif
 };
 
 /* Result of typeof operator enumeration. */
