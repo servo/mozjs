@@ -6253,7 +6253,9 @@ struct PerformanceGroup {
     uint64_t refCount_;
 };
 
+#ifndef RUST_BINDGEN
 using PerformanceGroupVector = mozilla::Vector<RefPtr<js::PerformanceGroup>, 0, SystemAllocPolicy>;
+#endif
 
 /**
  * Commit any Performance Monitoring data.
@@ -6304,6 +6306,7 @@ GetPerfMonitoringTestCpuRescheduling(JSContext*, uint64_t* stayed, uint64_t* mov
 extern JS_PUBLIC_API(void)
 AddCPOWPerformanceDelta(JSContext*, uint64_t delta);
 
+#ifndef RUST_BINDGEN
 typedef bool
 (*StopwatchStartCallback)(uint64_t, void*);
 extern JS_PUBLIC_API(bool)
@@ -6318,6 +6321,7 @@ typedef bool
 (*GetGroupsCallback)(JSContext*, PerformanceGroupVector&, void*);
 extern JS_PUBLIC_API(bool)
 SetGetPerformanceGroupsCallback(JSContext*, GetGroupsCallback, void*);
+#endif
 
 } /* namespace js */
 
