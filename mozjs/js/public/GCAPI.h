@@ -267,9 +267,13 @@ AbortIncrementalGC(JSContext* cx);
 
 namespace dbg {
 
-// The `JS::dbg::GarbageCollectionEvent` class is essentially a view of the
-// `js::gcstats::Statistics` data without the uber implementation-specific bits.
-// It should generally be palatable for web developers.
+/**
+ * The `JS::dbg::GarbageCollectionEvent` class is essentially a view of the
+ * `js::gcstats::Statistics` data without the uber implementation-specific bits.
+ * It should generally be palatable for web developers.
+ *
+ * <div rustbindgen hide></div>
+ */
 class GarbageCollectionEvent
 {
     // The major GC number of the GC cycle this data pertains to.
@@ -344,7 +348,9 @@ struct JS_PUBLIC_API(GCDescription) {
     char16_t* formatSummaryMessage(JSContext* cx) const;
     char16_t* formatJSON(JSContext* cx, uint64_t timestamp) const;
 
+#ifndef RUST_BINDGEN
     JS::dbg::GarbageCollectionEvent::Ptr toGCEvent(JSContext* cx) const;
+#endif
 };
 
 typedef void
