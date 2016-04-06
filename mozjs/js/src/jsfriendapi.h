@@ -443,6 +443,7 @@ class SourceHook {
     virtual bool load(JSContext* cx, const char* filename, char16_t** src, size_t* length) = 0;
 };
 
+#ifndef RUST_BINDGEN
 /**
  * Have |cx| use |hook| to retrieve lazily-retrieved source code. See the
  * comments for SourceHook. The context takes ownership of the hook, and
@@ -455,6 +456,7 @@ SetSourceHook(JSContext* cx, mozilla::UniquePtr<SourceHook> hook);
 /** Remove |cx|'s source hook, and return it. The caller now owns the hook. */
 extern JS_FRIEND_API(mozilla::UniquePtr<SourceHook>)
 ForgetSourceHook(JSContext* cx);
+#endif
 
 extern JS_FRIEND_API(JS::Zone*)
 GetCompartmentZone(JSCompartment* comp);
