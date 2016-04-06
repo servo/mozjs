@@ -3187,6 +3187,7 @@ JS_DeleteProperty(JSContext* cx, JS::HandleObject obj, const char* name);
 extern JS_PUBLIC_API(bool)
 JS_DeleteElement(JSContext* cx, JS::HandleObject obj, uint32_t index);
 
+#ifndef RUST_BINDGEN
 /**
  * Get an array of the non-symbol enumerable properties of obj.
  * This function is roughly equivalent to:
@@ -3204,6 +3205,7 @@ JS_DeleteElement(JSContext* cx, JS::HandleObject obj, uint32_t index);
  */
 extern JS_PUBLIC_API(bool)
 JS_Enumerate(JSContext* cx, JS::HandleObject obj, JS::MutableHandle<JS::IdVector> props);
+#endif
 
 /*
  * API for determining callability and constructability. [[Call]] and
