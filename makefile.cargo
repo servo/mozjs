@@ -24,22 +24,42 @@ CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
 	endif
 else
 
+ifneq ($(VSINSTALLDIR),)
 CC ?= gcc
 CPP ?= gcc -E
 CXX ?= g++
 AR ?= ar
+endif
 
 endif
 
 ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
-	CONFIGURE_FLAGS += --enable-debug=-g --enable-optimize=-O0 --enable-gczeal
+	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
 endif
 
 ifneq (,$(CCACHE))
 	CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
 
-ifeq ($(MSYSTEM),MINGW64)
+ifneq ($(VSINSTALLDIR),)
+        # Visual Studio build
+	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
+	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32
+	CONFIGURE_FLAGS += --host=x86_64-pc-mingw32
+	CONFIGURE_FLAGS += --disable-export-js --without-pthreads
+	MOZ_TOOLS=/
+
+	ifneq (,$(wildcard c:/python27/python.exe))
+	FORCED_PYTHON := "c:/python27/python.exe"
+	else ifneq(,$(NATIVE_WIN32_PYTHON))
+	FORCED_PYTHON := "$(NATIVE_WIN32_PYTHON)"
+	else
+	$(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
+	$(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
+	$(error Can't find native Win32 python)
+	endif
+
+else ifeq ($(MSYSTEM),MINGW64)
 	# msys2 sets CC=cc as default. however, there is no `cc.exe`.
 	# overwrite it here.
 	ifeq ($(CC),cc)
@@ -82,7 +102,7 @@ all:
 	touch $(SRC_DIR)/mozjs/js/src/configure
 	cd $(OUT_DIR) && \
 	PYTHON="$(FORCED_PYTHON)" \
-	MOZ_TOOLS="$(MOZ_TOOLS)" CC="$(CC)" CPP="$(CPP)" CXX="$(CXX)" AR="$(AR)" \
+	MOZ_TOOLS="$(MOZ_TOOLS)" \
 	$(SRC_DIR)/mozjs/js/src/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1)
 	cd $(OUT_DIR) && $(MAKE) -f Makefile -j$(NUM_JOBS)
 else

@@ -817,6 +817,7 @@ struct Class
     static size_t offsetOfFlags() { return offsetof(Class, flags); }
 };
 
+#ifndef RUST_BINDGEN
 static_assert(offsetof(JSClass, name) == offsetof(Class, name),
               "Class and JSClass must be consistent");
 static_assert(offsetof(JSClass, flags) == offsetof(Class, flags),
@@ -847,6 +848,7 @@ static_assert(offsetof(JSClass, trace) == offsetof(Class, trace),
               "Class and JSClass must be consistent");
 static_assert(sizeof(JSClass) == sizeof(Class),
               "Class and JSClass must be consistent");
+#endif
 
 static MOZ_ALWAYS_INLINE const JSClass*
 Jsvalify(const Class* c)

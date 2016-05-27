@@ -2016,10 +2016,12 @@ struct JSPropertySpec {
 
     static_assert(sizeof(SelfHostedWrapper) == sizeof(JSNativeWrapper),
                   "JSPropertySpec::getter/setter must be compact");
+#ifndef RUST_BINDGEN
     static_assert(offsetof(SelfHostedWrapper, funname) == offsetof(JSNativeWrapper, info),
                   "JS_SELF_HOSTED* macros below require that "
                   "SelfHostedWrapper::funname overlay "
                   "JSNativeWrapper::info");
+#endif
 private:
     void checkAccessorsAreNative() const {
 #ifndef RUST_BINDGEN
