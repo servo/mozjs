@@ -2339,7 +2339,7 @@ class JS_PUBLIC_API(CompartmentCreationOptions)
 class JS_PUBLIC_API(CompartmentBehaviors)
 {
   public:
-    class Override {
+    class JS_PUBLIC_API(Override) {
       public:
         Override() : mode_(Default) {}
 
