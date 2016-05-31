@@ -2,7 +2,6 @@ CONFIGURE_FLAGS := \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
-	--disable-shared-js \
 	--without-intl-api
 
 ifneq ($(HOST),$(TARGET))
@@ -46,7 +45,7 @@ ifneq ($(VSINSTALLDIR),)
 	OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
 	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32
 	CONFIGURE_FLAGS += --host=x86_64-pc-mingw32
-	CONFIGURE_FLAGS += --disable-export-js --without-pthreads
+	CONFIGURE_FLAGS += --without-pthreads
 	MOZ_TOOLS=/
 
 	ifneq (,$(wildcard c:/python27/python.exe))
@@ -90,8 +89,11 @@ else ifeq ($(MSYSTEM),MINGW64)
 	$(error Can't find native Win32 python)
 	endif
 
-	CONFIGURE_FLAGS += --disable-export-js --without-pthreads
-
+	# We don't need to build shared JS, and we need to disable export attrs
+	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js --without-pthreads
+else
+	# We don't need to build shared JS
+	CONFIGURE_FLAGS += --disable-shared-js
 endif
 
 SRC_DIR = $(shell pwd)

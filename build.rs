@@ -26,11 +26,17 @@ fn main() {
         .unwrap();
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/js/src", out_dir);
-    println!("cargo:rustc-link-lib=static=js_static");
     if target.contains("windows") {
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
+        if target.contains("gnu") {
+            println!("cargo:rustc-link-lib=stdc++");
+        }
+        //println!("cargo:rustc-link-lib=mozjs-48a1");
+        println!("cargo:rustc-link-lib=static=js_static");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+        println!("cargo:rustc-link-lib=static=js_static");
     }
-    println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:outdir={}", out_dir);
 }
