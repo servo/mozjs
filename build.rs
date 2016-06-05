@@ -5,10 +5,17 @@
 use std::env;
 use std::process::{Command, Stdio};
 
+
+#[cfg(target_os = "freebsd")]
+static MAKE_CMD: &'static str = "gmake";
+#[cfg(not(target_os = "freebsd"))]
+static MAKE_CMD: &'static str = "make";
+
+
 fn main() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let target = env::var("TARGET").unwrap();
-    let result = Command::new("make")
+    let result = Command::new(MAKE_CMD)
         .args(&["-R", "-f", "makefile.cargo"])
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
