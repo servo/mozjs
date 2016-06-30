@@ -1,0 +1,21 @@
+From 8767998afaff1e953261e4146a0a228b8eee78a5 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <n.oxyde@gmail.com>
+Date: Fri, 22 Apr 2016 14:07:12 +0200
+Subject: Add mozglue and stlport to JS_STANDALONE
+
+
+--- a/mozjs/js/src/moz.build
++++ b/mozjs/js/src/moz.build
+@@ -655,6 +655,12 @@ USE_LIBS += [
+     'zlib',
+ ]
+ 
++if CONFIG['JS_STANDALONE']:
++    USE_LIBS += ['mozglue']
++    if CONFIG['OS_TARGET'] == 'Android':
++        DIRS += ['../../build/stlport']
++        USE_LIBS += ['stlport']
++
+ if CONFIG['NIGHTLY_BUILD']:
+     DEFINES['ENABLE_BINARYDATA'] = True
+
