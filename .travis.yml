@@ -2,6 +2,7 @@ language: rust
 rust:
   - nightly
 sudo: 9000
+dist: trusty
 
 addons:
   apt:
