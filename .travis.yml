@@ -14,7 +14,7 @@ env:
 - CC="gcc-4.8" CPP="gcc-4.8 -E" CXX="g++-4.8"
 
 script:
-  - travis_wait cargo build --verbose
+  - travis_wait cargo build --verbose --verbose
 
 notifications:
   webhooks: http://build.servo.org:54856/travis
