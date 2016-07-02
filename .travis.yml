@@ -1,5 +1,6 @@
 language: rust
-channel: nightly
+rust:
+  - nightly
 sudo: 9000
 
 addons:
