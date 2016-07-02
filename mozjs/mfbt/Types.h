@@ -93,13 +93,8 @@
    * symbols. We add the weak attribute to the import version of the MFBT API
    * macros to exploit this.
    */
-#  if defined(MOZ_GLUE_IN_PROGRAM)
-#    define MFBT_API   __attribute__((weak)) MOZ_IMPORT_API
-#    define MFBT_DATA  __attribute__((weak)) MOZ_IMPORT_DATA
-#  else
 #    define MFBT_API   MOZ_IMPORT_API
 #    define MFBT_DATA  MOZ_IMPORT_DATA
-#  endif
 #endif
 #endif
 
