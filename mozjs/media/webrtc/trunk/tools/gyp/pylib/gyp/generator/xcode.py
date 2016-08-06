@@ -465,10 +465,10 @@ sys.exit(subprocess.call(sys.argv[1:]))" """
         #
         # No way to get the umask without setting a new one?  Set a safe one
         # and then set it back to the old value.
-        umask = os.umask(077)
+        umask = os.umask(0o77)
         os.umask(umask)
 
-        os.chmod(new_pbxproj_path, 0666 & ~umask)
+        os.chmod(new_pbxproj_path, 0o666 & ~umask)
         os.rename(new_pbxproj_path, pbxproj_path)
 
     except Exception:

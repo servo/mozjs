@@ -73,7 +73,7 @@ def run(argv):
 def _rmtreeOnError(rmFunction, filePath, excInfo):
     if excInfo[0] == OSError:
         # presuming because file is read-only
-        os.chmod(filePath, 0777)
+        os.chmod(filePath, 0o777)
         rmFunction(filePath)
 
 def rmtree(dirname):
