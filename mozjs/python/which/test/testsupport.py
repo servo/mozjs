@@ -52,7 +52,7 @@ def run(argv):
         except IOError:
             # IOError is raised iff the spawned app returns -1. Go
             # figure.
-            retval = -1 
+            retval = -1
         if retval is None:
             retval = 0
     else:
