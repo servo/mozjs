@@ -4,6 +4,7 @@ SHELL := /bin/bash
 
 # Default flags
 CONFIGURE_FLAGS := \
+        --enable-sm-promise \
 	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
