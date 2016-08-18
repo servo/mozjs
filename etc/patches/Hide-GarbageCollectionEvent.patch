@@ -1,14 +1,22 @@
-From e69aedeef3a08ee059e7f36439794fbc3352a4cf Mon Sep 17 00:00:00 2001
+From 2665d6184d02265ade407d66df569666fea7dea0 Mon Sep 17 00:00:00 2001
 From: Anthony Ramine <n.oxyde@gmail.com>
 Date: Wed, 6 Apr 2016 10:41:54 +0200
 Subject: Hide GarbageCollectionEvent
 
+---
+ mozjs/js/public/GCAPI.h | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
 
 diff --git a/mozjs/js/public/GCAPI.h b/mozjs/js/public/GCAPI.h
-index 5bedf24..e86d686 100644
+index 22e4915..2cd1acf 100644
 --- a/mozjs/js/public/GCAPI.h
 +++ b/mozjs/js/public/GCAPI.h
-@@ -267,9 +267,13 @@ AbortIncrementalGC(JSRuntime* rt);
+@@ -262,19 +262,23 @@ FinishIncrementalGC(JSContext* cx, gcreason::Reason reason);
+  * state. This may take an arbitrarily long time. When this function returns,
+  * IsIncrementalGCInProgress(cx) will always be false.
+  */
+ extern JS_PUBLIC_API(void)
+ AbortIncrementalGC(JSContext* cx);
  
  namespace dbg {
  
@@ -25,16 +33,31 @@ index 5bedf24..e86d686 100644
  class GarbageCollectionEvent
  {
      // The major GC number of the GC cycle this data pertains to.
-@@ -344,7 +348,9 @@ struct JS_PUBLIC_API(GCDescription) {
-     char16_t* formatSummaryMessage(JSRuntime* rt) const;
-     char16_t* formatJSON(JSRuntime* rt, uint64_t timestamp) const;
+     uint64_t majorGCNumber_;
+ 
+     // Reference to a non-owned, statically allocated C string. This is a very
+     // short reason explaining why a GC was triggered.
+     const char* reason;
+@@ -339,17 +343,19 @@ struct JS_PUBLIC_API(GCDescription) {
+ 
+     GCDescription(bool isCompartment, JSGCInvocationKind kind, gcreason::Reason reason)
+       : isCompartment_(isCompartment), invocationKind_(kind), reason_(reason) {}
+ 
+     char16_t* formatSliceMessage(JSContext* cx) const;
+     char16_t* formatSummaryMessage(JSContext* cx) const;
+     char16_t* formatJSON(JSContext* cx, uint64_t timestamp) const;
  
 +#ifndef RUST_BINDGEN
-     JS::dbg::GarbageCollectionEvent::Ptr toGCEvent(JSRuntime* rt) const;
+     JS::dbg::GarbageCollectionEvent::Ptr toGCEvent(JSContext* cx) const;
 +#endif
  };
  
  typedef void
+ (* GCSliceCallback)(JSContext* cx, GCProgress progress, const GCDescription& desc);
+ 
+ /**
+  * The GC slice callback is called at the beginning and end of each slice. This
+  * callback may be used for GC notifications as well as to perform additional
 -- 
-1.9.1
+2.8.3
 
