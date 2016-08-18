@@ -1,5 +1,5 @@
 From c162050717215f060e1f2e8dfe66a6a5ec7abd8f
-Author: Vladimir Vukicevic <vladimir@pobox.com>
+From: Vladimir Vukicevic <vladimir@pobox.com>
 Date: Thu Jul 21 09:19:43 2016 -0400
 Subject: Don't include pthread.h on Windows in PosixNSPR.h
 
