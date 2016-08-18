@@ -59,7 +59,7 @@ new file mode 100644
 index 0000000..b3ecd17
 --- /dev/null
 +++ b/mozjs/js/src/vm/WinNSPR.cpp
-@@ -0,0 +1,320 @@
+@@ -0,0 +1,321 @@
 +/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
 + * vim: set ts=8 sts=4 et sw=4 tw=99:
 + * This Source Code Form is subject to the terms of the Mozilla Public
@@ -132,8 +132,9 @@ index 0000000..b3ecd17
 +}
 +#endif
 +
-+struct nspr::Thread
++class nspr::Thread
 +{
++public:
 +    HANDLE thread;
 +    DWORD threadId;
 +    void (*start)(void* arg);
