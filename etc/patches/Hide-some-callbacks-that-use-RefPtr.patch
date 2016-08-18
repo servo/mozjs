@@ -1,12 +1,22 @@
-From ce246d33533fdb5c9af202d0f183f6fc40b8ebb8 Mon Sep 17 00:00:00 2001
+From 3f3e9f05ba01ddc5a1fb72e8f7eab7d2ee012163 Mon Sep 17 00:00:00 2001
 From: Anthony Ramine <n.oxyde@gmail.com>
 Date: Wed, 6 Apr 2016 10:52:19 +0200
 Subject: Hide some callbacks that use RefPtr
 
+---
+ mozjs/js/src/jsapi.h | 4 ++++
+ 1 file changed, 4 insertions(+)
 
+diff --git a/mozjs/js/src/jsapi.h b/mozjs/js/src/jsapi.h
+index eb5b39e..19a5faa 100644
 --- a/mozjs/js/src/jsapi.h
 +++ b/mozjs/js/src/jsapi.h
-@@ -6140,7 +6140,9 @@ struct PerformanceGroup {
+@@ -6248,17 +6248,19 @@ struct PerformanceGroup {
+ 
+   public:
+     // Compatibility with RefPtr<>
+     void AddRef();
+     void Release();
      uint64_t refCount_;
  };
  
@@ -16,20 +26,41 @@ Subject: Hide some callbacks that use RefPtr
  
  /**
   * Commit any Performance Monitoring data.
-@@ -6199,6 +6201,7 @@ typedef bool
+  *
+  * Until `FlushMonitoring` has been called, all PerformanceMonitoring data is invisible
+  * to the outside world and can cancelled with a call to `ResetMonitoring`.
+  */
  extern JS_PUBLIC_API(bool)
- SetStopwatchStartCallback(JSRuntime*, StopwatchStartCallback, void*);
+@@ -6299,27 +6301,29 @@ GetPerfMonitoringTestCpuRescheduling(JSContext*, uint64_t* stayed, uint64_t* mov
+ 
+ /**
+  * Add a number of microseconds to the time spent waiting on CPOWs
+  * since process start.
+  */
+ extern JS_PUBLIC_API(void)
+ AddCPOWPerformanceDelta(JSContext*, uint64_t delta);
  
 +#ifndef RUST_BINDGEN
  typedef bool
+ (*StopwatchStartCallback)(uint64_t, void*);
+ extern JS_PUBLIC_API(bool)
+ SetStopwatchStartCallback(JSContext*, StopwatchStartCallback, void*);
+ 
+ typedef bool
  (*StopwatchCommitCallback)(uint64_t, PerformanceGroupVector&, void*);
  extern JS_PUBLIC_API(bool)
-@@ -6208,6 +6211,7 @@ typedef bool
+ SetStopwatchCommitCallback(JSContext*, StopwatchCommitCallback, void*);
+ 
+ typedef bool
  (*GetGroupsCallback)(JSContext*, PerformanceGroupVector&, void*);
  extern JS_PUBLIC_API(bool)
- SetGetPerformanceGroupsCallback(JSRuntime*, GetGroupsCallback, void*);
+ SetGetPerformanceGroupsCallback(JSContext*, GetGroupsCallback, void*);
 +#endif
  
  } /* namespace js */
  
+ 
+ #endif /* jsapi_h */
+-- 
+2.8.3
 
