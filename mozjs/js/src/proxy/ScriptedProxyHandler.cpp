@@ -126,8 +126,8 @@ IsCompatiblePropertyDescriptor(JSContext* cx, bool extensible, Handle<PropertyDe
 }
 
 // Get the [[ProxyHandler]] of a scripted proxy.
-static JSObject*
-GetScriptedProxyHandlerObject(JSObject* proxy)
+/* static */ JSObject*
+ScriptedProxyHandler::handlerObject(const JSObject* proxy)
 {
     MOZ_ASSERT(proxy->as<ProxyObject>().handler() == &ScriptedProxyHandler::singleton);
     return proxy->as<ProxyObject>().extra(ScriptedProxyHandler::HANDLER_EXTRA).toObjectOrNull();
@@ -171,7 +171,7 @@ ScriptedProxyHandler::getPrototype(JSContext* cx, HandleObject proxy,
                                    MutableHandleObject protop) const
 {
     // Steps 1-3.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -242,7 +242,7 @@ ScriptedProxyHandler::setPrototype(JSContext* cx, HandleObject proxy, HandleObje
                                    ObjectOpResult& result) const
 {
     // Steps 1-4.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -333,7 +333,7 @@ ScriptedProxyHandler::preventExtensions(JSContext* cx, HandleObject proxy,
                                         ObjectOpResult& result) const
 {
     // Steps 1-3.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -389,7 +389,7 @@ bool
 ScriptedProxyHandler::isExtensible(JSContext* cx, HandleObject proxy, bool* extensible) const
 {
     // Steps 1-3.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -441,7 +441,7 @@ ScriptedProxyHandler::getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy
                                                MutableHandle<PropertyDescriptor> desc) const
 {
     // Steps 2-4.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -560,7 +560,7 @@ ScriptedProxyHandler::defineProperty(JSContext* cx, HandleObject proxy, HandleId
                                      Handle<PropertyDescriptor> desc, ObjectOpResult& result) const
 {
     // Steps 2-4.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -699,7 +699,7 @@ bool
 ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy, AutoIdVector& props) const
 {
     // Steps 1-3.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -765,25 +765,17 @@ ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy, AutoIdV
         return props.appendAll(trapResult);
 
     // Step 16.
+    // The algorithm below always removes all occurences of the same key
+    // at once, so we can use a set here.
     Rooted<GCHashSet<jsid>> uncheckedResultKeys(cx, GCHashSet<jsid>(cx));
     if (!uncheckedResultKeys.init(trapResult.length()))
         return false;
 
-    bool foundDuplicate = false;
     for (size_t i = 0, len = trapResult.length(); i < len; i++) {
         MOZ_ASSERT(!JSID_IS_VOID(trapResult[i]));
 
-        // This dup-checking (and complaining only if we reach the end of the
-        // overall algorithm, but not if we exit early without erroring) is
-        // dumb, but it's ECMA state of the art right now.  This should be
-        // fixed in <https://github.com/tc39/ecma262/issues/461>.
-        auto ptr = uncheckedResultKeys.lookupForAdd(trapResult[i]);
-        if (!ptr) {
-            if (!uncheckedResultKeys.add(ptr, trapResult[i]))
-                return false;
-        } else {
-            foundDuplicate = true;
-        }
+        if (!uncheckedResultKeys.put(trapResult[i]))
+            return false;
     }
 
     // Step 17.
@@ -823,7 +815,7 @@ ScriptedProxyHandler::ownPropertyKeys(JSContext* cx, HandleObject proxy, AutoIdV
     }
 
     // Step 20.
-    if (!uncheckedResultKeys.empty() || foundDuplicate) {
+    if (!uncheckedResultKeys.empty()) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CANT_REPORT_NEW);
         return false;
     }
@@ -838,7 +830,7 @@ ScriptedProxyHandler::delete_(JSContext* cx, HandleObject proxy, HandleId id,
                               ObjectOpResult& result) const
 {
     // Steps 2-4.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -897,7 +889,7 @@ bool
 ScriptedProxyHandler::has(JSContext* cx, HandleObject proxy, HandleId id, bool* bp) const
 {
     // Steps 2-4.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -967,7 +959,7 @@ ScriptedProxyHandler::get(JSContext* cx, HandleObject proxy, HandleValue receive
                           MutableHandleValue vp) const
 {
     // Steps 2-4.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -1042,7 +1034,7 @@ ScriptedProxyHandler::set(JSContext* cx, HandleObject proxy, HandleId id, Handle
                           HandleValue receiver, ObjectOpResult& result) const
 {
     // Steps 2-4.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -1118,7 +1110,7 @@ bool
 ScriptedProxyHandler::call(JSContext* cx, HandleObject proxy, const CallArgs& args) const
 {
     // Steps 1-3.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;
@@ -1165,7 +1157,7 @@ bool
 ScriptedProxyHandler::construct(JSContext* cx, HandleObject proxy, const CallArgs& args) const
 {
     // Steps 1-3.
-    RootedObject handler(cx, GetScriptedProxyHandlerObject(proxy));
+    RootedObject handler(cx, ScriptedProxyHandler::handlerObject(proxy));
     if (!handler) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_PROXY_REVOKED);
         return false;

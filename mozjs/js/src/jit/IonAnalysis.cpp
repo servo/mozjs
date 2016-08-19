@@ -1816,6 +1816,9 @@ TypeAnalyzer::specializeValidFloatOps()
             if (ins->type() == MIRType::Float32)
                 continue;
 
+            if (!alloc().ensureBallast())
+                return false;
+
             // This call will try to specialize the instruction iff all uses are consumers and
             // all inputs are producers.
             ins->trySpecializeFloat32(alloc());
@@ -1947,11 +1950,10 @@ IsRegExpHoistableCall(MCall* call, MDefinition* def)
         return false;
 
     JSAtom* name;
-    JSFunction* fun = call->getSingleTarget();
-    if (fun) {
+    if (WrappedFunction* fun = call->getSingleTarget()) {
         if (!fun->isSelfHostedBuiltin())
             return false;
-        name = GetSelfHostedFunctionName(fun);
+        name = GetSelfHostedFunctionName(fun->rawJSFunction());
     } else {
         MDefinition* funDef = call->getFunction();
         if (funDef->isDebugCheckSelfHosted())
@@ -2137,6 +2139,8 @@ jit::MakeMRegExpHoistable(MIRGraph& graph)
             // faster than a not movable regexp.
             RegExpObject* source = regexp->source();
             if (source->sticky() || source->global()) {
+                if (!graph.alloc().ensureBallast())
+                    return false;
                 MConstant* zero = MConstant::New(graph.alloc(), Int32Value(0));
                 regexp->block()->insertAfter(regexp, zero);
 
@@ -2178,7 +2182,7 @@ jit::AccountForCFGChanges(MIRGenerator* mir, MIRGraph& graph, bool updateAliasAn
     // If needed, update alias analysis dependencies.
     if (updateAliasAnalysis) {
         TraceLoggerThread* logger;
-        if (GetJitContext()->runtime->onMainThread())
+        if (GetJitContext()->onMainThread())
             logger = TraceLoggerForMainThread(GetJitContext()->runtime);
         else
             logger = TraceLoggerForCurrentThread();

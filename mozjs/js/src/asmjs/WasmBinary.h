@@ -28,12 +28,15 @@ static const uint32_t MagicNumber        = 0x6d736100; // "\0asm"
 static const uint32_t EncodingVersion    = 0x0b;
 
 static const char TypeSectionId[]        = "type";
+static const char GlobalSectionId[]      = "global";
 static const char ImportSectionId[]      = "import";
 static const char FunctionSectionId[]    = "function";
 static const char TableSectionId[]       = "table";
 static const char MemorySectionId[]      = "memory";
 static const char ExportSectionId[]      = "export";
+static const char StartSectionId[]       = "start";
 static const char CodeSectionId[]        = "code";
+static const char ElemSectionId[]        = "elem";
 static const char DataSectionId[]        = "data";
 static const char NameSectionId[]        = "name";
 
@@ -61,7 +64,29 @@ enum class ValType
 
 enum class TypeConstructor
 {
+    AnyFunc                              = 0x20,
     Function                             = 0x40
+};
+
+enum class DefinitionKind
+{
+    Function                             = 0x00,
+    Table                                = 0x01,
+    Memory                               = 0x02,
+    Global                               = 0x03
+};
+
+enum class ResizableFlags
+{
+    Default                              = 0x1,
+    HasMaximum                           = 0x2,
+    AllowedMask                          = 0x3
+};
+
+enum class GlobalFlags
+{
+    IsMutable                            = 0x1,
+    AllowedMask                          = 0x1
 };
 
 enum class Expr
@@ -255,13 +280,15 @@ enum class Expr
     // i64.eqz.
     I64Eqz                               = 0xba,
 
+    // Global access.
+    GetGlobal                            = 0xc0,
+    SetGlobal                            = 0xc1,
+
     // ------------------------------------------------------------------------
     // The rest of these operators are currently only emitted internally when
     // compiling asm.js and are rejected by wasm validation.
 
     // asm.js-specific operators
-    LoadGlobal                           = 0xc0,
-    StoreGlobal,
     I32Min,
     I32Max,
     I32Neg,
@@ -572,6 +599,7 @@ class Decoder
     const uint8_t* const beg_;
     const uint8_t* const end_;
     const uint8_t* cur_;
+    UniqueChars* error_;
 
     template <class T>
     MOZ_MUST_USE bool read(T* out) {
@@ -589,6 +617,13 @@ class Decoder
         memcpy(&ret, cur_, sizeof(T));
         cur_ += sizeof(T);
         return ret;
+    }
+
+    template <class T>
+    void uncheckedRead(T* ret) {
+        MOZ_ASSERT(bytesRemain() >= sizeof(T));
+        memcpy(ret, cur_, sizeof(T));
+        cur_ += sizeof(T);
     }
 
     template <typename UInt>
@@ -647,18 +682,33 @@ class Decoder
     static const size_t ExprLimit = 2 * UINT8_MAX - 1;
 
   public:
-    Decoder(const uint8_t* begin, const uint8_t* end)
+    Decoder(const uint8_t* begin, const uint8_t* end, UniqueChars* error = nullptr)
       : beg_(begin),
         end_(end),
-        cur_(begin)
+        cur_(begin),
+        error_(error)
     {
         MOZ_ASSERT(begin <= end);
     }
-    explicit Decoder(const Bytes& bytes)
+    explicit Decoder(const Bytes& bytes, UniqueChars* error = nullptr)
       : beg_(bytes.begin()),
         end_(bytes.end()),
-        cur_(bytes.begin())
+        cur_(bytes.begin()),
+        error_(error)
     {}
+
+    bool fail(const char* msg) {
+        error_->reset(strdup(msg));
+        return false;
+    }
+    bool fail(UniqueChars msg) {
+        *error_ = Move(msg);
+        return false;
+    }
+    void clearError() {
+        if (error_)
+            error_->reset();
+    }
 
     bool done() const {
         MOZ_ASSERT(cur_ <= end_);
@@ -759,8 +809,9 @@ class Decoder
     static const uint32_t NotStarted = UINT32_MAX;
 
     template <size_t IdSizeWith0>
-    MOZ_MUST_USE bool startSection(const char (&id)[IdSizeWith0], uint32_t* startOffset,
-                                             uint32_t* size) {
+    MOZ_MUST_USE bool startSection(const char (&id)[IdSizeWith0],
+                                   uint32_t* startOffset,
+                                   uint32_t* size) {
         static const size_t IdSize = IdSizeWith0 - 1;
         MOZ_ASSERT(id[IdSize] == '\0');
         const uint8_t* before = cur_;
@@ -812,11 +863,11 @@ class Decoder
     uint32_t uncheckedReadFixedU32() {
         return uncheckedRead<uint32_t>();
     }
-    float uncheckedReadFixedF32() {
-        return uncheckedRead<float>();
+    void uncheckedReadFixedF32(float* ret) {
+        return uncheckedRead<float>(ret);
     }
-    double uncheckedReadFixedF64() {
-        return uncheckedRead<double>();
+    void uncheckedReadFixedF64(double* ret) {
+        return uncheckedRead<double>(ret);
     }
     template <typename UInt>
     UInt uncheckedReadVarU() {

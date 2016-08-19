@@ -254,7 +254,7 @@ NoteViewBufferWasDetached(ArrayBufferViewObject* view,
                           ArrayBufferObject::BufferContents newContents,
                           JSContext* cx)
 {
-    view->notifyBufferDetached(newContents.data());
+    view->notifyBufferDetached(cx, newContents.data());
 
     // Notify compiled jit code that the base pointer has moved.
     MarkObjectStateChange(cx, view);
@@ -264,6 +264,8 @@ NoteViewBufferWasDetached(ArrayBufferViewObject* view,
 ArrayBufferObject::detach(JSContext* cx, Handle<ArrayBufferObject*> buffer,
                           BufferContents newContents)
 {
+    assertSameCompartment(cx, buffer);
+
     if (buffer->isWasm()) {
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_OUT_OF_MEMORY);
         return false;
@@ -292,10 +294,11 @@ ArrayBufferObject::detach(JSContext* cx, Handle<ArrayBufferObject*> buffer,
     // Update all views of the buffer to account for the buffer having been
     // detached, and clear the buffer's data and list of views.
 
-    if (InnerViewTable::ViewVector* views = cx->compartment()->innerViews.maybeViewsUnbarriered(buffer)) {
+    auto& innerViews = cx->compartment()->innerViews;
+    if (InnerViewTable::ViewVector* views = innerViews.maybeViewsUnbarriered(buffer)) {
         for (size_t i = 0; i < views->length(); i++)
             NoteViewBufferWasDetached((*views)[i], newContents, cx);
-        cx->compartment()->innerViews.removeViews(buffer);
+        innerViews.removeViews(buffer);
     }
     if (buffer->firstView()) {
         if (buffer->forInlineTypedObject()) {
@@ -364,7 +367,8 @@ ArrayBufferObject::changeContents(JSContext* cx, BufferContents newContents)
     setNewOwnedData(cx->runtime()->defaultFreeOp(), newContents);
 
     // Update all views.
-    if (InnerViewTable::ViewVector* views = cx->compartment()->innerViews.maybeViewsUnbarriered(this)) {
+    auto& innerViews = cx->compartment()->innerViews;
+    if (InnerViewTable::ViewVector* views = innerViews.maybeViewsUnbarriered(this)) {
         for (size_t i = 0; i < views->length(); i++)
             changeViewContents(cx, (*views)[i], oldDataPointer, newContents);
     }
@@ -462,7 +466,7 @@ ArrayBufferObject::createForWasm(JSContext* cx, uint32_t numBytes, bool signalsF
 #endif
     }
 
-    auto buffer = ArrayBufferObject::create(cx, numBytes);
+    auto* buffer = ArrayBufferObject::create(cx, numBytes);
     if (!buffer)
         return nullptr;
 
@@ -633,6 +637,10 @@ ArrayBufferObject::create(JSContext* cx, uint32_t nbytes, BufferContents content
             size_t nAllocated = nbytes;
             if (contents.kind() == MAPPED)
                 nAllocated = JS_ROUNDUP(nbytes, js::gc::SystemPageSize());
+#ifdef ASMJS_MAY_USE_SIGNAL_HANDLERS_FOR_OOB
+            else if (contents.kind() == WASM_MAPPED)
+                nAllocated = wasm::MappedSize;
+#endif
             cx->zone()->updateMallocCounter(nAllocated);
         }
     } else {
@@ -726,6 +734,7 @@ ArrayBufferObject::stealContents(JSContext* cx, Handle<ArrayBufferObject*> buffe
                                  bool hasStealableContents)
 {
     MOZ_ASSERT_IF(hasStealableContents, buffer->hasStealableContents());
+    assertSameCompartment(cx, buffer);
 
     BufferContents oldContents(buffer->dataPointer(), buffer->bufferKind());
     BufferContents newContents = AllocateArrayBufferContents(cx, buffer->byteLength());
@@ -855,7 +864,7 @@ ArrayBufferObject::addView(JSContext* cx, JSObject* viewArg)
         setFirstView(view);
         return true;
     }
-    return cx->compartment()->innerViews.addView(cx, this, view);
+    return cx->compartment()->innerViews.get().addView(cx, this, view);
 }
 
 /*
@@ -1073,7 +1082,7 @@ JSObject::is<js::ArrayBufferObjectMaybeShared>() const
 }
 
 void
-ArrayBufferViewObject::notifyBufferDetached(void* newData)
+ArrayBufferViewObject::notifyBufferDetached(JSContext* cx, void* newData)
 {
     MOZ_ASSERT(newData != nullptr);
     if (is<DataViewObject>()) {
@@ -1081,7 +1090,7 @@ ArrayBufferViewObject::notifyBufferDetached(void* newData)
     } else if (is<TypedArrayObject>()) {
         if (as<TypedArrayObject>().isSharedMemory())
             return;
-        as<TypedArrayObject>().notifyBufferDetached(newData);
+        as<TypedArrayObject>().notifyBufferDetached(cx, newData);
     } else {
         as<OutlineTypedObject>().notifyBufferDetached(newData);
     }

@@ -84,7 +84,7 @@ GCRuntime::tryNewNurseryObject(JSContext* cx, size_t thingSize, size_t nDynamicS
         return obj;
 
     if (allowGC && !rt->mainThread.suppressGC) {
-        minorGC(cx, JS::gcreason::OUT_OF_NURSERY);
+        minorGC(JS::gcreason::OUT_OF_NURSERY);
 
         // Exceeding gcMaxBytes while tenuring can disable the Nursery.
         if (nursery.isEnabled()) {
@@ -165,11 +165,10 @@ GCRuntime::tryNewTenuredThing(ExclusiveContext* cx, AllocKind kind, size_t thing
             // We have no memory available for a new chunk; perform an
             // all-compartments, non-incremental, shrinking GC and wait for
             // sweeping to finish.
-            JSRuntime *rt = cx->asJSContext()->runtime();
-            JS::PrepareForFullGC(rt);
+            JS::PrepareForFullGC(cx->asJSContext());
             AutoKeepAtoms keepAtoms(cx->perThreadData);
-            rt->gc.gc(GC_SHRINK, JS::gcreason::LAST_DITCH);
-            rt->gc.waitBackgroundSweepOrAllocEnd();
+            cx->asJSContext()->gc.gc(GC_SHRINK, JS::gcreason::LAST_DITCH);
+            cx->asJSContext()->gc.waitBackgroundSweepOrAllocEnd();
 
             t = tryNewTenuredThing<T, NoGC>(cx, kind, thingSize);
             if (!t)
@@ -228,7 +227,7 @@ GCRuntime::gcIfNeededPerAllocation(JSContext* cx)
     // Invoking the interrupt callback can fail and we can't usefully
     // handle that here. Just check in case we need to collect instead.
     if (rt->hasPendingInterrupt())
-        gcIfRequested(cx);
+        gcIfRequested();
 
     // If we have grown past our GC heap threshold while in the middle of
     // an incremental GC, we're growing faster than we're GCing, so stop
@@ -261,41 +260,17 @@ GCRuntime::checkIncrementalZoneState(ExclusiveContext* cx, T* t)
 
 // ///////////  Arena -> Thing Allocator  //////////////////////////////////////
 
-// After pulling a Chunk out of the empty chunks pool, we want to run the
-// background allocator to refill it. The code that takes Chunks does so under
-// the GC lock. We need to start the background allocation under the helper
-// threads lock. To avoid lock inversion we have to delay the start until after
-// we are outside the GC lock. This class handles that delay automatically.
-class MOZ_RAII js::gc::AutoMaybeStartBackgroundAllocation
-{
-    JSRuntime* runtime;
-
-  public:
-    AutoMaybeStartBackgroundAllocation()
-      : runtime(nullptr)
-    {}
-
-    void tryToStartBackgroundAllocation(JSRuntime* rt) {
-        runtime = rt;
-    }
-
-    ~AutoMaybeStartBackgroundAllocation() {
-        if (runtime)
-            runtime->gc.startBackgroundAllocTaskIfIdle();
-    }
-};
-
 void
 GCRuntime::startBackgroundAllocTaskIfIdle()
 {
     AutoLockHelperThreadState helperLock;
-    if (allocTask.isRunning())
+    if (allocTask.isRunningWithLockHeld(helperLock))
         return;
 
     // Join the previous invocation of the task. This will return immediately
     // if the thread has never been started.
-    allocTask.joinWithLockHeld();
-    allocTask.startWithLockHeld();
+    allocTask.joinWithLockHeld(helperLock);
+    allocTask.startWithLockHeld(helperLock);
 }
 
 /* static */ TenuredCell*
@@ -335,7 +310,7 @@ GCRuntime::refillFreeListOffMainThread(ExclusiveContext* cx, AllocKind thingKind
     // a GC session.
     AutoLockHelperThreadState lock;
     while (rt->isHeapBusy())
-        HelperThreadState().wait(GlobalHelperThreadState::PRODUCER);
+        HelperThreadState().wait(lock, GlobalHelperThreadState::PRODUCER);
 
     return arenas->allocateFromArena(zone, thingKind, maybeStartBGAlloc);
 }
@@ -391,7 +366,6 @@ ArenaLists::allocateFromArena(JS::Zone* zone, AllocKind thingKind,
     if (!arena)
         return nullptr;
 
-    MOZ_ASSERT(!maybeLock->wasUnlocked());
     MOZ_ASSERT(al.isCursorAtEnd());
     al.insertBeforeCursor(arena);
 
@@ -537,12 +511,9 @@ Chunk::findDecommittedArenaOffset()
 // ///////////  System -> Chunk Allocator  /////////////////////////////////////
 
 Chunk*
-GCRuntime::pickChunk(const AutoLockGC& lock,
-                     AutoMaybeStartBackgroundAllocation& maybeStartBackgroundAllocation)
+GCRuntime::getOrAllocChunk(const AutoLockGC& lock,
+                           AutoMaybeStartBackgroundAllocation& maybeStartBackgroundAllocation)
 {
-    if (availableChunks(lock).count())
-        return availableChunks(lock).head();
-
     Chunk* chunk = emptyChunks(lock).pop();
     if (!chunk) {
         chunk = Chunk::allocate(rt);
@@ -551,11 +522,34 @@ GCRuntime::pickChunk(const AutoLockGC& lock,
         MOZ_ASSERT(chunk->info.numArenasFreeCommitted == 0);
     }
 
+    if (wantBackgroundAllocation(lock))
+        maybeStartBackgroundAllocation.tryToStartBackgroundAllocation(rt->gc);
+
+    return chunk;
+}
+
+void
+GCRuntime::recycleChunk(Chunk* chunk, const AutoLockGC& lock)
+{
+    emptyChunks(lock).push(chunk);
+}
+
+Chunk*
+GCRuntime::pickChunk(const AutoLockGC& lock,
+                     AutoMaybeStartBackgroundAllocation& maybeStartBackgroundAllocation)
+{
+    if (availableChunks(lock).count())
+        return availableChunks(lock).head();
+
+    Chunk* chunk = getOrAllocChunk(lock, maybeStartBackgroundAllocation);
+    if (!chunk)
+        return nullptr;
+
+    chunk->init(rt);
+    MOZ_ASSERT(chunk->info.numArenasFreeCommitted == 0);
     MOZ_ASSERT(chunk->unused());
     MOZ_ASSERT(!fullChunks(lock).contains(chunk));
-
-    if (wantBackgroundAllocation(lock))
-        maybeStartBackgroundAllocation.tryToStartBackgroundAllocation(rt);
+    MOZ_ASSERT(!availableChunks(lock).contains(chunk));
 
     chunkAllocationSinceLastGC = true;
 
@@ -585,6 +579,7 @@ BackgroundAllocTask::run()
             chunk = Chunk::allocate(runtime);
             if (!chunk)
                 break;
+            chunk->init(runtime);
         }
         chunkPool_.push(chunk);
     }
@@ -596,7 +591,6 @@ Chunk::allocate(JSRuntime* rt)
     Chunk* chunk = static_cast<Chunk*>(MapAlignedPages(ChunkSize, ChunkSize));
     if (!chunk)
         return nullptr;
-    chunk->init(rt);
     rt->gc.stats.count(gcstats::STAT_NEW_CHUNK);
     return chunk;
 }
@@ -620,7 +614,7 @@ Chunk::init(JSRuntime* rt)
 
     /* Initialize the chunk info. */
     info.init();
-    new (&info.trailer) ChunkTrailer(rt);
+    new (&trailer) ChunkTrailer(rt);
 
     /* The rest of info fields are initialized in pickChunk. */
 }

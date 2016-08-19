@@ -13,6 +13,7 @@
 #define __STDC_FORMAT_MACROS
 
 #include "mozilla/SizePrintfMacros.h"
+#include "mozilla/Sprintf.h"
 
 #include <algorithm>
 #include <ctype.h>
@@ -842,8 +843,8 @@ js::Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
     JSOp op = (JSOp)*pc;
     if (op >= JSOP_LIMIT) {
         char numBuf1[12], numBuf2[12];
-        JS_snprintf(numBuf1, sizeof numBuf1, "%d", op);
-        JS_snprintf(numBuf2, sizeof numBuf2, "%d", JSOP_LIMIT);
+        SprintfLiteral(numBuf1, "%d", op);
+        SprintfLiteral(numBuf2, "%d", JSOP_LIMIT);
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
                              JSMSG_BYTECODE_TOO_BIG, numBuf1, numBuf2);
         return 0;
@@ -891,7 +892,7 @@ js::Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
 
       case JOF_SCOPECOORD: {
         RootedValue v(cx,
-            StringValue(ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc)));
+            StringValue(ScopeCoordinateName(cx->caches.scopeCoordinateNameCache, script, pc)));
         JSAutoByteString bytes;
         if (!ToDisassemblySource(cx, v, &bytes))
             return 0;
@@ -1016,7 +1017,7 @@ js::Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
 
       default: {
         char numBuf[12];
-        JS_snprintf(numBuf, sizeof numBuf, "%x", cs->format);
+        SprintfLiteral(numBuf, "%x", cs->format);
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
                              JSMSG_UNKNOWN_FORMAT, numBuf);
         return 0;
@@ -1143,7 +1144,7 @@ ExpressionDecompiler::decompilePC(jsbytecode* pc)
         return write("(intermediate value)");
       }
       case JSOP_GETALIASEDVAR: {
-        JSAtom* atom = ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc);
+        JSAtom* atom = ScopeCoordinateName(cx->caches.scopeCoordinateNameCache, script, pc);
         MOZ_ASSERT(atom);
         return write(atom);
       }
@@ -1213,7 +1214,7 @@ ExpressionDecompiler::decompilePC(jsbytecode* pc)
         return decompilePCForStackOperand(pc, -int32_t(GET_ARGC(pc) + 2)) &&
                write("(...)");
       case JSOP_SPREADCALL:
-        return decompilePCForStackOperand(pc, -int32_t(3)) &&
+        return decompilePCForStackOperand(pc, -3) &&
                write("(...)");
       case JSOP_NEWARRAY:
         return write("[]");
@@ -1227,6 +1228,8 @@ ExpressionDecompiler::decompilePC(jsbytecode* pc)
             return false;
         return write(str);
       }
+      case JSOP_CHECKISOBJ:
+        return decompilePCForStackOperand(pc, -1);
       case JSOP_VOID:
         return write("void ") && decompilePCForStackOperand(pc, -1);
       default:
@@ -2021,7 +2024,7 @@ GenerateLcovInfo(JSContext* cx, JSCompartment* comp, GenericPrinter& out)
 
     // Collect the list of scripts which are part of the current compartment.
     {
-        js::gc::AutoPrepareForTracing apft(rt, SkipAtoms);
+        js::gc::AutoPrepareForTracing apft(cx, SkipAtoms);
     }
     Rooted<ScriptVector> topScripts(cx, ScriptVector(cx));
     for (ZonesIter zone(rt, SkipAtoms); !zone.done(); zone.next()) {

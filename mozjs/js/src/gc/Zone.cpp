@@ -58,8 +58,6 @@ JS::Zone::Zone(JSRuntime* rt)
 
 Zone::~Zone()
 {
-    MOZ_ASSERT_IF(typeDescrObjects.initialized(), typeDescrObjects.empty());
-
     JSRuntime* rt = runtimeFromMainThread();
     if (this == rt->gc.systemZone)
         rt->gc.systemZone = nullptr;
@@ -302,7 +300,7 @@ Zone::notifyObservingDebuggers()
 {
     for (CompartmentsInZoneIter comps(this); !comps.done(); comps.next()) {
         JSRuntime* rt = runtimeFromAnyThread();
-        RootedGlobalObject global(rt, comps->unsafeUnbarrieredMaybeGlobal());
+        RootedGlobalObject global(rt->contextFromMainThread(), comps->unsafeUnbarrieredMaybeGlobal());
         if (!global)
             continue;
 

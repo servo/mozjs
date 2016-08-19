@@ -726,7 +726,9 @@ class ArtifactCache(CacheManager):
 class Artifacts(object):
     '''Maintain state to efficiently fetch build artifacts from a Firefox tree.'''
 
-    def __init__(self, tree, substs, defines, job=None, log=None, cache_dir='.', hg=None, git=None, skip_cache=False):
+    def __init__(self, tree, substs, defines, job=None, log=None,
+                 cache_dir='.', hg=None, git=None, skip_cache=False,
+                 topsrcdir=None):
         if (hg and git) or (not hg and not git):
             raise ValueError("Must provide path to exactly one of hg and git")
 
@@ -739,6 +741,7 @@ class Artifacts(object):
         self._git = git
         self._cache_dir = cache_dir
         self._skip_cache = skip_cache
+        self._topsrcdir = topsrcdir
 
         try:
             self._artifact_job = get_job_details(self._job, log=self._log)
@@ -831,11 +834,11 @@ class Artifacts(object):
             self._git, 'rev-list', '--topo-order',
             '--max-count={num}'.format(num=NUM_REVISIONS_TO_QUERY),
             'HEAD',
-        ])
+        ], cwd=self._topsrcdir)
 
         hg_hash_list = subprocess.check_output([
             self._git, 'cinnabar', 'git2hg'
-        ] + rev_list.splitlines())
+        ] + rev_list.splitlines(), cwd=self._topsrcdir)
 
         zeroes = "0" * 40
 
@@ -861,7 +864,7 @@ class Artifacts(object):
             '--template', '{node}\n',
             '-r', 'last(public() and ::., {num})'.format(
                 num=NUM_REVISIONS_TO_QUERY)
-        ]).splitlines()
+        ], cwd=self._topsrcdir).splitlines()
 
     def _find_pushheads(self):
         """Returns an iterator of recent pushhead revisions, starting with the
@@ -999,12 +1002,12 @@ class Artifacts(object):
     def install_from_revset(self, revset, distdir):
         if self._hg:
             revision = subprocess.check_output([self._hg, 'log', '--template', '{node}\n',
-                                                '-r', revset]).strip()
+                                                '-r', revset], cwd=self._topsrcdir).strip()
             if len(revision.split('\n')) != 1:
                 raise ValueError('hg revision specification must resolve to exactly one commit')
         else:
-            revision = subprocess.check_output([self._git, 'rev-parse', revset]).strip()
-            revision = subprocess.check_output([self._git, 'cinnabar', 'git2hg', revision]).strip()
+            revision = subprocess.check_output([self._git, 'rev-parse', revset], cwd=self._topsrcdir).strip()
+            revision = subprocess.check_output([self._git, 'cinnabar', 'git2hg', revision], cwd=self._topsrcdir).strip()
             if len(revision.split('\n')) != 1:
                 raise ValueError('hg revision specification must resolve to exactly one commit')
             if revision == "0" * 40:

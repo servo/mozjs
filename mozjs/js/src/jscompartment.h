@@ -14,7 +14,7 @@
 #include "mozilla/Variant.h"
 #include "mozilla/XorShift128PlusRNG.h"
 
-#include "asmjs/WasmJS.h"
+#include "asmjs/WasmCompartment.h"
 #include "builtin/RegExp.h"
 #include "gc/Barrier.h"
 #include "gc/Zone.h"
@@ -106,9 +106,9 @@ struct CrossCompartmentKey
     template <typename T> const T& as() const { return wrapped.as<T>(); }
 
     template <typename F>
-    auto applyToWrapped(F f) -> typename F::ReturnType {
+    auto applyToWrapped(F f) -> decltype(f(static_cast<JSObject**>(nullptr))) {
+        using ReturnType = decltype(f(static_cast<JSObject**>(nullptr)));
         struct WrappedMatcher {
-            using ReturnType = typename F::ReturnType;
             F f_;
             explicit WrappedMatcher(F f) : f_(f) {}
             ReturnType match(JSObject*& obj) { return f_(&obj); }
@@ -120,9 +120,9 @@ struct CrossCompartmentKey
     }
 
     template <typename F>
-    auto applyToDebugger(F f) -> typename F::ReturnType {
+    auto applyToDebugger(F f) -> decltype(f(static_cast<NativeObject**>(nullptr))) {
+        using ReturnType = decltype(f(static_cast<NativeObject**>(nullptr)));
         struct DebuggerMatcher {
-            using ReturnType = typename F::ReturnType;
             F f_;
             explicit DebuggerMatcher(F f) : f_(f) {}
             ReturnType match(JSObject*& obj) { return ReturnType(); }
@@ -137,10 +137,9 @@ struct CrossCompartmentKey
     // JSString* key.
     JSCompartment* compartment() {
         struct GetCompartmentFunctor {
-            using ReturnType = JSCompartment*;
-            ReturnType operator()(JSObject** tp) const { return (*tp)->compartment(); }
-            ReturnType operator()(JSScript** tp) const { return (*tp)->compartment(); }
-            ReturnType operator()(JSString** tp) const {
+            JSCompartment* operator()(JSObject** tp) const { return (*tp)->compartment(); }
+            JSCompartment* operator()(JSScript** tp) const { return (*tp)->compartment(); }
+            JSCompartment* operator()(JSString** tp) const {
                 MOZ_CRASH("invalid ccw key"); return nullptr;
             }
         };
@@ -150,14 +149,13 @@ struct CrossCompartmentKey
     struct Hasher : public DefaultHasher<CrossCompartmentKey>
     {
         struct HashFunctor {
-            using ReturnType = HashNumber;
-            ReturnType match(JSObject* obj) { return DefaultHasher<JSObject*>::hash(obj); }
-            ReturnType match(JSString* str) { return DefaultHasher<JSString*>::hash(str); }
-            ReturnType match(const DebuggerAndScript& tpl) {
+            HashNumber match(JSObject* obj) { return DefaultHasher<JSObject*>::hash(obj); }
+            HashNumber match(JSString* str) { return DefaultHasher<JSString*>::hash(str); }
+            HashNumber match(const DebuggerAndScript& tpl) {
                 return DefaultHasher<NativeObject*>::hash(mozilla::Get<0>(tpl)) ^
                        DefaultHasher<JSScript*>::hash(mozilla::Get<1>(tpl));
             }
-            ReturnType match(const DebuggerAndObject& tpl) {
+            HashNumber match(const DebuggerAndObject& tpl) {
                 return DefaultHasher<NativeObject*>::hash(mozilla::Get<0>(tpl)) ^
                        DefaultHasher<JSObject*>::hash(mozilla::Get<1>(tpl)) ^
                        (mozilla::Get<2>(tpl) << 5);
@@ -385,6 +383,10 @@ struct JSCompartment
         return runtime_;
     }
 
+    JSContext* contextFromMainThread() const {
+        return runtime_->contextFromMainThread();
+    }
+
     /*
      * Nb: global_ might be nullptr, if (a) it's the atoms compartment, or
      * (b) the compartment's global has been collected.  The latter can happen
@@ -504,7 +506,7 @@ struct JSCompartment
     js::ObjectWeakMap* objectMetadataTable;
 
     // Map from array buffers to views sharing that storage.
-    js::InnerViewTable innerViews;
+    JS::WeakCache<js::InnerViewTable> innerViews;
 
     // Inline transparent typed objects do not initially have an array buffer,
     // but can have that buffer created lazily if it is accessed later. This
@@ -514,11 +516,8 @@ struct JSCompartment
     // All unboxed layouts in the compartment.
     mozilla::LinkedList<js::UnboxedLayout> unboxedLayouts;
 
-    // All wasm live instances in the compartment.
-    using WasmInstanceObjectSet = js::GCHashSet<js::HeapPtr<js::WasmInstanceObject*>,
-                                                js::MovableCellHasher<js::HeapPtr<js::WasmInstanceObject*>>,
-                                                js::SystemAllocPolicy>;
-    JS::WeakCache<WasmInstanceObjectSet> wasmInstances;
+    // WebAssembly state for the compartment.
+    js::wasm::Compartment wasm;
 
   private:
     // All non-syntactic lexical scopes in the compartment. These are kept in
@@ -564,12 +563,11 @@ struct JSCompartment
 
     MOZ_MUST_USE bool init(JSContext* maybecx);
 
-    MOZ_MUST_USE inline bool wrap(JSContext* cx, JS::MutableHandleValue vp,
-                                            JS::HandleObject existing = nullptr);
+    MOZ_MUST_USE inline bool wrap(JSContext* cx, JS::MutableHandleValue vp);
 
     MOZ_MUST_USE bool wrap(JSContext* cx, js::MutableHandleString strp);
     MOZ_MUST_USE bool wrap(JSContext* cx, JS::MutableHandleObject obj,
-                                     JS::HandleObject existingArg = nullptr);
+                           JS::HandleObject existingArg = nullptr);
     MOZ_MUST_USE bool wrap(JSContext* cx, JS::MutableHandle<js::PropertyDescriptor> desc);
     MOZ_MUST_USE bool wrap(JSContext* cx, JS::MutableHandle<JS::GCVector<JS::Value>> vec);
 
@@ -617,7 +615,6 @@ struct JSCompartment
 
     void sweepAfterMinorGC();
 
-    void sweepInnerViews();
     void sweepCrossCompartmentWrappers();
     void sweepSavedStacks();
     void sweepGlobalObject(js::FreeOp* fop);
@@ -918,10 +915,13 @@ class AutoCompartment
 {
     ExclusiveContext * const cx_;
     JSCompartment * const origin_;
+    const js::AutoLockForExclusiveAccess* maybeLock_;
 
   public:
-    inline AutoCompartment(ExclusiveContext* cx, JSObject* target);
-    inline AutoCompartment(ExclusiveContext* cx, JSCompartment* target);
+    inline AutoCompartment(ExclusiveContext* cx, JSObject* target,
+                           js::AutoLockForExclusiveAccess* maybeLock = nullptr);
+    inline AutoCompartment(ExclusiveContext* cx, JSCompartment* target,
+                           js::AutoLockForExclusiveAccess* maybeLock = nullptr);
     inline ~AutoCompartment();
 
     ExclusiveContext* context() const { return cx_; }

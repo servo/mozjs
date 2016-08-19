@@ -121,7 +121,7 @@ EnterBaseline(JSContext* cx, EnterJitData& data)
     // this point). We use Maybe<> here so we can call reset() to call the
     // AutoAssertOnGC destructor before we enter JIT code.
     mozilla::Maybe<JS::AutoAssertOnGC> nogc;
-    nogc.emplace(cx->runtime());
+    nogc.emplace(cx);
 #endif
 
     MOZ_ASSERT(jit::IsBaselineEnabled(cx));
@@ -399,12 +399,17 @@ jit::CanEnterBaselineMethod(JSContext* cx, RunState& state)
 };
 
 BaselineScript*
-BaselineScript::New(JSScript* jsscript, uint32_t prologueOffset, uint32_t epilogueOffset,
-                    uint32_t profilerEnterToggleOffset, uint32_t profilerExitToggleOffset,
-                    uint32_t traceLoggerEnterToggleOffset, uint32_t traceLoggerExitToggleOffset,
+BaselineScript::New(JSScript* jsscript,
+                    uint32_t prologueOffset, uint32_t epilogueOffset,
+                    uint32_t profilerEnterToggleOffset,
+                    uint32_t profilerExitToggleOffset,
+                    uint32_t traceLoggerEnterToggleOffset,
+                    uint32_t traceLoggerExitToggleOffset,
                     uint32_t postDebugPrologueOffset,
-                    size_t icEntries, size_t pcMappingIndexEntries, size_t pcMappingSize,
-                    size_t bytecodeTypeMapEntries, size_t yieldEntries)
+                    size_t icEntries,
+                    size_t pcMappingIndexEntries, size_t pcMappingSize,
+                    size_t bytecodeTypeMapEntries,
+                    size_t yieldEntries)
 {
     static const unsigned DataAlignment = sizeof(uintptr_t);
 

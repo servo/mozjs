@@ -37,16 +37,16 @@ typedef jit::ABIArgIter<ValTypeVector> ABIArgValTypeIter;
 
 class FuncBytes
 {
-    Bytes              bytes_;
-    uint32_t           index_;
-    const DeclaredSig& sig_;
-    uint32_t           lineOrBytecode_;
-    Uint32Vector       callSiteLineNums_;
+    Bytes            bytes_;
+    uint32_t         index_;
+    const SigWithId& sig_;
+    uint32_t         lineOrBytecode_;
+    Uint32Vector     callSiteLineNums_;
 
   public:
     FuncBytes(Bytes&& bytes,
               uint32_t index,
-              const DeclaredSig& sig,
+              const SigWithId& sig,
               uint32_t lineOrBytecode,
               Uint32Vector&& callSiteLineNums)
       : bytes_(Move(bytes)),
@@ -59,7 +59,7 @@ class FuncBytes
     Bytes& bytes() { return bytes_; }
     const Bytes& bytes() const { return bytes_; }
     uint32_t index() const { return index_; }
-    const DeclaredSig& sig() const { return sig_; }
+    const SigWithId& sig() const { return sig_; }
     uint32_t lineOrBytecode() const { return lineOrBytecode_; }
     const Uint32Vector& callSiteLineNums() const { return callSiteLineNums_; }
 };
@@ -102,7 +102,6 @@ class IonCompileTask
     enum class CompileMode { None, Baseline, Ion };
 
   private:
-    JSRuntime* const           runtime_;
     const ModuleGeneratorData& mg_;
     LifoAlloc                  lifo_;
     UniqueFuncBytes            func_;
@@ -113,12 +112,9 @@ class IonCompileTask
     IonCompileTask& operator=(const IonCompileTask&) = delete;
 
   public:
-    IonCompileTask(JSRuntime* rt, const ModuleGeneratorData& mg, size_t defaultChunkSize)
-      : runtime_(rt), mg_(mg), lifo_(defaultChunkSize), func_(nullptr), mode_(CompileMode::None)
+    IonCompileTask(const ModuleGeneratorData& mg, size_t defaultChunkSize)
+      : mg_(mg), lifo_(defaultChunkSize), func_(nullptr), mode_(CompileMode::None)
     {}
-    JSRuntime* runtime() const {
-        return runtime_;
-    }
     LifoAlloc& lifo() {
         return lifo_;
     }

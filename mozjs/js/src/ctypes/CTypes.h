@@ -64,7 +64,7 @@ void
 AppendUInt(mozilla::Vector<T, N, AP>& v, unsigned n)
 {
   char array[16];
-  size_t alen = JS_snprintf(array, 16, "%u", n);
+  size_t alen = snprintf(array, sizeof(array), "%u", n);
   size_t vlen = v.length();
   if (!v.resize(vlen + alen))
     return;
@@ -317,7 +317,7 @@ struct FunctionInfo
 // Parameters necessary for invoking a JS function from a C closure.
 struct ClosureInfo
 {
-  JSRuntime* rt;
+  JSContext* cx;
   JS::Heap<JSObject*> closureObj;  // CClosure object
   JS::Heap<JSObject*> typeObj;     // FunctionType describing the C function
   JS::Heap<JSObject*> thisObj;     // 'this' object to use for the JS function call
@@ -327,8 +327,8 @@ struct ClosureInfo
 
   // Anything conditionally freed in the destructor should be initialized to
   // nullptr here.
-  explicit ClosureInfo(JSRuntime* runtime)
-    : rt(runtime)
+  explicit ClosureInfo(JSContext* context)
+    : cx(context)
     , errResult(nullptr)
     , closure(nullptr)
   {}

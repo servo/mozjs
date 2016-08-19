@@ -109,7 +109,7 @@ MIRGenerator::addAbortedPreliminaryGroup(ObjectGroup* group)
 }
 
 bool
-MIRGenerator::needsAsmJSBoundsCheckBranch(const MAsmJSHeapAccess* access) const
+MIRGenerator::needsBoundsCheckBranch(const MWasmMemoryAccess* access) const
 {
     // A heap access needs a bounds-check branch if we're not relying on signal
     // handlers to catch errors, and if it's not proven to be within bounds.
@@ -124,13 +124,7 @@ MIRGenerator::needsAsmJSBoundsCheckBranch(const MAsmJSHeapAccess* access) const
 }
 
 size_t
-MIRGenerator::foldableOffsetRange(const MAsmJSHeapAccess* access) const
-{
-    return foldableOffsetRange(access->needsBoundsCheck(), access->isAtomicAccess());
-}
-
-size_t
-MIRGenerator::foldableOffsetRange(bool accessNeedsBoundsCheck, bool atomic) const
+MIRGenerator::foldableOffsetRange(const MWasmMemoryAccess* access) const
 {
     // This determines whether it's ok to fold up to WasmImmediateRange
     // offsets, instead of just WasmCheckedImmediateRange.
@@ -148,14 +142,14 @@ MIRGenerator::foldableOffsetRange(bool accessNeedsBoundsCheck, bool atomic) cons
 
     // Signal-handling can be dynamically disabled by OS bugs or flags.
     // Bug 1254935: Atomic accesses can't be handled with signal handlers yet.
-    if (usesSignalHandlersForAsmJSOOB_ && !atomic)
+    if (usesSignalHandlersForAsmJSOOB_ && !access->isAtomicAccess())
         return WasmImmediateRange;
 #endif
 
     // On 32-bit platforms, if we've proven the access is in bounds after
     // 32-bit wrapping, we can fold full offsets because they're added with
     // 32-bit arithmetic.
-    if (sizeof(intptr_t) == sizeof(int32_t) && !accessNeedsBoundsCheck)
+    if (sizeof(intptr_t) == sizeof(int32_t) && !access->needsBoundsCheck())
         return WasmImmediateRange;
 
     // Otherwise, only allow the checked size. This is always less than the
@@ -1289,7 +1283,7 @@ MBasicBlock::assertUsesAreNotWithin(MUseIterator use, MUseIterator end)
 }
 
 AbortReason
-MBasicBlock::setBackedge(MBasicBlock* pred)
+MBasicBlock::setBackedge(TempAllocator& alloc, MBasicBlock* pred)
 {
     // Predecessors must be finished, and at the correct stack depth.
     MOZ_ASSERT(hasLastIns());
@@ -1302,7 +1296,7 @@ MBasicBlock::setBackedge(MBasicBlock* pred)
     bool hadTypeChange = false;
 
     // Add exit definitions to each corresponding phi at the entry.
-    if (!inheritPhisFromBackedge(pred, &hadTypeChange))
+    if (!inheritPhisFromBackedge(alloc, pred, &hadTypeChange))
         return AbortReason_Alloc;
 
     if (hadTypeChange) {
@@ -1558,7 +1552,7 @@ MBasicBlock::inheritPhis(MBasicBlock* header)
 }
 
 bool
-MBasicBlock::inheritPhisFromBackedge(MBasicBlock* backedge, bool* hadTypeChange)
+MBasicBlock::inheritPhisFromBackedge(TempAllocator& alloc, MBasicBlock* backedge, bool* hadTypeChange)
 {
     // We must be a pending loop header
     MOZ_ASSERT(kind_ == PENDING_LOOP_HEADER);
@@ -1599,7 +1593,7 @@ MBasicBlock::inheritPhisFromBackedge(MBasicBlock* backedge, bool* hadTypeChange)
 
         if (!entryDef->addInputSlow(exitDef))
             return false;
-        if (!entryDef->checkForTypeChange(exitDef, &typeChange))
+        if (!entryDef->checkForTypeChange(alloc, exitDef, &typeChange))
             return false;
         *hadTypeChange |= typeChange;
         setSlot(slot, entryDef);
@@ -1609,11 +1603,11 @@ MBasicBlock::inheritPhisFromBackedge(MBasicBlock* backedge, bool* hadTypeChange)
 }
 
 bool
-MBasicBlock::specializePhis()
+MBasicBlock::specializePhis(TempAllocator& alloc)
 {
     for (MPhiIterator iter = phisBegin(); iter != phisEnd(); iter++) {
         MPhi* phi = *iter;
-        if (!phi->specializeType())
+        if (!phi->specializeType(alloc))
             return false;
     }
     return true;

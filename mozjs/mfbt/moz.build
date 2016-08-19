@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -62,8 +62,8 @@ EXPORTS.mozilla = [
     'Move.h',
     'NotNull.h',
     'NullPtr.h',
-    'NumericLimits.h',
     'Opaque.h',
+    'OperatorNewExtensions.h',
     'Pair.h',
     'PodOperations.h',
     'Poison.h',
@@ -82,8 +82,9 @@ EXPORTS.mozilla = [
     'SegmentedVector.h',
     'SHA1.h',
     'SizePrintfMacros.h',
-    'Snprintf.h',
     'SplayTree.h',
+    'Sprintf.h',
+    'StaticAnalysisFunctions.h',
     'TaggedAnonymousMemory.h',
     'TemplateLib.h',
     'ThreadLocal.h',
@@ -119,8 +120,6 @@ DEFINES['IMPL_MFBT'] = True
 SOURCES += mfbt_nonunified_src_cppsrcs
 
 DISABLE_STL_WRAPPING = True
-
-NO_EXPAND_LIBS = True
 
 # Suppress warnings in third-party LZ4 code.
 # TODO: Remove these suppressions after bug 993267 is fixed.
