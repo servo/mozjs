@@ -10,12 +10,6 @@ assertEq(Object.getOwnPropertyNames(o).length, 0);
 var o = wasmEvalText('(module (func))');
 assertEq(Object.getOwnPropertyNames(o).length, 0);
 
-var o = wasmEvalText('(module (func) (export "" 0))');
-assertEq(typeof o, "function");
-assertEq(o.name, "wasm-function[0]");
-assertEq(o.length, 0);
-assertEq(o(), undefined);
-
 var o = wasmEvalText('(module (func) (export "a" 0))');
 var names = Object.getOwnPropertyNames(o);
 assertEq(names.length, 1);
@@ -30,28 +24,13 @@ assertEq(desc.enumerable, true);
 assertEq(desc.configurable, true);
 assertEq(desc.value(), undefined);
 
-var o = wasmEvalText('(module (func) (func) (export "" 0) (export "a" 1))');
-assertEq(typeof o, "function");
-assertEq(o.name, "wasm-function[0]");
-assertEq(o.length, 0);
-assertEq(o(), undefined);
-var desc = Object.getOwnPropertyDescriptor(o, 'a');
-assertEq(typeof desc.value, "function");
-assertEq(desc.value.name, "wasm-function[1]");
-assertEq(desc.value.length, 0);
-assertEq(desc.value(), undefined);
-assertEq(desc.writable, true);
-assertEq(desc.enumerable, true);
-assertEq(desc.configurable, true);
-assertEq(desc.value(), undefined);
-
 wasmEvalText('(module (func) (func) (export "a" 0))');
 wasmEvalText('(module (func) (func) (export "a" 1))');
 wasmEvalText('(module (func $a) (func $b) (export "a" $a) (export "b" $b))');
 wasmEvalText('(module (func $a) (func $b) (export "a" $a) (export "b" $b))');
 
-assertErrorMessage(() => wasmEvalText('(module (func) (export "a" 1))'), TypeError, /export function index out of range/);
-assertErrorMessage(() => wasmEvalText('(module (func) (func) (export "a" 2))'), TypeError, /export function index out of range/);
+assertErrorMessage(() => wasmEvalText('(module (func) (export "a" 1))'), TypeError, /exported function index out of bounds/);
+assertErrorMessage(() => wasmEvalText('(module (func) (func) (export "a" 2))'), TypeError, /exported function index out of bounds/);
 
 var o = wasmEvalText('(module (func) (export "a" 0) (export "b" 0))');
 assertEq(Object.getOwnPropertyNames(o).sort().toString(), "a,b");
@@ -424,6 +403,8 @@ if (hasI64()) {
     assertErrorMessage(() => wasmEvalText('(module (import "a" "" (result i64)))'), TypeError, /NYI/);
 }
 
+assertErrorMessage(() => wasmEvalText(`(module (type $t (func)) (func (call_indirect $t (i32.const 0))))`), TypeError, /can't call_indirect without a table/);
+
 var {v2i, i2i, i2v} = wasmEvalText(`(module
     (type (func (result i32)))
     (type (func (param i32) (result i32)))
@@ -443,7 +424,7 @@ var {v2i, i2i, i2v} = wasmEvalText(`(module
     (export "i2v" 8)
 )`);
 
-const badIndirectCall = /wasm indirect call signature mismatch/;
+const badIndirectCall = /bad wasm indirect call/;
 
 assertEq(v2i(0), 13);
 assertEq(v2i(1), 42);

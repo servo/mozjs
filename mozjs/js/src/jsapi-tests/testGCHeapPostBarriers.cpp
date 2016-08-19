@@ -9,68 +9,17 @@
 
 #include "js/RootingAPI.h"
 #include "jsapi-tests/tests.h"
-
-BEGIN_TEST(testGCHeapPostBarriers)
-{
-#ifdef JS_GC_ZEAL
-    AutoLeaveZeal nozeal(cx);
-#endif /* JS_GC_ZEAL */
-
-    /* Sanity check - objects start in the nursery and then become tenured. */
-    JS_GC(cx->runtime());
-    JS::RootedObject obj(cx, NurseryObject());
-    CHECK(js::gc::IsInsideNursery(obj.get()));
-    JS_GC(cx->runtime());
-    CHECK(!js::gc::IsInsideNursery(obj.get()));
-    JS::RootedObject tenuredObject(cx, obj);
-
-    /* Currently JSObject and JSFunction objects are nursery allocated. */
-    CHECK(TestHeapPostBarriers(NurseryObject()));
-    CHECK(TestHeapPostBarriers(NurseryFunction()));
-
-    return true;
-}
-
-MOZ_NEVER_INLINE bool
-Passthrough(bool value)
-{
-    /* Work around a Win64 optimization bug in VS2010. (Bug 1033146) */
-    return value;
-}
+#include "vm/Runtime.h"
 
 template <typename T>
-bool
-TestHeapPostBarriers(T initialObj)
+static T* CreateGCThing(JSContext* cx)
 {
-    CHECK(initialObj != nullptr);
-    CHECK(js::gc::IsInsideNursery(initialObj));
-
-    /* Construct Heap<> wrapper. */
-    auto heapDataStorage = mozilla::MakeUnique<char[]>(sizeof(JS::Heap<T>));
-    auto* heapData = new (heapDataStorage.get()) JS::Heap<T>();
-    CHECK(heapData);
-    CHECK(Passthrough(*heapData == nullptr));
-    *heapData = initialObj;
-
-    /* Store the pointer as an integer so that the hazard analysis will miss it. */
-    uintptr_t initialObjAsInt = uintptr_t(initialObj);
-
-    /* Perform minor GC and check heap wrapper is udated with new pointer. */
-    cx->minorGC(JS::gcreason::API);
-    CHECK(uintptr_t(heapData) != initialObjAsInt);
-    CHECK(!js::gc::IsInsideNursery(*heapData));
-
-    /* Check object is definitely still alive. */
-    JS::Rooted<T> obj(cx, *heapData);
-    JS::RootedValue value(cx);
-    CHECK(JS_GetProperty(cx, obj, "x", &value));
-    CHECK(value.isInt32());
-    CHECK(value.toInt32() == 42);
-
-    return true;
+    MOZ_CRASH();
+    return nullptr;
 }
 
-JSObject* NurseryObject()
+template <>
+JSObject* CreateGCThing(JSContext* cx)
 {
     JS::RootedObject obj(cx, JS_NewPlainObject(cx));
     if (!obj)
@@ -79,13 +28,126 @@ JSObject* NurseryObject()
     return obj;
 }
 
-JSFunction* NurseryFunction()
+template <>
+JSFunction* CreateGCThing(JSContext* cx)
 {
     /*
      * We don't actually use the function as a function, so here we cheat and
      * cast a JSObject.
      */
-    return static_cast<JSFunction*>(NurseryObject());
+    return static_cast<JSFunction*>(CreateGCThing<JSObject>(cx));
+}
+
+BEGIN_TEST(testGCHeapPostBarriers)
+{
+#ifdef JS_GC_ZEAL
+    AutoLeaveZeal nozeal(cx);
+#endif /* JS_GC_ZEAL */
+
+    /* Sanity check - objects start in the nursery and then become tenured. */
+    JS_GC(cx);
+    JS::RootedObject obj(cx, CreateGCThing<JSObject>(cx));
+    CHECK(js::gc::IsInsideNursery(obj.get()));
+    JS_GC(cx);
+    CHECK(!js::gc::IsInsideNursery(obj.get()));
+    JS::RootedObject tenuredObject(cx, obj);
+
+    /* Currently JSObject and JSFunction objects are nursery allocated. */
+    CHECK(TestHeapPostBarriersForType<JSObject>());
+    CHECK(TestHeapPostBarriersForType<JSFunction>());
+
+    return true;
+}
+
+bool
+CanAccessObject(JSObject* obj)
+{
+    JS::RootedObject rootedObj(cx, obj);
+    JS::RootedValue value(cx);
+    CHECK(JS_GetProperty(cx, rootedObj, "x", &value));
+    CHECK(value.isInt32());
+    CHECK(value.toInt32() == 42);
+    return true;
+}
+
+template <typename T>
+bool
+TestHeapPostBarriersForType()
+{
+    CHECK((TestHeapPostBarriersForWrapper<T, JS::Heap<T*>>()));
+    CHECK((TestHeapPostBarriersForWrapper<T, js::GCPtr<T*>>()));
+    CHECK((TestHeapPostBarriersForWrapper<T, js::HeapPtr<T*>>()));
+    return true;
+}
+
+template <typename T, typename W>
+bool
+TestHeapPostBarriersForWrapper()
+{
+    CHECK((TestHeapPostBarrierUpdate<T, W>()));
+    CHECK((TestHeapPostBarrierInitFailure<T, W>()));
+    return true;
+}
+
+template <typename T, typename W>
+bool
+TestHeapPostBarrierUpdate()
+{
+    // Normal case - allocate a heap object, write a nursery pointer into it and
+    // check that it gets updated on minor GC.
+
+    T* initialObj = CreateGCThing<T>(cx);
+    CHECK(initialObj != nullptr);
+    CHECK(js::gc::IsInsideNursery(initialObj));
+    uintptr_t initialObjAsInt = uintptr_t(initialObj);
+
+    W* ptr = nullptr;
+
+    {
+        auto heapPtr = cx->make_unique<W>();
+        CHECK(heapPtr);
+
+        W& wrapper = *heapPtr;
+        CHECK(wrapper.get() == nullptr);
+        wrapper = initialObj;
+        CHECK(wrapper == initialObj);
+
+        ptr = heapPtr.release();
+    }
+
+    cx->minorGC(JS::gcreason::API);
+
+    CHECK(uintptr_t(ptr->get()) != initialObjAsInt);
+    CHECK(!js::gc::IsInsideNursery(ptr->get()));
+    CHECK(CanAccessObject(ptr->get()));
+
+    return true;
+}
+
+template <typename T, typename W>
+bool
+TestHeapPostBarrierInitFailure()
+{
+    // Failure case - allocate a heap object, write a nursery pointer into it
+    // and fail to complete initialization.
+
+    T* initialObj = CreateGCThing<T>(cx);
+    CHECK(initialObj != nullptr);
+    CHECK(js::gc::IsInsideNursery(initialObj));
+
+    {
+        auto heapPtr = cx->make_unique<W>();
+        CHECK(heapPtr);
+
+        W& wrapper = *heapPtr;
+        CHECK(wrapper.get() == nullptr);
+        wrapper = initialObj;
+        CHECK(wrapper == initialObj);
+    }
+
+    cx->minorGC(JS::gcreason::API);
+
+    return true;
 }
 
 END_TEST(testGCHeapPostBarriers)

@@ -603,7 +603,7 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock* entry, jsbytecode* start, jsbytecod
                     }
                     MPhi* oldPhi = oldDef->toPhi();
                     MPhi* newPhi = entry->getSlot(slot)->toPhi();
-                    if (!newPhi->addBackedgeType(oldPhi->type(), oldPhi->resultTypeSet()))
+                    if (!newPhi->addBackedgeType(alloc(), oldPhi->type(), oldPhi->resultTypeSet()))
                         return false;
                 }
             }
@@ -644,7 +644,7 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock* entry, jsbytecode* start, jsbytecod
             TemporaryTypeSet* typeSet = bytecodeTypes(last);
             if (!typeSet->empty()) {
                 MIRType type = typeSet->getKnownMIRType();
-                if (!phi->addBackedgeType(type, typeSet))
+                if (!phi->addBackedgeType(alloc(), type, typeSet))
                     return false;
             }
         } else if (*last == JSOP_GETLOCAL || *last == JSOP_GETARG) {
@@ -654,7 +654,7 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock* entry, jsbytecode* start, jsbytecod
             if (slot < info().firstStackSlot()) {
                 MPhi* otherPhi = entry->getSlot(slot)->toPhi();
                 if (otherPhi->hasBackedgeType()) {
-                    if (!phi->addBackedgeType(otherPhi->type(), otherPhi->resultTypeSet()))
+                    if (!phi->addBackedgeType(alloc(), otherPhi->type(), otherPhi->resultTypeSet()))
                         return false;
                 }
             }
@@ -726,7 +726,7 @@ IonBuilder::analyzeNewLoopTypes(MBasicBlock* entry, jsbytecode* start, jsbytecod
                 break;
             }
             if (type != MIRType::None) {
-                if (!phi->addBackedgeType(type, nullptr))
+                if (!phi->addBackedgeType(alloc(), type, nullptr))
                     return false;
             }
         }
@@ -2145,6 +2145,9 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_NEWTARGET:
         return jsop_newtarget();
 
+      case JSOP_CHECKISOBJ:
+        return jsop_checkisobj(GET_UINT8(pc));
+
       case JSOP_CHECKOBJCOERCIBLE:
         return jsop_checkobjcoercible();
 
@@ -2453,7 +2456,7 @@ IonBuilder::finishLoop(CFGState& state, MBasicBlock* successor)
 
     // Compute phis in the loop header and propagate them throughout the loop,
     // including the successor.
-    AbortReason r = state.loop.entry->setBackedge(current);
+    AbortReason r = state.loop.entry->setBackedge(alloc(), current);
     if (r == AbortReason_Alloc)
         return ControlStatus_Error;
     if (r == AbortReason_Disable) {
@@ -2824,7 +2827,10 @@ IonBuilder::createBreakCatchBlock(DeferredEdge* edge, jsbytecode* pc)
 
     // Finish up remaining breaks.
     while (edge) {
-        edge->block->end(MGoto::New(alloc(), successor));
+        MGoto* brk = MGoto::New(alloc().fallible(), successor);
+        if (!brk)
+            return nullptr;
+        edge->block->end(brk);
         if (!successor->addPredecessor(alloc(), edge->block))
             return nullptr;
         edge = edge->next;
@@ -6225,9 +6231,9 @@ IonBuilder::createCallObject(MDefinition* callee, MDefinition* scope)
 
     // Allocate the object. Run-once scripts need a singleton type, so always do
     // a VM call in such cases.
-    MNullaryInstruction* callObj;
-    if (script()->treatAsRunOnce())
-        callObj = MNewRunOnceCallObject::New(alloc(), templateObj);
+    MNewCallObjectBase* callObj;
+    if (script()->treatAsRunOnce() || templateObj->isSingleton())
+        callObj = MNewSingletonCallObject::New(alloc(), templateObj);
     else
         callObj = MNewCallObject::New(alloc(), templateObj);
     current->add(callObj);
@@ -6590,7 +6596,8 @@ IonBuilder::jsop_funapplyarray(uint32_t argc)
     MDefinition* nativeFunc = current->pop();
     nativeFunc->setImplicitlyUsedUnchecked();
 
-    MApplyArray* apply = MApplyArray::New(alloc(), target, argFunc, elements, argThis);
+    WrappedFunction* wrappedTarget = target ? new(alloc()) WrappedFunction(target) : nullptr;
+    MApplyArray* apply = MApplyArray::New(alloc(), wrappedTarget, argFunc, elements, argThis);
     current->add(apply);
     current->push(apply);
     if (!resumeAfter(apply))
@@ -6637,7 +6644,8 @@ IonBuilder::jsop_funapplyarguments(uint32_t argc)
         MArgumentsLength* numArgs = MArgumentsLength::New(alloc());
         current->add(numArgs);
 
-        MApplyArgs* apply = MApplyArgs::New(alloc(), target, argFunc, numArgs, argThis);
+        WrappedFunction* wrappedTarget = target ? new(alloc()) WrappedFunction(target) : nullptr;
+        MApplyArgs* apply = MApplyArgs::New(alloc(), wrappedTarget, argFunc, numArgs, argThis);
         current->add(apply);
         current->push(apply);
         if (!resumeAfter(apply))
@@ -6940,7 +6948,7 @@ IonBuilder::makeCall(JSFunction* target, CallInfo& callInfo)
     TemporaryTypeSet* types = bytecodeTypes(pc);
 
     if (call->isCallDOMNative())
-        return pushDOMTypeBarrier(call, types, call->getSingleTarget());
+        return pushDOMTypeBarrier(call, types, call->getSingleTarget()->rawJSFunction());
 
     return pushTypeBarrier(call, types, BarrierKind::TypeSet);
 }
@@ -7853,7 +7861,9 @@ IonBuilder::newOsrPreheader(MBasicBlock* predecessor, jsbytecode* loopEntry, jsb
         uint32_t slot = info().localSlot(i);
         ptrdiff_t offset = BaselineFrame::reverseOffsetOfLocal(i);
 
-        MOsrValue* osrv = MOsrValue::New(alloc(), entry, offset);
+        MOsrValue* osrv = MOsrValue::New(alloc().fallible(), entry, offset);
+        if (!osrv)
+            return nullptr;
         osrBlock->add(osrv);
         osrBlock->initSlot(slot, osrv);
     }
@@ -7864,7 +7874,9 @@ IonBuilder::newOsrPreheader(MBasicBlock* predecessor, jsbytecode* loopEntry, jsb
         uint32_t slot = info().stackSlot(i);
         ptrdiff_t offset = BaselineFrame::reverseOffsetOfLocal(info().nlocals() + i);
 
-        MOsrValue* osrv = MOsrValue::New(alloc(), entry, offset);
+        MOsrValue* osrv = MOsrValue::New(alloc().fallible(), entry, offset);
+        if (!osrv)
+            return nullptr;
         osrBlock->add(osrv);
         osrBlock->initSlot(slot, osrv);
     }
@@ -7973,7 +7985,7 @@ IonBuilder::newPendingLoopHeader(MBasicBlock* predecessor, jsbytecode* pc, bool 
             if (!typeSet)
                 return nullptr;
             MIRType type = typeSet->getKnownMIRType();
-            if (!phi->addBackedgeType(type, typeSet))
+            if (!phi->addBackedgeType(alloc(), type, typeSet))
                 return nullptr;
         }
     }
@@ -8265,12 +8277,12 @@ IonBuilder::testSingletonPropertyTypes(MDefinition* obj, jsid id)
     return nullptr;
 }
 
-bool
+ResultWithOOM<bool>
 IonBuilder::testNotDefinedProperty(MDefinition* obj, jsid id)
 {
     TemporaryTypeSet* types = obj->resultTypeSet();
     if (!types || types->unknownObject() || types->getKnownMIRType() != MIRType::Object)
-        return false;
+        return ResultWithOOM<bool>::ok(false);
 
     for (unsigned i = 0, count = types->getObjectCount(); i < count; i++) {
         TypeSet::ObjectKey* key = types->getObject(i);
@@ -8278,12 +8290,15 @@ IonBuilder::testNotDefinedProperty(MDefinition* obj, jsid id)
             continue;
 
         while (true) {
+            if (!alloc().ensureBallast())
+                return ResultWithOOM<bool>::fail();
+
             if (!key->hasStableClassAndProto(constraints()) || key->unknownProperties())
-                return false;
+                return ResultWithOOM<bool>::ok(false);
 
             const Class* clasp = key->clasp();
             if (!ClassHasEffectlessLookup(clasp) || ObjectHasExtraOwnProperty(compartment, key, id))
-                return false;
+                return ResultWithOOM<bool>::ok(false);
 
             // If the object is a singleton, we can do a lookup now to avoid
             // unnecessary invalidations later on, in case the property types
@@ -8292,12 +8307,12 @@ IonBuilder::testNotDefinedProperty(MDefinition* obj, jsid id)
                 key->singleton()->is<NativeObject>() &&
                 key->singleton()->as<NativeObject>().lookupPure(id))
             {
-                return false;
+                return ResultWithOOM<bool>::ok(false);
             }
 
             HeapTypeSetKey property = key->property(id);
             if (property.isOwnProperty(constraints()))
-                return false;
+                return ResultWithOOM<bool>::ok(false);
 
             JSObject* proto = checkNurseryObject(key->proto().toObjectOrNull());
             if (!proto)
@@ -8306,7 +8321,7 @@ IonBuilder::testNotDefinedProperty(MDefinition* obj, jsid id)
         }
     }
 
-    return true;
+    return ResultWithOOM<bool>::ok(true);
 }
 
 bool
@@ -10783,6 +10798,22 @@ IonBuilder::jsop_rest()
 }
 
 bool
+IonBuilder::jsop_checkisobj(uint8_t kind)
+{
+    MDefinition* toCheck = current->peek(-1);
+
+    if (toCheck->type() == MIRType::Object) {
+        toCheck->setImplicitlyUsedUnchecked();
+        return true;
+    }
+
+    MCheckIsObj* check = MCheckIsObj::New(alloc(), current->pop(), kind);
+    current->add(check);
+    current->push(check);
+    return true;
+}
+
+bool
 IonBuilder::jsop_checkobjcoercible()
 {
     MDefinition* toCheck = current->peek(-1);
@@ -11681,7 +11712,10 @@ IonBuilder::getPropTryNotDefined(bool* emitted, MDefinition* obj, jsid id, Tempo
         return true;
     }
 
-    if (!testNotDefinedProperty(obj, id)) {
+    ResultWithOOM<bool> res = testNotDefinedProperty(obj, id);
+    if (res.oom)
+        return false;
+    if (!res.value) {
         trackOptimizationOutcome(TrackedOutcome::GenericFailure);
         return true;
     }
@@ -12380,11 +12414,13 @@ IonBuilder::getPropTryCache(bool* emitted, MDefinition* obj, PropertyName* name,
     // Caches can read values from prototypes, so update the barrier to
     // reflect such possible values.
     if (barrier != BarrierKind::TypeSet) {
-        BarrierKind protoBarrier =
+        ResultWithOOM<BarrierKind> protoBarrier =
             PropertyReadOnPrototypeNeedsTypeBarrier(this, obj, name, types);
-        if (protoBarrier != BarrierKind::NoBarrier) {
-            MOZ_ASSERT(barrier <= protoBarrier);
-            barrier = protoBarrier;
+        if (protoBarrier.oom)
+            return false;
+        if (protoBarrier.value != BarrierKind::NoBarrier) {
+            MOZ_ASSERT(barrier <= protoBarrier.value);
+            barrier = protoBarrier.value;
         }
     }
 
@@ -13798,7 +13834,10 @@ IonBuilder::inTryFold(bool* emitted, MDefinition* obj, MDefinition* id)
     if (propId != IdToTypeId(propId))
         return true;
 
-    if (!testNotDefinedProperty(obj, propId))
+    ResultWithOOM<bool> res = testNotDefinedProperty(obj, propId);
+    if (res.oom)
+        return false;
+    if (!res.value)
         return true;
 
     *emitted = true;

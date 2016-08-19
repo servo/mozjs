@@ -147,6 +147,9 @@ accessible/xpcom/export: xpcom/xpidl/export
 # The widget binding generator code is part of the annotationProcessors.
 widget/android/bindings/export: build/annotationProcessors/export
 
+# .xpt generation needs the xpidl lex/yacc files
+xpcom/xpidl/export: xpcom/idl-parser/xpidl/export
+
 # The roboextender addon includes a classes.dex containing a test Java addon.
 # The test addon must be built first.
 mobile/android/tests/browser/robocop/roboextender/tools: mobile/android/tests/javaaddons/tools
@@ -167,9 +170,6 @@ toolkit/library/target: ldap/target
 endif
 ifeq ($(MOZ_REPLACE_MALLOC_LINKAGE),dummy library)
 mozglue/build/target memory/replace/logalloc/replay/target: memory/replace/dummy/target
-endif
-ifdef MOZ_CRT
-mozglue/crt/target: mozglue/build/target
 endif
 # js/src/target can end up invoking js/src/host rules (through object files
 # depending on jsautokw.h, which depends on host_jskwgen, and that can't

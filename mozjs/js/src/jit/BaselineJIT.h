@@ -251,15 +251,17 @@ struct BaselineScript
         MOZ_ASSERT(fallbackStubSpace_.isEmpty());
     }
 
-    static BaselineScript* New(JSScript* jsscript, uint32_t prologueOffset,
-                               uint32_t epilogueOffset, uint32_t postDebugPrologueOffset,
+    static BaselineScript* New(JSScript* jsscript,
+                               uint32_t prologueOffset, uint32_t epilogueOffset,
                                uint32_t profilerEnterToggleOffset,
                                uint32_t profilerExitToggleOffset,
                                uint32_t traceLoggerEnterToggleOffset,
                                uint32_t traceLoggerExitToggleOffset,
-                               size_t icEntries, size_t pcMappingIndexEntries,
-                               size_t pcMappingSize,
-                               size_t bytecodeTypeMapEntries, size_t yieldEntries);
+                               uint32_t postDebugPrologueOffset,
+                               size_t icEntries,
+                               size_t pcMappingIndexEntries, size_t pcMappingSize,
+                               size_t bytecodeTypeMapEntries,
+                               size_t yieldEntries);
 
     static void Trace(JSTracer* trc, BaselineScript* script);
     static void Destroy(FreeOp* fop, BaselineScript* script);
@@ -515,7 +517,7 @@ IsBaselineEnabled(JSContext* cx)
 #ifdef JS_CODEGEN_NONE
     return false;
 #else
-    return cx->runtime()->options().baseline();
+    return cx->options().baseline();
 #endif
 }
 

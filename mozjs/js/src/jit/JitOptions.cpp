@@ -117,6 +117,9 @@ DefaultJitOptions::DefaultJitOptions()
     // Toggle whether eager scalar replacement is globally disabled.
     SET_DEFAULT(disableScalarReplacement, false);
 
+    // Toggles whether CacheIR stubs are used.
+    SET_DEFAULT(disableCacheIR, false);
+
     // Toggles whether shared stubs are used in Ionmonkey.
     SET_DEFAULT(disableSharedStubs, false);
 
@@ -220,6 +223,10 @@ DefaultJitOptions::DefaultJitOptions()
 
     // Test whether wasm int64 / double NaN bits testing is enabled.
     SET_DEFAULT(wasmTestMode, false);
+
+    // Determines whether explicit bounds check will be used for OOB
+    // instead of signals (even when signals are available).
+    SET_DEFAULT(wasmExplicitBoundsChecks, false);
 }
 
 bool

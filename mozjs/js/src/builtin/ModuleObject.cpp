@@ -18,6 +18,11 @@
 using namespace js;
 using namespace js::frontend;
 
+static_assert(MODULE_STATE_FAILED < MODULE_STATE_PARSED &&
+              MODULE_STATE_PARSED < MODULE_STATE_INSTANTIATED &&
+              MODULE_STATE_INSTANTIATED < MODULE_STATE_EVALUATED,
+              "Module states are ordered incorrectly");
+
 template<typename T, Value ValueGetter(const T* obj)>
 static bool
 ModuleValueGetterImpl(JSContext* cx, const CallArgs& args)
@@ -691,7 +696,7 @@ void
 ModuleObject::init(HandleScript script)
 {
     initReservedSlot(ScriptSlot, PrivateValue(script));
-    initReservedSlot(EvaluatedSlot, BooleanValue(false));
+    initReservedSlot(StateSlot, Int32Value(MODULE_STATE_FAILED));
 }
 
 void
@@ -712,6 +717,7 @@ ModuleObject::initImportExportData(HandleArrayObject requestedModules,
     initReservedSlot(LocalExportEntriesSlot, ObjectValue(*localExportEntries));
     initReservedSlot(IndirectExportEntriesSlot, ObjectValue(*indirectExportEntries));
     initReservedSlot(StarExportEntriesSlot, ObjectValue(*starExportEntries));
+    setReservedSlot(StateSlot, Int32Value(MODULE_STATE_PARSED));
 }
 
 static bool
@@ -722,35 +728,45 @@ FreezeObjectProperty(JSContext* cx, HandleNativeObject obj, uint32_t slot)
 }
 
 /* static */ bool
-ModuleObject::FreezeArrayProperties(JSContext* cx, HandleModuleObject self)
+ModuleObject::Freeze(JSContext* cx, HandleModuleObject self)
 {
     return FreezeObjectProperty(cx, self, RequestedModulesSlot) &&
            FreezeObjectProperty(cx, self, ImportEntriesSlot) &&
            FreezeObjectProperty(cx, self, LocalExportEntriesSlot) &&
            FreezeObjectProperty(cx, self, IndirectExportEntriesSlot) &&
-           FreezeObjectProperty(cx, self, StarExportEntriesSlot);
+           FreezeObjectProperty(cx, self, StarExportEntriesSlot) &&
+           FreezeObject(cx, self);
 }
 
-static inline void
-AssertObjectPropertyFrozen(JSContext* cx, HandleNativeObject obj, uint32_t slot)
-{
 #ifdef DEBUG
+
+static inline bool
+IsObjectFrozen(JSContext* cx, HandleObject obj)
+{
     bool frozen = false;
-    RootedObject property(cx, &obj->getSlot(slot).toObject());
-    MOZ_ALWAYS_TRUE(TestIntegrityLevel(cx, property, IntegrityLevel::Frozen, &frozen));
-    MOZ_ASSERT(frozen);
-#endif
+    MOZ_ALWAYS_TRUE(TestIntegrityLevel(cx, obj, IntegrityLevel::Frozen, &frozen));
+    return frozen;
 }
 
-/* static */ inline void
-ModuleObject::AssertArrayPropertiesFrozen(JSContext* cx, HandleModuleObject self)
+static inline bool
+IsObjectPropertyFrozen(JSContext* cx, HandleNativeObject obj, uint32_t slot)
 {
-    AssertObjectPropertyFrozen(cx, self, RequestedModulesSlot);
-    AssertObjectPropertyFrozen(cx, self, ImportEntriesSlot);
-    AssertObjectPropertyFrozen(cx, self, LocalExportEntriesSlot);
-    AssertObjectPropertyFrozen(cx, self, IndirectExportEntriesSlot);
-    AssertObjectPropertyFrozen(cx, self, StarExportEntriesSlot);
+    RootedObject property(cx, &obj->getSlot(slot).toObject());
+    return IsObjectFrozen(cx, property);
 }
+
+/* static */ inline bool
+ModuleObject::IsFrozen(JSContext* cx, HandleModuleObject self)
+{
+    return IsObjectPropertyFrozen(cx, self, RequestedModulesSlot) &&
+           IsObjectPropertyFrozen(cx, self, ImportEntriesSlot) &&
+           IsObjectPropertyFrozen(cx, self, LocalExportEntriesSlot) &&
+           IsObjectPropertyFrozen(cx, self, IndirectExportEntriesSlot) &&
+           IsObjectPropertyFrozen(cx, self, StarExportEntriesSlot) &&
+           IsObjectFrozen(cx, self);
+}
+
+#endif
 
 inline static void
 AssertModuleScopesMatch(ModuleObject* module)
@@ -784,10 +800,18 @@ ModuleObject::script() const
     return static_cast<JSScript*>(getReservedSlot(ScriptSlot).toPrivate());
 }
 
-bool
-ModuleObject::evaluated() const
+static inline void
+AssertValidModuleState(ModuleState state)
 {
-    return getReservedSlot(EvaluatedSlot).toBoolean();
+    MOZ_ASSERT(state >= MODULE_STATE_FAILED && state <= MODULE_STATE_EVALUATED);
+}
+
+ModuleState
+ModuleObject::state() const
+{
+    ModuleState state = getReservedSlot(StateSlot).toInt32();
+    AssertValidModuleState(state);
+    return state;
 }
 
 Value
@@ -858,7 +882,7 @@ ModuleObject::noteFunctionDeclaration(ExclusiveContext* cx, HandleAtom name, Han
 /* static */ bool
 ModuleObject::instantiateFunctionDeclarations(JSContext* cx, HandleModuleObject self)
 {
-    AssertArrayPropertiesFrozen(cx, self);
+    MOZ_ASSERT(IsFrozen(cx, self));
 
     FunctionDeclarationVector* funDecls = self->functionDeclarations();
     if (!funDecls) {
@@ -887,16 +911,18 @@ ModuleObject::instantiateFunctionDeclarations(JSContext* cx, HandleModuleObject 
 }
 
 void
-ModuleObject::setEvaluated()
+ModuleObject::setState(int32_t newState)
 {
-    MOZ_ASSERT(!evaluated());
-    setReservedSlot(EvaluatedSlot, TrueHandleValue);
+    AssertValidModuleState(newState);
+    MOZ_ASSERT(state() != MODULE_STATE_FAILED);
+    MOZ_ASSERT(newState == MODULE_STATE_FAILED || newState > state());
+    setReservedSlot(StateSlot, Int32Value(newState));
 }
 
 /* static */ bool
 ModuleObject::evaluate(JSContext* cx, HandleModuleObject self, MutableHandleValue rval)
 {
-    AssertArrayPropertiesFrozen(cx, self);
+    MOZ_ASSERT(IsFrozen(cx, self));
 
     RootedScript script(cx, self->script());
     RootedModuleEnvironmentObject scope(cx, self->environment());
@@ -956,7 +982,7 @@ ModuleObject::Evaluation(JSContext* cx, HandleModuleObject self)
 }
 
 DEFINE_GETTER_FUNCTIONS(ModuleObject, namespace_, NamespaceSlot)
-DEFINE_GETTER_FUNCTIONS(ModuleObject, evaluated, EvaluatedSlot)
+DEFINE_GETTER_FUNCTIONS(ModuleObject, state, StateSlot)
 DEFINE_GETTER_FUNCTIONS(ModuleObject, requestedModules, RequestedModulesSlot)
 DEFINE_GETTER_FUNCTIONS(ModuleObject, importEntries, ImportEntriesSlot)
 DEFINE_GETTER_FUNCTIONS(ModuleObject, localExportEntries, LocalExportEntriesSlot)
@@ -968,7 +994,7 @@ GlobalObject::initModuleProto(JSContext* cx, Handle<GlobalObject*> global)
 {
     static const JSPropertySpec protoAccessors[] = {
         JS_PSG("namespace", ModuleObject_namespace_Getter, 0),
-        JS_PSG("evaluated", ModuleObject_evaluatedGetter, 0),
+        JS_PSG("state", ModuleObject_stateGetter, 0),
         JS_PSG("requestedModules", ModuleObject_requestedModulesGetter, 0),
         JS_PSG("importEntries", ModuleObject_importEntriesGetter, 0),
         JS_PSG("localExportEntries", ModuleObject_localExportEntriesGetter, 0),
@@ -1141,15 +1167,6 @@ ModuleBuilder::processExport(frontend::ParseNode* pn)
         }
         break;
 
-      case PNK_FUNCTION: {
-          RootedFunction func(cx_, kid->pn_funbox->function());
-          RootedAtom localName(cx_, func->name());
-          RootedAtom exportName(cx_, isDefault ? cx_->names().default_ : localName.get());
-          if (!appendExportEntry(exportName, localName))
-              return false;
-          break;
-      }
-
       case PNK_CLASS: {
           const ClassNode& cls = kid->as<ClassNode>();
           MOZ_ASSERT(cls.names());
@@ -1175,6 +1192,20 @@ ModuleBuilder::processExport(frontend::ParseNode* pn)
           }
           break;
       }
+
+      case PNK_FUNCTION: {
+          RootedFunction func(cx_, kid->pn_funbox->function());
+          if (!func->isArrow()) {
+              RootedAtom localName(cx_, func->name());
+              RootedAtom exportName(cx_, isDefault ? cx_->names().default_ : localName.get());
+              MOZ_ASSERT_IF(isDefault, localName);
+              if (!appendExportEntry(exportName, localName))
+                  return false;
+              break;
+          }
+      }
+
+      MOZ_FALLTHROUGH; // Arrow functions are handled below.
 
       default:
         MOZ_ASSERT(isDefault);

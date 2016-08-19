@@ -12,7 +12,7 @@
 #include "gc/Barrier.h"
 #include "gc/Zone.h"
 
-#include "vm/Runtime-inl.h"
+#include "vm/Caches-inl.h"
 
 namespace js {
 
@@ -44,6 +44,25 @@ js::HashNumber
 js::TaggedProto::hashCode() const
 {
     return Zone::UniqueIdToHash(uniqueId());
+}
+
+bool
+js::TaggedProto::hasUniqueId() const
+{
+    if (!isObject())
+        return true;
+    JSObject* obj = toObject();
+    return obj->zone()->hasUniqueId(obj);
+}
+
+bool
+js::TaggedProto::ensureUniqueId() const
+{
+    if (!isObject())
+        return true;
+    uint64_t unusedId;
+    JSObject* obj = toObject();
+    return obj->zone()->getUniqueId(obj, &unusedId);
 }
 
 uint64_t

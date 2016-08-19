@@ -24,12 +24,10 @@
 #include "builtin/MapObject.h"
 #include "builtin/ModuleObject.h"
 #include "builtin/Object.h"
-#include "builtin/RegExp.h"
-
-#ifdef NIGHTLY_BUILD
+#ifdef SPIDERMONKEY_PROMISE
 #include "builtin/Promise.h"
 #endif
-
+#include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/SymbolObject.h"
 #include "builtin/TypedObject.h"
@@ -100,8 +98,8 @@ js::GlobalObject::getTypedObjectModule() const {
 /* static */ bool
 GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key)
 {
-    if (key == JSProto_Wasm)
-        return !cx->runtime()->options().wasm();
+    if (key == JSProto_Wasm || key == JSProto_WebAssembly)
+        return !cx->options().wasm();
 
 #ifdef ENABLE_SHARED_ARRAY_BUFFER
     // Return true if the given constructor has been disabled at run-time.

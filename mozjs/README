@@ -1,8 +1,8 @@
-This directory contains SpiderMonkey 50.
+This directory contains SpiderMonkey 51.
 
-This release is based on a revision of Mozilla 50:
+This release is based on a revision of Mozilla 51:
   http://hg.mozilla.org/releases/
 The changes in the patches/ directory were applied.
 
-MDN hosts the latest SpiderMonkey 50 release notes:
-  https://developer.mozilla.org/en-US/docs/SpiderMonkey/50
+MDN hosts the latest SpiderMonkey 51 release notes:
+  https://developer.mozilla.org/en-US/docs/SpiderMonkey/51

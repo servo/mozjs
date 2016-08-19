@@ -410,33 +410,32 @@ MacroAssembler::callWithABINoProfiler(const Address& fun, MoveOp::Type result)
 // Branch functions
 
 void
-MacroAssembler::branchPtrInNurseryRange(Condition cond, Register ptr, Register temp,
+MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr, Register temp,
                                         Label* label)
 {
+    MOZ_ASSERT(temp != InvalidReg);  // A temp register is required for x86.
     MOZ_ASSERT(ptr != temp);
-    branchPtrInNurseryRangeImpl(cond, ptr, temp, label);
+    movePtr(ptr, temp);
+    branchPtrInNurseryChunkImpl(cond, temp, label);
 }
 
 void
-MacroAssembler::branchPtrInNurseryRange(Condition cond, const Address& address, Register temp,
+MacroAssembler::branchPtrInNurseryChunk(Condition cond, const Address& address, Register temp,
                                         Label* label)
 {
-    branchPtrInNurseryRangeImpl(cond, address, temp, label);
+    MOZ_ASSERT(temp != InvalidReg);  // A temp register is required for x86.
+    loadPtr(address, temp);
+    branchPtrInNurseryChunkImpl(cond, temp, label);
 }
 
-template <typename T>
 void
-MacroAssembler::branchPtrInNurseryRangeImpl(Condition cond, const T& ptr, Register temp,
-                                            Label* label)
+MacroAssembler::branchPtrInNurseryChunkImpl(Condition cond, Register ptr, Label* label)
 {
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
-    MOZ_ASSERT(temp != InvalidReg);  // A temp register is required for x86.
 
-    const Nursery& nursery = GetJitContext()->runtime->gcNursery();
-    movePtr(ImmWord(-ptrdiff_t(nursery.start())), temp);
-    addPtr(ptr, temp);
-    branchPtr(cond == Assembler::Equal ? Assembler::Below : Assembler::AboveOrEqual,
-              temp, Imm32(nursery.nurserySize()), label);
+    orPtr(Imm32(gc::ChunkMask), ptr);
+    branch32(cond, Address(ptr, gc::ChunkLocationOffsetFromLastByte),
+             Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
 }
 
 void
@@ -448,7 +447,7 @@ MacroAssembler::branchValueIsNurseryObject(Condition cond, const Address& addres
     Label done;
 
     branchTestObject(Assembler::NotEqual, address, cond == Assembler::Equal ? &done : label);
-    branchPtrInNurseryRange(cond, address, temp, label);
+    branchPtrInNurseryChunk(cond, address, temp, label);
 
     bind(&done);
 }
@@ -462,7 +461,7 @@ MacroAssembler::branchValueIsNurseryObject(Condition cond, ValueOperand value, R
     Label done;
 
     branchTestObject(Assembler::NotEqual, value, cond == Assembler::Equal ? &done : label);
-    branchPtrInNurseryRange(cond, value.payloadReg(), temp, label);
+    branchPtrInNurseryChunk(cond, value.payloadReg(), temp, label);
 
     bind(&done);
 }
@@ -523,5 +522,40 @@ MacroAssembler::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, c
 template void
 MacroAssembler::storeUnboxedValue(ConstantOrRegister value, MIRType valueType, const BaseIndex& dest,
                                      MIRType slotType);
+
+// wasm specific methods, used in both the wasm baseline compiler and ion.
+void
+MacroAssembler::wasmTruncateDoubleToUInt32(FloatRegister input, Register output, Label* oolEntry)
+{
+    Label done;
+    vcvttsd2si(input, output);
+    branch32(Assembler::Condition::NotSigned, output, Imm32(0), &done);
+
+    loadConstantDouble(double(int32_t(0x80000000)), ScratchDoubleReg);
+    addDouble(input, ScratchDoubleReg);
+    vcvttsd2si(ScratchDoubleReg, output);
+
+    branch32(Assembler::Condition::Signed, output, Imm32(0), oolEntry);
+    or32(Imm32(0x80000000), output);
+
+    bind(&done);
+}
+
+void
+MacroAssembler::wasmTruncateFloat32ToUInt32(FloatRegister input, Register output, Label* oolEntry)
+{
+    Label done;
+    vcvttss2si(input, output);
+    branch32(Assembler::Condition::NotSigned, output, Imm32(0), &done);
+
+    loadConstantFloat32(float(int32_t(0x80000000)), ScratchFloat32Reg);
+    addFloat32(input, ScratchFloat32Reg);
+    vcvttss2si(ScratchFloat32Reg, output);
+
+    branch32(Assembler::Condition::Signed, output, Imm32(0), oolEntry);
+    or32(Imm32(0x80000000), output);
+
+    bind(&done);
+}
 
 //}}} check_macroassembler_style
