@@ -453,6 +453,7 @@ Proxy::getBuiltinClass(JSContext* cx, HandleObject proxy, ESClass* cls)
 bool
 Proxy::isArray(JSContext* cx, HandleObject proxy, JS::IsArrayAnswer* answer)
 {
+    JS_CHECK_RECURSION(cx, return false);
     return proxy->as<ProxyObject>().handler()->isArray(cx, proxy, answer);
 }
 
@@ -616,7 +617,7 @@ ProxyObject::trace(JSTracer* trc, JSObject* obj)
 {
     ProxyObject* proxy = &obj->as<ProxyObject>();
 
-    TraceEdge(trc, &proxy->shape, "ProxyObject_shape");
+    TraceEdge(trc, &proxy->shape_, "ProxyObject_shape");
 
 #ifdef DEBUG
     if (trc->runtime()->gc.isStrictProxyCheckingEnabled() && proxy->is<WrapperObject>()) {

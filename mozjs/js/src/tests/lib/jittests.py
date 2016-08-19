@@ -223,7 +223,8 @@ class JitTest:
                             # is translated to wasm
                             test.test_also.append(['--wasm-always-baseline'])
                     elif name == 'test-also-wasm-baseline':
-                        test.test_also.append(['--wasm-always-baseline'])
+                        if options.can_test_also_wasm_baseline:
+                            test.test_also.append(['--wasm-always-baseline'])
                     elif name.startswith('test-also='):
                         test.test_also.append([name[len('test-also='):]])
                     elif name.startswith('test-join='):
@@ -496,6 +497,7 @@ def process_test_results(results, num_tests, pb, options):
     failures = []
     timeouts = 0
     complete = False
+    output_dict = {}
     doing = 'before starting'
 
     if num_tests == 0:
@@ -522,6 +524,13 @@ def process_test_results(results, num_tests, pb, options):
             if res.test.valgrind and not show_output:
                 pb.beginline()
                 sys.stdout.write(res.err)
+
+            if options.check_output:
+                if res.test.path in output_dict.keys():
+                    if output_dict[res.test.path] != res.out:
+                        pb.message("FAIL - OUTPUT DIFFERS {}".format(res.test.relpath_tests))
+                else:
+                    output_dict[res.test.path] = res.out
 
             doing = 'after {}'.format(res.test.relpath_tests)
             if not ok:

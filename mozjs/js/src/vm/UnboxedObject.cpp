@@ -141,7 +141,7 @@ UnboxedLayout::makeConstructorCode(JSContext* cx, HandleObjectGroup group)
             Label notObject;
             masm.branchTestObject(Assembler::NotEqual, valueAddress, &notObject);
             Register valueObject = masm.extractObject(valueAddress, scratch1);
-            masm.branchPtrInNurseryRange(Assembler::Equal, valueObject, scratch2, &postBarrier);
+            masm.branchPtrInNurseryChunk(Assembler::Equal, valueObject, scratch2, &postBarrier);
             masm.bind(&notObject);
         }
     }
@@ -1920,7 +1920,7 @@ UnboxedPlainObject::fillAfterConvert(ExclusiveContext* cx,
 }
 
 bool
-js::TryConvertToUnboxedLayout(ExclusiveContext* cx, Shape* templateShape,
+js::TryConvertToUnboxedLayout(ExclusiveContext* cx, AutoEnterAnalysis& enter, Shape* templateShape,
                               ObjectGroup* group, PreliminaryObjectArray* objects)
 {
     bool isArray = !templateShape;
@@ -1930,7 +1930,7 @@ js::TryConvertToUnboxedLayout(ExclusiveContext* cx, Shape* templateShape,
     if (isArray) {
 #ifdef NIGHTLY_BUILD
         if (!getenv("JS_OPTION_USE_UNBOXED_ARRAYS")) {
-            if (!group->runtimeFromAnyThread()->options().unboxedArrays())
+            if (!cx->options().unboxedArrays())
                 return true;
         }
 #else
@@ -2015,7 +2015,9 @@ js::TryConvertToUnboxedLayout(ExclusiveContext* cx, Shape* templateShape,
             return true;
     }
 
-    AutoInitGCManagedObject<UnboxedLayout> layout(group->zone()->make_unique<UnboxedLayout>());
+    UniquePtr<UnboxedLayout>& layout = enter.unboxedLayoutToCleanUp;
+    MOZ_ASSERT(!layout);
+    layout = group->zone()->make_unique<UnboxedLayout>();
     if (!layout)
         return false;
 
@@ -2089,7 +2091,6 @@ js::TryConvertToUnboxedLayout(ExclusiveContext* cx, Shape* templateShape,
     }
 
     MOZ_ASSERT(valueCursor == values.length());
-    layout.release();
     return true;
 }
 

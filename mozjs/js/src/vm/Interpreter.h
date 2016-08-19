@@ -323,7 +323,7 @@ extern JSType
 TypeOfValue(const Value& v);
 
 extern bool
-InstanceOfOperator(JSContext* cx, HandleObject obj, MutableHandleValue v, bool* bp);
+InstanceOfOperator(JSContext* cx, HandleObject obj, HandleValue v, bool* bp);
 
 extern bool
 HasInstance(JSContext* cx, HandleObject obj, HandleValue v, bool* bp);
@@ -558,6 +558,13 @@ ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber, HandleScript scri
 void
 ReportRuntimeRedeclaration(JSContext* cx, HandlePropertyName name,
                            frontend::Definition::Kind declKind);
+
+enum class CheckIsObjectKind : uint8_t {
+    IteratorNext
+};
+
+bool
+ThrowCheckIsObject(JSContext* cx, CheckIsObjectKind kind);
 
 bool
 ThrowUninitializedThis(JSContext* cx, AbstractFramePtr frame);

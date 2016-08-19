@@ -61,6 +61,7 @@ struct DefaultJitOptions
     bool disableRangeAnalysis;
     bool disableRecoverIns;
     bool disableScalarReplacement;
+    bool disableCacheIR;
     bool disableSharedStubs;
     bool disableSincos;
     bool disableSink;
@@ -69,6 +70,7 @@ struct DefaultJitOptions
     bool limitScriptSize;
     bool osr;
     bool wasmTestMode;
+    bool wasmExplicitBoundsChecks;
     uint32_t baselineWarmUpThreshold;
     uint32_t exceptionBailoutThreshold;
     uint32_t frequentBailoutThreshold;

@@ -107,8 +107,6 @@ struct LinearMemoryAddress
     {}
 };
 
-struct Nothing {};
-
 template <typename ControlItem>
 class ControlStackEntry
 {
@@ -204,12 +202,6 @@ struct ExprIterPolicy
     // Should the iterator produce output values?
     static const bool Output = false;
 
-    // This function is called to report failures.
-    static bool fail(const char*, const Decoder&) {
-        MOZ_CRASH("unexpected validation failure");
-        return false;
-    }
-
     // These members allow clients to add additional information to the value
     // and control stacks, respectively. Using Nothing means that no additional
     // field is added.
@@ -277,13 +269,13 @@ class MOZ_STACK_CLASS ExprIter : private Policy
     MOZ_MUST_USE bool readFixedF32(float* out) {
         if (Validate)
             return d_.readFixedF32(out);
-        *out = d_.uncheckedReadFixedF32();
+        d_.uncheckedReadFixedF32(out);
         return true;
     }
     MOZ_MUST_USE bool readFixedF64(double* out) {
         if (Validate)
             return d_.readFixedF64(out);
-        *out = d_.uncheckedReadFixedF64();
+        d_.uncheckedReadFixedF64(out);
         return true;
     }
     MOZ_MUST_USE bool readFixedI8x16(I8x16* out) {
@@ -414,8 +406,8 @@ class MOZ_STACK_CLASS ExprIter : private Policy
     }
 
   public:
-    ExprIter(Policy policy, Decoder& decoder)
-      : Policy(policy), d_(decoder)
+    explicit ExprIter(Decoder& decoder)
+      : d_(decoder)
     {
         expr_ = Expr::Limit;
     }
@@ -594,8 +586,9 @@ ExprIter<Policy>::unrecognizedOpcode(Expr expr)
 
 template <typename Policy>
 inline bool
-ExprIter<Policy>::fail(const char* msg) {
-    return Policy::fail(msg, d_);
+ExprIter<Policy>::fail(const char* msg)
+{
+    return d_.fail(msg);
 }
 
 template <typename Policy>
@@ -1218,7 +1211,7 @@ ExprIter<Policy>::readGetGlobal(const GlobalDescVector& globals, uint32_t* id)
     if (Validate && validateId >= globals.length())
         return fail("get_global index out of range");
 
-    if (!push(ToExprType(globals[validateId].type)))
+    if (!push(ToExprType(globals[validateId].type())))
         return false;
 
     if (Output)
@@ -1240,7 +1233,10 @@ ExprIter<Policy>::readSetGlobal(const GlobalDescVector& globals, uint32_t* id, V
     if (Validate && validateId >= globals.length())
         return fail("set_global index out of range");
 
-    if (!topWithType(ToExprType(globals[validateId].type), value))
+    if (Validate && !globals[validateId].isMutable())
+        return fail("can't write an immutable global");
+
+    if (!topWithType(ToExprType(globals[validateId].type()), value))
         return false;
 
     if (Output)
@@ -1277,17 +1273,9 @@ ExprIter<Policy>::readF32Const(float* f32)
 {
     MOZ_ASSERT(Classify(expr_) == ExprKind::F32);
 
-    float validateF32;
-    if (!readFixedF32(Output ? f32 : &validateF32))
-        return false;
-
-    if (Validate && mozilla::IsNaN(Output ? *f32 : validateF32)) {
-        const float jsNaN = (float)JS::GenericNaN();
-        if (memcmp(Output ? f32 : &validateF32, &jsNaN, sizeof(*f32)) != 0)
-            return notYetImplemented("NaN literals with custom payloads");
-    }
-
-    return push(ExprType::F32);
+    float unused;
+    return readFixedF32(Output ? f32 : &unused) &&
+           push(ExprType::F32);
 }
 
 template <typename Policy>
@@ -1296,17 +1284,9 @@ ExprIter<Policy>::readF64Const(double* f64)
 {
     MOZ_ASSERT(Classify(expr_) == ExprKind::F64);
 
-    double validateF64;
-    if (!readFixedF64(Output ? f64 : &validateF64))
-       return false;
-
-    if (Validate && mozilla::IsNaN(Output ? *f64 : validateF64)) {
-        const double jsNaN = JS::GenericNaN();
-        if (memcmp(Output ? f64 : &validateF64, &jsNaN, sizeof(*f64)) != 0)
-            return notYetImplemented("NaN literals with custom payloads");
-    }
-
-    return push(ExprType::F64);
+    double unused;
+    return readFixedF64(Output ? f64 : &unused) &&
+           push(ExprType::F64);
 }
 
 template <typename Policy>
@@ -1836,8 +1816,8 @@ ExprIter<Policy>::readSimdCtorReturn(ValType simdType)
 namespace mozilla {
 
 // Specialize IsPod for the Nothing specializations.
-template<> struct IsPod<js::wasm::TypeAndValue<js::wasm::Nothing>> : TrueType {};
-template<> struct IsPod<js::wasm::ControlStackEntry<js::wasm::Nothing>> : TrueType {};
+template<> struct IsPod<js::wasm::TypeAndValue<Nothing>> : TrueType {};
+template<> struct IsPod<js::wasm::ControlStackEntry<Nothing>> : TrueType {};
 
 } // namespace mozilla
 

@@ -586,9 +586,6 @@ FindScopeObjectIndex(JSScript* script, NestedStaticScope& scope)
     MOZ_CRASH("Scope not found");
 }
 
-static bool
-SaveSharedScriptData(ExclusiveContext*, Handle<JSScript*>, SharedScriptData*, uint32_t);
-
 enum XDRClassKind {
     CK_BlockObject  = 0,
     CK_WithObject   = 1,
@@ -880,7 +877,6 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
 
         MOZ_ASSERT(!script->mainOffset());
         script->mainOffset_ = prologueLength;
-        script->setLength(length);
         script->funLength_ = funLength;
 
         scriptp.set(script);
@@ -954,22 +950,18 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
         script->nslots_ = nslots;
     }
 
-    jsbytecode* code = script->code();
-    SharedScriptData* ssd;
+    auto scriptDataGuard = mozilla::MakeScopeExit([&] {
+        if (mode == XDR_DECODE)
+            script->freeScriptData();
+    });
+
     if (mode == XDR_DECODE) {
-        ssd = SharedScriptData::new_(cx, length, nsrcnotes, natoms);
-        if (!ssd)
+        if (!script->createScriptData(cx, length, nsrcnotes, natoms))
             return false;
-        code = ssd->data;
-        if (natoms != 0) {
-            script->natoms_ = natoms;
-            script->atoms = ssd->atoms();
-        }
     }
 
+    jsbytecode* code = script->code();
     if (!xdr->codeBytes(code, length) || !xdr->codeBytes(code + length, nsrcnotes)) {
-        if (mode == XDR_DECODE)
-            js_free(ssd);
         return false;
     }
 
@@ -978,16 +970,17 @@ js::XDRScript(XDRState<mode>* xdr, HandleObject enclosingScopeArg, HandleScript 
             RootedAtom tmp(cx);
             if (!XDRAtom(xdr, &tmp))
                 return false;
-            script->atoms[i].init(tmp);
+            script->atoms()[i].init(tmp);
         } else {
-            RootedAtom tmp(cx, script->atoms[i]);
+            RootedAtom tmp(cx, script->atoms()[i]);
             if (!XDRAtom(xdr, &tmp))
                 return false;
         }
     }
 
+    scriptDataGuard.release();
     if (mode == XDR_DECODE) {
-        if (!SaveSharedScriptData(cx, script, ssd, nsrcnotes))
+        if (!script->shareScriptData(cx))
             return false;
     }
 
@@ -1861,8 +1854,6 @@ ScriptSource::chars(JSContext* cx, UncompressedSourceCache::AutoHoldEntry& holde
 {
     struct CharsMatcher
     {
-        using ReturnType = const char16_t*;
-
         JSContext* cx;
         ScriptSource& ss;
         UncompressedSourceCache::AutoHoldEntry& holder;
@@ -1874,12 +1865,12 @@ ScriptSource::chars(JSContext* cx, UncompressedSourceCache::AutoHoldEntry& holde
           , holder(holder)
         { }
 
-        ReturnType match(Uncompressed& u) {
+        const char16_t* match(Uncompressed& u) {
             return u.string.chars();
         }
 
-        ReturnType match(Compressed& c) {
-            if (const char16_t* decompressed = cx->runtime()->uncompressedSourceCache.lookup(&ss, holder))
+        const char16_t* match(Compressed& c) {
+            if (const char16_t* decompressed = cx->caches.uncompressedSourceCache.lookup(&ss, holder))
                 return decompressed;
 
             const size_t lengthWithNull = ss.length() + 1;
@@ -1916,15 +1907,15 @@ ScriptSource::chars(JSContext* cx, UncompressedSourceCache::AutoHoldEntry& holde
                 return ss.data.as<Uncompressed>().string.chars();
             }
 
-            ReturnType ret = decompressed.get();
-            if (!cx->runtime()->uncompressedSourceCache.put(&ss, Move(decompressed), holder)) {
+            const char16_t* ret = decompressed.get();
+            if (!cx->caches.uncompressedSourceCache.put(&ss, Move(decompressed), holder)) {
                 JS_ReportOutOfMemory(cx);
                 return nullptr;
             }
             return ret;
         }
 
-        ReturnType match(Missing&) {
+        const char16_t* match(Missing&) {
             MOZ_CRASH("ScriptSource::chars() on ScriptSource with SourceType = Missing");
             return nullptr;
         }
@@ -2147,17 +2138,15 @@ ScriptSource::performXDR(XDRState<mode>* xdr)
 {
     struct CompressedLengthMatcher
     {
-        using ReturnType = size_t;
-
-        ReturnType match(Uncompressed&) {
+        size_t match(Uncompressed&) {
             return 0;
         }
 
-        ReturnType match(Compressed& c) {
+        size_t match(Compressed& c) {
             return c.raw.length();
         }
 
-        ReturnType match(Missing&) {
+        size_t match(Missing&) {
             MOZ_CRASH("Missing source data in ScriptSource::performXDR");
             return 0;
         }
@@ -2165,17 +2154,15 @@ ScriptSource::performXDR(XDRState<mode>* xdr)
 
     struct RawDataMatcher
     {
-        using ReturnType = void*;
-
-        ReturnType match(Uncompressed& u) {
+        void* match(Uncompressed& u) {
             return (void*) u.string.chars();
         }
 
-        ReturnType match(Compressed& c) {
+        void* match(Compressed& c) {
             return (void*) c.raw.chars();
         }
 
-        ReturnType match(Missing&) {
+        void* match(Missing&) {
             MOZ_CRASH("Missing source data in ScriptSource::performXDR");
             return nullptr;
         }
@@ -2318,7 +2305,7 @@ FormatIntroducedFilename(ExclusiveContext* cx, const char* filename, unsigned li
     // and wants us to use a special free function.)
     char linenoBuf[15];
     size_t filenameLen = strlen(filename);
-    size_t linenoLen = JS_snprintf(linenoBuf, 15, "%u", lineno);
+    size_t linenoLen = snprintf(linenoBuf, sizeof(linenoBuf), "%u", lineno);
     size_t introducerLen = strlen(introducer);
     size_t len = filenameLen                    +
                  6 /* == strlen(" line ") */    +
@@ -2331,8 +2318,8 @@ FormatIntroducedFilename(ExclusiveContext* cx, const char* filename, unsigned li
         ReportOutOfMemory(cx);
         return nullptr;
     }
-    mozilla::DebugOnly<size_t> checkLen = JS_snprintf(formatted, len, "%s line %s > %s",
-                                                      filename, linenoBuf, introducer);
+    mozilla::DebugOnly<size_t> checkLen = snprintf(formatted, len, "%s line %s > %s",
+                                                   filename, linenoBuf, introducer);
     MOZ_ASSERT(checkLen == len - 1);
 
     return formatted;
@@ -2422,39 +2409,58 @@ SharedScriptData*
 js::SharedScriptData::new_(ExclusiveContext* cx, uint32_t codeLength,
                            uint32_t srcnotesLength, uint32_t natoms)
 {
-    /*
-     * Ensure the atoms are aligned, as some architectures don't allow unaligned
-     * access.
-     */
-    const uint32_t pointerSize = sizeof(JSAtom*);
-    const uint32_t pointerMask = pointerSize - 1;
-    const uint32_t dataOffset = offsetof(SharedScriptData, data);
-    uint32_t baseLength = codeLength + srcnotesLength;
-    uint32_t padding = (pointerSize - ((baseLength + dataOffset) & pointerMask)) & pointerMask;
-    uint32_t length = baseLength + padding + pointerSize * natoms;
-
-    SharedScriptData* entry = reinterpret_cast<SharedScriptData*>(
-            cx->zone()->pod_malloc<uint8_t>(length + dataOffset));
+    uint32_t dataLength = natoms * sizeof(GCPtrAtom) + codeLength + srcnotesLength;
+    uint32_t allocLength = offsetof(SharedScriptData, data_) + dataLength;
+    auto entry = reinterpret_cast<SharedScriptData*>(cx->zone()->pod_malloc<uint8_t>(allocLength));
     if (!entry) {
         ReportOutOfMemory(cx);
         return nullptr;
     }
 
-    entry->length = length;
-    entry->natoms = natoms;
-    entry->marked = false;
-    memset(entry->data + baseLength, 0, padding);
+    entry->refCount_ = 0;
+    entry->dataLength_ = dataLength;
+    entry->natoms_ = natoms;
+    entry->codeLength_ = codeLength;
 
     /*
      * Call constructors to initialize the storage that will be accessed as a
      * GCPtrAtom array via atoms().
      */
     GCPtrAtom* atoms = entry->atoms();
-    MOZ_ASSERT(reinterpret_cast<uintptr_t>(atoms) % sizeof(JSAtom*) == 0);
+    MOZ_ASSERT(reinterpret_cast<uintptr_t>(atoms) % sizeof(GCPtrAtom*) == 0);
     for (unsigned i = 0; i < natoms; ++i)
         new (&atoms[i]) GCPtrAtom();
 
     return entry;
+}
+
+bool
+JSScript::createScriptData(ExclusiveContext* cx, uint32_t codeLength, uint32_t srcnotesLength,
+                           uint32_t natoms)
+{
+    MOZ_ASSERT(!scriptData());
+    SharedScriptData* ssd = SharedScriptData::new_(cx, codeLength, srcnotesLength, natoms);
+    if (!ssd)
+        return false;
+
+    setScriptData(ssd);
+    return true;
+}
+
+void
+JSScript::freeScriptData()
+{
+    MOZ_ASSERT(scriptData_->refCount() == 1);
+    scriptData_->decRefCount();
+    scriptData_ = nullptr;
+}
+
+void
+JSScript::setScriptData(js::SharedScriptData* data)
+{
+    MOZ_ASSERT(!scriptData_);
+    scriptData_ = data;
+    scriptData_->incRefCount();
 }
 
 /*
@@ -2463,12 +2469,12 @@ js::SharedScriptData::new_(ExclusiveContext* cx, uint32_t codeLength,
  *
  * Sets the |code| and |atoms| fields on the given JSScript.
  */
-static bool
-SaveSharedScriptData(ExclusiveContext* cx, Handle<JSScript*> script, SharedScriptData* ssd,
-                     uint32_t nsrcnotes)
+bool
+JSScript::shareScriptData(ExclusiveContext* cx)
 {
-    MOZ_ASSERT(script != nullptr);
-    MOZ_ASSERT(ssd != nullptr);
+    SharedScriptData* ssd = scriptData();
+    MOZ_ASSERT(ssd);
+    MOZ_ASSERT(ssd->refCount() == 1);
 
     AutoLockForExclusiveAccess lock(cx);
 
@@ -2476,71 +2482,36 @@ SaveSharedScriptData(ExclusiveContext* cx, Handle<JSScript*> script, SharedScrip
 
     ScriptDataTable::AddPtr p = cx->scriptDataTable(lock).lookupForAdd(l);
     if (p) {
-        js_free(ssd);
-        ssd = *p;
+        MOZ_ASSERT(ssd != *p);
+        freeScriptData();
+        setScriptData(*p);
     } else {
         if (!cx->scriptDataTable(lock).add(p, ssd)) {
-            script->setCode(nullptr);
-            script->atoms = nullptr;
-            js_free(ssd);
+            freeScriptData();
             ReportOutOfMemory(cx);
             return false;
         }
+
+        // Being in the table counts as a reference on the script data.
+        scriptData()->incRefCount();
     }
 
-    /*
-     * During the IGC we need to ensure that bytecode is marked whenever it is
-     * accessed even if the bytecode was already in the table: at this point
-     * old scripts or exceptions pointing to the bytecode may no longer be
-     * reachable. This is effectively a read barrier.
-     */
-    if (cx->isJSContext()) {
-        JSRuntime* rt = cx->asJSContext()->runtime();
-        if (JS::IsIncrementalGCInProgress(rt) && rt->gc.isFullGc())
-            ssd->marked = true;
-    }
-
-    script->setCode(ssd->data);
-    script->atoms = ssd->atoms();
+    MOZ_ASSERT(scriptData()->refCount() >= 2);
     return true;
-}
-
-static inline void
-MarkScriptData(JSRuntime* rt, const jsbytecode* bytecode)
-{
-    /*
-     * As an invariant, a ScriptBytecodeEntry should not be 'marked' outside of
-     * a GC. Since SweepScriptBytecodes is only called during a full gc,
-     * to preserve this invariant, only mark during a full gc.
-     */
-    if (rt->gc.isFullGc())
-        SharedScriptData::fromBytecode(bytecode)->marked = true;
-}
-
-void
-js::UnmarkScriptData(JSRuntime* rt, AutoLockForExclusiveAccess& lock)
-{
-    MOZ_ASSERT(rt->gc.isFullGc());
-    ScriptDataTable& table = rt->scriptDataTable(lock);
-    for (ScriptDataTable::Enum e(table); !e.empty(); e.popFront()) {
-        SharedScriptData* entry = e.front();
-        entry->marked = false;
-    }
 }
 
 void
 js::SweepScriptData(JSRuntime* rt, AutoLockForExclusiveAccess& lock)
 {
-    MOZ_ASSERT(rt->gc.isFullGc());
+    // Entries are removed from the table when their reference count is one,
+    // i.e. when the only reference to them is from the table entry.
+
     ScriptDataTable& table = rt->scriptDataTable(lock);
 
-    if (rt->keepAtoms())
-        return;
-
     for (ScriptDataTable::Enum e(table); !e.empty(); e.popFront()) {
-        SharedScriptData* entry = e.front();
-        if (!entry->marked) {
-            js_free(entry);
+        SharedScriptData* scriptData = e.front();
+        if (scriptData->refCount() == 1) {
+            scriptData->decRefCount();
             e.removeFront();
         }
     }
@@ -2553,8 +2524,14 @@ js::FreeScriptData(JSRuntime* rt, AutoLockForExclusiveAccess& lock)
     if (!table.initialized())
         return;
 
-    for (ScriptDataTable::Enum e(table); !e.empty(); e.popFront())
+    for (ScriptDataTable::Enum e(table); !e.empty(); e.popFront()) {
+#ifdef DEBUG
+        SharedScriptData* scriptData = e.front();
+        fprintf(stderr, "ERROR: GC found live SharedScriptData %p with ref count %d at shutdown\n",
+                scriptData, scriptData->refCount());
+#endif
         js_free(e.front());
+    }
 
     table.clear();
 }
@@ -2839,14 +2816,13 @@ JSScript::fullyInitTrivial(ExclusiveContext* cx, Handle<JSScript*> script)
     if (!partiallyInit(cx, script, 0, 0, 0, 0, 0, 0))
         return false;
 
-    SharedScriptData* ssd = SharedScriptData::new_(cx, 1, 1, 0);
-    if (!ssd)
+    if (!script->createScriptData(cx, 1, 1, 0))
         return false;
 
-    ssd->data[0] = JSOP_RETRVAL;
-    ssd->data[1] = SRC_NULL;
-    script->setLength(1);
-    return SaveSharedScriptData(cx, script, ssd, 1);
+    jsbytecode* code = script->code();
+    code[0] = JSOP_RETRVAL;
+    code[1] = SRC_NULL;
+    return script->shareScriptData(cx);
 }
 
 /* static */ void
@@ -2932,19 +2908,16 @@ JSScript::fullyInitFromEmitter(ExclusiveContext* cx, HandleScript script, Byteco
 
     script->lineno_ = bce->firstLine;
 
-    script->setLength(prologueLength + mainLength);
-    script->natoms_ = natoms;
-    SharedScriptData* ssd = SharedScriptData::new_(cx, script->length(), nsrcnotes, natoms);
-    if (!ssd)
+    if (!script->createScriptData(cx, prologueLength + mainLength, nsrcnotes, natoms))
         return false;
 
-    jsbytecode* code = ssd->data;
+    jsbytecode* code = script->code();
     PodCopy<jsbytecode>(code, bce->prologue.code.begin(), prologueLength);
     PodCopy<jsbytecode>(code + prologueLength, bce->main.code.begin(), mainLength);
     bce->copySrcNotes((jssrcnote*)(code + script->length()), nsrcnotes);
-    InitAtomMap(bce->atomIndices.getMap(), ssd->atoms());
+    InitAtomMap(bce->atomIndices.getMap(), script->atoms());
 
-    if (!SaveSharedScriptData(cx, script, ssd, nsrcnotes))
+    if (!script->shareScriptData(cx))
         return false;
 
     if (bce->constList.length() != 0)
@@ -3158,7 +3131,10 @@ JSScript::finalize(FreeOp* fop)
         fop->free_(data);
     }
 
-    fop->runtime()->lazyScriptCache.remove(this);
+    if (scriptData_)
+        scriptData_->decRefCount();
+
+    fop->runtime()->contextFromMainThread()->caches.lazyScriptCache.remove(this);
 
     // In most cases, our LazyScript's script pointer will reference this
     // script, and thus be nulled out by normal weakref processing. However, if
@@ -3237,7 +3213,7 @@ js::GetSrcNote(GSNCache& cache, JSScript* script, jsbytecode* pc)
 jssrcnote*
 js::GetSrcNote(JSContext* cx, JSScript* script, jsbytecode* pc)
 {
-    return GetSrcNote(cx->runtime()->gsnCache, script, pc);
+    return GetSrcNote(cx->caches.gsnCache, script, pc);
 }
 
 unsigned
@@ -3563,16 +3539,15 @@ js::detail::CopyScript(JSContext* cx, HandleObject scriptStaticScope, HandleScri
     /* This assignment must occur before all the Rebase calls. */
     dst->data = data.forget();
     dst->dataSize_ = size;
-    memcpy(dst->data, src->data, size);
+    MOZ_ASSERT(bool(dst->data) == bool(src->data));
+    if (dst->data)
+        memcpy(dst->data, src->data, size);
 
     /* Script filenames, bytecodes and atoms are runtime-wide. */
-    dst->setCode(src->code());
-    dst->atoms = src->atoms;
+    dst->setScriptData(src->scriptData());
 
-    dst->setLength(src->length());
     dst->lineno_ = src->lineno();
     dst->mainOffset_ = src->mainOffset();
-    dst->natoms_ = src->natoms();
     dst->funLength_ = src->funLength();
     dst->nTypeSets_ = src->nTypeSets();
     dst->nslots_ = src->nslots();
@@ -3919,6 +3894,14 @@ JSScript::hasBreakpointsAt(jsbytecode* pc)
 }
 
 void
+SharedScriptData::traceChildren(JSTracer* trc)
+{
+    MOZ_ASSERT(refCount() != 0);
+    for (uint32_t i = 0; i < natoms(); ++i)
+        TraceNullableEdge(trc, &atoms()[i], "atom");
+}
+
+void
 JSScript::traceChildren(JSTracer* trc)
 {
     // NOTE: this JSScript may be partially initialized at this point.  E.g. we
@@ -3930,10 +3913,8 @@ JSScript::traceChildren(JSTracer* trc)
                   static_cast<GCMarker*>(trc)->shouldCheckCompartments(),
                   zone()->isCollecting());
 
-    if (atoms) {
-        for (uint32_t i = 0; i < natoms(); ++i)
-            TraceNullableEdge(trc, &atoms[i], "atom");
-    }
+    if (scriptData())
+        scriptData()->traceChildren(trc);
 
     if (hasObjects()) {
         ObjectArray* objarray = objects();
@@ -3956,12 +3937,8 @@ JSScript::traceChildren(JSTracer* trc)
     if (maybeLazyScript())
         TraceManuallyBarrieredEdge(trc, &lazyScript, "lazyScript");
 
-    if (trc->isMarkingTracer()) {
+    if (trc->isMarkingTracer())
         compartment()->mark();
-
-        if (code())
-            MarkScriptData(trc->runtime(), code());
-    }
 
     bindings.trace(trc);
 
@@ -4161,7 +4138,7 @@ JSScript::argumentsOptimizationFailed(JSContext* cx, HandleScript script)
      *    assumption of !script->needsArgsObj();
      *  - type inference data for the script assuming script->needsArgsObj
      */
-    for (AllFramesIter i(cx); !i.done(); ++i) {
+    for (AllScriptFramesIter i(cx); !i.done(); ++i) {
         /*
          * We cannot reliably create an arguments object for Ion activations of
          * this script.  To maintain the invariant that "script->needsArgsObj

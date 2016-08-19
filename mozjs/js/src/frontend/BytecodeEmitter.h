@@ -19,6 +19,7 @@
 #include "frontend/Parser.h"
 #include "frontend/SharedContext.h"
 #include "frontend/SourceNotes.h"
+#include "vm/Interpreter.h"
 
 namespace js {
 
@@ -504,6 +505,9 @@ struct BytecodeEmitter
     // JS stack, as measured from the top.
     MOZ_MUST_USE bool emitDupAt(unsigned slotFromTop);
 
+    // Helper to emit JSOP_CHECKISOBJ.
+    MOZ_MUST_USE bool emitCheckIsObj(CheckIsObjectKind kind);
+
     // Emit a bytecode followed by an uint16 immediate operand stored in
     // big-endian order.
     MOZ_MUST_USE bool emitUint16Operand(JSOp op, uint32_t operand);
@@ -709,7 +713,6 @@ struct BytecodeEmitter
     MOZ_MUST_USE bool emitOptimizeSpread(ParseNode* arg0, JumpList* jmp, bool* emitted);
 
     MOZ_MUST_USE bool emitCallOrNew(ParseNode* pn);
-    MOZ_MUST_USE bool emitDebugOnlyCheckSelfHosted();
     MOZ_MUST_USE bool emitSelfHostedCallFunction(ParseNode* pn);
     MOZ_MUST_USE bool emitSelfHostedResumeGenerator(ParseNode* pn);
     MOZ_MUST_USE bool emitSelfHostedForceInterpreter(ParseNode* pn);

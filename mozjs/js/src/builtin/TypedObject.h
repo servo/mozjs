@@ -13,6 +13,7 @@
 #include "builtin/TypedObjectConstants.h"
 #include "js/Conversions.h"
 #include "vm/ArrayBufferObject.h"
+#include "vm/ShapedObject.h"
 
 /*
  * -------------
@@ -489,7 +490,7 @@ class TypedObjectModuleObject : public NativeObject {
 };
 
 /* Base type for transparent and opaque typed objects. */
-class TypedObject : public JSObject
+class TypedObject : public ShapedObject
 {
     static const bool IsTypedObjectClass = true;
 
@@ -501,8 +502,6 @@ class TypedObject : public JSObject
 
   protected:
     static const ObjectOps objectOps_;
-
-    GCPtrShape shape_;
 
     static MOZ_MUST_USE bool obj_lookupProperty(JSContext* cx, HandleObject obj,
                                                 HandleId id, MutableHandleObject objp,
@@ -723,6 +722,16 @@ class InlineOpaqueTypedObject : public InlineTypedObject
 {
   public:
     static const Class class_;
+};
+
+// Class for the global SIMD object.
+class SimdObject : public JSObject
+{
+  public:
+    static const Class class_;
+    static MOZ_MUST_USE bool toString(JSContext* cx, unsigned int argc, Value* vp);
+    static MOZ_MUST_USE bool resolve(JSContext* cx, JS::HandleObject obj, JS::HandleId,
+                                     bool* resolved);
 };
 
 /*
