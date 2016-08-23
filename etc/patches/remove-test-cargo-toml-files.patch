@@ -1,0 +1,451 @@
+From cbe3d2134b91736937a4fa328179056d73f47bf6 Mon Sep 17 00:00:00 2001
+From: Nick Fitzgerald <fitzgen@gmail.com>
+Date: Tue, 23 Aug 2016 13:50:55 -0700
+Subject: [PATCH 1/2] Remove m-c's test Cargo.toml files
+
+---
+ .../data/crate-build-dependency-absolute-path/Cargo.toml   | 14 --------------
+ .../crate-build-dependency-nonexistent-path/Cargo.toml     | 14 --------------
+ .../data/crate-build-dependency-recursive/Cargo.toml       | 12 ------------
+ .../data/crate-build-dependency-recursive/ok/Cargo.toml    | 11 -----------
+ .../data/crate-build-dependency-version-only/Cargo.toml    | 14 --------------
+ .../data/crate-build-dependency-with-dict/Cargo.toml       | 14 --------------
+ .../data/crate-dependency-absolute-path/Cargo.toml         | 12 ------------
+ .../data/crate-dependency-nonexistent-path/Cargo.toml      | 12 ------------
+ .../data/crate-dependency-path-resolution/Cargo.toml       | 12 ------------
+ .../crate-dependency-path-resolution/shallow/Cargo.toml    |  6 ------
+ .../crate-dependency-path-resolution/the/depths/Cargo.toml |  9 ---------
+ .../frontend/data/crate-dependency-recursive/Cargo.toml    | 12 ------------
+ .../frontend/data/crate-dependency-recursive/ok/Cargo.toml |  9 ---------
+ .../frontend/data/crate-dependency-version-only/Cargo.toml | 12 ------------
+ .../frontend/data/crate-dependency-with-dict/Cargo.toml    | 12 ------------
+ .../test/frontend/data/duplicated-crate-names/Cargo.toml   | 13 -------------
+ .../data/duplicated-crate-names/crate-one/Cargo.toml       |  9 ---------
+ .../duplicated-crate-names/crate-one/duplicate/Cargo.toml  |  6 ------
+ .../data/duplicated-crate-names/crate-two/Cargo.toml       |  9 ---------
+ .../duplicated-crate-names/crate-two/duplicate/Cargo.toml  |  6 ------
+ .../frontend/data/rust-library-dash-folding/Cargo.toml     |  9 ---------
+ .../data/rust-library-invalid-crate-type/Cargo.toml        |  9 ---------
+ .../frontend/data/rust-library-name-mismatch/Cargo.toml    |  6 ------
+ .../frontend/data/rust-library-no-lib-section/Cargo.toml   |  6 ------
+ 24 files changed, 248 deletions(-)
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-absolute-path/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-nonexistent-path/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/ok/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-version-only/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-with-dict/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-absolute-path/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-nonexistent-path/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/shallow/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/the/depths/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/ok/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-version-only/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-with-dict/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/duplicate/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/duplicate/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-dash-folding/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-invalid-crate-type/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-name-mismatch/Cargo.toml
+ delete mode 100644 mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-no-lib-section/Cargo.toml
+
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-absolute-path/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-absolute-path/Cargo.toml
+deleted file mode 100644
+index 8d861e8..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-absolute-path/Cargo.toml
++++ /dev/null
+@@ -1,14 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-build = "build.rs"
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[build-dependencies]
+-bogus = { version = "0.1.0", path = "/path/to/somewhere" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-nonexistent-path/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-nonexistent-path/Cargo.toml
+deleted file mode 100644
+index e665bc6..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-nonexistent-path/Cargo.toml
++++ /dev/null
+@@ -1,14 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-build = "build.rs"
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[build-dependencies]
+-bogus = { version = "0.1.0", path = "../bogus" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/Cargo.toml
+deleted file mode 100644
+index af6863c..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/Cargo.toml
++++ /dev/null
+@@ -1,12 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-ok = { version = "0.1.0", path = "ok" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/ok/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/ok/Cargo.toml
+deleted file mode 100644
+index 9063000..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-recursive/ok/Cargo.toml
++++ /dev/null
+@@ -1,11 +0,0 @@
+-[package]
+-name = "ok"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-build = "build.rs"
+-
+-[build-dependencies]
+-bogus = { version = "0.1.0" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-version-only/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-version-only/Cargo.toml
+deleted file mode 100644
+index 9390e28..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-version-only/Cargo.toml
++++ /dev/null
+@@ -1,14 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-build = "build.rs"
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[build-dependencies]
+-bogus = "0.1.0"
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-with-dict/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-with-dict/Cargo.toml
+deleted file mode 100644
+index 1a1f76d..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-build-dependency-with-dict/Cargo.toml
++++ /dev/null
+@@ -1,14 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-build = "build.rs"
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[build-dependencies]
+-bogus = { version = "0.1.0" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-absolute-path/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-absolute-path/Cargo.toml
+deleted file mode 100644
+index 4ddbc07..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-absolute-path/Cargo.toml
++++ /dev/null
+@@ -1,12 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-bogus = { version = "0.1.0", path = "/path/to/somewhere" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-nonexistent-path/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-nonexistent-path/Cargo.toml
+deleted file mode 100644
+index b301162..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-nonexistent-path/Cargo.toml
++++ /dev/null
+@@ -1,12 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-bogus = { version = "0.1.0", path = "../bogus" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/Cargo.toml
+deleted file mode 100644
+index cc4f569..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/Cargo.toml
++++ /dev/null
+@@ -1,12 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-deep-crate = { version = "0.1.0", path = "the/depths" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/shallow/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/shallow/Cargo.toml
+deleted file mode 100644
+index c347f8c..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/shallow/Cargo.toml
++++ /dev/null
+@@ -1,6 +0,0 @@
+-[package]
+-name = "shallow-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/the/depths/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/the/depths/Cargo.toml
+deleted file mode 100644
+index 10a4ded..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-path-resolution/the/depths/Cargo.toml
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[package]
+-name = "deep-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[dependencies]
+-shallow-crate = { path = "../../shallow" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/Cargo.toml
+deleted file mode 100644
+index af6863c..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/Cargo.toml
++++ /dev/null
+@@ -1,12 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-ok = { version = "0.1.0", path = "ok" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/ok/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/ok/Cargo.toml
+deleted file mode 100644
+index a697ce7..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-recursive/ok/Cargo.toml
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[package]
+-name = "ok"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[dependencies]
+-bogus = { version = "0.1.0" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-version-only/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-version-only/Cargo.toml
+deleted file mode 100644
+index d5ac27b..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-version-only/Cargo.toml
++++ /dev/null
+@@ -1,12 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-bogus = "0.1.0"
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-with-dict/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-with-dict/Cargo.toml
+deleted file mode 100644
+index 5d1fd90..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/crate-dependency-with-dict/Cargo.toml
++++ /dev/null
+@@ -1,12 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-bogus = { version = "0.1.0" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/Cargo.toml
+deleted file mode 100644
+index a5b9a16..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/Cargo.toml
++++ /dev/null
+@@ -1,13 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+-
+-[dependencies]
+-crate-one = { path = "crate-one" }
+-crate-two = { path = "crate-two" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/Cargo.toml
+deleted file mode 100644
+index 9433eb3..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/Cargo.toml
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[package]
+-name = "crate-one"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[dependencies]
+-duplicate = { path = "duplicate" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/duplicate/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/duplicate/Cargo.toml
+deleted file mode 100644
+index 404ca9a..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-one/duplicate/Cargo.toml
++++ /dev/null
+@@ -1,6 +0,0 @@
+-[package]
+-name = "duplicate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/Cargo.toml
+deleted file mode 100644
+index f807132..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/Cargo.toml
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[package]
+-name = "crate-two"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[dependencies]
+-duplicate = { path = "duplicate" }
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/duplicate/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/duplicate/Cargo.toml
+deleted file mode 100644
+index 404ca9a..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/duplicated-crate-names/crate-two/duplicate/Cargo.toml
++++ /dev/null
+@@ -1,6 +0,0 @@
+-[package]
+-name = "duplicate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-dash-folding/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-dash-folding/Cargo.toml
+deleted file mode 100644
+index b859f6c..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-dash-folding/Cargo.toml
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["staticlib"]
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-invalid-crate-type/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-invalid-crate-type/Cargo.toml
+deleted file mode 100644
+index 26156c0..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-invalid-crate-type/Cargo.toml
++++ /dev/null
+@@ -1,9 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-
+-[lib]
+-crate-type = ["dylib"]
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-name-mismatch/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-name-mismatch/Cargo.toml
+deleted file mode 100644
+index 07d3733..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-name-mismatch/Cargo.toml
++++ /dev/null
+@@ -1,6 +0,0 @@
+-[package]
+-name = "deterministic-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+diff --git a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-no-lib-section/Cargo.toml b/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-no-lib-section/Cargo.toml
+deleted file mode 100644
+index c47b5ee..0000000
+--- a/mozjs/python/mozbuild/mozbuild/test/frontend/data/rust-library-no-lib-section/Cargo.toml
++++ /dev/null
+@@ -1,6 +0,0 @@
+-[package]
+-name = "random-crate"
+-version = "0.1.0"
+-authors = [
+-  "Nobody <nobody@mozilla.org>",
+-]
+-- 
+2.8.3
+
