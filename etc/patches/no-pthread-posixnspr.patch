@@ -1,19 +1,35 @@
-From c162050717215f060e1f2e8dfe66a6a5ec7abd8f
-Author: Vladimir Vukicevic <vladimir@pobox.com>
-Date: Thu Jul 21 09:19:43 2016 -0400
+From 533151cfba958a5d6e07523564246c9f0b5ce654 Mon Sep 17 00:00:00 2001
+From: Vladimir Vukicevic <vladimir@pobox.com>
+Date: Thu, 21 Jul 2016 09:19:43 -0400
 Subject: Don't include pthread.h on Windows in PosixNSPR.h
 
+---
+ mozjs/js/src/vm/PosixNSPR.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
 diff --git a/mozjs/js/src/vm/PosixNSPR.h b/mozjs/js/src/vm/PosixNSPR.h
-index edfd5fb..36a8e36 100644
+index da81591..7a95d3a 100644
 --- a/mozjs/js/src/vm/PosixNSPR.h
 +++ b/mozjs/js/src/vm/PosixNSPR.h
-@@ -9,7 +9,9 @@
- 
+@@ -4,17 +4,19 @@
+  * License, v. 2.0. If a copy of the MPL was not distributed with this
+  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+ #ifndef vm_PosixNSPR_h
+ #define vm_PosixNSPR_h
+
  #ifdef JS_POSIX_NSPR
- 
+
 +#ifndef _MSC_VER
  #include <pthread.h>
 +#endif
- #include <stdint.h>
- 
+
+ #include "jspubtd.h"
+
  namespace nspr {
+ class Thread;
+ class Lock;
+ class CondVar;
+ };
+--
+2.8.3

@@ -29,6 +29,7 @@
 #include "jit/arm64/vixl/Debugger-vixl.h"
 #include "jit/arm64/vixl/Simulator-vixl.h"
 #include "jit/IonTypes.h"
+#include "threading/LockGuard.h"
 #include "vm/Runtime.h"
 
 namespace vixl {
@@ -45,7 +46,6 @@ Simulator::Simulator(Decoder* decoder, FILE* stream)
   , stack_limit_(nullptr)
   , decoder_(nullptr)
   , oom_(false)
-  , lock_(nullptr)
 {
     this->init(decoder, stream);
 }
@@ -144,14 +144,6 @@ void Simulator::init(Decoder* decoder, FILE* stream) {
   // SilenceExclusiveAccessWarning().
   print_exclusive_access_warning_ = true;
 
-  lock_ = PR_NewLock();
-  if (!lock_) {
-    oom_ = true;
-    return;
-  }
-#ifdef DEBUG
-  lockOwner_ = nullptr;
-#endif
   redirection_ = nullptr;
 }
 
@@ -295,29 +287,16 @@ int64_t Simulator::call(uint8_t* entry, int argument_count, ...) {
 
 
 // Protects the icache and redirection properties of the simulator.
-class AutoLockSimulatorCache
+class AutoLockSimulatorCache : public js::LockGuard<js::Mutex>
 {
   friend class Simulator;
+  using Base = js::LockGuard<js::Mutex>;
 
  public:
-  explicit AutoLockSimulatorCache(Simulator* sim) : sim_(sim) {
-    PR_Lock(sim_->lock_);
-    VIXL_ASSERT(!sim_->lockOwner_);
-#ifdef DEBUG
-    sim_->lockOwner_ = PR_GetCurrentThread();
-#endif
+  explicit AutoLockSimulatorCache(Simulator* sim)
+    : Base(sim->lock_)
+  {
   }
-
-  ~AutoLockSimulatorCache() {
-#ifdef DEBUG
-    VIXL_ASSERT(sim_->lockOwner_ == PR_GetCurrentThread());
-    sim_->lockOwner_ = nullptr;
-#endif
-    PR_Unlock(sim_->lock_);
-  }
-
- private:
-   Simulator* const sim_;
 };
 
 
@@ -387,7 +366,6 @@ class Redirection
 
 
 void Simulator::setRedirection(Redirection* redirection) {
-  // VIXL_ASSERT(lockOwner_); TODO
   redirection_ = redirection;
 }
 
@@ -727,4 +705,3 @@ vixl::Simulator* JSRuntime::simulator() const {
 uintptr_t* JSRuntime::addressOfSimulatorStackLimit() {
   return simulator_->addressOfStackLimit();
 }
-

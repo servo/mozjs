@@ -23,9 +23,13 @@
 
 #include "frontend/TokenStream.h"
 #include "jit/Ion.h"
+#include "threading/ConditionVariable.h"
+#include "threading/Mutex.h"
 
 namespace js {
 
+class AutoLockHelperThreadState;
+class AutoUnlockHelperThreadState;
 struct HelperThread;
 struct ParseTask;
 namespace jit {
@@ -35,7 +39,7 @@ namespace wasm {
   class FuncIR;
   class FunctionCompileResults;
   class IonCompileTask;
-  typedef Vector<IonCompileTask*, 0, SystemAllocPolicy> IonCompileTaskVector;
+  typedef Vector<IonCompileTask*, 0, SystemAllocPolicy> IonCompileTaskPtrVector;
 } // namespace wasm
 
 enum class ParseTaskKind
@@ -47,6 +51,9 @@ enum class ParseTaskKind
 // Per-process state for off thread work items.
 class GlobalHelperThreadState
 {
+    friend class AutoLockHelperThreadState;
+    friend class AutoUnlockHelperThreadState;
+
   public:
     // Number of CPUs to treat this machine as having when creating threads.
     // May be accessed without locking.
@@ -62,7 +69,8 @@ class GlobalHelperThreadState
     typedef Vector<GCParallelTask*, 0, SystemAllocPolicy> GCParallelTaskVector;
 
     // List of available threads, or null if the thread state has not been initialized.
-    HelperThread* threads;
+    using HelperThreadVector = Vector<HelperThread, 0, SystemAllocPolicy>;
+    UniquePtr<HelperThreadVector> threads;
 
   private:
     // The lists below are all protected by |lock|.
@@ -71,7 +79,7 @@ class GlobalHelperThreadState
     IonBuilderVector ionWorklist_, ionFinishedList_;
 
     // wasm worklist and finished jobs.
-    wasm::IonCompileTaskVector wasmWorklist_, wasmFinishedList_;
+    wasm::IonCompileTaskPtrVector wasmWorklist_, wasmFinishedList_;
 
   public:
     // For now, only allow a single parallel asm.js compilation to happen at a
@@ -94,6 +102,8 @@ class GlobalHelperThreadState
     // GC tasks needing to be done in parallel.
     GCParallelTaskVector gcParallelWorklist_;
 
+    ParseTask* removeFinishedParseTask(ParseTaskKind kind, void* token);
+
   public:
     size_t maxIonCompilationThreads() const;
     size_t maxUnpausedIonCompilationThreads() const;
@@ -112,10 +122,6 @@ class GlobalHelperThreadState
     void lock();
     void unlock();
 
-#ifdef DEBUG
-    bool isLocked();
-#endif
-
     enum CondVar {
         // For notifying threads waiting for work that they may be able to make progress.
         CONSUMER,
@@ -128,9 +134,10 @@ class GlobalHelperThreadState
         PAUSE
     };
 
-    void wait(CondVar which, mozilla::TimeDuration timeout = mozilla::TimeDuration::Forever());
-    void notifyAll(CondVar which);
-    void notifyOne(CondVar which);
+    void wait(AutoLockHelperThreadState& locked, CondVar which,
+              mozilla::TimeDuration timeout = mozilla::TimeDuration::Forever());
+    void notifyAll(CondVar which, const AutoLockHelperThreadState&);
+    void notifyOne(CondVar which, const AutoLockHelperThreadState&);
 
     // Helper method for removing items from the vectors below while iterating over them.
     template <typename T>
@@ -140,85 +147,76 @@ class GlobalHelperThreadState
         vector.popBack();
     }
 
-    IonBuilderVector& ionWorklist() {
-        MOZ_ASSERT(isLocked());
+    IonBuilderVector& ionWorklist(const AutoLockHelperThreadState&) {
         return ionWorklist_;
     }
-    IonBuilderVector& ionFinishedList() {
-        MOZ_ASSERT(isLocked());
+    IonBuilderVector& ionFinishedList(const AutoLockHelperThreadState&) {
         return ionFinishedList_;
     }
 
-    wasm::IonCompileTaskVector& wasmWorklist() {
-        MOZ_ASSERT(isLocked());
+    wasm::IonCompileTaskPtrVector& wasmWorklist(const AutoLockHelperThreadState&) {
         return wasmWorklist_;
     }
-    wasm::IonCompileTaskVector& wasmFinishedList() {
-        MOZ_ASSERT(isLocked());
+    wasm::IonCompileTaskPtrVector& wasmFinishedList(const AutoLockHelperThreadState&) {
         return wasmFinishedList_;
     }
 
-    ParseTaskVector& parseWorklist() {
-        MOZ_ASSERT(isLocked());
+    ParseTaskVector& parseWorklist(const AutoLockHelperThreadState&) {
         return parseWorklist_;
     }
-    ParseTaskVector& parseFinishedList() {
-        MOZ_ASSERT(isLocked());
+    ParseTaskVector& parseFinishedList(const AutoLockHelperThreadState&) {
         return parseFinishedList_;
     }
-    ParseTaskVector& parseWaitingOnGC() {
-        MOZ_ASSERT(isLocked());
+    ParseTaskVector& parseWaitingOnGC(const AutoLockHelperThreadState&) {
         return parseWaitingOnGC_;
     }
 
-    SourceCompressionTaskVector& compressionWorklist() {
-        MOZ_ASSERT(isLocked());
+    SourceCompressionTaskVector& compressionWorklist(const AutoLockHelperThreadState&) {
         return compressionWorklist_;
     }
 
-    GCHelperStateVector& gcHelperWorklist() {
-        MOZ_ASSERT(isLocked());
+    GCHelperStateVector& gcHelperWorklist(const AutoLockHelperThreadState&) {
         return gcHelperWorklist_;
     }
 
-    GCParallelTaskVector& gcParallelWorklist() {
-        MOZ_ASSERT(isLocked());
+    GCParallelTaskVector& gcParallelWorklist(const AutoLockHelperThreadState&) {
         return gcParallelWorklist_;
     }
 
-    bool canStartWasmCompile();
-    bool canStartIonCompile();
-    bool canStartParseTask();
-    bool canStartCompressionTask();
-    bool canStartGCHelperTask();
-    bool canStartGCParallelTask();
+    bool canStartWasmCompile(const AutoLockHelperThreadState& lock);
+    bool canStartIonCompile(const AutoLockHelperThreadState& lock);
+    bool canStartParseTask(const AutoLockHelperThreadState& lock);
+    bool canStartCompressionTask(const AutoLockHelperThreadState& lock);
+    bool canStartGCHelperTask(const AutoLockHelperThreadState& lock);
+    bool canStartGCParallelTask(const AutoLockHelperThreadState& lock);
 
     // Unlike the methods above, the value returned by this method can change
     // over time, even if the helper thread state lock is held throughout.
-    bool pendingIonCompileHasSufficientPriority();
+    bool pendingIonCompileHasSufficientPriority(const AutoLockHelperThreadState& lock);
 
-    jit::IonBuilder* highestPriorityPendingIonCompile(bool remove = false);
-    HelperThread* lowestPriorityUnpausedIonCompileAtThreshold();
-    HelperThread* highestPriorityPausedIonCompile();
+    jit::IonBuilder* highestPriorityPendingIonCompile(const AutoLockHelperThreadState& lock,
+                                                      bool remove = false);
+    HelperThread* lowestPriorityUnpausedIonCompileAtThreshold(
+        const AutoLockHelperThreadState& lock);
+    HelperThread* highestPriorityPausedIonCompile(const AutoLockHelperThreadState& lock);
 
-    uint32_t harvestFailedWasmJobs() {
-        MOZ_ASSERT(isLocked());
+    uint32_t harvestFailedWasmJobs(const AutoLockHelperThreadState&) {
         uint32_t n = numWasmFailedJobs;
         numWasmFailedJobs = 0;
         return n;
     }
-    void noteWasmFailure() {
+    void noteWasmFailure(const AutoLockHelperThreadState&) {
         // Be mindful to signal the main thread after calling this function.
-        MOZ_ASSERT(isLocked());
         numWasmFailedJobs++;
     }
-    bool wasmFailed() {
-        MOZ_ASSERT(isLocked());
+    bool wasmFailed(const AutoLockHelperThreadState&) {
         return bool(numWasmFailedJobs);
     }
 
-    JSScript* finishParseTask(JSContext* maybecx, JSRuntime* rt, ParseTaskKind kind, void* token);
-    void mergeParseTaskCompartment(JSRuntime* rt, ParseTask* parseTask,
+    JSScript* finishParseTask(JSContext* cx, ParseTaskKind kind, void* token);
+    void cancelParseTask(JSContext* cx, ParseTaskKind kind, void* token);
+
+    void mergeParseTaskCompartment(JSContext* cx, ParseTask* parseTask,
                                    Handle<GlobalObject*> global,
                                    JSCompartment* dest);
 
@@ -230,12 +228,12 @@ class GlobalHelperThreadState
     uint32_t numWasmFailedJobs;
 
   public:
-    JSScript* finishScriptParseTask(JSContext* maybecx, JSRuntime* rt, void* token);
-    JSObject* finishModuleParseTask(JSContext* maybecx, JSRuntime* rt, void* token);
-    bool compressionInProgress(SourceCompressionTask* task);
-    SourceCompressionTask* compressionTaskForSource(ScriptSource* ss);
+    JSScript* finishScriptParseTask(JSContext* cx, void* token);
+    JSObject* finishModuleParseTask(JSContext* cx, void* token);
+    bool compressionInProgress(SourceCompressionTask* task, const AutoLockHelperThreadState& lock);
+    SourceCompressionTask* compressionTaskForSource(ScriptSource* ss, const AutoLockHelperThreadState& lock);
 
-    bool hasActiveThreads();
+    bool hasActiveThreads(const AutoLockHelperThreadState&);
     void waitForAllThreads();
 
     template <typename T>
@@ -247,22 +245,19 @@ class GlobalHelperThreadState
      * Lock protecting all mutable shared state accessed by helper threads, and
      * used by all condition variables.
      */
-    PRLock* helperLock;
-#ifdef DEBUG
-    mozilla::Atomic<PRThread*> lockOwner;
-#endif
+    js::Mutex helperLock;
 
     /* Condvars for threads waiting/notifying each other. */
-    PRCondVar* consumerWakeup;
-    PRCondVar* producerWakeup;
-    PRCondVar* pauseWakeup;
+    js::ConditionVariable consumerWakeup;
+    js::ConditionVariable producerWakeup;
+    js::ConditionVariable pauseWakeup;
 
-    PRCondVar* whichWakeup(CondVar which) {
+    js::ConditionVariable& whichWakeup(CondVar which) {
         switch (which) {
           case CONSUMER: return consumerWakeup;
           case PRODUCER: return producerWakeup;
           case PAUSE: return pauseWakeup;
-          default: MOZ_CRASH();
+          default: MOZ_CRASH("Invalid CondVar in |whichWakeup|");
         }
     }
 };
@@ -280,7 +275,7 @@ HelperThreadState()
 struct HelperThread
 {
     mozilla::Maybe<PerThreadData> threadData;
-    PRThread* thread;
+    mozilla::Maybe<Thread> thread;
 
     /*
      * Indicate to a thread that it should terminate itself. This is only read
@@ -351,12 +346,12 @@ struct HelperThread
         return nullptr;
     }
 
-    void handleWasmWorkload();
-    void handleIonWorkload();
-    void handleParseWorkload();
-    void handleCompressionWorkload();
-    void handleGCHelperWorkload();
-    void handleGCParallelWorkload();
+    void handleWasmWorkload(AutoLockHelperThreadState& locked);
+    void handleIonWorkload(AutoLockHelperThreadState& locked);
+    void handleParseWorkload(AutoLockHelperThreadState& locked, uintptr_t stackLimit);
+    void handleCompressionWorkload(AutoLockHelperThreadState& locked);
+    void handleGCHelperWorkload(AutoLockHelperThreadState& locked);
+    void handleGCParallelWorkload(AutoLockHelperThreadState& locked);
 };
 
 /* Methods for interacting with helper threads. */
@@ -384,7 +379,7 @@ PauseCurrentHelperThread();
 
 /* Perform MIR optimization and LIR generation on a single function. */
 bool
-StartOffThreadWasmCompile(ExclusiveContext* cx, wasm::IonCompileTask* task);
+StartOffThreadWasmCompile(wasm::IonCompileTask* task);
 
 /*
  * Schedule an Ion compilation for a script, given a builder which has been
@@ -436,37 +431,33 @@ struct AutoEnqueuePendingParseTasksAfterGC {
 bool
 StartOffThreadCompression(ExclusiveContext* cx, SourceCompressionTask* task);
 
-class MOZ_RAII AutoLockHelperThreadState
+class MOZ_RAII AutoLockHelperThreadState : public LockGuard<Mutex>
 {
+    using Base = LockGuard<Mutex>;
+
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 
   public:
     explicit AutoLockHelperThreadState(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM)
+      : Base(HelperThreadState().helperLock)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        HelperThreadState().lock();
-    }
-
-    ~AutoLockHelperThreadState() {
-        HelperThreadState().unlock();
     }
 };
 
-class MOZ_RAII AutoUnlockHelperThreadState
+class MOZ_RAII AutoUnlockHelperThreadState : public UnlockGuard<Mutex>
 {
+    using Base = UnlockGuard<Mutex>;
+
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 
   public:
 
-    explicit AutoUnlockHelperThreadState(MOZ_GUARD_OBJECT_NOTIFIER_ONLY_PARAM)
+    explicit AutoUnlockHelperThreadState(AutoLockHelperThreadState& locked
+                                         MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : Base(locked)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-        HelperThreadState().unlock();
-    }
-
-    ~AutoUnlockHelperThreadState()
-    {
-        HelperThreadState().lock();
     }
 };
 

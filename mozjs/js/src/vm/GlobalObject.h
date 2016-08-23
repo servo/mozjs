@@ -343,6 +343,10 @@ class GlobalObject : public NativeObject
         return &self->getPrototype(JSProto_Object).toObject().as<NativeObject>();
     }
 
+    static NativeObject* getOrCreateObjectPrototype(JSContext* cx, Handle<GlobalObject*> global) {
+        return global->getOrCreateObjectPrototype(cx);
+    }
+
     NativeObject* getOrCreateFunctionPrototype(JSContext* cx) {
         if (functionObjectClassesInitialized())
             return &getPrototype(JSProto_Function).toObject().as<NativeObject>();
@@ -350,6 +354,10 @@ class GlobalObject : public NativeObject
         if (!ensureConstructor(cx, self, JSProto_Object))
             return nullptr;
         return &self->getPrototype(JSProto_Function).toObject().as<NativeObject>();
+    }
+
+    static NativeObject* getOrCreateFunctionPrototype(JSContext* cx, Handle<GlobalObject*> global) {
+        return global->getOrCreateFunctionPrototype(cx);
     }
 
     static NativeObject* getOrCreateArrayPrototype(JSContext* cx, Handle<GlobalObject*> global) {
@@ -460,15 +468,15 @@ class GlobalObject : public NativeObject
     }
 
     JSObject* getOrCreateCollatorPrototype(JSContext* cx) {
-        return getOrCreateObject(cx, COLLATOR_PROTO, initCollatorProto);
+        return getOrCreateObject(cx, COLLATOR_PROTO, initIntlObject);
     }
 
     JSObject* getOrCreateNumberFormatPrototype(JSContext* cx) {
-        return getOrCreateObject(cx, NUMBER_FORMAT_PROTO, initNumberFormatProto);
+        return getOrCreateObject(cx, NUMBER_FORMAT_PROTO, initIntlObject);
     }
 
     JSObject* getOrCreateDateTimeFormatPrototype(JSContext* cx) {
-        return getOrCreateObject(cx, DATE_TIME_FORMAT_PROTO, initDateTimeFormatProto);
+        return getOrCreateObject(cx, DATE_TIME_FORMAT_PROTO, initIntlObject);
     }
 
     static bool ensureModulePrototypesCreated(JSContext *cx, Handle<GlobalObject*> global);
@@ -730,9 +738,6 @@ class GlobalObject : public NativeObject
 
     // Implemented in Intl.cpp.
     static bool initIntlObject(JSContext* cx, Handle<GlobalObject*> global);
-    static bool initCollatorProto(JSContext* cx, Handle<GlobalObject*> global);
-    static bool initNumberFormatProto(JSContext* cx, Handle<GlobalObject*> global);
-    static bool initDateTimeFormatProto(JSContext* cx, Handle<GlobalObject*> global);
 
     // Implemented in builtin/ModuleObject.cpp
     static bool initModuleProto(JSContext* cx, Handle<GlobalObject*> global);

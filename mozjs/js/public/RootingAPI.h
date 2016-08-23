@@ -418,7 +418,7 @@ class MOZ_NONHEAP_CLASS Handle : public js::HandleBase<T>
      *     for the lifetime of the handle, as its users may not expect its value
      *     to change underneath them.
      */
-    static MOZ_CONSTEXPR Handle fromMarkedLocation(const T* p) {
+    static constexpr Handle fromMarkedLocation(const T* p) {
         return Handle(p, DeliberatelyChoosingThisOverload,
                       ImUsingThisOnlyInFromFromMarkedLocation);
     }
@@ -453,7 +453,7 @@ class MOZ_NONHEAP_CLASS Handle : public js::HandleBase<T>
 
     enum Disambiguator { DeliberatelyChoosingThisOverload = 42 };
     enum CallerIdentity { ImUsingThisOnlyInFromFromMarkedLocation = 17 };
-    MOZ_CONSTEXPR Handle(const T* p, Disambiguator, CallerIdentity) : ptr(p) {}
+    constexpr Handle(const T* p, Disambiguator, CallerIdentity) : ptr(p) {}
 
     const T* ptr;
 };
@@ -564,6 +564,8 @@ struct JS_PUBLIC_API(MovableCellHasher)
     using Key = T;
     using Lookup = T;
 
+    static bool hasHash(const Lookup& l);
+    static bool ensureHash(const Lookup& l);
     static HashNumber hash(const Lookup& l);
     static bool match(const Key& k, const Lookup& l);
     static void rekey(Key& k, const Key& newKey) { k = newKey; }
@@ -575,22 +577,27 @@ struct JS_PUBLIC_API(MovableCellHasher<JS::Heap<T>>)
     using Key = JS::Heap<T>;
     using Lookup = T;
 
+    static bool hasHash(const Lookup& l) { return MovableCellHasher<T>::hasHash(l); }
+    static bool ensureHash(const Lookup& l) { return MovableCellHasher<T>::ensureHash(l); }
     static HashNumber hash(const Lookup& l) { return MovableCellHasher<T>::hash(l); }
     static bool match(const Key& k, const Lookup& l) { return MovableCellHasher<T>::match(k, l); }
     static void rekey(Key& k, const Key& newKey) { k.unsafeSet(newKey); }
 };
 
+template <typename T>
+struct FallibleHashMethods<MovableCellHasher<T>>
+{
+    template <typename Lookup> static bool hasHash(Lookup&& l) {
+        return MovableCellHasher<T>::hasHash(mozilla::Forward<Lookup>(l));
+    }
+    template <typename Lookup> static bool ensureHash(Lookup&& l) {
+        return MovableCellHasher<T>::ensureHash(mozilla::Forward<Lookup>(l));
+    }
+};
+
 } /* namespace js */
 
 namespace js {
-
-// After switching to MSVC2015, this can be eliminated and replaced with
-// alignas(n) everywhere.
-#if defined(_MSC_VER) && (_MSC_VER < 1900)
-# define JS_ALIGNAS(n) __declspec(align(n))
-#else
-# define JS_ALIGNAS(n) alignas(n)
-#endif
 
 // The alignment must be set because the Rooted and PersistentRooted ptr fields
 // may be accessed through reinterpret_cast<Rooted<ConcreteTraceable>*>, and
@@ -601,14 +608,14 @@ namespace js {
 // DispatchWrapper, rather than DispatchWrapper itself, but that causes MSVC to
 // fail when Rooted is used in an IsConvertible test.
 template <typename T>
-class JS_ALIGNAS(8) DispatchWrapper
+class alignas(8) DispatchWrapper
 {
     static_assert(JS::MapTypeToRootKind<T>::kind == JS::RootKind::Traceable,
                   "DispatchWrapper is intended only for usage with a Traceable");
 
     using TraceFn = void (*)(JSTracer*, T*, const char*);
     TraceFn tracer;
-    JS_ALIGNAS(gc::CellSize) T storage;
+    alignas(gc::CellSize) T storage;
 
   public:
     template <typename U>
@@ -632,8 +639,6 @@ class JS_ALIGNAS(8) DispatchWrapper
     }
 };
 
-#undef JS_ALIGNAS
-
 } /* namespace js */
 
 namespace JS {
@@ -655,19 +660,17 @@ class MOZ_RAII Rooted : public js::RootedBase<T>
         *stack = reinterpret_cast<Rooted<void*>*>(this);
     }
 
+    inline js::RootedListHeads& rootLists(JS::RootingContext* cx) {
+        return rootLists(static_cast<js::ContextFriendFields*>(cx));
+    }
     inline js::RootedListHeads& rootLists(js::ContextFriendFields* cx) {
-        return rootLists(reinterpret_cast<JSContext*>(cx));
+        if (JS::Zone* zone = cx->zone_)
+            return JS::shadow::Zone::asShadowZone(zone)->stackRoots_;
+        MOZ_ASSERT(cx->isJSContext);
+        return cx->roots.stackRoots_;
     }
     inline js::RootedListHeads& rootLists(JSContext* cx) {
-        if (JS::Zone* zone = js::GetContextZone(cx))
-            return JS::shadow::Zone::asShadowZone(zone)->stackRoots_;
-        return rootLists(js::GetRuntime(cx));
-    }
-    inline js::RootedListHeads& rootLists(js::PerThreadDataFriendFields* pt) {
-        return pt->roots.stackRoots_;
-    }
-    inline js::RootedListHeads& rootLists(JSRuntime* rt) {
-        return js::PerThreadDataFriendFields::getMainThread(rt)->roots.stackRoots_;
+        return rootLists(js::ContextFriendFields::get(cx));
     }
 
   public:
@@ -986,14 +989,16 @@ class PersistentRooted : public js::PersistentRootedBase<T>,
         roots.heapRoots_[kind].insertBack(reinterpret_cast<JS::PersistentRooted<void*>*>(this));
     }
 
-    js::RootLists& rootLists(js::PerThreadDataFriendFields* pt) { return pt->roots; }
-    js::RootLists& rootLists(JSRuntime* rt) {
-        return js::PerThreadDataFriendFields::getMainThread(rt)->roots;
+    js::RootLists& rootLists(JSContext* cx) {
+        return rootLists(JS::RootingContext::get(cx));
     }
-    js::RootLists& rootLists(JSContext* cx) { return rootLists(js::GetRuntime(cx)); }
-    js::RootLists& rootLists(js::ContextFriendFields* cx) {
-        return rootLists(reinterpret_cast<JSContext*>(cx));
+    js::RootLists& rootLists(JS::RootingContext* cx) {
+        MOZ_ASSERT(cx->isJSContext);
+        return cx->roots;
     }
+
+    // Disallow ExclusiveContext*.
+    js::RootLists& rootLists(js::ContextFriendFields* cx) = delete;
 
   public:
     PersistentRooted() : ptr(GCPolicy<T>::initial()) {}
@@ -1097,17 +1102,14 @@ class JS_PUBLIC_API(ObjectPtr)
     /* Always call finalize before the destructor. */
     ~ObjectPtr() { MOZ_ASSERT(!value); }
 
-    void finalize(JSRuntime* rt) {
-        if (IsIncrementalBarrierNeeded(rt))
-            IncrementalObjectBarrier(value);
-        value = nullptr;
-    }
+    void finalize(JSRuntime* rt);
+    void finalize(JSContext* cx);
 
     void init(JSObject* obj) { value = obj; }
 
     JSObject* get() const { return value; }
 
-    void writeBarrierPre(JSRuntime* rt) {
+    void writeBarrierPre(JSContext* cx) {
         IncrementalObjectBarrier(value);
     }
 

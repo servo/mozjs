@@ -54,16 +54,17 @@ class DebianBootstrapper(BaseBootstrapper):
         'libdbus-1-dev',
         'libdbus-glib-1-dev',
         'libgconf2-dev',
-        'libgtk2.0-dev',
         'libgtk-3-dev',
+        'libgtk2.0-dev',
         'libiw-dev',
         'libnotify-dev',
         'libpulse-dev',
+        'libx11-xcb-dev',
         'libxt-dev',
         'mesa-common-dev',
         'python-dbus',
-        'yasm',
         'xvfb',
+        'yasm',
     ]
 
     # Subclasses can add packages to this variable to have them installed.
@@ -98,13 +99,20 @@ class DebianBootstrapper(BaseBootstrapper):
         self.apt_install(*self.packages)
 
     def install_browser_packages(self):
-        self.apt_install(*self.browser_packages)
+        self.ensure_browser_packages()
+
+    def install_browser_artifact_mode_packages(self):
+        self.ensure_browser_packages(artifact_mode=True)
 
     def install_mobile_android_packages(self):
         self.ensure_mobile_android_packages()
 
     def install_mobile_android_artifact_mode_packages(self):
         self.ensure_mobile_android_packages(artifact_mode=True)
+
+    def ensure_browser_packages(self, artifact_mode=False):
+        # TODO: Figure out what not to install for artifact mode
+        self.apt_install(*self.browser_packages)
 
     def ensure_mobile_android_packages(self, artifact_mode=False):
         import android

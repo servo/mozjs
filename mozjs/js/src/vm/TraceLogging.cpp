@@ -363,7 +363,7 @@ TraceLoggerThread::getOrCreateEventPayload(const char* text)
     if (!str)
         return nullptr;
 
-    DebugOnly<size_t> ret = JS_snprintf(str, len + 1, "%s", text);
+    DebugOnly<size_t> ret = snprintf(str, len + 1, "%s", text);
     MOZ_ASSERT(ret == len);
     MOZ_ASSERT(strlen(str) == len);
 
@@ -431,7 +431,7 @@ TraceLoggerThread::getOrCreateEventPayload(TraceLoggerTextId type, const char* f
         return nullptr;
 
     DebugOnly<size_t> ret =
-        JS_snprintf(str, len + 1, "script %s:%" PRIuSIZE ":%" PRIuSIZE, filename, lineno, colno);
+        snprintf(str, len + 1, "script %s:%" PRIuSIZE ":%" PRIuSIZE, filename, lineno, colno);
     MOZ_ASSERT(ret == len);
     MOZ_ASSERT(strlen(str) == len);
 
@@ -795,14 +795,14 @@ TraceLoggerThreadState::enableTextId(JSContext* cx, uint32_t textId)
     if (enabledTextIds[textId])
         return;
 
+    ReleaseAllJITCode(cx->runtime()->defaultFreeOp());
+
     enabledTextIds[textId] = true;
     if (textId == TraceLogger_Engine) {
         enabledTextIds[TraceLogger_IonMonkey] = true;
         enabledTextIds[TraceLogger_Baseline] = true;
         enabledTextIds[TraceLogger_Interpreter] = true;
     }
-
-    ReleaseAllJITCode(cx->runtime()->defaultFreeOp());
 
     if (textId == TraceLogger_Scripts)
         jit::ToggleBaselineTraceLoggerScripts(cx->runtime(), true);
@@ -818,14 +818,14 @@ TraceLoggerThreadState::disableTextId(JSContext* cx, uint32_t textId)
     if (!enabledTextIds[textId])
         return;
 
+    ReleaseAllJITCode(cx->runtime()->defaultFreeOp());
+
     enabledTextIds[textId] = false;
     if (textId == TraceLogger_Engine) {
         enabledTextIds[TraceLogger_IonMonkey] = false;
         enabledTextIds[TraceLogger_Baseline] = false;
         enabledTextIds[TraceLogger_Interpreter] = false;
     }
-
-    ReleaseAllJITCode(cx->runtime()->defaultFreeOp());
 
     if (textId == TraceLogger_Scripts)
         jit::ToggleBaselineTraceLoggerScripts(cx->runtime(), false);
@@ -893,14 +893,13 @@ TraceLoggerThreadState::forMainThread(PerThreadData* mainThread)
 TraceLoggerThread*
 js::TraceLoggerForCurrentThread()
 {
-    PRThread* thread = PR_GetCurrentThread();
     if (!EnsureTraceLoggerState())
         return nullptr;
-    return traceLoggerState->forThread(thread);
+    return traceLoggerState->forThread(ThisThread::GetId());
 }
 
 TraceLoggerThread*
-TraceLoggerThreadState::forThread(PRThread* thread)
+TraceLoggerThreadState::forThread(const Thread::Id& thread)
 {
     MOZ_ASSERT(initialized);
 

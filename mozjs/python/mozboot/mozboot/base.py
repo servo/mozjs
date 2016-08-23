@@ -4,10 +4,12 @@
 
 from __future__ import print_function, unicode_literals
 
+import hashlib
 import os
 import re
 import subprocess
 import sys
+import urllib2
 
 from distutils.version import LooseVersion
 
@@ -71,6 +73,14 @@ We recommend the following tools for installing Python:
     official installers -- http://www.python.org/
 '''
 
+BROWSER_ARTIFACT_MODE_MOZCONFIG = '''
+Paste the lines between the chevrons (>>> and <<<) into your mozconfig file:
+
+<<<
+# Automatically download and use compiled C++ components:
+ac_add_options --enable-artifact-builds
+>>>
+'''
 
 # Upgrade Mercurial older than this.
 # This should match OLDEST_NON_LEGACY_VERSION from
@@ -115,6 +125,26 @@ class BaseBootstrapper(object):
         entirely from configure.
         '''
         pass
+
+    def install_browser_artifact_mode_packages(self):
+        '''
+        Install packages required to build Firefox for Desktop (application
+        'browser') in Artifact Mode.
+        '''
+        raise NotImplementedError(
+            'Cannot bootstrap Firefox for Desktop Artifact Mode: '
+            '%s does not yet implement install_browser_artifact_mode_packages()' %
+            __name__)
+
+    def suggest_browser_artifact_mode_mozconfig(self):
+        '''
+        Print a message to the console detailing what the user's mozconfig
+        should contain.
+
+        Firefox for Desktop Artifact Mode needs to enable artifact builds and
+        a path where the build artifacts will be written to.
+        '''
+        print(BROWSER_ARTIFACT_MODE_MOZCONFIG)
 
     def install_mobile_android_packages(self):
         '''
@@ -405,3 +435,18 @@ class BaseBootstrapper(object):
         Child classes should reimplement this.
         """
         print(PYTHON_UNABLE_UPGRADE % (current, MODERN_PYTHON_VERSION))
+
+    def http_download_and_save(self, url, dest, sha256hexhash):
+        f = urllib2.urlopen(url)
+        h = hashlib.sha256()
+        with open(dest, 'wb') as out:
+            while True:
+                data = f.read(4096)
+                if data:
+                    out.write(data)
+                    h.update(data)
+                else:
+                    break
+        if h.hexdigest() != sha256hexhash:
+            os.remove(dest)
+            raise ValueError('Hash of downloaded file does not match expected hash')

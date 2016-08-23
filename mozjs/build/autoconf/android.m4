@@ -11,52 +11,20 @@ MOZ_ARG_WITH_STRING(android-cxx-stl,
     android_cxx_stl=$withval,
     android_cxx_stl=libc++)
 
-define([MIN_ANDROID_VERSION], [9])
-android_version=MIN_ANDROID_VERSION
-
-MOZ_ARG_WITH_STRING(android-version,
-[  --with-android-version=VER
-                          android platform version, default] MIN_ANDROID_VERSION,
-    android_version=$withval)
-
-if test $android_version -lt MIN_ANDROID_VERSION ; then
-    AC_MSG_ERROR([--with-android-version must be at least MIN_ANDROID_VERSION.])
-fi
-
 case "$target" in
 *-android*|*-linuxandroid*)
-    AC_MSG_CHECKING([for android platform directory])
-
-    case "$target_cpu" in
-    arm)
-        target_name=arm
-        ;;
-    i?86)
-        target_name=x86
-        ;;
-    mipsel)
-        target_name=mips
-        ;;
-    esac
-
-    android_platform="$android_ndk"/platforms/android-"$android_version"/arch-"$target_name"
-
-    if test -d "$android_platform" ; then
-        AC_MSG_RESULT([$android_platform])
-    else
-        AC_MSG_ERROR([not found. Please check your NDK. With the current configuration, it should be in $android_platform])
-    fi
-
+    dnl $android_platform will be set for us by Python configure.
     CPPFLAGS="-idirafter $android_platform/usr/include $CPPFLAGS"
     CFLAGS="-fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-fno-short-enums -fno-exceptions $CXXFLAGS"
     ASFLAGS="-idirafter $android_platform/usr/include -DANDROID $ASFLAGS"
 
-    dnl Add -llog by default, since we use it all over the place.
     dnl Add --allow-shlib-undefined, because libGLESv2 links to an
     dnl undefined symbol (present on the hardware, just not in the
     dnl NDK.)
-    LDFLAGS="-L$android_platform/usr/lib -Wl,-rpath-link=$android_platform/usr/lib --sysroot=$android_platform -llog -Wl,--allow-shlib-undefined $LDFLAGS"
+    LDFLAGS="-L$android_platform/usr/lib -Wl,-rpath-link=$android_platform/usr/lib --sysroot=$android_platform -Wl,--allow-shlib-undefined $LDFLAGS"
+    dnl Add -llog by default, since we use it all over the place.
+    LIBS="-llog $LIBS"
     ANDROID_PLATFORM="${android_platform}"
 
     AC_DEFINE(ANDROID)

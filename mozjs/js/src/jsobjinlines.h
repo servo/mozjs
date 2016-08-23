@@ -29,6 +29,7 @@
 #include "jscompartmentinlines.h"
 #include "jsgcinlines.h"
 
+#include "vm/ShapedObject-inl.h"
 #include "vm/TypeInference-inl.h"
 
 namespace js {
@@ -49,9 +50,10 @@ MaybeConvertUnboxedObjectToNative(ExclusiveContext* cx, JSObject* obj)
 inline js::Shape*
 JSObject::maybeShape() const
 {
-    if (is<js::UnboxedPlainObject>() || is<js::UnboxedArrayObject>())
+    if (!is<js::ShapedObject>())
         return nullptr;
-    return *reinterpret_cast<js::Shape**>(uintptr_t(this) + offsetOfShape());
+
+    return as<js::ShapedObject>().shape();
 }
 
 inline js::Shape*
@@ -104,12 +106,18 @@ JSObject::finalize(js::FreeOp* fop)
         }
     }
 
+    nobj->sweepDictionaryListPointer();
+}
+
+MOZ_ALWAYS_INLINE void
+js::NativeObject::sweepDictionaryListPointer()
+{
     // For dictionary objects (which must be native), it's possible that
-    // unreachable shapes may be marked whose listp points into this object.
-    // In case this happens, null out the shape's pointer here so that a moving
-    // GC will not try to access the dead object.
-    if (nobj->shape_->listp == &nobj->shape_)
-        nobj->shape_->listp = nullptr;
+    // unreachable shapes may be marked whose listp points into this object.  In
+    // case this happens, null out the shape's pointer so that a moving GC will
+    // not try to access the dead object.
+    if (shape_->listp == &shape_)
+        shape_->listp = nullptr;
 }
 
 /* static */ inline bool
@@ -355,7 +363,12 @@ JSObject::create(js::ExclusiveContext* cx, js::gc::AllocKind kind, js::gc::Initi
 
     obj->group_.init(group);
 
-    obj->setInitialShapeMaybeNonNative(shape);
+    // This function allocates normal objects and proxies and typed objects
+    // (all with shapes), *and* it allocates objects without shapes (various
+    // unboxed object classes).  Setting shape is naturally only valid for the
+    // former class of objects.
+    if (obj->is<js::ShapedObject>())
+        obj->as<js::ShapedObject>().initShape(shape);
 
     // Note: slots are created and assigned internally by Allocate<JSObject>.
     obj->setInitialElementsMaybeNonNative(js::emptyObjectElements);
@@ -391,19 +404,6 @@ JSObject::create(js::ExclusiveContext* cx, js::gc::AllocKind kind, js::gc::Initi
 }
 
 inline void
-JSObject::setInitialShapeMaybeNonNative(js::Shape* shape)
-{
-    static_cast<js::NativeObject*>(this)->shape_.init(shape);
-}
-
-inline void
-JSObject::setShapeMaybeNonNative(js::Shape* shape)
-{
-    MOZ_ASSERT(!is<js::UnboxedPlainObject>());
-    static_cast<js::NativeObject*>(this)->shape_ = shape;
-}
-
-inline void
 JSObject::setInitialSlotsMaybeNonNative(js::HeapSlot* slots)
 {
     static_cast<js::NativeObject*>(this)->slots_ = slots;
@@ -427,10 +427,16 @@ JSObject::global() const
     return *compartment()->unsafeUnbarrieredMaybeGlobal();
 }
 
-inline bool
-JSObject::isOwnGlobal() const
+inline js::GlobalObject*
+JSObject::globalForTracing(JSTracer*) const
 {
-    return &global() == this;
+    return compartment()->unsafeUnbarrieredMaybeGlobal();
+}
+
+inline bool
+JSObject::isOwnGlobal(JSTracer* trc) const
+{
+    return globalForTracing(trc) == this;
 }
 
 inline bool

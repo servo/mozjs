@@ -47,7 +47,7 @@ BaselineCompiler::BaselineCompiler(JSContext* cx, TempAllocator& alloc, JSScript
 bool
 BaselineCompiler::init()
 {
-    if (!analysis_.init(alloc_, cx->runtime()->gsnCache))
+    if (!analysis_.init(alloc_, cx->caches.gsnCache))
         return false;
 
     if (!labels_.init(alloc_, script->length()))
@@ -515,7 +515,8 @@ BaselineCompiler::emitIC(ICStub* stub, ICEntry::Kind kind)
 
 typedef bool (*CheckOverRecursedWithExtraFn)(JSContext*, BaselineFrame*, uint32_t, uint32_t);
 static const VMFunction CheckOverRecursedWithExtraInfo =
-    FunctionInfo<CheckOverRecursedWithExtraFn>(CheckOverRecursedWithExtra);
+    FunctionInfo<CheckOverRecursedWithExtraFn>(CheckOverRecursedWithExtra,
+                                               "CheckOverRecursedWithExtra");
 
 bool
 BaselineCompiler::emitStackCheck(bool earlyCheck)
@@ -590,7 +591,8 @@ BaselineCompiler::emitIsDebuggeeCheck()
 }
 
 typedef bool (*DebugPrologueFn)(JSContext*, BaselineFrame*, jsbytecode*, bool*);
-static const VMFunction DebugPrologueInfo = FunctionInfo<DebugPrologueFn>(jit::DebugPrologue);
+static const VMFunction DebugPrologueInfo =
+    FunctionInfo<DebugPrologueFn>(jit::DebugPrologue, "DebugPrologue");
 
 bool
 BaselineCompiler::emitDebugPrologue()
@@ -626,11 +628,13 @@ BaselineCompiler::emitDebugPrologue()
 
 typedef bool (*InitGlobalOrEvalScopeObjectsFn)(JSContext*, BaselineFrame*);
 static const VMFunction InitGlobalOrEvalScopeObjectsInfo =
-    FunctionInfo<InitGlobalOrEvalScopeObjectsFn>(jit::InitGlobalOrEvalScopeObjects);
+    FunctionInfo<InitGlobalOrEvalScopeObjectsFn>(jit::InitGlobalOrEvalScopeObjects,
+                                                 "InitGlobalOrEvalScopeObjects");
 
 typedef bool (*InitFunctionScopeObjectsFn)(JSContext*, BaselineFrame*);
 static const VMFunction InitFunctionScopeObjectsInfo =
-    FunctionInfo<InitFunctionScopeObjectsFn>(jit::InitFunctionScopeObjects);
+    FunctionInfo<InitFunctionScopeObjectsFn>(jit::InitFunctionScopeObjects,
+                                             "InitFunctionScopeObjects");
 
 bool
 BaselineCompiler::initScopeChain()
@@ -684,7 +688,8 @@ BaselineCompiler::initScopeChain()
 }
 
 typedef bool (*InterruptCheckFn)(JSContext*);
-static const VMFunction InterruptCheckInfo = FunctionInfo<InterruptCheckFn>(InterruptCheck);
+static const VMFunction InterruptCheckInfo =
+    FunctionInfo<InterruptCheckFn>(InterruptCheck, "InterruptCheck");
 
 bool
 BaselineCompiler::emitInterruptCheck()
@@ -705,7 +710,8 @@ BaselineCompiler::emitInterruptCheck()
 
 typedef bool (*IonCompileScriptForBaselineFn)(JSContext*, BaselineFrame*, jsbytecode*);
 static const VMFunction IonCompileScriptForBaselineInfo =
-    FunctionInfo<IonCompileScriptForBaselineFn>(IonCompileScriptForBaseline);
+    FunctionInfo<IonCompileScriptForBaselineFn>(IonCompileScriptForBaseline,
+                                                "IonCompileScriptForBaseline");
 
 bool
 BaselineCompiler::emitWarmUpCounterIncrement(bool allowOsr)
@@ -1296,9 +1302,33 @@ BaselineCompiler::emit_JSOP_NULL()
     return true;
 }
 
+typedef bool (*ThrowCheckIsObjectFn)(JSContext*, CheckIsObjectKind);
+static const VMFunction ThrowCheckIsObjectInfo =
+    FunctionInfo<ThrowCheckIsObjectFn>(ThrowCheckIsObject, "ThrowCheckIsObject");
+
+bool
+BaselineCompiler::emit_JSOP_CHECKISOBJ()
+{
+    frame.syncStack(0);
+    masm.loadValue(frame.addressOfStackValue(frame.peek(-1)), R0);
+
+    Label ok;
+    masm.branchTestObject(Assembler::Equal, R0, &ok);
+
+    prepareVMCall();
+
+    pushArg(Imm32(GET_UINT8(pc)));
+    if (!callVM(ThrowCheckIsObjectInfo))
+        return false;
+
+    masm.bind(&ok);
+    return true;
+}
+
 typedef bool (*ThrowUninitializedThisFn)(JSContext*, BaselineFrame* frame);
 static const VMFunction ThrowUninitializedThisInfo =
-    FunctionInfo<ThrowUninitializedThisFn>(BaselineThrowUninitializedThis);
+    FunctionInfo<ThrowUninitializedThisFn>(BaselineThrowUninitializedThis,
+                                           "BaselineThrowUninitializedThis");
 
 bool
 BaselineCompiler::emit_JSOP_CHECKTHIS()
@@ -1329,7 +1359,7 @@ BaselineCompiler::emitCheckThis(ValueOperand val)
 
 typedef bool (*ThrowBadDerivedReturnFn)(JSContext*, HandleValue);
 static const VMFunction ThrowBadDerivedReturnInfo =
-    FunctionInfo<ThrowBadDerivedReturnFn>(jit::ThrowBadDerivedReturn);
+    FunctionInfo<ThrowBadDerivedReturnFn>(jit::ThrowBadDerivedReturn, "ThrowBadDerivedReturn");
 
 bool
 BaselineCompiler::emit_JSOP_CHECKRETURN()
@@ -1365,7 +1395,7 @@ BaselineCompiler::emit_JSOP_CHECKRETURN()
 
 typedef bool (*GetFunctionThisFn)(JSContext*, BaselineFrame*, MutableHandleValue);
 static const VMFunction GetFunctionThisInfo =
-    FunctionInfo<GetFunctionThisFn>(jit::BaselineGetFunctionThis);
+    FunctionInfo<GetFunctionThisFn>(jit::BaselineGetFunctionThis, "BaselineGetFunctionThis");
 
 bool
 BaselineCompiler::emit_JSOP_FUNCTIONTHIS()
@@ -1399,7 +1429,8 @@ BaselineCompiler::emit_JSOP_FUNCTIONTHIS()
 
 typedef bool (*GetNonSyntacticGlobalThisFn)(JSContext*, HandleObject, MutableHandleValue);
 static const VMFunction GetNonSyntacticGlobalThisInfo =
-    FunctionInfo<GetNonSyntacticGlobalThisFn>(js::GetNonSyntacticGlobalThis);
+    FunctionInfo<GetNonSyntacticGlobalThisFn>(js::GetNonSyntacticGlobalThis,
+                                              "GetNonSyntacticGlobalThis");
 
 bool
 BaselineCompiler::emit_JSOP_GLOBALTHIS()
@@ -1506,7 +1537,7 @@ BaselineCompiler::emit_JSOP_SYMBOL()
 
 typedef JSObject* (*DeepCloneObjectLiteralFn)(JSContext*, HandleObject, NewObjectKind);
 static const VMFunction DeepCloneObjectLiteralInfo =
-    FunctionInfo<DeepCloneObjectLiteralFn>(DeepCloneObjectLiteral);
+    FunctionInfo<DeepCloneObjectLiteralFn>(DeepCloneObjectLiteral, "DeepCloneObjectLiteral");
 
 bool
 BaselineCompiler::emit_JSOP_OBJECT()
@@ -1555,7 +1586,7 @@ BaselineCompiler::emit_JSOP_CALLSITEOBJ()
 
 typedef JSObject* (*CloneRegExpObjectFn)(JSContext*, JSObject*);
 static const VMFunction CloneRegExpObjectInfo =
-    FunctionInfo<CloneRegExpObjectFn>(CloneRegExpObject);
+    FunctionInfo<CloneRegExpObjectFn>(CloneRegExpObject, "CloneRegExpObject");
 
 bool
 BaselineCompiler::emit_JSOP_REGEXP()
@@ -1574,7 +1605,7 @@ BaselineCompiler::emit_JSOP_REGEXP()
 }
 
 typedef JSObject* (*LambdaFn)(JSContext*, HandleFunction, HandleObject);
-static const VMFunction LambdaInfo = FunctionInfo<LambdaFn>(js::Lambda);
+static const VMFunction LambdaInfo = FunctionInfo<LambdaFn>(js::Lambda, "Lambda");
 
 bool
 BaselineCompiler::emit_JSOP_LAMBDA()
@@ -1597,7 +1628,8 @@ BaselineCompiler::emit_JSOP_LAMBDA()
 }
 
 typedef JSObject* (*LambdaArrowFn)(JSContext*, HandleFunction, HandleObject, HandleValue);
-static const VMFunction LambdaArrowInfo = FunctionInfo<LambdaArrowFn>(js::LambdaArrow);
+static const VMFunction LambdaArrowInfo =
+    FunctionInfo<LambdaArrowFn>(js::LambdaArrow, "LambdaArrow");
 
 bool
 BaselineCompiler::emit_JSOP_LAMBDA_ARROW()
@@ -1920,7 +1952,7 @@ BaselineCompiler::emit_JSOP_SPREADCALLARRAY()
 
 typedef JSObject* (*NewArrayCopyOnWriteFn)(JSContext*, HandleArrayObject, gc::InitialHeap);
 const VMFunction jit::NewArrayCopyOnWriteInfo =
-    FunctionInfo<NewArrayCopyOnWriteFn>(js::NewDenseCopyOnWriteArray);
+    FunctionInfo<NewArrayCopyOnWriteFn>(js::NewDenseCopyOnWriteArray, "NewDenseCopyOnWriteArray");
 
 bool
 BaselineCompiler::emit_JSOP_NEWARRAY_COPYONWRITE()
@@ -2045,7 +2077,8 @@ BaselineCompiler::emit_JSOP_INITHIDDENELEM()
 }
 
 typedef bool (*MutateProtoFn)(JSContext* cx, HandlePlainObject obj, HandleValue newProto);
-static const VMFunction MutateProtoInfo = FunctionInfo<MutateProtoFn>(MutatePrototype);
+static const VMFunction MutateProtoInfo =
+    FunctionInfo<MutateProtoFn>(MutatePrototype, "MutatePrototype");
 
 bool
 BaselineCompiler::emit_JSOP_MUTATEPROTO()
@@ -2096,7 +2129,8 @@ BaselineCompiler::emit_JSOP_INITHIDDENPROP()
 }
 
 typedef bool (*NewbornArrayPushFn)(JSContext*, HandleObject, const Value&);
-static const VMFunction NewbornArrayPushInfo = FunctionInfo<NewbornArrayPushFn>(NewbornArrayPush);
+static const VMFunction NewbornArrayPushInfo =
+    FunctionInfo<NewbornArrayPushFn>(NewbornArrayPush, "NewbornArrayPush");
 
 bool
 BaselineCompiler::emit_JSOP_ARRAYPUSH()
@@ -2164,9 +2198,9 @@ BaselineCompiler::emit_JSOP_STRICTSETELEM()
 
 typedef bool (*DeleteElementFn)(JSContext*, HandleValue, HandleValue, bool*);
 static const VMFunction DeleteElementStrictInfo
-    = FunctionInfo<DeleteElementFn>(DeleteElementJit<true>);
+    = FunctionInfo<DeleteElementFn>(DeleteElementJit<true>, "DeleteElementStrict");
 static const VMFunction DeleteElementNonStrictInfo
-    = FunctionInfo<DeleteElementFn>(DeleteElementJit<false>);
+    = FunctionInfo<DeleteElementFn>(DeleteElementJit<false>, "DeleteElementNonStrict");
 
 bool
 BaselineCompiler::emit_JSOP_DELELEM()
@@ -2280,7 +2314,7 @@ BaselineCompiler::emit_JSOP_BINDGNAME()
 }
 
 typedef JSObject* (*BindVarFn)(JSContext*, HandleObject);
-static const VMFunction BindVarInfo = FunctionInfo<BindVarFn>(jit::BindVar);
+static const VMFunction BindVarInfo = FunctionInfo<BindVarFn>(jit::BindVar, "BindVar");
 
 bool
 BaselineCompiler::emit_JSOP_BINDVAR()
@@ -2381,9 +2415,9 @@ BaselineCompiler::emit_JSOP_GETXPROP()
 
 typedef bool (*DeletePropertyFn)(JSContext*, HandleValue, HandlePropertyName, bool*);
 static const VMFunction DeletePropertyStrictInfo =
-    FunctionInfo<DeletePropertyFn>(DeletePropertyJit<true>);
+    FunctionInfo<DeletePropertyFn>(DeletePropertyJit<true>, "DeletePropertyStrict");
 static const VMFunction DeletePropertyNonStrictInfo =
-    FunctionInfo<DeletePropertyFn>(DeletePropertyJit<false>);
+    FunctionInfo<DeletePropertyFn>(DeletePropertyJit<false>, "DeletePropertyNonStrict");
 
 bool
 BaselineCompiler::emit_JSOP_DELPROP()
@@ -2506,7 +2540,7 @@ BaselineCompiler::emit_JSOP_SETALIASEDVAR()
     Register temp = R1.scratchReg();
 
     Label skipBarrier;
-    masm.branchPtrInNurseryRange(Assembler::Equal, objReg, temp, &skipBarrier);
+    masm.branchPtrInNurseryChunk(Assembler::Equal, objReg, temp, &skipBarrier);
     masm.branchValueIsNurseryObject(Assembler::NotEqual, R0, temp, &skipBarrier);
 
     masm.call(&postBarrierSlot_); // Won't clobber R0
@@ -2554,7 +2588,8 @@ BaselineCompiler::emit_JSOP_BINDNAME()
 
 typedef bool (*DeleteNameFn)(JSContext*, HandlePropertyName, HandleObject,
                              MutableHandleValue);
-static const VMFunction DeleteNameInfo = FunctionInfo<DeleteNameFn>(DeleteNameOperation);
+static const VMFunction DeleteNameInfo =
+    FunctionInfo<DeleteNameFn>(DeleteNameOperation, "DeleteNameOperation");
 
 bool
 BaselineCompiler::emit_JSOP_DELNAME()
@@ -2630,7 +2665,7 @@ BaselineCompiler::emit_JSOP_GETINTRINSIC()
 }
 
 typedef bool (*DefVarFn)(JSContext*, HandlePropertyName, unsigned, HandleObject);
-static const VMFunction DefVarInfo = FunctionInfo<DefVarFn>(DefVar);
+static const VMFunction DefVarInfo = FunctionInfo<DefVarFn>(DefVar, "DefVar");
 
 bool
 BaselineCompiler::emit_JSOP_DEFVAR()
@@ -2654,7 +2689,7 @@ BaselineCompiler::emit_JSOP_DEFVAR()
 }
 
 typedef bool (*DefLexicalFn)(JSContext*, HandlePropertyName, unsigned, HandleObject);
-static const VMFunction DefLexicalInfo = FunctionInfo<DefLexicalFn>(DefLexical);
+static const VMFunction DefLexicalInfo = FunctionInfo<DefLexicalFn>(DefLexical, "DefLexical");
 
 bool
 BaselineCompiler::emit_JSOP_DEFCONST()
@@ -2684,7 +2719,8 @@ BaselineCompiler::emit_JSOP_DEFLET()
 }
 
 typedef bool (*DefFunOperationFn)(JSContext*, HandleScript, HandleObject, HandleFunction);
-static const VMFunction DefFunOperationInfo = FunctionInfo<DefFunOperationFn>(DefFunOperation);
+static const VMFunction DefFunOperationInfo =
+    FunctionInfo<DefFunOperationFn>(DefFunOperation, "DefFunOperation");
 
 bool
 BaselineCompiler::emit_JSOP_DEFFUN()
@@ -2706,7 +2742,8 @@ BaselineCompiler::emit_JSOP_DEFFUN()
 typedef bool (*InitPropGetterSetterFn)(JSContext*, jsbytecode*, HandleObject, HandlePropertyName,
                                        HandleObject);
 static const VMFunction InitPropGetterSetterInfo =
-    FunctionInfo<InitPropGetterSetterFn>(InitGetterSetterOperation);
+    FunctionInfo<InitPropGetterSetterFn>(InitGetterSetterOperation,
+                                         "InitPropGetterSetterOperation");
 
 bool
 BaselineCompiler::emitInitPropGetterSetter()
@@ -2763,7 +2800,8 @@ BaselineCompiler::emit_JSOP_INITHIDDENPROP_SETTER()
 typedef bool (*InitElemGetterSetterFn)(JSContext*, jsbytecode*, HandleObject, HandleValue,
                                        HandleObject);
 static const VMFunction InitElemGetterSetterInfo =
-    FunctionInfo<InitElemGetterSetterFn>(InitGetterSetterOperation);
+    FunctionInfo<InitElemGetterSetterFn>(InitGetterSetterOperation,
+                                         "InitElemGetterSetterOperation");
 
 bool
 BaselineCompiler::emitInitElemGetterSetter()
@@ -2922,7 +2960,7 @@ BaselineCompiler::emitFormalArgAccess(uint32_t arg, bool get)
 
         Label skipBarrier;
 
-        masm.branchPtrInNurseryRange(Assembler::Equal, reg, temp, &skipBarrier);
+        masm.branchPtrInNurseryChunk(Assembler::Equal, reg, temp, &skipBarrier);
         masm.branchValueIsNurseryObject(Assembler::NotEqual, R0, temp, &skipBarrier);
 
         masm.call(&postBarrierSlot_);
@@ -3008,7 +3046,8 @@ BaselineCompiler::emit_JSOP_NEWTARGET()
 
 typedef bool (*ThrowRuntimeLexicalErrorFn)(JSContext* cx, unsigned);
 static const VMFunction ThrowRuntimeLexicalErrorInfo =
-    FunctionInfo<ThrowRuntimeLexicalErrorFn>(jit::ThrowRuntimeLexicalError);
+    FunctionInfo<ThrowRuntimeLexicalErrorFn>(jit::ThrowRuntimeLexicalError,
+                                             "ThrowRuntimeLexicalError");
 
 bool
 BaselineCompiler::emitThrowConstAssignment()
@@ -3213,7 +3252,7 @@ BaselineCompiler::emit_JSOP_STRICTSPREADEVAL()
 
 typedef bool (*OptimizeSpreadCallFn)(JSContext*, HandleValue, bool*);
 static const VMFunction OptimizeSpreadCallInfo =
-    FunctionInfo<OptimizeSpreadCallFn>(OptimizeSpreadCall);
+    FunctionInfo<OptimizeSpreadCallFn>(OptimizeSpreadCall, "OptimizeSpreadCall");
 
 bool
 BaselineCompiler::emit_JSOP_OPTIMIZE_SPREADCALL()
@@ -3234,7 +3273,8 @@ BaselineCompiler::emit_JSOP_OPTIMIZE_SPREADCALL()
 
 typedef bool (*ImplicitThisFn)(JSContext*, HandleObject, HandlePropertyName,
                                MutableHandleValue);
-static const VMFunction ImplicitThisInfo = FunctionInfo<ImplicitThisFn>(ImplicitThisOperation);
+static const VMFunction ImplicitThisInfo =
+    FunctionInfo<ImplicitThisFn>(ImplicitThisOperation, "ImplicitThisOperation");
 
 bool
 BaselineCompiler::emit_JSOP_IMPLICITTHIS()
@@ -3298,7 +3338,8 @@ BaselineCompiler::emit_JSOP_TYPEOFEXPR()
 }
 
 typedef bool (*ThrowMsgFn)(JSContext*, const unsigned);
-static const VMFunction ThrowMsgInfo = FunctionInfo<ThrowMsgFn>(js::ThrowMsgOperation);
+static const VMFunction ThrowMsgInfo =
+    FunctionInfo<ThrowMsgFn>(js::ThrowMsgOperation, "ThrowMsgOperation");
 
 bool
 BaselineCompiler::emit_JSOP_THROWMSG()
@@ -3309,7 +3350,7 @@ BaselineCompiler::emit_JSOP_THROWMSG()
 }
 
 typedef bool (*ThrowFn)(JSContext*, HandleValue);
-static const VMFunction ThrowInfo = FunctionInfo<ThrowFn>(js::Throw);
+static const VMFunction ThrowInfo = FunctionInfo<ThrowFn>(js::Throw, "Throw");
 
 bool
 BaselineCompiler::emit_JSOP_THROW()
@@ -3324,7 +3365,8 @@ BaselineCompiler::emit_JSOP_THROW()
 }
 
 typedef bool (*ThrowingFn)(JSContext*, HandleValue);
-static const VMFunction ThrowingInfo = FunctionInfo<ThrowingFn>(js::ThrowingOperation);
+static const VMFunction ThrowingInfo =
+    FunctionInfo<ThrowingFn>(js::ThrowingOperation, "ThrowingOperation");
 
 bool
 BaselineCompiler::emit_JSOP_THROWING()
@@ -3389,7 +3431,8 @@ BaselineCompiler::emit_JSOP_RETSUB()
 }
 
 typedef bool (*PushBlockScopeFn)(JSContext*, BaselineFrame*, Handle<StaticBlockScope*>);
-static const VMFunction PushBlockScopeInfo = FunctionInfo<PushBlockScopeFn>(jit::PushBlockScope);
+static const VMFunction PushBlockScopeInfo =
+    FunctionInfo<PushBlockScopeFn>(jit::PushBlockScope, "PushBlockScope");
 
 bool
 BaselineCompiler::emit_JSOP_PUSHBLOCKSCOPE()
@@ -3407,11 +3450,13 @@ BaselineCompiler::emit_JSOP_PUSHBLOCKSCOPE()
 }
 
 typedef bool (*PopBlockScopeFn)(JSContext*, BaselineFrame*);
-static const VMFunction PopBlockScopeInfo = FunctionInfo<PopBlockScopeFn>(jit::PopBlockScope);
+static const VMFunction PopBlockScopeInfo =
+    FunctionInfo<PopBlockScopeFn>(jit::PopBlockScope, "PopBlockScope");
 
 typedef bool (*DebugLeaveThenPopBlockScopeFn)(JSContext*, BaselineFrame*, jsbytecode*);
 static const VMFunction DebugLeaveThenPopBlockScopeInfo =
-    FunctionInfo<DebugLeaveThenPopBlockScopeFn>(jit::DebugLeaveThenPopBlockScope);
+    FunctionInfo<DebugLeaveThenPopBlockScopeFn>(jit::DebugLeaveThenPopBlockScope,
+                                                "DebugLeaveThenPopBlockScope");
 
 bool
 BaselineCompiler::emit_JSOP_POPBLOCKSCOPE()
@@ -3432,11 +3477,12 @@ BaselineCompiler::emit_JSOP_POPBLOCKSCOPE()
 
 typedef bool (*FreshenBlockScopeFn)(JSContext*, BaselineFrame*);
 static const VMFunction FreshenBlockScopeInfo =
-    FunctionInfo<FreshenBlockScopeFn>(jit::FreshenBlockScope);
+    FunctionInfo<FreshenBlockScopeFn>(jit::FreshenBlockScope, "FreshenBlockScope");
 
 typedef bool (*DebugLeaveThenFreshenBlockScopeFn)(JSContext*, BaselineFrame*, jsbytecode*);
 static const VMFunction DebugLeaveThenFreshenBlockScopeInfo =
-    FunctionInfo<DebugLeaveThenFreshenBlockScopeFn>(jit::DebugLeaveThenFreshenBlockScope);
+    FunctionInfo<DebugLeaveThenFreshenBlockScopeFn>(jit::DebugLeaveThenFreshenBlockScope,
+                                                    "DebugLeaveThenFreshenBlockScope");
 
 bool
 BaselineCompiler::emit_JSOP_FRESHENBLOCKSCOPE()
@@ -3456,7 +3502,8 @@ BaselineCompiler::emit_JSOP_FRESHENBLOCKSCOPE()
 }
 
 typedef bool (*DebugLeaveBlockFn)(JSContext*, BaselineFrame*, jsbytecode*);
-static const VMFunction DebugLeaveBlockInfo = FunctionInfo<DebugLeaveBlockFn>(jit::DebugLeaveBlock);
+static const VMFunction DebugLeaveBlockInfo =
+    FunctionInfo<DebugLeaveBlockFn>(jit::DebugLeaveBlock, "DebugLeaveBlock");
 
 bool
 BaselineCompiler::emit_JSOP_DEBUGLEAVEBLOCK()
@@ -3473,7 +3520,8 @@ BaselineCompiler::emit_JSOP_DEBUGLEAVEBLOCK()
 }
 
 typedef bool (*EnterWithFn)(JSContext*, BaselineFrame*, HandleValue, Handle<StaticWithScope*>);
-static const VMFunction EnterWithInfo = FunctionInfo<EnterWithFn>(jit::EnterWith);
+static const VMFunction EnterWithInfo =
+    FunctionInfo<EnterWithFn>(jit::EnterWith, "EnterWith");
 
 bool
 BaselineCompiler::emit_JSOP_ENTERWITH()
@@ -3495,7 +3543,8 @@ BaselineCompiler::emit_JSOP_ENTERWITH()
 }
 
 typedef bool (*LeaveWithFn)(JSContext*, BaselineFrame*);
-static const VMFunction LeaveWithInfo = FunctionInfo<LeaveWithFn>(jit::LeaveWith);
+static const VMFunction LeaveWithInfo =
+    FunctionInfo<LeaveWithFn>(jit::LeaveWith, "LeaveWith");
 
 bool
 BaselineCompiler::emit_JSOP_LEAVEWITH()
@@ -3511,7 +3560,7 @@ BaselineCompiler::emit_JSOP_LEAVEWITH()
 
 typedef bool (*GetAndClearExceptionFn)(JSContext*, MutableHandleValue);
 static const VMFunction GetAndClearExceptionInfo =
-    FunctionInfo<GetAndClearExceptionFn>(GetAndClearException);
+    FunctionInfo<GetAndClearExceptionFn>(GetAndClearException, "GetAndClearException");
 
 bool
 BaselineCompiler::emit_JSOP_EXCEPTION()
@@ -3527,7 +3576,7 @@ BaselineCompiler::emit_JSOP_EXCEPTION()
 
 typedef bool (*OnDebuggerStatementFn)(JSContext*, BaselineFrame*, jsbytecode* pc, bool*);
 static const VMFunction OnDebuggerStatementInfo =
-    FunctionInfo<OnDebuggerStatementFn>(jit::OnDebuggerStatement);
+    FunctionInfo<OnDebuggerStatementFn>(jit::OnDebuggerStatement, "OnDebuggerStatement");
 
 bool
 BaselineCompiler::emit_JSOP_DEBUGGER()
@@ -3555,7 +3604,8 @@ BaselineCompiler::emit_JSOP_DEBUGGER()
 
 typedef bool (*DebugEpilogueFn)(JSContext*, BaselineFrame*, jsbytecode*);
 static const VMFunction DebugEpilogueInfo =
-    FunctionInfo<DebugEpilogueFn>(jit::DebugEpilogueOnBaselineReturn);
+    FunctionInfo<DebugEpilogueFn>(jit::DebugEpilogueOnBaselineReturn,
+                                  "DebugEpilogueOnBaselineReturn");
 
 bool
 BaselineCompiler::emitReturn()
@@ -3634,7 +3684,7 @@ BaselineCompiler::emit_JSOP_RETRVAL()
 }
 
 typedef bool (*ToIdFn)(JSContext*, HandleScript, jsbytecode*, HandleValue, MutableHandleValue);
-static const VMFunction ToIdInfo = FunctionInfo<ToIdFn>(js::ToIdOperation);
+static const VMFunction ToIdInfo = FunctionInfo<ToIdFn>(js::ToIdOperation, "ToIdOperation");
 
 bool
 BaselineCompiler::emit_JSOP_TOID()
@@ -3663,7 +3713,8 @@ BaselineCompiler::emit_JSOP_TOID()
 }
 
 typedef bool (*ThrowObjectCoercibleFn)(JSContext*, HandleValue);
-static const VMFunction ThrowObjectCoercibleInfo = FunctionInfo<ThrowObjectCoercibleFn>(ThrowObjectCoercible);
+static const VMFunction ThrowObjectCoercibleInfo =
+    FunctionInfo<ThrowObjectCoercibleFn>(ThrowObjectCoercible, "ThrowObjectCoercible");
 
 bool
 BaselineCompiler::emit_JSOP_CHECKOBJCOERCIBLE()
@@ -3689,7 +3740,7 @@ BaselineCompiler::emit_JSOP_CHECKOBJCOERCIBLE()
 }
 
 typedef JSString* (*ToStringFn)(JSContext*, HandleValue);
-static const VMFunction ToStringInfo = FunctionInfo<ToStringFn>(ToStringSlow);
+static const VMFunction ToStringInfo = FunctionInfo<ToStringFn>(ToStringSlow, "ToStringSlow");
 
 bool
 BaselineCompiler::emit_JSOP_TOSTRING()
@@ -3817,7 +3868,7 @@ BaselineCompiler::emit_JSOP_CALLEE()
 
 typedef bool (*NewArgumentsObjectFn)(JSContext*, BaselineFrame*, MutableHandleValue);
 static const VMFunction NewArgumentsObjectInfo =
-    FunctionInfo<NewArgumentsObjectFn>(jit::NewArgumentsObject);
+    FunctionInfo<NewArgumentsObjectFn>(jit::NewArgumentsObject, "NewArgumentsObject");
 
 bool
 BaselineCompiler::emit_JSOP_ARGUMENTS()
@@ -3857,7 +3908,7 @@ BaselineCompiler::emit_JSOP_ARGUMENTS()
 
 typedef bool (*RunOnceScriptPrologueFn)(JSContext*, HandleScript);
 static const VMFunction RunOnceScriptPrologueInfo =
-    FunctionInfo<RunOnceScriptPrologueFn>(js::RunOnceScriptPrologue);
+    FunctionInfo<RunOnceScriptPrologueFn>(js::RunOnceScriptPrologue, "RunOnceScriptPrologue");
 
 bool
 BaselineCompiler::emit_JSOP_RUNONCE()
@@ -3894,7 +3945,8 @@ BaselineCompiler::emit_JSOP_REST()
 }
 
 typedef JSObject* (*CreateGeneratorFn)(JSContext*, BaselineFrame*);
-static const VMFunction CreateGeneratorInfo = FunctionInfo<CreateGeneratorFn>(jit::CreateGenerator);
+static const VMFunction CreateGeneratorInfo =
+    FunctionInfo<CreateGeneratorFn>(jit::CreateGenerator, "CreateGenerator");
 
 bool
 BaselineCompiler::emit_JSOP_GENERATOR()
@@ -3954,8 +4006,8 @@ BaselineCompiler::emit_JSOP_INITIALYIELD()
 
     Register temp = R1.scratchReg();
     Label skipBarrier;
-    masm.branchPtrInNurseryRange(Assembler::Equal, genObj, temp, &skipBarrier);
-    masm.branchPtrInNurseryRange(Assembler::NotEqual, scopeObj, temp, &skipBarrier);
+    masm.branchPtrInNurseryChunk(Assembler::Equal, genObj, temp, &skipBarrier);
+    masm.branchPtrInNurseryChunk(Assembler::NotEqual, scopeObj, temp, &skipBarrier);
     masm.push(genObj);
     MOZ_ASSERT(genObj == R2.scratchReg());
     masm.call(&postBarrierSlot_);
@@ -3967,7 +4019,8 @@ BaselineCompiler::emit_JSOP_INITIALYIELD()
 }
 
 typedef bool (*NormalSuspendFn)(JSContext*, HandleObject, BaselineFrame*, jsbytecode*, uint32_t);
-static const VMFunction NormalSuspendInfo = FunctionInfo<NormalSuspendFn>(jit::NormalSuspend);
+static const VMFunction NormalSuspendInfo =
+    FunctionInfo<NormalSuspendFn>(jit::NormalSuspend, "NormalSuspend");
 
 bool
 BaselineCompiler::emit_JSOP_YIELD()
@@ -3999,8 +4052,8 @@ BaselineCompiler::emit_JSOP_YIELD()
 
         Register temp = R1.scratchReg();
         Label skipBarrier;
-        masm.branchPtrInNurseryRange(Assembler::Equal, genObj, temp, &skipBarrier);
-        masm.branchPtrInNurseryRange(Assembler::NotEqual, scopeObj, temp, &skipBarrier);
+        masm.branchPtrInNurseryChunk(Assembler::Equal, genObj, temp, &skipBarrier);
+        masm.branchPtrInNurseryChunk(Assembler::NotEqual, scopeObj, temp, &skipBarrier);
         MOZ_ASSERT(genObj == R2.scratchReg());
         masm.call(&postBarrierSlot_);
         masm.bind(&skipBarrier);
@@ -4022,7 +4075,8 @@ BaselineCompiler::emit_JSOP_YIELD()
 }
 
 typedef bool (*DebugAfterYieldFn)(JSContext*, BaselineFrame*);
-static const VMFunction DebugAfterYieldInfo = FunctionInfo<DebugAfterYieldFn>(jit::DebugAfterYield);
+static const VMFunction DebugAfterYieldInfo =
+    FunctionInfo<DebugAfterYieldFn>(jit::DebugAfterYield, "DebugAfterYield");
 
 bool
 BaselineCompiler::emit_JSOP_DEBUGAFTERYIELD()
@@ -4038,7 +4092,8 @@ BaselineCompiler::emit_JSOP_DEBUGAFTERYIELD()
 }
 
 typedef bool (*FinalSuspendFn)(JSContext*, HandleObject, BaselineFrame*, jsbytecode*);
-static const VMFunction FinalSuspendInfo = FunctionInfo<FinalSuspendFn>(jit::FinalSuspend);
+static const VMFunction FinalSuspendInfo =
+    FunctionInfo<FinalSuspendFn>(jit::FinalSuspend, "FinalSuspend");
 
 bool
 BaselineCompiler::emit_JSOP_FINALYIELDRVAL()
@@ -4062,11 +4117,13 @@ BaselineCompiler::emit_JSOP_FINALYIELDRVAL()
 
 typedef bool (*InterpretResumeFn)(JSContext*, HandleObject, HandleValue, HandlePropertyName,
                                   MutableHandleValue);
-static const VMFunction InterpretResumeInfo = FunctionInfo<InterpretResumeFn>(jit::InterpretResume);
+static const VMFunction InterpretResumeInfo =
+    FunctionInfo<InterpretResumeFn>(jit::InterpretResume, "InterpretResume");
 
 typedef bool (*GeneratorThrowFn)(JSContext*, BaselineFrame*, Handle<GeneratorObject*>,
                                  HandleValue, uint32_t);
-static const VMFunction GeneratorThrowInfo = FunctionInfo<GeneratorThrowFn>(jit::GeneratorThrowOrClose, TailCall);
+static const VMFunction GeneratorThrowInfo =
+    FunctionInfo<GeneratorThrowFn>(jit::GeneratorThrowOrClose, "GeneratorThrowOrClose", TailCall);
 
 bool
 BaselineCompiler::emit_JSOP_RESUME()
@@ -4309,7 +4366,8 @@ BaselineCompiler::emit_JSOP_RESUME()
 }
 
 typedef bool (*CheckSelfHostedFn)(JSContext*, HandleValue);
-static const VMFunction CheckSelfHostedInfo = FunctionInfo<CheckSelfHostedFn>(js::Debug_CheckSelfHosted);
+static const VMFunction CheckSelfHostedInfo =
+    FunctionInfo<CheckSelfHostedFn>(js::Debug_CheckSelfHosted, "Debug_CheckSelfHosted");
 
 bool
 BaselineCompiler::emit_JSOP_DEBUGCHECKSELFHOSTED()
