@@ -1,0 +1,40 @@
+From a83dbdd8a53ad79fa7a353f26c2048101ea768e1 Mon Sep 17 00:00:00 2001
+From: Nick Fitzgerald <fitzgen@gmail.com>
+Date: Wed, 24 Aug 2016 15:45:21 -0700
+Subject: [PATCH] Hide JS_GetDefaultLocale
+
+---
+ mozjs/js/src/jsapi.h | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/mozjs/js/src/jsapi.h b/mozjs/js/src/jsapi.h
+index f0708f2..7c4adc0 100644
+--- a/mozjs/js/src/jsapi.h
++++ b/mozjs/js/src/jsapi.h
+@@ -5066,21 +5066,23 @@ JS_ParseJSONWithReviver(JSContext* cx, JS::HandleString str, JS::HandleValue rev
+  * (Intl.Collator, Intl.NumberFormat, Intl.DateTimeFormat).
+  * Note that the Internationalization API encourages clients to
+  * specify their own locales.
+  * The locale string remains owned by the caller.
+  */
+ extern JS_PUBLIC_API(bool)
+ JS_SetDefaultLocale(JSContext* cx, const char* locale);
+ 
++#ifndef RUST_BINDGEN
+ /**
+  * Look up the default locale for the ECMAScript Internationalization API.
+  */
+ extern JS_PUBLIC_API(JS::UniqueChars)
+ JS_GetDefaultLocale(JSContext* cx);
++#endif
+ 
+ /**
+  * Reset the default locale to OS defaults.
+  */
+ extern JS_PUBLIC_API(void)
+ JS_ResetDefaultLocale(JSContext* cx);
+ 
+ /**
+-- 
+2.7.4
+
