@@ -5071,11 +5071,13 @@ JS_ParseJSONWithReviver(JSContext* cx, JS::HandleString str, JS::HandleValue rev
 extern JS_PUBLIC_API(bool)
 JS_SetDefaultLocale(JSContext* cx, const char* locale);
 
+#ifndef RUST_BINDGEN
 /**
  * Look up the default locale for the ECMAScript Internationalization API.
  */
 extern JS_PUBLIC_API(JS::UniqueChars)
 JS_GetDefaultLocale(JSContext* cx);
+#endif
 
 /**
  * Reset the default locale to OS defaults.
