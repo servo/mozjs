@@ -25,20 +25,23 @@ In order to upgrade to a new version of SpiderMonkey:
     * With the `LIBCLANG_PATH` and `LD_LIBRARY_PATH` environment variables
       set:
 
-      Generate the non-`DEBUG` bindings:
+      Generate and test the non-`DEBUG` bindings:
 
       ```
       $ cargo build
       $ ./etc/bindings.sh
       $ mv out.rs src/jsapi_$PLATFORM.rs
+      $ cargo test
       ```
 
-      Generate the `DEBUG` bindings:
+      Generate and test the `DEBUG` bindings:
 
       ```
+      $ cargo clean
       $ cargo build --features debugmozjs
       $ ./etc/bindings.sh
       $ mv out.rs src/jsapi_$PLATFORM_debug.rs
+      $ cargo test
       ```
 
 [bindgen]: https://github.com/servo/rust-bindgen
