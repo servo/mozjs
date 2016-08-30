@@ -168,6 +168,8 @@ const WHITELIST_TYPES: &'static [&'static str] = &[
     "JS::RootingContext",
     "JS::RootKind",
     "JS::ServoSizes",
+    "js::shadow::Object",
+    "js::shadow::ObjectGroup",
     "JS::SourceBufferHolder",
     "JS::Symbol",
     "JS::TraceKind",
@@ -190,6 +192,7 @@ const WHITELIST_VARS: &'static [&'static str] = &[
 /// Functions we want to generate bindings to.
 const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::ContextOptionsRef",
+    "js::detail::IsWindowSlow",
     "JS::Evaluate",
     "js::GetArrayBufferLengthAndData",
     "js::GetArrayBufferViewLengthAndData",
@@ -257,6 +260,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "js::ToUint16Slow",
     "js::ToUint32Slow",
     "js::ToUint64Slow",
+    "js::ToWindowIfWindowProxy",
     "js::UnwrapArrayBuffer",
     "js::UnwrapArrayBufferView",
     "js::UnwrapFloat32Array",
