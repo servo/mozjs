@@ -33,7 +33,9 @@ use glue::RUST_JS_NumberValue;
 use jsapi::root::*;
 use jsval::{BooleanValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
 use jsval::{JSVal, ObjectValue, ObjectOrNullValue, StringValue};
-use rust::{ToBoolean, ToNumber, ToUint16, ToInt32, ToUint32, ToInt64, ToUint64, ToString};
+use rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToUint64};
+use rust::{ToString, maybe_wrap_object_or_null_value};
+use rust::{maybe_wrap_object_value, maybe_wrap_value};
 use libc;
 use num_traits::{Bounded, Zero};
 use std::borrow::Cow;
@@ -182,9 +184,7 @@ impl ToJSValConvertible for JSVal {
     #[inline]
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: JS::MutableHandleValue) {
         rval.set(*self);
-        if !JS_WrapValue(cx, rval) {
-            panic!("JS_WrapValue failed.");
-        }
+        maybe_wrap_value(cx, rval);
     }
 }
 
@@ -202,9 +202,7 @@ impl ToJSValConvertible for JS::HandleValue {
     #[inline]
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: JS::MutableHandleValue) {
         rval.set(self.get());
-        if !JS_WrapValue(cx, rval) {
-            panic!("JS_WrapValue failed.");
-        }
+        maybe_wrap_value(cx, rval);
     }
 }
 
@@ -616,7 +614,7 @@ impl ToJSValConvertible for *mut JSObject {
     #[inline]
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: JS::MutableHandleValue) {
         rval.set(ObjectOrNullValue(*self));
-        assert!(JS_WrapValue(cx, rval));
+        maybe_wrap_object_or_null_value(cx, rval);
     }
 }
 
@@ -625,6 +623,6 @@ impl ToJSValConvertible for NonZero<*mut JSObject> {
     #[inline]
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: JS::MutableHandleValue) {
         rval.set(ObjectValue(self.get().as_mut().unwrap()));
-        assert!(JS_WrapValue(cx, rval));
+        maybe_wrap_object_value(cx, rval);
     }
 }

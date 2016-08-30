@@ -967,3 +967,76 @@ pub static SIMPLE_GLOBAL_CLASS: JSClass = JSClass {
     cOps: &SIMPLE_GLOBAL_CLASS_OPS as *const JSClassOps,
     reserved: [0 as *mut _; 3]
 };
+
+#[inline]
+unsafe fn get_object_group(obj: *mut JSObject) -> *mut js::shadow::ObjectGroup {
+    assert!(!obj.is_null());
+    let obj = obj as *mut js::shadow::Object;
+    (*obj).group
+}
+
+#[inline]
+pub unsafe fn get_object_class(obj: *mut JSObject) -> *const JSClass {
+    (*get_object_group(obj)).clasp as *const _
+}
+
+#[inline]
+pub unsafe fn get_object_compartment(obj: *mut JSObject) -> *mut JSCompartment {
+    (*get_object_group(obj)).compartment
+}
+
+#[inline]
+pub fn is_dom_class(class: &JSClass) -> bool {
+    class.flags & JSCLASS_IS_DOMJSCLASS != 0
+}
+
+#[inline]
+pub unsafe fn is_dom_object(obj: *mut JSObject) -> bool {
+    is_dom_class(&*get_object_class(obj))
+}
+
+#[inline]
+pub unsafe fn is_window(obj: *mut JSObject) -> bool {
+    (*get_object_class(obj)).flags & JSCLASS_IS_GLOBAL != 0 && js::detail::IsWindowSlow(obj)
+}
+
+#[inline]
+pub unsafe fn try_to_outerize(rval: JS::MutableHandleValue) {
+    let obj = rval.to_object();
+    if is_window(obj) {
+        let obj = js::ToWindowIfWindowProxy(obj);
+        assert!(!obj.is_null());
+        rval.set(jsval::ObjectValue(&mut *obj));
+    }
+}
+
+#[inline]
+pub unsafe fn maybe_wrap_object_value(cx: *mut JSContext, rval: JS::MutableHandleValue) {
+    assert!(rval.is_object());
+
+    // There used to be inline checks if this out of line call was necessary or
+    // not here, but JSAPI no longer exposes a way to get a JSContext's
+    // compartment, and additionally JSContext is under a bunch of churn in
+    // JSAPI in general right now.
+
+    assert!(JS_WrapValue(cx, rval));
+}
+
+#[inline]
+pub unsafe fn maybe_wrap_object_or_null_value(
+        cx: *mut JSContext,
+        rval: JS::MutableHandleValue) {
+    assert!(rval.is_object_or_null());
+    if !rval.is_null() {
+        maybe_wrap_object_value(cx, rval);
+    }
+}
+
+#[inline]
+pub unsafe fn maybe_wrap_value(cx: *mut JSContext, rval: JS::MutableHandleValue) {
+    if rval.is_string() {
+        assert!(JS_WrapValue(cx, rval));
+    } else if rval.is_object() {
+        maybe_wrap_object_value(cx, rval);
+    }
+}
