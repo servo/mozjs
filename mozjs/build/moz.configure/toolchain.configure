@@ -210,7 +210,10 @@ def get_compiler_info(compiler, language):
     # We then only include the version information when the C++ compiler
     # matches the feature check, so that an unsupported version of clang would
     # have no version number.
+    # We undef WINNT because mingw gcc has it as a standard define, and we want
+    # to use it as a bare name.
     check = dedent('''\
+        #undef WINNT
         #if defined(_MSC_VER)
         #if defined(__clang__)
         %COMPILER clang-cl
