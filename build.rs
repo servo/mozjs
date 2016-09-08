@@ -20,7 +20,7 @@ fn find_make() -> OsString {
 }
 
 fn main() {
-    let out_dir = env::var("OUT_DIR").unwrap();
+    let mut out_dir = env::var("OUT_DIR").unwrap();
     let target = env::var("TARGET").unwrap();
     let mut make = find_make();
     // Put MOZTOOLS_PATH at the beginning of PATH if specified
@@ -41,16 +41,19 @@ fn main() {
         .status()
         .unwrap();
     assert!(result.success());
-    println!("cargo:rustc-link-search=native={}/js/src", out_dir);
     if target.contains("windows") {
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
+        // Make sure that, on windows, the out dir uses forward slashes
+        // always for downstream consumers.
+        out_dir = out_dir.replace("\\", "/");
     } else {
         println!("cargo:rustc-link-lib=stdc++");
     }
     println!("cargo:rustc-link-lib=static=js_static");
+    println!("cargo:rustc-link-search=native={}/js/src", out_dir);
     println!("cargo:outdir={}", out_dir);
 }
