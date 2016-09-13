@@ -792,4 +792,25 @@ IsDebugBuild()
 #endif
 }
 
+#define JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Type, type)                         \
+    void                                                                       \
+    Get ## Type ## ArrayLengthAndData(JSObject* obj, uint32_t* length,         \
+                                      bool* isSharedMemory, type** data)       \
+    {                                                                          \
+        js::Get ## Type ## ArrayLengthAndData(obj, length, isSharedMemory,     \
+                                              data);                           \
+    }
+
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Int8, int8_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Uint8, uint8_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Uint8Clamped, uint8_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Int16, int16_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Uint16, uint16_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Int32, int32_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Uint32, uint32_t)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float32, float)
+JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float64, double)
+
+#undef JS_DEFINE_DATA_AND_LENGTH_ACCESSOR
+
 } // extern "C"
