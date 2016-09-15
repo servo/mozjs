@@ -240,7 +240,10 @@ extern "C" {
     pub fn IsWrapper(obj: *mut JSObject) -> bool;
     pub fn UnwrapObject(obj: *mut JSObject, stopAtOuter: u8) -> *mut JSObject;
     pub fn UncheckedUnwrapObject(obj: *mut JSObject, stopAtOuter: u8) -> *mut JSObject;
+    pub fn CreateAutoIdVector(cx: *mut JSContext) -> *mut JS::AutoIdVector;
     pub fn AppendToAutoIdVector(v: *mut JS::AutoIdVector, id: jsid) -> bool;
+    pub fn SliceAutoIdVector(v: *const JS::AutoIdVector, length: *mut usize) -> *const jsid;
+    pub fn DestroyAutoIdVector(v: *mut JS::AutoIdVector);
     pub fn CreateAutoObjectVector(aCx: *mut JSContext)
      -> *mut JS::AutoObjectVector;
     pub fn AppendToAutoObjectVector(v: *mut JS::AutoObjectVector,

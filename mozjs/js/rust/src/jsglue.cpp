@@ -660,10 +660,29 @@ UncheckedUnwrapObject(JSObject* obj, bool stopAtOuter)
     return js::UncheckedUnwrap(obj, stopAtOuter);
 }
 
+JS::AutoIdVector*
+CreateAutoIdVector(JSContext* cx)
+{
+    return new JS::AutoIdVector(cx);
+}
+
 bool
 AppendToAutoIdVector(JS::AutoIdVector* v, jsid id)
 {
     return v->append(id);
+}
+
+const jsid*
+SliceAutoIdVector(const JS::AutoIdVector* v, size_t* length)
+{
+    *length = v->length();
+    return v->begin();
+}
+
+void
+DestroyAutoIdVector(JS::AutoIdVector* v)
+{
+    delete v;
 }
 
 JS::AutoObjectVector*

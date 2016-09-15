@@ -191,6 +191,7 @@ const WHITELIST_VARS: &'static [&'static str] = &[
 const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::ContextOptionsRef",
     "JS::Evaluate",
+    "js::GetPropertyKeys",
     "JS::HeapObjectPostBarrier",
     "JS::HeapValuePostBarrier",
     "JS::InitSelfHostedCode",
@@ -219,6 +220,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_ReportErrorNumberUTF8",
     "JS_SetGCParameter",
     "JS_SetNativeStackQuota",
+    "JS_StringEqualsAscii",
     "JS_StringHasLatin1Chars",
     "JS_WrapValue",
     "JS::SetWarningReporter",
