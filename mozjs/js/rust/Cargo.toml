@@ -13,6 +13,8 @@ glob = "0.2.11"
 [[test]]
 name = "callback"
 [[test]]
+name = "enumerate"
+[[test]]
 name = "evaluate"
 [[test]]
 name = "stack_limit"
