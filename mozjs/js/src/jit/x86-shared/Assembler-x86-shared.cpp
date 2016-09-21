@@ -176,6 +176,51 @@ AssemblerX86Shared::InvertCondition(Condition cond)
     }
 }
 
+AssemblerX86Shared::Condition
+AssemblerX86Shared::UnsignedCondition(Condition cond)
+{
+    switch (cond) {
+      case Zero:
+      case NonZero:
+        return cond;
+      case LessThan:
+      case Below:
+        return Below;
+      case LessThanOrEqual:
+      case BelowOrEqual:
+        return BelowOrEqual;
+      case GreaterThan:
+      case Above:
+        return Above;
+      case AboveOrEqual:
+      case GreaterThanOrEqual:
+        return AboveOrEqual;
+      default:
+        MOZ_CRASH("unexpected condition");
+    }
+}
+
+AssemblerX86Shared::Condition
+AssemblerX86Shared::ConditionWithoutEqual(Condition cond)
+{
+    switch (cond) {
+      case LessThan:
+      case LessThanOrEqual:
+          return LessThan;
+      case Below:
+      case BelowOrEqual:
+        return Below;
+      case GreaterThan:
+      case GreaterThanOrEqual:
+        return GreaterThan;
+      case Above:
+      case AboveOrEqual:
+        return Above;
+      default:
+        MOZ_CRASH("unexpected condition");
+    }
+}
+
 void
 AssemblerX86Shared::verifyHeapAccessDisassembly(uint32_t begin, uint32_t end,
                                                 const Disassembler::HeapAccess& heapAccess)
@@ -190,6 +235,7 @@ CPUInfo::SSEVersion CPUInfo::maxEnabledSSEVersion = UnknownSSE;
 bool CPUInfo::avxPresent = false;
 bool CPUInfo::avxEnabled = false;
 bool CPUInfo::popcntPresent = false;
+bool CPUInfo::needAmdBugWorkaround = false;
 
 static uintptr_t
 ReadXGETBV()
@@ -218,12 +264,14 @@ ReadXGETBV()
 void
 CPUInfo::SetSSEVersion()
 {
-    int flagsEDX = 0;
+    int flagsEAX = 0;
     int flagsECX = 0;
+    int flagsEDX = 0;
 
 #ifdef _MSC_VER
     int cpuinfo[4];
     __cpuid(cpuinfo, 1);
+    flagsEAX = cpuinfo[0];
     flagsECX = cpuinfo[2];
     flagsEDX = cpuinfo[3];
 #elif defined(__GNUC__)
@@ -231,9 +279,9 @@ CPUInfo::SetSSEVersion()
     asm (
          "movl $0x1, %%eax;"
          "cpuid;"
-         : "=c" (flagsECX), "=d" (flagsEDX)
+         : "=a" (flagsEAX), "=c" (flagsECX), "=d" (flagsEDX)
          :
-         : "%eax", "%ebx"
+         : "%ebx"
          );
 # else
     // On x86, preserve ebx. The compiler needs it for PIC mode.
@@ -246,9 +294,9 @@ CPUInfo::SetSSEVersion()
          "pushl %%ebx;"
          "cpuid;"
          "popl %%ebx;"
-         : "=c" (flagsECX), "=d" (flagsEDX)
+         : "=a" (flagsEAX), "=c" (flagsECX), "=d" (flagsEDX)
          :
-         : "%eax"
+         :
          );
 # endif
 #else
@@ -288,6 +336,13 @@ CPUInfo::SetSSEVersion()
     static const int POPCNTBit = 1 << 23;
 
     popcntPresent = (flagsECX & POPCNTBit);
+
+    // Check if we need to work around an AMD CPU bug (see bug 1281759).
+    // We check for family 20 models 0-2. Intel doesn't use family 20 at
+    // this point, so this should only match AMD CPUs.
+    unsigned family = ((flagsEAX >> 20) & 0xff) + ((flagsEAX >> 8) & 0xf);
+    unsigned model = (((flagsEAX >> 16) & 0xf) << 4) + ((flagsEAX >> 4) & 0xf);
+    needAmdBugWorkaround = (family == 20 && model <= 2);
 }
 
 volatile uintptr_t* blackbox = nullptr;

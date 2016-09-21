@@ -9,11 +9,14 @@
 
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/HashFunctions.h"
 #include "mozilla/IndexSequence.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Tuple.h"
 
 #include <stdint.h>
+
+#include "js/Utility.h"
 
 #ifdef XP_WIN
 # define THREAD_RETURN_TYPE unsigned int
@@ -34,8 +37,11 @@ class ThreadTrampoline;
 class Thread
 {
 public:
+  struct Hasher;
+
   class Id
   {
+    friend struct Hasher;
     class PlatformData;
     void* platformData_[2];
 
@@ -47,8 +53,8 @@ public:
     Id& operator=(const Id&) = default;
     Id& operator=(Id&&) = default;
 
-    bool operator==(const Id& aOther);
-    bool operator!=(const Id& aOther) { return !operator==(aOther); }
+    bool operator==(const Id& aOther) const;
+    bool operator!=(const Id& aOther) const { return !operator==(aOther); }
 
     inline PlatformData* platformData();
     inline const PlatformData* platformData() const;
@@ -66,10 +72,32 @@ public:
     size_t stackSize() const { return stackSize_; }
   };
 
+  // A js::HashTable hash policy for keying hash tables by js::Thread::Id.
+  struct Hasher
+  {
+    typedef Id Lookup;
+
+    static HashNumber hash(const Lookup& l);
+
+    static bool match(const Id& key, const Lookup& lookup) {
+      return key == lookup;
+    }
+  };
+
   // Create a Thread in an initially unjoinable state. A thread of execution can
   // be created for this Thread by calling |init|. Some of the thread's
   // properties may be controlled by passing options to this constructor.
-  explicit Thread(const Options& options = Options()) : id_(Id()), options_(options) {}
+  template <typename O = Options,
+            // SFINAE to make sure we don't try and treat functors for the other
+            // constructor as an Options and vice versa.
+            typename NonConstO = typename mozilla::RemoveConst<O>::Type,
+            typename DerefO = typename mozilla::RemoveReference<NonConstO>::Type,
+            typename = typename mozilla::EnableIf<mozilla::IsSame<DerefO, Options>::value,
+                                                  void*>::Type>
+  explicit Thread(O&& options = Options())
+    : id_(Id())
+    , options_(mozilla::Forward<O>(options))
+  { }
 
   // Start a thread of execution at functor |f| with parameters |args|. Note
   // that the arguments must be either POD or rvalue references (mozilla::Move).
@@ -89,9 +117,11 @@ public:
   MOZ_MUST_USE bool init(F&& f, Args&&... args) {
     MOZ_RELEASE_ASSERT(!joinable());
     using Trampoline = detail::ThreadTrampoline<F, Args...>;
-    auto trampoline = new Trampoline(mozilla::Forward<F>(f),
-                                     mozilla::Forward<Args>(args)...);
-    MOZ_RELEASE_ASSERT(trampoline);
+    AutoEnterOOMUnsafeRegion oom;
+    auto trampoline = js_new<Trampoline>(mozilla::Forward<F>(f),
+                                         mozilla::Forward<Args>(args)...);
+    if (!trampoline)
+      oom.crash("js::Thread::init");
     return create(Trampoline::Start, trampoline);
   }
 
@@ -150,9 +180,9 @@ namespace ThisThread {
 // Return the thread id of the calling thread.
 Thread::Id GetId();
 
-// Set the current thread name. Returns true if successful. Note that setting
-// the thread name may not be available on all platforms; on these platforms
-// setName() will simply do nothing.
+// Set the current thread name. Note that setting the thread name may not be
+// available on all platforms; on these platforms setName() will simply do
+// nothing.
 void SetName(const char* name);
 
 } // namespace ThisThread
@@ -197,7 +227,7 @@ public:
   static THREAD_RETURN_TYPE THREAD_CALL_API Start(void* aPack) {
     auto* pack = static_cast<ThreadTrampoline<F, Args...>*>(aPack);
     pack->callMain(typename mozilla::IndexSequenceFor<Args...>::Type());
-    delete pack;
+    js_delete(pack);
     return 0;
   }
 

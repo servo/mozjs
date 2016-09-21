@@ -31,8 +31,10 @@ namespace jit { class MacroAssembler; class Label; }
 namespace wasm {
 
 class CallSite;
+class Code;
 class CodeRange;
 class Instance;
+class SigIdDesc;
 struct CallThunk;
 struct FuncOffsets;
 struct Metadata;
@@ -48,11 +50,12 @@ struct ProfilingOffsets;
 // function stack frame.
 class FrameIterator
 {
-    JSContext* cx_;
-    const Instance* instance_;
+    const WasmActivation* activation_;
+    const Code* code_;
     const CallSite* callsite_;
     const CodeRange* codeRange_;
     uint8_t* fp_;
+    uint8_t* pc_;
     bool missingFrameMessage_;
 
     void settle();
@@ -62,8 +65,13 @@ class FrameIterator
     explicit FrameIterator(const WasmActivation& activation);
     void operator++();
     bool done() const;
+    const char* filename() const;
+    const char16_t* displayURL() const;
+    bool mutedErrors() const;
     JSAtom* functionDisplayAtom() const;
     unsigned lineOrBytecode() const;
+    inline void* fp() const { return fp_; }
+    inline uint8_t* pc() const { return pc_; }
 };
 
 // An ExitReason describes the possible reasons for leaving compiled wasm code
@@ -73,7 +81,6 @@ enum class ExitReason : uint32_t
     None,          // default state, the pc is in wasm code
     ImportJit,     // fast-path call directly into JIT code
     ImportInterp,  // slow-path call into C++ Invoke()
-    Error,         // call to error generation
     Native         // call to native C++ code (e.g., Math.sin, ToInt32(), interrupt)
 };
 
@@ -82,14 +89,15 @@ enum class ExitReason : uint32_t
 // module is not in profiling mode, the activation is skipped.
 class ProfilingFrameIterator
 {
-    const Instance* instance_;
+    const WasmActivation* activation_;
+    const Code* code_;
     const CodeRange* codeRange_;
     uint8_t* callerFP_;
     void* callerPC_;
     void* stackAddress_;
     ExitReason exitReason_;
 
-    void initFromFP(const WasmActivation& activation);
+    void initFromFP();
 
   public:
     ProfilingFrameIterator();
@@ -112,7 +120,7 @@ void
 GenerateExitEpilogue(jit::MacroAssembler& masm, unsigned framePushed, ExitReason reason,
                      ProfilingOffsets* offsets);
 void
-GenerateFunctionPrologue(jit::MacroAssembler& masm, unsigned framePushed, uint32_t sigIndex,
+GenerateFunctionPrologue(jit::MacroAssembler& masm, unsigned framePushed, const SigIdDesc& sigId,
                          FuncOffsets* offsets);
 void
 GenerateFunctionEpilogue(jit::MacroAssembler& masm, unsigned framePushed, FuncOffsets* offsets);
@@ -120,13 +128,13 @@ GenerateFunctionEpilogue(jit::MacroAssembler& masm, unsigned framePushed, FuncOf
 // Runtime patching to enable/disable profiling
 
 void
-ToggleProfiling(const Instance& instance, const CallSite& callSite, bool enabled);
+ToggleProfiling(const Code& code, const CallSite& callSite, bool enabled);
 
 void
-ToggleProfiling(const Instance& instance, const CallThunk& callThunk, bool enabled);
+ToggleProfiling(const Code& code, const CallThunk& callThunk, bool enabled);
 
 void
-ToggleProfiling(const Instance& instance, const CodeRange& codeRange, bool enabled);
+ToggleProfiling(const Code& code, const CodeRange& codeRange, bool enabled);
 
 } // namespace wasm
 } // namespace js

@@ -1310,9 +1310,6 @@ inline void InferSpew(SpewChannel which, const char* fmt, ...) {}
 
 #endif
 
-/* Print a warning, dump state and abort the program. */
-MOZ_NORETURN MOZ_COLD void TypeFailure(JSContext* cx, const char* fmt, ...);
-
 // Prints type information for a context if spew is enabled or force is set.
 void
 PrintTypes(JSContext* cx, JSCompartment* comp, bool force);
@@ -1325,14 +1322,17 @@ namespace JS {
 namespace ubi {
 
 template<>
-struct Concrete<js::ObjectGroup> : TracerConcrete<js::ObjectGroup> {
-    Size size(mozilla::MallocSizeOf mallocSizeOf) const override;
-
+class Concrete<js::ObjectGroup> : TracerConcrete<js::ObjectGroup> {
   protected:
     explicit Concrete(js::ObjectGroup *ptr) : TracerConcrete<js::ObjectGroup>(ptr) { }
 
   public:
     static void construct(void *storage, js::ObjectGroup *ptr) { new (storage) Concrete(ptr); }
+
+    Size size(mozilla::MallocSizeOf mallocSizeOf) const override;
+
+    const char16_t* typeName() const override { return concreteTypeName; }
+    static const char16_t concreteTypeName[];
 };
 
 } // namespace ubi

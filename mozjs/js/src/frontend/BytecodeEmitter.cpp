@@ -457,6 +457,12 @@ BytecodeEmitter::emitDupAt(unsigned slotFromTop)
     return true;
 }
 
+bool
+BytecodeEmitter::emitCheckIsObj(CheckIsObjectKind kind)
+{
+    return emit2(JSOP_CHECKISOBJ, uint8_t(kind));
+}
+
 static const char*
 StatementName(StmtInfoBCE* stmt)
 {
@@ -4147,6 +4153,8 @@ BytecodeEmitter::emitIteratorNext(ParseNode* pn, bool allowSelfHosted)
         return false;
     if (!emitCall(JSOP_CALL, 0, pn))                      // ... RESULT
         return false;
+    if (!emitCheckIsObj(CheckIsObjectKind::IteratorNext)) // ... RESULT
+        return false;
     checkTypeSet(JSOP_CALL);
     return true;
 }
@@ -7171,6 +7179,8 @@ BytecodeEmitter::emitYieldStar(ParseNode* iter, ParseNode* gen)
         return false;
     if (!emitCall(JSOP_CALL, 1, iter))                           // ITER RESULT
         return false;
+    if (!emitCheckIsObj(CheckIsObjectKind::IteratorNext))        // ITER RESULT
+        return false;
     checkTypeSet(JSOP_CALL);
     MOZ_ASSERT(this->stackDepth == depth);
 
@@ -7396,18 +7406,6 @@ BytecodeEmitter::emitDeleteExpression(ParseNode* node)
 }
 
 bool
-BytecodeEmitter::emitDebugOnlyCheckSelfHosted()
-{
-#ifdef DEBUG
-    if (emitterMode == BytecodeEmitter::SelfHosting) {
-        if (!emit1(JSOP_DEBUGCHECKSELFHOSTED))
-            return false;
-    }
-#endif
-    return true;
-}
-
-bool
 BytecodeEmitter::emitSelfHostedCallFunction(ParseNode* pn)
 {
     // Special-casing of callFunction to emit bytecode that directly
@@ -7439,10 +7437,14 @@ BytecodeEmitter::emitSelfHostedCallFunction(ParseNode* pn)
     if (!emitTree(funNode))
         return false;
 
-    if (pn2->name() != cx->names().callContentFunction) {
-        if (!emitDebugOnlyCheckSelfHosted())
+#ifdef DEBUG
+    if (emitterMode == BytecodeEmitter::SelfHosting &&
+        pn2->name() != cx->names().callContentFunction)
+    {
+        if (!emit1(JSOP_DEBUGCHECKSELFHOSTED))
             return false;
     }
+#endif
 
     ParseNode* thisArg = funNode->pn_next;
     if (!emitTree(thisArg))
@@ -7644,6 +7646,7 @@ BytecodeEmitter::emitCallOrNew(ParseNode* pn)
             return false;
         break;
       case PNK_DOT:
+        MOZ_ASSERT(emitterMode != BytecodeEmitter::SelfHosting);
         if (pn2->as<PropertyAccess>().isSuper()) {
             if (!emitSuperPropOp(pn2, JSOP_GETPROP_SUPER, /* isCall = */ callop))
                 return false;
@@ -7652,11 +7655,9 @@ BytecodeEmitter::emitCallOrNew(ParseNode* pn)
                 return false;
         }
 
-        if (!emitDebugOnlyCheckSelfHosted())
-            return false;
-
         break;
       case PNK_ELEM:
+        MOZ_ASSERT(emitterMode != BytecodeEmitter::SelfHosting);
         if (pn2->as<PropertyByValue>().isSuper()) {
             if (!emitSuperElemOp(pn2, JSOP_GETELEM_SUPER, /* isCall = */ callop))
                 return false;
@@ -7668,9 +7669,6 @@ BytecodeEmitter::emitCallOrNew(ParseNode* pn)
                     return false;
             }
         }
-
-        if (!emitDebugOnlyCheckSelfHosted())
-            return false;
 
         break;
       case PNK_FUNCTION:

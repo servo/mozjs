@@ -20,6 +20,7 @@ class DeclEnvObject;
 class StaticWithScope;
 class InlineTypedObject;
 class GeneratorObject;
+class TypedArrayObject;
 
 namespace jit {
 
@@ -47,8 +48,6 @@ enum MaybeTailCall {
     TailCall,
     NonTailCall
 };
-
-static const char UnknownVMFunction[]        = "Unknown VM call";
 
 // Contains information about a virtual machine function that can be called
 // from JIT code. Functions described in this manner must conform to a simple
@@ -227,20 +226,6 @@ struct VMFunction
         return count;
     }
 
-    VMFunction()
-      : wrapped(nullptr),
-        name_(UnknownVMFunction),
-        explicitArgs(0),
-        argumentProperties(0),
-        argumentPassedInFloatRegs(0),
-        outParam(Type_Void),
-        returnType(Type_Void),
-        outParamRootType(RootNone),
-        extraValuesToPop(0)
-    {
-    }
-
-
     VMFunction(void* wrapped, const char* name, uint32_t explicitArgs, uint32_t argumentProperties,
                uint32_t argumentPassedInFloatRegs, uint64_t argRootTypes,
                DataType outParam, RootType outParamRootType, DataType returnType,
@@ -281,6 +266,7 @@ template <> struct TypeToDataType<PlainObject*> { static const DataType result =
 template <> struct TypeToDataType<InlineTypedObject*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<DeclEnvObject*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<ArrayObject*> { static const DataType result = Type_Object; };
+template <> struct TypeToDataType<TypedArrayObject*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSString*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<JSFlatString*> { static const DataType result = Type_Object; };
 template <> struct TypeToDataType<HandleObject> { static const DataType result = Type_Handle; };
@@ -460,21 +446,21 @@ template <>
 struct LastArg<>
 {
     typedef void Type;
-    static MOZ_CONSTEXPR_VAR size_t nbArgs = 0;
+    static constexpr size_t nbArgs = 0;
 };
 
 template <typename HeadType>
 struct LastArg<HeadType>
 {
     typedef HeadType Type;
-    static MOZ_CONSTEXPR_VAR size_t nbArgs = 1;
+    static constexpr size_t nbArgs = 1;
 };
 
 template <typename HeadType, typename... TailTypes>
 struct LastArg<HeadType, TailTypes...>
 {
     typedef typename LastArg<TailTypes...>::Type Type;
-    static MOZ_CONSTEXPR_VAR size_t nbArgs = LastArg<TailTypes...>::nbArgs + 1;
+    static constexpr size_t nbArgs = LastArg<TailTypes...>::nbArgs + 1;
 };
 
 // Construct a bit mask from a list of types.  The mask is constructed as an OR
@@ -489,7 +475,7 @@ struct BitMask;
 template <template<typename> class Each, typename ResultType, size_t Shift>
 struct BitMask<Each, ResultType, Shift>
 {
-    static MOZ_CONSTEXPR_VAR ResultType result = ResultType();
+    static constexpr ResultType result = ResultType();
 };
 
 template <template<typename> class Each, typename ResultType, size_t Shift,
@@ -501,7 +487,7 @@ struct BitMask<Each, ResultType, Shift, HeadType, TailTypes...>
     static_assert(LastArg<TailTypes...>::nbArgs < (8 * sizeof(ResultType) / Shift),
                   "not enough bits in the result type to store all bit masks");
 
-    static MOZ_CONSTEXPR_VAR ResultType result =
+    static constexpr ResultType result =
         ResultType(Each<HeadType>::result) |
         (BitMask<Each, ResultType, Shift, TailTypes...>::result << Shift);
 };
@@ -540,23 +526,6 @@ struct FunctionInfo<R (*)(Context, Args...)> : public VMFunction
     }
     static uint64_t argumentRootTypes() {
         return BitMask<TypeToRootType, uint64_t, 3, Args...>::result;
-    }
-    explicit FunctionInfo(pf fun, PopValues extraValuesToPop = PopValues(0))
-        : VMFunction(JS_FUNC_TO_DATA_PTR(void*, fun), UnknownVMFunction, explicitArgs(),
-                     argumentProperties(), argumentPassedInFloatRegs(),
-                     argumentRootTypes(), outParam(), outParamRootType(),
-                     returnType(), extraValuesToPop.numValues, NonTailCall)
-    {
-        static_assert(MatchContext<Context>::valid, "Invalid cx type in VMFunction");
-    }
-    explicit FunctionInfo(pf fun, MaybeTailCall expectTailCall,
-                          PopValues extraValuesToPop = PopValues(0))
-        : VMFunction(JS_FUNC_TO_DATA_PTR(void*, fun), UnknownVMFunction, explicitArgs(),
-                     argumentProperties(), argumentPassedInFloatRegs(),
-                     argumentRootTypes(), outParam(), outParamRootType(),
-                     returnType(), extraValuesToPop.numValues, expectTailCall)
-    {
-        static_assert(MatchContext<Context>::valid, "Invalid cx type in VMFunction");
     }
     explicit FunctionInfo(pf fun, const char* name, PopValues extraValuesToPop = PopValues(0))
         : VMFunction(JS_FUNC_TO_DATA_PTR(void*, fun), name, explicitArgs(),

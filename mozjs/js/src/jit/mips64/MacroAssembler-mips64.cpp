@@ -395,9 +395,9 @@ MacroAssemblerMIPS64::ma_daddu(Register rd, Imm32 imm)
 void
 MacroAssemblerMIPS64::ma_addTestOverflow(Register rd, Register rs, Register rt, Label* overflow)
 {
+    as_daddu(SecondScratchReg, rs, rt);
     as_addu(rd, rs, rt);
-    as_daddu(ScratchRegister, rs, rt);
-    ma_b(rd, ScratchRegister, overflow, Assembler::NotEqual);
+    ma_b(rd, SecondScratchReg, overflow, Assembler::NotEqual);
 }
 
 void
@@ -405,9 +405,9 @@ MacroAssemblerMIPS64::ma_addTestOverflow(Register rd, Register rs, Imm32 imm, La
 {
     // Check for signed range because of as_daddiu
     if (Imm16::IsInSignedRange(imm.value) && Imm16::IsInUnsignedRange(imm.value)) {
+        as_daddiu(SecondScratchReg, rs, imm.value);
         as_addiu(rd, rs, imm.value);
-        as_daddiu(ScratchRegister, rs, imm.value);
-        ma_b(rd, ScratchRegister, overflow, Assembler::NotEqual);
+        ma_b(rd, SecondScratchReg, overflow, Assembler::NotEqual);
     } else {
         ma_li(ScratchRegister, imm);
         ma_addTestOverflow(rd, rs, ScratchRegister, overflow);
@@ -435,9 +435,9 @@ MacroAssemblerMIPS64::ma_dsubu(Register rd, Imm32 imm)
 void
 MacroAssemblerMIPS64::ma_subTestOverflow(Register rd, Register rs, Register rt, Label* overflow)
 {
+    as_dsubu(SecondScratchReg, rs, rt);
     as_subu(rd, rs, rt);
-    as_dsubu(ScratchRegister, rs, rt);
-    ma_b(rd, ScratchRegister, overflow, Assembler::NotEqual);
+    ma_b(rd, SecondScratchReg, overflow, Assembler::NotEqual);
 }
 
 void
@@ -1259,7 +1259,7 @@ MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output)
 
     Label outOfRange;
 
-    branchTruncateDouble(input, output, &outOfRange);
+    branchTruncateDoubleMaybeModUint32(input, output, &outOfRange);
     asMasm().branch32(Assembler::Above, output, Imm32(255), &outOfRange);
     {
         // Check if we had a tie.
@@ -2280,7 +2280,7 @@ void
 MacroAssembler::branchValueIsNurseryObject(Condition cond, ValueOperand value,
                                            Register temp, Label* label)
 {
-    branchValueIsNurseryObjectImpl(cond, value.valueReg(), temp, label);
+    branchValueIsNurseryObjectImpl(cond, value, temp, label);
 }
 
 template <typename T>
@@ -2290,14 +2290,15 @@ MacroAssembler::branchValueIsNurseryObjectImpl(Condition cond, const T& value, R
 {
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
 
-    // 'Value' representing the start of the nursery tagged as a JSObject
-    const Nursery& nursery = GetJitContext()->runtime->gcNursery();
-    Value start = ObjectValue(*reinterpret_cast<JSObject *>(nursery.start()));
+    Label done;
+    branchTestObject(Assembler::NotEqual, value, cond == Assembler::Equal ? &done : label);
 
-    movePtr(ImmWord(-ptrdiff_t(start.asRawBits())), SecondScratchReg);
-    addPtr(value, SecondScratchReg);
-    branchPtr(cond == Assembler::Equal ? Assembler::Below : Assembler::AboveOrEqual,
-              SecondScratchReg, Imm32(nursery.nurserySize()), label);
+    extractObject(value, temp);
+    orPtr(Imm32(gc::ChunkMask), temp);
+    branch32(cond, Address(temp, gc::ChunkLocationOffsetFromLastByte),
+             Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
+
+    bind(&done);
 }
 
 void

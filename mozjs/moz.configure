@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -93,24 +93,18 @@ js_option('--enable-debug',
 add_old_configure_assignment('MOZ_DEBUG',
                              depends('--enable-debug')(lambda v: bool(v)))
 
-@depends('--disable-compile-environment', '--help')
-def toolchain_include(compile_env, help):
-    if compile_env:
-        return 'build/moz.configure/toolchain.configure'
+include_when('build/moz.configure/toolchain.configure',
+             when='--enable-compile-environment')
+include_when('build/moz.configure/memory.configure',
+             when='--enable-compile-environment')
+include_when('build/moz.configure/headers.configure',
+             when='--enable-compile-environment')
+include_when('build/moz.configure/warnings.configure',
+             when='--enable-compile-environment')
 
-include(toolchain_include)
-
-@depends('--disable-compile-environment', '--help')
-def memory_include(compile_env, help):
-    if compile_env:
-        return 'build/moz.configure/memory.configure'
-
-include(memory_include)
-
-
-@depends('--help')
+@dependable
 @imports(_from='mozbuild.backend', _import='backends')
-def build_backends_choices(help):
+def build_backends_choices():
     return tuple(backends)
 
 
@@ -202,6 +196,25 @@ def perl_version_check(min_version):
 perl_version_check('5.006')
 
 
+# GNU make detection
+# ==============================================================
+option(env='MAKE', nargs=1, help='Path to GNU make')
+
+@depends('MAKE', host)
+def possible_makes(make, host):
+    candidates = []
+    if host.kernel == 'WINNT':
+        candidates.append('mingw32-make')
+    if make:
+        candidates.append(make[0])
+    if host.kernel == 'WINNT':
+        candidates.extend(('make', 'gmake'))
+    else:
+        candidates.extend(('gmake', 'make'))
+    return candidates
+
+check_prog('GMAKE', possible_makes)
+
 # Miscellaneous programs
 # ==============================================================
 check_prog('DOXYGEN', ('doxygen',), allow_missing=True)
@@ -235,6 +248,7 @@ system_hunspell = pkg_check_modules('MOZ_HUNSPELL', 'hunspell',
                                     check_for_hunspell)
 
 set_config('MOZ_SYSTEM_HUNSPELL', system_hunspell)
+
 
 # Fallthrough to autoconf-based configure
 include('build/moz.configure/old.configure')

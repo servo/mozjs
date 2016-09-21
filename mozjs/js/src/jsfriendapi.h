@@ -45,7 +45,7 @@ class InterpreterFrame;
 } /* namespace js */
 
 extern JS_FRIEND_API(void)
-JS_SetGrayGCRootsTracer(JSRuntime* rt, JSTraceDataOp traceOp, void* data);
+JS_SetGrayGCRootsTracer(JSContext* cx, JSTraceDataOp traceOp, void* data);
 
 extern JS_FRIEND_API(JSObject*)
 JS_FindCompilationScope(JSContext* cx, JS::HandleObject obj);
@@ -131,21 +131,19 @@ enum {
     JS_TELEMETRY_GC_MINOR_REASON,
     JS_TELEMETRY_GC_MINOR_REASON_LONG,
     JS_TELEMETRY_GC_MINOR_US,
+    JS_TELEMETRY_GC_NURSERY_BYTES,
+    JS_TELEMETRY_GC_PRETENURE_COUNT,
     JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_CONTENT,
     JS_TELEMETRY_DEPRECATED_LANGUAGE_EXTENSIONS_IN_ADDONS,
     JS_TELEMETRY_ADDON_EXCEPTIONS,
-    JS_TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED,
     JS_TELEMETRY_END
 };
-
-static_assert(JS_TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED == 25,
-              "This value needs to be kept in sync with SelfHostingDefines.h");
 
 typedef void
 (*JSAccumulateTelemetryDataCallback)(int id, uint32_t sample, const char* key);
 
 extern JS_FRIEND_API(void)
-JS_SetAccumulateTelemetryCallback(JSRuntime* rt, JSAccumulateTelemetryDataCallback callback);
+JS_SetAccumulateTelemetryCallback(JSContext* cx, JSAccumulateTelemetryDataCallback callback);
 
 extern JS_FRIEND_API(bool)
 JS_GetIsSecureContext(JSCompartment* compartment);
@@ -447,17 +445,17 @@ class SourceHook {
 
 #ifndef RUST_BINDGEN
 /**
- * Have |rt| use |hook| to retrieve lazily-retrieved source code. See the
- * comments for SourceHook. The runtime takes ownership of the hook, and
- * will delete it when the runtime itself is deleted, or when a new hook is
+ * Have |cx| use |hook| to retrieve lazily-retrieved source code. See the
+ * comments for SourceHook. The context takes ownership of the hook, and
+ * will delete it when the context itself is deleted, or when a new hook is
  * set.
  */
 extern JS_FRIEND_API(void)
-SetSourceHook(JSRuntime* rt, mozilla::UniquePtr<SourceHook> hook);
+SetSourceHook(JSContext* cx, mozilla::UniquePtr<SourceHook> hook);
 
-/** Remove |rt|'s source hook, and return it. The caller now owns the hook. */
+/** Remove |cx|'s source hook, and return it. The caller now owns the hook. */
 extern JS_FRIEND_API(mozilla::UniquePtr<SourceHook>)
-ForgetSourceHook(JSRuntime* rt);
+ForgetSourceHook(JSContext* cx);
 #endif
 
 extern JS_FRIEND_API(JS::Zone*)
@@ -476,7 +474,7 @@ typedef enum  {
   * fp is the file for the dump output.
   */
 extern JS_FRIEND_API(void)
-DumpHeap(JSRuntime* rt, FILE* fp, DumpHeapNurseryBehaviour nurseryBehaviour);
+DumpHeap(JSContext* cx, FILE* fp, DumpHeapNurseryBehaviour nurseryBehaviour);
 
 #ifdef JS_OLD_GETTER_SETTER_METHODS
 JS_FRIEND_API(bool) obj_defineGetter(JSContext* cx, unsigned argc, JS::Value* vp);
@@ -497,9 +495,9 @@ IsAtomsZone(JS::Zone* zone);
 
 struct WeakMapTracer
 {
-    JSRuntime* runtime;
+    JSContext* context;
 
-    explicit WeakMapTracer(JSRuntime* rt) : runtime(rt) {}
+    explicit WeakMapTracer(JSContext* cx) : context(cx) {}
 
     // Weak map tracer callback, called once for every binding of every
     // weak map that was live at the time of the last garbage collection.
@@ -514,7 +512,7 @@ extern JS_FRIEND_API(void)
 TraceWeakMaps(WeakMapTracer* trc);
 
 extern JS_FRIEND_API(bool)
-AreGCGrayBitsValid(JSRuntime* rt);
+AreGCGrayBitsValid(JSContext* cx);
 
 extern JS_FRIEND_API(bool)
 ZoneGlobalsAreAllGray(JS::Zone* zone);
@@ -980,7 +978,7 @@ JS_FRIEND_API(bool)
 StringIsArrayIndex(JSLinearString* str, uint32_t* indexp);
 
 JS_FRIEND_API(void)
-SetPreserveWrapperCallback(JSRuntime* rt, PreserveWrapperCallback callback);
+SetPreserveWrapperCallback(JSContext* cx, PreserveWrapperCallback callback);
 
 JS_FRIEND_API(bool)
 IsObjectInContextCompartment(JSObject* obj, const JSContext* cx);
@@ -1003,9 +1001,7 @@ RunningWithTrustedPrincipals(JSContext* cx);
 inline uintptr_t
 GetNativeStackLimit(JSContext* cx, StackKind kind, int extraAllowance = 0)
 {
-    PerThreadDataFriendFields* mainThread =
-      PerThreadDataFriendFields::getMainThread(GetRuntime(cx));
-    uintptr_t limit = mainThread->nativeStackLimit[kind];
+    uintptr_t limit = ContextFriendFields::get(cx)->nativeStackLimit[kind];
 #if JS_STACK_GROWTH_DIRECTION > 0
     limit += extraAllowance;
 #else
@@ -1120,7 +1116,7 @@ typedef void
  * idle and a request begins.
  */
 JS_FRIEND_API(void)
-SetActivityCallback(JSRuntime* rt, ActivityCallback cb, void* arg);
+SetActivityCallback(JSContext* cx, ActivityCallback cb, void* arg);
 
 typedef bool
 (* DOMInstanceClassHasProtoAtDepth)(const Class* instanceClass,
@@ -1131,10 +1127,10 @@ struct JSDOMCallbacks {
 typedef struct JSDOMCallbacks DOMCallbacks;
 
 extern JS_FRIEND_API(void)
-SetDOMCallbacks(JSRuntime* rt, const DOMCallbacks* callbacks);
+SetDOMCallbacks(JSContext* cx, const DOMCallbacks* callbacks);
 
 extern JS_FRIEND_API(const DOMCallbacks*)
-GetDOMCallbacks(JSRuntime* rt);
+GetDOMCallbacks(JSContext* cx);
 
 extern JS_FRIEND_API(JSObject*)
 GetTestingFunctions(JSContext* cx);
@@ -1157,7 +1153,7 @@ CastToJSFreeOp(FreeOp* fop)
  * Returns nullptr for invalid arguments and JSEXN_INTERNALERR
  */
 extern JS_FRIEND_API(JSFlatString*)
-GetErrorTypeName(JSRuntime* rt, int16_t exnType);
+GetErrorTypeName(JSContext* cx, int16_t exnType);
 
 #ifdef JS_DEBUG
 extern JS_FRIEND_API(unsigned)
@@ -1249,10 +1245,9 @@ struct ExpandoAndGeneration {
       generation(0)
   {}
 
-  void Unlink()
+  void OwnerUnlinked()
   {
       ++generation;
-      expando.setUndefined();
   }
 
   static size_t offsetOfExpando()
@@ -1532,10 +1527,11 @@ enum Type {
     Uint8Clamped,
 
     /**
-     * SIMD types don't have their own TypedArray equivalent, for now.
+     * Types that don't have their own TypedArray equivalent, for now.
      */
     MaxTypedArrayViewType,
 
+    Int64,
     Float32x4,
     Int8x16,
     Int16x8,
@@ -1557,6 +1553,7 @@ byteSize(Type atype)
       case Uint32:
       case Float32:
         return 4;
+      case Int64:
       case Float64:
         return 8;
       case Int8x16:
@@ -1575,6 +1572,7 @@ isSignedIntType(Type atype) {
       case Int8:
       case Int16:
       case Int32:
+      case Int64:
       case Int8x16:
       case Int16x8:
       case Int32x4:
@@ -1602,6 +1600,7 @@ isSimdType(Type atype) {
       case Uint16:
       case Int32:
       case Uint32:
+      case Int64:
       case Float32:
       case Float64:
         return false;
@@ -1633,6 +1632,7 @@ scalarByteSize(Type atype) {
       case Uint16:
       case Int32:
       case Uint32:
+      case Int64:
       case Float32:
       case Float64:
       case MaxTypedArrayViewType:
@@ -2702,8 +2702,7 @@ PrepareScriptEnvironmentAndInvoke(JSContext* cx, JS::HandleObject scope,
                                   ScriptEnvironmentPreparer::Closure& closure);
 
 JS_FRIEND_API(void)
-SetScriptEnvironmentPreparer(JSRuntime* rt, ScriptEnvironmentPreparer*
-preparer);
+SetScriptEnvironmentPreparer(JSContext* cx, ScriptEnvironmentPreparer* preparer);
 
 enum CTypesActivityType {
     CTYPES_CALL_BEGIN,
@@ -2720,7 +2719,7 @@ typedef void
  * calling into C.
  */
 JS_FRIEND_API(void)
-SetCTypesActivityCallback(JSRuntime* rt, CTypesActivityCallback cb);
+SetCTypesActivityCallback(JSContext* cx, CTypesActivityCallback cb);
 
 class MOZ_RAII JS_FRIEND_API(AutoCTypesActivityCallback) {
   private:
@@ -2891,7 +2890,7 @@ ConvertArgsToArray(JSContext* cx, const JS::CallArgs& args);
  * functions below.
  */
 extern JS_FRIEND_API(void)
-SetWindowProxyClass(JSRuntime* rt, const Class* clasp);
+SetWindowProxyClass(JSContext* cx, const Class* clasp);
 
 /**
  * Associates a WindowProxy with a Window (global object). `windowProxy` must
@@ -2995,7 +2994,7 @@ class MemProfiler
         return sActiveProfilerCount > 0;
     }
 
-    static MemProfiler* GetMemProfiler(JSRuntime* runtime);
+    static MemProfiler* GetMemProfiler(JSContext* context);
 
     static void SetNativeProfiler(NativeProfiler* aProfiler) {
         sNativeProfiler = aProfiler;

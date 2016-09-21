@@ -77,6 +77,8 @@ static DllBlockInfo sWindowsDllBlocklist[] = {
   // { "uxtheme.dll", ALL_VERSIONS },
   // { "uxtheme.dll", 0x0000123400000000ULL },
   // The DLL name must be in lowercase!
+  // The version field is a maximum, that is, we block anything that is
+  // less-than or equal to that version.
   
   // NPFFAddon - Known malware
   { "npffaddon.dll", ALL_VERSIONS},
@@ -126,9 +128,6 @@ static DllBlockInfo sWindowsDllBlocklist[] = {
 
   // sprotector.dll crashes, bug 957258
   {"sprotector.dll", ALL_VERSIONS},
-
-  // Topcrash with Websense Endpoint, bug 828184
-  {"qipcap.dll", MAKE_VERSION(7, 6, 815, 1)},
 
   // leave these two in always for tests
   { "mozdllblockingtest.dll", ALL_VERSIONS },
@@ -220,6 +219,9 @@ static DllBlockInfo sWindowsDllBlocklist[] = {
   { "rlls.dll", ALL_VERSIONS },
   { "rlls64.dll", ALL_VERSIONS },
 
+  // Websense is crashing us for bunch of releases, bug 1291738 & bug 828184
+  { "qipcap.dll", MAKE_VERSION(7, 6, 818, 1) },
+
   { nullptr, 0 }
 };
 
@@ -243,6 +245,7 @@ static const int kUser32BeforeBlocklistParameterLen =
   sizeof(kUser32BeforeBlocklistParameter) - 1;
 
 static DWORD sThreadLoadingXPCOMModule;
+static bool sBlocklistInitAttempted;
 static bool sBlocklistInitFailed;
 static bool sUser32BeforeBlocklist;
 
@@ -756,24 +759,16 @@ WindowsDllInterceptor NtDllIntercept;
 MFBT_API void
 DllBlocklist_Initialize()
 {
-#if defined(_MSC_VER) && _MSC_VER < 1900 && defined(_M_X64)
-  // The code below is not blocklist-related, but is the best place for it.
-  // This is the earliest place where msvcr120.dll is loaded, and this
-  // codepath is used by both firefox.exe and plugin-container.exe processes.
-
-  // Disable CRT use of FMA3 on non-AVX2 CPUs and on Win7RTM due to bug 1160148
-  int cpuid0[4] = {0};
-  int cpuid7[4] = {0};
-  __cpuid(cpuid0, 0); // Get the maximum supported CPUID function
-  __cpuid(cpuid7, 7); // AVX2 is function 7, subfunction 0, EBX, bit 5
-  if (cpuid0[0] < 7 || !(cpuid7[1] & 0x20) || !IsWin7SP1OrLater()) {
-    _set_FMA3_enable(0);
+  if (sBlocklistInitAttempted) {
+    return;
   }
-#endif
+  sBlocklistInitAttempted = true;
 
   if (GetModuleHandleA("user32.dll")) {
     sUser32BeforeBlocklist = true;
   }
+  // Catch any missing DELAYLOADS for user32.dll
+  MOZ_ASSERT(!sUser32BeforeBlocklist);
 
   NtDllIntercept.Init("ntdll.dll");
 
@@ -821,4 +816,12 @@ DllBlocklist_WriteNotes(HANDLE file)
     WriteFile(file, kUser32BeforeBlocklistParameter,
               kUser32BeforeBlocklistParameterLen, &nBytes, nullptr);
   }
+}
+
+MFBT_API bool
+DllBlocklist_CheckStatus()
+{
+  if (sBlocklistInitFailed || sUser32BeforeBlocklist)
+    return false;
+  return true;
 }

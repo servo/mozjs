@@ -708,7 +708,7 @@ MacroAssemblerARM::ma_rsb(Imm32 imm, Register dest, SBit s, Condition c)
 void
 MacroAssemblerARM::ma_rsb(Register src1, Register dest, SBit s, Condition c)
 {
-    as_alu(dest, dest, O2Reg(src1), OpAdd, s, c);
+    as_alu(dest, src1, O2Reg(dest), OpRsb, s, c);
 }
 
 void
@@ -898,6 +898,20 @@ MacroAssemblerARM::ma_check_mul(Register src1, Imm32 imm, Register dest, Conditi
     }
 
     MOZ_CRASH("Condition NYI");
+}
+
+void
+MacroAssemblerARM::ma_umull(Register src1, Imm32 imm, Register destHigh, Register destLow)
+{
+    ScratchRegisterScope scratch(asMasm());
+    ma_mov(imm, scratch);
+    as_umull(destHigh, destLow, src1, scratch);
+}
+
+void
+MacroAssemblerARM::ma_umull(Register src1, Register src2, Register destHigh, Register destLow)
+{
+    as_umull(destHigh, destLow, src1, src2);
 }
 
 void
@@ -1126,8 +1140,8 @@ MacroAssemblerARM::ma_strb(Register rt, DTRAddr addr, Index mode, Condition cc)
 // Specialty for moving N bits of data, where n == 8,16,32,64.
 BufferOffset
 MacroAssemblerARM::ma_dataTransferN(LoadStore ls, int size, bool IsSigned,
-                          Register rn, Register rm, Register rt,
-                          Index mode, Assembler::Condition cc, unsigned shiftAmount)
+                                    Register rn, Register rm, Register rt,
+                                    Index mode, Assembler::Condition cc, unsigned shiftAmount)
 {
     if (size == 32 || (size == 8 && !IsSigned))
         return as_dtr(ls, size, mode, rt, DTRAddr(rn, DtrRegImmShift(rm, LSL, shiftAmount)), cc);
@@ -1782,7 +1796,8 @@ MacroAssemblerARM::ma_vldr(const Address& addr, VFPRegister dest, Condition cc)
 }
 
 BufferOffset
-MacroAssemblerARM::ma_vldr(VFPRegister src, Register base, Register index, int32_t shift, Condition cc)
+MacroAssemblerARM::ma_vldr(VFPRegister src, Register base, Register index, int32_t shift,
+                           Condition cc)
 {
     ScratchRegisterScope scratch(asMasm());
     as_add(scratch, base, lsl(index, shift), LeaveCC, cc);
@@ -2545,14 +2560,16 @@ MacroAssemblerARMCompat::setStackArg(Register reg, uint32_t arg)
 }
 
 void
-MacroAssemblerARMCompat::minMaxDouble(FloatRegister srcDest, FloatRegister second, bool handleNaN, bool isMax)
+MacroAssemblerARMCompat::minMaxDouble(FloatRegister srcDest, FloatRegister second, bool canBeNaN,
+                                      bool isMax)
 {
     FloatRegister first = srcDest;
 
-    Assembler::Condition cond = isMax
-        ? Assembler::VFP_LessThanOrEqual
-        : Assembler::VFP_GreaterThanOrEqual;
     Label nan, equal, returnSecond, done;
+
+    Assembler::Condition cond = isMax
+                                ? Assembler::VFP_LessThanOrEqual
+                                : Assembler::VFP_GreaterThanOrEqual;
 
     compareDouble(first, second);
     // First or second is NaN, result is NaN.
@@ -2579,8 +2596,11 @@ MacroAssemblerARMCompat::minMaxDouble(FloatRegister srcDest, FloatRegister secon
     ma_b(&done);
 
     bind(&nan);
-    loadConstantDouble(JS::GenericNaN(), srcDest);
-    ma_b(&done);
+    // If the first argument is the NaN, return it; otherwise return the second
+    // operand.
+    compareDouble(first, first);
+    ma_vmov(first, srcDest, Assembler::VFP_Unordered);
+    ma_b(&done, Assembler::VFP_Unordered);
 
     bind(&returnSecond);
     ma_vmov(second, srcDest);
@@ -2589,14 +2609,16 @@ MacroAssemblerARMCompat::minMaxDouble(FloatRegister srcDest, FloatRegister secon
 }
 
 void
-MacroAssemblerARMCompat::minMaxFloat32(FloatRegister srcDest, FloatRegister second, bool handleNaN, bool isMax)
+MacroAssemblerARMCompat::minMaxFloat32(FloatRegister srcDest, FloatRegister second, bool canBeNaN,
+                                       bool isMax)
 {
     FloatRegister first = srcDest;
 
-    Assembler::Condition cond = isMax
-        ? Assembler::VFP_LessThanOrEqual
-        : Assembler::VFP_GreaterThanOrEqual;
     Label nan, equal, returnSecond, done;
+
+    Assembler::Condition cond = isMax
+                                ? Assembler::VFP_LessThanOrEqual
+                                : Assembler::VFP_GreaterThanOrEqual;
 
     compareFloat(first, second);
     // First or second is NaN, result is NaN.
@@ -2623,8 +2645,10 @@ MacroAssemblerARMCompat::minMaxFloat32(FloatRegister srcDest, FloatRegister seco
     ma_b(&done);
 
     bind(&nan);
-    loadConstantFloat32(float(JS::GenericNaN()), srcDest);
-    ma_b(&done);
+    // See comment in minMaxDouble.
+    compareFloat(first, first);
+    ma_vmov_f32(first, srcDest, Assembler::VFP_Unordered);
+    ma_b(&done, Assembler::VFP_Unordered);
 
     bind(&returnSecond);
     ma_vmov_f32(second, srcDest);
@@ -4741,6 +4765,12 @@ MacroAssembler::flush()
     Assembler::flush();
 }
 
+void
+MacroAssembler::comment(const char* msg)
+{
+    Assembler::comment(msg);
+}
+
 // ===============================================================
 // Stack manipulation functions.
 
@@ -5190,7 +5220,7 @@ MacroAssembler::pushFakeReturnAddress(Register scratch)
 // Branch functions
 
 void
-MacroAssembler::branchPtrInNurseryRange(Condition cond, Register ptr, Register temp,
+MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr, Register temp,
                                         Label* label)
 {
     AutoRegisterScope scratch2(*this, secondScratchReg_);
@@ -5199,13 +5229,10 @@ MacroAssembler::branchPtrInNurseryRange(Condition cond, Register ptr, Register t
     MOZ_ASSERT(ptr != temp);
     MOZ_ASSERT(ptr != scratch2);
 
-    const Nursery& nursery = GetJitContext()->runtime->gcNursery();
-    uintptr_t startChunk = nursery.start() >> Nursery::ChunkShift;
-
-    ma_mov(Imm32(startChunk), scratch2);
-    as_rsb(scratch2, scratch2, lsr(ptr, Nursery::ChunkShift));
-    branch32(cond == Assembler::Equal ? Assembler::Below : Assembler::AboveOrEqual,
-             scratch2, Imm32(nursery.numChunks()), label);
+    ma_lsr(Imm32(gc::ChunkShift), ptr, scratch2);
+    ma_lsl(Imm32(gc::ChunkShift), scratch2, scratch2);
+    load32(Address(scratch2, gc::ChunkLocationOffset), scratch2);
+    branch32(cond, scratch2, Imm32(int32_t(gc::ChunkLocation::Nursery)), label);
 }
 
 void
@@ -5215,10 +5242,10 @@ MacroAssembler::branchValueIsNurseryObject(Condition cond, const Address& addres
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
 
     Label done;
-
     branchTestObject(Assembler::NotEqual, address, cond == Assembler::Equal ? &done : label);
+
     loadPtr(address, temp);
-    branchPtrInNurseryRange(cond, temp, InvalidReg, label);
+    branchPtrInNurseryChunk(cond, temp, InvalidReg, label);
 
     bind(&done);
 }
@@ -5230,9 +5257,9 @@ MacroAssembler::branchValueIsNurseryObject(Condition cond, ValueOperand value,
     MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
 
     Label done;
-
     branchTestObject(Assembler::NotEqual, value, cond == Assembler::Equal ? &done : label);
-    branchPtrInNurseryRange(cond, value.payloadReg(), temp, label);
+
+    branchPtrInNurseryChunk(cond, value.payloadReg(), InvalidReg, label);
 
     bind(&done);
 }
@@ -5289,3 +5316,37 @@ MacroAssembler::storeUnboxedValue(ConstantOrRegister value, MIRType valueType,
                                   const BaseIndex& dest, MIRType slotType);
 
 //}}} check_macroassembler_style
+
+void
+MacroAssemblerARM::emitUnalignedLoad(bool isSigned, unsigned byteSize, Register ptr, Register tmp,
+                                     Register dest, unsigned offset)
+{
+    // Preconditions.
+    MOZ_ASSERT(ptr != tmp);
+    MOZ_ASSERT(ptr != dest);
+    MOZ_ASSERT(tmp != dest);
+    MOZ_ASSERT(byteSize <= 4);
+
+    for (unsigned i = 0; i < byteSize; i++) {
+        // Only the last byte load shall be signed, if needed.
+        bool signedByteLoad = isSigned && (i == byteSize - 1);
+        ma_dataTransferN(IsLoad, 8, signedByteLoad, ptr, Imm32(offset + i), i ? tmp : dest);
+        if (i)
+            as_orr(dest, dest, lsl(tmp, 8 * i));
+    }
+}
+
+void
+MacroAssemblerARM::emitUnalignedStore(unsigned byteSize, Register ptr, Register val,
+                                      unsigned offset)
+{
+    // Preconditions.
+    MOZ_ASSERT(ptr != val);
+    MOZ_ASSERT(byteSize <= 4);
+
+    for (unsigned i = 0; i < byteSize; i++) {
+        ma_dataTransferN(IsStore, 8 /* bits */, /* signed */ false, ptr, Imm32(offset + i), val);
+        if (i < byteSize - 1)
+            ma_lsr(Imm32(8), val, val);
+    }
+}

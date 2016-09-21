@@ -227,14 +227,6 @@ Shape::fixupDictionaryShapeAfterMovingGC()
     if (!listp)
         return;
 
-    // It's possible that this shape is unreachable and that listp points to the
-    // location of a dead object in the nursery, in which case we should never
-    // touch it again.
-    if (IsInsideNursery(reinterpret_cast<Cell*>(listp))) {
-        listp = nullptr;
-        return;
-    }
-
     // The listp field either points to the parent field of the next shape in
     // the list if there is one.  Otherwise if this shape is the last in the
     // list then it points to the shape_ field of the object the list is for.
@@ -260,7 +252,7 @@ Shape::fixupDictionaryShapeAfterMovingGC()
             listp = &gc::Forwarded(next)->parent;
     } else {
         // listp points to the shape_ field of an object.
-        JSObject* last = reinterpret_cast<JSObject*>(uintptr_t(listp) - JSObject::offsetOfShape());
+        JSObject* last = reinterpret_cast<JSObject*>(uintptr_t(listp) - ShapedObject::offsetOfShape());
         if (gc::IsForwarded(last))
             listp = &gc::Forwarded(last)->as<NativeObject>().shape_;
     }

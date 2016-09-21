@@ -10,7 +10,7 @@ from __future__ import absolute_import
 import os
 import re
 import json
-import mozbuild.mozconfig as mozconfig
+
 
 def build_dict(config, env=os.environ):
     """
@@ -29,9 +29,8 @@ def build_dict(config, env=os.environ):
     d = {}
     d['topsrcdir'] = config.topsrcdir
 
-    the_mozconfig = mozconfig.MozconfigLoader(config.topsrcdir).find_mozconfig(env)
-    if the_mozconfig:
-        d['mozconfig'] = the_mozconfig
+    if config.mozconfig:
+        d['mozconfig'] = config.mozconfig
 
     # os
     o = substs["OS_TARGET"]
@@ -141,6 +140,9 @@ def build_dict(config, env=os.environ):
         d['platform_guess'] = guess_platform()
         d['buildtype_guess'] = guess_buildtype()
 
+    if 'buildapp' in d and d['buildapp'] == 'mobile/android' and 'MOZ_ANDROID_MIN_SDK_VERSION' in substs:
+        d['android_min_sdk'] = substs['MOZ_ANDROID_MIN_SDK_VERSION']
+
     return d
 
 
@@ -153,7 +155,6 @@ def write_mozinfo(file, config, env=os.environ):
     """
     build_conf = build_dict(config, env)
     if isinstance(file, basestring):
-        with open(file, "w") as f:
-            json.dump(build_conf, f)
-    else:
-        json.dump(build_conf, file)
+        file = open(file, 'wb')
+
+    json.dump(build_conf, file, sort_keys=True, indent=4)

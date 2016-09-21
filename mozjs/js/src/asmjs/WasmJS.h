@@ -19,47 +19,76 @@
 #ifndef wasm_js_h
 #define wasm_js_h
 
-#include "js/UniquePtr.h"
+#include "asmjs/WasmTypes.h"
+#include "gc/Policy.h"
 #include "vm/NativeObject.h"
 
 namespace js {
 
 class TypedArrayObject;
-class WasmInstanceObject;
 
 namespace wasm {
 
-// This is a widespread header, so keep out core wasm impl definitions.
-
-class Module;
-class Instance;
-
-typedef UniquePtr<Module> UniqueModule;
-typedef UniquePtr<Instance> UniqueInstance;
-
 // Return whether WebAssembly can be compiled on this platform.
+// This must be checked and must be true to call any of the top-level wasm
+// eval/compile methods.
 
 bool
 HasCompilerSupport(ExclusiveContext* cx);
+
+// Return whether WebAssembly has int64 support on this platform.
+bool
+IsI64Implemented();
 
 // Compiles the given binary wasm module given the ArrayBufferObject
 // and links the module's imports with the given import object.
 
 MOZ_MUST_USE bool
 Eval(JSContext* cx, Handle<TypedArrayObject*> code, HandleObject importObj,
-     MutableHandle<WasmInstanceObject*> instanceObj);
+     MutableHandleWasmInstanceObject instanceObj);
+
+// The field name of the export object on the instance object.
+
+extern const char InstanceExportField[];
+
+// These accessors can be used to probe JS values for being an exported wasm
+// function.
+
+extern bool
+IsExportedFunction(JSFunction* fun);
+
+extern bool
+IsExportedFunction(const Value& v, MutableHandleFunction f);
+
+extern Instance&
+ExportedFunctionToInstance(JSFunction* fun);
+
+extern WasmInstanceObject*
+ExportedFunctionToInstanceObject(JSFunction* fun);
+
+extern uint32_t
+ExportedFunctionToIndex(JSFunction* fun);
 
 } // namespace wasm
 
-// The class of the Wasm global namespace object.
+// 'Wasm' and its one function 'instantiateModule' are transitional APIs and
+// will be removed (replaced by 'WebAssembly') before release.
 
 extern const Class WasmClass;
 
 JSObject*
 InitWasmClass(JSContext* cx, HandleObject global);
 
-// The class of wasm module object wrappers. Each WasmModuleObject owns a
-// wasm::Module. These objects are currently not exposed directly to JS.
+// The class of the WebAssembly global namespace object.
+
+extern const Class WebAssemblyClass;
+
+JSObject*
+InitWebAssemblyClass(JSContext* cx, HandleObject global);
+
+// The class of WebAssembly.Module. Each WasmModuleObject owns a
+// wasm::Module. These objects are used both as content-facing JS objects and as
+// internal implementation details of asm.js.
 
 class WasmModuleObject : public NativeObject
 {
@@ -69,17 +98,19 @@ class WasmModuleObject : public NativeObject
   public:
     static const unsigned RESERVED_SLOTS = 1;
     static const Class class_;
+    static const JSPropertySpec properties[];
+    static const JSFunctionSpec methods[];
+    static bool construct(JSContext*, unsigned, Value*);
 
-    static WasmModuleObject* create(ExclusiveContext* cx, wasm::UniqueModule module);
+    static WasmModuleObject* create(ExclusiveContext* cx,
+                                    wasm::Module& module,
+                                    HandleObject proto = nullptr);
     wasm::Module& module() const;
 };
 
-typedef Rooted<WasmModuleObject*> RootedWasmModuleObject;
-typedef Handle<WasmModuleObject*> HandleWasmModuleObject;
-typedef MutableHandle<WasmModuleObject*> MutableHandleWasmModuleObject;
-
-// The class of wasm instance object wrappers. Each WasmInstanceObject owns a
-// wasm::Instance. These objects are currently not exposed directly to JS.
+// The class of WebAssembly.Instance. Each WasmInstanceObject owns a
+// wasm::Instance. These objects are used both as content-facing JS objects and
+// as internal implementation details of asm.js.
 
 class WasmInstanceObject : public NativeObject
 {
@@ -89,21 +120,90 @@ class WasmInstanceObject : public NativeObject
     bool isNewborn() const;
     static void finalize(FreeOp* fop, JSObject* obj);
     static void trace(JSTracer* trc, JSObject* obj);
+
+    // ExportMap maps from function index to exported function object. This map
+    // is weak to avoid holding objects alive; the point is just to ensure a
+    // unique object identity for any given function object.
+    using ExportMap = GCHashMap<uint32_t,
+                                ReadBarrieredFunction,
+                                DefaultHasher<uint32_t>,
+                                SystemAllocPolicy>;
+    using WeakExportMap = JS::WeakCache<ExportMap>;
+    WeakExportMap& exports() const;
+
   public:
     static const unsigned RESERVED_SLOTS = 2;
     static const Class class_;
+    static const JSPropertySpec properties[];
+    static const JSFunctionSpec methods[];
+    static bool construct(JSContext*, unsigned, Value*);
 
-    static WasmInstanceObject* create(ExclusiveContext* cx);
-    void init(wasm::UniqueInstance module);
-    void initExportsObject(HandleObject exportObj);
+    static WasmInstanceObject* create(JSContext* cx,
+                                      UniquePtr<wasm::Code> code,
+                                      HandleWasmMemoryObject memory,
+                                      Vector<RefPtr<wasm::Table>, 0, SystemAllocPolicy>&& tables,
+                                      Handle<FunctionVector> funcImports,
+                                      const wasm::ValVector& globalImports,
+                                      HandleObject proto);
     wasm::Instance& instance() const;
-    JSObject& exportsObject() const;
+
+    static bool getExportedFunction(JSContext* cx,
+                                    HandleWasmInstanceObject instanceObj,
+                                    uint32_t funcIndex,
+                                    MutableHandleFunction fun);
 };
 
-typedef GCVector<WasmInstanceObject*> WasmInstanceObjectVector;
-typedef Rooted<WasmInstanceObject*> RootedWasmInstanceObject;
-typedef Handle<WasmInstanceObject*> HandleWasmInstanceObject;
-typedef MutableHandle<WasmInstanceObject*> MutableHandleWasmInstanceObject;
+// The class of WebAssembly.Memory. A WasmMemoryObject references an ArrayBuffer
+// or SharedArrayBuffer object which owns the actual memory.
+
+class WasmMemoryObject : public NativeObject
+{
+    static const unsigned BUFFER_SLOT = 0;
+    static const ClassOps classOps_;
+  public:
+    static const unsigned RESERVED_SLOTS = 1;
+    static const Class class_;
+    static const JSPropertySpec properties[];
+    static const JSFunctionSpec methods[];
+    static bool construct(JSContext*, unsigned, Value*);
+
+    static WasmMemoryObject* create(ExclusiveContext* cx,
+                                    Handle<ArrayBufferObjectMaybeShared*> buffer,
+                                    HandleObject proto);
+    ArrayBufferObjectMaybeShared& buffer() const;
+};
+
+// The class of WebAssembly.Table. A WasmTableObject holds a refcount on a
+// wasm::Table, allowing a Table to be shared between multiple Instances
+// (eventually between multiple threads).
+
+class WasmTableObject : public NativeObject
+{
+    static const unsigned TABLE_SLOT = 0;
+    static const ClassOps classOps_;
+    bool isNewborn() const;
+    static void finalize(FreeOp* fop, JSObject* obj);
+    static void trace(JSTracer* trc, JSObject* obj);
+    static bool lengthGetterImpl(JSContext* cx, const CallArgs& args);
+    static bool lengthGetter(JSContext* cx, unsigned argc, Value* vp);
+    static bool getImpl(JSContext* cx, const CallArgs& args);
+    static bool get(JSContext* cx, unsigned argc, Value* vp);
+    static bool setImpl(JSContext* cx, const CallArgs& args);
+    static bool set(JSContext* cx, unsigned argc, Value* vp);
+
+  public:
+    static const unsigned RESERVED_SLOTS = 1;
+    static const Class class_;
+    static const JSPropertySpec properties[];
+    static const JSFunctionSpec methods[];
+    static bool construct(JSContext*, unsigned, Value*);
+
+    // Note that, after creation, a WasmTableObject's table() is not initialized
+    // and must be initialized before use.
+
+    static WasmTableObject* create(JSContext* cx, uint32_t length);
+    wasm::Table& table() const;
+};
 
 } // namespace js
 

@@ -373,8 +373,8 @@ JS_STATIC_ASSERT(sizeof(jsval_layout) == 8);
 #if defined(JS_VALUE_IS_CONSTEXPR)
 #  define JS_RETURN_LAYOUT_FROM_BITS(BITS) \
     return (jsval_layout) { .asBits = (BITS) }
-#  define JS_VALUE_CONSTEXPR MOZ_CONSTEXPR
-#  define JS_VALUE_CONSTEXPR_VAR MOZ_CONSTEXPR_VAR
+#  define JS_VALUE_CONSTEXPR constexpr
+#  define JS_VALUE_CONSTEXPR_VAR constexpr
 #else
 #  define JS_RETURN_LAYOUT_FROM_BITS(BITS) \
     jsval_layout l;                        \
@@ -552,7 +552,7 @@ static inline jsval_layout
 OBJECT_TO_JSVAL_IMPL(JSObject* obj)
 {
     jsval_layout l;
-    MOZ_ASSERT(uintptr_t(obj) > 0x1000 || uintptr_t(obj) == 0x42);
+    MOZ_ASSERT(uintptr_t(obj) > 0x1000 || uintptr_t(obj) == 0x48);
     l.s.tag = JSVAL_TAG_OBJECT;
     l.s.payload.obj = obj;
     return l;
@@ -687,7 +687,7 @@ BUILD_JSVAL(JSValueTag tag, uint64_t payload)
 static inline bool
 JSVAL_IS_DOUBLE_IMPL(jsval_layout l)
 {
-    return l.asBits <= JSVAL_SHIFTED_TAG_MAX_DOUBLE;
+    return (l.asBits | mozilla::DoubleTypeTraits::kSignBit) <= JSVAL_SHIFTED_TAG_MAX_DOUBLE;
 }
 
 static inline jsval_layout
@@ -695,7 +695,7 @@ DOUBLE_TO_JSVAL_IMPL(double d)
 {
     jsval_layout l;
     l.asDouble = d;
-    MOZ_ASSERT(l.asBits <= JSVAL_SHIFTED_TAG_MAX_DOUBLE);
+    MOZ_ASSERT(JSVAL_IS_DOUBLE_IMPL(l));
     return l;
 }
 
@@ -834,7 +834,7 @@ OBJECT_TO_JSVAL_IMPL(JSObject* obj)
 {
     jsval_layout l;
     uint64_t objBits = (uint64_t)obj;
-    MOZ_ASSERT(uintptr_t(obj) > 0x1000 || uintptr_t(obj) == 0x42);
+    MOZ_ASSERT(uintptr_t(obj) > 0x1000 || uintptr_t(obj) == 0x48);
     MOZ_ASSERT((objBits >> JSVAL_TAG_SHIFT) == 0);
     l.asBits = objBits | JSVAL_SHIFTED_TAG_OBJECT;
     return l;
@@ -947,9 +947,8 @@ MAGIC_UINT32_TO_JSVAL_IMPL(uint32_t payload)
 static inline bool
 JSVAL_SAME_TYPE_IMPL(jsval_layout lhs, jsval_layout rhs)
 {
-    uint64_t lbits = lhs.asBits, rbits = rhs.asBits;
-    return (lbits <= JSVAL_SHIFTED_TAG_MAX_DOUBLE && rbits <= JSVAL_SHIFTED_TAG_MAX_DOUBLE) ||
-           (((lbits ^ rbits) & 0xFFFF800000000000LL) == 0);
+    return (JSVAL_IS_DOUBLE_IMPL(lhs) && JSVAL_IS_DOUBLE_IMPL(rhs)) ||
+           (((lhs.asBits ^ rhs.asBits) & 0xFFFF800000000000LL) == 0);
 }
 
 static inline JSValueType
@@ -1558,7 +1557,7 @@ static inline Value
 ObjectValueCrashOnTouch()
 {
     Value v;
-    v.setObject(*reinterpret_cast<JSObject*>(0x42));
+    v.setObject(*reinterpret_cast<JSObject*>(0x48));
     return v;
 }
 

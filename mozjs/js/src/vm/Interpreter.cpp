@@ -716,7 +716,7 @@ js::Execute(JSContext* cx, HandleScript script, JSObject& scopeChainArg, Value* 
  * ES6 (4-25-16) 12.10.4 InstanceofOperator
  */
 extern bool
-js::InstanceOfOperator(JSContext* cx, HandleObject obj, MutableHandleValue v, bool* bp)
+js::InstanceOfOperator(JSContext* cx, HandleObject obj, HandleValue v, bool* bp)
 {
     /* Step 1. is handled by caller. */
 
@@ -745,7 +745,7 @@ js::InstanceOfOperator(JSContext* cx, HandleObject obj, MutableHandleValue v, bo
     }
 
     /* Step 5. */
-    return js::OrdinaryHasInstance(cx, obj, v, bp);
+    return OrdinaryHasInstance(cx, obj, v, bp);
 }
 
 bool
@@ -755,7 +755,7 @@ js::HasInstance(JSContext* cx, HandleObject obj, HandleValue v, bool* bp)
     RootedValue local(cx, v);
     if (JSHasInstanceOp hasInstance = clasp->getHasInstance())
         return hasInstance(cx, obj, &local, bp);
-    return js::InstanceOfOperator(cx, obj, &local, bp);
+    return js::InstanceOfOperator(cx, obj, local, bp);
 }
 
 static inline bool
@@ -1825,7 +1825,6 @@ CASE(EnableInterruptsPseudoOpcode)
 /* Various 1-byte no-ops. */
 CASE(JSOP_NOP)
 CASE(JSOP_NOP_DESTRUCTURING)
-CASE(JSOP_UNUSED14)
 CASE(JSOP_UNUSED149)
 CASE(JSOP_UNUSED179)
 CASE(JSOP_UNUSED180)
@@ -2556,6 +2555,15 @@ CASE(JSOP_GLOBALTHIS)
 }
 END_CASE(JSOP_GLOBALTHIS)
 
+CASE(JSOP_CHECKISOBJ)
+{
+    if (!REGS.sp[-1].isObject()) {
+        MOZ_ALWAYS_FALSE(ThrowCheckIsObject(cx, CheckIsObjectKind(GET_UINT8(REGS.pc))));
+        goto error;
+    }
+}
+END_CASE(JSOP_CHECKISOBJ)
+
 CASE(JSOP_CHECKTHIS)
 {
     if (REGS.sp[-1].isMagic(JS_UNINITIALIZED_LEXICAL)) {
@@ -3222,7 +3230,7 @@ CASE(JSOP_GETALIASEDVAR)
 #ifdef DEBUG
     // Only the .this slot can hold the TDZ MagicValue.
     if (IsUninitializedLexical(val)) {
-        PropertyName* name = ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache,
+        PropertyName* name = ScopeCoordinateName(cx->caches.scopeCoordinateNameCache,
                                                  script, REGS.pc);
         MOZ_ASSERT(name == cx->names().dotThis);
         JSOp next = JSOp(*GetNextPc(REGS.pc));
@@ -4034,7 +4042,7 @@ END_CASE(JSOP_IS_CONSTRUCTING)
 DEFAULT()
 {
     char numBuf[12];
-    JS_snprintf(numBuf, sizeof numBuf, "%d", *REGS.pc);
+    snprintf(numBuf, sizeof numBuf, "%d", *REGS.pc);
     JS_ReportErrorNumber(cx, GetErrorMessage, nullptr,
                          JSMSG_BAD_BYTECODE, numBuf);
     goto error;
@@ -4944,7 +4952,7 @@ js::ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber,
         name = script->getName(pc);
     } else {
         MOZ_ASSERT(IsAliasedVarOp(op));
-        name = ScopeCoordinateName(cx->runtime()->scopeCoordinateNameCache, script, pc);
+        name = ScopeCoordinateName(cx->caches.scopeCoordinateNameCache, script, pc);
     }
 
     ReportRuntimeLexicalError(cx, errorNumber, name);
@@ -4966,6 +4974,19 @@ js::ReportRuntimeRedeclaration(JSContext* cx, HandlePropertyName name,
         JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_REDECLARED_VAR,
                              kindStr, printable.ptr());
     }
+}
+
+bool
+js::ThrowCheckIsObject(JSContext* cx, CheckIsObjectKind kind)
+{
+    switch (kind) {
+      case CheckIsObjectKind::IteratorNext:
+        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NEXT_RETURNED_PRIMITIVE);
+        break;
+      default:
+        MOZ_CRASH("Unknown kind");
+    }
+    return false;
 }
 
 bool
