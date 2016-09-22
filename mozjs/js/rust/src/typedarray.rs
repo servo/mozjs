@@ -261,11 +261,11 @@ pub type ArrayBuffer<'a> = TypedArray<'a, ArrayBufferU8>;
 #[macro_export]
 macro_rules! typedarray {
     (in($cx:expr) let $name:ident : $ty:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted($init);
+        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted($init);
         let $name = $crate::typedarray::$ty::from($cx, &mut __root);
     };
     (in($cx:expr) let mut $name:ident : $ty:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted($init);
+        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted($init);
         let mut $name = $crate::typedarray::$ty::from($cx, &mut __root);
     }
 }
