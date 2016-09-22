@@ -482,6 +482,10 @@ impl Default for jsid {
     }
 }
 
+impl Default for JS::Value {
+    fn default() -> JS::Value { jsval::UndefinedValue() }
+}
+
 impl Default for JS::CompartmentOptions {
     fn default() -> Self { unsafe { ::std::mem::zeroed() } }
 }
