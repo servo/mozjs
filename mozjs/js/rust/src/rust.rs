@@ -21,6 +21,7 @@ use jsval;
 use glue::{CreateAutoObjectVector, CreateCallArgsFromVp, AppendToAutoObjectVector, DeleteAutoObjectVector, IsDebugBuild};
 use glue::{CreateAutoIdVector, SliceAutoIdVector, DestroyAutoIdVector};
 use glue::{NewCompileOptions, DeleteCompileOptions};
+use panic;
 
 const DEFAULT_HEAPSIZE: u32 = 32_u32 * 1024_u32 * 1024_u32;
 
@@ -204,6 +205,7 @@ impl Runtime {
 
             if !JS::Evaluate2(self.cx(), options.ptr, ptr as *const u16, len as _, rval) {
                 debug!("...err!");
+                panic::maybe_resume_unwind();
                 Err(())
             } else {
                 // we could return the script result but then we'd have
