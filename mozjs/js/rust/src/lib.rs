@@ -31,6 +31,7 @@ pub mod error;
 pub mod glue;
 pub mod heap;
 pub mod jsval;
+pub mod panic;
 pub mod typedarray;
 
 use jsval::JSVal;
