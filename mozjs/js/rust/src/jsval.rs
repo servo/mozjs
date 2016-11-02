@@ -153,16 +153,16 @@ pub fn BooleanValue(b: bool) -> JSVal {
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
-pub fn ObjectValue(o: &JSObject) -> JSVal {
-    let bits = o as *const JSObject as usize as u64;
+pub fn ObjectValue(o: *mut JSObject) -> JSVal {
+    let bits = o as usize as u64;
     assert!((bits >> JSVAL_TAG_SHIFT) == 0);
     BuildJSVal(ValueTag::OBJECT, bits)
 }
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-pub fn ObjectValue(o: &JSObject) -> JSVal {
-    let bits = o as *const JSObject as usize as u64;
+pub fn ObjectValue(o: *mut JSObject) -> JSVal {
+    let bits = o as usize as u64;
     BuildJSVal(ValueTag::OBJECT, bits)
 }
 
@@ -171,7 +171,7 @@ pub fn ObjectOrNullValue(o: *mut JSObject) -> JSVal {
     if o.is_null() {
         NullValue()
     } else {
-        ObjectValue(unsafe { &*o })
+        ObjectValue(o)
     }
 }
 
