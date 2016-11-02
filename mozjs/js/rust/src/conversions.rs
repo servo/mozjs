@@ -534,7 +534,7 @@ impl<T: ToJSValConvertible> ToJSValConvertible for Vec<T> {
                                      index as u32, val.handle(), JSPROP_ENUMERATE as _, None, None));
         }
 
-        rval.set(ObjectValue(&*js_array.handle().get()));
+        rval.set(ObjectValue(js_array.handle().get()));
     }
 }
 
