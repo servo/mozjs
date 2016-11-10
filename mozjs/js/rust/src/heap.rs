@@ -72,6 +72,12 @@ impl<T: GCMethods<T> + Copy> Clone for Heap<T>
     }
 }
 
+impl<T: GCMethods<T> + Copy + PartialEq> PartialEq for Heap<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.get() == other.get()
+    }
+}
+
 impl<T> Default for Heap<*mut T>
     where *mut T: GCMethods<*mut T> + Copy
 {
