@@ -30,6 +30,14 @@ pub struct Heap<T: GCMethods<T> + Copy> {
 }
 
 impl<T: GCMethods<T> + Copy> Heap<T> {
+    pub fn new(v: T) -> Heap<T>
+        where Heap<T>: Default
+    {
+        let mut ptr = Heap::default();
+        ptr.set(v);
+        ptr
+    }
+
     pub fn set(&mut self, new_ptr: T) {
         unsafe {
             let prev = self.ptr;
