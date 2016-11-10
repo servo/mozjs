@@ -64,6 +64,14 @@ impl<T: GCMethods<T> + Copy> Heap<T> {
     }
 }
 
+impl<T: GCMethods<T> + Copy> Clone for Heap<T>
+    where Heap<T>: Default
+{
+    fn clone(&self) -> Self {
+        Heap::new(self.get())
+    }
+}
+
 impl<T> Default for Heap<*mut T>
     where *mut T: GCMethods<*mut T> + Copy
 {
