@@ -1,8 +1,17 @@
+use glue;
 use heapsize::HeapSizeOf;
 use jsapi::root::*;
 use rust::GCMethods;
 use std::mem;
 use std::ptr;
+
+/// Types that can be traced.
+///
+/// This trait is unsafe; if it is implemented incorrectly, the GC may end up
+/// collecting objects that are still reachable.
+pub unsafe trait Trace {
+    unsafe fn trace(&self, trc: *mut JSTracer);
+}
 
 /**
  * The Heap<T> class is a heap-stored reference to a JS GC thing. All members of
@@ -94,6 +103,49 @@ impl<T: GCMethods<T> + Copy> Drop for Heap<T> {
             let prev = self.ptr;
             T::post_barrier(&mut self.ptr as _, prev, T::initial());
         }
+    }
+}
+
+// Creates a C string literal `$str`.
+macro_rules! c_str {
+    ($str:expr) => {
+        concat!($str, "\0").as_ptr() as *const ::std::os::raw::c_char
+    }
+}
+
+unsafe impl Trace for Heap<*mut JSFunction> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        glue::CallFunctionTracer(trc, self as *const _ as *mut Self, c_str!("function"));
+    }
+}
+
+unsafe impl Trace for Heap<*mut JSObject> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        glue::CallObjectTracer(trc, self as *const _ as *mut Self, c_str!("object"));
+    }
+}
+
+unsafe impl Trace for Heap<*mut JSScript> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        glue::CallScriptTracer(trc, self as *const _ as *mut Self, c_str!("script"));
+    }
+}
+
+unsafe impl Trace for Heap<*mut JSString> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        glue::CallStringTracer(trc, self as *const _ as *mut Self, c_str!("string"));
+    }
+}
+
+unsafe impl Trace for Heap<JS::Value> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        glue::CallValueTracer(trc, self as *const _ as *mut Self, c_str!("value"));
+    }
+}
+
+unsafe impl Trace for Heap<jsid> {
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        glue::CallIdTracer(trc, self as *const _ as *mut Self, c_str!("id"));
     }
 }
 
