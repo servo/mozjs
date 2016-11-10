@@ -17,7 +17,7 @@ use std::default::Default;
 use std::ops::{Deref, DerefMut};
 use std::thread;
 use jsapi::root::*;
-use jsval;
+use jsval::{self, UndefinedValue};
 use glue::{CreateAutoObjectVector, CreateCallArgsFromVp, AppendToAutoObjectVector, DeleteAutoObjectVector, IsDebugBuild};
 use glue::{CreateAutoIdVector, SliceAutoIdVector, DestroyAutoIdVector};
 use glue::{NewCompileOptions, DeleteCompileOptions};
@@ -531,12 +531,13 @@ impl GCMethods<*mut JSFunction> for *mut JSFunction {
     unsafe fn post_barrier(v: *mut *mut JSFunction,
                            prev: *mut JSFunction, next: *mut JSFunction) {
         JS::HeapObjectPostBarrier(mem::transmute(v),
-                                  mem::transmute(prev), mem::transmute(next));
+                                  mem::transmute(prev),
+                                  mem::transmute(next));
     }
 }
 
 impl GCMethods<JS::Value> for JS::Value {
-    unsafe fn initial() -> JS::Value { jsval::UndefinedValue() }
+    unsafe fn initial() -> JS::Value { UndefinedValue() }
     unsafe fn post_barrier(v: *mut JS::Value, prev: JS::Value, next: JS::Value) {
         JS::HeapValuePostBarrier(v, &prev, &next);
     }

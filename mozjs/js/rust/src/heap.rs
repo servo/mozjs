@@ -1,6 +1,5 @@
 use heapsize::HeapSizeOf;
 use jsapi::root::*;
-use jsval;
 use rust::GCMethods;
 use std::mem;
 use std::ptr;
@@ -57,18 +56,12 @@ impl<T: GCMethods<T> + Copy> Heap<T> {
     }
 }
 
-impl Default for Heap<*mut JSObject> {
-    fn default() -> Heap<*mut JSObject> {
+impl<T> Default for Heap<*mut T>
+    where *mut T: GCMethods<*mut T> + Copy
+{
+    fn default() -> Heap<*mut T> {
         Heap {
             ptr: ptr::null_mut()
-        }
-    }
-}
-
-impl Default for Heap<JS::Value> {
-    fn default() -> Heap<JS::Value> {
-        Heap {
-            ptr: jsval::UndefinedValue()
         }
     }
 }
