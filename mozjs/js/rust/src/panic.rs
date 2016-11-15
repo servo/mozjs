@@ -17,7 +17,7 @@ pub fn maybe_resume_unwind() {
 
 /// Generic wrapper for JS engine callbacks panic-catching
 pub fn wrap_panic<F, R>(function: F, generic_return_type: R) -> R
-    where F: FnMut() -> R + UnwindSafe
+    where F: FnOnce() -> R + UnwindSafe
 {
     let result = catch_unwind(function);
     match result {
