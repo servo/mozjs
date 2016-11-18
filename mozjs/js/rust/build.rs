@@ -260,7 +260,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "js::ToUint16Slow",
     "js::ToUint32Slow",
     "js::ToUint64Slow",
-    "js::ToWindowIfWindowProxy",
+    "js::detail::ToWindowProxyIfWindowSlow",
     "js::UnwrapArrayBuffer",
     "js::UnwrapArrayBufferView",
     "js::UnwrapFloat32Array",

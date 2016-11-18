@@ -1004,7 +1004,7 @@ pub unsafe fn is_window(obj: *mut JSObject) -> bool {
 pub unsafe fn try_to_outerize(rval: JS::MutableHandleValue) {
     let obj = rval.to_object();
     if is_window(obj) {
-        let obj = js::ToWindowIfWindowProxy(obj);
+        let obj = js::detail::ToWindowProxyIfWindowSlow(obj);
         assert!(!obj.is_null());
         rval.set(jsval::ObjectValue(&mut *obj));
     }
