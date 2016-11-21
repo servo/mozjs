@@ -466,6 +466,22 @@ impl JS::HandleValue {
     }
 }
 
+impl JS::HandleValueArray {
+    pub fn new() -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: 0,
+            elements_: ptr::null(),
+        }
+    }
+
+    pub unsafe fn from_rooted_slice(values: &[JS::Value]) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: values.len(),
+            elements_: values.as_ptr()
+        }
+    }
+}
+
 const ConstNullValue: *mut JSObject = 0 as *mut JSObject;
 
 impl JS::HandleObject {
