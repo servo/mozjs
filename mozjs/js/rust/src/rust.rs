@@ -7,6 +7,7 @@
 use ac::AutoCompartment;
 use libc::c_uint;
 use heapsize::HeapSizeOf;
+use std::cell::Cell;
 use std::char;
 use std::ffi;
 use std::ptr;
@@ -77,12 +78,23 @@ impl ToResult for bool {
 // ___________________________________________________________________________
 // friendly Rustic API to runtimes
 
+thread_local!(static CONTEXT: Cell<*mut JSContext> = Cell::new(ptr::null_mut()));
+
 /// A wrapper for the `JSContext` structure in SpiderMonkey.
 pub struct Runtime {
     cx: *mut JSContext,
 }
 
 impl Runtime {
+    /// Get the `JSContext` for this thread.
+    pub fn get() -> *mut JSContext {
+        let cx = CONTEXT.with(|context| {
+            context.get()
+        });
+        assert!(!cx.is_null());
+        cx
+    }
+
     /// Creates a new `JSContext`.
     pub fn new() -> Runtime {
         use std::cell::UnsafeCell;
@@ -174,6 +186,11 @@ impl Runtime {
 
             JS_BeginRequest(js_context);
 
+            CONTEXT.with(|context| {
+                assert!(context.get().is_null());
+                context.set(js_context);
+            });
+
             Runtime {
                 cx: js_context,
             }
@@ -220,6 +237,11 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         unsafe {
+            CONTEXT.with(|context| {
+                assert!(!context.get().is_null());
+                context.set(ptr::null_mut());
+            });
+
             JS_EndRequest(self.cx);
             JS_DestroyContext(self.cx);
         }
