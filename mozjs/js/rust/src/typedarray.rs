@@ -257,6 +257,8 @@ pub type Float32Array<'a> = TypedArray<'a, Float32>;
 pub type Float64Array<'a> = TypedArray<'a, Float64>;
 /// The ArrayBuffer type.
 pub type ArrayBuffer<'a> = TypedArray<'a, ArrayBufferU8>;
+/// The ArrayBufferView type
+pub type ArrayBufferView<'a> = TypedArray<'a, ArrayBufferViewU8>;
 
 #[macro_export]
 macro_rules! typedarray {
