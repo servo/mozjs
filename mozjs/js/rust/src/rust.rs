@@ -398,6 +398,7 @@ impl<'a, T: 'a + RootKind + GCMethods> DerefMut for RootedGuard<'a, T> {
 impl<'a, T: 'a + RootKind + GCMethods> Drop for RootedGuard<'a, T> {
     fn drop(&mut self) {
         unsafe {
+            self.root.ptr = T::initial();
             self.root.remove_from_root_stack();
         }
     }
