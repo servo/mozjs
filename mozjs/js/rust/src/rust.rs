@@ -536,17 +536,17 @@ const ChunkSize: usize = 1 << ChunkShift;
 #[cfg(target_pointer_width = "32")]
 const ChunkLocationOffset: usize = ChunkSize - 2 * 4 - 8;
 
-pub trait GCMethods<T> {
-    unsafe fn initial() -> T;
-    unsafe fn post_barrier(v: *mut T, prev: T, next: T);
+pub trait GCMethods {
+    unsafe fn initial() -> Self;
+    unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self);
 }
 
-impl GCMethods<jsid> for jsid {
+impl GCMethods for jsid {
     unsafe fn initial() -> jsid { JSID_VOID }
     unsafe fn post_barrier(_: *mut jsid, _: jsid, _: jsid) {}
 }
 
-impl GCMethods<*mut JSObject> for *mut JSObject {
+impl GCMethods for *mut JSObject {
     unsafe fn initial() -> *mut JSObject { ptr::null_mut() }
     unsafe fn post_barrier(v: *mut *mut JSObject,
                            prev: *mut JSObject, next: *mut JSObject) {
@@ -554,17 +554,17 @@ impl GCMethods<*mut JSObject> for *mut JSObject {
     }
 }
 
-impl GCMethods<*mut JSString> for *mut JSString {
+impl GCMethods for *mut JSString {
     unsafe fn initial() -> *mut JSString { ptr::null_mut() }
     unsafe fn post_barrier(_: *mut *mut JSString, _: *mut JSString, _: *mut JSString) {}
 }
 
-impl GCMethods<*mut JSScript> for *mut JSScript {
+impl GCMethods for *mut JSScript {
     unsafe fn initial() -> *mut JSScript { ptr::null_mut() }
     unsafe fn post_barrier(_: *mut *mut JSScript, _: *mut JSScript, _: *mut JSScript) { }
 }
 
-impl GCMethods<*mut JSFunction> for *mut JSFunction {
+impl GCMethods for *mut JSFunction {
     unsafe fn initial() -> *mut JSFunction { ptr::null_mut() }
     unsafe fn post_barrier(v: *mut *mut JSFunction,
                            prev: *mut JSFunction, next: *mut JSFunction) {
@@ -574,7 +574,7 @@ impl GCMethods<*mut JSFunction> for *mut JSFunction {
     }
 }
 
-impl GCMethods<JS::Value> for JS::Value {
+impl GCMethods for JS::Value {
     unsafe fn initial() -> JS::Value { UndefinedValue() }
     unsafe fn post_barrier(v: *mut JS::Value, prev: JS::Value, next: JS::Value) {
         JS::HeapValuePostBarrier(v, &prev, &next);
