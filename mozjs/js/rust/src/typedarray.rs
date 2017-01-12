@@ -32,9 +32,12 @@ impl<'a, T: TypedArrayElement> TypedArray<'a, T> {
     /// Create a typed array representation that wraps an existing JS reflector.
     /// This operation will fail if attempted on a JS object that does not match
     /// the expected typed array details.
-    pub fn from(cx: *mut JSContext, root: &'a mut Rooted<*mut JSObject>) -> Result<Self, ()> {
+    pub fn from(cx: *mut JSContext,
+                root: &'a mut Rooted<*mut JSObject>,
+                object: *mut JSObject)
+                -> Result<Self, ()> {
         unsafe {
-            let mut guard = RootedGuard::new(cx, root);
+            let mut guard = RootedGuard::new(cx, root, object);
             let unwrapped = T::unwrap_array(*guard);
             if unwrapped.is_null() {
                 return Err(());
@@ -263,11 +266,11 @@ pub type ArrayBufferView<'a> = TypedArray<'a, ArrayBufferViewU8>;
 #[macro_export]
 macro_rules! typedarray {
     (in($cx:expr) let $name:ident : $ty:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted($init);
-        let $name = $crate::typedarray::$ty::from($cx, &mut __root);
+        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted();
+        let $name = $crate::typedarray::$ty::from($cx, &mut __root, $init);
     };
     (in($cx:expr) let mut $name:ident : $ty:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted($init);
-        let mut $name = $crate::typedarray::$ty::from($cx, &mut __root);
+        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted();
+        let mut $name = $crate::typedarray::$ty::from($cx, &mut __root, $init);
     }
 }

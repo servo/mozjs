@@ -304,11 +304,13 @@ impl RootKind for JS::Value {
 }
 
 impl<T> JS::Rooted<T> {
-    pub fn new_unrooted(initial: T) -> JS::Rooted<T> {
+    pub fn new_unrooted() -> JS::Rooted<T>
+        where T: GCMethods,
+    {
         JS::Rooted {
             stack: ptr::null_mut(),
             prev: ptr::null_mut(),
-            ptr: initial,
+            ptr: unsafe { T::initial() },
         }
     }
 
@@ -349,7 +351,10 @@ pub struct RootedGuard<'a, T: 'a> {
 }
 
 impl<'a, T> RootedGuard<'a, T> {
-    pub fn new(cx: *mut JSContext, root: &'a mut JS::Rooted<T>) -> Self where T: RootKind {
+    pub fn new(cx: *mut JSContext, root: &'a mut JS::Rooted<T>, initial: T) -> Self
+        where T: RootKind
+    {
+        root.ptr = initial;
         unsafe {
             root.register_with_root_lists(cx);
         }
@@ -403,12 +408,12 @@ impl<'a, T> Drop for RootedGuard<'a, T> {
 #[macro_export]
 macro_rules! rooted {
     (in($cx:expr) let $name:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::root::JS::Rooted::new_unrooted($init);
-        let $name = $crate::rust::RootedGuard::new($cx, &mut __root);
+        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted();
+        let $name = $crate::rust::RootedGuard::new($cx, &mut __root, $init);
     };
     (in($cx:expr) let mut $name:ident = $init:expr) => {
-        let mut __root = $crate::jsapi::root::JS::Rooted::new_unrooted($init);
-        let mut $name = $crate::rust::RootedGuard::new($cx, &mut __root);
+        let mut __root = $crate::jsapi::JS::Rooted::new_unrooted();
+        let mut $name = $crate::rust::RootedGuard::new($cx, &mut __root, $init);
     }
 }
 
