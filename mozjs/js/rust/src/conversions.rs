@@ -572,7 +572,7 @@ impl<C: Clone, T: FromJSValConvertible<Config=C>> FromJSValConvertible for Vec<T
                          -> Result<ConversionResult<Vec<T>>, ()> {
         let mut iterator = JS::ForOfIterator {
             cx_: cx,
-            iterator: JS::RootedObject::new_unrooted(ptr::null_mut()),
+            iterator: JS::RootedObject::new_unrooted(),
             index: ::std::u32::MAX, // NOT_ARRAY
         };
         let mut iterator = ForOfIteratorGuard::new(cx, &mut iterator);
