@@ -346,14 +346,12 @@ impl<T> JS::Rooted<T> {
 /// Rust API for keeping a JS::Rooted value in the context's root stack.
 /// Example usage: `rooted!(in(cx) let x = UndefinedValue());`.
 /// `RootedGuard::new` also works, but the macro is preferred.
-pub struct RootedGuard<'a, T: 'a> {
+pub struct RootedGuard<'a, T: 'a + RootKind + GCMethods> {
     root: &'a mut JS::Rooted<T>
 }
 
-impl<'a, T> RootedGuard<'a, T> {
-    pub fn new(cx: *mut JSContext, root: &'a mut JS::Rooted<T>, initial: T) -> Self
-        where T: RootKind
-    {
+impl<'a, T: 'a + RootKind + GCMethods> RootedGuard<'a, T> {
+    pub fn new(cx: *mut JSContext, root: &'a mut JS::Rooted<T>, initial: T) -> Self {
         root.ptr = initial;
         unsafe {
             root.register_with_root_lists(cx);
@@ -384,20 +382,20 @@ impl<'a, T> RootedGuard<'a, T> {
     }
 }
 
-impl<'a, T> Deref for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind + GCMethods> Deref for RootedGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.root.ptr
     }
 }
 
-impl<'a, T> DerefMut for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind + GCMethods> DerefMut for RootedGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.root.ptr
     }
 }
 
-impl<'a, T> Drop for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind + GCMethods> Drop for RootedGuard<'a, T> {
     fn drop(&mut self) {
         unsafe {
             self.root.remove_from_root_stack();
