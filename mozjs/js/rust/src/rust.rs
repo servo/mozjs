@@ -338,7 +338,7 @@ impl<T> JS::Rooted<T> {
     }
 
     pub unsafe fn remove_from_root_stack(&mut self) {
-        assert!(*self.stack == mem::transmute(&*self));
+        assert!(*self.stack == self as *mut _ as usize as _);
         *self.stack = self.prev;
     }
 }
