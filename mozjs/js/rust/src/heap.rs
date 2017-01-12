@@ -34,11 +34,11 @@ pub unsafe trait Trace {
  */
 #[repr(C)]
 #[derive(Debug)]
-pub struct Heap<T: GCMethods<T> + Copy> {
+pub struct Heap<T: GCMethods + Copy> {
     ptr: T,
 }
 
-impl<T: GCMethods<T> + Copy> Heap<T> {
+impl<T: GCMethods + Copy> Heap<T> {
     pub fn new(v: T) -> Heap<T>
         where Heap<T>: Default
     {
@@ -73,7 +73,7 @@ impl<T: GCMethods<T> + Copy> Heap<T> {
     }
 }
 
-impl<T: GCMethods<T> + Copy> Clone for Heap<T>
+impl<T: GCMethods + Copy> Clone for Heap<T>
     where Heap<T>: Default
 {
     fn clone(&self) -> Self {
@@ -81,14 +81,14 @@ impl<T: GCMethods<T> + Copy> Clone for Heap<T>
     }
 }
 
-impl<T: GCMethods<T> + Copy + PartialEq> PartialEq for Heap<T> {
+impl<T: GCMethods + Copy + PartialEq> PartialEq for Heap<T> {
     fn eq(&self, other: &Self) -> bool {
         self.get() == other.get()
     }
 }
 
 impl<T> Default for Heap<*mut T>
-    where *mut T: GCMethods<*mut T> + Copy
+    where *mut T: GCMethods + Copy
 {
     fn default() -> Heap<*mut T> {
         Heap {
@@ -97,7 +97,7 @@ impl<T> Default for Heap<*mut T>
     }
 }
 
-impl<T: GCMethods<T> + Copy> Drop for Heap<T> {
+impl<T: GCMethods + Copy> Drop for Heap<T> {
     fn drop(&mut self) {
         unsafe {
             let prev = self.ptr;
@@ -151,7 +151,7 @@ unsafe impl Trace for Heap<jsid> {
 
 // This is measured properly by the heap measurement implemented in
 // SpiderMonkey.
-impl<T: Copy + GCMethods<T>> HeapSizeOf for Heap<T> {
+impl<T: Copy + GCMethods> HeapSizeOf for Heap<T> {
     fn heap_size_of_children(&self) -> usize {
         0
     }
