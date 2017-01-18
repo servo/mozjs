@@ -238,6 +238,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_NewInt16Array",
     "JS_NewInt32Array",
     "JS_NewInt8Array",
+    "JS_NewObject",
     "JS_NewUCStringCopyN",
     "JS_NewUint16Array",
     "JS_NewUint32Array",

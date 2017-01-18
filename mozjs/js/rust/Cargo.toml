@@ -21,6 +21,8 @@ name = "panic"
 [[test]]
 name = "rooting"
 [[test]]
+name = "runtime"
+[[test]]
 name = "typedarray"
 [[test]]
 name = "stack_limit"
