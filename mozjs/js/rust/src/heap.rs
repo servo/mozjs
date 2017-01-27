@@ -2,7 +2,7 @@ use glue;
 use heapsize::HeapSizeOf;
 use jsapi::root::*;
 use rust::GCMethods;
-use std::mem;
+use std::cell::UnsafeCell;
 use std::ptr;
 
 /// Types that can be traced.
@@ -35,40 +35,40 @@ pub unsafe trait Trace {
 #[repr(C)]
 #[derive(Debug)]
 pub struct Heap<T: GCMethods + Copy> {
-    ptr: T,
+    ptr: UnsafeCell<T>,
 }
 
 impl<T: GCMethods + Copy> Heap<T> {
     pub fn new(v: T) -> Heap<T>
         where Heap<T>: Default
     {
-        let mut ptr = Heap::default();
+        let ptr = Heap::default();
         ptr.set(v);
         ptr
     }
 
-    pub fn set(&mut self, new_ptr: T) {
+    pub fn set(&self, v: T) {
         unsafe {
-            let prev = self.ptr;
-            self.ptr = new_ptr;
-            T::post_barrier(&mut self.ptr as _, prev, new_ptr);
+            let ptr = self.ptr.get();
+            let prev = *ptr;
+            *ptr = v;
+            T::post_barrier(ptr, prev, v);
         }
     }
 
     pub fn get(&self) -> T {
-        self.ptr
+        unsafe {
+            *self.ptr.get()
+        }
     }
 
     pub unsafe fn get_unsafe(&self) -> *mut T {
-        // TODO: We need to be able to (1) mark UnsafeCell as repr(C) somehow so
-        // we can pass it across FFI boundaries, and then (2) instrument bindgen
-        // to mark fields to be generated as UnsafeCell...
-        mem::transmute(&self.ptr)
+        self.ptr.get()
     }
 
     pub fn handle(&self) -> JS::Handle<T> {
         unsafe {
-            JS::Handle::from_marked_location(&self.ptr as *const _)
+            JS::Handle::from_marked_location(self.ptr.get() as *const _)
         }
     }
 }
@@ -92,7 +92,7 @@ impl<T> Default for Heap<*mut T>
 {
     fn default() -> Heap<*mut T> {
         Heap {
-            ptr: ptr::null_mut()
+            ptr: UnsafeCell::new(ptr::null_mut())
         }
     }
 }
@@ -100,8 +100,8 @@ impl<T> Default for Heap<*mut T>
 impl<T: GCMethods + Copy> Drop for Heap<T> {
     fn drop(&mut self) {
         unsafe {
-            let prev = self.ptr;
-            T::post_barrier(&mut self.ptr as _, prev, T::initial());
+            let prev = self.ptr.get();
+            T::post_barrier(prev, *prev, T::initial());
         }
     }
 }
