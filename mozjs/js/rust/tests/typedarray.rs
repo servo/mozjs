@@ -43,8 +43,33 @@ fn typedarray() {
         typedarray!(in(cx) let array: Uint32Array = rval.get());
         assert_eq!(array.unwrap().as_slice(), &[1, 3, 5, 0, 0][..]);
 
+        typedarray!(in(cx) let mut array: Uint32Array = rval.get());
+        array.as_mut().unwrap().update(&[0, 2, 4, 6]);
+        assert_eq!(array.unwrap().as_slice(), &[0, 2, 4, 6, 0][..]);
+
         rooted!(in(cx) let rval = ptr::null_mut());
         typedarray!(in(cx) let array: Uint8Array = rval.get());
         assert!(array.is_err());
+    }
+}
+
+#[test]
+#[should_panic]
+fn typedarray_update_panic() {
+    let rt = Runtime_::new();
+    let cx = rt.cx();
+
+    unsafe {
+        rooted!(in(cx) let global =
+            JS_NewGlobalObject(cx, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
+                               JS::OnNewGlobalHookOption::FireOnNewGlobalHook,
+                               &JS::CompartmentOptions::default())
+        );
+
+        let _ac = JSAutoCompartment::new(cx, global.get());
+        rooted!(in(cx) let mut rval = ptr::null_mut());
+        let _ = Uint32Array::create(cx, 5, Some(&[1, 2, 3, 4, 5]), rval.handle_mut());
+        typedarray!(in(cx) let mut array: Uint32Array = rval.get());
+        array.as_mut().unwrap().update(&[0, 2, 4, 6, 8, 10]);
     }
 }
