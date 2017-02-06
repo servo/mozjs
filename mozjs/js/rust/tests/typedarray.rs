@@ -42,5 +42,9 @@ fn typedarray() {
 
         typedarray!(in(cx) let array: Uint32Array = rval.get());
         assert_eq!(array.unwrap().as_slice(), &[1, 3, 5, 0, 0][..]);
+
+        rooted!(in(cx) let rval = ptr::null_mut());
+        typedarray!(in(cx) let array: Uint8Array = rval.get());
+        assert!(array.is_err());
     }
 }
