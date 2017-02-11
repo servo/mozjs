@@ -1,6 +1,6 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 //! High-level, safe bindings for JS typed array APIs. Allows creating new
 //! typed arrays or wrapping existing JS reflectors, and prevents reinterpreting
@@ -21,6 +21,11 @@ use jsapi::JS::*;
 use rust::RootedGuard;
 use std::ptr;
 use std::slice;
+
+pub enum CreateWith<'a, T: 'a> {
+    Length(u32),
+    Slice(&'a [T]),
+}
 
 /// A rooted typed array.
 pub struct TypedArray<'a, T: 'a + TypedArrayElement> {
@@ -49,7 +54,7 @@ impl<'a, T: TypedArrayElement> TypedArray<'a, T> {
             *guard = unwrapped;
             Ok(TypedArray {
                 object: guard,
-                computed: None
+                computed: None,
             })
         }
     }
@@ -59,9 +64,7 @@ impl<'a, T: TypedArrayElement> TypedArray<'a, T> {
             return data;
         }
 
-        let data = unsafe {
-            T::length_and_data(*self.object)
-        };
+        let data = unsafe { T::length_and_data(*self.object) };
         self.computed = Some(data);
         data
     }
@@ -92,16 +95,20 @@ impl<'a, T: TypedArrayElementCreator + TypedArrayElement> TypedArray<'a, T> {
     /// Create a new JS typed array, optionally providing initial data that will
     /// be copied into the newly-allocated buffer. Returns the new JS reflector.
     pub unsafe fn create(cx: *mut JSContext,
-                         length: u32,
-                         data: Option<&[T::Element]>,
+                         with: CreateWith<T::Element>,
                          result: MutableHandleObject)
                          -> Result<(), ()> {
+        let length = match with {
+            CreateWith::Length(len) => len,
+            CreateWith::Slice(slice) => slice.len() as u32,
+        };
+
         result.set(T::create_new(cx, length));
         if result.get().is_null() {
             return Err(());
         }
 
-        if let Some(data) = data {
+        if let CreateWith::Slice(data) = with {
             TypedArray::<T>::update_raw(data, result.handle());
         }
 
@@ -109,13 +116,11 @@ impl<'a, T: TypedArrayElementCreator + TypedArrayElement> TypedArray<'a, T> {
     }
 
     ///  Update an existed JS typed array
-    pub unsafe fn update(&mut self,
-                         data: &[T::Element]) {
+    pub unsafe fn update(&mut self, data: &[T::Element]) {
         TypedArray::<T>::update_raw(data, self.object.handle());
     }
 
-    unsafe fn update_raw(data: &[T::Element],
-                         result: HandleObject) {
+    unsafe fn update_raw(data: &[T::Element], result: HandleObject) {
         let (buf, length) = T::length_and_data(result.get());
         assert!(data.len() <= length as usize);
         ptr::copy_nonoverlapping(data.as_ptr(), buf, data.len());
