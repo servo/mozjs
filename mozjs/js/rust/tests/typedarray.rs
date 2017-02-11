@@ -1,6 +1,6 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this
- * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 #[macro_use]
 extern crate js;
@@ -9,7 +9,7 @@ use js::jsapi::*;
 use js::jsval::UndefinedValue;
 use js::rust::Runtime as Runtime_;
 use js::rust::SIMPLE_GLOBAL_CLASS;
-use js::typedarray::Uint32Array;
+use js::typedarray::{CreateWith, Uint32Array};
 use std::ptr;
 
 #[test]
@@ -38,18 +38,28 @@ fn typedarray() {
         assert!(array.is_err());
 
         rooted!(in(cx) let mut rval = ptr::null_mut());
-        assert!(Uint32Array::create(cx, 5, Some(&[1, 3, 5]), rval.handle_mut()).is_ok());
+        assert!(Uint32Array::create(cx, CreateWith::Slice(&[1, 3, 5]), rval.handle_mut()).is_ok());
 
         typedarray!(in(cx) let array: Uint32Array = rval.get());
-        assert_eq!(array.unwrap().as_slice(), &[1, 3, 5, 0, 0][..]);
+        assert_eq!(array.unwrap().as_slice(), &[1, 3, 5][..]);
 
         typedarray!(in(cx) let mut array: Uint32Array = rval.get());
-        array.as_mut().unwrap().update(&[0, 2, 4, 6]);
-        assert_eq!(array.unwrap().as_slice(), &[0, 2, 4, 6, 0][..]);
+        array.as_mut().unwrap().update(&[2, 4, 6]);
+        assert_eq!(array.unwrap().as_slice(), &[2, 4, 6][..]);
 
         rooted!(in(cx) let rval = ptr::null_mut());
         typedarray!(in(cx) let array: Uint8Array = rval.get());
         assert!(array.is_err());
+
+        rooted!(in(cx) let mut rval = ptr::null_mut());
+        assert!(Uint32Array::create(cx, CreateWith::Length(5), rval.handle_mut()).is_ok());
+
+        typedarray!(in(cx) let array: Uint32Array = rval.get());
+        assert_eq!(array.unwrap().as_slice(), &[0, 0, 0, 0, 0]);
+
+        typedarray!(in(cx) let mut array: Uint32Array = rval.get());
+        array.as_mut().unwrap().update(&[0, 1, 2, 3]);
+        assert_eq!(array.unwrap().as_slice(), &[0, 1, 2, 3, 0]);
     }
 }
 
@@ -68,7 +78,7 @@ fn typedarray_update_panic() {
 
         let _ac = JSAutoCompartment::new(cx, global.get());
         rooted!(in(cx) let mut rval = ptr::null_mut());
-        let _ = Uint32Array::create(cx, 5, Some(&[1, 2, 3, 4, 5]), rval.handle_mut());
+        let _ = Uint32Array::create(cx, CreateWith::Slice(&[1, 2, 3, 4, 5]), rval.handle_mut());
         typedarray!(in(cx) let mut array: Uint32Array = rval.get());
         array.as_mut().unwrap().update(&[0, 2, 4, 6, 8, 10]);
     }
