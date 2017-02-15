@@ -103,6 +103,14 @@ impl<T> Default for Heap<*mut T>
     }
 }
 
+impl Default for Heap<JS::Value> {
+    fn default() -> Heap<JS::Value> {
+        Heap {
+            ptr: UnsafeCell::new(JS::Value::default())
+        }
+    }
+}
+
 impl<T: GCMethods + Copy> Drop for Heap<T> {
     fn drop(&mut self) {
         unsafe {
