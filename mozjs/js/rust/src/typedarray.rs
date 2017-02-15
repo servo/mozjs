@@ -282,6 +282,12 @@ pub type ArrayBuffer<'a> = TypedArray<'a, ArrayBufferU8>;
 /// The ArrayBufferView type
 pub type ArrayBufferView<'a> = TypedArray<'a, ArrayBufferViewU8>;
 
+impl<'a> ArrayBufferView<'a> {
+    pub fn get_array_type(&self) -> Scalar::Type {
+        unsafe { JS_GetArrayBufferViewType(self.object.get()) }
+    }
+}
+
 #[macro_export]
 macro_rules! typedarray {
     (in($cx:expr) let $name:ident : $ty:ident = $init:expr) => {
