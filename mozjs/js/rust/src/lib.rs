@@ -15,6 +15,7 @@
 extern crate core;
 #[macro_use]
 extern crate heapsize;
+#[macro_use]
 extern crate lazy_static;
 extern crate libc;
 #[macro_use]
