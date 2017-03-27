@@ -251,6 +251,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_ResolveStandardClass",
     "JS_SetGCParameter",
     "JS_SetNativeStackQuota",
+    "JS_ShutDown",
     "JS_StringEqualsAscii",
     "JS_StringHasLatin1Chars",
     "JS_WrapValue",

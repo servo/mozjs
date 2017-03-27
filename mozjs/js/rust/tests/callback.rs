@@ -27,7 +27,7 @@ use std::str;
 
 #[test]
 fn callback() {
-    let runtime = Runtime::new();
+    let runtime = Runtime::new().unwrap();
     let context = runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = CompartmentOptions::default();

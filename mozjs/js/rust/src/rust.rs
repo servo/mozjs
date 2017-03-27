@@ -7,7 +7,7 @@
 use ac::AutoCompartment;
 use libc::c_uint;
 use heapsize::HeapSizeOf;
-use std::cell::Cell;
+use std::cell::{Cell, UnsafeCell};
 use std::char;
 use std::ffi;
 use std::ptr;
@@ -16,6 +16,8 @@ use std::mem;
 use std::u32;
 use std::default::Default;
 use std::ops::{Deref, DerefMut};
+use std::sync::{Once, ONCE_INIT};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 use std::thread;
 use jsapi::root::*;
 use jsval::{self, UndefinedValue};
@@ -80,6 +82,11 @@ impl ToResult for bool {
 
 thread_local!(static CONTEXT: Cell<*mut JSContext> = Cell::new(ptr::null_mut()));
 
+lazy_static! {
+    static ref OUTSTANDING_RUNTIMES: AtomicUsize = AtomicUsize::new(0);
+    static ref SHUT_DOWN: AtomicBool = AtomicBool::new(false);
+}
+
 /// A wrapper for the `JSContext` structure in SpiderMonkey.
 pub struct Runtime {
     cx: *mut JSContext,
@@ -96,10 +103,12 @@ impl Runtime {
     }
 
     /// Creates a new `JSContext`.
-    pub fn new() -> Runtime {
-        use std::cell::UnsafeCell;
-        use std::sync::{Once, ONCE_INIT};
-        use std::sync::atomic::{AtomicPtr, Ordering};
+    pub fn new() -> Result<Runtime, ()> {
+        if SHUT_DOWN.load(Ordering::SeqCst) {
+            return Err(());
+        }
+
+        OUTSTANDING_RUNTIMES.fetch_add(1, Ordering::SeqCst);
 
         unsafe {
             #[derive(Debug)]
@@ -191,9 +200,9 @@ impl Runtime {
 
             JS_BeginRequest(js_context);
 
-            Runtime {
+            Ok(Runtime {
                 cx: js_context,
-            }
+            })
         }
     }
 
@@ -244,6 +253,11 @@ impl Drop for Runtime {
                 assert_eq!(context.get(), self.cx);
                 context.set(ptr::null_mut());
             });
+
+            if OUTSTANDING_RUNTIMES.fetch_sub(1, Ordering::SeqCst) == 1 {
+                SHUT_DOWN.store(true, Ordering::SeqCst);
+                JS_ShutDown();
+            }
         }
     }
 }
