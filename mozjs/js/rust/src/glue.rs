@@ -173,6 +173,7 @@ pub struct ForwardingProxyHandler {
 impl ::std::default::Default for ForwardingProxyHandler {
     fn default() -> ForwardingProxyHandler { unsafe { ::std::mem::zeroed() } }
 }
+
 extern "C" {
     pub fn InvokeGetOwnPropertyDescriptor(handler: *const ::libc::c_void,
                                           cx: *mut JSContext,
@@ -203,7 +204,18 @@ extern "C" {
      -> *const ::libc::c_void;
     pub fn CreateWrapperProxyHandler(aTraps: *const ProxyTraps)
      -> *const ::libc::c_void;
+    pub fn CreateRustJSPrincipal(origin: *const ::libc::c_void,
+                                  destroy: Option<unsafe extern "C" fn
+                                                  (principal: *mut JSPrincipals)>,
+                                  write: Option<unsafe extern "C" fn
+                                                (cx: *mut JSContext,
+                                                 writer: *mut JSStructuredCloneWriter)
+                                                 -> bool>)
+     -> *mut JSPrincipals;
+    pub fn GetPrincipalOrigin(principal: *const JSPrincipals)
+     -> *const ::libc::c_void;
     pub fn GetCrossCompartmentWrapper() -> *const ::libc::c_void;
+    pub fn GetSecurityWrapper() -> *const ::libc::c_void;
     pub fn NewCompileOptions(aCx: *mut JSContext, aFile: *const ::libc::c_char,
                              aLine: u32) -> *mut JS::ReadOnlyCompileOptions;
     pub fn DeleteCompileOptions(aOpts: *mut JS::ReadOnlyCompileOptions);
