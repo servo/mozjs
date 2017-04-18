@@ -192,6 +192,7 @@ const WHITELIST_VARS: &'static [&'static str] = &[
 
 /// Functions we want to generate bindings to.
 const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
+    "js::AssertSameCompartment",
     "JS::ContextOptionsRef",
     "js::detail::IsWindowSlow",
     "JS::Evaluate",
