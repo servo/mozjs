@@ -181,6 +181,20 @@ impl ToJSValConvertible for () {
     }
 }
 
+impl FromJSValConvertible for JS::HandleValue {
+    type Config = ();
+    #[inline]
+    unsafe fn from_jsval(cx: *mut JSContext,
+                         value: JS::HandleValue,
+                         _option: ())
+                         -> Result<ConversionResult<JS::HandleValue>, ()> {
+        if value.is_object() {
+            js::AssertSameCompartment(cx, value.to_object());
+        }
+        Ok(ConversionResult::Success(value))
+    }
+}
+
 impl FromJSValConvertible for JSVal {
     type Config = ();
     unsafe fn from_jsval(_cx: *mut JSContext,
