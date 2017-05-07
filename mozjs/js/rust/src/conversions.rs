@@ -655,7 +655,7 @@ impl ToJSValConvertible for *mut JSObject {
 impl ToJSValConvertible for NonZero<*mut JSObject> {
     #[inline]
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: JS::MutableHandleValue) {
-        rval.set(ObjectValue(self.get().as_mut().unwrap()));
+        rval.set(ObjectValue(self.get()));
         maybe_wrap_object_value(cx, rval);
     }
 }
