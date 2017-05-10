@@ -6,6 +6,7 @@ extern crate bindgen;
 extern crate cmake;
 extern crate glob;
 
+use std::env;
 use std::path;
 
 fn main() {
@@ -25,7 +26,16 @@ fn build_jsglue_cpp() {
 
 /// Find the public include directory within our mozjs-sys crate dependency.
 fn get_mozjs_include_dir() -> path::PathBuf {
-    let entries = glob::glob("./target/*/build/mozjs_sys-*/out/dist/include")
+    let out_dir = env::var("OUT_DIR")
+        .expect("cargo should invoke us with the OUT_DIR env var set");
+
+    let mut target_build_dir = path::PathBuf::from(out_dir);
+    target_build_dir.push("../../");
+
+    let mut include_dir_glob = target_build_dir.display().to_string();
+    include_dir_glob.push_str("mozjs_sys-*/out/dist/include");
+
+    let entries = glob::glob(&include_dir_glob)
         .expect("Should find entries for mozjs-sys include dir");
 
     for entry in entries {
