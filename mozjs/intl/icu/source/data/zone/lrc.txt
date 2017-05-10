@@ -1,0 +1,13 @@
+﻿// © 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html#License
+lrc{
+    Version{"2.1.27.40"}
+    zoneStrings{
+        "meta:America_Central"{
+            ld{"روٙشنایی نئهادار روٙز"}
+            lg{"گاٛت مینجاٛیی"}
+            ls{"گاٛت مینجاٛیی ئستاٛنداٛرد"}
+        }
+        regionFormat{"{0}"}
+    }
+}
