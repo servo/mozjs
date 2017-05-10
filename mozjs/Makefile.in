@@ -1,0 +1,333 @@
+#
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+ifeq (,$(MAKE_VERSION))
+$(error GNU Make is required)
+endif
+make_min_ver := 3.81
+ifneq ($(make_min_ver),$(firstword $(sort $(make_min_ver) $(MAKE_VERSION))))
+$(error GNU Make $(make_min_ver) or higher is required)
+endif
+
+export TOPLEVEL_BUILD := 1
+
+default::
+
+ifndef TEST_MOZBUILD
+ifdef MOZ_BUILD_APP
+include $(wildcard $(topsrcdir)/$(MOZ_BUILD_APP)/build.mk)
+endif
+endif
+
+include $(topsrcdir)/config/config.mk
+
+GARBAGE_DIRS += _javagen _profile staticlib
+DIST_GARBAGE = config.cache config.log config.status* config-defs.h \
+   config/autoconf.mk \
+   mozilla-config.h \
+   netwerk/necko-config.h xpcom/xpcom-config.h xpcom/xpcom-private.h \
+   .mozconfig.mk
+
+ifndef MOZ_PROFILE_USE
+buildid.h source-repo.h: FORCE
+endif
+
+ifdef JS_STANDALONE
+configure_dir = $(topsrcdir)/js/src
+else
+configure_dir = $(topsrcdir)
+endif
+
+BUILD_BACKEND_FILES := $(addprefix backend.,$(addsuffix Backend,$(BUILD_BACKENDS)))
+
+ifndef TEST_MOZBUILD
+ifndef MOZ_PROFILE_USE
+# We need to explicitly put BUILD_BACKEND_FILES here otherwise the rule in
+# rules.mk doesn't run early enough.
+$(TIERS) binaries:: CLOBBER $(configure_dir)/configure config.status $(BUILD_BACKEND_FILES)
+ifndef JS_STANDALONE
+ifdef COMPILE_ENVIRONMENT
+$(TIERS) binaries:: $(topsrcdir)/js/src/configure js/src/config.status
+endif
+endif
+endif
+endif
+
+ifdef JS_STANDALONE
+.PHONY: CLOBBER
+CLOBBER:
+else
+CLOBBER: $(topsrcdir)/CLOBBER
+	@echo 'STOP!  The CLOBBER file has changed.'
+	@echo 'Please run the build through a sanctioned build wrapper, such as'
+	@echo '"mach build" or client.mk.'
+	@exit 1
+endif
+
+$(topsrcdir)/configure: $(topsrcdir)/configure.in $(topsrcdir)/old-configure.in
+$(topsrcdir)/js/src/configure: $(topsrcdir)/js/src/configure.in $(topsrcdir)/js/src/old-configure.in
+$(topsrcdir)/configure $(topsrcdir)/js/src/configure:
+	@echo 'STOP!  $? has changed, and your configure is out of date.'
+	@echo 'Please rerun autoconf and re-configure your build directory.'
+	@echo 'To ignore this message, touch "$@",'
+	@echo 'but your build might not succeed.'
+	@exit 1
+
+config.status: $(configure_dir)/configure $(configure_dir)/old-configure
+js/src/config.status: $(topsrcdir)/js/src/configure $(topsrcdir)/js/src/old-configure
+config.status js/src/config.status:
+	@echo 'STOP!  $? has changed and needs to be run again.'
+	@echo 'Please rerun it.'
+	@echo 'To ignore this message, touch "$(CURDIR)/$@",'
+	@echo 'but your build might not succeed.'
+	@exit 1
+
+# Regenerate the build backend if it is out of date. We only have this rule in
+# this main make file because having it in rules.mk and applied to partial tree
+# builds resulted in a world of hurt. Gory details are in bug 877308.
+#
+# The mach build driver will ensure the backend is up to date for partial tree
+# builds. This cleanly avoids most of the pain.
+
+ifndef TEST_MOZBUILD
+
+.PHONY: backend
+backend: $(BUILD_BACKEND_FILES)
+
+include $(topsrcdir)/build/rebuild-backend.mk
+
+Makefile: $(BUILD_BACKEND_FILES)
+	@$(TOUCH) $@
+
+default:: $(BUILD_BACKEND_FILES)
+endif
+
+install_manifests := \
+  $(addprefix dist/,branding idl include public private sdk xpi-stage) \
+  _tests \
+  $(NULL)
+# Skip the dist/bin install manifest when using the hybrid
+# FasterMake/RecursiveMake backend. This is a hack until bug 1241744 moves
+# xpidl handling to FasterMake in that case, mechanically making the dist/bin
+# install manifest non-existent (non-existent manifests being skipped)
+ifeq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
+install_manifests += dist/bin
+endif
+install_manifest_depends = \
+  CLOBBER \
+  $(configure_dir)/configure \
+  config.status \
+  $(BUILD_BACKEND_FILES) \
+  $(NULL)
+
+ifndef JS_STANDALONE
+ifdef COMPILE_ENVIRONMENT
+install_manifest_depends += \
+  $(topsrcdir)/js/src/configure \
+  js/src/config.status \
+  $(NULL)
+endif
+endif
+
+.PHONY: install-manifests
+install-manifests: $(addprefix install-,$(install_manifests))
+
+# If we're using the hybrid FasterMake/RecursiveMake backend, we want
+# to recurse in the faster/ directory in parallel of install manifests.
+# But dist/idl needs to happen before (cf. dependencies in
+# config/faster/rules.mk)
+ifneq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
+install-manifests: faster
+.PHONY: faster
+faster: install-dist/idl
+	$(MAKE) -C faster FASTER_RECURSIVE_MAKE=1
+endif
+
+.PHONY: tup
+tup:
+	$(call BUILDSTATUS,TIERS make tup)
+	$(call BUILDSTATUS,TIER_START make)
+	$(MAKE) buildid.h source-repo.h
+	$(call BUILDSTATUS,TIER_FINISH make)
+	$(call BUILDSTATUS,TIER_START tup)
+	@$(TUP) $(if $(findstring s,$(filter-out --%,$(MAKEFLAGS))),,--verbose)
+	$(call BUILDSTATUS,TIER_FINISH tup)
+
+# process_install_manifest needs to be invoked with --no-remove when building
+# js as standalone because automated builds are building nspr separately and
+# that would remove the resulting files.
+# Eventually, a standalone js build would just be able to build nspr itself,
+# removing the need for the former.
+ifdef JS_STANDALONE
+NO_REMOVE=1
+endif
+
+# For an artifact build, _tests will already be partly populated, so run
+# this install manifest with NO_REMOVE set in this case.
+ifdef MOZ_ARTIFACT_BUILDS
+install-_tests: NO_REMOVE=1
+endif
+
+.PHONY: $(addprefix install-,$(subst /,_,$(install_manifests)))
+$(addprefix install-,$(install_manifests)): install-%: $(install_manifest_depends)
+ifneq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
+	@# If we're using the hybrid FasterMake/RecursiveMake backend, we want
+	@# to ensure the FasterMake end doesn't have install manifests for the
+	@# same directory, because that would blow up
+	$(if $(wildcard _build_manifests/install/$(subst /,_,$*)),$(if $(wildcard faster/install_$(subst /,_,$*)*),$(error FasterMake and RecursiveMake ends of the hybrid build system want to handle $*)))
+endif
+	$(addprefix $(call py_action,process_install_manifest,$(if $(NO_REMOVE),--no-remove )$*) ,$(wildcard _build_manifests/install/$(subst /,_,$*)))
+
+# Dummy wrapper rule to allow the faster backend to piggy back
+$(addprefix install-,$(subst /,_,$(filter dist/%,$(install_manifests)))): install-dist_%: install-dist/% ;
+
+.PHONY: install-tests
+install-tests: install-test-files
+
+# Force --no-remove, because $objdir/_tests is handled by multiple manifests.
+.PHONY: install-test-files
+install-test-files:
+	$(call py_action,process_install_manifest,--no-remove _tests _build_manifests/install/_test_files)
+
+include $(topsrcdir)/build/moz-automation.mk
+
+# dist and _tests should be purged during cleaning. However, we don't want them
+# purged during PGO builds because they contain some auto-generated files.
+ifneq ($(filter-out maybe_clobber_profiledbuild,$(MAKECMDGOALS)),)
+GARBAGE_DIRS += dist _tests
+endif
+
+# Windows PGO builds don't perform a clean before the 2nd pass. So, we want
+# to preserve content for the 2nd pass on Windows. Everywhere else, we always
+# process the install manifests as part of export.
+# For the binaries rule, not all the install manifests matter, so force only
+# the interesting ones to be done.
+ifdef MOZ_PROFILE_USE
+ifndef NO_PROFILE_GUIDED_OPTIMIZE
+ifneq ($(OS_ARCH)_$(GNU_CC), WINNT_)
+recurse_pre-export:: install-manifests
+binaries::
+	@$(MAKE) install-manifests NO_REMOVE=1 install_manifests=dist/include
+endif
+endif
+else # !MOZ_PROFILE_USE (normal build)
+recurse_pre-export:: install-manifests
+binaries::
+	@$(MAKE) install-manifests NO_REMOVE=1 install_manifests=dist/include
+endif
+
+# For historical reasons that are unknown, $(DIST)/sdk is always blown away
+# with no regard for PGO passes. This decision could probably be revisited.
+recurse_pre-export:: install-dist/sdk
+
+recurse_artifact:
+	$(topsrcdir)/mach --log-no-times artifact install
+
+ifndef JS_STANDALONE
+ifdef ENABLE_TESTS
+# Additional makefile targets to call automated test suites
+include $(topsrcdir)/testing/testsuite-targets.mk
+endif
+endif
+
+default all::
+	$(call BUILDSTATUS,TIERS $(TIERS) $(if $(MOZ_AUTOMATION),$(MOZ_AUTOMATION_TIERS)))
+
+include $(topsrcdir)/config/rules.mk
+
+ifdef SCCACHE_VERBOSE_STATS
+default::
+	-$(CCACHE) --show-stats --stats-format=json > sccache-stats.json
+	@echo "===SCCACHE STATS==="
+	-$(CCACHE) --show-stats
+	@echo "==================="
+endif
+
+distclean::
+	$(RM) $(DIST_GARBAGE)
+
+ifdef MOZ_CRASHREPORTER
+include $(topsrcdir)/toolkit/mozapps/installer/package-name.mk
+
+endif
+
+.PHONY: prepsymbolsarchive
+prepsymbolsarchive:
+	echo packing symbols
+	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
+
+ifndef MOZ_AUTOMATION
+prepsymbolsarchive: recurse_syms
+endif
+
+.PHONY: symbolsfullarchive
+symbolsfullarchive: prepsymbolsarchive
+	$(RM) '$(DIST)/$(SYMBOL_FULL_ARCHIVE_BASENAME).zip'
+	cd $(DIST)/crashreporter-symbols && \
+          zip -r5D '../$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip' . -x '*test*' -x '*Test*'
+
+.PHONY: symbolsarchive
+symbolsarchive: prepsymbolsarchive
+	$(RM) '$(DIST)/$(SYMBOL_ARCHIVE_BASENAME).zip'
+	cd $(DIST)/crashreporter-symbols && \
+          zip -r5D '../$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip' . -i '*.sym'
+
+ifdef MOZ_CRASHREPORTER
+buildsymbols: symbolsfullarchive symbolsarchive
+else
+buildsymbols:
+endif
+
+uploadsymbols:
+ifdef MOZ_CRASHREPORTER
+ifdef SOCORRO_SYMBOL_UPLOAD_TOKEN_FILE
+	$(PYTHON) -u $(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.py '$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).zip'
+endif
+endif
+
+.PHONY: update-packaging
+update-packaging:
+	$(MAKE) -C tools/update-packaging
+
+#XXX: this is a hack, since we don't want to clobber for MSVC
+# PGO support, but we can't do this test in client.mk
+ifneq ($(OS_ARCH)_$(GNU_CC), WINNT_)
+# No point in clobbering if PGO has been explicitly disabled.
+ifndef NO_PROFILE_GUIDED_OPTIMIZE
+maybe_clobber_profiledbuild: clean
+else
+maybe_clobber_profiledbuild:
+endif
+else
+maybe_clobber_profiledbuild:
+	$(RM) $(DIST)/bin/*.pgc
+	find $(DIST)/$(MOZ_APP_NAME) -name '*.pgc' -exec mv {} $(DIST)/bin \;
+endif
+
+.PHONY: maybe_clobber_profiledbuild
+
+# Look for R_386_PC32 relocations in shared libs, these
+# break x86_64 builds and SELinux users.
+ifeq ($(OS_TARGET)_$(TARGET_XPCOM_ABI),Linux_x86-gcc3)
+check::
+	@relcount=`find $(DIST)/bin -name '*.so' | xargs objdump -R | grep R_386_PC32 | wc -l` && if test $$relcount -gt 0; then echo 'FAILED: R_386_PC32 relocations detected in a shared library.  Did you use a system header without adding it to config/system-headers?'; exit 1; else echo 'PASSED'; fi
+endif
+
+ifdef JS_STANDALONE
+# Delegate js-specific rules to js
+check-%:
+	$(MAKE) -C js/src $@
+
+source-package install:
+	$(MAKE) -C js/src $@
+
+# Every export rule depends on config/export, but the rule for config/export
+# doesn't exist when building js non-standalone.
+.PHONY: config/export
+config/export:
+
+endif
+
+# There used to be build interdependencies here. They are now in config/recurse.mk
