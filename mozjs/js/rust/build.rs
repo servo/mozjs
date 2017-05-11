@@ -56,6 +56,7 @@ fn get_mozjs_include_dir() -> path::PathBuf {
 fn build_jsapi_bindings() {
     let mut builder = bindgen::builder()
         .header("./etc/wrapper.hpp")
+        .raw_line("pub use self::root::*;")
         .enable_cxx_namespaces();
 
     if cfg!(feature = "debugmozjs") {
