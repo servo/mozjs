@@ -33,7 +33,7 @@ use glue::RUST_JS_NumberValue;
 use heap::Heap;
 use jsapi::root::*;
 use jsval::{BooleanValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
-use jsval::{JSVal, ObjectValue, ObjectOrNullValue, StringValue};
+use jsval::{ObjectValue, ObjectOrNullValue, StringValue};
 use rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToUint64};
 use rust::{ToString, maybe_wrap_object_or_null_value};
 use rust::{maybe_wrap_object_value, maybe_wrap_value};
@@ -195,27 +195,27 @@ impl FromJSValConvertible for JS::HandleValue {
     }
 }
 
-impl FromJSValConvertible for JSVal {
+impl FromJSValConvertible for JS::Value {
     type Config = ();
     unsafe fn from_jsval(_cx: *mut JSContext,
                          value: JS::HandleValue,
                          _option: ())
-                         -> Result<ConversionResult<JSVal>, ()> {
+                         -> Result<ConversionResult<JS::Value>, ()> {
         Ok(ConversionResult::Success(value.get()))
     }
 }
 
-impl FromJSValConvertible for Heap<JSVal> {
+impl FromJSValConvertible for Heap<JS::Value> {
     type Config = ();
     unsafe fn from_jsval(_cx: *mut JSContext,
                          value: JS::HandleValue,
                          _option: ())
                          -> Result<ConversionResult<Self>, ()> {
-        Ok(ConversionResult::Success(Heap::<JSVal>::new(value.get())))
+        Ok(ConversionResult::Success(Heap::<JS::Value>::new(value.get())))
     }
 }
 
-impl ToJSValConvertible for JSVal {
+impl ToJSValConvertible for JS::Value {
     #[inline]
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: JS::MutableHandleValue) {
         rval.set(*self);
@@ -231,7 +231,7 @@ impl ToJSValConvertible for JS::HandleValue {
     }
 }
 
-impl ToJSValConvertible for Heap<JSVal> {
+impl ToJSValConvertible for Heap<JS::Value> {
     #[inline]
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: JS::MutableHandleValue) {
         rval.set(self.get());
