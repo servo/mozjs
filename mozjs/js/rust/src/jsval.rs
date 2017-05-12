@@ -7,8 +7,6 @@ use jsapi::root::*;
 use libc::c_void;
 use std::mem;
 
-pub type JSVal = JS::Value;
-
 #[cfg(target_pointer_width = "64")]
 const JSVAL_TAG_SHIFT: usize = 47;
 
@@ -70,8 +68,8 @@ enum ValueShiftedTag {
 const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 
 #[inline(always)]
-fn AsJSVal(val: u64) -> JSVal {
-    JSVal {
+fn AsJSVal(val: u64) -> JS::Value {
+    JS::Value {
         data: JS::Value_layout {
             asBits: val,
         }
@@ -80,34 +78,34 @@ fn AsJSVal(val: u64) -> JSVal {
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
-fn BuildJSVal(tag: ValueTag, payload: u64) -> JSVal {
+fn BuildJSVal(tag: ValueTag, payload: u64) -> JS::Value {
     AsJSVal(((tag as u32 as u64) << JSVAL_TAG_SHIFT) | payload)
 }
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-fn BuildJSVal(tag: ValueTag, payload: u64) -> JSVal {
+fn BuildJSVal(tag: ValueTag, payload: u64) -> JS::Value {
     AsJSVal(((tag as u32 as u64) << 32) | payload)
 }
 
 #[inline(always)]
-pub fn NullValue() -> JSVal {
+pub fn NullValue() -> JS::Value {
     BuildJSVal(ValueTag::NULL, 0)
 }
 
 #[inline(always)]
-pub fn UndefinedValue() -> JSVal {
+pub fn UndefinedValue() -> JS::Value {
     BuildJSVal(ValueTag::UNDEFINED, 0)
 }
 
 #[inline(always)]
-pub fn Int32Value(i: i32) -> JSVal {
+pub fn Int32Value(i: i32) -> JS::Value {
     BuildJSVal(ValueTag::INT32, i as u32 as u64)
 }
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
-pub fn DoubleValue(f: f64) -> JSVal {
+pub fn DoubleValue(f: f64) -> JS::Value {
     let bits: u64 = unsafe { mem::transmute(f) };
     assert!(bits <= ValueShiftedTag::MAX_DOUBLE as u64);
     AsJSVal(bits)
@@ -115,7 +113,7 @@ pub fn DoubleValue(f: f64) -> JSVal {
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-pub fn DoubleValue(f: f64) -> JSVal {
+pub fn DoubleValue(f: f64) -> JS::Value {
     let bits: u64 = unsafe { mem::transmute(f) };
     let val = AsJSVal(bits);
     assert!(val.is_double());
@@ -123,7 +121,7 @@ pub fn DoubleValue(f: f64) -> JSVal {
 }
 
 #[inline(always)]
-pub fn UInt32Value(ui: u32) -> JSVal {
+pub fn UInt32Value(ui: u32) -> JS::Value {
     if ui > 0x7fffffff {
         DoubleValue(ui as f64)
     } else {
@@ -133,7 +131,7 @@ pub fn UInt32Value(ui: u32) -> JSVal {
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
-pub fn StringValue(s: &JSString) -> JSVal {
+pub fn StringValue(s: &JSString) -> JS::Value {
     let bits = s as *const JSString as usize as u64;
     assert!((bits >> JSVAL_TAG_SHIFT) == 0);
     BuildJSVal(ValueTag::STRING, bits)
@@ -141,19 +139,19 @@ pub fn StringValue(s: &JSString) -> JSVal {
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-pub fn StringValue(s: &JSString) -> JSVal {
+pub fn StringValue(s: &JSString) -> JS::Value {
     let bits = s as *const JSString as usize as u64;
     BuildJSVal(ValueTag::STRING, bits)
 }
 
 #[inline(always)]
-pub fn BooleanValue(b: bool) -> JSVal {
+pub fn BooleanValue(b: bool) -> JS::Value {
     BuildJSVal(ValueTag::BOOLEAN, b as u64)
 }
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
-pub fn ObjectValue(o: *mut JSObject) -> JSVal {
+pub fn ObjectValue(o: *mut JSObject) -> JS::Value {
     let bits = o as usize as u64;
     assert!((bits >> JSVAL_TAG_SHIFT) == 0);
     BuildJSVal(ValueTag::OBJECT, bits)
@@ -161,13 +159,13 @@ pub fn ObjectValue(o: *mut JSObject) -> JSVal {
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-pub fn ObjectValue(o: *mut JSObject) -> JSVal {
+pub fn ObjectValue(o: *mut JSObject) -> JS::Value {
     let bits = o as usize as u64;
     BuildJSVal(ValueTag::OBJECT, bits)
 }
 
 #[inline(always)]
-pub fn ObjectOrNullValue(o: *mut JSObject) -> JSVal {
+pub fn ObjectOrNullValue(o: *mut JSObject) -> JS::Value {
     if o.is_null() {
         NullValue()
     } else {
@@ -177,7 +175,7 @@ pub fn ObjectOrNullValue(o: *mut JSObject) -> JSVal {
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
-pub fn PrivateValue(o: *const c_void) -> JSVal {
+pub fn PrivateValue(o: *const c_void) -> JS::Value {
     let ptrBits = o as usize as u64;
     assert!((ptrBits & 1) == 0);
     AsJSVal(ptrBits >> 1)
@@ -185,13 +183,13 @@ pub fn PrivateValue(o: *const c_void) -> JSVal {
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-pub fn PrivateValue(o: *const c_void) -> JSVal {
+pub fn PrivateValue(o: *const c_void) -> JS::Value {
     let ptrBits = o as usize as u64;
     assert!((ptrBits & 1) == 0);
     BuildJSVal(ValueTag::PRIVATE, ptrBits)
 }
 
-impl JSVal {
+impl JS::Value {
     #[inline(always)]
     unsafe fn asBits(&self) -> u64 {
         self.data.asBits
