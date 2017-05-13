@@ -158,6 +158,7 @@ const WHITELIST_TYPES: &'static [&'static str] = &[
     "JSStructuredCloneWriter",
     "JSScript",
     "JSType",
+    "JSTypedMethodJitInfo",
     "JSValueTag",
     "JSValueType",
     "JSVersion",
@@ -208,6 +209,7 @@ const WHITELIST_VARS: &'static [&'static str] = &[
 
 /// Functions we want to generate bindings to.
 const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
+    "INTERNED_STRING_TO_JSID",
     "js::AddRawValueRoot",
     "JS_AlreadyHasOwnPropertyById",
     "JS_AtomizeAndPinString",
