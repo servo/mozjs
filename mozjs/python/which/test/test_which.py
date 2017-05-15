@@ -41,7 +41,7 @@ class WhichTestCase(unittest.TestCase):
         for app in self.testapps:
             path = os.path.join(self.tmpdir, app)
             open(path, 'wb').write('\n')
-            os.chmod(path, 0755)
+            os.chmod(path, 0o755)
 
     def tearDown(self):
         testsupport.rmtree(self.tmpdir)
