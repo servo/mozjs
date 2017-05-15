@@ -214,7 +214,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_AlreadyHasOwnPropertyById",
     "JS_AtomizeAndPinString",
     "js::AssertSameCompartment",
-    "JS_Call",
+    "JS::Call",
     "JS_CallFunctionValue",
     "JS::ContextOptionsRef",
     "JS_CopyPropertiesFrom",
