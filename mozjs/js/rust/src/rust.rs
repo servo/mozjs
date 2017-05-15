@@ -15,6 +15,7 @@ use std::slice;
 use std::mem;
 use std::u32;
 use std::default::Default;
+use std::marker;
 use std::ops::{Deref, DerefMut};
 use std::sync::{Once, ONCE_INIT};
 use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
@@ -325,6 +326,7 @@ impl<T> JS::Rooted<T> {
             stack: ptr::null_mut(),
             prev: ptr::null_mut(),
             ptr: unsafe { T::initial() },
+            _phantom_0: marker::PhantomData,
         }
     }
 
@@ -440,6 +442,7 @@ impl<T> JS::Handle<T> {
     pub unsafe fn from_marked_location(ptr: *const T) -> JS::Handle<T> {
         JS::Handle {
             ptr: mem::transmute(ptr),
+            _phantom_0: marker::PhantomData,
         }
     }
 }
@@ -456,6 +459,7 @@ impl<T> JS::MutableHandle<T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> JS::MutableHandle<T> {
         JS::MutableHandle {
             ptr: ptr,
+            _phantom_0: marker::PhantomData,
         }
     }
 
