@@ -150,7 +150,7 @@ const WHITELIST_TYPES: &'static [&'static str] = &[
     "JSGCMode",
     "JSGCParamKey",
     "JS::GCProgress",
-    "JSGCStatus"
+    "JSGCStatus",
     "JSJitCompilerOption",
     "JSJitGetterCallArgs",
     "JSJitMethodCallArgs",
