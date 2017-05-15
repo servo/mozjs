@@ -364,6 +364,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_SetParallelParsingEnabled",
     "JS_SetPendingException",
     "js::SetPreserveWrapperCallback",
+    "js::SetWindowProxy",
     "js::SetWindowProxyClass",
     "JS_SetProperty",
     "JS_SetReservedSlot",
