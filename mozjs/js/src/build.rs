@@ -5,7 +5,7 @@
 extern crate num_cpus;
 
 use std::env;
-use std::path;
+// use std::path;
 use std::process::{Command, Stdio};
 
 fn run_logged_command(mut cmd: Command) {
@@ -45,9 +45,6 @@ fn main() {
     run_logged_command(cmd);
 
 
-    println!("cargo:rustc-link-search=native={}/mozglue/build", out_dir);
-    println!("cargo:rustc-link-lib=static=mozglue");
-
     println!("cargo:rustc-link-search=native={}/js/src/build", out_dir);
 
     // Statically link SpiderMonkey.
@@ -68,6 +65,18 @@ fn main() {
 
     // println!("cargo:rustc-link-lib=mozjs");
 
+    // On windows, MacOS, and Android, mozglue is only available as a shared
+    // library. On other OSes, it is only available as a static library. See
+    // mozglue/build/moz.build for details.
+    println!("cargo:rustc-link-search=native={}/mozglue/build", out_dir);
+    if cfg!(any(target_os = "macos",
+                target_os = "windows",
+                target_os = "android")) {
+        println!("cargo:rustc-link-lib=mozglue");
+    } else {
+        println!("cargo:rustc-link-lib=static=mozglue");
+    }
+
     println!("cargo:rustc-link-search=native={}/dist/bin", out_dir);
     println!("cargo:rustc-link-lib=nspr4");
 
@@ -77,7 +86,7 @@ fn main() {
             println!("cargo:rustc-link-lib=stdc++");
         }
     } else {
-        println!("cargo:rustc-link-lib=stdc++");
+        println!("cargo:rustc-link-lib=c++");
     }
 
     println!("cargo:outdir={}", out_dir);
