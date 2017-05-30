@@ -71,6 +71,10 @@ fn build_jsapi_bindings() {
     builder = builder.clang_arg("-I");
     builder = builder.clang_arg(include_dir);
 
+    for ty in UNSAFE_IMPL_SYNC_TYPES {
+        builder = builder.raw_line(format!("unsafe impl Sync for {} {{}}", ty));
+    }
+
     for extra in EXTRA_CLANG_FLAGS {
         builder = builder.clang_arg(*extra);
     }
@@ -104,6 +108,12 @@ fn build_jsapi_bindings() {
     println!("cargo:rerun-if-changed=etc/wrapper.hpp");
     println!("cargo:rerun-if-changed=src/jsapi.rs");
 }
+
+/// JSAPI types for which we should implement `Sync`.
+const UNSAFE_IMPL_SYNC_TYPES: &'static [&'static str] = &[
+    "JSClass",
+    "JSTypedMethodJitInfo",
+];
 
 /// Flags passed through bindgen directly to Clang.
 const EXTRA_CLANG_FLAGS: &'static [&'static str] = &[
