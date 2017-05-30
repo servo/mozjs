@@ -38,8 +38,6 @@ pub mod typedarray;
 pub mod jsapi;
 use self::jsapi::root::*;
 
-unsafe impl Sync for JSClass {}
-
 #[inline(always)]
 pub unsafe fn JS_ARGV(_cx: *mut JSContext, vp: *mut JS::Value) -> *mut JS::Value {
     vp.offset(2)
