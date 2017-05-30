@@ -212,6 +212,13 @@ impl Runtime {
         self.cx
     }
 
+    /// Returns the underlying `JSContext`'s `JSRuntime`.
+    pub fn rt(&self) -> *mut JSRuntime {
+        unsafe {
+            JS_GetRuntime(self.cx)
+        }
+    }
+
     pub fn evaluate_script(&self, glob: JS::HandleObject, script: &str, filename: &str,
                            line_num: u32, rval: JS::MutableHandleValue)
                     -> Result<(),()> {
