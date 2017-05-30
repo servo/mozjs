@@ -6,7 +6,7 @@ build = "build.rs"
 license = "MPL-2.0"
 
 [build-dependencies]
-bindgen = "0.25"
+bindgen = "0.25.2"
 cmake = "0.1"
 glob = "0.2.11"
 
