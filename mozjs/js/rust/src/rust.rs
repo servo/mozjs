@@ -997,16 +997,13 @@ pub unsafe fn define_methods(cx: *mut JSContext, obj: JS::HandleObject,
 pub unsafe fn define_properties(cx: *mut JSContext, obj: JS::HandleObject,
                                 properties: &'static [JSPropertySpec])
                                 -> Result<(), ()> {
+    assert!(!properties.is_empty());
     assert!({
-        match properties.last() {
-            Some(ref spec) => {
-                slice::from_raw_parts(spec as *const _ as *const u8,
-                                      mem::size_of_val(spec))
-                    .iter()
-                    .all(|byte| *byte == 0)
-            },
-            None => false,
-        }
+        let spec = properties.last().unwrap();
+        slice::from_raw_parts(spec as *const _ as *const u8,
+                              mem::size_of_val(spec))
+            .iter()
+            .all(|byte| *byte == 0)
     });
 
     JS_DefineProperties(cx, obj, properties.as_ptr()).to_result()
