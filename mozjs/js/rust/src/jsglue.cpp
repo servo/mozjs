@@ -589,6 +589,18 @@ GetWindowProxyClass()
     return &WindowProxyClass;
 }
 
+JS::Value
+GetProxyReservedSlot(JSObject* obj, uint32_t slot)
+{
+    return js::GetProxyReservedSlot(obj, slot);
+}
+
+void
+SetProxyReservedSlot(JSObject* obj, uint32_t slot, const JS::Value* val)
+{
+    js::SetProxyReservedSlot(obj, slot, *val);
+}
+
 JSObject*
 NewWindowProxy(JSContext* aCx, JS::HandleObject aObj, const void* aHandler)
 {
@@ -864,14 +876,14 @@ JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float64, double)
 #undef JS_DEFINE_DATA_AND_LENGTH_ACCESSOR
 
 JSAutoStructuredCloneBuffer*
-CreateJSStructuredCloneData(JS::StructuredCloneScope scope,
-                            const JSStructuredCloneCallbacks* callbacks)
+NewJSAutoStructuredCloneBuffer(JS::StructuredCloneScope scope,
+                               const JSStructuredCloneCallbacks* callbacks)
 {
     return js_new<JSAutoStructuredCloneBuffer>(scope, callbacks, nullptr);
 }
 
 JSStructuredCloneData*
-DeleteJSStructuredCloneData(JSAutoStructuredCloneBuffer* buf)
+DeleteJSAutoStructuredCloneBuffer(JSAutoStructuredCloneBuffer* buf)
 {
     js_delete(buf);
 }

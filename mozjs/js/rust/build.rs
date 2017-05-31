@@ -112,6 +112,9 @@ fn build_jsapi_bindings() {
 /// JSAPI types for which we should implement `Sync`.
 const UNSAFE_IMPL_SYNC_TYPES: &'static [&'static str] = &[
     "JSClass",
+    "JSFunctionSpec",
+    "JSNativeWrapper",
+    "JSPropertySpec",
     "JSTypedMethodJitInfo",
 ];
 
