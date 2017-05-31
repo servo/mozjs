@@ -320,6 +320,17 @@ extern "C" {
                                         isSharedMemory: *mut bool,
                                         data: *mut *mut f64);
 
+    pub fn NewJSAutoStructuredCloneBuffer(scope: JS::StructuredCloneScope,
+                                          callbacks: *const JSStructuredCloneCallbacks)
+                                          -> *mut JSAutoStructuredCloneBuffer;
+    pub fn DeleteJSAutoStructuredCloneBuffer(buf: *mut JSAutoStructuredCloneBuffer);
+    pub fn GetLengthOfJSStructuredCloneData(data: *mut JSStructuredCloneData) -> usize;
+    pub fn CopyJSStructuredCloneData(src: *mut JSStructuredCloneData, dest: *mut u8);
+    pub fn WriteBytesToJSStructuredCloneData(src: *const u8,
+                                             len: usize,
+                                             dest: *mut JSStructuredCloneData)
+                                             -> bool;
+
     pub fn IsDebugBuild() -> bool;
 }
 
