@@ -33,6 +33,7 @@ pub mod glue;
 pub mod heap;
 pub mod jsval;
 pub mod panic;
+pub mod sc;
 pub mod typedarray;
 
 pub mod jsapi;

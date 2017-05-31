@@ -331,7 +331,7 @@ class RustJSPrincipal : public JSPrincipals
     bool (*writeCallback)(JSContext* cx, JSStructuredCloneWriter* writer);
 
   public:
-    RustJSPrincipal(const void* origin, 
+    RustJSPrincipal(const void* origin,
                      void (*destroy)(JSPrincipals *principal),
                      bool (*write)(JSContext* cx, JSStructuredCloneWriter* writer))
     : JSPrincipals() {
@@ -862,5 +862,61 @@ JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float32, float)
 JS_DEFINE_DATA_AND_LENGTH_ACCESSOR(Float64, double)
 
 #undef JS_DEFINE_DATA_AND_LENGTH_ACCESSOR
+
+JSAutoStructuredCloneBuffer*
+CreateJSStructuredCloneData(JS::StructuredCloneScope scope,
+                            const JSStructuredCloneCallbacks* callbacks)
+{
+    return js_new<JSAutoStructuredCloneBuffer>(scope, callbacks, nullptr);
+}
+
+JSStructuredCloneData*
+DeleteJSStructuredCloneData(JSAutoStructuredCloneBuffer* buf)
+{
+    js_delete(buf);
+}
+
+size_t
+GetLengthOfJSStructuredCloneData(JSStructuredCloneData* data)
+{
+    assert(data != nullptr);
+
+    size_t len = 0;
+
+    auto iter = data->Iter();
+    while (!iter.Done()) {
+        size_t len_of_this_segment = iter.RemainingInSegment();
+        len += len_of_this_segment;
+        iter.Advance(*data, len_of_this_segment);
+    }
+
+    return len;
+}
+
+void
+CopyJSStructuredCloneData(JSStructuredCloneData* src, uint8_t* dest)
+{
+    assert(src != nullptr);
+    assert(dest != nullptr);
+
+    size_t bytes_copied = 0;
+
+    auto iter = src->Iter();
+    while (!iter.Done()) {
+        size_t len_of_this_segment = iter.RemainingInSegment();
+        memcpy(dest + bytes_copied, iter.Data(), len_of_this_segment);
+        bytes_copied += len_of_this_segment;
+        iter.Advance(*src, len_of_this_segment);
+    }
+}
+
+bool
+WriteBytesToJSStructuredCloneData(const uint8_t* src, size_t len, JSStructuredCloneData* dest)
+{
+    assert(src != nullptr);
+    assert(dest != nullptr);
+
+    return dest->WriteBytes(reinterpret_cast<const char*>(src), len);
+}
 
 } // extern "C"
