@@ -1000,10 +1000,9 @@ pub unsafe fn define_properties(cx: *mut JSContext, obj: JS::HandleObject,
     assert!(!properties.is_empty());
     assert!({
         let spec = properties.last().unwrap();
-        slice::from_raw_parts(spec as *const _ as *const u8,
-                              mem::size_of_val(spec))
-            .iter()
-            .all(|byte| *byte == 0)
+        let slice = slice::from_raw_parts(spec as *const _ as *const u8,
+                                          mem::size_of::<JSPropertySpec>());
+        slice.iter().all(|byte| *byte == 0)
     });
 
     JS_DefineProperties(cx, obj, properties.as_ptr()).to_result()
