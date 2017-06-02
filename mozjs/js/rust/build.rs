@@ -302,6 +302,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_GetFloat32ArrayData",
     "JS_GetFloat64ArrayData",
     "JS_GetFunctionObject",
+    "JS_GetGCParameter",
     "JS_GetInt16ArrayData",
     "JS_GetInt32ArrayData",
     "JS_GetInt8ArrayData",
