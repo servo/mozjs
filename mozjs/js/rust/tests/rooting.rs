@@ -9,19 +9,7 @@
 extern crate js;
 extern crate libc;
 
-use js::jsapi::CompartmentOptions;
-use js::jsapi::JSAutoCompartment;
-use js::jsapi::JSClass;
-use js::jsapi::JSContext;
-use js::jsapi::JSFunctionSpec;
-use js::jsapi::JS_GetObjectPrototype;
-use js::jsapi::JSNativeWrapper;
-use js::jsapi::JS_NewGlobalObject;
-use js::jsapi::JS_NewObjectWithUniqueType;
-use js::jsapi::JSPROP_ENUMERATE;
-use js::jsapi::JS_SetGCZeal;
-use js::jsapi::OnNewGlobalHookOption;
-use js::jsapi::Value;
+use js::jsapi::*;
 use js::rust::{Runtime, SIMPLE_GLOBAL_CLASS, define_methods};
 use std::ptr;
 
@@ -29,18 +17,18 @@ use std::ptr;
 fn rooting() {
     unsafe {
         let runtime = Runtime::new().unwrap();
-        JS_SetGCZeal(runtime.rt(), 2, 1);
+        JS_SetGCZeal(runtime.cx(), 2, 1);
 
         let cx = runtime.cx();
-        let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
-        let c_option = CompartmentOptions::default();
+        let h_option = JS::OnNewGlobalHookOption::FireOnNewGlobalHook;
+        let c_option = JS::CompartmentOptions::default();
 
         rooted!(in(cx) let global = JS_NewGlobalObject(cx,
                                                        &SIMPLE_GLOBAL_CLASS,
                                                        ptr::null_mut(),
                                                        h_option,
                                                        &c_option));
-        let _ac = JSAutoCompartment::new(cx, global.get());
+        let _ac = js::ac::AutoCompartment::with_obj(cx, global.get());
         rooted!(in(cx) let prototype_proto = JS_GetObjectPrototype(cx, global.handle()));
         rooted!(in(cx) let proto = JS_NewObjectWithUniqueType(cx,
                                                               &CLASS as *const _,
@@ -49,7 +37,7 @@ fn rooting() {
     }
 }
 
-unsafe extern "C" fn generic_method(_: *mut JSContext, _: u32, _: *mut Value) -> bool {
+unsafe extern "C" fn generic_method(_: *mut JSContext, _: u32, _: *mut JS::Value) -> bool {
     true
 }
 
