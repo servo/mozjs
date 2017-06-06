@@ -96,7 +96,7 @@ pub trait ToJSValConvertible {
 pub enum ConversionResult<T> {
     /// Everything went fine.
     Success(T),
-    /// Pending exception.
+    /// Conversion failed, without a pending exception.
     Failure(Cow<'static, str>),
 }
 
@@ -118,6 +118,7 @@ pub trait FromJSValConvertible: Sized {
     /// Optional configuration of type `T` can be passed as the `option`
     /// argument.
     /// If it returns `Err(())`, a JSAPI exception is pending.
+    /// If it returns `Ok(Failure(reason))`, there is no pending JSAPI exception.
     unsafe fn from_jsval(cx: *mut JSContext,
                          val: JS::HandleValue,
                          option: Self::Config)
