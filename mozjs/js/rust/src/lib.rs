@@ -44,11 +44,6 @@ pub unsafe fn JS_ARGV(_cx: *mut JSContext, vp: *mut JS::Value) -> *mut JS::Value
     vp.offset(2)
 }
 
-#[inline(always)]
-pub unsafe fn JS_CALLEE(_cx: *mut JSContext, vp: *mut JS::Value) -> JS::Value {
-    *vp
-}
-
 known_heap_size!(0, JS::Value);
 
 impl JS::ObjectOpResult {
