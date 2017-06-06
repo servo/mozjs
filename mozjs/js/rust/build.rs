@@ -373,6 +373,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_SetGCCallback",
     "JS::SetGCSliceCallback",
     "JS_SetGCParameter",
+    "JS_SetGCZeal",
     "JS_SetGlobalJitCompilerOption",
     "JS_SetImmutablePrototype",
     "JS_SetNativeStackQuota",

@@ -24,7 +24,7 @@ fn runtime() {
                                                        ptr::null_mut(),
                                                        h_option,
                                                        &c_option));
-        let _ac = JSAutoCompartment::new(cx, global.get());
+        let _ac = js::ac::AutoCompartment::with_obj(cx, global.get());
         rooted!(in(cx) let _object = JS_NewObject(cx, &CLASS as *const _));
     }
 
@@ -52,7 +52,7 @@ static CLASS_OPS: JSClassOps = JSClassOps {
 
 static CLASS: JSClass = JSClass {
     name: b"EventTargetPrototype\0" as *const u8 as *const libc::c_char,
-    flags: 0,
+    flags: 0 | JSCLASS_FOREGROUND_FINALIZE,
     cOps: &CLASS_OPS as *const JSClassOps,
     reserved: [0 as *mut _; 3]
 };
