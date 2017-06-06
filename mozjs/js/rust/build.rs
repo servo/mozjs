@@ -290,6 +290,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::detail::InitWithFailureDiagnostic",
     "JS_DestroyContext",
     "JS::DisableIncrementalGC",
+    "js::Dump.*",
     "JS_EncodeStringToUTF8",
     "JS_EndRequest",
     "JS_EnterCompartment",
