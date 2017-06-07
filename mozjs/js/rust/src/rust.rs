@@ -715,6 +715,15 @@ impl JS::CallArgs {
     pub fn callee(&self) -> *mut JSObject {
         self.calleev().to_object()
     }
+
+    #[inline]
+    pub fn new_target(&self) -> JS::MutableHandleValue {
+        assert!(self._base.constructing_());
+        unsafe {
+            JS::MutableHandleValue::from_marked_location(
+                self._base.argv_.offset(self._base.argc_ as isize))
+        }
+    }
 }
 
 impl JSJitGetterCallArgs {
