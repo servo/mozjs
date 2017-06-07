@@ -613,6 +613,12 @@ GetProxyPrivate(JSObject* obj)
     return js::GetProxyPrivate(obj);
 }
 
+void
+SetProxyPrivate(JSObject* obj, const JS::Value* expando)
+{
+    js::SetProxyPrivate(obj, *expando);
+}
+
 bool
 RUST_JSID_IS_INT(JS::HandleId id)
 {
@@ -668,7 +674,8 @@ RUST_js_GetErrorMessage(void* userRef, uint32_t errorNumber)
 bool
 IsProxyHandlerFamily(JSObject* obj)
 {
-    return js::GetProxyHandler(obj)->family() == &HandlerFamily;
+    auto family = js::GetProxyHandler(obj)->family();
+    return family == &HandlerFamily;
 }
 
 const void*
