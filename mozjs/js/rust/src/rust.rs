@@ -1059,8 +1059,13 @@ pub unsafe fn is_dom_object(obj: *mut JSObject) -> bool {
 }
 
 #[inline]
+pub unsafe fn is_global(obj: *mut JSObject) -> bool {
+    (*get_object_class(obj)).flags & JSCLASS_IS_GLOBAL != 0
+}
+
+#[inline]
 pub unsafe fn is_window(obj: *mut JSObject) -> bool {
-    (*get_object_class(obj)).flags & JSCLASS_IS_GLOBAL != 0 && js::detail::IsWindowSlow(obj)
+    is_global(obj) && js::detail::IsWindowSlow(obj)
 }
 
 #[inline]
