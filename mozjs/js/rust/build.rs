@@ -55,6 +55,7 @@ fn get_mozjs_include_dir() -> path::PathBuf {
 /// generated, see the `const` configuration variables below.
 fn build_jsapi_bindings() {
     let mut builder = bindgen::builder()
+        .unstable_rust(true)
         .header("./etc/wrapper.hpp")
         .raw_line("pub use self::root::*;")
         .enable_cxx_namespaces();
