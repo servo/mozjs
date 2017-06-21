@@ -16,10 +16,16 @@ before_install:
 - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install ccache yasm; fi
 
 script:
-  - cargo build --verbose --verbose $FEATURES
+  - cd mozjs/js/rust
+  - ccache -z
+  - CCACHE=$(which ccache) travis_wait cargo build --verbose $FEATURES
+  - CCACHE=$(which ccache) cargo test --verbose $FEATURES
+  - ccache -s
 
 before_install:
   if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install yasm; fi
 
 notifications:
   webhooks: http://build.servo.org:54856/travis
+
+cache: ccache
