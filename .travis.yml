@@ -1,24 +1,50 @@
 language: rust
+
 rust:
   - nightly
+
 sudo: 9000
-dist: trusty
 
 os:
   - linux
   - osx
+
+dist: trusty
+
+addons:
+  apt:
+    sources:
+      # Provides newer gcc.
+      - ubuntu-toolchain-r-test
+      # Provides libclang 3.9.
+      - llvm-toolchain-trusty-3.9
+    packages:
+      - autoconf2.13
+      # bindgen requires libclang >= 3.9.
+      - clang-3.9
+      # SpiderMonkey needs gcc >= 4.9.
+      - gcc-5
+      - g++-5
 
 env:
   - FEATURES=""
   - FEATURES="--features debugmozjs"
 
 before_install:
-- if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install ccache yasm; fi
+  - export RUST_BACKTRACE=1
+  - export RUST_LOG=bindgen
+  - export RUST_LOG_LEVEL=debug
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install ccache yasm; fi
+  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC="gcc-5"; export CXX="g++-5"; export LD_LIBRARY_PATH=/usr/lib/llvm-3.9/lib; fi
 
 script:
+  - export RUST_LOG=bindgen
+  - export LD_LIBRARY_PATH=/usr/lib/llvm-3.9/lib
   - cd mozjs/js/rust
   - ccache -z
   - CCACHE=$(which ccache) travis_wait cargo build --verbose $FEATURES
+  - find target/debug -type f -name output
+  - cat target/debug/build/js-*/output
   - CCACHE=$(which ccache) cargo test --verbose $FEATURES
   - ccache -s
 
