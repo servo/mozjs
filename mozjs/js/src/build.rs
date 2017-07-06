@@ -16,11 +16,47 @@ fn run_logged_command(mut cmd: Command) {
     assert!(result.success(), "child should exit OK");
 }
 
+fn choose_python() -> String {
+    let mut choices = vec![];
+    if let Ok(python) = env::var("PYTHON") {
+        choices.push(python);
+    }
+    choices.push("python2.7".into());
+    choices.push("python2.7.exe".into());
+    choices.push("python2".into());
+    choices.push("python2.exe".into());
+    choices.push("python".into());
+    choices.push("python.exe".into());
+
+    for python in choices {
+        if {
+            Command::new(&python)
+                .args(&["-c", "print 'Hello, World'"])
+                .output()
+                .ok()
+                .map_or(false, |out| {
+                    String::from_utf8_lossy(&out.stdout).trim() == "Hello, World"
+                })
+        } {
+            return python;
+        }
+    }
+
+    panic!("Could not find an acceptable Python")
+}
+
 fn main() {
     let out_dir = env::var("OUT_DIR").expect("Should have env var OUT_DIR");
     let target = env::var("TARGET").expect("Should have env var TARGET");
 
-    let js_src = env::var("CARGO_MANIFEST_DIR").expect("Should have env var CARGO_MANIFEST_DIR");
+    let mut js_src = env::var("CARGO_MANIFEST_DIR").expect("Should have env var CARGO_MANIFEST_DIR");
+
+    if cfg!(windows) {
+        // js/src/devtools/autospider.py uses `posixpath` instead of `os.path`
+        // for joining paths together for Reasons (*handwaves*) so we play along
+        // and make sure that windows paths aren't completely annihilated...
+        js_src = js_src.replace('\\', "/");
+    }
 
     env::set_var("MAKEFLAGS", format!("-j{}", num_cpus::get()));
     env::set_current_dir(&js_src).unwrap();
@@ -31,7 +67,7 @@ fn main() {
         "plain"
     };
 
-    let python = env::var("PYTHON").unwrap_or("python2.7".into());
+    let python = choose_python();
     let mut cmd = Command::new(&python);
     cmd.args(&["./devtools/automation/autospider.py",
                "--build-only",
@@ -40,6 +76,7 @@ fn main() {
         .env("SOURCE", &js_src)
         .env("PWD", &js_src)
         .env("AUTOMATION", "1")
+        .env("PYTHON", &python)
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
     run_logged_command(cmd);
