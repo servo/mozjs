@@ -87,6 +87,10 @@ def set_vars_from_script(script, vars):
        (in the form "export FOO=<value>"), since otherwise there will be
        problems with mismatched Windows/POSIX formats.
     '''
+    print("FITZGEN: script = {}".format(script))
+    print("FITZGEN: script is file? {}".format(str(posixpath.isfile(script))))
+    print("FITZGEN: script is executable? {}".format(str(os.access(script, os.X_OK))))
+
     script_text = 'source %s' % script
     if platform.system() == 'Windows':
         parse_state = 'parsing exports'
