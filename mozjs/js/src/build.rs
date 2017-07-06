@@ -49,14 +49,15 @@ fn main() {
     let out_dir = env::var("OUT_DIR").expect("Should have env var OUT_DIR");
     let target = env::var("TARGET").expect("Should have env var TARGET");
 
-    let mut js_src = env::var("CARGO_MANIFEST_DIR").expect("Should have env var CARGO_MANIFEST_DIR");
-
+    let mut js_src = env::var("CARGO_MANIFEST_DIR")
+        .expect("Should have env var CARGO_MANIFEST_DIR");
     if cfg!(windows) {
         // js/src/devtools/autospider.py uses `posixpath` instead of `os.path`
         // for joining paths together for Reasons (*handwaves*) so we play along
         // and make sure that windows paths aren't completely annihilated...
         js_src = js_src.replace('\\', "/");
     }
+    println!("js_src = {}", js_src);
 
     env::set_var("MAKEFLAGS", format!("-j{}", num_cpus::get()));
     env::set_current_dir(&js_src).unwrap();
