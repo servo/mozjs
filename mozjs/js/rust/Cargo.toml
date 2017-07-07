@@ -8,7 +8,7 @@ license = "MPL-2.0"
 [build-dependencies]
 env_logger = "0.4"
 log = "0.3"
-bindgen = "0.26.2"
+bindgen = { git = "https://github.com/fitzgen/rust-bindgen", branch = "always-log-libclang-version" }
 cmake = "0.1"
 glob = "0.2.11"
 
