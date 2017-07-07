@@ -57,7 +57,7 @@ fn main() {
         // and make sure that windows paths aren't completely annihilated...
         js_src = js_src.replace('\\', "/");
     }
-    println!("js_src = {}", js_src);
+    println!("initial js_src = {}", js_src);
 
     env::set_var("MAKEFLAGS", format!("-j{}", num_cpus::get()));
     env::set_current_dir(&js_src).unwrap();
@@ -68,13 +68,16 @@ fn main() {
         "plain"
     };
 
+    let js_src = js_src.replace("C:", "/c");
+    println!("FITZGEN: fixed-up js_src = {}", js_src);
+
     let python = choose_python();
     let mut cmd = Command::new(&python);
     cmd.args(&["./devtools/automation/autospider.py",
                "--build-only",
                "--objdir", &out_dir,
                variant])
-        .env("SOURCE", &js_src.replace("C:", "/c"))
+        .env("SOURCE", &js_src)
         .env("PWD", &js_src)
         .env("AUTOMATION", "1")
         .env("PYTHON", &python)
