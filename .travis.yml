@@ -39,7 +39,7 @@ before_install:
 
 script:
   - export RUST_LOG=bindgen
-  - export LD_LIBRARY_PATH=/usr/lib/llvm-3.9/lib
+  - export LIBCLANG_PATH=/usr/lib/llvm-3.9/lib
   - cd mozjs/js/rust
   - ccache -z
   - CCACHE=$(which ccache) travis_wait cargo build --verbose $FEATURES
