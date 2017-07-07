@@ -31,19 +31,10 @@ env:
   - FEATURES="--features debugmozjs"
 
 before_install:
-  - export RUST_BACKTRACE=1
-  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install ccache yasm; fi
-  - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC="gcc-5"; export CXX="g++-5"; export LD_LIBRARY_PATH=/usr/lib/llvm-3.9/lib; fi
+  - source .travis/before_install.sh
 
 script:
-  - export LIBCLANG_PATH=/usr/lib/llvm-3.9/lib
-  - cd mozjs/js/rust
-  - ccache -z
-  - CCACHE=$(which ccache) travis_wait cargo build --verbose $FEATURES
-  - find target/debug -type f -name output
-  - cat target/debug/build/js-*/output
-  - CCACHE=$(which ccache) cargo test --verbose $FEATURES
-  - ccache -s
+  - .travis/script.sh
 
 notifications:
   webhooks: http://build.servo.org:54856/travis
