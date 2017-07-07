@@ -231,6 +231,7 @@ if platform.system() == 'Darwin':
 elif platform.system() == 'Windows':
     MAKE = env.get('MAKE', 'mozmake')
     os.environ['SOURCE'] = DIR.source
+    print("FITZGEN: os.environ['SOURCE'] = {}".format(os.environ['SOURCE']))
     if word_bits == 64:
         os.environ['USE_64BIT'] = '1'
     set_vars_from_script(posixpath.join(PDIR.scripts, 'winbuildenv.sh'),
