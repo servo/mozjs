@@ -74,7 +74,7 @@ fn main() {
                "--build-only",
                "--objdir", &out_dir,
                variant])
-        .env("SOURCE", &js_src)
+        .env("SOURCE", &js_src.replace("C:", "/c"))
         .env("PWD", &js_src)
         .env("AUTOMATION", "1")
         .env("PYTHON", &python)
