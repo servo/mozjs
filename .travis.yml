@@ -32,13 +32,10 @@ env:
 
 before_install:
   - export RUST_BACKTRACE=1
-  - export RUST_LOG=bindgen
-  - export RUST_LOG_LEVEL=debug
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install ccache yasm; fi
   - if [[ "$TRAVIS_OS_NAME" == "linux" ]]; then export CC="gcc-5"; export CXX="g++-5"; export LD_LIBRARY_PATH=/usr/lib/llvm-3.9/lib; fi
 
 script:
-  - export RUST_LOG=bindgen
   - export LIBCLANG_PATH=/usr/lib/llvm-3.9/lib
   - cd mozjs/js/rust
   - ccache -z
