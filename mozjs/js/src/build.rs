@@ -5,7 +5,6 @@
 extern crate num_cpus;
 
 use std::env;
-// use std::path;
 use std::process::{Command, Stdio};
 
 fn run_logged_command(mut cmd: Command) {
