@@ -24,7 +24,7 @@ impl StructuredCloneBuffer {
                callbacks: &jsapi::JSStructuredCloneCallbacks)
                -> StructuredCloneBuffer {
         let raw = unsafe {
-            glue::NewJSAutoStructuredCloneBuffer(scope, callbacks as *const _)
+            glue::NewJSAutoStructuredCloneBuffer(scope, callbacks)
         };
         assert!(!raw.is_null());
         StructuredCloneBuffer {
@@ -35,7 +35,7 @@ impl StructuredCloneBuffer {
     /// Get the raw `*mut JSStructuredCloneData` owned by this buffer.
     pub fn data(&self) -> *mut jsapi::JSStructuredCloneData {
         unsafe {
-            &mut (*self.raw).data_ as *mut _
+            &mut (*self.raw).data_
         }
     }
 
@@ -51,35 +51,44 @@ impl StructuredCloneBuffer {
         vec
     }
 
-    /// Read a JS value out of this buffer. Returns false when an underlying
-    /// JSAPI call fails.
+    /// Read a JS value out of this buffer.
     pub fn read(&mut self,
                 vp: jsapi::JS::MutableHandleValue,
                 callbacks: &jsapi::JSStructuredCloneCallbacks)
-                -> bool {
-        unsafe {
-            (*self.raw).read(Runtime::get(), vp, callbacks as *const _, ptr::null_mut())
+                -> Result<(), ()> {
+        if unsafe {
+            (*self.raw).read(Runtime::get(), vp, callbacks, ptr::null_mut())
+        } {
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
-    /// Write a JS value into this buffer. Returns false when an underlying
-    /// JSAPI call fails.
+    /// Write a JS value into this buffer.
     pub fn write(&mut self,
                  v: jsapi::JS::HandleValue,
                  callbacks: &jsapi::JSStructuredCloneCallbacks)
-                 -> bool {
-        unsafe {
-            (*self.raw).write(Runtime::get(), v, callbacks as *const _, ptr::null_mut())
+                 -> Result<(), ()> {
+        if unsafe {
+            (*self.raw).write(Runtime::get(), v, callbacks, ptr::null_mut())
+        } {
+            Ok(())
+        } else {
+            Err(())
         }
     }
 
-    /// Copy the given slice into this buffer. Returns false when an underlying
-    /// JSAPI call fails.
-    pub fn write_bytes(&mut self, bytes: &[u8]) -> bool {
+    /// Copy the given slice into this buffer.
+    pub fn write_bytes(&mut self, bytes: &[u8]) -> Result<(), ()> {
         let len = bytes.len();
         let src = bytes.as_ptr();
-        unsafe {
+        if unsafe {
             glue::WriteBytesToJSStructuredCloneData(src, len, self.data())
+        } {
+            Ok(())
+        } else {
+            Err(())
         }
     }
 }
