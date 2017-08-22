@@ -62,11 +62,7 @@ fn main() {
         "MAKEFLAGS",
         format!(
             "-j{}",
-            if env::var("TRAVIS_CI").is_ok() {
-                1
-            } else {
-                num_cpus::get()
-            }
+            1
         )
     );
     env::set_current_dir(&js_src).unwrap();
