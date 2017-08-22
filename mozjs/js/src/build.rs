@@ -58,7 +58,17 @@ fn main() {
     }
     println!("initial js_src = {}", js_src);
 
-    env::set_var("MAKEFLAGS", format!("-j{}", num_cpus::get()));
+    env::set_var(
+        "MAKEFLAGS",
+        format!(
+            "-j{}",
+            if env::var("TRAVIS_CI").is_ok() {
+                1
+            } else {
+                num_cpus::get()
+            }
+        )
+    );
     env::set_current_dir(&js_src).unwrap();
 
     let variant = if cfg!(feature = "debugmozjs") {
