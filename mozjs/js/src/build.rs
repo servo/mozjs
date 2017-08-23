@@ -58,7 +58,7 @@ fn main() {
     }
     println!("initial js_src = {}", js_src);
 
-    env::set_var("MAKEFLAGS", "-j8");
+    env::set_var("MAKEFLAGS", "-j6");
     env::set_current_dir(&js_src).unwrap();
 
     let variant = if cfg!(feature = "debugmozjs") {
