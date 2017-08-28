@@ -255,6 +255,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::CallOriginalPromiseResolve",
     "JS::CallOriginalPromiseReject",
     "JS::CompileFunction",
+    "JS::Construct",
     "JS::ContextOptionsRef",
     "JS_CopyPropertiesFrom",
     "JS::CurrentGlobalOrNull",
