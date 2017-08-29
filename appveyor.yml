@@ -63,7 +63,7 @@ install:
   - cargo -vV
 
 build_script:
-  - dir C:\Python2.7
+  - dir C:\Python27
   - echo PATH %PATH%
   - echo VSINSTALLDIR %VSINSTALLDIR%
   - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
