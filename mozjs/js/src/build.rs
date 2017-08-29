@@ -5,13 +5,21 @@
 extern crate num_cpus;
 
 use std::env;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-fn run_logged_command(mut cmd: Command) {
+fn main() {
+    if cfg!(target_os = "windows") {
+        mozilla_build();
+    } else {
+        autospider();
+    }
+    link();
+}
+
+fn run_logged_command(cmd: &mut Command) {
     println!("Running command: {:?}", cmd);
-    let result = cmd
-        .status()
-        .expect("Should spawn child OK");
+    let result = cmd.status().expect("Should spawn child OK");
     assert!(result.success(), "child should exit OK");
 }
 
@@ -44,19 +52,11 @@ fn choose_python() -> String {
     panic!("Could not find an acceptable Python")
 }
 
-fn main() {
+fn autospider() {
     let out_dir = env::var("OUT_DIR").expect("Should have env var OUT_DIR");
-    let target = env::var("TARGET").expect("Should have env var TARGET");
 
-    let mut js_src = env::var("CARGO_MANIFEST_DIR")
+    let js_src = env::var("CARGO_MANIFEST_DIR")
         .expect("Should have env var CARGO_MANIFEST_DIR");
-    if cfg!(windows) {
-        // js/src/devtools/autospider.py uses `posixpath` instead of `os.path`
-        // for joining paths together for Reasons (*handwaves*) so we play along
-        // and make sure that windows paths aren't completely annihilated...
-        js_src = js_src.replace('\\', "/");
-    }
-    println!("initial js_src = {}", js_src);
 
     env::set_var("MAKEFLAGS", "-j6");
     env::set_current_dir(&js_src).unwrap();
@@ -67,43 +67,88 @@ fn main() {
         "plain"
     };
 
-    let js_src = js_src.replace("C:", "/c");
-    println!("FITZGEN: fixed-up js_src = {}", js_src);
-
     let python = choose_python();
-    let mut cmd = Command::new(&python);
-    cmd.args(&["./devtools/automation/autospider.py",
-               "--build-only",
-               "--objdir", &out_dir,
-               variant])
-        .env("SOURCE", &js_src)
-        .env("PWD", &js_src)
-        .env("AUTOMATION", "1")
-        .env("PYTHON", &python)
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    run_logged_command(cmd);
+    run_logged_command(
+        Command::new(&python)
+            .args(&["./devtools/automation/autospider.py",
+                    "--build-only",
+                    "--objdir", &out_dir,
+                    variant])
+            .env("SOURCE", &js_src)
+            .env("PWD", &js_src)
+            .env("AUTOMATION", "1")
+            .env("PYTHON", &python)
+    );
+}
 
+const MOZILLA_BUILD_URL: &'static str =
+    "https://ftp.mozilla.org/pub/mozilla.org/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe";
+
+fn mozilla_build() {
+    let out_dir = PathBuf::from(
+        env::var("OUT_DIR")
+            .expect("Should have env var OUT_DIR")
+    );
+    let js_src = PathBuf::from(
+        env::var("CARGO_MANIFEST_DIR")
+            .expect("Should have env var CARGO_MANIFEST_DIR")
+    );
+
+    if !Path::new(r#"C:\mozilla-build"#).exists() {
+        // Download mozillabuild.exe
+        let powershell_command = format!(
+            "& {{ (New-Object Net.WebClient).DownloadFile('{}', '{}') }}",
+            MOZILLA_BUILD_URL,
+            out_dir.join("mozillabuild.exe").display(),
+        );
+        run_logged_command(
+            Command::new("powershell").args(&["-command", &powershell_command])
+        );
+
+        // Install mozillabuild
+        run_logged_command(
+            Command::new("./mozillabuild.exe").arg("/S").current_dir(&out_dir)
+        );
+    }
+
+    // Run autoconf.
+    run_logged_command(
+        Command::new(r#"C:\mozilla-build\start-shell.bat"#)
+            .current_dir(&js_src)
+            .arg("autoconf2.13")
+    );
+
+    // Run configure.
+    run_logged_command(
+        Command::new(r#"C:\mozilla-build\start-shell.bat"#)
+            .current_dir(&out_dir)
+            .arg(js_src.join("configure"))
+            .arg("--enable-nspr-build")
+            .args(
+                if cfg!(feature = "debugmozjs") {
+                    &["--disable-optimize", "--enable-debug"]
+                } else {
+                    &["--enable-optimize", "--disable-debug"]
+                }
+            )
+    );
+
+    // Run make.
+    run_logged_command(
+        Command::new(r#"C:\mozilla-build\start-shell.bat"#)
+            .current_dir(&out_dir)
+            .arg(js_src.join("make"))
+    );
+}
+
+fn link() {
+    let out_dir = env::var("OUT_DIR").expect("Should have env var OUT_DIR");
+    let target = env::var("TARGET").expect("Should have env var TARGET");
 
     println!("cargo:rustc-link-search=native={}/js/src/build", out_dir);
 
     // Statically link SpiderMonkey.
     println!("cargo:rustc-link-lib=static=js_static");
-
-    // // Dynamically link SpiderMonkey.
-    // // Link `libmozjs-$VERSION.so` to `libmozjs.so`.
-    // let mut cmd = Command::new("sh");
-    // cmd.args(&["-c", "ln -s $(pwd)/libmozjs-*.so $(pwd)/libmozjs.so"])
-    //     .current_dir({
-    //         let mut js_src_build = path::PathBuf::from(&out_dir);
-    //         js_src_build.push("js/src/build");
-    //         js_src_build
-    //     })
-    //     .stdout(Stdio::inherit())
-    //     .stderr(Stdio::inherit());
-    // run_logged_command(cmd);
-
-    // println!("cargo:rustc-link-lib=mozjs");
 
     // On windows, MacOS, and Android, mozglue is only available as a shared
     // library. On other OSes, it is only available as a static library. See
