@@ -2,11 +2,9 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-extern crate num_cpus;
-
 use std::env;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 fn main() {
     if cfg!(target_os = "windows") {
@@ -138,6 +136,7 @@ fn mozilla_build() {
         Command::new(r#"C:\mozilla-build\start-shell.bat"#)
             .current_dir(&out_dir)
             .arg(js_src.join("make"))
+            .arg("-j6")
     );
 }
 
