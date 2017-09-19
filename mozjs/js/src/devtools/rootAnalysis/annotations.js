@@ -10,10 +10,6 @@ var GCSuppressionTypes = [];
 var ignoreIndirectCalls = {
     "mallocSizeOf" : true,
     "aMallocSizeOf" : true,
-    "_malloc_message" : true,
-    "je_malloc_message" : true,
-    "chunk_dalloc" : true,
-    "chunk_alloc" : true,
     "__conv" : true,
     "__convf" : true,
     "prerrortable.c:callback_newtable" : true,
@@ -63,7 +59,6 @@ var ignoreClasses = {
     "JSLocaleCallbacks" : true,
     "JSC::ExecutableAllocator" : true,
     "PRIOMethods": true,
-    "XPCOMFunctions" : true, // I'm a little unsure of this one
     "_MD_IOVector" : true,
     "malloc_table_t": true, // replace_malloc
     "malloc_hook_table_t": true, // replace_malloc
@@ -84,7 +79,7 @@ var ignoreCallees = {
     "GrGLInterface.fCallback" : true,
     "std::strstreambuf._M_alloc_fun" : true,
     "std::strstreambuf._M_free_fun" : true,
-    "struct js::gc::Callback<void (*)(JSRuntime*, void*)>.op" : true,
+    "struct js::gc::Callback<void (*)(JSContext*, void*)>.op" : true,
     "mozilla::ThreadSharedFloatArrayBufferList::Storage.mFree" : true,
 };
 
@@ -161,6 +156,7 @@ function isSuppressedVirtualMethod(csu, method)
 var ignoreFunctions = {
     "ptio.c:pt_MapError" : true,
     "je_malloc_printf" : true,
+    "malloc_usable_size" : true,
     "vprintf_stderr" : true,
     "PR_ExplodeTime" : true,
     "PR_ErrorInstallTable" : true,
@@ -174,6 +170,12 @@ var ignoreFunctions = {
 
     // Bug 1056410 - devirtualization prevents the standard nsISupports::Release heuristic from working
     "uint32 nsXPConnect::Release()" : true,
+
+    // Allocation API
+    "malloc": true,
+    "calloc": true,
+    "realloc": true,
+    "free": true,
 
     // FIXME!
     "NS_LogInit": true,
@@ -192,24 +194,11 @@ var ignoreFunctions = {
     // up wrapping a pending exception. See bug 898815 for the heavyweight fix.
     "void js::AutoCompartment::~AutoCompartment(int32)" : true,
     "void JSAutoCompartment::~JSAutoCompartment(int32)" : true,
-    "void js::AutoClearTypeInferenceStateOnOOM::~AutoClearTypeInferenceStateOnOOM()" : true,
-
-    // Bug 948646 - the only thing AutoJSContext's constructor calls
-    // is an Init() routine whose entire body is covered with an
-    // AutoSuppressGCAnalysis. AutoSafeJSContext is the same thing, just with
-    // a different value for the 'aSafe' parameter.
-    "void mozilla::AutoJSContext::AutoJSContext(mozilla::detail::GuardObjectNotifier*)" : true,
-    "void mozilla::AutoSafeJSContext::~AutoSafeJSContext(int32)" : true,
-
-    // And these are workarounds to avoid even more analysis work,
-    // which would sadly still be needed even with bug 898815.
-    "void js::AutoCompartment::AutoCompartment(js::ExclusiveContext*, JSCompartment*)": true,
 
     // The nsScriptNameSpaceManager functions can't actually GC.  They
     // just use a PLDHashTable which has function pointers, which makes the
     // analysis think maybe they can.
-    "nsGlobalNameStruct* nsScriptNameSpaceManager::LookupNavigatorName(nsAString_internal*)": true,
-    "nsGlobalNameStruct* nsScriptNameSpaceManager::LookupName(nsAString_internal*, uint16**)": true,
+    "nsGlobalNameStruct* nsScriptNameSpaceManager::LookupName(nsAString*, uint16**)": true,
 
     // Similar to heap snapshot mock classes, and GTests below. This posts a
     // synchronous runnable when a GTest fails, and we are pretty sure that the
@@ -230,15 +219,23 @@ var ignoreFunctions = {
     // nsTHashtable<T>::s_MatchEntry for its matchEntry function pointer, but
     // there is no mechanism for that. So we will just annotate a particularly
     // troublesome logging-related usage.
-    "EntryType* nsTHashtable<EntryType>::PutEntry(nsTHashtable<EntryType>::KeyType) [with EntryType = nsBaseHashtableET<nsCharPtrHashKey, nsAutoPtr<mozilla::LogModule> >; nsTHashtable<EntryType>::KeyType = const char*]" : true,
+    "EntryType* nsTHashtable<EntryType>::PutEntry(nsTHashtable<EntryType>::KeyType, const fallible_t&) [with EntryType = nsBaseHashtableET<nsCharPtrHashKey, nsAutoPtr<mozilla::LogModule> >; nsTHashtable<EntryType>::KeyType = const char*; nsTHashtable<EntryType>::fallible_t = mozilla::fallible_t]" : true,
     "EntryType* nsTHashtable<EntryType>::GetEntry(nsTHashtable<EntryType>::KeyType) const [with EntryType = nsBaseHashtableET<nsCharPtrHashKey, nsAutoPtr<mozilla::LogModule> >; nsTHashtable<EntryType>::KeyType = const char*]" : true,
     "EntryType* nsTHashtable<EntryType>::PutEntry(nsTHashtable<EntryType>::KeyType) [with EntryType = nsBaseHashtableET<nsPtrHashKey<const mozilla::BlockingResourceBase>, nsAutoPtr<mozilla::DeadlockDetector<mozilla::BlockingResourceBase>::OrderingEntry> >; nsTHashtable<EntryType>::KeyType = const mozilla::BlockingResourceBase*]" : true,
     "EntryType* nsTHashtable<EntryType>::GetEntry(nsTHashtable<EntryType>::KeyType) const [with EntryType = nsBaseHashtableET<nsPtrHashKey<const mozilla::BlockingResourceBase>, nsAutoPtr<mozilla::DeadlockDetector<mozilla::BlockingResourceBase>::OrderingEntry> >; nsTHashtable<EntryType>::KeyType = const mozilla::BlockingResourceBase*]" : true,
+
+    // VTune internals that lazy-load a shared library and make IndirectCalls.
+    "iJIT_IsProfilingActive" : true,
+    "iJIT_NotifyEvent": true,
 
     // The big hammers.
     "PR_GetCurrentThread" : true,
     "calloc" : true,
 };
+
+function extraGCFunctions() {
+    return ["ffi_call"];
+}
 
 function isProtobuf(name)
 {
@@ -318,6 +315,8 @@ function isRootedGCPointerTypeName(name)
     if (name == "ErrorResult" ||
         name == "JSErrorResult" ||
         name == "WrappableJSErrorResult" ||
+        name == "binding_detail::FastErrorResult" ||
+        name == "IgnoredErrorResult" ||
         name == "frontend::TokenStream" ||
         name == "frontend::TokenStream::Position" ||
         name == "ModuleValidator")

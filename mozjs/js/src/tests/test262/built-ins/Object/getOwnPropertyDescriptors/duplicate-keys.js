@@ -3,7 +3,7 @@
 
 /*---
 description: Object.getOwnPropertyDescriptors on a proxy with duplicate ownKeys should work
-esid: pending
+esid: sec-object.getownpropertydescriptors
 author: Jordan Harband
 features: [Proxy]
 ---*/
@@ -27,5 +27,14 @@ var proxy = new Proxy({}, {
 
 var result = Object.getOwnPropertyDescriptors(proxy);
 assert.sameValue(result.hasOwnProperty('DUPLICATE'), true);
-assert.sameValue(result.DUPLICATE, undefined);
+
+var lastDescriptor = descriptors[descriptors.length - 1];
+assert.notSameValue(result.DUPLICATE, lastDescriptor);
+assert.sameValue(result.DUPLICATE.enumerable, lastDescriptor.enumerable);
+assert.sameValue(result.DUPLICATE.configurable, lastDescriptor.configurable);
+assert.sameValue(result.DUPLICATE.value, lastDescriptor.value);
+assert.sameValue(result.DUPLICATE.writable, lastDescriptor.writable);
+
 assert.sameValue(log, 'ownKeys|getOwnPropertyDescriptor:DUPLICATE|getOwnPropertyDescriptor:DUPLICATE|getOwnPropertyDescriptor:DUPLICATE|');
+
+reportCompare(0, 0);

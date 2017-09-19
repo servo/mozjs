@@ -20,6 +20,7 @@ class TaggedProto
     static JSObject * const LazyProto;
 
     TaggedProto() : proto(nullptr) {}
+    TaggedProto(const TaggedProto& other) : proto(other.proto) {}
     explicit TaggedProto(JSObject* proto) : proto(proto) {}
 
     uintptr_t toWord() const { return uintptr_t(proto); }
@@ -45,6 +46,9 @@ class TaggedProto
     bool operator !=(const TaggedProto& other) const { return proto != other.proto; }
 
     HashNumber hashCode() const;
+
+    bool hasUniqueId() const;
+    bool ensureUniqueId() const;
     uint64_t uniqueId() const;
 
     void trace(JSTracer* trc) {
@@ -65,20 +69,16 @@ struct InternalBarrierMethods<TaggedProto>
 
     static void readBarrier(const TaggedProto& proto);
 
-    static bool isMarkableTaggedPointer(TaggedProto proto) {
-        return proto.isObject();
-    }
-
-    static bool isMarkable(TaggedProto proto) {
+    static bool isMarkable(const TaggedProto& proto) {
         return proto.isObject();
     }
 };
 
-template<class Outer>
-class TaggedProtoOperations
+template <class Wrapper>
+class WrappedPtrOperations<TaggedProto, Wrapper>
 {
     const TaggedProto& value() const {
-        return static_cast<const Outer*>(this)->get();
+        return static_cast<const Wrapper*>(this)->get();
     }
 
   public:
@@ -92,23 +92,11 @@ class TaggedProtoOperations
     uint64_t uniqueId() const { return value().uniqueId(); }
 };
 
-template <>
-class HandleBase<TaggedProto> : public TaggedProtoOperations<Handle<TaggedProto>>
-{};
-
-template <>
-class RootedBase<TaggedProto> : public TaggedProtoOperations<Rooted<TaggedProto>>
-{};
-
-template <>
-class BarrieredBaseMixins<TaggedProto> : public TaggedProtoOperations<GCPtr<TaggedProto>>
-{};
-
 // If the TaggedProto is a JSObject pointer, convert to that type and call |f|
 // with the pointer. If the TaggedProto is lazy, calls F::defaultValue.
 template <typename F, typename... Args>
 auto
-DispatchTyped(F f, TaggedProto& proto, Args&&... args)
+DispatchTyped(F f, const TaggedProto& proto, Args&&... args)
   -> decltype(f(static_cast<JSObject*>(nullptr), mozilla::Forward<Args>(args)...))
 {
     if (proto.isObject())

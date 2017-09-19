@@ -8,7 +8,7 @@ import os
 import sys
 
 from collections import Iterable
-from types import StringTypes
+from types import StringTypes, ModuleType
 
 import mozpack.path as mozpath
 
@@ -34,6 +34,7 @@ class BuildConfig(object):
         self.non_global_defines = []
         self.substs = {}
         self.files = []
+        self.mozconfig = None
 
     @classmethod
     def from_config_status(cls, path):
@@ -44,6 +45,12 @@ class BuildConfig(object):
         # cache the compiled code as it can be reused
         # we cache it the first time, or if the file changed
         if not path in code_cache or code_cache[path][0] != mtime:
+            # Add config.status manually to sys.modules so it gets picked up by
+            # iter_modules_in_path() for automatic dependencies.
+            mod = ModuleType('config.status')
+            mod.__file__ = path
+            sys.modules['config.status'] = mod
+
             with open(path, 'rt') as fh:
                 source = fh.read()
                 code_cache[path] = (
@@ -106,7 +113,7 @@ class ConfigEnvironment(object):
     """
 
     def __init__(self, topsrcdir, topobjdir, defines=None,
-        non_global_defines=None, substs=None, source=None):
+        non_global_defines=None, substs=None, source=None, mozconfig=None):
 
         if not source:
             source = mozpath.join(topobjdir, 'config.status')
@@ -116,9 +123,13 @@ class ConfigEnvironment(object):
         self.substs = dict(substs or {})
         self.topsrcdir = mozpath.abspath(topsrcdir)
         self.topobjdir = mozpath.abspath(topobjdir)
+        self.mozconfig = mozpath.abspath(mozconfig) if mozconfig else None
         self.lib_prefix = self.substs.get('LIB_PREFIX', '')
+        self.rust_lib_prefix = self.substs.get('RUST_LIB_PREFIX', '')
         if 'LIB_SUFFIX' in self.substs:
             self.lib_suffix = '.%s' % self.substs['LIB_SUFFIX']
+        if 'RUST_LIB_SUFFIX' in self.substs:
+            self.rust_lib_suffix = '.%s' % self.substs['RUST_LIB_SUFFIX']
         self.dll_prefix = self.substs.get('DLL_PREFIX', '')
         self.dll_suffix = self.substs.get('DLL_SUFFIX', '')
         if self.substs.get('IMPORT_LIB_SUFFIX'):

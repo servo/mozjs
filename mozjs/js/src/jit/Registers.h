@@ -35,22 +35,27 @@ struct Register {
     typedef Codes::Code Code;
     typedef Codes::SetType SetType;
 
-    Codes::Encoding reg_;
+    Encoding reg_;
+    explicit constexpr Register(Encoding e)
+     : reg_(e)
+    { }
+    Register() = default;
+
     static Register FromCode(Code i) {
         MOZ_ASSERT(i < Registers::Total);
-        Register r = { Encoding(i) };
+        Register r { Encoding(i) };
         return r;
     }
     static Register FromName(const char* name) {
         Code code = Registers::FromName(name);
-        Register r = { Encoding(code) };
+        Register r { Encoding(code) };
         return r;
     }
     static Register Invalid() {
-        Register r = { Encoding(Codes::Invalid) };
+        Register r { Encoding(Codes::Invalid) };
         return r;
     }
-    MOZ_CONSTEXPR Code code() const {
+    constexpr Code code() const {
         return Code(reg_);
     }
     Encoding encoding() const {
@@ -88,6 +93,19 @@ struct Register {
         return SetType(1) << code();
     }
 
+    static constexpr RegTypeName DefaultType = RegTypeName::GPR;
+
+    template <RegTypeName = DefaultType>
+    static SetType LiveAsIndexableSet(SetType s) {
+        return SetType(0);
+    }
+
+    template <RegTypeName Name = DefaultType>
+    static SetType AllocatableAsIndexableSet(SetType s) {
+        static_assert(Name != RegTypeName::Any, "Allocatable set are not iterable");
+        return SetType(0);
+    }
+
     static uint32_t SetSize(SetType x) {
         return Codes::SetSize(x);
     }
@@ -99,6 +117,29 @@ struct Register {
     }
 };
 
+template <> inline Register::SetType
+Register::LiveAsIndexableSet<RegTypeName::GPR>(SetType set)
+{
+    return set;
+}
+
+template <> inline Register::SetType
+Register::LiveAsIndexableSet<RegTypeName::Any>(SetType set)
+{
+    return set;
+}
+
+template <> inline Register::SetType
+Register::AllocatableAsIndexableSet<RegTypeName::GPR>(SetType set)
+{
+    return set;
+}
+
+#if defined(JS_NUNBOX32)
+static const uint32_t INT64LOW_OFFSET = 0 * sizeof(int32_t);
+static const uint32_t INT64HIGH_OFFSET = 1 * sizeof(int32_t);
+#endif
+
 struct Register64
 {
 #ifdef JS_PUNBOX64
@@ -109,7 +150,7 @@ struct Register64
 #endif
 
 #ifdef JS_PUNBOX64
-    explicit MOZ_CONSTEXPR Register64(Register r)
+    explicit constexpr Register64(Register r)
       : reg(r)
     {}
     bool operator ==(Register64 other) const {
@@ -118,12 +159,11 @@ struct Register64
     bool operator !=(Register64 other) const {
         return reg != other.reg;
     }
+    static Register64 Invalid() {
+        return Register64(Register::Invalid());
+    }
 #else
-    explicit Register64(Register r)
-      : high(Register::Invalid()), low(Register::Invalid())
-    {}
-
-    MOZ_CONSTEXPR Register64(Register h, Register l)
+    constexpr Register64(Register h, Register l)
       : high(h), low(l)
     {}
     bool operator ==(Register64 other) const {
@@ -131,6 +171,9 @@ struct Register64
     }
     bool operator !=(Register64 other) const {
         return high != other.high || low != other.low;
+    }
+    static Register64 Invalid() {
+        return Register64(Register::Invalid(), Register::Invalid());
     }
 #endif
 };
@@ -228,7 +271,7 @@ struct AutoGenericRegisterScope : public RegisterType
     explicit AutoGenericRegisterScope(MacroAssembler& masm, RegisterType reg);
     ~AutoGenericRegisterScope();
 #else
-    MOZ_CONSTEXPR explicit AutoGenericRegisterScope(MacroAssembler& masm, RegisterType reg)
+    constexpr explicit AutoGenericRegisterScope(MacroAssembler& masm, RegisterType reg)
       : RegisterType(reg)
     { }
 #endif

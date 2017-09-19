@@ -518,15 +518,15 @@ CodeGeneratorARM64::visitBitAndAndBranch(LBitAndAndBranch* baab)
 }
 
 void
-CodeGeneratorARM64::visitAsmJSUInt32ToDouble(LAsmJSUInt32ToDouble* lir)
+CodeGeneratorARM64::visitWasmUint32ToDouble(LWasmUint32ToDouble* lir)
 {
-    MOZ_CRASH("visitAsmJSUInt32ToDouble");
+    MOZ_CRASH("visitWasmUint32ToDouble");
 }
 
 void
-CodeGeneratorARM64::visitAsmJSUInt32ToFloat32(LAsmJSUInt32ToFloat32* lir)
+CodeGeneratorARM64::visitWasmUint32ToFloat32(LWasmUint32ToFloat32* lir)
 {
-    MOZ_CRASH("visitAsmJSUInt32ToFloat32");
+    MOZ_CRASH("visitWasmUint32ToFloat32");
 }
 
 void
@@ -620,7 +620,6 @@ getBase(U* mir)
 {
     switch (mir->base()) {
       case U::Heap: return HeapReg;
-      case U::Global: return GlobalReg;
     }
     return InvalidReg;
 }
@@ -635,12 +634,6 @@ void
 CodeGeneratorARM64::visitStoreTypedArrayElementStatic(LStoreTypedArrayElementStatic* ins)
 {
     MOZ_CRASH("CodeGeneratorARM64::visitStoreTypedArrayElementStatic");
-}
-
-void
-CodeGeneratorARM64::visitAsmJSCall(LAsmJSCall* ins)
-{
-    MOZ_CRASH("visitAsmJSCall");
 }
 
 void
@@ -668,9 +661,9 @@ CodeGeneratorARM64::visitAsmJSAtomicBinopHeap(LAsmJSAtomicBinopHeap* ins)
 }
 
 void
-CodeGeneratorARM64::visitAsmJSPassStackArg(LAsmJSPassStackArg* ins)
+CodeGeneratorARM64::visitWasmStackArg(LWasmStackArg* ins)
 {
-    MOZ_CRASH("visitAsmJSPassStackArg");
+    MOZ_CRASH("visitWasmStackArg");
 }
 
 void
@@ -689,30 +682,6 @@ void
 CodeGeneratorARM64::visitEffectiveAddress(LEffectiveAddress* ins)
 {
     MOZ_CRASH("visitEffectiveAddress");
-}
-
-void
-CodeGeneratorARM64::visitAsmJSLoadGlobalVar(LAsmJSLoadGlobalVar* ins)
-{
-    MOZ_CRASH("visitAsmJSLoadGlobalVar");
-}
-
-void
-CodeGeneratorARM64::visitAsmJSStoreGlobalVar(LAsmJSStoreGlobalVar* ins)
-{
-    MOZ_CRASH("visitAsmJSStoreGlobalVar");
-}
-
-void
-CodeGeneratorARM64::visitAsmJSLoadFuncPtr(LAsmJSLoadFuncPtr* ins)
-{
-    MOZ_CRASH("visitAsmJSLoadFuncPtr");
-}
-
-void
-CodeGeneratorARM64::visitAsmJSLoadFFIFunc(LAsmJSLoadFFIFunc* ins)
-{
-    MOZ_CRASH("visitAsmJSLoadFFIFunc");
 }
 
 void

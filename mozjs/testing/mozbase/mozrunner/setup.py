@@ -6,7 +6,7 @@ import sys
 from setuptools import setup, find_packages
 
 PACKAGE_NAME = 'mozrunner'
-PACKAGE_VERSION = '6.11'
+PACKAGE_VERSION = '6.13'
 
 desc = """Reliable start/stop/configuration of Mozilla Applications (Firefox, Thunderbird, etc.)"""
 
@@ -14,11 +14,11 @@ deps = ['mozdevice >= 0.37',
         'mozfile >= 1.0',
         'mozinfo >= 0.7',
         'mozlog >= 3.0',
-        'mozprocess >= 0.22',
+        'mozprocess >= 0.23',
         'mozprofile >= 0.18',
         ]
 
-EXTRAS_REQUIRE = {'crash': ['mozcrash >= 0.14']}
+EXTRAS_REQUIRE = {'crash': ['mozcrash >= 1.0']}
 
 # we only support python 2 right now
 assert sys.version_info[0] == 2
@@ -42,7 +42,7 @@ setup(name=PACKAGE_NAME,
       license='MPL 2.0',
       packages=find_packages(),
       package_data={'mozrunner': [
-            'resources/metrotestharness.exe'
+          'resources/metrotestharness.exe'
       ]},
       zip_safe=False,
       install_requires=deps,
@@ -51,5 +51,4 @@ setup(name=PACKAGE_NAME,
       # -*- Entry points: -*-
       [console_scripts]
       mozrunner = mozrunner:cli
-      """,
-    )
+      """)

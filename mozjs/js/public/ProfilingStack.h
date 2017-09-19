@@ -21,7 +21,7 @@ namespace js {
 // A call stack can be specified to the JS engine such that all JS entry/exits
 // to functions push/pop an entry to/from the specified stack.
 //
-// For more detailed information, see vm/SPSProfiler.h.
+// For more detailed information, see vm/GeckoProfiler.h.
 //
 class ProfileEntry
 {
@@ -36,29 +36,34 @@ class ProfileEntry
     //
     // A ProfileEntry represents both a C++ profile entry and a JS one.
 
-    // Descriptive string of this entry.
+    // Descriptive string of this entry. Can be a static string or a dynamic
+    // string. If it's a dynamic string (which will need to be copied during
+    // sampling), then isCopyLabel() needs to return true.
     const char * volatile string;
+
+    // An additional descriptive string of this entry. Can be null.
+    const char * volatile dynamicString;
 
     // Stack pointer for non-JS entries, the script pointer otherwise.
     void * volatile spOrScript;
 
     // Line number for non-JS entries, the bytecode offset otherwise.
-    int32_t volatile lineOrPc;
+    int32_t volatile lineOrPcOffset;
 
     // General purpose storage describing this frame.
     uint32_t volatile flags_;
 
   public:
     // These traits are bit masks. Make sure they're powers of 2.
-    enum Flags {
+    enum Flags : uint32_t {
         // Indicate whether a profile entry represents a CPP frame. If not set,
         // a JS frame is assumed by default. You're not allowed to publicly
         // change the frame type. Instead, initialize the ProfileEntry as either
         // a JS or CPP frame with `initJsFrame` or `initCppFrame` respectively.
         IS_CPP_ENTRY = 0x01,
 
-        // Indicate that copying the frame label is not necessary when taking a
-        // sample of the pseudostack.
+        // Indicates that the label string is not a static string and needs to
+        // be copied during sampling.
         FRAME_LABEL_COPY = 0x02,
 
         // This ProfileEntry is a dummy entry indicating the start of a run
@@ -95,10 +100,10 @@ class ProfileEntry
     static_assert((static_cast<int>(Category::FIRST) & Flags::ALL) == 0,
                   "The category bitflags should not intersect with the other flags!");
 
-    // All of these methods are marked with the 'volatile' keyword because SPS's
-    // representation of the stack is stored such that all ProfileEntry
-    // instances are volatile. These methods would not be available unless they
-    // were marked as volatile as well.
+    // All of these methods are marked with the 'volatile' keyword because the
+    // Gecko Profiler's representation of the stack is stored such that all
+    // ProfileEntry instances are volatile. These methods would not be
+    // available unless they were marked as volatile as well.
 
     bool isCpp() const volatile { return hasFlag(IS_CPP_ENTRY); }
     bool isJs() const volatile { return !isCpp(); }
@@ -108,6 +113,9 @@ class ProfileEntry
     void setLabel(const char* aString) volatile { string = aString; }
     const char* label() const volatile { return string; }
 
+    void setDynamicString(const char* aDynamicString) volatile { dynamicString = aDynamicString; }
+    const char* getDynamicString() const volatile { return dynamicString; }
+
     void initJsFrame(JSScript* aScript, jsbytecode* aPc) volatile {
         flags_ = 0;
         spOrScript = aScript;
@@ -116,7 +124,7 @@ class ProfileEntry
     void initCppFrame(void* aSp, uint32_t aLine) volatile {
         flags_ = IS_CPP_ENTRY;
         spOrScript = aSp;
-        lineOrPc = static_cast<int32_t>(aLine);
+        lineOrPcOffset = static_cast<int32_t>(aLine);
     }
 
     void setFlag(uint32_t flag) volatile {
@@ -161,16 +169,19 @@ class ProfileEntry
         MOZ_ASSERT(!isJs());
         return spOrScript;
     }
-    JSScript* script() const volatile {
+    JS_PUBLIC_API(JSScript*) script() const volatile;
+    uint32_t line() const volatile {
+        MOZ_ASSERT(!isJs());
+        return static_cast<uint32_t>(lineOrPcOffset);
+    }
+
+    // Note that the pointer returned might be invalid.
+    JSScript* rawScript() const volatile {
         MOZ_ASSERT(isJs());
         return (JSScript*)spOrScript;
     }
-    uint32_t line() const volatile {
-        MOZ_ASSERT(!isJs());
-        return static_cast<uint32_t>(lineOrPc);
-    }
 
-    // We can't know the layout of JSScript, so look in vm/SPSProfiler.cpp.
+    // We can't know the layout of JSScript, so look in vm/GeckoProfiler.cpp.
     JS_FRIEND_API(jsbytecode*) pc() const volatile;
     JS_FRIEND_API(void) setPC(jsbytecode* pc) volatile;
 
@@ -183,22 +194,19 @@ class ProfileEntry
 
     static size_t offsetOfLabel() { return offsetof(ProfileEntry, string); }
     static size_t offsetOfSpOrScript() { return offsetof(ProfileEntry, spOrScript); }
-    static size_t offsetOfLineOrPc() { return offsetof(ProfileEntry, lineOrPc); }
+    static size_t offsetOfLineOrPcOffset() { return offsetof(ProfileEntry, lineOrPcOffset); }
     static size_t offsetOfFlags() { return offsetof(ProfileEntry, flags_); }
 };
 
 JS_FRIEND_API(void)
-SetRuntimeProfilingStack(JSRuntime* rt, ProfileEntry* stack, uint32_t* size,
+SetContextProfilingStack(JSContext* cx, ProfileEntry* stack, mozilla::Atomic<uint32_t>* size,
                          uint32_t max);
 
 JS_FRIEND_API(void)
-EnableRuntimeProfilingStack(JSRuntime* rt, bool enabled);
+EnableContextProfilingStack(JSContext* cx, bool enabled);
 
 JS_FRIEND_API(void)
-RegisterRuntimeProfilingEventMarker(JSRuntime* rt, void (*fn)(const char*));
-
-JS_FRIEND_API(jsbytecode*)
-ProfilingGetPC(JSRuntime* rt, JSScript* script, void* ip);
+RegisterContextProfilingEventMarker(JSContext* cx, void (*fn)(const char*));
 
 } // namespace js
 

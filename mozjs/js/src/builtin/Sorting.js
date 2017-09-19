@@ -12,11 +12,11 @@ function CountingSort(array, len, signed) {
     var min = 0;
 
     // Map int8 values onto the uint8 range when storing in buffer.
-    if (signed)  {
+    if (signed) {
         min = -128;
     }
 
-    for (var i = 0; i  < 256; i++) {
+    for (var i = 0; i < 256; i++) {
         buffer[i] = 0;
     }
 
@@ -45,7 +45,7 @@ function CountingSort(array, len, signed) {
 
 // Helper for RadixSort
 function ByteAtCol(x, pos) {
-    return  (x >> (pos * 8)) & 0xFF;
+    return (x >> (pos * 8)) & 0xFF;
 }
 
 function SortByColumn(array, len, aux, col) {
@@ -75,7 +75,7 @@ function SortByColumn(array, len, aux, col) {
 
     // Transform counts to indices.
     for (let r = 0; r < R; r++) {
-        counts[r+1] += counts[r];
+        counts[r + 1] += counts[r];
     }
 
     // Distribute
@@ -93,7 +93,7 @@ function SortByColumn(array, len, aux, col) {
 
 // Sorts integers and float32. |signed| is true for int16 and int32, |floating|
 // is true for float32.
-function RadixSort(array, len, nbytes, signed, floating, comparefn) {
+function RadixSort(array, len, buffer, nbytes, signed, floating, comparefn) {
 
     // Determined by performance testing.
     if (len < 128) {
@@ -111,7 +111,15 @@ function RadixSort(array, len, nbytes, signed, floating, comparefn) {
 
     // Preprocess
     if (floating) {
-        view = new Int32Array(array.buffer);
+        // This happens if the array object is constructed under JIT
+        if (buffer === null) {
+            buffer = callFunction(std_TypedArray_buffer, array);
+        }
+
+        // Verify that the buffer is non-null
+        assert(buffer !== null, "Attached data buffer should be reified when array length is >= 128.");
+
+        view = new Int32Array(buffer);
 
         // Flip sign bit for positive numbers; flip all bits for negative
         // numbers
@@ -204,13 +212,13 @@ function Merge(list, start, mid, end, lBuffer, rBuffer, comparefn) {
 
     // Empty out any remaining elements in the buffer.
     while (i < sizeLeft) {
-        list[k] =lBuffer[i];
+        list[k] = lBuffer[i];
         i++;
         k++;
     }
 
     while (j < sizeRight) {
-        list[k] =rBuffer[j];
+        list[k] = rBuffer[j];
         j++;
         k++;
     }
@@ -227,18 +235,18 @@ function MoveHoles(sparse, sparseLen, dense, denseLen) {
 
 // Iterative, bottom up, mergesort.
 function MergeSort(array, len, comparefn) {
-    // To save effort we will do all of our work on a dense list,
-    // then create holes at the end.
-    var denseList = new List();
-    var denseLen = 0;
-
     // Until recently typed arrays had no sort method. To work around that
     // many users passed them to Array.prototype.sort. Now that we have a
     // typed array specific sorting method it makes sense to divert to it
     // when possible.
     if (IsPossiblyWrappedTypedArray(array)) {
-        return TypedArraySort.call(array, comparefn);
+        return callFunction(TypedArraySort, array, comparefn);
     }
+
+    // To save effort we will do all of our work on a dense list,
+    // then create holes at the end.
+    var denseList = new List();
+    var denseLen = 0;
 
     for (var i = 0; i < len; i++) {
         if (i in array)
@@ -250,7 +258,7 @@ function MergeSort(array, len, comparefn) {
 
     // Insertion sort for small arrays, where "small" is defined by performance
     // testing.
-    if (len < 24) {
+    if (denseLen < 24) {
         InsertionSort(denseList, 0, denseLen - 1, comparefn);
         MoveHoles(array, len, denseList, denseLen);
         return array;
@@ -260,7 +268,7 @@ function MergeSort(array, len, comparefn) {
     var lBuffer = new List();
     var rBuffer = new List();
 
-    var mid, end, endOne, endTwo;
+    var mid, end;
     for (var windowSize = 1; windowSize < denseLen; windowSize = 2 * windowSize) {
         for (var start = 0; start < denseLen - 1; start += 2 * windowSize) {
             assert(windowSize < denseLen, "The window size is larger than the array denseLength!");
@@ -286,7 +294,7 @@ function MergeSort(array, len, comparefn) {
 function Partition(array, from, to, comparefn) {
     assert(to - from >= 3, "Partition will not work with less than three elements");
 
-    var medianIndex = (from + to) >> 1;
+    var medianIndex = from + ((to - from) >> 1);
 
     var i = from + 1;
     var j = to;
@@ -306,7 +314,7 @@ function Partition(array, from, to, comparefn) {
     var pivotIndex = i;
 
     // Hoare partition method.
-    for(;;) {
+    for (;;) {
         do i++; while (comparefn(array[i], array[pivotIndex]) < 0);
         do j--; while (comparefn(array[j], array[pivotIndex]) > 0);
         if (i > j)
@@ -320,6 +328,8 @@ function Partition(array, from, to, comparefn) {
 
 // In-place QuickSort.
 function QuickSort(array, len, comparefn) {
+    assert(0 <= len && len <= 0x7FFFFFFF, "length is a positive int32 value");
+
     // Managing the stack ourselves seems to provide a small performance boost.
     var stack = new List();
     var top = 0;
@@ -327,7 +337,7 @@ function QuickSort(array, len, comparefn) {
     var start = 0;
     var end   = len - 1;
 
-    var pivotIndex, i, j, leftLen, rightLen;
+    var pivotIndex, leftLen, rightLen;
 
     for (;;) {
         // Insertion sort for the first N elements where N is some value

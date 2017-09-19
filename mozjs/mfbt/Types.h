@@ -38,11 +38,7 @@
  * methods or data used cross-file.
  */
 #if defined(WIN32)
-#  ifdef RUST_BINDGEN
-#    define MOZ_EXPORT   __attribute__((visibility("default")))
-#  else
-#    define MOZ_EXPORT   __declspec(dllexport)
-#  endif
+#  define MOZ_EXPORT   __declspec(dllexport)
 #else /* Unix */
 #  ifdef HAVE_VISIBILITY_ATTRIBUTE
 #    define MOZ_EXPORT       __attribute__((visibility("default")))
@@ -77,10 +73,6 @@
 #  define MOZ_IMPORT_DATA  MOZ_EXPORT
 #endif
 
-#if defined(_WIN32)
-#  define MFBT_API
-#  define MFBT_DATA
-#else
 /*
  * Consistent with the above comment, the MFBT_API and MFBT_DATA macros expose
  * export mfbt declarations when building mfbt, and they expose import mfbt
@@ -104,7 +96,6 @@
 #    define MFBT_API   MOZ_IMPORT_API
 #    define MFBT_DATA  MOZ_IMPORT_DATA
 #  endif
-#endif
 #endif
 
 /*

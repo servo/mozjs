@@ -12,6 +12,7 @@
 #include "js/Proxy.h"
 #include "vm/ErrorObject.h"
 #include "vm/ProxyObject.h"
+#include "vm/RegExpObject.h"
 #include "vm/WrapperObject.h"
 
 #include "jsobjinlines.h"
@@ -21,7 +22,7 @@
 using namespace js;
 
 bool
-Wrapper::finalizeInBackground(Value priv) const
+Wrapper::finalizeInBackground(const Value& priv) const
 {
     if (!priv.isObject())
         return true;
@@ -268,10 +269,10 @@ Wrapper::fun_toString(JSContext* cx, HandleObject proxy, unsigned indent) const
 }
 
 bool
-Wrapper::regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g) const
+Wrapper::regexp_toShared(JSContext* cx, HandleObject proxy, MutableHandleRegExpShared shared) const
 {
     RootedObject target(cx, proxy->as<ProxyObject>().target());
-    return RegExpToShared(cx, target, g);
+    return RegExpToShared(cx, target, shared);
 }
 
 bool
@@ -312,9 +313,9 @@ Wrapper::New(JSContext* cx, JSObject* obj, const Wrapper* handler,
 }
 
 JSObject*
-Wrapper::Renew(JSContext* cx, JSObject* existing, JSObject* obj, const Wrapper* handler)
+Wrapper::Renew(JSObject* existing, JSObject* obj, const Wrapper* handler)
 {
-    existing->as<ProxyObject>().renew(cx, handler, ObjectValue(*obj));
+    existing->as<ProxyObject>().renew(handler, ObjectValue(*obj));
     return existing;
 }
 
@@ -329,7 +330,10 @@ JSObject*
 Wrapper::wrappedObject(JSObject* wrapper)
 {
     MOZ_ASSERT(wrapper->is<WrapperObject>());
-    return wrapper->as<ProxyObject>().target();
+    JSObject* target = wrapper->as<ProxyObject>().target();
+    if (target)
+        JS::ExposeObjectToActiveJS(target);
+    return target;
 }
 
 JS_FRIEND_API(JSObject*)
@@ -379,6 +383,12 @@ js::UnwrapOneChecked(JSObject* obj, bool stopAtWindowProxy)
     return handler->hasSecurityPolicy() ? nullptr : Wrapper::wrappedObject(obj);
 }
 
+void
+js::ReportAccessDenied(JSContext* cx)
+{
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_OBJECT_ACCESS_DENIED);
+}
+
 const char Wrapper::family = 0;
 const Wrapper Wrapper::singleton((unsigned)0);
 const Wrapper Wrapper::singletonWithPrototype((unsigned)0, true);
@@ -396,7 +406,7 @@ js::TransparentObjectWrapper(JSContext* cx, HandleObject existing, HandleObject 
 
 ErrorCopier::~ErrorCopier()
 {
-    JSContext* cx = ac->context()->asJSContext();
+    JSContext* cx = ac->context();
 
     // The provenance of Debugger.DebuggeeWouldRun is the topmost locking
     // debugger compartment; it should not be copied around.

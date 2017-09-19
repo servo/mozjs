@@ -206,8 +206,8 @@ ComparePolicy::adjustInputs(TempAllocator& alloc, MInstruction* def)
 
     // Convert all inputs to the right input type
     MIRType type = compare->inputType();
-    MOZ_ASSERT(type == MIRType::Int32 || type == MIRType::Double ||
-               type == MIRType::Object || type == MIRType::String || type == MIRType::Float32);
+    MOZ_ASSERT(type == MIRType::Int32 || type == MIRType::Double || type == MIRType::Float32 ||
+               type == MIRType::Object || type == MIRType::String || type == MIRType::Symbol);
     for (size_t i = 0; i < 2; i++) {
         MDefinition* in = def->getOperand(i);
         if (in->type() == type)
@@ -250,6 +250,9 @@ ComparePolicy::adjustInputs(TempAllocator& alloc, MInstruction* def)
             break;
           case MIRType::String:
             replace = MUnbox::New(alloc, in, MIRType::String, MUnbox::Infallible);
+            break;
+          case MIRType::Symbol:
+            replace = MUnbox::New(alloc, in, MIRType::Symbol, MUnbox::Infallible);
             break;
           default:
             MOZ_CRASH("Unknown compare specialization");
@@ -382,9 +385,15 @@ bool
 PowPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins)
 {
     MIRType specialization = ins->typePolicySpecialization();
-    MOZ_ASSERT(specialization == MIRType::Int32 || specialization == MIRType::Double);
+    MOZ_ASSERT(specialization == MIRType::Int32 ||
+               specialization == MIRType::Double ||
+               specialization == MIRType::None);
 
-    // Input must be a double.
+    // Inputs will be boxed if either is non-numeric.
+    if (specialization == MIRType::None)
+        return BoxInputsPolicy::staticAdjustInputs(alloc, ins);
+
+    // Otherwise, input must be a double.
     if (!DoublePolicy<0>::staticAdjustInputs(alloc, ins))
         return false;
 
@@ -646,11 +655,7 @@ BoxExceptPolicy<Op, Type>::staticAdjustInputs(TempAllocator& alloc, MInstruction
     return BoxPolicy<Op>::staticAdjustInputs(alloc, ins);
 }
 
-template bool BoxExceptPolicy<0, MIRType::String>::staticAdjustInputs(TempAllocator& alloc,
-                                                                     MInstruction* ins);
-template bool BoxExceptPolicy<1, MIRType::String>::staticAdjustInputs(TempAllocator& alloc,
-                                                                     MInstruction* ins);
-template bool BoxExceptPolicy<2, MIRType::String>::staticAdjustInputs(TempAllocator& alloc,
+template bool BoxExceptPolicy<0, MIRType::Object>::staticAdjustInputs(TempAllocator& alloc,
                                                                      MInstruction* ins);
 
 template <unsigned Op>
@@ -668,6 +673,7 @@ CacheIdPolicy<Op>::staticAdjustInputs(TempAllocator& alloc, MInstruction* ins)
     }
 }
 
+template bool CacheIdPolicy<0>::staticAdjustInputs(TempAllocator& alloc, MInstruction* ins);
 template bool CacheIdPolicy<1>::staticAdjustInputs(TempAllocator& alloc, MInstruction* ins);
 
 bool
@@ -1212,7 +1218,7 @@ FilterTypeSetPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins)
     _(TypeBarrierPolicy)
 
 #define TEMPLATE_TYPE_POLICY_LIST(_)                                    \
-    _(BoxExceptPolicy<0, MIRType::String>)                               \
+    _(BoxExceptPolicy<0, MIRType::Object>)                              \
     _(BoxPolicy<0>)                                                     \
     _(ConvertToInt32Policy<0>)                                          \
     _(ConvertToStringPolicy<0>)                                         \
@@ -1244,7 +1250,8 @@ FilterTypeSetPolicy::adjustInputs(TempAllocator& alloc, MInstruction* ins)
     _(MixPolicy<DoublePolicy<0>, DoublePolicy<1> >)                     \
     _(MixPolicy<IntPolicy<0>, IntPolicy<1> >)                           \
     _(MixPolicy<ObjectPolicy<0>, BoxPolicy<1> >)                        \
-    _(MixPolicy<ObjectPolicy<0>, CacheIdPolicy<1>>)                     \
+    _(MixPolicy<BoxExceptPolicy<0, MIRType::Object>, CacheIdPolicy<1>>) \
+    _(MixPolicy<CacheIdPolicy<0>, ObjectPolicy<1> >)                    \
     _(MixPolicy<ObjectPolicy<0>, ConvertToStringPolicy<1> >)            \
     _(MixPolicy<ObjectPolicy<0>, IntPolicy<1> >)                        \
     _(MixPolicy<ObjectPolicy<0>, IntPolicy<2> >)                        \

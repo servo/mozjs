@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -18,7 +18,7 @@ include('build/moz.configure/init.configure')
 # To be removed in Bug 1003313
 @depends(milestone)
 def e10s_testing_only(milestone):
-    if not milestone.is_release:
+    if not milestone.is_release_or_beta:
         return True
 
 set_config('E10S_TESTING_ONLY', e10s_testing_only)
@@ -34,6 +34,16 @@ def artifact_builds(value):
         return True
 
 set_config('MOZ_ARTIFACT_BUILDS', artifact_builds)
+
+imply_option('--enable-artifact-build-symbols',
+             depends(artifact_builds)(lambda v: False if v is None else None),
+             reason='--disable-artifact-builds')
+
+option('--enable-artifact-build-symbols',
+       help='Download symbols when artifact builds are enabled.')
+
+set_config('MOZ_ARTIFACT_BUILD_SYMBOLS',
+           depends_if('--enable-artifact-build-symbols')(lambda _: True))
 
 @depends('--enable-artifact-builds')
 def imply_disable_compile_environment(value):
@@ -93,24 +103,39 @@ js_option('--enable-debug',
 add_old_configure_assignment('MOZ_DEBUG',
                              depends('--enable-debug')(lambda v: bool(v)))
 
-@depends('--disable-compile-environment', '--help')
-def toolchain_include(compile_env, help):
-    if compile_env:
-        return 'build/moz.configure/toolchain.configure'
+imply_option('--enable-rust-debug',
+             depends('--enable-debug')(lambda v: bool(v) or None))
 
-include(toolchain_include)
+js_option('--enable-rust-debug',
+          help='Build Rust code with debug assertions turned on.')
 
-@depends('--disable-compile-environment', '--help')
-def memory_include(compile_env, help):
-    if compile_env:
-        return 'build/moz.configure/memory.configure'
+@depends('--enable-rust-debug')
+def debug_rust(debug):
+    if debug:
+        return True
 
-include(memory_include)
+set_config('MOZ_DEBUG_RUST', debug_rust)
+set_define('MOZ_DEBUG_RUST', debug_rust)
 
+include('build/moz.configure/pkg.configure')
+# Make this assignment here rather than in pkg.configure to avoid
+# requiring this file in unit tests.
+add_old_configure_assignment('PKG_CONFIG', pkg_config)
+
+include('build/moz.configure/toolchain.configure',
+        when='--enable-compile-environment')
+include('build/moz.configure/memory.configure',
+        when='--enable-compile-environment')
+include('build/moz.configure/headers.configure',
+        when='--enable-compile-environment')
+include('build/moz.configure/warnings.configure',
+        when='--enable-compile-environment')
+
+include(include_project_configure)
 
 @depends('--help')
 @imports(_from='mozbuild.backend', _import='backends')
-def build_backends_choices(help):
+def build_backends_choices(_):
     return tuple(backends)
 
 
@@ -146,6 +171,23 @@ def build_backends(backends):
 
 set_config('BUILD_BACKENDS', build_backends)
 
+option('--disable-gtest-in-build',
+       help='Force disable building the gtest libxul during the build.',
+       when='--enable-compile-environment')
+
+# Determine whether to build the gtest xul. This happens in automation
+# on Desktop platforms with the exception of Windows PGO, where linking
+# xul-gtest.dll takes too long.
+@depends('MOZ_PGO', build_project, target, 'MOZ_AUTOMATION', '--disable-gtest-in-build',
+         when='--enable-compile-environment')
+def build_gtest(pgo, build_project, target, automation, enabled):
+    if not enabled:
+        return None
+    if (automation and build_project == 'browser' and
+        not (pgo and target.os == 'WINNT')):
+        return True
+
+set_config('LINK_GTEST_DURING_COMPILE', build_gtest)
 
 # Awk detection
 # ==============================================================
@@ -202,6 +244,36 @@ def perl_version_check(min_version):
 perl_version_check('5.006')
 
 
+# GNU make detection
+# ==============================================================
+option(env='MAKE', nargs=1, help='Path to GNU make')
+
+@depends('MAKE', host)
+def possible_makes(make, host):
+    candidates = []
+    if host.kernel == 'WINNT':
+        candidates.append('mingw32-make')
+    if make:
+        candidates.append(make[0])
+    if host.kernel == 'WINNT':
+        candidates.extend(('make', 'gmake'))
+    else:
+        candidates.extend(('gmake', 'make'))
+    return candidates
+
+check_prog('GMAKE', possible_makes)
+
+# tup detection
+# ==============================================================
+@depends(build_backends)
+def tup_progs(build_backends):
+    for backend in build_backends:
+        if 'Tup' in backend:
+            return ['tup']
+    return None
+
+tup = check_prog('TUP', tup_progs)
+
 # Miscellaneous programs
 # ==============================================================
 check_prog('DOXYGEN', ('doxygen',), allow_missing=True)
@@ -212,14 +284,17 @@ def extra_programs(target):
     if target.kernel == 'Darwin':
         return namespace(
             DSYMUTIL=('dsymutil', 'llvm-dsymutil'),
-            GENISOIMAGE=('genisoimage',),
+            MKFSHFS=('newfs_hfs', 'mkfs.hfsplus'),
+            HFS_TOOL=('hfsplus',)
         )
     if target.os == 'GNU' and target.kernel == 'Linux':
         return namespace(RPMBUILD=('rpmbuild',))
 
 check_prog('DSYMUTIL', delayed_getattr(extra_programs, 'DSYMUTIL'),
            allow_missing=True)
-check_prog('GENISOIMAGE', delayed_getattr(extra_programs, 'GENISOIMAGE'),
+check_prog('MKFSHFS', delayed_getattr(extra_programs, 'MKFSHFS'),
+           allow_missing=True)
+check_prog('HFS_TOOL', delayed_getattr(extra_programs, 'HFS_TOOL'),
            allow_missing=True)
 check_prog('RPMBUILD', delayed_getattr(extra_programs, 'RPMBUILD'),
            allow_missing=True)
@@ -232,10 +307,76 @@ def check_for_hunspell(value, compile_env):
     return value and compile_env
 
 system_hunspell = pkg_check_modules('MOZ_HUNSPELL', 'hunspell',
-                                    check_for_hunspell)
+                                    when=check_for_hunspell)
 
-set_config('MOZ_SYSTEM_HUNSPELL', system_hunspell)
+set_config('MOZ_SYSTEM_HUNSPELL', depends_if(system_hunspell)(lambda _: True))
+
+
+@depends(target)
+@imports('os')
+def makensis_progs(target):
+    if target.kernel != 'WINNT':
+        return
+
+    candidates = [
+        'makensis-3.01.exe',
+        'makensis-3.0b3.exe',
+        'makensis-3.0b1.exe',
+        'makensis.exe',
+        'makensis',
+    ]
+
+    # Look for nsis installed by msys environment. But only the 32-bit version.
+    # We use an absolute path and insert as the first entry so it is preferred
+    # over a 64-bit exe that may be in PATH.
+    if 'MSYSTEM_PREFIX' in os.environ:
+        prefix = os.path.dirname(os.environ['MSYSTEM_PREFIX'])
+        candidates.insert(0, os.path.join(prefix, 'mingw32', 'bin', 'makensis.exe'))
+
+    return tuple(candidates)
+
+nsis = check_prog('MAKENSISU', makensis_progs, allow_missing=True)
+
+# Make sure the version of makensis is up to date.
+@depends_if(nsis)
+@checking('for NSIS version')
+@imports('re')
+def nsis_version(nsis):
+    nsis_min_version = '3.0b1'
+    out = check_cmd_output(nsis, '-version',
+                           onerror=lambda: die('Failed to get nsis version.'))
+    m = re.search(r'(?<=v)[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?', out)
+
+    if not m:
+        raise FatalCheckError('Unknown version of makensis')
+    ver = Version(m.group(0))
+
+    # Versions comparisons don't quite work well with beta versions, so ensure
+    # it works for the non-beta version.
+    if ver < nsis_min_version and (ver >= '3.0a' or ver < '3'):
+        raise FatalCheckError('To build the installer you must have NSIS'
+                              ' version %s or greater in your path'
+                              % nsis_min_version)
+
+    return ver
+
+# And that makensis is 32-bit.
+@depends_if(nsis)
+@checking('for 32-bit NSIS')
+def nsis_binary_type(nsis):
+    bin_type = windows_binary_type(nsis)
+    if bin_type != 'win32':
+        raise FatalCheckError('%s is not a 32-bit Windows application' % nsis)
+
+    return 'yes'
+
 
 # Fallthrough to autoconf-based configure
 include('build/moz.configure/old.configure')
-# Please do not add anything after the include of old.configure.
+
+@imports('__sandbox__')
+def all_paths():
+    return __sandbox__._all_paths
+
+set_config('ALL_CONFIGURE_PATHS', all_paths())
+# Please do not add anything after setting ALL_CONFIGURE_PATHS.

@@ -80,6 +80,8 @@ class MozconfigLoader(object):
         'CC', 'CXX', 'CFLAGS', 'CXXFLAGS', 'LDFLAGS', 'MOZ_OBJDIR',
     }
 
+    AUTODETECT = object()
+
     def __init__(self, topsrcdir):
         self.topsrcdir = topsrcdir
 
@@ -190,8 +192,8 @@ class MozconfigLoader(object):
     def read_mozconfig(self, path=None, moz_build_app=None):
         """Read the contents of a mozconfig into a data structure.
 
-        This takes the path to a mozconfig to load. If it is not defined, we
-        will try to find a mozconfig from the environment using
+        This takes the path to a mozconfig to load. If the given path is
+        AUTODETECT, will try to find a mozconfig from the environment using
         find_mozconfig().
 
         mozconfig files are shell scripts. So, we can't just parse them.
@@ -199,7 +201,7 @@ class MozconfigLoader(object):
         state from execution. Thus, the output from a mozconfig is a friendly
         static data structure.
         """
-        if path is None:
+        if path is self.AUTODETECT:
             path = self.find_mozconfig()
 
         result = {
@@ -233,7 +235,9 @@ class MozconfigLoader(object):
             shell = shell + '.exe'
 
         command = [shell, mozpath.normsep(self._loader_script),
-                   mozpath.normsep(self.topsrcdir), path]
+                   mozpath.normsep(self.topsrcdir), path, sys.executable,
+                   mozpath.join(mozpath.dirname(self._loader_script),
+                                'action', 'dump_env.py')]
 
         try:
             # We need to capture stderr because that's where the shell sends

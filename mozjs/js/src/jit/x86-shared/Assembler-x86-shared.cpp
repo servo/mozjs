@@ -39,41 +39,34 @@ AssemblerX86Shared::copyDataRelocationTable(uint8_t* dest)
         memcpy(dest, dataRelocations_.buffer(), dataRelocations_.length());
 }
 
-void
-AssemblerX86Shared::copyPreBarrierTable(uint8_t* dest)
-{
-    if (preBarriers_.length())
-        memcpy(dest, preBarriers_.buffer(), preBarriers_.length());
-}
-
 static void
 TraceDataRelocations(JSTracer* trc, uint8_t* buffer, CompactBufferReader& reader)
 {
     while (reader.more()) {
         size_t offset = reader.readUnsigned();
-        void** ptr = X86Encoding::GetPointerRef(buffer + offset);
+        void* ptr = X86Encoding::GetPointer(buffer + offset);
 
 #ifdef JS_PUNBOX64
         // All pointers on x64 will have the top bits cleared. If those bits
         // are not cleared, this must be a Value.
-        uintptr_t* word = reinterpret_cast<uintptr_t*>(ptr);
-        if (*word >> JSVAL_TAG_SHIFT) {
-            jsval_layout layout;
-            layout.asBits = *word;
-            Value v = IMPL_TO_JSVAL(layout);
-            TraceManuallyBarrieredEdge(trc, &v, "ion-masm-value");
-            if (*word != JSVAL_TO_IMPL(v).asBits) {
+        uintptr_t word = reinterpret_cast<uintptr_t>(ptr);
+        if (word >> JSVAL_TAG_SHIFT) {
+            Value v = Value::fromRawBits(word);
+            TraceManuallyBarrieredEdge(trc, &v, "jit-masm-value");
+            if (word != v.asRawBits()) {
                 // Only update the code if the Value changed, because the code
                 // is not writable if we're not moving objects.
-                *word = JSVAL_TO_IMPL(v).asBits;
+                X86Encoding::SetPointer(buffer + offset, v.bitsAsPunboxPointer());
             }
             continue;
         }
 #endif
 
         // No barrier needed since these are constants.
-        TraceManuallyBarrieredGenericPointerEdge(trc, reinterpret_cast<gc::Cell**>(ptr),
-                                                 "ion-masm-ptr");
+        gc::Cell* cellPtr = reinterpret_cast<gc::Cell*>(ptr);
+        TraceManuallyBarrieredGenericPointerEdge(trc, &cellPtr, "jit-masm-ptr");
+        if (cellPtr != ptr)
+            X86Encoding::SetPointer(buffer + offset, cellPtr);
     }
 }
 
@@ -97,7 +90,8 @@ AssemblerX86Shared::trace(JSTracer* trc)
     }
     if (dataRelocations_.length()) {
         CompactBufferReader reader(dataRelocations_);
-        ::TraceDataRelocations(trc, masm.data(), reader);
+        unsigned char* code = masm.data();
+        ::TraceDataRelocations(trc, code, reader);
     }
 }
 
@@ -176,12 +170,93 @@ AssemblerX86Shared::InvertCondition(Condition cond)
     }
 }
 
+AssemblerX86Shared::Condition
+AssemblerX86Shared::UnsignedCondition(Condition cond)
+{
+    switch (cond) {
+      case Zero:
+      case NonZero:
+        return cond;
+      case LessThan:
+      case Below:
+        return Below;
+      case LessThanOrEqual:
+      case BelowOrEqual:
+        return BelowOrEqual;
+      case GreaterThan:
+      case Above:
+        return Above;
+      case AboveOrEqual:
+      case GreaterThanOrEqual:
+        return AboveOrEqual;
+      default:
+        MOZ_CRASH("unexpected condition");
+    }
+}
+
+AssemblerX86Shared::Condition
+AssemblerX86Shared::ConditionWithoutEqual(Condition cond)
+{
+    switch (cond) {
+      case LessThan:
+      case LessThanOrEqual:
+          return LessThan;
+      case Below:
+      case BelowOrEqual:
+        return Below;
+      case GreaterThan:
+      case GreaterThanOrEqual:
+        return GreaterThan;
+      case Above:
+      case AboveOrEqual:
+        return Above;
+      default:
+        MOZ_CRASH("unexpected condition");
+    }
+}
+
+AssemblerX86Shared::DoubleCondition
+AssemblerX86Shared::InvertCondition(DoubleCondition cond)
+{
+    switch (cond) {
+      case DoubleEqual:
+        return DoubleNotEqualOrUnordered;
+      case DoubleEqualOrUnordered:
+        return DoubleNotEqual;
+      case DoubleNotEqualOrUnordered:
+        return DoubleEqual;
+      case DoubleNotEqual:
+        return DoubleEqualOrUnordered;
+      case DoubleLessThan:
+        return DoubleGreaterThanOrEqualOrUnordered;
+      case DoubleLessThanOrUnordered:
+        return DoubleGreaterThanOrEqual;
+      case DoubleLessThanOrEqual:
+        return DoubleGreaterThanOrUnordered;
+      case DoubleLessThanOrEqualOrUnordered:
+        return DoubleGreaterThan;
+      case DoubleGreaterThan:
+        return DoubleLessThanOrEqualOrUnordered;
+      case DoubleGreaterThanOrUnordered:
+        return DoubleLessThanOrEqual;
+      case DoubleGreaterThanOrEqual:
+        return DoubleLessThanOrUnordered;
+      case DoubleGreaterThanOrEqualOrUnordered:
+        return DoubleLessThan;
+      default:
+        MOZ_CRASH("unexpected condition");
+    }
+}
+
 void
 AssemblerX86Shared::verifyHeapAccessDisassembly(uint32_t begin, uint32_t end,
                                                 const Disassembler::HeapAccess& heapAccess)
 {
 #ifdef DEBUG
-    Disassembler::VerifyHeapAccess(masm.data() + begin, masm.data() + end, heapAccess);
+    if (masm.oom())
+        return;
+    unsigned char* code = masm.data();
+    Disassembler::VerifyHeapAccess(code + begin, code + end, heapAccess);
 #endif
 }
 
@@ -190,6 +265,7 @@ CPUInfo::SSEVersion CPUInfo::maxEnabledSSEVersion = UnknownSSE;
 bool CPUInfo::avxPresent = false;
 bool CPUInfo::avxEnabled = false;
 bool CPUInfo::popcntPresent = false;
+bool CPUInfo::needAmdBugWorkaround = false;
 
 static uintptr_t
 ReadXGETBV()
@@ -218,12 +294,14 @@ ReadXGETBV()
 void
 CPUInfo::SetSSEVersion()
 {
-    int flagsEDX = 0;
+    int flagsEAX = 0;
     int flagsECX = 0;
+    int flagsEDX = 0;
 
 #ifdef _MSC_VER
     int cpuinfo[4];
     __cpuid(cpuinfo, 1);
+    flagsEAX = cpuinfo[0];
     flagsECX = cpuinfo[2];
     flagsEDX = cpuinfo[3];
 #elif defined(__GNUC__)
@@ -231,9 +309,9 @@ CPUInfo::SetSSEVersion()
     asm (
          "movl $0x1, %%eax;"
          "cpuid;"
-         : "=c" (flagsECX), "=d" (flagsEDX)
+         : "=a" (flagsEAX), "=c" (flagsECX), "=d" (flagsEDX)
          :
-         : "%eax", "%ebx"
+         : "%ebx"
          );
 # else
     // On x86, preserve ebx. The compiler needs it for PIC mode.
@@ -246,9 +324,9 @@ CPUInfo::SetSSEVersion()
          "pushl %%ebx;"
          "cpuid;"
          "popl %%ebx;"
-         : "=c" (flagsECX), "=d" (flagsEDX)
+         : "=a" (flagsEAX), "=c" (flagsECX), "=d" (flagsEDX)
          :
-         : "%eax"
+         :
          );
 # endif
 #else
@@ -288,6 +366,13 @@ CPUInfo::SetSSEVersion()
     static const int POPCNTBit = 1 << 23;
 
     popcntPresent = (flagsECX & POPCNTBit);
+
+    // Check if we need to work around an AMD CPU bug (see bug 1281759).
+    // We check for family 20 models 0-2. Intel doesn't use family 20 at
+    // this point, so this should only match AMD CPUs.
+    unsigned family = ((flagsEAX >> 20) & 0xff) + ((flagsEAX >> 8) & 0xf);
+    unsigned model = (((flagsEAX >> 16) & 0xf) << 4) + ((flagsEAX >> 4) & 0xf);
+    needAmdBugWorkaround = (family == 20 && model <= 2);
 }
 
 volatile uintptr_t* blackbox = nullptr;

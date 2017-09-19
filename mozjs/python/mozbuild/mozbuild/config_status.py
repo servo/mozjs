@@ -62,7 +62,8 @@ files by running:
 
 
 def config_status(topobjdir='.', topsrcdir='.', defines=None,
-                  non_global_defines=None, substs=None, source=None):
+                  non_global_defines=None, substs=None, source=None,
+                  mozconfig=None, args=sys.argv[1:]):
     '''Main function, providing config.status functionality.
 
     Contrary to config.status, it doesn't use CONFIG_FILES or CONFIG_HEADERS
@@ -106,14 +107,15 @@ def config_status(topobjdir='.', topsrcdir='.', defines=None,
                         ' '.join(default_backends))
     parser.add_argument('--dry-run', action='store_true',
                         help='do everything except writing files out.')
-    options = parser.parse_args()
+    options = parser.parse_args(args)
 
     # Without -n, the current directory is meant to be the top object directory
     if not options.not_topobjdir:
         topobjdir = os.path.abspath('.')
 
     env = ConfigEnvironment(topsrcdir, topobjdir, defines=defines,
-            non_global_defines=non_global_defines, substs=substs, source=source)
+            non_global_defines=non_global_defines, substs=substs,
+            source=source, mozconfig=mozconfig)
 
     # mozinfo.json only needs written if configure changes and configure always
     # passes this environment variable.
@@ -152,6 +154,9 @@ def config_status(topobjdir='.', topsrcdir='.', defines=None,
         summary = obj.summary()
         print(summary, file=sys.stderr)
         execution_time += summary.execution_time
+        if hasattr(obj, 'gyp_summary'):
+            summary = obj.gyp_summary()
+            print(summary, file=sys.stderr)
 
     cpu_time = time.clock() - cpu_start
     wall_time = time.time() - time_start

@@ -33,16 +33,16 @@ BEGIN_TEST(testPinAcrossGC)
     sw.str = JS_AtomizeAndPinString(cx, "wrapped chars that another test shouldn't be using");
     sw.strOk = false;
     CHECK(sw.str);
-    JS_AddFinalizeCallback(rt, FinalizeCallback, nullptr);
-    JS_GC(rt);
+    JS_AddFinalizeCallback(cx, FinalizeCallback, nullptr);
+    JS_GC(cx);
     CHECK(sw.strOk);
     return true;
 }
 
 static void
-FinalizeCallback(JSFreeOp* fop, JSFinalizeStatus status, bool isCompartmentGC, void* data)
+FinalizeCallback(JSFreeOp* fop, JSFinalizeStatus status, bool isZoneGC, void* data)
 {
     if (status == JSFINALIZE_GROUP_START)
-        sw.strOk = js::gc::IsMarkedUnbarriered(&sw.str);
+        sw.strOk = js::gc::IsMarkedUnbarriered(fop->runtime(), &sw.str);
 }
 END_TEST(testPinAcrossGC)

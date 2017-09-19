@@ -9,66 +9,77 @@
 #include "jscompartment.h"
 #include "jsobj.h"
 
-#include "asmjs/WasmJS.h"
 #include "builtin/TypedObject.h"
 #include "gc/Policy.h"
 #include "gc/Zone.h"
 #include "js/HashTable.h"
 #include "js/Value.h"
-#include "vm/ScopeObject.h"
+#include "vm/EnvironmentObject.h"
 #include "vm/SharedArrayObject.h"
 #include "vm/Symbol.h"
+#include "wasm/WasmJS.h"
 
 namespace js {
+
+bool
+RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(JS::shadow::Zone* shadowZone)
+{
+    MOZ_ASSERT(CurrentThreadCanAccessRuntime(shadowZone->runtimeFromActiveCooperatingThread()));
+    return JS::CurrentThreadIsHeapMajorCollecting();
+}
 
 #ifdef DEBUG
 
 bool
-HeapSlot::preconditionForSet(NativeObject* owner, Kind kind, uint32_t slot)
+IsMarkedBlack(JSObject* obj)
+{
+    // Note: we assume conservatively that Nursery things will be live.
+    if (!obj->isTenured())
+        return true;
+
+    gc::TenuredCell& tenured = obj->asTenured();
+    if (tenured.isMarked(gc::BLACK) || tenured.arena()->allocatedDuringIncremental)
+        return true;
+
+    return false;
+}
+
+bool
+HeapSlot::preconditionForSet(NativeObject* owner, Kind kind, uint32_t slot) const
 {
     return kind == Slot
          ? &owner->getSlotRef(slot) == this
          : &owner->getDenseElement(slot) == (const Value*)this;
 }
 
-bool
-HeapSlot::preconditionForWriteBarrierPost(NativeObject* obj, Kind kind, uint32_t slot,
-                                              Value target) const
+void
+HeapSlot::assertPreconditionForWriteBarrierPost(NativeObject* obj, Kind kind, uint32_t slot,
+                                                const Value& target) const
 {
-    return kind == Slot
-         ? obj->getSlotAddressUnchecked(slot)->get() == target
-         : static_cast<HeapSlot*>(obj->getDenseElements() + slot)->get() == target;
-}
+    if (kind == Slot)
+        MOZ_ASSERT(obj->getSlotAddressUnchecked(slot)->get() == target);
+    else
+        MOZ_ASSERT(static_cast<HeapSlot*>(obj->getDenseElements() + slot)->get() == target);
 
-bool
-RuntimeFromMainThreadIsHeapMajorCollecting(JS::shadow::Zone* shadowZone)
-{
-    return shadowZone->runtimeFromMainThread()->isHeapMajorCollecting();
+    CheckEdgeIsNotBlackToGray(obj, target);
 }
 
 bool
 CurrentThreadIsIonCompiling()
 {
-    return TlsPerThreadData.get()->ionCompiling;
+    return TlsContext.get()->ionCompiling;
 }
 
 bool
 CurrentThreadIsIonCompilingSafeForMinorGC()
 {
-    return TlsPerThreadData.get()->ionCompilingSafeForMinorGC;
+    return TlsContext.get()->ionCompilingSafeForMinorGC;
 }
 
 bool
 CurrentThreadIsGCSweeping()
 {
-    return TlsPerThreadData.get()->gcSweeping;
-}
-
-bool
-CurrentThreadIsHandlingInitFailure()
-{
-    JSRuntime* rt = TlsPerThreadData.get()->runtimeIfOnOwnerThread();
-    return rt && rt->handlingInitFailure;
+    return TlsContext.get()->gcSweeping;
 }
 
 #endif // DEBUG
@@ -107,6 +118,27 @@ template void PreBarrierFunctor<jsid>::operator()<JS::Symbol>(JS::Symbol*);
 template void PreBarrierFunctor<jsid>::operator()<JSString>(JSString*);
 
 template <typename T>
+/* static */ bool
+MovableCellHasher<T>::hasHash(const Lookup& l)
+{
+    if (!l)
+        return true;
+
+    return l->zoneFromAnyThread()->hasUniqueId(l);
+}
+
+template <typename T>
+/* static */ bool
+MovableCellHasher<T>::ensureHash(const Lookup& l)
+{
+    if (!l)
+        return true;
+
+    uint64_t unusedId;
+    return l->zoneFromAnyThread()->getUniqueId(l, &unusedId);
+}
+
+template <typename T>
 /* static */ HashNumber
 MovableCellHasher<T>::hash(const Lookup& l)
 {
@@ -114,9 +146,9 @@ MovableCellHasher<T>::hash(const Lookup& l)
         return 0;
 
     // We have to access the zone from-any-thread here: a worker thread may be
-    // cloning a self-hosted object from the main-thread-runtime-owned self-
-    // hosting zone into the off-main-thread runtime. The zone's uid lock will
-    // protect against multiple workers doing this simultaneously.
+    // cloning a self-hosted object from the main runtime's self- hosting zone
+    // into another runtime. The zone's uid lock will protect against multiple
+    // workers doing this simultaneously.
     MOZ_ASSERT(CurrentThreadCanAccessZone(l->zoneFromAnyThread()) ||
                l->zoneFromAnyThread()->isSelfHostingZone());
 
@@ -148,12 +180,21 @@ MovableCellHasher<T>::match(const Key& k, const Lookup& l)
     return zone->getUniqueIdInfallible(k) == zone->getUniqueIdInfallible(l);
 }
 
-template struct MovableCellHasher<JSObject*>;
-template struct MovableCellHasher<GlobalObject*>;
-template struct MovableCellHasher<SavedFrame*>;
-template struct MovableCellHasher<ScopeObject*>;
-template struct MovableCellHasher<WasmInstanceObject*>;
-template struct MovableCellHasher<JSScript*>;
+#ifdef JS_BROKEN_GCC_ATTRIBUTE_WARNING
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wattributes"
+#endif // JS_BROKEN_GCC_ATTRIBUTE_WARNING
+
+template struct JS_PUBLIC_API(MovableCellHasher<JSObject*>);
+template struct JS_PUBLIC_API(MovableCellHasher<GlobalObject*>);
+template struct JS_PUBLIC_API(MovableCellHasher<SavedFrame*>);
+template struct JS_PUBLIC_API(MovableCellHasher<EnvironmentObject*>);
+template struct JS_PUBLIC_API(MovableCellHasher<WasmInstanceObject*>);
+template struct JS_PUBLIC_API(MovableCellHasher<JSScript*>);
+
+#ifdef JS_BROKEN_GCC_ATTRIBUTE_WARNING
+#pragma GCC diagnostic pop
+#endif // JS_BROKEN_GCC_ATTRIBUTE_WARNING
 
 } // namespace js
 

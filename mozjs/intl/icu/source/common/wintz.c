@@ -1,3 +1,5 @@
+// Copyright (C) 2016 and later: Unicode, Inc. and others.
+// License & terms of use: http://www.unicode.org/copyright.html
 /*
 ********************************************************************************
 *   Copyright (C) 2005-2015, International Business Machines
@@ -214,6 +216,8 @@ static LONG getTZKeyName(char* tzKeyName, int32_t length) {
              &cbData);
     }
 
+    RegCloseKey(hkey);
+
     return result;
 }
 
@@ -352,6 +356,7 @@ uprv_detectWindowsTimeZone() {
                     tryPreVistaFallback = FALSE;
                 }
             }
+            ures_close(winTZ);
         }
     }
 

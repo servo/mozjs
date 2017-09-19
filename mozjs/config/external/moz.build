@@ -1,4 +1,4 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
+# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
 # vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -33,6 +33,9 @@ if CONFIG['MOZ_WEBM_ENCODER']:
 if not CONFIG['MOZ_SYSTEM_LIBVPX']:
     external_dirs += ['media/libvpx']
 
+if CONFIG['MOZ_AV1']:
+    external_dirs += ['media/libaom']
+
 if not CONFIG['MOZ_SYSTEM_PNG']:
     external_dirs += ['media/libpng']
 
@@ -58,6 +61,10 @@ external_dirs += [
     'media/libspeex_resampler',
     'media/libstagefright',
     'media/libsoundtouch',
+    'media/psshparser'
 ]
+
+if CONFIG['MOZ_LINKER']:
+    external_dirs += ['modules/xz-embedded']
 
 DIRS += ['../../' + i for i in external_dirs]

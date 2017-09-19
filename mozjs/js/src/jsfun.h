@@ -17,10 +17,6 @@
 
 namespace js {
 
-namespace frontend {
-class FunctionBox;
-}
-
 class FunctionExtended;
 
 typedef JSNative           Native;
@@ -31,6 +27,15 @@ struct JSAtomState;
 static const uint32_t JSSLOT_BOUND_FUNCTION_TARGET     = 2;
 static const uint32_t JSSLOT_BOUND_FUNCTION_THIS       = 3;
 static const uint32_t JSSLOT_BOUND_FUNCTION_ARGS       = 4;
+
+static const char FunctionConstructorMedialSigils[] = ") {\n";
+static const char FunctionConstructorFinalBrace[] = "\n}";
+
+enum class FunctionPrefixKind {
+    None,
+    Get,
+    Set
+};
 
 class JSFunction : public js::NativeObject
 {
@@ -53,8 +58,6 @@ class JSFunction : public js::NativeObject
         CONSTRUCTOR      = 0x0002,  /* function that can be called as a constructor */
         EXTENDED         = 0x0004,  /* structure is FunctionExtended */
         BOUND_FUN        = 0x0008,  /* function was created with Function.prototype.bind. */
-        EXPR_BODY        = 0x0010,  /* arrow function with expression body or
-                                     * expression closure: function(x) x*x */
         HAS_GUESSED_ATOM = 0x0020,  /* function had no explicit name, but a
                                        name was guessed for it anyway */
         LAMBDA           = 0x0040,  /* function comes from a FunctionExpression, ArrowFunction, or
@@ -62,12 +65,12 @@ class JSFunction : public js::NativeObject
                                        function-statement) */
         SELF_HOSTED      = 0x0080,  /* function is self-hosted builtin and must not be
                                        decompilable nor constructible. */
-        HAS_REST         = 0x0100,  /* function has a rest (...) parameter */
+        HAS_COMPILE_TIME_NAME = 0x0100, /* function had no explicit name, but a
+                                           name was set by SetFunctionName
+                                           at compile time */
         INTERPRETED_LAZY = 0x0200,  /* function is interpreted but doesn't have a script yet */
         RESOLVED_LENGTH  = 0x0400,  /* f.length has been resolved (see fun_resolve). */
         RESOLVED_NAME    = 0x0800,  /* f.name has been resolved (see fun_resolve). */
-        BEING_PARSED     = 0x1000,  /* function is currently being parsed; has
-                                       a funbox in place of an environment */
 
         FUNCTION_KIND_SHIFT = 13,
         FUNCTION_KIND_MASK  = 0x7 << FUNCTION_KIND_SHIFT,
@@ -86,37 +89,25 @@ class JSFunction : public js::NativeObject
         ASMJS_CTOR = ASMJS_KIND | NATIVE_CTOR,
         ASMJS_LAMBDA_CTOR = ASMJS_KIND | NATIVE_CTOR | LAMBDA,
         INTERPRETED_METHOD = INTERPRETED | METHOD_KIND,
-        INTERPRETED_METHOD_GENERATOR = INTERPRETED | METHOD_KIND,
+        INTERPRETED_METHOD_GENERATOR_OR_ASYNC = INTERPRETED | METHOD_KIND,
         INTERPRETED_CLASS_CONSTRUCTOR = INTERPRETED | CLASSCONSTRUCTOR_KIND | CONSTRUCTOR,
         INTERPRETED_GETTER = INTERPRETED | GETTER_KIND,
         INTERPRETED_SETTER = INTERPRETED | SETTER_KIND,
         INTERPRETED_LAMBDA = INTERPRETED | LAMBDA | CONSTRUCTOR,
         INTERPRETED_LAMBDA_ARROW = INTERPRETED | LAMBDA | ARROW_KIND,
-        INTERPRETED_LAMBDA_GENERATOR = INTERPRETED | LAMBDA,
+        INTERPRETED_LAMBDA_GENERATOR_OR_ASYNC = INTERPRETED | LAMBDA,
         INTERPRETED_NORMAL = INTERPRETED | CONSTRUCTOR,
-        INTERPRETED_GENERATOR = INTERPRETED,
+        INTERPRETED_GENERATOR_OR_ASYNC = INTERPRETED,
         NO_XDR_FLAGS = RESOLVED_LENGTH | RESOLVED_NAME,
 
-        STABLE_ACROSS_CLONES = CONSTRUCTOR | EXPR_BODY | HAS_GUESSED_ATOM | LAMBDA |
-                               SELF_HOSTED |  HAS_REST | FUNCTION_KIND_MASK
+        STABLE_ACROSS_CLONES = CONSTRUCTOR | HAS_GUESSED_ATOM | LAMBDA |
+                               SELF_HOSTED | HAS_COMPILE_TIME_NAME | FUNCTION_KIND_MASK
     };
 
     static_assert((INTERPRETED | INTERPRETED_LAZY) == js::JS_FUNCTION_INTERPRETED_BITS,
                   "jsfriendapi.h's JSFunction::INTERPRETED-alike is wrong");
     static_assert(((FunctionKindLimit - 1) << FUNCTION_KIND_SHIFT) <= FUNCTION_KIND_MASK,
                   "FunctionKind doesn't fit into flags_");
-
-    // Implemented in Parser.cpp. Used so the static scope chain may be walked
-    // in Parser without a JSScript.
-    class MOZ_STACK_CLASS AutoParseUsingFunctionBox
-    {
-        js::RootedFunction fun_;
-        js::RootedObject oldEnv_;
-
-      public:
-        AutoParseUsingFunctionBox(js::ExclusiveContext* cx, js::frontend::FunctionBox* funbox);
-        ~AutoParseUsingFunctionBox();
-    };
 
   private:
     uint16_t        nargs_;       /* number of formal arguments
@@ -127,8 +118,8 @@ class JSFunction : public js::NativeObject
             friend class JSFunction;
             js::Native          native;       /* native method pointer or null */
             const JSJitInfo*    jitinfo;     /* Information about this function to be
-                                                 used by the JIT;
-                                                 use the accessor! */
+                                                used by the JIT;
+                                                use the accessor! */
         } n;
         struct Scripted {
             union {
@@ -136,33 +127,42 @@ class JSFunction : public js::NativeObject
                                       use the accessor! */
                 js::LazyScript* lazy_; /* lazily compiled script, or nullptr */
             } s;
-            union {
-                JSObject*   env_;    /* environment for new activations;
-                                        use the accessor! */
-                js::frontend::FunctionBox* funbox_; /* the function box when parsing */
-            };
+            JSObject*   env_;    /* environment for new activations */
         } i;
         void*           nativeOrScript;
     } u;
     js::GCPtrAtom atom_;      /* name for diagnostics and decompiling */
 
   public:
-
     /* Call objects must be created for each invocation of this function. */
     bool needsCallObject() const {
         MOZ_ASSERT(!isInterpretedLazy());
-        MOZ_ASSERT(!isBeingParsed());
 
         if (isNative())
             return false;
 
-        // Note: this should be kept in sync with FunctionBox::needsCallObject().
-        return nonLazyScript()->hasAnyAliasedBindings() ||
-               nonLazyScript()->funHasExtensibleScope() ||
-               nonLazyScript()->funNeedsDeclEnvObject() ||
-               nonLazyScript()->needsHomeObject()       ||
-               nonLazyScript()->isDerivedClassConstructor() ||
-               isGenerator();
+        // Note: this should be kept in sync with
+        // FunctionBox::needsCallObjectRegardlessOfBindings().
+        MOZ_ASSERT_IF(nonLazyScript()->funHasExtensibleScope() ||
+                      nonLazyScript()->needsHomeObject()       ||
+                      nonLazyScript()->isDerivedClassConstructor() ||
+                      isStarGenerator() ||
+                      isLegacyGenerator() ||
+                      isAsync(),
+                      nonLazyScript()->bodyScope()->hasEnvironment());
+
+        return nonLazyScript()->bodyScope()->hasEnvironment();
+    }
+
+    bool needsExtraBodyVarEnvironment() const;
+    bool needsNamedLambdaEnvironment() const;
+
+    bool needsFunctionEnvironmentObjects() const {
+        return needsCallObject() || needsNamedLambdaEnvironment();
+    }
+
+    bool needsSomeEnvironmentObject() const {
+        return needsFunctionEnvironmentObjects() || needsExtraBodyVarEnvironment();
     }
 
     size_t nargs() const {
@@ -187,14 +187,12 @@ class JSFunction : public js::NativeObject
     bool isAsmJSNative()            const { return kind() == AsmJS; }
 
     /* Possible attributes of an interpreted function: */
-    bool isExprBody()               const { return flags() & EXPR_BODY; }
+    bool hasCompileTimeName()       const { return flags() & HAS_COMPILE_TIME_NAME; }
     bool hasGuessedAtom()           const { return flags() & HAS_GUESSED_ATOM; }
     bool isLambda()                 const { return flags() & LAMBDA; }
     bool isBoundFunction()          const { return flags() & BOUND_FUN; }
-    bool hasRest()                  const { return flags() & HAS_REST; }
     bool isInterpretedLazy()        const { return flags() & INTERPRETED_LAZY; }
     bool hasScript()                const { return flags() & INTERPRETED; }
-    bool isBeingParsed()            const { return flags() & BEING_PARSED; }
 
     bool infallibleIsDefaultClassConstructor(JSContext* cx) const;
 
@@ -231,7 +229,7 @@ class JSFunction : public js::NativeObject
     }
 
     bool isNamedLambda() const {
-        return isLambda() && displayAtom() && !hasGuessedAtom();
+        return isLambda() && displayAtom() && !hasCompileTimeName() && !hasGuessedAtom();
     }
 
     bool hasLexicalThis() const {
@@ -239,6 +237,7 @@ class JSFunction : public js::NativeObject
     }
 
     bool isBuiltinFunctionConstructor();
+    bool needsPrototypeProperty();
 
     /* Returns the strictness of this function, which must be interpreted. */
     bool strict() const {
@@ -273,11 +272,6 @@ class JSFunction : public js::NativeObject
         this->nargs_ = nargs;
     }
 
-    // Can be called multiple times by the parser.
-    void setHasRest() {
-        flags_ |= HAS_REST;
-    }
-
     void setIsBoundFunction() {
         MOZ_ASSERT(!isBoundFunction());
         flags_ |= BOUND_FUN;
@@ -296,11 +290,6 @@ class JSFunction : public js::NativeObject
         flags_ |= SELF_HOSTED;
     }
 
-    // Can be called multiple times by the parser.
-    void setIsExprBody() {
-        flags_ |= EXPR_BODY;
-    }
-
     void setArrow() {
         setKind(Arrow);
     }
@@ -313,26 +302,57 @@ class JSFunction : public js::NativeObject
         flags_ |= RESOLVED_NAME;
     }
 
-    JSAtom* name() const { return hasGuessedAtom() ? nullptr : atom_.get(); }
+    void setAsyncKind(js::FunctionAsyncKind asyncKind) {
+        if (isInterpretedLazy())
+            lazyScript()->setAsyncKind(asyncKind);
+        else
+            nonLazyScript()->setAsyncKind(asyncKind);
+    }
 
-    // Because display names (see Debugger.Object.displayName) are already stored
-    // on functions and will always contain a valid es6 function name, as described
-    // in "ECMA-262 (2016-02-27) 9.2.11 SetFunctionName," we have opted to save
-    // memory by parsing the existing display name when a function's name property
-    // is accessed.
-    JSAtom* functionName(JSContext* cx) const;
+    static bool getUnresolvedLength(JSContext* cx, js::HandleFunction fun,
+                                    js::MutableHandleValue v);
 
-    void initAtom(JSAtom* atom) { atom_.init(atom); }
+    JSAtom* getUnresolvedName(JSContext* cx);
 
-    void setAtom(JSAtom* atom) { atom_ = atom; }
+    JSAtom* explicitName() const {
+        return (hasCompileTimeName() || hasGuessedAtom()) ? nullptr : atom_.get();
+    }
+    JSAtom* explicitOrCompileTimeName() const {
+        return hasGuessedAtom() ? nullptr : atom_.get();
+    }
+
+    void initAtom(JSAtom* atom) {
+        MOZ_ASSERT_IF(atom, js::AtomIsMarked(zone(), atom));
+        atom_.init(atom);
+    }
+
+    void setAtom(JSAtom* atom) {
+        MOZ_ASSERT_IF(atom, js::AtomIsMarked(zone(), atom));
+        atom_ = atom;
+    }
 
     JSAtom* displayAtom() const {
+        return atom_;
+    }
+
+    void setCompileTimeName(JSAtom* atom) {
+        MOZ_ASSERT(!atom_);
+        MOZ_ASSERT(atom);
+        MOZ_ASSERT(!hasGuessedAtom());
+        MOZ_ASSERT(!isClassConstructor());
+        atom_ = atom;
+        flags_ |= HAS_COMPILE_TIME_NAME;
+    }
+    JSAtom* compileTimeName() const {
+        MOZ_ASSERT(hasCompileTimeName());
+        MOZ_ASSERT(atom_);
         return atom_;
     }
 
     void setGuessedAtom(JSAtom* atom) {
         MOZ_ASSERT(!atom_);
         MOZ_ASSERT(atom);
+        MOZ_ASSERT(!hasCompileTimeName());
         MOZ_ASSERT(!hasGuessedAtom());
         atom_ = atom;
         flags_ |= HAS_GUESSED_ATOM;
@@ -352,36 +372,22 @@ class JSFunction : public js::NativeObject
      * activations (stack frames) of the function.
      */
     JSObject* environment() const {
-        MOZ_ASSERT(isInterpreted() && !isBeingParsed());
+        MOZ_ASSERT(isInterpreted());
         return u.i.env_;
     }
 
     void setEnvironment(JSObject* obj) {
-        MOZ_ASSERT(isInterpreted() && !isBeingParsed());
+        MOZ_ASSERT(isInterpreted());
         *reinterpret_cast<js::GCPtrObject*>(&u.i.env_) = obj;
     }
 
     void initEnvironment(JSObject* obj) {
-        MOZ_ASSERT(isInterpreted() && !isBeingParsed());
+        MOZ_ASSERT(isInterpreted());
         reinterpret_cast<js::GCPtrObject*>(&u.i.env_)->init(obj);
     }
 
     void unsetEnvironment() {
         setEnvironment(nullptr);
-    }
-
-  private:
-    void setFunctionBox(js::frontend::FunctionBox* funbox) {
-        MOZ_ASSERT(isInterpreted());
-        MOZ_ASSERT_IF(!isBeingParsed(), !environment());
-        flags_ |= BEING_PARSED;
-        u.i.funbox_ = funbox;
-    }
-
-    void unsetFunctionBox() {
-        MOZ_ASSERT(isBeingParsed());
-        flags_ &= ~BEING_PARSED;
-        u.i.funbox_ = nullptr;
     }
 
   public:
@@ -409,24 +415,24 @@ class JSFunction : public js::NativeObject
     //   use, but has extra checks, requires a cx and may trigger a GC.
     //
     // - For inlined functions which may have a LazyScript but whose JSScript
-    //   is known to exist, existingScriptForInlinedFunction() will get the
-    //   script and delazify the function if necessary.
+    //   is known to exist, existingScript() will get the script and delazify
+    //   the function if necessary. If the function should not be delazified,
+    //   use existingScriptNonDelazifying().
     //
     // - For functions known to have a JSScript, nonLazyScript() will get it.
 
-    JSScript* getOrCreateScript(JSContext* cx) {
-        MOZ_ASSERT(isInterpreted());
+    static JSScript* getOrCreateScript(JSContext* cx, js::HandleFunction fun) {
+        MOZ_ASSERT(fun->isInterpreted());
         MOZ_ASSERT(cx);
-        if (isInterpretedLazy()) {
-            JS::RootedFunction self(cx, this);
-            if (!createScriptForLazilyInterpretedFunction(cx, self))
+        if (fun->isInterpretedLazy()) {
+            if (!createScriptForLazilyInterpretedFunction(cx, fun))
                 return nullptr;
-            return self->nonLazyScript();
+            return fun->nonLazyScript();
         }
-        return nonLazyScript();
+        return fun->nonLazyScript();
     }
 
-    JSScript* existingScriptForInlinedFunction() {
+    JSScript* existingScriptNonDelazifying() const {
         MOZ_ASSERT(isInterpreted());
         if (isInterpretedLazy()) {
             // Get the script from the canonical function. Ion used the
@@ -437,11 +443,17 @@ class JSFunction : public js::NativeObject
             js::LazyScript* lazy = lazyScript();
             JSFunction* fun = lazy->functionNonDelazifying();
             MOZ_ASSERT(fun);
-            JSScript* script = fun->nonLazyScript();
+            return fun->nonLazyScript();
+        }
+        return nonLazyScript();
+    }
 
+    JSScript* existingScript() {
+        MOZ_ASSERT(isInterpreted());
+        if (isInterpretedLazy()) {
             if (shadowZone()->needsIncrementalBarrier())
-                js::LazyScript::writeBarrierPre(lazy);
-
+                js::LazyScript::writeBarrierPre(lazyScript());
+            JSScript* script = existingScriptNonDelazifying();
             flags_ &= ~INTERPRETED_LAZY;
             flags_ |= INTERPRETED;
             initScript(script);
@@ -462,7 +474,7 @@ class JSFunction : public js::NativeObject
         return u.i.s.script_;
     }
 
-    bool getLength(JSContext* cx, uint16_t* length);
+    static bool getLength(JSContext* cx, js::HandleFunction fun, uint16_t* length);
 
     js::LazyScript* lazyScript() const {
         MOZ_ASSERT(isInterpretedLazy() && u.i.s.lazy_);
@@ -472,11 +484,6 @@ class JSFunction : public js::NativeObject
     js::LazyScript* lazyScriptOrNull() const {
         MOZ_ASSERT(isInterpretedLazy());
         return u.i.s.lazy_;
-    }
-
-    js::frontend::FunctionBox* functionBox() const {
-        MOZ_ASSERT(isBeingParsed());
-        return u.i.funbox_;
     }
 
     js::GeneratorKind generatorKind() const {
@@ -490,11 +497,21 @@ class JSFunction : public js::NativeObject
         return js::NotGenerator;
     }
 
-    bool isGenerator() const { return generatorKind() != js::NotGenerator; }
-
     bool isLegacyGenerator() const { return generatorKind() == js::LegacyGenerator; }
 
     bool isStarGenerator() const { return generatorKind() == js::StarGenerator; }
+
+    js::FunctionAsyncKind asyncKind() const {
+        return isInterpretedLazy() ? lazyScript()->asyncKind() : nonLazyScript()->asyncKind();
+    }
+
+    bool isAsync() const {
+        if (isInterpretedLazy())
+            return lazyScript()->isAsync();
+        if (hasScript())
+            return nonLazyScript()->isAsync();
+        return false;
+    }
 
     void setScript(JSScript* script_) {
         mutableScript() = script_;
@@ -505,11 +522,13 @@ class JSFunction : public js::NativeObject
     }
 
     void setUnlazifiedScript(JSScript* script) {
-        // Note: createScriptForLazilyInterpretedFunction triggers a barrier on
-        // lazy script before it is overwritten here.
         MOZ_ASSERT(isInterpretedLazy());
-        if (lazyScriptOrNull() && !lazyScript()->maybeScript())
-            lazyScript()->initScript(script);
+        if (lazyScriptOrNull()) {
+            // Trigger a pre barrier on the lazy script being overwritten.
+            js::LazyScript::writeBarrierPre(lazyScriptOrNull());
+            if (!lazyScript()->maybeScript())
+                lazyScript()->initScript(script);
+        }
         flags_ &= ~INTERPRETED_LAZY;
         flags_ |= INTERPRETED;
         initScript(script);
@@ -560,13 +579,17 @@ class JSFunction : public js::NativeObject
         return offsetof(JSFunction, u.nativeOrScript);
     }
 
+    static unsigned offsetOfJitInfo() {
+        return offsetof(JSFunction, u.n.jitinfo);
+    }
+
     inline void trace(JSTracer* trc);
 
     /* Bound function accessors. */
 
     JSObject* getBoundFunctionTarget() const;
     const js::Value& getBoundFunctionThis() const;
-    const js::Value& getBoundFunctionArgument(JSContext* cx, unsigned which) const;
+    const js::Value& getBoundFunctionArgument(unsigned which) const;
     size_t getBoundFunctionArgumentCount() const;
 
   private:
@@ -597,7 +620,7 @@ class JSFunction : public js::NativeObject
     inline const js::Value& getExtendedSlot(size_t which) const;
 
     /* Constructs a new type for the function if necessary. */
-    static bool setTypeForScriptedFunction(js::ExclusiveContext* cx, js::HandleFunction fun,
+    static bool setTypeForScriptedFunction(JSContext* cx, js::HandleFunction fun,
                                            bool singleton = false);
 
     /* GC support. */
@@ -628,33 +651,41 @@ Function(JSContext* cx, unsigned argc, Value* vp);
 extern bool
 Generator(JSContext* cx, unsigned argc, Value* vp);
 
-// Allocate a new function backed by a JSNative.
-extern JSFunction*
-NewNativeFunction(ExclusiveContext* cx, JSNative native, unsigned nargs, HandleAtom atom,
-                  gc::AllocKind allocKind = gc::AllocKind::FUNCTION,
-                  NewObjectKind newKind = GenericObject);
+extern bool
+AsyncFunctionConstructor(JSContext* cx, unsigned argc, Value* vp);
 
-// Allocate a new constructor backed by a JSNative.
+extern bool
+AsyncGeneratorConstructor(JSContext* cx, unsigned argc, Value* vp);
+
+// Allocate a new function backed by a JSNative.  Note that by default this
+// creates a singleton object.
 extern JSFunction*
-NewNativeConstructor(ExclusiveContext* cx, JSNative native, unsigned nargs, HandleAtom atom,
+NewNativeFunction(JSContext* cx, JSNative native, unsigned nargs, HandleAtom atom,
+                  gc::AllocKind allocKind = gc::AllocKind::FUNCTION,
+                  NewObjectKind newKind = SingletonObject);
+
+// Allocate a new constructor backed by a JSNative.  Note that by default this
+// creates a singleton object.
+extern JSFunction*
+NewNativeConstructor(JSContext* cx, JSNative native, unsigned nargs, HandleAtom atom,
                      gc::AllocKind allocKind = gc::AllocKind::FUNCTION,
-                     NewObjectKind newKind = GenericObject,
+                     NewObjectKind newKind = SingletonObject,
                      JSFunction::Flags flags = JSFunction::NATIVE_CTOR);
 
-// Allocate a new scripted function.  If enclosingDynamicScope is null, the
+// Allocate a new scripted function.  If enclosingEnv is null, the
 // global will be used.  In all cases the parent of the resulting object will be
 // the global.
 extern JSFunction*
-NewScriptedFunction(ExclusiveContext* cx, unsigned nargs, JSFunction::Flags flags,
+NewScriptedFunction(JSContext* cx, unsigned nargs, JSFunction::Flags flags,
                     HandleAtom atom, HandleObject proto = nullptr,
                     gc::AllocKind allocKind = gc::AllocKind::FUNCTION,
                     NewObjectKind newKind = GenericObject,
-                    HandleObject enclosingDynamicScope = nullptr);
+                    HandleObject enclosingEnv = nullptr);
 
 // By default, if proto is nullptr, Function.prototype is used instead.i
 // If protoHandling is NewFunctionExactProto, and proto is nullptr, the created
 // function will use nullptr as its [[Prototype]] instead. If
-// enclosingDynamicScope is null, the function will have a null environment()
+// enclosingEnv is null, the function will have a null environment()
 // (yes, null, not the global).  In all cases, the global will be used as the
 // parent.
 
@@ -663,14 +694,23 @@ enum NewFunctionProtoHandling {
     NewFunctionGivenProto
 };
 extern JSFunction*
-NewFunctionWithProto(ExclusiveContext* cx, JSNative native, unsigned nargs,
-                     JSFunction::Flags flags, HandleObject enclosingDynamicScope, HandleAtom atom,
+NewFunctionWithProto(JSContext* cx, JSNative native, unsigned nargs,
+                     JSFunction::Flags flags, HandleObject enclosingEnv, HandleAtom atom,
                      HandleObject proto, gc::AllocKind allocKind = gc::AllocKind::FUNCTION,
                      NewObjectKind newKind = GenericObject,
                      NewFunctionProtoHandling protoHandling = NewFunctionClassProto);
 
 extern JSAtom*
-IdToFunctionName(JSContext* cx, HandleId id, const char* prefix = nullptr);
+IdToFunctionName(JSContext* cx, HandleId id,
+                 FunctionPrefixKind prefixKind = FunctionPrefixKind::None);
+
+extern JSAtom*
+NameToFunctionName(JSContext* cx, HandleAtom name,
+                   FunctionPrefixKind prefixKind = FunctionPrefixKind::None);
+
+extern bool
+SetFunctionNameIfNoOwnName(JSContext* cx, HandleFunction fun, HandleValue name,
+                           FunctionPrefixKind prefixKind);
 
 extern JSFunction*
 DefineFunction(JSContext* cx, HandleObject obj, HandleId id, JSNative native,
@@ -690,9 +730,6 @@ FunctionHasDefaultHasInstance(JSFunction* fun, const WellKnownSymbols& symbols);
 
 extern bool
 fun_symbolHasInstance(JSContext* cx, unsigned argc, Value* vp);
-
-extern bool
-OrdinaryHasInstance(JSContext* cx, HandleObject objArg, MutableHandleValue v, bool* bp);
 
 /*
  * Function extended with reserved slots for use by various kinds of functions.
@@ -716,10 +753,10 @@ class FunctionExtended : public JSFunction
     static const unsigned WASM_INSTANCE_SLOT = 0;
 
     /*
-     * wasm/asm.js exported functions store the index of the export in the
-     * module's export vector in the second slot.
+     * wasm/asm.js exported functions store the function index of the exported
+     * function in the original module.
      */
-    static const unsigned WASM_EXPORT_INDEX_SLOT = 1;
+    static const unsigned WASM_FUNC_INDEX_SLOT = 1;
 
     /*
      * asm.js module functions store their WasmModuleObject in the first slot.
@@ -754,13 +791,9 @@ CloneFunctionReuseScript(JSContext* cx, HandleFunction fun, HandleObject parent,
 // Functions whose scripts are cloned are always given singleton types.
 extern JSFunction*
 CloneFunctionAndScript(JSContext* cx, HandleFunction fun, HandleObject parent,
-                       HandleObject newStaticScope,
+                       HandleScope newScope,
                        gc::AllocKind kind = gc::AllocKind::FUNCTION,
                        HandleObject proto = nullptr);
-
-extern bool
-FindBody(JSContext* cx, HandleFunction fun, HandleLinearString src, size_t* bodyStart,
-         size_t* bodyEnd);
 
 } // namespace js
 
@@ -792,6 +825,8 @@ inline void
 JSFunction::initExtendedSlot(size_t which, const js::Value& val)
 {
     MOZ_ASSERT(which < mozilla::ArrayLength(toExtended()->extendedSlots));
+    js::CheckEdgeIsNotBlackToGray(this, val);
+    MOZ_ASSERT(js::IsObjectValueInCompartment(val, compartment()));
     toExtended()->extendedSlots[which].init(val);
 }
 
@@ -799,6 +834,8 @@ inline void
 JSFunction::setExtendedSlot(size_t which, const js::Value& val)
 {
     MOZ_ASSERT(which < mozilla::ArrayLength(toExtended()->extendedSlots));
+    js::CheckEdgeIsNotBlackToGray(this, val);
+    MOZ_ASSERT(js::IsObjectValueInCompartment(val, compartment()));
     toExtended()->extendedSlots[which] = val;
 }
 
@@ -811,12 +848,12 @@ JSFunction::getExtendedSlot(size_t which) const
 
 namespace js {
 
-JSString* FunctionToString(JSContext* cx, HandleFunction fun, bool lambdaParen);
+JSString* FunctionToString(JSContext* cx, HandleFunction fun, bool prettyPring);
 
 template<XDRMode mode>
 bool
-XDRInterpretedFunction(XDRState<mode>* xdr, HandleObject enclosingScope,
-                       HandleScript enclosingScript, MutableHandleFunction objp);
+XDRInterpretedFunction(XDRState<mode>* xdr, HandleScope enclosingScope,
+                       HandleScriptSource sourceObject, MutableHandleFunction objp);
 
 /*
  * Report an error that call.thisv is not compatible with the specified class,
@@ -849,7 +886,7 @@ namespace JS {
 namespace detail {
 
 JS_PUBLIC_API(void)
-CheckIsValidConstructible(Value calleev);
+CheckIsValidConstructible(const Value& calleev);
 
 } // namespace detail
 } // namespace JS

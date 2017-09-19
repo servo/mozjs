@@ -23,11 +23,6 @@ from mozpack.copier import (
     Jarrer,
 )
 
-STARTUP_CACHE_PATHS = [
-    'jsloader',
-    'jssubloader',
-]
-
 '''
 Formatters are classes receiving packaging instructions and creating the
 appropriate package layout.
@@ -255,6 +250,11 @@ class OmniJarFormatter(JarFormatter):
         if addon:
             JarFormatter._add_base(self, base, addon)
         else:
+            # Initialize a chrome.manifest next to the omnijar file so that
+            # there's always a chrome.manifest file, even an empty one.
+            path = mozpath.normpath(mozpath.join(base, 'chrome.manifest'))
+            if not self.copier.contains(path):
+                self.copier.add(path, ManifestFile(''))
             self._sub_formatter[base] = OmniJarSubFormatter(
                 FileRegistrySubtree(base, self.copier), self._omnijar_name,
                 self._compress, self._optimize, self._non_resources)
@@ -316,4 +316,4 @@ class OmniJarSubFormatter(PiecemealFormatter):
             'greprefs.js',
             'hyphenation',
             'update.locale',
-        ] or path[0] in STARTUP_CACHE_PATHS
+        ]

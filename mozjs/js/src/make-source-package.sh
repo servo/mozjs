@@ -72,6 +72,7 @@ case $cmd in
        ${tgtpath}
 
     cp -pPR ${TOPSRCDIR}/js/moz.configure ${tgtpath}/js
+    cp -pPR ${TOPSRCDIR}/js/ffi.configure ${tgtpath}/js
 
     mkdir -p ${tgtpath}/taskcluster
     cp -pPR ${TOPSRCDIR}/taskcluster/moz.build ${tgtpath}/taskcluster/
@@ -92,10 +93,15 @@ case $cmd in
     # copy build and config directory.
     cp -pPR ${TOPSRCDIR}/build ${TOPSRCDIR}/config ${tgtpath}
 
+    # copy cargo config
+    ${MKDIR} -p ${tgtpath}/.cargo
+    cp -pPR ${TOPSRCDIR}/.cargo/config.in ${tgtpath}/.cargo
+
     # put in js itself
     cp -pPR ${TOPSRCDIR}/mfbt ${tgtpath}
     cp -p ${SRCDIR}/../moz.configure ${tgtpath}/js
     cp -pPR ${SRCDIR}/../public ${tgtpath}/js
+    cp -pPR ${SRCDIR}/../rust ${tgtpath}/js
     cp -pPR ${SRCDIR}/../examples ${tgtpath}/js
     find ${SRCDIR} -mindepth 1 -maxdepth 1 -not -path ${STAGING} -a -not -name ${pkg} \
         -exec cp -pPR {} ${tgtpath}/js/src \;
@@ -134,7 +140,6 @@ case $cmd in
     ${MKDIR} -p ${tgtpath}/mozglue
     cp -pPR \
         ${TOPSRCDIR}/mozglue/build \
-        ${TOPSRCDIR}/mozglue/crt \
         ${TOPSRCDIR}/mozglue/misc \
         ${TOPSRCDIR}/mozglue/moz.build \
         ${tgtpath}/mozglue
@@ -180,7 +185,7 @@ INSTALL_EOF
 This directory contains SpiderMonkey ${MOZJS_MAJOR_VERSION}.
 
 This release is based on a revision of Mozilla ${MOZJS_MAJOR_VERSION}:
-  http://hg.mozilla.org/releases/
+  https://hg.mozilla.org/releases/
 The changes in the patches/ directory were applied.
 
 MDN hosts the latest SpiderMonkey ${MOZJS_MAJOR_VERSION} release notes:
