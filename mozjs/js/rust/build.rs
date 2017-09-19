@@ -34,6 +34,19 @@ fn build_jsglue_cpp() {
     println!("cargo:rerun-if-changed=src/jsglue.cpp");
 }
 
+fn glob_path(pattern: &str) -> path::PathBuf {
+    let entries = glob::glob(pattern)
+        .expect("should parse glob pattern OK");
+
+    for entry in entries {
+        if let Ok(path) = entry {
+            return path;
+        }
+    }
+
+    panic!("did not find any acceptable path for '{}'", pattern)
+}
+
 /// Find the public include directory within our mozjs-sys crate dependency.
 fn get_mozjs_include_dir() -> path::PathBuf {
     let out_dir = env::var("OUT_DIR")
@@ -45,17 +58,34 @@ fn get_mozjs_include_dir() -> path::PathBuf {
     let mut include_dir_glob = target_build_dir.display().to_string();
     include_dir_glob.push_str("mozjs_sys-*/out/dist/include");
 
-    let entries = glob::glob(&include_dir_glob)
-        .expect("Should find entries for mozjs-sys include dir");
+    glob_path(&include_dir_glob)
+}
 
-    for entry in entries {
-        if let Ok(path) = entry {
-            return path.canonicalize()
-                .expect("Should canonicalize include path");
-        }
-    }
+fn get_clang_include_path() -> path::PathBuf {
+    let libclang_path = env::var_os("LIBCLANG_PATH")
+        .expect("should have LIBCLANG_PATH env var");
+    let libclang_path = path::Path::new(&libclang_path);
 
-    panic!("Should have found either a mozjs_sys in target/debug or in target/release");
+    let include_glob = libclang_path.join("clang").join("*").join("include");
+    let include_glob = include_glob.display().to_string();
+
+    glob_path(&include_glob)
+}
+
+fn get_ucrt_include_path() -> path::PathBuf {
+    glob_path("C:\\Program Files (x86)\\Windows Kits\\10\\Include\\*\\ucrt")
+}
+
+fn get_msvc_include_path() -> path::PathBuf {
+    glob_path("C:\\Program Files (x86)\\Microsoft Visual Studio\\2017\\Community\\VC\\Tools\\MSVC\\*\\include")
+}
+
+fn get_um_include_path() -> path::PathBuf {
+    glob_path("C:\\Program Files (x86)\\Windows Kits\\10\\Include\\*\\um")
+}
+
+fn get_shared_include_path() -> path::PathBuf {
+    glob_path("C:\\Program Files (x86)\\Windows Kits\\10\\Include\\*\\shared")
 }
 
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
@@ -64,16 +94,47 @@ fn get_mozjs_include_dir() -> path::PathBuf {
 /// To add or remove which functions, types, and variables get bindings
 /// generated, see the `const` configuration variables below.
 fn build_jsapi_bindings() {
+    println!("FITZGEN: LIBCLANG_PATH = {:?}", env::var("LIBCLANG_PATH"));
+    println!("FITZGEN: clang_version = {:?}", bindgen::clang_version());
+
     let mut builder = bindgen::builder()
-        .unstable_rust(true)
+        .rust_target(bindgen::RustTarget::Stable_1_19)
         .header("./etc/wrapper.hpp")
         .raw_line("pub use self::root::*;")
         .enable_cxx_namespaces();
 
     if cfg!(feature = "debugmozjs") {
         builder = builder
+            .clang_arg("-DJS_GC_ZEAL")
             .clang_arg("-DDEBUG")
             .clang_arg("-DJS_DEBUG");
+    }
+
+    if cfg!(target_os = "windows") {
+        if cfg!(target_pointer_width = "64") {
+             // builder = builder.clang_arg("--target=x86_64-pc-mingw32");
+             builder = builder.clang_arg("--target=x86_64-pc-win32");
+        } else {
+             assert!(cfg!(target_pointer_width = "32"));
+             // builder = builder.clang_arg("--target=i686-pc-mingw32");
+             builder = builder.clang_arg("--target=i686-pc-win32");
+        }
+
+        // Compatibility with MSVC 2015/2017.
+        builder = builder
+            .clang_arg("-fms-extensions")
+            .clang_arg("-fms-compatibility")
+            .clang_arg("-fms-compatibility-version=19");
+
+        // Where to find the system headers.
+        builder = builder
+            .clang_arg(format!("-I{}", get_clang_include_path().display()))
+            .clang_arg(format!("-I{}", get_msvc_include_path().display()))
+            .clang_arg(format!("-I{}", get_ucrt_include_path().display()))
+            .clang_arg(format!("-I{}", get_um_include_path().display()))
+            .clang_arg(format!("-I{}", get_shared_include_path().display()));
+    } else {
+        builder = builder.clang_arg("-DOS_POSIX=1");
     }
 
     let include_dir = get_mozjs_include_dir();
@@ -113,11 +174,17 @@ fn build_jsapi_bindings() {
     let bindings = builder.generate()
         .expect("Should generate JSAPI bindings OK");
 
-    bindings.write_to_file("./src/jsapi.rs")
-        .expect("Should write bindings to file OK");
+    let out = path::PathBuf::from(env::var("OUT_DIR").unwrap());
+
+    if cfg!(feature = "debugmozjs") {
+        bindings.write_to_file(out.join("jsapi_debug.rs"))
+            .expect("Should write bindings to file OK");
+    } else {
+        bindings.write_to_file(out.join("jsapi.rs"))
+            .expect("Should write bindings to file OK");
+    }
 
     println!("cargo:rerun-if-changed=etc/wrapper.hpp");
-    println!("cargo:rerun-if-changed=src/jsapi.rs");
 }
 
 /// JSAPI types for which we should implement `Sync`.
