@@ -169,7 +169,7 @@ fn link() {
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
-    } else if target.contains("macos") {
+    } else if target.contains("macos") || target.contains("freebsd") {
         println!("cargo:rustc-link-lib=c++");
     } else {
         println!("cargo:rustc-link-lib=stdc++");
