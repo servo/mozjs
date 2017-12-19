@@ -59,7 +59,9 @@ class Operand
     // Used as a Register::Encoding and a FloatRegister::Encoding.
     uint32_t base_ : 5;
     Scale scale_ : 3;
-    Register::Encoding index_ : 5;
+    // We don't use all 8 bits, of course, but GCC complains if the size of
+    // this field is smaller than the size of Register::Encoding.
+    Register::Encoding index_ : 8;
     int32_t disp_;
 
   public:
@@ -167,9 +169,8 @@ class Operand
           case REG:          return r.encoding() == reg();
           case MEM_REG_DISP: return r.encoding() == base();
           case MEM_SCALE:    return r.encoding() == base() || r.encoding() == index();
-          default: MOZ_CRASH("Unexpected Operand kind");
+          default:           return false;
         }
-        return false;
     }
 };
 
@@ -224,6 +225,7 @@ class CPUInfo
     static bool avxPresent;
     static bool avxEnabled;
     static bool popcntPresent;
+    static bool needAmdBugWorkaround;
 
     static void SetSSEVersion();
 
@@ -240,6 +242,7 @@ class CPUInfo
     static bool IsSSE41Present() { return GetSSEVersion() >= SSE4_1; }
     static bool IsSSE42Present() { return GetSSEVersion() >= SSE4_2; }
     static bool IsPOPCNTPresent() { return popcntPresent; }
+    static bool NeedAmdBugWorkaround() { return needAmdBugWorkaround; }
 
     static void SetSSE3Disabled() { maxEnabledSSEVersion = SSE2; avxEnabled = false; }
     static void SetSSE4Disabled() { maxEnabledSSEVersion = SSSE3; avxEnabled = false; }
@@ -264,7 +267,6 @@ class AssemblerX86Shared : public AssemblerShared
     Vector<RelativePatch, 8, SystemAllocPolicy> jumps_;
     CompactBufferWriter jumpRelocations_;
     CompactBufferWriter dataRelocations_;
-    CompactBufferWriter preBarriers_;
 
     void writeDataRelocation(ImmGCPtr ptr) {
         if (ptr.value) {
@@ -272,9 +274,6 @@ class AssemblerX86Shared : public AssemblerShared
                 embedsNurseryPointers_ = true;
             dataRelocations_.writeUnsigned(masm.currentOffset());
         }
-    }
-    void writePrebarrierOffset(CodeOffset label) {
-        preBarriers_.writeUnsigned(label.offset());
     }
 
   protected:
@@ -302,6 +301,8 @@ class AssemblerX86Shared : public AssemblerShared
         LessThan = X86Encoding::ConditionL,
         LessThanOrEqual = X86Encoding::ConditionLE,
         Overflow = X86Encoding::ConditionO,
+        CarrySet = X86Encoding::ConditionC,
+        CarryClear = X86Encoding::ConditionNC,
         Signed = X86Encoding::ConditionS,
         NotSigned = X86Encoding::ConditionNS,
         Zero = X86Encoding::ConditionE,
@@ -379,6 +380,10 @@ class AssemblerX86Shared : public AssemblerShared
     }
 
     static Condition InvertCondition(Condition cond);
+    static Condition UnsignedCondition(Condition cond);
+    static Condition ConditionWithoutEqual(Condition cond);
+
+    static DoubleCondition InvertCondition(DoubleCondition cond);
 
     // Return the primary condition to test. Some primary conditions may not
     // handle NaNs properly and may therefore require a secondary condition.
@@ -396,8 +401,19 @@ class AssemblerX86Shared : public AssemblerShared
         return AssemblerShared::oom() ||
                masm.oom() ||
                jumpRelocations_.oom() ||
-               dataRelocations_.oom() ||
-               preBarriers_.oom();
+               dataRelocations_.oom();
+    }
+
+    void disableProtection() { masm.disableProtection(); }
+    void enableProtection() { masm.enableProtection(); }
+    void setLowerBoundForProtection(size_t size) {
+        masm.setLowerBoundForProtection(size);
+    }
+    void unprotectRegion(unsigned char* first, size_t size) {
+        masm.unprotectRegion(first, size);
+    }
+    void reprotectRegion(unsigned char* first, size_t size) {
+        masm.reprotectRegion(first, size);
     }
 
     void setPrinter(Sprinter* sp) {
@@ -418,7 +434,6 @@ class AssemblerX86Shared : public AssemblerShared
     void processCodeLabels(uint8_t* rawCode);
     void copyJumpRelocationTable(uint8_t* dest);
     void copyDataRelocationTable(uint8_t* dest);
-    void copyPreBarrierTable(uint8_t* dest);
 
     // Size of the instruction stream, in bytes.
     size_t size() const {
@@ -431,15 +446,11 @@ class AssemblerX86Shared : public AssemblerShared
     size_t dataRelocationTableBytes() const {
         return dataRelocations_.length();
     }
-    size_t preBarrierTableBytes() const {
-        return preBarriers_.length();
-    }
     // Size of the data table, in bytes.
     size_t bytesNeeded() const {
         return size() +
                jumpRelocationTableBytes() +
-               dataRelocationTableBytes() +
-               preBarrierTableBytes();
+               dataRelocationTableBytes();
     }
 
   public:
@@ -908,17 +919,18 @@ class AssemblerX86Shared : public AssemblerShared
 
   public:
     void nop() { masm.nop(); }
+    void nop(size_t n) { masm.insert_nop(n); }
     void j(Condition cond, Label* label) { jSrc(cond, label); }
     void jmp(Label* label) { jmpSrc(label); }
     void j(Condition cond, RepatchLabel* label) { jSrc(cond, label); }
     void jmp(RepatchLabel* label) { jmpSrc(label); }
 
-    void j(Condition cond, wasm::JumpTarget target) {
+    void j(Condition cond, wasm::TrapDesc target) {
         Label l;
         j(cond, &l);
         bindLater(&l, target);
     }
-    void jmp(wasm::JumpTarget target) {
+    void jmp(wasm::TrapDesc target) {
         Label l;
         jmp(&l);
         bindLater(&l, target);
@@ -954,11 +966,11 @@ class AssemblerX86Shared : public AssemblerShared
         }
         label->bind(dst.offset());
     }
-    void bindLater(Label* label, wasm::JumpTarget target) {
+    void bindLater(Label* label, wasm::TrapDesc target) {
         if (label->used()) {
             JmpSrc jmp(label->offset());
             do {
-                append(target, jmp.offset());
+                append(wasm::TrapSite(target, jmp.offset()));
             } while (masm.nextJump(jmp, &jmp));
         }
         label->reset();
@@ -1049,21 +1061,26 @@ class AssemblerX86Shared : public AssemblerShared
     CodeOffset callWithPatch() {
         return CodeOffset(masm.call().offset());
     }
+
     void patchCall(uint32_t callerOffset, uint32_t calleeOffset) {
         unsigned char* code = masm.data();
-        X86Encoding::AutoUnprotectAssemblerBufferRegion unprotect(masm, callerOffset - 4, 4);
         X86Encoding::SetRel32(code + callerOffset, code + calleeOffset);
     }
-    CodeOffset thunkWithPatch() {
+    CodeOffset farJumpWithPatch() {
         return CodeOffset(masm.jmp().offset());
     }
-    void patchThunk(uint32_t thunkOffset, uint32_t targetOffset) {
+    void patchFarJump(CodeOffset farJump, uint32_t targetOffset) {
         unsigned char* code = masm.data();
-        X86Encoding::AutoUnprotectAssemblerBufferRegion unprotect(masm, thunkOffset - 4, 4);
-        X86Encoding::SetRel32(code + thunkOffset, code + targetOffset);
+        X86Encoding::SetRel32(code + farJump.offset(), code + targetOffset);
     }
-    static void repatchThunk(uint8_t* code, uint32_t thunkOffset, uint32_t targetOffset) {
-        X86Encoding::SetRel32(code + thunkOffset, code + targetOffset);
+    static void repatchFarJump(uint8_t* code, uint32_t farJumpOffset, uint32_t targetOffset) {
+        X86Encoding::SetRel32(code + farJumpOffset, code + targetOffset);
+    }
+
+    // This is for patching during code generation, not after.
+    void patchAddl(CodeOffset offset, int32_t n) {
+        unsigned char* code = masm.data();
+        X86Encoding::SetInt32(code + offset.offset(), n);
     }
 
     CodeOffset twoByteNop() {
@@ -1076,19 +1093,11 @@ class AssemblerX86Shared : public AssemblerShared
         X86Encoding::BaseAssembler::patchJumpToTwoByteNop(jump);
     }
 
-    static void UpdateBoundsCheck(uint8_t* patchAt, uint32_t heapLength) {
-        // An access is out-of-bounds iff
-        //          ptr + offset + data-type-byte-size > heapLength
-        //     i.e. ptr > heapLength - data-type-byte-size - offset.
-        // data-type-byte-size and offset are already included in the addend so
-        // we just have to add the heap length here.
-        //
-        // On x64, even with signal handling being used for most bounds checks,
-        // there may be atomic operations that depend on explicit checks. All
-        // accesses that have been recorded are the only ones that need bound
-        // checks (see also
-        // CodeGeneratorX64::visitAsmJS{Load,Store,CompareExchange,Exchange,AtomicBinop}Heap)
-        X86Encoding::AddInt32(patchAt, heapLength);
+    static void patchFiveByteNopToCall(uint8_t* callsite, uint8_t* target) {
+        X86Encoding::BaseAssembler::patchFiveByteNopToCall(callsite, target);
+    }
+    static void patchCallToFiveByteNop(uint8_t* callsite) {
+        X86Encoding::BaseAssembler::patchCallToFiveByteNop(callsite);
     }
 
     void breakpoint() {
@@ -1101,8 +1110,20 @@ class AssemblerX86Shared : public AssemblerShared
     static bool HasSSE41() { return CPUInfo::IsSSE41Present(); }
     static bool HasPOPCNT() { return CPUInfo::IsPOPCNTPresent(); }
     static bool SupportsFloatingPoint() { return CPUInfo::IsSSE2Present(); }
+    static bool SupportsUnalignedAccesses() { return true; }
     static bool SupportsSimd() { return CPUInfo::IsSSE2Present(); }
     static bool HasAVX() { return CPUInfo::IsAVXPresent(); }
+
+    static bool HasRoundInstruction(RoundingMode mode) {
+        switch (mode) {
+          case RoundingMode::Up:
+          case RoundingMode::Down:
+          case RoundingMode::NearestTiesToEven:
+          case RoundingMode::TowardsZero:
+            return CPUInfo::IsSSE41Present();
+        }
+        MOZ_CRASH("unexpected mode");
+    }
 
     void cmpl(Register rhs, Register lhs) {
         masm.cmpl_rr(rhs.encoding(), lhs.encoding());
@@ -1682,6 +1703,12 @@ class AssemblerX86Shared : public AssemblerShared
     }
     void sarl_cl(Register dest) {
         masm.sarl_CLr(dest.encoding());
+    }
+    void shrdl_cl(Register src, Register dest) {
+        masm.shrdl_CLr(src.encoding(), dest.encoding());
+    }
+    void shldl_cl(Register src, Register dest) {
+        masm.shldl_CLr(src.encoding(), dest.encoding());
     }
 
     void roll(const Imm32 imm, Register dest) {
@@ -3332,6 +3359,21 @@ class AssemblerX86Shared : public AssemblerShared
         MOZ_ASSERT(HasSSE2());
         masm.vsqrtss_rr(src1.encoding(), src0.encoding(), dest.encoding());
     }
+
+    static X86Encoding::RoundingMode
+    ToX86RoundingMode(RoundingMode mode) {
+        switch (mode) {
+          case RoundingMode::Up:
+            return X86Encoding::RoundUp;
+          case RoundingMode::Down:
+            return X86Encoding::RoundDown;
+          case RoundingMode::NearestTiesToEven:
+            return X86Encoding::RoundToNearest;
+          case RoundingMode::TowardsZero:
+            return X86Encoding::RoundToZero;
+        }
+        MOZ_CRASH("unexpected mode");
+    }
     void vroundsd(X86Encoding::RoundingMode mode, FloatRegister src1, FloatRegister src0, FloatRegister dest) {
         MOZ_ASSERT(HasSSE41());
         masm.vroundsd_irr(mode, src1.encoding(), src0.encoding(), dest.encoding());
@@ -3340,6 +3382,7 @@ class AssemblerX86Shared : public AssemblerShared
         MOZ_ASSERT(HasSSE41());
         masm.vroundss_irr(mode, src1.encoding(), src0.encoding(), dest.encoding());
     }
+
     unsigned vinsertpsMask(unsigned sourceLane, unsigned destLane, unsigned zeroMask = 0)
     {
         // Note that the sourceLane bits are ignored in the case of a source
@@ -3491,10 +3534,55 @@ class AssemblerX86Shared : public AssemblerShared
             MOZ_CRASH("unexpected operand kind");
         }
     }
+    void fistp(const Operand& dest) {
+        switch (dest.kind()) {
+          case Operand::MEM_REG_DISP:
+            masm.fistp_m(dest.disp(), dest.base());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void fnstcw(const Operand& dest) {
+        switch (dest.kind()) {
+          case Operand::MEM_REG_DISP:
+            masm.fnstcw_m(dest.disp(), dest.base());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void fldcw(const Operand& dest) {
+        switch (dest.kind()) {
+          case Operand::MEM_REG_DISP:
+            masm.fldcw_m(dest.disp(), dest.base());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void fnstsw(const Operand& dest) {
+        switch (dest.kind()) {
+          case Operand::MEM_REG_DISP:
+            masm.fnstsw_m(dest.disp(), dest.base());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
     void fld(const Operand& dest) {
         switch (dest.kind()) {
           case Operand::MEM_REG_DISP:
             masm.fld_m(dest.disp(), dest.base());
+            break;
+          default:
+            MOZ_CRASH("unexpected operand kind");
+        }
+    }
+    void fld32(const Operand& dest) {
+        switch (dest.kind()) {
+          case Operand::MEM_REG_DISP:
+            masm.fld32_m(dest.disp(), dest.base());
             break;
           default:
             MOZ_CRASH("unexpected operand kind");

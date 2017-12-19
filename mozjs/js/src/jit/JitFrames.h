@@ -95,10 +95,11 @@ ScriptFromCalleeToken(CalleeToken token)
 // to. The exact mechanism in which frames are laid out is architecture
 // dependent.
 //
-// Two special frame types exist. Entry frames begin an ion activation, and
-// therefore there is exactly one per activation of jit::Cannon. Exit frames
-// are necessary to leave JIT code and enter C++, and thus, C++ code will
-// always begin iterating from the topmost exit frame.
+// Two special frame types exist:
+// - Entry frames begin a JitActivation, and therefore there is exactly one
+// per activation of EnterIon or EnterBaseline. These reuse JitFrameLayout.
+// - Exit frames are necessary to leave JIT code and enter C++, and thus,
+// C++ code will always begin iterating from the topmost exit frame.
 
 class LSafepoint;
 
@@ -284,10 +285,10 @@ void HandleException(ResumeFromException* rfe);
 
 void EnsureBareExitFrame(JSContext* cx, JitFrameLayout* frame);
 
-void MarkJitActivations(JSRuntime* rt, JSTracer* trc);
+void TraceJitActivations(JSContext* cx, const CooperatingContext& target, JSTracer* trc);
 
 JSCompartment*
-TopmostIonActivationCompartment(JSRuntime* rt);
+TopmostIonActivationCompartment(JSContext* cx);
 
 void UpdateJitActivationsForMinorGC(JSRuntime* rt, JSTracer* trc);
 
@@ -438,15 +439,6 @@ class JitFrameLayout : public CommonFrameLayout
     }
 };
 
-// this is the layout of the frame that is used when we enter Ion code from platform ABI code
-class EntryFrameLayout : public JitFrameLayout
-{
-  public:
-    static inline size_t Size() {
-        return sizeof(EntryFrameLayout);
-    }
-};
-
 class RectifierFrameLayout : public JitFrameLayout
 {
   public:
@@ -455,7 +447,7 @@ class RectifierFrameLayout : public JitFrameLayout
     }
 };
 
-class IonAccessorICFrameLayout : public CommonFrameLayout
+class IonICCallFrameLayout : public CommonFrameLayout
 {
   protected:
     // Pointer to root the stub's JitCode.
@@ -466,7 +458,7 @@ class IonAccessorICFrameLayout : public CommonFrameLayout
         return &stubCode_;
     }
     static size_t Size() {
-        return sizeof(IonAccessorICFrameLayout);
+        return sizeof(IonICCallFrameLayout);
     }
 };
 
@@ -529,7 +521,7 @@ class ExitFrameLayout : public CommonFrameLayout
 
   public:
     // Pushed for "bare" fake exit frames that have no GC things on stack to be
-    // marked.
+    // traced.
     static JitCode* BareToken() { return (JitCode*)ExitFrameLayoutBareToken; }
 
     static inline size_t Size() {
@@ -1033,7 +1025,7 @@ void
 GetPcScript(JSContext* cx, JSScript** scriptRes, jsbytecode** pcRes);
 
 CalleeToken
-MarkCalleeToken(JSTracer* trc, CalleeToken token);
+TraceCalleeToken(JSTracer* trc, CalleeToken token);
 
 // The minimum stack size is two. Two slots are needed because INITGLEXICAL
 // (stack depth 1) is compiled as a SETPROP (stack depth 2) on the global

@@ -14,6 +14,8 @@ import os
 import subprocess
 import sys
 
+from collections import OrderedDict
+
 import mozpack.path as mozpath
 
 from mach.decorators import (
@@ -36,11 +38,10 @@ from mozbuild.base import (
     ObjdirMismatchException,
 )
 
-from mozpack.manifests import (
-    InstallManifest,
+from mozbuild.backend import (
+    backends,
+    get_backend_class,
 )
-
-from mozbuild.backend import backends
 from mozbuild.shellutil import quote as shell_quote
 
 
@@ -211,6 +212,8 @@ class BuildOutputManager(LoggingMixin):
         # TODO convert terminal footer to config file setting.
         if not terminal or os.environ.get('MACH_NO_TERMINAL_FOOTER', None):
             return
+        if os.environ.get('INSIDE_EMACS', None):
+            return
 
         self.t = terminal
         self.footer = BuildProgressFooter(terminal, monitor)
@@ -231,6 +234,11 @@ class BuildOutputManager(LoggingMixin):
             # Prevents the footer from being redrawn if logging occurs.
             self._handler.footer = None
 
+        # Ensure the resource monitor is stopped because leaving it running
+        # could result in the process hanging on exit because the resource
+        # collection child process hasn't been told to stop.
+        self.monitor.stop_resource_recording()
+
     def write_line(self, line):
         if self.footer:
             self.footer.clear()
@@ -250,10 +258,6 @@ class BuildOutputManager(LoggingMixin):
     def on_line(self, line):
         warning, state_changed, relevant = self.monitor.on_line(line)
 
-        if warning:
-            self.log(logging.INFO, 'compiler_warning', warning,
-                'Warning: {flag} in {filename}: {message}')
-
         if relevant:
             self.log(logging.INFO, 'build_output', {'line': line}, '{line}')
         elif state_changed:
@@ -265,6 +269,13 @@ class BuildOutputManager(LoggingMixin):
             finally:
                 if have_handler:
                     self.handler.release()
+
+
+class StoreDebugParamsAndWarnAction(argparse.Action):
+    def __call__(self, parser, namespace, values, option_string=None):
+        sys.stderr.write('The --debugparams argument is deprecated. Please ' +
+                         'use --debugger-args instead.\n\n')
+        setattr(namespace, self.dest, values)
 
 
 @CommandProvider
@@ -282,8 +293,10 @@ class Build(MachCommandBase):
                      help='Do not add extra make dependencies.')
     @CommandArgument('-v', '--verbose', action='store_true',
         help='Verbose output for what commands the build is running.')
+    @CommandArgument('--keep-going', action='store_true',
+                     help='Keep building after an error has occurred')
     def build(self, what=None, disable_extra_make_dependencies=None, jobs=0,
-        directory=None, verbose=False):
+        directory=None, verbose=False, keep_going=False):
         """Build the source tree.
 
         With no arguments, this will perform a full build.
@@ -397,7 +410,7 @@ class Build(MachCommandBase):
                 # comprehensive history lesson.
                 self._run_make(directory=self.topobjdir, target='backend',
                     line_handler=output.on_line, log=False,
-                    print_directory=False)
+                    print_directory=False, keep_going=keep_going)
 
                 # Build target pairs.
                 for make_dir, make_target in target_pairs:
@@ -408,19 +421,69 @@ class Build(MachCommandBase):
                     status = self._run_make(directory=make_dir, target=make_target,
                         line_handler=output.on_line, log=False, print_directory=False,
                         ensure_exit_code=False, num_jobs=jobs, silent=not verbose,
-                        append_env={b'NO_BUILDSTATUS_MESSAGES': b'1'})
+                        append_env={b'NO_BUILDSTATUS_MESSAGES': b'1'},
+                        keep_going=keep_going)
 
                     if status != 0:
                         break
             else:
-                status = self._run_make(srcdir=True, filename='client.mk',
-                    line_handler=output.on_line, log=False, print_directory=False,
-                    allow_parallel=False, ensure_exit_code=False, num_jobs=jobs,
-                    silent=not verbose)
+                # Try to call the default backend's build() method. This will
+                # run configure to determine BUILD_BACKENDS if it hasn't run
+                # yet.
+                config = None
+                try:
+                    config = self.config_environment
+                except Exception:
+                    config_rc = self.configure(buildstatus_messages=True,
+                                               line_handler=output.on_line)
+                    if config_rc != 0:
+                        return config_rc
+
+                    # Even if configure runs successfully, we may have trouble
+                    # getting the config_environment for some builds, such as
+                    # OSX Universal builds. These have to go through client.mk
+                    # regardless.
+                    try:
+                        config = self.config_environment
+                    except Exception:
+                        pass
+
+                if config:
+                    active_backend = config.substs.get('BUILD_BACKENDS', [None])[0]
+                    if active_backend:
+                        backend_cls = get_backend_class(active_backend)(config)
+                        status = backend_cls.build(self, output, jobs, verbose)
+
+                # If the backend doesn't specify a build() method, then just
+                # call client.mk directly.
+                if status is None:
+                    status = self._run_make(srcdir=True, filename='client.mk',
+                        line_handler=output.on_line, log=False, print_directory=False,
+                        allow_parallel=False, ensure_exit_code=False, num_jobs=jobs,
+                        silent=not verbose, keep_going=keep_going)
 
                 self.log(logging.WARNING, 'warning_summary',
                     {'count': len(monitor.warnings_database)},
                     '{count} compiler warnings present.')
+
+            # Print the collected compiler warnings. This is redundant with
+            # inline output from the compiler itself. However, unlike inline
+            # output, this list is sorted and grouped by file, making it
+            # easier to triage output.
+            for warning in sorted(monitor.instance_warnings):
+                path = mozpath.normsep(warning['filename'])
+                if path.startswith(self.topsrcdir):
+                    path = path[len(self.topsrcdir) + 1:]
+
+                warning['normpath'] = path
+
+                if warning['column'] is not None:
+                    self.log(logging.WARNING, 'compiler_warning', warning,
+                             'warning: {normpath}:{line}:{column} [{flag}] '
+                             '{message}')
+                else:
+                    self.log(logging.WARNING, 'compiler_warning', warning,
+                             'warning: {normpath}:{line} [{flag}] {message}')
 
             monitor.finish(record_usage=status==0)
 
@@ -475,7 +538,7 @@ class Build(MachCommandBase):
             # to avoid accidentally disclosing PII.
             telemetry_data['substs'] = {}
             try:
-                for key in ['MOZ_ARTIFACT_BUILDS', 'MOZ_USING_CCACHE']:
+                for key in ['MOZ_ARTIFACT_BUILDS', 'MOZ_USING_CCACHE', 'MOZ_USING_SCCACHE']:
                     value = self.substs.get(key, False)
                     telemetry_data['substs'][key] = value
             except BuildEnvironmentNotFoundException:
@@ -517,16 +580,23 @@ class Build(MachCommandBase):
         description='Configure the tree (run configure and config.status).')
     @CommandArgument('options', default=None, nargs=argparse.REMAINDER,
                      help='Configure options')
-    def configure(self, options=None):
+    def configure(self, options=None, buildstatus_messages=False, line_handler=None):
         def on_line(line):
             self.log(logging.INFO, 'build_output', {'line': line}, '{line}')
 
+        line_handler = line_handler or on_line
+
         options = ' '.join(shell_quote(o) for o in options or ())
+        append_env = {b'CONFIGURE_ARGS': options.encode('utf-8')}
+
+        # Only print build status messages when we have an active
+        # monitor.
+        if not buildstatus_messages:
+            append_env[b'NO_BUILDSTATUS_MESSAGES'] =  b'1'
         status = self._run_make(srcdir=True, filename='client.mk',
-            target='configure', line_handler=on_line, log=False,
+            target='configure', line_handler=line_handler, log=False,
             print_directory=False, allow_parallel=False, ensure_exit_code=False,
-            append_env={b'CONFIGURE_ARGS': options.encode('utf-8'),
-                        b'NO_BUILDSTATUS_MESSAGES': b'1',})
+            append_env=append_env)
 
         if not status:
             print('Configure complete!')
@@ -572,41 +642,6 @@ class Build(MachCommandBase):
 
         print('Hit CTRL+c to stop server.')
         server.run()
-
-    CLOBBER_CHOICES = ['objdir', 'python']
-    @Command('clobber', category='build',
-        description='Clobber the tree (delete the object directory).')
-    @CommandArgument('what', default=['objdir'], nargs='*',
-        help='Target to clobber, must be one of {{{}}} (default objdir).'.format(
-             ', '.join(CLOBBER_CHOICES)))
-    def clobber(self, what):
-        invalid = set(what) - set(self.CLOBBER_CHOICES)
-        if invalid:
-            print('Unknown clobber target(s): {}'.format(', '.join(invalid)))
-            return 1
-
-        ret = 0
-        if 'objdir' in what:
-            try:
-                self.remove_objdir()
-            except OSError as e:
-                if sys.platform.startswith('win'):
-                    if isinstance(e, WindowsError) and e.winerror in (5,32):
-                        self.log(logging.ERROR, 'file_access_error', {'error': e},
-                            "Could not clobber because a file was in use. If the "
-                            "application is running, try closing it. {error}")
-                        return 1
-                raise
-
-        if 'python' in what:
-            if os.path.isdir(mozpath.join(self.topsrcdir, '.hg')):
-                cmd = ['hg', 'purge', '--all', '-I', 'glob:**.py[co]']
-            elif os.path.isdir(mozpath.join(self.topsrcdir, '.git')):
-                cmd = ['git', 'clean', '-f', '-x', '*.py[co]']
-            else:
-                cmd = ['find', '.', '-type', 'f', '-name', '*.py[co]', '-delete']
-            ret = subprocess.call(cmd, cwd=self.topsrcdir)
-        return ret
 
     @Command('build-backend', category='build',
         description='Generate a backend used to build the tree.')
@@ -658,6 +693,47 @@ class Doctor(MachCommandBase):
         return doctor.check_all()
 
 @CommandProvider
+class Clobber(MachCommandBase):
+    NO_AUTO_LOG = True
+    CLOBBER_CHOICES = ['objdir', 'python']
+    @Command('clobber', category='build',
+        description='Clobber the tree (delete the object directory).')
+    @CommandArgument('what', default=['objdir'], nargs='*',
+        help='Target to clobber, must be one of {{{}}} (default objdir).'.format(
+             ', '.join(CLOBBER_CHOICES)))
+    @CommandArgument('--full', action='store_true',
+        help='Perform a full clobber')
+    def clobber(self, what, full=False):
+        invalid = set(what) - set(self.CLOBBER_CHOICES)
+        if invalid:
+            print('Unknown clobber target(s): {}'.format(', '.join(invalid)))
+            return 1
+
+        ret = 0
+        if 'objdir' in what:
+            from mozbuild.controller.clobber import Clobberer
+            try:
+                Clobberer(self.topsrcdir, self.topobjdir).remove_objdir(full)
+            except OSError as e:
+                if sys.platform.startswith('win'):
+                    if isinstance(e, WindowsError) and e.winerror in (5,32):
+                        self.log(logging.ERROR, 'file_access_error', {'error': e},
+                            "Could not clobber because a file was in use. If the "
+                            "application is running, try closing it. {error}")
+                        return 1
+                raise
+
+        if 'python' in what:
+            if conditions.is_hg(self):
+                cmd = ['hg', 'purge', '--all', '-I', 'glob:**.py[co]']
+            elif conditions.is_git(self):
+                cmd = ['git', 'clean', '-f', '-x', '*.py[co]']
+            else:
+                cmd = ['find', '.', '-type', 'f', '-name', '*.py[co]', '-delete']
+            ret = subprocess.call(cmd, cwd=self.topsrcdir)
+        return ret
+
+@CommandProvider
 class Logs(MachCommandBase):
     """Provide commands to read mach logs."""
     NO_AUTO_LOG = True
@@ -672,12 +748,12 @@ class Logs(MachCommandBase):
             path = self._get_state_filename('last_log.json')
             log_file = open(path, 'rb')
 
-        if self.log_manager.terminal:
+        if os.isatty(sys.stdout.fileno()):
             env = dict(os.environ)
             if 'LESS' not in env:
                 # Sensible default flags if none have been set in the user
                 # environment.
-                env['LESS'] = 'FRX'
+                env[b'LESS'] = b'FRX'
             less = subprocess.Popen(['less'], stdin=subprocess.PIPE, env=env)
             # Various objects already have a reference to sys.stdout, so we
             # can't just change it, we need to change the file descriptor under
@@ -1034,10 +1110,12 @@ class Install(MachCommandBase):
 
     @Command('install', category='post-build',
         description='Install the package on the machine, or on a device.')
-    def install(self):
+    @CommandArgument('--verbose', '-v', action='store_true',
+        help='Print verbose output when installing to an Android emulator.')
+    def install(self, verbose=False):
         if conditions.is_android(self):
             from mozrunner.devices.android_device import verify_android_device
-            verify_android_device(self)
+            verify_android_device(self, verbose=verbose)
         ret = self._run_make(directory=".", target='install', ensure_exit_code=False)
         if ret == 0:
             self.notify('Install complete')
@@ -1060,22 +1138,22 @@ class RunProgram(MachCommandBase):
         help='Do not pass the --foreground argument by default on Mac.')
     @CommandArgument('--noprofile', '-n', action='store_true', group=prog_group,
         help='Do not pass the --profile argument by default.')
+    @CommandArgument('--disable-e10s', action='store_true', group=prog_group,
+        help='Run the program with electrolysis disabled.')
+    @CommandArgument('--enable-crash-reporter', action='store_true', group=prog_group,
+        help='Run the program with the crash reporter enabled.')
 
     @CommandArgumentGroup('debugging')
     @CommandArgument('--debug', action='store_true', group='debugging',
         help='Enable the debugger. Not specifying a --debugger option will result in the default debugger being used.')
     @CommandArgument('--debugger', default=None, type=str, group='debugging',
         help='Name of debugger to use.')
-    @CommandArgument('--debugparams', default=None, metavar='params', type=str,
+    @CommandArgument('--debugger-args', default=None, metavar='params', type=str,
         group='debugging',
         help='Command-line arguments to pass to the debugger itself; split as the Bourne shell would.')
-    # Bug 933807 introduced JS_DISABLE_SLOW_SCRIPT_SIGNALS to avoid clever
-    # segfaults induced by the slow-script-detecting logic for Ion/Odin JITted
-    # code.  If we don't pass this, the user will need to periodically type
-    # "continue" to (safely) resume execution.  There are ways to implement
-    # automatic resuming; see the bug.
-    @CommandArgument('--slowscript', action='store_true', group='debugging',
-        help='Do not set the JS_DISABLE_SLOW_SCRIPT_SIGNALS env variable; when not set, recoverable but misleading SIGSEGV instances may occur in Ion/Odin JIT code.')
+    @CommandArgument('--debugparams', action=StoreDebugParamsAndWarnAction,
+        default=None, type=str, dest='debugger_args', group='debugging',
+        help=argparse.SUPPRESS)
 
     @CommandArgumentGroup('DMD')
     @CommandArgument('--dmd', action='store_true', group='DMD',
@@ -1086,8 +1164,9 @@ class RunProgram(MachCommandBase):
         help='Allocation stack trace coverage. The default is \'partial\'.')
     @CommandArgument('--show-dump-stats', action='store_true', group='DMD',
         help='Show stats when doing dumps.')
-    def run(self, params, remote, background, noprofile, debug, debugger,
-        debugparams, slowscript, dmd, mode, stacks, show_dump_stats):
+    def run(self, params, remote, background, noprofile, disable_e10s,
+        enable_crash_reporter, debug, debugger, debugger_args,
+        dmd, mode, stacks, show_dump_stats):
 
         if conditions.is_android(self):
             # Running Firefox for Android is completely different
@@ -1095,7 +1174,7 @@ class RunProgram(MachCommandBase):
                 print("DMD is not supported for Firefox for Android")
                 return 1
             from mozrunner.devices.android_device import verify_android_device, run_firefox_for_android
-            if not (debug or debugger or debugparams):
+            if not (debug or debugger or debugger_args):
                 verify_android_device(self, install=True)
                 return run_firefox_for_android(self, params)
             verify_android_device(self, install=True, debugger=True)
@@ -1131,9 +1210,17 @@ class RunProgram(MachCommandBase):
                 args.append('-profile')
                 args.append(path)
 
-        extra_env = {'MOZ_CRASHREPORTER_DISABLE': '1'}
+        extra_env = {
+            'MOZ_DEVELOPER_REPO_DIR': self.topsrcdir,
+        }
 
-        if debug or debugger or debugparams:
+        if not enable_crash_reporter:
+            extra_env['MOZ_CRASHREPORTER_DISABLE'] = '1'
+
+        if disable_e10s:
+            extra_env['MOZ_FORCE_DISABLE_E10S'] = '1'
+
+        if debug or debugger or debugger_args:
             if 'INSIDE_EMACS' in os.environ:
                 self.log_manager.terminal_handler.setLevel(logging.WARNING)
 
@@ -1144,24 +1231,21 @@ class RunProgram(MachCommandBase):
                 debugger = mozdebug.get_default_debugger_name(mozdebug.DebuggerSearch.KeepLooking)
 
             if debugger:
-                self.debuggerInfo = mozdebug.get_debugger_info(debugger, debugparams)
+                self.debuggerInfo = mozdebug.get_debugger_info(debugger, debugger_args)
                 if not self.debuggerInfo:
                     print("Could not find a suitable debugger in your PATH.")
                     return 1
 
             # Parameters come from the CLI. We need to convert them before
             # their use.
-            if debugparams:
+            if debugger_args:
                 from mozbuild import shellutil
                 try:
-                    debugparams = shellutil.split(debugparams)
+                    debugger_args = shellutil.split(debugger_args)
                 except shellutil.MetaCharacterException as e:
-                    print("The --debugparams you passed require a real shell to parse them.")
+                    print("The --debugger-args you passed require a real shell to parse them.")
                     print("(We can't handle the %r character.)" % e.char)
                     return 1
-
-            if not slowscript:
-                extra_env['JS_DISABLE_SLOW_SCRIPT_SIGNALS'] = '1'
 
             # Prepend the debugger args.
             args = [self.debuggerInfo.path] + self.debuggerInfo.args + args
@@ -1427,41 +1511,9 @@ class PackageFrontend(MachCommandBase):
     def _set_log_level(self, verbose):
         self.log_manager.terminal_handler.setLevel(logging.INFO if not verbose else logging.DEBUG)
 
-    def _install_pip_package(self, package):
-        if os.environ.get('MOZ_AUTOMATION'):
-            self.virtualenv_manager._run_pip([
-                'install',
-                package,
-                '--no-index',
-                '--find-links',
-                'http://pypi.pub.build.mozilla.org/pub',
-                '--trusted-host',
-                'pypi.pub.build.mozilla.org',
-            ])
-            return
-        self.virtualenv_manager.install_pip_package(package)
-
     def _make_artifacts(self, tree=None, job=None, skip_cache=False):
-        # Undo PATH munging that will be done by activating the virtualenv,
-        # so that invoked subprocesses expecting to find system python
-        # (git cinnabar, in particular), will not find virtualenv python.
-        original_path = os.environ.get('PATH', '')
-        self._activate_virtualenv()
-        os.environ['PATH'] = original_path
-
-        for package in ('pylru==1.0.9',
-                        'taskcluster==0.0.32',
-                        'mozregression==1.0.2'):
-            self._install_pip_package(package)
-
         state_dir = self._mach_context.state_dir
         cache_dir = os.path.join(state_dir, 'package-frontend')
-
-        try:
-            os.makedirs(cache_dir)
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
 
         import which
 
@@ -1482,11 +1534,11 @@ class PackageFrontend(MachCommandBase):
             else:
                 git = which.which('git')
 
-        # Absolutely must come after the virtualenv is populated!
         from mozbuild.artifacts import Artifacts
         artifacts = Artifacts(tree, self.substs, self.defines, job,
                               log=self.log, cache_dir=cache_dir,
-                              skip_cache=skip_cache, hg=hg, git=git)
+                              skip_cache=skip_cache, hg=hg, git=git,
+                              topsrcdir=self.topsrcdir)
         return artifacts
 
     @ArtifactSubCommand('artifact', 'install',
@@ -1505,26 +1557,372 @@ class PackageFrontend(MachCommandBase):
 
         return artifacts.install_from(source, self.distdir)
 
-    @ArtifactSubCommand('artifact', 'last',
-        'Print the last pre-built artifact installed.')
-    def artifact_print_last(self, tree=None, job=None, verbose=False):
-        self._set_log_level(verbose)
-        artifacts = self._make_artifacts(tree=tree, job=job)
-        artifacts.print_last()
-        return 0
-
-    @ArtifactSubCommand('artifact', 'print-cache',
-        'Print local artifact cache for debugging.')
-    def artifact_print_cache(self, tree=None, job=None, verbose=False):
-        self._set_log_level(verbose)
-        artifacts = self._make_artifacts(tree=tree, job=job)
-        artifacts.print_cache()
-        return 0
-
     @ArtifactSubCommand('artifact', 'clear-cache',
         'Delete local artifacts and reset local artifact cache.')
     def artifact_clear_cache(self, tree=None, job=None, verbose=False):
         self._set_log_level(verbose)
         artifacts = self._make_artifacts(tree=tree, job=job)
         artifacts.clear_cache()
+        return 0
+
+    @SubCommand('artifact', 'toolchain')
+    @CommandArgument('--verbose', '-v', action='store_true',
+        help='Print verbose output.')
+    @CommandArgument('--cache-dir', metavar='DIR',
+        help='Directory where to store the artifacts cache')
+    @CommandArgument('--skip-cache', action='store_true',
+        help='Skip all local caches to force re-fetching remote artifacts.',
+        default=False)
+    @CommandArgument('--from-build', metavar='BUILD', nargs='+',
+        help='Get toolchains resulting from the given build(s)')
+    @CommandArgument('--tooltool-manifest', metavar='MANIFEST',
+        help='Explicit tooltool manifest to process')
+    @CommandArgument('--authentication-file', metavar='FILE',
+        help='Use the RelengAPI token found in the given file to authenticate')
+    @CommandArgument('--tooltool-url', metavar='URL',
+        help='Use the given url as tooltool server')
+    @CommandArgument('--no-unpack', action='store_true',
+        help='Do not unpack any downloaded file')
+    @CommandArgument('--retry', type=int, default=0,
+        help='Number of times to retry failed downloads')
+    @CommandArgument('files', nargs='*',
+        help='Only download the given file names (you may use file name stems)')
+    def artifact_toolchain(self, verbose=False, cache_dir=None,
+                          skip_cache=False, from_build=(),
+                          tooltool_manifest=None, authentication_file=None,
+                          tooltool_url=None, no_unpack=False, retry=None,
+                          files=()):
+        '''Download, cache and install pre-built toolchains.
+        '''
+        from mozbuild.artifacts import ArtifactCache
+        from mozbuild.action.tooltool import (
+            FileRecord,
+            open_manifest,
+            unpack_file,
+        )
+        from requests.adapters import HTTPAdapter
+        import redo
+        import requests
+        import shutil
+
+        from taskgraph.generator import Kind
+        from taskgraph.optimize import optimize_task
+        from taskgraph.util.taskcluster import (
+            get_artifact_url,
+            list_artifacts,
+        )
+        import yaml
+
+        self._set_log_level(verbose)
+        # Normally, we'd use self.log_manager.enable_unstructured(),
+        # but that enables all logging, while we only really want tooltool's
+        # and it also makes structured log output twice.
+        # So we manually do what it does, and limit that to the tooltool
+        # logger.
+        if self.log_manager.terminal_handler:
+            logging.getLogger('mozbuild.action.tooltool').addHandler(
+                self.log_manager.terminal_handler)
+            logging.getLogger('redo').addHandler(
+                self.log_manager.terminal_handler)
+            self.log_manager.terminal_handler.addFilter(
+                self.log_manager.structured_filter)
+        if not cache_dir:
+            cache_dir = os.path.join(self._mach_context.state_dir, 'toolchains')
+
+        tooltool_url = (tooltool_url or
+                        'https://api.pub.build.mozilla.org/tooltool').rstrip('/')
+
+        cache = ArtifactCache(cache_dir=cache_dir, log=self.log,
+                              skip_cache=skip_cache)
+
+        if authentication_file:
+            with open(authentication_file, 'rb') as f:
+                token = f.read().strip()
+
+            class TooltoolAuthenticator(HTTPAdapter):
+                def send(self, request, *args, **kwargs):
+                    request.headers['Authorization'] = \
+                        'Bearer {}'.format(token)
+                    return super(TooltoolAuthenticator, self).send(
+                        request, *args, **kwargs)
+
+            cache._download_manager.session.mount(
+                tooltool_url, TooltoolAuthenticator())
+
+        class DownloadRecord(FileRecord):
+            def __init__(self, url, *args, **kwargs):
+                super(DownloadRecord, self).__init__(*args, **kwargs)
+                self.url = url
+                self.basename = self.filename
+
+            def fetch_with(self, cache):
+                self.filename = cache.fetch(self.url)
+                return self.filename
+
+            def validate(self):
+                if self.size is None and self.digest is None:
+                    return True
+                return super(DownloadRecord, self).validate()
+
+        records = OrderedDict()
+        downloaded = []
+
+        if tooltool_manifest:
+            manifest = open_manifest(tooltool_manifest)
+            for record in manifest.file_records:
+                url = '{}/{}/{}'.format(tooltool_url, record.algorithm,
+                                        record.digest)
+                records[record.filename] = DownloadRecord(
+                    url, record.filename, record.size, record.digest,
+                    record.algorithm, unpack=record.unpack,
+                    version=record.version, visibility=record.visibility,
+                    setup=record.setup)
+
+        if from_build:
+            params = {
+                'message': '',
+                'project': '',
+                'level': os.environ.get('MOZ_SCM_LEVEL', '3'),
+                'base_repository': '',
+                'head_repository': '',
+                'head_rev': '',
+                'moz_build_date': '',
+                'build_date': 0,
+                'pushlog_id': 0,
+                'owner': '',
+            }
+
+            # TODO: move to the taskcluster package
+            def tasks(kind):
+                kind_path = mozpath.join(self.topsrcdir, 'taskcluster', 'ci', kind)
+                with open(mozpath.join(kind_path, 'kind.yml')) as f:
+                    config = yaml.load(f)
+                    tasks = Kind(kind, kind_path, config).load_tasks(params, {})
+                    return {
+                        task.task['metadata']['name']: task
+                        for task in tasks
+                    }
+
+            toolchains = tasks('toolchain')
+
+            for b in from_build:
+                user_value = b
+
+                if '/' not in b:
+                    b = '{}/opt'.format(b)
+
+                if not b.startswith('toolchain-'):
+                    b = 'toolchain-{}'.format(b)
+
+                task = toolchains.get(b)
+                if not task:
+                    self.log(logging.ERROR, 'artifact', {'build': user_value},
+                             'Could not find a toolchain build named `{build}`')
+                    return 1
+
+                optimized, task_id = optimize_task(task, {})
+                if not optimized:
+                    self.log(logging.ERROR, 'artifact', {'build': user_value},
+                             'Could not find artifacts for a toolchain build '
+                             'named `{build}`')
+                    return 1
+
+                for artifact in list_artifacts(task_id):
+                    name = artifact['name']
+                    if not name.startswith('public/'):
+                        continue
+                    name = name[len('public/'):]
+                    if name.startswith('logs/'):
+                        continue
+                    name = os.path.basename(name)
+                    records[name] = DownloadRecord(
+                        get_artifact_url(task_id, artifact['name']),
+                        name, None, None, None, unpack=True)
+
+        for record in records.itervalues():
+            if files and not any(record.basename == f or
+                                      record.basename.startswith('%s.' % f)
+                                      for f in files):
+                continue
+
+            self.log(logging.INFO, 'artifact', {'name': record.basename},
+                     'Downloading {name}')
+            valid = False
+            # sleeptime is 60 per retry.py, used by tooltool_wrapper.sh
+            for attempt, _ in enumerate(redo.retrier(attempts=retry+1,
+                                                     sleeptime=60)):
+                try:
+                    record.fetch_with(cache)
+                except requests.exceptions.HTTPError as e:
+                    status = e.response.status_code
+                    # The relengapi proxy likes to return error 400 bad request
+                    # which seems improbably to be due to our (simple) GET
+                    # being borked.
+                    should_retry = status >= 500 or status == 400
+                    if should_retry or attempt < retry:
+                        level = logging.WARN
+                    else:
+                        level = logging.ERROR
+                    self.log(level, 'artifact', {}, e.message)
+                    if not should_retry:
+                        break
+                    if attempt < retry:
+                        self.log(logging.INFO, 'artifact', {},
+                                 'Will retry in a moment...')
+                    continue
+                try:
+                    valid = record.validate()
+                except Exception:
+                    pass
+                if not valid:
+                    os.unlink(record.filename)
+                    if attempt < retry:
+                        self.log(logging.INFO, 'artifact', {},
+                                 'Will retry in a moment...')
+                    continue
+
+                downloaded.append(record)
+                break
+
+            if not valid:
+                self.log(logging.ERROR, 'artifact', {'name': record.basename},
+                         'Failed to download {name}')
+                return 1
+
+        for record in downloaded:
+            local = os.path.join(os.getcwd(), record.basename)
+            if os.path.exists(local):
+                os.unlink(local)
+            # unpack_file needs the file with its final name to work
+            # (https://github.com/mozilla/build-tooltool/issues/38), so we
+            # need to copy it, even though we remove it later. Use hard links
+            # when possible.
+            try:
+                os.link(record.filename, local)
+            except Exception:
+                shutil.copy(record.filename, local)
+            if record.unpack and not no_unpack:
+                unpack_file(local, record.setup)
+                os.unlink(local)
+
+        if not downloaded:
+            self.log(logging.ERROR, 'artifact', {}, 'Nothing to download')
+            if files:
+                return 1
+
+        return 0
+
+
+@CommandProvider
+class Vendor(MachCommandBase):
+    """Vendor third-party dependencies into the source repository."""
+
+    @Command('vendor', category='misc',
+             description='Vendor third-party dependencies into the source repository.')
+    def vendor(self):
+        self.parser.print_usage()
+        sys.exit(1)
+
+    @SubCommand('vendor', 'rust',
+                description='Vendor rust crates from crates.io into third_party/rust')
+    @CommandArgument('--ignore-modified', action='store_true',
+        help='Ignore modified files in current checkout',
+        default=False)
+    @CommandArgument('--build-peers-said-large-imports-were-ok', action='store_true',
+        help='Permit overly-large files to be added to the repository',
+        default=False)
+    def vendor_rust(self, **kwargs):
+        from mozbuild.vendor_rust import VendorRust
+        vendor_command = self._spawn(VendorRust)
+        vendor_command.vendor(**kwargs)
+
+    @SubCommand('vendor', 'aom',
+                description='Vendor av1 video codec reference implementation into the source repository.')
+    @CommandArgument('-r', '--revision',
+        help='Repository tag or commit to update to.')
+    @CommandArgument('--ignore-modified', action='store_true',
+        help='Ignore modified files in current checkout',
+        default=False)
+    def vendor_aom(self, **kwargs):
+        from mozbuild.vendor_aom import VendorAOM
+        vendor_command = self._spawn(VendorAOM)
+        vendor_command.vendor(**kwargs)
+
+
+@CommandProvider
+class WebRTCGTestCommands(GTestCommands):
+    @Command('webrtc-gtest', category='testing',
+        description='Run WebRTC.org GTest unit tests.')
+    @CommandArgument('gtest_filter', default=b"*", nargs='?', metavar='gtest_filter',
+        help="test_filter is a ':'-separated list of wildcard patterns (called the positive patterns),"
+             "optionally followed by a '-' and another ':'-separated pattern list (called the negative patterns).")
+    @CommandArgumentGroup('debugging')
+    @CommandArgument('--debug', action='store_true', group='debugging',
+        help='Enable the debugger. Not specifying a --debugger option will result in the default debugger being used.')
+    @CommandArgument('--debugger', default=None, type=str, group='debugging',
+        help='Name of debugger to use.')
+    @CommandArgument('--debugger-args', default=None, metavar='params', type=str,
+        group='debugging',
+        help='Command-line arguments to pass to the debugger itself; split as the Bourne shell would.')
+    def gtest(self, gtest_filter, debug, debugger,
+              debugger_args):
+        app_path = self.get_binary_path('webrtc-gtest')
+        args = [app_path]
+
+        if debug or debugger or debugger_args:
+            args = self.prepend_debugger_args(args, debugger, debugger_args)
+
+        # Used to locate resources used by tests
+        cwd = os.path.join(self.topsrcdir, 'media', 'webrtc', 'trunk')
+
+        if not os.path.isdir(cwd):
+            print('Unable to find working directory for tests: %s' % cwd)
+            return 1
+
+        gtest_env = {
+            # These tests are not run under ASAN upstream, so we need to
+            # disable some checks.
+            b'ASAN_OPTIONS': 'alloc_dealloc_mismatch=0',
+            # Use GTest environment variable to control test execution
+            # For details see:
+            # https://code.google.com/p/googletest/wiki/AdvancedGuide#Running_Test_Programs:_Advanced_Options
+            b'GTEST_FILTER': gtest_filter
+        }
+
+        return self.run_process(args=args,
+                                append_env=gtest_env,
+                                cwd=cwd,
+                                ensure_exit_code=False,
+                                pass_thru=True)
+
+@CommandProvider
+class Repackage(MachCommandBase):
+    '''Repackages artifacts into different formats.
+
+    This is generally used after packages are signed by the signing
+    scriptworkers in order to bundle things up into shippable formats, such as a
+    .dmg on OSX or an installer exe on Windows.
+    '''
+    @Command('repackage', category='misc',
+             description='Repackage artifacts into different formats.')
+    @CommandArgument('--input', '-i', type=str, required=True,
+        help='Input filename')
+    @CommandArgument('--output', '-o', type=str, required=True,
+        help='Output filename')
+    def repackage(self, input, output):
+        if not os.path.exists(input):
+            print('Input file does not exist: %s' % input)
+            return 1
+
+        if not os.path.exists(os.path.join(self.topobjdir, 'config.status')):
+            print('config.status not found.  Please run |mach configure| '
+                  'prior to |mach repackage|.')
+            return 1
+
+        if output.endswith('.dmg'):
+            from mozbuild.repackage import repackage_dmg
+            repackage_dmg(input, output)
+        else:
+            print("Repackaging into output '%s' is not yet supported." % output)
+            return 1
         return 0

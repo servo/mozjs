@@ -28,6 +28,10 @@ class ArenaCellSet;
  * GC's remembered set. Entries in the store buffer that cannot be represented
  * with the simple pointer-to-a-pointer scheme must derive from this class and
  * use the generic store buffer interface.
+ *
+ * A single BufferableRef entry in the generic buffer can represent many entries
+ * in the remembered set.  For example js::OrderedHashTableRef represents all
+ * the incoming edges corresponding to keys in an ordered hash table.
  */
 class BufferableRef
 {
@@ -338,7 +342,7 @@ class StoreBuffer
 
     template <typename Buffer, typename Edge>
     void unput(Buffer& buffer, const Edge& edge) {
-        MOZ_ASSERT(!JS::shadow::Runtime::asShadowRuntime(runtime_)->isHeapBusy());
+        MOZ_ASSERT(!JS::CurrentThreadIsHeapBusy());
         MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime_));
         if (!isEnabled())
             return;
@@ -348,7 +352,7 @@ class StoreBuffer
 
     template <typename Buffer, typename Edge>
     void put(Buffer& buffer, const Edge& edge) {
-        MOZ_ASSERT(!JS::shadow::Runtime::asShadowRuntime(runtime_)->isHeapBusy());
+        MOZ_ASSERT(!JS::CurrentThreadIsHeapBusy());
         MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime_));
         if (!isEnabled())
             return;
@@ -384,7 +388,7 @@ class StoreBuffer
     {
     }
 
-    bool enable();
+    MOZ_MUST_USE bool enable();
     void disable();
     bool isEnabled() const { return enabled_; }
 

@@ -22,17 +22,19 @@ GetBuildId(JS::BuildIdCharVector* buildId)
 static JSScript*
 FreezeThaw(JSContext* cx, JS::HandleScript script)
 {
-    JS::SetBuildIdOp(cx->runtime(), GetBuildId);
+    JS::SetBuildIdOp(cx, GetBuildId);
 
     // freeze
-    uint32_t nbytes;
-    void* memory = JS_EncodeScript(cx, script, &nbytes);
-    if (!memory)
+    JS::TranscodeBuffer buffer;
+    JS::TranscodeResult rs = JS::EncodeScript(cx, buffer, script);
+    if (rs != JS::TranscodeResult_Ok)
         return nullptr;
 
     // thaw
-    JSScript* script2 = JS_DecodeScript(cx, memory, nbytes);
-    js_free(memory);
+    JS::RootedScript script2(cx);
+    rs = JS::DecodeScript(cx, buffer, &script2);
+    if (rs != JS::TranscodeResult_Ok)
+        return nullptr;
     return script2;
 }
 
@@ -70,7 +72,7 @@ BEGIN_TEST(testXDR_bug506491)
     CHECK(JS_ExecuteScript(cx, script, &v2));
 
     // try to break the Block object that is the parent of f
-    JS_GC(rt);
+    JS_GC(cx);
 
     // confirm
     EVAL("f() === 'ok';\n", &v2);

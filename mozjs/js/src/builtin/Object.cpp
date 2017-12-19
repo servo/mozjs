@@ -9,17 +9,23 @@
 #include "mozilla/ArrayUtils.h"
 
 #include "jscntxt.h"
+#include "jsstr.h"
 
 #include "builtin/Eval.h"
 #include "frontend/BytecodeCompiler.h"
 #include "jit/InlinableNatives.h"
 #include "js/UniquePtr.h"
+#include "vm/AsyncFunction.h"
 #include "vm/StringBuffer.h"
 
 #include "jsobjinlines.h"
 
 #include "vm/NativeObject-inl.h"
 #include "vm/Shape-inl.h"
+
+#ifdef FUZZING
+#include "builtin/TestingFunctions.h"
+#endif
 
 using namespace js;
 
@@ -68,18 +74,18 @@ js::obj_propertyIsEnumerable(JSContext* cx, unsigned argc, Value* vp)
         JSObject* obj = &args.thisv().toObject();
 
         /* Step 3. */
-        Shape* shape;
+        PropertyResult prop;
         if (obj->isNative() &&
-            NativeLookupOwnProperty<NoGC>(cx, &obj->as<NativeObject>(), id, &shape))
+            NativeLookupOwnProperty<NoGC>(cx, &obj->as<NativeObject>(), id, &prop))
         {
             /* Step 4. */
-            if (!shape) {
+            if (!prop) {
                 args.rval().setBoolean(false);
                 return true;
             }
 
             /* Step 5. */
-            unsigned attrs = GetShapeAttributes(obj, shape);
+            unsigned attrs = GetPropertyAttributes(obj, prop);
             args.rval().setBoolean((attrs & JSPROP_ENUMERATE) != 0);
             return true;
         }
@@ -110,7 +116,9 @@ static bool
 obj_toSource(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    JS_CHECK_RECURSION(cx, return false);
+
+    if (!CheckRecursionLimit(cx))
+        return false;
 
     RootedObject obj(cx, ToObject(cx, args.thisv()));
     if (!obj)
@@ -124,6 +132,27 @@ obj_toSource(JSContext* cx, unsigned argc, Value* vp)
     return true;
 }
 
+template <typename CharT>
+static bool
+Consume(const CharT*& s, const CharT* e, const char *chars)
+{
+    size_t len = strlen(chars);
+    if (s + len >= e)
+        return false;
+    if (!EqualChars(s, chars, len))
+        return false;
+    s += len;
+    return true;
+}
+
+template <typename CharT>
+static void
+ConsumeSpaces(const CharT*& s, const CharT* e)
+{
+    while (*s == ' ' && s < e)
+        s++;
+}
+
 /*
  * Given a function source string, return the offset and length of the part
  * between '(function $name' and ')'.
@@ -132,43 +161,73 @@ template <typename CharT>
 static bool
 ArgsAndBodySubstring(mozilla::Range<const CharT> chars, size_t* outOffset, size_t* outLen)
 {
-    const CharT* const start = chars.start().get();
-    const CharT* const end = chars.end().get();
+    const CharT* const start = chars.begin().get();
     const CharT* s = start;
+    const CharT* e = chars.end().get();
 
-    uint8_t parenChomp = 0;
-    if (s[0] == '(') {
+    if (s == e)
+        return false;
+
+    // Remove enclosing parentheses.
+    if (*s == '(' && *(e - 1) == ')') {
         s++;
-        parenChomp = 1;
+        e--;
     }
 
-    /* Try to jump "function" keyword. */
-    s = js_strchr_limit(s, ' ', end);
-    if (!s)
-        return false;
+    // Support the following cases, with spaces between tokens:
+    //
+    //   -+---------+-+------------+-+-----+-+- [ - <any> - ] - ( -+-
+    //    |         | |            | |     | |                     |
+    //    +- async -+ +- function -+ +- * -+ +- <any> - ( ---------+
+    //                |            |
+    //                +- get ------+
+    //                |            |
+    //                +- set ------+
+    //
+    // This accepts some invalid syntax, but we don't care, since it's only
+    // used by the non-standard toSource, and we're doing a best-effort attempt
+    // here.
 
-    /*
-     * Jump over the function's name: it can't be encoded as part
-     * of an ECMA getter or setter.
-     */
-    s = js_strchr_limit(s, '(', end);
-    if (!s)
-        return false;
+    (void) Consume(s, e, "async");
+    ConsumeSpaces(s, e);
+    (void) (Consume(s, e, "function") || Consume(s, e, "get") || Consume(s, e, "set"));
+    ConsumeSpaces(s, e);
+    (void) Consume(s, e, "*");
+    ConsumeSpaces(s, e);
 
-    if (*s == ' ')
+    // Jump over the function's name.
+    if (Consume(s, e, "[")) {
+        s = js_strchr_limit(s, ']', e);
+        if (!s)
+            return false;
         s++;
+        ConsumeSpaces(s, e);
+        if (*s != '(')
+            return false;
+    } else {
+        s = js_strchr_limit(s, '(', e);
+        if (!s)
+            return false;
+    }
 
     *outOffset = s - start;
-    *outLen = end - s - parenChomp;
+    *outLen = e - s;
     MOZ_ASSERT(*outOffset + *outLen <= chars.length());
     return true;
 }
+
+enum class PropertyKind {
+    Getter,
+    Setter,
+    Method,
+    Normal
+};
 
 JSString*
 js::ObjectToSource(JSContext* cx, HandleObject obj)
 {
     /* If outermost, we need parentheses to be an expression, not a block. */
-    bool outermost = (cx->cycleDetectorSet.count() == 0);
+    bool outermost = cx->cycleDetectorVector().empty();
 
     AutoCycleDetector detector(cx, obj);
     if (!detector.init())
@@ -182,59 +241,29 @@ js::ObjectToSource(JSContext* cx, HandleObject obj)
     if (!buf.append('{'))
         return nullptr;
 
-    RootedValue v0(cx), v1(cx);
-    MutableHandleValue val[2] = {&v0, &v1};
-
-    RootedString str0(cx), str1(cx);
-    MutableHandleString gsop[2] = {&str0, &str1};
-
     AutoIdVector idv(cx);
     if (!GetPropertyKeys(cx, obj, JSITER_OWNONLY | JSITER_SYMBOLS, &idv))
         return nullptr;
 
     bool comma = false;
-    for (size_t i = 0; i < idv.length(); ++i) {
-        RootedId id(cx, idv[i]);
-        Rooted<PropertyDescriptor> desc(cx);
-        if (!GetOwnPropertyDescriptor(cx, obj, id, &desc))
-            return nullptr;
 
-        int valcnt = 0;
-        if (desc.object()) {
-            if (desc.isAccessorDescriptor()) {
-                if (desc.hasGetterObject() && desc.getterObject()) {
-                    val[valcnt].setObject(*desc.getterObject());
-                    gsop[valcnt].set(cx->names().get);
-                    valcnt++;
-                }
-                if (desc.hasSetterObject() && desc.setterObject()) {
-                    val[valcnt].setObject(*desc.setterObject());
-                    gsop[valcnt].set(cx->names().set);
-                    valcnt++;
-                }
-            } else {
-                valcnt = 1;
-                val[0].set(desc.value());
-                gsop[0].set(nullptr);
-            }
-        }
-
+    auto AddProperty = [cx, &comma, &buf](HandleId id, HandleValue val, PropertyKind kind) -> bool {
         /* Convert id to a string. */
         RootedString idstr(cx);
         if (JSID_IS_SYMBOL(id)) {
             RootedValue v(cx, SymbolValue(JSID_TO_SYMBOL(id)));
             idstr = ValueToSource(cx, v);
             if (!idstr)
-                return nullptr;
+                return false;
         } else {
             RootedValue idv(cx, IdToValue(id));
             idstr = ToString<CanGC>(cx, idv);
             if (!idstr)
-                return nullptr;
+                return false;
 
             /*
-             * If id is a string that's not an identifier, or if it's a negative
-             * integer, then it must be quoted.
+             * If id is a string that's not an identifier, or if it's a
+             * negative integer, then it must be quoted.
              */
             if (JSID_IS_ATOM(id)
                 ? !IsIdentifier(JSID_TO_ATOM(id))
@@ -242,28 +271,65 @@ js::ObjectToSource(JSContext* cx, HandleObject obj)
             {
                 idstr = QuoteString(cx, idstr, char16_t('\''));
                 if (!idstr)
-                    return nullptr;
+                    return false;
             }
         }
 
-        for (int j = 0; j < valcnt; j++) {
-            /* Convert val[j] to its canonical source form. */
-            JSString* valsource = ValueToSource(cx, val[j]);
-            if (!valsource)
-                return nullptr;
+        RootedString valsource(cx, ValueToSource(cx, val));
+        if (!valsource)
+            return false;
 
-            RootedLinearString valstr(cx, valsource->ensureLinear(cx));
-            if (!valstr)
-                return nullptr;
+        RootedLinearString valstr(cx, valsource->ensureLinear(cx));
+        if (!valstr)
+            return false;
 
-            size_t voffset = 0;
-            size_t vlength = valstr->length();
+        if (comma && !buf.append(", "))
+            return false;
+        comma = true;
 
-            /*
-             * Remove '(function ' from the beginning of valstr and ')' from the
-             * end so that we can put "get" in front of the function definition.
-             */
-            if (gsop[j] && IsFunctionObject(val[j])) {
+        size_t voffset, vlength;
+
+        // Methods and accessors can return exact syntax of source, that fits
+        // into property without adding property name or "get"/"set" prefix.
+        // Use the exact syntax when the following conditions are met:
+        //
+        //   * It's a function object
+        //     (exclude proxies)
+        //   * Function's kind and property's kind are same
+        //     (this can be false for dynamically defined properties)
+        //   * Function has explicit name
+        //     (this can be false for computed property and dynamically defined
+        //      properties)
+        //   * Function's name and property's name are same
+        //     (this can be false for dynamically defined properties)
+        if (kind == PropertyKind::Getter || kind == PropertyKind::Setter ||
+            kind == PropertyKind::Method)
+        {
+            RootedFunction fun(cx);
+            if (val.toObject().is<JSFunction>()) {
+                fun = &val.toObject().as<JSFunction>();
+                // Method's case should be checked on caller.
+                if (((fun->isGetter() && kind == PropertyKind::Getter) ||
+                     (fun->isSetter() && kind == PropertyKind::Setter) ||
+                     kind == PropertyKind::Method) &&
+                    fun->explicitName())
+                {
+                    bool result;
+                    if (!EqualStrings(cx, fun->explicitName(), idstr, &result))
+                        return false;
+
+                    if (result)  {
+                        if (!buf.append(valstr))
+                            return false;
+                        return true;
+                    }
+                }
+            }
+
+            {
+                // When falling back try to generate a better string
+                // representation by skipping the prelude, and also removing
+                // the enclosing parentheses.
                 bool success;
                 JS::AutoCheckCannotGC nogc;
                 if (valstr->hasLatin1Chars())
@@ -271,29 +337,90 @@ js::ObjectToSource(JSContext* cx, HandleObject obj)
                 else
                     success = ArgsAndBodySubstring(valstr->twoByteRange(nogc), &voffset, &vlength);
                 if (!success)
-                    gsop[j].set(nullptr);
+                    kind = PropertyKind::Normal;
             }
 
-            if (comma && !buf.append(", "))
-                return nullptr;
-            comma = true;
+            if (kind == PropertyKind::Getter) {
+                if (!buf.append("get "))
+                    return false;
+            } else if (kind == PropertyKind::Setter) {
+                if (!buf.append("set "))
+                    return false;
+            } else if (kind == PropertyKind::Method && fun) {
+                if (IsWrappedAsyncFunction(fun)) {
+                    if (!buf.append("async "))
+                        return false;
+                }
 
-            if (gsop[j]) {
-                if (!buf.append(gsop[j]) || !buf.append(' '))
+                if (fun->isStarGenerator()) {
+                    if (!buf.append('*'))
+                        return false;
+                }
+            }
+        }
+
+        bool needsBracket = JSID_IS_SYMBOL(id);
+        if (needsBracket && !buf.append('['))
+            return false;
+        if (!buf.append(idstr))
+            return false;
+        if (needsBracket && !buf.append(']'))
+            return false;
+
+        if (kind == PropertyKind::Getter || kind == PropertyKind::Setter ||
+            kind == PropertyKind::Method)
+        {
+            if (!buf.appendSubstring(valstr, voffset, vlength))
+                return false;
+        } else {
+            if (!buf.append(':'))
+                return false;
+            if (!buf.append(valstr))
+                return false;
+        }
+        return true;
+    };
+
+    RootedId id(cx);
+    Rooted<PropertyDescriptor> desc(cx);
+    RootedValue val(cx);
+    RootedFunction fun(cx);
+    for (size_t i = 0; i < idv.length(); ++i) {
+        id = idv[i];
+        if (!GetOwnPropertyDescriptor(cx, obj, id, &desc))
+            return nullptr;
+
+        if (!desc.object())
+            continue;
+
+        if (desc.isAccessorDescriptor()) {
+            if (desc.hasGetterObject() && desc.getterObject()) {
+                val.setObject(*desc.getterObject());
+                if (!AddProperty(id, val, PropertyKind::Getter))
                     return nullptr;
             }
-            if (JSID_IS_SYMBOL(id) && !buf.append('['))
-                return nullptr;
-            if (!buf.append(idstr))
-                return nullptr;
-            if (JSID_IS_SYMBOL(id) && !buf.append(']'))
-                return nullptr;
-            if (!buf.append(gsop[j] ? ' ' : ':'))
-                return nullptr;
-
-            if (!buf.appendSubstring(valstr, voffset, vlength))
-                return nullptr;
+            if (desc.hasSetterObject() && desc.setterObject()) {
+                val.setObject(*desc.setterObject());
+                if (!AddProperty(id, val, PropertyKind::Setter))
+                    return nullptr;
+            }
+            continue;
         }
+
+        val.set(desc.value());
+        if (IsFunctionObject(val, fun.address())) {
+            if (IsWrappedAsyncFunction(fun))
+                fun = GetUnwrappedAsyncFunction(fun);
+
+            if (fun->isMethod()) {
+                if (!AddProperty(id, val, PropertyKind::Method))
+                    return nullptr;
+                continue;
+            }
+        }
+
+        if (!AddProperty(id, val, PropertyKind::Normal))
+            return nullptr;
     }
 
     if (!buf.append('}'))
@@ -305,76 +432,122 @@ js::ObjectToSource(JSContext* cx, HandleObject obj)
 }
 #endif /* JS_HAS_TOSOURCE */
 
-JSString*
-JS_BasicObjectToString(JSContext* cx, HandleObject obj)
-{
-    // Some classes are really common, don't allocate new strings for them.
-    // The ordering below is based on the measurements in bug 966264.
-    if (obj->is<PlainObject>())
-        return cx->names().objectObject;
-    if (obj->is<StringObject>())
-        return cx->names().objectString;
-    if (obj->is<ArrayObject>())
-        return cx->names().objectArray;
-    if (obj->is<JSFunction>())
-        return cx->names().objectFunction;
-    if (obj->is<NumberObject>())
-        return cx->names().objectNumber;
-
-    const char* className = GetObjectClassName(cx, obj);
-
-    if (strcmp(className, "Window") == 0)
-        return cx->names().objectWindow;
-
-    StringBuffer sb(cx);
-    if (!sb.append("[object ") || !sb.append(className, strlen(className)) ||
-        !sb.append("]"))
-    {
-        return nullptr;
-    }
-    return sb.finishString();
-}
-
-/* ES5 15.2.4.2.  Note steps 1 and 2 are errata. */
+// ES6 19.1.3.6
 bool
 js::obj_toString(JSContext* cx, unsigned argc, Value* vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    /* Step 1. */
+    // Step 1.
     if (args.thisv().isUndefined()) {
         args.rval().setString(cx->names().objectUndefined);
         return true;
     }
 
-    /* Step 2. */
+    // Step 2.
     if (args.thisv().isNull()) {
         args.rval().setString(cx->names().objectNull);
         return true;
     }
 
-    /* Step 3. */
+    // Step 3.
     RootedObject obj(cx, ToObject(cx, args.thisv()));
     if (!obj)
         return false;
 
-    /* Steps 4-5. */
-    JSString* str = JS_BasicObjectToString(cx, obj);
+    // Step 4.
+    bool isArray;
+    if (!IsArray(cx, obj, &isArray))
+        return false;
+
+    // Step 5.
+    RootedString builtinTag(cx);
+    if (isArray) {
+        builtinTag = cx->names().objectArray;
+    } else {
+        // Steps 6-13.
+        ESClass cls;
+        if (!GetBuiltinClass(cx, obj, &cls))
+            return false;
+
+        switch (cls) {
+          case ESClass::String:
+            builtinTag = cx->names().objectString;
+            break;
+          case ESClass::Arguments:
+            builtinTag = cx->names().objectArguments;
+            break;
+          case ESClass::Error:
+            builtinTag = cx->names().objectError;
+            break;
+          case ESClass::Boolean:
+            builtinTag = cx->names().objectBoolean;
+            break;
+          case ESClass::Number:
+            builtinTag = cx->names().objectNumber;
+            break;
+          case ESClass::Date:
+            builtinTag = cx->names().objectDate;
+            break;
+          case ESClass::RegExp:
+            builtinTag = cx->names().objectRegExp;
+            break;
+          default:
+            if (obj->isCallable()) {
+                // Non-standard: Prevent <object> from showing up as Function.
+                RootedObject unwrapped(cx, CheckedUnwrap(obj));
+                if (!unwrapped || !unwrapped->getClass()->isDOMClass())
+                    builtinTag = cx->names().objectFunction;
+            }
+            break;
+        }
+    }
+    // Step 14.
+    // Currently omitted for non-standard fallback.
+
+    // Step 15.
+    RootedValue tag(cx);
+    RootedId toStringTagId(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().toStringTag));
+    if (!GetProperty(cx, obj, obj, toStringTagId, &tag))
+        return false;
+
+    // Step 16.
+    if (!tag.isString()) {
+        // Non-standard (bug 1277801): Use ClassName as a fallback in the interim
+        if (!builtinTag) {
+            const char* className = GetObjectClassName(cx, obj);
+            // "[object Object]" is by far the most common case at this point,
+            // so we optimize it here.
+            if (strcmp(className, "Object") == 0) {
+                builtinTag = cx->names().objectObject;
+            } else {
+                StringBuffer sb(cx);
+                if (!sb.append("[object ") || !sb.append(className, strlen(className)) ||
+                    !sb.append("]"))
+                {
+                    return false;
+                }
+
+                builtinTag = sb.finishAtom();
+                if (!builtinTag)
+                    return false;
+            }
+        }
+
+        args.rval().setString(builtinTag);
+        return true;
+    }
+
+    // Step 17.
+    StringBuffer sb(cx);
+    if (!sb.append("[object ") || !sb.append(tag.toString()) || !sb.append("]"))
+        return false;
+
+    JSString* str = sb.finishAtom();
     if (!str)
         return false;
+
     args.rval().setString(str);
-    return true;
-}
-
-
-bool
-js::obj_valueOf(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-    RootedObject obj(cx, ToObject(cx, args.thisv()));
-    if (!obj)
-        return false;
-    args.rval().setObject(*obj);
     return true;
 }
 
@@ -384,22 +557,23 @@ obj_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     if (args.length() < 2) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
-                             "Object.setPrototypeOf", "1", "");
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
+                                  "Object.setPrototypeOf", "1", "");
         return false;
     }
 
     /* Step 1-2. */
     if (args[0].isNullOrUndefined()) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CANT_CONVERT_TO,
-                             args[0].isNull() ? "null" : "undefined", "object");
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_CANT_CONVERT_TO,
+                                  args[0].isNull() ? "null" : "undefined", "object");
         return false;
     }
 
     /* Step 3. */
     if (!args[1].isObjectOrNull()) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE,
-                             "Object.setPrototypeOf", "an object or null", InformalValueTypeName(args[1]));
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_NOT_EXPECTED_TYPE,
+                                  "Object.setPrototypeOf", "an object or null",
+                                  InformalValueTypeName(args[1]));
         return false;
     }
 
@@ -423,7 +597,7 @@ obj_setPrototypeOf(JSContext* cx, unsigned argc, Value* vp)
 #if JS_HAS_OBJ_WATCHPOINT
 
 bool
-js::WatchHandler(JSContext* cx, JSObject* obj_, jsid id_, JS::Value old,
+js::WatchHandler(JSContext* cx, JSObject* obj_, jsid id_, const JS::Value& old,
                  JS::Value* nvp, void* closure)
 {
     RootedObject obj(cx, obj_);
@@ -511,50 +685,6 @@ obj_unwatch(JSContext* cx, unsigned argc, Value* vp)
 
 #endif /* JS_HAS_OBJ_WATCHPOINT */
 
-/* ECMA 15.2.4.5. */
-bool
-js::obj_hasOwnProperty(JSContext* cx, unsigned argc, Value* vp)
-{
-    CallArgs args = CallArgsFromVp(argc, vp);
-
-    HandleValue idValue = args.get(0);
-
-    // As an optimization, provide a fast path when rooting is not necessary and
-    // we can safely retrieve the object's shape.
-
-    /* Step 1, 2. */
-    jsid id;
-    if (args.thisv().isObject() && ValueToId<NoGC>(cx, idValue, &id)) {
-        JSObject* obj = &args.thisv().toObject();
-        Shape* prop;
-        if (obj->isNative() &&
-            NativeLookupOwnProperty<NoGC>(cx, &obj->as<NativeObject>(), id, &prop))
-        {
-            args.rval().setBoolean(!!prop);
-            return true;
-        }
-    }
-
-    /* Step 1. */
-    RootedId idRoot(cx);
-    if (!ToPropertyKey(cx, idValue, &idRoot))
-        return false;
-
-    /* Step 2. */
-    RootedObject obj(cx, ToObject(cx, args.thisv()));
-    if (!obj)
-        return false;
-
-    /* Step 3. */
-    bool found;
-    if (!HasOwnProperty(cx, obj, idRoot, &found))
-        return false;
-
-    /* Step 4,5. */
-    args.rval().setBoolean(found);
-    return true;
-}
-
 /* ES5 15.2.4.6. */
 static bool
 obj_isPrototypeOf(JSContext* cx, unsigned argc, Value* vp)
@@ -616,6 +746,58 @@ js::ObjectCreateWithTemplate(JSContext* cx, HandlePlainObject templateObj)
     return ObjectCreateImpl(cx, proto, GenericObject, group);
 }
 
+// ES 2017 draft 19.1.2.3.1
+static bool
+ObjectDefineProperties(JSContext* cx, HandleObject obj, HandleValue properties)
+{
+    // Step 1. implicit
+    // Step 2.
+    RootedObject props(cx, ToObject(cx, properties));
+    if (!props)
+        return false;
+
+    // Step 3.
+    AutoIdVector keys(cx);
+    if (!GetPropertyKeys(cx, props, JSITER_OWNONLY | JSITER_SYMBOLS | JSITER_HIDDEN, &keys))
+        return false;
+
+    RootedId nextKey(cx);
+    Rooted<PropertyDescriptor> desc(cx);
+    RootedValue descObj(cx);
+
+    // Step 4.
+    Rooted<PropertyDescriptorVector> descriptors(cx, PropertyDescriptorVector(cx));
+    AutoIdVector descriptorKeys(cx);
+
+    // Step 5.
+    for (size_t i = 0, len = keys.length(); i < len; i++) {
+        nextKey = keys[i];
+
+        // Step 5.a.
+        if (!GetOwnPropertyDescriptor(cx, props, nextKey, &desc))
+            return false;
+
+        // Step 5.b.
+        if (desc.object() && desc.enumerable()) {
+            if (!GetProperty(cx, props, props, nextKey, &descObj) ||
+                !ToPropertyDescriptor(cx, descObj, true, &desc) ||
+                !descriptors.append(desc) ||
+                !descriptorKeys.append(nextKey))
+            {
+                return false;
+            }
+        }
+    }
+
+    // Step 6.
+    for (size_t i = 0, len = descriptors.length(); i < len; i++) {
+        if (!DefineProperty(cx, obj, descriptorKeys[i], descriptors[i]))
+            return false;
+    }
+
+    return true;
+}
+
 // ES6 draft rev34 (2015/02/20) 19.1.2.2 Object.create(O [, Properties])
 bool
 js::obj_create(JSContext* cx, unsigned argc, Value* vp)
@@ -624,8 +806,8 @@ js::obj_create(JSContext* cx, unsigned argc, Value* vp)
 
     // Step 1.
     if (args.length() == 0) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
-                             "Object.create", "0", "s");
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
+                                  "Object.create", "0", "s");
         return false;
     }
 
@@ -634,8 +816,9 @@ js::obj_create(JSContext* cx, unsigned argc, Value* vp)
         UniqueChars bytes = DecompileValueGenerator(cx, JSDVG_SEARCH_STACK, v, nullptr);
         if (!bytes)
             return false;
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
-                             bytes.get(), "not an object or null");
+
+        JS_ReportErrorNumberLatin1(cx, GetErrorMessage, nullptr, JSMSG_UNEXPECTED_TYPE,
+                                   bytes.get(), "not an object or null");
         return false;
     }
 
@@ -647,9 +830,7 @@ js::obj_create(JSContext* cx, unsigned argc, Value* vp)
 
     // Step 3.
     if (args.hasDefined(1)) {
-        RootedValue val(cx, args[1]);
-        RootedObject props(cx, ToObject(cx, val));
-        if (!props || !DefineProperties(cx, obj, props))
+        if (!ObjectDefineProperties(cx, obj, args[1]))
             return false;
     }
 
@@ -715,7 +896,6 @@ EnumerableOwnProperties(JSContext* cx, const JS::CallArgs& args, EnumerableOwnPr
         nobj = &obj->as<NativeObject>();
     RootedShape shape(cx);
     Rooted<PropertyDescriptor> desc(cx);
-
     // Step 4.
     size_t out = 0;
     for (size_t i = 0; i < len; i++) {
@@ -735,7 +915,7 @@ EnumerableOwnProperties(JSContext* cx, const JS::CallArgs& args, EnumerableOwnPr
                 value = nobj->getDenseOrTypedArrayElement(JSID_TO_INT(id));
             } else {
                 shape = nobj->lookup(cx, id);
-                if (!shape || !(GetShapeAttributes(nobj, shape) & JSPROP_ENUMERATE))
+                if (!shape || !(shape->attributes() & JSPROP_ENUMERATE))
                     continue;
                 if (!shape->isAccessorShape()) {
                     if (!NativeGetExistingProperty(cx, nobj, nobj, shape, &value))
@@ -756,9 +936,7 @@ EnumerableOwnProperties(JSContext* cx, const JS::CallArgs& args, EnumerableOwnPr
             // (Omitted because Object.keys doesn't use this implementation.)
 
             // Step 4.a.ii.2.a.
-            if (obj->isNative() && desc.hasValue())
-                value = desc.value();
-            else if (!GetProperty(cx, obj, obj, id, &value))
+            if (!GetProperty(cx, obj, obj, id, &value))
                 return false;
         }
 
@@ -928,17 +1106,13 @@ obj_defineProperties(JSContext* cx, unsigned argc, Value* vp)
 
     /* Step 2. */
     if (args.length() < 2) {
-        JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
-                             "Object.defineProperties", "0", "s");
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_MORE_ARGS_NEEDED,
+                                  "Object.defineProperties", "0", "s");
         return false;
     }
-    RootedValue val(cx, args[1]);
-    RootedObject props(cx, ToObject(cx, val));
-    if (!props)
-        return false;
 
     /* Steps 3-6. */
-    return DefineProperties(cx, obj, props);
+    return ObjectDefineProperties(cx, obj, args[1]);
 }
 
 // ES6 20141014 draft 19.1.2.15 Object.preventExtensions(O)
@@ -1097,12 +1271,12 @@ static const JSFunctionSpec object_methods[] = {
 #endif
     JS_FN(js_toString_str,             obj_toString,                0,0),
     JS_SELF_HOSTED_FN(js_toLocaleString_str, "Object_toLocaleString", 0, 0),
-    JS_FN(js_valueOf_str,              obj_valueOf,                 0,0),
+    JS_SELF_HOSTED_FN(js_valueOf_str,  "Object_valueOf",            0,0),
 #if JS_HAS_OBJ_WATCHPOINT
     JS_FN(js_watch_str,                obj_watch,                   2,0),
     JS_FN(js_unwatch_str,              obj_unwatch,                 1,0),
 #endif
-    JS_FN(js_hasOwnProperty_str,       obj_hasOwnProperty,          1,0),
+    JS_SELF_HOSTED_FN(js_hasOwnProperty_str, "Object_hasOwnProperty", 1,0),
     JS_FN(js_isPrototypeOf_str,        obj_isPrototypeOf,           1,0),
     JS_FN(js_propertyIsEnumerable_str, obj_propertyIsEnumerable,    1,0),
 #if JS_OLD_GETTER_SETTER_METHODS
@@ -1203,6 +1377,16 @@ FinishObjectClassInit(JSContext* cx, JS::HandleObject ctor, JS::HandleObject pro
         return false;
     global->setOriginalEval(evalobj);
 
+#ifdef FUZZING
+    if (cx->options().fuzzing()) {
+        if (!DefineTestingFunctions(cx, global, /* fuzzingSafe = */ true,
+                                    /* disableOOMFunctions = */ false))
+        {
+            return false;
+        }
+    }
+#endif
+
     Rooted<NativeObject*> holder(cx, GlobalObject::getIntrinsicsHolder(cx, global));
     if (!holder)
         return false;
@@ -1216,8 +1400,8 @@ FinishObjectClassInit(JSContext* cx, JS::HandleObject ctor, JS::HandleObject pro
      * only set the [[Prototype]] if it hasn't already been set.
      */
     Rooted<TaggedProto> tagged(cx, TaggedProto(proto));
-    if (global->shouldSplicePrototype(cx)) {
-        if (!global->splicePrototype(cx, global->getClass(), tagged))
+    if (global->shouldSplicePrototype()) {
+        if (!JSObject::splicePrototype(cx, global, global->getClass(), tagged))
             return false;
     }
     return true;

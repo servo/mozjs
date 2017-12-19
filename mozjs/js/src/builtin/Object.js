@@ -60,7 +60,8 @@ function ObjectGetOwnPropertyDescriptors(O) {
         var desc = std_Object_getOwnPropertyDescriptor(obj, key);
 
         // Step 4.c.
-        _DefineDataProperty(descriptors, key, desc);
+        if (typeof desc !== "undefined")
+            _DefineDataProperty(descriptors, key, desc);
     }
 
     // Step 5.
@@ -86,13 +87,21 @@ function Object_toLocaleString() {
     return callContentFunction(O.toString, O);
 }
 
+// ES 2017 draft bb96899bb0d9ef9be08164a26efae2ee5f25e875 19.1.3.7
+function Object_valueOf() {
+    // Step 1.
+    return ToObject(this);
+}
+
+// ES 2018 draft 19.1.3.2
+function Object_hasOwnProperty(V) {
+    // Implement hasOwnProperty as a pseudo function that becomes a JSOp
+    // to easier add an inline cache for this.
+    return hasOwn(V, this);
+}
+
 // ES7 draft (2016 March 8) B.2.2.3
 function ObjectDefineSetter(name, setter) {
-    if (this === null || this === undefined)
-        AddContentTelemetry(TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED, 1);
-    else
-        AddContentTelemetry(TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED, 0);
-
     // Step 1.
     var object = ToObject(this);
 
@@ -119,11 +128,6 @@ function ObjectDefineSetter(name, setter) {
 
 // ES7 draft (2016 March 8) B.2.2.2
 function ObjectDefineGetter(name, getter) {
-    if (this === null || this === undefined)
-        AddContentTelemetry(TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED, 1);
-    else
-        AddContentTelemetry(TELEMETRY_DEFINE_GETTER_SETTER_THIS_NULL_UNDEFINED, 0);
-
     // Step 1.
     var object = ToObject(this);
 
@@ -163,7 +167,7 @@ function ObjectLookupSetter(name) {
         // Step 3.b.
         if (desc) {
             // Step.b.i.
-            if (callFunction(std_Object_hasOwnProperty, desc, "set"))
+            if (hasOwn("set", desc))
                 return desc.set;
 
             // Step.b.ii.
@@ -192,7 +196,7 @@ function ObjectLookupGetter(name) {
         // Step 3.b.
         if (desc) {
             // Step.b.i.
-            if (callFunction(std_Object_hasOwnProperty, desc, "get"))
+            if (hasOwn("get", desc))
                 return desc.get;
 
             // Step.b.ii.

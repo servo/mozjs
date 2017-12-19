@@ -7,56 +7,24 @@ AC_DEFUN([MOZ_ANDROID_NDK],
 
 MOZ_ARG_WITH_STRING(android-cxx-stl,
 [  --with-android-cxx-stl=VALUE
-                          use the specified C++ STL (stlport, libstdc++, libc++)],
+                          use the specified C++ STL (libstdc++, libc++)],
     android_cxx_stl=$withval,
     android_cxx_stl=libc++)
 
-define([MIN_ANDROID_VERSION], [9])
-android_version=MIN_ANDROID_VERSION
-
-MOZ_ARG_WITH_STRING(android-version,
-[  --with-android-version=VER
-                          android platform version, default] MIN_ANDROID_VERSION,
-    android_version=$withval)
-
-if test $android_version -lt MIN_ANDROID_VERSION ; then
-    AC_MSG_ERROR([--with-android-version must be at least MIN_ANDROID_VERSION.])
-fi
-
 case "$target" in
 *-android*|*-linuxandroid*)
-    AC_MSG_CHECKING([for android platform directory])
-
-    case "$target_cpu" in
-    arm)
-        target_name=arm
-        ;;
-    i?86)
-        target_name=x86
-        ;;
-    mipsel)
-        target_name=mips
-        ;;
-    esac
-
-    android_platform="$android_ndk"/platforms/android-"$android_version"/arch-"$target_name"
-
-    if test -d "$android_platform" ; then
-        AC_MSG_RESULT([$android_platform])
-    else
-        AC_MSG_ERROR([not found. Please check your NDK. With the current configuration, it should be in $android_platform])
-    fi
-
+    dnl $android_platform will be set for us by Python configure.
     CPPFLAGS="-idirafter $android_platform/usr/include $CPPFLAGS"
     CFLAGS="-fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-fno-short-enums -fno-exceptions $CXXFLAGS"
     ASFLAGS="-idirafter $android_platform/usr/include -DANDROID $ASFLAGS"
 
-    dnl Add -llog by default, since we use it all over the place.
     dnl Add --allow-shlib-undefined, because libGLESv2 links to an
     dnl undefined symbol (present on the hardware, just not in the
     dnl NDK.)
-    LDFLAGS="-L$android_platform/usr/lib -Wl,-rpath-link=$android_platform/usr/lib --sysroot=$android_platform -llog -Wl,--allow-shlib-undefined $LDFLAGS"
+    LDFLAGS="-L$android_platform/usr/lib -Wl,-rpath-link=$android_platform/usr/lib --sysroot=$android_platform -Wl,--allow-shlib-undefined $LDFLAGS"
+    dnl Add -llog by default, since we use it all over the place.
+    LIBS="-llog $LIBS"
     ANDROID_PLATFORM="${android_platform}"
 
     AC_DEFINE(ANDROID)
@@ -83,6 +51,9 @@ if test "$OS_TARGET" = "Android"; then
         ;;
     mips32-*) # When target_cpu is mipsel, CPU_ARCH is mips32
         ANDROID_CPU_ARCH=mips
+        ;;
+    aarch64-*)
+        ANDROID_CPU_ARCH=arm64-v8a
         ;;
     esac
 
@@ -130,6 +101,22 @@ if test "$OS_TARGET" = "Android"; then
                 AC_MSG_ERROR([Couldn't find path to llvm-libc++ in the android ndk])
             fi
 
+            if ! test -e "$cxx_include"; then
+                # NDK r13 removes the inner "libcxx" directory.
+                cxx_include="$cxx_base/include"
+                if ! test -e "$cxx_include"; then
+                    AC_MSG_ERROR([Couldn't find path to libc++ includes in the android ndk])
+                fi
+            fi
+
+            if ! test -e "$cxxabi_include"; then
+                # NDK r13 removes the inner "libcxxabi" directory.
+                cxxabi_include="$cxxabi_base/include"
+                if ! test -e "$cxxabi_include"; then
+                    AC_MSG_ERROR([Couldn't find path to libc++abi includes in the android ndk])
+                fi
+            fi
+
             STLPORT_LIBS="-L$cxx_libs -lc++_static"
             # NDK r12 split the libc++ runtime libraries into pieces.
             for lib in c++abi unwind android_support; do
@@ -140,12 +127,7 @@ if test "$OS_TARGET" = "Android"; then
             # Add android/support/include/ for prototyping long double math
             # functions, locale-specific C library functions, multibyte support,
             # etc.
-            STLPORT_CPPFLAGS="-I$android_ndk/sources/android/support/include -I$cxx_include -I$cxxabi_include"
-            ;;
-        mozstlport)
-            # We don't need to set STLPORT_LIBS, because the build system will
-            # take care of linking in our home-built stlport where it is needed.
-            STLPORT_CPPFLAGS="-isystem $_topsrcdir/build/stlport/stlport -isystem $_topsrcdir/build/stlport/overrides -isystem $android_ndk/sources/cxx-stl/system/include"
+            STLPORT_CPPFLAGS="-I$cxx_include -I$android_ndk/sources/android/support/include -I$cxxabi_include"
             ;;
         *)
             AC_MSG_ERROR([Bad value for --enable-android-cxx-stl])
@@ -253,8 +235,10 @@ fi
 ])
 
 dnl Configure an Android SDK.
-dnl Arg 1: target SDK version, like 22.
-dnl Arg 2: build tools version, like 22.0.1.
+dnl Arg 1: target SDK version, like 23.
+dnl Arg 2: list of build-tools versions, like "23.0.3 23.0.1".
+dnl Arg 3: target lint version, like "25.3.1" (note: we fall back to
+dnl        unversioned lint if this version is not found).
 AC_DEFUN([MOZ_ANDROID_SDK],
 [
 
@@ -286,12 +270,20 @@ case "$target" in
     fi
     AC_MSG_RESULT([$android_sdk])
 
-    android_build_tools="$android_sdk_root"/build-tools/$2
-    AC_MSG_CHECKING([for Android build-tools version $2])
-    if test -d "$android_build_tools" -a -f "$android_build_tools/aapt"; then
-        AC_MSG_RESULT([$android_build_tools])
-    else
-        AC_MSG_ERROR([You must install the Android build-tools version $2.  Try |mach bootstrap|.  (Looked for $android_build_tools)])
+    AC_MSG_CHECKING([for Android build-tools])
+    android_build_tools_base="$android_sdk_root"/build-tools
+    android_build_tools_version=""
+    for version in $2; do
+        android_build_tools="$android_build_tools_base"/$version
+        if test -d "$android_build_tools" -a -f "$android_build_tools/aapt"; then
+            android_build_tools_version=$version
+            AC_MSG_RESULT([$android_build_tools])
+            break
+        fi
+    done
+    if test "$android_build_tools_version" = ""; then
+        version=$(echo $2 | cut -d" " -f1)
+        AC_MSG_ERROR([You must install the Android build-tools version $version.  Try |mach bootstrap|.  (Looked for "$android_build_tools_base"/$version)])
     fi
 
     MOZ_PATH_PROG(ZIPALIGN, zipalign, :, [$android_build_tools])
@@ -341,7 +333,7 @@ case "$target" in
     ANDROID_SDK="${android_sdk}"
     ANDROID_SDK_ROOT="${android_sdk_root}"
     ANDROID_TOOLS="${android_tools}"
-    ANDROID_BUILD_TOOLS_VERSION="$2"
+    ANDROID_BUILD_TOOLS_VERSION="$android_build_tools_version"
     AC_DEFINE_UNQUOTED(ANDROID_TARGET_SDK,$ANDROID_TARGET_SDK)
     AC_SUBST(ANDROID_TARGET_SDK)
     AC_SUBST(ANDROID_SDK_ROOT)
@@ -351,10 +343,13 @@ case "$target" in
 
     MOZ_ANDROID_AAR(customtabs, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
     MOZ_ANDROID_AAR(appcompat-v7, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
+    MOZ_ANDROID_AAR(support-vector-drawable, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
+    MOZ_ANDROID_AAR(animated-vector-drawable, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
     MOZ_ANDROID_AAR(cardview-v7, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
     MOZ_ANDROID_AAR(design, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
     MOZ_ANDROID_AAR(recyclerview-v7, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
     MOZ_ANDROID_AAR(support-v4, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support, REQUIRED_INTERNAL_IMPL)
+    MOZ_ANDROID_AAR(palette-v7, $ANDROID_SUPPORT_LIBRARY_VERSION, android, com/android/support)
 
     ANDROID_SUPPORT_ANNOTATIONS_JAR="$ANDROID_SDK_ROOT/extras/android/m2repository/com/android/support/support-annotations/$ANDROID_SUPPORT_LIBRARY_VERSION/support-annotations-$ANDROID_SUPPORT_LIBRARY_VERSION.jar"
     AC_MSG_CHECKING([for support-annotations JAR])
@@ -367,6 +362,26 @@ case "$target" in
     AC_SUBST(ANDROID_SUPPORT_ANNOTATIONS_JAR_LIB)
     ;;
 esac
+
+android_lint_target=$3
+ANDROID_LINT_CLASSPATH=""
+android_lint_versioned_jar="$ANDROID_SDK_ROOT/tools/lib/lint-$android_lint_target.jar"
+android_lint_unversioned_jar="$ANDROID_SDK_ROOT/tools/lib/lint.jar"
+if test -e "$android_lint_versioned_jar" ; then
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $android_lint_versioned_jar"
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/lint-checks-$android_lint_target.jar"
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/sdklib-$android_lint_target.jar"
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/repository-$android_lint_target.jar"
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/common-$android_lint_target.jar"
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/lint-api-$android_lint_target.jar"
+elif test -e "$android_lint_unversioned_jar" ; then
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $android_lint_unversioned_jar"
+    ANDROID_LINT_CLASSPATH="$ANDROID_LINT_CLASSPATH $ANDROID_SDK_ROOT/tools/lib/lint-checks.jar"
+else
+    AC_MSG_ERROR([Unable to find android sdk's lint jar. This probably means that you need to update android.m4 to find the latest version of lint-*.jar and all its dependencies. (looked for $android_lint_versioned_jar and $android_lint_unversioned_jar)])
+fi
+AC_MSG_RESULT([$ANDROID_LINT_CLASSPATH])
+AC_SUBST(ANDROID_LINT_CLASSPATH)
 
 MOZ_ARG_WITH_STRING(android-min-sdk,
 [  --with-android-min-sdk=[VER]     Impose a minimum Firefox for Android SDK version],

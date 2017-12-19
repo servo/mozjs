@@ -15,7 +15,6 @@
     _(ArrayShift)                   \
     _(ArrayPush)                    \
     _(ArraySlice)                   \
-    _(ArraySplice)                  \
                                     \
     _(AtomicsCompareExchange)       \
     _(AtomicsExchange)              \
@@ -27,6 +26,11 @@
     _(AtomicsOr)                    \
     _(AtomicsXor)                   \
     _(AtomicsIsLockFree)            \
+                                    \
+    _(IntlIsCollator)               \
+    _(IntlIsDateTimeFormat)         \
+    _(IntlIsNumberFormat)           \
+    _(IntlIsPluralRules)            \
                                     \
     _(MathAbs)                      \
     _(MathFloor)                    \
@@ -75,6 +79,7 @@
     _(String)                       \
     _(StringCharCodeAt)             \
     _(StringFromCharCode)           \
+    _(StringFromCodePoint)          \
     _(StringCharAt)                 \
                                     \
     _(IntrinsicStringReplaceString) \
@@ -113,19 +118,23 @@
     _(IntrinsicToString)            \
     _(IntrinsicIsConstructing)      \
     _(IntrinsicSubstringKernel)     \
-    _(IntrinsicDefineDataProperty)  \
     _(IntrinsicObjectHasPrototype)  \
                                     \
     _(IntrinsicIsArrayIterator)     \
     _(IntrinsicIsMapIterator)       \
+    _(IntrinsicIsSetIterator)       \
     _(IntrinsicIsStringIterator)    \
-    _(IntrinsicIsListIterator)      \
                                     \
     _(IntrinsicGetNextMapEntryForIterator) \
+                                    \
+    _(IntrinsicGetNextSetEntryForIterator) \
+                                    \
+    _(IntrinsicNewArrayIterator)    \
                                     \
     _(IntrinsicArrayBufferByteLength) \
     _(IntrinsicPossiblyWrappedArrayBufferByteLength) \
                                     \
+    _(TypedArrayConstructor)        \
     _(IntrinsicIsTypedArray)        \
     _(IntrinsicIsPossiblyWrappedTypedArray) \
     _(IntrinsicTypedArrayLength)    \
@@ -149,6 +158,7 @@ enum class InlinableNative : uint16_t {
 #define ADD_NATIVE(native) native,
     INLINABLE_NATIVE_LIST(ADD_NATIVE)
 #undef ADD_NATIVE
+    Limit
 };
 
 #define ADD_NATIVE(native) extern const JSJitInfo JitInfo_##native;

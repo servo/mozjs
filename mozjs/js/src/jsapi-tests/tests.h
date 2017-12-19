@@ -24,6 +24,7 @@
 /* Note: Aborts on OOM. */
 class JSAPITestString {
     js::Vector<char, 0, js::SystemAllocPolicy> chars;
+
   public:
     JSAPITestString() {}
     explicit JSAPITestString(const char* s) { *this += s; }
@@ -33,21 +34,34 @@ class JSAPITestString {
     const char* end() const { return chars.end(); }
     size_t length() const { return chars.length(); }
 
-    JSAPITestString & operator +=(const char* s) {
+    JSAPITestString& operator +=(const char* s) {
         if (!chars.append(s, strlen(s)))
             abort();
         return *this;
     }
 
-    JSAPITestString & operator +=(const JSAPITestString& s) {
+    JSAPITestString& operator +=(const JSAPITestString& s) {
         if (!chars.append(s.begin(), s.length()))
             abort();
         return *this;
     }
 };
 
-inline JSAPITestString operator+(JSAPITestString a, const char* b) { return a += b; }
-inline JSAPITestString operator+(JSAPITestString a, const JSAPITestString& b) { return a += b; }
+inline JSAPITestString
+operator+(const JSAPITestString& a, const char* b)
+{
+    JSAPITestString result = a;
+    result += b;
+    return result;
+}
+
+inline JSAPITestString
+operator+(const JSAPITestString& a, const JSAPITestString& b)
+{
+    JSAPITestString result = a;
+    result += b;
+    return result;
+}
 
 class JSAPITest
 {
@@ -55,20 +69,18 @@ class JSAPITest
     static JSAPITest* list;
     JSAPITest* next;
 
-    JSRuntime* rt;
     JSContext* cx;
     JS::PersistentRootedObject global;
     bool knownFail;
     JSAPITestString msgs;
     JSCompartment* oldCompartment;
 
-    JSAPITest() : rt(nullptr), cx(nullptr), knownFail(false), oldCompartment(nullptr) {
+    JSAPITest() : cx(nullptr), knownFail(false), oldCompartment(nullptr) {
         next = list;
         list = this;
     }
 
     virtual ~JSAPITest() {
-        MOZ_RELEASE_ASSERT(!rt);
         MOZ_RELEASE_ASSERT(!cx);
         MOZ_RELEASE_ASSERT(!global);
     }
@@ -185,7 +197,7 @@ class JSAPITest
             return false; \
     } while (false)
 
-    bool checkSame(JS::Value actualArg, JS::Value expectedArg,
+    bool checkSame(const JS::Value& actualArg, const JS::Value& expectedArg,
                    const char* actualExpr, const char* expectedExpr,
                    const char* filename, int lineno) {
         bool same;
@@ -208,7 +220,16 @@ class JSAPITest
             return fail(JSAPITestString("CHECK failed: " #expr), __FILE__, __LINE__); \
     } while (false)
 
-    bool fail(JSAPITestString msg = JSAPITestString(), const char* filename = "-", int lineno = 0) {
+    bool fail(const JSAPITestString& msg = JSAPITestString(),
+              const char* filename = "-",
+              int lineno = 0)
+    {
+        char location[256];
+        snprintf(location, mozilla::ArrayLength(location), "%s:%d:", filename, lineno);
+
+        JSAPITestString message(location);
+        message += msg;
+
         if (JS_IsExceptionPending(cx)) {
             js::gc::AutoSuppressGC gcoff(cx);
             JS::RootedValue v(cx);
@@ -218,11 +239,15 @@ class JSAPITest
             if (s) {
                 JSAutoByteString bytes(cx, s);
                 if (!!bytes)
-                    msg += bytes.ptr();
+                    message += bytes.ptr();
             }
         }
-        fprintf(stderr, "%s:%d:%.*s\n", filename, lineno, (int) msg.length(), msg.begin());
-        msgs += msg;
+
+        fprintf(stderr, "%.*s\n", int(message.length()), message.begin());
+
+        if (msgs.length() != 0)
+            msgs += " | ";
+        msgs += message;
         return false;
     }
 
@@ -267,11 +292,11 @@ class JSAPITest
 
     bool definePrint();
 
-    static void setNativeStackQuota(JSRuntime* rt)
+    static void setNativeStackQuota(JSContext* cx)
     {
         const size_t MAX_STACK_SIZE =
 /* Assume we can't use more than 5e5 bytes of C stack by default. */
-#if (defined(DEBUG) && defined(__SUNPRO_CC))  || defined(JS_CPU_SPARC)
+#if (defined(DEBUG) && defined(__SUNPRO_CC)) || defined(__sparc__)
             /*
              * Sun compiler uses a larger stack space for js::Interpret() with
              * debug.  Use a bigger gMaxStackSize to make "make check" happy.
@@ -282,33 +307,32 @@ class JSAPITest
 #endif
         ;
 
-        JS_SetNativeStackQuota(rt, MAX_STACK_SIZE);
+        JS_SetNativeStackQuota(cx, MAX_STACK_SIZE);
     }
 
-    virtual JSRuntime * createRuntime() {
-        JSRuntime* rt = JS_NewRuntime(8L * 1024 * 1024);
-        if (!rt)
+    virtual JSContext* createContext() {
+        JSContext* cx = JS_NewContext(8L * 1024 * 1024);
+        if (!cx)
             return nullptr;
-        JS::SetWarningReporter(rt, &reportWarning);
-        setNativeStackQuota(rt);
-        return rt;
+        JS::SetWarningReporter(cx, &reportWarning);
+        setNativeStackQuota(cx);
+        return cx;
     }
 
-    virtual void destroyRuntime() {
-        MOZ_RELEASE_ASSERT(!cx);
-        MOZ_RELEASE_ASSERT(rt);
-        JS_DestroyRuntime(rt);
-        rt = nullptr;
+    virtual void destroyContext() {
+        MOZ_RELEASE_ASSERT(cx);
+        JS_DestroyContext(cx);
+        cx = nullptr;
     }
 
-    static void reportWarning(JSContext* cx, const char* message, JSErrorReport* report) {
+    static void reportWarning(JSContext* cx, JSErrorReport* report) {
         MOZ_RELEASE_ASSERT(report);
         MOZ_RELEASE_ASSERT(JSREPORT_IS_WARNING(report->flags));
 
         fprintf(stderr, "%s:%u:%s\n",
                 report->filename ? report->filename : "<no filename>",
                 (unsigned int) report->lineno,
-                message);
+                report->message().c_str());
     }
 
     virtual const JSClass * getGlobalClass() {
@@ -436,14 +460,14 @@ class AutoLeaveZeal
     explicit AutoLeaveZeal(JSContext* cx) : cx_(cx) {
         uint32_t dummy;
         JS_GetGCZealBits(cx_, &zealBits_, &frequency_, &dummy);
-        JS_SetGCZeal(JS_GetRuntime(cx_), 0, 0);
-        JS::PrepareForFullGC(JS_GetRuntime(cx_));
-        JS::GCForReason(JS_GetRuntime(cx_), GC_SHRINK, JS::gcreason::DEBUG_GC);
+        JS_SetGCZeal(cx_, 0, 0);
+        JS::PrepareForFullGC(cx_);
+        JS::GCForReason(cx_, GC_SHRINK, JS::gcreason::DEBUG_GC);
     }
     ~AutoLeaveZeal() {
         for (size_t i = 0; i < sizeof(zealBits_) * 8; i++) {
             if (zealBits_ & (1 << i))
-                JS_SetGCZeal(JS_GetRuntime(cx_), i, frequency_);
+                JS_SetGCZeal(cx_, i, frequency_);
         }
 
 #ifdef DEBUG

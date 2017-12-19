@@ -15,7 +15,7 @@ using namespace js;
 using JS::IsArrayAnswer;
 
 bool
-BaseProxyHandler::enter(JSContext* cx, HandleObject wrapper, HandleId id, Action act,
+BaseProxyHandler::enter(JSContext* cx, HandleObject wrapper, HandleId id, Action act, bool mayThrow,
                         bool* bp) const
 {
     *bp = true;
@@ -327,7 +327,7 @@ BaseProxyHandler::fun_toString(JSContext* cx, HandleObject proxy, unsigned inden
 
 bool
 BaseProxyHandler::regexp_toShared(JSContext* cx, HandleObject proxy,
-                                  RegExpGuard* g) const
+                                  MutableHandleRegExpShared shared) const
 {
     MOZ_CRASH("This should have been a wrapped regexp");
 }
@@ -406,8 +406,8 @@ BaseProxyHandler::setPrototype(JSContext* cx, HandleObject proxy, HandleObject p
     // Disallow sets of protos on proxies with dynamic prototypes but no hook.
     // This keeps us away from the footgun of having the first proto set opt
     // you out of having dynamic protos altogether.
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CANT_SET_PROTO_OF,
-                         "incompatible Proxy");
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_CANT_SET_PROTO_OF,
+                              "incompatible Proxy");
     return false;
 }
 
@@ -421,8 +421,8 @@ BaseProxyHandler::setImmutablePrototype(JSContext* cx, HandleObject proxy, bool*
 bool
 BaseProxyHandler::watch(JSContext* cx, HandleObject proxy, HandleId id, HandleObject callable) const
 {
-    JS_ReportErrorNumber(cx, GetErrorMessage, nullptr, JSMSG_CANT_WATCH,
-                         proxy->getClass()->name);
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_CANT_WATCH,
+                              proxy->getClass()->name);
     return false;
 }
 

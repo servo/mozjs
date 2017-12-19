@@ -33,6 +33,8 @@
 #include "jit/arm64/Assembler-arm64.h"
 #include "jit/arm64/vixl/Debugger-vixl.h"
 #include "jit/arm64/vixl/Globals-vixl.h"
+#include "jit/arm64/vixl/Instrument-vixl.h"
+#include "jit/arm64/vixl/Simulator-Constants-vixl.h"
 
 #define LS_MACRO_LIST(V)                                      \
   V(Ldrb, Register&, rt, LDRB_w)                              \
@@ -2305,7 +2307,7 @@ class MacroAssembler : public js::jit::Assembler {
       UseScratchRegisterScope* scratch_scope);
 
   bool LabelIsOutOfRange(Label* label, ImmBranchType branch_type) {
-    return !Instruction::IsValidImmPCOffset(branch_type, nextOffset().diffB<int32_t>(label));
+    return !Instruction::IsValidImmPCOffset(branch_type, nextOffset().getOffset() - label->offset());
   }
 
   // The register to use as a stack pointer for stack operations.

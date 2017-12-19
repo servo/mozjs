@@ -49,13 +49,13 @@ HashChildren(Shape* kid1, Shape* kid2)
 }
 
 bool
-PropertyTree::insertChild(ExclusiveContext* cx, Shape* parent, Shape* child)
+PropertyTree::insertChild(JSContext* cx, Shape* parent, Shape* child)
 {
     MOZ_ASSERT(!parent->inDictionary());
     MOZ_ASSERT(!child->parent);
     MOZ_ASSERT(!child->inDictionary());
-    MOZ_ASSERT(child->compartment() == parent->compartment());
-    MOZ_ASSERT(cx->isInsideCurrentCompartment(this));
+    MOZ_ASSERT(child->zone() == parent->zone());
+    MOZ_ASSERT(cx->zone() == zone_);
 
     KidsPointer* kidp = &parent->kids;
 
@@ -127,7 +127,7 @@ Shape::removeChild(Shape* child)
 }
 
 Shape*
-PropertyTree::getChild(ExclusiveContext* cx, Shape* parentArg, Handle<StackShape> child)
+PropertyTree::getChild(JSContext* cx, Shape* parentArg, Handle<StackShape> child)
 {
     RootedShape parent(cx, parentArg);
     MOZ_ASSERT(parent);
@@ -164,9 +164,7 @@ PropertyTree::getChild(ExclusiveContext* cx, Shape* parentArg, Handle<StackShape
             Shape* tmp = existingShape;
             TraceManuallyBarrieredEdge(zone->barrierTracer(), &tmp, "read barrier");
             MOZ_ASSERT(tmp == existingShape);
-        } else if (zone->isGCSweeping() && !existingShape->isMarked() &&
-                   !existingShape->arena()->allocatedDuringIncremental)
-        {
+        } else if (IsAboutToBeFinalizedUnbarriered(&existingShape)) {
             /*
              * The shape we've found is unreachable and due to be finalized, so
              * remove our weak reference to it and don't use it.
@@ -227,14 +225,6 @@ Shape::fixupDictionaryShapeAfterMovingGC()
     if (!listp)
         return;
 
-    // It's possible that this shape is unreachable and that listp points to the
-    // location of a dead object in the nursery, in which case we should never
-    // touch it again.
-    if (IsInsideNursery(reinterpret_cast<Cell*>(listp))) {
-        listp = nullptr;
-        return;
-    }
-
     // The listp field either points to the parent field of the next shape in
     // the list if there is one.  Otherwise if this shape is the last in the
     // list then it points to the shape_ field of the object the list is for.
@@ -260,7 +250,7 @@ Shape::fixupDictionaryShapeAfterMovingGC()
             listp = &gc::Forwarded(next)->parent;
     } else {
         // listp points to the shape_ field of an object.
-        JSObject* last = reinterpret_cast<JSObject*>(uintptr_t(listp) - JSObject::offsetOfShape());
+        JSObject* last = reinterpret_cast<JSObject*>(uintptr_t(listp) - ShapedObject::offsetOfShape());
         if (gc::IsForwarded(last))
             listp = &gc::Forwarded(last)->as<NativeObject>().shape_;
     }

@@ -127,13 +127,13 @@ class WebIDLCodegenManager(LoggingMixin):
 
     # Global parser derived declaration files.
     GLOBAL_DECLARE_FILES = {
-        'FeatureList.h',
         'GeneratedAtomList.h',
         'GeneratedEventList.h',
         'PrototypeList.h',
         'RegisterBindings.h',
         'RegisterWorkerBindings.h',
         'RegisterWorkerDebuggerBindings.h',
+        'RegisterWorkletBindings.h',
         'ResolveSystemBinding.h',
         'UnionConversions.h',
         'UnionTypes.h',
@@ -144,6 +144,7 @@ class WebIDLCodegenManager(LoggingMixin):
         'RegisterBindings.cpp',
         'RegisterWorkerBindings.cpp',
         'RegisterWorkerDebuggerBindings.cpp',
+        'RegisterWorkletBindings.cpp',
         'ResolveSystemBinding.cpp',
         'UnionTypes.cpp',
         'PrototypeList.cpp',
@@ -308,7 +309,11 @@ class WebIDLCodegenManager(LoggingMixin):
 
         root = CGExampleRoot(self.config, interface)
 
-        return self._maybe_write_codegen(root, *self._example_paths(interface))
+        example_paths = self._example_paths(interface)
+        for path in example_paths:
+            print "Generating %s" % path
+
+        return self._maybe_write_codegen(root, *example_paths)
 
     def _parse_webidl(self):
         import WebIDL

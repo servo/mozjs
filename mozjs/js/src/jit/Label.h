@@ -20,8 +20,8 @@ struct LabelBase
     int32_t offset_ : 31;
     bool bound_   : 1;
 
-    // Disallow assignment.
-    void operator =(const LabelBase& label);
+    void operator =(const LabelBase& label) = delete;
+
   public:
     static const int32_t INVALID_OFFSET = -1;
 
@@ -90,7 +90,7 @@ class Label : public LabelBase
         // The assertion below doesn't hold if an error occurred.
         JitContext* context = MaybeGetJitContext();
         bool hadError = js::oom::HadSimulatedOOM() ||
-                        (context && context->runtime->hadOutOfMemory());
+                        (context && context->runtime && context->runtime->hadOutOfMemory());
         MOZ_ASSERT_IF(!hadError, !used());
 #endif
     }

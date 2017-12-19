@@ -14,7 +14,9 @@
 #include "jsfriendapi.h"
 #include "jstypes.h"
 
+#include "js/GCAPI.h"
 #include "js/Value.h"
+#include "vm/String.h"
 
 namespace js {
 namespace jit {
@@ -699,6 +701,8 @@ ScalarTypeToMIRType(Scalar::Type type)
       case Scalar::Uint32:
       case Scalar::Uint8Clamped:
         return MIRType::Int32;
+      case Scalar::Int64:
+        return MIRType::Int64;
       case Scalar::Float32:
         return MIRType::Float32;
       case Scalar::Float64:
@@ -727,6 +731,7 @@ ScalarTypeToLength(Scalar::Type type)
       case Scalar::Uint16:
       case Scalar::Int32:
       case Scalar::Uint32:
+      case Scalar::Int64:
       case Scalar::Float32:
       case Scalar::Float64:
       case Scalar::Uint8Clamped:
@@ -744,6 +749,15 @@ ScalarTypeToLength(Scalar::Type type)
     MOZ_CRASH("unexpected SIMD kind");
 }
 
+static inline const char*
+PropertyNameToExtraName(PropertyName* name)
+{
+    JS::AutoCheckCannotGC nogc;
+    if (!name->hasLatin1Chars())
+        return nullptr;
+    return reinterpret_cast<const char *>(name->latin1Chars(nogc));
+}
+
 #ifdef DEBUG
 
 // Track the pipeline of opcodes which has produced a snapshot.
@@ -755,14 +769,15 @@ ScalarTypeToLength(Scalar::Type type)
 
 #endif // DEBUG
 
-enum {
+enum ABIArgType {
     ArgType_General = 0x1,
     ArgType_Double  = 0x2,
     ArgType_Float32 = 0x3,
+    ArgType_Int64   = 0x4,
 
     RetType_Shift   = 0x0,
-    ArgType_Shift   = 0x2,
-    ArgType_Mask    = 0x3
+    ArgType_Shift   = 0x3,
+    ArgType_Mask    = 0x7
 };
 
 enum ABIFunctionType
@@ -779,6 +794,9 @@ enum ABIFunctionType
     Args_General7 = Args_General6 | (ArgType_General << (ArgType_Shift * 7)),
     Args_General8 = Args_General7 | (ArgType_General << (ArgType_Shift * 8)),
 
+    // int64 f(double)
+    Args_Int64_Double = (ArgType_Int64 << RetType_Shift) | (ArgType_Double << ArgType_Shift),
+
     // double f()
     Args_Double_None = ArgType_Double << RetType_Shift,
 
@@ -788,11 +806,19 @@ enum ABIFunctionType
     // float f(float)
     Args_Float32_Float32 = (ArgType_Float32 << RetType_Shift) | (ArgType_Float32 << ArgType_Shift),
 
+    // float f(int, int)
+    Args_Float32_IntInt = (ArgType_Float32 << RetType_Shift) |
+        (ArgType_General << (ArgType_Shift * 1)) |
+        (ArgType_General << (ArgType_Shift * 2)),
+
     // double f(double)
     Args_Double_Double = Args_Double_None | (ArgType_Double << ArgType_Shift),
 
     // double f(int)
     Args_Double_Int = Args_Double_None | (ArgType_General << ArgType_Shift),
+
+    // double f(int, int)
+    Args_Double_IntInt = Args_Double_Int | (ArgType_General << (ArgType_Shift * 2)),
 
     // double f(double, int)
     Args_Double_DoubleInt = Args_Double_None |
@@ -801,6 +827,9 @@ enum ABIFunctionType
 
     // double f(double, double)
     Args_Double_DoubleDouble = Args_Double_Double | (ArgType_Double << (ArgType_Shift * 2)),
+
+    // float f(float, float)
+    Args_Float32_Float32Float32 = Args_Float32_Float32 | (ArgType_Float32 << (ArgType_Shift * 2)),
 
     // double f(int, double)
     Args_Double_IntDouble = Args_Double_None |
@@ -830,7 +859,6 @@ enum ABIFunctionType
         (ArgType_General << (ArgType_Shift * 2)) |
         (ArgType_Double  << (ArgType_Shift * 3)) |
         (ArgType_General << (ArgType_Shift * 4))
-
 };
 
 enum class BarrierKind : uint32_t {
@@ -847,6 +875,14 @@ enum class BarrierKind : uint32_t {
 };
 
 enum ReprotectCode { Reprotect = true, DontReprotect = false };
+
+// Rounding modes for round instructions.
+enum class RoundingMode {
+    Down,
+    Up,
+    NearestTiesToEven,
+    TowardsZero
+};
 
 } // namespace jit
 } // namespace js

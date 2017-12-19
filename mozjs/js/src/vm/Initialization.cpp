@@ -15,9 +15,11 @@
 #include "jstypes.h"
 
 #include "builtin/AtomicsObject.h"
+#include "ds/MemoryProtectionExceptionHandler.h"
 #include "gc/Statistics.h"
 #include "jit/ExecutableAllocator.h"
 #include "jit/Ion.h"
+#include "jit/JitCommon.h"
 #include "js/Utility.h"
 #if ENABLE_INTL_API
 #include "unicode/uclean.h"
@@ -28,10 +30,13 @@
 #include "vm/Runtime.h"
 #include "vm/Time.h"
 #include "vm/TraceLogging.h"
+#include "vtune/VTuneWrapper.h"
+#include "wasm/WasmBuiltins.h"
+#include "wasm/WasmInstance.h"
 
 using JS::detail::InitState;
 using JS::detail::libraryInitState;
-using js::FutexRuntime;
+using js::FutexThread;
 
 InitState JS::detail::libraryInitState;
 
@@ -59,9 +64,18 @@ CheckMessageParameterCounts()
 }
 #endif /* DEBUG */
 
+#define RETURN_IF_FAIL(code) do { if (!code) return #code " failed"; } while (0)
+
 JS_PUBLIC_API(const char*)
-JS_InitWithFailureDiagnostic(void)
+JS::detail::InitWithFailureDiagnostic(bool isDebugBuild)
 {
+    // Verify that our DEBUG setting matches the caller's.
+#ifdef DEBUG
+    MOZ_RELEASE_ASSERT(isDebugBuild);
+#else
+    MOZ_RELEASE_ASSERT(!isDebugBuild);
+#endif
+
     MOZ_ASSERT(libraryInitState == InitState::Uninitialized,
                "must call JS_Init once before any JSAPI operation except "
                "JS_SetICUMemoryFunctions");
@@ -70,53 +84,62 @@ JS_InitWithFailureDiagnostic(void)
 
     PRMJ_NowInit();
 
+    // The first invocation of `ProcessCreation` creates a temporary thread
+    // and crashes if that fails, i.e. because we're out of memory. To prevent
+    // that from happening at some later time, get it out of the way during
+    // startup.
+    mozilla::TimeStamp::ProcessCreation();
+
 #ifdef DEBUG
     CheckMessageParameterCounts();
 #endif
 
-    using js::TlsPerThreadData;
-    if (!TlsPerThreadData.init())
-        return "JS_InitWithFailureDiagnostic: TlsPerThreadData.init() failed";
+    RETURN_IF_FAIL(js::TlsContext.init());
 
 #if defined(DEBUG) || defined(JS_OOM_BREAKPOINT)
-    if (!js::oom::InitThreadType())
-        return "JS_InitWithFailureDiagnostic: js::oom::InitThreadType() failed";
-    js::oom::SetThreadType(js::oom::THREAD_TYPE_MAIN);
+    RETURN_IF_FAIL(js::oom::InitThreadType());
+    js::oom::SetThreadType(js::oom::THREAD_TYPE_COOPERATING);
 #endif
 
-    js::jit::ExecutableAllocator::initStatic();
+    RETURN_IF_FAIL(js::Mutex::Init());
 
-    if (!js::jit::InitializeIon())
-        return "JS_InitWithFailureDiagnostic: js::jit::InitializeIon() failed";
+    RETURN_IF_FAIL(js::wasm::InitInstanceStaticData());
 
-    js::DateTimeInfo::init();
+    js::gc::InitMemorySubsystem(); // Ensure gc::SystemPageSize() works.
+    RETURN_IF_FAIL(js::gc::InitializeStaticData());
+
+    RETURN_IF_FAIL(js::jit::InitProcessExecutableMemory());
+
+    MOZ_ALWAYS_TRUE(js::MemoryProtectionExceptionHandler::install());
+
+    RETURN_IF_FAIL(js::jit::InitializeIon());
+
+    RETURN_IF_FAIL(js::InitDateTimeState());
+
+#ifdef MOZ_VTUNE
+    RETURN_IF_FAIL(js::vtune::Initialize());
+#endif
 
 #if EXPOSE_INTL_API
     UErrorCode err = U_ZERO_ERROR;
     u_init(&err);
     if (U_FAILURE(err))
-        return "JS_InitWithFailureDiagnostic: u_init() failed";
+        return "u_init() failed";
 #endif // EXPOSE_INTL_API
 
-    if (!js::CreateHelperThreadsState())
-        return "JS_InitWithFailureDiagnostic: js::CreateHelperThreadState() failed";
+    RETURN_IF_FAIL(js::CreateHelperThreadsState());
+    RETURN_IF_FAIL(FutexThread::initialize());
+    RETURN_IF_FAIL(js::gcstats::Statistics::initialize());
 
-    if (!FutexRuntime::initialize())
-        return "JS_InitWithFailureDiagnostic: FutexRuntime::initialize() failed";
-
-    if (!js::gcstats::Statistics::initialize())
-        return "JS_InitWithFailureDiagnostic: js::gcstats::Statistics::initialize() failed";
+#ifdef JS_SIMULATOR
+    RETURN_IF_FAIL(js::jit::SimulatorProcess::initialize());
+#endif
 
     libraryInitState = InitState::Running;
     return nullptr;
 }
 
-JS_PUBLIC_API(bool)
-JS_Init(void)
-{
-    const char* failure = JS_InitWithFailureDiagnostic();
-    return !failure;
-}
+#undef RETURN_IF_FAIL
 
 JS_PUBLIC_API(void)
 JS_ShutDown(void)
@@ -133,14 +156,24 @@ JS_ShutDown(void)
     }
 #endif
 
-    FutexRuntime::destroy();
+    FutexThread::destroy();
 
     js::DestroyHelperThreadsState();
+
+#ifdef JS_SIMULATOR
+    js::jit::SimulatorProcess::destroy();
+#endif
 
 #ifdef JS_TRACE_LOGGING
     js::DestroyTraceLoggerThreadState();
     js::DestroyTraceLoggerGraphState();
 #endif
+
+    js::MemoryProtectionExceptionHandler::uninstall();
+
+    js::wasm::ShutDownInstanceStaticData();
+
+    js::Mutex::ShutDown();
 
     // The only difficult-to-address reason for the restriction that you can't
     // call JS_Init/stuff/JS_ShutDown multiple times is the Windows PRMJ
@@ -156,6 +189,17 @@ JS_ShutDown(void)
 #if EXPOSE_INTL_API
     u_cleanup();
 #endif // EXPOSE_INTL_API
+
+#ifdef MOZ_VTUNE
+    js::vtune::Shutdown();
+#endif // MOZ_VTUNE
+
+    js::FinishDateTimeState();
+
+    if (!JSRuntime::hasLiveRuntimes()) {
+        js::wasm::ReleaseBuiltinThunks();
+        js::jit::ReleaseProcessExecutableMemory();
+    }
 
     libraryInitState = InitState::ShutDown;
 }

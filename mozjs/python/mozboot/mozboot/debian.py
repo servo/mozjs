@@ -6,6 +6,7 @@ import os
 import sys
 
 from mozboot.base import BaseBootstrapper
+from mozboot.linux_common import StyloInstall
 
 
 MERCURIAL_INSTALL_PROMPT = '''
@@ -28,7 +29,7 @@ Choice:
 '''.strip()
 
 
-class DebianBootstrapper(BaseBootstrapper):
+class DebianBootstrapper(StyloInstall, BaseBootstrapper):
     # These are common packages for all Debian-derived distros (such as
     # Ubuntu).
     COMMON_PACKAGES = [
@@ -54,16 +55,17 @@ class DebianBootstrapper(BaseBootstrapper):
         'libdbus-1-dev',
         'libdbus-glib-1-dev',
         'libgconf2-dev',
-        'libgtk2.0-dev',
         'libgtk-3-dev',
+        'libgtk2.0-dev',
         'libiw-dev',
         'libnotify-dev',
         'libpulse-dev',
+        'libx11-xcb-dev',
         'libxt-dev',
         'mesa-common-dev',
         'python-dbus',
-        'yasm',
         'xvfb',
+        'yasm',
     ]
 
     # Subclasses can add packages to this variable to have them installed.
@@ -73,7 +75,7 @@ class DebianBootstrapper(BaseBootstrapper):
     # (mobile/android) for all Debian-derived distros (such as Ubuntu).
     MOBILE_ANDROID_COMMON_PACKAGES = [
         'zlib1g-dev',  # mobile/android requires system zlib.
-        'openjdk-7-jdk',
+        'default-jdk',
         'wget',  # For downloading the Android SDK and NDK.
         'libncurses5:i386',  # See comments about i386 below.
         'libstdc++6:i386',
@@ -98,13 +100,20 @@ class DebianBootstrapper(BaseBootstrapper):
         self.apt_install(*self.packages)
 
     def install_browser_packages(self):
-        self.apt_install(*self.browser_packages)
+        self.ensure_browser_packages()
+
+    def install_browser_artifact_mode_packages(self):
+        self.ensure_browser_packages(artifact_mode=True)
 
     def install_mobile_android_packages(self):
         self.ensure_mobile_android_packages()
 
     def install_mobile_android_artifact_mode_packages(self):
         self.ensure_mobile_android_packages(artifact_mode=True)
+
+    def ensure_browser_packages(self, artifact_mode=False):
+        # TODO: Figure out what not to install for artifact mode
+        self.apt_install(*self.browser_packages)
 
     def ensure_mobile_android_packages(self, artifact_mode=False):
         import android
@@ -126,10 +135,10 @@ class DebianBootstrapper(BaseBootstrapper):
 
         # 2. The user may have an external Android SDK (in which case we save
         # them a lengthy download), or they may have already completed the
-        # download. We unpack to ~/.mozbuild/{android-sdk-linux, android-ndk-r11b}.
+        # download. We unpack to ~/.mozbuild/{android-sdk-linux, android-ndk-r11c}.
         mozbuild_path = os.environ.get('MOZBUILD_STATE_PATH', os.path.expanduser(os.path.join('~', '.mozbuild')))
         self.sdk_path = os.environ.get('ANDROID_SDK_HOME', os.path.join(mozbuild_path, 'android-sdk-linux'))
-        self.ndk_path = os.environ.get('ANDROID_NDK_HOME', os.path.join(mozbuild_path, 'android-ndk-r11b'))
+        self.ndk_path = os.environ.get('ANDROID_NDK_HOME', os.path.join(mozbuild_path, 'android-ndk-r11c'))
         self.sdk_url = 'https://dl.google.com/android/android-sdk_r24.0.1-linux.tgz'
         self.ndk_url = android.android_ndk_url('linux')
 

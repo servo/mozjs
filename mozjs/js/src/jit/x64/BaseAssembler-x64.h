@@ -53,6 +53,17 @@ class BaseAssemblerX64 : public BaseAssembler
         }
     }
 
+    void addq_i32r(int32_t imm, RegisterID dst)
+    {
+        // 32-bit immediate always, for patching.
+        spew("addq       $0x%04x, %s", imm, GPReg64Name(dst));
+        if (dst == rax)
+            m_formatter.oneByteOp64(OP_ADD_EAXIv);
+        else
+            m_formatter.oneByteOp64(OP_GROUP1_EvIz, dst, GROUP1_OP_ADD);
+        m_formatter.immediate32(imm);
+    }
+
     void addq_im(int32_t imm, int32_t offset, RegisterID base)
     {
         spew("addq       $%d, " MEM_ob, imm, ADDR_ob(offset, base));
@@ -610,7 +621,7 @@ class BaseAssemblerX64 : public BaseAssembler
 
     void leaq_mr(int32_t offset, RegisterID base, RegisterID index, int scale, RegisterID dst)
     {
-        spew("leaq       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale), GPReg64Name(dst)),
+        spew("leaq       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale), GPReg64Name(dst));
         m_formatter.oneByteOp64(OP_LEA, offset, base, index, scale, dst);
     }
 
@@ -620,7 +631,6 @@ class BaseAssemblerX64 : public BaseAssembler
         m_formatter.oneByteOp64(OP_GROUP11_EvIz, offset, base, GROUP11_MOV);
         m_formatter.immediate32(imm);
     }
-
     void movq_i32m(int32_t imm, int32_t offset, RegisterID base, RegisterID index, int scale)
     {
         spew("movq       $%d, " MEM_obs, imm, ADDR_obs(offset, base, index, scale));
@@ -652,6 +662,28 @@ class BaseAssemblerX64 : public BaseAssembler
         spew("movabsq    $0x%" PRIx64 ", %s", imm, GPReg64Name(dst));
         m_formatter.oneByteOp64(OP_MOV_EAXIv, dst);
         m_formatter.immediate64(imm);
+    }
+
+    void movsbq_mr(int32_t offset, RegisterID base, RegisterID dst)
+    {
+        spew("movsbq     " MEM_ob ", %s", ADDR_ob(offset, base), GPReg64Name(dst));
+        m_formatter.twoByteOp64(OP2_MOVSX_GvEb, offset, base, dst);
+    }
+    void movsbq_mr(int32_t offset, RegisterID base, RegisterID index, int scale, RegisterID dst)
+    {
+        spew("movsbq     " MEM_obs ", %s", ADDR_obs(offset, base, index, scale), GPReg64Name(dst));
+        m_formatter.twoByteOp64(OP2_MOVSX_GvEb, offset, base, index, scale, dst);
+    }
+
+    void movswq_mr(int32_t offset, RegisterID base, RegisterID dst)
+    {
+        spew("movswq     " MEM_ob ", %s", ADDR_ob(offset, base), GPReg64Name(dst));
+        m_formatter.twoByteOp64(OP2_MOVSX_GvEw, offset, base, dst);
+    }
+    void movswq_mr(int32_t offset, RegisterID base, RegisterID index, int scale, RegisterID dst)
+    {
+        spew("movswq     " MEM_obs ", %s", ADDR_obs(offset, base, index, scale), GPReg64Name(dst));
+        m_formatter.twoByteOp64(OP2_MOVSX_GvEw, offset, base, index, scale, dst);
     }
 
     void movslq_rr(RegisterID src, RegisterID dst)

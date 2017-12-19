@@ -10,10 +10,11 @@
 #include "mozilla/IntegerPrintfMacros.h"
 
 #include <stdio.h>
-#if defined(XP_WIN)
-# include <windows.h>
+#ifdef XP_WIN
+#include <process.h>
+#define getpid _getpid
 #else
-# include <unistd.h>
+#include <unistd.h>
 #endif
 
 #include "jscompartment.h"
@@ -91,16 +92,16 @@ LCovSource::exportInto(GenericPrinter& out) const
 
     outFN_.exportInto(out);
     outFNDA_.exportInto(out);
-    out.printf("FNF:%d\n", numFunctionsFound_);
-    out.printf("FNH:%d\n", numFunctionsHit_);
+    out.printf("FNF:%" PRIuSIZE "\n", numFunctionsFound_);
+    out.printf("FNH:%" PRIuSIZE "\n", numFunctionsHit_);
 
     outBRDA_.exportInto(out);
-    out.printf("BRF:%d\n", numBranchesFound_);
-    out.printf("BRH:%d\n", numBranchesHit_);
+    out.printf("BRF:%" PRIuSIZE "\n", numBranchesFound_);
+    out.printf("BRH:%" PRIuSIZE "\n", numBranchesHit_);
 
     outDA_.exportInto(out);
-    out.printf("LF:%d\n", numLinesInstrumented_);
-    out.printf("LH:%d\n", numLinesHit_);
+    out.printf("LF:%" PRIuSIZE "\n", numLinesInstrumented_);
+    out.printf("LH:%" PRIuSIZE "\n", numLinesHit_);
 
     out.put("end_of_record\n");
 }
@@ -130,7 +131,7 @@ bool
 LCovSource::writeScript(JSScript* script)
 {
     numFunctionsFound_++;
-    outFN_.printf("FN:%d,", script->lineno());
+    outFN_.printf("FN:%" PRIuSIZE ",", script->lineno());
     if (!writeScriptName(outFN_, script))
         return false;
     outFN_.put("\n", 1);
@@ -191,7 +192,7 @@ LCovSource::writeScript(JSScript* script)
             }
 
             if (oldLine != lineno && fallsthrough) {
-                outDA_.printf("DA:%d,%" PRIu64 "\n", lineno, hits);
+                outDA_.printf("DA:%" PRIuSIZE ",%" PRIu64 "\n", lineno, hits);
 
                 // Count the number of lines instrumented & hit.
                 numLinesInstrumented_++;
@@ -220,15 +221,15 @@ LCovSource::writeScript(JSScript* script)
             }
 
             uint64_t taken = hits - fallthroughHits;
-            outBRDA_.printf("BRDA:%d,%d,0,", lineno, branchId);
+            outBRDA_.printf("BRDA:%" PRIuSIZE ",%" PRIuSIZE ",0,", lineno, branchId);
             if (taken)
-                outBRDA_.printf("%d\n", taken);
+                outBRDA_.printf("%" PRIu64 "\n", taken);
             else
                 outBRDA_.put("-\n", 2);
 
-            outBRDA_.printf("BRDA:%d,%d,1,", lineno, branchId);
+            outBRDA_.printf("BRDA:%" PRIuSIZE ",%" PRIuSIZE ",1,", lineno, branchId);
             if (fallthroughHits)
-                outBRDA_.printf("%d\n", fallthroughHits);
+                outBRDA_.printf("%" PRIu64 "\n", fallthroughHits);
             else
                 outBRDA_.put("-\n", 2);
 
@@ -308,9 +309,10 @@ LCovSource::writeScript(JSScript* script)
                         caseHits -= fallsThroughHits;
                     }
 
-                    outBRDA_.printf("BRDA:%d,%d,%d,", lineno, branchId, caseId);
+                    outBRDA_.printf("BRDA:%" PRIuSIZE ",%" PRIuSIZE ",%" PRIuSIZE ",",
+                                    lineno, branchId, caseId);
                     if (caseHits)
-                        outBRDA_.printf("%d\n", caseHits);
+                        outBRDA_.printf("%" PRIu64 "\n", caseHits);
                     else
                         outBRDA_.put("-\n", 2);
 
@@ -359,9 +361,10 @@ LCovSource::writeScript(JSScript* script)
             }
 
             if (defaultHasOwnClause) {
-                outBRDA_.printf("BRDA:%d,%d,%d,", lineno, branchId, caseId);
+                outBRDA_.printf("BRDA:%" PRIuSIZE ",%" PRIuSIZE ",%" PRIuSIZE ",",
+                                lineno, branchId, caseId);
                 if (defaultHits)
-                    outBRDA_.printf("%d\n", defaultHits);
+                    outBRDA_.printf("%" PRIu64 "\n", defaultHits);
                 else
                     outBRDA_.put("-\n", 2);
                 numBranchesFound_++;
@@ -508,7 +511,7 @@ LCovCompartment::exportInto(GenericPrinter& out, bool* isEmpty) const
 bool
 LCovCompartment::writeCompartmentName(JSCompartment* comp)
 {
-    JSRuntime* rt = comp->runtimeFromMainThread();
+    JSContext* cx = TlsContext.get();
 
     // lcov trace files are starting with an optional test case name, that we
     // recycle to be a compartment name.
@@ -517,12 +520,12 @@ LCovCompartment::writeCompartmentName(JSCompartment* comp)
     // thus we escape invalid chracters with a "_" symbol in front of its
     // hexadecimal code.
     outTN_.put("TN:");
-    if (rt->compartmentNameCallback) {
+    if (cx->runtime()->compartmentNameCallback) {
         char name[1024];
         {
             // Hazard analysis cannot tell that the callback does not GC.
             JS::AutoSuppressGCAnalysis nogc;
-            (*rt->compartmentNameCallback)(rt, comp, name, sizeof(name));
+            (*cx->runtime()->compartmentNameCallback)(cx, comp, name, sizeof(name));
         }
         for (char *s = name; s < name + sizeof(name) && *s; s++) {
             if (('a' <= *s && *s <= 'z') ||
@@ -544,11 +547,7 @@ LCovCompartment::writeCompartmentName(JSCompartment* comp)
 
 LCovRuntime::LCovRuntime()
   : out_(),
-#if defined(XP_WIN)
-    pid_(GetCurrentProcessId()),
-#else
     pid_(getpid()),
-#endif
     isEmpty_(false)
 {
 }
@@ -570,9 +569,9 @@ LCovRuntime::fillWithFilename(char *name, size_t length)
     static mozilla::Atomic<size_t> globalRuntimeId(0);
     size_t rid = globalRuntimeId++;
 
-    size_t len = JS_snprintf(name, length, "%s/%" PRId64 "-%" PRIuSIZE "-%" PRIuSIZE ".info",
-                             outDir, timestamp, pid_, rid);
-    if (length <= len) {
+    int len = snprintf(name, length, "%s/%" PRId64 "-%" PRIu32 "-%" PRIuSIZE ".info",
+                       outDir, timestamp, pid_, rid);
+    if (length != size_t(len)) {
         fprintf(stderr, "Warning: LCovRuntime::init: Cannot serialize file name.");
         return false;
     }
@@ -613,11 +612,7 @@ LCovRuntime::writeLCovResult(LCovCompartment& comp)
     if (!out_.isInitialized())
         return;
 
-#if defined(XP_WIN)
-    size_t p = GetCurrentProcessId();
-#else
-    size_t p = getpid();
-#endif
+    uint32_t p = getpid();
     if (pid_ != p) {
         pid_ = p;
         finishFile();

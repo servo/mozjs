@@ -4,6 +4,14 @@
 
 from mozboot.base import BaseBootstrapper
 
+STYLO_MOZCONFIG = '''
+To enable Stylo in your builds, paste the lines between the chevrons
+(>>> and <<<) into your mozconfig file:
+
+<<<
+ac_add_options --enable-stylo
+>>>
+'''
 
 class FreeBSDBootstrapper(BaseBootstrapper):
     def __init__(self, version, flavor, **kwargs):
@@ -13,14 +21,19 @@ class FreeBSDBootstrapper(BaseBootstrapper):
 
         self.packages = [
             'autoconf213',
+            'cargo',
             'gmake',
+            'gtar',
             'mercurial',
             'pkgconf',
+            'rust',
+            'watchman',
             'zip',
         ]
 
         self.browser_packages = [
             'dbus-glib',
+            'gconf2',
             'gtk2',
             'gtk3',
             'libGL',
@@ -29,18 +42,17 @@ class FreeBSDBootstrapper(BaseBootstrapper):
             'yasm',
         ]
 
-        if self.flavor == 'dragonfly':
+        if not self.which('unzip'):
             self.packages.append('unzip')
 
-        # gcc in base is too old
-        if self.flavor == 'freebsd' and self.version < 9:
+        # GCC 4.2 or Clang 3.4 in base are too old
+        if self.flavor == 'freebsd' and self.version < 11:
             self.browser_packages.append('gcc')
 
     def pkg_install(self, *packages):
-        if self.which('pkg'):
-            command = ['pkg', 'install']
-        else:
-            command = ['pkg_add', '-Fr']
+        command = ['pkg', 'install']
+        if self.no_interactive:
+            command.append('-y')
 
         command.extend(packages)
         self.run_as_root(command)
@@ -49,7 +61,21 @@ class FreeBSDBootstrapper(BaseBootstrapper):
         self.pkg_install(*self.packages)
 
     def install_browser_packages(self):
+        self.ensure_browser_packages()
+
+    def install_browser_artifact_mode_packages(self):
+        self.ensure_browser_packages(artifact_mode=True)
+
+    def ensure_browser_packages(self, artifact_mode=False):
+        # TODO: Figure out what not to install for artifact mode
         self.pkg_install(*self.browser_packages)
+
+    def ensure_stylo_packages(self, state_dir):
+        self.pkg_install('llvm39')
+
+    def suggest_browser_mozconfig(self):
+        if self.stylo:
+            print(STYLO_MOZCONFIG)
 
     def upgrade_mercurial(self, current):
         self.pkg_install('mercurial')

@@ -9,9 +9,10 @@ import subprocess
 import glob
 
 from mozboot.base import BaseBootstrapper
+from mozboot.linux_common import StyloInstall
 
 
-class ArchlinuxBootstrapper(BaseBootstrapper):
+class ArchlinuxBootstrapper(StyloInstall, BaseBootstrapper):
     '''Archlinux experimental bootstrapper.'''
 
     SYSTEM_PACKAGES = [
@@ -29,6 +30,7 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
         'alsa-lib',
         'dbus-glib',
         'desktop-file-utils',
+        'gconf',
         'gtk2',
         'gtk3',
         'hicolor-icon-theme',
@@ -81,14 +83,21 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
         self.pacman_install(*self.SYSTEM_PACKAGES)
 
     def install_browser_packages(self):
-        self.aur_install(*self.BROWSER_AUR_PACKAGES)
-        self.pacman_install(*self.BROWSER_PACKAGES)
+        self.ensure_browser_packages()
+
+    def install_browser_artifact_mode_packages(self):
+        self.ensure_browser_packages(artifact_mode=True)
 
     def install_mobile_android_packages(self):
         self.ensure_mobile_android_packages()
 
     def install_mobile_android_artifact_mode_packages(self):
         self.ensure_mobile_android_packages(artifact_mode=True)
+
+    def ensure_browser_packages(self, artifact_mode=False):
+        # TODO: Figure out what not to install for artifact mode
+        self.aur_install(*self.BROWSER_AUR_PACKAGES)
+        self.pacman_install(*self.BROWSER_PACKAGES)
 
     def ensure_mobile_android_packages(self, artifact_mode=False):
         import android
@@ -114,10 +123,10 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
 
         # 2. The user may have an external Android SDK (in which case we save
         # them a lengthy download), or they may have already completed the
-        # download. We unpack to ~/.mozbuild/{android-sdk-linux, android-ndk-r11b}.
+        # download. We unpack to ~/.mozbuild/{android-sdk-linux, android-ndk-r11c}.
         mozbuild_path = os.environ.get('MOZBUILD_STATE_PATH', os.path.expanduser(os.path.join('~', '.mozbuild')))
         self.sdk_path = os.environ.get('ANDROID_SDK_HOME', os.path.join(mozbuild_path, 'android-sdk-linux'))
-        self.ndk_path = os.environ.get('ANDROID_NDK_HOME', os.path.join(mozbuild_path, 'android-ndk-r11b'))
+        self.ndk_path = os.environ.get('ANDROID_NDK_HOME', os.path.join(mozbuild_path, 'android-ndk-r11c'))
         self.sdk_url = 'https://dl.google.com/android/android-sdk_r24.0.1-linux.tgz'
         self.ndk_url = android.android_ndk_url('linux')
 
@@ -160,8 +169,8 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
 
         self.run_as_root(command)
 
-    def run(self, command):
-        subprocess.check_call(command, stdin=sys.stdin)
+    def run(self, command, env=None):
+        subprocess.check_call(command, stdin=sys.stdin, env=env)
 
     def download(self, uri):
         command = ['curl', '-L', '-O', uri]
@@ -181,8 +190,10 @@ class ArchlinuxBootstrapper(BaseBootstrapper):
 
     def makepkg(self, name):
         command = ['makepkg', '-s']
-        self.run(command)
-        pack = glob.glob(name + '*.tar.xz')[0]
+        makepkg_env = os.environ.copy()
+        makepkg_env['PKGEXT'] = '.pkg.tar.xz'
+        self.run(command, env=makepkg_env)
+        pack = glob.glob(name + '*.pkg.tar.xz')[0]
         command = ['pacman', '-U']
         if self.no_interactive:
             command.append('--noconfirm')

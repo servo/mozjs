@@ -60,13 +60,13 @@ class JS_FRIEND_API(Wrapper) : public BaseProxyHandler
     unsigned mFlags;
 
   public:
-    explicit MOZ_CONSTEXPR Wrapper(unsigned aFlags, bool aHasPrototype = false,
+    explicit constexpr Wrapper(unsigned aFlags, bool aHasPrototype = false,
                                    bool aHasSecurityPolicy = false)
       : BaseProxyHandler(&family, aHasPrototype, aHasSecurityPolicy),
         mFlags(aFlags)
     { }
 
-    virtual bool finalizeInBackground(Value priv) const override;
+    virtual bool finalizeInBackground(const Value& priv) const override;
 
     /* Standard internal methods. */
     virtual bool getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy, HandleId id,
@@ -118,7 +118,7 @@ class JS_FRIEND_API(Wrapper) : public BaseProxyHandler
     virtual JSString* fun_toString(JSContext* cx, HandleObject proxy,
                                    unsigned indent) const override;
     virtual bool regexp_toShared(JSContext* cx, HandleObject proxy,
-                                 RegExpGuard* g) const override;
+                                 MutableHandle<RegExpShared*> shared) const override;
     virtual bool boxedValue_unbox(JSContext* cx, HandleObject proxy,
                                   MutableHandleValue vp) const override;
     virtual bool isCallable(JSObject* obj) const override;
@@ -136,7 +136,7 @@ class JS_FRIEND_API(Wrapper) : public BaseProxyHandler
     static JSObject* New(JSContext* cx, JSObject* obj, const Wrapper* handler,
                          const WrapperOptions& options = WrapperOptions());
 
-    static JSObject* Renew(JSContext* cx, JSObject* existing, JSObject* obj, const Wrapper* handler);
+    static JSObject* Renew(JSObject* existing, JSObject* obj, const Wrapper* handler);
 
     static const Wrapper* wrapperHandler(JSObject* wrapper);
 
@@ -163,7 +163,7 @@ WrapperOptions::proto() const
 class JS_FRIEND_API(CrossCompartmentWrapper) : public Wrapper
 {
   public:
-    explicit MOZ_CONSTEXPR CrossCompartmentWrapper(unsigned aFlags, bool aHasPrototype = false,
+    explicit constexpr CrossCompartmentWrapper(unsigned aFlags, bool aHasPrototype = false,
                                                    bool aHasSecurityPolicy = false)
       : Wrapper(CROSS_COMPARTMENT | aFlags, aHasPrototype, aHasSecurityPolicy)
     { }
@@ -212,8 +212,12 @@ class JS_FRIEND_API(CrossCompartmentWrapper) : public Wrapper
     virtual const char* className(JSContext* cx, HandleObject proxy) const override;
     virtual JSString* fun_toString(JSContext* cx, HandleObject wrapper,
                                    unsigned indent) const override;
-    virtual bool regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g) const override;
+    virtual bool regexp_toShared(JSContext* cx, HandleObject proxy,
+                                 MutableHandle<RegExpShared*> shared) const override;
     virtual bool boxedValue_unbox(JSContext* cx, HandleObject proxy, MutableHandleValue vp) const override;
+
+    // Allocate CrossCompartmentWrappers in the nursery.
+    virtual bool canNurseryAllocate() const override { return true; }
 
     static const CrossCompartmentWrapper singleton;
     static const CrossCompartmentWrapper singletonWithPrototype;
@@ -222,7 +226,7 @@ class JS_FRIEND_API(CrossCompartmentWrapper) : public Wrapper
 class JS_FRIEND_API(OpaqueCrossCompartmentWrapper) : public CrossCompartmentWrapper
 {
   public:
-    explicit MOZ_CONSTEXPR OpaqueCrossCompartmentWrapper() : CrossCompartmentWrapper(0)
+    explicit constexpr OpaqueCrossCompartmentWrapper() : CrossCompartmentWrapper(0)
     { }
 
     /* Standard internal methods. */
@@ -286,12 +290,12 @@ template <class Base>
 class JS_FRIEND_API(SecurityWrapper) : public Base
 {
   public:
-    explicit MOZ_CONSTEXPR SecurityWrapper(unsigned flags, bool hasPrototype = false)
+    explicit constexpr SecurityWrapper(unsigned flags, bool hasPrototype = false)
       : Base(flags, hasPrototype, /* hasSecurityPolicy = */ true)
     { }
 
     virtual bool enter(JSContext* cx, HandleObject wrapper, HandleId id, Wrapper::Action act,
-                       bool* bp) const override;
+                       bool mayThrow, bool* bp) const override;
 
     virtual bool defineProperty(JSContext* cx, HandleObject wrapper, HandleId id,
                                 Handle<PropertyDescriptor> desc,
@@ -307,7 +311,8 @@ class JS_FRIEND_API(SecurityWrapper) : public Base
                             const CallArgs& args) const override;
     virtual bool getBuiltinClass(JSContext* cx, HandleObject wrapper, ESClass* cls) const override;
     virtual bool isArray(JSContext* cx, HandleObject wrapper, JS::IsArrayAnswer* answer) const override;
-    virtual bool regexp_toShared(JSContext* cx, HandleObject proxy, RegExpGuard* g) const override;
+    virtual bool regexp_toShared(JSContext* cx, HandleObject proxy,
+                                 MutableHandle<RegExpShared*> shared) const override;
     virtual bool boxedValue_unbox(JSContext* cx, HandleObject proxy, MutableHandleValue vp) const override;
 
     // Allow isCallable and isConstructor. They used to be class-level, and so could not be guarded
@@ -325,7 +330,6 @@ class JS_FRIEND_API(SecurityWrapper) : public Base
     typedef SecurityWrapper<Base> Restrictive;
 };
 
-typedef SecurityWrapper<Wrapper> SameCompartmentSecurityWrapper;
 typedef SecurityWrapper<CrossCompartmentWrapper> CrossCompartmentSecurityWrapper;
 
 extern JSObject*
@@ -356,10 +360,13 @@ CheckedUnwrap(JSObject* obj, bool stopAtWindowProxy = true);
 JS_FRIEND_API(JSObject*)
 UnwrapOneChecked(JSObject* obj, bool stopAtWindowProxy = true);
 
+void
+ReportAccessDenied(JSContext* cx);
+
 JS_FRIEND_API(bool)
 IsCrossCompartmentWrapper(JSObject* obj);
 
-void
+JS_FRIEND_API(void)
 NukeCrossCompartmentWrapper(JSContext* cx, JSObject* wrapper);
 
 void

@@ -7,6 +7,7 @@
 #ifndef js_GCAPI_h
 #define js_GCAPI_h
 
+#include "mozilla/TimeStamp.h"
 #include "mozilla/Vector.h"
 
 #include "js/GCAnnotations.h"
@@ -26,12 +27,12 @@ typedef enum JSGCMode {
     /** Perform only global GCs. */
     JSGC_MODE_GLOBAL = 0,
 
-    /** Perform per-compartment GCs until too much garbage has accumulated. */
-    JSGC_MODE_COMPARTMENT = 1,
+    /** Perform per-zone GCs until too much garbage has accumulated. */
+    JSGC_MODE_ZONE = 1,
 
     /**
      * Collect in short time slices rather than all at once. Implies
-     * JSGC_MODE_COMPARTMENT.
+     * JSGC_MODE_ZONE.
      */
     JSGC_MODE_INCREMENTAL = 2
 } JSGCMode;
@@ -65,7 +66,7 @@ namespace JS {
     D(EVICT_NURSERY)                            \
     D(FULL_STORE_BUFFER)                        \
     D(SHARED_MEMORY_LIMIT)                      \
-    D(PERIODIC_FULL_GC)                         \
+    D(UNUSED1)                                  \
     D(INCREMENTAL_TOO_SLOW)                     \
     D(ABORT_GC)                                 \
                                                 \
@@ -161,7 +162,7 @@ PrepareZoneForGC(Zone* zone);
  * Schedule all zones to be collected in the next GC.
  */
 extern JS_PUBLIC_API(void)
-PrepareForFullGC(JSRuntime* rt);
+PrepareForFullGC(JSContext* cx);
 
 /**
  * When performing an incremental GC, the zones that were selected for the
@@ -169,14 +170,14 @@ PrepareForFullGC(JSRuntime* rt);
  * This function selects those slices automatically.
  */
 extern JS_PUBLIC_API(void)
-PrepareForIncrementalGC(JSRuntime* rt);
+PrepareForIncrementalGC(JSContext* cx);
 
 /**
  * Returns true if any zone in the system has been scheduled for GC with one of
  * the functions above or by the JS engine.
  */
 extern JS_PUBLIC_API(bool)
-IsGCScheduled(JSRuntime* rt);
+IsGCScheduled(JSContext* cx);
 
 /**
  * Undoes the effect of the Prepare methods above. The given zone will not be
@@ -201,7 +202,7 @@ SkipZoneForGC(Zone* zone);
  * the system.
  */
 extern JS_PUBLIC_API(void)
-GCForReason(JSRuntime* rt, JSGCInvocationKind gckind, gcreason::Reason reason);
+GCForReason(JSContext* cx, JSGCInvocationKind gckind, gcreason::Reason reason);
 
 /*
  * Incremental GC:
@@ -227,53 +228,49 @@ GCForReason(JSRuntime* rt, JSGCInvocationKind gckind, gcreason::Reason reason);
  * Begin an incremental collection and perform one slice worth of work. When
  * this function returns, the collection may not be complete.
  * IncrementalGCSlice() must be called repeatedly until
- * !IsIncrementalGCInProgress(rt).
+ * !IsIncrementalGCInProgress(cx).
  *
  * Note: SpiderMonkey's GC is not realtime. Slices in practice may be longer or
  *       shorter than the requested interval.
  */
 extern JS_PUBLIC_API(void)
-StartIncrementalGC(JSRuntime* rt, JSGCInvocationKind gckind, gcreason::Reason reason,
+StartIncrementalGC(JSContext* cx, JSGCInvocationKind gckind, gcreason::Reason reason,
                    int64_t millis = 0);
 
 /**
  * Perform a slice of an ongoing incremental collection. When this function
  * returns, the collection may not be complete. It must be called repeatedly
- * until !IsIncrementalGCInProgress(rt).
+ * until !IsIncrementalGCInProgress(cx).
  *
  * Note: SpiderMonkey's GC is not realtime. Slices in practice may be longer or
  *       shorter than the requested interval.
  */
 extern JS_PUBLIC_API(void)
-IncrementalGCSlice(JSRuntime* rt, gcreason::Reason reason, int64_t millis = 0);
+IncrementalGCSlice(JSContext* cx, gcreason::Reason reason, int64_t millis = 0);
 
 /**
- * If IsIncrementalGCInProgress(rt), this call finishes the ongoing collection
- * by performing an arbitrarily long slice. If !IsIncrementalGCInProgress(rt),
+ * If IsIncrementalGCInProgress(cx), this call finishes the ongoing collection
+ * by performing an arbitrarily long slice. If !IsIncrementalGCInProgress(cx),
  * this is equivalent to GCForReason. When this function returns,
- * IsIncrementalGCInProgress(rt) will always be false.
+ * IsIncrementalGCInProgress(cx) will always be false.
  */
 extern JS_PUBLIC_API(void)
-FinishIncrementalGC(JSRuntime* rt, gcreason::Reason reason);
+FinishIncrementalGC(JSContext* cx, gcreason::Reason reason);
 
 /**
- * If IsIncrementalGCInProgress(rt), this call aborts the ongoing collection and
+ * If IsIncrementalGCInProgress(cx), this call aborts the ongoing collection and
  * performs whatever work needs to be done to return the collector to its idle
  * state. This may take an arbitrarily long time. When this function returns,
- * IsIncrementalGCInProgress(rt) will always be false.
+ * IsIncrementalGCInProgress(cx) will always be false.
  */
 extern JS_PUBLIC_API(void)
-AbortIncrementalGC(JSRuntime* rt);
+AbortIncrementalGC(JSContext* cx);
 
 namespace dbg {
 
-/**
- * The `JS::dbg::GarbageCollectionEvent` class is essentially a view of the
- * `js::gcstats::Statistics` data without the uber implementation-specific bits.
- * It should generally be palatable for web developers.
- *
- * <div rustbindgen hide></div>
- */
+// The `JS::dbg::GarbageCollectionEvent` class is essentially a view of the
+// `js::gcstats::Statistics` data without the uber implementation-specific bits.
+// It should generally be palatable for web developers.
 class GarbageCollectionEvent
 {
     // The major GC number of the GC cycle this data pertains to.
@@ -291,8 +288,8 @@ class GarbageCollectionEvent
     // Represents a single slice of a possibly multi-slice incremental garbage
     // collection.
     struct Collection {
-        double startTimestamp;
-        double endTimestamp;
+        mozilla::TimeStamp startTimestamp;
+        mozilla::TimeStamp endTimestamp;
     };
 
     // The set of garbage collection slices that made up this GC cycle.
@@ -337,24 +334,22 @@ enum GCProgress {
 };
 
 struct JS_PUBLIC_API(GCDescription) {
-    bool isCompartment_;
+    bool isZone_;
     JSGCInvocationKind invocationKind_;
     gcreason::Reason reason_;
 
-    GCDescription(bool isCompartment, JSGCInvocationKind kind, gcreason::Reason reason)
-      : isCompartment_(isCompartment), invocationKind_(kind), reason_(reason) {}
+    GCDescription(bool isZone, JSGCInvocationKind kind, gcreason::Reason reason)
+      : isZone_(isZone), invocationKind_(kind), reason_(reason) {}
 
-    char16_t* formatSliceMessage(JSRuntime* rt) const;
-    char16_t* formatSummaryMessage(JSRuntime* rt) const;
-    char16_t* formatJSON(JSRuntime* rt, uint64_t timestamp) const;
+    char16_t* formatSliceMessage(JSContext* cx) const;
+    char16_t* formatSummaryMessage(JSContext* cx) const;
+    char16_t* formatJSON(JSContext* cx, uint64_t timestamp) const;
 
-#ifndef RUST_BINDGEN
-    JS::dbg::GarbageCollectionEvent::Ptr toGCEvent(JSRuntime* rt) const;
-#endif
+    JS::dbg::GarbageCollectionEvent::Ptr toGCEvent(JSContext* cx) const;
 };
 
 typedef void
-(* GCSliceCallback)(JSRuntime* rt, GCProgress progress, const GCDescription& desc);
+(* GCSliceCallback)(JSContext* cx, GCProgress progress, const GCDescription& desc);
 
 /**
  * The GC slice callback is called at the beginning and end of each slice. This
@@ -362,7 +357,7 @@ typedef void
  * marking.
  */
 extern JS_PUBLIC_API(GCSliceCallback)
-SetGCSliceCallback(JSRuntime* rt, GCSliceCallback callback);
+SetGCSliceCallback(JSContext* cx, GCSliceCallback callback);
 
 /**
  * Describes the progress of an observed nursery collection.
@@ -382,7 +377,7 @@ enum class GCNurseryProgress {
  * A nursery collection callback receives the progress of the nursery collection
  * and the reason for the collection.
  */
-using GCNurseryCollectionCallback = void(*)(JSRuntime* rt, GCNurseryProgress progress,
+using GCNurseryCollectionCallback = void(*)(JSContext* cx, GCNurseryProgress progress,
                                             gcreason::Reason reason);
 
 /**
@@ -390,7 +385,17 @@ using GCNurseryCollectionCallback = void(*)(JSRuntime* rt, GCNurseryProgress pro
  * be called at the start and end of every nursery collection.
  */
 extern JS_PUBLIC_API(GCNurseryCollectionCallback)
-SetGCNurseryCollectionCallback(JSRuntime* rt, GCNurseryCollectionCallback callback);
+SetGCNurseryCollectionCallback(JSContext* cx, GCNurseryCollectionCallback callback);
+
+typedef void
+(* DoCycleCollectionCallback)(JSContext* cx);
+
+/**
+ * The purge gray callback is called after any COMPARTMENT_REVIVED GC in which
+ * the majority of compartments have been marked gray.
+ */
+extern JS_PUBLIC_API(DoCycleCollectionCallback)
+SetDoCycleCollectionCallback(JSContext* cx, DoCycleCollectionCallback callback);
 
 /**
  * Incremental GC defaults to enabled, but may be disabled for testing or in
@@ -399,7 +404,7 @@ SetGCNurseryCollectionCallback(JSRuntime* rt, GCNurseryCollectionCallback callba
  * disabled on the runtime.
  */
 extern JS_PUBLIC_API(void)
-DisableIncrementalGC(JSRuntime* rt);
+DisableIncrementalGC(JSContext* cx);
 
 /**
  * Returns true if incremental GC is enabled. Simply having incremental GC
@@ -410,7 +415,14 @@ DisableIncrementalGC(JSRuntime* rt);
  * collections are not happening incrementally when expected.
  */
 extern JS_PUBLIC_API(bool)
-IsIncrementalGCEnabled(JSRuntime* rt);
+IsIncrementalGCEnabled(JSContext* cx);
+
+/**
+ * Returns true while an incremental GC is ongoing, both when actively
+ * collecting and between slices.
+ */
+extern JS_PUBLIC_API(bool)
+IsIncrementalGCInProgress(JSContext* cx);
 
 /**
  * Returns true while an incremental GC is ongoing, both when actively
@@ -420,25 +432,27 @@ extern JS_PUBLIC_API(bool)
 IsIncrementalGCInProgress(JSRuntime* rt);
 
 /*
- * Returns true when writes to GC things must call an incremental (pre) barrier.
- * This is generally only true when running mutator code in-between GC slices.
- * At other times, the barrier may be elided for performance.
+ * Returns true when writes to GC thing pointers (and reads from weak pointers)
+ * must call an incremental barrier. This is generally only true when running
+ * mutator code in-between GC slices. At other times, the barrier may be elided
+ * for performance.
  */
 extern JS_PUBLIC_API(bool)
-IsIncrementalBarrierNeeded(JSRuntime* rt);
+IsIncrementalBarrierNeeded(JSContext* cx);
 
 /*
- * Notify the GC that a reference to a GC thing is about to be overwritten.
- * These methods must be called if IsIncrementalBarrierNeeded.
+ * Notify the GC that a reference to a JSObject is about to be overwritten.
+ * This method must be called if IsIncrementalBarrierNeeded.
  */
 extern JS_PUBLIC_API(void)
-IncrementalReferenceBarrier(GCCellPtr thing);
+IncrementalPreWriteBarrier(JSObject* obj);
 
+/*
+ * Notify the GC that a weak reference to a GC thing has been read.
+ * This method must be called if IsIncrementalBarrierNeeded.
+ */
 extern JS_PUBLIC_API(void)
-IncrementalValueBarrier(const Value& v);
-
-extern JS_PUBLIC_API(void)
-IncrementalObjectBarrier(JSObject* obj);
+IncrementalReadBarrier(GCCellPtr thing);
 
 /**
  * Returns true if the most recent GC ran incrementally.
@@ -457,10 +471,10 @@ WasIncrementalGC(JSRuntime* rt);
 /** Ensure that generational GC is disabled within some scope. */
 class JS_PUBLIC_API(AutoDisableGenerationalGC)
 {
-    js::gc::GCRuntime* gc;
+    JSContext* cx;
 
   public:
-    explicit AutoDisableGenerationalGC(JSRuntime* rt);
+    explicit AutoDisableGenerationalGC(JSContext* cx);
     ~AutoDisableGenerationalGC();
 };
 
@@ -480,37 +494,32 @@ extern JS_PUBLIC_API(size_t)
 GetGCNumber();
 
 /**
- * The GC does not immediately return the unused memory freed by a collection
- * back to the system incase it is needed soon afterwards. This call forces the
- * GC to return this memory immediately.
+ * Pass a subclass of this "abstract" class to callees to require that they
+ * never GC. Subclasses can use assertions or the hazard analysis to ensure no
+ * GC happens.
  */
-extern JS_PUBLIC_API(void)
-ShrinkGCBuffers(JSRuntime* rt);
+class JS_PUBLIC_API(AutoRequireNoGC)
+{
+  protected:
+    AutoRequireNoGC() {}
+    ~AutoRequireNoGC() {}
+};
 
 /**
- * Assert if a GC occurs while this class is live. This class does not disable
- * the static rooting hazard analysis.
+ * Diagnostic assert (see MOZ_DIAGNOSTIC_ASSERT) that GC cannot occur while this
+ * class is live. This class does not disable the static rooting hazard
+ * analysis.
+ *
+ * This works by entering a GC unsafe region, which is checked on allocation and
+ * on GC.
  */
-class JS_PUBLIC_API(AutoAssertOnGC)
+class JS_PUBLIC_API(AutoAssertNoGC) : public AutoRequireNoGC
 {
-#ifdef DEBUG
-    js::gc::GCRuntime* gc;
-    size_t gcNumber;
+    JSContext* cx_;
 
   public:
-    AutoAssertOnGC();
-    explicit AutoAssertOnGC(JSRuntime* rt);
-    ~AutoAssertOnGC();
-
-    static void VerifyIsSafeToGC(JSRuntime* rt);
-#else
-  public:
-    AutoAssertOnGC() {}
-    explicit AutoAssertOnGC(JSRuntime* rt) {}
-    ~AutoAssertOnGC() {}
-
-    static void VerifyIsSafeToGC(JSRuntime* rt) {}
-#endif
+    explicit AutoAssertNoGC(JSContext* cx = nullptr);
+    ~AutoAssertNoGC();
 };
 
 /**
@@ -524,15 +533,29 @@ class JS_PUBLIC_API(AutoAssertNoAlloc)
 
   public:
     AutoAssertNoAlloc() : gc(nullptr) {}
-    explicit AutoAssertNoAlloc(JSRuntime* rt);
+    explicit AutoAssertNoAlloc(JSContext* cx);
     void disallowAlloc(JSRuntime* rt);
     ~AutoAssertNoAlloc();
 #else
   public:
     AutoAssertNoAlloc() {}
-    explicit AutoAssertNoAlloc(JSRuntime* rt) {}
+    explicit AutoAssertNoAlloc(JSContext* cx) {}
     void disallowAlloc(JSRuntime* rt) {}
 #endif
+};
+
+/**
+ * Assert if a GC barrier is invoked while this class is live. This class does
+ * not disable the static rooting hazard analysis.
+ */
+class JS_PUBLIC_API(AutoAssertOnBarrier)
+{
+    JSContext* context;
+    bool prev;
+
+  public:
+    explicit AutoAssertOnBarrier(JSContext* cx);
+    ~AutoAssertOnBarrier();
 };
 
 /**
@@ -553,7 +576,7 @@ class JS_PUBLIC_API(AutoSuppressGCAnalysis) : public AutoAssertNoAlloc
 {
   public:
     AutoSuppressGCAnalysis() : AutoAssertNoAlloc() {}
-    explicit AutoSuppressGCAnalysis(JSRuntime* rt) : AutoAssertNoAlloc(rt) {}
+    explicit AutoSuppressGCAnalysis(JSContext* cx) : AutoAssertNoAlloc(cx) {}
 } JS_HAZ_GC_SUPPRESSED;
 
 /**
@@ -567,25 +590,38 @@ class JS_PUBLIC_API(AutoSuppressGCAnalysis) : public AutoAssertNoAlloc
 class JS_PUBLIC_API(AutoAssertGCCallback) : public AutoSuppressGCAnalysis
 {
   public:
-    explicit AutoAssertGCCallback(JSObject* obj);
+#ifdef DEBUG
+    AutoAssertGCCallback();
+#else
+    AutoAssertGCCallback() {}
+#endif
 };
 
 /**
  * Place AutoCheckCannotGC in scopes that you believe can never GC. These
- * annotations will be verified both dynamically via AutoAssertOnGC, and
+ * annotations will be verified both dynamically via AutoAssertNoGC, and
  * statically with the rooting hazard analysis (implemented by making the
  * analysis consider AutoCheckCannotGC to be a GC pointer, and therefore
  * complain if it is live across a GC call.) It is useful when dealing with
  * internal pointers to GC things where the GC thing itself may not be present
  * for the static analysis: e.g. acquiring inline chars from a JSString* on the
  * heap.
+ *
+ * We only do the assertion checking in DEBUG builds.
  */
-class JS_PUBLIC_API(AutoCheckCannotGC) : public AutoAssertOnGC
+#ifdef DEBUG
+class JS_PUBLIC_API(AutoCheckCannotGC) : public AutoAssertNoGC
 {
   public:
-    AutoCheckCannotGC() : AutoAssertOnGC() {}
-    explicit AutoCheckCannotGC(JSRuntime* rt) : AutoAssertOnGC(rt) {}
+    explicit AutoCheckCannotGC(JSContext* cx = nullptr) : AutoAssertNoGC(cx) {}
 } JS_HAZ_GC_INVALIDATED;
+#else
+class JS_PUBLIC_API(AutoCheckCannotGC) : public AutoRequireNoGC
+{
+  public:
+    explicit AutoCheckCannotGC(JSContext* cx = nullptr) {}
+} JS_HAZ_GC_INVALIDATED;
+#endif
 
 /**
  * Unsets the gray bit for anything reachable from |thing|. |kind| should not be
@@ -600,36 +636,52 @@ UnmarkGrayGCThingRecursively(GCCellPtr thing);
 namespace js {
 namespace gc {
 
+extern JS_FRIEND_API(bool)
+BarriersAreAllowedOnCurrentThread();
+
 static MOZ_ALWAYS_INLINE void
 ExposeGCThingToActiveJS(JS::GCCellPtr thing)
 {
-    MOZ_ASSERT(thing.kind() != JS::TraceKind::Shape);
-
-    /*
-     * GC things residing in the nursery cannot be gray: they have no mark bits.
-     * All live objects in the nursery are moved to tenured at the beginning of
-     * each GC slice, so the gray marker never sees nursery things.
-     */
+    // GC things residing in the nursery cannot be gray: they have no mark bits.
+    // All live objects in the nursery are moved to tenured at the beginning of
+    // each GC slice, so the gray marker never sees nursery things.
     if (IsInsideNursery(thing.asCell()))
         return;
-    JS::shadow::Runtime* rt = detail::GetGCThingRuntime(thing.unsafeAsUIntPtr());
-    if (IsIncrementalBarrierNeededOnTenuredGCThing(rt, thing))
-        JS::IncrementalReferenceBarrier(thing);
-    else if (JS::GCThingIsMarkedGray(thing))
+
+    // There's nothing to do for permanent GC things that might be owned by
+    // another runtime.
+    if (thing.mayBeOwnedByOtherRuntime())
+        return;
+
+    MOZ_DIAGNOSTIC_ASSERT(BarriersAreAllowedOnCurrentThread());
+
+    if (IsIncrementalBarrierNeededOnTenuredGCThing(thing))
+        JS::IncrementalReadBarrier(thing);
+    else if (js::gc::detail::TenuredCellIsMarkedGray(thing.asCell()))
         JS::UnmarkGrayGCThingRecursively(thing);
+
+    MOZ_ASSERT(!js::gc::detail::TenuredCellIsMarkedGray(thing.asCell()));
 }
 
-static MOZ_ALWAYS_INLINE void
-MarkGCThingAsLive(JSRuntime* aRt, JS::GCCellPtr thing)
+template <typename T>
+extern JS_PUBLIC_API(bool)
+EdgeNeedsSweepUnbarrieredSlow(T* thingp);
+
+static MOZ_ALWAYS_INLINE bool
+EdgeNeedsSweepUnbarriered(JSObject** objp)
 {
-    JS::shadow::Runtime* rt = JS::shadow::Runtime::asShadowRuntime(aRt);
-    /*
-     * Any object in the nursery will not be freed during any GC running at that time.
-     */
-    if (IsInsideNursery(thing.asCell()))
-        return;
-    if (IsIncrementalBarrierNeededOnTenuredGCThing(rt, thing))
-        JS::IncrementalReferenceBarrier(thing);
+    // This function does not handle updating nursery pointers. Raw JSObject
+    // pointers should be updated separately or replaced with
+    // JS::Heap<JSObject*> which handles this automatically.
+    MOZ_ASSERT(!JS::CurrentThreadIsHeapMinorCollecting());
+    if (IsInsideNursery(reinterpret_cast<Cell*>(*objp)))
+        return false;
+
+    auto zone = JS::shadow::Zone::asShadowZone(detail::GetGCThingZone(uintptr_t(*objp)));
+    if (!zone->isGCSweepingOrCompacting())
+        return false;
+
+    return EdgeNeedsSweepUnbarrieredSlow(objp);
 }
 
 } /* namespace gc */
@@ -646,23 +698,16 @@ namespace JS {
 static MOZ_ALWAYS_INLINE void
 ExposeObjectToActiveJS(JSObject* obj)
 {
+    MOZ_ASSERT(obj);
+    MOZ_ASSERT(!js::gc::EdgeNeedsSweepUnbarrieredSlow(&obj));
     js::gc::ExposeGCThingToActiveJS(GCCellPtr(obj));
 }
 
 static MOZ_ALWAYS_INLINE void
 ExposeScriptToActiveJS(JSScript* script)
 {
+    MOZ_ASSERT(!js::gc::EdgeNeedsSweepUnbarrieredSlow(&script));
     js::gc::ExposeGCThingToActiveJS(GCCellPtr(script));
-}
-
-/*
- * If a GC is currently marking, mark the string black.
- */
-static MOZ_ALWAYS_INLINE void
-MarkStringAsLive(Zone* zone, JSString* string)
-{
-    JSRuntime* rt = JS::shadow::Zone::asShadowZone(zone)->runtimeFromMainThread();
-    js::gc::MarkGCThingAsLive(rt, GCCellPtr(string));
 }
 
 /*
@@ -671,13 +716,13 @@ MarkStringAsLive(Zone* zone, JSString* string)
  * Note: this is not related to the PokeGC in nsJSEnvironment.
  */
 extern JS_FRIEND_API(void)
-PokeGC(JSRuntime* rt);
+PokeGC(JSContext* cx);
 
 /*
  * Internal to Firefox.
  */
 extern JS_FRIEND_API(void)
-NotifyDidPaint(JSRuntime* rt);
+NotifyDidPaint(JSContext* cx);
 
 } /* namespace JS */
 

@@ -32,20 +32,15 @@
 
 struct JSRuntime;
 
-namespace JS {
-namespace shadow {
-struct Runtime;
-} // namespace shadow
-} // namespace JS
-
 namespace js {
 
 class AutoLockGC;
 class FreeOp;
 
-#ifdef DEBUG
 extern bool
-RuntimeFromMainThreadIsHeapMajorCollecting(JS::shadow::Zone* shadowZone);
+RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(JS::shadow::Zone* shadowZone);
+
+#ifdef DEBUG
 
 // Barriers can't be triggered during backend Ion compilation, which may run on
 // a helper thread.
@@ -109,8 +104,12 @@ enum class AllocKind {
     FAT_INLINE_STRING,
     STRING,
     EXTERNAL_STRING,
+    FAT_INLINE_ATOM,
+    ATOM,
     SYMBOL,
     JITCODE,
+    SCOPE,
+    REGEXP_SHARED,
     LIMIT,
     LAST = LIMIT - 1
 };
@@ -118,35 +117,39 @@ enum class AllocKind {
 // Macro to enumerate the different allocation kinds supplying information about
 // the trace kind, C++ type and allocation size.
 #define FOR_EACH_OBJECT_ALLOCKIND(D) \
- /* AllocKind              TraceKind    TypeName           SizedType */ \
-    D(FUNCTION,            Object,      JSObject,          JSFunction) \
-    D(FUNCTION_EXTENDED,   Object,      JSObject,          FunctionExtended) \
-    D(OBJECT0,             Object,      JSObject,          JSObject_Slots0) \
-    D(OBJECT0_BACKGROUND,  Object,      JSObject,          JSObject_Slots0) \
-    D(OBJECT2,             Object,      JSObject,          JSObject_Slots2) \
-    D(OBJECT2_BACKGROUND,  Object,      JSObject,          JSObject_Slots2) \
-    D(OBJECT4,             Object,      JSObject,          JSObject_Slots4) \
-    D(OBJECT4_BACKGROUND,  Object,      JSObject,          JSObject_Slots4) \
-    D(OBJECT8,             Object,      JSObject,          JSObject_Slots8) \
-    D(OBJECT8_BACKGROUND,  Object,      JSObject,          JSObject_Slots8) \
-    D(OBJECT12,            Object,      JSObject,          JSObject_Slots12) \
-    D(OBJECT12_BACKGROUND, Object,      JSObject,          JSObject_Slots12) \
-    D(OBJECT16,            Object,      JSObject,          JSObject_Slots16) \
-    D(OBJECT16_BACKGROUND, Object,      JSObject,          JSObject_Slots16)
+ /* AllocKind              TraceKind      TypeName           SizedType */ \
+    D(FUNCTION,            Object,        JSObject,          JSFunction) \
+    D(FUNCTION_EXTENDED,   Object,        JSObject,          FunctionExtended) \
+    D(OBJECT0,             Object,        JSObject,          JSObject_Slots0) \
+    D(OBJECT0_BACKGROUND,  Object,        JSObject,          JSObject_Slots0) \
+    D(OBJECT2,             Object,        JSObject,          JSObject_Slots2) \
+    D(OBJECT2_BACKGROUND,  Object,        JSObject,          JSObject_Slots2) \
+    D(OBJECT4,             Object,        JSObject,          JSObject_Slots4) \
+    D(OBJECT4_BACKGROUND,  Object,        JSObject,          JSObject_Slots4) \
+    D(OBJECT8,             Object,        JSObject,          JSObject_Slots8) \
+    D(OBJECT8_BACKGROUND,  Object,        JSObject,          JSObject_Slots8) \
+    D(OBJECT12,            Object,        JSObject,          JSObject_Slots12) \
+    D(OBJECT12_BACKGROUND, Object,        JSObject,          JSObject_Slots12) \
+    D(OBJECT16,            Object,        JSObject,          JSObject_Slots16) \
+    D(OBJECT16_BACKGROUND, Object,        JSObject,          JSObject_Slots16)
 
 #define FOR_EACH_NONOBJECT_ALLOCKIND(D) \
- /* AllocKind              TraceKind    TypeName           SizedType */ \
-    D(SCRIPT,              Script,      JSScript,          JSScript) \
-    D(LAZY_SCRIPT,         LazyScript,  js::LazyScript,    js::LazyScript) \
-    D(SHAPE,               Shape,       js::Shape,         js::Shape) \
-    D(ACCESSOR_SHAPE,      Shape,       js::AccessorShape, js::AccessorShape) \
-    D(BASE_SHAPE,          BaseShape,   js::BaseShape,     js::BaseShape) \
-    D(OBJECT_GROUP,        ObjectGroup, js::ObjectGroup,   js::ObjectGroup) \
-    D(FAT_INLINE_STRING,   String,      JSFatInlineString, JSFatInlineString) \
-    D(STRING,              String,      JSString,          JSString) \
-    D(EXTERNAL_STRING,     String,      JSExternalString,  JSExternalString) \
-    D(SYMBOL,              Symbol,      JS::Symbol,        JS::Symbol) \
-    D(JITCODE,             JitCode,     js::jit::JitCode,  js::jit::JitCode)
+ /* AllocKind              TraceKind      TypeName           SizedType */ \
+    D(SCRIPT,              Script,        JSScript,          JSScript) \
+    D(LAZY_SCRIPT,         LazyScript,    js::LazyScript,    js::LazyScript) \
+    D(SHAPE,               Shape,         js::Shape,         js::Shape) \
+    D(ACCESSOR_SHAPE,      Shape,         js::AccessorShape, js::AccessorShape) \
+    D(BASE_SHAPE,          BaseShape,     js::BaseShape,     js::BaseShape) \
+    D(OBJECT_GROUP,        ObjectGroup,   js::ObjectGroup,   js::ObjectGroup) \
+    D(FAT_INLINE_STRING,   String,        JSFatInlineString, JSFatInlineString) \
+    D(STRING,              String,        JSString,          JSString) \
+    D(EXTERNAL_STRING,     String,        JSExternalString,  JSExternalString) \
+    D(FAT_INLINE_ATOM,     String,        js::FatInlineAtom, js::FatInlineAtom) \
+    D(ATOM,                String,        js::NormalAtom,    js::NormalAtom) \
+    D(SYMBOL,              Symbol,        JS::Symbol,        JS::Symbol) \
+    D(JITCODE,             JitCode,       js::jit::JitCode,  js::jit::JitCode) \
+    D(SCOPE,               Scope,         js::Scope,         js::Scope) \
+    D(REGEXP_SHARED,       RegExpShared,  js::RegExpShared,  js::RegExpShared)
 
 #define FOR_EACH_ALLOCKIND(D) \
     FOR_EACH_OBJECT_ALLOCKIND(D) \
@@ -183,28 +186,28 @@ IsShapeAllocKind(AllocKind kind)
 
 // Returns a sequence for use in a range-based for loop,
 // to iterate over all alloc kinds.
-inline decltype(mozilla::MakeEnumeratedRange<int>(AllocKind::FIRST, AllocKind::LIMIT))
+inline decltype(mozilla::MakeEnumeratedRange(AllocKind::FIRST, AllocKind::LIMIT))
 AllAllocKinds()
 {
-    return mozilla::MakeEnumeratedRange<int>(AllocKind::FIRST, AllocKind::LIMIT);
+    return mozilla::MakeEnumeratedRange(AllocKind::FIRST, AllocKind::LIMIT);
 }
 
 // Returns a sequence for use in a range-based for loop,
 // to iterate over all object alloc kinds.
-inline decltype(mozilla::MakeEnumeratedRange<int>(AllocKind::OBJECT_FIRST, AllocKind::OBJECT_LIMIT))
+inline decltype(mozilla::MakeEnumeratedRange(AllocKind::OBJECT_FIRST, AllocKind::OBJECT_LIMIT))
 ObjectAllocKinds()
 {
-    return mozilla::MakeEnumeratedRange<int>(AllocKind::OBJECT_FIRST, AllocKind::OBJECT_LIMIT);
+    return mozilla::MakeEnumeratedRange(AllocKind::OBJECT_FIRST, AllocKind::OBJECT_LIMIT);
 }
 
 // Returns a sequence for use in a range-based for loop,
 // to iterate over alloc kinds from |first| to |limit|, exclusive.
-inline decltype(mozilla::MakeEnumeratedRange<int>(AllocKind::FIRST, AllocKind::LIMIT))
+inline decltype(mozilla::MakeEnumeratedRange(AllocKind::FIRST, AllocKind::LIMIT))
 SomeAllocKinds(AllocKind first = AllocKind::FIRST, AllocKind limit = AllocKind::LIMIT)
 {
     MOZ_ASSERT(IsAllocKind(first), "|first| is not a valid AllocKind!");
     MOZ_ASSERT(IsAllocKind(limit), "|limit| is not a valid AllocKind!");
-    return mozilla::MakeEnumeratedRange<int>(first, limit);
+    return mozilla::MakeEnumeratedRange(first, limit);
 }
 
 // AllAllocKindArray<ValueType> gives an enumerated array of ValueTypes,
@@ -249,13 +252,11 @@ struct Cell
     MOZ_ALWAYS_INLINE const TenuredCell& asTenured() const;
     MOZ_ALWAYS_INLINE TenuredCell& asTenured();
 
-    inline JSRuntime* runtimeFromMainThread() const;
-    inline JS::shadow::Runtime* shadowRuntimeFromMainThread() const;
+    inline JSRuntime* runtimeFromActiveCooperatingThread() const;
 
     // Note: Unrestricted access to the runtime of a GC thing from an arbitrary
     // thread can easily lead to races. Use this method very carefully.
     inline JSRuntime* runtimeFromAnyThread() const;
-    inline JS::shadow::Runtime* shadowRuntimeFromAnyThread() const;
 
     // May be overridden by GC thing kinds that have a compartment pointer.
     inline JSCompartment* maybeCompartment() const { return nullptr; }
@@ -293,10 +294,6 @@ class TenuredCell : public Cell
     MOZ_ALWAYS_INLINE void unmark(uint32_t color) const;
     MOZ_ALWAYS_INLINE void copyMarkBitsFrom(const TenuredCell* src);
 
-    // Note: this is in TenuredCell because JSObject subclasses are sometimes
-    // used tagged.
-    static MOZ_ALWAYS_INLINE bool isNullLike(const Cell* thing) { return !thing; }
-
     // Access to the arena.
     inline Arena* arena() const;
     inline AllocKind getAllocKind() const;
@@ -329,7 +326,7 @@ class TenuredCell : public Cell
 /* Cells are aligned to CellShift, so the largest tagged null pointer is: */
 const uintptr_t LargestTaggedNullCellPointer = (1 << CellShift) - 1;
 
-MOZ_CONSTEXPR size_t
+constexpr size_t
 DivideAndRoundUp(size_t numerator, size_t divisor) {
     return (numerator + divisor - 1) / divisor;
 }
@@ -529,11 +526,24 @@ class Arena
                   "Arena::auxNextLink packing assumes that ArenaShift has "
                   "enough bits to cover allocKind and hasDelayedMarking.");
 
-    /*
-     * If non-null, points to an ArenaCellSet that represents the set of cells
-     * in this arena that are in the nursery's store buffer.
-     */
-    ArenaCellSet* bufferedCells;
+  private:
+    union {
+        /*
+         * For arenas in zones other than the atoms zone, if non-null, points
+         * to an ArenaCellSet that represents the set of cells in this arena
+         * that are in the nursery's store buffer.
+         */
+        ArenaCellSet* bufferedCells_;
+
+        /*
+         * For arenas in the atoms zone, the starting index into zone atom
+         * marking bitmaps (see AtomMarking.h) of the things in this zone.
+         * Atoms never refer to nursery things, so no store buffer index is
+         * needed.
+         */
+        size_t atomBitmapStart_;
+    };
+  public:
 
     /*
      * The size of data should be |ArenaSize - offsetof(data)|, but the offset
@@ -555,6 +565,8 @@ class Arena
         last->initAsEmpty();
     }
 
+    // Initialize an arena to its unallocated state. For arenas that were
+    // previously allocated for some zone, use release() instead.
     void setAsNotAllocated() {
         firstFreeSpan.initAsEmpty();
         zone = nullptr;
@@ -563,8 +575,11 @@ class Arena
         allocatedDuringIncremental = 0;
         markOverflow = 0;
         auxNextLink = 0;
-        bufferedCells = nullptr;
+        bufferedCells_ = nullptr;
     }
+
+    // Return an allocated arena to its unallocated state.
+    inline void release();
 
     uintptr_t address() const {
         checkAddress();
@@ -597,8 +612,9 @@ class Arena
     size_t getThingSize() const { return thingSize(getAllocKind()); }
     size_t getThingsPerArena() const { return thingsPerArena(getAllocKind()); }
     size_t getThingsSpan() const { return getThingsPerArena() * getThingSize(); }
+    size_t getFirstThingOffset() const { return firstThingOffset(getAllocKind()); }
 
-    uintptr_t thingsStart() const { return address() + firstThingOffset(getAllocKind()); }
+    uintptr_t thingsStart() const { return address() + getFirstThingOffset(); }
     uintptr_t thingsEnd() const { return address() + ArenaSize; }
 
     bool isEmpty() const {
@@ -682,16 +698,15 @@ class Arena
         auxNextLink = 0;
     }
 
+    inline ArenaCellSet*& bufferedCells();
+    inline size_t& atomBitmapStart();
+
     template <typename T>
     size_t finalize(FreeOp* fop, AllocKind thingKind, size_t thingSize);
 
     static void staticAsserts();
 
     void unmarkAll();
-
-    static size_t offsetOfBufferedCells() {
-        return offsetof(Arena, bufferedCells);
-    }
 };
 
 static_assert(ArenaZoneOffset == offsetof(Arena, zone),
@@ -756,17 +771,17 @@ struct ChunkTrailer
 {
     /* Construct a Nursery ChunkTrailer. */
     ChunkTrailer(JSRuntime* rt, StoreBuffer* sb)
-      : location(gc::ChunkLocationBitNursery), storeBuffer(sb), runtime(rt)
+      : location(ChunkLocation::Nursery), storeBuffer(sb), runtime(rt)
     {}
 
     /* Construct a Tenured heap ChunkTrailer. */
     explicit ChunkTrailer(JSRuntime* rt)
-      : location(gc::ChunkLocationBitTenuredHeap), storeBuffer(nullptr), runtime(rt)
+      : location(ChunkLocation::TenuredHeap), storeBuffer(nullptr), runtime(rt)
     {}
 
   public:
     /* The index the chunk in the nursery, or LocationTenuredHeap. */
-    uint32_t        location;
+    ChunkLocation   location;
     uint32_t        padding;
 
     /* The store buffer for writes to things in this chunk or nullptr. */
@@ -784,7 +799,6 @@ struct ChunkInfo
 {
     void init() {
         next = prev = nullptr;
-        age = 0;
     }
 
   private:
@@ -801,7 +815,7 @@ struct ChunkInfo
      * Calculating sizes and offsets is simpler if sizeof(ChunkInfo) is
      * architecture-independent.
      */
-    char            padding[20];
+    char            padding[24];
 #endif
 
     /*
@@ -816,12 +830,6 @@ struct ChunkInfo
 
     /* Number of free, committed arenas. */
     uint32_t        numArenasFreeCommitted;
-
-    /* Number of GC cycles this chunk has survived. */
-    uint32_t        age;
-
-    /* Information shared by all Chunk types. */
-    ChunkTrailer    trailer;
 };
 
 /*
@@ -855,7 +863,7 @@ struct ChunkInfo
  */
 const size_t BytesPerArenaWithHeader = ArenaSize + ArenaBitmapBytes;
 const size_t ChunkDecommitBitmapBytes = ChunkSize / ArenaSize / JS_BITS_PER_BYTE;
-const size_t ChunkBytesAvailable = ChunkSize - sizeof(ChunkInfo) - ChunkDecommitBitmapBytes;
+const size_t ChunkBytesAvailable = ChunkSize - sizeof(ChunkTrailer) - sizeof(ChunkInfo) - ChunkDecommitBitmapBytes;
 const size_t ArenasPerChunk = ChunkBytesAvailable / BytesPerArenaWithHeader;
 
 #ifdef JS_GC_SMALL_CHUNK_SIZE
@@ -943,7 +951,8 @@ const size_t ChunkPadSize = ChunkSize
                             - (sizeof(Arena) * ArenasPerChunk)
                             - sizeof(ChunkBitmap)
                             - sizeof(PerArenaBitmap)
-                            - sizeof(ChunkInfo);
+                            - sizeof(ChunkInfo)
+                            - sizeof(ChunkTrailer);
 static_assert(ChunkPadSize < BytesPerArenaWithHeader,
               "If the chunk padding is larger than an arena, we should have one more arena.");
 
@@ -961,6 +970,7 @@ struct Chunk
     ChunkBitmap     bitmap;
     PerArenaBitmap  decommittedArenas;
     ChunkInfo       info;
+    ChunkTrailer    trailer;
 
     static Chunk* fromAddress(uintptr_t addr) {
         addr &= ~ChunkMask;
@@ -995,7 +1005,7 @@ struct Chunk
     }
 
     bool isNurseryChunk() const {
-        return info.trailer.storeBuffer;
+        return trailer.storeBuffer;
     }
 
     Arena* allocateArena(JSRuntime* rt, JS::Zone* zone, AllocKind kind, const AutoLockGC& lock);
@@ -1007,10 +1017,9 @@ struct Chunk
     void decommitAllArenasWithoutUnlocking(const AutoLockGC& lock);
 
     static Chunk* allocate(JSRuntime* rt);
+    void init(JSRuntime* rt);
 
   private:
-    inline void init(JSRuntime* rt);
-
     void decommitAllArenas(JSRuntime* rt);
 
     /* Search for a decommitted arena to allocate. */
@@ -1032,12 +1041,10 @@ static_assert(sizeof(Chunk) == ChunkSize,
               "Ensure the hardcoded chunk size definition actually matches the struct.");
 static_assert(js::gc::ChunkMarkBitmapOffset == offsetof(Chunk, bitmap),
               "The hardcoded API bitmap offset must match the actual offset.");
-static_assert(js::gc::ChunkRuntimeOffset == offsetof(Chunk, info) +
-                                            offsetof(ChunkInfo, trailer) +
+static_assert(js::gc::ChunkRuntimeOffset == offsetof(Chunk, trailer) +
                                             offsetof(ChunkTrailer, runtime),
               "The hardcoded API runtime offset must match the actual offset.");
-static_assert(js::gc::ChunkLocationOffset == offsetof(Chunk, info) +
-                                             offsetof(ChunkInfo, trailer) +
+static_assert(js::gc::ChunkLocationOffset == offsetof(Chunk, trailer) +
                                              offsetof(ChunkTrailer, location),
               "The hardcoded API location offset must match the actual offset.");
 
@@ -1051,13 +1058,13 @@ class HeapUsage
      * A heap usage that contains our parent's heap usage, or null if this is
      * the top-level usage container.
      */
-    HeapUsage* parent_;
+    HeapUsage* const parent_;
 
     /*
      * The approximate number of bytes in use on the GC heap, to the nearest
      * ArenaSize. This does not include any malloc data. It also does not
      * include not-actively-used addresses that are still reserved at the OS
-     * level for GC usage. It is atomic because it is updated by both the main
+     * level for GC usage. It is atomic because it is updated by both the active
      * and GC helper threads.
      */
     mozilla::Atomic<size_t, mozilla::ReleaseAcquire> gcBytes_;
@@ -1128,29 +1135,17 @@ Cell::asTenured()
 }
 
 inline JSRuntime*
-Cell::runtimeFromMainThread() const
+Cell::runtimeFromActiveCooperatingThread() const
 {
-    JSRuntime* rt = chunk()->info.trailer.runtime;
+    JSRuntime* rt = chunk()->trailer.runtime;
     MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
     return rt;
-}
-
-inline JS::shadow::Runtime*
-Cell::shadowRuntimeFromMainThread() const
-{
-    return reinterpret_cast<JS::shadow::Runtime*>(runtimeFromMainThread());
 }
 
 inline JSRuntime*
 Cell::runtimeFromAnyThread() const
 {
-    return chunk()->info.trailer.runtime;
-}
-
-inline JS::shadow::Runtime*
-Cell::shadowRuntimeFromAnyThread() const
-{
-    return reinterpret_cast<JS::shadow::Runtime*>(runtimeFromAnyThread());
+    return chunk()->trailer.runtime;
 }
 
 inline uintptr_t
@@ -1174,7 +1169,7 @@ Cell::chunk() const
 inline StoreBuffer*
 Cell::storeBuffer() const
 {
-    return chunk()->info.trailer.storeBuffer;
+    return chunk()->trailer.storeBuffer;
 }
 
 inline JS::TraceKind
@@ -1286,35 +1281,61 @@ TenuredCell::isInsideZone(JS::Zone* zone) const
 TenuredCell::readBarrier(TenuredCell* thing)
 {
     MOZ_ASSERT(!CurrentThreadIsIonCompiling());
-    MOZ_ASSERT(!isNullLike(thing));
-    if (thing->shadowRuntimeFromAnyThread()->isHeapCollecting())
-        return;
+    MOZ_ASSERT(thing);
+
+    // It would be good if barriers were never triggered during collection, but
+    // at the moment this can happen e.g. when rekeying tables containing
+    // read-barriered GC things after a moving GC.
+    //
+    // TODO: Fix this and assert we're not collecting if we're on the active
+    // thread.
 
     JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
-    MOZ_ASSERT_IF(!CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()),
-                  !shadowZone->needsIncrementalBarrier());
-
     if (shadowZone->needsIncrementalBarrier()) {
-        MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(shadowZone));
+        // Barriers are only enabled on the active thread and are disabled while collecting.
+        MOZ_ASSERT(!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone));
         Cell* tmp = thing;
         TraceManuallyBarrieredGenericPointerEdge(shadowZone->barrierTracer(), &tmp, "read barrier");
         MOZ_ASSERT(tmp == thing);
     }
-    if (thing->isMarked(GRAY))
-        UnmarkGrayCellRecursively(thing, thing->getTraceKind());
+
+    if (thing->isMarked(GRAY)) {
+        // There shouldn't be anything marked grey unless we're on the active thread.
+        MOZ_ASSERT(CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()));
+        if (!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone))
+            UnmarkGrayCellRecursively(thing, thing->getTraceKind());
+    }
 }
+
+void
+AssertSafeToSkipBarrier(TenuredCell* thing);
 
 /* static */ MOZ_ALWAYS_INLINE void
 TenuredCell::writeBarrierPre(TenuredCell* thing)
 {
     MOZ_ASSERT(!CurrentThreadIsIonCompiling());
-    MOZ_ASSERT_IF(thing, !isNullLike(thing));
-    if (!thing || thing->shadowRuntimeFromAnyThread()->isHeapCollecting())
+    if (!thing)
         return;
+
+#ifdef JS_GC_ZEAL
+    // When verifying pre barriers we need to switch on all barriers, even
+    // those on the Atoms Zone. Normally, we never enter a parse task when
+    // collecting in the atoms zone, so will filter out atoms below.
+    // Unfortuantely, If we try that when verifying pre-barriers, we'd never be
+    // able to handle off thread parse tasks at all as we switch on the verifier any
+    // time we're not doing GC. This would cause us to deadlock, as off thread parsing
+    // is meant to resume after GC work completes. Instead we filter out any
+    // off thread barriers that reach us and assert that they would normally not be
+    // possible.
+    if (!CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread())) {
+        AssertSafeToSkipBarrier(thing);
+        return;
+    }
+#endif
 
     JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
     if (shadowZone->needsIncrementalBarrier()) {
-        MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(shadowZone));
+        MOZ_ASSERT(!RuntimeFromActiveCooperatingThreadIsHeapMajorCollecting(shadowZone));
         Cell* tmp = thing;
         TraceManuallyBarrieredGenericPointerEdge(shadowZone->barrierTracer(), &tmp, "pre barrier");
         MOZ_ASSERT(tmp == thing);
@@ -1350,7 +1371,56 @@ TenuredCell::isAligned() const
 }
 #endif
 
+static const int32_t ChunkLocationOffsetFromLastByte =
+    int32_t(gc::ChunkLocationOffset) - int32_t(gc::ChunkMask);
+
 } /* namespace gc */
+
+namespace debug {
+
+// Utility functions meant to be called from an interactive debugger.
+enum class MarkInfo : int {
+    BLACK = js::gc::BLACK,
+    GRAY = js::gc::GRAY,
+    UNMARKED = -1,
+    NURSERY = -2,
+};
+
+// Get the mark color for a cell, in a way easily usable from a debugger.
+MOZ_NEVER_INLINE MarkInfo
+GetMarkInfo(js::gc::Cell* cell);
+
+// Sample usage from gdb:
+//
+//   (gdb) p $word = js::debug::GetMarkWordAddress(obj)
+//   $1 = (uintptr_t *) 0x7fa56d5fe360
+//   (gdb) p/x $mask = js::debug::GetMarkMask(obj, js::gc::GRAY)
+//   $2 = 0x200000000
+//   (gdb) watch *$word
+//   Hardware watchpoint 7: *$word
+//   (gdb) cond 7 *$word & $mask
+//   (gdb) cont
+//
+// Note that this is *not* a watchpoint on a single bit. It is a watchpoint on
+// the whole word, which will trigger whenever the word changes and the
+// selected bit is set after the change.
+//
+// So if the bit changing is the desired one, this is exactly what you want.
+// But if a different bit changes (either set or cleared), you may still stop
+// execution if the $mask bit happened to already be set. gdb does not expose
+// enough information to restrict the watchpoint to just a single bit.
+
+// Return the address of the word containing the mark bits for the given cell,
+// or nullptr if the cell is in the nursery.
+MOZ_NEVER_INLINE uintptr_t*
+GetMarkWordAddress(js::gc::Cell* cell);
+
+// Return the mask for the given cell and color, or 0 if the cell is in the
+// nursery.
+MOZ_NEVER_INLINE uintptr_t
+GetMarkMask(js::gc::Cell* cell, uint32_t color);
+
+} /* namespace debug */
 } /* namespace js */
 
 #endif /* gc_Heap_h */

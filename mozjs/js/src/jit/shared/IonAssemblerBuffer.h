@@ -8,6 +8,7 @@
 #define jit_shared_IonAssemblerBuffer_h
 
 #include "mozilla/Assertions.h"
+#include "mozilla/MathAlgorithms.h"
 
 #include "jit/shared/Assembler-shared.h"
 
@@ -48,12 +49,16 @@ class BufferOffset
     // inserted between the branch and its destination.
     template <class BOffImm>
     BOffImm diffB(BufferOffset other) const {
+        if (!BOffImm::IsInRange(offset - other.offset))
+            return BOffImm();
         return BOffImm(offset - other.offset);
     }
 
     template <class BOffImm>
     BOffImm diffB(Label* other) const {
         MOZ_ASSERT(other->bound());
+        if (!BOffImm::IsInRange(offset - other->offset()))
+            return BOffImm();
         return BOffImm(offset - other->offset());
     }
 };
@@ -130,6 +135,15 @@ class BufferSlice
             memcpy(&instructions[length()], source, numBytes);
         bytelength_ += numBytes;
     }
+
+    MOZ_ALWAYS_INLINE
+    void putU32Aligned(uint32_t value) {
+        MOZ_ASSERT(bytelength_ + 4 <= SliceSize);
+        MOZ_ASSERT((bytelength_ & 3) == 0);
+        MOZ_ASSERT((uintptr_t(&instructions[0]) & 3) == 0);
+        *reinterpret_cast<uint32_t*>(&instructions[bytelength_]) = value;
+        bytelength_ += 4;
+    }
 };
 
 template<int SliceSize, class Inst>
@@ -169,8 +183,8 @@ class AssemblerBuffer
     { }
 
   public:
-    bool isAligned(int alignment) const {
-        MOZ_ASSERT(IsPowerOfTwo(alignment));
+    bool isAligned(size_t alignment) const {
+        MOZ_ASSERT(mozilla::IsPowerOfTwo(alignment));
         return !(size() & (alignment - 1));
     }
 
@@ -227,6 +241,16 @@ class AssemblerBuffer
 
     BufferOffset putInt(uint32_t value) {
         return putBytes(sizeof(value), &value);
+    }
+
+    MOZ_ALWAYS_INLINE
+    BufferOffset putU32Aligned(uint32_t value) {
+        if (!ensureSpace(sizeof(value)))
+            return BufferOffset();
+
+        BufferOffset ret = nextOffset();
+        tail->putU32Aligned(value);
+        return ret;
     }
 
     // Add numBytes bytes to this buffer.
@@ -352,7 +376,8 @@ class AssemblerBuffer
     // bounds of the buffer. Use |getInstOrNull()| if |off| may be unassigned.
     Inst* getInst(BufferOffset off) {
         const int offset = off.getOffset();
-        MOZ_RELEASE_ASSERT(off.assigned() && offset >= 0 && (unsigned)offset < size());
+        // This function is hot, do not make the next line a RELEASE_ASSERT.
+        MOZ_ASSERT(off.assigned() && offset >= 0 && unsigned(offset) < size());
 
         // Is the instruction in the last slice?
         if (offset >= int(bufferSize))
