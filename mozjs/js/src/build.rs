@@ -72,7 +72,6 @@ fn autospider() {
                     "--build-only",
                     "--objdir", &out_dir,
                     variant])
-            .env("MAKEFLAGS", env::var("CARGO_MAKEFLAGS").unwrap_or_default())
             .env("SOURCE", &js_src)
             .env("PWD", &js_src)
             .env("AUTOMATION", "1")
