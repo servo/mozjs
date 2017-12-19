@@ -4,6 +4,7 @@
 export RUST_BACKTRACE=1
 
 if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then
+    brew update
     brew install autoconf@2.13 ccache llvm@3.9 yasm
     export LIBCLANG_PATH=$(find /usr/local/Cellar/llvm -type f -name libclang.dylib)
     export LIBCLANG_PATH=$(dirname $LIBCLANG_PATH)
