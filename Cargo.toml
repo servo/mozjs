@@ -21,8 +21,14 @@ promises = []
 
 [lib]
 name = "mozjs_sys"
-path = "lib.rs"
 
 [dependencies]
 libc = "0.2"
 libz-sys = "1.0"
+
+[build-dependencies]
+bindgen = "0.36"
+cc = "1.0"
+
+[patch.crates-io]
+bindgen = { git = "https://github.com/rust-lang-nursery/rust-bindgen" }
