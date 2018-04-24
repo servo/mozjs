@@ -23,7 +23,7 @@ Under Windows:
 "c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 ```
 
-3. Set the `MOZTOOLS_PATH` environement variable to point to the tools from the Mozilla Build Package:
+3. Set the `MOZTOOLS_PATH` environment variable to point to the tools from the Mozilla Build Package:
 ```
 set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
 ```
