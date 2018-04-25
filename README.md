@@ -28,6 +28,12 @@ Under Windows:
 set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
 ```
 
+4. Download and install Clang for Windows (64 bit) from https://releases.llvm.org/download.html
+   and set the `LIBCLANG_PATH` environment variable to its `lib` directory:
+```
+set LIBCLANG_PATH=C:\Program Files\LLVM\lib
+```
+
 You can now build and test the crate using cargo:
 ```
 cargo build
