@@ -27,8 +27,5 @@ libc = "0.2"
 libz-sys = "1.0"
 
 [build-dependencies]
-bindgen = "0.36"
+bindgen = "0.36.1"
 cc = "1.0"
-
-[patch.crates-io]
-bindgen = { git = "https://github.com/rust-lang-nursery/rust-bindgen" }
