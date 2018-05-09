@@ -324,6 +324,19 @@ impl JSVal {
 
     #[inline(always)]
     #[cfg(target_pointer_width = "64")]
+    pub fn is_magic(&self) -> bool {
+        assert!((self.asBits() >> JSVAL_TAG_SHIFT) <= ValueTag::MAGIC as u64);
+        self.asBits() >= ValueShiftedTag::MAGIC as u64
+    }
+
+    #[inline(always)]
+    #[cfg(target_pointer_width = "32")]
+    pub fn is_magic(&self) -> bool {
+        (self.asBits() >> 32) == ValueTag::MAGIC as u64
+    }
+
+    #[inline(always)]
+    #[cfg(target_pointer_width = "64")]
     pub fn is_symbol(&self) -> bool {
         self.asBits() == ValueShiftedTag::SYMBOL as u64
     }

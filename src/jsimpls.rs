@@ -262,7 +262,21 @@ impl JSJitGetterCallArgs {
 impl JS::CallArgs {
     #[inline]
     pub unsafe fn from_vp(vp: *mut JS::Value, argc: u32) -> JS::CallArgs {
-        JS_CallArgsFromVp(argc, vp)
+        // For some reason, with debugmozjs, calling
+        // JS_CallArgsFromVp(vp, argc)
+        // produces a SEGV caused by the vp being overwritten by the argc.
+        // TODO: debug this!
+        JS::CallArgs {
+            _bitfield_1: JS::CallArgs::new_bitfield_1(
+                (*vp.offset(1)).is_magic(),
+                false
+            ),
+            argc_: argc,
+            argv_: vp.offset(2),
+            wantUsedRval_: JS::detail::IncludeUsedRval {
+                usedRval_: false,
+            },
+        }
     }
 
     #[inline]
