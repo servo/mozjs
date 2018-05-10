@@ -8,23 +8,30 @@ os:
   - linux
   - osx
 
+addons:
+  apt:
+    sources:
+      - ubuntu-toolchain-r-test
+      - llvm-toolchain-trusty-5.0
+    packages:
+      - g++-6
+      - clang-5.0
+
 matrix:
   include:
     - os: linux
-      addons:
-        apt:
-          sources:
-            - ubuntu-toolchain-r-test
-            - llvm-toolchain-trusty-5.0
-          packages:
-            - g++-6
-            - clang-5.0
       env:
-        - LIBCLANGPATH=/usr/lib/clang/5.0/lib FEATURES=""
-        - LIBCLANGPATH=/usr/lib/clang/5.0/lib FEATURES="--features debugmozjs"
+        - LIBCLANGPATH=/usr/lib/clang/5.0/lib
+	- FEATURES=""
+    - os: linux
+      env:
+        - LIBCLANGPATH=/usr/lib/clang/5.0/lib
+	- FEATURES="--features debugmozjs"
     - os: osx
       env:
         - FEATURES=""
+    - os: osx
+      env:
         - FEATURES="--features debugmozjs"
 
 script:
