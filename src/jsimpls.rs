@@ -263,7 +263,7 @@ impl JS::CallArgs {
     #[inline]
     pub unsafe fn from_vp(vp: *mut JS::Value, argc: u32) -> JS::CallArgs {
         // For some reason, with debugmozjs, calling
-        // JS_CallArgsFromVp(vp, argc)
+        // JS_CallArgsFromVp(argc, vp)
         // produces a SEGV caused by the vp being overwritten by the argc.
         // TODO: debug this!
         JS::CallArgs {
@@ -273,6 +273,9 @@ impl JS::CallArgs {
             ),
             argc_: argc,
             argv_: vp.offset(2),
+            #[cfg(not(feature = "debugmozjs"))]
+            __bindgen_padding_0: [0, 0, 0],
+            #[cfg(feature = "debugmozjs")]
             wantUsedRval_: JS::detail::IncludeUsedRval {
                 usedRval_: false,
             },

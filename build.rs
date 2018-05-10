@@ -11,6 +11,11 @@ use std::ffi::{OsStr, OsString};
 use std::process::{Command, Stdio};
 
 fn main() {
+    if cfg!(feature = "debugmozjs") && cfg!(windows) {
+        // https://github.com/rust-lang/rust/issues/39016
+        panic!("Rustc doesn't support MSVC debug runtime.");
+    }
+
     build_jsapi();
     build_jsglue();
     build_jsapi_bindings();
@@ -25,6 +30,37 @@ fn find_make() -> OsString {
             Err(_) => OsStr::new("make").to_os_string(),
         }
     }
+}
+
+fn cc_flags() -> Vec<&'static str> {
+    let mut result = vec![
+        "-DRUST_BINDGEN",
+        "-DSTATIC_JS_API",
+    ];
+
+    if cfg!(feature = "debugmozjs") {
+        result.extend(&[
+            "-DJS_GC_ZEAL",
+            "-DDEBUG",
+            "-DJS_DEBUG",
+        ]);
+    }
+
+    if cfg!(windows) {
+        result.extend(&[
+            "-std=c++14",
+            "-DWIN32",
+        ]);
+    } else {
+        result.extend(&[
+            "-std=gnu++11",
+            "-fno-sized-deallocation",
+            "-Wno-unused-parameter",
+            "-Wno-invalid-offsetof",
+        ]);
+    }
+
+    result
 }
 
 fn build_jsapi() {
@@ -79,13 +115,16 @@ fn build_jsapi() {
 fn build_jsglue() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
         
-    cc::Build::new()
-        .flag("-std=c++11")
-        .flag_if_supported("-Wno-unused-parameter")
-        .flag_if_supported("-Wno-invalid-offsetof")
-        .file("src/jsglue.cpp")
-        .include(out.join("dist/include"))
-        .compile("jsglue");
+    let mut build = cc::Build::new();
+    build.cpp(true);
+
+    for flag in cc_flags() {
+        build.flag_if_supported(flag);
+    }
+
+    build.file("src/jsglue.cpp");
+    build.include(out.join("dist/include"));
+    build.compile("jsglue");
 }
 
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
@@ -113,24 +152,18 @@ fn build_jsapi_bindings() {
         .rustified_enum(".*")
         .enable_cxx_namespaces()
         .with_codegen_config(config)
-        .rustfmt_bindings(true)
         .clang_arg("-I").clang_arg(out.join("dist/include").to_str().expect("UTF-8"))
-        .clang_arg("-x").clang_arg("c++")
-        .clang_arg("-std=c++11")
-        .clang_arg("-fno-sized-deallocation")
-        .clang_arg("-DRUST_BINDGEN");
-
-    if cfg!(feature = "debugmozjs") {
-        builder = builder
-            .clang_arg("-DJS_GC_ZEAL")
-            .clang_arg("-DDEBUG")
-            .clang_arg("-DJS_DEBUG");
-    }
+        .clang_arg("-x").clang_arg("c++");
 
     if cfg!(windows) {
-        builder = builder
-	    .clang_arg("-fms-compatibility");
+        builder = builder.clang_arg("-fms-compatibility");
     }
+
+    for flag in cc_flags() {
+        builder = builder.clang_arg(flag);
+    }
+
+    println!("Generting bindings {:?}.", builder.command_line_flags());
 
     for ty in UNSAFE_IMPL_SYNC_TYPES {
         builder = builder.raw_line(format!("unsafe impl Sync for root::{} {{}}", ty));
