@@ -22,8 +22,8 @@ matrix:
       env:
         global:
           - CC=gcc-6
-	  - CXX=g++-6
-	  - LIBCLANGPATH=/usr/lib/clang/5.0/lib
+          - CXX=g++-6
+          - LIBCLANGPATH=/usr/lib/clang/5.0/lib
 
 env:
   - FEATURES=""
