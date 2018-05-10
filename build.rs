@@ -113,7 +113,6 @@ fn build_jsapi_bindings() {
         .rustified_enum(".*")
         .enable_cxx_namespaces()
         .with_codegen_config(config)
-        .rustfmt_bindings(true)
         .clang_arg("-I").clang_arg(out.join("dist/include").to_str().expect("UTF-8"))
         .clang_arg("-x").clang_arg("c++")
         .clang_arg("-std=c++11")
