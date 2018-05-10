@@ -1,4 +1,5 @@
 version: 1.0.{build}
+image: Visual Studio 2017
 
 environment:
   # The appveyor image we use has a pretty huge set of things installed... we make the
