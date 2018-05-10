@@ -22,11 +22,11 @@ matrix:
     - os: linux
       env:
         - LIBCLANGPATH=/usr/lib/clang/5.0/lib
-	- FEATURES=""
+        - FEATURES=""
     - os: linux
       env:
         - LIBCLANGPATH=/usr/lib/clang/5.0/lib
-	- FEATURES="--features debugmozjs"
+        - FEATURES="--features debugmozjs"
     - os: osx
       env:
         - FEATURES=""
