@@ -46,7 +46,6 @@ fn cc_flags() -> Vec<&'static str> {
     if cfg!(windows) && !is_mingw {
         result.extend(&[
             "-std=c++14",
-	    "-fms-compatibility",
         ]);
     } else {
         result.extend(&[
@@ -151,6 +150,10 @@ fn build_jsapi_bindings() {
         .with_codegen_config(config)
         .clang_arg("-I").clang_arg(out.join("dist/include").to_str().expect("UTF-8"))
         .clang_arg("-x").clang_arg("c++");
+
+    if cfg!(windows) {
+        builder = builder.clang_arg("-fms-compatibility");
+    }
 
     for flag in cc_flags() {
         builder = builder.clang_arg(flag);
