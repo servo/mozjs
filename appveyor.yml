@@ -45,10 +45,8 @@ install:
 # I can't make this work with a multi-line script (e.g. via |+ etc.), so we copy the if before every command
   - if %TARGET:*-msvc=msvc%==msvc set BUILD_ENV=msvc
   - if %TARGET:*-gnu=gnu%==gnu set BUILD_ENV=gnu
-  - if %BUILD_ENV%==msvc call "C:\Program Files (x86)\Microsoft Visual Studio 14.0\VC\bin\amd64\vcvars64.bat"
-  - if %BUILD_ENV%==msvc copy C:\mozilla-build\yasm\yasm.exe C:\mozilla-build\msys\bin
-  - if %BUILD_ENV%==msvc copy C:\mozilla-build\mozmake\mozmake.exe C:\mozilla-build\msys\bin
-  - if %BUILD_ENV%==msvc set MOZTOOLS_PATH=C:\mozilla-build\msys\bin
+  - if %BUILD_ENV%==msvc call "C:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+  - if %BUILD_ENV%==msvc set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
   - if %BUILD_ENV%==msvc set NATIVE_WIN32_PYTHON=C:/Python27/python.exe
   - if %BUILD_ENV%==gnu  set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin\;%PATH%
   - if %BUILD_ENV%==gnu  set MSYSTEM=MINGW64
