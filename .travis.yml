@@ -1,12 +1,9 @@
 language: rust
 rust:
   - nightly
+  - stable
 sudo: 9000
 dist: trusty
-
-os:
-  - linux
-  - osx
 
 addons:
   apt:
