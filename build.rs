@@ -80,7 +80,7 @@ fn build_jsglue() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
         
     cc::Build::new()
-        .flag("-std=c++11")
+        .flag("-std=c++14")
         .flag_if_supported("-Wno-unused-parameter")
         .flag_if_supported("-Wno-invalid-offsetof")
         .file("src/jsglue.cpp")
@@ -115,7 +115,7 @@ fn build_jsapi_bindings() {
         .with_codegen_config(config)
         .clang_arg("-I").clang_arg(out.join("dist/include").to_str().expect("UTF-8"))
         .clang_arg("-x").clang_arg("c++")
-        .clang_arg("-std=c++11")
+        .clang_arg("-std=c++14")
         .clang_arg("-fno-sized-deallocation")
         .clang_arg("-DRUST_BINDGEN");
 

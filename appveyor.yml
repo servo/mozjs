@@ -49,7 +49,6 @@ install:
   - if %BUILD_ENV%==msvc call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build\vcvars64.bat"
   - if %BUILD_ENV%==msvc set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
   - if %BUILD_ENV%==msvc set NATIVE_WIN32_PYTHON=C:/Python27/python.exe
-  - if %BUILD_ENV%==msvc set LIBCLANG_PATH=C:\Libraries\llvm-4.0.0
   - if %BUILD_ENV%==gnu  set PATH=C:\msys64\mingw64\bin;C:\msys64\usr\bin\;%PATH%
   - if %BUILD_ENV%==gnu  set MSYSTEM=MINGW64
   - if %BUILD_ENV%==gnu  set MSYS=winsymlinks=lnk
