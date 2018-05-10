@@ -56,8 +56,6 @@ install:
   - if %BUILD_ENV%==gnu  bash -lc "pacman --noconfirm -Sy"
   - if %BUILD_ENV%==gnu  bash -lc "pacman -Sy --needed --noconfirm git mingw-w64-x86_64-toolchain tar make python2-setuptools"
   - if %BUILD_ENV%==gnu  bash -lc "easy_install-2.7 pip virtualenv"
-  - if %BUILD_ENV%==gnu  bash -lc "mv /mingw64/bin/python2.exe /mingw64/bin/python2-mingw64.exe"
-  - if %BUILD_ENV%==gnu  bash -lc "mv /mingw64/bin/python2.7.exe /mingw64/bin/python2.7-mingw64.exe"
   - rustc -vV
   - cargo -vV
 
