@@ -116,7 +116,7 @@ fn build_jsglue() {
     build.cpp(true);
 
     for flag in cc_flags() {
-        build.flag(flag);
+        build.flag_if_supported(flag);
     }
 
     build.file("src/jsglue.cpp");

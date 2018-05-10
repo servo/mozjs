@@ -20,14 +20,12 @@ matrix:
             - g++-6
             - clang-5.0
       env:
-        global:
-          - CC=gcc-6
-          - CXX=g++-6
-          - LIBCLANGPATH=/usr/lib/clang/5.0/lib
-
-env:
-  - FEATURES=""
-  - FEATURES="--features debugmozjs"
+        - LIBCLANGPATH=/usr/lib/clang/5.0/lib FEATURES=""
+        - LIBCLANGPATH=/usr/lib/clang/5.0/lib FEATURES="--features debugmozjs"
+    - os: osx
+      env:
+        - FEATURES=""
+        - FEATURES="--features debugmozjs"
 
 script:
   - cargo build --verbose --verbose $FEATURES
