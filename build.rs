@@ -110,6 +110,7 @@ fn build_jsglue() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
         
     let mut build = cc::Build::new();
+    build.cpp(true);
 
     for flag in cc_flags() {
         build.flag(flag);
