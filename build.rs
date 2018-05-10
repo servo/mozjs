@@ -29,9 +29,6 @@ fn find_make() -> OsString {
 
 fn cc_flags() -> Vec<&'static str> {
     let mut result = vec![
-        "-Wno-unused-parameter",
-        "-Wno-invalid-offsetof",
-        "-fno-sized-deallocation",
         "-DRUST_BINDGEN",
     ];
 
@@ -51,6 +48,9 @@ fn cc_flags() -> Vec<&'static str> {
     } else {
         result.extend(&[
             "-std=gnu++11",
+            "-fno-sized-deallocation",
+            "-Wno-unused-parameter",
+            "-Wno-invalid-offsetof",
         ]);
     }
 
