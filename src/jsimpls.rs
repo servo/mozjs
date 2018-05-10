@@ -273,6 +273,8 @@ impl JS::CallArgs {
             ),
             argc_: argc,
             argv_: vp.offset(2),
+            #[cfg(not(feature = "debugmozjs"))]
+            __bindgen_padding_0: [0, 0, 0],
             #[cfg(feature = "debugmozjs")]
             wantUsedRval_: JS::detail::IncludeUsedRval {
                 usedRval_: false,
