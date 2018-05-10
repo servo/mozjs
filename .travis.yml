@@ -8,14 +8,19 @@ os:
   - linux
   - osx
 
-addons:
-  apt:
-    sources:
-      - ubuntu-toolchain-r-test
-      - llvm-toolchain-trusty-5.0
-    packages:
-      - g++-6
-      - clang-5.0
+matrix:
+  include:
+    - os: linux
+      addons:
+        apt:
+          sources:
+            - ubuntu-toolchain-r-test
+            - llvm-toolchain-trusty-5.0
+          packages:
+            - g++-6
+            - clang-5.0
+      env:
+        - CC=gcc-6 CXX=g++-6 LIBCLANGPATH=/usr/lib/clang/5.0/lib
 
 env:
   - FEATURES=""
