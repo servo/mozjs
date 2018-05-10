@@ -27,6 +27,36 @@ fn find_make() -> OsString {
     }
 }
 
+fn cc_flags() -> Vec<&'static str> {
+    let mut result = vec![
+        "-Wno-unused-parameter",
+        "-Wno-invalid-offsetof",
+        "-fno-sized-deallocation",
+        "-DRUST_BINDGEN",
+    ];
+
+    if cfg!(feature = "debugmozjs") {
+        result.extend(&[
+            "-DJS_GC_ZEAL",
+            "-DDEBUG",
+            "-DJS_DEBUG",
+        ]);
+    }
+
+    if cfg!(windows) {
+        result.extend(&[
+            "-std=c++14",
+	    "-fms-compatibility",
+        ]);
+    } else {
+        result.extend(&[
+            "-std=gnu++11",
+        ]);
+    }
+
+    result
+}
+
 fn build_jsapi() {
     let out_dir = env::var("OUT_DIR").unwrap();
     let target = env::var("TARGET").unwrap();
@@ -79,13 +109,15 @@ fn build_jsapi() {
 fn build_jsglue() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
         
-    cc::Build::new()
-        .flag("-std=c++14")
-        .flag_if_supported("-Wno-unused-parameter")
-        .flag_if_supported("-Wno-invalid-offsetof")
-        .file("src/jsglue.cpp")
-        .include(out.join("dist/include"))
-        .compile("jsglue");
+    let mut build = cc::Build::new();
+
+    for flag in cc_flags() {
+        build.flag(flag);
+    }
+
+    build.file("src/jsglue.cpp");
+    build.include(out.join("dist/include"));
+    build.compile("jsglue");
 }
 
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
@@ -114,21 +146,10 @@ fn build_jsapi_bindings() {
         .enable_cxx_namespaces()
         .with_codegen_config(config)
         .clang_arg("-I").clang_arg(out.join("dist/include").to_str().expect("UTF-8"))
-        .clang_arg("-x").clang_arg("c++")
-        .clang_arg("-std=c++14")
-        .clang_arg("-fno-sized-deallocation")
-        .clang_arg("-DRUST_BINDGEN");
+        .clang_arg("-x").clang_arg("c++");
 
-    if cfg!(feature = "debugmozjs") {
-        builder = builder
-            .clang_arg("-DJS_GC_ZEAL")
-            .clang_arg("-DDEBUG")
-            .clang_arg("-DJS_DEBUG");
-    }
-
-    if cfg!(windows) {
-        builder = builder
-	    .clang_arg("-fms-compatibility");
+    for flag in cc_flags() {
+        builder = builder.clang_arg(flag);
     }
 
     for ty in UNSAFE_IMPL_SYNC_TYPES {
