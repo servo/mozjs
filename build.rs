@@ -28,6 +28,9 @@ fn find_make() -> OsString {
 }
 
 fn cc_flags() -> Vec<&'static str> {
+    let is_mingw = env::var_os("MSYSTEM")
+        .map_or(false, |x| x.to_str().map_or(false, |x| x.starts_with("MINGW")));
+
     let mut result = vec![
         "-DRUST_BINDGEN",
     ];
@@ -40,7 +43,7 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     }
 
-    if cfg!(windows) {
+    if cfg!(windows) && !is_mingw {
         result.extend(&[
             "-std=c++14",
 	    "-fms-compatibility",
