@@ -43,6 +43,12 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     }
 
+    if is_mingw {
+        result.extend(&[
+            "-D__GNUC__"
+        ]);
+    }
+
     if cfg!(windows) && !is_mingw {
         result.extend(&[
             "-std=c++14",
