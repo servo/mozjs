@@ -28,9 +28,6 @@ fn find_make() -> OsString {
 }
 
 fn cc_flags() -> Vec<&'static str> {
-    let is_mingw = env::var_os("MSYSTEM")
-        .map_or(false, |x| x.to_str().map_or(false, |x| x.starts_with("MINGW")));
-
     let mut result = vec![
         "-DRUST_BINDGEN",
     ];
@@ -43,14 +40,7 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     }
 
-    if is_mingw {
-        result.extend(&[
-            "-U_MSC_VER",
-            "-D__GNUC__",
-        ]);
-    }
-
-    if cfg!(windows) && !is_mingw {
+    if cfg!(windows) {
         result.extend(&[
             "-std=c++14",
         ]);
@@ -162,11 +152,11 @@ fn build_jsapi_bindings() {
         builder = builder.clang_arg("-fms-compatibility");
     }
 
-    println!("Generting bindings with flags {:?}.", cc_flags());
-
     for flag in cc_flags() {
         builder = builder.clang_arg(flag);
     }
+
+    println!("Generting bindings {:?}.", builder.command_line_flags());
 
     for ty in UNSAFE_IMPL_SYNC_TYPES {
         builder = builder.raw_line(format!("unsafe impl Sync for root::{} {{}}", ty));
