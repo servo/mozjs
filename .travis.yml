@@ -1,6 +1,7 @@
 language: rust
 rust:
   - nightly
+  - beta
   - stable
 sudo: 9000
 dist: trusty
@@ -14,25 +15,13 @@ addons:
       - g++-6
       - clang-5.0
 
-matrix:
-  include:
-    - os: linux
-      env:
-        - LIBCLANGPATH=/usr/lib/clang/5.0/lib
-        - FEATURES=""
-    - os: linux
-      env:
-        - LIBCLANGPATH=/usr/lib/clang/5.0/lib
-        - FEATURES="--features debugmozjs"
-    - os: osx
-      env:
-        - FEATURES=""
-    - os: osx
-      env:
-        - FEATURES="--features debugmozjs"
+env:
+  - FEATURES=""
+  - FEATURES="--features debugmozjs"
 
 script:
   - cargo build --verbose --verbose $FEATURES
+  - cargo test $FEATURES
 
 before_install:
   if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install yasm; fi
