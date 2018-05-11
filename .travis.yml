@@ -6,6 +6,10 @@ rust:
 sudo: 9000
 dist: trusty
 
+os:
+  - linux
+  - osx
+
 addons:
   apt:
     sources:
