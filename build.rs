@@ -45,7 +45,8 @@ fn cc_flags() -> Vec<&'static str> {
 
     if is_mingw {
         result.extend(&[
-            "-D__GNUC__"
+            "-U_MSC_VER",
+            "-D__GNUC__",
         ]);
     }
 
@@ -160,6 +161,8 @@ fn build_jsapi_bindings() {
     if cfg!(windows) {
         builder = builder.clang_arg("-fms-compatibility");
     }
+
+    println!("Generting bindings with flags {:?}.", cc_flags());
 
     for flag in cc_flags() {
         builder = builder.clang_arg(flag);
