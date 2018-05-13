@@ -30,6 +30,7 @@ fn find_make() -> OsString {
 fn cc_flags() -> Vec<&'static str> {
     let mut result = vec![
         "-DRUST_BINDGEN",
+        "-DSTATIC_JS_API",
     ];
 
     if cfg!(feature = "debugmozjs") {
@@ -43,6 +44,7 @@ fn cc_flags() -> Vec<&'static str> {
     if cfg!(windows) {
         result.extend(&[
             "-std=c++14",
+            "-DWIN32",
         ]);
     } else {
         result.extend(&[
