@@ -39,11 +39,6 @@ fn cc_flags() -> Vec<&'static str> {
             "-DDEBUG",
             "-DJS_DEBUG",
         ]);
-        if cfg!(windows) {
-            result.extend(&[
-                "-MDd",
-            ]);
-        }
     }
 
     if cfg!(windows) {
@@ -120,6 +115,10 @@ fn build_jsglue() {
 
     for flag in cc_flags() {
         build.flag_if_supported(flag);
+    }
+
+    if cfg!(windows) {
+        build.flag("-MDd");
     }
 
     build.file("src/jsglue.cpp");
