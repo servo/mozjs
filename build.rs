@@ -39,6 +39,11 @@ fn cc_flags() -> Vec<&'static str> {
             "-DDEBUG",
             "-DJS_DEBUG",
         ]);
+        if cfg!(windows) {
+            result.extend(&[
+                "-MDd",
+            ]);
+        }
     }
 
     if cfg!(windows) {
