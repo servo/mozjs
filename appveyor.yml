@@ -27,7 +27,8 @@ environment:
     C:\\Program Files\\Git\\usr\\bin;\
     C:\\Program Files\\AppVeyor\\BuildAgent;"
   matrix:
-  - TARGET: nightly-x86_64-pc-windows-msvc
+    - FEATURES: "--features=debugmozjs"
+    - FEATURES: ""
 
 # Uncomment to enable RDP & wait for exit.  Connection info will be printed in the log.
 #init:
@@ -43,6 +44,7 @@ install:
   - ps: .\rust-install.exe /VERYSILENT /NORESTART /DIR="C:\rust" | Out-Null
   - ps: $env:PATH="$env:PATH;C:\rust\bin"
   - set BUILD_ENV=msvc
+  - set TARGET=nightly-x86_64-pc-windows-msvc
   - call "C:\Program Files (x86)\Microsoft Visual Studio\2017\Community\VC\Auxiliary\Build\vcvars64.bat"
   - set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\mozmake;C:\mozilla-build\yasm
   - set NATIVE_WIN32_PYTHON=C:/Python27/python.exe
@@ -53,6 +55,4 @@ build_script:
   - echo PATH %PATH%
   - echo VSINSTALLDIR %VSINSTALLDIR%
   - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
-  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose && cargo test
-  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --features debugmozjs && cargo test --features debugmozjs
-
+  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose %FEATURES% && cargo test %FEATURES%
