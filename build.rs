@@ -117,10 +117,6 @@ fn build_jsglue() {
         build.flag_if_supported(flag);
     }
 
-    if cfg!(windows) {
-        build.flag("-MDd");
-    }
-
     build.file("src/jsglue.cpp");
     build.include(out.join("dist/include"));
     build.compile("jsglue");
