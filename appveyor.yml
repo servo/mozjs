@@ -28,7 +28,7 @@ environment:
     C:\\Program Files\\AppVeyor\\BuildAgent;"
   matrix:
     - CARGO_OPTS: ""
-    - CARGO_OPTS: "-r"
+    - CARGO_OPTS: "--release"
 
 # Uncomment to enable RDP & wait for exit.  Connection info will be printed in the log.
 #init:
