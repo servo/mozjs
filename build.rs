@@ -11,6 +11,11 @@ use std::ffi::{OsStr, OsString};
 use std::process::{Command, Stdio};
 
 fn main() {
+    if cfg!(feature = "debugmozjs") && cfg!(windows) {
+        // https://github.com/rust-lang/rust/issues/39016
+        panic!("Rustc doesn't support MSVC debug runtime.");
+    }
+
     build_jsapi();
     build_jsglue();
     build_jsapi_bindings();

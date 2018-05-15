@@ -63,7 +63,7 @@ endif
 endif
 
 ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
-	CONFIGURE_FLAGS += --enable-debug --disable-debug-rtl --disable-optimize --enable-gczeal
+	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
 endif
 
 ifneq (,$(CARGO_FEATURE_PROMISES))
