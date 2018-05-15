@@ -27,8 +27,8 @@ environment:
     C:\\Program Files\\Git\\usr\\bin;\
     C:\\Program Files\\AppVeyor\\BuildAgent;"
   matrix:
-    - FEATURES: "--features=debugmozjs"
-    - FEATURES: ""
+    - CARGO_OPTS: ""
+    - CARGO_OPTS: "-r"
 
 # Uncomment to enable RDP & wait for exit.  Connection info will be printed in the log.
 #init:
@@ -55,4 +55,4 @@ build_script:
   - echo PATH %PATH%
   - echo VSINSTALLDIR %VSINSTALLDIR%
   - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
-  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose %FEATURES% && cargo test %FEATURES%
+  - cd %APPVEYOR_BUILD_FOLDER% && cargo build --verbose --verbose %CARGO_OPTS% && cargo test %CARGO_OPTS%
