@@ -325,8 +325,7 @@ impl JSVal {
     #[inline(always)]
     #[cfg(target_pointer_width = "64")]
     pub fn is_magic(&self) -> bool {
-        assert!((self.asBits() >> JSVAL_TAG_SHIFT) <= ValueTag::MAGIC as u64);
-        self.asBits() >= ValueShiftedTag::MAGIC as u64
+        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::MAGIC as u64
     }
 
     #[inline(always)]
