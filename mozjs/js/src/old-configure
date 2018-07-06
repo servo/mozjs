@@ -5115,7 +5115,7 @@ if test "$OS_TARGET" = "Android"; then
             ndk_base="$android_ndk/sources/cxx-stl"
             cxx_base="$ndk_base/llvm-libc++"
             cxx_libs="$cxx_base/libs/$cpu_arch_dir"
-            cxx_include="$cxx_base/libcxx/include"
+            cxx_include="$cxx_base/include"
             cxxabi_base="$ndk_base/llvm-libc++abi"
             cxxabi_include="$cxxabi_base/libcxxabi/include"
 
