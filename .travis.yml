@@ -8,6 +8,7 @@ dist: trusty
 os:
   - linux
   - osx
+osx_image: xcode9.3
 
 addons:
   apt:
@@ -28,6 +29,7 @@ before_script:
   - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update; brew install autoconf@2.13 ccache yasm; fi
 
 script:
+  - env
   - ccache -z
   - CCACHE=$(which ccache) travis_wait cargo build --verbose $FEATURES
   - CCACHE=$(which ccache) RUST_BACKTRACE=1 cargo test --verbose $FEATURES
