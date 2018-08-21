@@ -66,6 +66,10 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     }
 
+    if target.contains("apple") || target.contains("freebsd") {
+        result.push("-stdlib=libc++");
+    }
+
     result
 }
 
