@@ -68,6 +68,7 @@ fn cc_flags() -> Vec<&'static str> {
 
     if target.contains("apple") || target.contains("freebsd") {
         result.push("-stdlib=libc++");
+        result.push("-mmacosx-version-min=10.7");
     }
 
     result
