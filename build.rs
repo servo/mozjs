@@ -66,6 +66,17 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     }
 
+    let is_apple = target.contains("apple");
+    let is_freebsd = target.contains("freebsd");
+
+    if is_apple || is_freebsd {
+        result.push("-stdlib=libc++");
+    }
+
+    if is_apple {
+        result.push("-mmacosx-version-min=10.7");
+    }
+
     result
 }
 
