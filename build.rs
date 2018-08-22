@@ -73,10 +73,6 @@ fn cc_flags() -> Vec<&'static str> {
         result.push("-stdlib=libc++");
     }
 
-    if is_apple {
-        result.push("-mmacosx-version-min=10.7");
-    }
-
     result
 }
 
