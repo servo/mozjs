@@ -158,6 +158,29 @@ fn build_jsglue() {
     build.compile("jsglue");
 }
 
+fn bindgen_cflags() -> Vec<String> {
+    use std::fs::File;
+    use std::io::Read;
+
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let bindgen_flags = out.join("js/rust/bindgen-flags");
+
+    let mut f = match File::open(bindgen_flags) {
+        Ok(f) => f,
+        Err(..) => return vec![],
+    };
+
+    let mut contents = String::new();
+    match f.read_to_string(&mut contents) {
+        Ok(..) => {},
+        Err(..) => return vec![],
+    }
+
+    // FIXME(emilio): whitespace handling of all the split_whitespace callers is
+    // so broken.
+    contents.split_whitespace().map(|s| s.to_owned()).collect()
+}
+
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
 /// Rust.
 ///
@@ -193,6 +216,10 @@ fn build_jsapi_bindings() {
     let target = env::var("TARGET").unwrap();
     if target.contains("windows") {
         builder = builder.clang_arg("-fms-compatibility");
+    }
+
+    for f in bindgen_cflags() {
+        builder = builder.clang_arg(f);
     }
 
     if let Ok(flags) = env::var("CXXFLAGS") {

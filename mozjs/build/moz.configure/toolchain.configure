@@ -1094,6 +1094,7 @@ def bindgen_cflags(value):
 
 
 add_old_configure_assignment('_BINDGEN_CFLAGS', bindgen_cflags)
+set_config('MOZ_BINDGEN_CFLAGS', depends_if(bindgen_cflags)(lambda cflags: " ".join(cflags)))
 
 
 @depends(c_compiler)
