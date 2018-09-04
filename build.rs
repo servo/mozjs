@@ -176,6 +176,8 @@ fn bindgen_cflags() -> Vec<String> {
         Err(..) => return vec![],
     }
 
+    contents = contents.replace("@MOZ_BINDGEN_CFLAGS@", "");
+
     // FIXME(emilio): whitespace handling of all the split_whitespace callers is
     // so broken.
     contents.split_whitespace().map(|s| s.to_owned()).collect()
