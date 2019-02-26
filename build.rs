@@ -71,6 +71,7 @@ fn cc_flags() -> Vec<&'static str> {
 
     if is_apple || is_freebsd {
         result.push("-stdlib=libc++");
+        result.push("-std=c++14");
     }
 
     result
