@@ -112,7 +112,6 @@ ifeq ($(findstring x86_64,$(TARGET)),x86_64)
 	# This is the correct target for MSVC builds
 	CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
 endif
-	CONFIGURE_FLAGS += --without-pthreads
 	MOZ_TOOLS=/
 
 else ifeq ($(MSYSTEM),MINGW64)
@@ -134,7 +133,7 @@ else ifeq ($(MSYSTEM),MINGW64)
 	MOZ_TOOLS=/
 
 	# We don't need to build shared JS, and we need to disable export attrs
-	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js --without-pthreads
+	CONFIGURE_FLAGS += --disable-shared-js --disable-export-js
 else
 	# We don't need to build shared JS
 	CONFIGURE_FLAGS += --disable-shared-js

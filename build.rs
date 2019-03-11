@@ -114,8 +114,6 @@ fn build_jsapi() {
     assert!(result.success());
     println!("cargo:rustc-link-search=native={}/js/src/build", out_dir);
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
-    println!("cargo:rustc-link-search=native={}/mozglue/build", out_dir);
-    println!("cargo:rustc-link-lib=static=mozglue");
     if target.contains("windows") {
         println!("cargo:rustc-link-search=native={}/dist/bin", out_dir);
         println!("cargo:rustc-link-lib=winmm");
@@ -133,6 +131,7 @@ fn build_jsapi() {
         println!("cargo:rustc-link-lib=stdc++");
     }
     println!("cargo:outdir={}", out_dir);
+    println!("cargo:rerun-if-changed=makefile.cargo");
 }
 
 
@@ -312,13 +311,13 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "JS::ReadOnlyCompileOptions",
     "JS::Rooted<JS::Auto.*Vector.*>",
     "JS::detail::CallArgsBase.*",
-    "js::HashMap.*",
     "js::detail::UniqueSelector.*",
-    "js::detail::HashTable.*",
     "mozilla::BufferList",
     "mozilla::Maybe.*",
     "mozilla::UniquePtr.*",
     "mozilla::Variant",
+    "mozilla::Hash.*",
+    "mozilla::detail::Hash.*",
 ];
 
 /// Types for which we should NEVER generate bindings, even if it is used within
@@ -343,5 +342,4 @@ const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
     ("root", "pub type JSJitInfo = ::jsjit::JSJitInfo;"),
     ("root::JS", "pub type Heap<T> = ::jsgc::Heap<T>;"),
     ("root::JS", "pub type Rooted<T> = ::jsgc::Rooted<T>;"),
-    ("root::JS", "pub type AutoGCRooterTag = AutoGCRooter__bindgen_ty_1;"),
 ];
