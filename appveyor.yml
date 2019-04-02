@@ -2,6 +2,8 @@ version: 1.0.{build}
 image: Visual Studio 2017
 
 environment:
+  LINKER: "link.exe"
+  PYTHON3: "C:\\Python37-x64\\python.exe"
   # The appveyor image we use has a pretty huge set of things installed... we make the
   # initial PATH something sane so we know what to expect
   PATH: "C:\\windows\\system32;\
