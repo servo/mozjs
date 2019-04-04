@@ -19,7 +19,7 @@ categories = ["compression", "api-bindings"]
 
 [dependencies]
 libc = "0.2"
-bzip2-sys = { version = "0.1", path = "bzip2-sys" }
+bzip2-sys = { version = "0.1", path = "../bzip2-sys" }
 tokio-io = { version = "0.1", optional = true }
 futures = { version = "0.1", optional = true }
 

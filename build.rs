@@ -63,6 +63,7 @@ fn cc_flags() -> Vec<&'static str> {
             "-fno-sized-deallocation",
             "-Wno-unused-parameter",
             "-Wno-invalid-offsetof",
+            "-Wno-unused-private-field",
         ]);
     }
 
@@ -334,6 +335,9 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     // Bindgen generates bitfields with private fields, so they cannot
     // be used in const expressions.
     "JSJitInfo",
+    // Declared as a constexpr, and clang doesn't expose aggregate initializations,
+    // so it causes a link error.
+    "JSID_VOID",
 ];
 
 /// Definitions for types that were blacklisted

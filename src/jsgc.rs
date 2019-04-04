@@ -6,7 +6,6 @@ use jsapi::JS;
 use jsapi::jsid;
 use jsapi::JSFlatString;
 use jsapi::JSFunction;
-use jsapi::JSID_VOID;
 use jsapi::JSObject;
 use jsapi::JSScript;
 use jsapi::JSString;
@@ -89,6 +88,9 @@ pub trait GCMethods {
     /// Place a post-write barrier
     unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self);
 }
+
+const JSID_TYPE_VOID: usize = 0x2;
+const JSID_VOID: jsid = jsid { asBits: JSID_TYPE_VOID };
 
 impl GCMethods for jsid {
     unsafe fn initial() -> jsid { JSID_VOID }

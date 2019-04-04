@@ -1,0 +1,10 @@
+diff --git a/mozjs/third_party/rust/argon2rs/Cargo.toml b/mozjs/third_party/rust/argon2rs/Cargo.toml
+index 1235e46e0d..4785ba616e 100644
+--- a/mozjs/third_party/rust/argon2rs/Cargo.toml
++++ b/mozjs/third_party/rust/argon2rs/Cargo.toml
+@@ -18,4 +18,4 @@ blake2-rfc = "0.2.16"
+ scoped_threadpool = "0.1.7"
+ 
+ [dev-dependencies]
+-cargon = { path = "benches/cargon", version = "0.0.1" }
++#cargon = { path = "benches/cargon", version = "0.0.1" }
