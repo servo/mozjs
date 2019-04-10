@@ -745,7 +745,8 @@ host = help_host_target | host
 def target(value, host, shell):
     if not value:
         return host
-    return split_triplet(config_sub(shell, value[0]))
+    print(value[0])
+    return split_triplet(config_sub(shell, 'jdm-' + value[0]))
 
 
 target = help_host_target | target
