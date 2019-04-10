@@ -133,7 +133,9 @@ case $maybe_os in
     else os=; fi
     ;;
 esac
-
+echo $basic_machine
+echo $os
+exit 1234
 ### Let's recognize common machines as not being operating systems so
 ### that things like config.sub decstation-3100 work.  We also
 ### recognize some manufacturers as not being operating systems, so we
