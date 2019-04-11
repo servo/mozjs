@@ -62,11 +62,11 @@ void JS_ValueSetBoolean(JS::Value* value, bool x) {
     value->setBoolean(x);
 }
 
-bool JS_ValueIsBoolean(JS::Value value) {
+bool JS_ValueIsBoolean(const JS::Value* value) {
     return value.isBoolean();
 }
 
-bool JS_ValueToBoolean(JS::Value value) {
+bool JS_ValueToBoolean(const JS::Value* value) {
     return value.toBoolean();
 }
 
@@ -74,11 +74,11 @@ void JS_ValueSetDouble(JS::Value* value, double x) {
     value->setDouble(x);
 }
 
-bool JS_ValueIsDouble(JS::Value value) {
+bool JS_ValueIsDouble(const JS::Value* value) {
     return value.isDouble();
 }
 
-double JS_ValueToDouble(JS::Value value) {
+double JS_ValueToDouble(const JS::Value* value) {
     return value.toDouble();
 }
 
@@ -86,19 +86,19 @@ void JS_ValueSetInt32(JS::Value* value, int32_t x) {
     value->setInt32(x);
 }
 
-bool JS_ValueIsInt32(JS::Value value) {
+bool JS_ValueIsInt32(const JS::Value* value) {
     return value.isInt32();
 }
 
-int32_t JS_ValueToInt32(JS::Value value) {
+int32_t JS_ValueToInt32(const JS::Value* value) {
     return value.toInt32();
 }
 
-bool JS_ValueIsNumber(JS::Value value) {
+bool JS_ValueIsNumber(const JS::Value* value) {
     return value.isNumber();
 }
 
-double JS_ValueToNumber(JS::Value value) {
+double JS_ValueToNumber(const JS::Value* value) {
     return value.toNumber();
 }
 
@@ -106,11 +106,11 @@ void JS_ValueSetNull(JS::Value* value) {
     value->setNull();
 }
 
-bool JS_ValueIsNull(JS::Value value) {
+bool JS_ValueIsNull(const JS::Value* value) {
     return value.isNull();
 }
 
-bool JS_ValueIsUndefined(JS::Value value) {
+bool JS_ValueIsUndefined(const JS::Value* value) {
     return value.isUndefined();
 }
 }
