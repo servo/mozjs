@@ -122,7 +122,7 @@ else ifeq ($(findstring i686,$(TARGET)),i686)
 	# This is the correct target for MSVC builds
 	CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=i686-pc-mingw32
 endif
-	CONFIGURE_FLAGS += --without-pthreads
+	CONFIGURE_FLAGS += --without-pthreads --enable-linker=lld
 	MOZ_TOOLS=/
 
 else ifeq ($(MSYSTEM),MINGW64)
