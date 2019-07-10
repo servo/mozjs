@@ -13,9 +13,6 @@ CONFIGURE_FLAGS := \
 
 ifeq (windows,$(findstring windows,$(TARGET)))
 	WINDOWS := 1
-	# Override any attempt to use the debug CRT when building with debug.
-	CFLAGS += "-MD"
-	CXXFLAGS += "-MD"
 else
 	WINDOWS :=
 endif
@@ -194,5 +191,6 @@ maybe-configure:
 	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
 	  AS="$(AS)" AR="$(AR)" \
 	  STLPORT_LIBS="$(STLPORT_LIBS)" \
+	  MOZ_NO_DEBUG_RTL=1 \
 	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
 	fi
