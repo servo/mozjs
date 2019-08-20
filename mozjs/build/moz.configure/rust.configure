@@ -193,7 +193,7 @@ def rust_triple_alias(host_or_target, last_resort):
 
         if rustc_target is None:
             key = (host_or_target.cpu, host_or_target.endianness, host_or_target.vendor, host_or_target_raw_os)
-            log.debug("falling back to " + str(key)
+            log.debug("falling back to " + str(key))
             rustc_target = rust_supported_targets.per_raw_os.get(
                 (host_or_target.cpu, host_or_target.endianness,
                  host_or_target.vendor, host_or_target_raw_os))
