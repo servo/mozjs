@@ -126,6 +126,8 @@ def rust_supported_targets(rustc):
         key = (t.cpu, t.endianness, t.os)
         if key in per_os:
             previous = per_os[key]
+            new_key = (previous.cpu, previous.endianness, previous.vendor, previous.raw_os)
+            log.debug("shuffling " + str(new_key))
             per_raw_os[(previous.cpu, previous.endianness,
                         previous.vendor, previous.raw_os)] = previous
             del per_os[key]
@@ -138,8 +140,11 @@ def rust_supported_targets(rustc):
             # normalize.
             if raw_os == 'androideabi':
                 raw_os = 'linux-androideabi'
+            new_key = (t.cpu, t.endianness, t.vendor, raw_os);
+            log.debug("storing ambiguous " + str(new_key))
             per_raw_os[(t.cpu, t.endianness, t.vendor, raw_os)] = t
         else:
+            log.debug("storing " + str(key))
             per_os[key] = t
     return namespace(per_os=per_os, per_raw_os=per_raw_os)
 
@@ -162,6 +167,7 @@ def rust_triple_alias(host_or_target, last_resort):
     @imports(_from='textwrap', _import='dedent')
     def rust_target(rustc, host_or_target, compiler_info,
                     rust_supported_targets, last_resort):
+        log.debug("host_or_target: " + str(host_or_target))
         # Rust's --target options are similar to, but not exactly the same
         # as, the autoconf-derived targets we use.  An example would be that
         # Rust uses distinct target triples for targetting the GNU C++ ABI
@@ -181,19 +187,24 @@ def rust_triple_alias(host_or_target, last_resort):
             host_or_target_os = host_or_target.os
             host_or_target_raw_os = host_or_target.raw_os
 
+        log.debug("host_or_target_os: " + host_or_target_os)
         rustc_target = rust_supported_targets.per_os.get(
             (host_or_target.cpu, host_or_target.endianness, host_or_target_os))
 
         if rustc_target is None:
+            key = (host_or_target.cpu, host_or_target.endianness, host_or_target.vendor, host_or_target_raw_os)
+            log.debug("falling back to " + str(key)
             rustc_target = rust_supported_targets.per_raw_os.get(
                 (host_or_target.cpu, host_or_target.endianness,
                  host_or_target.vendor, host_or_target_raw_os))
 
+        log.debug("last resort is " + str(last_resort))
         if last_resort:
-            key = (last_resort.cpu, last_resort.endianness, last_resort.vendor, host_or_target_os)
+            key = (last_resort.cpu, last_resort.endianness, last_resort.vendor, host_or_target_raw_os)
+            log.debug("last resort: " + str(key))
             rustc_target = rust_supported_targets.per_raw_os.get(
                 (last_resort.cpu, last_resort.endianness,
-                last_resort.vendor, host_or_target_os))
+                last_resort.vendor, host_or_target_raw_os))
 
         if rustc_target is None:
             die("Don't know how to translate {} for rustc".format(
