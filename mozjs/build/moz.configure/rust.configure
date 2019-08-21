@@ -199,7 +199,7 @@ def rust_triple_alias(host_or_target, last_resort):
                  host_or_target.vendor, host_or_target_raw_os))
 
         log.debug("last resort is " + str(last_resort))
-        if last_resort:
+        if not rustc_target and last_resort:
             key = (last_resort.cpu, last_resort.endianness, last_resort.vendor, host_or_target_raw_os)
             log.debug("last resort: " + str(key))
             rustc_target = rust_supported_targets.per_raw_os.get(
