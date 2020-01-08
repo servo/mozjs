@@ -1,4 +1,6 @@
-extern crate tempdir;
+#![forbid(unsafe_code)]
+
+extern crate tempfile;
 
 pub mod preferences;
 pub mod prefreader;

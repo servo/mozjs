@@ -17,7 +17,9 @@
 use std::error;
 use std::fmt;
 
-type DashError = Box<error::Error>;
+use cranelift_wasm::WasmError;
+
+type DashError = Box<dyn error::Error>;
 pub type DashResult<T> = Result<T, DashError>;
 
 /// A simple error type that contains a string message, used to wrap raw Cranelift error types
@@ -43,5 +45,11 @@ impl fmt::Display for BasicError {
 impl error::Error for BasicError {
     fn description(&self) -> &str {
         &self.msg
+    }
+}
+
+impl Into<WasmError> for BasicError {
+    fn into(self) -> WasmError {
+        WasmError::User(self.msg)
     }
 }
