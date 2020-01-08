@@ -164,6 +164,7 @@ fn build_jsapi(src_dir: &Path, build_dir: &Path) {
         .arg(cargo_manifest_dir.join("makefile.cargo"))
         .current_dir(&build_dir)
         .env("SRC_DIR", &src_dir)
+        .env("NO_RUST_PANIC_HOOK", "1")
         .status()
         .expect("Failed to run `make`");
     assert!(result.success());
@@ -382,6 +383,9 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     // Bindgen generates bitfields with private fields, so they cannot
     // be used in const expressions.
     "JSJitInfo",
+    // Bindgen chokes on the template.
+    "JS::HandleVector.*",
+    "JS::MutableHandleVector.*",
 ];
 
 /// Definitions for types that were blacklisted
