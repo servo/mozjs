@@ -1,8 +1,18 @@
-diff --git i/mozjs/build/moz.configure/rust.configure w/mozjs/build/moz.configure/rust.configure
-index 6c129579e..f6a3af9e2 100644
---- i/mozjs/build/moz.configure/rust.configure
-+++ w/mozjs/build/moz.configure/rust.configure
-@@ -29,34 +29,10 @@ def rustc_info(rustc):
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Anthony Ramine <nox@nox.paris>
+Date: Mon, 28 Oct 2019 23:08:58 +0100
+Subject: [PATCH] Remove cargo version check
+
+It causes issues when the configure script is invoked through RLS.
+---
+ build/moz.configure/rust.configure | 49 ++----------------------------
+ 1 file changed, 2 insertions(+), 47 deletions(-)
+
+diff --git a/build/moz.configure/rust.configure b/build/moz.configure/rust.configure
+index 43a399bf3b1e..158ac634c9aa 100644
+--- a/build/moz.configure/rust.configure
++++ b/build/moz.configure/rust.configure
+@@ -100,34 +100,10 @@ def rustc_info(rustc):
  
  set_config('RUSTC_VERSION', depends(rustc_info)(lambda info: str(info.version)))
  
@@ -39,7 +49,7 @@ index 6c129579e..f6a3af9e2 100644
      if not rustc_info:
          die(dedent('''\
          Rust compiler not found.
-@@ -89,27 +65,6 @@ def rust_compiler(rustc_info, cargo_info, build_project):
+@@ -159,27 +135,6 @@ def rust_compiler(rustc_info, cargo_info, build_project):
          installer is available from https://rustup.rs/
          '''.format(version, rustc_min_version)))
  

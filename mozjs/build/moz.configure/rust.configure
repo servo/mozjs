@@ -17,6 +17,12 @@ cargo = check_prog('_CARGO', ['cargo'], what='cargo',
                    paths=toolchain_search_path, input='CARGO',
                    allow_missing=True)
 
+option(env='RUST_SYSROOT', nargs=1, help='Path to the rustc sysroot')
+
+@depends('RUST_SYSROOT')
+def rust_sysroot(value):
+    if value:
+        return value[0]
 
 @template
 def unwrap_rustup(prog, name):
@@ -100,34 +106,10 @@ def rustc_info(rustc):
 
 set_config('RUSTC_VERSION', depends(rustc_info)(lambda info: str(info.version)))
 
-@depends_if(cargo)
-@checking('cargo version', lambda info: info.version)
-@imports('re')
-def cargo_info(cargo):
-    out = check_cmd_output(cargo, '--version', '--verbose').splitlines()
-    info = dict((s.strip() for s in line.split(':', 1)) for line in out[1:])
-    version = info.get('release')
-    # Older versions of cargo didn't support --verbose, in which case, they
-    # only output a not-really-pleasant-to-parse output. Fortunately, they
-    # don't error out, so we can just try some regexp matching on the output
-    # we already got.
-    if version is None:
-        VERSION_FORMAT = r'^cargo (\d\.\d+\.\d+).*'
 
-        m = re.search(VERSION_FORMAT, out[0])
-        # Fail fast if cargo changes its output on us.
-        if not m:
-            die('Could not determine cargo version from output: %s', out)
-        version = m.group(1)
-
-    return namespace(
-        version=Version(version),
-    )
-
-
-@depends(rustc_info, cargo_info, build_project)
+@depends(rustc_info, build_project)
 @imports(_from='textwrap', _import='dedent')
-def rust_compiler(rustc_info, cargo_info, build_project):
+def rust_compiler(rustc_info, build_project):
     if not rustc_info:
         die(dedent('''\
         Rust compiler not found.
@@ -158,27 +140,6 @@ def rust_compiler(rustc_info, cargo_info, build_project):
         to the latest release by typing 'rustup update'. The
         installer is available from https://rustup.rs/
         '''.format(version, rustc_min_version)))
-
-    if not cargo_info:
-        die(dedent('''\
-        Cargo package manager not found.
-        To compile Rust language sources, you must have 'cargo' in your path.
-        See https://www.rust-lang.org/ for more information.
-
-        You can install cargo by running './mach bootstrap'
-        or by directly running the installer from https://rustup.rs/
-        '''))
-
-    version = cargo_info.version
-    if version < cargo_min_version:
-        die(dedent('''\
-        Cargo package manager {} is too old.
-
-        To compile Rust language sources please install at least
-        version {} of 'cargo' and make sure it is first in your path.
-
-        You can verify this by typing 'cargo --version'.
-        ''').format(version, cargo_min_version))
 
     return True
 
@@ -221,7 +182,7 @@ def rust_triple_alias(host_or_target, host_or_target_c_compiler):
     host_or_target_str = {host: 'host', target: 'target'}[host_or_target]
 
     @depends(rustc, host_or_target, host_or_target_c_compiler,
-             rust_supported_targets, arm_target, when=rust_compiler)
+             rust_supported_targets, arm_target, rust_sysroot, when=rust_compiler)
     @checking('for rust %s triplet' % host_or_target_str)
     @imports('os')
     @imports(_from='mozbuild.configure.util', _import='LineIO')
@@ -229,7 +190,7 @@ def rust_triple_alias(host_or_target, host_or_target_c_compiler):
     @imports(_from='tempfile', _import='mkstemp')
     @imports(_from='textwrap', _import='dedent')
     def rust_target(rustc, host_or_target, compiler_info,
-                    rust_supported_targets, arm_target):
+                    rust_supported_targets, arm_target, rust_sysroot):
         # Rust's --target options are similar to, but not exactly the same
         # as, the autoconf-derived targets we use.  An example would be that
         # Rust uses distinct target triples for targetting the GNU C++ ABI
@@ -370,6 +331,8 @@ def rust_triple_alias(host_or_target, host_or_target_c_compiler):
                 '-o', out_path,
                 in_path,
             ]
+            if rust_sysroot:
+                cmd += ['--sysroot', rust_sysroot]
 
             def failed():
                 die(dedent('''\
@@ -399,6 +362,8 @@ rust_host_triple = rust_triple_alias(host, host_c_compiler)
 @depends(host, rust_host_triple, rustc_info.host)
 def validate_rust_host_triple(host, rust_host, rustc_host):
     if rust_host != rustc_host:
+        if host.machine == 'uwp' and rustc_host.machine == 'pc':
+            return
         if host.alias == rust_host:
             configure_host = host.alias
         else:
@@ -442,6 +407,8 @@ def rustc_natvis_ldflags(target, compiler_info, rustc):
     if target.kernel == 'WINNT' and compiler_info.type == 'clang-cl':
         sysroot = check_cmd_output(rustc, '--print', 'sysroot').strip()
         etc = os.path.join(sysroot, 'lib/rustlib/etc')
+        if not os.path.exists(etc):
+            return []
         ldflags = []
         for f in os.listdir(etc):
             if f.endswith('.natvis'):
