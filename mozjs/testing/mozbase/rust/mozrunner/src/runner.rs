@@ -18,31 +18,31 @@ use crate::firefox_args::Arg;
 pub trait Runner {
     type Process;
 
-    fn arg<'a, S>(&'a mut self, arg: S) -> &'a mut Self
+    fn arg<S>(&mut self, arg: S) -> &mut Self
     where
         S: AsRef<OsStr>;
 
-    fn args<'a, I, S>(&'a mut self, args: I) -> &'a mut Self
+    fn args<I, S>(&mut self, args: I) -> &mut Self
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>;
 
-    fn env<'a, K, V>(&'a mut self, key: K, value: V) -> &'a mut Self
+    fn env<K, V>(&mut self, key: K, value: V) -> &mut Self
     where
         K: AsRef<OsStr>,
         V: AsRef<OsStr>;
 
-    fn envs<'a, I, K, V>(&'a mut self, envs: I) -> &'a mut Self
+    fn envs<I, K, V>(&mut self, envs: I) -> &mut Self
     where
         I: IntoIterator<Item = (K, V)>,
         K: AsRef<OsStr>,
         V: AsRef<OsStr>;
 
-    fn stdout<'a, T>(&'a mut self, stdout: T) -> &'a mut Self
+    fn stdout<T>(&mut self, stdout: T) -> &mut Self
     where
         T: Into<Stdio>;
 
-    fn stderr<'a, T>(&'a mut self, stderr: T) -> &'a mut Self
+    fn stderr<T>(&mut self, stderr: T) -> &mut Self
     where
         T: Into<Stdio>;
 
@@ -96,20 +96,18 @@ impl fmt::Display for RunnerError {
 impl Error for RunnerError {
     fn description(&self) -> &str {
         match *self {
-            RunnerError::Io(ref err) => {
-                match err.kind() {
-                    ErrorKind::NotFound => "no such file or directory",
-                    _ => err.description(),
-                }
-            }
+            RunnerError::Io(ref err) => match err.kind() {
+                ErrorKind::NotFound => "no such file or directory",
+                _ => err.description(),
+            },
             RunnerError::PrefReader(ref err) => err.description(),
         }
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         Some(match *self {
-            RunnerError::Io(ref err) => err as &Error,
-            RunnerError::PrefReader(ref err) => err as &Error,
+            RunnerError::Io(ref err) => err as &dyn Error,
+            RunnerError::PrefReader(ref err) => err as &dyn Error,
         })
     }
 }
@@ -188,8 +186,8 @@ impl FirefoxRunner {
 
         FirefoxRunner {
             path: path.to_path_buf(),
-            envs: envs,
-            profile: profile,
+            envs,
+            profile,
             args: vec![],
             stdout: None,
             stderr: None,
@@ -200,7 +198,7 @@ impl FirefoxRunner {
 impl Runner for FirefoxRunner {
     type Process = FirefoxProcess;
 
-    fn arg<'a, S>(&'a mut self, arg: S) -> &'a mut FirefoxRunner
+    fn arg<S>(&mut self, arg: S) -> &mut FirefoxRunner
     where
         S: AsRef<OsStr>,
     {
@@ -208,7 +206,7 @@ impl Runner for FirefoxRunner {
         self
     }
 
-    fn args<'a, I, S>(&'a mut self, args: I) -> &'a mut FirefoxRunner
+    fn args<I, S>(&mut self, args: I) -> &mut FirefoxRunner
     where
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
@@ -219,7 +217,7 @@ impl Runner for FirefoxRunner {
         self
     }
 
-    fn env<'a, K, V>(&'a mut self, key: K, value: V) -> &'a mut FirefoxRunner
+    fn env<K, V>(&mut self, key: K, value: V) -> &mut FirefoxRunner
     where
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
@@ -228,7 +226,7 @@ impl Runner for FirefoxRunner {
         self
     }
 
-    fn envs<'a, I, K, V>(&'a mut self, envs: I) -> &'a mut FirefoxRunner
+    fn envs<I, K, V>(&mut self, envs: I) -> &mut FirefoxRunner
     where
         I: IntoIterator<Item = (K, V)>,
         K: AsRef<OsStr>,
@@ -240,7 +238,7 @@ impl Runner for FirefoxRunner {
         self
     }
 
-    fn stdout<'a, T>(&'a mut self, stdout: T) -> &'a mut Self
+    fn stdout<T>(&mut self, stdout: T) -> &mut Self
     where
         T: Into<Stdio>,
     {
@@ -248,7 +246,7 @@ impl Runner for FirefoxRunner {
         self
     }
 
-    fn stderr<'a, T>(&'a mut self, stderr: T) -> &'a mut Self
+    fn stderr<T>(&mut self, stderr: T) -> &mut Self
     where
         T: Into<Stdio>,
     {
@@ -259,8 +257,8 @@ impl Runner for FirefoxRunner {
     fn start(mut self) -> Result<FirefoxProcess, RunnerError> {
         self.profile.user_prefs()?.write()?;
 
-        let stdout = self.stdout.unwrap_or_else(|| Stdio::inherit());
-        let stderr = self.stderr.unwrap_or_else(|| Stdio::inherit());
+        let stdout = self.stdout.unwrap_or_else(Stdio::inherit);
+        let stderr = self.stderr.unwrap_or_else(Stdio::inherit);
 
         let binary_path = platform::resolve_binary_path(&mut self.path);
         let mut cmd = Command::new(binary_path);
@@ -277,7 +275,7 @@ impl Runner for FirefoxRunner {
                 Arg::Foreground => seen_foreground = true,
                 Arg::NoRemote => seen_no_remote = true,
                 Arg::Profile | Arg::NamedProfile | Arg::ProfileManager => seen_profile = true,
-                Arg::Other(_) | Arg::None => {},
+                Arg::Other(_) | Arg::None => {}
             }
         }
         if !seen_foreground {
@@ -299,7 +297,7 @@ impl Runner for FirefoxRunner {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(all(not(target_os = "macos"), unix))]
 pub mod platform {
     use path::find_binary;
     use std::path::PathBuf;
@@ -322,8 +320,8 @@ pub mod platform {
 pub mod platform {
     use crate::path::{find_binary, is_binary};
     use dirs;
-    use std::path::PathBuf;
     use plist::Value;
+    use std::path::PathBuf;
 
     /// Searches for the binary file inside the path passed as parameter.
     /// If the binary is not found, the path remains unaltered.
@@ -336,13 +334,10 @@ pub mod platform {
             if let Ok(plist) = Value::from_file(&info_plist) {
                 if let Some(dict) = plist.as_dictionary() {
                     if let Some(binary_file) = dict.get("CFBundleExecutable") {
-                        match binary_file {
-                            Value::String(s) => {
-                                path.push("Contents");
-                                path.push("MacOS");
-                                path.push(s);
-                            },
-                            _ => {}
+                        if let Value::String(s) = binary_file {
+                            path.push("Contents");
+                            path.push("MacOS");
+                            path.push(s);
                         }
                     }
                 }
@@ -362,11 +357,21 @@ pub mod platform {
 
         let home = dirs::home_dir();
         for &(prefix_home, trial_path) in [
-            (false, "/Applications/Firefox.app/Contents/MacOS/firefox-bin"),
+            (
+                false,
+                "/Applications/Firefox.app/Contents/MacOS/firefox-bin",
+            ),
             (true, "Applications/Firefox.app/Contents/MacOS/firefox-bin"),
-            (false, "/Applications/Firefox Nightly.app/Contents/MacOS/firefox-bin"),
-            (true, "Applications/Firefox Nightly.app/Contents/MacOS/firefox-bin"),
-        ].iter()
+            (
+                false,
+                "/Applications/Firefox Nightly.app/Contents/MacOS/firefox-bin",
+            ),
+            (
+                true,
+                "Applications/Firefox Nightly.app/Contents/MacOS/firefox-bin",
+            ),
+        ]
+        .iter()
         {
             let path = match (home.as_ref(), prefix_home) {
                 (Some(ref home_dir), true) => home_dir.join(trial_path),
@@ -391,8 +396,8 @@ pub mod platform {
     use path::{find_binary, is_binary};
     use std::io::Error;
     use std::path::PathBuf;
-    use winreg::RegKey;
     use winreg::enums::*;
+    use winreg::RegKey;
 
     pub fn resolve_binary_path(path: &mut PathBuf) -> &PathBuf {
         path
@@ -414,7 +419,8 @@ pub mod platform {
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
         for subtree_key in ["SOFTWARE", "SOFTWARE\\WOW6432Node"].iter() {
             let subtree = hklm.open_subkey_with_flags(subtree_key, KEY_READ)?;
-            let mozilla_org = match subtree.open_subkey_with_flags("mozilla.org\\Mozilla", KEY_READ) {
+            let mozilla_org = match subtree.open_subkey_with_flags("mozilla.org\\Mozilla", KEY_READ)
+            {
                 Ok(val) => val,
                 Err(_) => continue,
             };
@@ -449,7 +455,7 @@ pub mod platform {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+#[cfg(not(any(unix, target_os = "windows")))]
 pub mod platform {
     use std::path::PathBuf;
 
