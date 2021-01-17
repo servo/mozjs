@@ -16,9 +16,11 @@
 #include "js/Conversions.h"
 #include "js/Date.h"
 #include "js/Equality.h"
+#include "js/friend/ErrorMessages.h"
 #include "js/ForOfIterator.h"
 #include "js/Id.h"
 #include "js/Initialization.h"
+#include "js/experimental/JitInfo.h"
 #include "js/JSON.h"
 #include "js/MemoryMetrics.h"
 #include "js/Modules.h"
@@ -43,7 +45,8 @@ bool JS_Init();
 
 JS::RealmOptions* JS_NewRealmOptions();
 void DeleteRealmOptions(JS::RealmOptions* options);
-JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx);
+JS::OwningCompileOptions* JS_NewOwningCompileOptions(JSContext* cx);
+void DeleteOwningCompileOptions(JS::OwningCompileOptions* optiosn);
 
 void JS_StackCapture_AllFrames(JS::StackCapture*);
 void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture*);

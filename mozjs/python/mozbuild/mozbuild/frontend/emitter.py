@@ -1345,6 +1345,7 @@ class TreeMetadataEmitter(LoggingMixin):
                 Defines,
                 (
                     computed_flags,
+                    computed_as_flags,
                 ),
             ),
             ("HOST_DEFINES", HostDefines, (computed_host_flags,)),

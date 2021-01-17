@@ -105,7 +105,7 @@ fn cc_flags() -> Vec<&'static str> {
     let target = env::var("TARGET").unwrap();
     if target.contains("windows") {
         result.extend(&[
-            "-std=c++14",
+            "-std=c++17",
             "-DWIN32",
             // Don't use reinterpret_cast() in offsetof(),
             // since it's not a constant expression, so can't
@@ -114,7 +114,7 @@ fn cc_flags() -> Vec<&'static str> {
         ]);
     } else {
         result.extend(&[
-            "-std=gnu++14",
+            "-std=gnu++17",
             "-fno-sized-deallocation",
             "-Wno-unused-parameter",
             "-Wno-invalid-offsetof",
@@ -392,6 +392,7 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::HandleVector",
     "JS::MutableHandleVector",
     "JS::Rooted.*Vector",
+    "JS::RootedValueArray",
 ];
 
 /// Definitions for types that were blacklisted

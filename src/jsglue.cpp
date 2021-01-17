@@ -23,9 +23,13 @@ void DeleteRealmOptions(JS::RealmOptions* options) {
 	delete options;
 }
 
-JS::OwningCompileOptions JS_NewOwningCompileOptions(JSContext* cx) {
-    JS::OwningCompileOptions result(cx);
+JS::OwningCompileOptions* JS_NewOwningCompileOptions(JSContext* cx) {
+    JS::OwningCompileOptions* result = new JS::OwningCompileOptions(cx);
     return result;
+}
+
+void DeleteOwningCompileOptions(JS::OwningCompileOptions* opts) {
+    delete opts;
 }
 
 JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone) {
