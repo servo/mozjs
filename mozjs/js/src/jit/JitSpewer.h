@@ -160,7 +160,7 @@ class AutoSpewEndFunction {
 };
 
 void CheckLogging();
-GenericPrinter&& JitSpewPrinter();
+GenericPrinter& JitSpewPrinter();
 
 class JitSpewIndent {
   JitSpewChannel channel_;
