@@ -106,7 +106,6 @@ fn cc_flags() -> Vec<&'static str> {
     if target.contains("windows") {
         result.extend(&[
             "-std=c++17",
-            "-std:c++17",
             "-DWIN32",
             // Don't use reinterpret_cast() in offsetof(),
             // since it's not a constant expression, so can't
@@ -210,6 +209,7 @@ fn build_jsglue(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let config = format!("{}/js/src/js-confdefs.h", build_dir.display());
     if target.contains("windows") {
+        build.flag_if_supported("-std:c++17");
         build.flag("-FI");
     } else {
         build.flag("-include");
