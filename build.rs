@@ -106,6 +106,7 @@ fn cc_flags() -> Vec<&'static str> {
     if target.contains("windows") {
         result.extend(&[
             "-std=c++17",
+            "-std:c++17",
             "-DWIN32",
             // Don't use reinterpret_cast() in offsetof(),
             // since it's not a constant expression, so can't
