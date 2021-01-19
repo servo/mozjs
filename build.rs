@@ -355,6 +355,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "js::.*",
     "JS_.*",
     ".*_TO_JSID",
+    "JS_DeprecatedStringHasLatin1Chars",
 ];
 
 /// Types that should be treated as an opaque blob of bytes whenever they show
