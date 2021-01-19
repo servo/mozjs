@@ -5,6 +5,8 @@
 # This script generates jit/CacheIROpsGenerated.h from CacheIROps.yaml
 
 import buildconfig
+import sys
+print(sys.path)
 import yaml
 import six
 from collections import OrderedDict
