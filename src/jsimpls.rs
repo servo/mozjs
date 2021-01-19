@@ -21,9 +21,6 @@ use jsgc::RootKind;
 use jsid::JSID_VOID;
 use jsval::UndefinedValue;
 
-#[cfg(feature = "debugmozjs")]
-use jsapi::mozilla::detail::GuardObjectNotificationReceiver;
-
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_void;
@@ -164,10 +161,6 @@ impl JSAutoRealm {
         JSAutoRealm {
             cx_: cx,
             oldRealm_: unsafe { JS::EnterRealm(cx, target) },
-            #[cfg(feature = "debugmozjs")]
-            _mCheckNotUsedAsTemporary: GuardObjectNotificationReceiver {
-                mStatementDone: false,
-            }
         }
     }
 }
