@@ -128,4 +128,16 @@ bool JS_ValueIsNull(const JS::Value* value) {
 bool JS_ValueIsUndefined(const JS::Value* value) {
     return value->isUndefined();
 }
+
+size_t GetLinearStringLength(JSLinearString* s) {
+    return JS::GetLinearStringLength(s);
+}
+
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx) {
+    return JS::GetLinearStringCharAt(s, idx);
+}
+
+JSLinearString* AtomToLinearString(JSAtom* atom) {
+    return JS::AtomToLinearString(atom);
+}
 }

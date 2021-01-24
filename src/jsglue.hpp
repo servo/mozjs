@@ -40,6 +40,7 @@
 #include "js/WasmModule.h"
 #include "js/shadow/Object.h"
 #include "js/shadow/ObjectGroup.h"
+#include "js/friend/DOMProxy.h"
 #include "js/friend/ErrorMessages.h"
 #include "js/friend/WindowProxy.h"
 #include "js/experimental/JitInfo.h"
@@ -86,6 +87,10 @@ void JS_ValueSetNull(JS::Value* value);
 bool JS_ValueIsNull(const JS::Value* value);
 
 bool JS_ValueIsUndefined(const JS::Value* value);
+
+size_t GetLinearStringLength(JSLinearString* s);
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
+JSLinearString* AtomToLinearString(JSAtom* atom);
 
 }
 
