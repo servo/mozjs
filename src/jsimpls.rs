@@ -178,7 +178,7 @@ impl JS::AutoGCRooter {
         #[allow(non_snake_case)]
         let autoGCRooters: *mut _ = {
             let rooting_cx = cx as *mut JS::RootingContext;
-            (*rooting_cx).autoGCRooters_.as_mut_ptr()
+            &mut (*rooting_cx).autoGCRooters_[self.kind_ as usize]
         };
         self.stackTop = autoGCRooters as *mut *mut _;
         self.down = *autoGCRooters as *mut _;
