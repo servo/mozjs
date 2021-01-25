@@ -342,8 +342,8 @@ class VirtualenvManager(VirtualenvHelper):
         import distutils.sysconfig
 
         packages = self.packages()
-        print("PY3: " + PY3)
-        print("packages:\n" + packages)
+        print("PY3: " + str(PY3))
+        print("packages:\n" + str(packages))
         python_lib = distutils.sysconfig.get_python_lib()
         do_close = not bool(sitecustomize)
         sitecustomize = sitecustomize or open(
