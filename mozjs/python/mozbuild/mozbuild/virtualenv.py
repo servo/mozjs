@@ -288,6 +288,7 @@ class VirtualenvManager(VirtualenvHelper):
 
     def packages(self):
         mode = "rU" if PY2 else "r"
+        print("manifest: " + self.manifest_path)
         with open(self.manifest_path, mode) as fh:
             packages = [line.rstrip().split(":") for line in fh]
         return packages
@@ -341,6 +342,8 @@ class VirtualenvManager(VirtualenvHelper):
         import distutils.sysconfig
 
         packages = self.packages()
+        print("PY3: " + PY3)
+        print("packages:\n" + packages)
         python_lib = distutils.sysconfig.get_python_lib()
         do_close = not bool(sitecustomize)
         sitecustomize = sitecustomize or open(

@@ -8,6 +8,7 @@ import buildconfig
 import sys
 print(sys.path)
 import yaml
+raise ValueError("hi")
 import six
 from collections import OrderedDict
 from mozbuild.preprocessor import Preprocessor
