@@ -1,13 +1,13 @@
 language: rust
 rust:
   #- nightly
-  - beta
+  #- beta
   - stable
 sudo: 9000
 dist: focal
 os:
   - linux
-  - osx
+  #- osx
 osx_image: xcode11
 
 addons:
@@ -29,7 +29,7 @@ addons:
 
 env:
   - FEATURES=""
-  - FEATURES="debugmozjs"
+  #- FEATURES="debugmozjs"
 
 before_script:
   - rustup component add rustfmt-preview

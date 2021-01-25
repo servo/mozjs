@@ -60,6 +60,6 @@ install:
 
 build_script:
   - echo PATH %PATH%
-  - echo MOZTOOLS_PATH %MOZTOOLS_PATH%
-  - cd %APPVEYOR_BUILD_FOLDER%
-  - cargo test --verbose --verbose %DEBUGMOZJS% --lib
+  #- echo MOZTOOLS_PATH %MOZTOOLS_PATH%
+  #- cd %APPVEYOR_BUILD_FOLDER%
+  #- cargo test --verbose --verbose %DEBUGMOZJS% --lib
