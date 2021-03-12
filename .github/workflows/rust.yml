@@ -12,12 +12,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
-        rust: [beta, stable]
-        features: ["--features debugmozjs", ""]
-        exclude:
-          - os: windows-latest
-            rust: beta
+        os: [windows-latest]
+        rust: [nightly-2021-02-25]
+        features: [""]
     steps:
     - uses: actions/checkout@v2
     - name: Install deps on osx
