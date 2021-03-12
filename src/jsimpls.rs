@@ -256,6 +256,7 @@ impl JS::CallArgs {
                 (*vp.offset(1)).is_magic(),
                 false
             ),
+            _bitfield_align_1: Default::default(),
             argc_: argc,
             argv_: vp.offset(2),
             #[cfg(not(feature = "debugmozjs"))]
