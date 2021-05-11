@@ -93,7 +93,7 @@ with only_when(host_is_osx | target_is_osx):
         # installation docs:
         # https://firefox-source-docs.mozilla.org/setup/macos_build.html#macos-sdk-is-unsupported
         sdk_min_version = Version("10.12")
-        sdk_max_version = Version("11.1")
+        sdk_max_version = Version("11.3")
 
         if sdk:
             sdk = sdk[0]
