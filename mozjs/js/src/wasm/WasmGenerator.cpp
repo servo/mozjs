@@ -24,7 +24,6 @@
 #include "mozilla/Unused.h"
 
 #include <algorithm>
-#include <thread>
 
 #include "util/Memory.h"
 #include "util/Text.h"
@@ -39,8 +38,6 @@
 #include "wasm/WasmStubs.h"
 
 #include "jit/MacroAssembler-inl.h"
-
-#undef far
 
 using namespace js;
 using namespace js::jit;
@@ -829,6 +826,18 @@ void CompileTask::runHelperThreadTask(AutoLockHelperThreadState& lock) {
   state.condVar().notify_one(); /* failed or finished */
 }
 
+ThreadType CompileTask::threadType() {
+  switch (compilerEnv.mode()) {
+    case CompileMode::Once:
+    case CompileMode::Tier1:
+      return ThreadType::THREAD_TYPE_WASM_COMPILE_TIER1;
+    case CompileMode::Tier2:
+      return ThreadType::THREAD_TYPE_WASM_COMPILE_TIER2;
+    default:
+      MOZ_CRASH();
+  }
+}
+
 bool ModuleGenerator::locallyCompileCurrentTask() {
   if (!ExecuteCompileTask(currentTask_, error_)) {
     return false;
@@ -1342,7 +1351,7 @@ bool ModuleGenerator::finishTier2(const Module& module) {
   if (MOZ_UNLIKELY(JitOptions.wasmDelayTier2)) {
     // Introduce an artificial delay when testing wasmDelayTier2, since we
     // want to exercise both tier1 and tier2 code in this case.
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    ThisThread::SleepMilliseconds(500);
   }
 
   return module.finishTier2(*linkData_, std::move(codeTier));

@@ -67,7 +67,7 @@ opt-level = 2
 opt-level = 2
 
 [patch.crates-io]
-chardetng = { git = "https://github.com/hsivonen/chardetng", rev="fd4ed671ef495af4dcda4c4cba3ef8d426db8af1" }
+chardetng = { git = "https://github.com/hsivonen/chardetng", rev="39f95e2f7cd6e632a379cdeee62c68e8cedd7810" }
 chardetng_c = { git = "https://github.com/hsivonen/chardetng_c", rev="ed8a4c6f900a90d4dbc1d64b856e61490a1c3570" }
 packed_simd = { git = "https://github.com/hsivonen/packed_simd", rev="0917fe780032a6bbb23d71be545f9c1834128d75" }
 rlbox_lucet_sandbox = { git = "https://github.com/PLSysSec/rlbox_lucet_sandbox/", rev="f3cace4fb8b53db0849c62af4fa62bade5a620f7" }
@@ -76,7 +76,8 @@ spirv_cross = { git = "https://github.com/kvark/spirv_cross", branch = "wgpu5" }
 # failure's backtrace feature might break our builds, see bug 1608157.
 failure = { git = "https://github.com/badboy/failure", rev = "64af847bc5fdcb6d2438bec8a6030812a80519a5" }
 failure_derive = { git = "https://github.com/badboy/failure", rev = "64af847bc5fdcb6d2438bec8a6030812a80519a5" }
-minidump_writer_linux = { git = "https://github.com/msirringhaus/minidump_writer_linux.git", rev = "01c7a0da8d34059f7dae8ab9e7512529ff16347a" }
+minidump_writer_linux = { git = "https://github.com/msirringhaus/minidump_writer_linux.git", rev = "667c38bf1d9a8ea0c2c0a219d13006a39847b3f2" }
+xmldecl = { git = "https://github.com/hsivonen/xmldecl", rev="a74f7df5bf6cb11194fb74daa0c3cf42f326fd90" }
 
 [patch.crates-io.cranelift-codegen]
 git = "https://github.com/mozilla-spidermonkey/wasmtime"

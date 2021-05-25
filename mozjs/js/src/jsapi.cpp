@@ -57,7 +57,7 @@
 #include "js/Conversions.h"
 #include "js/Date.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"    // js::CheckSystemRecursionLimit
+#include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/Initialization.h"
 #include "js/JSON.h"
 #include "js/LocaleSensitive.h"
@@ -432,44 +432,9 @@ JS::ContextOptions& JS::ContextOptions::setWasmCranelift(bool flag) {
   return *this;
 }
 
-JS::ContextOptions& JS::ContextOptions::setWasmFunctionReferences(bool flag) {
-#ifdef ENABLE_WASM_FUNCTION_REFERENCES
-  wasmFunctionReferences_ = flag;
-#endif
-  return *this;
-}
-
-JS::ContextOptions& JS::ContextOptions::setWasmGc(bool flag) {
-#ifdef ENABLE_WASM_GC
-  wasmGc_ = flag;
-#endif
-  return *this;
-}
-
-JS::ContextOptions& JS::ContextOptions::setWasmMultiValue(bool flag) {
-#ifdef ENABLE_WASM_MULTI_VALUE
-  wasmMultiValue_ = flag;
-#endif
-  return *this;
-}
-
-JS::ContextOptions& JS::ContextOptions::setWasmSimd(bool flag) {
-#ifdef ENABLE_WASM_SIMD
-  wasmSimd_ = flag;
-#endif
-  return *this;
-}
-
 JS::ContextOptions& JS::ContextOptions::setWasmSimdWormhole(bool flag) {
 #ifdef ENABLE_WASM_SIMD_WORMHOLE
   wasmSimdWormhole_ = flag;
-#endif
-  return *this;
-}
-
-JS::ContextOptions& JS::ContextOptions::setWasmExceptions(bool flag) {
-#ifdef ENABLE_WASM_EXCEPTIONS
-  wasmExceptions_ = flag;
 #endif
   return *this;
 }
@@ -831,7 +796,9 @@ JS_FRIEND_API void js::RemapRemoteWindowProxies(
   AutoDisableProxyCheck adpc;
 
   AutoEnterOOMUnsafeRegion oomUnsafe;
-  if (!CheckSystemRecursionLimit(cx)) {
+
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.checkSystem(cx)) {
     oomUnsafe.crash("js::RemapRemoteWindowProxies");
   }
 
@@ -980,12 +947,12 @@ JS_PUBLIC_API bool JS_ResolveStandardClass(JSContext* cx, HandleObject obj,
   Handle<GlobalObject*> global = obj.as<GlobalObject>();
   *resolved = false;
 
-  if (!JSID_IS_ATOM(id)) {
+  if (!id.isAtom()) {
     return true;
   }
 
   /* Check whether we're resolving 'undefined', and define it if so. */
-  JSAtom* idAtom = JSID_TO_ATOM(id);
+  JSAtom* idAtom = id.toAtom();
   if (idAtom == cx->names().undefined) {
     *resolved = true;
     return DefineDataProperty(
@@ -1051,11 +1018,11 @@ JS_PUBLIC_API bool JS_MayResolveStandardClass(const JSAtomState& names, jsid id,
     return true;
   }
 
-  if (!JSID_IS_ATOM(id)) {
+  if (!id.isAtom()) {
     return false;
   }
 
-  JSAtom* atom = JSID_TO_ATOM(id);
+  JSAtom* atom = id.toAtom();
 
   // This will return true even for deselected constructors.  (To do
   // better, we need a JSContext here; it's fine as it is.)
@@ -1207,11 +1174,11 @@ JS_PUBLIC_API JSProtoKey JS_IdToProtoKey(JSContext* cx, HandleId id) {
   CHECK_THREAD(cx);
   cx->check(id);
 
-  if (!JSID_IS_ATOM(id)) {
+  if (!id.isAtom()) {
     return JSProto_Null;
   }
 
-  JSAtom* atom = JSID_TO_ATOM(id);
+  JSAtom* atom = id.toAtom();
   const JSStdName* stdnm =
       LookupStdName(cx->names(), atom, standard_class_names);
   if (!stdnm) {
@@ -1540,21 +1507,28 @@ JS_GetExternalStringCallbacks(JSString* str) {
 
 static void SetNativeStackLimit(JSContext* cx, JS::StackKind kind,
                                 size_t stackSize) {
-#if JS_STACK_GROWTH_DIRECTION > 0
+#ifdef __wasi__
+  // WASI makes this easy: we build with the "stack-first" wasm-ld option, so
+  // the stack grows downward toward zero. Let's set a limit just a bit above
+  // this so that we catch an overflow before a Wasm trap occurs.
+  cx->nativeStackLimit[kind] = 1024;
+#else  // __wasi__
+#  if JS_STACK_GROWTH_DIRECTION > 0
   if (stackSize == 0) {
     cx->nativeStackLimit[kind] = UINTPTR_MAX;
   } else {
-    MOZ_ASSERT(cx->nativeStackBase <= size_t(-1) - stackSize);
-    cx->nativeStackLimit[kind] = cx->nativeStackBase + stackSize - 1;
+    MOZ_ASSERT(cx->nativeStackBase() <= size_t(-1) - stackSize);
+    cx->nativeStackLimit[kind] = cx->nativeStackBase() + stackSize - 1;
   }
-#else
+#  else   // stack grows up
   if (stackSize == 0) {
     cx->nativeStackLimit[kind] = 0;
   } else {
-    MOZ_ASSERT(cx->nativeStackBase >= stackSize);
-    cx->nativeStackLimit[kind] = cx->nativeStackBase - (stackSize - 1);
+    MOZ_ASSERT(cx->nativeStackBase() >= stackSize);
+    cx->nativeStackLimit[kind] = cx->nativeStackBase() - (stackSize - 1);
   }
-#endif
+#  endif  // stack grows down
+#endif    // !__wasi__
 }
 
 JS_PUBLIC_API void JS_SetNativeStackQuota(JSContext* cx,
@@ -4595,8 +4569,7 @@ JS_PUBLIC_API bool JS::PropertySpecNameEqualsId(JSPropertySpec::Name name,
   }
 
   MOZ_ASSERT(!PropertySpecNameIsDigits(name));
-  return JSID_IS_ATOM(id) &&
-         JS_LinearStringEqualsAscii(JSID_TO_ATOM(id), name.string());
+  return id.isAtom() && JS_LinearStringEqualsAscii(id.toAtom(), name.string());
 }
 
 JS_PUBLIC_API bool JS_Stringify(JSContext* cx, MutableHandleValue vp,
@@ -5283,6 +5256,13 @@ JS_PUBLIC_API void JS_SetGlobalJitCompilerOption(JSContext* cx,
         JitSpew(js::jit::JitSpew_IonScripts, "Disable offthread compilation");
       }
       break;
+    case JSJITCOMPILER_INLINING_BYTECODE_MAX_LENGTH:
+      if (value == uint32_t(-1)) {
+        jit::DefaultJitOptions defaultValues;
+        value = defaultValues.smallFunctionMaxBytecodeLength;
+      }
+      jit::JitOptions.smallFunctionMaxBytecodeLength = value;
+      break;
     case JSJITCOMPILER_JUMP_THRESHOLD:
       if (value == uint32_t(-1)) {
         jit::DefaultJitOptions defaultValues;
@@ -5364,6 +5344,9 @@ JS_PUBLIC_API bool JS_GetGlobalJitCompilerOption(JSContext* cx,
     case JSJITCOMPILER_ION_FREQUENT_BAILOUT_THRESHOLD:
       *valueOut = jit::JitOptions.frequentBailoutThreshold;
       break;
+    case JSJITCOMPILER_INLINING_BYTECODE_MAX_LENGTH:
+      *valueOut = jit::JitOptions.smallFunctionMaxBytecodeLength;
+      break;
     case JSJITCOMPILER_BASELINE_INTERPRETER_ENABLE:
       *valueOut = jit::JitOptions.baselineInterpreter;
       break;
@@ -5431,9 +5414,7 @@ JS_PUBLIC_API bool JS_CharsToId(JSContext* cx, JS::TwoByteChars chars,
     return false;
   }
 #ifdef DEBUG
-  uint32_t dummy;
-  MOZ_ASSERT(!atom->isIndex(&dummy),
-             "API misuse: |chars| must not encode an index");
+  MOZ_ASSERT(!atom->isIndex(), "API misuse: |chars| must not encode an index");
 #endif
   idp.set(AtomToId(atom));
   return true;

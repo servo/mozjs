@@ -108,20 +108,13 @@ template <MaybeAdding Adding>
 
 inline Shape* Shape::new_(JSContext* cx, Handle<StackShape> other,
                           uint32_t nfixed) {
-  Shape* shape = other.isAccessorShape() ? js::Allocate<AccessorShape>(cx)
-                                         : js::Allocate<Shape>(cx);
+  Shape* shape = js::Allocate<Shape>(cx);
   if (!shape) {
     ReportOutOfMemory(cx);
     return nullptr;
   }
 
-  if (other.isAccessorShape()) {
-    new (shape) AccessorShape(other, nfixed);
-  } else {
-    new (shape) Shape(other, nfixed);
-  }
-
-  return shape;
+  return new (shape) Shape(other, nfixed);
 }
 
 inline void Shape::updateBaseShapeAfterMovingGC() {
@@ -131,72 +124,9 @@ inline void Shape::updateBaseShapeAfterMovingGC() {
   }
 }
 
-static inline void GetterSetterPreWriteBarrier(AccessorShape* shape) {
-  if (shape->hasGetterObject()) {
-    PreWriteBarrier(shape->getterObject());
-  }
-  if (shape->hasSetterObject()) {
-    PreWriteBarrier(shape->setterObject());
-  }
-}
-
-static inline void GetterSetterPostWriteBarrier(AccessorShape* shape) {
-  // If the shape contains any nursery pointers then add it to a vector on the
-  // zone that we fixup on minor GC. Prevent this vector growing too large
-  // since we don't tolerate OOM here.
-
-  static const size_t MaxShapeVectorLength = 5000;
-
-  MOZ_ASSERT(shape);
-
-  gc::StoreBuffer* sb = nullptr;
-  if (shape->hasGetterObject()) {
-    sb = shape->getterObject()->storeBuffer();
-  }
-  if (!sb && shape->hasSetterObject()) {
-    sb = shape->setterObject()->storeBuffer();
-  }
-  if (!sb) {
-    return;
-  }
-
-  auto& nurseryShapes = shape->zone()->nurseryShapes();
-
-  {
-    AutoEnterOOMUnsafeRegion oomUnsafe;
-    if (!nurseryShapes.append(shape)) {
-      oomUnsafe.crash("GetterSetterPostWriteBarrier");
-    }
-  }
-
-  if (nurseryShapes.length() == 1) {
-    sb->putGeneric(NurseryShapesRef(shape->zone()));
-  } else if (nurseryShapes.length() == MaxShapeVectorLength) {
-    sb->setAboutToOverflow(JS::GCReason::FULL_SHAPE_BUFFER);
-  }
-}
-
-inline AccessorShape::AccessorShape(const StackShape& other, uint32_t nfixed)
-    : Shape(other, nfixed),
-      rawGetter(other.rawGetter),
-      rawSetter(other.rawSetter) {
-  MOZ_ASSERT(getAllocKind() == gc::AllocKind::ACCESSOR_SHAPE);
-  GetterSetterPostWriteBarrier(this);
-}
-
-inline AccessorShape::AccessorShape(BaseShape* base, ObjectFlags objectFlags,
-                                    uint32_t nfixed)
-    : Shape(base, objectFlags, nfixed), rawGetter(nullptr), rawSetter(nullptr) {
-  MOZ_ASSERT(getAllocKind() == gc::AllocKind::ACCESSOR_SHAPE);
-}
-
 inline void Shape::initDictionaryShape(const StackShape& child, uint32_t nfixed,
                                        DictionaryShapeLink next) {
-  if (child.isAccessorShape()) {
-    new (this) AccessorShape(child, nfixed);
-  } else {
-    new (this) Shape(child, nfixed);
-  }
+  new (this) Shape(child, nfixed);
   this->immutableFlags |= IN_DICTIONARY;
 
   MOZ_ASSERT(dictNext.isNone());
@@ -275,19 +205,6 @@ template <class ObjectSubclass>
   return true;
 }
 
-inline AutoRooterGetterSetter::Inner::Inner(uint8_t attrs, GetterOp* pgetter_,
-                                            SetterOp* psetter_)
-    : attrs(attrs), pgetter(pgetter_), psetter(psetter_) {}
-
-inline AutoRooterGetterSetter::AutoRooterGetterSetter(JSContext* cx,
-                                                      uint8_t attrs,
-                                                      GetterOp* pgetter,
-                                                      SetterOp* psetter) {
-  if (attrs & (JSPROP_GETTER | JSPROP_SETTER)) {
-    inner.emplace(cx, Inner(attrs, pgetter, psetter));
-  }
-}
-
 static inline uint8_t GetPropertyAttributes(JSObject* obj,
                                             PropertyResult prop) {
   MOZ_ASSERT(obj->is<NativeObject>());
@@ -299,7 +216,7 @@ static inline uint8_t GetPropertyAttributes(JSObject* obj,
     return JSPROP_ENUMERATE;
   }
 
-  return prop.shape()->attributes();
+  return prop.shapeProperty().attributes();
 }
 
 /*
@@ -430,7 +347,7 @@ MOZ_ALWAYS_INLINE Shape* Shape::searchNoHashify(Shape* start, jsid id) {
   return foundShape;
 }
 
-/* static */ MOZ_ALWAYS_INLINE Shape* NativeObject::addDataProperty(
+/* static */ MOZ_ALWAYS_INLINE Shape* NativeObject::addProperty(
     JSContext* cx, HandleNativeObject obj, HandleId id, uint32_t slot,
     unsigned attrs) {
   MOZ_ASSERT(!JSID_IS_VOID(id));
@@ -448,29 +365,29 @@ MOZ_ALWAYS_INLINE Shape* Shape::searchNoHashify(Shape* start, jsid id) {
     entry = &table->search<MaybeAdding::Adding>(id, keep);
   }
 
-  return addDataPropertyInternal(cx, obj, id, slot, attrs, table, entry, keep);
+  return addPropertyInternal(cx, obj, id, slot, attrs, table, entry, keep);
 }
 
-/* static */ MOZ_ALWAYS_INLINE Shape* NativeObject::addAccessorProperty(
-    JSContext* cx, HandleNativeObject obj, HandleId id, GetterOp getter,
-    SetterOp setter, unsigned attrs) {
-  MOZ_ASSERT(!JSID_IS_VOID(id));
-  MOZ_ASSERT_IF(!id.isPrivateName(), obj->uninlinedNonProxyIsExtensible());
-  MOZ_ASSERT(!obj->containsPure(id));
+MOZ_ALWAYS_INLINE ObjectFlags GetObjectFlagsForNewProperty(Shape* last, jsid id,
+                                                           unsigned attrs,
+                                                           JSContext* cx) {
+  ObjectFlags flags = last->objectFlags();
 
-  AutoKeepShapeCaches keep(cx);
-  ShapeTable* table = nullptr;
-  ShapeTable::Entry* entry = nullptr;
-  if (obj->inDictionaryMode()) {
-    table = obj->lastProperty()->ensureTableForDictionary(cx, keep);
-    if (!table) {
-      return nullptr;
-    }
-    entry = &table->search<MaybeAdding::Adding>(id, keep);
+  uint32_t index;
+  if (IdIsIndex(id, &index)) {
+    flags.setFlag(ObjectFlag::Indexed);
+  } else if (JSID_IS_SYMBOL(id) && JSID_TO_SYMBOL(id)->isInterestingSymbol()) {
+    flags.setFlag(ObjectFlag::HasInterestingSymbol);
   }
 
-  return addAccessorPropertyInternal(cx, obj, id, getter, setter, attrs, table,
-                                     entry, keep);
+  if ((attrs & (JSPROP_READONLY | JSPROP_GETTER | JSPROP_SETTER |
+                JSPROP_CUSTOM_DATA_PROP)) &&
+      last->getObjectClass() == &PlainObject::class_ &&
+      !JSID_IS_ATOM(id, cx->names().proto)) {
+    flags.setFlag(ObjectFlag::HasNonWritableOrAccessorPropExclProto);
+  }
+
+  return flags;
 }
 
 } /* namespace js */

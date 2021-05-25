@@ -19,7 +19,6 @@
 #include "wasm/WasmModule.h"
 
 #include <chrono>
-#include <thread>
 
 #include "jit/JitOptions.h"
 #include "js/BuildId.h"                 // JS::BuildIdCharVector
@@ -81,7 +80,7 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   }
 
   ThreadType threadType() override {
-    return ThreadType::THREAD_TYPE_WASM_TIER2;
+    return ThreadType::THREAD_TYPE_WASM_GENERATOR_TIER2;
   }
 };
 
@@ -199,7 +198,7 @@ bool Module::finishTier2(const LinkData& linkData2,
 
 void Module::testingBlockOnTier2Complete() const {
   while (testingTier2Active_) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ThisThread::SleepMilliseconds(1);
   }
 }
 
@@ -568,7 +567,7 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
   }
 
   if (memoryObj) {
-    size_t memoryLength = memoryObj->volatileMemoryLength().get();
+    size_t memoryLength = memoryObj->volatileMemoryLength();
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -720,7 +719,7 @@ bool Module::instantiateMemory(JSContext* cx,
     if (!CheckLimits(cx, declaredMin, declaredMax,
                      /* defaultMax */ uint64_t(MaxMemory32Bytes()),
                      /* actualLength */
-                     uint64_t(memory->volatileMemoryLength().get()),
+                     uint64_t(memory->volatileMemoryLength()),
                      memory->buffer().wasmMaxSize(), metadata().isAsmJS(),
                      "Memory")) {
       return false;

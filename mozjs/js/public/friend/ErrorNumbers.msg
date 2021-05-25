@@ -457,7 +457,7 @@ MSG_DEF(JSMSG_WASM_BAD_REF_NONNULLABLE_VALUE,  0, JSEXN_TYPEERR,     "cannot pas
 MSG_DEF(JSMSG_WASM_BAD_FUNCREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass WebAssembly exported functions to funcref")
 MSG_DEF(JSMSG_WASM_BAD_EQREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a TypedObject to an eqref")
 MSG_DEF(JSMSG_WASM_BAD_VAL_TYPE,       0, JSEXN_TYPEERR,     "cannot pass v128 to or from JS")
-MSG_DEF(JSMSG_WASM_BAD_GLOBAL_TYPE,    0, JSEXN_TYPEERR,     "bad type for a WebAssembly.Global")
+MSG_DEF(JSMSG_WASM_BAD_STRING_VAL_TYPE,    0, JSEXN_TYPEERR,     "bad value type")
 MSG_DEF(JSMSG_WASM_NO_TRANSFER,        0, JSEXN_TYPEERR,     "cannot transfer WebAssembly/asm.js ArrayBuffer")
 MSG_DEF(JSMSG_WASM_TEXT_FAIL,          1, JSEXN_SYNTAXERR,   "wasm text error: {0}")
 MSG_DEF(JSMSG_WASM_MISSING_MAXIMUM,    0, JSEXN_TYPEERR,     "'shared' is true but maximum is not specified")
@@ -712,7 +712,7 @@ MSG_DEF(JSMSG_GET_ASYNC_ITER_RETURNED_PRIMITIVE, 0, JSEXN_TYPEERR, "[Symbol.asyn
 MSG_DEF(JSMSG_READABLESTREAM_UNDERLYINGSOURCE_TYPE_WRONG,0, JSEXN_RANGEERR,"'underlyingSource.type' must be \"bytes\" or undefined.")
 MSG_DEF(JSMSG_READABLESTREAM_BYTES_TYPE_NOT_IMPLEMENTED, 0, JSEXN_RANGEERR,"support for 'new ReadableStream({ type: \"bytes\" })' is not yet implemented")
 MSG_DEF(JSMSG_READABLESTREAM_BYOB_READER_FOR_NON_BYTE_STREAM,0,JSEXN_TYPEERR,"can't get a BYOB reader for a non-byte stream")
-MSG_DEF(JSMSG_READABLESTREAM_INVALID_READER_MODE,        0, JSEXN_RANGEERR,"'mode' must be \"byob\" or undefined.")
+MSG_DEF(JSMSG_READABLESTREAM_INVALID_READER_MODE,        0, JSEXN_TYPEERR,"'mode' must be \"byob\" or undefined.")
 MSG_DEF(JSMSG_NUMBER_MUST_BE_FINITE_NON_NEGATIVE, 1, JSEXN_RANGEERR, "'{0}' must be a finite, non-negative number.")
 MSG_DEF(JSMSG_READABLEBYTESTREAMCONTROLLER_INVALID_BYTESWRITTEN, 0, JSEXN_RANGEERR, "'bytesWritten' exceeds remaining length.")
 MSG_DEF(JSMSG_READABLEBYTESTREAMCONTROLLER_INVALID_VIEW_SIZE, 0, JSEXN_RANGEERR, "view size does not match requested data.")
@@ -749,6 +749,7 @@ MSG_DEF(JSMSG_WRITABLESTREAM_ALREADY_LOCKED,             0, JSEXN_TYPEERR, "writ
 MSG_DEF(JSMSG_READABLESTREAM_NYI,                        0, JSEXN_ERR,     "full WritableStream support is not yet implemented")
 
 // Other Stream-related
+MSG_DEF(JSMSG_STREAM_MISSING_HIGHWATERMARK,              0, JSEXN_TYPEERR,  "'highWaterMark' must not be undefined.")
 MSG_DEF(JSMSG_STREAM_INVALID_HIGHWATERMARK,              0, JSEXN_RANGEERR, "'highWaterMark' must be a non-negative, non-NaN number.")
 MSG_DEF(JSMSG_STREAM_CONSUME_ERROR,                      0, JSEXN_TYPEERR,  "error consuming stream body")
 

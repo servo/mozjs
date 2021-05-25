@@ -215,7 +215,7 @@ static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
     // Collect any typed array or shared typed array elements from this
     // object.
     if (pobj->is<TypedArrayObject>()) {
-      size_t len = pobj->as<TypedArrayObject>().length().get();
+      size_t len = pobj->as<TypedArrayObject>().length();
 
       // Fail early if the typed array is enormous, because this will be very
       // slow and will likely report OOM. This also means we don't need to
@@ -244,13 +244,11 @@ static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
         firstElemIndex = props.length();
       }
 
-      for (Shape::Range<NoGC> r(pobj->lastProperty()); !r.empty();
-           r.popFront()) {
-        Shape& shape = r.front();
-        jsid id = shape.propid();
+      for (ShapePropertyIter<NoGC> iter(pobj->shape()); !iter.done(); iter++) {
+        jsid id = iter->key();
         uint32_t dummy;
         if (IdIsIndex(id, &dummy)) {
-          if (!Enumerate<CheckForDuplicates>(cx, pobj, id, shape.enumerable(),
+          if (!Enumerate<CheckForDuplicates>(cx, pobj, id, iter->enumerable(),
                                              flags, visited, props)) {
             return false;
           }
@@ -277,10 +275,8 @@ static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
 
     /* Collect all unique property names from this object's shape. */
     bool symbolsFound = false;
-    Shape::Range<NoGC> r(pobj->lastProperty());
-    for (; !r.empty(); r.popFront()) {
-      Shape& shape = r.front();
-      jsid id = shape.propid();
+    for (ShapePropertyIter<NoGC> iter(pobj->shape()); !iter.done(); iter++) {
+      jsid id = iter->key();
 
       if (JSID_IS_SYMBOL(id)) {
         symbolsFound = true;
@@ -292,7 +288,7 @@ static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
         continue;
       }
 
-      if (!Enumerate<CheckForDuplicates>(cx, pobj, id, shape.enumerable(),
+      if (!Enumerate<CheckForDuplicates>(cx, pobj, id, iter->enumerable(),
                                          flags, visited, props)) {
         return false;
       }
@@ -307,11 +303,10 @@ static bool EnumerateNativeProperties(JSContext* cx, HandleNativeObject pobj,
     // 9.1.12 requires that all symbols appear after all strings in the
     // result.
     size_t initialLength = props.length();
-    for (Shape::Range<NoGC> r(pobj->lastProperty()); !r.empty(); r.popFront()) {
-      Shape& shape = r.front();
-      jsid id = shape.propid();
+    for (ShapePropertyIter<NoGC> iter(pobj->shape()); !iter.done(); iter++) {
+      jsid id = iter->key();
       if (JSID_IS_SYMBOL(id)) {
-        if (!Enumerate<CheckForDuplicates>(cx, pobj, id, shape.enumerable(),
+        if (!Enumerate<CheckForDuplicates>(cx, pobj, id, iter->enumerable(),
                                            flags, visited, props)) {
           return false;
         }
@@ -1067,12 +1062,15 @@ PlainObject* Realm::createIterResultTemplateObject(
     return nullptr;
   }
 
+#ifdef DEBUG
   // Make sure that the properties are in the right slots.
-  DebugOnly<Shape*> shape = templateObject->lastProperty();
-  MOZ_ASSERT(shape->previous()->slot() == Realm::IterResultObjectValueSlot &&
-             shape->previous()->propidRef() == NameToId(cx->names().value));
-  MOZ_ASSERT(shape->slot() == Realm::IterResultObjectDoneSlot &&
-             shape->propidRef() == NameToId(cx->names().done));
+  ShapePropertyIter<NoGC> iter(templateObject->shape());
+  MOZ_ASSERT(iter->slot() == Realm::IterResultObjectDoneSlot &&
+             iter->key() == NameToId(cx->names().done));
+  iter++;
+  MOZ_ASSERT(iter->slot() == Realm::IterResultObjectValueSlot &&
+             iter->key() == NameToId(cx->names().value));
+#endif
 
   return templateObject;
 }

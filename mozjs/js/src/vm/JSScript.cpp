@@ -1212,12 +1212,6 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
                                        scriptEnclosingScope, funOrMod));
   MOZ_TRY(frontend::StencilXDR::codeSharedData<mode>(xdr, script->sharedData_));
 
-  if (mode == XDR_DECODE) {
-    if (!SharedImmutableScriptData::shareScriptData(cx, script->sharedData_)) {
-      return xdr->fail(JS::TranscodeResult::Throw);
-    }
-  }
-
   if (xdrFlags & HasLazyScript) {
     if (mode == XDR_DECODE) {
       script->setAllowRelazify();
@@ -1519,20 +1513,6 @@ uint64_t JSScript::getHitCount(jsbytecode* pc) {
     count -= throwCount->numExec();
     targetOffset = throwCount->pcOffset() - 1;
   } while (true);
-}
-
-void JSScript::incHitCount(jsbytecode* pc) {
-  MOZ_ASSERT(containsPC(pc));
-  if (pc < main()) {
-    pc = main();
-  }
-
-  ScriptCounts& sc = getScriptCounts();
-  js::PCCounts* baseCount = sc.getImmediatePrecedingPCCounts(pcToOffset(pc));
-  if (!baseCount) {
-    return;
-  }
-  baseCount->numExec()++;
 }
 
 void JSScript::addIonCounts(jit::IonScriptCounts* ionCounts) {
@@ -2331,6 +2311,11 @@ bool ScriptSource::tryCompressOffThread(JSContext* cx) {
   // ParseTask::finish instead.
   MOZ_ASSERT(!cx->isHelperThreadContext());
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
+
+  // If source compression was already attempted, do not queue a new task.
+  if (hadCompressionTask_) {
+    return true;
+  }
 
   if (!hasUncompressedSource()) {
     // This excludes compressed, missing, and retrievable source.
@@ -4144,7 +4129,7 @@ void js::maybeSpewScriptFinalWarmUpCount(JSScript* script) {
     // spewer is not enabled, AutoSpewChannel automatically sets and unsets
     // the proper channel for the duration of spewing a health report's warm
     // up count.
-    AutoSpewChannel channel(cx, SpewChannel::RateMyCacheIR, script);
+    AutoSpewChannel channel(cx, SpewChannel::CacheIRHealthReport, script);
     jit::CacheIRHealth cih;
     cih.spewScriptFinalWarmUpCount(cx, scriptName, script, warmUpCount);
 
@@ -4839,8 +4824,10 @@ bool JSScript::formalIsAliased(unsigned argSlot) {
   MOZ_CRASH("Argument slot not found");
 }
 
-bool JSScript::anyFormalIsAliased() {
-  if (functionHasParameterExprs()) {
+// Returns true if any formal argument is mapped by the arguments
+// object, but lives in the call object.
+bool JSScript::anyFormalIsForwarded() {
+  if (!argsObjAliasesFormals()) {
     return false;
   }
 

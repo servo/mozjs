@@ -546,16 +546,17 @@ struct RuntimeSizes {
 };
 
 struct UnusedGCThingSizes {
-#define FOR_EACH_SIZE(MACRO)            \
-  MACRO(Other, GCHeapUnused, object)    \
-  MACRO(Other, GCHeapUnused, script)    \
-  MACRO(Other, GCHeapUnused, shape)     \
-  MACRO(Other, GCHeapUnused, baseShape) \
-  MACRO(Other, GCHeapUnused, string)    \
-  MACRO(Other, GCHeapUnused, symbol)    \
-  MACRO(Other, GCHeapUnused, bigInt)    \
-  MACRO(Other, GCHeapUnused, jitcode)   \
-  MACRO(Other, GCHeapUnused, scope)     \
+#define FOR_EACH_SIZE(MACRO)               \
+  MACRO(Other, GCHeapUnused, object)       \
+  MACRO(Other, GCHeapUnused, script)       \
+  MACRO(Other, GCHeapUnused, shape)        \
+  MACRO(Other, GCHeapUnused, baseShape)    \
+  MACRO(Other, GCHeapUnused, getterSetter) \
+  MACRO(Other, GCHeapUnused, string)       \
+  MACRO(Other, GCHeapUnused, symbol)       \
+  MACRO(Other, GCHeapUnused, bigInt)       \
+  MACRO(Other, GCHeapUnused, jitcode)      \
+  MACRO(Other, GCHeapUnused, scope)        \
   MACRO(Other, GCHeapUnused, regExpShared)
 
   UnusedGCThingSizes() = default;
@@ -583,6 +584,9 @@ struct UnusedGCThingSizes {
         break;
       case JS::TraceKind::BaseShape:
         baseShape += n;
+        break;
+      case JS::TraceKind::GetterSetter:
+        getterSetter += n;
         break;
       case JS::TraceKind::JitCode:
         jitcode += n;
@@ -628,6 +632,7 @@ struct ZoneStats {
   MACRO(Other, MallocHeap, bigIntsMallocHeap)              \
   MACRO(Other, GCHeapAdmin, gcHeapArenaAdmin)              \
   MACRO(Other, GCHeapUsed, jitCodesGCHeap)                 \
+  MACRO(Other, GCHeapUsed, getterSettersGCHeap)            \
   MACRO(Other, GCHeapUsed, scopesGCHeap)                   \
   MACRO(Other, MallocHeap, scopesMallocHeap)               \
   MACRO(Other, GCHeapUsed, regExpSharedsGCHeap)            \
@@ -793,12 +798,12 @@ struct RuntimeStats {
   // values from the zones and compartments. Both of those values are not
   // reported directly, but are just present for sanity-checking other
   // values.
-#define FOR_EACH_SIZE(MACRO)                           \
-  MACRO(_, Ignore, gcHeapChunkTotal)                   \
-  MACRO(_, GCHeapDecommitted, gcHeapDecommittedArenas) \
-  MACRO(_, GCHeapUnused, gcHeapUnusedChunks)           \
-  MACRO(_, GCHeapUnused, gcHeapUnusedArenas)           \
-  MACRO(_, GCHeapAdmin, gcHeapChunkAdmin)              \
+#define FOR_EACH_SIZE(MACRO)                          \
+  MACRO(_, Ignore, gcHeapChunkTotal)                  \
+  MACRO(_, GCHeapDecommitted, gcHeapDecommittedPages) \
+  MACRO(_, GCHeapUnused, gcHeapUnusedChunks)          \
+  MACRO(_, GCHeapUnused, gcHeapUnusedArenas)          \
+  MACRO(_, GCHeapAdmin, gcHeapChunkAdmin)             \
   MACRO(_, Ignore, gcHeapGCThings)
 
   explicit RuntimeStats(mozilla::MallocSizeOf mallocSizeOf)
@@ -808,8 +813,8 @@ struct RuntimeStats {
   //
   // - rtStats.gcHeapChunkTotal
   //   - decommitted bytes
-  //     - rtStats.gcHeapDecommittedArenas
-  //         (decommitted arenas in non-empty chunks)
+  //     - rtStats.gcHeapDecommittedPages
+  //         (decommitted pages in non-empty chunks)
   //   - unused bytes
   //     - rtStats.gcHeapUnusedChunks (empty chunks)
   //     - rtStats.gcHeapUnusedArenas (empty arenas within non-empty chunks)
@@ -822,8 +827,8 @@ struct RuntimeStats {
   //       == (rtStats.zTotals.sizeOfLiveGCThings() +
   //           rtStats.cTotals.sizeOfLiveGCThings())
   //
-  // It's possible that some arenas in empty chunks may be decommitted, but
-  // we don't count those under rtStats.gcHeapDecommittedArenas because (a)
+  // It's possible that some pages in empty chunks may be decommitted, but
+  // we don't count those under rtStats.gcHeapDecommittedPages because (a)
   // it's rare, and (b) this means that rtStats.gcHeapUnusedChunks is a
   // multiple of the chunk size, which is good.
 

@@ -7,6 +7,7 @@
 #ifndef vm_JSObject_h
 #define vm_JSObject_h
 
+#include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 
 #include "gc/Barrier.h"
@@ -18,6 +19,7 @@
 #include "js/Wrapper.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/Printer.h"
+#include "vm/PropertyResult.h"
 #include "vm/Shape.h"
 #include "vm/StringType.h"
 #include "vm/Xdr.h"
@@ -44,6 +46,22 @@ class NativeObject;
 class NewObjectCache;
 
 enum class IntegrityLevel { Sealed, Frozen };
+
+/*
+ * The NewObjectKind allows an allocation site to specify the lifetime
+ * requirements that must be fixed at allocation time.
+ */
+enum NewObjectKind {
+  /* This is the default. Most objects are generic. */
+  GenericObject,
+
+  /*
+   * Objects which will not benefit from being allocated in the nursery
+   * (e.g. because they are known to have a long lifetime) may be allocated
+   * with this kind to place them immediately into the tenured generation.
+   */
+  TenuredObject
+};
 
 // Forward declarations, required for later friend declarations.
 bool PreventExtensions(JSContext* cx, JS::HandleObject obj,
@@ -819,8 +837,7 @@ extern bool ReadPropertyDescriptors(
 /* Read the name using a dynamic lookup on the scopeChain. */
 extern bool LookupName(JSContext* cx, HandlePropertyName name,
                        HandleObject scopeChain, MutableHandleObject objp,
-                       MutableHandleObject pobjp,
-                       MutableHandle<PropertyResult> propp);
+                       MutableHandleObject pobjp, PropertyResult* propp);
 
 extern bool LookupNameNoGC(JSContext* cx, PropertyName* name,
                            JSObject* scopeChain, JSObject** objp,
@@ -874,8 +891,13 @@ bool GetOwnNativeGetterPure(JSContext* cx, JSObject* obj, jsid id,
 bool HasOwnDataPropertyPure(JSContext* cx, JSObject* obj, jsid id,
                             bool* result);
 
+// Deprecated: Use the Maybe<PropertyDescriptor> overload!
 bool GetOwnPropertyDescriptor(JSContext* cx, HandleObject obj, HandleId id,
                               MutableHandle<JS::PropertyDescriptor> desc);
+
+bool GetOwnPropertyDescriptor(
+    JSContext* cx, HandleObject obj, HandleId id,
+    MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc);
 
 /*
  * Like JS::FromPropertyDescriptor, but ignore desc.object() and always set vp

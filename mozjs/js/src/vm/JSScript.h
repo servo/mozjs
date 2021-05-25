@@ -524,6 +524,9 @@ class ScriptSource {
                       CompressedData<char16_t>>
       pendingCompressed_;
 
+  // True if an associated SourceCompressionTask was ever created.
+  bool hadCompressionTask_ = false;
+
   // The filename of this script.
   mozilla::Maybe<SharedImmutableString> filename_;
 
@@ -884,6 +887,10 @@ class ScriptSource {
                                         size_t length);
 
   [[nodiscard]] bool tryCompressOffThread(JSContext* cx);
+
+  // Called by the SourceCompressionTask constructor to indicate such a task was
+  // ever created.
+  void noteSourceCompressionTask() { hadCompressionTask_ = true; }
 
   // *Trigger* the conversion of this ScriptSource from containing uncompressed
   // |Unit|-encoded source to containing compressed source.  Conversion may not
@@ -2147,7 +2154,6 @@ class JSScript : public js::BaseScript {
   const js::PCCounts* maybeGetThrowCounts(jsbytecode* pc);
   js::PCCounts* getThrowCounts(jsbytecode* pc);
   uint64_t getHitCount(jsbytecode* pc);
-  void incHitCount(jsbytecode* pc);  // Used when we bailout out of Ion.
   void addIonCounts(js::jit::IonScriptCounts* ionCounts);
   js::jit::IonScriptCounts* getIonCounts();
   void releaseScriptCounts(js::ScriptCounts* counts);
@@ -2290,7 +2296,7 @@ class JSScript : public js::BaseScript {
   }
 
   bool formalIsAliased(unsigned argSlot);
-  bool anyFormalIsAliased();
+  bool anyFormalIsForwarded();
   bool formalLivesInArgumentsObject(unsigned argSlot);
 
   // See comment above 'debugMode' in Realm.h for explanation of

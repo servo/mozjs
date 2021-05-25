@@ -14,6 +14,8 @@
 #include <iterator>
 #include <stdarg.h>
 
+#include "util/GetPidProvider.h"  // getpid()
+
 #ifdef MOZ_CALLGRIND
 #  include <valgrind/callgrind.h>
 #endif
@@ -21,16 +23,6 @@
 #ifdef __APPLE__
 #  ifdef MOZ_INSTRUMENTS
 #    include "devtools/Instruments.h"
-#  endif
-#endif
-
-#ifdef XP_WIN
-#  ifdef JS_ENABLE_UWP
-#    include <processthreadsapi.h>
-#    define getpid GetCurrentProcessId
-#  else
-#    include <process.h>
-#    define getpid _getpid
 #  endif
 #endif
 

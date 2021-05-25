@@ -1003,7 +1003,7 @@ bool OptimizeMIR(MIRGenerator* mir) {
   DumpMIRExpressions(graph, mir->outerInfo(),
                      "BuildSSA (== input to OptimizeMIR)");
 
-  if (!JitOptions.disablePgo && !mir->compilingWasm()) {
+  if (!JitOptions.disablePruning && !mir->compilingWasm()) {
     AutoTraceLog log(logger, TraceLogger_PruneUnusedBranches);
     JitSpewCont(JitSpew_Prune, "\n");
     if (!PruneUnusedBranches(mir, graph)) {
@@ -1408,6 +1408,20 @@ bool OptimizeMIR(MIRGenerator* mir) {
   }
   AssertExtendedGraphCoherency(graph, /* underValueNumberer = */ false,
                                /* force = */ true);
+
+  // Remove unreachable blocks created by MBasicBlock::NewFakeLoopPredecessor
+  // to ensure every loop header has two predecessors. (This only happens due
+  // to OSR.)  After this point, it is no longer possible to build the
+  // dominator tree.
+  if (!mir->compilingWasm() && graph.osrBlock()) {
+    graph.removeFakeLoopPredecessors();
+    gs.spewPass("Remove fake loop predecessors");
+    AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Remove fake loop predecessors")) {
+      return false;
+    }
+  }
 
   // Passes after this point must not move instructions; these analyses
   // depend on knowing the final order in which instructions will execute.

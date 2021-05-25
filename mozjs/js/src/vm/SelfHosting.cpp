@@ -1079,7 +1079,7 @@ static bool intrinsic_ArrayBufferByteLength(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args[0].isObject());
   MOZ_ASSERT(args[0].toObject().is<T>());
 
-  size_t byteLength = args[0].toObject().as<T>().byteLength().get();
+  size_t byteLength = args[0].toObject().as<T>().byteLength();
   args.rval().setNumber(byteLength);
   return true;
 }
@@ -1097,7 +1097,7 @@ static bool intrinsic_PossiblyWrappedArrayBufferByteLength(JSContext* cx,
     return false;
   }
 
-  size_t byteLength = obj->byteLength().get();
+  size_t byteLength = obj->byteLength();
   args.rval().setNumber(byteLength);
   return true;
 }
@@ -1395,9 +1395,9 @@ static bool intrinsic_TypedArrayBitwiseSlice(JSContext* cx, unsigned argc,
   size_t sourceOffset = size_t(args[2].toNumber());
   size_t count = size_t(args[3].toNumber());
 
-  MOZ_ASSERT(count > 0 && count <= source->length().get());
-  MOZ_ASSERT(sourceOffset <= source->length().get() - count);
-  MOZ_ASSERT(count <= unsafeTypedArrayCrossCompartment->length().get());
+  MOZ_ASSERT(count > 0 && count <= source->length());
+  MOZ_ASSERT(sourceOffset <= source->length() - count);
+  MOZ_ASSERT(count <= unsafeTypedArrayCrossCompartment->length());
 
   size_t elementSize = TypedArrayElemSize(sourceType);
   MOZ_ASSERT(elementSize ==
@@ -1455,7 +1455,7 @@ static bool intrinsic_TypedArrayInitFromPackedArray(JSContext* cx,
 
   RootedArrayObject source(cx, &args[1].toObject().as<ArrayObject>());
   MOZ_ASSERT(IsPackedArray(source));
-  MOZ_ASSERT(source->length() == target->length().get());
+  MOZ_ASSERT(source->length() == target->length());
 
   switch (target->type()) {
 #define INIT_TYPED_ARRAY(T, N)                                         \
@@ -1856,11 +1856,11 @@ static bool intrinsic_HostResolveImportedModule(JSContext* cx, unsigned argc,
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 2);
   RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
-  RootedString specifier(cx, args[1].toString());
+  RootedObject moduleRequest(cx, &args[1].toObject());
 
   RootedValue referencingPrivate(cx, JS::GetModulePrivate(module));
-  RootedObject result(cx,
-                      CallModuleResolveHook(cx, referencingPrivate, specifier));
+  RootedObject result(
+      cx, CallModuleResolveHook(cx, referencingPrivate, moduleRequest));
   if (!result) {
     return false;
   }
@@ -1901,9 +1901,9 @@ static bool intrinsic_CreateNamespaceBinding(JSContext* cx, unsigned argc,
   MOZ_ASSERT(args[2].toObject().is<ModuleNamespaceObject>());
   // The property already exists in the evironment but is not writable, so set
   // the slot directly.
-  RootedShape shape(cx, environment->lookup(cx, name));
-  MOZ_ASSERT(shape);
-  environment->setSlot(shape->slot(), args[2]);
+  mozilla::Maybe<ShapeProperty> prop = environment->lookup(cx, name);
+  MOZ_ASSERT(prop.isSome());
+  environment->setSlot(prop->slot(), args[2]);
   args.rval().setUndefined();
   return true;
 }
@@ -1918,9 +1918,10 @@ static bool intrinsic_EnsureModuleEnvironmentNamespace(JSContext* cx,
   RootedModuleEnvironmentObject environment(cx, &module->initialEnvironment());
   // The property already exists in the evironment but is not writable, so set
   // the slot directly.
-  RootedShape shape(cx, environment->lookup(cx, cx->names().starNamespaceStar));
-  MOZ_ASSERT(shape);
-  environment->setSlot(shape->slot(), args[1]);
+  mozilla::Maybe<ShapeProperty> prop =
+      environment->lookup(cx, cx->names().starNamespaceStar);
+  MOZ_ASSERT(prop.isSome());
+  environment->setSlot(prop->slot(), args[1]);
   args.rval().setUndefined();
   return true;
 }
@@ -1982,6 +1983,28 @@ static bool intrinsic_AppendAsyncParentModule(JSContext* cx, unsigned argc,
   return ModuleObject::appendAsyncParentModule(cx, self, parent);
 }
 
+static bool intrinsic_InitAsyncEvaluating(JSContext* cx, unsigned argc,
+                                          Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 1);
+  RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
+  if (!module->initAsyncEvaluatingSlot()) {
+    return false;
+  }
+  args.rval().setUndefined();
+  return true;
+}
+
+static bool intrinsic_IsAsyncEvaluating(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 1);
+  RootedModuleObject module(cx, &args[0].toObject().as<ModuleObject>());
+  bool isAsyncEvaluating = module->isAsyncEvaluating();
+  args.rval().setBoolean(isAsyncEvaluating);
+  return true;
+}
+
 static bool intrinsic_CreateTopLevelCapability(JSContext* cx, unsigned argc,
                                                Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -2040,8 +2063,8 @@ static bool intrinsic_AddModuleNamespaceBinding(JSContext* cx, unsigned argc,
       cx, &args[0].toObject().as<ModuleNamespaceObject>());
   RootedAtom exportedName(cx, &args[1].toString()->asAtom());
   RootedModuleObject targetModule(cx, &args[2].toObject().as<ModuleObject>());
-  RootedAtom localName(cx, &args[3].toString()->asAtom());
-  if (!namespace_->addBinding(cx, exportedName, targetModule, localName)) {
+  RootedAtom targetName(cx, &args[3].toString()->asAtom());
+  if (!namespace_->addBinding(cx, exportedName, targetModule, targetName)) {
     return false;
   }
 
@@ -2609,6 +2632,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("SetCycleRoot", intrinsic_SetCycleRoot, 2, 0),
     JS_FN("GetCycleRoot", intrinsic_GetCycleRoot, 1, 0),
     JS_FN("AppendAsyncParentModule", intrinsic_AppendAsyncParentModule, 2, 0),
+    JS_FN("InitAsyncEvaluating", intrinsic_InitAsyncEvaluating, 1, 0),
+    JS_FN("IsAsyncEvaluating", intrinsic_IsAsyncEvaluating, 1, 0),
     JS_FN("CreateTopLevelCapability", intrinsic_CreateTopLevelCapability, 1, 0),
     JS_FN("ModuleTopLevelCapabilityResolve",
           intrinsic_ModuleTopLevelCapabilityResolve, 1, 0),
@@ -2765,7 +2790,7 @@ static bool VerifyGlobalNames(JSContext* cx, Handle<GlobalObject*> shg) {
         PropertyName* name = loc.getPropertyName(script);
         id = NameToId(name);
 
-        if (!shg->lookupPure(id)) {
+        if (shg->lookupPure(id).isNothing()) {
           // cellIter disallows GCs, but error reporting wants to
           // have them, so we need to move it out of the loop.
           nameMissing = true;
@@ -2942,10 +2967,10 @@ static void GetUnclonedValue(NativeObject* selfHostedObject,
   // non-permanent atoms here should be impossible.
   MOZ_ASSERT_IF(JSID_IS_STRING(id), JSID_TO_STRING(id)->isPermanentAtom());
 
-  Shape* shape = selfHostedObject->lookupPure(id);
-  MOZ_ASSERT(shape);
-  MOZ_ASSERT(shape->isDataProperty());
-  *vp = selfHostedObject->getSlot(shape->slot());
+  mozilla::Maybe<ShapeProperty> prop = selfHostedObject->lookupPure(id);
+  MOZ_ASSERT(prop.isSome());
+  MOZ_ASSERT(prop->isDataProperty());
+  *vp = selfHostedObject->getSlot(prop->slot());
 }
 
 static bool CloneProperties(JSContext* cx, HandleNativeObject selfHostedObject,
@@ -2964,27 +2989,25 @@ static bool CloneProperties(JSContext* cx, HandleNativeObject selfHostedObject,
     }
   }
 
-  Rooted<ShapeVector> shapes(cx, ShapeVector(cx));
-  for (Shape::Range<NoGC> range(selfHostedObject->lastProperty());
-       !range.empty(); range.popFront()) {
-    Shape& shape = range.front();
-    if (shape.enumerable() && !shapes.append(&shape)) {
+  Rooted<ShapePropertyVector> props(cx, ShapePropertyVector(cx));
+  for (ShapePropertyIter<NoGC> iter(selfHostedObject->shape()); !iter.done();
+       iter++) {
+    if (iter->enumerable() && !props.append(*iter)) {
       return false;
     }
   }
 
-  // Now our shapes are in last-to-first order, so....
-  std::reverse(shapes.begin(), shapes.end());
-  for (size_t i = 0; i < shapes.length(); ++i) {
-    MOZ_ASSERT(!shapes[i]->isAccessorShape(),
+  // Now our properties are in last-to-first order, so....
+  std::reverse(props.begin(), props.end());
+  for (size_t i = 0; i < props.length(); ++i) {
+    MOZ_ASSERT(props[i].isDataProperty(),
                "Can't handle cloning accessors here yet.");
-    if (!ids.append(shapes[i]->propid())) {
+    if (!ids.append(props[i].key())) {
       return false;
     }
-    uint8_t shapeAttrs =
-        shapes[i]->attributes() &
-        (JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY);
-    if (!attrs.append(shapeAttrs)) {
+    uint8_t propAttrs = props[i].attributes() &
+                        (JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY);
+    if (!attrs.append(propAttrs)) {
       return false;
     }
   }

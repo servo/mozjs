@@ -115,6 +115,7 @@ class GlobalObject : public NativeObject {
     IMPORT_ENTRY_PROTO,
     EXPORT_ENTRY_PROTO,
     REQUESTED_MODULE_PROTO,
+    MODULE_REQUEST_PROTO,
     REGEXP_STATICS,
     RUNTIME_CODEGEN_ENABLED,
     INTRINSICS,
@@ -492,7 +493,8 @@ class GlobalObject : public NativeObject {
   }
 
   static bool ensureModulePrototypesCreated(JSContext* cx,
-                                            Handle<GlobalObject*> global);
+                                            Handle<GlobalObject*> global,
+                                            bool setUsedAsPrototype = false);
 
   static JSObject* getOrCreateModulePrototype(JSContext* cx,
                                               Handle<GlobalObject*> global) {
@@ -515,6 +517,12 @@ class GlobalObject : public NativeObject {
       JSContext* cx, Handle<GlobalObject*> global) {
     return getOrCreateObject(cx, global, REQUESTED_MODULE_PROTO,
                              initRequestedModuleProto);
+  }
+
+  static JSObject* getOrCreateModuleRequestPrototype(
+      JSContext* cx, Handle<GlobalObject*> global) {
+    return getOrCreateObject(cx, global, MODULE_REQUEST_PROTO,
+                             initModuleRequestProto);
   }
 
   static JSFunction* getOrCreateTypedArrayConstructor(
@@ -741,13 +749,13 @@ class GlobalObject : public NativeObject {
     }
 
     NativeObject* holder = &slot.toObject().as<NativeObject>();
-    Shape* shape = holder->lookupPure(name);
-    if (!shape) {
+    mozilla::Maybe<ShapeProperty> prop = holder->lookupPure(name);
+    if (prop.isNothing()) {
       *vp = UndefinedValue();
       return false;
     }
 
-    *vp = holder->getSlot(shape->slot());
+    *vp = holder->getSlot(prop->slot());
     return true;
   }
 
@@ -760,8 +768,8 @@ class GlobalObject : public NativeObject {
       return false;
     }
 
-    if (Shape* shape = holder->lookup(cx, name)) {
-      vp.set(holder->getSlot(shape->slot()));
+    if (mozilla::Maybe<ShapeProperty> prop = holder->lookup(cx, name)) {
+      vp.set(holder->getSlot(prop->slot()));
       *exists = true;
     } else {
       *exists = false;
@@ -840,6 +848,8 @@ class GlobalObject : public NativeObject {
   static bool initExportEntryProto(JSContext* cx, Handle<GlobalObject*> global);
   static bool initRequestedModuleProto(JSContext* cx,
                                        Handle<GlobalObject*> global);
+  static bool initModuleRequestProto(JSContext* cx,
+                                     Handle<GlobalObject*> global);
 
   static bool initStandardClasses(JSContext* cx, Handle<GlobalObject*> global);
   static bool initSelfHostingBuiltins(JSContext* cx,

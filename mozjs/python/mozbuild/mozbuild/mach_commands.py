@@ -73,7 +73,7 @@ class Watch(MachCommandBase):
     @Command(
         "watch",
         category="post-build",
-        description="Watch and re-build the tree.",
+        description="Watch and re-build (parts of) the tree.",
         conditions=[conditions.is_firefox],
     )
     @CommandArgument(
@@ -83,18 +83,16 @@ class Watch(MachCommandBase):
         help="Verbose output for what commands the watcher is running.",
     )
     def watch(self, verbose=False):
-        """Watch and re-build the source tree."""
+        """Watch and re-build (parts of) the source tree."""
 
         if not conditions.is_artifact_build(self):
             print(
-                "mach watch requires an artifact build. See "
-                "https://developer.mozilla.org/docs/Mozilla/Developer_guide/Build_Instructions/Simple_Firefox_build"  # noqa
+                "WARNING: mach watch only rebuilds the `mach build faster` parts of the tree!"
             )
-            return 1
 
         if not self.substs.get("WATCHMAN", None):
             print(
-                "mach watch requires watchman to be installed. See "
+                "mach watch requires watchman to be installed and found at configure time. See "
                 "https://developer.mozilla.org/docs/Mozilla/Developer_guide/Build_Instructions/Incremental_builds_with_filesystem_watching"  # noqa
             )
             return 1
@@ -2265,12 +2263,7 @@ class CreateMachEnvironment(MachCommandBase):
     @Command(
         "create-mach-environment",
         category="devenv",
-        description=(
-            "Create the `mach` virtualenvs. If executed with python3 (the "
-            "default when entering from `mach`), create both a python3 "
-            "and python2.7 virtualenv. If executed with python2, only "
-            "create the python2.7 virtualenv."
-        ),
+        description="Create the `mach` virtualenv.",
     )
     @CommandArgument(
         "-f",
@@ -2280,11 +2273,31 @@ class CreateMachEnvironment(MachCommandBase):
     )
     def create_mach_environment(self, force=False):
         from mozboot.util import get_mach_virtualenv_root
-        from mozbuild.pythonutil import find_python2_executable
         from mozbuild.virtualenv import VirtualenvManager
-        from six import PY2
 
-        virtualenv_path = get_mach_virtualenv_root(py2=PY2)
+        if sys.platform.startswith("darwin") and not os.environ.get(
+            "MACH_I_DO_WANT_TO_USE_ROSETTA"
+        ):
+            # If running on arm64 mac, check whether we're running under
+            # Rosetta and advise against it.
+            proc = subprocess.run(
+                ["sysctl", "-n", "sysctl.proc_translated"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if (
+                proc.returncode == 0
+                and proc.stdout.decode("ascii", "replace").strip() == "1"
+            ):
+                print(
+                    "Python is being emulated under Rosetta. Please use a native "
+                    "Python instead. If you still really want to go ahead, set "
+                    "the MACH_I_DO_WANT_TO_USE_ROSETTA environment variable.",
+                    file=sys.stderr,
+                )
+                return 1
+
+        virtualenv_path = get_mach_virtualenv_root()
         if sys.executable.startswith(virtualenv_path):
             print(
                 "You can only create a mach environment with the system "
@@ -2318,50 +2331,22 @@ class CreateMachEnvironment(MachCommandBase):
                 "data. Continuing."
             )
 
-        if not PY2:
-            manager.install_pip_requirements(
-                os.path.join(self.topsrcdir, "build", "zstandard_requirements.txt")
-            )
+        manager.install_pip_requirements(
+            os.path.join(self.topsrcdir, "build", "zstandard_requirements.txt")
+        )
 
-            # This can fail on some platforms. See
-            # https://bugzilla.mozilla.org/show_bug.cgi?id=1660120
-            try:
-                manager.install_pip_requirements(
-                    os.path.join(self.topsrcdir, "build", "glean_requirements.txt")
-                )
-            except subprocess.CalledProcessError:
-                print(
-                    "Could not install glean_sdk, so telemetry will not be "
-                    "collected. Continuing."
-                )
-            print("Python 3 mach environment created.")
-            if platform.system() == "Darwin" and platform.machine() == "arm64":
-                # Skip the creation of a python2 virtualenv on arm64 mac because
-                # of https://github.com/pypa/virtualenv/issues/2023
-                return
-            python2, _ = find_python2_executable()
-            if not python2:
-                print(
-                    "WARNING! Could not find a Python 2 executable to create "
-                    "a Python 2 virtualenv",
-                    file=sys.stderr,
-                )
-                return 0
-            args = [
-                python2,
-                os.path.join(self.topsrcdir, "mach"),
-                "create-mach-environment",
-            ]
-            if force:
-                args.append("-f")
-            ret = subprocess.call(args)
-            if ret:
-                print(
-                    "WARNING! Failed to create a Python 2 mach environment.",
-                    file=sys.stderr,
-                )
-        else:
-            print("Python 2 mach environment created.")
+        # This can fail on some platforms. See
+        # https://bugzilla.mozilla.org/show_bug.cgi?id=1660120
+        try:
+            manager.install_pip_requirements(
+                os.path.join(self.topsrcdir, "build", "glean_requirements.txt")
+            )
+        except subprocess.CalledProcessError:
+            print(
+                "Could not install glean_sdk, so telemetry will not be "
+                "collected. Continuing."
+            )
+        print("Mach environment created.")
 
 
 def _prepend_debugger_args(args, debugger, debugger_args):

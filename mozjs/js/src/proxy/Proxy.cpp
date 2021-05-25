@@ -7,13 +7,14 @@
 #include "js/Proxy.h"
 
 #include "mozilla/Attributes.h"
+#include "mozilla/Maybe.h"
 
 #include <string.h>
 
 #include "jsapi.h"
 
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit, js::GetNativeStackLimit
+#include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit, js::GetNativeStackLimit
 #include "js/friend/WindowProxy.h"  // js::IsWindow, js::IsWindowProxy, js::ToWindowProxyIfWindow
 #include "js/PropertySpec.h"
 #include "js/Value.h"  // JS::ObjectValue
@@ -48,13 +49,11 @@ static bool ProxySetOnExpando(JSContext* cx, HandleObject proxy, HandleId id,
   // expando exsists.
   MOZ_ASSERT(expando);
 
-  Rooted<PropertyDescriptor> ownDesc(cx);
+  Rooted<mozilla::Maybe<PropertyDescriptor>> ownDesc(cx);
   if (!GetOwnPropertyDescriptor(cx, expando, id, &ownDesc)) {
     return false;
   }
-  ownDesc.assertCompleteIfFound();
-
-  MOZ_ASSERT(ownDesc.object());
+  MOZ_ASSERT(ownDesc.isSome());
 
   RootedValue expandoValue(cx, proxy->as<ProxyObject>().expando());
   return SetPropertyIgnoringNamedGetter(cx, expando, id, v, expandoValue,
@@ -175,7 +174,8 @@ JS_FRIEND_API void js::assertEnteredPolicy(JSContext* cx, JSObject* proxy,
 bool Proxy::getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy,
                                      HandleId id,
                                      MutableHandle<PropertyDescriptor> desc) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -198,7 +198,8 @@ bool Proxy::getOwnPropertyDescriptor(JSContext* cx, HandleObject proxy,
 bool Proxy::defineProperty(JSContext* cx, HandleObject proxy, HandleId id,
                            Handle<PropertyDescriptor> desc,
                            ObjectOpResult& result) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -224,7 +225,8 @@ bool Proxy::defineProperty(JSContext* cx, HandleObject proxy, HandleId id,
 
 bool Proxy::ownPropertyKeys(JSContext* cx, HandleObject proxy,
                             MutableHandleIdVector props) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -238,7 +240,8 @@ bool Proxy::ownPropertyKeys(JSContext* cx, HandleObject proxy,
 
 bool Proxy::delete_(JSContext* cx, HandleObject proxy, HandleId id,
                     ObjectOpResult& result) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -285,7 +288,8 @@ JS_FRIEND_API bool js::AppendUnique(JSContext* cx, MutableHandleIdVector base,
 bool Proxy::getPrototype(JSContext* cx, HandleObject proxy,
                          MutableHandleObject proto) {
   MOZ_ASSERT(proxy->hasDynamicPrototype());
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   return proxy->as<ProxyObject>().handler()->getPrototype(cx, proxy, proto);
@@ -295,7 +299,8 @@ bool Proxy::getPrototype(JSContext* cx, HandleObject proxy,
 bool Proxy::setPrototype(JSContext* cx, HandleObject proxy, HandleObject proto,
                          ObjectOpResult& result) {
   MOZ_ASSERT(proxy->hasDynamicPrototype());
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   return proxy->as<ProxyObject>().handler()->setPrototype(cx, proxy, proto,
@@ -306,7 +311,8 @@ bool Proxy::setPrototype(JSContext* cx, HandleObject proxy, HandleObject proto,
 bool Proxy::getPrototypeIfOrdinary(JSContext* cx, HandleObject proxy,
                                    bool* isOrdinary,
                                    MutableHandleObject proto) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   return proxy->as<ProxyObject>().handler()->getPrototypeIfOrdinary(
@@ -316,7 +322,8 @@ bool Proxy::getPrototypeIfOrdinary(JSContext* cx, HandleObject proxy,
 /* static */
 bool Proxy::setImmutablePrototype(JSContext* cx, HandleObject proxy,
                                   bool* succeeded) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -326,7 +333,8 @@ bool Proxy::setImmutablePrototype(JSContext* cx, HandleObject proxy,
 /* static */
 bool Proxy::preventExtensions(JSContext* cx, HandleObject proxy,
                               ObjectOpResult& result) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -335,7 +343,8 @@ bool Proxy::preventExtensions(JSContext* cx, HandleObject proxy,
 
 /* static */
 bool Proxy::isExtensible(JSContext* cx, HandleObject proxy, bool* extensible) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   return proxy->as<ProxyObject>().handler()->isExtensible(cx, proxy,
@@ -343,7 +352,8 @@ bool Proxy::isExtensible(JSContext* cx, HandleObject proxy, bool* extensible) {
 }
 
 bool Proxy::has(JSContext* cx, HandleObject proxy, HandleId id, bool* bp) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -389,7 +399,8 @@ bool js::ProxyHas(JSContext* cx, HandleObject proxy, HandleValue idVal,
 }
 
 bool Proxy::hasOwn(JSContext* cx, HandleObject proxy, HandleId id, bool* bp) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -433,7 +444,8 @@ MOZ_ALWAYS_INLINE bool Proxy::getInternal(JSContext* cx, HandleObject proxy,
                                           MutableHandleValue vp) {
   MOZ_ASSERT_IF(receiver.isObject(), !IsWindow(&receiver.toObject()));
 
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -502,7 +514,8 @@ MOZ_ALWAYS_INLINE bool Proxy::setInternal(JSContext* cx, HandleObject proxy,
                                           ObjectOpResult& result) {
   MOZ_ASSERT_IF(receiver.isObject(), !IsWindow(&receiver.toObject()));
 
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
 
@@ -569,7 +582,8 @@ bool js::ProxySetPropertyByValue(JSContext* cx, HandleObject proxy,
 
 bool Proxy::getOwnEnumerablePropertyKeys(JSContext* cx, HandleObject proxy,
                                          MutableHandleIdVector props) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -583,7 +597,8 @@ bool Proxy::getOwnEnumerablePropertyKeys(JSContext* cx, HandleObject proxy,
 
 bool Proxy::enumerate(JSContext* cx, HandleObject proxy,
                       MutableHandleIdVector props) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
 
@@ -624,7 +639,8 @@ bool Proxy::enumerate(JSContext* cx, HandleObject proxy,
 }
 
 bool Proxy::call(JSContext* cx, HandleObject proxy, const CallArgs& args) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -643,7 +659,8 @@ bool Proxy::call(JSContext* cx, HandleObject proxy, const CallArgs& args) {
 }
 
 bool Proxy::construct(JSContext* cx, HandleObject proxy, const CallArgs& args) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -663,7 +680,8 @@ bool Proxy::construct(JSContext* cx, HandleObject proxy, const CallArgs& args) {
 
 bool Proxy::nativeCall(JSContext* cx, IsAcceptableThis test, NativeImpl impl,
                        const CallArgs& args) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   RootedObject proxy(cx, &args.thisv().toObject());
@@ -675,7 +693,8 @@ bool Proxy::nativeCall(JSContext* cx, IsAcceptableThis test, NativeImpl impl,
 
 bool Proxy::hasInstance(JSContext* cx, HandleObject proxy, MutableHandleValue v,
                         bool* bp) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -689,7 +708,8 @@ bool Proxy::hasInstance(JSContext* cx, HandleObject proxy, MutableHandleValue v,
 }
 
 bool Proxy::getBuiltinClass(JSContext* cx, HandleObject proxy, ESClass* cls) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   return proxy->as<ProxyObject>().handler()->getBuiltinClass(cx, proxy, cls);
@@ -697,7 +717,8 @@ bool Proxy::getBuiltinClass(JSContext* cx, HandleObject proxy, ESClass* cls) {
 
 bool Proxy::isArray(JSContext* cx, HandleObject proxy,
                     JS::IsArrayAnswer* answer) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   return proxy->as<ProxyObject>().handler()->isArray(cx, proxy, answer);
@@ -706,8 +727,8 @@ bool Proxy::isArray(JSContext* cx, HandleObject proxy,
 const char* Proxy::className(JSContext* cx, HandleObject proxy) {
   // Check for unbounded recursion, but don't signal an error; className
   // needs to be infallible.
-  int stackDummy;
-  if (!JS_CHECK_STACK_SIZE(GetNativeStackLimit(cx), &stackDummy)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.checkDontReport(cx)) {
     return "too much recursion";
   }
 
@@ -723,7 +744,8 @@ const char* Proxy::className(JSContext* cx, HandleObject proxy) {
 
 JSString* Proxy::fun_toString(JSContext* cx, HandleObject proxy,
                               bool isToSource) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return nullptr;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -737,7 +759,8 @@ JSString* Proxy::fun_toString(JSContext* cx, HandleObject proxy,
 }
 
 RegExpShared* Proxy::regexp_toShared(JSContext* cx, HandleObject proxy) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return nullptr;
   }
   return proxy->as<ProxyObject>().handler()->regexp_toShared(cx, proxy);
@@ -745,7 +768,8 @@ RegExpShared* Proxy::regexp_toShared(JSContext* cx, HandleObject proxy) {
 
 bool Proxy::boxedValue_unbox(JSContext* cx, HandleObject proxy,
                              MutableHandleValue vp) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   return proxy->as<ProxyObject>().handler()->boxedValue_unbox(cx, proxy, vp);
@@ -756,7 +780,8 @@ JSObject* const TaggedProto::LazyProto = reinterpret_cast<JSObject*>(0x1);
 /* static */
 bool Proxy::getElements(JSContext* cx, HandleObject proxy, uint32_t begin,
                         uint32_t end, ElementAdder* adder) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   const BaseProxyHandler* handler = proxy->as<ProxyObject>().handler();
@@ -781,17 +806,17 @@ void Proxy::trace(JSTracer* trc, JSObject* proxy) {
 
 static bool proxy_LookupProperty(JSContext* cx, HandleObject obj, HandleId id,
                                  MutableHandleObject objp,
-                                 MutableHandle<JS::PropertyResult> propp) {
+                                 PropertyResult* propp) {
   bool found;
   if (!Proxy::has(cx, obj, id, &found)) {
     return false;
   }
 
   if (found) {
-    propp.setProxyProperty();
+    propp->setProxyProperty();
     objp.set(obj);
   } else {
-    propp.setNotFound();
+    propp->setNotFound();
     objp.set(nullptr);
   }
   return true;

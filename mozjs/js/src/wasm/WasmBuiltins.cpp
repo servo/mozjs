@@ -31,7 +31,7 @@
 #include "jit/Simulator.h"
 #include "js/experimental/JitInfo.h"  // JSJitInfo
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
+#include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "threading/Mutex.h"
 #include "util/Memory.h"
 #include "util/Poison.h"
@@ -586,6 +586,10 @@ static void* WasmHandleThrow(jit::ResumeFromException* rfe) {
 static void* ReportError(JSContext* cx, unsigned errorNumber) {
   JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr, errorNumber);
 
+  if (cx->isThrowingOutOfMemory()) {
+    return nullptr;
+  }
+
   // Distinguish exceptions thrown from traps from other RuntimeErrors.
   RootedValue exn(cx);
   if (!cx->getPendingException(&exn)) {
@@ -644,19 +648,21 @@ static void* WasmHandleTrap() {
       return ReportError(cx, JSMSG_WASM_UNALIGNED_ACCESS);
     case Trap::CheckInterrupt:
       return CheckInterrupt(cx, activation);
-    case Trap::StackOverflow:
+    case Trap::StackOverflow: {
       // TlsData::setInterrupt() causes a fake stack overflow. Since
       // TlsData::setInterrupt() is called racily, it's possible for a real
       // stack overflow to trap, followed by a racy call to setInterrupt().
       // Thus, we must check for a real stack overflow first before we
       // CheckInterrupt() and possibly resume execution.
-      if (!CheckRecursionLimit(cx)) {
+      AutoCheckRecursionLimit recursion(cx);
+      if (!recursion.check(cx)) {
         return nullptr;
       }
       if (activation->wasmExitTls()->isInterrupted()) {
         return CheckInterrupt(cx, activation);
       }
       return ReportError(cx, JSMSG_OVER_RECURSED);
+    }
     case Trap::ThrowReported:
       // Error was already reported under another name.
       return nullptr;

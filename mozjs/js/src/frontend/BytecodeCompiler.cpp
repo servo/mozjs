@@ -29,8 +29,9 @@
 #include "vm/GlobalObject.h"
 #include "vm/HelperThreadState.h"  // ParseTask
 #include "vm/JSContext.h"
-#include "vm/JSScript.h"
+#include "vm/JSScript.h"       // ScriptSource, UncompressedSourceCache
 #include "vm/ModuleBuilder.h"  // js::ModuleBuilder
+#include "vm/Time.h"           // AutoIncrementalTimer
 #include "vm/TraceLogging.h"
 #include "wasm/AsmJS.h"
 
@@ -135,7 +136,7 @@ class MOZ_STACK_CLASS frontend::SourceAwareCompiler {
 
   void handleParseFailure(const Directives& newDirectives,
                           TokenStreamPosition& startPosition,
-                          CompilationState::RewindToken& startObj);
+                          CompilationState::CompilationStatePosition& startStatePosition);
 
  public:
   CompilationState& compilationState() { return compilationState_; };
@@ -670,12 +671,12 @@ bool frontend::SourceAwareCompiler<Unit>::canHandleParseFailure(
 template <typename Unit>
 void frontend::SourceAwareCompiler<Unit>::handleParseFailure(
     const Directives& newDirectives, TokenStreamPosition& startPosition,
-    CompilationState::RewindToken& startObj) {
+    CompilationState::CompilationStatePosition& startStatePosition) {
   MOZ_ASSERT(canHandleParseFailure(newDirectives));
 
   // Rewind to starting position to retry.
   parser->tokenStream.rewind(startPosition);
-  compilationState_.rewind(startObj);
+  compilationState_.rewind(startStatePosition);
 
   // Assignment must be monotonic to prevent reparsing iloops
   MOZ_ASSERT_IF(compilationState_.directives.strict(), newDirectives.strict());
@@ -786,7 +787,7 @@ FunctionNode* frontend::StandaloneFunctionCompiler<Unit>::parse(
   assertSourceAndParserCreated();
 
   TokenStreamPosition startPosition(parser->tokenStream);
-  CompilationState::RewindToken startObj = compilationState_.getRewindToken();
+  auto startStatePosition = compilationState_.getPosition();
 
   // Speculatively parse using the default directives implied by the context.
   // If a directive is encountered (e.g., "use strict") that changes how the
@@ -808,7 +809,7 @@ FunctionNode* frontend::StandaloneFunctionCompiler<Unit>::parse(
       return nullptr;
     }
 
-    handleParseFailure(newDirectives, startPosition, startObj);
+    handleParseFailure(newDirectives, startPosition, startStatePosition);
   }
 
   return fn;
@@ -1001,19 +1002,9 @@ ModuleObject* frontend::CompileModule(JSContext* cx,
   return CompileModuleImpl(cx, options, srcBuf);
 }
 
-void frontend::FillCompileOptionsForLazyFunction(JS::CompileOptions& options,
-                                                 JS::Handle<BaseScript*> lazy) {
-  options.setMutedErrors(lazy->mutedErrors())
-      .setFileAndLine(lazy->filename(), lazy->lineno())
-      .setColumn(lazy->column())
-      .setScriptSourceOffset(lazy->sourceStart())
-      .setNoScriptRval(false)
-      .setSelfHostingMode(false);
-}
-
 template <typename Unit>
-static bool CompileLazyFunctionImpl(JSContext* cx, CompilationInput& input,
-                                    const Unit* units, size_t length) {
+static bool CompileLazyFunction(JSContext* cx, CompilationInput& input,
+                                const Unit* units, size_t length) {
   MOZ_ASSERT(input.source);
 
   MOZ_ASSERT(cx->compartment() == input.lazy->compartment());
@@ -1044,9 +1035,6 @@ static bool CompileLazyFunctionImpl(JSContext* cx, CompilationInput& input,
   if (!parser.checkOptions()) {
     return false;
   }
-
-  AutoGeckoProfilerEntry pseudoFrame(cx, "script delazify",
-                                     JS::ProfilingCategoryPair::JS_Parsing);
 
   FunctionNode* pn = parser.standaloneLazyFunction(
       fun, input.lazy->toStringStart(), input.lazy->strict(),
@@ -1104,15 +1092,63 @@ static bool CompileLazyFunctionImpl(JSContext* cx, CompilationInput& input,
   return true;
 }
 
-bool frontend::CompileLazyFunction(JSContext* cx, CompilationInput& input,
-                                   const char16_t* units, size_t length) {
-  return CompileLazyFunctionImpl(cx, input, units, length);
+template <typename Unit>
+static bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx,
+                                                  HandleFunction fun,
+                                                  Handle<BaseScript*> lazy,
+                                                  ScriptSource* ss) {
+  MOZ_ASSERT(!lazy->hasBytecode(), "Script is already compiled!");
+  MOZ_ASSERT(lazy->function() == fun);
+
+  AutoIncrementalTimer timer(cx->realm()->timers.delazificationTime);
+
+  size_t sourceStart = lazy->sourceStart();
+  size_t sourceLength = lazy->sourceEnd() - lazy->sourceStart();
+
+  MOZ_ASSERT(ss->hasSourceText());
+
+  // Parse and compile the script from source.
+  UncompressedSourceCache::AutoHoldEntry holder;
+
+  MOZ_ASSERT(ss->hasSourceType<Unit>());
+
+  ScriptSource::PinnedUnits<Unit> units(cx, ss, holder, sourceStart,
+                                        sourceLength);
+  if (!units.get()) {
+    return false;
+  }
+
+  JS::CompileOptions options(cx);
+  options.setMutedErrors(lazy->mutedErrors())
+      .setFileAndLine(lazy->filename(), lazy->lineno())
+      .setColumn(lazy->column())
+      .setScriptSourceOffset(lazy->sourceStart())
+      .setNoScriptRval(false)
+      .setSelfHostingMode(false);
+
+  Rooted<CompilationInput> input(cx, CompilationInput(options));
+  input.get().initFromLazy(lazy, ss);
+
+  return CompileLazyFunction(cx, input.get(), units.get(), sourceLength);
 }
 
-bool frontend::CompileLazyFunction(JSContext* cx, CompilationInput& input,
-                                   const mozilla::Utf8Unit* units,
-                                   size_t length) {
-  return CompileLazyFunctionImpl(cx, input, units, length);
+bool frontend::DelazifyCanonicalScriptedFunction(JSContext* cx,
+                                                 HandleFunction fun) {
+  AutoGeckoProfilerEntry pseudoFrame(cx, "script delazify",
+                                     JS::ProfilingCategoryPair::JS_Parsing);
+
+  Rooted<BaseScript*> lazy(cx, fun->baseScript());
+  ScriptSource* ss = lazy->scriptSource();
+
+  if (ss->hasSourceType<Utf8Unit>()) {
+    // UTF-8 source text.
+    return DelazifyCanonicalScriptedFunctionImpl<Utf8Unit>(cx, fun, lazy, ss);
+  }
+
+  MOZ_ASSERT(ss->hasSourceType<char16_t>());
+
+  // UTF-16 source text.
+  return DelazifyCanonicalScriptedFunctionImpl<char16_t>(cx, fun, lazy, ss);
 }
 
 static JSFunction* CompileStandaloneFunction(

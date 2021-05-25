@@ -369,6 +369,9 @@ class GlobalHelperThreadState {
                                     MutableHandle<ScriptVector> scripts);
   JSObject* finishModuleParseTask(JSContext* cx, JS::OffThreadToken* token);
 
+  frontend::CompilationStencil* finishStencilParseTask(
+      JSContext* cx, JS::OffThreadToken* token);
+
   bool hasActiveThreads(const AutoLockHelperThreadState&);
   bool hasQueuedTasks(const AutoLockHelperThreadState& locked);
   void waitForAllThreads();
@@ -612,7 +615,9 @@ class SourceCompressionTask : public HelperThreadTask {
  public:
   // The majorGCNumber is used for scheduling tasks.
   SourceCompressionTask(JSRuntime* rt, ScriptSource* source)
-      : runtime_(rt), majorGCNumber_(rt->gc.majorGCCount()), source_(source) {}
+      : runtime_(rt), majorGCNumber_(rt->gc.majorGCCount()), source_(source) {
+    source->noteSourceCompressionTask();
+  }
   virtual ~SourceCompressionTask() = default;
 
   bool runtimeMatches(JSRuntime* runtime) const { return runtime == runtime_; }

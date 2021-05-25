@@ -77,7 +77,7 @@ static inline bool IsUninitializedLexical(const Value& val) {
 }
 
 static inline bool IsUninitializedLexicalSlot(HandleObject obj,
-                                              Handle<PropertyResult> prop) {
+                                              const PropertyResult& prop) {
   MOZ_ASSERT(prop.isFound());
   if (obj->is<WithEnvironmentObject>()) {
     return false;
@@ -88,13 +88,13 @@ static inline bool IsUninitializedLexicalSlot(HandleObject obj,
     return false;
   }
 
-  Shape* shape = prop.shape();
-  if (!shape->isDataProperty()) {
+  ShapeProperty shapeProp = prop.shapeProperty();
+  if (!shapeProp.isDataProperty()) {
     return false;
   }
 
-  MOZ_ASSERT(obj->as<NativeObject>().containsPure(shape));
-  return IsUninitializedLexical(obj->as<NativeObject>().getSlot(shape->slot()));
+  return IsUninitializedLexical(
+      obj->as<NativeObject>().getSlot(shapeProp.slot()));
 }
 
 static inline bool CheckUninitializedLexical(JSContext* cx, PropertyName* name_,
@@ -138,7 +138,7 @@ enum class GetNameMode { Normal, TypeOf };
 
 template <GetNameMode mode>
 inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
-                      HandlePropertyName name, Handle<PropertyResult> prop,
+                      HandlePropertyName name, const PropertyResult& prop,
                       MutableHandleValue vp) {
   if (prop.isNotFound()) {
     switch (mode) {
@@ -158,17 +158,17 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
       return false;
     }
   } else {
-    RootedShape shape(cx, prop.shape());
-    if (shape->isDataDescriptor() && shape->hasDefaultGetter()) {
+    ShapeProperty shapeProp = prop.shapeProperty();
+    if (shapeProp.isDataProperty()) {
       /* Fast path for Object instance properties. */
-      MOZ_ASSERT(shape->isDataProperty());
-      vp.set(holder->as<NativeObject>().getSlot(shape->slot()));
+      vp.set(holder->as<NativeObject>().getSlot(shapeProp.slot()));
     } else {
       // Unwrap 'with' environments for reasons given in
       // GetNameBoundInEnvironment.
       RootedObject normalized(cx, MaybeUnwrapWithEnvironment(receiver));
+      RootedId id(cx, NameToId(name));
       if (!NativeGetExistingProperty(cx, normalized, holder.as<NativeObject>(),
-                                     shape, vp)) {
+                                     id, shapeProp, vp)) {
         return false;
       }
     }
@@ -189,12 +189,12 @@ inline bool FetchNameNoGC(NativeObject* pobj, PropertyResult prop, Value* vp) {
     return false;
   }
 
-  Shape* shape = prop.shape();
-  if (!shape->isDataDescriptor() || !shape->hasDefaultGetter()) {
+  ShapeProperty shapeProp = prop.shapeProperty();
+  if (!shapeProp.isDataProperty()) {
     return false;
   }
 
-  *vp = pobj->getSlot(shape->slot());
+  *vp = pobj->getSlot(shapeProp.slot());
   return !IsUninitializedLexical(*vp);
 }
 
@@ -212,7 +212,7 @@ inline bool GetEnvironmentName(JSContext* cx, HandleObject envChain,
     }
   }
 
-  Rooted<PropertyResult> prop(cx);
+  PropertyResult prop;
   RootedObject obj(cx), pobj(cx);
   if (!LookupName(cx, name, envChain, &obj, &pobj, &prop)) {
     return false;
@@ -318,11 +318,12 @@ inline void InitGlobalLexicalOperation(
                 lexicalEnv == &cx->global()->lexicalEnvironment());
   MOZ_ASSERT(JSOp(*pc) == JSOp::InitGLexical);
 
-  Shape* shape = lexicalEnv->lookup(cx, script->getName(pc));
-  MOZ_ASSERT(shape);
-  MOZ_ASSERT(IsUninitializedLexical(lexicalEnv->getSlot(shape->slot())));
+  mozilla::Maybe<ShapeProperty> prop =
+      lexicalEnv->lookup(cx, script->getName(pc));
+  MOZ_ASSERT(prop.isSome());
+  MOZ_ASSERT(IsUninitializedLexical(lexicalEnv->getSlot(prop->slot())));
 
-  lexicalEnv->setSlot(shape->slot(), value);
+  lexicalEnv->setSlot(prop->slot(), value);
 }
 
 inline bool InitPropertyOperation(JSContext* cx, JSOp op, HandleObject obj,

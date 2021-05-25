@@ -529,7 +529,8 @@
   cost_estimate: 4
   args:
     obj: ObjId
-    shape: ShapeField
+    id: IdField
+    getterSetter: GetterSetterField
 
 - name: GuardInt32IsNonNegative
   shared: true
@@ -586,6 +587,24 @@
     obj: ObjId
     expected: ObjId
     slot: RawInt32Field
+
+- name: GuardFixedSlotValue
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    obj: ObjId
+    offset: RawInt32Field
+    val: ValueField
+
+- name: GuardDynamicSlotValue
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    obj: ObjId
+    offset: RawInt32Field
+    val: ValueField
 
 - name: GuardNoAllocationMetadataBuilder
   shared: true
@@ -2448,6 +2467,16 @@
     templateObject: ObjectField
     disambiguationIdHi: UInt32Imm
     disambiguationIdLo: UInt32Imm
+
+- name: NewPlainObjectResult
+  shared: true
+  transpile: false
+  cost_estimate: 4
+  args:
+    numFixedSlots: UInt32Imm
+    numDynamicSlots: UInt32Imm
+    allocKind: AllocKindImm
+    shape: ShapeField
 
 - name: CallStringConcatResult
   shared: true

@@ -61,6 +61,18 @@ class PropertyName;
 /* The buffer length required to contain any unsigned 32-bit integer. */
 static const size_t UINT32_CHAR_BUFFER_LENGTH = sizeof("4294967295") - 1;
 
+// Maximum array index. This value is defined in the spec (ES2021 draft, 6.1.7):
+//
+//   An array index is an integer index whose numeric value i is in the range
+//   +0𝔽 ≤ i < 𝔽(2^32 - 1).
+const uint32_t MAX_ARRAY_INDEX = 4294967294u;  // 2^32-2 (= UINT32_MAX-1)
+
+// Returns true if the characters of `s` store an unsigned 32-bit integer value
+// less than or equal to MAX_ARRAY_INDEX, initializing `*indexp` to that value
+// if so. Leading '0' isn't allowed except 0 itself.
+template <typename CharT>
+bool CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp);
+
 } /* namespace js */
 
 // clang-format off
@@ -305,16 +317,21 @@ class JSString : public js::gc::CellWithLengthAndFlags {
 
   static const uint32_t LATIN1_CHARS_BIT = js::Bit(9);
 
-  static const uint32_t INDEX_VALUE_BIT = js::Bit(10);
+  // Whether this atom's characters store an uint32 index value less than or
+  // equal to MAX_ARRAY_INDEX. Not used for non-atomized strings.
+  // See JSLinearString::isIndex.
+  static const uint32_t ATOM_IS_INDEX_BIT = js::Bit(10);
+
+  static const uint32_t INDEX_VALUE_BIT = js::Bit(11);
   static const uint32_t INDEX_VALUE_SHIFT = 16;
 
   // NON_DEDUP_BIT is used in string deduplication during tenuring.
-  static const uint32_t NON_DEDUP_BIT = js::Bit(11);
+  static const uint32_t NON_DEDUP_BIT = js::Bit(12);
 
   // If IN_STRING_TO_ATOM_CACHE is set, this string had an entry in the
   // StringToAtomCache at some point. Note that GC can purge the cache without
   // clearing this bit.
-  static const uint32_t IN_STRING_TO_ATOM_CACHE = js::Bit(12);
+  static const uint32_t IN_STRING_TO_ATOM_CACHE = js::Bit(13);
 
   static const uint32_t MAX_LENGTH = JS::MaxStringLength;
 
@@ -775,9 +792,6 @@ class JSLinearString : public JSString {
   bool isLinear() const = delete;
   JSLinearString& asLinear() const = delete;
 
-  template <typename CharT>
-  static bool isIndexSlow(const CharT* s, size_t length, uint32_t* indexp);
-
  protected:
   /* Returns void pointer to latin1/twoByte chars, for finalizers. */
   MOZ_ALWAYS_INLINE
@@ -864,31 +878,21 @@ class JSLinearString : public JSString {
     JS::AutoCheckCannotGC nogc;
     if (hasLatin1Chars()) {
       const JS::Latin1Char* s = latin1Chars(nogc);
-      return mozilla::IsAsciiDigit(*s) && isIndexSlow(s, len, indexp);
+      return mozilla::IsAsciiDigit(*s) &&
+             js::CheckStringIsIndex(s, len, indexp);
     }
     const char16_t* s = twoByteChars(nogc);
-    return mozilla::IsAsciiDigit(*s) && isIndexSlow(s, len, indexp);
+    return mozilla::IsAsciiDigit(*s) && js::CheckStringIsIndex(s, len, indexp);
   }
 
-  /*
-   * Returns true if this string's characters store an unsigned 32-bit
-   * integer value, initializing *indexp to that value if so.
-   * Leading '0' isn't allowed except 0 itself.
-   * (Thus if calling isIndex returns true, js::IndexToString(cx, *indexp) will
-   * be a string equal to this string.)
-   */
-  bool isIndex(uint32_t* indexp) const {
-    MOZ_ASSERT(JSString::isLinear());
+  // Returns true if this string's characters store an unsigned 32-bit integer
+  // value less than or equal to MAX_ARRAY_INDEX, initializing *indexp to that
+  // value if so. Leading '0' isn't allowed except 0 itself.
+  // (Thus if calling isIndex returns true, js::IndexToString(cx, *indexp) will
+  // be a string equal to this string.)
+  inline bool isIndex(uint32_t* indexp) const;
 
-    if (JSString::hasIndexValue()) {
-      *indexp = getIndexValue();
-      return true;
-    }
-
-    return isIndexSlow(indexp);
-  }
-
-  void maybeInitializeIndex(uint32_t index, bool allowAtom = false) {
+  void maybeInitializeIndexValue(uint32_t index, bool allowAtom = false) {
     MOZ_ASSERT(JSString::isLinear());
     MOZ_ASSERT_IF(hasIndexValue(), getIndexValue() == index);
     MOZ_ASSERT_IF(!allowAtom, !isAtom());
@@ -1164,6 +1168,29 @@ class JSAtom : public JSLinearString {
     setFlagBit(PERMANENT_ATOM_MASK);
   }
 
+  MOZ_ALWAYS_INLINE bool isIndex() const {
+    MOZ_ASSERT(JSString::isAtom());
+    mozilla::DebugOnly<uint32_t> index;
+    MOZ_ASSERT(!!(flags() & ATOM_IS_INDEX_BIT) == isIndexSlow(&index));
+    return flags() & ATOM_IS_INDEX_BIT;
+  }
+  MOZ_ALWAYS_INLINE bool isIndex(uint32_t* index) const {
+    MOZ_ASSERT(JSString::isAtom());
+    if (!isIndex()) {
+      return false;
+    }
+    *index = hasIndexValue() ? getIndexValue() : getIndexSlow();
+    return true;
+  }
+
+  uint32_t getIndexSlow() const;
+
+  void setIsIndex(uint32_t index) {
+    MOZ_ASSERT(JSString::isAtom());
+    setFlagBit(ATOM_IS_INDEX_BIT);
+    maybeInitializeIndexValue(index, /* allowAtom = */ true);
+  }
+
   inline js::HashNumber hash() const;
   inline void initHash(js::HashNumber hash);
 
@@ -1243,12 +1270,6 @@ MOZ_ALWAYS_INLINE JSAtom* JSLinearString::morphAtomizedStringIntoPermanentAtom(
 }
 
 namespace js {
-
-// Returns true if the characters of `s` store an unsigned 32-bit integer value,
-// initializing `*indexp` to that value if so.
-// Leading '0' isn't allowed except 0 itself.
-template <typename CharT>
-bool CheckStringIsIndex(const CharT* s, size_t length, uint32_t* indexp);
 
 /**
  * An indexable characters class exposing unaligned, little-endian encoded
@@ -1973,11 +1994,23 @@ MOZ_ALWAYS_INLINE const char16_t* JSLinearString::rawTwoByteChars() const {
 }
 
 inline js::PropertyName* JSAtom::asPropertyName() {
-#ifdef DEBUG
-  uint32_t dummy;
-  MOZ_ASSERT(!isIndex(&dummy));
-#endif
+  MOZ_ASSERT(!isIndex());
   return static_cast<js::PropertyName*>(this);
+}
+
+inline bool JSLinearString::isIndex(uint32_t* indexp) const {
+  MOZ_ASSERT(JSString::isLinear());
+
+  if (isAtom()) {
+    return asAtom().isIndex(indexp);
+  }
+
+  if (JSString::hasIndexValue()) {
+    *indexp = getIndexValue();
+    return true;
+  }
+
+  return isIndexSlow(indexp);
 }
 
 inline size_t JSLinearString::allocSize() const {

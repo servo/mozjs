@@ -11,6 +11,8 @@
 
 #if defined(XP_WIN)
 #  include "util/Windows.h"
+#elif defined(__wasi__)
+// Nothing.
 #elif defined(XP_UNIX) && !defined(XP_DARWIN)
 #  include <signal.h>
 #  include <sys/types.h>
@@ -110,7 +112,7 @@ static bool sExceptionHandlerInstalled = false;
 static ProtectedRegionTree sProtectedRegions;
 
 bool MemoryProtectionExceptionHandler::isDisabled() {
-#if defined(XP_WIN) && (defined(MOZ_ASAN) || defined(JS_ENABLE_UWP))
+#if defined(XP_WIN) && defined(MOZ_ASAN)
   // Under Windows ASan, WasmFaultHandler registers itself at 'last' priority
   // in order to let ASan's ShadowExceptionHandler stay at 'first' priority.
   // Unfortunately that results in spurious wasm faults passing through the
@@ -120,6 +122,8 @@ bool MemoryProtectionExceptionHandler::isDisabled() {
   return true;
 #elif !defined(MOZ_DIAGNOSTIC_ASSERT_ENABLED)
   // Disable the exception handler for Beta and Release builds.
+  return true;
+#elif defined(__wasi__)
   return true;
 #else
   return false;
@@ -175,7 +179,6 @@ static mozilla::Atomic<bool> sHandlingException(false);
 
 static long __stdcall VectoredExceptionHandler(
     EXCEPTION_POINTERS* ExceptionInfo) {
-#ifndef JS_ENABLE_UWP
   EXCEPTION_RECORD* ExceptionRecord = ExceptionInfo->ExceptionRecord;
 
   // We only handle one kind of exception; ignore all others.
@@ -200,7 +203,6 @@ static long __stdcall VectoredExceptionHandler(
       }
     }
   }
-#endif
 
   // Forward to the previous handler which may be a debugger,
   // the crash reporter or something else entirely.
@@ -215,11 +217,9 @@ bool MemoryProtectionExceptionHandler::install() {
     return true;
   }
 
-#ifndef JS_ENABLE_UWP
   // Install our new exception handler.
   sVectoredExceptionHandler = AddVectoredExceptionHandler(
       /* FirstHandler = */ true, VectoredExceptionHandler);
-#endif
 
   sExceptionHandlerInstalled = sVectoredExceptionHandler != nullptr;
   return sExceptionHandlerInstalled;
@@ -229,14 +229,18 @@ void MemoryProtectionExceptionHandler::uninstall() {
   if (sExceptionHandlerInstalled) {
     MOZ_ASSERT(!sHandlingException);
 
-#ifndef JS_ENABLE_UWP
     // Restore the previous exception handler.
     MOZ_ALWAYS_TRUE(RemoveVectoredExceptionHandler(sVectoredExceptionHandler));
-#endif
 
     sExceptionHandlerInstalled = false;
   }
 }
+
+#elif defined(__wasi__)
+
+bool MemoryProtectionExceptionHandler::install() { return true; }
+
+void MemoryProtectionExceptionHandler::uninstall() {}
 
 #elif defined(XP_UNIX) && !defined(XP_DARWIN)
 

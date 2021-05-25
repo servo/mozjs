@@ -59,12 +59,27 @@ def register_sentry(argv, settings, topsrcdir):
 
 
 def _process_event(sentry_event, topsrcdir):
-    if not _is_unmodified_mach_core(topsrcdir):
-        # Returning None causes the event to be dropped:
-        # https://docs.sentry.io/platforms/python/configuration/filtering/#using-beforesend
-        return None
+    # Returning nothing causes the event to be dropped:
+    # https://docs.sentry.io/platforms/python/configuration/filtering/#using-beforesend
+    repo = _get_repository_object(topsrcdir)
+    if repo is None:
+        # We don't know the repo state, so we don't know if mach files are
+        # unmodified.
+        return
+
+    base_ref = repo.base_ref_as_hg()
+    if not base_ref:
+        # If we don't know which revision this exception is attached to, then it's
+        # not worth sending
+        return
+
+    if not _is_unmodified_mach_core(repo):
+        return
+
     for map_fn in (_settle_mach_module_id, _patch_absolute_paths, _delete_server_name):
         sentry_event = map_fn(sentry_event, topsrcdir)
+
+    sentry_event["release"] = "hg-rev-{}".format(base_ref)
     return sentry_event
 
 
@@ -126,13 +141,19 @@ def _patch_absolute_paths(sentry_event, topsrcdir):
         for target in (target_path, repr_path):
             # Paths in the Sentry event aren't consistent:
             # * On *nix, they're mostly forward slashes.
+            # * On *nix, not all absolute paths start with a leading forward slash.
             # * On Windows, they're mostly backslashes.
             # * On Windows, `.extra."sys.argv"` uses forward slashes.
             # * The Python variables in-scope captured by the Sentry report may be
             #   inconsistent, even for a single path. For example, on
             #   Windows, Mach calculates the state_dir as "C:\Users\<user>/.mozbuild".
-            #
-            # To resolve this, we have our path-patching match
+
+            # Handle the case where not all absolute paths start with a leading
+            # forward slash: make the initial slash optional in the search string.
+            if target.startswith("/"):
+                target = "/?" + target[1:]
+
+            # Handle all possible slash variants: our search string should match
             # both forward slashes and backslashes. This is done by dynamically
             # replacing each "/" and "\" with the regex "[\/\\]" (match both).
             slash_regex = re.compile(r"[\/\\]")
@@ -159,7 +180,7 @@ def _get_repository_object(topsrcdir):
         return None
 
 
-def _is_unmodified_mach_core(topsrcdir):
+def _is_unmodified_mach_core(repo):
     """True if mach is unmodified compared to the public tree.
 
     To avoid submitting Sentry events for errors caused by user's
@@ -172,12 +193,6 @@ def _is_unmodified_mach_core(topsrcdir):
     pretty confident that the Mach behaviour that caused the exception
     also exists in the public tree.
     """
-    repo = _get_repository_object(topsrcdir)
-    if repo is None:
-        # We don't know the repo state, so we don't know if mach files are
-        # unmodified.
-        return False
-
     try:
         files = set(repo.get_outgoing_files()) | set(repo.get_changed_files())
     except MissingUpstreamRepo:

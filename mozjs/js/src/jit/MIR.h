@@ -132,7 +132,8 @@ static inline MIRType MIRTypeFromValue(const js::Value& vp) {
    * graph, and need to be handled specially. As an example, this is used to   \
    * keep the flagged instruction in resume points, not substituting with an   \
    * UndefinedValue. This can be used by call inlining when a function         \
-   * argument is not used by the inlined instructions.                         \
+   * argument is not used by the inlined instructions. It is also used         \
+   * to annotate instructions which were used in removed branches.             \
    */                                                                          \
   _(ImplicitlyUsed)                                                            \
                                                                                \
@@ -140,21 +141,6 @@ static inline MIRType MIRTypeFromValue(const js::Value& vp) {
    * points.                                                                   \
    */                                                                          \
   _(Unused)                                                                    \
-                                                                               \
-  /* When a branch is removed, the uses of multiple instructions are removed.  \
-   * The removal of branches is based on hypotheses.  These hypotheses might   \
-   * fail, in which case we need to bailout from the current code.             \
-   *                                                                           \
-   * When we implement a destructive optimization, we need to consider the     \
-   * failing cases, and consider the fact that we might resume the execution   \
-   * into a branch which was removed from the compiler.  As such, a            \
-   * destructive optimization need to take into acount removed branches.       \
-   *                                                                           \
-   * In order to let destructive optimizations know about removed branches, we \
-   * have to annotate instructions with the UseRemoved flag.  This flag        \
-   * annotates instruction which were used in removed branches.                \
-   */                                                                          \
-  _(UseRemoved)                                                                \
                                                                                \
   /* Marks if the current instruction should go to the bailout paths instead   \
    * of producing code as part of the control flow.  This flag can only be set \
@@ -778,7 +764,8 @@ class MDefinition : public MNode {
   // uses of the current instruction.
   void replaceAllUsesWith(MDefinition* dom);
 
-  // Like replaceAllUsesWith, but doesn't set UseRemoved on |this|'s operands.
+  // Like replaceAllUsesWith, but doesn't set ImplicitlyUsed on |this|'s
+  // operands.
   void justReplaceAllUsesWith(MDefinition* dom);
 
   // Replace the current instruction by an optimized-out constant in all uses
@@ -955,6 +942,7 @@ using CompilerFunction = CompilerGCPointer<JSFunction*>;
 using CompilerBaseScript = CompilerGCPointer<BaseScript*>;
 using CompilerPropertyName = CompilerGCPointer<PropertyName*>;
 using CompilerShape = CompilerGCPointer<Shape*>;
+using CompilerGetterSetter = CompilerGCPointer<GetterSetter*>;
 
 // An instruction is an SSA name that is inserted into a basic block's IR
 // stream.
@@ -6322,9 +6310,9 @@ class MArrowNewTarget : public MUnaryInstruction,
   }
 };
 
-// This is a 3 state flag used by FlagPhiInputsAsHavingRemovedUses to record and
+// This is a 3 state flag used by FlagPhiInputsAsImplicitlyUsed to record and
 // propagate the information about the consumers of a Phi instruction. This is
-// then used to set UseRemoved flags on the inputs of such Phi instructions.
+// then used to set ImplicitlyUsed flags on the inputs of such Phi instructions.
 enum class PhiUsage : uint8_t { Unknown, Unused, Used };
 
 using PhiVector = Vector<MPhi*, 4, JitAllocPolicy>;
@@ -9183,7 +9171,8 @@ class MGuardValue : public MUnaryInstruction, public BoxInputsPolicy::Data {
 
   MGuardValue(MDefinition* val, const Value& expected)
       : MUnaryInstruction(classOpcode, val), expected_(expected) {
-    MOZ_ASSERT(expected.isNullOrUndefined() || expected.isMagic());
+    MOZ_ASSERT(expected.isNullOrUndefined() || expected.isMagic() ||
+               expected.isPrivateGCThing());
 
     setGuard();
     setMovable();
@@ -11958,10 +11947,11 @@ class MLoadWrapperTarget : public MUnaryInstruction,
 // Guard the accessor shape is present on the object or its prototype chain.
 class MGuardHasGetterSetter : public MUnaryInstruction,
                               public SingleObjectPolicy::Data {
-  CompilerShape shape_;
+  jsid propId_;
+  CompilerGetterSetter getterSetter_;
 
-  MGuardHasGetterSetter(MDefinition* obj, Shape* shape)
-      : MUnaryInstruction(classOpcode, obj), shape_(shape) {
+  MGuardHasGetterSetter(MDefinition* obj, jsid id, GetterSetter* gs)
+      : MUnaryInstruction(classOpcode, obj), propId_(id), getterSetter_(gs) {
     setResultType(MIRType::Object);
     setMovable();
     setGuard();
@@ -11972,7 +11962,8 @@ class MGuardHasGetterSetter : public MUnaryInstruction,
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, object))
 
-  Shape* shape() const { return shape_; }
+  jsid propId() const { return propId_; }
+  GetterSetter* getterSetter() const { return getterSetter_; }
 
   AliasSet getAliasSet() const override {
     return AliasSet::Load(AliasSet::ObjectFields);
@@ -11982,7 +11973,10 @@ class MGuardHasGetterSetter : public MUnaryInstruction,
     if (!ins->isGuardHasGetterSetter()) {
       return false;
     }
-    if (ins->toGuardHasGetterSetter()->shape() != shape()) {
+    if (ins->toGuardHasGetterSetter()->propId() != propId()) {
+      return false;
+    }
+    if (ins->toGuardHasGetterSetter()->getterSetter() != getterSetter()) {
       return false;
     }
     return congruentIfOperandsEqual(ins);
@@ -12266,7 +12260,8 @@ class MWasmLoadTls : public MUnaryInstruction, public NoTypePolicy::Data {
                aliases_.flags() == AliasSet::None().flags());
 
     // The only types supported at the moment.
-    MOZ_ASSERT(type == MIRType::Pointer || type == MIRType::Int32);
+    MOZ_ASSERT(type == MIRType::Pointer || type == MIRType::Int32 ||
+               type == MIRType::Int64);
 
     setMovable();
     setResultType(type);
@@ -12312,6 +12307,14 @@ class MWasmHeapBase : public MUnaryInstruction, public NoTypePolicy::Data {
   AliasSet getAliasSet() const override { return aliases_; }
 };
 
+// Bounds check nodes are of type Int32 on 32-bit systems for both wasm and
+// asm.js code, as well as on 64-bit systems for asm.js code and for wasm code
+// that is known to have a bounds check limit that fits into 32 bits.  They are
+// of type Int64 only on 64-bit systems for wasm code with 4GB (or larger)
+// heaps.  There is no way for nodes of both types to be present in the same
+// function.  Should this change, then BCE must be updated to take type into
+// account.
+
 class MWasmBoundsCheck : public MBinaryInstruction, public NoTypePolicy::Data {
   wasm::BytecodeOffset bytecodeOffset_;
 
@@ -12323,7 +12326,7 @@ class MWasmBoundsCheck : public MBinaryInstruction, public NoTypePolicy::Data {
     setGuard();
 
     if (JitOptions.spectreIndexMasking) {
-      setResultType(MIRType::Int32);
+      setResultType(index->type());
     }
   }
 
@@ -12394,6 +12397,33 @@ class MWasmAlignmentCheck : public MUnaryInstruction,
   uint32_t byteSize() const { return byteSize_; }
 
   wasm::BytecodeOffset bytecodeOffset() const { return bytecodeOffset_; }
+};
+
+class MWasmExtendU32Index : public MUnaryInstruction,
+                            public NoTypePolicy::Data {
+  explicit MWasmExtendU32Index(MDefinition* input)
+      : MUnaryInstruction(classOpcode, input) {
+    setResultType(MIRType::Int64);
+  }
+
+ public:
+  INSTRUCTION_HEADER(WasmExtendU32Index)
+  TRIVIAL_NEW_WRAPPERS
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+};
+
+class MWasmWrapU32Index : public MUnaryInstruction, public NoTypePolicy::Data {
+  explicit MWasmWrapU32Index(MDefinition* input)
+      : MUnaryInstruction(classOpcode, input) {
+    setResultType(MIRType::Int32);
+  }
+
+ public:
+  INSTRUCTION_HEADER(WasmWrapU32Index)
+  TRIVIAL_NEW_WRAPPERS
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
 };
 
 class MWasmLoad

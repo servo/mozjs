@@ -35,6 +35,8 @@ struct DevPixelSpan {
   int end;
 };
 
+enum class SkeletonUIDensity { Default, Touch, Compact };
+
 struct SkeletonUISettings {
   uint32_t screenX;
   uint32_t screenY;
@@ -48,6 +50,7 @@ struct SkeletonUISettings {
   bool menubarShown;
   bool bookmarksToolbarShown;
   bool rtlEnabled;
+  SkeletonUIDensity uiDensity;
 };
 
 enum class ThemeMode : uint32_t { Invalid, Default, Dark, Light };
@@ -56,14 +59,17 @@ enum class SkeletonUIFlag : uint8_t {
   MenubarShown,
   BookmarksToolbarShown,
   RtlEnabled,
+  TouchDensity,
+  CompactDensity,
 };
 
 struct ThemeColors {
   uint32_t backgroundColor;
   uint32_t toolbarForegroundColor;
   uint32_t tabBarColor;
+  uint32_t tabColor;
+  uint32_t tabOutlineColor;
   uint32_t chromeContentDividerColor;
-  uint32_t tabLineColor;
   uint32_t urlbarColor;
   uint32_t urlbarBorderColor;
   uint32_t animationColor;
@@ -92,6 +98,7 @@ enum class PreXULSkeletonUIError : uint32_t {
   FailedBlitting,
   FailedFillingBottomRect,
   CrashedOnce,
+  BadUIDensity,
   Unknown,
 };
 
@@ -142,6 +149,8 @@ inline const wchar_t* GetPreXULSkeletonUIErrorString(
       return L"FailedFillingBottomRect";
     case PreXULSkeletonUIError::CrashedOnce:
       return L"CrashedOnce";
+    case PreXULSkeletonUIError::BadUIDensity:
+      return L"BadUIDensity";
     case PreXULSkeletonUIError::Unknown:
       return L"Unknown";
   }
@@ -169,6 +178,7 @@ MFBT_API Result<Ok, PreXULSkeletonUIError> SetPreXULSkeletonUIEnabledIfAllowed(
 MFBT_API void PollPreXULSkeletonUIEvents();
 MFBT_API Result<Ok, PreXULSkeletonUIError> SetPreXULSkeletonUIThemeId(
     ThemeMode theme);
+MFBT_API Result<Ok, PreXULSkeletonUIError> NotePreXULSkeletonUIRestarting();
 
 }  // namespace mozilla
 

@@ -30,7 +30,7 @@ struct JSFunctionSpec;
 
 namespace js {
 
-class Shape;
+class PropertyResult;
 
 // This is equal to JSFunction::class_.  Use it in places where you don't want
 // to #include jsfun.h.
@@ -201,160 +201,13 @@ class ObjectOpResult {
   }
 };
 
-class PropertyResult {
-  enum class Kind : uint8_t {
-    NotFound,
-    NativeProperty,
-    NonNativeProperty,
-    DenseElement,
-    TypedArrayElement,
-  };
-  union {
-    // Set if kind is NativeProperty.
-    js::Shape* shape_;
-    // Set if kind is DenseElement.
-    uint32_t denseIndex_;
-    // Set if kind is TypedArrayElement.
-    size_t typedArrayIndex_;
-  };
-  Kind kind_ = Kind::NotFound;
-  bool ignoreProtoChain_ = false;
-
- public:
-  PropertyResult() = default;
-
-  // When a property is not found, we may additionally indicate that the
-  // prototype chain should be ignored. This occurs for:
-  //  - An out-of-range numeric property on a TypedArrayObject.
-  //  - A resolve hook recursively calling itself as it sets the property.
-  bool isNotFound() const { return kind_ == Kind::NotFound; }
-  bool shouldIgnoreProtoChain() const {
-    MOZ_ASSERT(isNotFound());
-    return ignoreProtoChain_;
-  }
-
-  bool isFound() const { return kind_ != Kind::NotFound; }
-  bool isNonNativeProperty() const { return kind_ == Kind::NonNativeProperty; }
-  bool isDenseElement() const { return kind_ == Kind::DenseElement; }
-  bool isTypedArrayElement() const { return kind_ == Kind::TypedArrayElement; }
-  bool isNativeProperty() const { return kind_ == Kind::NativeProperty; }
-
-  js::Shape* shape() const {
-    MOZ_ASSERT(isNativeProperty());
-    return shape_;
-  }
-
-  uint32_t denseElementIndex() const {
-    MOZ_ASSERT(isDenseElement());
-    return denseIndex_;
-  }
-
-  size_t typedArrayElementIndex() const {
-    MOZ_ASSERT(isTypedArrayElement());
-    return typedArrayIndex_;
-  }
-
-  void setNotFound() { kind_ = Kind::NotFound; }
-
-  void setNativeProperty(js::Shape* propertyShape) {
-    kind_ = Kind::NativeProperty;
-    shape_ = propertyShape;
-  }
-
-  void setTypedObjectProperty() { kind_ = Kind::NonNativeProperty; }
-  void setProxyProperty() { kind_ = Kind::NonNativeProperty; }
-
-  void setDenseElement(uint32_t index) {
-    kind_ = Kind::DenseElement;
-    denseIndex_ = index;
-  }
-
-  void setTypedArrayElement(size_t index) {
-    kind_ = Kind::TypedArrayElement;
-    typedArrayIndex_ = index;
-  }
-
-  void setTypedArrayOutOfRange() {
-    kind_ = Kind::NotFound;
-    ignoreProtoChain_ = true;
-  }
-  void setRecursiveResolve() {
-    kind_ = Kind::NotFound;
-    ignoreProtoChain_ = true;
-  }
-
-  void trace(JSTracer* trc);
-};
-
 }  // namespace JS
 
-namespace js {
-
-template <class Wrapper>
-class WrappedPtrOperations<JS::PropertyResult, Wrapper> {
-  const JS::PropertyResult& value() const {
-    return static_cast<const Wrapper*>(this)->get();
-  }
-
- public:
-  bool isNotFound() const { return value().isNotFound(); }
-  bool isFound() const { return value().isFound(); }
-  js::Shape* shape() const { return value().shape(); }
-  uint32_t denseElementIndex() const { return value().denseElementIndex(); }
-  size_t typedArrayElementIndex() const {
-    return value().typedArrayElementIndex();
-  }
-  bool isNativeProperty() const { return value().isNativeProperty(); }
-  bool isNonNativeProperty() const { return value().isNonNativeProperty(); }
-  bool isDenseElement() const { return value().isDenseElement(); }
-  bool isTypedArrayElement() const { return value().isTypedArrayElement(); }
-
-  bool shouldIgnoreProtoChain() const {
-    return value().shouldIgnoreProtoChain();
-  }
-};
-
-template <class Wrapper>
-class MutableWrappedPtrOperations<JS::PropertyResult, Wrapper>
-    : public WrappedPtrOperations<JS::PropertyResult, Wrapper> {
-  JS::PropertyResult& value() { return static_cast<Wrapper*>(this)->get(); }
-
- public:
-  void setNotFound() { value().setNotFound(); }
-  void setNativeProperty(js::Shape* shape) { value().setNativeProperty(shape); }
-  void setTypedObjectProperty() { value().setTypedObjectProperty(); }
-  void setProxyProperty() { value().setProxyProperty(); }
-  void setDenseElement(uint32_t index) { value().setDenseElement(index); }
-  void setTypedArrayElement(size_t index) {
-    value().setTypedArrayElement(index);
-  }
-  void setTypedArrayOutOfRange() { value().setTypedArrayOutOfRange(); }
-  void setRecursiveResolve() { value().setRecursiveResolve(); }
-};
-
-}  // namespace js
-
 // JSClass operation signatures.
-
-/**
- * Get a property named by id in obj.  Note the jsid id type -- id may
- * be a string (Unicode property identifier) or an int (element index).  The
- * *vp out parameter, on success, is the new property value after the action.
- */
-typedef bool (*JSGetterOp)(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                           JS::MutableHandleValue vp);
 
 /** Add a property named by id to obj. */
 typedef bool (*JSAddPropertyOp)(JSContext* cx, JS::HandleObject obj,
                                 JS::HandleId id, JS::HandleValue v);
-
-/**
- * Set a property named by id in obj, treating the assignment as strict
- * mode code if strict is true. Note the jsid id type -- id may be a string
- * (Unicode property identifier) or an int (element index).
- */
-typedef bool (*JSSetterOp)(JSContext* cx, JS::HandleObject obj, JS::HandleId id,
-                           JS::HandleValue v, JS::ObjectOpResult& result);
 
 /**
  * Delete a property named by id in obj.
@@ -470,7 +323,7 @@ namespace js {
 
 typedef bool (*LookupPropertyOp)(JSContext* cx, JS::HandleObject obj,
                                  JS::HandleId id, JS::MutableHandleObject objp,
-                                 JS::MutableHandle<JS::PropertyResult> propp);
+                                 PropertyResult* propp);
 typedef bool (*DefinePropertyOp)(JSContext* cx, JS::HandleObject obj,
                                  JS::HandleId id,
                                  JS::Handle<JS::PropertyDescriptor> desc,
@@ -718,7 +571,7 @@ static const uint32_t JSCLASS_FOREGROUND_FINALIZE =
 // application.
 static const uint32_t JSCLASS_GLOBAL_APPLICATION_SLOTS = 5;
 static const uint32_t JSCLASS_GLOBAL_SLOT_COUNT =
-    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 29;
+    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 30;
 
 static constexpr uint32_t JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(uint32_t n) {
   return JSCLASS_IS_GLOBAL |

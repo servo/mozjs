@@ -32,7 +32,7 @@
 #include "js/ErrorReport.h"
 #include "js/ForOfIterator.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
+#include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/PropertySpec.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
@@ -45,7 +45,6 @@
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/NativeObject.h"
-#include "vm/ObjectGroup.h"
 #include "vm/ObjectOperations.h"
 #include "vm/SavedStacks.h"
 #include "vm/SelfHosting.h"
@@ -430,16 +429,16 @@ Shape* js::ErrorObject::assignInitialShape(JSContext* cx,
                                            Handle<ErrorObject*> obj) {
   MOZ_ASSERT(obj->empty());
 
-  if (!NativeObject::addDataProperty(cx, obj, cx->names().fileName,
-                                     FILENAME_SLOT, 0)) {
+  if (!NativeObject::addProperty(cx, obj, cx->names().fileName, FILENAME_SLOT,
+                                 0)) {
     return nullptr;
   }
-  if (!NativeObject::addDataProperty(cx, obj, cx->names().lineNumber,
-                                     LINENUMBER_SLOT, 0)) {
+  if (!NativeObject::addProperty(cx, obj, cx->names().lineNumber,
+                                 LINENUMBER_SLOT, 0)) {
     return nullptr;
   }
-  return NativeObject::addDataProperty(cx, obj, cx->names().columnNumber,
-                                       COLUMNNUMBER_SLOT, 0);
+  return NativeObject::addProperty(cx, obj, cx->names().columnNumber,
+                                   COLUMNNUMBER_SLOT, 0);
 }
 
 /* static */
@@ -463,7 +462,7 @@ bool js::ErrorObject::init(JSContext* cx, Handle<ErrorObject*> obj,
   // |new Error("")| -- but not in others -- |new Error(undefined)|,
   // |new Error()|.
   if (message) {
-    Shape* messageShape = NativeObject::addDataProperty(
+    Shape* messageShape = NativeObject::addProperty(
         cx, obj, cx->names().message, MESSAGE_SLOT, 0);
     if (!messageShape) {
       return false;
@@ -779,7 +778,8 @@ JSString* js::ErrorToSource(JSContext* cx, HandleObject obj) {
  * Return a string that may eval to something similar to the original object.
  */
 static bool exn_toSource(JSContext* cx, unsigned argc, Value* vp) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
   CallArgs args = CallArgsFromVp(argc, vp);

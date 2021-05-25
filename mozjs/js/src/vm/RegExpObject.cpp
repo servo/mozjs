@@ -265,8 +265,8 @@ Shape* RegExpObject::assignInitialShape(JSContext* cx,
   static_assert(LAST_INDEX_SLOT == 0);
 
   /* The lastIndex property alone is writable but non-configurable. */
-  return NativeObject::addDataProperty(cx, self, cx->names().lastIndex,
-                                       LAST_INDEX_SLOT, JSPROP_PERMANENT);
+  return NativeObject::addProperty(cx, self, cx->names().lastIndex,
+                                   LAST_INDEX_SLOT, JSPROP_PERMANENT);
 }
 
 void RegExpObject::initIgnoringLastIndex(JSAtom* source, RegExpFlags flags) {
@@ -664,6 +664,7 @@ RegExpRunStatus RegExpShared::execute(JSContext* cx,
   uint32_t interruptRetries = 0;
   const uint32_t maxInterruptRetries = 4;
   do {
+    DebugOnly<bool> alreadyThrowing = cx->isExceptionPending();
     RegExpRunStatus result = irregexp::Execute(cx, re, input, start, matches);
 
     if (result == RegExpRunStatus_Error) {
@@ -677,6 +678,14 @@ RegExpRunStatus RegExpShared::execute(JSContext* cx,
        * third case, we want to handle the interrupt and try again.
        * We cap the number of times we will retry.
        */
+      if (cx->isExceptionPending()) {
+        // If this regexp is being executed by recovery instructions
+        // while bailing out to handle an exception, there may already
+        // be an exception pending. If so, just return that exception
+        // instead of reporting a new one.
+        MOZ_ASSERT(alreadyThrowing);
+        return RegExpRunStatus_Error;
+      }
       if (cx->hasAnyPendingInterrupt()) {
         if (!CheckForInterrupt(cx)) {
           return RegExpRunStatus_Error;
@@ -974,8 +983,9 @@ RegExpShared* RegExpZone::get(JSContext* cx, HandleAtom source,
   return shared;
 }
 
-size_t RegExpZone::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
-  return set_.sizeOfExcludingThis(mallocSizeOf);
+size_t RegExpZone::sizeOfIncludingThis(
+    mozilla::MallocSizeOf mallocSizeOf) const {
+  return mallocSizeOf(this) + set_.sizeOfExcludingThis(mallocSizeOf);
 }
 
 RegExpZone::RegExpZone(Zone* zone) : set_(zone, zone) {}
@@ -993,9 +1003,7 @@ JSObject* js::CloneRegExpObject(JSContext* cx, Handle<RegExpObject*> regex) {
 
   clone->clearShared();
 
-  if (!EmptyShape::ensureInitialCustomShape<RegExpObject>(cx, clone)) {
-    return nullptr;
-  }
+  clone->setShape(regex->shape());
 
   RegExpShared* shared = RegExpObject::getShared(cx, regex);
   if (!shared) {

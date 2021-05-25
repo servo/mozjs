@@ -42,6 +42,7 @@
 #include "vm/BigIntType.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/GeneratorObject.h"
+#include "vm/GetterSetter.h"
 #include "vm/Uint8Clamped.h"
 
 #include "builtin/Boolean-inl.h"
@@ -1048,7 +1049,7 @@ static GCPtr<T>* AsGCPtr(uintptr_t* ptr) {
 
 uintptr_t CacheIRStubInfo::getStubRawWord(const uint8_t* stubData,
                                           uint32_t offset) const {
-  MOZ_ASSERT(uintptr_t(stubData) % sizeof(uintptr_t) == 0);
+  MOZ_ASSERT(uintptr_t(stubData + offset) % sizeof(uintptr_t) == 0);
   return *reinterpret_cast<const uintptr_t*>(stubData + offset);
 }
 
@@ -1060,7 +1061,7 @@ uintptr_t CacheIRStubInfo::getStubRawWord(ICCacheIRStub* stub,
 
 int64_t CacheIRStubInfo::getStubRawInt64(const uint8_t* stubData,
                                          uint32_t offset) const {
-  MOZ_ASSERT(uintptr_t(stubData) % sizeof(int64_t) == 0);
+  MOZ_ASSERT(uintptr_t(stubData + offset) % sizeof(int64_t) == 0);
   return *reinterpret_cast<const int64_t*>(stubData + offset);
 }
 
@@ -1073,7 +1074,7 @@ int64_t CacheIRStubInfo::getStubRawInt64(ICCacheIRStub* stub,
 void CacheIRStubInfo::replaceStubRawWord(uint8_t* stubData, uint32_t offset,
                                          uintptr_t oldWord,
                                          uintptr_t newWord) const {
-  MOZ_ASSERT(uintptr_t(stubData) % sizeof(uintptr_t) == 0);
+  MOZ_ASSERT(uintptr_t(stubData + offset) % sizeof(uintptr_t) == 0);
   uintptr_t* addr = reinterpret_cast<uintptr_t*>(stubData + offset);
   MOZ_ASSERT(*addr == oldWord);
   *addr = newWord;
@@ -1082,12 +1083,14 @@ void CacheIRStubInfo::replaceStubRawWord(uint8_t* stubData, uint32_t offset,
 template <class Stub, class T>
 GCPtr<T>& CacheIRStubInfo::getStubField(Stub* stub, uint32_t offset) const {
   uint8_t* stubData = (uint8_t*)stub + stubDataOffset_;
-  MOZ_ASSERT(uintptr_t(stubData) % sizeof(uintptr_t) == 0);
+  MOZ_ASSERT(uintptr_t(stubData + offset) % sizeof(uintptr_t) == 0);
 
   return *AsGCPtr<T>((uintptr_t*)(stubData + offset));
 }
 
 template GCPtr<Shape*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
+    ICCacheIRStub* stub, uint32_t offset) const;
+template GCPtr<GetterSetter*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
     ICCacheIRStub* stub, uint32_t offset) const;
 template GCPtr<JSObject*>& CacheIRStubInfo::getStubField<ICCacheIRStub>(
     ICCacheIRStub* stub, uint32_t offset) const;
@@ -1117,6 +1120,9 @@ void CacheIRWriter::copyStubData(uint8_t* dest) const {
   uintptr_t* destWords = reinterpret_cast<uintptr_t*>(dest);
 
   for (const StubField& field : stubFields_) {
+    MOZ_ASSERT((uintptr_t(destWords) % field.sizeInBytes()) == 0,
+               "Unaligned stub field");
+
     switch (field.type()) {
       case StubField::Type::RawInt32:
       case StubField::Type::RawPointer:
@@ -1124,6 +1130,9 @@ void CacheIRWriter::copyStubData(uint8_t* dest) const {
         break;
       case StubField::Type::Shape:
         InitGCPtr<Shape*>(destWords, field.asWord());
+        break;
+      case StubField::Type::GetterSetter:
+        InitGCPtr<GetterSetter*>(destWords, field.asWord());
         break;
       case StubField::Type::JSObject:
         InitGCPtr<JSObject*>(destWords, field.asWord());
@@ -1176,6 +1185,10 @@ void jit::TraceCacheIRStub(JSTracer* trc, T* stub,
         TraceSameZoneCrossCompartmentEdge(trc, &shapeField, "cacheir-shape");
         break;
       }
+      case StubField::Type::GetterSetter:
+        TraceEdge(trc, &stubInfo->getStubField<T, GetterSetter*>(stub, offset),
+                  "cacheir-getter-setter");
+        break;
       case StubField::Type::JSObject:
         TraceEdge(trc, &stubInfo->getStubField<T, JSObject*>(stub, offset),
                   "cacheir-object");
@@ -1976,6 +1989,63 @@ bool CacheIRCompiler::emitGuardDynamicSlotIsSpecificObject(
   masm.branchPtr(Assembler::NotEqual, expectedObject, scratch1,
                  failure->label());
 
+  return true;
+}
+
+bool CacheIRCompiler::emitGuardFixedSlotValue(ObjOperandId objId,
+                                              uint32_t offsetOffset,
+                                              uint32_t valOffset) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  Register obj = allocator.useRegister(masm, objId);
+
+  AutoScratchRegister scratch(allocator, masm);
+  AutoScratchValueRegister scratchVal(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  StubFieldOffset offset(offsetOffset, StubField::Type::RawInt32);
+  emitLoadStubField(offset, scratch);
+
+  StubFieldOffset val(valOffset, StubField::Type::Value);
+  emitLoadValueStubField(val, scratchVal);
+
+  BaseIndex slotVal(obj, scratch, TimesOne);
+  masm.branchTestValue(Assembler::NotEqual, slotVal, scratchVal,
+                       failure->label());
+  return true;
+}
+
+bool CacheIRCompiler::emitGuardDynamicSlotValue(ObjOperandId objId,
+                                                uint32_t offsetOffset,
+                                                uint32_t valOffset) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
+  Register obj = allocator.useRegister(masm, objId);
+
+  AutoScratchRegister scratch1(allocator, masm);
+  AutoScratchRegister scratch2(allocator, masm);
+  AutoScratchValueRegister scratchVal(allocator, masm);
+
+  FailurePath* failure;
+  if (!addFailurePath(&failure)) {
+    return false;
+  }
+
+  masm.loadPtr(Address(obj, NativeObject::offsetOfSlots()), scratch1);
+
+  StubFieldOffset offset(offsetOffset, StubField::Type::RawInt32);
+  emitLoadStubField(offset, scratch2);
+
+  StubFieldOffset val(valOffset, StubField::Type::Value);
+  emitLoadValueStubField(val, scratchVal);
+
+  BaseIndex slotVal(scratch1, scratch2, TimesOne);
+  masm.branchTestValue(Assembler::NotEqual, slotVal, scratchVal,
+                       failure->label());
   return true;
 }
 
@@ -6031,6 +6101,46 @@ bool CacheIRCompiler::emitLoadNewObjectFromTemplateResult(
   return true;
 }
 
+bool CacheIRCompiler::emitNewPlainObjectResult(uint32_t numFixedSlots,
+                                               uint32_t numDynamicSlots,
+                                               gc::AllocKind allocKind,
+                                               uint32_t shapeOffset) {
+  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+  AutoCallVM callvm(masm, this, allocator);
+  AutoScratchRegister obj(allocator, masm);
+  AutoScratchRegister scratch(allocator, masm);
+  AutoScratchRegisterMaybeOutput shape(allocator, masm, callvm.output());
+
+  StubFieldOffset shapeSlot(shapeOffset, StubField::Type::Shape);
+
+  Label success;
+  Label fail;
+
+  emitLoadStubField(shapeSlot, shape);
+  masm.createPlainGCObject(obj, shape, scratch, shape, numFixedSlots,
+                           numDynamicSlots, allocKind, gc::DefaultHeap, &fail);
+  masm.tagValue(JSVAL_TYPE_OBJECT, obj, callvm.output().valueReg());
+  masm.jump(&success);
+
+  masm.bind(&fail);
+
+  // We get here if the nursery is full (unlikely) but also if the current arena
+  // is full and we need to allocate a new one (fairly common).
+
+  callvm.prepare();
+  masm.Push(Imm32(gc::DefaultHeap));
+  masm.Push(Imm32(int32_t(allocKind)));
+  emitLoadStubField(shapeSlot, shape);  // This might have been overwritten.
+  masm.Push(shape);
+
+  using Fn =
+      JSObject* (*)(JSContext*, HandleShape, gc::AllocKind, gc::InitialHeap);
+  callvm.call<Fn, NewPlainObject>();
+
+  masm.bind(&success);
+  return true;
+}
+
 bool CacheIRCompiler::emitComparePointerResultShared(JSOp op,
                                                      TypedOperandId lhsId,
                                                      TypedOperandId rhsId) {
@@ -6726,6 +6836,9 @@ void CacheIRCompiler::emitLoadStubFieldConstant(StubFieldOffset val,
     case StubField::Type::Shape:
       masm.movePtr(ImmGCPtr(shapeStubField(val.getOffset())), dest);
       break;
+    case StubField::Type::GetterSetter:
+      masm.movePtr(ImmGCPtr(getterSetterStubField(val.getOffset())), dest);
+      break;
     case StubField::Type::String:
       masm.movePtr(ImmGCPtr(stringStubField(val.getOffset())), dest);
       break;
@@ -6737,6 +6850,9 @@ void CacheIRCompiler::emitLoadStubFieldConstant(StubFieldOffset val,
       break;
     case StubField::Type::RawInt32:
       masm.move32(Imm32(int32StubField(val.getOffset())), dest);
+      break;
+    case StubField::Type::Id:
+      masm.movePropertyKey(idStubField(val.getOffset()), dest);
       break;
     default:
       MOZ_CRASH("Unhandled stub field constant type");
@@ -6761,6 +6877,7 @@ void CacheIRCompiler::emitLoadStubField(StubFieldOffset val, Register dest) {
     switch (val.getStubFieldType()) {
       case StubField::Type::RawPointer:
       case StubField::Type::Shape:
+      case StubField::Type::GetterSetter:
       case StubField::Type::JSObject:
       case StubField::Type::Symbol:
       case StubField::Type::String:
@@ -6773,6 +6890,19 @@ void CacheIRCompiler::emitLoadStubField(StubFieldOffset val, Register dest) {
       default:
         MOZ_CRASH("Unhandled stub field constant type");
     }
+  }
+}
+
+void CacheIRCompiler::emitLoadValueStubField(StubFieldOffset val,
+                                             ValueOperand dest) {
+  MOZ_ASSERT(val.getStubFieldType() == StubField::Type::Value);
+
+  if (stubFieldPolicy_ == StubFieldPolicy::Constant) {
+    MOZ_ASSERT(mode_ == Mode::Ion);
+    masm.moveValue(valueStubField(val.getOffset()), dest);
+  } else {
+    Address addr(ICStubReg, stubDataOffset_ + val.getOffset());
+    masm.loadValue(addr, dest);
   }
 }
 
@@ -6925,13 +7055,19 @@ bool CacheIRCompiler::emitMegamorphicStoreSlot(ObjOperandId objId,
 }
 
 bool CacheIRCompiler::emitGuardHasGetterSetter(ObjOperandId objId,
-                                               uint32_t shapeOffset) {
+                                               uint32_t idOffset,
+                                               uint32_t getterSetterOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
+
   Register obj = allocator.useRegister(masm, objId);
-  StubFieldOffset shape(shapeOffset, StubField::Type::Shape);
+
+  StubFieldOffset id(idOffset, StubField::Type::Id);
+  StubFieldOffset getterSetter(getterSetterOffset,
+                               StubField::Type::GetterSetter);
 
   AutoScratchRegister scratch1(allocator, masm);
   AutoScratchRegister scratch2(allocator, masm);
+  AutoScratchRegister scratch3(allocator, masm);
 
   FailurePath* failure;
   if (!addFailurePath(&failure)) {
@@ -6944,13 +7080,16 @@ bool CacheIRCompiler::emitGuardHasGetterSetter(ObjOperandId objId,
   volatileRegs.takeUnchecked(scratch2);
   masm.PushRegsInMask(volatileRegs);
 
-  using Fn = bool (*)(JSContext * cx, JSObject * obj, Shape * propShape);
+  using Fn = bool (*)(JSContext * cx, JSObject * obj, jsid id,
+                      GetterSetter * getterSetter);
   masm.setupUnalignedABICall(scratch1);
   masm.loadJSContext(scratch1);
   masm.passABIArg(scratch1);
   masm.passABIArg(obj);
-  emitLoadStubField(shape, scratch2);
+  emitLoadStubField(id, scratch2);
   masm.passABIArg(scratch2);
+  emitLoadStubField(getterSetter, scratch3);
+  masm.passABIArg(scratch3);
   masm.callWithABI<Fn, ObjectHasGetterSetterPure>();
   masm.mov(ReturnReg, scratch1);
   masm.PopRegsInMask(volatileRegs);

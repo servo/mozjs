@@ -442,10 +442,10 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
             break;
           case MIRType::Simd128:
 #ifdef ENABLE_WASM_SIMD
-            // We will reach this point when we generate interpreter entry stubs
-            // for exports that receive v128 values, but the code will never be
-            // executed because such exports cannot be called from JS.
-            masm.breakpoint();
+            // This is only used by the testing invoke path,
+            // wasmLosslessInvoke, and is guarded against in normal JS-API
+            // call paths.
+            masm.loadUnalignedSimd128(src, iter->fpu());
             break;
 #else
             MOZ_CRASH("V128 not supported in SetupABIArguments");
@@ -489,10 +489,14 @@ static void SetupABIArguments(MacroAssembler& masm, const FuncExport& fe,
           }
           case MIRType::Simd128: {
 #ifdef ENABLE_WASM_SIMD
-            // We will reach this point when we generate interpreter entry stubs
-            // for exports that receive v128 values, but the code will never be
-            // executed because such exports cannot be called from JS.
-            masm.breakpoint();
+            // This is only used by the testing invoke path,
+            // wasmLosslessInvoke, and is guarded against in normal JS-API
+            // call paths.
+            ScratchSimd128Scope fpscratch(masm);
+            masm.loadUnalignedSimd128(src, fpscratch);
+            masm.storeUnalignedSimd128(
+                fpscratch,
+                Address(masm.getStackPointer(), iter->offsetFromArgBase()));
             break;
 #else
             MOZ_CRASH("V128 not supported in SetupABIArguments");
@@ -594,11 +598,7 @@ static const unsigned NonVolatileRegsPushSize =
     NonVolatileRegs.fpus().getPushSizeInBytes();
 #endif
 
-#ifdef ENABLE_WASM_REFTYPES
 static const unsigned NumExtraPushed = 2;  // tls and argv
-#else
-static const unsigned NumExtraPushed = 1;  // argv
-#endif
 
 #ifdef JS_CODEGEN_ARM64
 static const unsigned WasmPushSize = 16;
@@ -824,9 +824,7 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
         WasmTlsReg);
   }
 
-#ifdef ENABLE_WASM_REFTYPES
   WasmPush(masm, WasmTlsReg);
-#endif
 
   // Save 'argv' on the stack so that we can recover it after the call.
   WasmPush(masm, argv);
@@ -884,9 +882,7 @@ static bool GenerateInterpEntry(MacroAssembler& masm, const FuncExport& fe,
   // Recover the 'argv' pointer which was saved before aligning the stack.
   WasmPop(masm, argv);
 
-#ifdef ENABLE_WASM_REFTYPES
   WasmPop(masm, WasmTlsReg);
-#endif
 
   // Store the register result, if any, in argv[0].
   // No spectre.index_masking is required, as the value leaves ReturnReg.
@@ -2989,18 +2985,7 @@ bool wasm::GenerateEntryStubs(MacroAssembler& masm, size_t funcExportIndex,
     return false;
   }
 
-  if (isAsmJS || fe.funcType().temporarilyUnsupportedReftypeForEntry()) {
-    return true;
-  }
-
-  // SIMD spec requires JS calls to exports with V128 in the signature to throw.
-  if (fe.funcType().hasUnexposableArgOrRet()) {
-    return true;
-  }
-
-  // Returning multiple values to JS JIT code not yet implemented (see
-  // bug 1595031).
-  if (fe.funcType().temporarilyUnsupportedResultCountForJitEntry()) {
+  if (isAsmJS || !fe.canHaveJitEntry()) {
     return true;
   }
 
@@ -3081,19 +3066,9 @@ bool wasm::GenerateStubs(const ModuleEnvironment& env,
       return false;
     }
 
-    // SIMD spec requires calls to JS functions with V128 in the signature to
-    // throw.
-    if (fi.funcType().hasUnexposableArgOrRet()) {
-      continue;
-    }
-
-    if (fi.funcType().temporarilyUnsupportedReftypeForExit()) {
-      continue;
-    }
-
-    // Exit to JS JIT code returning multiple values not yet implemented
-    // (see bug 1595031).
-    if (fi.funcType().temporarilyUnsupportedResultCountForJitExit()) {
+    // Skip if the function does not have a signature that allows for a JIT
+    // exit.
+    if (!fi.canHaveJitExit()) {
       continue;
     }
 

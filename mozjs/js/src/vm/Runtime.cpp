@@ -71,7 +71,11 @@ JS::FilenameValidationCallback js::gFilenameValidationCallback = nullptr;
 namespace js {
 bool (*HelperThreadTaskCallback)(js::UniquePtr<RunnableTask>);
 
+#ifndef __wasi__
 bool gCanUseExtraThreads = true;
+#else
+bool gCanUseExtraThreads = false;
+#endif
 }  // namespace js
 
 void js::DisableExtraThreads() { gCanUseExtraThreads = false; }
@@ -353,6 +357,8 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
     rtSizes->atomsTable += mallocSizeOf(staticStrings);
     rtSizes->atomsTable += mallocSizeOf(commonNames);
     rtSizes->atomsTable += permanentAtoms()->sizeOfIncludingThis(mallocSizeOf);
+    rtSizes->atomsTable +=
+        commonParserNames.ref()->sizeOfIncludingThis(mallocSizeOf);
   }
 
   JSContext* cx = mainContextFromAnyThread();

@@ -2378,7 +2378,7 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.subInt64x2(rhs, lhsDest);
       break;
     case wasm::SimdOp::I64x2Mul:
-      masm.mulInt64x2(rhs, lhsDest, temp1);
+      masm.mulInt64x2(lhsDest, rhs, lhsDest, temp1);
       break;
     case wasm::SimdOp::F32x4Add:
       masm.addFloat32x4(rhs, lhsDest);
@@ -2417,7 +2417,7 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.maxFloat64x2(rhs, lhsDest, temp1, temp2);
       break;
     case wasm::SimdOp::V8x16Swizzle:
-      masm.swizzleInt8x16(rhs, lhsDest, temp1);
+      masm.swizzleInt8x16(rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16NarrowSI16x8:
       masm.narrowInt16x8(rhs, lhsDest);
@@ -2450,18 +2450,16 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.compareInt8x16(Assembler::GreaterThanOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16LtU:
-      masm.unsignedCompareInt8x16(Assembler::Below, rhs, lhsDest, temp1, temp2);
+      masm.compareInt8x16(Assembler::Below, rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16GtU:
-      masm.unsignedCompareInt8x16(Assembler::Above, rhs, lhsDest, temp1, temp2);
+      masm.compareInt8x16(Assembler::Above, rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16LeU:
-      masm.unsignedCompareInt8x16(Assembler::BelowOrEqual, rhs, lhsDest, temp1,
-                                  temp2);
+      masm.compareInt8x16(Assembler::BelowOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I8x16GeU:
-      masm.unsignedCompareInt8x16(Assembler::AboveOrEqual, rhs, lhsDest, temp1,
-                                  temp2);
+      masm.compareInt8x16(Assembler::AboveOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I16x8Eq:
       masm.compareInt16x8(Assembler::Equal, rhs, lhsDest);
@@ -2482,18 +2480,16 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.compareInt16x8(Assembler::GreaterThanOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I16x8LtU:
-      masm.unsignedCompareInt16x8(Assembler::Below, rhs, lhsDest, temp1, temp2);
+      masm.compareInt16x8(Assembler::Below, rhs, lhsDest);
       break;
     case wasm::SimdOp::I16x8GtU:
-      masm.unsignedCompareInt16x8(Assembler::Above, rhs, lhsDest, temp1, temp2);
+      masm.compareInt16x8(Assembler::Above, rhs, lhsDest);
       break;
     case wasm::SimdOp::I16x8LeU:
-      masm.unsignedCompareInt16x8(Assembler::BelowOrEqual, rhs, lhsDest, temp1,
-                                  temp2);
+      masm.compareInt16x8(Assembler::BelowOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I16x8GeU:
-      masm.unsignedCompareInt16x8(Assembler::AboveOrEqual, rhs, lhsDest, temp1,
-                                  temp2);
+      masm.compareInt16x8(Assembler::AboveOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I32x4Eq:
       masm.compareInt32x4(Assembler::Equal, rhs, lhsDest);
@@ -2514,18 +2510,16 @@ void CodeGenerator::visitWasmBinarySimd128(LWasmBinarySimd128* ins) {
       masm.compareInt32x4(Assembler::GreaterThanOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I32x4LtU:
-      masm.unsignedCompareInt32x4(Assembler::Below, rhs, lhsDest, temp1, temp2);
+      masm.compareInt32x4(Assembler::Below, rhs, lhsDest);
       break;
     case wasm::SimdOp::I32x4GtU:
-      masm.unsignedCompareInt32x4(Assembler::Above, rhs, lhsDest, temp1, temp2);
+      masm.compareInt32x4(Assembler::Above, rhs, lhsDest);
       break;
     case wasm::SimdOp::I32x4LeU:
-      masm.unsignedCompareInt32x4(Assembler::BelowOrEqual, rhs, lhsDest, temp1,
-                                  temp2);
+      masm.compareInt32x4(Assembler::BelowOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I32x4GeU:
-      masm.unsignedCompareInt32x4(Assembler::AboveOrEqual, rhs, lhsDest, temp1,
-                                  temp2);
+      masm.compareInt32x4(Assembler::AboveOrEqual, rhs, lhsDest);
       break;
     case wasm::SimdOp::I64x2Eq:
       masm.compareForEqualityInt64x2(Assembler::Equal, rhs, lhsDest);
@@ -2978,20 +2972,20 @@ void CodeGenerator::visitWasmShuffleSimd128(LWasmShuffleSimd128* ins) {
   switch (ins->op()) {
     case LWasmShuffleSimd128::BLEND_8x16: {
       masm.blendInt8x16(reinterpret_cast<const uint8_t*>(control.asInt8x16()),
-                        rhs, lhsDest, ToFloatRegister(ins->temp()));
+                        lhsDest, rhs, lhsDest, ToFloatRegister(ins->temp()));
       break;
     }
     case LWasmShuffleSimd128::BLEND_16x8: {
       MOZ_ASSERT(ins->temp()->isBogusTemp());
       masm.blendInt16x8(reinterpret_cast<const uint16_t*>(control.asInt16x8()),
-                        rhs, lhsDest);
+                        lhsDest, rhs, lhsDest);
       break;
     }
     case LWasmShuffleSimd128::CONCAT_RIGHT_SHIFT_8x16: {
       MOZ_ASSERT(ins->temp()->isBogusTemp());
       int8_t count = 16 - control.asInt8x16()[0];
       MOZ_ASSERT(count > 0, "Should have been a MOVE operation");
-      masm.concatAndRightShiftInt8x16(rhs, lhsDest, count);
+      masm.concatAndRightShiftSimd128(rhs, lhsDest, count);
       break;
     }
     case LWasmShuffleSimd128::INTERLEAVE_HIGH_8x16: {
@@ -3155,7 +3149,7 @@ void CodeGenerator::visitWasmPermuteSimd128(LWasmPermuteSimd128* ins) {
       }
       int8_t count = control.asInt8x16()[0];
       MOZ_ASSERT(count > 0, "Should have been a MOVE operation");
-      masm.concatAndRightShiftInt8x16(dest, dest, count);
+      masm.concatAndRightShiftSimd128(dest, dest, count);
       break;
     }
     case LWasmPermuteSimd128::SHIFT_LEFT_8x16: {

@@ -38,7 +38,7 @@
 #include "js/CallNonGenericMethod.h"
 #include "js/CompileOptions.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
+#include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/PropertySpec.h"
 #include "js/Proxy.h"
 #include "js/SourceText.h"
@@ -441,10 +441,10 @@ bool JSFunction::hasNonConfigurablePrototypeDataProperty() {
 #ifdef DEBUG
     PropertyName* prototypeName =
         runtimeFromMainThread()->commonNames->prototype;
-    Shape* shape = lookupPure(prototypeName);
-    MOZ_ASSERT(shape);
-    MOZ_ASSERT(shape->isDataProperty());
-    MOZ_ASSERT(!shape->configurable());
+    Maybe<ShapeProperty> prop = lookupPure(prototypeName);
+    MOZ_ASSERT(prop.isSome());
+    MOZ_ASSERT(prop->isDataProperty());
+    MOZ_ASSERT(!prop->configurable());
 #endif
     return true;
   }
@@ -455,12 +455,12 @@ bool JSFunction::hasNonConfigurablePrototypeDataProperty() {
   }
 
   PropertyName* prototypeName = runtimeFromMainThread()->commonNames->prototype;
-  Shape* shape = lookupPure(prototypeName);
-  return shape && shape->isDataProperty() && !shape->configurable();
+  Maybe<ShapeProperty> prop = lookupPure(prototypeName);
+  return prop.isSome() && prop->isDataProperty() && !prop->configurable();
 }
 
 static bool fun_mayResolve(const JSAtomState& names, jsid id, JSObject*) {
-  if (!JSID_IS_ATOM(id)) {
+  if (!id.isAtom()) {
     return false;
   }
 
@@ -470,13 +470,13 @@ static bool fun_mayResolve(const JSAtomState& names, jsid id, JSObject*) {
 
 static bool fun_resolve(JSContext* cx, HandleObject obj, HandleId id,
                         bool* resolvedp) {
-  if (!JSID_IS_ATOM(id)) {
+  if (!id.isAtom()) {
     return true;
   }
 
   RootedFunction fun(cx, &obj->as<JSFunction>());
 
-  if (JSID_IS_ATOM(id, cx->names().prototype)) {
+  if (id.isAtom(cx->names().prototype)) {
     if (!fun->needsPrototypeProperty()) {
       return true;
     }
@@ -489,8 +489,8 @@ static bool fun_resolve(JSContext* cx, HandleObject obj, HandleId id,
     return true;
   }
 
-  bool isLength = JSID_IS_ATOM(id, cx->names().length);
-  if (isLength || JSID_IS_ATOM(id, cx->names().name)) {
+  bool isLength = id.isAtom(cx->names().length);
+  if (isLength || id.isAtom(cx->names().name)) {
     MOZ_ASSERT(!IsInternalFunctionObject(*obj));
 
     RootedValue v(cx);
@@ -719,7 +719,8 @@ bool JS::OrdinaryHasInstance(JSContext* cx, HandleObject objArg, HandleValue v,
   /* Step 2. */
   if (obj->is<JSFunction>() && obj->isBoundFunction()) {
     /* Steps 2a-b. */
-    if (!CheckRecursionLimit(cx)) {
+    AutoCheckRecursionLimit recursion(cx);
+    if (!recursion.check(cx)) {
       return false;
     }
     obj = obj->as<JSFunction>().getBoundFunctionTarget();
@@ -1144,7 +1145,7 @@ bool js::fun_apply(JSContext* cx, unsigned argc, Value* vp) {
     // Steps 4-5 (note erratum removing steps originally numbered 5 and 7 in
     // original version of ES5).
     RootedObject aobj(cx, &args[1].toObject());
-    uint32_t length;
+    uint64_t length;
     if (!GetLengthProperty(cx, aobj, &length)) {
       return false;
     }
@@ -1514,68 +1515,6 @@ bool JSFunction::finishBoundFunctionInit(JSContext* cx, HandleFunction bound,
   return true;
 }
 
-template <typename Unit>
-bool DelazifyCanonicalScriptedFunctionImpl(JSContext* cx, HandleFunction fun,
-                                           Handle<BaseScript*> lazy,
-                                           ScriptSource* ss) {
-  MOZ_ASSERT(!lazy->hasBytecode(), "Script is already compiled!");
-  MOZ_ASSERT(lazy->function() == fun);
-
-  AutoIncrementalTimer timer(cx->realm()->timers.delazificationTime);
-
-  size_t sourceStart = lazy->sourceStart();
-  size_t sourceLength = lazy->sourceEnd() - lazy->sourceStart();
-
-  {
-    MOZ_ASSERT(ss->hasSourceText());
-
-    // Parse and compile the script from source.
-    UncompressedSourceCache::AutoHoldEntry holder;
-
-    MOZ_ASSERT(ss->hasSourceType<Unit>());
-
-    ScriptSource::PinnedUnits<Unit> units(cx, ss, holder, sourceStart,
-                                          sourceLength);
-    if (!units.get()) {
-      return false;
-    }
-
-    JS::CompileOptions options(cx);
-    frontend::FillCompileOptionsForLazyFunction(options, lazy);
-
-    Rooted<frontend::CompilationInput> input(
-        cx, frontend::CompilationInput(options));
-    input.get().initFromLazy(lazy, ss);
-
-    if (!frontend::CompileLazyFunction(cx, input.get(), units.get(),
-                                       sourceLength)) {
-      // The frontend shouldn't fail after linking the function and the
-      // non-lazy script together.
-      MOZ_ASSERT(fun->baseScript() == lazy);
-      MOZ_ASSERT(lazy->isReadyForDelazification());
-      return false;
-    }
-  }
-
-  return true;
-}
-
-static bool DelazifyCanonicalScriptedFunction(JSContext* cx,
-                                              HandleFunction fun) {
-  Rooted<BaseScript*> lazy(cx, fun->baseScript());
-  ScriptSource* ss = lazy->scriptSource();
-
-  if (ss->hasSourceType<Utf8Unit>()) {
-    // UTF-8 source text.
-    return DelazifyCanonicalScriptedFunctionImpl<Utf8Unit>(cx, fun, lazy, ss);
-  }
-
-  MOZ_ASSERT(ss->hasSourceType<char16_t>());
-
-  // UTF-16 source text.
-  return DelazifyCanonicalScriptedFunctionImpl<char16_t>(cx, fun, lazy, ss);
-}
-
 /* static */
 bool JSFunction::delazifyLazilyInterpretedFunction(JSContext* cx,
                                                    HandleFunction fun) {
@@ -1606,7 +1545,15 @@ bool JSFunction::delazifyLazilyInterpretedFunction(JSContext* cx,
   }
 
   // Finally, compile the script if it really doesn't exist.
-  return DelazifyCanonicalScriptedFunction(cx, fun);
+  if (!frontend::DelazifyCanonicalScriptedFunction(cx, fun)) {
+    // The frontend shouldn't fail after linking the function and the
+    // non-lazy script together.
+    MOZ_ASSERT(fun->baseScript() == lazy);
+    MOZ_ASSERT(lazy->isReadyForDelazification());
+    return false;
+  }
+
+  return true;
 }
 
 /* static */
@@ -2343,7 +2290,7 @@ JSAtom* js::IdToFunctionName(
   MOZ_ASSERT(JSID_IS_STRING(id) || JSID_IS_SYMBOL(id) || JSID_IS_INT(id));
 
   // No prefix fastpath.
-  if (JSID_IS_ATOM(id) && prefixKind == FunctionPrefixKind::None) {
+  if (id.isAtom() && prefixKind == FunctionPrefixKind::None) {
     return JSID_TO_ATOM(id);
   }
 

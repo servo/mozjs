@@ -2947,8 +2947,7 @@ GeneralParser<ParseHandler, Unit>::functionDefinition(
   Directives newDirectives = directives;
 
   Position start(tokenStream);
-  CompilationState::RewindToken startObj =
-      this->compilationState_.getRewindToken();
+  auto startObj = this->compilationState_.getPosition();
 
   // Parse the inner function. The following is a loop as we may attempt to
   // reparse a function due to failed syntax parsing and encountering new
@@ -3025,8 +3024,7 @@ bool Parser<FullParseHandler, Unit>::trySyntaxParseInnerFunction(
     }
 
     UsedNameTracker::RewindToken token = usedNames_.getRewindToken();
-    CompilationState::RewindToken startObj =
-        this->compilationState_.getRewindToken();
+    auto statePosition = this->compilationState_.getPosition();
 
     // Move the syntax parser to the current position in the stream.  In the
     // common case this seeks forward, but it'll also seek backward *at least*
@@ -3064,7 +3062,7 @@ bool Parser<FullParseHandler, Unit>::trySyntaxParseInnerFunction(
         // correctness.
         syntaxParser->clearAbortedSyntaxParse();
         usedNames_.rewind(token);
-        this->compilationState_.rewind(startObj);
+        this->compilationState_.rewind(statePosition);
         MOZ_ASSERT_IF(!syntaxParser->cx_->isHelperThreadContext(),
                       !syntaxParser->cx_->isExceptionPending());
         break;
@@ -3889,7 +3887,8 @@ bool GeneralParser<ParseHandler, Unit>::maybeParseDirective(
 template <class ParseHandler, typename Unit>
 typename ParseHandler::ListNodeType
 GeneralParser<ParseHandler, Unit>::statementList(YieldHandling yieldHandling) {
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -4207,7 +4206,8 @@ GeneralParser<ParseHandler, Unit>::objectBindingPattern(
     DeclarationKind kind, YieldHandling yieldHandling) {
   MOZ_ASSERT(anyChars.isCurrentTokenType(TokenKind::LeftCurly));
 
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -4361,7 +4361,8 @@ GeneralParser<ParseHandler, Unit>::arrayBindingPattern(
     DeclarationKind kind, YieldHandling yieldHandling) {
   MOZ_ASSERT(anyChars.isCurrentTokenType(TokenKind::LeftBracket));
 
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -8458,7 +8459,8 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::statement(
     YieldHandling yieldHandling) {
   MOZ_ASSERT(checkOptionsCalled_);
 
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -8704,7 +8706,8 @@ GeneralParser<ParseHandler, Unit>::statementListItem(
     YieldHandling yieldHandling, bool canHaveDirectives /* = false */) {
   MOZ_ASSERT(checkOptionsCalled_);
 
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -9227,7 +9230,8 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::assignExpr(
     TripledotHandling tripledotHandling,
     PossibleError* possibleError /* = nullptr */,
     InvokedPrediction invoked /* = PredictUninvoked */) {
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -9307,6 +9311,7 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::assignExpr(
   // Save the tokenizer state in case we find an arrow function and have to
   // rewind.
   Position start(tokenStream);
+  auto ghostToken = this->compilationState_.getPosition();
 
   PossibleError possibleErrorInner(*this);
   Node lhs;
@@ -9377,7 +9382,11 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::assignExpr(
     // Note: We do not call CompilationState::rewind here because parsing
     // during delazification will see the same rewind and need the same sequence
     // of inner functions to skip over.
+    // Instead, we mark inner functions as "ghost".
+    //
+    // See GHOST_FUNCTION in FunctionFlags.h for more details.
     tokenStream.rewind(start);
+    this->compilationState_.markGhost(ghostToken);
 
     TokenKind next;
     if (!tokenStream.getToken(&next, TokenStream::SlashIsRegExp)) {
@@ -9599,7 +9608,8 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::optionalExpr(
     YieldHandling yieldHandling, TripledotHandling tripledotHandling,
     TokenKind tt, PossibleError* possibleError /* = nullptr */,
     InvokedPrediction invoked /* = PredictUninvoked */) {
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -9709,7 +9719,8 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::unaryExpr(
     YieldHandling yieldHandling, TripledotHandling tripledotHandling,
     PossibleError* possibleError /* = nullptr */,
     InvokedPrediction invoked /* = PredictUninvoked */) {
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -9976,7 +9987,8 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::memberExpr(
 
   Node lhs;
 
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 
@@ -11618,7 +11630,8 @@ typename ParseHandler::Node GeneralParser<ParseHandler, Unit>::primaryExpr(
     YieldHandling yieldHandling, TripledotHandling tripledotHandling,
     TokenKind tt, PossibleError* possibleError, InvokedPrediction invoked) {
   MOZ_ASSERT(anyChars.isCurrentTokenType(tt));
-  if (!CheckRecursionLimit(cx_)) {
+  AutoCheckRecursionLimit recursion(cx_);
+  if (!recursion.check(cx_)) {
     return null();
   }
 

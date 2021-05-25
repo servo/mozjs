@@ -219,6 +219,8 @@ enum class Op {
   Try = 0x06,
   Catch = 0x07,
   Throw = 0x08,
+  Rethrow = 0x09,
+  Unwind = 0x0a,
 #endif
   End = 0x0b,
   Br = 0x0c,
@@ -229,6 +231,12 @@ enum class Op {
   // Call operators
   Call = 0x10,
   CallIndirect = 0x11,
+
+// Additional exception operators
+#ifdef ENABLE_WASM_EXCEPTIONS
+  Delegate = 0x18,
+  CatchAll = 0x19,
+#endif
 
   // Parametric operators
   Drop = 0x1a,
@@ -1003,10 +1011,8 @@ static const unsigned MaxTables = 100000;
 static const unsigned MaxImports = 100000;
 static const unsigned MaxExports = 100000;
 static const unsigned MaxGlobals = 1000000;
-#ifdef ENABLE_WASM_EXCEPTIONS
 static const unsigned MaxEvents =
     1000000;  // TODO: get this into the shared limits spec
-#endif
 static const unsigned MaxDataSegments = 100000;
 static const unsigned MaxDataSegmentLengthPages = 16384;
 static const unsigned MaxElemSegments = 10000000;
@@ -1015,8 +1021,6 @@ static const unsigned MaxTableLimitField = UINT32_MAX;
 static const unsigned MaxTableLength = 10000000;
 static const unsigned MaxLocals = 50000;
 static const unsigned MaxParams = 1000;
-// The actual maximum results may be `1` if multi-value is not enabled. Check
-// `env->funcMaxResults()` to get the correct value for a module.
 static const unsigned MaxResults = 1000;
 static const unsigned MaxStructFields = 1000;
 static const unsigned MaxMemory32LimitField = 65536;

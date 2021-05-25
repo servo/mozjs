@@ -447,15 +447,16 @@ impl Device {
             AndroidStorageInput::App => AndroidStorage::App,
             AndroidStorageInput::Internal => AndroidStorage::Internal,
             AndroidStorageInput::Sdcard => AndroidStorage::Sdcard,
-            AndroidStorageInput::Auto => match device.is_rooted {
-                true => AndroidStorage::Internal,
-                false => AndroidStorage::App,
-            },
+            AndroidStorageInput::Auto => AndroidStorage::Sdcard,
         };
 
-        // Set Permissive=1 if we have root.
         if device.is_rooted {
+            debug!("Device is rooted");
+
+            // Set Permissive=1 if we have root.
             device.execute_host_shell_command("setenforce permissive")?;
+        } else {
+            debug!("Device is unrooted");
         }
 
         Ok(device)
@@ -513,7 +514,8 @@ impl Device {
         let response = std::str::from_utf8(&bytes)?;
         debug!("execute_host_command: << {:?}", response);
 
-        Ok(response.to_owned())
+        // Unify new lines by removing possible carriage returns
+        Ok(response.replace("\r\n", "\n"))
     }
 
     pub fn enable_run_as_for_path(&self, path: &Path) -> bool {

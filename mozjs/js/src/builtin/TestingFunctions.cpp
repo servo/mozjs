@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cfloat>
+#include <cinttypes>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -36,6 +37,7 @@
 
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "jsmath.h"
 
 #ifdef JS_HAS_INTL_API
 #  include "builtin/intl/CommonFunctions.h"
@@ -73,6 +75,7 @@
 #include "js/HashTable.h"
 #include "js/LocaleSensitive.h"
 #include "js/OffThreadScriptCompilation.h"  // js::UseOffThreadParseGlobal
+#include "js/Printf.h"
 #include "js/PropertySpec.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlag, JS::RegExpFlags
 #include "js/SourceText.h"
@@ -149,7 +152,7 @@ using JS::SourceText;
 
 // If fuzzingSafe is set, remove functionality that could cause problems with
 // fuzzers. Set this via the environment variable MOZ_FUZZING_SAFE.
-mozilla::Atomic<bool> fuzzingSafe(false);
+mozilla::Atomic<bool> js::fuzzingSafe(false);
 
 // If disableOOMFunctions is set, disable functionality that causes artificial
 // OOM conditions.
@@ -830,42 +833,14 @@ static bool WasmThreadsEnabled(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool WasmReftypesEnabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::ReftypesAvailable(cx));
-  return true;
-}
-
-static bool WasmFunctionReferencesEnabled(JSContext* cx, unsigned argc,
-                                          Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::FunctionReferencesAvailable(cx));
-  return true;
-}
-
-static bool WasmGcEnabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::GcTypesAvailable(cx));
-  return true;
-}
-
-static bool WasmExceptionsEnabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::ExceptionsAvailable(cx));
-  return true;
-}
-
-static bool WasmMultiValueEnabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::MultiValuesAvailable(cx));
-  return true;
-}
-
-static bool WasmSimdEnabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(wasm::SimdAvailable(cx));
-  return true;
-}
+#define WASM_FEATURE(NAME, ...)                                              \
+  static bool Wasm##NAME##Enabled(JSContext* cx, unsigned argc, Value* vp) { \
+    CallArgs args = CallArgsFromVp(argc, vp);                                \
+    args.rval().setBoolean(wasm::NAME##Available(cx));                       \
+    return true;                                                             \
+  }
+JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE);
+#undef WASM_FEATURE
 
 static bool WasmSimdExperimentalEnabled(JSContext* cx, unsigned argc,
                                         Value* vp) {
@@ -898,13 +873,6 @@ static bool WasmCompilersPresent(JSContext* cx, unsigned argc, Value* vp) {
       strcat(buf, ",");
     }
     strcat(buf, "cranelift");
-  }
-  // Cranelift->Ion transition
-  if (wasm::IonPlatformSupport()) {
-    if (*buf) {
-      strcat(buf, ",");
-    }
-    strcat(buf, "ion");
   }
 #else
   if (wasm::IonPlatformSupport()) {
@@ -1031,6 +999,369 @@ static bool WasmSimdAnalysis(JSContext* cx, unsigned argc, Value* vp) {
 #  endif
 #endif
 
+static bool WasmGlobalFromArrayBuffer(JSContext* cx, unsigned argc, Value* vp) {
+  if (!wasm::HasSupport(cx)) {
+    JS_ReportErrorASCII(cx, "wasm support unavailable");
+    return false;
+  }
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() < 2) {
+    JS_ReportErrorASCII(cx, "not enough arguments");
+    return false;
+  }
+
+  // Get the type of the value
+  wasm::ValType valType;
+  if (!wasm::ToValType(cx, args.get(0), &valType)) {
+    return false;
+  }
+
+  // Get the array buffer for the value
+  if (!args.get(1).isObject() ||
+      !args.get(1).toObject().is<ArrayBufferObject>()) {
+    JS_ReportErrorASCII(cx, "argument is not an array buffer");
+    return false;
+  }
+  RootedArrayBufferObject buffer(
+      cx, &args.get(1).toObject().as<ArrayBufferObject>());
+
+  // Only allow POD to be created from bytes
+  switch (valType.kind()) {
+    case wasm::ValType::I32:
+    case wasm::ValType::I64:
+    case wasm::ValType::F32:
+    case wasm::ValType::F64:
+    case wasm::ValType::V128:
+      break;
+    default:
+      JS_ReportErrorASCII(
+          cx, "invalid valtype for creating WebAssembly.Global from bytes");
+      return false;
+  }
+
+  // Check we have all the bytes we need
+  if (valType.size() != buffer->byteLength()) {
+    JS_ReportErrorASCII(cx, "array buffer has incorrect size");
+    return false;
+  }
+
+  // Copy the bytes from buffer into a tagged val
+  wasm::RootedVal val(cx, valType);
+  val.get().readFromRootedLocation(buffer->dataPointer());
+
+  // Create the global object
+  RootedObject proto(
+      cx, GlobalObject::getOrCreatePrototype(cx, JSProto_WasmGlobal));
+  RootedWasmGlobalObject result(
+      cx, WasmGlobalObject::create(cx, val, false, proto));
+
+  args.rval().setObject(*result.get());
+  return true;
+}
+
+enum class LaneInterp {
+  I32x4,
+  I64x2,
+  F32x4,
+  F64x2,
+};
+
+size_t LaneInterpLanes(LaneInterp interp) {
+  switch (interp) {
+    case LaneInterp::I32x4:
+      return 4;
+    case LaneInterp::I64x2:
+      return 2;
+    case LaneInterp::F32x4:
+      return 4;
+    case LaneInterp::F64x2:
+      return 2;
+    default:
+      MOZ_ASSERT_UNREACHABLE();
+      return 0;
+  }
+}
+
+static bool ToLaneInterp(JSContext* cx, HandleValue v, LaneInterp* out) {
+  RootedString interpStr(cx, ToString(cx, v));
+  if (!interpStr) {
+    return false;
+  }
+  RootedLinearString interpLinearStr(cx, interpStr->ensureLinear(cx));
+  if (!interpLinearStr) {
+    return false;
+  }
+
+  if (StringEqualsLiteral(interpLinearStr, "i32x4")) {
+    *out = LaneInterp::I32x4;
+    return true;
+  } else if (StringEqualsLiteral(interpLinearStr, "i64x2")) {
+    *out = LaneInterp::I64x2;
+    return true;
+  } else if (StringEqualsLiteral(interpLinearStr, "f32x4")) {
+    *out = LaneInterp::F32x4;
+    return true;
+  } else if (StringEqualsLiteral(interpLinearStr, "f64x2")) {
+    *out = LaneInterp::F64x2;
+    return true;
+  }
+
+  JS_ReportErrorASCII(cx, "invalid lane interpretation");
+  return false;
+}
+
+static bool WasmGlobalExtractLane(JSContext* cx, unsigned argc, Value* vp) {
+  if (!wasm::HasSupport(cx)) {
+    JS_ReportErrorASCII(cx, "wasm support unavailable");
+    return false;
+  }
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() < 3) {
+    JS_ReportErrorASCII(cx, "not enough arguments");
+    return false;
+  }
+
+  // Get the global value
+  if (!args.get(0).isObject() ||
+      !args.get(0).toObject().is<WasmGlobalObject>()) {
+    JS_ReportErrorASCII(cx, "argument is not wasm value");
+    return false;
+  }
+  RootedWasmGlobalObject global(cx,
+                                &args.get(0).toObject().as<WasmGlobalObject>());
+
+  // Check that we have a v128 value
+  if (global->type().kind() != wasm::ValType::V128) {
+    JS_ReportErrorASCII(cx, "global is not a v128 value");
+    return false;
+  }
+  wasm::V128 v128 = global->val().get().v128();
+
+  // Get the passed interpretation of lanes
+  LaneInterp interp;
+  if (!ToLaneInterp(cx, args.get(1), &interp)) {
+    return false;
+  }
+
+  // Get the lane to extract
+  int32_t lane;
+  if (!ToInt32(cx, args.get(2), &lane)) {
+    return false;
+  }
+
+  // Check that the lane interp is valid
+  if (lane < 0 || size_t(lane) >= LaneInterpLanes(interp)) {
+    JS_ReportErrorASCII(cx, "invalid lane for interp");
+    return false;
+  }
+
+  wasm::RootedVal val(cx);
+  switch (interp) {
+    case LaneInterp::I32x4:
+      val.set(wasm::Val(v128.extractLane<uint32_t>(lane)));
+      break;
+    case LaneInterp::I64x2:
+      val.set(wasm::Val(v128.extractLane<uint64_t>(lane)));
+      break;
+    case LaneInterp::F32x4:
+      val.set(wasm::Val(v128.extractLane<float>(lane)));
+      break;
+    case LaneInterp::F64x2:
+      val.set(wasm::Val(v128.extractLane<double>(lane)));
+      break;
+    default:
+      MOZ_ASSERT_UNREACHABLE();
+  }
+
+  RootedObject proto(
+      cx, GlobalObject::getOrCreatePrototype(cx, JSProto_WasmGlobal));
+  RootedWasmGlobalObject result(
+      cx, WasmGlobalObject::create(cx, val, false, proto));
+  args.rval().setObject(*result.get());
+  return true;
+}
+
+static bool WasmGlobalsEqual(JSContext* cx, unsigned argc, Value* vp) {
+  if (!wasm::HasSupport(cx)) {
+    JS_ReportErrorASCII(cx, "wasm support unavailable");
+    return false;
+  }
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() < 2) {
+    JS_ReportErrorASCII(cx, "not enough arguments");
+    return false;
+  }
+
+  if (!args.get(0).isObject() ||
+      !args.get(0).toObject().is<WasmGlobalObject>() ||
+      !args.get(1).isObject() ||
+      !args.get(1).toObject().is<WasmGlobalObject>()) {
+    JS_ReportErrorASCII(cx, "argument is not wasm value");
+    return false;
+  }
+
+  RootedWasmGlobalObject a(cx, &args.get(0).toObject().as<WasmGlobalObject>());
+  RootedWasmGlobalObject b(cx, &args.get(1).toObject().as<WasmGlobalObject>());
+
+  if (a->type() != b->type()) {
+    JS_ReportErrorASCII(cx, "globals are of different type");
+    return false;
+  }
+
+  bool result;
+  const wasm::Val& aVal = a->val().get();
+  const wasm::Val& bVal = b->val().get();
+  switch (a->type().kind()) {
+    case wasm::ValType::I32: {
+      result = aVal.i32() == bVal.i32();
+      break;
+    }
+    case wasm::ValType::I64: {
+      result = aVal.i64() == bVal.i64();
+      break;
+    }
+    case wasm::ValType::F32: {
+      result = mozilla::EqualOrBothNaN(aVal.f32(), aVal.f32());
+      break;
+    }
+    case wasm::ValType::F64: {
+      result = mozilla::EqualOrBothNaN(aVal.f64(), aVal.f64());
+      break;
+    }
+    case wasm::ValType::V128: {
+      // Don't know the interpretation of the v128, so we only can do an exact
+      // bitwise equality. Testing code can use wasmGlobalExtractLane to
+      // workaround this if needed.
+      result = aVal.v128() == bVal.v128();
+      break;
+    }
+    case wasm::ValType::Ref: {
+      result = aVal.ref() == bVal.ref();
+      break;
+    }
+    default:
+      JS_ReportErrorASCII(cx, "unsupported type");
+      return false;
+  }
+  args.rval().setBoolean(result);
+  return true;
+}
+
+static bool WasmGlobalToString(JSContext* cx, unsigned argc, Value* vp) {
+  if (!wasm::HasSupport(cx)) {
+    JS_ReportErrorASCII(cx, "wasm support unavailable");
+    return false;
+  }
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() < 1) {
+    JS_ReportErrorASCII(cx, "not enough arguments");
+    return false;
+  }
+  if (!args.get(0).isObject() ||
+      !args.get(0).toObject().is<WasmGlobalObject>()) {
+    JS_ReportErrorASCII(cx, "argument is not wasm value");
+    return false;
+  }
+  RootedWasmGlobalObject global(cx,
+                                &args.get(0).toObject().as<WasmGlobalObject>());
+  const wasm::Val& globalVal = global->val().get();
+
+  UniqueChars result;
+  switch (globalVal.type().kind()) {
+    case wasm::ValType::I32: {
+      result = JS_smprintf("i32:%" PRIx32, globalVal.i32());
+      break;
+    }
+    case wasm::ValType::I64: {
+      result = JS_smprintf("i64:%" PRIx64, globalVal.i64());
+      break;
+    }
+    case wasm::ValType::F32: {
+      result = JS_smprintf("f32:%f", globalVal.f32());
+      break;
+    }
+    case wasm::ValType::F64: {
+      result = JS_smprintf("f64:%lf", globalVal.f64());
+      break;
+    }
+    case wasm::ValType::V128: {
+      wasm::V128 v128 = globalVal.v128();
+      result = JS_smprintf(
+          "v128:%x,%x,%x,%x,%x,%x,%x,%x,%x,%x,%x,%x,%x,%x,%x,%x", v128.bytes[0],
+          v128.bytes[1], v128.bytes[2], v128.bytes[3], v128.bytes[4],
+          v128.bytes[5], v128.bytes[6], v128.bytes[7], v128.bytes[8],
+          v128.bytes[9], v128.bytes[10], v128.bytes[11], v128.bytes[12],
+          v128.bytes[13], v128.bytes[14], v128.bytes[15]);
+      break;
+    }
+    case wasm::ValType::Ref: {
+      result = JS_smprintf("ref:%p", globalVal.ref().asJSObject());
+      break;
+    }
+    default:
+      MOZ_ASSERT_UNREACHABLE();
+  }
+
+  args.rval().setString(JS_NewStringCopyZ(cx, result.get()));
+  return true;
+}
+
+static bool WasmLosslessInvoke(JSContext* cx, unsigned argc, Value* vp) {
+  if (!wasm::HasSupport(cx)) {
+    JS_ReportErrorASCII(cx, "wasm support unavailable");
+    return false;
+  }
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (args.length() < 1) {
+    JS_ReportErrorASCII(cx, "not enough arguments");
+    return false;
+  }
+  if (!args.get(0).isObject()) {
+    JS_ReportErrorASCII(cx, "argument is not an object");
+    return false;
+  }
+
+  RootedFunction func(cx, args[0].toObject().maybeUnwrapIf<JSFunction>());
+  if (!func || !wasm::IsWasmExportedFunction(func)) {
+    JS_ReportErrorASCII(cx, "argument is not an exported wasm function");
+    return false;
+  }
+
+  // Get the instance and funcIndex for calling the function
+  wasm::Instance& instance = wasm::ExportedFunctionToInstance(func);
+  uint32_t funcIndex = wasm::ExportedFunctionToFuncIndex(func);
+
+  // Set up a modified call frame following the standard JS
+  // [callee, this, arguments...] convention.
+  RootedValueVector wasmCallFrame(cx);
+  size_t len = 2 + args.length();
+  if (!wasmCallFrame.resize(len)) {
+    return false;
+  }
+  wasmCallFrame[0].set(args.calleev());
+  wasmCallFrame[1].set(args.thisv());
+  // Copy over the arguments needed to invoke the provided wasm function,
+  // skipping the wasm function we're calling that is at `args.get(0)`.
+  for (size_t i = 1; i < args.length(); i++) {
+    size_t wasmArg = i - 1;
+    wasmCallFrame[2 + wasmArg].set(args.get(i));
+  }
+  size_t wasmArgc = argc - 1;
+  CallArgs wasmCallArgs(CallArgsFromVp(wasmArgc, wasmCallFrame.begin()));
+
+  // Invoke the function with the new call frame
+  bool result = instance.callExport(cx, funcIndex, wasmCallArgs,
+                                    wasm::CoercionLevel::Lossless);
+  // Assign the wasm rval to our rval
+  args.rval().set(wasmCallArgs.rval());
+  return result;
+}
+
 static bool ConvertToTier(JSContext* cx, HandleValue value,
                           const wasm::Code& code, wasm::Tier* tier) {
   RootedString option(cx, JS::ToString(cx, value));
@@ -1068,7 +1399,7 @@ static bool ConvertToTier(JSContext* cx, HandleValue value,
 }
 
 static bool WasmExtractCode(JSContext* cx, unsigned argc, Value* vp) {
-  if (!cx->options().wasm()) {
+  if (!wasm::HasSupport(cx)) {
     JS_ReportErrorASCII(cx, "wasm support unavailable");
     return false;
   }
@@ -1337,7 +1668,7 @@ static bool WasmDisassembleCode(JSContext* cx, const wasm::Code& code,
 }
 
 static bool WasmDisassemble(JSContext* cx, unsigned argc, Value* vp) {
-  if (!cx->options().wasm()) {
+  if (!wasm::HasSupport(cx)) {
     JS_ReportErrorASCII(cx, "wasm support unavailable");
     return false;
   }
@@ -4141,7 +4472,319 @@ static bool DisableTraceLogger(JSContext* cx, unsigned argc, Value* vp) {
 
   return true;
 }
-#endif
+#endif  // JS_TRACE_LOGGING
+
+// ShapeSnapshot holds information about an object's properties. This is used
+// for checking object and shape changes between two points in time.
+class ShapeSnapshot {
+  GCPtr<JSObject*> object_;
+  GCPtr<Shape*> shape_;
+  GCPtr<BaseShape*> baseShape_;
+  ObjectFlags objectFlags_;
+
+  GCVector<HeapPtr<Value>, 8> slots_;
+
+  struct PropertyInfo {
+    HeapPtr<Shape*> propShape;
+    HeapPtr<JS::PropertyKey> key;
+    uint32_t slot;
+    uint8_t attrs;
+
+    explicit PropertyInfo(Shape* shape)
+        : propShape(shape),
+          key(shape->propid()),
+          slot(shape->maybeSlot()),
+          attrs(propShape->attributes()) {}
+    void trace(JSTracer* trc) {
+      TraceEdge(trc, &propShape, "propShape");
+      TraceEdge(trc, &key, "key");
+    }
+    bool operator==(const PropertyInfo& other) const {
+      return propShape == other.propShape && key == other.key &&
+             slot == other.slot && attrs == other.attrs;
+    }
+    bool operator!=(const PropertyInfo& other) const {
+      return !operator==(other);
+    }
+  };
+  GCVector<PropertyInfo, 8> properties_;
+
+ public:
+  explicit ShapeSnapshot(JSContext* cx) : slots_(cx), properties_(cx) {}
+  void checkSelf(JSContext* cx) const;
+  void check(JSContext* cx, const ShapeSnapshot& other) const;
+  bool init(JSObject* obj);
+  void trace(JSTracer* trc);
+
+  JSObject* object() const { return object_; }
+};
+
+// A JSObject that holds a ShapeSnapshot.
+class ShapeSnapshotObject : public NativeObject {
+  static constexpr size_t SnapshotSlot = 0;
+  static constexpr size_t ReservedSlots = 1;
+
+ public:
+  static const JSClassOps classOps_;
+  static const JSClass class_;
+
+  bool hasSnapshot() const {
+    // The snapshot may not be present yet if we GC during initialization.
+    return !getSlot(SnapshotSlot).isUndefined();
+  }
+
+  ShapeSnapshot& snapshot() const {
+    void* ptr = getSlot(SnapshotSlot).toPrivate();
+    MOZ_ASSERT(ptr);
+    return *static_cast<ShapeSnapshot*>(ptr);
+  }
+
+  static ShapeSnapshotObject* create(JSContext* cx, HandleObject obj);
+
+  static void finalize(JSFreeOp* fop, JSObject* obj) {
+    if (obj->as<ShapeSnapshotObject>().hasSnapshot()) {
+      js_delete(&obj->as<ShapeSnapshotObject>().snapshot());
+    }
+  }
+  static void trace(JSTracer* trc, JSObject* obj) {
+    if (obj->as<ShapeSnapshotObject>().hasSnapshot()) {
+      obj->as<ShapeSnapshotObject>().snapshot().trace(trc);
+    }
+  }
+};
+
+/*static */ const JSClassOps ShapeSnapshotObject::classOps_ = {
+    nullptr,                        // addProperty
+    nullptr,                        // delProperty
+    nullptr,                        // enumerate
+    nullptr,                        // newEnumerate
+    nullptr,                        // resolve
+    nullptr,                        // mayResolve
+    ShapeSnapshotObject::finalize,  // finalize
+    nullptr,                        // call
+    nullptr,                        // hasInstance
+    nullptr,                        // construct
+    ShapeSnapshotObject::trace,     // trace
+};
+
+/*static */ const JSClass ShapeSnapshotObject::class_ = {
+    "ShapeSnapshotObject",
+    JSCLASS_HAS_RESERVED_SLOTS(ShapeSnapshotObject::ReservedSlots) |
+        JSCLASS_BACKGROUND_FINALIZE,
+    &ShapeSnapshotObject::classOps_};
+
+bool ShapeSnapshot::init(JSObject* obj) {
+  object_ = obj;
+  shape_ = obj->shape();
+  baseShape_ = shape_->base();
+  objectFlags_ = shape_->objectFlags();
+
+  if (obj->is<NativeObject>()) {
+    NativeObject* nobj = &obj->as<NativeObject>();
+
+    // Snapshot the slot values.
+    size_t slotSpan = nobj->slotSpan();
+    if (!slots_.growBy(slotSpan)) {
+      return false;
+    }
+    for (size_t i = 0; i < slotSpan; i++) {
+      slots_[i] = nobj->getSlot(i);
+    }
+
+    // Snapshot property information.
+    Shape* propShape = shape_;
+    while (!propShape->isEmptyShape()) {
+      if (!properties_.append(PropertyInfo(propShape))) {
+        return false;
+      }
+      propShape = propShape->previous();
+    }
+  }
+
+  return true;
+}
+
+void ShapeSnapshot::trace(JSTracer* trc) {
+  TraceEdge(trc, &object_, "object");
+  TraceEdge(trc, &shape_, "shape");
+  TraceEdge(trc, &baseShape_, "baseShape");
+  slots_.trace(trc);
+  properties_.trace(trc);
+}
+
+void ShapeSnapshot::checkSelf(JSContext* cx) const {
+  // Assertions based on a single snapshot.
+
+  // Non-dictionary shapes must not be mutated.
+  if (!shape_->inDictionary()) {
+    MOZ_RELEASE_ASSERT(shape_->base() == baseShape_);
+    MOZ_RELEASE_ASSERT(shape_->objectFlags() == objectFlags_);
+  }
+
+  for (const PropertyInfo& prop : properties_) {
+    Shape* propShape = prop.propShape;
+
+    // Skip if the Shape no longer matches the snapshotted data. This can
+    // only happen for non-configurable dictionary properties.
+    if (PropertyInfo(propShape) != prop) {
+      MOZ_RELEASE_ASSERT(propShape->inDictionary());
+      MOZ_RELEASE_ASSERT(!(prop.attrs & JSPROP_PERMANENT));
+      continue;
+    }
+
+    // Ensure ObjectFlags depending on property information are set if needed.
+    ObjectFlags expectedFlags =
+        GetObjectFlagsForNewProperty(shape_, prop.key, prop.attrs, cx);
+    MOZ_RELEASE_ASSERT(expectedFlags == objectFlags_);
+
+    // Accessors must have a PrivateGCThingValue(GetterSetter*) slot value.
+    if (propShape->isAccessorDescriptor()) {
+      Value slotVal = slots_[prop.slot];
+      MOZ_RELEASE_ASSERT(slotVal.isPrivateGCThing());
+      MOZ_RELEASE_ASSERT(slotVal.toGCThing()->is<GetterSetter>());
+    }
+
+    // Data properties must not have a PrivateGCThingValue slot value.
+    if (propShape->isDataProperty()) {
+      Value slotVal = slots_[prop.slot];
+      MOZ_RELEASE_ASSERT(!slotVal.isPrivateGCThing());
+    }
+  }
+}
+
+void ShapeSnapshot::check(JSContext* cx, const ShapeSnapshot& later) const {
+  checkSelf(cx);
+  later.checkSelf(cx);
+
+  if (object_ != later.object_) {
+    // Snapshots are for different objects. Assert dictionary shapes aren't
+    // shared.
+    if (object_->is<NativeObject>()) {
+      NativeObject* nobj = &object_->as<NativeObject>();
+      if (nobj->inDictionaryMode()) {
+        MOZ_RELEASE_ASSERT(shape_ != later.shape_);
+      }
+    }
+    return;
+  }
+
+  // We have two snapshots for the same object. Check the shape information
+  // wasn't changed in invalid ways.
+
+  // If the Shape is still the same, the object must have the same BaseShape,
+  // ObjectFlags and property information.
+  if (shape_ == later.shape_) {
+    MOZ_RELEASE_ASSERT(objectFlags_ == later.objectFlags_);
+    MOZ_RELEASE_ASSERT(baseShape_ == later.baseShape_);
+    MOZ_RELEASE_ASSERT(slots_.length() == later.slots_.length());
+    MOZ_RELEASE_ASSERT(properties_.length() == later.properties_.length());
+
+    for (size_t i = 0; i < properties_.length(); i++) {
+      MOZ_RELEASE_ASSERT(properties_[i] == later.properties_[i]);
+      // Non-configurable accessor properties and non-configurable, non-writable
+      // data properties shouldn't have had their slot mutated.
+      Shape* propShape = properties_[i].propShape;
+      if (!propShape->configurable()) {
+        if (propShape->isAccessorDescriptor() ||
+            (propShape->isDataProperty() && !propShape->writable())) {
+          size_t slot = propShape->slot();
+          MOZ_RELEASE_ASSERT(slots_[slot] == later.slots_[slot]);
+        }
+      }
+    }
+  }
+
+  // Object flags should not be lost. The exception is the Indexed flag, it
+  // can be cleared when densifying elements, so clear that flag first.
+  {
+    ObjectFlags flags = objectFlags_;
+    ObjectFlags flagsLater = later.objectFlags_;
+    flags.clearFlag(ObjectFlag::Indexed);
+    flagsLater.clearFlag(ObjectFlag::Indexed);
+    MOZ_RELEASE_ASSERT((flags.toRaw() & flagsLater.toRaw()) == flags.toRaw());
+  }
+
+  // If the HadGetterSetterChange flag wasn't set, all GetterSetter slots must
+  // be unchanged.
+  if (!later.objectFlags_.hasFlag(ObjectFlag::HadGetterSetterChange)) {
+    for (size_t i = 0; i < slots_.length(); i++) {
+      if (slots_[i].isPrivateGCThing() &&
+          slots_[i].toGCThing()->is<GetterSetter>()) {
+        MOZ_RELEASE_ASSERT(i < later.slots_.length());
+        MOZ_RELEASE_ASSERT(later.slots_[i] == slots_[i]);
+      }
+    }
+  }
+}
+
+// static
+ShapeSnapshotObject* ShapeSnapshotObject::create(JSContext* cx,
+                                                 HandleObject obj) {
+  Rooted<UniquePtr<ShapeSnapshot>> snapshot(cx,
+                                            cx->make_unique<ShapeSnapshot>(cx));
+  if (!snapshot || !snapshot->init(obj)) {
+    return nullptr;
+  }
+
+  auto* snapshotObj = NewObjectWithGivenProto<ShapeSnapshotObject>(cx, nullptr);
+  if (!snapshotObj) {
+    return nullptr;
+  }
+  snapshotObj->initReservedSlot(SnapshotSlot, PrivateValue(snapshot.release()));
+  return snapshotObj;
+}
+
+static bool CreateShapeSnapshot(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (!args.get(0).isObject()) {
+    JS_ReportErrorASCII(cx, "createShapeSnapshot requires an object argument");
+    return false;
+  }
+
+  RootedObject obj(cx, &args[0].toObject());
+  auto* res = ShapeSnapshotObject::create(cx, obj);
+  if (!res) {
+    return false;
+  }
+
+  res->snapshot().check(cx, res->snapshot());
+
+  args.rval().setObject(*res);
+  return true;
+}
+
+static bool CheckShapeSnapshot(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  if (!args.get(0).isObject() ||
+      !args[0].toObject().is<ShapeSnapshotObject>()) {
+    JS_ReportErrorASCII(cx, "checkShapeSnapshot requires a snapshot argument");
+    return false;
+  }
+
+  // Get the object to use from the snapshot if the second argument is not an
+  // object.
+  RootedObject obj(cx);
+  if (args.get(1).isObject()) {
+    obj = &args[1].toObject();
+  } else {
+    auto& snapshot = args[0].toObject().as<ShapeSnapshotObject>().snapshot();
+    obj = snapshot.object();
+  }
+
+  RootedObject otherSnapshot(cx, ShapeSnapshotObject::create(cx, obj));
+  if (!otherSnapshot) {
+    return false;
+  }
+
+  auto& snapshot1 = args[0].toObject().as<ShapeSnapshotObject>().snapshot();
+  auto& snapshot2 = otherSnapshot->as<ShapeSnapshotObject>().snapshot();
+  snapshot1.check(cx, snapshot2);
+
+  args.rval().setUndefined();
+  return true;
+}
 
 #if defined(DEBUG) || defined(JS_JITSPEW)
 static bool DumpObject(JSContext* cx, unsigned argc, Value* vp) {
@@ -5192,7 +5835,7 @@ static bool EvalStencilXDR(JSContext* cx, uint32_t argc, Value* vp) {
   frontend::CompilationStencil stencil(nullptr);
 
   /* Deserialize the stencil from XDR. */
-  JS::TranscodeRange xdrRange(src->dataPointer(), src->byteLength().get());
+  JS::TranscodeRange xdrRange(src->dataPointer(), src->byteLength());
   bool succeeded = false;
   if (!stencil.deserializeStencils(cx, input.get(), xdrRange, &succeeded)) {
     return false;
@@ -5673,9 +6316,7 @@ static bool GetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
   auto getTimeZone = [](std::time_t* now) -> const char* {
     std::tm local{};
 #if defined(_WIN32)
-#ifndef JS_ENABLE_UWP
     _tzset();
-#endif
     if (localtime_s(&local, now) == 0) {
       return _tzname[local.tm_isdst > 0];
     }
@@ -5770,9 +6411,7 @@ static bool SetTimeZone(JSContext* cx, unsigned argc, Value* vp) {
   }
 
 #if defined(_WIN32)
-#ifndef JS_ENABLE_UWP
   _tzset();
-#endif
 #else
   tzset();
 #endif /* _WIN32 */
@@ -6925,15 +7564,17 @@ gc::ZealModeHelpText),
 "  Returns a boolean indicating whether WebAssembly supports using a large"
 "  virtual memory reservation in order to elide bounds checks on this platform."),
 
+#define WASM_FEATURE(NAME, ...) \
+    JS_FN_HELP("wasm" #NAME "Enabled", Wasm##NAME##Enabled, 0, 0, \
+"wasm" #NAME "Enabled()", \
+"  Returns a boolean indicating whether the WebAssembly " #NAME " proposal is enabled."),
+JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE)
+#undef WASM_FEATURE
+
     JS_FN_HELP("wasmThreadsEnabled", WasmThreadsEnabled, 0, 0,
 "wasmThreadsEnabled()",
 "  Returns a boolean indicating whether the WebAssembly threads proposal is\n"
 "  supported on the current device."),
-
-    JS_FN_HELP("wasmSimdEnabled", WasmSimdEnabled, 0, 0,
-"wasmSimdEnabled()",
-"  Returns a boolean indicating whether WebAssembly SIMD is supported by the\n"
-"  compilers and runtime."),
 
     JS_FN_HELP("wasmSimdExperimentalEnabled", WasmSimdExperimentalEnabled, 0, 0,
 "wasmSimdExperimentalEnabled()",
@@ -6945,31 +7586,37 @@ gc::ZealModeHelpText),
 "  Returns a boolean indicating whether WebAssembly SIMD wormhole instructions\n"
 "  are supported by the compilers and runtime."),
 
-    JS_FN_HELP("wasmReftypesEnabled", WasmReftypesEnabled, 1, 0,
-"wasmReftypesEnabled()",
-"  Returns a boolean indicating whether the WebAssembly reftypes proposal is enabled."),
-
-    JS_FN_HELP("wasmFunctionReferencesEnabled", WasmFunctionReferencesEnabled, 1, 0,
-"wasmFunctionReferencesEnabled()",
-"  Returns a boolean indicating whether the WebAssembly function-references proposal is enabled."),
-
-    JS_FN_HELP("wasmGcEnabled", WasmGcEnabled, 1, 0,
-"wasmGcEnabled()",
-"  Returns a boolean indicating whether the WebAssembly GC types proposal is enabled."),
-
-    JS_FN_HELP("wasmMultiValueEnabled", WasmMultiValueEnabled, 1, 0,
-"wasmMultiValueEnabled()",
-"  Returns a boolean indicating whether the WebAssembly multi-value proposal is enabled."),
-
-    JS_FN_HELP("wasmExceptionsEnabled", WasmExceptionsEnabled, 1, 0,
-"wasmExceptionsEnabled()",
-"  Returns a boolean indicating whether the WebAssembly exceptions proposal is enabled."),
-
 #if defined(ENABLE_WASM_SIMD) && defined(DEBUG)
     JS_FN_HELP("wasmSimdAnalysis", WasmSimdAnalysis, 1, 0,
 "wasmSimdAnalysis(...)",
 "  Unstable API for white-box testing.\n"),
 #endif
+
+    JS_FN_HELP("wasmGlobalFromArrayBuffer", WasmGlobalFromArrayBuffer, 2, 0,
+"wasmGlobalFromArrayBuffer(type, arrayBuffer)",
+"  Create a WebAssembly.Global object from a provided ArrayBuffer. The type\n"
+"  must be POD (i32, i64, f32, f64, v128). The buffer must be the same\n"
+"  size as the type in bytes.\n"),
+    JS_FN_HELP("wasmGlobalExtractLane", WasmGlobalExtractLane, 3, 0,
+"wasmGlobalExtractLane(global, laneInterp, laneIndex)",
+"  Extract a lane from a WebAssembly.Global object that contains a v128 value\n"
+"  and return it as a new WebAssembly.Global object of the appropriate type.\n"
+"  The supported laneInterp values are i32x4, i64x2, f32x4, and\n"
+"  f64x2.\n"),
+    JS_FN_HELP("wasmGlobalsEqual", WasmGlobalsEqual, 2, 0,
+"wasmGlobalsEqual(globalA, globalB)",
+"  Compares two WebAssembly.Global objects for if their types and values are\n"
+"  equal. Mutability is not compared. NaN values are considered equal and are\n"
+"  not required to have the same bit pattern.\n"),
+    JS_FN_HELP("wasmGlobalToString", WasmGlobalToString, 1, 0,
+"wasmGlobalToString(global)",
+"  Returns a debug representation of the contents of a WebAssembly.Global\n"
+"  object.\n"),
+    JS_FN_HELP("wasmLosslessInvoke", WasmLosslessInvoke, 1, 0,
+"wasmLosslessInvoke(wasmFunc, args...)",
+"  Invokes the provided WebAssembly function using a modified conversion\n"
+"  function that allows providing a param as a WebAssembly.Global and\n"
+"  returning a result as a WebAssembly.Global.\n"),
 
     JS_FN_HELP("wasmCompilersPresent", WasmCompilersPresent, 0, 0,
 "wasmCompilersPresent()",
@@ -7128,6 +7775,16 @@ gc::ZealModeHelpText),
     JS_FN_HELP("helperThreadCount", HelperThreadCount, 0, 0,
 "helperThreadCount()",
 "  Returns the number of helper threads available for off-thread tasks."),
+
+    JS_FN_HELP("createShapeSnapshot", CreateShapeSnapshot, 1, 0,
+"createShapeSnapshot(obj)",
+"  Returns an object containing a shape snapshot for use with\n"
+"  checkShapeSnapshot.\n"),
+
+    JS_FN_HELP("checkShapeSnapshot", CheckShapeSnapshot, 2, 0,
+"checkShapeSnapshot(snapshot, [obj])",
+"  Check shape invariants based on the given snapshot and optional object.\n"
+"  If there's no object argument, the snapshot's object is used.\n"),
 
     JS_FN_HELP("enableShapeConsistencyChecks", EnableShapeConsistencyChecks, 0, 0,
 "enableShapeConsistencyChecks()",

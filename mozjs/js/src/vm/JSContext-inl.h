@@ -180,8 +180,8 @@ class ContextChecks {
 
   void check(AbstractFramePtr frame, int argIndex);
 
-  void check(Handle<PropertyDescriptor> desc, int argIndex) {
-    check(desc.object(), argIndex);
+  void check(const PropertyDescriptor& desc, int argIndex) {
+    check(desc.objectDoNotUse(), argIndex);
     if (desc.hasGetterObject()) {
       check(desc.getterObject(), argIndex);
     }
@@ -191,7 +191,13 @@ class ContextChecks {
     check(desc.value(), argIndex);
   }
 
-  void check(JS::Handle<mozilla::Maybe<JS::Value>> maybe, int argIndex) {
+  void check(Handle<mozilla::Maybe<Value>> maybe, int argIndex) {
+    if (maybe.get().isSome()) {
+      check(maybe.get().ref(), argIndex);
+    }
+  }
+
+  void check(Handle<mozilla::Maybe<PropertyDescriptor>> maybe, int argIndex) {
     if (maybe.get().isSome()) {
       check(maybe.get().ref(), argIndex);
     }
@@ -246,56 +252,6 @@ MOZ_ALWAYS_INLINE bool CallNativeImpl(JSContext* cx, NativeImpl impl,
     MOZ_ASSERT_IF(!alreadyThrowing, !cx->isExceptionPending());
   }
   return ok;
-}
-
-MOZ_ALWAYS_INLINE bool CallJSGetterOp(JSContext* cx, GetterOp op,
-                                      HandleObject obj, HandleId id,
-                                      MutableHandleValue vp) {
-  if (!CheckRecursionLimit(cx)) {
-    return false;
-  }
-
-  cx->check(obj, id, vp);
-  bool ok = op(cx, obj, id, vp);
-  if (ok) {
-    cx->check(vp);
-  }
-  return ok;
-}
-
-MOZ_ALWAYS_INLINE bool CallJSSetterOp(JSContext* cx, SetterOp op,
-                                      HandleObject obj, HandleId id,
-                                      HandleValue v, ObjectOpResult& result) {
-  if (!CheckRecursionLimit(cx)) {
-    return false;
-  }
-
-  cx->check(obj, id, v);
-  return op(cx, obj, id, v, result);
-}
-
-inline bool CallJSAddPropertyOp(JSContext* cx, JSAddPropertyOp op,
-                                HandleObject obj, HandleId id, HandleValue v) {
-  if (!CheckRecursionLimit(cx)) {
-    return false;
-  }
-
-  cx->check(obj, id, v);
-  return op(cx, obj, id, v);
-}
-
-inline bool CallJSDeletePropertyOp(JSContext* cx, JSDeletePropertyOp op,
-                                   HandleObject receiver, HandleId id,
-                                   ObjectOpResult& result) {
-  if (!CheckRecursionLimit(cx)) {
-    return false;
-  }
-
-  cx->check(receiver, id);
-  if (op) {
-    return op(cx, receiver, id, result);
-  }
-  return result.succeed();
 }
 
 MOZ_ALWAYS_INLINE bool CheckForInterrupt(JSContext* cx) {

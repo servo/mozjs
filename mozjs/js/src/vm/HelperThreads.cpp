@@ -505,7 +505,6 @@ AutoSetHelperThreadContext::AutoSetHelperThreadContext(
   cx = HelperThreadState().getFirstUnusedContext(lock);
   MOZ_ASSERT(cx);
   cx->setHelperThread(lock);
-  cx->nativeStackBase = GetNativeStackBase();
   // When we set the JSContext, we need to reset the computed stack limits for
   // the current thread, so we also set the native stack quota.
   JS_SetNativeStackQuota(cx, HELPER_STACK_QUOTA);
@@ -1045,9 +1044,14 @@ static bool EnsureParserCreatedClasses(JSContext* cx, ParseTaskKind kind) {
     return false;  // needed by async function*() {}
   }
 
-  if (kind == ParseTaskKind::Module &&
-      !GlobalObject::ensureModulePrototypesCreated(cx, global)) {
-    return false;
+  if (kind == ParseTaskKind::Module) {
+    // Set the used-as-prototype flag on the prototype objects because we can't
+    // GC in mergeRealms.
+    bool setUsedAsPrototype = true;
+    if (!GlobalObject::ensureModulePrototypesCreated(cx, global,
+                                                     setUsedAsPrototype)) {
+      return false;
+    }
   }
 
   return true;
@@ -1651,7 +1655,8 @@ size_t GlobalHelperThreadState::maxIonCompilationThreads() const {
 }
 
 size_t GlobalHelperThreadState::maxWasmCompilationThreads() const {
-  if (IsHelperThreadSimulatingOOM(js::THREAD_TYPE_WASM)) {
+  if (IsHelperThreadSimulatingOOM(js::THREAD_TYPE_WASM_COMPILE_TIER1) ||
+      IsHelperThreadSimulatingOOM(js::THREAD_TYPE_WASM_COMPILE_TIER2)) {
     return 1;
   }
   return cpuCount;
@@ -1662,7 +1667,8 @@ size_t GlobalHelperThreadState::maxWasmTier2GeneratorThreads() const {
 }
 
 size_t GlobalHelperThreadState::maxPromiseHelperThreads() const {
-  if (IsHelperThreadSimulatingOOM(js::THREAD_TYPE_WASM)) {
+  if (IsHelperThreadSimulatingOOM(js::THREAD_TYPE_WASM_COMPILE_TIER1) ||
+      IsHelperThreadSimulatingOOM(js::THREAD_TYPE_WASM_COMPILE_TIER2)) {
     return 1;
   }
   return cpuCount;
@@ -1733,21 +1739,24 @@ HelperThreadTask* GlobalHelperThreadState::maybeGetWasmCompile(
   size_t physCoresAvailable = size_t(ceil(cpuCount / 3.0));
 
   size_t threads;
+  ThreadType threadType;
   if (mode == wasm::CompileMode::Tier2) {
     if (tier2oversubscribed) {
       threads = maxWasmCompilationThreads();
     } else {
       threads = physCoresAvailable;
     }
+    threadType = THREAD_TYPE_WASM_COMPILE_TIER2;
   } else {
     if (tier2oversubscribed) {
       threads = 0;
     } else {
       threads = maxWasmCompilationThreads();
     }
+    threadType = THREAD_TYPE_WASM_COMPILE_TIER1;
   }
 
-  if (!threads || !checkTaskThreadLimit(THREAD_TYPE_WASM, threads, lock)) {
+  if (!threads || !checkTaskThreadLimit(threadType, threads, lock)) {
     return nullptr;
   }
 
@@ -1757,7 +1766,7 @@ HelperThreadTask* GlobalHelperThreadState::maybeGetWasmCompile(
 HelperThreadTask* GlobalHelperThreadState::maybeGetWasmTier2GeneratorTask(
     const AutoLockHelperThreadState& lock) {
   if (wasmTier2GeneratorWorklist(lock).empty() ||
-      !checkTaskThreadLimit(THREAD_TYPE_WASM_TIER2,
+      !checkTaskThreadLimit(THREAD_TYPE_WASM_GENERATOR_TIER2,
                             maxWasmTier2GeneratorThreads(),
                             /*isMaster=*/true, lock)) {
     return nullptr;
@@ -2223,6 +2232,37 @@ JSObject* GlobalHelperThreadState::finishModuleParseTask(
   }
 
   return script->module();
+}
+
+frontend::CompilationStencil* GlobalHelperThreadState::finishStencilParseTask(
+    JSContext* cx, JS::OffThreadToken* token) {
+  // TODO: The Script and Module task kinds should be combined in future since
+  //       they both generate the same Stencil type.
+  auto task = static_cast<ParseTask*>(token);
+  MOZ_RELEASE_ASSERT(task->kind == ParseTaskKind::Script ||
+                     task->kind == ParseTaskKind::Module);
+
+  Rooted<UniquePtr<ParseTask>> parseTask(
+      cx, finishParseTaskCommon(cx, task->kind, token));
+  if (!parseTask) {
+    return nullptr;
+  }
+
+  MOZ_ASSERT(!parseTask->options.useOffThreadParseGlobal);
+  MOZ_ASSERT(parseTask->extensibleStencil_);
+
+  UniquePtr<frontend::CompilationStencil> stencil =
+      cx->make_unique<frontend::CompilationStencil>(
+          parseTask->stencilInput_->source);
+  if (!stencil) {
+    return nullptr;
+  }
+
+  if (!stencil->steal(cx, std::move(*parseTask->extensibleStencil_))) {
+    return nullptr;
+  }
+
+  return stencil.release();
 }
 
 void GlobalHelperThreadState::cancelParseTask(JSRuntime* rt, ParseTaskKind kind,

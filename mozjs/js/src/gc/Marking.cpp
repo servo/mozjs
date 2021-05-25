@@ -35,6 +35,7 @@
 #include "vm/ArrayObject.h"
 #include "vm/BigIntType.h"
 #include "vm/GeneratorObject.h"
+#include "vm/GetterSetter.h"
 #include "vm/RegExpShared.h"
 #include "vm/Scope.h"  // GetScopeDataTrailingNames
 #include "vm/Shape.h"
@@ -1078,6 +1079,10 @@ void GCMarker::traverse(BaseShape* thing) {
   traceChildren(thing);
 }
 template <>
+void GCMarker::traverse(GetterSetter* thing) {
+  traceChildren(thing);
+}
+template <>
 void GCMarker::traverse(JS::Symbol* thing) {
   traceChildren(thing);
 }
@@ -1138,13 +1143,6 @@ void GCMarker::traverse(jit::JitCode* thing) {
 template <>
 void GCMarker::traverse(BaseScript* thing) {
   pushThing(thing);
-}
-}  // namespace js
-
-namespace js {
-template <>
-void GCMarker::traverse(AccessorShape* thing) {
-  MOZ_CRASH("AccessorShape must be marked as a Shape");
 }
 }  // namespace js
 
@@ -1286,15 +1284,7 @@ void Shape::traceChildren(JSTracer* trc) {
       dictNext.setObject(obj);
     }
   }
-
   cache_.trace(trc);
-
-  if (hasGetterObject()) {
-    TraceManuallyBarrieredEdge(trc, &asAccessorShape().getterObj, "getter");
-  }
-  if (hasSetterObject()) {
-    TraceManuallyBarrieredEdge(trc, &asAccessorShape().setterObj, "setter");
-  }
 }
 inline void js::GCMarker::eagerlyMarkChildren(Shape* shape) {
   MOZ_ASSERT(shape->isMarked(markColor()));
@@ -1319,16 +1309,6 @@ inline void js::GCMarker::eagerlyMarkChildren(Shape* shape) {
     // must point to this shape or an anscestor.  Since these pointers will
     // be traced by this loop they do not need to be traced here as well.
     MOZ_ASSERT(shape->canSkipMarkingShapeCache());
-
-    // When triggered between slices on behalf of a barrier, these
-    // objects may reside in the nursery, so require an extra check.
-    // FIXME: Bug 1157967 - remove the isTenured checks.
-    if (shape->hasGetterObject() && shape->getterObject()->isTenured()) {
-      markAndTraverseEdge(shape, shape->getterObject());
-    }
-    if (shape->hasSetterObject() && shape->setterObject()->isTenured()) {
-      markAndTraverseEdge(shape, shape->setterObject());
-    }
 
     shape = shape->previous();
   } while (shape && mark(shape));
@@ -1583,6 +1563,15 @@ void BaseShape::traceChildren(JSTracer* trc) {
 
   if (proto_.isObject()) {
     TraceEdge(trc, &proto_, "baseshape_proto");
+  }
+}
+
+void GetterSetter::traceChildren(JSTracer* trc) {
+  if (getter()) {
+    TraceCellHeaderEdge(trc, this, "gettersetter_getter");
+  }
+  if (setter()) {
+    TraceEdge(trc, &setter_, "gettersetter_setter");
   }
 }
 
@@ -2804,6 +2793,9 @@ js::RegExpShared* TenuringTracer::onRegExpSharedEdge(RegExpShared* shared) {
   return shared;
 }
 js::BaseShape* TenuringTracer::onBaseShapeEdge(BaseShape* base) { return base; }
+js::GetterSetter* TenuringTracer::onGetterSetterEdge(GetterSetter* gs) {
+  return gs;
+}
 js::jit::JitCode* TenuringTracer::onJitCodeEdge(jit::JitCode* code) {
   return code;
 }
@@ -3209,7 +3201,7 @@ JSObject* js::TenuringTracer::moveToTenuredSlow(JSObject* src) {
     if (tarray->hasInlineElements()) {
       AllocKind srcKind = GetGCObjectKind(TypedArrayObject::FIXED_DATA_START);
       size_t headerSize = Arena::thingSize(srcKind);
-      srcSize = headerSize + tarray->byteLength().get();
+      srcSize = headerSize + tarray->byteLength();
     }
   }
 
@@ -3834,6 +3826,9 @@ js::BaseScript* SweepingTracer::onScriptEdge(js::BaseScript* script) {
 BaseShape* SweepingTracer::onBaseShapeEdge(BaseShape* base) {
   return onEdge(base);
 }
+GetterSetter* SweepingTracer::onGetterSetterEdge(GetterSetter* gs) {
+  return onEdge(gs);
+}
 jit::JitCode* SweepingTracer::onJitCodeEdge(jit::JitCode* jit) {
   return onEdge(jit);
 }
@@ -4137,6 +4132,10 @@ js::BaseScript* BarrierTracer::onScriptEdge(js::BaseScript* script) {
 BaseShape* BarrierTracer::onBaseShapeEdge(BaseShape* base) {
   PreWriteBarrier(base);
   return base;
+}
+GetterSetter* BarrierTracer::onGetterSetterEdge(GetterSetter* gs) {
+  PreWriteBarrier(gs);
+  return gs;
 }
 Scope* BarrierTracer::onScopeEdge(Scope* scope) {
   PreWriteBarrier(scope);

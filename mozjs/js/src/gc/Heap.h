@@ -643,7 +643,9 @@ class TenuredChunk : public TenuredChunkBase {
   void releaseArena(GCRuntime* gc, Arena* arena, const AutoLockGC& lock);
   void recycleArena(Arena* arena, SortedArenaList& dest, size_t thingsPerArena);
 
-  [[nodiscard]] bool decommitOneFreeArena(GCRuntime* gc, AutoLockGC& lock);
+  void decommitFreeArenas(GCRuntime* gc, const bool& cancel, AutoLockGC& lock);
+  [[nodiscard]] bool decommitOneFreePage(GCRuntime* gc, size_t pageIndex,
+                                         AutoLockGC& lock);
   void decommitAllArenas();
 
   // This will decommit each unused not-already decommitted arena. It performs a
@@ -661,15 +663,44 @@ class TenuredChunk : public TenuredChunkBase {
 #endif
 
  private:
-  /* Search for a decommitted arena to allocate. */
-  unsigned findDecommittedArenaOffset();
-  Arena* fetchNextDecommittedArena();
+  /* Search for a decommitted page to allocate. */
+  unsigned findDecommittedPageOffset();
+  void commitOnePage(GCRuntime* gc);
 
   void addArenaToFreeList(GCRuntime* gc, Arena* arena);
-  void addArenaToDecommittedList(const Arena* arena);
+
+  // Add Arenas located in the page of pageIndex to the free list.
+  void addArenasInPageToFreeList(GCRuntime* gc, size_t pageIndex);
+  // Mark areans located in the same page of arena as decommitted.
+  void markArenasInPageDecommitted(size_t pageIndex);
 
   void updateChunkListAfterAlloc(GCRuntime* gc, const AutoLockGC& lock);
-  void updateChunkListAfterFree(GCRuntime* gc, const AutoLockGC& lock);
+  void updateChunkListAfterFree(GCRuntime* gc, size_t numArenasFree,
+                                const AutoLockGC& lock);
+
+  // Rebuild info.freeArenasHead by ascending order of arenas' address.
+  void rebuildFreeArenasList();
+
+  // Check if the page is free.
+  bool isPageFree(size_t pageIndex) const;
+  // Check the arena from freeArenasList is located in a free page.
+  // Unlike the isPageFree(size_t) version, this isPageFree(Arena*) will see the
+  // following arenas from the freeArenasHead are also located in the same page,
+  // to prevent not to access the arenas mprotect'ed during compaction in debug
+  // build.
+  bool isPageFree(const Arena* arena) const;
+
+  // Get the page index of the arena.
+  size_t pageIndex(const Arena* arena) const {
+    return pageIndex(arenaIndex(arena->address()));
+  }
+  size_t pageIndex(size_t arenaIndex) const {
+    return arenaIndex / ArenasPerPage;
+  }
+
+  Arena* pageAddress(size_t pageIndex) {
+    return &arenas[pageIndex * ArenasPerPage];
+  }
 };
 
 inline void Arena::checkAddress() const {

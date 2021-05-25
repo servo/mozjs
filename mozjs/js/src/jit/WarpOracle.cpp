@@ -25,6 +25,7 @@
 #include "vm/BuiltinObjectKind.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
+#include "vm/GetterSetter.h"
 #include "vm/Instrumentation.h"
 #include "vm/Opcodes.h"
 
@@ -165,7 +166,7 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
 
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_WarpSnapshots)) {
-    GenericPrinter& out = JitSpewPrinter();
+    Fprinter& out = JitSpewPrinter();
     snapshot->dump(out);
   }
 #endif
@@ -181,7 +182,8 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
   //
   // Note: this assertion catches potential performance issues.
   // Failing this assertion is not a correctness/security problem.
-  // We therefore ignore cases involving OOM or stack overflow.
+  // We therefore ignore cases involving OOM, stack overflow, or
+  // stubs purged by GC.
   HashNumber hash = icScript->hash();
   if (outerScript_->jitScript()->hasFailedICHash()) {
     HashNumber oldHash = outerScript_->jitScript()->getFailedICHash();
@@ -213,12 +215,12 @@ template <typename T, typename... Args>
   ModuleEnvironmentObject* env = GetModuleEnvironmentForScript(script);
   MOZ_ASSERT(env);
 
-  Shape* shape;
+  mozilla::Maybe<ShapeProperty> prop;
   ModuleEnvironmentObject* targetEnv;
-  MOZ_ALWAYS_TRUE(env->lookupImport(NameToId(name), &targetEnv, &shape));
+  MOZ_ALWAYS_TRUE(env->lookupImport(NameToId(name), &targetEnv, &prop));
 
-  uint32_t numFixedSlots = shape->numFixedSlots();
-  uint32_t slot = shape->slot();
+  uint32_t numFixedSlots = targetEnv->numFixedSlots();
+  uint32_t slot = prop->slot();
 
   // In the rare case where this import hasn't been initialized already (we have
   // an import cycle where modules reference each other's imports), we need a
@@ -1066,6 +1068,10 @@ bool WarpScriptOracle::replaceNurseryPointers(ICCacheIRStub* stub,
       case StubField::Type::Shape:
         static_assert(std::is_convertible_v<Shape*, gc::TenuredCell*>,
                       "Code assumes shapes are tenured");
+        break;
+      case StubField::Type::GetterSetter:
+        static_assert(std::is_convertible_v<GetterSetter*, gc::TenuredCell*>,
+                      "Code assumes GetterSetters are tenured");
         break;
       case StubField::Type::Symbol:
         static_assert(std::is_convertible_v<JS::Symbol*, gc::TenuredCell*>,

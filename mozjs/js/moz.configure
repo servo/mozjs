@@ -54,6 +54,7 @@ set_config("JS_ENABLE_SMOOSH", enable_smoosh)
 set_define("JS_ENABLE_SMOOSH", enable_smoosh)
 
 include("../build/moz.configure/nspr.configure", when="--enable-compile-environment")
+include("../build/moz.configure/rust.configure", when="--enable-compile-environment")
 include("../build/moz.configure/bindgen.configure", when="--enable-compile-environment")
 
 set_config("JS_STANDALONE", js_standalone)
@@ -76,18 +77,6 @@ set_define("JS_64BIT", depends(target)(lambda t: t.bitness == 64 or None))
 
 set_define("JS_PUNBOX64", depends(target)(lambda t: t.bitness == 64 or None))
 set_define("JS_NUNBOX32", depends(target)(lambda t: t.bitness == 32 or None))
-
-option("--enable-uwp",
-       default=False,
-       help="{Enable|Disable} building for UWP environments")
-
-@depends("--enable-uwp")
-def js_enable_uwp(value):
-    if value:
-        return True
-
-set_config("JS_ENABLE_UWP", js_enable_uwp)
-set_define("JS_ENABLE_UWP", js_enable_uwp)
 
 
 # SpiderMonkey as a shared library, and how its symbols are exported
@@ -301,14 +290,14 @@ with only_when("--enable-compile-environment"):
     imply_option("--enable-frame-pointers", True, when=profiling)
 
 
-@depends(profiling, target, js_enable_uwp)
-def imply_vtune(value, target, uwp):
+@depends(profiling, target)
+def imply_vtune(value, target):
     ok_cpu = target.cpu in ["x86", "x86_64"]
     ok_kernel = target.kernel == "WINNT" or (
         target.kernel == "Linux" and target.os == "GNU"
     )
 
-    if value and ok_cpu and ok_kernel and not uwp:
+    if value and ok_cpu and ok_kernel:
         return True
 
 
@@ -566,30 +555,42 @@ set_define("MOZ_RUST_SIMD", rust_simd)
 # Support for wasm code generation with Cranelift
 # ==============================================================
 
+option(
+    "--enable-cranelift",
+    default=False,
+    help="{Enable|Disable} Cranelift code generator for wasm",
+)
+
 
 @depends(
-    milestone.is_nightly,
+    "--enable-cranelift",
     "--enable-jit",
     "--enable-simulator",
     target,
     target_is_windows,
 )
-def cranelift_default(is_nightly, jit_enabled, simulator, target, is_windows):
-    if is_nightly and jit_enabled and not is_windows:
-        if target.cpu == "aarch64":
-            return True
-        if simulator and simulator[0] == "arm64":
-            return True
+def enable_cranelift(value, jit_enabled, simulator, target, is_windows):
+    if not value:
+        return
+
+    if not jit_enabled:
+        die("--enable-cranelift requires --enable-jit")
+
+    if not (
+        target.cpu == "aarch64"
+        or (target.cpu == "x86_64" and simulator and simulator[0] == "arm64")
+    ):
+        die("--enable-cranelift is only supported on arm64")
+
+    if is_windows:
+        die("--enable-cranelift is not supported on windows")
+
+    return True
 
 
-option(
-    "--enable-cranelift",
-    default=cranelift_default,
-    help="{Enable|Disable} Cranelift code generator for wasm",
-)
+set_config("ENABLE_WASM_CRANELIFT", enable_cranelift)
+set_define("ENABLE_WASM_CRANELIFT", enable_cranelift)
 
-set_config("ENABLE_WASM_CRANELIFT", depends_if("--enable-cranelift")(lambda x: True))
-set_define("ENABLE_WASM_CRANELIFT", depends_if("--enable-cranelift")(lambda x: True))
 
 # Telemetry to measure compile time and generated-code runtime
 # ============================================================
@@ -621,28 +622,13 @@ set_define(
     "WASM_CODEGEN_DEBUG", depends_if("--enable-wasm-codegen-debug")(lambda x: True)
 )
 
-# Support for WebAssembly reference types.
-# =====================================================
-
-option("--disable-wasm-reftypes", help="Disable WebAssembly reference types")
-
-
-@depends("--disable-wasm-reftypes")
-def enable_wasm_reftypes(value):
-    if value:
-        return True
-
-
-set_config("ENABLE_WASM_REFTYPES", enable_wasm_reftypes)
-set_define("ENABLE_WASM_REFTYPES", enable_wasm_reftypes)
-
 # Support for WebAssembly function-references.
 # ===========================
 
 
-@depends(milestone.is_nightly, "--disable-wasm-reftypes")
-def default_wasm_function_references(is_nightly, reftypes):
-    if is_nightly and reftypes:
+@depends(milestone.is_nightly)
+def default_wasm_function_references(is_nightly):
+    if is_nightly:
         return True
 
 
@@ -653,17 +639,10 @@ option(
 )
 
 
-@depends("--enable-wasm-function-references", "--disable-wasm-reftypes")
-def wasm_function_references(value, reftypes):
-    if not value:
-        return
-
-    if reftypes:
+@depends("--enable-wasm-function-references")
+def wasm_function_references(value):
+    if value:
         return True
-
-    die(
-        "--enable-wasm-function-references only possible without --disable-wasm-reftypes"
-    )
 
 
 set_config("ENABLE_WASM_FUNCTION_REFERENCES", wasm_function_references)
@@ -725,27 +704,6 @@ set_define(
     "WASM_PRIVATE_REFTYPES",
     depends_if("--enable-wasm-private-reftypes")(lambda x: True),
 )
-
-
-# Support for the WebAssembly multi-value proposal.
-# Do not remove until Cranelift supports multi-value.
-# =====================================================
-
-option(
-    "--disable-wasm-multi-value",
-    help="Disable WebAssembly multi-value blocks and function calls",
-)
-
-
-@depends("--disable-wasm-multi-value")
-def enable_wasm_multi_value(value):
-    if value:
-        return True
-
-
-set_config("ENABLE_WASM_MULTI_VALUE", enable_wasm_multi_value)
-set_define("ENABLE_WASM_MULTI_VALUE", enable_wasm_multi_value)
-
 
 # Support for WebAssembly shared memory and atomics.
 #
@@ -1005,9 +963,9 @@ set_define(
 # ==================================
 
 
-@depends(milestone.is_nightly, "--enable-wasm-multi-value")
-def default_wasm_exceptions(is_nightly, multi_value):
-    if multi_value and is_nightly:
+@depends(milestone.is_nightly)
+def default_wasm_exceptions(is_nightly):
+    if is_nightly:
         return True
 
 

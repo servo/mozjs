@@ -54,9 +54,9 @@
 #include "vm/JSAtom.h"                   // for Atomize
 #include "vm/JSContext.h"                // for JSContext, ReportValueError
 #include "vm/JSFunction.h"               // for JSFunction
+#include "vm/JSObject.h"                 // for GenericObject, NewObjectKind
 #include "vm/JSScript.h"                 // for JSScript
 #include "vm/NativeObject.h"             // for NativeObject, JSObject::is
-#include "vm/ObjectGroup.h"              // for GenericObject, NewObjectKind
 #include "vm/ObjectOperations.h"         // for DefineProperty
 #include "vm/PlainObject.h"              // for js::PlainObject
 #include "vm/PromiseObject.h"            // for js::PromiseObject
@@ -806,7 +806,7 @@ bool DebuggerObject::CallData::getOwnPropertyDescriptorMethod() {
     return false;
   }
 
-  Rooted<PropertyDescriptor> desc(cx);
+  Rooted<Maybe<PropertyDescriptor>> desc(cx);
   if (!DebuggerObject::getOwnPropertyDescriptor(cx, object, id, &desc)) {
     return false;
   }
@@ -981,11 +981,11 @@ bool DebuggerObject::CallData::applyMethod() {
 
     RootedObject argsobj(cx, &args[1].toObject());
 
-    unsigned argc = 0;
+    uint64_t argc = 0;
     if (!GetLengthProperty(cx, argsobj, &argc)) {
       return false;
     }
-    argc = unsigned(std::min(argc, ARGS_LENGTH_MAX));
+    argc = std::min(argc, uint64_t(ARGS_LENGTH_MAX));
 
     if (!nargs.growBy(argc) || !GetElements(cx, argsobj, argc, nargs.begin())) {
       return false;
@@ -1368,8 +1368,13 @@ bool DebuggerObject::CallData::setInstrumentationMethod() {
   }
   RootedObject kindsObj(cx, &args[1].toObject());
 
-  unsigned length = 0;
+  uint64_t length = 0;
   if (!GetLengthProperty(cx, kindsObj, &length)) {
+    return false;
+  }
+
+  if (length > UINT32_MAX) {
+    JS_ReportErrorASCII(cx, "Invalid length for instrumentation kinds array");
     return false;
   }
 
@@ -2072,7 +2077,7 @@ bool DebuggerObject::getOwnPropertySymbols(JSContext* cx,
 /* static */
 bool DebuggerObject::getOwnPropertyDescriptor(
     JSContext* cx, HandleDebuggerObject object, HandleId id,
-    MutableHandle<PropertyDescriptor> desc) {
+    MutableHandle<Maybe<PropertyDescriptor>> desc_) {
   RootedObject referent(cx, object->referent());
   Debugger* dbg = object->owner();
 
@@ -2084,12 +2089,14 @@ bool DebuggerObject::getOwnPropertyDescriptor(
     cx->markId(id);
 
     ErrorCopier ec(ar);
-    if (!GetOwnPropertyDescriptor(cx, referent, id, desc)) {
+    if (!GetOwnPropertyDescriptor(cx, referent, id, desc_)) {
       return false;
     }
   }
 
-  if (desc.object()) {
+  if (desc_.isSome()) {
+    Rooted<PropertyDescriptor> desc(cx, *desc_);
+
     // Rewrap the debuggee values in desc for the debugger.
     if (!dbg->wrapDebuggeeValue(cx, desc.value())) {
       return false;
@@ -2112,7 +2119,10 @@ bool DebuggerObject::getOwnPropertyDescriptor(
 
     // Avoid tripping same-compartment assertions in
     // JS::FromPropertyDescriptor().
+    // TODO: Remove this when PropertyDescriptor doesn't have an
+    // object anymore.
     desc.object().set(object);
+    desc_.set(mozilla::Some(desc.get()));
   }
 
   return true;
@@ -2393,7 +2403,7 @@ bool DebuggerObject::forceLexicalInitializationByName(
 
   RootedObject globalLexical(cx, &referent->lexicalEnvironment());
   RootedObject pobj(cx);
-  Rooted<PropertyResult> prop(cx);
+  PropertyResult prop;
   if (!LookupProperty(cx, globalLexical, id, &pobj, &prop)) {
     return false;
   }
@@ -2401,11 +2411,11 @@ bool DebuggerObject::forceLexicalInitializationByName(
   result = false;
   if (prop.isFound()) {
     MOZ_ASSERT(prop.isNativeProperty());
-    Shape* shape = prop.shape();
-    Value v = globalLexical->as<NativeObject>().getSlot(shape->slot());
-    if (shape->isDataProperty() && v.isMagic() &&
+    ShapeProperty shapeProp = prop.shapeProperty();
+    Value v = globalLexical->as<NativeObject>().getSlot(shapeProp.slot());
+    if (shapeProp.isDataProperty() && v.isMagic() &&
         v.whyMagic() == JS_UNINITIALIZED_LEXICAL) {
-      globalLexical->as<NativeObject>().setSlot(shape->slot(),
+      globalLexical->as<NativeObject>().setSlot(shapeProp.slot(),
                                                 UndefinedValue());
       result = true;
     }

@@ -13,6 +13,16 @@ assertEq(
   0
 );
 
+assertEq(
+  wasmEvalText(
+    `(module
+       (func (export "f") (result i32)
+         try nop catch_all end
+         (i32.const 0)))`
+  ).exports.f(),
+  0
+);
+
 // Test try block with no throws
 assertEq(
   wasmEvalText(
@@ -284,6 +294,40 @@ assertEq(
   2
 );
 
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param)))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try $l (result i32)
+           (throw $exn)
+         catch $exn
+           (i32.const 2)
+           (br $l)
+           rethrow 0
+         end))`
+  ).exports.f(),
+  2
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param)))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try $l (result i32)
+           (throw $exn)
+         catch_all
+           (i32.const 2)
+           (br $l)
+           rethrow 0
+         end))`
+  ).exports.f(),
+  2
+);
+
 // Test br branching out of a catch block.
 assertEq(
   wasmEvalText(
@@ -320,6 +364,17 @@ assertEq(
   0
 );
 
+assertEq(
+  wasmEvalText(
+    `(module
+       (func (export "f") (result i32)
+         i32.const 0
+         return
+         try nop catch_all end))`
+  ).exports.f(),
+  0
+);
+
 // Test catch with exception values pushed to stack.
 assertEq(
   wasmEvalText(
@@ -335,6 +390,8 @@ assertEq(
            (i32.const 42)
            (throw $exn)
          catch $exn
+         catch_all
+           (i32.const 99)
          end))`
   ).exports.f(),
   42
@@ -354,6 +411,11 @@ assertEq(
            (f64.const 84.4)
            (throw $exn)
          catch $exn
+         catch_all
+           (i32.const 99)
+           (i64.const 999)
+           (f32.const 99.9)
+           (f64.const 999.9)
          end
          drop drop drop))`
   ).exports.f(),
@@ -380,6 +442,11 @@ assertEq(
            (f64.const 84.4)
            (call $foo)
          catch $exn
+         catch_all
+           (i32.const 99)
+           (i64.const 999)
+           (f32.const 99.9)
+           (f64.const 999.9)
          end
          drop drop drop))`
   ).exports.f(),
@@ -399,6 +466,8 @@ assertEq(
            (throw $exn2)
          catch $exn1
          catch $exn2
+         catch_all
+           (i32.const 99)
          end))`
   ).exports.f(),
   42
@@ -419,6 +488,183 @@ assertEq(
          end))`
   ).exports.f(),
   42
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param i32)))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         (i32.const 42)
+         try $l (param i32) (result i32)
+           (throw $exn)
+         catch $exn
+         catch_all
+           (i32.const 99)
+         end))`
+  ).exports.f(),
+  42
+);
+
+// Test the catch_all case.
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param i32)))
+       (event $exn1 (type 0))
+       (event $exn2 (type 0))
+       (func (export "f") (result i32)
+         try $l (result i32)
+           (i32.const 42)
+           (throw $exn2)
+         catch $exn1
+         catch_all
+           (i32.const 99)
+         end))`
+  ).exports.f(),
+  99
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn (param i32))
+       (func (export "f") (result i32)
+         try (result i32)
+           try (result i32)
+             (i32.const 42)
+             (throw $exn)
+           catch_all
+             (i32.const 99)
+           end
+         catch $exn
+         end))`
+  ).exports.f(),
+  99
+);
+
+// Test foreign exception catch.
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (import "m" "foreign" (func $foreign))
+       (event $exn (type 0))
+       (func (export "f") (result i32) (local i32)
+         try $l
+           (call $foreign)
+         catch $exn
+         catch_all
+           (local.set 0 (i32.const 42))
+         end
+         (local.get 0)))`,
+    {
+      m: {
+        foreign() {
+          throw 5;
+        },
+      },
+    }
+  ).exports.f(),
+  42
+);
+
+// Exception handlers should not catch traps.
+assertErrorMessage(
+  () =>
+    wasmEvalText(
+      `(module
+         (type (func))
+         (event $exn (type 0))
+         (func (export "f") (result i32) (local i32)
+           try $l
+             unreachable
+           catch $exn
+             (local.set 0 (i32.const 98))
+           catch_all
+             (local.set 0 (i32.const 99))
+           end
+           (local.get 0)))`
+    ).exports.f(),
+  WebAssembly.RuntimeError,
+  "unreachable executed"
+);
+
+// Ensure that a RuntimeError created by the user is not filtered out
+// as a trap emitted by the runtime (i.e., the filtering predicate is not
+// observable from JS).
+assertEq(
+  wasmEvalText(
+    `(module
+       (import "m" "foreign" (func $foreign))
+       (func (export "f") (result i32)
+         try (result i32)
+           (call $foreign)
+           (i32.const 99)
+         catch_all
+           (i32.const 42)
+         end))`,
+    {
+      m: {
+        foreign() {
+          throw new WebAssembly.RuntimeError();
+        },
+      },
+    }
+  ).exports.f(),
+  42
+);
+
+// Test uncatchable JS exceptions (OOM & stack overflow).
+{
+  let f = wasmEvalText(
+    `(module
+       (import "m" "foreign" (func $foreign))
+       (func (export "f") (result)
+         try
+           (call $foreign)
+         catch_all
+         end))`,
+    {
+      m: {
+        foreign() {
+          throwOutOfMemory();
+        },
+      },
+    }
+  ).exports.f;
+
+  var thrownVal;
+  try {
+    f();
+  } catch (exn) {
+    thrownVal = exn;
+  }
+
+  assertEq(thrownVal, "out of memory");
+}
+
+assertErrorMessage(
+  () =>
+    wasmEvalText(
+      `(module
+       (import "m" "foreign" (func $foreign))
+       (func (export "f")
+         try
+           (call $foreign)
+         catch_all
+         end))`,
+      {
+        m: {
+          foreign: function foreign() {
+            foreign();
+          },
+        },
+      }
+    ).exports.f(),
+  Error,
+  "too much recursion"
 );
 
 // Ensure memory operations work after a throw. This is also testing that the
@@ -452,3 +698,414 @@ assertEq(
     102
   );
 }
+
+// Test simple rethrow.
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try
+             throw $exn
+           catch $exn
+             rethrow 0
+           end
+           i32.const 1
+         catch $exn
+           i32.const 27
+         end))`
+  ).exports.f(),
+  27
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try
+             throw $exn
+           catch_all
+             rethrow 0
+           end
+           i32.const 1
+         catch $exn
+           i32.const 27
+         end))`
+  ).exports.f(),
+  27
+);
+
+// Test rethrows in nested blocks.
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try
+             throw $exn
+           catch $exn
+             block
+               rethrow 1
+             end
+           end
+           i32.const 1
+         catch $exn
+           i32.const 27
+         end))`
+  ).exports.f(),
+  27
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try
+             throw $exn
+           catch_all
+             block
+               rethrow 1
+             end
+           end
+           i32.const 1
+         catch $exn
+           i32.const 27
+         end))`
+  ).exports.f(),
+  27
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn1 (type 0))
+       (event $exn2 (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try
+             throw $exn1
+           catch $exn1
+             try
+               throw $exn2
+             catch $exn2
+               rethrow 1
+             end
+           end
+           i32.const 0
+         catch $exn1
+           i32.const 1
+         catch $exn2
+           i32.const 2
+         end))`
+  ).exports.f(),
+  1
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn1 (type 0))
+       (event $exn2 (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try
+             throw $exn1
+           catch $exn1
+             try
+               throw $exn2
+             catch_all
+               rethrow 1
+             end
+           end
+           i32.const 0
+         catch $exn1
+           i32.const 1
+         catch $exn2
+           i32.const 2
+         end))`
+  ).exports.f(),
+  1
+);
+
+// Test try-delegate blocks.
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn (param))
+       (func (export "f") (result i32)
+         i32.const 1
+         br 0
+         try
+           throw $exn
+         delegate 0))`
+  ).exports.f(),
+  1
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn (param))
+       (func (export "f") (result i32)
+         try (result i32)
+           i32.const 1
+           br 0
+         delegate 0))`
+  ).exports.f(),
+  1
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn (param))
+       (func (export "f") (result i32)
+         try (result i32)
+           i32.const 1
+           return
+         delegate 0))`
+  ).exports.f(),
+  1
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param i32)))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try
+             i32.const 42
+             throw $exn
+           delegate 0
+           i32.const 0
+         catch $exn
+           i32.const 1
+           i32.add
+         end))`
+  ).exports.f(),
+  43
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param i32)))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try (result i32)
+             try
+               i32.const 42
+               throw $exn
+             delegate 1
+             i32.const 0
+           catch $exn
+             i32.const 1
+             i32.add
+           end
+         catch $exn
+           i32.const 2
+           i32.add
+         end))`
+  ).exports.f(),
+  44
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param i32)))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           try (result i32)
+             try (result i32)
+               try
+                 i32.const 42
+                 throw $exn
+               delegate 1
+               i32.const 0
+             catch $exn
+               i32.const 1
+               i32.add
+             end
+           delegate 0
+         catch $exn
+           i32.const 2
+           i32.add
+         end))`
+  ).exports.f(),
+  44
+);
+
+// Test delegation to function body.
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn (param))
+       (func (export "f") (result i32)
+         try (result i32)
+           i32.const 1
+         delegate 0))`
+  ).exports.f(),
+  1
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func (param i32)))
+       (event $exn (type 0))
+       (func (export "f") (result i32)
+         try (result i32)
+           call $g
+         catch $exn
+         end)
+       (func $g (result i32)
+         try (result i32)
+           try
+             i32.const 42
+             throw $exn
+           delegate 1
+           i32.const 0
+         catch $exn
+           i32.const 1
+           i32.add
+         end))`
+  ).exports.f(),
+  42
+);
+
+// Test try-unwind blocks.
+assertEq(
+  wasmEvalText(
+    `(module
+       (func (export "f") (result i32)
+         try (result i32)
+           i32.const 42
+         unwind
+         end))`
+  ).exports.f(),
+  42
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (func (export "f") (result i32)
+         try (result i32)
+           i32.const 42
+           br 0
+         unwind
+         end))`
+  ).exports.f(),
+  42
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn)
+       (func (export "f") (result i32)
+         try (result i32)
+           throw $exn
+         unwind
+           i32.const 42
+           br 0
+         end))`
+  ).exports.f(),
+  42
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn)
+       (func (export "f") (result i32)
+         try (result i32)
+           throw $exn
+         unwind
+           i32.const 42
+           return
+         end))`
+  ).exports.f(),
+  42
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn (type 0))
+       (func (export "f") (result i32) (local i32)
+         try
+           try
+             throw $exn
+           unwind
+             i32.const 1
+             local.set 0
+           end
+         catch $exn
+         end
+         local.get 0))`
+  ).exports.f(),
+  1
+);
+
+// Test the interaction between delegate and unwind.
+assertEq(
+  wasmEvalText(
+    `(module
+       (event $exn)
+       (func (export "f") (result i32) (local i32)
+         try
+           try
+             try
+               throw $exn
+             delegate 0
+           unwind
+             i32.const 42
+             local.set 0
+           end
+         catch_all
+         end
+         local.get 0))`
+  ).exports.f(),
+  42
+);
+
+assertEq(
+  wasmEvalText(
+    `(module
+       (type (func))
+       (event $exn (type 0))
+       (func (export "f") (result i32) (local i32)
+         try $l
+           try
+             try
+               throw $exn
+             delegate 1
+           unwind
+             i32.const 27
+             local.set 0
+           end
+         catch_all
+         end
+         local.get 0))`
+  ).exports.f(),
+  0
+);

@@ -440,6 +440,41 @@ void MacroAssembler::createGCObject(Register obj, Register temp,
   initGCThing(obj, temp, templateObj, initContents);
 }
 
+void MacroAssembler::createPlainGCObject(
+    Register result, Register shape, Register temp, Register temp2,
+    uint32_t numFixedSlots, uint32_t numDynamicSlots, gc::AllocKind allocKind,
+    gc::InitialHeap initialHeap, Label* fail) {
+  MOZ_ASSERT(gc::IsObjectAllocKind(allocKind));
+  MOZ_ASSERT(shape != temp, "shape can overlap with temp2, but not temp");
+
+  // Allocate object.
+  allocateObject(result, temp, allocKind, numDynamicSlots, initialHeap, fail);
+
+  // Initialize shape field.
+  storePtr(shape, Address(result, JSObject::offsetOfShape()));
+
+  // If the object has dynamic slots, allocateObject will initialize
+  // the slots field. If not, we must initialize it now.
+  if (numDynamicSlots == 0) {
+    storePtr(ImmPtr(emptyObjectSlots),
+             Address(result, NativeObject::offsetOfSlots()));
+  }
+
+  // Initialize elements field.
+  storePtr(ImmPtr(emptyObjectElements),
+           Address(result, NativeObject::offsetOfElements()));
+
+  // Initialize fixed slots.
+  fillSlotsWithUndefined(Address(result, NativeObject::getFixedSlotOffset(0)),
+                         temp, 0, numFixedSlots);
+
+  // Initialize dynamic slots.
+  if (numDynamicSlots > 0) {
+    loadPtr(Address(result, NativeObject::offsetOfSlots()), temp2);
+    fillSlotsWithUndefined(Address(temp2, 0), temp, 0, numDynamicSlots);
+  }
+}
+
 // Inline version of Nursery::allocateString.
 void MacroAssembler::nurseryAllocateString(Register result, Register temp,
                                            gc::AllocKind allocKind,
@@ -687,7 +722,7 @@ void MacroAssembler::initTypedArraySlots(Register obj, Register temp,
       "typed array inline buffer is limited by the maximum object byte size");
 
   // Initialise data elements to zero.
-  size_t length = templateObj->length().get();
+  size_t length = templateObj->length();
   MOZ_ASSERT(length <= INT32_MAX,
              "Template objects are only created for int32 lengths");
   size_t nbytes = length * templateObj->bytesPerElement();
@@ -2725,28 +2760,49 @@ void MacroAssembler::PopRegsInMask(LiveGeneralRegisterSet set) {
   PopRegsInMask(LiveRegisterSet(set.set(), FloatRegisterSet()));
 }
 
-void MacroAssembler::Push(jsid id, Register scratchReg) {
-  if (id.isGCThing()) {
-    // If we're pushing a gcthing, then we can't just push the tagged jsid
+void MacroAssembler::Push(JS::PropertyKey key, Register scratchReg) {
+  if (key.isGCThing()) {
+    // If we're pushing a gcthing, then we can't just push the tagged key
     // value since the GC won't have any idea that the push instruction
     // carries a reference to a gcthing.  Need to unpack the pointer,
-    // push it using ImmGCPtr, and then rematerialize the id at runtime.
+    // push it using ImmGCPtr, and then rematerialize the PropertyKey at
+    // runtime.
 
-    if (JSID_IS_STRING(id)) {
-      JSString* str = JSID_TO_STRING(id);
-      MOZ_ASSERT(((size_t)str & JSID_TYPE_MASK) == 0);
+    if (key.isString()) {
+      JSString* str = key.toString();
+      MOZ_ASSERT((uintptr_t(str) & JSID_TYPE_MASK) == 0);
       static_assert(JSID_TYPE_STRING == 0,
                     "need to orPtr JSID_TYPE_STRING tag if it's not 0");
       Push(ImmGCPtr(str));
     } else {
-      MOZ_ASSERT(JSID_IS_SYMBOL(id));
-      JS::Symbol* sym = JSID_TO_SYMBOL(id);
-      movePtr(ImmGCPtr(sym), scratchReg);
-      orPtr(Imm32(JSID_TYPE_SYMBOL), scratchReg);
+      MOZ_ASSERT(key.isSymbol());
+      movePropertyKey(key, scratchReg);
       Push(scratchReg);
     }
   } else {
-    Push(ImmWord(JSID_BITS(id)));
+    MOZ_ASSERT(key.isInt());
+    Push(ImmWord(key.asBits));
+  }
+}
+
+void MacroAssembler::movePropertyKey(JS::PropertyKey key, Register dest) {
+  if (key.isGCThing()) {
+    // See comment in |Push(PropertyKey, ...)| above for an explanation.
+    if (key.isString()) {
+      JSString* str = key.toString();
+      MOZ_ASSERT((uintptr_t(str) & JSID_TYPE_MASK) == 0);
+      static_assert(JSID_TYPE_STRING == 0,
+                    "need to orPtr JSID_TYPE_STRING tag if it's not 0");
+      movePtr(ImmGCPtr(str), dest);
+    } else {
+      MOZ_ASSERT(key.isSymbol());
+      JS::Symbol* sym = key.toSymbol();
+      movePtr(ImmGCPtr(sym), dest);
+      orPtr(Imm32(JSID_TYPE_SYMBOL), dest);
+    }
+  } else {
+    MOZ_ASSERT(key.isInt());
+    movePtr(ImmWord(key.asBits), dest);
   }
 }
 

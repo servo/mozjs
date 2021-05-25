@@ -248,6 +248,7 @@ class StubField {
     RawInt32,
     RawPointer,
     Shape,
+    GetterSetter,
     JSObject,
     Symbol,
     String,
@@ -293,6 +294,8 @@ class StubField {
 
   bool sizeIsWord() const { return sizeIsWord(type_); }
   bool sizeIsInt64() const { return sizeIsInt64(type_); }
+
+  size_t sizeInBytes() const { return sizeInBytes(type_); }
 
   uintptr_t asWord() const {
     MOZ_ASSERT(sizeIsWord());
@@ -617,25 +620,45 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
 
   void writeCallFlagsImm(CallFlags flags) { buffer_.writeByte(flags.toByte()); }
 
-  uint8_t addStubField(uint64_t value, StubField::Type fieldType) {
-    uint8_t offset = 0;
-    size_t newStubDataSize = stubDataSize_ + StubField::sizeInBytes(fieldType);
+  void addStubField(uint64_t value, StubField::Type fieldType) {
+    size_t fieldOffset = stubDataSize_;
+#ifndef JS_64BIT
+    // On 32-bit platforms there are two stub field sizes (4 bytes and 8 bytes).
+    // Ensure 8-byte fields are properly aligned.
+    if (StubField::sizeIsInt64(fieldType)) {
+      fieldOffset = AlignBytes(fieldOffset, sizeof(uint64_t));
+    }
+#endif
+    MOZ_ASSERT((fieldOffset % StubField::sizeInBytes(fieldType)) == 0);
+
+    size_t newStubDataSize = fieldOffset + StubField::sizeInBytes(fieldType);
     if (newStubDataSize < MaxStubDataSizeInBytes) {
+#ifndef JS_64BIT
+      // Add a RawInt32 stub field for padding if necessary, because when we
+      // iterate over the stub fields we assume there are no 'holes'.
+      if (fieldOffset != stubDataSize_) {
+        MOZ_ASSERT((stubDataSize_ + sizeof(uintptr_t)) == fieldOffset);
+        buffer_.propagateOOM(
+            stubFields_.append(StubField(0, StubField::Type::RawInt32)));
+      }
+#endif
       buffer_.propagateOOM(stubFields_.append(StubField(value, fieldType)));
-      MOZ_ASSERT((stubDataSize_ % sizeof(uintptr_t)) == 0);
-      offset = stubDataSize_ / sizeof(uintptr_t);
-      buffer_.writeByte(offset);
+      MOZ_ASSERT((fieldOffset % sizeof(uintptr_t)) == 0);
+      buffer_.writeByte(fieldOffset / sizeof(uintptr_t));
       stubDataSize_ = newStubDataSize;
     } else {
       tooLarge_ = true;
     }
-    return offset;
   }
 
   void writeShapeField(Shape* shape) {
     MOZ_ASSERT(shape);
     assertSameZone(shape);
     addStubField(uintptr_t(shape), StubField::Type::Shape);
+  }
+  void writeGetterSetterField(GetterSetter* gs) {
+    MOZ_ASSERT(gs);
+    addStubField(uintptr_t(gs), StubField::Type::GetterSetter);
   }
   void writeObjectField(JSObject* obj) {
     MOZ_ASSERT(obj);
@@ -716,6 +739,11 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
 
   void writeWasmValTypeImm(wasm::ValType::Kind kind) {
     static_assert(unsigned(wasm::TypeCode::Limit) <= UINT8_MAX);
+    buffer_.writeByte(uint8_t(kind));
+  }
+
+  void writeAllocKindImm(gc::AllocKind kind) {
+    static_assert(unsigned(gc::AllocKind::LIMIT) <= UINT8_MAX);
     buffer_.writeByte(uint8_t(kind));
   }
 
@@ -1119,6 +1147,7 @@ class MOZ_RAII CacheIRReader {
   wasm::ValType::Kind wasmValType() {
     return wasm::ValType::Kind(buffer_.readByte());
   }
+  gc::AllocKind allocKind() { return gc::AllocKind(buffer_.readByte()); }
 
   Scalar::Type scalarType() { return Scalar::Type(buffer_.readByte()); }
   uint32_t rttValueKey() { return buffer_.readByte(); }
@@ -1184,6 +1213,7 @@ class MOZ_RAII CacheIRCloner {
   int64_t readStubInt64(uint32_t offset);
 
   Shape* getShapeField(uint32_t stubOffset);
+  GetterSetter* getGetterSetterField(uint32_t stubOffset);
   JSObject* getObjectField(uint32_t stubOffset);
   JSString* getStringField(uint32_t stubOffset);
   JSAtom* getAtomField(uint32_t stubOffset);
@@ -1896,6 +1926,8 @@ class MOZ_RAII NewObjectIRGenerator : public IRGenerator {
                        ICState::Mode, JSOp op, HandleObject templateObj);
 
   AttachDecision tryAttachStub();
+  AttachDecision tryAttachPlainObject();
+  AttachDecision tryAttachTemplateObject();
 };
 
 // Retrieve Xray JIT info set by the embedder.

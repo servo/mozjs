@@ -62,8 +62,8 @@ namespace gc {
  /* AllocKind              TraceKind     TypeName           SizedType          BGFinal Nursery Compact */ \
     D(SCRIPT,              Script,       js::BaseScript,    js::BaseScript,    false,  false,  true) \
     D(SHAPE,               Shape,        js::Shape,         js::Shape,         true,   false,  true) \
-    D(ACCESSOR_SHAPE,      Shape,        js::AccessorShape, js::AccessorShape, true,   false,  true) \
     D(BASE_SHAPE,          BaseShape,    js::BaseShape,     js::BaseShape,     true,   false,  true) \
+    D(GETTER_SETTER,       GetterSetter, js::GetterSetter,  js::GetterSetter,  true,   false,  true) \
     D(EXTERNAL_STRING,     String,       JSExternalString,  JSExternalString,  true,   false,  true) \
     D(FAT_INLINE_ATOM,     String,       js::FatInlineAtom, js::FatInlineAtom, true,   false,  false) \
     D(ATOM,                String,       js::NormalAtom,    js::NormalAtom,    true,   false,  false) \
@@ -131,7 +131,7 @@ inline bool IsObjectAllocKind(AllocKind kind) {
 }
 
 inline bool IsShapeAllocKind(AllocKind kind) {
-  return kind == AllocKind::SHAPE || kind == AllocKind::ACCESSOR_SHAPE;
+  return kind == AllocKind::SHAPE;
 }
 
 // Returns a sequence for use in a range-based for loop,

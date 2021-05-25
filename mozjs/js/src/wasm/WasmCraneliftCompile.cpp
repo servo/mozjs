@@ -291,7 +291,7 @@ class CraneliftContext {
  public:
   explicit CraneliftContext(const ModuleEnvironment& moduleEnv)
       : moduleEnv_(moduleEnv), compiler_(nullptr) {
-    staticEnv_.ref_types_enabled = moduleEnv.refTypesEnabled();
+    staticEnv_.ref_types_enabled = true;
     staticEnv_.threads_enabled = true;
     staticEnv_.v128_enabled = moduleEnv.v128Enabled();
 #ifdef WASM_SUPPORTS_HUGE_MEMORY
@@ -304,7 +304,7 @@ class CraneliftContext {
       staticEnv_.memory_guard_size = OffsetGuardLimit;
     }
 #endif
-    // Otherwise, heap bounds are stored in the `boundsCheckLimit32` field
+    // Otherwise, heap bounds are stored in the `boundsCheckLimit` field
     // of TlsData.
   }
   bool init() {
@@ -326,7 +326,7 @@ CraneliftFuncCompileInput::CraneliftFuncCompileInput(
       index(func.index),
       offset_in_module(func.lineOrBytecode) {}
 
-static_assert(offsetof(TlsData, boundsCheckLimit32) == sizeof(void*),
+static_assert(offsetof(TlsData, boundsCheckLimit) == sizeof(void*),
               "fix make_heap() in wasm2clif.rs");
 
 CraneliftStaticEnvironment::CraneliftStaticEnvironment()

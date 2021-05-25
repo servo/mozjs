@@ -355,10 +355,10 @@ Shape* Shape::replaceLastProperty(JSContext* cx, ObjectFlags objectFlags,
  * which must be lastProperty() if inDictionaryMode(), else parent must be
  * one of lastProperty() or lastProperty()->parent.
  */
-/* static */ MOZ_ALWAYS_INLINE Shape* NativeObject::getChildDataProperty(
+/* static */ MOZ_ALWAYS_INLINE Shape* NativeObject::getChildProperty(
     JSContext* cx, HandleNativeObject obj, HandleShape parent,
     MutableHandle<StackShape> child) {
-  MOZ_ASSERT(child.isDataProperty());
+  MOZ_ASSERT(!child.isCustomDataProperty());
 
   if (child.hasMissingSlot()) {
     uint32_t slot;
@@ -424,17 +424,17 @@ Shape* Shape::replaceLastProperty(JSContext* cx, ObjectFlags objectFlags,
   return shape;
 }
 
-/* static */ MOZ_ALWAYS_INLINE Shape* NativeObject::getChildAccessorProperty(
+/* static */ MOZ_ALWAYS_INLINE Shape* NativeObject::getChildCustomDataProperty(
     JSContext* cx, HandleNativeObject obj, HandleShape parent,
     MutableHandle<StackShape> child) {
-  MOZ_ASSERT(!child.isDataProperty());
+  MOZ_ASSERT(child.isCustomDataProperty());
 
-  // Accessor properties have no slot, but slot_ will reflect that of parent.
+  // Custom data properties have no slot, but slot_ will reflect that of parent.
   child.setSlot(parent->maybeSlot());
 
   if (obj->inDictionaryMode()) {
     MOZ_ASSERT(parent == obj->lastProperty());
-    Shape* shape = Allocate<AccessorShape>(cx);
+    Shape* shape = Allocate<Shape>(cx);
     if (!shape) {
       return nullptr;
     }
@@ -475,8 +475,7 @@ bool js::NativeObject::toDictionaryMode(JSContext* cx, HandleNativeObject obj) {
   while (shape) {
     MOZ_ASSERT(!shape->inDictionary());
 
-    Shape* dprop = shape->isAccessorShape() ? Allocate<AccessorShape>(cx)
-                                            : Allocate<Shape>(cx);
+    Shape* dprop = Allocate<Shape>(cx);
     if (!dprop) {
       ReportOutOfMemory(cx);
       return false;
@@ -529,18 +528,6 @@ static bool ShouldConvertToDictionary(NativeObject* obj) {
            PropertyTree::MAX_HEIGHT_WITH_ELEMENTS_ACCESS;
   }
   return obj->lastProperty()->entryCount() >= PropertyTree::MAX_HEIGHT;
-}
-
-static MOZ_ALWAYS_INLINE ObjectFlags GetObjectFlagsForNewShape(Shape* last,
-                                                               jsid id) {
-  ObjectFlags flags = last->objectFlags();
-  uint32_t index;
-  if (IdIsIndex(id, &index)) {
-    flags.setFlag(ObjectFlag::Indexed);
-  } else if (JSID_IS_SYMBOL(id) && JSID_TO_SYMBOL(id)->isInterestingSymbol()) {
-    flags.setFlag(ObjectFlag::HasInterestingSymbol);
-  }
-  return flags;
 }
 
 namespace js {
@@ -611,28 +598,35 @@ MOZ_ALWAYS_INLINE void Shape::updateDictionaryTable(
   parent->handoffTableTo(this);
 }
 
-static void AssertValidPropertyOp(NativeObject* obj, GetterOp getter,
-                                  SetterOp setter, unsigned attrs) {
-  // We only support PropertyOp accessors on ArrayObject and ArgumentsObject
-  // and we don't want to add more of these properties (bug 1404885).
-
-#ifdef DEBUG
-  if ((getter && !(attrs & JSPROP_GETTER)) ||
-      (setter && !(attrs & JSPROP_SETTER))) {
-    MOZ_ASSERT(obj->is<ArrayObject>() || obj->is<ArgumentsObject>());
-  }
-#endif
+static void AssertValidCustomDataProp(NativeObject* obj, unsigned attrs) {
+  // We only support custom data properties on ArrayObject and ArgumentsObject.
+  // The mechanism is deprecated so we don't want to add new uses.
+  MOZ_ASSERT(attrs & JSPROP_CUSTOM_DATA_PROP);
+  MOZ_ASSERT(obj->is<ArrayObject>() || obj->is<ArgumentsObject>());
+  MOZ_ASSERT((attrs & (JSPROP_GETTER | JSPROP_SETTER)) == 0);
 }
 
 /* static */
-Shape* NativeObject::addAccessorPropertyInternal(
-    JSContext* cx, HandleNativeObject obj, HandleId id, GetterOp getter,
-    SetterOp setter, unsigned attrs, ShapeTable* table,
-    ShapeTable::Entry* entry, const AutoKeepShapeCaches& keep) {
-  AutoCheckShapeConsistency check(obj);
-  AutoRooterGetterSetter gsRoot(cx, attrs, &getter, &setter);
+Shape* NativeObject::addCustomDataProperty(JSContext* cx,
+                                           HandleNativeObject obj, HandleId id,
+                                           unsigned attrs) {
+  MOZ_ASSERT(!JSID_IS_VOID(id));
+  MOZ_ASSERT(!id.isPrivateName());
+  MOZ_ASSERT(!obj->containsPure(id));
 
-  AssertValidPropertyOp(obj, getter, setter, attrs);
+  AutoCheckShapeConsistency check(obj);
+  AssertValidCustomDataProp(obj, attrs);
+
+  AutoKeepShapeCaches keep(cx);
+  ShapeTable* table = nullptr;
+  ShapeTable::Entry* entry = nullptr;
+  if (obj->inDictionaryMode()) {
+    table = obj->lastProperty()->ensureTableForDictionary(cx, keep);
+    if (!table) {
+      return nullptr;
+    }
+    entry = &table->search<MaybeAdding::Adding>(id, keep);
+  }
 
   if (!maybeConvertToOrGrowDictionaryForAdd(cx, obj, id, &table, &entry,
                                             keep)) {
@@ -643,12 +637,11 @@ Shape* NativeObject::addAccessorPropertyInternal(
   RootedShape shape(cx);
   {
     RootedShape last(cx, obj->lastProperty());
-    ObjectFlags objectFlags = GetObjectFlagsForNewShape(last, id);
+    ObjectFlags objectFlags = GetObjectFlagsForNewProperty(last, id, attrs, cx);
 
     Rooted<StackShape> child(cx, StackShape(last->base(), objectFlags, id,
                                             SHAPE_INVALID_SLOT, attrs));
-    child.updateGetterSetter(getter, setter);
-    shape = getChildAccessorProperty(cx, obj, last, &child);
+    shape = getChildCustomDataProperty(cx, obj, last, &child);
     if (!shape) {
       return nullptr;
     }
@@ -664,13 +657,14 @@ Shape* NativeObject::addAccessorPropertyInternal(
 }
 
 /* static */
-Shape* NativeObject::addDataPropertyInternal(JSContext* cx,
-                                             HandleNativeObject obj,
-                                             HandleId id, uint32_t slot,
-                                             unsigned attrs, ShapeTable* table,
-                                             ShapeTable::Entry* entry,
-                                             const AutoKeepShapeCaches& keep) {
+Shape* NativeObject::addPropertyInternal(JSContext* cx, HandleNativeObject obj,
+                                         HandleId id, uint32_t slot,
+                                         unsigned attrs, ShapeTable* table,
+                                         ShapeTable::Entry* entry,
+                                         const AutoKeepShapeCaches& keep) {
   AutoCheckShapeConsistency check(obj);
+  MOZ_ASSERT(!(attrs & JSPROP_CUSTOM_DATA_PROP),
+             "Use addCustomDataProperty for custom data properties");
 
   // The slot, if any, must be a reserved slot.
   MOZ_ASSERT(slot == SHAPE_INVALID_SLOT ||
@@ -685,11 +679,11 @@ Shape* NativeObject::addDataPropertyInternal(JSContext* cx,
   RootedShape shape(cx);
   {
     RootedShape last(cx, obj->lastProperty());
-    ObjectFlags objectFlags = GetObjectFlagsForNewShape(last, id);
+    ObjectFlags objectFlags = GetObjectFlagsForNewProperty(last, id, attrs, cx);
 
     Rooted<StackShape> child(
         cx, StackShape(last->base(), objectFlags, id, slot, attrs));
-    shape = getChildDataProperty(cx, obj, last, &child);
+    shape = getChildProperty(cx, obj, last, &child);
     if (!shape) {
       return nullptr;
     }
@@ -740,7 +734,9 @@ Shape* NativeObject::addEnumerableDataProperty(JSContext* cx,
 
   AutoCheckShapeConsistency check(obj);
 
-  ObjectFlags objectFlags = GetObjectFlagsForNewShape(obj->lastProperty(), id);
+  constexpr unsigned attrs = JSPROP_ENUMERATE;
+  ObjectFlags objectFlags =
+      GetObjectFlagsForNewProperty(obj->lastProperty(), id, attrs, cx);
 
   // Fast path for non-dictionary shapes with a single child.
   do {
@@ -760,8 +756,7 @@ Shape* NativeObject::addEnumerableDataProperty(JSContext* cx,
     MOZ_ASSERT(!child->inDictionary());
 
     if (child->propidRaw() != id || child->objectFlags() != objectFlags ||
-        child->isAccessorShape() || child->attributes() != JSPROP_ENUMERATE ||
-        child->base() != lastProperty->base()) {
+        child->attributes() != attrs || child->base() != lastProperty->base()) {
       break;
     }
 
@@ -772,7 +767,7 @@ Shape* NativeObject::addEnumerableDataProperty(JSContext* cx,
       break;
     }
 
-    if (!obj->setLastProperty(cx, child)) {
+    if (!obj->setLastPropertyForNewDataProperty(cx, child)) {
       return nullptr;
     }
     return child;
@@ -846,7 +841,7 @@ Shape* NativeObject::addEnumerableDataProperty(JSContext* cx,
     if (!shape) {
       return nullptr;
     }
-    if (!obj->setLastProperty(cx, shape)) {
+    if (!obj->setLastPropertyForNewDataProperty(cx, shape)) {
       return nullptr;
     }
   }
@@ -870,12 +865,19 @@ static void AssertCanChangeAttrs(Shape* shape, unsigned attrs) {
     return;
   }
 
-  /* A permanent property must stay permanent. */
+  // A non-configurable property must stay non-configurable.
   MOZ_ASSERT(attrs & JSPROP_PERMANENT);
 
-  /* Reject attempts to remove a slot from the permanent data property. */
-  MOZ_ASSERT_IF(shape->isDataProperty(),
-                !(attrs & (JSPROP_GETTER | JSPROP_SETTER)));
+  // Reject attempts to turn a non-configurable data property into an accessor
+  // or custom data property.
+  MOZ_ASSERT_IF(
+      shape->isDataProperty(),
+      !(attrs & (JSPROP_GETTER | JSPROP_SETTER | JSPROP_CUSTOM_DATA_PROP)));
+
+  // Reject attempts to turn a non-configurable accessor property into a data
+  // property or custom data property.
+  MOZ_ASSERT_IF(shape->isAccessorDescriptor(),
+                attrs & (JSPROP_GETTER | JSPROP_SETTER));
 #endif
 }
 
@@ -916,12 +918,14 @@ bool NativeObject::maybeToDictionaryModeForPut(JSContext* cx,
 }
 
 /* static */
-Shape* NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj,
-                                     HandleId id, unsigned attrs) {
+Shape* NativeObject::putProperty(JSContext* cx, HandleNativeObject obj,
+                                 HandleId id, unsigned attrs) {
   MOZ_ASSERT(!JSID_IS_VOID(id));
 
   AutoCheckShapeConsistency check(obj);
   AssertValidArrayIndex(obj, id);
+  MOZ_ASSERT(!(attrs & JSPROP_CUSTOM_DATA_PROP),
+             "Use changeCustomDataPropAttributes for custom data properties");
 
   // Search for id in order to claim its entry if table has been allocated.
   AutoKeepShapeCaches keep(cx);
@@ -939,8 +943,8 @@ Shape* NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj,
           obj->isExtensible() ||
               (JSID_IS_INT(id) && obj->containsDenseElement(JSID_TO_INT(id))),
           "Can't add new property to non-extensible object");
-      return addDataPropertyInternal(cx, obj, id, SHAPE_INVALID_SLOT, attrs,
-                                     table, entry, keep);
+      return addPropertyInternal(cx, obj, id, SHAPE_INVALID_SLOT, attrs, table,
+                                 entry, keep);
     }
 
     // Property exists: search must have returned a valid entry.
@@ -952,21 +956,20 @@ Shape* NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj,
   // If the caller wants to allocate a slot, but doesn't care which slot,
   // copy the existing shape's slot into slot so we can match shape, if all
   // other members match.
-  bool hadSlot = shape->isDataProperty();
-  uint32_t oldSlot = shape->maybeSlot();
-  uint32_t slot = hadSlot ? oldSlot : SHAPE_INVALID_SLOT;
+  uint32_t slot = shape->hasSlot() ? shape->slot() : SHAPE_INVALID_SLOT;
 
-#ifdef DEBUG
-  // Property |id| already exists, so object flags should already be set.
-  ObjectFlags objectFlags = GetObjectFlagsForNewShape(obj->lastProperty(), id);
-  MOZ_ASSERT(objectFlags == obj->lastProperty()->objectFlags());
-#endif
+  ObjectFlags objectFlags =
+      GetObjectFlagsForNewProperty(obj->lastProperty(), id, attrs, cx);
 
-  // Now that we've possibly preserved slot, check whether all members match.
-  // If so, this is a redundant "put" and we can return without more work.
-  if (shape->matchesParamsAfterId(obj->lastProperty()->base(),
-                                  obj->lastProperty()->objectFlags(), slot,
-                                  attrs, nullptr, nullptr)) {
+  if (shape->isAccessorDescriptor()) {
+    objectFlags.setFlag(ObjectFlag::HadGetterSetterChange);
+  }
+
+  // Now that we've possibly preserved slot, check whether the property info and
+  // object flags match. If so, this is a redundant "put" and we can return
+  // without more work.
+  if (shape->matchesPropertyParamsAfterId(slot, attrs) &&
+      obj->lastProperty()->objectFlags() == objectFlags) {
     return shape;
   }
 
@@ -974,7 +977,7 @@ Shape* NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj,
     return nullptr;
   }
 
-  MOZ_ASSERT_IF(shape->isDataProperty(), shape->slot() == slot);
+  MOZ_ASSERT_IF(shape->hasSlot(), shape->slot() == slot);
 
   if (obj->inDictionaryMode()) {
     // Updating some property in a dictionary-mode object. Create a new
@@ -982,9 +985,8 @@ Shape* NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj,
     // the last property of the dictionary (unless the modified property
     // is also the last property).
     bool updateLast = (shape == obj->lastProperty());
-    shape = NativeObject::replaceWithNewEquivalentShape(
-        cx, obj, shape, nullptr,
-        /* accessorShape = */ false);
+    shape =
+        NativeObject::replaceWithNewEquivalentShape(cx, obj, shape, nullptr);
     if (!shape) {
       return nullptr;
     }
@@ -998,10 +1000,14 @@ Shape* NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj,
       }
     }
 
+    // Update the last property's object flags. This is fine because we just
+    // generated a new shape for the object. Note that |shape|'s object flags
+    // aren't used anywhere if it's not the last property.
+    obj->lastProperty()->setObjectFlags(objectFlags);
+
     shape->setBase(obj->lastProperty()->base());
     shape->setSlot(slot);
     shape->attrs = uint8_t(attrs);
-    shape->immutableFlags &= ~Shape::ACCESSOR_SHAPE;
     shape->immutableFlags |= Shape::IN_DICTIONARY;
   } else {
     // Updating the last property in a non-dictionary-mode object. Find an
@@ -1010,31 +1016,29 @@ Shape* NativeObject::putDataProperty(JSContext* cx, HandleNativeObject obj,
     MOZ_ASSERT(shape == obj->lastProperty());
 
     // Find or create a property tree node labeled by our arguments.
-    Rooted<StackShape> child(
-        cx, StackShape(obj->lastProperty()->base(),
-                       obj->lastProperty()->objectFlags(), id, slot, attrs));
+    Rooted<StackShape> child(cx, StackShape(obj->lastProperty()->base(),
+                                            objectFlags, id, slot, attrs));
     RootedShape parent(cx, shape->parent);
-    shape = getChildDataProperty(cx, obj, parent, &child);
+    shape = getChildProperty(cx, obj, parent, &child);
     if (!shape) {
       return nullptr;
     }
   }
 
-  MOZ_ASSERT(shape->isDataProperty());
+  MOZ_ASSERT(obj->lastProperty()->objectFlags() == objectFlags);
   return shape;
 }
 
 /* static */
-Shape* NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj,
-                                         HandleId id, GetterOp getter,
-                                         SetterOp setter, unsigned attrs) {
+Shape* NativeObject::changeCustomDataPropAttributes(JSContext* cx,
+                                                    HandleNativeObject obj,
+                                                    HandleId id,
+                                                    unsigned attrs) {
   MOZ_ASSERT(!JSID_IS_VOID(id));
 
   AutoCheckShapeConsistency check(obj);
   AssertValidArrayIndex(obj, id);
-  AssertValidPropertyOp(obj, getter, setter, attrs);
-
-  AutoRooterGetterSetter gsRoot(cx, attrs, &getter, &setter);
+  AssertValidCustomDataProp(obj, attrs);
 
   // Search for id in order to claim its entry if table has been allocated.
   AutoKeepShapeCaches keep(cx);
@@ -1047,14 +1051,7 @@ Shape* NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj,
       return nullptr;
     }
 
-    if (!shape) {
-      MOZ_ASSERT(
-          obj->isExtensible() ||
-              (JSID_IS_INT(id) && obj->containsDenseElement(JSID_TO_INT(id))),
-          "Can't add new property to non-extensible object");
-      return addAccessorPropertyInternal(cx, obj, id, getter, setter, attrs,
-                                         table, entry, keep);
-    }
+    MOZ_ASSERT(shape);
 
     // Property exists: search must have returned a valid entry.
     MOZ_ASSERT_IF(entry, !entry->isRemoved());
@@ -1062,20 +1059,15 @@ Shape* NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj,
 
   AssertCanChangeAttrs(shape, attrs);
 
-  bool hadSlot = shape->isDataProperty();
-  uint32_t oldSlot = shape->maybeSlot();
+  MOZ_ASSERT(shape->isCustomDataProperty());
 
-#ifdef DEBUG
-  // Property |id| already exists, so object flags should already be set.
-  ObjectFlags objectFlags = GetObjectFlagsForNewShape(obj->lastProperty(), id);
-  MOZ_ASSERT(objectFlags == obj->lastProperty()->objectFlags());
-#endif
+  ObjectFlags objectFlags =
+      GetObjectFlagsForNewProperty(obj->lastProperty(), id, attrs, cx);
 
-  // Check whether all members match. If so, this is a redundant "put" and we
-  // can return without more work.
-  if (shape->matchesParamsAfterId(obj->lastProperty()->base(),
-                                  obj->lastProperty()->objectFlags(),
-                                  SHAPE_INVALID_SLOT, attrs, getter, setter)) {
+  // Check whether the property info and object flags match. If so, this is a
+  // redundant "put" and we can return without more work.
+  if (shape->matchesPropertyParamsAfterId(SHAPE_INVALID_SLOT, attrs) &&
+      obj->lastProperty()->objectFlags() == objectFlags) {
     return shape;
   }
 
@@ -1090,8 +1082,7 @@ Shape* NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj,
     // is also the last property).
     bool updateLast = (shape == obj->lastProperty());
     shape =
-        NativeObject::replaceWithNewEquivalentShape(cx, obj, shape, nullptr,
-                                                    /* accessorShape = */ true);
+        NativeObject::replaceWithNewEquivalentShape(cx, obj, shape, nullptr);
     if (!shape) {
       return nullptr;
     }
@@ -1099,16 +1090,15 @@ Shape* NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj,
       return nullptr;
     }
 
+    // Update the last property's object flags. This is fine because we just
+    // generated a new shape for the object. Note that |shape|'s object flags
+    // aren't used anywhere if it's not the last property.
+    obj->lastProperty()->setObjectFlags(objectFlags);
+
     shape->setBase(obj->lastProperty()->base());
     shape->setSlot(SHAPE_INVALID_SLOT);
     shape->attrs = uint8_t(attrs);
-    shape->immutableFlags |= Shape::IN_DICTIONARY | Shape::ACCESSOR_SHAPE;
-
-    AccessorShape& accShape = shape->asAccessorShape();
-    GetterSetterPreWriteBarrier(&accShape);
-    accShape.rawGetter = getter;
-    accShape.rawSetter = setter;
-    GetterSetterPostWriteBarrier(&accShape);
+    shape->immutableFlags |= Shape::IN_DICTIONARY;
   } else {
     // Updating the last property in a non-dictionary-mode object. Find an
     // alternate shared child of the last property's previous shape.
@@ -1116,52 +1106,20 @@ Shape* NativeObject::putAccessorProperty(JSContext* cx, HandleNativeObject obj,
     MOZ_ASSERT(shape == obj->lastProperty());
 
     // Find or create a property tree node labeled by our arguments.
-    Rooted<StackShape> child(cx, StackShape(obj->lastProperty()->base(),
-                                            obj->lastProperty()->objectFlags(),
-                                            id, SHAPE_INVALID_SLOT, attrs));
-    child.updateGetterSetter(getter, setter);
+    Rooted<StackShape> child(
+        cx, StackShape(obj->lastProperty()->base(), objectFlags, id,
+                       SHAPE_INVALID_SLOT, attrs));
     RootedShape parent(cx, shape->parent);
-    shape = getChildAccessorProperty(cx, obj, parent, &child);
+    shape = getChildCustomDataProperty(cx, obj, parent, &child);
     if (!shape) {
       return nullptr;
     }
   }
 
-  // Can't fail now, so free the previous incarnation's slot. But we do not
-  // need to free oldSlot (and must not, as trying to will botch an assertion
-  // in NativeObject::freeSlot) if the new last property (shape here) has a
-  // slotSpan that does not cover it.
-  if (hadSlot && oldSlot < obj->slotSpan()) {
-    obj->freeSlot(cx, oldSlot);
-  }
+  MOZ_ASSERT(obj->lastProperty()->objectFlags() == objectFlags);
 
-  MOZ_ASSERT(!shape->isDataProperty());
+  MOZ_ASSERT(shape->isCustomDataProperty());
   return shape;
-}
-
-/* static */
-Shape* NativeObject::changeProperty(JSContext* cx, HandleNativeObject obj,
-                                    HandleShape shape, unsigned attrs,
-                                    GetterOp getter, SetterOp setter) {
-  MOZ_ASSERT(obj->containsPure(shape));
-
-  AutoCheckShapeConsistency check(obj);
-
-  /* Allow only shared (slotless) => unshared (slotful) transition. */
-#ifdef DEBUG
-  bool needSlot = Shape::isDataProperty(attrs, getter, setter);
-  MOZ_ASSERT_IF(shape->isDataProperty() != needSlot, needSlot);
-#endif
-
-  AssertCanChangeAttrs(shape, attrs);
-
-  if (shape->attrs == attrs && shape->getter() == getter &&
-      shape->setter() == setter) {
-    return shape;
-  }
-
-  RootedId propid(cx, shape->propid());
-  return putAccessorProperty(cx, obj, propid, getter, setter, attrs);
 }
 
 /* static */
@@ -1180,6 +1138,21 @@ bool NativeObject::removeProperty(JSContext* cx, HandleNativeObject obj,
 
   if (!shape) {
     return true;
+  }
+
+  // If we're removing an accessor property, ensure the HadGetterSetterChange
+  // object flag is set. This is necessary because the slot holding the
+  // GetterSetter can be changed indirectly by removing the property and then
+  // adding it back with a different GetterSetter value but the same shape.
+  if (shape->isAccessorDescriptor() && !obj->hadGetterSetterChange()) {
+    if (!NativeObject::setHadGetterSetterChange(cx, obj)) {
+      return false;
+    }
+    // Relookup shape/table/entry in case setHadGetterSetterChange changed them.
+    if (!Shape::search(cx, obj->lastProperty(), id, keep, shape.address(),
+                       &table, &entry)) {
+      return false;
+    }
   }
 
   const bool removingLastProperty = (shape == obj->lastProperty());
@@ -1208,8 +1181,7 @@ bool NativeObject::removeProperty(JSContext* cx, HandleNativeObject obj,
    */
   RootedShape spare(cx);
   if (obj->inDictionaryMode()) {
-    /* For simplicity, always allocate an accessor shape for now. */
-    spare = Allocate<AccessorShape>(cx);
+    spare = Allocate<Shape>(cx);
     if (!spare) {
       return false;
     }
@@ -1217,7 +1189,7 @@ bool NativeObject::removeProperty(JSContext* cx, HandleNativeObject obj,
   }
 
   /* If shape has a slot, free its slot number. */
-  if (shape->isDataProperty()) {
+  if (shape->hasSlot()) {
     obj->freeSlot(cx, shape->slot());
   }
 
@@ -1245,7 +1217,8 @@ bool NativeObject::removeProperty(JSContext* cx, HandleNativeObject obj,
        */
       Shape* aprop = obj->lastProperty();
       for (int n = 50; --n >= 0 && aprop->parent; aprop = aprop->parent) {
-        MOZ_ASSERT_IF(aprop != shape, obj->contains(cx, aprop));
+        MOZ_ASSERT_IF(aprop != shape,
+                      obj->contains(cx, aprop->propid(), ShapeProperty(aprop)));
       }
 #endif
     }
@@ -1291,16 +1264,20 @@ bool NativeObject::removeProperty(JSContext* cx, HandleNativeObject obj,
   return true;
 }
 
+#ifdef DEBUG
+static bool ContainsShape(NativeObject* obj, Shape* shape, JSContext* cx) {
+  return obj->lastProperty()->search(cx, shape->propid()) == shape;
+}
+#endif
+
 /* static */
 Shape* NativeObject::replaceWithNewEquivalentShape(JSContext* cx,
                                                    HandleNativeObject obj,
                                                    Shape* oldShape,
-                                                   Shape* newShape,
-                                                   bool accessorShape) {
+                                                   Shape* newShape) {
   MOZ_ASSERT(cx->isInsideCurrentZone(oldShape));
   MOZ_ASSERT_IF(oldShape != obj->lastProperty(),
-                obj->inDictionaryMode() &&
-                    obj->lookup(cx, oldShape->propidRef()) == oldShape);
+                obj->inDictionaryMode() && ContainsShape(obj, oldShape, cx));
 
   if (!obj->inDictionaryMode()) {
     RootedShape newRoot(cx, newShape);
@@ -1313,22 +1290,13 @@ Shape* NativeObject::replaceWithNewEquivalentShape(JSContext* cx,
 
   if (!newShape) {
     RootedShape oldRoot(cx, oldShape);
-    bool allocAccessorShape = accessorShape || oldShape->isAccessorShape();
-    if (allocAccessorShape) {
-      newShape = Allocate<AccessorShape>(cx);
-    } else {
-      newShape = Allocate<Shape>(cx);
-    }
 
+    newShape = Allocate<Shape>(cx);
     if (!newShape) {
       return nullptr;
     }
 
-    if (allocAccessorShape) {
-      new (newShape) AccessorShape(oldRoot->base(), ObjectFlags(), 0);
-    } else {
-      new (newShape) Shape(oldRoot->base(), ObjectFlags(), 0);
-    }
+    new (newShape) Shape(oldRoot->base(), ObjectFlags(), 0);
 
     oldShape = oldRoot;
   }
@@ -1811,19 +1779,8 @@ void Shape::fixupShapeTreeAfterMovingGC() {
     Shape* key = MaybeForwarded(e.front());
     BaseShape* base = MaybeForwarded(key->base());
 
-    GetterOp getter = key->getter();
-    if (key->hasGetterObject()) {
-      getter = GetterOp(MaybeForwarded(key->getterObject()));
-    }
-
-    SetterOp setter = key->setter();
-    if (key->hasSetterObject()) {
-      setter = SetterOp(MaybeForwarded(key->setterObject()));
-    }
-
     StackShape lookup(base, key->objectFlags(), key->propidRef(),
                       key->immutableFlags & Shape::SLOT_MASK, key->attrs);
-    lookup.updateGetterSetter(getter, setter);
     e.rekeyFront(lookup, key);
   }
 }
@@ -1834,60 +1791,6 @@ void Shape::fixupAfterMovingGC() {
   } else {
     fixupShapeTreeAfterMovingGC();
   }
-}
-
-void NurseryShapesRef::trace(JSTracer* trc) {
-  auto& shapes = zone_->nurseryShapes();
-  for (auto shape : shapes) {
-    shape->fixupGetterSetterForBarrier(trc);
-  }
-  shapes.clearAndFree();
-}
-
-void Shape::fixupGetterSetterForBarrier(JSTracer* trc) {
-  if (!hasGetterValue() && !hasSetterValue()) {
-    return;
-  }
-
-  JSObject* priorGetter = asAccessorShape().getterObj;
-  JSObject* priorSetter = asAccessorShape().setterObj;
-  if (!priorGetter && !priorSetter) {
-    return;
-  }
-
-  JSObject* postGetter = priorGetter;
-  JSObject* postSetter = priorSetter;
-  if (priorGetter) {
-    TraceManuallyBarrieredEdge(trc, &postGetter, "getterObj");
-  }
-  if (priorSetter) {
-    TraceManuallyBarrieredEdge(trc, &postSetter, "setterObj");
-  }
-  if (priorGetter == postGetter && priorSetter == postSetter) {
-    return;
-  }
-
-  if (parent && !parent->inDictionary() && parent->children.isShapeSet()) {
-    // Relocating the getterObj or setterObj will have changed our location in
-    // our parent's ShapeSet, so take care to update it. We must do this before
-    // we update the shape itself, since the shape is used to match the original
-    // entry in the hash set.
-
-    StackShape original(this);
-    StackShape updated(this);
-    updated.rawGetter = reinterpret_cast<GetterOp>(postGetter);
-    updated.rawSetter = reinterpret_cast<SetterOp>(postSetter);
-
-    ShapeSet* set = parent->children.toShapeSet();
-    MOZ_ALWAYS_TRUE(set->rekeyAs(original, updated, this));
-  }
-
-  asAccessorShape().getterObj = postGetter;
-  asAccessorShape().setterObj = postSetter;
-
-  MOZ_ASSERT_IF(
-      parent && !parent->inDictionary() && parent->children.isShapeSet(),
-      parent->children.toShapeSet()->has(StackShape(this)));
 }
 
 #ifdef DEBUG
@@ -1921,10 +1824,7 @@ void Shape::dump(js::GenericPrinter& out) const {
     JSID_TO_SYMBOL(propid)->dump(out);
   }
 
-  out.printf(" g/s %p/%p slot %d attrs %x ",
-             JS_FUNC_TO_DATA_PTR(void*, getter()),
-             JS_FUNC_TO_DATA_PTR(void*, setter()),
-             isDataProperty() ? int32_t(slot()) : -1, attrs);
+  out.printf(" slot %d attrs %x ", hasSlot() ? int32_t(slot()) : -1, attrs);
 
   if (attrs) {
     int first = 1;
@@ -2120,15 +2020,6 @@ void Zone::fixupInitialShapeTable() {
   }
 }
 
-void AutoRooterGetterSetter::Inner::trace(JSTracer* trc) {
-  if ((attrs & JSPROP_GETTER) && *pgetter) {
-    TraceRoot(trc, (JSObject**)pgetter, "AutoRooterGetterSetter getter");
-  }
-  if ((attrs & JSPROP_SETTER) && *psetter) {
-    TraceRoot(trc, (JSObject**)psetter, "AutoRooterGetterSetter setter");
-  }
-}
-
 JS::ubi::Node::Size JS::ubi::Concrete<js::Shape>::size(
     mozilla::MallocSizeOf mallocSizeOf) const {
   Size size = js::gc::Arena::thingSize(get().asTenured().getAllocKind());
@@ -2149,10 +2040,4 @@ JS::ubi::Node::Size JS::ubi::Concrete<js::Shape>::size(
 JS::ubi::Node::Size JS::ubi::Concrete<js::BaseShape>::size(
     mozilla::MallocSizeOf mallocSizeOf) const {
   return js::gc::Arena::thingSize(get().asTenured().getAllocKind());
-}
-
-void PropertyResult::trace(JSTracer* trc) {
-  if (isNativeProperty()) {
-    TraceRoot(trc, &shape_, "PropertyResult::shape_");
-  }
 }

@@ -2362,6 +2362,32 @@ void LIRGenerator::visitNonNegativeIntPtrToInt32(
 #endif
 }
 
+void LIRGenerator::visitWasmExtendU32Index(MWasmExtendU32Index* ins) {
+#ifdef JS_64BIT
+  MDefinition* input = ins->input();
+  MOZ_ASSERT(input->type() == MIRType::Int32);
+  MOZ_ASSERT(ins->type() == MIRType::Int64);
+
+  auto* lir = new (alloc()) LWasmExtendU32Index(useRegisterAtStart(input));
+  defineReuseInput(lir, ins, 0);
+#else
+  MOZ_CRASH("64-bit only");
+#endif
+}
+
+void LIRGenerator::visitWasmWrapU32Index(MWasmWrapU32Index* ins) {
+#ifdef JS_64BIT
+  MDefinition* input = ins->input();
+  MOZ_ASSERT(input->type() == MIRType::Int64);
+  MOZ_ASSERT(ins->type() == MIRType::Int32);
+
+  auto* lir = new (alloc()) LWasmWrapU32Index(useRegisterAtStart(input));
+  defineReuseInput(lir, ins, 0);
+#else
+  MOZ_CRASH("64-bit only");
+#endif
+}
+
 void LIRGenerator::visitIntPtrToDouble(MIntPtrToDouble* ins) {
   MDefinition* input = ins->input();
   MOZ_ASSERT(input->type() == MIRType::IntPtr);
@@ -4616,19 +4642,33 @@ void LIRGenerator::visitWasmBoundsCheck(MWasmBoundsCheck* ins) {
   MOZ_ASSERT(!ins->isRedundant());
 
   MDefinition* index = ins->index();
-  MOZ_ASSERT(index->type() == MIRType::Int32);
-
   MDefinition* boundsCheckLimit = ins->boundsCheckLimit();
-  MOZ_ASSERT(boundsCheckLimit->type() == MIRType::Int32);
 
-  if (JitOptions.spectreIndexMasking) {
-    auto* lir = new (alloc()) LWasmBoundsCheck(useRegisterAtStart(index),
-                                               useRegister(boundsCheckLimit));
-    defineReuseInput(lir, ins, 0);
+  MOZ_ASSERT(boundsCheckLimit->type() == index->type());
+
+  if (index->type() == MIRType::Int64) {
+    if (JitOptions.spectreIndexMasking) {
+      auto* lir = new (alloc()) LWasmBoundsCheck64(
+          useInt64RegisterAtStart(index), useInt64Register(boundsCheckLimit));
+      defineInt64ReuseInput(lir, ins, 0);
+    } else {
+      auto* lir = new (alloc())
+          LWasmBoundsCheck64(useInt64RegisterAtStart(index),
+                             useInt64RegisterAtStart(boundsCheckLimit));
+      add(lir, ins);
+    }
   } else {
-    auto* lir = new (alloc()) LWasmBoundsCheck(
-        useRegisterAtStart(index), useRegisterAtStart(boundsCheckLimit));
-    add(lir, ins);
+    MOZ_ASSERT(index->type() == MIRType::Int32);
+
+    if (JitOptions.spectreIndexMasking) {
+      auto* lir = new (alloc()) LWasmBoundsCheck(useRegisterAtStart(index),
+                                                 useRegister(boundsCheckLimit));
+      defineReuseInput(lir, ins, 0);
+    } else {
+      auto* lir = new (alloc()) LWasmBoundsCheck(
+          useRegisterAtStart(index), useRegisterAtStart(boundsCheckLimit));
+      add(lir, ins);
+    }
   }
 }
 
@@ -5341,7 +5381,7 @@ void LIRGenerator::visitGuardHasGetterSetter(MGuardHasGetterSetter* ins) {
 
   auto* guard = new (alloc())
       LGuardHasGetterSetter(useRegisterAtStart(object), tempFixed(CallTempReg0),
-                            tempFixed(CallTempReg1));
+                            tempFixed(CallTempReg1), tempFixed(CallTempReg2));
   assignSnapshot(guard, ins->bailoutKind());
   add(guard, ins);
   redefine(ins, object);
@@ -5591,7 +5631,7 @@ void LIRGenerator::visitWasmFloatConstant(MWasmFloatConstant* ins) {
 #ifdef JS_JITSPEW
 static void SpewResumePoint(MBasicBlock* block, MInstruction* ins,
                             MResumePoint* resumePoint) {
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.printf("Current resume point %p details:\n", (void*)resumePoint);
   out.printf("    frame count: %u\n", resumePoint->frameCount());
 
@@ -5696,19 +5736,11 @@ void LIRGenerator::updateResumeState(MInstruction* ins) {
 }
 
 void LIRGenerator::updateResumeState(MBasicBlock* block) {
-  // As Value Numbering phase can remove edges from the entry basic block to a
-  // code paths reachable from the OSR entry point, we have to add fixup
-  // blocks to keep the dominator tree organized the same way. These fixup
-  // blocks are flaged as unreachable, and should only exist iff the graph has
-  // an OSR block.
-  //
   // Note: RangeAnalysis can flag blocks as unreachable, but they are only
   // removed iff GVN (including UCE) is enabled.
   MOZ_ASSERT_IF(!mir()->compilingWasm() && !block->unreachable(),
                 block->entryResumePoint());
-  MOZ_ASSERT_IF(
-      block->unreachable(),
-      block->graph().osrBlock() || !mir()->optimizationInfo().gvnEnabled());
+  MOZ_ASSERT_IF(block->unreachable(), !mir()->optimizationInfo().gvnEnabled());
   lastResumePoint_ = block->entryResumePoint();
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonSnapshots) && lastResumePoint_) {
@@ -5723,14 +5755,7 @@ bool LIRGenerator::visitBlock(MBasicBlock* block) {
 
   definePhis();
 
-  // See fixup blocks added by Value Numbering, to keep the dominator relation
-  // modified by the presence of the OSR block.
-  MOZ_ASSERT_IF(block->unreachable(),
-                *block->begin() == block->lastIns() ||
-                    !mir()->optimizationInfo().gvnEnabled());
-  MOZ_ASSERT_IF(
-      block->unreachable(),
-      block->graph().osrBlock() || !mir()->optimizationInfo().gvnEnabled());
+  MOZ_ASSERT_IF(block->unreachable(), !mir()->optimizationInfo().gvnEnabled());
   for (MInstructionIterator iter = block->begin(); *iter != block->lastIns();
        iter++) {
     if (!visitInstruction(*iter)) {

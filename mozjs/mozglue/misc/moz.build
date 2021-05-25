@@ -28,7 +28,9 @@ EXPORTS.mozilla.glue += [
 
 if CONFIG["OS_ARCH"] == "WINNT":
     EXPORTS.mozilla += [
+        "PreXULSkeletonUI.h",
         "StackWalk_windows.h",
+        "StackWalkThread.h",
         "TimeStamp_windows.h",
         "WindowsDpiAwareness.h",
     ]
@@ -62,6 +64,7 @@ if CONFIG["OS_ARCH"] == "WINNT":
         "WindowsUnicode.h",
     ]
     SOURCES += [
+        "PreXULSkeletonUI.cpp",
         "TimeStamp_windows.cpp",
         "WindowsMapRemoteView.cpp",
         "WindowsProcessMitigations.cpp",
@@ -83,6 +86,12 @@ if CONFIG["OS_ARCH"] == "WINNT":
     SOURCES += [
         "ConditionVariable_windows.cpp",
         "Mutex_windows.cpp",
+    ]
+# WASI hasn't supported cond vars and mutexes yet so noop implementation is used.
+elif CONFIG["OS_ARCH"] == "WASI":
+    SOURCES += [
+        "ConditionVariable_noop.cpp",
+        "Mutex_noop.cpp",
     ]
 else:
     SOURCES += [

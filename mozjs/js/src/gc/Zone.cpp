@@ -175,7 +175,6 @@ JS::Zone::Zone(JSRuntime* rt, Kind kind)
       propertyTree_(this, this),
       baseShapes_(this, this),
       initialShapes_(this, this),
-      nurseryShapes_(this),
       finalizationRegistries_(this, this),
       finalizationRecordMap_(this, this),
       jitZone_(this, nullptr),
@@ -651,7 +650,7 @@ void Zone::addSizeOfIncludingThis(
     size_t* shapeCaches, size_t* atomsMarkBitmaps, size_t* compartmentObjects,
     size_t* crossCompartmentWrappersTables, size_t* compartmentsPrivateData,
     size_t* scriptCountsMapArg) {
-  *regexpZone += regExps().sizeOfExcludingThis(mallocSizeOf);
+  *regexpZone += regExps().sizeOfIncludingThis(mallocSizeOf);
   if (jitZone_) {
     jitZone_->addSizeOfIncludingThis(mallocSizeOf, code, jitZone,
                                      baselineStubsOptimized);
@@ -924,10 +923,17 @@ void Zone::clearScriptCounts(Realm* realm) {
   // ScriptCounts entries of the given realm.
   for (auto i = scriptCountsMap->modIter(); !i.done(); i.next()) {
     BaseScript* script = i.get().key();
-    if (script->realm() == realm) {
-      script->clearHasScriptCounts();
-      i.remove();
+    if (script->realm() != realm) {
+      continue;
     }
+    // We can't destroy the ScriptCounts yet if the script has Baseline code,
+    // because Baseline code bakes in pointers to the counters. The ScriptCounts
+    // will be destroyed in Zone::discardJitCode when discarding the JitScript.
+    if (script->hasBaselineScript()) {
+      continue;
+    }
+    script->clearHasScriptCounts();
+    i.remove();
   }
 }
 

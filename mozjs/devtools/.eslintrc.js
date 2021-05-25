@@ -22,7 +22,11 @@ module.exports = {
       },
     },
     {
-      files: ["client/shared/*.jsm"],
+      files: [
+        "client/shared/*.jsm",
+        // Allow non-camelcase so that run_test doesn't produce a warning.
+        "**/test*/**/*",
+      ],
       rules: {
         camelcase: "off",
       },
@@ -95,6 +99,10 @@ module.exports = {
           "^(resource://)?devtools/client",
         ],
       },
+      excludedFiles: [
+        // Tests can always import anything.
+        "**/test*/**/*",
+      ],
     },
     {
       // Cu, Cc etc... are not available in most devtools modules loaded by require.
@@ -219,6 +227,8 @@ module.exports = {
     "func-style": "off",
     // Only useful in a node environment.
     "handle-callback-err": "off",
+    // componentDidUnmount is not a real lifecycle method, use componentWillUnmount.
+    "id-denylist": ["error", "componentDidUnmount"],
     // Maximum depth callbacks can be nested.
     "max-nested-callbacks": ["error", 3],
     // Don't limit the number of parameters that can be used in a function.

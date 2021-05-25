@@ -11,8 +11,8 @@
 #include "js/Class.h"         // JSClass
 #include "js/Result.h"        // JS::OOM, JS::Result
 #include "js/RootingAPI.h"    // JS::Handle
+#include "vm/JSObject.h"      // js::NewObjectKind
 #include "vm/NativeObject.h"  // js::NativeObject
-#include "vm/ObjectGroup.h"   // js::NewObjectKind
 
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSFunction;
@@ -20,17 +20,35 @@ class JS_PUBLIC_API JSObject;
 
 namespace js {
 
+struct IdValuePair;
+
 // Object class for plain native objects created using '{}' object literals,
 // 'new Object()', 'Object.create', etc.
 class PlainObject : public NativeObject {
  public:
   static const JSClass class_;
 
+ private:
+#ifdef DEBUG
+  void assertHasNoNonWritableOrAccessorPropExclProto() const;
+#endif
+
+ public:
   static inline JS::Result<PlainObject*, JS::OOM> createWithTemplate(
       JSContext* cx, JS::Handle<PlainObject*> templateObject);
 
   /* Return the allocKind we would use if we were to tenure this object. */
   inline gc::AllocKind allocKindForTenure() const;
+
+  bool hasNonWritableOrAccessorPropExclProto() const {
+    if (hasFlag(ObjectFlag::HasNonWritableOrAccessorPropExclProto)) {
+      return true;
+    }
+#ifdef DEBUG
+    assertHasNoNonWritableOrAccessorPropExclProto();
+#endif
+    return false;
+  }
 };
 
 // Specializations of 7.3.23 CopyDataProperties(...) for NativeObjects.
@@ -45,6 +63,11 @@ extern PlainObject* CreateThisForFunction(JSContext* cx,
                                           JS::Handle<JSFunction*> callee,
                                           JS::Handle<JSObject*> newTarget,
                                           NewObjectKind newKind);
+
+extern PlainObject* NewPlainObjectWithProperties(JSContext* cx,
+                                                 IdValuePair* properties,
+                                                 size_t nproperties,
+                                                 NewObjectKind newKind);
 
 }  // namespace js
 

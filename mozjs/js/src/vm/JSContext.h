@@ -9,6 +9,7 @@
 #ifndef vm_JSContext_h
 #define vm_JSContext_h
 
+#include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 
 #include "jstypes.h"  // JS_PUBLIC_API
@@ -421,7 +422,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
 
   template <typename V, typename E>
-  V* resultToPtr(const JS::Result<V*, E>& result) {
+  V* resultToPtr(JS::Result<V*, E>& result) {
     return result.isOk() ? result.unwrap() : nullptr;
   }
 
@@ -479,8 +480,12 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return runtime()->interpreterStack();
   }
 
-  /* Base address of the native stack for the current thread. */
-  uintptr_t nativeStackBase;
+ private:
+  // Base address of the native stack for the current thread.
+  mozilla::Maybe<uintptr_t> nativeStackBase_;
+
+ public:
+  uintptr_t nativeStackBase() const { return *nativeStackBase_; }
 
  public:
   /* If non-null, report JavaScript entry points to this monitor. */

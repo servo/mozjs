@@ -156,8 +156,6 @@ static inline bool IsOptimizableObjectInstruction(MInstruction* ins) {
 // changing shape, and which are known by TI at the object creation.
 static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
   MOZ_ASSERT(ins->type() == MIRType::Object);
-  MOZ_ASSERT(IsOptimizableObjectInstruction(ins) || ins->isGuardShape() ||
-             ins->isFunctionEnvironment());
 
   JitSpewDef(JitSpew_Escape, "Check object\n", ins);
   JitSpewIndent spewIndent(JitSpew_Escape);
@@ -223,6 +221,26 @@ static bool IsObjectEscaped(MInstruction* ins, JSObject* objDefault) {
         MOZ_ASSERT(!ins->isGuardShape());
         if (obj->shape() != guard->shape()) {
           JitSpewDef(JitSpew_Escape, "has a non-matching guard shape\n", guard);
+          return true;
+        }
+        if (IsObjectEscaped(def->toInstruction(), obj)) {
+          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
+          return true;
+        }
+        break;
+      }
+
+      case MDefinition::Opcode::CheckIsObj: {
+        if (IsObjectEscaped(def->toInstruction(), obj)) {
+          JitSpewDef(JitSpew_Escape, "is indirectly escaped by\n", def);
+          return true;
+        }
+        break;
+      }
+
+      case MDefinition::Opcode::Unbox: {
+        if (def->type() != MIRType::Object) {
+          JitSpewDef(JitSpew_Escape, "has an invalid unbox\n", def);
           return true;
         }
         if (IsObjectEscaped(def->toInstruction(), obj)) {
@@ -301,6 +319,8 @@ class ObjectMemoryView : public MDefinitionVisitorDefaultNoop {
   void visitStoreDynamicSlot(MStoreDynamicSlot* ins);
   void visitLoadDynamicSlot(MLoadDynamicSlot* ins);
   void visitGuardShape(MGuardShape* ins);
+  void visitCheckIsObj(MCheckIsObj* ins);
+  void visitUnbox(MUnbox* ins);
   void visitFunctionEnvironment(MFunctionEnvironment* ins);
   void visitLambda(MLambda* ins);
   void visitLambdaArrow(MLambdaArrow* ins);
@@ -619,6 +639,33 @@ void ObjectMemoryView::visitObjectGuard(MInstruction* ins,
 
 void ObjectMemoryView::visitGuardShape(MGuardShape* ins) {
   visitObjectGuard(ins, ins->object());
+}
+
+void ObjectMemoryView::visitCheckIsObj(MCheckIsObj* ins) {
+  // Skip checks on other objects.
+  if (ins->input() != obj_) {
+    return;
+  }
+
+  // Replace the check by its object.
+  ins->replaceAllUsesWith(obj_);
+
+  // Remove original instruction.
+  ins->block()->discard(ins);
+}
+
+void ObjectMemoryView::visitUnbox(MUnbox* ins) {
+  // Skip unrelated unboxes.
+  if (ins->input() != obj_) {
+    return;
+  }
+  MOZ_ASSERT(ins->type() == MIRType::Object);
+
+  // Replace the unbox with the object.
+  ins->replaceAllUsesWith(obj_);
+
+  // Remove the unbox.
+  ins->block()->discard(ins);
 }
 
 void ObjectMemoryView::visitFunctionEnvironment(MFunctionEnvironment* ins) {
@@ -1492,13 +1539,13 @@ void ArgumentsReplacer::visitGuardArgumentsObjectFlags(
   // property of the args object. We have already determined that the
   // args object doesn't escape, so its properties can't be mutated.
   //
-  // FORWARDED_ARGUMENTS_BIT is set if any argument is closed over,
-  // which is an immutable property of the script. Because we are
-  // replacing the args object for a known script, we can check the
-  // flag once, which is done when we first attach the CacheIR, and
-  // rely on it.  (Note that this wouldn't be true if we didn't know
-  // the origin of args_, because it could be passed in from another
-  // function.)
+  // FORWARDED_ARGUMENTS_BIT is set if any mapped argument is closed
+  // over, which is an immutable property of the script. Because we
+  // are replacing the args object for a known script, we can check
+  // the flag once, which is done when we first attach the CacheIR,
+  // and rely on it.  (Note that this wouldn't be true if we didn't
+  // know the origin of args_, because it could be passed in from
+  // another function.)
   uint32_t supportedBits = ArgumentsObject::LENGTH_OVERRIDDEN_BIT |
                            ArgumentsObject::ITERATOR_OVERRIDDEN_BIT |
                            ArgumentsObject::ELEMENT_OVERRIDDEN_BIT |
@@ -1507,7 +1554,7 @@ void ArgumentsReplacer::visitGuardArgumentsObjectFlags(
 
   MOZ_ASSERT((ins->flags() & ~supportedBits) == 0);
   MOZ_ASSERT_IF(ins->flags() & ArgumentsObject::FORWARDED_ARGUMENTS_BIT,
-                !args_->block()->info().anyFormalIsAliased());
+                !args_->block()->info().anyFormalIsForwarded());
 #endif
 
   // Replace the guard with the args object.
@@ -1582,8 +1629,6 @@ void ArgumentsReplacer::visitLoadArgumentsObjectArg(
   if (isInlinedArguments()) {
     auto* actualArgs = args_->toCreateInlinedArgumentsObject();
 
-    // TODO: optimize for constant indices.
-
     // Insert bounds check.
     auto* length =
         MConstant::New(alloc(), Int32Value(actualArgs->numActuals()));
@@ -1593,6 +1638,10 @@ void ArgumentsReplacer::visitLoadArgumentsObjectArg(
     check->setBailoutKind(ins->bailoutKind());
     ins->block()->insertBefore(ins, check);
 
+    if (mir_->outerInfo().hadBoundsCheckBailout()) {
+      check->setNotMovable();
+    }
+
     loadArg = MGetInlinedArgument::New(alloc(), check, actualArgs);
   } else {
     // Insert bounds check.
@@ -1600,9 +1649,12 @@ void ArgumentsReplacer::visitLoadArgumentsObjectArg(
     ins->block()->insertBefore(ins, length);
 
     MInstruction* check = MBoundsCheck::New(alloc(), index, length);
+    check->setBailoutKind(ins->bailoutKind());
     ins->block()->insertBefore(ins, check);
 
-    check->setBailoutKind(ins->bailoutKind());
+    if (mir_->outerInfo().hadBoundsCheckBailout()) {
+      check->setNotMovable();
+    }
 
     if (JitOptions.spectreIndexMasking) {
       check = MSpectreMaskIndex::New(alloc(), check, length);

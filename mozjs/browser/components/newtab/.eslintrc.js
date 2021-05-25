@@ -32,7 +32,7 @@ module.exports = {
     "plugin:mozilla/mochitest-test",
     "plugin:mozilla/xpcshell-test",
     "plugin:prettier/recommended", // require("eslint-plugin-prettier")
-    "prettier/react", // require("eslint-config-prettier")
+    "prettier", // require("eslint-config-prettier")
   ],
   overrides: [
     {
@@ -40,6 +40,8 @@ module.exports = {
       files: [
         "content-src/aboutwelcome/components/Zap.jsx",
         "content-src/aboutwelcome/components/MultiStageAboutWelcome.jsx",
+        "content-src/aboutwelcome/components/MultiStageScreen.jsx",
+        "content-src/aboutwelcome/components/MultiStageProtonScreen.jsx",
         "content-src/aboutwelcome/components/ReturnToAMO.jsx",
         "content-src/asrouter/templates/OnboardingMessage/**",
         "content-src/asrouter/templates/FirstRun/**",

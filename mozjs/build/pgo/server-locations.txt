@@ -74,6 +74,7 @@ http://test2.mochi.test:8888
 http://example.org:80                privileged
 http://test1.example.org:80          privileged
 http://test2.example.org:80          privileged
+http://test3.example.org:80          privileged
 http://sub1.test1.example.org:80     privileged
 http://sub1.test2.example.org:80     privileged
 http://sub2.test1.example.org:80     privileged
@@ -304,6 +305,10 @@ https://www.badcertdomain.example.com:443                         privileged,cer
 https://127.0.0.3:433                                             privileged,cert=badCertDomain
 https://badcertdomain.example.com:82                              privileged,cert=badCertDomain
 https://mismatch.badcertdomain.example.com:443                    privileged,cert=badCertDomain
+
+# Hosts for HTTPS-First upgrades/downgrades
+http://httpsfirst.com:80                                          privileged
+https://httpsfirst.com:443                                        privileged,nocert
 
 # Hosts for sha1 console warning tests
 https://sha1ee.example.com:443                                    privileged,cert=sha1_end_entity

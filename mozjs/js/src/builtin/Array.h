@@ -21,9 +21,6 @@ namespace js {
 
 class ArrayObject;
 
-/* 2^32-2, inclusive */
-const uint32_t MAX_ARRAY_INDEX = 4294967294u;
-
 MOZ_ALWAYS_INLINE bool IdIsIndex(jsid id, uint32_t* indexp) {
   if (JSID_IS_INT(id)) {
     int32_t i = JSID_TO_INT(id);
@@ -37,12 +34,7 @@ MOZ_ALWAYS_INLINE bool IdIsIndex(jsid id, uint32_t* indexp) {
   }
 
   JSAtom* atom = JSID_TO_ATOM(id);
-  if (atom->length() == 0 ||
-      !mozilla::IsAsciiDigit(atom->latin1OrTwoByteChar(0))) {
-    return false;
-  }
-
-  return js::StringIsArrayIndex(atom, indexp);
+  return atom->isIndex(indexp);
 }
 
 // The methods below only create dense boxed arrays.
@@ -91,7 +83,7 @@ extern ArrayObject* NewArrayWithShape(JSContext* cx, uint32_t length,
 extern bool ToLength(JSContext* cx, HandleValue v, uint64_t* out);
 
 extern bool GetLengthProperty(JSContext* cx, HandleObject obj,
-                              uint32_t* lengthp);
+                              uint64_t* lengthp);
 
 extern bool SetLengthProperty(JSContext* cx, HandleObject obj, uint32_t length);
 
@@ -157,6 +149,12 @@ extern bool ObjectMayHaveExtraIndexedProperties(JSObject* obj);
 // JS::IsArray has multiple overloads, use js::IsArrayFromJit to disambiguate.
 extern bool IsArrayFromJit(JSContext* cx, HandleObject obj, bool* isArray);
 
+extern bool ArrayLengthGetter(JSContext* cx, HandleObject obj, HandleId id,
+                              MutableHandleValue vp);
+
+extern bool ArrayLengthSetter(JSContext* cx, HandleObject obj, HandleId id,
+                              HandleValue v, ObjectOpResult& result);
+
 class MOZ_NON_TEMPORARY_CLASS ArraySpeciesLookup final {
   /*
    * An ArraySpeciesLookup holds the following:
@@ -175,7 +173,7 @@ class MOZ_NON_TEMPORARY_CLASS ArraySpeciesLookup final {
    *      To quickly retrieve and ensure that the Array constructor
    *      stored in the slot has not changed.
    *
-   *  Array's shape for the @@species getter. (arraySpeciesShape_)
+   *  Array's slot number for the @@species getter. (arraySpeciesGetterSlot_)
    *  Array's canonical value for @@species (canonicalSpeciesFunc_)
    *      To quickly retrieve and ensure that the @@species getter for Array
    *      has not changed.
@@ -189,13 +187,11 @@ class MOZ_NON_TEMPORARY_CLASS ArraySpeciesLookup final {
   MOZ_INIT_OUTSIDE_CTOR NativeObject* arrayProto_;
   MOZ_INIT_OUTSIDE_CTOR NativeObject* arrayConstructor_;
 
-  // Shape of matching Array, and slot containing the @@species
-  // property, and the canonical value.
+  // Shape of matching Array, and slot containing the @@species property, and
+  // the canonical value.
   MOZ_INIT_OUTSIDE_CTOR Shape* arrayConstructorShape_;
-#ifdef DEBUG
-  MOZ_INIT_OUTSIDE_CTOR Shape* arraySpeciesShape_;
+  MOZ_INIT_OUTSIDE_CTOR uint32_t arraySpeciesGetterSlot_;
   MOZ_INIT_OUTSIDE_CTOR JSFunction* canonicalSpeciesFunc_;
-#endif
 
   // Shape of matching Array.prototype object, and slot containing the
   // constructor for it.

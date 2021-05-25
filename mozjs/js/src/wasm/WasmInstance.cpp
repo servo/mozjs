@@ -299,17 +299,8 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     return true;
   }
 
-  // Should have been guarded earlier
-  MOZ_ASSERT(!fi.funcType().hasUnexposableArgOrRet());
-
-  // Functions with unsupported reference types in signature don't have a jit
-  // exit at the moment.
-  if (fi.funcType().temporarilyUnsupportedReftypeForExit()) {
-    return true;
-  }
-
-  // Functions that return multiple values don't have a jit exit at the moment.
-  if (fi.funcType().temporarilyUnsupportedResultCountForJitExit()) {
+  // Skip if the function does not have a signature that allows for a JIT exit.
+  if (!fi.canHaveJitExit()) {
     return true;
   }
 
@@ -350,7 +341,7 @@ Instance::callImport_general(Instance* instance, int32_t funcImportIndex,
   // write tests for cross-realm calls.
   MOZ_ASSERT(TlsContext.get()->realm() == instance->realm());
 
-  size_t byteLength = instance->memory()->volatileMemoryLength().get();
+  size_t byteLength = instance->memory()->volatileMemoryLength();
 #ifdef JS_64BIT
   // Ensure that the memory size is no more than 4GB.
   MOZ_ASSERT(byteLength <= 0x100000000);
@@ -376,8 +367,7 @@ static int32_t PerformWait(Instance* instance, uint32_t byteOffset, T value,
     return -1;
   }
 
-  if (byteOffset + sizeof(T) >
-      instance->memory()->volatileMemoryLength().get()) {
+  if (byteOffset + sizeof(T) > instance->memory()->volatileMemoryLength()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_WASM_OUT_OF_BOUNDS);
     return -1;
@@ -432,7 +422,7 @@ static int32_t PerformWait(Instance* instance, uint32_t byteOffset, T value,
     return -1;
   }
 
-  if (byteOffset >= instance->memory()->volatileMemoryLength().get()) {
+  if (byteOffset >= instance->memory()->volatileMemoryLength()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_WASM_OUT_OF_BOUNDS);
     return -1;
@@ -480,7 +470,7 @@ inline int32_t WasmMemoryCopy32(T memBase, size_t memLen,
   MOZ_ASSERT(SASigMemCopy32.failureMode == FailureMode::FailOnNegI32);
 
   const WasmArrayRawBuffer* rawBuf = WasmArrayRawBuffer::fromDataPtr(memBase);
-  size_t memLen = rawBuf->byteLength().get();
+  size_t memLen = rawBuf->byteLength();
 
   return WasmMemoryCopy32(memBase, memLen, dstByteOffset, srcByteOffset, len,
                           memmove);
@@ -497,7 +487,7 @@ inline int32_t WasmMemoryCopy32(T memBase, size_t memLen,
 
   const SharedArrayRawBuffer* rawBuf =
       SharedArrayRawBuffer::fromDataPtr(memBase);
-  size_t memLen = rawBuf->volatileByteLength().get();
+  size_t memLen = rawBuf->volatileByteLength();
 
   return WasmMemoryCopy32<SharedMem<uint8_t*>, RacyMemMove>(
       SharedMem<uint8_t*>::shared(memBase), memLen, dstByteOffset,
@@ -547,7 +537,7 @@ inline int32_t WasmMemoryFill32(T memBase, size_t memLen, uint32_t byteOffset,
   MOZ_ASSERT(SASigMemFill32.failureMode == FailureMode::FailOnNegI32);
 
   const WasmArrayRawBuffer* rawBuf = WasmArrayRawBuffer::fromDataPtr(memBase);
-  size_t memLen = rawBuf->byteLength().get();
+  size_t memLen = rawBuf->byteLength();
 
   return WasmMemoryFill32(memBase, memLen, byteOffset, value, len, memset);
 }
@@ -560,7 +550,7 @@ inline int32_t WasmMemoryFill32(T memBase, size_t memLen, uint32_t byteOffset,
 
   const SharedArrayRawBuffer* rawBuf =
       SharedArrayRawBuffer::fromDataPtr(memBase);
-  size_t memLen = rawBuf->volatileByteLength().get();
+  size_t memLen = rawBuf->volatileByteLength();
 
   return WasmMemoryFill32(SharedMem<uint8_t*>::shared(memBase), memLen,
                           byteOffset, value, len,
@@ -591,7 +581,7 @@ inline int32_t WasmMemoryFill32(T memBase, size_t memLen, uint32_t byteOffset,
   const uint32_t segLen = seg.bytes.length();
 
   WasmMemoryObject* mem = instance->memory();
-  const size_t memLen = mem->volatileMemoryLength().get();
+  const size_t memLen = mem->volatileMemoryLength();
 
   // We are proposing to copy
   //
@@ -1002,8 +992,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
   JSContext* cx = TlsContext.get();
 
   SharedExceptionTag tag = instance->exceptionTags()[exnIndex];
-  RootedArrayBufferObject buf(
-      cx, ArrayBufferObject::createZeroed(cx, BufferSize(nbytes)));
+  RootedArrayBufferObject buf(cx, ArrayBufferObject::createZeroed(cx, nbytes));
 
   if (!buf) {
     return nullptr;
@@ -1215,10 +1204,12 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
 
   tlsData()->memoryBase =
       memory_ ? memory_->buffer().dataPointerEither().unwrap() : nullptr;
-  size_t limit = memory_ ? memory_->boundsCheckLimit().get() : 0;
-  // Assert that the cast will not fail
+  size_t limit = memory_ ? memory_->boundsCheckLimit() : 0;
+#if !defined(JS_64BIT) || defined(ENABLE_WASM_CRANELIFT)
+  // We assume that the limit is a 32-bit quantity
   MOZ_ASSERT(limit <= UINT32_MAX);
-  tlsData()->boundsCheckLimit32 = uint32_t(limit);
+#endif
+  tlsData()->boundsCheckLimit = limit;
   tlsData()->instance = this;
   tlsData()->realm = realm_;
   tlsData()->cx = cx;
@@ -1347,7 +1338,7 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
   // Allocate in the global type sets for structural type checks
   if (!metadata().types.empty()) {
     // Transfer and allocate type objects for the struct types in the module
-    if (GcTypesAvailable(cx)) {
+    if (GcAvailable(cx)) {
       uint32_t baseIndex = 0;
       if (!cx->wasm().typeContext->transferTypes(metadata().types,
                                                  &baseIndex)) {
@@ -1462,7 +1453,7 @@ bool Instance::memoryAccessInGuardRegion(const uint8_t* addr,
   }
 
   size_t lastByteOffset = addr - base + (numBytes - 1);
-  return lastByteOffset >= memory()->volatileMemoryLength().get() &&
+  return lastByteOffset >= memory()->volatileMemoryLength() &&
          lastByteOffset < memoryMappedSize();
 }
 
@@ -1479,7 +1470,7 @@ bool Instance::memoryAccessInBounds(const uint8_t* addr,
     return false;
   }
 
-  size_t length = memory()->volatileMemoryLength().get();
+  size_t length = memory()->volatileMemoryLength();
   if (addr >= base + length) {
     return false;
   }
@@ -1771,7 +1762,7 @@ static bool GetInterpEntryAndEnsureStubs(JSContext* cx, Instance& instance,
 bool wasm::ResultsToJSValue(JSContext* cx, ResultType type,
                             void* registerResultLoc,
                             Maybe<char*> stackResultsLoc,
-                            MutableHandleValue rval) {
+                            MutableHandleValue rval, CoercionLevel level) {
   if (type.empty()) {
     // No results: set to undefined, and we're done.
     rval.setUndefined();
@@ -1795,7 +1786,7 @@ bool wasm::ResultsToJSValue(JSContext* cx, ResultType type,
     if (iter.cur().inRegister()) {
       MOZ_ASSERT(!usedRegisterResult);
       if (!ToJSValue<DebugCodegenVal>(cx, registerResultLoc, iter.cur().type(),
-                                      rval)) {
+                                      rval, level)) {
         return false;
       }
       usedRegisterResult = true;
@@ -1819,7 +1810,7 @@ bool wasm::ResultsToJSValue(JSContext* cx, ResultType type,
     const ABIResult& result = iter.cur();
     if (result.onStack()) {
       char* loc = stackResultsLoc.value() + result.stackOffset();
-      if (!ToJSValue<DebugCodegenVal>(cx, loc, result.type(), &tmp)) {
+      if (!ToJSValue<DebugCodegenVal>(cx, loc, result.type(), &tmp, level)) {
         return false;
       }
       if (!NewbornArrayPush(cx, array, tmp)) {
@@ -1892,16 +1883,17 @@ class MOZ_RAII ReturnToJSResultCollector {
     return stackResultsArea_.get();
   }
 
-  bool collect(JSContext* cx, void* registerResultLoc,
-               MutableHandleValue rval) {
+  bool collect(JSContext* cx, void* registerResultLoc, MutableHandleValue rval,
+               CoercionLevel level) {
     Maybe<char*> stackResultsLoc =
         stackResultsArea_ ? Some(stackResultsArea_.get()) : Nothing();
-    return ResultsToJSValue(cx, type_, registerResultLoc, stackResultsLoc,
-                            rval);
+    return ResultsToJSValue(cx, type_, registerResultLoc, stackResultsLoc, rval,
+                            level);
   }
 };
 
-bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
+bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args,
+                          CoercionLevel level) {
   if (memory_) {
     // If there has been a moving grow, this Instance should have been notified.
     MOZ_RELEASE_ASSERT(memory_->buffer().dataPointerEither() == memoryBase());
@@ -1914,7 +1906,9 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
     return false;
   }
 
-  if (funcType->hasUnexposableArgOrRet()) {
+  // Lossless coercions can handle unexposable arguments or returns. This is
+  // only available in testing code.
+  if (level != CoercionLevel::Lossless && funcType->hasUnexposableArgOrRet()) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_VAL_TYPE);
     return false;
@@ -1956,7 +1950,8 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
     size_t naturalIdx = argTypes.naturalIndex(i);
     v = naturalIdx < args.length() ? args[naturalIdx] : UndefinedValue();
     ValType type = funcType->arg(naturalIdx);
-    if (!ToWebAssemblyValue<DebugCodegenVal>(cx, v, type, rawArgLoc, true)) {
+    if (!ToWebAssemblyValue<DebugCodegenVal>(cx, v, type, rawArgLoc, true,
+                                             level)) {
       return false;
     }
     if (type.isReference()) {
@@ -2037,7 +2032,7 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args) {
   void* registerResultLoc = &exportArgs[0];
   DebugCodegen(DebugChannel::Function, "wasm-function[%d]; results [",
                funcIndex);
-  if (!results.collect(cx, registerResultLoc, args.rval())) {
+  if (!results.collect(cx, registerResultLoc, args.rval(), level)) {
     return false;
   }
   DebugCodegen(DebugChannel::Function, "]\n");
@@ -2066,10 +2061,12 @@ void Instance::onMovingGrowMemory() {
 
   ArrayBufferObject& buffer = memory_->buffer().as<ArrayBufferObject>();
   tlsData()->memoryBase = buffer.dataPointer();
-  size_t limit = memory_->boundsCheckLimit().get();
-  // Assert that the cast will not fail
+  size_t limit = memory_->boundsCheckLimit();
+#if !defined(JS_64BIT) || defined(ENABLE_WASM_CRANELIFT)
+  // We assume that the limit is a 32-bit quantity
   MOZ_ASSERT(limit <= UINT32_MAX);
-  tlsData()->boundsCheckLimit32 = uint32_t(limit);
+#endif
+  tlsData()->boundsCheckLimit = limit;
 }
 
 void Instance::onMovingGrowTable(const Table* theTable) {

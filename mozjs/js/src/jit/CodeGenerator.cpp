@@ -6808,7 +6808,7 @@ void CodeGenerator::visitNewTypedArray(LNewTypedArray* lir) {
 
   TypedArrayObject* ttemplate = &templateObject->as<TypedArrayObject>();
 
-  size_t n = ttemplate->length().get();
+  size_t n = ttemplate->length();
   MOZ_ASSERT(n <= INT32_MAX,
              "Template objects are only created for int32 lengths");
 
@@ -12111,8 +12111,7 @@ void CodeGenerator::addGetPropertyCache(LInstruction* ins,
   CacheKind kind = CacheKind::GetElem;
   if (id.constant() && id.value().isString()) {
     JSString* idString = id.value().toString();
-    uint32_t dummy;
-    if (idString->isAtom() && !idString->asAtom().isIndex(&dummy)) {
+    if (idString->isAtom() && !idString->asAtom().isIndex()) {
       kind = CacheKind::GetProp;
     }
   }
@@ -12129,8 +12128,7 @@ void CodeGenerator::addSetPropertyCache(LInstruction* ins,
   CacheKind kind = CacheKind::SetElem;
   if (id.constant() && id.value().isString()) {
     JSString* idString = id.value().toString();
-    uint32_t dummy;
-    if (idString->isAtom() && !idString->asAtom().isIndex(&dummy)) {
+    if (idString->isAtom() && !idString->asAtom().isIndex()) {
       kind = CacheKind::SetProp;
     }
   }
@@ -12178,8 +12176,7 @@ void CodeGenerator::visitGetPropSuperCache(LGetPropSuperCache* ins) {
   CacheKind kind = CacheKind::GetElemSuper;
   if (id.constant() && id.value().isString()) {
     JSString* idString = id.value().toString();
-    uint32_t dummy;
-    if (idString->isAtom() && !idString->asAtom().isIndex(&dummy)) {
+    if (idString->isAtom() && !idString->asAtom().isIndex()) {
       kind = CacheKind::GetPropSuper;
     }
   }
@@ -14177,10 +14174,25 @@ void CodeGenerator::visitWasmTrap(LWasmTrap* lir) {
 
 void CodeGenerator::visitWasmBoundsCheck(LWasmBoundsCheck* ins) {
   const MWasmBoundsCheck* mir = ins->mir();
+  Label ok;
   Register ptr = ToRegister(ins->ptr());
   Register boundsCheckLimit = ToRegister(ins->boundsCheckLimit());
-  Label ok;
   masm.wasmBoundsCheck32(Assembler::Below, ptr, boundsCheckLimit, &ok);
+  masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
+  masm.bind(&ok);
+}
+
+void CodeGenerator::visitWasmBoundsCheck64(LWasmBoundsCheck64* ins) {
+  const MWasmBoundsCheck* mir = ins->mir();
+  Label ok;
+#ifdef JS_64BIT
+  Register64 ptr = ToRegister64(ins->ptr());
+  Register64 boundsCheckLimit = ToRegister64(ins->boundsCheckLimit());
+  masm.wasmBoundsCheck64(Assembler::Below, ptr, boundsCheckLimit, &ok);
+#else
+  // 64-bit bounds checks are used only on 64-bit systems.
+  MOZ_CRASH("Should not happen");
+#endif
   masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
   masm.bind(&ok);
 }
@@ -14204,6 +14216,12 @@ void CodeGenerator::visitWasmLoadTls(LWasmLoadTls* ins) {
       masm.load32(Address(ToRegister(ins->tlsPtr()), ins->mir()->offset()),
                   ToRegister(ins->output()));
       break;
+#ifdef JS_64BIT
+    case MIRType::Int64:
+      masm.load64(Address(ToRegister(ins->tlsPtr()), ins->mir()->offset()),
+                  ToOutRegister64(ins));
+      break;
+#endif
     default:
       MOZ_CRASH("MIRType not supported in WasmLoadTls");
   }
@@ -14873,15 +14891,19 @@ void CodeGenerator::visitGuardHasGetterSetter(LGuardHasGetterSetter* lir) {
   Register object = ToRegister(lir->object());
   Register temp1 = ToRegister(lir->temp1());
   Register temp2 = ToRegister(lir->temp2());
+  Register temp3 = ToRegister(lir->temp3());
 
-  masm.movePtr(ImmGCPtr(lir->mir()->shape()), temp2);
+  masm.movePropertyKey(lir->mir()->propId(), temp2);
+  masm.movePtr(ImmGCPtr(lir->mir()->getterSetter()), temp3);
 
-  using Fn = bool (*)(JSContext * cx, JSObject * obj, Shape * propShape);
+  using Fn = bool (*)(JSContext * cx, JSObject * obj, jsid id,
+                      GetterSetter * getterSetter);
   masm.setupUnalignedABICall(temp1);
   masm.loadJSContext(temp1);
   masm.passABIArg(temp1);
   masm.passABIArg(object);
   masm.passABIArg(temp2);
+  masm.passABIArg(temp3);
   masm.callWithABI<Fn, ObjectHasGetterSetterPure>();
 
   bailoutIfFalseBool(ReturnReg, lir->snapshot());

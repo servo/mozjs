@@ -34,7 +34,6 @@
 #include "js/UbiNode.h"
 #include "util/EnumFlags.h"
 #include "vm/JSAtom.h"
-#include "vm/ObjectGroup.h"
 #include "vm/Printer.h"
 #include "vm/StringType.h"
 #include "vm/SymbolType.h"
@@ -107,9 +106,6 @@
  * trees are more space-efficient than alternatives.  This was removed in bug
  * 631138; see that bug for the full details.
  *
- * For getters/setters, an AccessorShape is allocated. This is a slightly fatter
- * type with extra fields for the getter/setter data.
- *
  * Because many Shapes have similar data, there is actually a secondary type
  * called a BaseShape that holds some of a Shape's data.  Many shapes can share
  * a single BaseShape.
@@ -124,8 +120,84 @@ MOZ_ALWAYS_INLINE size_t JSSLOT_FREE(const JSClass* clasp) {
 
 namespace js {
 
+/* Limit on the number of slotful properties in an object. */
+static const uint32_t SHAPE_INVALID_SLOT = Bit(24) - 1;
+static const uint32_t SHAPE_MAXIMUM_SLOT = Bit(24) - 2;
+
 class Shape;
 struct StackShape;
+
+// ShapeProperty contains information (attributes, slot number) for a property
+// stored in the Shape tree. Property lookups on NativeObjects return a
+// ShapeProperty.
+class ShapeProperty {
+  uint32_t slot_;
+  uint8_t attrs_;
+
+ public:
+  inline explicit ShapeProperty(Shape* shape);
+
+  bool isDataProperty() const {
+    return !(attrs_ &
+             (JSPROP_GETTER | JSPROP_SETTER | JSPROP_CUSTOM_DATA_PROP));
+  }
+  bool isCustomDataProperty() const { return attrs_ & JSPROP_CUSTOM_DATA_PROP; }
+  bool isAccessorProperty() const {
+    return attrs_ & (JSPROP_GETTER | JSPROP_SETTER);
+  }
+
+  // Note: unlike isDataProperty, this returns true also for custom data
+  // properties. See JSPROP_CUSTOM_DATA_PROP.
+  bool isDataDescriptor() const {
+    return isDataProperty() || isCustomDataProperty();
+  }
+
+  bool hasSlot() const { return !isCustomDataProperty(); }
+
+  uint32_t slot() const {
+    MOZ_ASSERT(hasSlot());
+    MOZ_ASSERT(slot_ < SHAPE_INVALID_SLOT);
+    return slot_;
+  }
+
+  uint8_t attributes() const { return attrs_; }
+  bool writable() const { return !(attrs_ & JSPROP_READONLY); }
+  bool configurable() const { return !(attrs_ & JSPROP_PERMANENT); }
+  bool enumerable() const { return attrs_ & JSPROP_ENUMERATE; }
+
+  bool operator==(const ShapeProperty& other) const {
+    return slot_ == other.slot_ && attrs_ == other.attrs_;
+  }
+  bool operator!=(const ShapeProperty& other) const {
+    return !operator==(other);
+  }
+};
+
+class ShapePropertyWithKey : public ShapeProperty {
+  JS::PropertyKey key_;
+
+ public:
+  explicit ShapePropertyWithKey(Shape* shape);
+
+  JS::PropertyKey key() const { return key_; }
+
+  void trace(JSTracer* trc) {
+    TraceRoot(trc, &key_, "ShapePropertyWithKey-key");
+  }
+};
+
+template <class Wrapper>
+class WrappedPtrOperations<ShapePropertyWithKey, Wrapper> {
+  const ShapePropertyWithKey& value() const {
+    return static_cast<const Wrapper*>(this)->get();
+  }
+
+ public:
+  bool isDataProperty() const { return value().isDataProperty(); }
+  uint32_t slot() const { return value().slot(); }
+  JS::PropertyKey key() const { return value().key(); }
+  uint8_t attributes() const { return value().attributes(); }
+};
 
 struct ShapeHasher : public DefaultHasher<Shape*> {
   using Key = Shape*;
@@ -260,13 +332,6 @@ class PropertyTree {
 };
 
 class TenuringTracer;
-
-using GetterOp = JSGetterOp;
-using SetterOp = JSSetterOp;
-
-/* Limit on the number of slotful properties in an object. */
-static const uint32_t SHAPE_INVALID_SLOT = Bit(24) - 1;
-static const uint32_t SHAPE_MAXIMUM_SLOT = Bit(24) - 2;
 
 enum class MaybeAdding { Adding = true, NotAdding = false };
 
@@ -635,7 +700,6 @@ class MOZ_RAII AutoKeepShapeCaches {
  * earlier property, however.
  */
 
-class AccessorShape;
 class Shape;
 struct StackBaseShape;
 
@@ -657,6 +721,24 @@ enum class ObjectFlag : uint16_t {
 
   // See JSObject::isQualifiedVarObj().
   QualifiedVarObj = 1 << 8,
+
+  // If set, the object may have a non-writable property or an accessor
+  // property.
+  //
+  // * This is only set for PlainObjects because we only need it for these
+  //   objects and setting it for other objects confuses insertInitialShape.
+  //
+  // * This flag does not account for properties named "__proto__". This is
+  //   because |Object.prototype| has a "__proto__" accessor property and we
+  //   don't want to include it because it would result in the flag being set on
+  //   most proto chains. Code using this flag must check for "__proto__"
+  //   property names separately.
+  HasNonWritableOrAccessorPropExclProto = 1 << 9,
+
+  // If set, the object either mutated or deleted an accessor property. This is
+  // used to invalidate IC/Warp code specializing on specific getter/setter
+  // objects. See also the SMDOC comment in vm/GetterSetter.h.
+  HadGetterSetterChange = 1 << 10,
 };
 
 using ObjectFlags = EnumFlags<ObjectFlag>;
@@ -825,7 +907,8 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
   // compilation can access the immutableFlags word, so we don't want any
   // mutable state here to avoid (TSan) races.
   enum ImmutableFlags : uint32_t {
-    // Mask to get the index in object slots for isDataProperty() shapes.
+    // Mask to get the index in object slots for hasSlot() shapes (all property
+    // shapes except custom data properties).
     // For other shapes in the property tree with a parent, stores the
     // parent's slot index (which may be invalid), and invalid for all
     // other shapes.
@@ -839,10 +922,6 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
 
     // Property stored in per-object dictionary, not shared property tree.
     IN_DICTIONARY = 1 << 29,
-
-    // This shape is an AccessorShape, a fat Shape that can store
-    // getter/setter information.
-    ACCESSOR_SHAPE = 1 << 30,
   };
 
   // Flags stored in mutableFlags.
@@ -918,10 +997,17 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
   void handoffTableTo(Shape* newShape);
 
   void setParent(Shape* p) {
+    // For non-dictionary shapes: if the parent has a slot number, it must be
+    // less than or equal to the child's slot number. (Parent and child can have
+    // the same slot number if the child is a custom data property, these don't
+    // have a slot.)
     MOZ_ASSERT_IF(p && !p->hasMissingSlot() && !inDictionary(),
                   p->maybeSlot() <= maybeSlot());
+    // For non-dictionary shapes: if the child has a slot, its slot number
+    // must not be the same as the parent's slot number. If the child does not
+    // have a slot, its slot number must match the parent's slot number.
     MOZ_ASSERT_IF(p && !inDictionary(),
-                  isDataProperty() == (p->maybeSlot() != maybeSlot()));
+                  hasSlot() == (p->maybeSlot() != maybeSlot()));
     parent = p;
   }
 
@@ -1006,16 +1092,6 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
     }
   }
 
-  bool isAccessorShape() const {
-    MOZ_ASSERT_IF(immutableFlags & ACCESSOR_SHAPE,
-                  getAllocKind() == gc::AllocKind::ACCESSOR_SHAPE);
-    return immutableFlags & ACCESSOR_SHAPE;
-  }
-  AccessorShape& asAccessorShape() const {
-    MOZ_ASSERT(isAccessorShape());
-    return *(AccessorShape*)this;
-  }
-
   const GCPtrShape& previous() const { return parent; }
 
   template <AllowGC allowGC>
@@ -1030,7 +1106,7 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
       static_assert(allowGC == CanGC);
     }
 
-    explicit Range(Shape* shape) : cursor((JSContext*)nullptr, shape) {
+    explicit Range(Shape* shape) : cursor(nullptr, shape) {
       static_assert(allowGC == NoGC);
     }
 
@@ -1079,110 +1155,70 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
   static inline Shape* new_(JSContext* cx, Handle<StackShape> other,
                             uint32_t nfixed);
 
-  /*
-   * Whether this shape has a valid slot value. This may be true even if
-   * !isDataProperty() (see SlotInfo comment above), and may be false even if
-   * isDataProperty() if the shape is being constructed and has not had a slot
-   * assigned yet. After construction, isDataProperty() implies
-   * !hasMissingSlot().
-   */
+  // Whether this shape has a valid slot value. This may be true even if
+  // !hasSlot() (see SlotInfo comment above), and may be false even if
+  // hasSlot() if the shape is being constructed and has not had a slot
+  // assigned yet. After construction, hasSlot() implies !hasMissingSlot().
   bool hasMissingSlot() const { return maybeSlot() == SHAPE_INVALID_SLOT; }
 
  public:
   bool inDictionary() const { return immutableFlags & IN_DICTIONARY; }
 
-  inline GetterOp getter() const;
-  bool hasDefaultGetter() const { return !getter(); }
-  GetterOp getterOp() const {
-    MOZ_ASSERT(!hasGetterValue());
-    return getter();
-  }
-  inline JSObject* getterObject() const;
-  bool hasGetterObject() const { return hasGetterValue() && getterObject(); }
-
-  // Per ES5, decode null getterObj as the undefined value, which encodes as
-  // null.
-  Value getterValue() const {
-    MOZ_ASSERT(hasGetterValue());
-    if (JSObject* getterObj = getterObject()) {
-      return ObjectValue(*getterObj);
-    }
-    return UndefinedValue();
-  }
-
-  Value getterOrUndefined() const {
-    return hasGetterValue() ? getterValue() : UndefinedValue();
-  }
-
-  inline SetterOp setter() const;
-  bool hasDefaultSetter() const { return !setter(); }
-  SetterOp setterOp() const {
-    MOZ_ASSERT(!hasSetterValue());
-    return setter();
-  }
-  inline JSObject* setterObject() const;
-  bool hasSetterObject() const { return hasSetterValue() && setterObject(); }
-
-  // Per ES5, decode null setterObj as the undefined value, which encodes as
-  // null.
-  Value setterValue() const {
-    MOZ_ASSERT(hasSetterValue());
-    if (JSObject* setterObj = setterObject()) {
-      return ObjectValue(*setterObj);
-    }
-    return UndefinedValue();
-  }
-
-  Value setterOrUndefined() const {
-    return hasSetterValue() ? setterValue() : UndefinedValue();
-  }
-
   bool matches(const Shape* other) const {
     return propid_.get() == other->propid_.get() &&
            matchesParamsAfterId(other->base(), other->objectFlags(),
-                                other->maybeSlot(), other->attrs,
-                                other->getter(), other->setter());
+                                other->maybeSlot(), other->attrs);
   }
 
   inline bool matches(const StackShape& other) const;
 
   bool matchesParamsAfterId(BaseShape* base, ObjectFlags aobjectFlags,
-                            uint32_t aslot, unsigned aattrs, GetterOp rawGetter,
-                            SetterOp rawSetter) const {
+                            uint32_t aslot, unsigned aattrs) const {
     return base == this->base() && objectFlags() == aobjectFlags &&
-           maybeSlot() == aslot && attrs == aattrs && getter() == rawGetter &&
-           setter() == rawSetter;
+           matchesPropertyParamsAfterId(aslot, aattrs);
+  }
+  bool matchesPropertyParamsAfterId(uint32_t aslot, unsigned aattrs) const {
+    return maybeSlot() == aslot && attrs == aattrs;
   }
 
-  static bool isDataProperty(unsigned attrs, GetterOp getter, SetterOp setter) {
-    return !(attrs & (JSPROP_GETTER | JSPROP_SETTER)) && !getter && !setter;
+  // Note: this returns true only for plain data properties with a slot. Returns
+  // false for custom data properties. See JSPROP_CUSTOM_DATA_PROP.
+  static bool isDataProperty(unsigned attrs) {
+    return !(attrs & (JSPROP_GETTER | JSPROP_SETTER | JSPROP_CUSTOM_DATA_PROP));
   }
 
   bool isDataProperty() const {
     MOZ_ASSERT(!isEmptyShape());
-    return isDataProperty(attrs, getter(), setter());
+    return isDataProperty(attrs);
   }
   uint32_t slot() const {
-    MOZ_ASSERT(isDataProperty() && !hasMissingSlot());
+    MOZ_ASSERT(hasSlot());
     return maybeSlot();
   }
   uint32_t maybeSlot() const { return immutableFlags & SLOT_MASK; }
+
+  bool hasSlot() const {
+    MOZ_ASSERT(!isEmptyShape());
+    MOZ_ASSERT_IF(!isCustomDataProperty(), !hasMissingSlot());
+    return !isCustomDataProperty();
+  }
+
+  bool isCustomDataProperty() const { return attrs & JSPROP_CUSTOM_DATA_PROP; }
 
   bool isEmptyShape() const {
     MOZ_ASSERT_IF(JSID_IS_EMPTY(propid_), hasMissingSlot());
     return JSID_IS_EMPTY(propid_);
   }
 
-  uint32_t slotSpan(const JSClass* clasp) const {
+  uint32_t slotSpan() const {
     MOZ_ASSERT(!inDictionary());
-    // Proxy classes have reserved slots, but proxies manage their own slot
-    // layout. This means all non-native object shapes have nfixed == 0 and
-    // slotSpan == 0.
-    uint32_t free = clasp->isProxyObject() ? 0 : JSSLOT_FREE(clasp);
+    // slotSpan is only defined for native objects. Proxy classes have reserved
+    // slots, but proxies manage their own slot layout.
+    const JSClass* clasp = getObjectClass();
+    MOZ_ASSERT(clasp->isNativeObject());
+    uint32_t free = JSSLOT_FREE(clasp);
     return hasMissingSlot() ? free : std::max(free, maybeSlot() + 1);
   }
-
-  uint32_t slotSpan() const { return slotSpan(getObjectClass()); }
 
   void setSlot(uint32_t slot) {
     MOZ_ASSERT(slot <= SHAPE_INVALID_SLOT);
@@ -1230,12 +1266,16 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
   bool hasGetterValue() const { return attrs & JSPROP_GETTER; }
   bool hasSetterValue() const { return attrs & JSPROP_SETTER; }
 
+  // Note: unlike isDataProperty, this returns true also for custom data
+  // properties. See JSPROP_CUSTOM_DATA_PROP.
   bool isDataDescriptor() const {
     return (attrs & (JSPROP_SETTER | JSPROP_GETTER)) == 0;
   }
   bool isAccessorDescriptor() const {
     return (attrs & (JSPROP_SETTER | JSPROP_GETTER)) != 0;
   }
+
+  bool isAccessorProperty() const { return isAccessorDescriptor(); }
 
   uint32_t entryCount() {
     JS::AutoCheckCannotGC nogc;
@@ -1316,7 +1356,6 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
   MOZ_ALWAYS_INLINE Shape* searchLinear(jsid id);
 
   void fixupAfterMovingGC();
-  void fixupGetterSetterForBarrier(JSTracer* trc);
   void updateBaseShapeAfterMovingGC();
 
   // For JIT usage.
@@ -1350,51 +1389,6 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
     static_assert(sizeof(Shape) == 8 * sizeof(void*));
 #endif
   }
-};
-
-/* Fat Shape used for accessor properties. */
-class AccessorShape : public Shape {
-  friend class Shape;
-  friend class NativeObject;
-
-  union {
-    GetterOp rawGetter;  /* getter hook for shape */
-    JSObject* getterObj; /* user-defined callable "get" object or
-                            null if shape->hasGetterValue() */
-  };
-  union {
-    SetterOp rawSetter;  /* setter hook for shape */
-    JSObject* setterObj; /* user-defined callable "set" object or
-                            null if shape->hasSetterValue() */
-  };
-
- public:
-  /* Get a shape identical to this one, without parent/children information. */
-  inline AccessorShape(const StackShape& other, uint32_t nfixed);
-
-  inline AccessorShape(BaseShape* base, ObjectFlags objectFlags,
-                       uint32_t nfixed);
-};
-
-class MOZ_RAII AutoRooterGetterSetter {
-  class Inner {
-   public:
-    inline Inner(uint8_t attrs, GetterOp* pgetter_, SetterOp* psetter_);
-
-    void trace(JSTracer* trc);
-
-   private:
-    uint8_t attrs;
-    GetterOp* pgetter;
-    SetterOp* psetter;
-  };
-
- public:
-  inline AutoRooterGetterSetter(JSContext* cx, uint8_t attrs, GetterOp* pgetter,
-                                SetterOp* psetter);
-
- private:
-  mozilla::Maybe<Rooted<Inner>> inner;
 };
 
 struct EmptyShape : public js::Shape {
@@ -1504,8 +1498,6 @@ struct StackShape {
   /* For performance, StackShape only roots when absolutely necessary. */
   BaseShape* base;
   jsid propid;
-  GetterOp rawGetter;
-  SetterOp rawSetter;
   uint32_t immutableFlags;
   ObjectFlags objectFlags;
   uint8_t attrs;
@@ -1515,8 +1507,6 @@ struct StackShape {
                       uint32_t slot, unsigned attrs)
       : base(base),
         propid(propid),
-        rawGetter(nullptr),
-        rawSetter(nullptr),
         immutableFlags(slot),
         objectFlags(objectFlags),
         attrs(uint8_t(attrs)),
@@ -1529,32 +1519,21 @@ struct StackShape {
   explicit StackShape(Shape* shape)
       : base(shape->base()),
         propid(shape->propidRef()),
-        rawGetter(shape->getter()),
-        rawSetter(shape->setter()),
         immutableFlags(shape->immutableFlags),
         objectFlags(shape->objectFlags()),
         attrs(shape->attrs),
         mutableFlags(shape->mutableFlags) {}
 
-  void updateGetterSetter(GetterOp rawGetter, SetterOp rawSetter) {
-    if (rawGetter || rawSetter || (attrs & (JSPROP_GETTER | JSPROP_SETTER))) {
-      immutableFlags |= Shape::ACCESSOR_SHAPE;
-    } else {
-      immutableFlags &= ~Shape::ACCESSOR_SHAPE;
-    }
-
-    this->rawGetter = rawGetter;
-    this->rawSetter = rawSetter;
-  }
-
   bool isDataProperty() const {
     MOZ_ASSERT(!JSID_IS_EMPTY(propid));
-    return Shape::isDataProperty(attrs, rawGetter, rawSetter);
+    return Shape::isDataProperty(attrs);
   }
   bool hasMissingSlot() const { return maybeSlot() == SHAPE_INVALID_SLOT; }
 
+  bool isCustomDataProperty() const { return attrs & JSPROP_CUSTOM_DATA_PROP; }
+
   uint32_t slot() const {
-    MOZ_ASSERT(isDataProperty() && !hasMissingSlot());
+    MOZ_ASSERT(!hasMissingSlot());
     return maybeSlot();
   }
   uint32_t maybeSlot() const { return immutableFlags & Shape::SLOT_MASK; }
@@ -1564,15 +1543,11 @@ struct StackShape {
     immutableFlags = (immutableFlags & ~Shape::SLOT_MASK) | slot;
   }
 
-  bool isAccessorShape() const {
-    return immutableFlags & Shape::ACCESSOR_SHAPE;
-  }
-
   HashNumber hash() const {
     HashNumber hash = HashId(propid);
     return mozilla::AddToHash(
-        hash, mozilla::HashGeneric(base, objectFlags.toRaw(), attrs,
-                                   maybeSlot(), rawGetter, rawSetter));
+        hash,
+        mozilla::HashGeneric(base, objectFlags.toRaw(), attrs, maybeSlot()));
   }
 
   // StructGCPolicy implementation.
@@ -1587,13 +1562,14 @@ class WrappedPtrOperations<StackShape, Wrapper> {
 
  public:
   bool isDataProperty() const { return ss().isDataProperty(); }
+  bool isCustomDataProperty() const { return ss().isCustomDataProperty(); }
   bool hasMissingSlot() const { return ss().hasMissingSlot(); }
   uint32_t slot() const { return ss().slot(); }
   uint32_t maybeSlot() const { return ss().maybeSlot(); }
   uint32_t slotSpan() const { return ss().slotSpan(); }
-  bool isAccessorShape() const { return ss().isAccessorShape(); }
   uint8_t attrs() const { return ss().attrs; }
   ObjectFlags objectFlags() const { return ss().objectFlags; }
+  jsid propid() const { return ss().propid; }
 };
 
 template <typename Wrapper>
@@ -1602,9 +1578,6 @@ class MutableWrappedPtrOperations<StackShape, Wrapper>
   StackShape& ss() { return static_cast<Wrapper*>(this)->get(); }
 
  public:
-  void updateGetterSetter(GetterOp rawGetter, SetterOp rawSetter) {
-    ss().updateGetterSetter(rawGetter, rawSetter);
-  }
   void setSlot(uint32_t slot) { ss().setSlot(slot); }
   void setBase(BaseShape* base) { ss().base = base; }
   void setAttrs(uint8_t attrs) { ss().attrs = attrs; }
@@ -1623,28 +1596,10 @@ inline Shape::Shape(const StackShape& other, uint32_t nfixed)
       parent(nullptr) {
   setNumFixedSlots(nfixed);
 
-#ifdef DEBUG
-  gc::AllocKind allocKind = getAllocKind();
-  MOZ_ASSERT_IF(other.isAccessorShape(),
-                allocKind == gc::AllocKind::ACCESSOR_SHAPE);
-  MOZ_ASSERT_IF(allocKind == gc::AllocKind::SHAPE, !other.isAccessorShape());
-#endif
-
   MOZ_ASSERT_IF(!isEmptyShape(), AtomIsMarked(zone(), propid()));
 
   children.setNone();
 }
-
-// This class is used to update any shapes in a zone that have nursery objects
-// as getters/setters.  It updates the pointers and the shapes' entries in the
-// parents' ShapeSet tables.
-class NurseryShapesRef : public gc::BufferableRef {
-  Zone* zone_;
-
- public:
-  explicit NurseryShapesRef(Zone* zone) : zone_(zone) {}
-  void trace(JSTracer* trc) override;
-};
 
 inline Shape::Shape(BaseShape* base, ObjectFlags objectFlags, uint32_t nfixed)
     : CellWithTenuredGCPointer(base),
@@ -1656,24 +1611,6 @@ inline Shape::Shape(BaseShape* base, ObjectFlags objectFlags, uint32_t nfixed)
       parent(nullptr) {
   MOZ_ASSERT(base);
   children.setNone();
-}
-
-inline GetterOp Shape::getter() const {
-  return isAccessorShape() ? asAccessorShape().rawGetter : nullptr;
-}
-
-inline SetterOp Shape::setter() const {
-  return isAccessorShape() ? asAccessorShape().rawSetter : nullptr;
-}
-
-inline JSObject* Shape::getterObject() const {
-  MOZ_ASSERT(hasGetterValue());
-  return asAccessorShape().getterObj;
-}
-
-inline JSObject* Shape::setterObject() const {
-  MOZ_ASSERT(hasSetterValue());
-  return asAccessorShape().setterObj;
 }
 
 inline Shape* Shape::searchLinear(jsid id) {
@@ -1690,7 +1627,7 @@ inline Shape* Shape::searchLinear(jsid id) {
 inline bool Shape::matches(const StackShape& other) const {
   return propid_.get() == other.propid &&
          matchesParamsAfterId(other.base, other.objectFlags, other.maybeSlot(),
-                              other.attrs, other.rawGetter, other.rawSetter);
+                              other.attrs);
 }
 
 template <MaybeAdding Adding>
@@ -1723,6 +1660,59 @@ MOZ_ALWAYS_INLINE bool ShapeIC::search(jsid id, Shape** foundShape) {
 
   return false;
 }
+
+inline ShapeProperty::ShapeProperty(Shape* shape)
+    : slot_(shape->maybeSlot()), attrs_(shape->attributes()) {}
+
+inline ShapePropertyWithKey::ShapePropertyWithKey(Shape* shape)
+    : ShapeProperty(shape), key_(shape->propid()) {}
+
+using ShapePropertyVector = GCVector<ShapePropertyWithKey, 8>;
+
+// Iterator for iterating over a shape's properties. It can be used like this:
+//
+//   for (ShapePropertyIter<NoGC> iter(nobj->shape()); !iter.done(); iter++) {
+//     PropertyKey key = iter->key();
+//     if (iter->isDataProperty() && iter->enumerable()) { .. }
+//   }
+template <AllowGC allowGC>
+class MOZ_RAII ShapePropertyIter {
+ protected:
+  friend class Shape;
+
+  typename MaybeRooted<Shape*, allowGC>::RootType cursor_;
+
+ public:
+  ShapePropertyIter(JSContext* cx, Shape* shape) : cursor_(cx, shape) {
+    static_assert(allowGC == CanGC);
+  }
+
+  explicit ShapePropertyIter(Shape* shape) : cursor_(nullptr, shape) {
+    static_assert(allowGC == NoGC);
+  }
+
+  bool done() const { return cursor_->isEmptyShape(); }
+
+  void operator++(int) {
+    MOZ_ASSERT(!done());
+    cursor_ = cursor_->previous();
+  }
+
+  ShapePropertyWithKey get() const {
+    MOZ_ASSERT(!done());
+    return ShapePropertyWithKey(cursor_);
+  }
+
+  ShapePropertyWithKey operator*() const { return get(); }
+
+  // Fake pointer struct to make operator-> work.
+  // See https://stackoverflow.com/a/52856349.
+  struct FakePtr {
+    ShapePropertyWithKey val_;
+    const ShapePropertyWithKey* operator->() const { return &val_; }
+  };
+  FakePtr operator->() const { return {get()}; }
+};
 
 }  // namespace js
 

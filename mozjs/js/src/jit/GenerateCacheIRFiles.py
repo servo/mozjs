@@ -76,6 +76,7 @@ arg_writer_info = {
     "IntPtrId": ("IntPtrOperandId", "writeOperandId"),
     "RawId": ("OperandId", "writeOperandId"),
     "ShapeField": ("Shape*", "writeShapeField"),
+    "GetterSetterField": ("GetterSetter*", "writeGetterSetterField"),
     "ObjectField": ("JSObject*", "writeObjectField"),
     "StringField": ("JSString*", "writeStringField"),
     "AtomField": ("JSAtom*", "writeStringField"),
@@ -101,6 +102,7 @@ arg_writer_info = {
     "UInt32Imm": ("uint32_t", "writeUInt32Imm"),
     "JSNativeImm": ("JSNative", "writeJSNativeImm"),
     "StaticStringImm": ("const char*", "writeStaticStringImm"),
+    "AllocKindImm": ("gc::AllocKind", "writeAllocKindImm"),
 }
 
 
@@ -170,6 +172,7 @@ arg_reader_info = {
     "IntPtrId": ("IntPtrOperandId", "Id", "reader.intPtrOperandId()"),
     "RawId": ("uint32_t", "Id", "reader.rawOperandId()"),
     "ShapeField": ("uint32_t", "Offset", "reader.stubOffset()"),
+    "GetterSetterField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "ObjectField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "StringField": ("uint32_t", "Offset", "reader.stubOffset()"),
     "AtomField": ("uint32_t", "Offset", "reader.stubOffset()"),
@@ -195,6 +198,7 @@ arg_reader_info = {
     "UInt32Imm": ("uint32_t", "", "reader.uint32Immediate()"),
     "JSNativeImm": ("JSNative", "", "reinterpret_cast<JSNative>(reader.pointer())"),
     "StaticStringImm": ("const char*", "", "reinterpret_cast<char*>(reader.pointer())"),
+    "AllocKindImm": ("gc::AllocKind", "", "reader.allocKind()"),
 }
 
 
@@ -250,6 +254,7 @@ arg_spewer_method = {
     "IntPtrId": "spewOperandId",
     "RawId": "spewRawOperandId",
     "ShapeField": "spewField",
+    "GetterSetterField": "spewField",
     "ObjectField": "spewField",
     "StringField": "spewField",
     "AtomField": "spewField",
@@ -275,6 +280,7 @@ arg_spewer_method = {
     "UInt32Imm": "spewUInt32Imm",
     "JSNativeImm": "spewJSNativeImm",
     "StaticStringImm": "spewStaticStringImm",
+    "AllocKindImm": "spewAllocKindImm",
 }
 
 
@@ -381,6 +387,7 @@ arg_length = {
     "IntPtrId": 1,
     "RawId": 1,
     "ShapeField": 1,
+    "GetterSetterField": 1,
     "ObjectField": 1,
     "StringField": 1,
     "AtomField": 1,
@@ -406,6 +413,7 @@ arg_length = {
     "UInt32Imm": 4,
     "JSNativeImm": "sizeof(uintptr_t)",
     "StaticStringImm": "sizeof(uintptr_t)",
+    "AllocKindImm": 1,
 }
 
 

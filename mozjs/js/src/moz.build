@@ -213,6 +213,7 @@ EXPORTS.js += [
     "../public/ValueArray.h",
     "../public/Vector.h",
     "../public/Warnings.h",
+    "../public/WasmFeatures.h",
     "../public/WasmModule.h",
     "../public/WeakMapPtr.h",
     "../public/Wrapper.h",
@@ -383,6 +384,7 @@ UNIFIED_SOURCES += [
     "vm/FunctionFlags.cpp",
     "vm/GeckoProfiler.cpp",
     "vm/GeneratorObject.cpp",
+    "vm/GetterSetter.cpp",
     "vm/GlobalObject.cpp",
     "vm/HelperThreads.cpp",
     "vm/Id.cpp",
@@ -401,7 +403,6 @@ UNIFIED_SOURCES += [
     "vm/MemoryMetrics.cpp",
     "vm/Modules.cpp",
     "vm/NativeObject.cpp",
-    "vm/ObjectGroup.cpp",
     "vm/OffThreadPromiseRuntimeState.cpp",
     "vm/OffThreadScriptCompilation.cpp",
     "vm/PIC.cpp",
@@ -492,6 +493,12 @@ if CONFIG["OS_ARCH"] == "WINNT":
     UNIFIED_SOURCES += [
         "threading/windows/CpuCount.cpp",
         "threading/windows/WindowsThread.cpp",
+    ]
+# WASI hasn't supported thread yet so noop implementation is used.
+elif CONFIG["OS_ARCH"] == "WASI":
+    UNIFIED_SOURCES += [
+        "threading/noop/CpuCount.cpp",
+        "threading/noop/NoopThread.cpp",
     ]
 else:
     UNIFIED_SOURCES += [

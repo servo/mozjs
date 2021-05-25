@@ -37,7 +37,7 @@ using namespace js::jit;
 
 using mozilla::DebugOnly;
 
-// Stack used by FlagPhiInputsAsHavingRemovedUses. It stores the Phi instruction
+// Stack used by FlagPhiInputsAsImplicitlyUsed. It stores the Phi instruction
 // pointer and the MUseIterator which should be visited next.
 using MPhiUseIteratorStack =
     Vector<std::pair<MPhi*, MUseIterator>, 16, SystemAllocPolicy>;
@@ -81,7 +81,7 @@ static bool DepthFirstSearchUse(MIRGenerator* mir,
 #ifdef DEBUG
       useCount++;
 #endif
-      if (mir->shouldCancel("FlagPhiInputsAsHavingRemovedUses inner loop")) {
+      if (mir->shouldCancel("FlagPhiInputsAsImplicitlyUsed inner loop")) {
         return false;
       }
 
@@ -101,10 +101,10 @@ static bool DepthFirstSearchUse(MIRGenerator* mir,
       }
 
       MPhi* cphi = cdef->toPhi();
-      if (cphi->getUsageAnalysis() == PhiUsage::Used || cphi->isUseRemoved() ||
+      if (cphi->getUsageAnalysis() == PhiUsage::Used ||
           cphi->isImplicitlyUsed()) {
         // The information got cached on the Phi the last time it
-        // got visited, or when flagging operands of removed
+        // got visited, or when flagging operands of implicitly used
         // instructions.
         return push(producer, use);
       }
@@ -146,14 +146,13 @@ static bool DepthFirstSearchUse(MIRGenerator* mir,
   return true;
 }
 
-static bool FlagPhiInputsAsHavingRemovedUses(MIRGenerator* mir,
-                                             MBasicBlock* block,
-                                             MBasicBlock* succ,
-                                             MPhiUseIteratorStack& worklist) {
+static bool FlagPhiInputsAsImplicitlyUsed(MIRGenerator* mir, MBasicBlock* block,
+                                          MBasicBlock* succ,
+                                          MPhiUseIteratorStack& worklist) {
   // When removing an edge between 2 blocks, we might remove the ability of
   // later phases to figure out that the uses of a Phi should be considered as
-  // a use of all its inputs. Thus we need to mark the Phi inputs as having
-  // removed uses iff the phi has any uses.
+  // a use of all its inputs. Thus we need to mark the Phi inputs as being
+  // implicitly used iff the phi has any uses.
   //
   //
   //        +--------------------+         +---------------------+
@@ -205,37 +204,36 @@ static bool FlagPhiInputsAsHavingRemovedUses(MIRGenerator* mir,
   //                     +------------------------+
   //
   //
-  // If the inputs of the Phi are not flagged as having removed uses, then
+  // If the inputs of the Phi are not flagged as implicitly used, then
   // later compilation phase might optimize them out. The problem is that a
   // bailout will use this value and give it back to baseline, which will then
   // use the OptimizedOut magic value in a computation.
   //
   // Unfortunately, we cannot be too conservative about flagging Phi inputs as
-  // having removed uses, as this would prevent many optimizations from being
+  // having implicit uses, as this would prevent many optimizations from being
   // used. Thus, the following code is in charge of flagging Phi instructions
-  // as Unused or Used, and setting UseRemoved accordingly.
+  // as Unused or Used, and setting ImplicitlyUsed accordingly.
   size_t predIndex = succ->getPredecessorIndex(block);
   MPhiIterator end = succ->phisEnd();
   MPhiIterator it = succ->phisBegin();
   for (; it != end; it++) {
     MPhi* phi = *it;
 
-    if (mir->shouldCancel("FlagPhiInputsAsHavingRemovedUses outer loop")) {
+    if (mir->shouldCancel("FlagPhiInputsAsImplicitlyUsed outer loop")) {
       return false;
     }
 
     // We are looking to mark the Phi inputs which are used across the edge
     // between the |block| and its successor |succ|.
     MDefinition* def = phi->getOperand(predIndex);
-    if (def->isUseRemoved()) {
+    if (def->isImplicitlyUsed()) {
       continue;
     }
 
-    // If the Phi is either Used or Unused, set the UseRemoved flag
+    // If the Phi is either Used or Unused, set the ImplicitlyUsed flag
     // accordingly.
-    if (phi->getUsageAnalysis() == PhiUsage::Used || phi->isUseRemoved() ||
-        phi->isImplicitlyUsed()) {
-      def->setUseRemoved();
+    if (phi->getUsageAnalysis() == PhiUsage::Used || phi->isImplicitlyUsed()) {
+      def->setImplicitlyUsedUnchecked();
       continue;
     } else if (phi->getUsageAnalysis() == PhiUsage::Unused) {
       continue;
@@ -254,7 +252,7 @@ static bool FlagPhiInputsAsHavingRemovedUses(MIRGenerator* mir,
     if (!worklist.empty()) {
       // One of the Phis is used, set Used flags on all the Phis which are
       // in the use chain.
-      def->setUseRemoved();
+      def->setImplicitlyUsedUnchecked();
       do {
         auto pair = worklist.popCopy();
         MPhi* producer = pair.first;
@@ -268,61 +266,60 @@ static bool FlagPhiInputsAsHavingRemovedUses(MIRGenerator* mir,
   return true;
 }
 
-static bool FlagAllOperandsAsHavingRemovedUses(MIRGenerator* mir,
-                                               MBasicBlock* block) {
+static MInstructionIterator FindFirstInstructionAfterBail(MBasicBlock* block) {
+  MOZ_ASSERT(block->alwaysBails());
+  for (MInstructionIterator it = block->begin(); it != block->end(); it++) {
+    MInstruction* ins = *it;
+    if (ins->isBail()) {
+      it++;
+      return it;
+    }
+  }
+  MOZ_CRASH("Expected MBail in alwaysBails block");
+}
+
+// Given an iterator pointing to the first removed instruction, mark
+// the operands of each removed instruction as having implicit uses.
+static bool FlagOperandsAsImplicitlyUsedAfter(
+    MIRGenerator* mir, MBasicBlock* block, MInstructionIterator firstRemoved) {
+  MOZ_ASSERT(firstRemoved->block() == block);
+
   const CompileInfo& info = block->info();
 
-  // Flag all instructions operands as having removed uses.
+  // Flag operands of removed instructions as having implicit uses.
   MInstructionIterator end = block->end();
-  for (MInstructionIterator it = block->begin(); it != end; it++) {
-    if (mir->shouldCancel("FlagAllOperandsAsHavingRemovedUses loop 1")) {
+  for (MInstructionIterator it = firstRemoved; it != end; it++) {
+    if (mir->shouldCancel("FlagOperandsAsImplicitlyUsedAfter (loop 1)")) {
       return false;
     }
 
     MInstruction* ins = *it;
     for (size_t i = 0, e = ins->numOperands(); i < e; i++) {
-      ins->getOperand(i)->setUseRemovedUnchecked();
+      ins->getOperand(i)->setImplicitlyUsedUnchecked();
     }
 
-    // Flag observable resume point operands as having removed uses.
+    // Flag observable resume point operands as having implicit uses.
     if (MResumePoint* rp = ins->resumePoint()) {
       // Note: no need to iterate over the caller's of the resume point as
       // this is the same as the entry resume point.
       MOZ_ASSERT(&rp->block()->info() == &info);
       for (size_t i = 0, e = rp->numOperands(); i < e; i++) {
         if (info.isObservableSlot(i)) {
-          rp->getOperand(i)->setUseRemovedUnchecked();
+          rp->getOperand(i)->setImplicitlyUsedUnchecked();
         }
       }
     }
   }
 
-  // Flag observable operands of the entry resume point as having removed uses.
-  MResumePoint* rp = block->entryResumePoint();
-  while (rp) {
-    if (mir->shouldCancel("FlagAllOperandsAsHavingRemovedUses loop 2")) {
-      return false;
-    }
-
-    const CompileInfo& info = rp->block()->info();
-    for (size_t i = 0, e = rp->numOperands(); i < e; i++) {
-      if (info.isObservableSlot(i)) {
-        rp->getOperand(i)->setUseRemovedUnchecked();
-      }
-    }
-
-    rp = rp->caller();
-  }
-
-  // Flag Phi inputs of the successors has having removed uses.
+  // Flag Phi inputs of the successors as having implicit uses.
   MPhiUseIteratorStack worklist;
   for (size_t i = 0, e = block->numSuccessors(); i < e; i++) {
-    if (mir->shouldCancel("FlagAllOperandsAsHavingRemovedUses loop 3")) {
+    if (mir->shouldCancel("FlagOperandsAsImplicitlyUsedAfter (loop 2)")) {
       return false;
     }
 
-    if (!FlagPhiInputsAsHavingRemovedUses(mir, block, block->getSuccessor(i),
-                                          worklist)) {
+    if (!FlagPhiInputsAsImplicitlyUsed(mir, block, block->getSuccessor(i),
+                                       worklist)) {
       return false;
     }
   }
@@ -330,278 +327,121 @@ static bool FlagAllOperandsAsHavingRemovedUses(MIRGenerator* mir,
   return true;
 }
 
-static void RemoveFromSuccessors(MBasicBlock* block) {
-  // Remove this block from its successors.
-  size_t numSucc = block->numSuccessors();
-  while (numSucc--) {
-    MBasicBlock* succ = block->getSuccessor(numSucc);
-    if (succ->isDead()) {
-      continue;
-    }
-    JitSpew(JitSpew_Prune, "Remove block edge %u -> %u.", block->id(),
-            succ->id());
-    succ->removePredecessor(block);
-  }
-}
-
-static void ConvertToBailingBlock(TempAllocator& alloc, MBasicBlock* block) {
-  // Add a bailout instruction.
-  MBail* bail = MBail::New(alloc, BailoutKind::FirstExecution);
-  MInstruction* bailPoint = block->safeInsertTop();
-  block->insertBefore(block->safeInsertTop(), bail);
-
-  // Discard all remaining instructions.
-  MInstructionIterator clearStart = block->begin(bailPoint);
-  block->discardAllInstructionsStartingAt(clearStart);
-  if (block->outerResumePoint()) {
-    block->clearOuterResumePoint();
-  }
-
-  // And replace the last instruction by the unreachable control instruction.
-  block->end(MUnreachable::New(alloc));
-}
-
-bool jit::PruneUnusedBranches(MIRGenerator* mir, MIRGraph& graph) {
-  JitSpew(JitSpew_Prune, "Begin");
-  MOZ_ASSERT(!mir->compilingWasm(),
-             "wasm compilation has no code coverage support.");
-
-  // We do a reverse-post-order traversal, marking basic blocks when the block
-  // have to be converted into bailing blocks, and flagging block as
-  // unreachable if all predecessors are flagged as bailing or unreachable.
-  bool someUnreachable = false;
-  for (ReversePostorderIterator block(graph.rpoBegin());
-       block != graph.rpoEnd(); block++) {
-    if (mir->shouldCancel("Prune unused branches (main loop)")) {
+static bool FlagEntryResumePointOperands(MIRGenerator* mir,
+                                         MBasicBlock* block) {
+  // Flag observable operands of the entry resume point as having implicit uses.
+  MResumePoint* rp = block->entryResumePoint();
+  while (rp) {
+    if (mir->shouldCancel("FlagEntryResumePointOperands")) {
       return false;
     }
 
-    JitSpew(JitSpew_Prune, "Investigate Block %u:", block->id());
+    const CompileInfo& info = rp->block()->info();
+    for (size_t i = 0, e = rp->numOperands(); i < e; i++) {
+      if (info.isObservableSlot(i)) {
+        rp->getOperand(i)->setImplicitlyUsedUnchecked();
+      }
+    }
+
+    rp = rp->caller();
+  }
+
+  return true;
+}
+
+static bool FlagAllOperandsAsImplicitlyUsed(MIRGenerator* mir,
+                                            MBasicBlock* block) {
+  return FlagEntryResumePointOperands(mir, block) &&
+         FlagOperandsAsImplicitlyUsedAfter(mir, block, block->begin());
+}
+
+// WarpBuilder sets the alwaysBails flag on blocks that contain an
+// unconditional bailout. We trim any instructions in those blocks
+// after the first unconditional bailout, and remove any blocks that
+// are only reachable through bailing blocks.
+bool jit::PruneUnusedBranches(MIRGenerator* mir, MIRGraph& graph) {
+  JitSpew(JitSpew_Prune, "Begin");
+
+  // Pruning is guided by unconditional bailouts. Wasm does not have bailouts.
+  MOZ_ASSERT(!mir->compilingWasm());
+
+  Vector<MBasicBlock*, 16, SystemAllocPolicy> worklist;
+  uint32_t numMarked = 0;
+  bool needsTrim = false;
+
+  auto markReachable = [&](MBasicBlock* block) -> bool {
+    block->mark();
+    numMarked++;
+    if (block->alwaysBails()) {
+      needsTrim = true;
+    }
+    return worklist.append(block);
+  };
+
+  // The entry block is always reachable.
+  if (!markReachable(graph.entryBlock())) {
+    return false;
+  }
+
+  // The OSR entry block is always reachable if it exists.
+  if (graph.osrBlock() && !markReachable(graph.osrBlock())) {
+    return false;
+  }
+
+  // Iteratively mark all reachable blocks.
+  while (!worklist.empty()) {
+    if (mir->shouldCancel("Prune unused branches (marking reachable)")) {
+      return false;
+    }
+    MBasicBlock* block = worklist.popCopy();
+
+    JitSpew(JitSpew_Prune, "Visit block %u:", block->id());
     JitSpewIndent indent(JitSpew_Prune);
 
-    // Do not touch entry basic blocks.
-    if (*block == graph.osrBlock() || *block == graph.entryBlock()) {
-      JitSpew(JitSpew_Prune, "Block %u is an entry point.", block->id());
+    // If this block always bails, then it does not reach its successors.
+    if (block->alwaysBails()) {
       continue;
     }
 
-    // Compute if all the predecessors of this block are either bailling out
-    // or are already flagged as unreachable.
-    bool isUnreachable = true;
-    bool isLoopHeader = block->isLoopHeader();
-    size_t numPred = block->numPredecessors();
-    size_t i = 0;
-    for (; i < numPred; i++) {
-      if (mir->shouldCancel("Prune unused branches (inner loop 1)")) {
-        return false;
-      }
-
-      MBasicBlock* pred = block->getPredecessor(i);
-
-      // The backedge is visited after the loop header, but if the loop
-      // header is unreachable, then we can assume that the backedge would
-      // be unreachable too.
-      if (isLoopHeader && pred == block->backedge()) {
+    for (size_t i = 0; i < block->numSuccessors(); i++) {
+      MBasicBlock* succ = block->getSuccessor(i);
+      if (succ->isMarked()) {
         continue;
       }
-
-      // Break if any of the predecessor can continue in this block.
-      if (!pred->isMarked() && !pred->unreachable()) {
-        isUnreachable = false;
-        break;
+      JitSpew(JitSpew_Prune, "Reaches block %u", succ->id());
+      if (!markReachable(succ)) {
+        return false;
       }
-    }
-
-    // Compute if the block should bailout, based on the trivial heuristic
-    // which is that if the block never got visited before, then it is
-    // likely to not be visited after.
-    bool shouldBailout = block->getHitState() == MBasicBlock::HitState::Count &&
-                         block->getHitCount() == 0;
-
-    // Check if the predecessors got accessed a large number of times in
-    // comparisons of the current block, in order to know if our attempt at
-    // removing this block is not premature.
-    if (!isUnreachable && shouldBailout) {
-      size_t p = numPred;
-      size_t predCount = 0;
-      size_t numSuccessorsOfPreds = 1;
-      bool isLoopExit = false;
-      while (p--) {
-        if (mir->shouldCancel("Prune unused branches (inner loop 2)")) {
-          return false;
-        }
-
-        MBasicBlock* pred = block->getPredecessor(p);
-        if (pred->getHitState() == MBasicBlock::HitState::Count) {
-          predCount += pred->getHitCount();
-        }
-        isLoopExit |= pred->isLoopHeader() && pred->backedge() != *block;
-        numSuccessorsOfPreds += pred->numSuccessors() - 1;
-      }
-
-      // Iterate over the approximated set of dominated blocks and count
-      // the number of instructions which are dominated.  Note that this
-      // approximation has issues with OSR blocks, but this should not be
-      // a big deal.
-      size_t numDominatedInst = 0;
-      size_t numEffectfulInst = 0;
-      int numInOutEdges = block->numPredecessors();
-      size_t branchSpan = 0;
-      ReversePostorderIterator it(block);
-      do {
-        if (mir->shouldCancel("Prune unused branches (inner loop 3)")) {
-          return false;
-        }
-
-        // Iterate over dominated blocks, and visit exit blocks as well.
-        numInOutEdges -= it->numPredecessors();
-        if (numInOutEdges < 0) {
-          break;
-        }
-        numInOutEdges += it->numSuccessors();
-
-        // Collect information about the instructions within the block.
-        for (MDefinitionIterator def(*it); def; def++) {
-          numDominatedInst++;
-          if (def->isEffectful()) {
-            numEffectfulInst++;
-          }
-        }
-
-        it++;
-        branchSpan++;
-      } while (numInOutEdges > 0 && it != graph.rpoEnd());
-
-      // The goal of branch pruning is to remove branches which are
-      // preventing other optimization, while keeping branches which would
-      // be costly if we were to bailout. The following heuristics are
-      // made to prevent bailouts in branches when we estimate that the
-      // confidence is not enough to compensate for the cost of a bailout.
-      //
-      //   1. Confidence for removal varies with the number of hit counts
-      //      of the predecessor. The reason being that the likelyhood of
-      //      taking this branch is decreasing with the number of hit
-      //      counts of the predecessor.
-      //
-      //   2. Confidence for removal varies with the number of dominated
-      //      instructions. The reason being that the complexity of the
-      //      branch increases with the number of instructions, thus
-      //      working against other optimizations.
-      //
-      //   3. Confidence for removal varies with the span of the
-      //      branch. The reason being that a branch that spans over a
-      //      large set of blocks is likely to remove optimization
-      //      opportunity as it prevents instructions from the other
-      //      branches to dominate the blocks which are after.
-      //
-      //   4. Confidence for removal varies with the number of effectful
-      //      instructions. The reason being that an effectful instruction
-      //      can remove optimization opportunities based on Scalar
-      //      Replacement, and based on Alias Analysis.
-      //
-      // The following converts various units in some form of arbitrary
-      // score, such that we can compare it to a threshold.
-      size_t score = 0;
-      MOZ_ASSERT(numSuccessorsOfPreds >= 1);
-      score += predCount * JitOptions.branchPruningHitCountFactor /
-               numSuccessorsOfPreds;
-      score += numDominatedInst * JitOptions.branchPruningInstFactor;
-      score += branchSpan * JitOptions.branchPruningBlockSpanFactor;
-      score += numEffectfulInst * JitOptions.branchPruningEffectfulInstFactor;
-      if (score < JitOptions.branchPruningThreshold) {
-        shouldBailout = false;
-      }
-
-      // If the predecessors do not have enough hit counts, keep the
-      // branch, until we recompile this function later, with more
-      // information.
-      if (predCount / numSuccessorsOfPreds < 50) {
-        shouldBailout = false;
-      }
-
-      // There is only a single successors to the predecessors, thus the
-      // decision should be taken as part of the previous block
-      // investigation, and this block should be unreachable.
-      if (numSuccessorsOfPreds == 1) {
-        shouldBailout = false;
-      }
-
-      // If this is the exit block of a loop, then keep this basic
-      // block. This heuristic is useful as a bailout is often much more
-      // costly than a simple exit sequence.
-      if (isLoopExit) {
-        shouldBailout = false;
-      }
-
-      // Interpreters are often implemented as a table switch within a for
-      // loop. What might happen is that the interpreter heats up in a
-      // subset of instructions, but might need other instructions for the
-      // rest of the evaluation.
-      if (numSuccessorsOfPreds > 8) {
-        shouldBailout = false;
-      }
-
-      JitSpew(JitSpew_Prune,
-              "info: block %u,"
-              " predCount: %zu, domInst: %zu"
-              ", span: %zu, effectful: %zu, "
-              " isLoopExit: %s, numSuccessorsOfPred: %zu."
-              " (score: %zu, shouldBailout: %s)",
-              block->id(), predCount, numDominatedInst, branchSpan,
-              numEffectfulInst, isLoopExit ? "true" : "false",
-              numSuccessorsOfPreds, score, shouldBailout ? "true" : "false");
-    }
-
-    // Continue to the next basic block if the current basic block can
-    // remain unchanged.
-    if (!isUnreachable && !shouldBailout) {
-      continue;
-    }
-
-    someUnreachable = true;
-    if (isUnreachable) {
-      JitSpew(JitSpew_Prune, "Mark block %u as unreachable.", block->id());
-      block->setUnreachable();
-      // If the block is unreachable, then there is no need to convert it
-      // to a bailing block.
-    } else if (shouldBailout) {
-      JitSpew(JitSpew_Prune, "Mark block %u as bailing block.", block->id());
-      block->markUnchecked();
-    }
-
-    // When removing a loop header, we should ensure that its backedge is
-    // removed first, otherwise this triggers an assertion in
-    // removePredecessorsWithoutPhiOperands.
-    if (block->isLoopHeader()) {
-      JitSpew(JitSpew_Prune, "Mark block %u as bailing block. (loop backedge)",
-              block->backedge()->id());
-      block->backedge()->markUnchecked();
     }
   }
 
-  // Returns early if nothing changed.
-  if (!someUnreachable) {
+  if (!needsTrim && numMarked == graph.numBlocks()) {
+    // There is nothing to prune.
+    graph.unmarkBlocks();
     return true;
   }
 
-  JitSpew(
-      JitSpew_Prune,
-      "Convert basic block to bailing blocks, and remove unreachable blocks:");
+  JitSpew(JitSpew_Prune, "Remove unreachable instructions and blocks:");
   JitSpewIndent indent(JitSpew_Prune);
 
-  // As we are going to remove edges and basic block, we have to mark
-  // instructions which would be needed by baseline if we were to bailout.
+  // The operands of removed instructions may be needed in baseline
+  // after bailing out.
   for (PostorderIterator it(graph.poBegin()); it != graph.poEnd();) {
-    if (mir->shouldCancel("Prune unused branches (marking loop)")) {
+    if (mir->shouldCancel("Prune unused branches (marking operands)")) {
       return false;
     }
 
     MBasicBlock* block = *it++;
-    if (!block->isMarked() && !block->unreachable()) {
-      continue;
+    if (!block->isMarked()) {
+      // If we are removing the block entirely, mark the operands of every
+      // instruction as being implicitly used.
+      FlagAllOperandsAsImplicitlyUsed(mir, block);
+    } else if (block->alwaysBails()) {
+      // If we are only trimming instructions after a bail, only mark operands
+      // of removed instructions.
+      MInstructionIterator firstRemoved = FindFirstInstructionAfterBail(block);
+      FlagOperandsAsImplicitlyUsedAfter(mir, block, firstRemoved);
     }
-
-    FlagAllOperandsAsHavingRemovedUses(mir, block);
   }
 
   // Remove the blocks in post-order such that consumers are visited before
@@ -610,38 +450,70 @@ bool jit::PruneUnusedBranches(MIRGenerator* mir, MIRGraph& graph) {
     if (mir->shouldCancel("Prune unused branches (removal loop)")) {
       return false;
     }
+    if (!graph.alloc().ensureBallast()) {
+      return false;
+    }
 
     MBasicBlock* block = *it++;
-    if (!block->isMarked() && !block->unreachable()) {
+    if (block->isMarked() && !block->alwaysBails()) {
       continue;
     }
 
-    JitSpew(JitSpew_Prune, "Remove / Replace block %u.", block->id());
-    JitSpewIndent indent(JitSpew_Prune);
-
     // As we are going to replace/remove the last instruction, we first have
     // to remove this block from the predecessor list of its successors.
-    RemoveFromSuccessors(block);
-
-    // Convert the current basic block to a bailing block which ends with an
-    // Unreachable control instruction.
-    if (block->isMarked()) {
-      JitSpew(JitSpew_Prune, "Convert Block %u to a bailing block.",
-              block->id());
-      if (!graph.alloc().ensureBallast()) {
-        return false;
+    size_t numSucc = block->numSuccessors();
+    for (uint32_t i = 0; i < numSucc; i++) {
+      MBasicBlock* succ = block->getSuccessor(i);
+      if (succ->isDead()) {
+        continue;
       }
-      ConvertToBailingBlock(graph.alloc(), block);
-      block->unmark();
+
+      // Our dominators code expects all loop headers to have two predecessors.
+      // If we are removing the normal entry to a loop, but can still reach
+      // the loop header via OSR, we create a fake unreachable predecessor.
+      if (succ->isLoopHeader() && block != succ->backedge()) {
+        MOZ_ASSERT(graph.osrBlock());
+        if (!graph.alloc().ensureBallast()) {
+          return false;
+        }
+
+        MBasicBlock* fake = MBasicBlock::NewFakeLoopPredecessor(graph, succ);
+        if (!fake) {
+          return false;
+        }
+        // Mark the block to avoid removing it as unreachable.
+        fake->mark();
+
+        JitSpew(JitSpew_Prune,
+                "Header %u only reachable by OSR. Add fake predecessor %u",
+                succ->id(), fake->id());
+      }
+
+      JitSpew(JitSpew_Prune, "Remove block edge %u -> %u.", block->id(),
+              succ->id());
+      succ->removePredecessor(block);
     }
 
-    // Remove all instructions.
-    if (block->unreachable()) {
-      JitSpew(JitSpew_Prune, "Remove Block %u.", block->id());
-      JitSpewIndent indent(JitSpew_Prune);
+    if (!block->isMarked()) {
+      // Remove unreachable blocks from the CFG.
+      JitSpew(JitSpew_Prune, "Remove block %u.", block->id());
       graph.removeBlock(block);
+    } else {
+      // Remove unreachable instructions after unconditional bailouts.
+      JitSpew(JitSpew_Prune, "Trim block %u.", block->id());
+
+      // Discard all instructions after the first MBail.
+      MInstructionIterator firstRemoved = FindFirstInstructionAfterBail(block);
+      block->discardAllInstructionsStartingAt(firstRemoved);
+
+      if (block->outerResumePoint()) {
+        block->clearOuterResumePoint();
+      }
+
+      block->end(MUnreachable::New(graph.alloc()));
     }
   }
+  graph.unmarkBlocks();
 
   return true;
 }
@@ -1134,7 +1006,7 @@ bool jit::EliminateDeadResumePointOperands(MIRGenerator* mir, MIRGraph& graph) {
       // If the instruction's behavior has been constant folded into a
       // separate instruction, we can't determine precisely where the
       // instruction becomes dead and can't eliminate its uses.
-      if (ins->isImplicitlyUsed() || ins->isUseRemoved()) {
+      if (ins->isImplicitlyUsed()) {
         continue;
       }
 
@@ -1273,7 +1145,7 @@ bool jit::EliminateDeadCode(MIRGenerator* mir, MIRGraph& graph) {
 static inline bool IsPhiObservable(MPhi* phi, Observability observe) {
   // If the phi has uses which are not reflected in SSA, then behavior in the
   // interpreter may be affected by removing the phi.
-  if (phi->isImplicitlyUsed() || phi->isUseRemoved()) {
+  if (phi->isImplicitlyUsed()) {
     return true;
   }
 
@@ -1485,6 +1357,7 @@ class TypeAnalyzer {
   bool respecialize(MPhi* phi, MIRType type);
   bool propagateSpecialization(MPhi* phi);
   bool specializePhis();
+  bool specializeOsrOnlyPhis();
   void replaceRedundantPhi(MPhi* phi);
   bool adjustPhiInputs(MPhi* phi);
   bool adjustInputs(MDefinition* def);
@@ -1584,11 +1457,11 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
 
   MIRType type = MIRType::None;
   bool convertibleToFloat32 = false;
-  DebugOnly<bool> hasPhiInputs = false;
+  DebugOnly<bool> hasSpecializableInput = false;
   for (size_t i = 0, e = phi->numOperands(); i < e; i++) {
     MDefinition* in = phi->getOperand(i);
     if (in->isPhi()) {
-      hasPhiInputs = true;
+      hasSpecializableInput = true;
       if (!in->toPhi()->triedToSpecialize()) {
         continue;
       }
@@ -1603,6 +1476,8 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
     // See shouldSpecializeOsrPhis comment. This is the first step mentioned
     // there.
     if (shouldSpecializeOsrPhis() && in->isOsrValue()) {
+      hasSpecializableInput = true;
+
       // TODO(post-Warp): simplify float32 handling in this function or (better)
       // make the float32 analysis a stand-alone optimization pass instead of
       // complicating type analysis. See bug 1655773.
@@ -1640,8 +1515,7 @@ MIRType TypeAnalyzer::guessPhiType(MPhi* phi) const {
     }
   }
 
-  MOZ_ASSERT_IF(type == MIRType::None, hasPhiInputs);
-
+  MOZ_ASSERT_IF(type == MIRType::None, hasSpecializableInput);
   return type;
 }
 
@@ -1721,6 +1595,34 @@ bool TypeAnalyzer::propagateAllPhiSpecializations() {
   return true;
 }
 
+// If branch pruning removes the path from the entry block to the OSR
+// preheader, we may have phis (or chains of phis) with no operands
+// other than OsrValues. These phis will still have MIRType::None.
+// Since we don't have any information about them, we specialize them
+// as MIRType::Value.
+bool TypeAnalyzer::specializeOsrOnlyPhis() {
+  MOZ_ASSERT(graph.osrBlock());
+  MOZ_ASSERT(graph.osrPreHeaderBlock()->numPredecessors() == 1);
+
+  for (PostorderIterator block(graph.poBegin()); block != graph.poEnd();
+       block++) {
+    if (mir->shouldCancel("Specialize osr-only phis (main loop)")) {
+      return false;
+    }
+
+    for (MPhiIterator phi(block->phisBegin()); phi != block->phisEnd(); phi++) {
+      if (mir->shouldCancel("Specialize osr-only phis (inner loop)")) {
+        return false;
+      }
+
+      if (phi->type() == MIRType::None) {
+        phi->specialize(MIRType::Value);
+      }
+    }
+  }
+  return true;
+}
+
 bool TypeAnalyzer::specializePhis() {
   for (PostorderIterator block(graph.poBegin()); block != graph.poEnd();
        block++) {
@@ -1758,7 +1660,14 @@ bool TypeAnalyzer::specializePhis() {
     MBasicBlock* preHeader = graph.osrPreHeaderBlock();
     MBasicBlock* header = preHeader->getSingleSuccessor();
 
-    if (header->isLoopHeader()) {
+    if (preHeader->numPredecessors() == 1) {
+      MOZ_ASSERT(preHeader->getPredecessor(0) == graph.osrBlock());
+      // Branch pruning has removed the path from the entry block
+      // to the preheader. Specialize any phis with no non-osr inputs.
+      if (!specializeOsrOnlyPhis()) {
+        return false;
+      }
+    } else if (header->isLoopHeader()) {
       for (MPhiIterator phi(header->phisBegin()); phi != header->phisEnd();
            phi++) {
         MPhi* preHeaderPhi = phi->getOperand(0)->toPhi();
@@ -1778,11 +1687,12 @@ bool TypeAnalyzer::specializePhis() {
         return false;
       }
     } else {
-      // Edge case: the header is a 'pending' loop header when control flow in
-      // the loop body is terminated unconditionally and there's no backedge.
-      // In this case the header only has the preheader as predecessor and we
-      // don't need to do anything.
-      MOZ_ASSERT(header->isPendingLoopHeader());
+      // Edge case: there is no backedge in this loop. This can happen
+      // if the header is a 'pending' loop header when control flow in
+      // the loop body is terminated unconditionally, or if a block
+      // that dominates the backedge unconditionally bails out. In
+      // this case the header only has the preheader as predecessor
+      // and we don't need to do anything.
       MOZ_ASSERT(header->numPredecessors() == 1);
     }
   }
@@ -1936,19 +1846,20 @@ void TypeAnalyzer::replaceRedundantPhi(MPhi* phi) {
   block->insertBefore(*(block->begin()), c);
   phi->justReplaceAllUsesWith(c);
 
-  if (shouldSpecializeOsrPhis() && block == graph.osrPreHeaderBlock()) {
+  if (shouldSpecializeOsrPhis()) {
     // See shouldSpecializeOsrPhis comment. This is part of the third step,
     // guard the incoming MOsrValue is of this type.
     MBasicBlock* osrBlock = graph.osrBlock();
-    MOZ_ASSERT(block->getPredecessor(1) == osrBlock);
-    MDefinition* def = phi->getOperand(1);
-    if (def->isOsrValue()) {
-      MGuardValue* guard = MGuardValue::New(alloc(), def, v);
-      guard->setBailoutKind(BailoutKind::SpeculativePhi);
-      osrBlock->insertBefore(osrBlock->lastIns(), guard);
-    } else {
-      MOZ_ASSERT(def->isConstant());
-      MOZ_ASSERT(def->type() == phi->type());
+    for (uint32_t i = 0; i < phi->numOperands(); i++) {
+      MDefinition* def = phi->getOperand(i);
+      if (def->isOsrValue()) {
+        MOZ_ASSERT(def->block() == osrBlock);
+        MGuardValue* guard = MGuardValue::New(alloc(), def, v);
+        guard->setBailoutKind(BailoutKind::SpeculativePhi);
+        osrBlock->insertBefore(osrBlock->lastIns(), guard);
+      } else {
+        MOZ_ASSERT(def->type() == phi->type());
+      }
     }
   }
 }
@@ -2340,7 +2251,7 @@ bool jit::RemoveUnmarkedBlocks(MIRGenerator* mir, MIRGraph& graph,
         continue;
       }
 
-      FlagAllOperandsAsHavingRemovedUses(mir, block);
+      FlagAllOperandsAsImplicitlyUsed(mir, block);
     }
 
     // Find unmarked blocks and remove them.
@@ -2484,6 +2395,8 @@ static void ComputeImmediateDominators(MIRGraph& graph) {
 }
 
 bool jit::BuildDominatorTree(MIRGraph& graph) {
+  MOZ_ASSERT(graph.canBuildDominators());
+
   ComputeImmediateDominators(graph);
 
   Vector<MBasicBlock*, 4, JitAllocPolicy> worklist(graph.alloc());
@@ -4329,7 +4242,7 @@ void jit::DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,
     return;
   }
 
-  GenericPrinter& out = JitSpewPrinter();
+  Fprinter& out = JitSpewPrinter();
   out.printf("===== %s =====\n", phase);
 
   size_t depth = 2;

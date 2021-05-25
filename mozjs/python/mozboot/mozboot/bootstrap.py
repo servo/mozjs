@@ -242,7 +242,12 @@ class Bootstrapper(object):
                 cls = ArchlinuxBootstrapper
             elif dist_id in ("void"):
                 cls = VoidBootstrapper
-            elif os.path.exists("/etc/SUSE-brand"):
+            elif dist_id in (
+                "opensuse",
+                "opensuse-leap",
+                "opensuse-tumbleweed",
+                "suse",
+            ):
                 cls = OpenSUSEBootstrapper
             else:
                 raise NotImplementedError(

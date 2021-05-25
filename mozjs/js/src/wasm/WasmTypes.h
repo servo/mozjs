@@ -38,6 +38,7 @@
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
 #include "js/Vector.h"
+#include "js/WasmFeatures.h"
 #include "vm/MallocProvider.h"
 #include "vm/NativeObject.h"
 #include "wasm/WasmConstants.h"
@@ -874,6 +875,11 @@ class PackedType : public T {
     }
   }
 
+  PackedType<ValTypeTraits> valType() const {
+    MOZ_ASSERT(isValType());
+    return PackedType<ValTypeTraits>(tc_);
+  }
+
   bool isValType() const {
     switch (tc_.typeCode()) {
       case TypeCode::I8:
@@ -992,6 +998,8 @@ static inline bool IsNumberType(ValType vt) { return !vt.isReference(); }
 static inline jit::MIRType ToMIRType(const Maybe<ValType>& t) {
   return t ? ToMIRType(ValType(t.ref())) : jit::MIRType::None;
 }
+
+extern bool ToValType(JSContext* cx, HandleValue v, ValType* out);
 
 extern UniqueChars ToString(ValType type);
 
@@ -1268,36 +1276,27 @@ struct FeatureOptions {
 
 struct FeatureArgs {
   FeatureArgs()
-      : sharedMemory(Shareable::False),
-        refTypes(false),
-        functionReferences(false),
-        gcTypes(false),
-        multiValue(false),
-        v128(false),
+      :
+#define WASM_FEATURE(NAME, LOWER_NAME, ...) LOWER_NAME(false),
+        JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE)
+#undef WASM_FEATURE
+            sharedMemory(Shareable::False),
         hugeMemory(false),
-        simdWormhole(false),
-        exceptions(false) {}
+        simdWormhole(false) {
+  }
   FeatureArgs(const FeatureArgs&) = default;
   FeatureArgs& operator=(const FeatureArgs&) = default;
   FeatureArgs(FeatureArgs&&) = default;
 
   static FeatureArgs build(JSContext* cx, const FeatureOptions& options);
 
-  FeatureArgs withRefTypes(bool refTypes) const {
-    FeatureArgs features = *this;
-    features.refTypes = refTypes;
-    return features;
-  }
+#define WASM_FEATURE(NAME, LOWER_NAME, ...) bool LOWER_NAME;
+  JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE)
+#undef WASM_FEATURE
 
   Shareable sharedMemory;
-  bool refTypes;
-  bool functionReferences;
-  bool gcTypes;
-  bool multiValue;
-  bool v128;
   bool hugeMemory;
   bool simdWormhole;
-  bool exceptions;
 };
 
 // The LitVal class represents a single WebAssembly value of a given value
@@ -1469,6 +1468,9 @@ class MOZ_NON_PARAM Val : public LitVal {
     return cell_.ref_.asJSObjectAddress();
   }
 
+  void readFromRootedLocation(const void* loc);
+  void writeToRootedLocation(void* loc, bool mustWrite64) const;
+
   // See the comment for `ToWebAssemblyValue` below.
   static bool fromJSValue(JSContext* cx, ValType targetType, HandleValue val,
                           MutableHandle<Val> rval);
@@ -1511,6 +1513,16 @@ using MutableHandleValVector = MutableHandle<ValVector>;
 class NoDebug;
 class DebugCodegenVal;
 
+// The level of coercion to apply in `ToWebAssemblyValue` and `ToJSValue`.
+enum class CoercionLevel {
+  // The default coercions given by the JS-API specification.
+  Spec,
+  // Allow for the coercions given by `Spec` but also use WebAssembly.Global
+  // as a container for lossless conversions. This is only available through
+  // the wasmLosslessInvoke testing function and is used in tests.
+  Lossless,
+};
+
 // Coercion function from a JS value to a WebAssembly value [1].
 //
 // This function may fail for any of the following reasons:
@@ -1522,10 +1534,12 @@ class DebugCodegenVal;
 // [1] https://webassembly.github.io/spec/js-api/index.html#towebassemblyvalue
 template <typename Debug = NoDebug>
 extern bool ToWebAssemblyValue(JSContext* cx, HandleValue val, FieldType type,
-                               void* loc, bool mustWrite64);
+                               void* loc, bool mustWrite64,
+                               CoercionLevel level = CoercionLevel::Spec);
 template <typename Debug = NoDebug>
 extern bool ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
-                               void* loc, bool mustWrite64);
+                               void* loc, bool mustWrite64,
+                               CoercionLevel level = CoercionLevel::Spec);
 
 // Coercion function from a WebAssembly value to a JS value [1].
 //
@@ -1537,10 +1551,12 @@ extern bool ToWebAssemblyValue(JSContext* cx, HandleValue val, ValType type,
 // [1] https://webassembly.github.io/spec/js-api/index.html#tojsvalue
 template <typename Debug = NoDebug>
 extern bool ToJSValue(JSContext* cx, const void* src, FieldType type,
-                      MutableHandleValue dst);
+                      MutableHandleValue dst,
+                      CoercionLevel level = CoercionLevel::Spec);
 template <typename Debug = NoDebug>
 extern bool ToJSValue(JSContext* cx, const void* src, ValType type,
-                      MutableHandleValue dst);
+                      MutableHandleValue dst,
+                      CoercionLevel level = CoercionLevel::Spec);
 
 // The FuncType class represents a WebAssembly function signature which takes a
 // list of value types and returns an expression type. The engine uses two
@@ -1555,6 +1571,48 @@ extern bool ToJSValue(JSContext* cx, const void* src, ValType type,
 class FuncType {
   ValTypeVector args_;
   ValTypeVector results_;
+
+  // Entry from JS to wasm via the JIT is currently unimplemented for
+  // functions that return multiple values.
+  bool temporarilyUnsupportedResultCountForJitEntry() const {
+    return results().length() > MaxResultsForJitEntry;
+  }
+  // Calls out from wasm to JS that return multiple values is currently
+  // unsupported.
+  bool temporarilyUnsupportedResultCountForJitExit() const {
+    return results().length() > MaxResultsForJitExit;
+  }
+  // For JS->wasm jit entries, temporarily disallow certain types until the
+  // stubs generator is improved.
+  //   * ref params may be nullable externrefs
+  //   * ref results may not be type indices
+  // V128 types are excluded per spec but are guarded against separately.
+  bool temporarilyUnsupportedReftypeForEntry() const {
+    for (ValType arg : args()) {
+      if (arg.isReference() && (!arg.isExternRef() || !arg.isNullable())) {
+        return true;
+      }
+    }
+    for (ValType result : results()) {
+      if (result.isTypeIndex()) {
+        return true;
+      }
+    }
+    return false;
+  }
+  // For wasm->JS jit exits, temporarily disallow certain types until
+  // the stubs generator is improved.
+  //   * ref results may be nullable externrefs
+  // Unexposable types must be guarded against separately.
+  bool temporarilyUnsupportedReftypeForExit() const {
+    for (ValType result : results()) {
+      if (result.isReference() &&
+          (!result.isExternRef() || !result.isNullable())) {
+        return true;
+      }
+    }
+    return false;
+  }
 
  public:
   FuncType() : args_(), results_() {}
@@ -1605,16 +1663,9 @@ class FuncType {
   }
   bool operator!=(const FuncType& rhs) const { return !(*this == rhs); }
 
-  // Entry from JS to wasm via the JIT is currently unimplemented for
-  // functions that return multiple values.
-  bool temporarilyUnsupportedResultCountForJitEntry() const {
-    return results().length() > MaxResultsForJitEntry;
-  }
-  // Calls out from wasm to JS that return multiple values is currently
-  // unsupported.
-  bool temporarilyUnsupportedResultCountForJitExit() const {
-    return results().length() > MaxResultsForJitExit;
-  }
+  bool canHaveJitEntry() const;
+  bool canHaveJitExit() const;
+
   bool hasUnexposableArgOrRet() const {
     for (ValType arg : args()) {
       if (!arg.isExposable()) {
@@ -1628,55 +1679,7 @@ class FuncType {
     }
     return false;
   }
-  // For JS->wasm jit entries, temporarily disallow certain types until the
-  // stubs generator is improved.
-  //   * ref params may be nullable externrefs
-  //   * ref results may not be type indices
-  // V128 types are excluded per spec but are guarded against separately.
-  bool temporarilyUnsupportedReftypeForEntry() const {
-    for (ValType arg : args()) {
-      if (arg.isReference() && (!arg.isExternRef() || !arg.isNullable())) {
-        return true;
-      }
-    }
-    for (ValType result : results()) {
-      if (result.isTypeIndex()) {
-        return true;
-      }
-    }
-    return false;
-  }
-  // For inline JS->wasm jit entries, temporarily disallow certain types until
-  // the stubs generator is improved.
-  //   * ref params may be nullable externrefs
-  //   * ref results may not be type indices
-  // V128 types are excluded per spec but are guarded against separately.
-  bool temporarilyUnsupportedReftypeForInlineEntry() const {
-    for (ValType arg : args()) {
-      if (arg.isReference() && (!arg.isExternRef() || !arg.isNullable())) {
-        return true;
-      }
-    }
-    for (ValType result : results()) {
-      if (result.isTypeIndex()) {
-        return true;
-      }
-    }
-    return false;
-  }
-  // For wasm->JS jit exits, temporarily disallow certain types until
-  // the stubs generator is improved.
-  //   * ref results may be nullable externrefs
-  // Unexposable types must be guarded against separately.
-  bool temporarilyUnsupportedReftypeForExit() const {
-    for (ValType result : results()) {
-      if (result.isReference() &&
-          (!result.isExternRef() || !result.isNullable())) {
-        return true;
-      }
-    }
-    return false;
-  }
+
 #ifdef WASM_PRIVATE_REFTYPES
   bool exposesTypeIndex() const {
     for (const ValType& arg : args()) {
@@ -1851,17 +1854,13 @@ class ResultType {
   enum Kind {
     EmptyKind = Tagged::ImmediateKind1,
     SingleKind = Tagged::ImmediateKind2,
-#ifdef ENABLE_WASM_MULTI_VALUE
     VectorKind = Tagged::PointerKind1,
-#endif
     InvalidKind = Tagged::PointerKind2,
   };
 
   ResultType(Kind kind, uint32_t imm) : tagged_(Tagged::Kind(kind), imm) {}
-#ifdef ENABLE_WASM_MULTI_VALUE
   explicit ResultType(const ValTypeVector* ptr)
       : tagged_(Tagged::Kind(VectorKind), ptr) {}
-#endif
 
   Kind kind() const { return Kind(tagged_.kind()); }
 
@@ -1870,12 +1869,10 @@ class ResultType {
     return ValType(PackedTypeCode::fromBits(tagged_.immediate()));
   }
 
-#ifdef ENABLE_WASM_MULTI_VALUE
   const ValTypeVector& values() const {
     MOZ_ASSERT(kind() == VectorKind);
     return *tagged_.pointer();
   }
-#endif
 
  public:
   ResultType() : tagged_(Tagged::Kind(InvalidKind), nullptr) {}
@@ -1891,11 +1888,7 @@ class ResultType {
       case 1:
         return Single(vals[0]);
       default:
-#ifdef ENABLE_WASM_MULTI_VALUE
         return ResultType(&vals);
-#else
-        MOZ_CRASH("multi-value returns not supported");
-#endif
     }
   }
 
@@ -1906,10 +1899,8 @@ class ResultType {
         return true;
       case SingleKind:
         return out->append(singleValType());
-#ifdef ENABLE_WASM_MULTI_VALUE
       case VectorKind:
         return out->appendAll(values());
-#endif
       default:
         MOZ_CRASH("bad resulttype");
     }
@@ -1923,10 +1914,8 @@ class ResultType {
         return 0;
       case SingleKind:
         return 1;
-#ifdef ENABLE_WASM_MULTI_VALUE
       case VectorKind:
         return values().length();
-#endif
       default:
         MOZ_CRASH("bad resulttype");
     }
@@ -1937,10 +1926,8 @@ class ResultType {
       case SingleKind:
         MOZ_ASSERT(i == 0);
         return singleValType();
-#ifdef ENABLE_WASM_MULTI_VALUE
       case VectorKind:
         return values()[i];
-#endif
       default:
         MOZ_CRASH("bad resulttype");
     }
@@ -1952,14 +1939,12 @@ class ResultType {
       case SingleKind:
       case InvalidKind:
         return tagged_.bits() == rhs.tagged_.bits();
-#ifdef ENABLE_WASM_MULTI_VALUE
       case VectorKind: {
         if (rhs.kind() != VectorKind) {
           return false;
         }
         return EqualContainers(values(), rhs.values());
       }
-#endif
       default:
         MOZ_CRASH("bad resulttype");
     }
@@ -1982,17 +1967,13 @@ class BlockType {
   enum Kind {
     VoidToVoidKind = Tagged::ImmediateKind1,
     VoidToSingleKind = Tagged::ImmediateKind2,
-#ifdef ENABLE_WASM_MULTI_VALUE
     FuncKind = Tagged::PointerKind1,
     FuncResultsKind = Tagged::PointerKind2
-#endif
   };
 
   BlockType(Kind kind, uint32_t imm) : tagged_(Tagged::Kind(kind), imm) {}
-#ifdef ENABLE_WASM_MULTI_VALUE
   BlockType(Kind kind, const FuncType& type)
       : tagged_(Tagged::Kind(kind), &type) {}
-#endif
 
   Kind kind() const { return Kind(tagged_.kind()); }
   ValType singleValType() const {
@@ -2000,9 +1981,7 @@ class BlockType {
     return ValType(PackedTypeCode::fromBits(tagged_.immediate()));
   }
 
-#ifdef ENABLE_WASM_MULTI_VALUE
   const FuncType& funcType() const { return *tagged_.pointer(); }
-#endif
 
  public:
   BlockType()
@@ -2016,15 +1995,10 @@ class BlockType {
     return BlockType(VoidToSingleKind, vt.bitsUnsafe());
   }
   static BlockType Func(const FuncType& type) {
-#ifdef ENABLE_WASM_MULTI_VALUE
     if (type.args().length() == 0) {
       return FuncResults(type);
     }
     return BlockType(FuncKind, type);
-#else
-    MOZ_ASSERT(type.args().length() == 0);
-    return FuncResults(type);
-#endif
   }
   static BlockType FuncResults(const FuncType& type) {
     switch (type.results().length()) {
@@ -2033,11 +2007,7 @@ class BlockType {
       case 1:
         return VoidToSingle(type.results()[0]);
       default:
-#ifdef ENABLE_WASM_MULTI_VALUE
         return BlockType(FuncResultsKind, type);
-#else
-        MOZ_CRASH("multi-value returns not supported");
-#endif
     }
   }
 
@@ -2045,14 +2015,10 @@ class BlockType {
     switch (kind()) {
       case VoidToVoidKind:
       case VoidToSingleKind:
-#ifdef ENABLE_WASM_MULTI_VALUE
       case FuncResultsKind:
-#endif
         return ResultType::Empty();
-#ifdef ENABLE_WASM_MULTI_VALUE
       case FuncKind:
         return ResultType::Vector(funcType().args());
-#endif
       default:
         MOZ_CRASH("unexpected kind");
     }
@@ -2064,11 +2030,9 @@ class BlockType {
         return ResultType::Empty();
       case VoidToSingleKind:
         return ResultType::Single(singleValType());
-#ifdef ENABLE_WASM_MULTI_VALUE
       case FuncKind:
       case FuncResultsKind:
         return ResultType::Vector(funcType().results());
-#endif
       default:
         MOZ_CRASH("unexpected kind");
     }
@@ -2082,12 +2046,10 @@ class BlockType {
       case VoidToVoidKind:
       case VoidToSingleKind:
         return tagged_.bits() == rhs.tagged_.bits();
-#ifdef ENABLE_WASM_MULTI_VALUE
       case FuncKind:
         return funcType() == rhs.funcType();
       case FuncResultsKind:
         return EqualContainers(funcType().results(), rhs.funcType().results());
-#endif
       default:
         MOZ_CRASH("unexpected kind");
     }
@@ -3761,9 +3723,22 @@ struct TlsData {
   // Pointer to the base of the default memory (or null if there is none).
   uint8_t* memoryBase;
 
-  // Bounds check limit of 32-bit memory, in bytes (or zero if there is no
-  // memory).
-  uint32_t boundsCheckLimit32;
+  // Bounds check limit in bytes (or zero if there is no memory).  This is
+  // 64-bits on 64-bit systems so as to allow for heap lengths up to and beyond
+  // 4GB, and 32-bits on 32-bit systems, where heaps are limited to 2GB.
+  //
+  // On 64-bit systems, the upper bits of this value will be zero and 32-bit
+  // bounds checks can be used under the following circumstances:
+  //
+  // - The heap is for asm.js; asm.js heaps are limited to 2GB
+  // - The max size of the heap is encoded in the module and is less than 4GB
+  // - Cranelift is present in the system; Cranelift-compatible heaps are
+  //   limited to 4GB-128K
+  //
+  // All our jits require little-endian byte order, so the address of the 32-bit
+  // heap limit is the same as the address of the 64-bit heap limit: the address
+  // of this member.
+  uintptr_t boundsCheckLimit;
 
   // Pointer to the Instance that contains this TLS data.
   Instance* instance;

@@ -100,8 +100,8 @@ MOZ_TOOL_VARIABLES
 dnl Special win32 checks
 dnl ========================================================
 
-# Target the Windows 10 SDK by default
-WINVER=A00
+# Target the Windows 8.1 SDK by default
+WINVER=601
 
 case "$target" in
 *-mingw*)
@@ -706,6 +706,10 @@ case "$target" in
 
 *-solaris*)
     MOZ_FIX_LINK_PATHS="-L${DIST}/bin"
+    ;;
+
+*-wasi*)
+    MOZ_FIX_LINK_PATHS=
     ;;
 
 esac
