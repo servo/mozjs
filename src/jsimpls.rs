@@ -56,7 +56,7 @@ impl Default for jsid {
 
 impl Default for JS::PropertyDescriptor {
     fn default() -> Self {
-        JS::PropertyDescriptor { obj: ptr::null_mut(), attrs: 0, getter: None, setter: None, value: UndefinedValue() }
+        JS::PropertyDescriptor { obj: ptr::null_mut(), attrs: 0, getter: ptr::null_mut(), setter: ptr::null_mut(), value_: UndefinedValue() }
     }
 }
 
