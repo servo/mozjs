@@ -8,14 +8,14 @@ diff --git a/mozglue/misc/moz.build b/mozglue/misc/moz.build
 index d3136755f5..7ab9fe2567 100644
 --- a/mozglue/misc/moz.build
 +++ b/mozglue/misc/moz.build
-@@ -25,7 +25,6 @@ EXPORTS.mozilla.glue += [
+@@ -28,7 +28,6 @@ EXPORTS.mozilla.glue += [
  
  if CONFIG["OS_ARCH"] == "WINNT":
      EXPORTS.mozilla += [
 -        "PreXULSkeletonUI.h",
          "StackWalk_windows.h",
+         "StackWalkThread.h",
          "TimeStamp_windows.h",
-         "WindowsDpiAwareness.h",
 @@ -59,7 +58,6 @@ if CONFIG["OS_ARCH"] == "WINNT":
          "WindowsUnicode.h",
      ]

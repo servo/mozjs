@@ -38,17 +38,19 @@ index 4fbca27fa..d61b97916 100644
            out.printf("Processing store ");
            def->printName(out);
            out.printf(" (flags %x)\n", set.flags());
-diff --git a/js/src/jit/CacheIRSpewer.cpp b/js/src/jit/CacheIRSpewer.cpp
-index 63d9fa754..e0c99e21e 100644
---- a/js/src/jit/CacheIRSpewer.cpp
-+++ b/js/src/jit/CacheIRSpewer.cpp
-@@ -13,8 +13,13 @@
- #  include <algorithm>
+diff --git a/js/src/util/StructuredSpewer.h b/js/src/util/StructuredSpewer.h
+index 40f8e1cf9..b65f4b87f 100644
+--- a/js/src/util/StructuredSpewer.h
++++ b/js/src/util/StructuredSpewer.h
+@@ -21,8 +21,15 @@
+ #  include "vm/Printer.h"
  
  #  ifdef XP_WIN
 -#    include <process.h>
 -#    define getpid _getpid
 +#    ifdef JS_ENABLE_UWP
++#      define UNICODE
++#      include <Windows.h>
 +#      include <processthreadsapi.h>
 +#      define getpid GetCurrentProcessId
 +#    else
@@ -58,6 +60,7 @@ index 63d9fa754..e0c99e21e 100644
  #  else
  #    include <unistd.h>
  #  endif
+
 diff --git a/js/src/jit/IonAnalysis.cpp b/js/src/jit/IonAnalysis.cpp
 index 199c7f99c..0ce9e9e19 100644
 --- a/js/src/jit/IonAnalysis.cpp
@@ -75,24 +78,6 @@ diff --git a/js/src/jit/JitSpewer.cpp b/js/src/jit/JitSpewer.cpp
 index 4fcf78b05..2f947ae1b 100644
 --- a/js/src/jit/JitSpewer.cpp
 +++ b/js/src/jit/JitSpewer.cpp
-@@ -12,8 +12,15 @@
- #  include "mozilla/Sprintf.h"
- 
- #  ifdef XP_WIN
--#    include <process.h>
--#    define getpid _getpid
-+#    ifdef JS_ENABLE_UWP
-+#      define UNICODE
-+#      include <Windows.h>
-+#      include <processthreadsapi.h>
-+#      define getpid GetCurrentProcessId
-+#    else
-+#      include <process.h>
-+#      define getpid _getpid
-+#    endif
- #  else
- #    include <unistd.h>
- #  endif
 @@ -336,8 +343,12 @@ AutoSpewEndFunction::~AutoSpewEndFunction() {
    mir_->graphSpewer().endFunction();
  }
@@ -281,26 +266,6 @@ index cfc4acf7b..36f476380 100644
      out.printf("    slot %u (%u): ", allocWritten_, offset);
      alloc.dump(out);
      out.printf("\n");
-diff --git a/js/src/util/StructuredSpewer.h b/js/src/util/StructuredSpewer.h
-index 5d300a1fe..a3be18be4 100644
---- a/js/src/util/StructuredSpewer.h
-+++ b/js/src/util/StructuredSpewer.h
-@@ -21,8 +21,13 @@
- #  include "vm/Printer.h"
- 
- #  ifdef XP_WIN
--#    include <process.h>
--#    define getpid _getpid
-+#    ifdef JS_ENABLE_UWP
-+#      include <processthreadsapi.h>
-+#      define getpid GetCurrentProcessId
-+#    else
-+#      include <process.h>
-+#      define getpid _getpid
-+#    endif
- #  else
- #    include <unistd.h>
- #  endif
 diff --git a/js/src/vm/Printer.cpp b/js/src/vm/Printer.cpp
 index 427fd62e6..8438deeb7 100644
 --- a/js/src/vm/Printer.cpp
