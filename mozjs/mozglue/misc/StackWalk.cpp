@@ -104,9 +104,11 @@ class FrameSkipper {
 // We need a way to know if we are building for WXP (or later), as if we are, we
 // need to use the newer 64-bit APIs. API_VERSION_NUMBER seems to fit the bill.
 // A value of 9 indicates we want to use the new APIs.
+#ifndef JS_ENABLE_UWP
 #  if API_VERSION_NUMBER < 9
 #    error Too old imagehlp.h
 #  endif
+#endif
 
 struct WalkStackData {
   // Are we walking the stack of the calling thread? Note that we need to avoid
@@ -208,6 +210,9 @@ static void InitializeDbgHelpCriticalSection() {
 }
 
 static void WalkStackMain64(struct WalkStackData* aData) {
+#ifdef JS_ENABLE_UWP
+  return;
+#else
   // Get a context for the specified thread.
   CONTEXT context_buf;
   CONTEXT* context;
@@ -392,6 +397,7 @@ static void WalkStackMain64(struct WalkStackData* aData) {
     }
 #  endif
   }
+#endif
 }
 
 /**
@@ -472,6 +478,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
   BOOL retval = TRUE;
   DWORD64 addr = *(DWORD64*)aUserContext;
 
+#ifndef JS_ENABLE_UWP
   /*
    * You'll want to control this if we are running on an
    *  architecture where the addresses go the other direction.
@@ -491,7 +498,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
       PrintError("SymLoadModule64");
     }
   }
-
+#endif
   return retval;
 }
 
@@ -523,6 +530,7 @@ static BOOL CALLBACK callbackEspecial64(PCSTR aModuleName, DWORD64 aModuleBase,
 #    define NS_IMAGEHLP_MODULE64_SIZE sizeof(IMAGEHLP_MODULE64)
 #  endif
 
+#ifndef JS_ENABLE_UWP
 BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
                                 PIMAGEHLP_MODULE64 aModuleInfo,
                                 PIMAGEHLP_LINE64 aLineInfo) {
@@ -579,10 +587,11 @@ BOOL SymGetModuleInfoEspecial64(HANDLE aProcess, DWORD64 aAddr,
 
   return retval;
 }
+#endif
 
 static bool EnsureSymInitialized() {
   static bool gInitialized = false;
-  bool retStat;
+  bool retStat = true;
 
   if (gInitialized) {
     return gInitialized;
@@ -590,11 +599,13 @@ static bool EnsureSymInitialized() {
 
   InitializeDbgHelpCriticalSection();
 
+#ifndef JS_ENABLE_UWP
   SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME);
   retStat = SymInitialize(GetCurrentProcess(), nullptr, TRUE);
   if (!retStat) {
     PrintError("SymInitialize");
   }
+#endif
 
   gInitialized = retStat;
   /* XXX At some point we need to arrange to call SymCleanup */
@@ -602,6 +613,7 @@ static bool EnsureSymInitialized() {
   return retStat;
 }
 
+#ifndef JS_ENABLE_UWP
 MFBT_API bool MozDescribeCodeAddress(void* aPC,
                                      MozCodeAddressDetails* aDetails) {
   aDetails->library[0] = '\0';
@@ -665,6 +677,7 @@ MFBT_API bool MozDescribeCodeAddress(void* aPC,
   LeaveCriticalSection(&gDbgHelpCS);  // release our lock
   return true;
 }
+#endif
 
 // i386 or PPC Linux stackwalking code
 #elif HAVE_DLADDR &&                                           \
