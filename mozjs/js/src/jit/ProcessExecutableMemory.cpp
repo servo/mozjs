@@ -147,7 +147,6 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
 // For an explanation of the problem being solved here, see
 // SetJitExceptionFilter in jsfriendapi.h.
 static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
-#ifndef JS_ENABLE_UWP
   if (!VirtualAlloc(p, pageSize, MEM_COMMIT, PAGE_READWRITE)) {
     MOZ_CRASH();
   }
@@ -225,11 +224,7 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
 #    endif
 
   DWORD oldProtect;
-#ifdef JS_ENABLE_UWP
-  if (!VirtualProtectFromApp(p, pageSize, PAGE_EXECUTE_READ, &oldProtect)) {
-#else
   if (!VirtualProtect(p, pageSize, PAGE_EXECUTE_READ, &oldProtect)) {
-#endif
     MOZ_CRASH();
   }
 
@@ -239,9 +234,6 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
   AutoSuppressStackWalking suppress;
   return RtlInstallFunctionTableCallback((DWORD64)p | 0x3, (DWORD64)p, bytes,
                                          RuntimeFunctionCallback, NULL, NULL);
-#else
-  return false;
-#endif
 }
 
 static void UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
@@ -261,11 +253,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
   void* p = nullptr;
   for (size_t i = 0; i < 10; i++) {
     void* randomAddr = ComputeRandomAllocationAddress();
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (p) {
       break;
     }
@@ -273,11 +261,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
 
   if (!p) {
     // Try again without randomization.
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (!p) {
       return nullptr;
     }
@@ -328,17 +312,8 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
 
 [[nodiscard]] static bool CommitPages(void* addr, size_t bytes,
                                       ProtectionSetting protection) {
-#ifdef JS_ENABLE_UWP
-  void* p = VirtualAllocFromApp(addr, bytes, MEM_COMMIT, PAGE_READWRITE);
-  if (p) {
-    ULONG oldProt;
-    bool r = VirtualProtectFromApp(addr, bytes, ProtectionSettingToFlags(protection), &oldProt);
-    MOZ_RELEASE_ASSERT(r);
-  }
-#else
   void* p = VirtualAlloc(addr, bytes, MEM_COMMIT,
                          ProtectionSettingToFlags(protection));
-#endif
   if (!p) {
     return false;
   }
@@ -826,11 +801,7 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
 #  ifdef XP_WIN
   DWORD oldProtect;
   DWORD flags = ProtectionSettingToFlags(protection);
-#ifdef JS_ENABLE_UWP
-  if (!VirtualProtectFromApp(pageStart, size, flags, &oldProtect)) {
-#else
   if (!VirtualProtect(pageStart, size, flags, &oldProtect)) {
-#endif
     return false;
   }
 #  else

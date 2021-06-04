@@ -21,15 +21,8 @@
 #  include "vm/Printer.h"
 
 #  ifdef XP_WIN
-#    ifdef JS_ENABLE_UWP
-#      define UNICODE
-#      include <Windows.h>
-#      include <processthreadsapi.h>
-#      define getpid GetCurrentProcessId
-#    else
-#      include <process.h>
-#      define getpid _getpid
-#    endif
+#    include <process.h>
+#    define getpid _getpid
 #  else
 #    include <unistd.h>
 #  endif
