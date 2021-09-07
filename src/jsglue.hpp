@@ -93,18 +93,6 @@ uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
 JSLinearString* AtomToLinearString(JSAtom* atom);
 
 /* This types are using maybe so we manually unwrap it in these wrappers */
-/*
-$ cat ./src/jsapi_wrappers.in | grep "desc: u8"
-wrap!(jsapi: pub fn FromPropertyDescriptor(cx: *mut JSContext, desc: u8, vp: MutableHandle<Value>) -> bool);
-wrap!(jsapi: pub fn JS_GetOwnPropertyDescriptorById(cx: *mut JSContext, obj: HandleObject, id: HandleId, desc: u8) -> bool);
-wrap!(jsapi: pub fn JS_GetOwnPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const ::std::os::raw::c_char, desc: u8) -> bool);
-wrap!(jsapi: pub fn JS_GetOwnUCPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: u8) -> bool);
-wrap!(jsapi: pub fn JS_GetPropertyDescriptorById(cx: *mut JSContext, obj: HandleObject, id: HandleId, desc: u8, holder: MutableHandleObject) -> bool);
-wrap!(jsapi: pub fn JS_GetPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const ::std::os::raw::c_char, desc: u8, holder: MutableHandleObject) -> bool);
-wrap!(jsapi: pub fn JS_GetUCPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: u8, holder: MutableHandleObject) -> bool);
-$ cat ./src/jsapi_wrappers.in | grep "Desc: u8"
-wrap!(jsapi: pub fn SetPropertyIgnoringNamedGetter(cx: *mut JSContext, obj: HandleObject, id: HandleId, v: HandleValue, receiver: HandleValue, ownDesc: u8, result: *mut ObjectOpResult) -> bool);
-*/
 bool FromPropertyDescriptor(JSContext *cx, JS::Handle<JS::PropertyDescriptor> desc, JS::MutableHandle<JS::Value> vp);
 bool JS_GetOwnPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc);
 bool JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name, JS::MutableHandle<JS::PropertyDescriptor> desc);
