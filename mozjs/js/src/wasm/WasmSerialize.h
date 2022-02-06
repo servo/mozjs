@@ -19,12 +19,18 @@
 #ifndef wasm_serialize_h
 #define wasm_serialize_h
 
+#include "mozilla/Maybe.h"
+#include "mozilla/RefPtr.h"
+
 #include <type_traits>
 
+#include "js/AllocPolicy.h"
 #include "js/Vector.h"
 
 namespace js {
 namespace wasm {
+
+using mozilla::MallocSizeOf;
 
 // Factor out common serialization, cloning and about:memory size-computation
 // functions for reuse when serializing wasm and asm.js modules.
@@ -126,6 +132,48 @@ static inline size_t SizeOfVectorExcludingThis(
   return size;
 }
 
+template <class T>
+static inline size_t SerializedMaybeSize(const mozilla::Maybe<T>& maybe) {
+  if (!maybe) {
+    return sizeof(uint8_t);
+  }
+  return sizeof(uint8_t) + maybe->serializedSize();
+}
+
+template <class T>
+static inline uint8_t* SerializeMaybe(uint8_t* cursor,
+                                      const mozilla::Maybe<T>& maybe) {
+  cursor = WriteScalar<uint8_t>(cursor, maybe ? 1 : 0);
+  if (maybe) {
+    cursor = maybe->serialize(cursor);
+  }
+  return cursor;
+}
+
+template <class T>
+static inline const uint8_t* DeserializeMaybe(const uint8_t* cursor,
+                                              mozilla::Maybe<T>* maybe) {
+  uint8_t isSome;
+  cursor = ReadScalar<uint8_t>(cursor, &isSome);
+  if (!cursor) {
+    return nullptr;
+  }
+
+  if (isSome == 1) {
+    maybe->emplace();
+    cursor = (*maybe)->deserialize(cursor);
+  } else {
+    *maybe = mozilla::Nothing();
+  }
+  return cursor;
+}
+
+template <class T>
+static inline size_t SizeOfMaybeExcludingThis(const mozilla::Maybe<T>& maybe,
+                                              MallocSizeOf mallocSizeOf) {
+  return maybe ? maybe->sizeOfExcludingThis(mallocSizeOf) : 0;
+}
+
 template <class T, size_t N>
 static inline size_t SerializedPodVectorSize(
     const mozilla::Vector<T, N, SystemAllocPolicy>& vec) {
@@ -167,6 +215,45 @@ static inline const uint8_t* DeserializePodVectorChecked(
   cursor = ReadBytesChecked(cursor, remain, vec->begin(), length * sizeof(T));
   return cursor;
 }
+
+// To call Vector::shrinkStorageToFit , a type must specialize mozilla::IsPod
+// which is pretty verbose to do within js::wasm, so factor that process out
+// into a macro.
+
+#define WASM_DECLARE_POD_VECTOR(Type, VectorName)   \
+  }                                                 \
+  }                                                 \
+  namespace mozilla {                               \
+  template <>                                       \
+  struct IsPod<js::wasm::Type> : std::true_type {}; \
+  }                                                 \
+  namespace js {                                    \
+  namespace wasm {                                  \
+  typedef Vector<Type, 0, SystemAllocPolicy> VectorName;
+
+// A wasm Module and everything it contains must support serialization and
+// deserialization. Some data can be simply copied as raw bytes and,
+// as a convention, is stored in an inline CacheablePod struct. Everything else
+// should implement the below methods which are called recusively by the
+// containing Module.
+
+#define WASM_DECLARE_SERIALIZABLE(Type)              \
+  size_t serializedSize() const;                     \
+  uint8_t* serialize(uint8_t* cursor) const;         \
+  const uint8_t* deserialize(const uint8_t* cursor); \
+  size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+
+template <class T>
+struct SerializableRefPtr : RefPtr<T> {
+  using RefPtr<T>::operator=;
+
+  SerializableRefPtr() = default;
+
+  template <class U>
+  MOZ_IMPLICIT SerializableRefPtr(U&& u) : RefPtr<T>(std::forward<U>(u)) {}
+
+  WASM_DECLARE_SERIALIZABLE(SerializableRefPtr)
+};
 
 template <class T>
 inline size_t SerializableRefPtr<T>::serializedSize() const {

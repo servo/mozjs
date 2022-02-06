@@ -8,17 +8,23 @@
 #define jit_BaselineCodeGen_h
 
 #include "jit/BaselineFrameInfo.h"
-#include "jit/BaselineIC.h"
 #include "jit/BytecodeAnalysis.h"
 #include "jit/FixedList.h"
 #include "jit/MacroAssembler.h"
-#include "vm/GeneratorResumeKind.h"  // GeneratorResumeKind
 
 namespace js {
 
 namespace jit {
 
-enum class ScriptGCThingType { Atom, RegExp, Object, Function, Scope, BigInt };
+enum class ScriptGCThingType {
+  Atom,
+  String,
+  RegExp,
+  Object,
+  Function,
+  Scope,
+  BigInt
+};
 
 // Base class for BaselineCompiler and BaselineInterpreterGenerator. The Handler
 // template is a class storing fields/methods that are interpreter or compiler
@@ -175,6 +181,7 @@ class BaselineCodeGen {
   void emitLoadReturnValue(ValueOperand val);
   void emitPushNonArrowFunctionNewTarget();
   void emitGetAliasedVar(ValueOperand dest);
+  [[nodiscard]] bool emitGetAliasedDebugVar(ValueOperand dest);
 
   [[nodiscard]] bool emitNextIC();
   [[nodiscard]] bool emitInterruptCheck();
@@ -216,7 +223,6 @@ class BaselineCodeGen {
 
   [[nodiscard]] bool emitReturn();
 
-  [[nodiscard]] bool emitToBoolean();
   [[nodiscard]] bool emitTest(bool branchIfTrue);
   [[nodiscard]] bool emitAndOr(bool branchIfTrue);
   [[nodiscard]] bool emitCoalesce();
@@ -229,9 +235,7 @@ class BaselineCodeGen {
   [[nodiscard]] bool emitSetElemSuper(bool strict);
   [[nodiscard]] bool emitSetPropSuper(bool strict);
 
-  [[nodiscard]] bool emitBindName(JSOp op);
-
-  // Try to bake in the result of GETGNAME/BINDGNAME instead of using an IC.
+  // Try to bake in the result of GetGName/BindGName instead of using an IC.
   // Return true if we managed to optimize the op.
   bool tryOptimizeGetGlobalName();
   bool tryOptimizeBindGlobalName();

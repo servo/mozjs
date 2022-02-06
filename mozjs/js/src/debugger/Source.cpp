@@ -14,27 +14,26 @@
 #include <string.h>  // for memcpy
 #include <utility>   // for move
 
-#include "jsapi.h"  // for JS_ReportErrorNumberASCII, JS_CopyStringCharsZ
-
 #include "debugger/Debugger.h"  // for DebuggerSourceReferent, Debugger
 #include "debugger/Script.h"    // for DebuggerScript
 #include "gc/Tracer.h"  // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "js/CompilationAndEvaluation.h"  // for Compile
-#include "js/experimental/TypedData.h"    // for JS_NewUint8Array
-#include "js/friend/ErrorMessages.h"      // for GetErrorMessage, JSMSG_*
-#include "js/SourceText.h"                // for JS::SourceOwnership
-#include "vm/BytecodeUtil.h"              // for JSDVG_SEARCH_STACK
-#include "vm/JSContext.h"                 // for JSContext (ptr only)
-#include "vm/JSObject.h"                  // for JSObject, RequireObject
-#include "vm/JSScript.h"          // for ScriptSource, ScriptSourceObject
-#include "vm/ObjectGroup.h"       // for TenuredObject
+#include "js/ErrorReport.h"  // for JS_ReportErrorASCII,  JS_ReportErrorNumberASCII
+#include "js/experimental/TypedData.h"  // for JS_NewUint8Array
+#include "js/friend/ErrorMessages.h"    // for GetErrorMessage, JSMSG_*
+#include "js/SourceText.h"              // for JS::SourceOwnership
+#include "js/String.h"                  // for JS_CopyStringCharsZ
+#include "vm/BytecodeUtil.h"            // for JSDVG_SEARCH_STACK
+#include "vm/JSContext.h"               // for JSContext (ptr only)
+#include "vm/JSObject.h"                // for JSObject, RequireObject
+#include "vm/JSScript.h"                // for ScriptSource, ScriptSourceObject
 #include "vm/StringType.h"        // for NewStringCopyZ, JSString (ptr only)
 #include "vm/TypedArrayObject.h"  // for TypedArrayObject, JSObject::is
 #include "wasm/WasmCode.h"        // for Metadata
 #include "wasm/WasmDebug.h"       // for DebugState
 #include "wasm/WasmInstance.h"    // for Instance
 #include "wasm/WasmJS.h"          // for WasmInstanceObject
-#include "wasm/WasmTypes.h"       // for Bytes, RootedWasmInstanceObject
+#include "wasm/WasmTypeDecls.h"   // for Bytes, RootedWasmInstanceObject
 
 #include "debugger/Debugger-inl.h"  // for Debugger::fromJSObject
 #include "vm/JSObject-inl.h"        // for InitClass
@@ -66,8 +65,7 @@ const JSClassOps DebuggerSource::classOps_ = {
 };
 
 const JSClass DebuggerSource::class_ = {
-    "Source", JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
-    &classOps_};
+    "Source", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS), &classOps_};
 
 /* static */
 NativeObject* DebuggerSource::initClass(JSContext* cx,
@@ -87,8 +85,9 @@ DebuggerSource* DebuggerSource::create(JSContext* cx, HandleObject proto,
     return nullptr;
   }
   sourceObj->setReservedSlot(OWNER_SLOT, ObjectValue(*debugger));
-  referent.get().match(
-      [&](auto sourceHandle) { sourceObj->setPrivateGCThing(sourceHandle); });
+  referent.get().match([&](auto sourceHandle) {
+    sourceObj->setReservedSlotGCThingAsPrivate(SOURCE_SLOT, sourceHandle);
+  });
 
   return sourceObj;
 }
@@ -101,7 +100,7 @@ Debugger* DebuggerSource::owner() const {
 
 // For internal use only.
 NativeObject* DebuggerSource::getReferentRawObject() const {
-  return static_cast<NativeObject*>(getPrivate());
+  return maybePtrFromReservedSlot<NativeObject>(SOURCE_SLOT);
 }
 
 DebuggerSourceReferent DebuggerSource::getReferent() const {
@@ -118,10 +117,9 @@ void DebuggerSource::trace(JSTracer* trc) {
   // There is a barrier on private pointers, so the Unbarriered marking
   // is okay.
   if (JSObject* referent = getReferentRawObject()) {
-    TraceManuallyBarrieredCrossCompartmentEdge(
-        trc, static_cast<JSObject*>(this), &referent,
-        "Debugger.Source referent");
-    setPrivateUnbarriered(referent);
+    TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
+                                               "Debugger.Source referent");
+    setReservedSlotGCThingAsPrivateUnbarriered(SOURCE_SLOT, referent);
   }
 }
 
@@ -398,14 +396,14 @@ struct DebuggerSourceGetElementMatcher {
 
 bool DebuggerSource::CallData::getElement() {
   DebuggerSourceGetElementMatcher matcher(cx);
+  RootedValue elementValue(cx);
   if (JSObject* element = referent.match(matcher)) {
-    args.rval().setObjectOrNull(element);
-    if (!obj->owner()->wrapDebuggeeValue(cx, args.rval())) {
+    elementValue.setObject(*element);
+    if (!obj->owner()->wrapDebuggeeValue(cx, &elementValue)) {
       return false;
     }
-  } else {
-    args.rval().setUndefined();
   }
+  args.rval().set(elementValue);
   return true;
 }
 
@@ -619,7 +617,7 @@ static JSScript* ReparseSource(JSContext* cx, HandleScriptSourceObject sso) {
   ScriptSource* ss = sso->source();
 
   JS::CompileOptions options(cx);
-  options.hideScriptFromDebugger = true;
+  options.setHideScriptFromDebugger(true);
   options.setFileAndLine(ss->filename(), ss->startLine());
 
   UncompressedSourceCache::AutoHoldEntry holder;

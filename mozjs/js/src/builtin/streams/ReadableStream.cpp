@@ -8,7 +8,8 @@
 
 #include "builtin/streams/ReadableStream.h"
 
-#include "jsapi.h"    // JS_ReportErrorNumberASCII
+#include "mozilla/Maybe.h"  // mozilla::Maybe, mozilla::Some
+
 #include "jspubtd.h"  // JSProto_ReadableStream
 
 #include "builtin/Array.h"                   // js::NewDenseFullyAllocatedArray
@@ -21,8 +22,9 @@
 #include "builtin/streams/ReadableStreamReader.h"  // js::CreateReadableStream{BYOB,Default}Reader, js::ForAuthorCodeBool
 #include "builtin/streams/WritableStream.h"  // js::WritableStream
 #include "js/CallArgs.h"                     // JS::CallArgs{,FromVp}
-#include "js/Class.h"  // JSCLASS_PRIVATE_IS_NSISUPPORTS, JSCLASS_HAS_PRIVATE, JS_NULL_CLASS_OPS
-#include "js/Conversions.h"           // JS::ToBoolean
+#include "js/Class.h"        // JSCLASS_SLOT0_IS_NSISUPPORTS, JS_NULL_CLASS_OPS
+#include "js/Conversions.h"  // JS::ToBoolean
+#include "js/ErrorReport.h"  // JS_ReportErrorNumberASCII
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertySpec.h"  // JS{Function,Property}Spec, JS_FN, JS_PSG, JS_{FS,PS}_END
 #include "js/RootingAPI.h"        // JS::Handle, JS::Rooted, js::CanGC
@@ -38,6 +40,9 @@
 #include "vm/Compartment-inl.h"   // js::UnwrapAndTypeCheck{Argument,This,Value}
 #include "vm/JSObject-inl.h"      // js::NewBuiltinClassInstance
 #include "vm/NativeObject-inl.h"  // js::ThrowIfNotConstructing
+
+using mozilla::Maybe;
+using mozilla::Some;
 
 using js::CanGC;
 using js::ClassSpec;
@@ -108,7 +113,7 @@ bool ReadableStream::constructor(JSContext* cx, unsigned argc, JS::Value* vp) {
   // Implicit in the spec: argument default values.
   Rooted<Value> underlyingSource(cx, args.get(0));
   if (underlyingSource.isUndefined()) {
-    JSObject* emptyObj = NewBuiltinClassInstance<PlainObject>(cx);
+    JSObject* emptyObj = NewPlainObject(cx);
     if (!emptyObj) {
       return false;
     }
@@ -117,7 +122,7 @@ bool ReadableStream::constructor(JSContext* cx, unsigned argc, JS::Value* vp) {
 
   Rooted<Value> strategy(cx, args.get(1));
   if (strategy.isUndefined()) {
-    JSObject* emptyObj = NewBuiltinClassInstance<PlainObject>(cx);
+    JSObject* emptyObj = NewPlainObject(cx);
     if (!emptyObj) {
       return false;
     }
@@ -271,68 +276,95 @@ bool ReadableStream::constructor(JSContext* cx, unsigned argc, JS::Value* vp) {
 //
 // Not implemented.
 
+enum class ReadableStreamReaderMode { Byob };
+
 /**
- * Streams spec, 3.2.5.4. getReader({ mode } = {})
+ * https://streams.spec.whatwg.org/#rs-get-reader
+ * ReadableStreamReader getReader(optional ReadableStreamGetReaderOptions
+ * options = {});
  */
 [[nodiscard]] static bool ReadableStream_getReader(JSContext* cx, unsigned argc,
                                                    JS::Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
-  // Implicit in the spec: Argument defaults and destructuring.
-  Rooted<Value> optionsVal(cx, args.get(0));
-  if (optionsVal.isUndefined()) {
-    JSObject* emptyObj = NewBuiltinClassInstance<PlainObject>(cx);
-    if (!emptyObj) {
-      return false;
-    }
-    optionsVal.setObject(*emptyObj);
-  }
-  Rooted<Value> modeVal(cx);
-  if (!GetProperty(cx, optionsVal, cx->names().mode, &modeVal)) {
-    return false;
-  }
-
-  // Step 1: If ! IsReadableStream(this) is false, throw a TypeError exception.
+  // Implicit |this| check.
   Rooted<ReadableStream*> unwrappedStream(
       cx, UnwrapAndTypeCheckThis<ReadableStream>(cx, args, "getReader"));
   if (!unwrappedStream) {
     return false;
   }
 
-  // Step 2: If mode is undefined, return
-  //         ? AcquireReadableStreamDefaultReader(this, true).
+  // Implicit in the spec: Dictionary destructuring.
+  // https://heycam.github.io/webidl/#es-dictionary
+  // 3.2.17. Dictionary types
+
+  Rooted<Value> optionsVal(cx, args.get(0));
+  // Step 1.
+  if (!optionsVal.isNullOrUndefined() && !optionsVal.isObject()) {
+    ReportValueError(cx, JSMSG_CANT_CONVERT_TO, JSDVG_IGNORE_STACK, optionsVal,
+                     nullptr, "dictionary");
+    return false;
+  }
+
+  Maybe<ReadableStreamReaderMode> mode;
+  // Step 4: ...
+  //
+  // - Optimized for one dictionary member.
+  // - Treat non-object options as non-existing "mode" member.
+  if (optionsVal.isObject()) {
+    Rooted<Value> modeVal(cx);
+    if (!GetProperty(cx, optionsVal, cx->names().mode, &modeVal)) {
+      return false;
+    }
+
+    // Step 4.1.3: If esMemberValue is not undefined, then: ...
+    if (!modeVal.isUndefined()) {
+      // https://heycam.github.io/webidl/#es-enumeration
+      // 3.2.18. Enumeration types
+
+      // Step 1:  Let S be the result of calling ToString(V).
+      Rooted<JSString*> modeStr(cx, ToString<CanGC>(cx, modeVal));
+      if (!modeStr) {
+        return false;
+      }
+
+      // Step 2: If S is not one of E's enumeration values,
+      //         then throw a TypeError.
+      //
+      // Note: We only have one valid value "byob".
+      bool equal;
+      if (!EqualStrings(cx, modeStr, cx->names().byob, &equal)) {
+        return false;
+      }
+      if (!equal) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                  JSMSG_READABLESTREAM_INVALID_READER_MODE);
+        return false;
+      }
+
+      mode = Some(ReadableStreamReaderMode::Byob);
+    }
+  }
+
+  // Step 1: If options["mode"] does not exist,
+  //         return ? AcquireReadableStreamDefaultReader(this).
   Rooted<JSObject*> reader(cx);
-  if (modeVal.isUndefined()) {
+  if (mode.isNothing()) {
     reader = CreateReadableStreamDefaultReader(cx, unwrappedStream,
                                                ForAuthorCodeBool::Yes);
   } else {
-    // Step 3: Set mode to ? ToString(mode) (implicit).
-    Rooted<JSString*> mode(cx, ToString<CanGC>(cx, modeVal));
-    if (!mode) {
-      return false;
-    }
+    // Step 2: Assert: options["mode"] is "byob".
+    MOZ_ASSERT(mode.value() == ReadableStreamReaderMode::Byob);
 
-    // Step 5: (If mode is not "byob",) Throw a RangeError exception.
-    bool equal;
-    if (!EqualStrings(cx, mode, cx->names().byob, &equal)) {
-      return false;
-    }
-    if (!equal) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_READABLESTREAM_INVALID_READER_MODE);
-      return false;
-    }
-
-    // Step 4: If mode is "byob",
-    //         return ? AcquireReadableStreamBYOBReader(this, true).
+    // Step 3: Return ? AcquireReadableStreamBYOBReader(this).
     reader = CreateReadableStreamBYOBReader(cx, unwrappedStream,
                                             ForAuthorCodeBool::Yes);
   }
 
-  // Reordered second part of steps 2 and 4.
   if (!reader) {
     return false;
   }
+
   args.rval().setObject(*reader);
   return true;
 }
@@ -353,7 +385,7 @@ static bool ReadableStream_pipeTo(JSContext* cx, unsigned argc, Value* vp) {
   // Implicit in the spec: argument default values.
   Rooted<Value> options(cx, args.get(1));
   if (options.isUndefined()) {
-    JSObject* emptyObj = NewBuiltinClassInstance<PlainObject>(cx);
+    JSObject* emptyObj = NewPlainObject(cx);
     if (!emptyObj) {
       return false;
     }
@@ -495,21 +527,23 @@ static bool ReadableStream_tee(JSContext* cx, unsigned argc, Value* vp) {
 // Not implemented.
 
 static const JSFunctionSpec ReadableStream_methods[] = {
-    JS_FN("cancel", ReadableStream_cancel, 1, 0),
-    JS_FN("getReader", ReadableStream_getReader, 0, 0),
+    JS_FN("cancel", ReadableStream_cancel, 0, JSPROP_ENUMERATE),
+    JS_FN("getReader", ReadableStream_getReader, 0, JSPROP_ENUMERATE),
     // pipeTo is only conditionally supported right now, so it must be manually
     // added below if desired.
-    JS_FN("tee", ReadableStream_tee, 0, 0), JS_FS_END};
+    JS_FN("tee", ReadableStream_tee, 0, JSPROP_ENUMERATE), JS_FS_END};
 
 static const JSPropertySpec ReadableStream_properties[] = {
-    JS_PSG("locked", ReadableStream_locked, 0), JS_PS_END};
+    JS_PSG("locked", ReadableStream_locked, JSPROP_ENUMERATE),
+    JS_STRING_SYM_PS(toStringTag, "ReadableStream", JSPROP_READONLY),
+    JS_PS_END};
 
 static bool FinishReadableStreamClassInit(JSContext* cx, Handle<JSObject*> ctor,
                                           Handle<JSObject*> proto) {
   // This function and everything below should be replaced with
   //
   // JS_STREAMS_CLASS_SPEC(ReadableStream, 0, SlotCount, 0,
-  //                       JSCLASS_PRIVATE_IS_NSISUPPORTS | JSCLASS_HAS_PRIVATE,
+  //                       JSCLASS_SLOT0_IS_NSISUPPORTS,
   //                       JS_NULL_CLASS_OPS);
   //
   // when "pipeTo" is always enabled.
@@ -518,7 +552,7 @@ static bool FinishReadableStreamClassInit(JSContext* cx, Handle<JSObject*> ctor,
       rco.getReadableStreamPipeToEnabled()) {
     Rooted<jsid> pipeTo(cx, NameToId(cx->names().pipeTo));
     if (!DefineFunction(cx, proto, pipeTo, ReadableStream_pipeTo, 2,
-                        JSPROP_RESOLVING)) {
+                        JSPROP_RESOLVING | JSPROP_ENUMERATE)) {
       return false;
     }
   }
@@ -527,7 +561,7 @@ static bool FinishReadableStreamClassInit(JSContext* cx, Handle<JSObject*> ctor,
 }
 
 const ClassSpec ReadableStream::classSpec_ = {
-    js::GenericCreateConstructor<ReadableStream::constructor, 2,
+    js::GenericCreateConstructor<ReadableStream::constructor, 0,
                                  js::gc::AllocKind::FUNCTION>,
     js::GenericCreatePrototype<ReadableStream>,
     nullptr,
@@ -541,7 +575,7 @@ const JSClass ReadableStream::class_ = {
     "ReadableStream",
     JSCLASS_HAS_RESERVED_SLOTS(ReadableStream::SlotCount) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_ReadableStream) |
-        JSCLASS_PRIVATE_IS_NSISUPPORTS | JSCLASS_HAS_PRIVATE,
+        JSCLASS_SLOT0_IS_NSISUPPORTS,
     JS_NULL_CLASS_OPS, &ReadableStream::classSpec_};
 
 const JSClass ReadableStream::protoClass_ = {

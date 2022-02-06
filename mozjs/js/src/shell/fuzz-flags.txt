@@ -25,10 +25,12 @@
 --ion-limit-script-size=off
 --ion-limit-script-size=on
 --ion-offthread-compile=off
+--ion-optimize-shapeguards=off
+--ion-optimize-shapeguards=on
 --ion-osr=off
 --ion-osr=on
---ion-pgo=off
---ion-pgo=on
+--ion-pruning=off
+--ion-pruning=on
 --ion-range-analysis=off
 --ion-range-analysis=on
 --ion-regalloc=testbed

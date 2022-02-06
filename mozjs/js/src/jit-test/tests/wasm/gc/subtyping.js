@@ -1,13 +1,13 @@
 // |jit-test| skip-if: !wasmGcEnabled()
 
-function assertSubtype(a, b, types) {
+function assertSubtype(superType, subType, types) {
   types = types || [];
   wasmEvalText(`(module
-    ${types.map((x) => `(type ${x})`).join('\n')}
+    ${types.map((x, i) => `(type \$${i} ${x})`).join('\n')}
     (func
       unreachable
-      (block (param ${b})
-        (block (param ${a})
+      (block (param ${subType})
+        (block (param ${superType})
           drop
         )
       )
@@ -15,9 +15,9 @@ function assertSubtype(a, b, types) {
   )`);
 }
 
-function assertNotSubtype(a, b, types) {
+function assertNotSubtype(superType, subType, types) {
   assertErrorMessage(() => {
-    assertSubtype(a, b, types);
+    assertSubtype(superType, subType, types);
   }, WebAssembly.CompileError, /type mismatch/);
 }
 
@@ -223,3 +223,33 @@ assertNotSubtype(
   '(rtt 0 1)',
   ['(struct)',
    '(struct (field i32))']);
+
+// An rtt with depth can be a subtype of rtt without depth
+assertSubtype(
+  '(rtt $0)',
+  '(rtt 0 $0)',
+  ['(struct)']);
+
+// An rtt without depth is not a subtype of an rtt with depth
+assertNotSubtype(
+  '(rtt 0 $0)',
+  '(rtt $0)',
+  ['(struct)']);
+
+// Rtts with depth must have the same depth
+assertSubtype(
+  '(rtt 0 $0)',
+  '(rtt 0 $0)',
+  ['(struct)']);
+assertSubtype(
+  '(rtt 1 $0)',
+  '(rtt 1 $0)',
+  ['(struct)']);
+assertNotSubtype(
+  '(rtt 1 $0)',
+  '(rtt 0 $0)',
+  ['(struct)']);
+assertNotSubtype(
+  '(rtt 2 $0)',
+  '(rtt 1 $0)',
+  ['(struct)']);

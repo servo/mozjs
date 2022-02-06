@@ -2065,10 +2065,7 @@ void MacroAssembler::wasmUnalignedLoad(const wasm::MemoryAccessDesc& access,
 void MacroAssembler::wasmUnalignedLoadFP(const wasm::MemoryAccessDesc& access,
                                          Register memoryBase, Register ptr,
                                          Register ptrScratch,
-                                         FloatRegister output, Register tmp1,
-                                         Register tmp2, Register tmp3) {
-  MOZ_ASSERT(tmp2 == InvalidReg);
-  MOZ_ASSERT(tmp3 == InvalidReg);
+                                         FloatRegister output, Register tmp1) {
   wasmLoadImpl(access, memoryBase, ptr, ptrScratch, AnyRegister(output), tmp1);
 }
 
@@ -2102,7 +2099,7 @@ void MacroAssemblerMIPSShared::wasmLoadImpl(
 
   // Maybe add the offset.
   if (offset) {
-    asMasm().addPtr(Imm32(offset), ptrScratch);
+    asMasm().addPtr(ImmWord(offset), ptrScratch);
     ptr = ptrScratch;
   }
 
@@ -2184,7 +2181,7 @@ void MacroAssemblerMIPSShared::wasmStoreImpl(
 
   // Maybe add the offset.
   if (offset) {
-    asMasm().addPtr(Imm32(offset), ptrScratch);
+    asMasm().addPtr(ImmWord(offset), ptrScratch);
     ptr = ptrScratch;
   }
 

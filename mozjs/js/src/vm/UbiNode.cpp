@@ -22,10 +22,12 @@
 #include "util/Text.h"
 #include "vm/BigIntType.h"
 #include "vm/EnvironmentObject.h"
+#include "vm/GetterSetter.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
+#include "vm/PropMap.h"
 #include "vm/Scope.h"
 #include "vm/Shape.h"
 #include "vm/StringType.h"
@@ -149,7 +151,7 @@ Node::Size Concrete<void>::size(mozilla::MallocSizeOf mallocSizeof) const {
   MOZ_CRASH("null ubi::Node");
 }
 
-Node::Node(const JS::GCCellPtr& thing) {
+Node::Node(JS::GCCellPtr thing) {
   ApplyGCThingTyped(thing, [this](auto t) { this->construct(t); });
 }
 
@@ -195,7 +197,7 @@ class EdgeVectorTracer final : public JS::CallbackTracer {
   // True if we should populate the edge's names.
   bool wantNames;
 
-  void onChild(const JS::GCCellPtr& thing) override {
+  void onChild(JS::GCCellPtr thing) override {
     if (!okay) {
       return;
     }
@@ -256,6 +258,8 @@ JS::Zone* TracerConcrete<Referent>::zone() const {
 template JS::Zone* TracerConcrete<js::BaseScript>::zone() const;
 template JS::Zone* TracerConcrete<js::Shape>::zone() const;
 template JS::Zone* TracerConcrete<js::BaseShape>::zone() const;
+template JS::Zone* TracerConcrete<js::GetterSetter>::zone() const;
+template JS::Zone* TracerConcrete<js::PropMap>::zone() const;
 template JS::Zone* TracerConcrete<js::RegExpShared>::zone() const;
 template JS::Zone* TracerConcrete<js::Scope>::zone() const;
 template JS::Zone* TracerConcrete<JS::Symbol>::zone() const;
@@ -287,6 +291,10 @@ template UniquePtr<EdgeRange> TracerConcrete<js::BaseScript>::edges(
 template UniquePtr<EdgeRange> TracerConcrete<js::Shape>::edges(
     JSContext* cx, bool wantNames) const;
 template UniquePtr<EdgeRange> TracerConcrete<js::BaseShape>::edges(
+    JSContext* cx, bool wantNames) const;
+template UniquePtr<EdgeRange> TracerConcrete<js::GetterSetter>::edges(
+    JSContext* cx, bool wantNames) const;
+template UniquePtr<EdgeRange> TracerConcrete<js::PropMap>::edges(
     JSContext* cx, bool wantNames) const;
 template UniquePtr<EdgeRange> TracerConcrete<js::RegExpShared>::edges(
     JSContext* cx, bool wantNames) const;
@@ -343,6 +351,9 @@ const char16_t Concrete<js::jit::JitCode>::concreteTypeName[] =
     u"js::jit::JitCode";
 const char16_t Concrete<js::Shape>::concreteTypeName[] = u"js::Shape";
 const char16_t Concrete<js::BaseShape>::concreteTypeName[] = u"js::BaseShape";
+const char16_t Concrete<js::GetterSetter>::concreteTypeName[] =
+    u"js::GetterSetter";
+const char16_t Concrete<js::PropMap>::concreteTypeName[] = u"js::PropMap";
 const char16_t Concrete<js::Scope>::concreteTypeName[] = u"js::Scope";
 const char16_t Concrete<js::RegExpShared>::concreteTypeName[] =
     u"js::RegExpShared";

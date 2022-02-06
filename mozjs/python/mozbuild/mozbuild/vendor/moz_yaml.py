@@ -12,12 +12,6 @@ from __future__ import absolute_import, print_function, unicode_literals
 import errno
 import os
 import re
-import sys
-
-HERE = os.path.abspath(os.path.dirname(__file__))
-lib_path = os.path.join(HERE, "..", "..", "..", "third_party", "python")
-sys.path.append(os.path.join(lib_path, "voluptuous"))
-sys.path.append(os.path.join(lib_path, "pyyaml", "lib"))
 
 import voluptuous
 import yaml
@@ -63,7 +57,7 @@ VALID_LICENSES = [
     "Unicode",  # http://www.unicode.org/copyright.html
 ]
 
-VALID_SOURCE_HOSTS = ["gitlab", "googlesource", "github"]
+VALID_SOURCE_HOSTS = ["gitlab", "googlesource", "github", "angle"]
 
 """
 ---
@@ -127,29 +121,48 @@ updatebot:
     - type: commit-alert
       branch: upstream-branch-name
       cc: ["bugzilla@email.address", "another@example.com"]
+      needinfo: ["bugzilla@email.address", "another@example.com"]
       enabled: True
       filter: security
+      frequency: every
+      platform: windows
     - type: vendoring
       branch: master
       enabled: False
+      frequency: 2 weeks
 
 # Configuration for the automated vendoring system.
 # optional
 vendoring:
 
   # Repository URL to vendor from
-  # eg. https://github.com/kinetiknz/nestegg.git
+  # eg. https://github.com/kinetiknz/nestegg
   # Any repository host can be specified here, however initially we'll only
-  # support automated vendoring from selected sources initially.
+  # support automated vendoring from selected sources.
   url: source url (generally repository clone url)
 
   # Type of hosting for the upstream repository
-  # Valid values are 'gitlab', 'github'
+  # Valid values are 'gitlab', 'github', googlesource
   source-hosting: gitlab
+
+  # Type of git reference (commit, tag) to track updates from.
+  # If omitted, will default to tracking commits.
+  tracking: commit
 
   # Base directory of the location where the source files will live in-tree.
   # If omitted, will default to the location the moz.yaml file is in.
   vendor-directory: third_party/directory
+
+  # Allows skipping certain steps of the vendoring process.
+  # Most useful if e.g. vendoring upstream is complicated and should be done by a script
+  # The valid steps that can be skipped are listed below
+  skip-vendoring-steps:
+    - fetch
+    - exclude
+    - update-moz-yaml
+    - update-actions
+    - hg-add
+    - update-moz-build
 
   # List of patch files to apply after vendoring. Applied in the order
   # specified, and alphabetically if globbing is used. Patches must apply
@@ -200,12 +213,13 @@ vendoring:
   # Actions to take after updating. Applied in order.
   # The action subfield is required. It must be one of:
   #   - copy-file
+  #   - move-dir
   #   - replace-in-file
   #   - delete-path
   #   - run-script
   # Unless otherwise noted, all subfields of action are required.
   #
-  # If the action is copy-file:
+  # If the action is copy-file or move-dir:
   #   from is the source file
   #   to is the destination
   #
@@ -348,7 +362,12 @@ def _schema_1():
                 Required("license"): Msg(License(), msg="Unsupported License"),
                 "license-file": All(str, Length(min=1)),
                 Required("release"): All(str, Length(min=1)),
-                Required("revision"): Match(r"^[a-fA-F0-9]{12,40}$"),
+                # The following regex defines a valid git reference
+                # The first group [^ ~^:?*[\]] matches 0 or more times anything
+                # that isn't a Space, ~, ^, :, ?, *, or ]
+                # The second group [^ ~^:?*[\]\.]+ matches 1 or more times
+                # anything that isn't a Space, ~, ^, :, ?, *, [, ], or .
+                Required("revision"): Match(r"^[^ ~^:?*[\]]*[^ ~^:?*[\]\.]+$"),
             },
             "updatebot": {
                 Required("maintainer-phab"): All(str, Length(min=1)),
@@ -358,24 +377,20 @@ def _schema_1():
                     [
                         {
                             Required("type"): In(
-                                [
-                                    "vendoring",
-                                    "commit-alert",
-                                ],
+                                ["vendoring", "commit-alert"],
                                 msg="Invalid type specified in tasks",
                             ),
                             "branch": All(str, Length(min=1)),
                             "enabled": Boolean(),
                             "cc": Unique([str]),
+                            "needinfo": Unique([str]),
                             "filter": In(
-                                [
-                                    "none",
-                                    "security",
-                                    "source-extensions",
-                                ],
+                                ["none", "security", "source-extensions"],
                                 msg="Invalid filter value specified in tasks",
                             ),
                             "source-extensions": Unique([str]),
+                            "frequency": Match(r"^(every|release|[1-9][0-9]* weeks?)$"),
+                            "platform": Match(r"^(windows|linux)$"),
                         }
                     ],
                 ),
@@ -387,6 +402,8 @@ def _schema_1():
                     Length(min=1),
                     In(VALID_SOURCE_HOSTS, msg="Unsupported Source Hosting"),
                 ),
+                "tracking": All(str, Length(min=1)),
+                "skip-vendoring-steps": Unique([str]),
                 "vendor-directory": All(str, Length(min=1)),
                 "patches": Unique([str]),
                 "keep": Unique([str]),
@@ -399,6 +416,7 @@ def _schema_1():
                             Required("action"): In(
                                 [
                                     "copy-file",
+                                    "move-dir",
                                     "replace-in-file",
                                     "run-script",
                                     "delete-path",
@@ -411,6 +429,7 @@ def _schema_1():
                             "with": All(str, Length(min=1)),
                             "file": All(str, Length(min=1)),
                             "script": All(str, Length(min=1)),
+                            "args": All([All(str, Length(min=1))]),
                             "cwd": All(str, Length(min=1)),
                             "path": All(str, Length(min=1)),
                         }
@@ -450,7 +469,21 @@ def _schema_1_additional(filename, manifest, require_license_file=True):
     if "vendoring" in manifest and "origin" not in manifest:
         raise ValueError('"vendoring" requires an "origin"')
 
-    # If there are Updatebot tasks, then certain fields must be present
+    # Only commit and tag are allowed for tracking
+    if "vendoring" in manifest:
+        if "tracking" not in manifest["vendoring"]:
+            manifest["vendoring"]["tracking"] = "commit"
+        if (
+            manifest["vendoring"]["tracking"] != "commit"
+            and manifest["vendoring"]["tracking"] != "tag"
+        ):
+            raise ValueError(
+                "Only commit or tag is supported for git references to track, %s was given."
+                % manifest["vendoring"]["tracking"]
+            )
+
+    # If there are Updatebot tasks, then certain fields must be present and
+    # defaults need to be set.
     if "updatebot" in manifest and "tasks" in manifest["updatebot"]:
         if "vendoring" not in manifest or "url" not in manifest["vendoring"]:
             raise ValueError(
@@ -485,10 +518,11 @@ class UpdateActions(object):
         for v in values:
             if "action" not in v:
                 raise Invalid("All file-update entries must specify a valid action")
-            if v["action"] == "copy-file":
+            if v["action"] in ["copy-file", "move-dir"]:
                 if "from" not in v or "to" not in v or len(v.keys()) != 3:
                     raise Invalid(
-                        "copy-file action must (only) specify 'from' and 'to' keys"
+                        "%s action must (only) specify 'from' and 'to' keys"
+                        % v["action"]
                     )
             elif v["action"] == "replace-in-file":
                 if (
@@ -507,9 +541,13 @@ class UpdateActions(object):
                         "delete-path action must (only) specify the 'path' key"
                     )
             elif v["action"] == "run-script":
-                if "script" not in v or "cwd" not in v or len(v.keys()) != 3:
+                if "script" not in v or "cwd" not in v:
                     raise Invalid(
-                        "run-script action must (only) specify 'script' and 'cwd' keys"
+                        "run-script action must specify 'script' and 'cwd' keys"
+                    )
+                if set(v.keys()) - set(["args", "cwd", "script", "action"]) != set():
+                    raise Invalid(
+                        "run-script action may only specify 'script', 'cwd', and 'args' keys"
                     )
             else:
                 # This check occurs before the validator above, so the above is

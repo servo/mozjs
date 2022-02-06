@@ -113,22 +113,25 @@ print("")
 rsync_filter_list = """
 # Top-level config and build files
 
++ /aclocal.m4
++ /client.mk
 + /configure.py
 + /LICENSE
++ /mach
 + /Makefile.in
 + /moz.build
 + /moz.configure
 + /test.mozbuild
 + /.babel-eslint.rc.js
-+ .eslintignore
-+ .eslintrc.js
-+ .flake8
-+ .gitignore
-+ .hgignore
-+ .lldbinit
-+ .prettierignore
-+ .prettierrc
-+ .ycm_extra_conf.py
++ /.eslintignore
++ /.eslintrc.js
++ /.flake8
++ /.gitignore
++ /.hgignore
++ /.lldbinit
++ /.prettierignore
++ /.prettierrc
++ /.ycm_extra_conf.py
 
 # Additional libraries (optionally) used by SpiderMonkey
 
@@ -139,6 +142,9 @@ rsync_filter_list = """
 - /intl/icu/source/test
 - /intl/icu/source/tools
 + /intl/icu/**
+
+- /intl/components/gtest
++ /intl/components/**
 
 + /memory/replace/dmd/dmd.py
 + /memory/build/**
@@ -159,6 +165,7 @@ rsync_filter_list = """
 + /tools/fuzzing/interface/**
 + /tools/fuzzing/registry/**
 + /tools/fuzzing/libfuzzer/**
++ /tools/fuzzing/*.mozbuild
 
 # Build system and dependencies
 
@@ -175,13 +182,22 @@ rsync_filter_list = """
 
 + /layout/tools/reftest/reftest/**
 
++ /testing/mach_commands.py
 + /testing/moz.build
 + /testing/mozbase/**
 + /testing/performance/**
++ /testing/web-platform/*.ini
++ /testing/web-platform/*.py
++ /testing/web-platform/meta/streams/**
++ /testing/web-platform/mozilla/**
++ /testing/web-platform/tests/resources/**
 + /testing/web-platform/tests/streams/**
++ /testing/web-platform/tests/tools/**
 
 + /toolkit/crashreporter/tools/symbolstore.py
 + /toolkit/mozapps/installer/package-name.mk
+
++ /xpcom/geckoprocesstypes_generator/**
 
 # SpiderMonkey itself
 
@@ -196,19 +212,52 @@ rsync_filter_list = """
 """
 
 INSTALL_CONTENT = """\
-Full build documentation for SpiderMonkey is hosted on MDN:
-  https://developer.mozilla.org/en-US/docs/SpiderMonkey/Build_Documentation
+Documentation for SpiderMonkey is available at:
+
+  https://spidermonkey.dev/
+
+In particular, it points to build documentation at
+
+  https://firefox-source-docs.mozilla.org/js/build.html
 
 Note that the libraries produced by the build system include symbols,
 causing the binaries to be extremely large. It is highly suggested that `strip`
 be run over the binaries before deploying them.
 
 Building with default options may be performed as follows:
-  cd js/src
-  mkdir obj
-  cd obj
-  ../configure
-  make # or mozmake on Windows
+
+  ./mach build
+
+This will produce a debug build (much more suitable for developing against the
+SpiderMonkey JSAPI). To produce an optimized build:
+
+  export MOZCONFIG=$(pwd)/mozconfig.opt
+  ./mach build
+
+You may edit the mozconfig and mozconfig.opt files to configure your own build
+appropriately.
+"""
+
+MOZCONFIG_DEBUG_CONTENT = """\
+# Much slower when running, but adds assertions that are much better for
+# developing against the JSAPI.
+ac_add_options --enable-debug
+
+# Much faster when running, worse for debugging.
+ac_add_options --enable-optimize
+
+mk_add_options MOZ_OBJDIR=obj-debug
+"""
+
+MOZCONFIG_OPT_CONTENT = """\
+# Much faster when running, but very error-prone to develop against because
+# this will skip all the assertions critical to using the JSAPI properly.
+ac_add_options --disable-debug
+
+# Much faster when running, worse for debugging.
+ac_add_options --enable-optimize
+
+mk_add_options MOZ_OBJDIR=obj-opt
 """
 
 README_CONTENT = """\
@@ -218,8 +267,7 @@ This release is based on a revision of Mozilla {major_version}:
   https://hg.mozilla.org/releases/
 The changes in the patches/ directory were applied.
 
-MDN hosts the latest SpiderMonkey {major_version} release notes:
-  https://developer.mozilla.org/en-US/docs/SpiderMonkey/{major_version}
+See https://spidermonkey.dev/ for documentation, examples, and release notes.
 """.format(
     major_version=major_version
 )
@@ -358,30 +406,18 @@ def generate_configure():
         )
 
 
-def copy_install():
-    """Copy or create INSTALL."""
+def copy_file(filename, content):
+    """Copy an existing file from the staging area, or create a new file
+    with the given contents if it does not exist."""
 
-    staging_install_file = staging_dir / "INSTALL"
-    target_install_file = target_dir / "INSTALL"
+    staging_file = staging_dir / filename
+    target_file = target_dir / filename
 
-    if staging_install_file.exists():
-        shutil.copy2(str(staging_install_file), str(target_install_file))
+    if staging_file.exists():
+        shutil.copy2(str(staging_file), str(target_file))
     else:
-        with target_install_file.open("w") as f:
-            f.write(INSTALL_CONTENT)
-
-
-def copy_readme():
-    """Copy or create README."""
-
-    staging_readme_file = staging_dir / "README"
-    target_readme_file = target_dir / "README"
-
-    if staging_readme_file.exists():
-        shutil.copy2(str(staging_readme_file), str(target_readme_file))
-    else:
-        with target_readme_file.open("w") as f:
-            f.write(README_CONTENT)
+        with target_file.open("w") as f:
+            f.write(content)
 
 
 def copy_patches():
@@ -413,8 +449,10 @@ def stage():
     sync_files()
     copy_cargo_toml()
     generate_configure()
-    copy_install()
-    copy_readme()
+    copy_file("INSTALL", INSTALL_CONTENT)
+    copy_file("README", README_CONTENT)
+    copy_file("mozconfig", MOZCONFIG_DEBUG_CONTENT)
+    copy_file("mozconfig.opt", MOZCONFIG_OPT_CONTENT)
     copy_patches()
     remove_python_cache()
 

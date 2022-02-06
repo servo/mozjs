@@ -49,9 +49,7 @@ endif
 
 # Without -j > 1, make will not pass jobserver info down to cargo. Force
 # one job when requested as a special case.
-ifeq (1,$(MOZ_PARALLEL_BUILD))
-cargo_build_flags += -j1
-endif
+cargo_build_flags += $(filter -j1,$(MAKEFLAGS))
 
 # We also need to rebuild the rust stdlib so that it's instrumented. Because
 # build-std is still pretty experimental, we need to explicitly request
@@ -59,6 +57,24 @@ endif
 ifdef MOZ_TSAN
 cargo_build_flags += -Zbuild-std=std,panic_abort
 RUSTFLAGS += -Zsanitizer=thread
+endif
+
+rustflags_sancov =
+ifdef LIBFUZZER
+ifndef MOZ_TSAN
+ifndef FUZZING_JS_FUZZILLI
+# These options should match what is implicitly enabled for `clang -fsanitize=fuzzer`
+#   here: https://github.com/llvm/llvm-project/blob/release/13.x/clang/lib/Driver/SanitizerArgs.cpp#L422
+#
+#  -sanitizer-coverage-inline-8bit-counters      Increments 8-bit counter for every edge.
+#  -sanitizer-coverage-level=4                   Enable coverage for all blocks, critical edges, and indirect calls.
+#  -sanitizer-coverage-trace-compares            Tracing of CMP and similar instructions.
+#  -sanitizer-coverage-pc-table                  Create a static PC table.
+#
+# In TSan builds, we must not pass any of these, because sanitizer coverage is incompatible with TSan.
+rustflags_sancov += -Cpasses=sancov-module -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-level=4 -Cllvm-args=-sanitizer-coverage-trace-compares -Cllvm-args=-sanitizer-coverage-pc-table
+endif
+endif
 endif
 
 # These flags are passed via `cargo rustc` and only apply to the final rustc
@@ -69,11 +85,17 @@ ifndef MOZ_DEBUG_RUST
 # Enable link-time optimization for release builds, but not when linking
 # gkrust_gtest. And not when doing cross-language LTO.
 ifndef MOZ_LTO_RUST_CROSS
+# Never enable when sancov is enabled to work around https://github.com/rust-lang/rust/issues/90300.
+ifndef rustflags_sancov
+# Never enable when coverage is enabled to work around https://github.com/rust-lang/rust/issues/90045.
+ifndef MOZ_CODE_COVERAGE
 ifeq (,$(findstring gkrust_gtest,$(RUST_LIBRARY_FILE)))
 cargo_rustc_flags += -Clto
 endif
 # We need -Cembed-bitcode=yes for all crates when using -Clto.
 RUSTFLAGS += -Cembed-bitcode=yes
+endif
+endif
 endif
 endif
 endif
@@ -84,26 +106,11 @@ endif
 
 rustflags_neon =
 ifeq (neon,$(MOZ_FPU))
-# Enable neon and disable restriction to 16 FPU registers
+ifneq (,$(filter thumbv7neon-,$(RUST_TARGET)))
+# Enable neon and disable restriction to 16 FPU registers when neon is enabled
+# but we're not using a thumbv7neon target, where it's already the default.
 # (CPUs with neon have 32 FPU registers available)
 rustflags_neon += -C target_feature=+neon,-d16
-endif
-
-rustflags_sancov =
-ifdef LIBFUZZER
-ifndef MOZ_TSAN
-ifndef FUZZING_JS_FUZZILLI
-# These options should match what is implicitly enabled for `clang -fsanitize=fuzzer`
-#   here: https://github.com/llvm/llvm-project/blob/release/8.x/clang/lib/Driver/SanitizerArgs.cpp#L354
-#
-#  -sanitizer-coverage-inline-8bit-counters      Increments 8-bit counter for every edge.
-#  -sanitizer-coverage-level=4                   Enable coverage for all blocks, critical edges, and indirect calls.
-#  -sanitizer-coverage-trace-compares            Tracing of CMP and similar instructions.
-#  -sanitizer-coverage-pc-table                  Create a static PC table.
-#
-# In TSan builds, we must not pass any of these, because sanitizer coverage is incompatible with TSan.
-rustflags_sancov += -Cpasses=sancov -Cllvm-args=-sanitizer-coverage-inline-8bit-counters -Cllvm-args=-sanitizer-coverage-level=4 -Cllvm-args=-sanitizer-coverage-trace-compares -Cllvm-args=-sanitizer-coverage-pc-table
-endif
 endif
 endif
 
@@ -185,6 +192,19 @@ export CFLAGS_$(rust_cc_env_name)=$(CC_BASE_FLAGS)
 export CXXFLAGS_$(rust_cc_env_name)=$(CXX_BASE_FLAGS)
 endif
 
+# When host == target, cargo will compile build scripts with sanitizers enabled
+# if sanitizers are enabled, which may randomly fail when they execute
+# because of https://github.com/google/sanitizers/issues/1322.
+# Work around by disabling __tls_get_addr interception (bug 1635327).
+ifeq ($(RUST_TARGET),$(RUST_HOST_TARGET))
+define sanitizer_options
+ifdef MOZ_$1
+export $1_OPTIONS:=$$($1_OPTIONS:%=%:)intercept_tls_get_addr=0
+endif
+endef
+$(foreach san,ASAN TSAN UBSAN,$(eval $(call sanitizer_options,$(san))))
+endif
+
 # Force the target down to all bindgen callers, even those that may not
 # read BINDGEN_SYSTEM_FLAGS some way or another.
 export BINDGEN_EXTRA_CLANG_ARGS:=$(filter --target=%,$(BINDGEN_SYSTEM_FLAGS))
@@ -199,6 +219,7 @@ export LIBCLANG_PATH=$(MOZ_LIBCLANG_PATH)
 export CLANG_PATH=$(MOZ_CLANG_PATH)
 export PKG_CONFIG
 export PKG_CONFIG_ALLOW_CROSS=1
+export PKG_CONFIG_PATH
 ifneq (,$(PKG_CONFIG_SYSROOT_DIR))
 export PKG_CONFIG_SYSROOT_DIR
 endif
@@ -207,7 +228,10 @@ export PKG_CONFIG_LIBDIR
 endif
 export RUST_BACKTRACE=full
 export MOZ_TOPOBJDIR=$(topobjdir)
+export MOZ_FOLD_LIBS
 export PYTHON3
+export CARGO_PROFILE_RELEASE_OPT_LEVEL
+export CARGO_PROFILE_DEV_OPT_LEVEL
 
 # Set COREAUDIO_SDK_PATH for third_party/rust/coreaudio-sys/build.rs
 ifeq ($(OS_ARCH), Darwin)
@@ -217,13 +241,11 @@ endif
 endif
 
 ifndef RUSTC_BOOTSTRAP
-ifeq (,$(filter 1.47.% 1.48.% 1.49.%,$(RUSTC_VERSION)))
-RUSTC_BOOTSTRAP := gkrust_shared,qcms
+RUSTC_BOOTSTRAP := mozglue_static,qcms
 ifdef MOZ_RUST_SIMD
 RUSTC_BOOTSTRAP := $(RUSTC_BOOTSTRAP),encoding_rs,packed_simd
 endif
 export RUSTC_BOOTSTRAP
-endif
 endif
 
 target_rust_ltoable := force-cargo-library-build
@@ -237,6 +259,11 @@ ifdef MOZ_PROFILE_GENERATE
 # because -C panic=unwind (the compiler default) is not compatible with -C profile-generate
 # (https://github.com/rust-lang/rust/issues/61002).
 rust_pgo_flags := -C panic=abort -C profile-generate=$(topobjdir)
+ifeq (1,$(words $(filter 5.% 6.% 7.% 8.% 9.% 10.% 11.%,$(CC_VERSION) $(RUSTC_LLVM_VERSION))))
+# Disable value profiling when:
+# (RUSTC_LLVM_VERSION < 12 and CC_VERSION >= 12) or (RUSTC_LLVM_VERSION >= 12 and CC_VERSION < 12)
+rust_pgo_flags += -C llvm-args=--disable-vp=true
+endif
 # The C compiler may be passed extra llvm flags for PGO that we also want to pass to rust as well.
 # In PROFILE_GEN_CFLAGS, they look like "-mllvm foo", and we want "-C llvm-args=foo", so first turn
 # "-mllvm foo" into "-mllvm:foo" so that it becomes a unique argument, that we can then filter for,
@@ -289,10 +316,6 @@ endef
 cargo_host_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_HOST_TARGET))_LINKER
 cargo_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_TARGET))_LINKER
 
-# Cargo needs the same linker flags as the C/C++ compiler,
-# but not the final libraries. Filter those out because they
-# cause problems on macOS 10.7; see bug 1365993 for details.
-# Also, we don't want to pass PGO flags until cargo supports them.
 export MOZ_CARGO_WRAP_LDFLAGS
 export MOZ_CARGO_WRAP_LD
 export MOZ_CARGO_WRAP_HOST_LDFLAGS
@@ -316,12 +339,43 @@ export $(cargo_linker_env_var):=$(topsrcdir)/build/cargo-linker
 WRAP_HOST_LINKER_LIBPATHS:=$(HOST_LINKER_LIBPATHS)
 endif
 
-# Defining all of this for TSan builds results in crashes while running
-# some crates's build scripts (!), so disable it for now.
-# See https://github.com/rust-lang/cargo/issues/5754
-ifndef NATIVE_TSAN
+# Cargo needs the same linker flags as the C/C++ compiler,
+# but not the final libraries. Filter those out because they
+# cause problems on macOS 10.7; see bug 1365993 for details.
+# Also, we don't want to pass PGO flags until cargo supports them.
 $(TARGET_RECIPES): MOZ_CARGO_WRAP_LDFLAGS:=$(filter-out -fsanitize=cfi% -framework Cocoa -lobjc AudioToolbox ExceptionHandling -fprofile-%,$(LDFLAGS))
-endif # NATIVE_TSAN
+
+# When building with sanitizer, rustc links its own runtime, which conflicts
+# with the one that passing -fsanitize=* to the linker would add.
+# Ideally, we'd always do this filtering, but because the flags may also apply
+# to build scripts because cargo doesn't allow the distinction, we only filter
+# when building programs, except when using thread sanitizer where we filter
+# everywhere.
+ifneq (,$(filter -Zsanitizer=%,$(RUSTFLAGS)))
+$(if $(filter -Zsanitizer=thread,$(RUSTFLAGS)),$(TARGET_RECIPES),force-cargo-program-build): MOZ_CARGO_WRAP_LDFLAGS:=$(filter-out -fsanitize=%,$(MOZ_CARGO_WRAP_LDFLAGS))
+endif
+
+# Rustc assumes that *-windows-gnu targets build with mingw-gcc and manually
+# add runtime libraries that don't exist with mingw-clang. We created dummy
+# libraries in $(topobjdir)/build/win32, but that's not enough, because some
+# of the wanted symbols that come from these libraries are available in a
+# different library, that we add manually. We also need to avoid rustc
+# passing -nodefaultlibs to clang so that it adds clang_rt.
+ifeq (WINNT_clang,$(OS_ARCH)_$(CC_TYPE))
+force-cargo-program-build: MOZ_CARGO_WRAP_LDFLAGS+=-L$(topobjdir)/build/win32 -lunwind
+force-cargo-program-build: CARGO_RUSTCFLAGS += -C default-linker-libraries=yes
+endif
+
+# Rustc passes -nodefaultlibs to the linker (clang) on mac, which prevents
+# clang from adding the necessary sanitizer runtimes when building with
+# C/C++ sanitizer but without rust sanitizer.
+ifeq (Darwin,$(OS_ARCH))
+ifeq (,$(filter -Zsanitizer=%,$(RUSTFLAGS)))
+ifneq (,$(filter -fsanitize=%,$(LDFLAGS)))
+force-cargo-program-build: CARGO_RUSTCFLAGS += -C default-linker-libraries=yes
+endif
+endif
+endif
 
 $(HOST_RECIPES): MOZ_CARGO_WRAP_LDFLAGS:=$(HOST_LDFLAGS) $(WRAP_HOST_LINKER_LIBPATHS)
 $(TARGET_RECIPES) $(HOST_RECIPES): MOZ_CARGO_WRAP_HOST_LDFLAGS:=$(HOST_LDFLAGS) $(WRAP_HOST_LINKER_LIBPATHS)
@@ -344,6 +398,13 @@ ifdef RUST_LIBRARY_FILE
 
 ifdef RUST_LIBRARY_FEATURES
 rust_features_flag := --features '$(RUST_LIBRARY_FEATURES)'
+endif
+
+ifeq (WASI,$(OS_ARCH))
+# The rust wasi target defaults to statically link the wasi crt, but when we
+# build static libraries from rust and link them with C/C++ code, we also link
+# a wasi crt, which may conflict with rust's.
+force-cargo-library-build: CARGO_RUSTCFLAGS += -C target-feature=-crt-static
 endif
 
 # Assume any system libraries rustc links against are already in the target's LIBS.
@@ -394,7 +455,7 @@ rust_test_flag := --no-fail-fast
 force-cargo-test-run:
 	$(call RUN_CARGO,test $(cargo_target_flag) $(rust_test_flag) $(rust_test_options) $(rust_test_features_flag))
 
-endif
+endif # RUST_TESTS
 
 ifdef HOST_RUST_LIBRARY_FILE
 
@@ -419,7 +480,7 @@ ifdef RUST_PROGRAMS
 
 force-cargo-program-build: $(call resfile,module)
 	$(REPORT_BUILD)
-	$(call CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag) -- $(addprefix -C link-arg=$(CURDIR)/,$(call resfile,module))
+	$(call CARGO_BUILD) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag) -- $(addprefix -C link-arg=$(CURDIR)/,$(call resfile,module)) $(CARGO_RUSTCFLAGS)
 
 $(RUST_PROGRAMS): force-cargo-program-build ;
 

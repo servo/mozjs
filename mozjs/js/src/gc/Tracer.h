@@ -129,6 +129,17 @@ inline void TraceCellHeaderEdge(JSTracer* trc,
   }
 }
 
+template <class T>
+inline void TraceCellHeaderEdge(JSTracer* trc,
+                                gc::TenuredCellWithGCPointer<T>* thingp,
+                                const char* name) {
+  T* thing = thingp->headerPtr();
+  gc::TraceEdgeInternal(trc, gc::ConvertToBase(&thing), name);
+  if (thing != thingp->headerPtr()) {
+    thingp->unbarrieredSetHeaderPtr(thing);
+  }
+}
+
 // Trace through a possibly-null edge in the live object graph on behalf of
 // tracing.
 
@@ -213,11 +224,43 @@ inline bool TraceManuallyBarrieredWeakEdge(JSTracer* trc, T* thingp,
   return gc::TraceEdgeInternal(trc, gc::ConvertToBase(thingp), name);
 }
 
+// The result of tracing a weak edge, which can be either:
+//
+//  - the target is dead (and the edge has been cleared), or
+//  - the target is alive (and the edge may have been updated)
+//
+// This includes the initial and final values of the edge to allow cleanup if
+// the target is dead or access to the referent if it is alive.
 template <typename T>
-inline bool TraceWeakEdge(JSTracer* trc, BarrieredBase<T>* thingp,
-                          const char* name) {
-  return gc::TraceEdgeInternal(
-      trc, gc::ConvertToBase(thingp->unbarrieredAddress()), name);
+struct TraceWeakResult {
+  const bool live_;
+  const T initial_;
+  const T final_;
+
+  bool isLive() const { return live_; }
+  bool isDead() const { return !live_; }
+
+  MOZ_IMPLICIT operator bool() const { return isLive(); }
+
+  T initialTarget() const {
+    MOZ_ASSERT(isDead());
+    return initial_;
+  }
+
+  T finalTarget() const {
+    MOZ_ASSERT(isLive());
+    return final_;
+  }
+};
+
+template <typename T>
+inline TraceWeakResult<T> TraceWeakEdge(JSTracer* trc, BarrieredBase<T>* thingp,
+                                        const char* name) {
+  T* addr = thingp->unbarrieredAddress();
+  T initial = *addr;
+  bool live = !InternalBarrierMethods<T>::isMarkable(initial) ||
+              gc::TraceEdgeInternal(trc, gc::ConvertToBase(addr), name);
+  return TraceWeakResult<T>{live, initial, *addr};
 }
 
 // Trace all edges contained in the given array.
@@ -336,6 +379,13 @@ inline js::Shape* DispatchToOnEdge(GenericTracer* trc, js::Shape* shape) {
 inline js::BaseShape* DispatchToOnEdge(GenericTracer* trc,
                                        js::BaseShape* base) {
   return trc->onBaseShapeEdge(base);
+}
+inline js::GetterSetter* DispatchToOnEdge(GenericTracer* trc,
+                                          js::GetterSetter* gs) {
+  return trc->onGetterSetterEdge(gs);
+}
+inline js::PropMap* DispatchToOnEdge(GenericTracer* trc, js::PropMap* map) {
+  return trc->onPropMapEdge(map);
 }
 inline js::jit::JitCode* DispatchToOnEdge(GenericTracer* trc,
                                           js::jit::JitCode* code) {

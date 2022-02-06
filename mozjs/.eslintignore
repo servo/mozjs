@@ -40,11 +40,9 @@ browser/components/sessionstore/test/unit/data/sessionstore_invalid.js
 browser/components/enterprisepolicies/schemas/schema.jsm
 # generated & special files in cld2
 browser/components/translation/cld2/
-# Screenshots is imported as a system add-on and has
-# their own lint rules currently.
-browser/extensions/screenshots/
 # generated or library files in pocket
 browser/components/pocket/content/panels/js/tmpl.js
+browser/components/pocket/content/panels/js/main.bundle.js
 
 # Ignore newtab files
 browser/components/newtab/aboutwelcome/content/aboutwelcome.bundle.js
@@ -79,8 +77,13 @@ devtools/client/inspector/markup/test/events_bundle.js
 devtools/client/netmonitor/test/xhr_bundle.js
 devtools/client/webconsole/test/browser/code_bundle_nosource.js
 devtools/client/webconsole/test/browser/code_bundle_invalidmap.js
+devtools/client/webconsole/test/browser/test-autocomplete-mapped.js
+devtools/client/webconsole/test/browser/test-autocomplete-mapped.src.js
 devtools/server/tests/xpcshell/setBreakpoint*
 devtools/server/tests/xpcshell/sourcemapped.js
+
+# Ignore generated code from wasm-bindgen
+devtools/client/performance-new/profiler_get_symbols.js
 
 # Testing syntax error
 devtools/client/webconsole/test/browser/test-syntaxerror-worklet.js
@@ -133,7 +136,6 @@ js/public/
 js/xpconnect/
 js/src/devtools/
 js/src/jit-test/
-js/src/jsapi-tests/binast/
 js/src/tests/
 js/src/Y.js
 
@@ -159,6 +161,10 @@ python/
 # These are (mainly) imported code that we don't want to lint to make imports easier.
 remote/cdp/Protocol.jsm
 remote/cdp/test/browser/chrome-remote-interface.js
+remote/marionette/atom.js
+
+# This file explicitly has a syntax error and cannot be parsed by eslint.
+remote/shared/messagehandler/test/browser/resources/modules/root/invalid.jsm
 
 # services/ exclusions
 
@@ -174,9 +180,7 @@ servo/
 
 # Test files that we don't want to lint (preprocessed, minified etc)
 testing/condprofile/condprof/tests/profile
-testing/marionette/atom.js
 testing/mozbase/mozprofile/tests/files/prefs_with_comments.js
-testing/talos/talos/scripts/jszip.min.js
 testing/talos/talos/startup_test/sessionrestore/profile/sessionstore.js
 testing/talos/talos/startup_test/sessionrestore/profile-manywindows/sessionstore.js
 testing/talos/talos/tests/devtools/addon/content/pages/
@@ -188,9 +192,6 @@ testing/talos/talos/fis/tp5n/
 testing/web-platform/
 
 # toolkit/ exclusions
-
-# Ignore generated code from wasm-bindgen
-toolkit/components/extensions/profiler_get_symbols.js
 
 # Intentionally invalid JS
 toolkit/components/workerloader/tests/moduleF-syntax-error.js
@@ -211,9 +212,6 @@ toolkit/components/reader/Readerable.jsm
 toolkit/mozapps/update/tests/data/xpcshellConstantsPP.js
 toolkit/modules/AppConstants.jsm
 
-# Tests old non-star function generators
-toolkit/modules/tests/xpcshell/test_task.js
-
 # Uses special template formatting.
 tools/tryselect/selectors/chooser/templates/chooser.html
 
@@ -222,3 +220,9 @@ tools/update-packaging/**/*refs.js
 
 # Ignore backgroundtasks preferences files.
 toolkit/components/backgroundtasks/defaults
+
+# Uses preprocessing
+toolkit/components/crashes/CrashManager.jsm
+
+# Ignore pre-generated webpack and typescript transpiled files for translations
+browser/extensions/translations/extension/

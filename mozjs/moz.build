@@ -177,6 +177,8 @@ if CONFIG["MOZ_BUILD_APP"]:
 else:
     include("/toolkit/toolkit.mozbuild")
 
+OBJDIR_PP_FILES[".cargo"] += [".cargo/config.in"]
+
 DEFINES["top_srcdir"] = TOPSRCDIR
 
 SPHINX_TREES["contributing"] = "docs/contributing"
@@ -192,5 +194,11 @@ SPHINX_TREES["bug-mgmt"] = "docs/bug-mgmt"
 SPHINX_TREES["setup"] = "docs/setup"
 
 SPHINX_TREES["crash-reporting"] = "docs/crash-reporting"
+
+SPHINX_TREES["performance"] = "docs/performance"
+
+SPHINX_TREES["metrics"] = "docs/metrics"
+
+SPHINX_TREES["gtest"] = "docs/gtest"
 
 include("build/templates.mozbuild")

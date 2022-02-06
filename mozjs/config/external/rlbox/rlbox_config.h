@@ -6,6 +6,8 @@
 #ifndef RLBOX_CONFIG
 #define RLBOX_CONFIG
 
+#include "mozilla/Assertions.h"
+
 #ifdef XP_MACOSX
 
 // RLBox uses c++17's shared_locks by default, even for the noop_sandbox
@@ -27,9 +29,12 @@ struct rlbox_shared_lock {
 
 #endif
 
-// All uses are on the main thread right now, disable rlbox thread checks for
-// performance
+// All uses of rlbox's function and callbacks invocations are on a single
+// thread right now, so we disable rlbox thread checks for performance
+// See (Bug 1739298) for more details
 #define RLBOX_SINGLE_THREADED_INVOCATIONS
+
+#define RLBOX_CUSTOM_ABORT(msg) MOZ_CRASH_UNSAFE_PRINTF("RLBox crash: %s", msg)
 
 // The MingW compiler does not correctly handle static thread_local inline
 // members. This toggles a workaround that allows the host application (firefox)

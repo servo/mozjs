@@ -23,19 +23,15 @@
 #include "jit/JitCommon.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimitWithStackPointer
-#include "util/Memory.h"
-#include "util/StructuredSpewer.h"
+#include "jit/MacroAssembler.h"
+#include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit
 #include "vm/Interpreter.h"
 #include "vm/TraceLogging.h"
 
 #include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
 #include "jit/JitScript-inl.h"
-#include "jit/MacroAssembler-inl.h"
-#include "vm/BytecodeUtil-inl.h"
 #include "vm/GeckoProfiler-inl.h"
-#include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Stack-inl.h"
 
@@ -106,11 +102,10 @@ static JitExecStatus EnterBaseline(JSContext* cx, EnterJitData& data) {
   MOZ_ASSERT(data.osrFrame);
 
   // Check for potential stack overflow before OSR-ing.
-  uint8_t spDummy;
   uint32_t extra =
       BaselineFrame::Size() + (data.osrNumStackValues * sizeof(Value));
-  uint8_t* checkSp = (&spDummy) - extra;
-  if (!CheckRecursionLimitWithStackPointer(cx, checkSp)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.checkWithExtra(cx, extra)) {
     return JitExec_Aborted;
   }
 
@@ -661,7 +656,7 @@ const RetAddrEntry& BaselineScript::prologueRetAddrEntry(
 }
 
 const RetAddrEntry& BaselineScript::retAddrEntryFromReturnAddress(
-    uint8_t* returnAddr) {
+    const uint8_t* returnAddr) {
   MOZ_ASSERT(returnAddr > method_->raw());
   MOZ_ASSERT(returnAddr < method_->raw() + method_->instructionsSize());
   CodeOffset offset(returnAddr - method_->raw());

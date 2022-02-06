@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import uuid
+from pathlib import Path
 
 from xml.dom import getDOMImplementation
 
@@ -27,6 +28,7 @@ from ..frontend.data import (
     LocalInclude,
     Program,
     Sources,
+    SandboxedWasmLibrary,
     UnifiedSources,
 )
 from mozbuild.base import ExecutionSummary
@@ -109,7 +111,7 @@ class VisualStudioBackend(CommonBackend):
             # for us instead.
             self._process_unified_sources(obj)
 
-        elif isinstance(obj, Library):
+        elif isinstance(obj, Library) and not isinstance(obj, SandboxedWasmLibrary):
             self._libs_to_paths[obj.basename] = reldir
 
         elif isinstance(obj, Program) or isinstance(obj, HostProgram):
@@ -465,11 +467,16 @@ class VisualStudioBackend(CommonBackend):
         fh.write(b"$expanded = $bashargs -join ' '\r\n")
         fh.write(b'$procargs = "-c", $expanded\r\n')
 
+        if (Path(os.environ["MOZILLABUILD"]) / "msys2").exists():
+            bash_path = rb"msys2\usr\bin\bash"
+        else:
+            bash_path = rb"msys\bin\bash"
+
         fh.write(
             b"Start-Process -WorkingDirectory $env:TOPOBJDIR "
-            b"-FilePath $env:MOZILLABUILD\\msys\\bin\\bash "
+            b"-FilePath $env:MOZILLABUILD\\%b "
             b"-ArgumentList $procargs "
-            b"-Wait -NoNewWindow\r\n"
+            b"-Wait -NoNewWindow\r\n" % bash_path
         )
 
     def _write_mach_batch(self, fh):
@@ -491,12 +498,17 @@ class VisualStudioBackend(CommonBackend):
             self.environment.topsrcdir, self.environment.topobjdir
         ).replace("\\", "/")
 
+        if (Path(os.environ["MOZILLABUILD"]) / "msys2").exists():
+            bash_path = rb"msys2\usr\bin\bash"
+        else:
+            bash_path = rb"msys\bin\bash"
+
         # We go through mach because it has the logic for choosing the most
         # appropriate build tool.
         fh.write(
-            b'"%%MOZILLABUILD%%\\msys\\bin\\bash" '
+            b'"%%MOZILLABUILD%%\\%b" '
             b'-c "%s/mach --log-no-times %%1 %%2 %%3 %%4 %%5 %%6 %%7"'
-            % relpath.encode("utf-8")
+            % (bash_path, relpath.encode("utf-8"))
         )
 
     def _write_vs_project(self, out_dir, basename, name, **kwargs):
@@ -623,6 +635,10 @@ class VisualStudioBackend(CommonBackend):
 
             n = pg.appendChild(doc.createElement("LocalDebuggerCommandArguments"))
             n.appendChild(doc.createTextNode(debugger[1]))
+
+        # Sets IntelliSense to use c++17 Language Standard
+        n = pg.appendChild(doc.createElement("AdditionalOptions"))
+        n.appendChild(doc.createTextNode("/std:c++17"))
 
         i = project.appendChild(doc.createElement("Import"))
         i.setAttribute("Project", "$(VCTargetsPath)\\Microsoft.Cpp.props")

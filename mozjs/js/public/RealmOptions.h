@@ -48,9 +48,6 @@ enum class CompartmentSpecifier {
 
   // Create a new realm in an existing compartment.
   ExistingCompartment,
-
-  // Internal use only. Create the self-hosting compartment.
-  NewCompartmentInSelfHostingZone,
 };
 
 /**
@@ -98,7 +95,6 @@ class JS_PUBLIC_API RealmCreationOptions {
   RealmCreationOptions& setNewCompartmentAndZone();
   RealmCreationOptions& setExistingCompartment(JSObject* obj);
   RealmCreationOptions& setExistingCompartment(Compartment* compartment);
-  RealmCreationOptions& setNewCompartmentInSelfHostingZone();
 
   // Certain compartments are implementation details of the embedding, and
   // references to them should never leak out to script. This flag causes this
@@ -112,16 +108,6 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool invisibleToDebugger() const { return invisibleToDebugger_; }
   RealmCreationOptions& setInvisibleToDebugger(bool flag) {
     invisibleToDebugger_ = flag;
-    return *this;
-  }
-
-  // Realms used for off-thread compilation have their contents merged into a
-  // target realm when the compilation is finished. This is only allowed if
-  // this flag is set. The invisibleToDebugger flag must also be set for such
-  // realms.
-  bool mergeable() const { return mergeable_; }
-  RealmCreationOptions& setMergeable(bool flag) {
-    mergeable_ = flag;
     return *this;
   }
 
@@ -188,7 +174,11 @@ class JS_PUBLIC_API RealmCreationOptions {
 
   bool getStreamsEnabled() const { return streams_; }
   RealmCreationOptions& setStreamsEnabled(bool flag) {
+#ifndef MOZ_DOM_STREAMS
     streams_ = flag;
+#else
+    MOZ_ASSERT(!streams_);
+#endif
     return *this;
   }
 
@@ -242,6 +232,14 @@ class JS_PUBLIC_API RealmCreationOptions {
     return *this;
   }
 
+#ifdef ENABLE_NEW_SET_METHODS
+  bool getNewSetMethodsEnabled() const { return newSetMethods_; }
+  RealmCreationOptions& setNewSetMethodsEnabled(bool flag) {
+    newSetMethods_ = flag;
+    return *this;
+  }
+#endif
+
   // This flag doesn't affect JS engine behavior.  It is used by Gecko to
   // mark whether content windows and workers are "Secure Context"s. See
   // https://w3c.github.io/webappsec-secure-contexts/
@@ -268,7 +266,6 @@ class JS_PUBLIC_API RealmCreationOptions {
   uint64_t profilerRealmID_ = 0;
   WeakRefSpecifier weakRefs_ = WeakRefSpecifier::Disabled;
   bool invisibleToDebugger_ = false;
-  bool mergeable_ = false;
   bool preserveJitCode_ = false;
   bool sharedMemoryAndAtomics_ = false;
   bool defineSharedArrayBufferConstructor_ = true;
@@ -281,6 +278,9 @@ class JS_PUBLIC_API RealmCreationOptions {
   bool toSource_ = false;
   bool propertyErrorMessageFix_ = false;
   bool iteratorHelpers_ = false;
+#ifdef ENABLE_NEW_SET_METHODS
+  bool newSetMethods_ = false;
+#endif
   bool secureContext_ = false;
 };
 

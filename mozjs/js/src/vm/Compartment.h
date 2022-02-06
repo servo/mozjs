@@ -31,9 +31,7 @@ namespace js {
 class ObjectWrapperMap {
   static const size_t InitialInnerMapSize = 4;
 
-  using InnerMap =
-      NurseryAwareHashMap<JSObject*, JSObject*, DefaultHasher<JSObject*>,
-                          ZoneAllocPolicy>;
+  using InnerMap = NurseryAwareHashMap<JSObject*, JSObject*, ZoneAllocPolicy>;
   using OuterMap = GCHashMap<JS::Compartment*, InnerMap,
                              DefaultHasher<JS::Compartment*>, ZoneAllocPolicy>;
 
@@ -235,10 +233,10 @@ class ObjectWrapperMap {
     }
   }
 
-  void sweep() {
+  void traceWeak(JSTracer* trc) {
     for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
       InnerMap& m = e.front().value();
-      m.sweep();
+      m.traceWeak(trc);
       if (m.empty()) {
         e.removeFront();
       }
@@ -247,8 +245,8 @@ class ObjectWrapperMap {
 };
 
 using StringWrapperMap =
-    NurseryAwareHashMap<JSString*, JSString*, DefaultHasher<JSString*>,
-                        ZoneAllocPolicy, DuplicatesPossible>;
+    NurseryAwareHashMap<JSString*, JSString*, ZoneAllocPolicy,
+                        DuplicatesPossible>;
 
 }  // namespace js
 
@@ -282,6 +280,7 @@ class JS::Compartment {
     // the compartment, not the realm, because same-compartment realms can
     // have cross-realm pointers without wrappers.
     bool scheduledForDestruction = false;
+    bool hasMarkedCells = false;
     bool maybeAlive = true;
 
     // During GC, we may set this to |true| if we entered a realm in this
@@ -361,6 +360,9 @@ class JS::Compartment {
   [[nodiscard]] bool wrap(JSContext* cx, JS::MutableHandleObject obj);
   [[nodiscard]] bool wrap(JSContext* cx,
                           JS::MutableHandle<JS::PropertyDescriptor> desc);
+  [[nodiscard]] bool wrap(
+      JSContext* cx,
+      JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc);
   [[nodiscard]] bool wrap(JSContext* cx,
                           JS::MutableHandle<JS::GCVector<JS::Value>> vec);
   [[nodiscard]] bool rewrap(JSContext* cx, JS::MutableHandleObject obj,
@@ -420,7 +422,7 @@ class JS::Compartment {
 
   void sweepRealms(JSFreeOp* fop, bool keepAtleastOne, bool destroyingRuntime);
   void sweepAfterMinorGC(JSTracer* trc);
-  void sweepCrossCompartmentObjectWrappers();
+  void traceCrossCompartmentObjectWrapperEdges(JSTracer* trc);
 
   void fixupCrossCompartmentObjectWrappersAfterMovingGC(JSTracer* trc);
   void fixupAfterMovingGC(JSTracer* trc);
@@ -430,22 +432,22 @@ class JS::Compartment {
 
 namespace js {
 
-// We only set the maybeAlive flag for objects and scripts. It's assumed that,
-// if a compartment is alive, then it will have at least some live object or
-// script it in. Even if we get this wrong, the worst that will happen is that
-// scheduledForDestruction will be set on the compartment, which will cause
+// We only set the hasMarkedCells flag for objects and scripts. It's assumed
+// that, if a compartment is alive, then it will have at least some live object
+// or script it in. Even if we get this wrong, the worst that will happen is
+// that scheduledForDestruction will be set on the compartment, which will cause
 // some extra GC activity to try to free the compartment.
 template <typename T>
-inline void SetMaybeAliveFlag(T* thing) {}
+inline void SetCompartmentHasMarkedCells(T* thing) {}
 
 template <>
-inline void SetMaybeAliveFlag(JSObject* thing) {
-  thing->compartment()->gcState.maybeAlive = true;
+inline void SetCompartmentHasMarkedCells(JSObject* thing) {
+  thing->compartment()->gcState.hasMarkedCells = true;
 }
 
 template <>
-inline void SetMaybeAliveFlag(JSScript* thing) {
-  thing->compartment()->gcState.maybeAlive = true;
+inline void SetCompartmentHasMarkedCells(JSScript* thing) {
+  thing->compartment()->gcState.hasMarkedCells = true;
 }
 
 /*

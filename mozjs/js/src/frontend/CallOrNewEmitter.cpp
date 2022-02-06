@@ -8,14 +8,10 @@
 
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/NameOpEmitter.h"
-#include "frontend/SharedContext.h"
 #include "vm/Opcodes.h"
-#include "vm/StringType.h"
 
 using namespace js;
 using namespace js::frontend;
-
-using mozilla::Maybe;
 
 CallOrNewEmitter::CallOrNewEmitter(BytecodeEmitter* bce, JSOp op,
                                    ArgumentsKind argumentsKind,
@@ -35,7 +31,7 @@ bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
       bce_, name,
       isCall() ? NameOpEmitter::Kind::Call : NameOpEmitter::Kind::Get);
   if (!noe.emitGet()) {
-    //              [stack] CALLEE THIS
+    //              [stack] CALLEE THIS?
     return false;
   }
 
@@ -57,17 +53,27 @@ bool CallOrNewEmitter::emitNameCallee(TaggedParserAtomIndex name) {
 }
 
 [[nodiscard]] ElemOpEmitter& CallOrNewEmitter::prepareForElemCallee(
-    bool isSuperElem, bool isPrivate) {
+    bool isSuperElem) {
   MOZ_ASSERT(state_ == State::Start);
 
   eoe_.emplace(bce_,
                isCall() ? ElemOpEmitter::Kind::Call : ElemOpEmitter::Kind::Get,
                isSuperElem ? ElemOpEmitter::ObjKind::Super
-                           : ElemOpEmitter::ObjKind::Other,
-               isPrivate ? NameVisibility::Private : NameVisibility::Public);
+                           : ElemOpEmitter::ObjKind::Other);
 
   state_ = State::ElemCallee;
   return *eoe_;
+}
+
+PrivateOpEmitter& CallOrNewEmitter::prepareForPrivateCallee(
+    TaggedParserAtomIndex privateName) {
+  MOZ_ASSERT(state_ == State::Start);
+  xoe_.emplace(
+      bce_,
+      isCall() ? PrivateOpEmitter::Kind::Call : PrivateOpEmitter::Kind::Get,
+      privateName);
+  state_ = State::PrivateCallee;
+  return *xoe_;
 }
 
 bool CallOrNewEmitter::prepareForFunctionCallee() {
@@ -106,8 +112,9 @@ bool CallOrNewEmitter::prepareForOtherCallee() {
 
 bool CallOrNewEmitter::emitThis() {
   MOZ_ASSERT(state_ == State::NameCallee || state_ == State::PropCallee ||
-             state_ == State::ElemCallee || state_ == State::FunctionCallee ||
-             state_ == State::SuperCallee || state_ == State::OtherCallee);
+             state_ == State::ElemCallee || state_ == State::PrivateCallee ||
+             state_ == State::FunctionCallee || state_ == State::SuperCallee ||
+             state_ == State::OtherCallee);
 
   bool needsThis = false;
   switch (state_) {
@@ -124,6 +131,12 @@ bool CallOrNewEmitter::emitThis() {
       break;
     case State::ElemCallee:
       eoe_.reset();
+      if (!isCall()) {
+        needsThis = true;
+      }
+      break;
+    case State::PrivateCallee:
+      xoe_.reset();
       if (!isCall()) {
         needsThis = true;
       }
@@ -180,10 +193,20 @@ bool CallOrNewEmitter::wantSpreadOperand() {
   return isSingleSpread() || isPassthroughRest();
 }
 
+bool CallOrNewEmitter::prepareForSpreadArguments() {
+  MOZ_ASSERT(state_ == State::WantSpreadOperand);
+  MOZ_ASSERT(isSpread());
+  MOZ_ASSERT(!isSingleSpread() && !isPassthroughRest());
+
+  state_ = State::Arguments;
+  return true;
+}
+
 bool CallOrNewEmitter::emitSpreadArgumentsTest() {
   // Caller should check wantSpreadOperand before this.
   MOZ_ASSERT(state_ == State::WantSpreadOperand);
   MOZ_ASSERT(isSpread());
+  MOZ_ASSERT(isSingleSpread() || isPassthroughRest());
 
   if (isSingleSpread()) {
     // Emit a preparation code to optimize the spread call:
@@ -197,16 +220,34 @@ bool CallOrNewEmitter::emitSpreadArgumentsTest() {
     //              [stack] CALLEE THIS ARG0
 
     ifNotOptimizable_.emplace(bce_);
-    if (!bce_->emit1(JSOp::OptimizeSpreadCall)) {
-      //            [stack] CALLEE THIS ARG0 OPTIMIZED
+    if (!bce_->emit1(JSOp::Dup)) {
+      //            [stack] CALLEE THIS ARG0 ARG0
       return false;
     }
-    if (!ifNotOptimizable_->emitThen(IfEmitter::ConditionKind::Negative)) {
-      //            [stack] CALLEE THIS ARG0
+    if (!bce_->emit1(JSOp::OptimizeSpreadCall)) {
+      //            [stack] CALLEE THIS ARG0 ARRAY_OR_UNDEF
+      return false;
+    }
+
+    if (!bce_->emit1(JSOp::Dup)) {
+      //            [stack] CALLEE THIS ARG0 ARRAY_OR_UNDEF ARRAY_OR_UNDEF
+      return false;
+    }
+    if (!bce_->emit1(JSOp::Undefined)) {
+      //            [stack] CALLEE THIS ARG0 ARRAY_OR_UNDEF ARRAY_OR_UNDEF UNDEF
+      return false;
+    }
+    if (!bce_->emit1(JSOp::StrictEq)) {
+      //            [stack] CALLEE THIS ARG0 ARRAY_OR_UNDEF EQ
+      return false;
+    }
+
+    if (!ifNotOptimizable_->emitThenElse()) {
+      //            [stack] CALLEE THIS ARG0 ARRAY_OR_UNDEF
       return false;
     }
     if (!bce_->emit1(JSOp::Pop)) {
-      //            [stack] CALLEE THIS
+      //            [stack] CALLEE THIS ARG0
       return false;
     }
   }
@@ -223,10 +264,23 @@ bool CallOrNewEmitter::wantSpreadIteration() {
   return !isPassthroughRest();
 }
 
-bool CallOrNewEmitter::emitEnd(uint32_t argc, const Maybe<uint32_t>& beginPos) {
+bool CallOrNewEmitter::emitEnd(uint32_t argc, uint32_t beginPos) {
   MOZ_ASSERT(state_ == State::Arguments);
 
   if (isSingleSpread()) {
+    if (!ifNotOptimizable_->emitElse()) {
+      //            [stack] CALLEE THIS ARG0 ARRAY_OR_UNDEF
+      return false;
+    }
+    if (!bce_->emit1(JSOp::Swap)) {
+      //            [stack] CALLEE THIS ARRAY_OR_UNDEF ARG0
+      return false;
+    }
+    if (!bce_->emit1(JSOp::Pop)) {
+      //            [stack] CALLEE THIS ARRAY_OR_UNDEF
+      return false;
+    }
+
     if (!ifNotOptimizable_->emitEnd()) {
       //            [stack] CALLEE THIS ARR
       return false;
@@ -249,10 +303,8 @@ bool CallOrNewEmitter::emitEnd(uint32_t argc, const Maybe<uint32_t>& beginPos) {
       }
     }
   }
-  if (beginPos) {
-    if (!bce_->updateSourceCoordNotes(*beginPos)) {
-      return false;
-    }
+  if (!bce_->updateSourceCoordNotes(beginPos)) {
+    return false;
   }
   if (!bce_->markSimpleBreakpoint()) {
     return false;
@@ -269,8 +321,8 @@ bool CallOrNewEmitter::emitEnd(uint32_t argc, const Maybe<uint32_t>& beginPos) {
     }
   }
 
-  if (isEval() && beginPos) {
-    uint32_t lineNum = bce_->parser->errorReporter().lineAt(*beginPos);
+  if (isEval()) {
+    uint32_t lineNum = bce_->parser->errorReporter().lineAt(beginPos);
     if (!bce_->emitUint32Operand(JSOp::Lineno, lineNum)) {
       return false;
     }

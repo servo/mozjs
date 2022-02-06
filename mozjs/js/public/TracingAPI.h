@@ -21,10 +21,10 @@ template <typename T>
 class TenuredHeap;
 
 /** Returns a static string equivalent of |kind|. */
-JS_FRIEND_API const char* GCTraceKindToAscii(JS::TraceKind kind);
+JS_PUBLIC_API const char* GCTraceKindToAscii(JS::TraceKind kind);
 
 /** Returns the base size in bytes of the GC thing of kind |kind|. */
-JS_FRIEND_API size_t GCTraceKindSize(JS::TraceKind kind);
+JS_PUBLIC_API size_t GCTraceKindSize(JS::TraceKind kind);
 
 // Kinds of JSTracer.
 enum class TracerKind {
@@ -44,6 +44,7 @@ enum class TracerKind {
   GrayBuffering,
   ClearEdges,
   Sweeping,
+  MinorSweeping,
   Barrier,
 
   // Callback tracers: General-purpose tracers that have a single virtual
@@ -250,20 +251,69 @@ class GenericTracer : public JSTracer {
   virtual js::BaseScript* onScriptEdge(js::BaseScript* script) = 0;
   virtual js::Shape* onShapeEdge(js::Shape* shape) = 0;
   virtual js::RegExpShared* onRegExpSharedEdge(js::RegExpShared* shared) = 0;
+  virtual js::GetterSetter* onGetterSetterEdge(js::GetterSetter* gs) = 0;
+  virtual js::PropMap* onPropMapEdge(js::PropMap* map) = 0;
   virtual js::BaseShape* onBaseShapeEdge(js::BaseShape* base) = 0;
   virtual js::jit::JitCode* onJitCodeEdge(js::jit::JitCode* code) = 0;
   virtual js::Scope* onScopeEdge(js::Scope* scope) = 0;
+};
+
+// A helper class that implements a GenericTracer by calling template method
+// on a derived type for each edge kind.
+template <typename T>
+class GenericTracerImpl : public GenericTracer {
+ public:
+  GenericTracerImpl(JSRuntime* rt, JS::TracerKind kind,
+                    JS::TraceOptions options)
+      : GenericTracer(rt, kind, options) {}
+
+ private:
+  T* derived() { return static_cast<T*>(this); }
+
+  JSObject* onObjectEdge(JSObject* obj) override {
+    return derived()->onEdge(obj);
+  }
+  Shape* onShapeEdge(Shape* shape) override { return derived()->onEdge(shape); }
+  JSString* onStringEdge(JSString* string) override {
+    return derived()->onEdge(string);
+  }
+  BaseScript* onScriptEdge(BaseScript* script) override {
+    return derived()->onEdge(script);
+  }
+  BaseShape* onBaseShapeEdge(BaseShape* base) override {
+    return derived()->onEdge(base);
+  }
+  GetterSetter* onGetterSetterEdge(GetterSetter* gs) override {
+    return derived()->onEdge(gs);
+  }
+  PropMap* onPropMapEdge(PropMap* map) override {
+    return derived()->onEdge(map);
+  }
+  Scope* onScopeEdge(Scope* scope) override { return derived()->onEdge(scope); }
+  RegExpShared* onRegExpSharedEdge(RegExpShared* shared) override {
+    return derived()->onEdge(shared);
+  }
+  JS::BigInt* onBigIntEdge(JS::BigInt* bi) override {
+    return derived()->onEdge(bi);
+  }
+  JS::Symbol* onSymbolEdge(JS::Symbol* sym) override {
+    return derived()->onEdge(sym);
+  }
+  jit::JitCode* onJitCodeEdge(jit::JitCode* jit) override {
+    return derived()->onEdge(jit);
+  }
 };
 
 }  // namespace js
 
 namespace JS {
 
-class JS_PUBLIC_API CallbackTracer : public js::GenericTracer {
+class JS_PUBLIC_API CallbackTracer
+    : public js::GenericTracerImpl<CallbackTracer> {
  public:
   CallbackTracer(JSRuntime* rt, JS::TracerKind kind = JS::TracerKind::Callback,
                  JS::TraceOptions options = JS::TraceOptions())
-      : GenericTracer(rt, kind, options) {
+      : GenericTracerImpl(rt, kind, options) {
     MOZ_ASSERT(isCallbackTracer());
   }
   CallbackTracer(JSContext* cx, JS::TracerKind kind = JS::TracerKind::Callback,
@@ -271,50 +321,15 @@ class JS_PUBLIC_API CallbackTracer : public js::GenericTracer {
 
   // Override this method to receive notification when a node in the GC
   // heap graph is visited.
-  virtual void onChild(const JS::GCCellPtr& thing) = 0;
+  virtual void onChild(JS::GCCellPtr thing) = 0;
 
  private:
-  // This class implements the GenericTracer interface to dispatches to onChild.
-  virtual JSObject* onObjectEdge(JSObject* obj) {
-    onChild(JS::GCCellPtr(obj));
-    return obj;
+  template <typename T>
+  T* onEdge(T* thing) {
+    onChild(JS::GCCellPtr(thing));
+    return thing;
   }
-  virtual JSString* onStringEdge(JSString* str) {
-    onChild(JS::GCCellPtr(str));
-    return str;
-  }
-  virtual JS::Symbol* onSymbolEdge(JS::Symbol* sym) {
-    onChild(JS::GCCellPtr(sym));
-    return sym;
-  }
-  virtual JS::BigInt* onBigIntEdge(JS::BigInt* bi) {
-    onChild(JS::GCCellPtr(bi));
-    return bi;
-  }
-  virtual js::BaseScript* onScriptEdge(js::BaseScript* script) {
-    onChild(JS::GCCellPtr(script));
-    return script;
-  }
-  virtual js::Shape* onShapeEdge(js::Shape* shape) {
-    onChild(JS::GCCellPtr(shape, JS::TraceKind::Shape));
-    return shape;
-  }
-  virtual js::BaseShape* onBaseShapeEdge(js::BaseShape* base) {
-    onChild(JS::GCCellPtr(base, JS::TraceKind::BaseShape));
-    return base;
-  }
-  virtual js::jit::JitCode* onJitCodeEdge(js::jit::JitCode* code) {
-    onChild(JS::GCCellPtr(code, JS::TraceKind::JitCode));
-    return code;
-  }
-  virtual js::Scope* onScopeEdge(js::Scope* scope) {
-    onChild(JS::GCCellPtr(scope, JS::TraceKind::Scope));
-    return scope;
-  }
-  virtual js::RegExpShared* onRegExpSharedEdge(js::RegExpShared* shared) {
-    onChild(JS::GCCellPtr(shared, JS::TraceKind::RegExpShared));
-    return shared;
-  }
+  friend class js::GenericTracerImpl<CallbackTracer>;
 };
 
 // Set the name portion of the tracer's context for the current edge.
@@ -451,26 +466,26 @@ inline void TraceEdge(JSTracer* trc, JS::TenuredHeap<T>* thingp,
 }
 
 // Edges that are always traced as part of root marking do not require
-// incremental barriers. |JS::UnsafeTraceRoot| overloads allow for marking
+// incremental barriers. |JS::TraceRoot| overloads allow for marking
 // non-barriered pointers but assert that this happens during root marking.
 //
 // Note that while |edgep| must never be null, it is fine for |*edgep| to be
 // nullptr.
-#define JS_DECLARE_UNSAFE_TRACE_ROOT(type)                              \
-  extern JS_PUBLIC_API void UnsafeTraceRoot(JSTracer* trc, type* edgep, \
-                                            const char* name);
+#define JS_DECLARE_TRACE_ROOT(type)                               \
+  extern JS_PUBLIC_API void TraceRoot(JSTracer* trc, type* edgep, \
+                                      const char* name);
 
 // Declare edge-tracing function overloads for public GC pointer types.
-JS_FOR_EACH_PUBLIC_GC_POINTER_TYPE(JS_DECLARE_UNSAFE_TRACE_ROOT)
-JS_FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(JS_DECLARE_UNSAFE_TRACE_ROOT)
+JS_FOR_EACH_PUBLIC_GC_POINTER_TYPE(JS_DECLARE_TRACE_ROOT)
+JS_FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(JS_DECLARE_TRACE_ROOT)
 
 // We also require overloads for these purely-internal types.  These overloads
 // ought not be in public headers, and they should use a different name in order
 // to not be *actual* overloads, but for the moment we still declare them here.
-JS_DECLARE_UNSAFE_TRACE_ROOT(js::AbstractGeneratorObject*)
-JS_DECLARE_UNSAFE_TRACE_ROOT(js::SavedFrame*)
+JS_DECLARE_TRACE_ROOT(js::AbstractGeneratorObject*)
+JS_DECLARE_TRACE_ROOT(js::SavedFrame*)
 
-#undef JS_DECLARE_UNSAFE_TRACE_ROOT
+#undef JS_DECLARE_TRACE_ROOT
 
 extern JS_PUBLIC_API void TraceChildren(JSTracer* trc, GCCellPtr thing);
 
@@ -491,29 +506,11 @@ extern JS_PUBLIC_API void UnsafeTraceManuallyBarrieredEdge(JSTracer* trc,
                                                            JSObject** edgep,
                                                            const char* name);
 
-// Not part of the public API, but declared here so we can use it in
-// GCPolicyAPI.h
-template <typename T>
-inline bool TraceManuallyBarrieredWeakEdge(JSTracer* trc, T* thingp,
-                                           const char* name);
-
-template <typename T>
-class BarrieredBase;
-
-template <typename T>
-inline bool TraceWeakEdge(JSTracer* trc, BarrieredBase<T>* thingp,
-                          const char* name);
-
 namespace gc {
 
 // Return true if the given edge is not live and is about to be swept.
 template <typename T>
-extern JS_PUBLIC_API bool EdgeNeedsSweep(JS::Heap<T>* edgep);
-
-// Not part of the public API, but declared here so we can use it in GCPolicy
-// which is.
-template <typename T>
-bool IsAboutToBeFinalizedUnbarriered(T* thingp);
+extern JS_PUBLIC_API bool TraceWeakEdge(JSTracer* trc, JS::Heap<T>* thingp);
 
 }  // namespace gc
 
@@ -522,7 +519,7 @@ bool IsAboutToBeFinalizedUnbarriered(T* thingp);
  * Return whether the runtime is currently being destroyed, for use in
  * assertions.
  */
-extern JS_FRIEND_API bool RuntimeIsBeingDestroyed();
+extern JS_PUBLIC_API bool RuntimeIsBeingDestroyed();
 #endif
 
 }  // namespace js

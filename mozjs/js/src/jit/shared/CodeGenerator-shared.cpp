@@ -163,6 +163,8 @@ bool CodeGeneratorShared::generateEpilogue() {
 }
 
 bool CodeGeneratorShared::generateOutOfLineCode() {
+  AutoCreatedBy acb(masm, "CodeGeneratorShared::generateOutOfLineCode");
+
   // OOL paths should not attempt to use |current| as it's the last block
   // instead of the block corresponding to the OOL path.
   current = nullptr;
@@ -393,6 +395,7 @@ void CodeGeneratorShared::encodeAllocation(LSnapshot* snapshot,
     case MIRType::Symbol:
     case MIRType::BigInt:
     case MIRType::Object:
+    case MIRType::Shape:
     case MIRType::Boolean:
     case MIRType::Double: {
       LAllocation* payload = snapshot->payloadOfSlot(*allocIndex);
@@ -439,16 +442,12 @@ void CodeGeneratorShared::encodeAllocation(LSnapshot* snapshot,
       }
       break;
     }
-    case MIRType::MagicOptimizedArguments:
     case MIRType::MagicOptimizedOut:
     case MIRType::MagicUninitializedLexical:
     case MIRType::MagicIsConstructing: {
       uint32_t index;
       JSWhyMagic why = JS_GENERIC_MAGIC;
       switch (type) {
-        case MIRType::MagicOptimizedArguments:
-          why = JS_OPTIMIZED_ARGUMENTS;
-          break;
         case MIRType::MagicOptimizedOut:
           why = JS_OPTIMIZED_OUT;
           break;

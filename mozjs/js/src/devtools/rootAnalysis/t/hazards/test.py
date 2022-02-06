@@ -39,7 +39,9 @@ assert hazmap["cell3"].GCFunction in (
     "void halfSuppressedFunction()",
     "void unsuppressedFunction()",
 )
-assert hazmap["<returnvalue>"].GCFunction == "void GCInDestructor::~GCInDestructor()"
+assert hazmap["<returnvalue>"].GCFunction.startswith(
+    "void GCInDestructor::~GCInDestructor()"
+)
 
 assert "container1" in hazmap
 assert "container2" not in hazmap
@@ -71,6 +73,9 @@ assert "unsafe7" in hazmap
 assert "safe8" not in hazmap
 assert "safe9" not in hazmap
 assert "safe10" not in hazmap
+assert "safe11" not in hazmap
+assert "safe12" not in hazmap
+assert "unsafe13" in hazmap
 
 # method hazard.
 

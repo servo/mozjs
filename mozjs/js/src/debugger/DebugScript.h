@@ -11,7 +11,6 @@
 #include <stddef.h>  // for size_t
 #include <stdint.h>  // for uint32_t
 
-#include "jsapi.h"
 #include "jstypes.h"
 
 #include "gc/WeakMap.h"
@@ -134,6 +133,8 @@ using UniqueDebugScript = js::UniquePtr<DebugScript, JS::FreePolicy>;
 class DebugScriptObject : public NativeObject {
  public:
   static const JSClass class_;
+
+  enum { ScriptSlot, SlotCount };
 
   static DebugScriptObject* create(JSContext* cx, UniqueDebugScript debugScript,
                                    size_t nbytes);

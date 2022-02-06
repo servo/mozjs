@@ -6,15 +6,16 @@
 
 #include "jit/x64/MacroAssembler-x64.h"
 
-#include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
 #include "util/Memory.h"
+#include "vm/BigIntType.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
+#include "vm/StringType.h"
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -575,6 +576,22 @@ void MacroAssemblerX64::profilerExitFrame() {
   jump(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
 }
 
+Assembler::Condition MacroAssemblerX64::testStringTruthy(
+    bool truthy, const ValueOperand& value) {
+  ScratchRegisterScope scratch(asMasm());
+  unboxString(value, scratch);
+  cmp32(Operand(scratch, JSString::offsetOfLength()), Imm32(0));
+  return truthy ? Assembler::NotEqual : Assembler::Equal;
+}
+
+Assembler::Condition MacroAssemblerX64::testBigIntTruthy(
+    bool truthy, const ValueOperand& value) {
+  ScratchRegisterScope scratch(asMasm());
+  unboxBigInt(value, scratch);
+  cmp32(Operand(scratch, JS::BigInt::offsetOfDigitLength()), Imm32(0));
+  return truthy ? Assembler::NotEqual : Assembler::Equal;
+}
+
 MacroAssembler& MacroAssemblerX64::asMasm() {
   return *static_cast<MacroAssembler*>(this);
 }
@@ -940,22 +957,22 @@ void MacroAssembler::wasmLoad(const wasm::MemoryAccessDesc& access,
         vmovddup(srcAddr, out.fpu());
       } else if (access.isWidenSimd128Load()) {
         switch (access.widenSimdOp()) {
-          case wasm::SimdOp::I16x8LoadS8x8:
+          case wasm::SimdOp::V128Load8x8S:
             vpmovsxbw(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I16x8LoadU8x8:
+          case wasm::SimdOp::V128Load8x8U:
             vpmovzxbw(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I32x4LoadS16x4:
+          case wasm::SimdOp::V128Load16x4S:
             vpmovsxwd(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I32x4LoadU16x4:
+          case wasm::SimdOp::V128Load16x4U:
             vpmovzxwd(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I64x2LoadS32x2:
+          case wasm::SimdOp::V128Load32x2S:
             vpmovsxdq(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I64x2LoadU32x2:
+          case wasm::SimdOp::V128Load32x2U:
             vpmovzxdq(srcAddr, out.fpu());
             break;
           default:
@@ -1163,6 +1180,10 @@ void MacroAssembler::wasmTruncateFloat32ToUInt64(
   or64(Imm64(0x8000000000000000), output);
 
   bind(oolRejoin);
+}
+
+void MacroAssembler::widenInt32(Register r) {
+  move32To64ZeroExtend(r, Register64(r));
 }
 
 // ========================================================================
@@ -1474,6 +1495,155 @@ void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
   MOZ_ASSERT(off > ptrdiff_t(INT32_MIN));
   MOZ_ASSERT(off < ptrdiff_t(INT32_MAX));
   PatchWrite_Imm32(loc, Imm32(off));
+}
+
+void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
+                                       Register64 boundsCheckLimit, Label* ok) {
+  cmpPtr(index.reg, boundsCheckLimit.reg);
+  j(cond, ok);
+  if (JitOptions.spectreIndexMasking) {
+    cmovCCq(cond, Operand(boundsCheckLimit.reg), index.reg);
+  }
+}
+
+void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
+                                       Address boundsCheckLimit, Label* ok) {
+  cmpPtr(index.reg, Operand(boundsCheckLimit));
+  j(cond, ok);
+  if (JitOptions.spectreIndexMasking) {
+    cmovCCq(cond, Operand(boundsCheckLimit), index.reg);
+  }
+}
+
+// ========================================================================
+// Integer compare-then-conditionally-load/move operations.
+
+// cmpMove, Cond-Reg-Reg-Reg-Reg cases
+
+template <>
+void MacroAssemblerX64::cmpMove<32, 32>(Condition cond, Register lhs,
+                                        Register rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, rhs);
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpMove<32, 64>(Condition cond, Register lhs,
+                                        Register rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, rhs);
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpMove<64, 32>(Condition cond, Register lhs,
+                                        Register rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, rhs);
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpMove<64, 64>(Condition cond, Register lhs,
+                                        Register rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, rhs);
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
+}
+
+// cmpMove, Cond-Reg-Addr-Reg-Reg cases
+
+template <>
+void MacroAssemblerX64::cmpMove<32, 32>(Condition cond, Register lhs,
+                                        const Address& rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, Operand(rhs));
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpMove<32, 64>(Condition cond, Register lhs,
+                                        const Address& rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, Operand(rhs));
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpMove<64, 32>(Condition cond, Register lhs,
+                                        const Address& rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, Operand(rhs));
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpMove<64, 64>(Condition cond, Register lhs,
+                                        const Address& rhs, Register falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, Operand(rhs));
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
+}
+
+// cmpLoad, Cond-Reg-Reg-Addr-Reg cases
+
+template <>
+void MacroAssemblerX64::cmpLoad<32, 32>(Condition cond, Register lhs,
+                                        Register rhs, const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, rhs);
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpLoad<32, 64>(Condition cond, Register lhs,
+                                        Register rhs, const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, rhs);
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpLoad<64, 32>(Condition cond, Register lhs,
+                                        Register rhs, const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, rhs);
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpLoad<64, 64>(Condition cond, Register lhs,
+                                        Register rhs, const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, rhs);
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
+}
+
+// cmpLoad, Cond-Reg-Addr-Addr-Reg cases
+
+template <>
+void MacroAssemblerX64::cmpLoad<32, 32>(Condition cond, Register lhs,
+                                        const Address& rhs,
+                                        const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, Operand(rhs));
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpLoad<32, 64>(Condition cond, Register lhs,
+                                        const Address& rhs,
+                                        const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmp32(lhs, Operand(rhs));
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpLoad<64, 32>(Condition cond, Register lhs,
+                                        const Address& rhs,
+                                        const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, Operand(rhs));
+  cmovCCl(cond, Operand(falseVal), trueValAndDest);
+}
+template <>
+void MacroAssemblerX64::cmpLoad<64, 64>(Condition cond, Register lhs,
+                                        const Address& rhs,
+                                        const Address& falseVal,
+                                        Register trueValAndDest) {
+  cmpPtr(lhs, Operand(rhs));
+  cmovCCq(cond, Operand(falseVal), trueValAndDest);
 }
 
 //}}} check_macroassembler_style

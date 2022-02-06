@@ -13,8 +13,6 @@
 
 #include <stddef.h>  // for size_t
 
-#include "jsapi.h"  // for JSContext, CallArgs
-
 #include "NamespaceImports.h"   // for Value, MutableHandleValue, HandleObject
 #include "debugger/DebugAPI.h"  // for ResumeMode
 #include "debugger/Debugger.h"  // for ResumeMode, Handler, Debugger
@@ -24,6 +22,8 @@
 #include "vm/JSObject.h"        // for JSObject
 #include "vm/NativeObject.h"    // for NativeObject
 #include "vm/Stack.h"           // for AbstractFramePtr
+
+struct JS_PUBLIC_API JSContext;
 
 namespace js {
 
@@ -120,7 +120,8 @@ class DebuggerFrame : public NativeObject {
   static const JSClass class_;
 
   enum {
-    OWNER_SLOT = 0,
+    FRAME_ITER_SLOT = 0,
+    OWNER_SLOT,
     ARGUMENTS_SLOT,
     ONSTEP_HANDLER_SLOT,
     ONPOP_HANDLER_SLOT,
@@ -188,9 +189,6 @@ class DebuggerFrame : public NativeObject {
   [[nodiscard]] static DebuggerFrame* check(JSContext* cx, HandleValue thisv);
 
   bool isOnStack() const;
-
-  // Like isOnStack, but works even in the midst of a relocating GC.
-  bool isOnStackMaybeForwarded() const;
 
   bool isSuspended() const;
 

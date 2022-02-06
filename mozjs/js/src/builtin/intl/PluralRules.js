@@ -60,6 +60,9 @@ function resolvePluralRulesInternals(lazyPluralRulesData) {
         internalProps.maximumSignificantDigits = lazyPluralRulesData.maximumSignificantDigits;
     }
 
+    // Intl.NumberFormat v3 Proposal
+    internalProps.roundingPriority = lazyPluralRulesData.roundingPriority;
+
     // Step 13 (lazily computed on first access).
     internalProps.pluralCategories = null;
 
@@ -71,7 +74,8 @@ function resolvePluralRulesInternals(lazyPluralRulesData) {
  */
 function getPluralRulesInternals(obj) {
     assert(IsObject(obj), "getPluralRulesInternals called with non-object");
-    assert(GuardToPluralRules(obj) !== null, "getPluralRulesInternals called with non-PluralRules");
+    assert(intl_GuardToPluralRules(obj) !== null,
+           "getPluralRulesInternals called with non-PluralRules");
 
     var internals = getIntlObjectInternals(obj);
     assert(internals.type === "PluralRules", "bad type escaped getIntlObjectInternals");
@@ -98,7 +102,8 @@ function getPluralRulesInternals(obj) {
  */
 function InitializePluralRules(pluralRules, locales, options) {
     assert(IsObject(pluralRules), "InitializePluralRules called with non-object");
-    assert(GuardToPluralRules(pluralRules) !== null, "InitializePluralRules called with non-PluralRules");
+    assert(intl_GuardToPluralRules(pluralRules) !== null,
+           "InitializePluralRules called with non-PluralRules");
 
     // Lazy PluralRules data has the following structure:
     //
@@ -120,6 +125,8 @@ function InitializePluralRules(pluralRules, locales, options) {
     //     // optional, mutually exclusive with the fraction-digits option
     //     minimumSignificantDigits: integer ∈ [1, 21],
     //     maximumSignificantDigits: integer ∈ [1, 21],
+    //
+    //     roundingPriority: "auto" / "lessPrecision" / "morePrecision",
     //   }
     //
     // Note that lazy data is only installed as a final step of initialization,
@@ -138,7 +145,7 @@ function InitializePluralRules(pluralRules, locales, options) {
         options = ToObject(options);
 
     // Step 4.
-    let opt = new Record();
+    let opt = new_Record();
     lazyPluralRulesData.opt = opt;
 
     // Steps 5-6.
@@ -191,8 +198,8 @@ function Intl_PluralRules_select(value) {
     let pluralRules = this;
 
     // Steps 2-3.
-    if (!IsObject(pluralRules) || (pluralRules = GuardToPluralRules(pluralRules)) === null) {
-        return callFunction(CallPluralRulesMethodIfWrapped, this, value,
+    if (!IsObject(pluralRules) || (pluralRules = intl_GuardToPluralRules(pluralRules)) === null) {
+        return callFunction(intl_CallPluralRulesMethodIfWrapped, this, value,
                             "Intl_PluralRules_select");
     }
 
@@ -207,6 +214,31 @@ function Intl_PluralRules_select(value) {
 }
 
 /**
+ * Returns a String value representing the plural category matching the input
+ * number range according to the effective locale and the formatting options
+ * of this PluralRules.
+ */
+function Intl_PluralRules_selectRange(start, end) {
+    // Step 1.
+    var pluralRules = this;
+
+    // Step 2.
+    if (!IsObject(pluralRules) || (pluralRules = intl_GuardToPluralRules(pluralRules)) === null) {
+        return callFunction(intl_CallPluralRulesMethodIfWrapped, this, start, end,
+                            "Intl_PluralRules_selectRange");
+    }
+
+    // Step 3.
+    var x = ToNumber(start);
+
+    // Step 4.
+    var y = ToNumber(end);
+
+    // Step 5.
+    return intl_SelectPluralRuleRange(pluralRules, x, y);
+}
+
+/**
  * Returns the resolved options for a PluralRules object.
  *
  * Spec: ECMAScript 402 API, PluralRules, 13.4.4.
@@ -216,8 +248,8 @@ function Intl_PluralRules_resolvedOptions() {
     var pluralRules = this;
 
     // Steps 2-3.
-    if (!IsObject(pluralRules) || (pluralRules = GuardToPluralRules(pluralRules)) === null) {
-        return callFunction(CallPluralRulesMethodIfWrapped, this,
+    if (!IsObject(pluralRules) || (pluralRules = intl_GuardToPluralRules(pluralRules)) === null) {
+        return callFunction(intl_CallPluralRulesMethodIfWrapped, this,
                             "Intl_PluralRules_resolvedOptions");
     }
 
@@ -236,8 +268,8 @@ function Intl_PluralRules_resolvedOptions() {
            "minimumFractionDigits is present iff maximumFractionDigits is present");
 
     if (hasOwn("minimumFractionDigits", internals)) {
-        _DefineDataProperty(result, "minimumFractionDigits", internals.minimumFractionDigits);
-        _DefineDataProperty(result, "maximumFractionDigits", internals.maximumFractionDigits);
+        DefineDataProperty(result, "minimumFractionDigits", internals.minimumFractionDigits);
+        DefineDataProperty(result, "maximumFractionDigits", internals.maximumFractionDigits);
     }
 
     // Min/Max significant digits are either both present or not present at all.
@@ -246,10 +278,10 @@ function Intl_PluralRules_resolvedOptions() {
            "minimumSignificantDigits is present iff maximumSignificantDigits is present");
 
     if (hasOwn("minimumSignificantDigits", internals)) {
-        _DefineDataProperty(result, "minimumSignificantDigits",
-                            internals.minimumSignificantDigits);
-        _DefineDataProperty(result, "maximumSignificantDigits",
-                            internals.maximumSignificantDigits);
+        DefineDataProperty(result, "minimumSignificantDigits",
+                           internals.minimumSignificantDigits);
+        DefineDataProperty(result, "maximumSignificantDigits",
+                           internals.maximumSignificantDigits);
     }
 
     // Step 6.
@@ -261,10 +293,14 @@ function Intl_PluralRules_resolvedOptions() {
 
     var pluralCategories = [];
     for (var i = 0; i < internalsPluralCategories.length; i++)
-        _DefineDataProperty(pluralCategories, i, internalsPluralCategories[i]);
+        DefineDataProperty(pluralCategories, i, internalsPluralCategories[i]);
 
     // Step 7.
-    _DefineDataProperty(result, "pluralCategories", pluralCategories);
+    DefineDataProperty(result, "pluralCategories", pluralCategories);
+
+#ifdef NIGHTLY_BUILD
+    DefineDataProperty(result, "roundingPriority", internals.roundingPriority);
+#endif
 
     // Step 8.
     return result;

@@ -13,7 +13,8 @@
 #include "jit/AtomicOp.h"
 #include "jit/MoveResolver.h"
 #include "vm/BigIntType.h"  // JS::BigInt
-#include "wasm/WasmTypes.h"
+#include "wasm/WasmBuiltins.h"
+#include "wasm/WasmTlsData.h"
 
 #ifdef _M_ARM64
 #  ifdef move32
@@ -250,11 +251,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     vixl::MacroAssembler::Drop(Operand(ARMRegister(amount, 64)));
   }
 
-#ifdef ENABLE_WASM_SIMD
-  void PushRegsInMaskForWasmStubs(LiveRegisterSet set);
-  void PopRegsInMaskForWasmStubs(LiveRegisterSet set, LiveRegisterSet ignore);
-#endif
-
   // Update sp with the value of the current active stack pointer, if necessary.
   void syncStackPtr() {
     if (!GetStackPointer64().Is(vixl::sp)) {
@@ -324,6 +320,13 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
   void storeValue(const Address& src, const Address& dest, Register temp) {
     loadPtr(src, temp);
     storePtr(temp, dest);
+  }
+
+  void storePrivateValue(Register src, const Address& dest) {
+    storePtr(src, dest);
+  }
+  void storePrivateValue(ImmGCPtr imm, const Address& dest) {
+    storePtr(imm, dest);
   }
 
   void loadValue(Address src, Register val) {
@@ -1130,6 +1133,9 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
   void cmpPtr(Register lhs, ImmPtr rhs) {
     Cmp(ARMRegister(lhs, 64), Operand(uint64_t(rhs.value)));
   }
+  void cmpPtr(Register lhs, Imm64 rhs) {
+    Cmp(ARMRegister(lhs, 64), Operand(uint64_t(rhs.value)));
+  }
   void cmpPtr(Register lhs, Register rhs) {
     Cmp(ARMRegister(lhs, 64), ARMRegister(rhs, 64));
   }
@@ -1251,6 +1257,10 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     MOZ_CRASH("moveFloatAsDouble");
   }
 
+  void moveSimd128(FloatRegister src, FloatRegister dest) {
+    fmov(ARMFPRegister(dest, 128), ARMFPRegister(src, 128));
+  }
+
   void splitSignExtTag(const ValueOperand& operand, Register dest) {
     splitSignExtTag(operand.valueReg(), dest);
   }
@@ -1349,6 +1359,9 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
   void adds64(Imm32 imm, Register dest) {
     Adds(ARMRegister(dest, 64), ARMRegister(dest, 64), Operand(imm.value));
   }
+  void adds64(ImmWord imm, Register dest) {
+    Adds(ARMRegister(dest, 64), ARMRegister(dest, 64), Operand(imm.value));
+  }
   void adds64(Register src, Register dest) {
     Adds(ARMRegister(dest, 64), ARMRegister(dest, 64),
          Operand(ARMRegister(src, 64)));
@@ -1417,12 +1430,14 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
                          ARMFPRegister lhs, ARMFPRegister rhs);
   void compareSimd128Float(Assembler::Condition cond, ARMFPRegister dest,
                            ARMFPRegister lhs, ARMFPRegister rhs);
-  void rightShiftInt8x16(Register rhs, FloatRegister lhsDest,
-                         FloatRegister temp, bool isUnsigned);
-  void rightShiftInt16x8(Register rhs, FloatRegister lhsDest,
-                         FloatRegister temp, bool isUnsigned);
-  void rightShiftInt32x4(Register rhs, FloatRegister lhsDest,
-                         FloatRegister temp, bool isUnsigned);
+  void rightShiftInt8x16(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
+  void rightShiftInt16x8(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
+  void rightShiftInt32x4(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
+  void rightShiftInt64x2(FloatRegister lhs, Register rhs, FloatRegister dest,
+                         bool isUnsigned);
 
   void branchNegativeZero(FloatRegister reg, Register scratch, Label* label) {
     MOZ_CRASH("branchNegativeZero");
@@ -1916,17 +1931,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     splitSignExtTag(src, scratch);
     return testBigInt(cond, scratch);
   }
-  Condition testBigIntTruthy(bool truthy, const ValueOperand& value) {
-    vixl::UseScratchRegisterScope temps(this);
-    const Register scratch = temps.AcquireX().asUnsized();
-
-    MOZ_ASSERT(value.valueReg() != scratch);
-
-    unboxBigInt(value, scratch);
-    load32(Address(scratch, BigInt::offsetOfDigitLength()), scratch);
-    cmp32(scratch, Imm32(0));
-    return truthy ? Condition::NonZero : Condition::Zero;
-  }
   Condition testInt32(Condition cond, const BaseIndex& src) {
     vixl::UseScratchRegisterScope temps(this);
     const Register scratch = temps.AcquireX().asUnsized();
@@ -1979,19 +1983,10 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
     Tst(payload32, payload32);
     return truthy ? NonZero : Zero;
   }
-  Condition testStringTruthy(bool truthy, const ValueOperand& value) {
-    vixl::UseScratchRegisterScope temps(this);
-    const Register scratch = temps.AcquireX().asUnsized();
-    const ARMRegister scratch32(scratch, 32);
-    const ARMRegister scratch64(scratch, 64);
 
-    MOZ_ASSERT(value.valueReg() != scratch);
+  Condition testBigIntTruthy(bool truthy, const ValueOperand& value);
+  Condition testStringTruthy(bool truthy, const ValueOperand& value);
 
-    unboxString(value, scratch);
-    Ldr(scratch32, MemOperand(scratch64, JSString::offsetOfLength()));
-    Cmp(scratch32, Operand(0));
-    return truthy ? Condition::NonZero : Condition::Zero;
-  }
   void int32OrDouble(Register src, ARMFPRegister dest) {
     Label isInt32;
     Label join;
@@ -2100,6 +2095,14 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
                      Register64 val64, Register memoryBase, Register ptr);
   void wasmStoreImpl(const wasm::MemoryAccessDesc& access, MemOperand destAddr,
                      AnyRegister valany, Register64 val64);
+  // The complete address is in `address`, and `access` is used for its type
+  // attributes only; its `offset` is ignored.
+  void wasmLoadAbsolute(const wasm::MemoryAccessDesc& access,
+                        Register memoryBase, uint64_t address, AnyRegister out,
+                        Register64 out64);
+  void wasmStoreAbsolute(const wasm::MemoryAccessDesc& access,
+                         AnyRegister value, Register64 value64,
+                         Register memoryBase, uint64_t address);
 
   // Emit a BLR or NOP instruction. ToggleCall can be used to patch
   // this instruction.
@@ -2221,11 +2224,6 @@ class MacroAssemblerCompat : public vixl::MacroAssembler {
 #endif
   }
 
-  void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
-    loadPtr(Address(WasmTlsReg,
-                    offsetof(wasm::TlsData, globalArea) + globalDataOffset),
-            dest);
-  }
   void loadWasmPinnedRegsFromTls() {
     loadPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, memoryBase)), HeapReg);
   }

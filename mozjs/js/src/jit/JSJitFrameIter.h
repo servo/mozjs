@@ -282,7 +282,6 @@ class JSJitProfilingFrameIterator {
   FrameType type_;
   void* resumePCinCurrentFrame_;
 
-  inline JitFrameLayout* framePtr() const;
   inline JSScript* frameScript() const;
   [[nodiscard]] bool tryInitWithPC(void* pc);
   [[nodiscard]] bool tryInitWithTable(JitcodeGlobalTable* table, void* pc,
@@ -307,6 +306,7 @@ class JSJitProfilingFrameIterator {
     MOZ_ASSERT(!done());
     return fp_;
   }
+  inline JitFrameLayout* framePtr() const;
   void* stackAddress() const { return fp(); }
   FrameType frameType() const {
     MOZ_ASSERT(!done());
@@ -563,7 +563,7 @@ class SnapshotIterator {
                              unsigned start, unsigned end, JSScript* script,
                              MaybeReadFallback& fallback) {
     // Assumes that the common frame arguments have already been read.
-    if (script->argumentsHasVarBinding()) {
+    if (script->needsArgsObj()) {
       if (argsObj) {
         Value v = maybeRead(fallback);
         if (v.isObject()) {
@@ -738,7 +738,7 @@ class InlineFrameIterator {
           // this inlined frame.
           InlineFrameIterator it(cx, this);
           ++it;
-          unsigned argsObjAdj = it.script()->argumentsHasVarBinding() ? 1 : 0;
+          unsigned argsObjAdj = it.script()->needsArgsObj() ? 1 : 0;
           bool hasNewTarget = isConstructing();
           SnapshotIterator parent_s(it.snapshotIterator());
 
@@ -818,7 +818,7 @@ class InlineFrameIterator {
     s.skip();
 
     // Arguments object.
-    if (script()->argumentsHasVarBinding()) {
+    if (script()->needsArgsObj()) {
       s.skip();
     }
 

@@ -9,12 +9,9 @@
 
 #include "mozilla/Attributes.h"
 
-#include <stdint.h>
-
 #include "frontend/NameAnalysisTypes.h"
 #include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
-#include "js/TypeDecls.h"
-#include "vm/SharedStencil.h"  // GCThingIndex
+#include "vm/SharedStencil.h"     // GCThingIndex
 
 namespace js {
 namespace frontend {
@@ -27,7 +24,7 @@ struct BytecodeEmitter;
 //
 //   `name;`
 //     NameOpEmitter noe(this, atom_of_name
-//                       ElemOpEmitter::Kind::Get);
+//                       NameOpEmitter::Kind::Get);
 //     noe.emitGet();
 //
 //   `name();`
@@ -35,19 +32,19 @@ struct BytecodeEmitter;
 //
 //   `name++;`
 //     NameOpEmitter noe(this, atom_of_name
-//                       ElemOpEmitter::Kind::PostIncrement);
+//                       NameOpEmitter::Kind::PostIncrement);
 //     noe.emitIncDec();
 //
 //   `name = 10;`
 //     NameOpEmitter noe(this, atom_of_name
-//                       ElemOpEmitter::Kind::SimpleAssignment);
+//                       NameOpEmitter::Kind::SimpleAssignment);
 //     noe.prepareForRhs();
 //     emit(10);
 //     noe.emitAssignment();
 //
 //   `name += 10;`
 //     NameOpEmitter noe(this, atom_of_name
-//                       ElemOpEmitter::Kind::CompoundAssignment);
+//                       NameOpEmitter::Kind::CompoundAssignment);
 //     noe.prepareForRhs();
 //     emit(10);
 //     emit_add_op_here();
@@ -55,7 +52,7 @@ struct BytecodeEmitter;
 //
 //   `name = 10;` part of `let name = 10;`
 //     NameOpEmitter noe(this, atom_of_name
-//                       ElemOpEmitter::Kind::Initialize);
+//                       NameOpEmitter::Kind::Initialize);
 //     noe.prepareForRhs();
 //     emit(10);
 //     noe.emitAssignment();

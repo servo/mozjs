@@ -11,10 +11,8 @@
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ThreadLocal.h"
-#include "mozilla/Unused.h"
 
 #include "gc/FreeOp.h"
-#include "gc/Marking.h"
 #include "gc/PublicIterators.h"
 #include "jit/AliasAnalysis.h"
 #include "jit/AlignmentMaskAnalysis.h"
@@ -22,7 +20,6 @@
 #include "jit/BacktrackingAllocator.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineJIT.h"
-#include "jit/CacheIRSpewer.h"
 #include "jit/CodeGenerator.h"
 #include "jit/CompileInfo.h"
 #include "jit/EdgeCaseAnalysis.h"
@@ -38,7 +35,6 @@
 #include "jit/IonOptimizationLevels.h"
 #include "jit/IonScript.h"
 #include "jit/JitcodeMap.h"
-#include "jit/JitCommon.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRealm.h"
 #include "jit/JitRuntime.h"
@@ -60,28 +56,21 @@
 #include "js/Printf.h"
 #include "js/UniquePtr.h"
 #include "util/Memory.h"
-#include "util/Windows.h"
-#include "vm/BytecodeIterator.h"
-#include "vm/HelperThreadState.h"
+#include "util/WindowsWrapper.h"
+#include "vm/HelperThreads.h"
 #include "vm/Realm.h"
 #include "vm/TraceLogging.h"
 #ifdef MOZ_VTUNE
 #  include "vtune/VTuneWrapper.h"
 #endif
 
-#include "debugger/DebugAPI-inl.h"
 #include "gc/GC-inl.h"
 #include "jit/InlineScriptTree-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SafepointIndex-inl.h"
-#include "jit/shared/Lowering-shared-inl.h"
-#include "vm/BytecodeIterator-inl.h"
-#include "vm/EnvironmentObject-inl.h"
 #include "vm/GeckoProfiler-inl.h"
-#include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Realm-inl.h"
-#include "vm/Stack-inl.h"
 
 #if defined(ANDROID)
 #  include <sys/system_properties.h>
@@ -104,6 +93,8 @@ JitRuntime::~JitRuntime() {
 }
 
 uint32_t JitRuntime::startTrampolineCode(MacroAssembler& masm) {
+  AutoCreatedBy acb(masm, "startTrampolineCode");
+
   masm.assumeUnreachable("Shouldn't get here");
   masm.flushBuffer();
   masm.haltingAlign(CodeAlignment);
@@ -297,7 +288,8 @@ uint8_t* JitRuntime::allocateIonOsrTempData(size_t size) {
 
 void JitRuntime::freeIonOsrTempData() { ionOsrTempData_.ref().reset(); }
 
-JitRealm::JitRealm() : stubCodes_(nullptr), stringsCanBeInNursery(false) {}
+JitRealm::JitRealm()
+    : stubCodes_(nullptr), initialStringHeap(gc::TenuredHeap) {}
 
 JitRealm::~JitRealm() { js_delete(stubCodes_); }
 
@@ -401,8 +393,7 @@ uint8_t* jit::LazyLinkTopActivation(JSContext* cx,
 }
 
 /* static */
-void JitRuntime::TraceAtomZoneRoots(JSTracer* trc,
-                                    const AutoAccessAtomsZone& access) {
+void JitRuntime::TraceAtomZoneRoots(JSTracer* trc) {
   MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
 
   // Shared stubs are allocated in the atoms zone, so do not iterate
@@ -411,7 +402,7 @@ void JitRuntime::TraceAtomZoneRoots(JSTracer* trc,
     return;
   }
 
-  Zone* zone = trc->runtime()->atomsZone(access);
+  Zone* zone = trc->runtime()->atomsZone();
   for (auto i = zone->cellIterUnsafe<JitCode>(); !i.done(); i.next()) {
     JitCode* code = i;
     TraceRoot(trc, &code, "wrapper");
@@ -444,9 +435,7 @@ void JitRealm::traceWeak(JSTracer* trc, JS::Realm* realm) {
   stubCodes_->traceWeak(trc);
 
   for (WeakHeapPtrJitCode& stub : stubs_) {
-    if (stub) {
-      TraceWeakEdge(trc, &stub, "JitRealm::stubs_");
-    }
+    TraceWeakEdge(trc, &stub, "JitRealm::stubs_");
   }
 }
 
@@ -1003,7 +992,7 @@ bool OptimizeMIR(MIRGenerator* mir) {
   DumpMIRExpressions(graph, mir->outerInfo(),
                      "BuildSSA (== input to OptimizeMIR)");
 
-  if (!JitOptions.disablePgo && !mir->compilingWasm()) {
+  if (!JitOptions.disablePruning && !mir->compilingWasm()) {
     AutoTraceLog log(logger, TraceLogger_PruneUnusedBranches);
     JitSpewCont(JitSpew_Prune, "\n");
     if (!PruneUnusedBranches(mir, graph)) {
@@ -1154,9 +1143,11 @@ bool OptimizeMIR(MIRGenerator* mir) {
   ValueNumberer gvn(mir, graph);
 
   // Alias analysis is required for LICM and GVN so that we don't move
-  // loads across stores.
+  // loads across stores. We also use alias information when removing
+  // redundant shapeguards.
   if (mir->optimizationInfo().licmEnabled() ||
-      mir->optimizationInfo().gvnEnabled()) {
+      mir->optimizationInfo().gvnEnabled() ||
+      mir->optimizationInfo().eliminateRedundantShapeGuardsEnabled()) {
     {
       AutoTraceLog log(logger, TraceLogger_AliasAnalysis);
 
@@ -1409,6 +1400,20 @@ bool OptimizeMIR(MIRGenerator* mir) {
   AssertExtendedGraphCoherency(graph, /* underValueNumberer = */ false,
                                /* force = */ true);
 
+  // Remove unreachable blocks created by MBasicBlock::NewFakeLoopPredecessor
+  // to ensure every loop header has two predecessors. (This only happens due
+  // to OSR.)  After this point, it is no longer possible to build the
+  // dominator tree.
+  if (!mir->compilingWasm() && graph.osrBlock()) {
+    graph.removeFakeLoopPredecessors();
+    gs.spewPass("Remove fake loop predecessors");
+    AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Remove fake loop predecessors")) {
+      return false;
+    }
+  }
+
   // Passes after this point must not move instructions; these analyses
   // depend on knowing the final order in which instructions will execute.
 
@@ -1436,6 +1441,14 @@ bool OptimizeMIR(MIRGenerator* mir) {
       return false;
     }
     gs.spewPass("Bounds Check Elimination");
+    AssertGraphCoherency(graph);
+  }
+
+  if (mir->optimizationInfo().eliminateRedundantShapeGuardsEnabled()) {
+    if (!EliminateRedundantShapeGuards(graph)) {
+      return false;
+    }
+    gs.spewPass("Shape Guard Elimination");
     AssertGraphCoherency(graph);
   }
 
@@ -1614,7 +1627,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
   auto alloc =
       cx->make_unique<LifoAlloc>(TempAllocator::PreferredLifoChunkSize);
   if (!alloc) {
-    return AbortReason::Alloc;
+    return AbortReason::Error;
   }
 
   TempAllocator* temp = alloc->new_<TempAllocator>(alloc.get());
@@ -1625,11 +1638,11 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
   JitContext jctx(cx, temp);
 
   if (!cx->realm()->ensureJitRealmExists(cx)) {
-    return AbortReason::Alloc;
+    return AbortReason::Error;
   }
 
   if (!cx->realm()->jitRealm()->ensureIonStubsExist(cx)) {
-    return AbortReason::Alloc;
+    return AbortReason::Error;
   }
 
   MIRGraph* graph = alloc->new_<MIRGraph>(temp);
@@ -1645,7 +1658,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
 
   CompileInfo* info = alloc->new_<CompileInfo>(
       CompileRuntime::get(cx->runtime()), script, script->function(), osrPc,
-      Analysis_None, script->needsArgsObj(), inlineScriptTree);
+      script->needsArgsObj(), inlineScriptTree);
   if (!info) {
     return AbortReason::Alloc;
   }
@@ -1682,7 +1695,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
             ". (Compiled on background thread.)",
             script->filename(), script->lineno(), script->column());
 
-    IonCompileTask* task = alloc->new_<IonCompileTask>(*mirGen, snapshot);
+    IonCompileTask* task = alloc->new_<IonCompileTask>(cx, *mirGen, snapshot);
     if (!task) {
       return AbortReason::Alloc;
     }
@@ -1698,7 +1711,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
 
     // The allocator and associated data will be destroyed after being
     // processed in the finishedOffThreadCompilations list.
-    mozilla::Unused << alloc.release();
+    (void)alloc.release();
 
     return AbortReason::NoAbort;
   }
@@ -1924,7 +1937,7 @@ bool jit::OffThreadCompilationAvailable(JSContext* cx) {
   // Require cpuCount > 1 so that Ion compilation jobs and active-thread
   // execution are not competing for the same resources.
   return cx->runtime()->canUseOffthreadIonCompilation() &&
-         HelperThreadState().cpuCount > 1 && CanUseExtraThreads();
+         GetHelperThreadCPUCount() > 1 && CanUseExtraThreads();
 }
 
 MethodStatus jit::CanEnterIon(JSContext* cx, RunState& state) {

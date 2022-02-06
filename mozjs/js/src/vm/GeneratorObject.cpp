@@ -134,8 +134,8 @@ void AbstractGeneratorObject::trace(JSTracer* trc) {
 }
 
 bool AbstractGeneratorObject::suspend(JSContext* cx, HandleObject obj,
-                                      AbstractFramePtr frame, jsbytecode* pc,
-                                      unsigned nvalues) {
+                                      AbstractFramePtr frame,
+                                      const jsbytecode* pc, unsigned nvalues) {
   MOZ_ASSERT(JSOp(*pc) == JSOp::InitialYield || JSOp(*pc) == JSOp::Yield ||
              JSOp(*pc) == JSOp::Await);
 
@@ -179,8 +179,7 @@ void AbstractGeneratorObject::dump() const {
     uint32_t len = stack.length();
     fprintf(stderr, "    length: %u\n,", len);
     fprintf(stderr, "    data: [\n");
-    const Value* elements =
-        const_cast<AbstractGeneratorObject*>(this)->getDenseElements();
+    const Value* elements = getDenseElements();
     for (uint32_t i = 0; i < std::max(len, denseLen); i++) {
       fprintf(stderr, "      [%u]: ", i);
       js::DumpValue(elements[i]);
@@ -208,11 +207,12 @@ void AbstractGeneratorObject::finalSuspend(HandleObject obj) {
 static AbstractGeneratorObject* GetGeneratorObjectForCall(JSContext* cx,
                                                           CallObject& callObj) {
   // The ".generator" binding is always present and always "aliased".
-  Shape* shape = callObj.lookup(cx, cx->names().dotGenerator);
-  if (shape == nullptr) {
+  mozilla::Maybe<PropertyInfo> prop =
+      callObj.lookup(cx, cx->names().dotGenerator);
+  if (prop.isNothing()) {
     return nullptr;
   }
-  Value genValue = callObj.getSlot(shape->slot());
+  Value genValue = callObj.getSlot(prop->slot());
 
   // If the `Generator; SetAliasedVar ".generator"; InitialYield` bytecode
   // sequence has not run yet, genValue is undefined.
@@ -229,8 +229,9 @@ AbstractGeneratorObject* js::GetGeneratorObjectForFrame(
   if (frame.isModuleFrame()) {
     ModuleEnvironmentObject* moduleEnv =
         frame.script()->module()->environment();
-    Shape* shape = moduleEnv->lookup(cx, cx->names().dotGenerator);
-    Value genValue = moduleEnv->getSlot(shape->slot());
+    mozilla::Maybe<PropertyInfo> prop =
+        moduleEnv->lookup(cx, cx->names().dotGenerator);
+    Value genValue = moduleEnv->getSlot(prop->slot());
     return genValue.isObject()
                ? &genValue.toObject().as<AbstractGeneratorObject>()
                : nullptr;
@@ -254,7 +255,7 @@ bool js::GeneratorThrowOrReturn(JSContext* cx, AbstractFramePtr frame,
                                 GeneratorResumeKind resumeKind) {
   MOZ_ASSERT(genObj->isRunning());
   if (resumeKind == GeneratorResumeKind::Throw) {
-    cx->setPendingExceptionAndCaptureStack(arg);
+    cx->setPendingException(arg, ShouldCaptureStack::Maybe);
   } else {
     MOZ_ASSERT(resumeKind == GeneratorResumeKind::Return);
 
@@ -359,7 +360,7 @@ JSObject* js::NewTenuredObjectWithFunctionPrototype(
   if (!proto) {
     return nullptr;
   }
-  return NewTenuredObjectWithGivenProto<PlainObject>(cx, proto);
+  return NewPlainObjectWithProto(cx, proto, TenuredObject);
 }
 
 static JSObject* CreateGeneratorFunction(JSContext* cx, JSProtoKey key) {
@@ -388,10 +389,8 @@ static bool GeneratorFunctionClassFinish(JSContext* cx,
   // Change the "constructor" property to non-writable before adding any other
   // properties, so it's still the last property and can be modified without a
   // dictionary-mode transition.
-  MOZ_ASSERT(StringEqualsAscii(
-      JSID_TO_LINEAR_STRING(
-          genFunctionProto->as<NativeObject>().lastProperty()->propid()),
-      "constructor"));
+  MOZ_ASSERT(genFunctionProto->as<NativeObject>().getLastProperty().key() ==
+             NameToId(cx->names().constructor));
   MOZ_ASSERT(!genFunctionProto->as<NativeObject>().inDictionaryMode());
 
   RootedValue genFunctionVal(cx, ObjectValue(*genFunction));

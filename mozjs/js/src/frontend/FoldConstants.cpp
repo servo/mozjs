@@ -8,21 +8,20 @@
 
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Maybe.h"  // mozilla::Maybe
-#include "mozilla/Range.h"
 
 #include "jslibmath.h"
 #include "jsmath.h"
-#include "jsnum.h"
 
+#include "frontend/FullParseHandler.h"
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVisitor.h"
-#include "frontend/Parser.h"
 #include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Conversions.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
-#include "js/Vector.h"
-#include "util/StringBuffer.h"  // StringBuffer
+#include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit
+#include "util/StringBuffer.h"      // StringBuffer
 #include "vm/StringType.h"
+#include "vm/TraceLogging.h"
+#include "vm/TraceLoggingTypes.h"
 
 using namespace js;
 using namespace js::frontend;
@@ -84,7 +83,8 @@ static bool ListContainsHoistedDeclaration(JSContext* cx, ListNode* list,
 // |node| being completely eliminated as dead.
 static bool ContainsHoistedDeclaration(JSContext* cx, ParseNode* node,
                                        bool* result) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return false;
   }
 
@@ -172,6 +172,10 @@ restart:
     case ParseNodeKind::ExportStmt:
     case ParseNodeKind::ExportBatchSpecStmt:
     case ParseNodeKind::CallImportExpr:
+    case ParseNodeKind::CallImportSpec:
+    case ParseNodeKind::ImportAssertionList:
+    case ParseNodeKind::ImportAssertion:
+    case ParseNodeKind::ImportModuleRequest:
       *result = false;
       return true;
 
@@ -370,6 +374,7 @@ restart:
     case ParseNodeKind::GeExpr:
     case ParseNodeKind::InstanceOfExpr:
     case ParseNodeKind::InExpr:
+    case ParseNodeKind::PrivateInExpr:
     case ParseNodeKind::LshExpr:
     case ParseNodeKind::RshExpr:
     case ParseNodeKind::UrshExpr:
@@ -404,10 +409,12 @@ restart:
     case ParseNodeKind::ElemExpr:
     case ParseNodeKind::Arguments:
     case ParseNodeKind::CallExpr:
+    case ParseNodeKind::PrivateMemberExpr:
     case ParseNodeKind::OptionalChain:
     case ParseNodeKind::OptionalDotExpr:
     case ParseNodeKind::OptionalElemExpr:
     case ParseNodeKind::OptionalCallExpr:
+    case ParseNodeKind::OptionalPrivateMemberExpr:
     case ParseNodeKind::Name:
     case ParseNodeKind::PrivateName:
     case ParseNodeKind::TemplateStringExpr:
@@ -432,8 +439,10 @@ restart:
     case ParseNodeKind::ForOf:
     case ParseNodeKind::ForHead:
     case ParseNodeKind::DefaultConstructor:
+    case ParseNodeKind::ClassBodyScope:
     case ParseNodeKind::ClassMethod:
     case ParseNodeKind::ClassField:
+    case ParseNodeKind::StaticClassBlock:
     case ParseNodeKind::ClassMemberList:
     case ParseNodeKind::ClassNames:
     case ParseNodeKind::NewTargetExpr:
@@ -446,14 +455,15 @@ restart:
           "ContainsHoistedDeclaration should have indicated false on "
           "some parent node without recurring to test this node");
 
-    case ParseNodeKind::PipelineExpr:
-      MOZ_ASSERT(node->is<ListNode>());
-      *result = false;
-      return true;
-
     case ParseNodeKind::LastUnused:
     case ParseNodeKind::Limit:
       MOZ_CRASH("unexpected sentinel ParseNodeKind in node");
+
+#ifdef ENABLE_RECORD_TUPLE
+    case ParseNodeKind::RecordExpr:
+    case ParseNodeKind::TupleExpr:
+      MOZ_CRASH("Record and Tuple are not supported yet");
+#endif
   }
 
   MOZ_CRASH("invalid node kind");

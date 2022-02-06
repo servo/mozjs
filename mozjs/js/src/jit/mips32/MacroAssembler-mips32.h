@@ -12,7 +12,8 @@
 #include "jit/mips-shared/MacroAssembler-mips-shared.h"
 #include "jit/MoveResolver.h"
 #include "vm/BytecodeUtil.h"
-#include "wasm/WasmTypes.h"
+#include "wasm/WasmBuiltins.h"
+#include "wasm/WasmTlsData.h"
 
 namespace js {
 namespace jit {
@@ -818,11 +819,6 @@ class MacroAssemblerMIPSCompat : public MacroAssemblerMIPS {
 
   void moveFloat32(FloatRegister src, FloatRegister dest) {
     as_movs(dest, src);
-  }
-  void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
-    loadPtr(Address(WasmTlsReg,
-                    offsetof(wasm::TlsData, globalArea) + globalDataOffset),
-            dest);
   }
   void loadWasmPinnedRegsFromTls() {
     loadPtr(Address(WasmTlsReg, offsetof(wasm::TlsData, memoryBase)), HeapReg);

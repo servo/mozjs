@@ -5,12 +5,12 @@
 /**
  * ListFormat internal properties.
  */
+function listFormatLocaleData() {
+    // ListFormat don't support any extension keys.
+    return {};
+}
 var listFormatInternalProperties = {
-    localeData: function() // eslint-disable-line object-shorthand
-    {
-        // ListFormat don't support any extension keys.
-        return {};
-    },
+    localeData: listFormatLocaleData,
     relevantExtensionKeys: []
 };
 
@@ -59,7 +59,8 @@ function resolveListFormatInternals(lazyListFormatData) {
  */
 function getListFormatInternals(obj) {
     assert(IsObject(obj), "getListFormatInternals called with non-object");
-    assert(GuardToListFormat(obj) !== null, "getListFormatInternals called with non-ListFormat");
+    assert(intl_GuardToListFormat(obj) !== null,
+           "getListFormatInternals called with non-ListFormat");
 
     var internals = getIntlObjectInternals(obj);
     assert(internals.type === "ListFormat", "bad type escaped getIntlObjectInternals");
@@ -86,9 +87,10 @@ function getListFormatInternals(obj) {
  * This later work occurs in |resolveListFormatInternals|; steps not noted
  * here occur there.
  */
-function InitializeListFormat(listFormat, locales, options, supportsTypeAndStyle) {
+function InitializeListFormat(listFormat, locales, options) {
     assert(IsObject(listFormat), "InitializeListFormat called with non-object");
-    assert(GuardToListFormat(listFormat) !== null, "InitializeListFormat called with non-ListFormat");
+    assert(intl_GuardToListFormat(listFormat) !== null,
+           "InitializeListFormat called with non-ListFormat");
 
     // Lazy ListFormat data has the following structure:
     //
@@ -119,7 +121,7 @@ function InitializeListFormat(listFormat, locales, options, supportsTypeAndStyle
         ThrowTypeError(JSMSG_OBJECT_REQUIRED, options === null ? "null" : typeof options);
 
     // Step 6.
-    var opt = new Record();
+    var opt = new_Record();
     lazyListFormatData.opt = opt;
 
     // Steps 7-8.
@@ -128,19 +130,13 @@ function InitializeListFormat(listFormat, locales, options, supportsTypeAndStyle
 
     // Compute formatting options.
 
-    // Supporting all "type" and "style" options requires draft APIs in ICU 67,
-    // which may not be available when compiling against a system ICU.
-
     // Steps 12-13.
-    var type = GetOption(options, "type", "string",
-                         supportsTypeAndStyle ? ["conjunction", "disjunction", "unit"] : ["conjunction"],
+    var type = GetOption(options, "type", "string", ["conjunction", "disjunction", "unit"],
                          "conjunction");
     lazyListFormatData.type = type;
 
     // Steps 14-15.
-    var style = GetOption(options, "style", "string",
-                          supportsTypeAndStyle ? ["long", "short", "narrow"] : ["long"],
-                          "long");
+    var style = GetOption(options, "style", "string", ["long", "short", "narrow"], "long");
     lazyListFormatData.style = style;
 
     // We've done everything that must be done now: mark the lazy data as fully
@@ -186,7 +182,7 @@ function StringListFromIterable(iterable, methodName) {
         }
 
         // Step 5.b.iii.
-        _DefineDataProperty(list, list.length, element);
+        DefineDataProperty(list, list.length, element);
     }
 
     // Step 6.
@@ -201,8 +197,8 @@ function Intl_ListFormat_format(list) {
     var listFormat = this;
 
     // Steps 2-3.
-    if (!IsObject(listFormat) || (listFormat = GuardToListFormat(listFormat)) === null) {
-        return callFunction(CallListFormatMethodIfWrapped, this, list,
+    if (!IsObject(listFormat) || (listFormat = intl_GuardToListFormat(listFormat)) === null) {
+        return callFunction(intl_CallListFormatMethodIfWrapped, this, list,
                             "Intl_ListFormat_format");
     }
 
@@ -229,8 +225,8 @@ function Intl_ListFormat_formatToParts(list) {
     var listFormat = this;
 
     // Steps 2-3.
-    if (!IsObject(listFormat) || (listFormat = GuardToListFormat(listFormat)) === null) {
-        return callFunction(CallListFormatMethodIfWrapped, this, list,
+    if (!IsObject(listFormat) || (listFormat = intl_GuardToListFormat(listFormat)) === null) {
+        return callFunction(intl_CallListFormatMethodIfWrapped, this, list,
                             "Intl_ListFormat_formatToParts");
     }
 
@@ -257,8 +253,8 @@ function Intl_ListFormat_resolvedOptions() {
     var listFormat = this;
 
     // Steps 2-3.
-    if (!IsObject(listFormat) || (listFormat = GuardToListFormat(listFormat)) === null) {
-        return callFunction(CallListFormatMethodIfWrapped, this,
+    if (!IsObject(listFormat) || (listFormat = intl_GuardToListFormat(listFormat)) === null) {
+        return callFunction(intl_CallListFormatMethodIfWrapped, this,
                             "Intl_ListFormat_resolvedOptions");
     }
 

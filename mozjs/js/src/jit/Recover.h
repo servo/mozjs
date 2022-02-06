@@ -9,8 +9,6 @@
 
 #include "mozilla/Attributes.h"
 
-#include "builtin/Array.h"
-
 #include "jit/MIR.h"
 #include "jit/Snapshots.h"
 
@@ -114,15 +112,17 @@ namespace jit {
   _(RegExpTester)                 \
   _(StringReplace)                \
   _(TypeOf)                       \
+  _(TypeOfName)                   \
   _(ToDouble)                     \
   _(ToFloat32)                    \
   _(TruncateToInt32)              \
   _(NewObject)                    \
+  _(NewPlainObject)               \
+  _(NewArrayObject)               \
   _(NewTypedArray)                \
   _(NewArray)                     \
   _(NewIterator)                  \
   _(NewCallObject)                \
-  _(CreateThisWithTemplate)       \
   _(Lambda)                       \
   _(LambdaArrow)                  \
   _(FunctionWithProto)            \
@@ -134,6 +134,7 @@ namespace jit {
   _(BigIntAsUintN)                \
   _(CreateArgumentsObject)        \
   _(CreateInlinedArgumentsObject) \
+  _(Rest)                         \
   _(AssertRecoveredOnBailout)
 
 class RResumePoint;
@@ -700,6 +701,14 @@ class RTypeOf final : public RInstruction {
                              SnapshotIterator& iter) const override;
 };
 
+class RTypeOfName final : public RInstruction {
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(TypeOfName, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
 class RToDouble final : public RInstruction {
  public:
   RINSTRUCTION_HEADER_NUM_OP_(ToDouble, 1)
@@ -725,11 +734,32 @@ class RTruncateToInt32 final : public RInstruction {
 };
 
 class RNewObject final : public RInstruction {
- private:
-  MNewObject::Mode mode_;
-
  public:
   RINSTRUCTION_HEADER_NUM_OP_(NewObject, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RNewPlainObject final : public RInstruction {
+ private:
+  gc::AllocKind allocKind_;
+  gc::InitialHeap initialHeap_;
+
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(NewPlainObject, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RNewArrayObject final : public RInstruction {
+ private:
+  uint32_t length_;
+  gc::InitialHeap initialHeap_;
+
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(NewArrayObject, 1)
 
   [[nodiscard]] bool recover(JSContext* cx,
                              SnapshotIterator& iter) const override;
@@ -760,14 +790,6 @@ class RNewIterator final : public RInstruction {
 
  public:
   RINSTRUCTION_HEADER_NUM_OP_(NewIterator, 1)
-
-  [[nodiscard]] bool recover(JSContext* cx,
-                             SnapshotIterator& iter) const override;
-};
-
-class RCreateThisWithTemplate final : public RInstruction {
- public:
-  RINSTRUCTION_HEADER_NUM_OP_(CreateThisWithTemplate, 1)
 
   [[nodiscard]] bool recover(JSContext* cx,
                              SnapshotIterator& iter) const override;
@@ -893,6 +915,16 @@ class RCreateInlinedArgumentsObject final : public RInstruction {
     // +1 for the callee.
     return numActuals() + 2;
   }
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RRest final : public RInstruction {
+  uint32_t numFormals_;
+
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(Rest, 1)
 
   [[nodiscard]] bool recover(JSContext* cx,
                              SnapshotIterator& iter) const override;

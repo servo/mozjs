@@ -3,7 +3,6 @@ max-line-length = 99
 exclude =
     # These paths should be triaged and either fixed or moved to the list below.
     devtools/shared,
-    dom/base,
     dom/bindings,
     gfx/tests,
     ipc/ipdl/ipdl,
@@ -51,7 +50,6 @@ exclude =
     toolkit/nss.configure,
 
     # These paths are intentionally excluded (not necessarily for good reason).
-    build/build-infer/build-infer.py,
     build/moz.configure/*.configure,
     build/pymake/,
     browser/extensions/mortar/ppapi/,
@@ -73,10 +71,8 @@ exclude =
     testing/marionette/harness/marionette_harness/tests,
     testing/mochitest/pywebsocket3,
     testing/mozharness/configs/test/test_malformed.py,
-    testing/web-platform/mozilla/tests/tools/wptserve_py2,
     testing/web-platform/tests,
     tools/lint/test/files,
-    tools/infer/test/*.configure,
     tools/crashreporter/*.configure,
     .ycm_extra_conf.py,
 

@@ -3,7 +3,7 @@
 // Owning elements and attribute names are attached to scripts compiled
 // off-thread.
 
-var g = newGlobal({newCompartment: true});
+var g = newGlobal({ newCompartment: true });
 var dbg = new Debugger;
 var gDO = dbg.addDebuggee(g);
 
@@ -18,9 +18,12 @@ dbg.onDebuggerStatement = function (frame) {
   assertEq(source.elementAttributeName, 'mass');
 };
 
-g.offThreadCompileScript('debugger;',
-                         { element: elt,
-                           elementAttributeName: 'mass' });
+var job = g.offThreadCompileToStencil('debugger;');
+var stencil = g.finishOffThreadCompileToStencil(job);
 log += 'o';
-g.runOffThreadScript();
+g.evalStencil(stencil,
+  {
+    element: elt,
+    elementAttributeName: 'mass'
+  });
 assertEq(log, 'od');

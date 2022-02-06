@@ -111,10 +111,10 @@ static inline void AssertScopeMatchesEnvironment(Scope* scope,
         case ScopeKind::StrictNamedLambda:
         case ScopeKind::FunctionLexical:
         case ScopeKind::ClassBody:
-          MOZ_ASSERT(&env->as<BlockLexicalEnvironmentObject>().scope() ==
+          MOZ_ASSERT(&env->as<ScopedLexicalEnvironmentObject>().scope() ==
                      si.scope());
           env =
-              &env->as<BlockLexicalEnvironmentObject>().enclosingEnvironment();
+              &env->as<ScopedLexicalEnvironmentObject>().enclosingEnvironment();
           break;
 
         case ScopeKind::With:
@@ -233,13 +233,15 @@ void InterpreterFrame::epilogue(JSContext* cx, jsbytecode* pc) {
   MOZ_ASSERT(isEvalFrame() || isGlobalFrame() || isModuleFrame());
 }
 
-bool InterpreterFrame::checkReturn(JSContext* cx, HandleValue thisv) {
+bool InterpreterFrame::checkReturn(JSContext* cx, HandleValue thisv,
+                                   MutableHandleValue result) {
   MOZ_ASSERT(script()->isDerivedClassConstructor());
   MOZ_ASSERT(isFunctionFrame());
   MOZ_ASSERT(callee().isClassConstructor());
 
   HandleValue retVal = returnValue();
   if (retVal.isObject()) {
+    result.set(retVal);
     return true;
   }
 
@@ -253,7 +255,7 @@ bool InterpreterFrame::checkReturn(JSContext* cx, HandleValue thisv) {
     return ThrowUninitializedThis(cx);
   }
 
-  setReturnValue(thisv);
+  result.set(thisv);
   return true;
 }
 
@@ -296,6 +298,18 @@ bool InterpreterFrame::recreateLexicalEnvironment(JSContext* cx) {
   }
 
   replaceInnermostEnvironment(*fresh);
+  return true;
+}
+
+bool InterpreterFrame::pushClassBodyEnvironment(JSContext* cx,
+                                                Handle<ClassBodyScope*> scope) {
+  ClassBodyLexicalEnvironmentObject* env =
+      ClassBodyLexicalEnvironmentObject::createForFrame(cx, scope, this);
+  if (!env) {
+    return false;
+  }
+
+  pushOnEnvironmentChain(*env);
   return true;
 }
 
@@ -748,4 +762,12 @@ bool JS::ProfilingFrameIterator::isWasm() const {
 
 bool JS::ProfilingFrameIterator::isJSJit() const {
   return kind_ == Kind::JSJit;
+}
+
+mozilla::Maybe<JS::ProfilingFrameIterator::RegisterState>
+JS::ProfilingFrameIterator::getCppEntryRegisters() const {
+  if (!isJSJit()) {
+    return mozilla::Nothing{};
+  }
+  return jit::JitRuntime::getCppEntryRegisters(jsJitIter().framePtr());
 }

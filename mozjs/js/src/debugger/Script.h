@@ -7,15 +7,16 @@
 #ifndef debugger_Script_h
 #define debugger_Script_h
 
-#include "jsapi.h"  // for Handle, JSFunctionSpec, JSPropertySpec
-
 #include "jstypes.h"            // for JS_PUBLIC_API
 #include "NamespaceImports.h"   // for Value, HandleObject, CallArgs
 #include "debugger/Debugger.h"  // for DebuggerScriptReferent
 #include "gc/Rooting.h"         // for HandleNativeObject
+#include "js/TypeDecls.h"       // for Handle
 #include "vm/NativeObject.h"    // for NativeObject
 
 class JS_PUBLIC_API JSObject;
+struct JSFunctionSpec;
+struct JSPropertySpec;
 
 namespace js {
 
@@ -31,10 +32,8 @@ class DebuggerScript : public NativeObject {
   static const JSClass class_;
 
   enum {
+    SCRIPT_SLOT,
     OWNER_SLOT,
-
-    // Holds any instrumentation ID that has been assigned to the script.
-    INSTRUMENTATION_ID_SLOT,
 
     RESERVED_SLOTS,
   };
@@ -53,15 +52,13 @@ class DebuggerScript : public NativeObject {
   inline js::BaseScript* getReferentScript() const;
   inline DebuggerScriptReferent getReferent() const;
 
+  void clearReferent() { clearReservedSlotGCThingAsPrivate(SCRIPT_SLOT); }
+
   static DebuggerScript* check(JSContext* cx, HandleValue v);
 
   static bool construct(JSContext* cx, unsigned argc, Value* vp);
 
   struct CallData;
-
-  Value getInstrumentationId() const {
-    return getSlot(INSTRUMENTATION_ID_SLOT);
-  }
 
   bool isInstance() const;
   Debugger* owner() const;

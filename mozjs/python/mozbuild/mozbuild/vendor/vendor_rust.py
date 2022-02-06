@@ -63,6 +63,13 @@ Cargo.lock to the HEAD version, run `git checkout -- Cargo.lock` or
 """
 
 
+PACKAGES_WE_ALWAYS_WANT_AN_OVERRIDE_OF = [
+    "autocfg",
+    "cmake",
+    "vcpkg",
+]
+
+
 class VendorRust(MozbuildObject):
     def get_cargo_path(self):
         try:
@@ -257,6 +264,14 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
         "BSD-3-Clause": [],
     }
 
+    # ICU4X is distributed as individual crates that all share the same LICENSE
+    # that will need to be individually added to the allow list below. We'll
+    # define the SHA256 once here, to make the review process easier as new
+    # ICU4X crates are vendored into the tree.
+    ICU4X_LICENSE_SHA256 = (
+        "02420cc1b4c26d9a3318d60fd57048d015831249a5b776a1ada75cd227e78630"
+    )
+
     # This whitelist should only be used for packages that use a
     # license-file and for which the license-file entry has been
     # reviewed.  The table is keyed by package names and maps to the
@@ -271,6 +286,22 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
         # we're whitelisting this fuchsia crate because it doesn't get built in the final
         # product but has a license-file that needs ignoring
         "fuchsia-cprng": "03b114f53e6587a398931762ee11e2395bfdba252a329940e2c8c9e81813845b",
+        # ICU4X crates, see comment above.
+        "fixed_decimal": ICU4X_LICENSE_SHA256,
+        "icu_plurals": ICU4X_LICENSE_SHA256,
+        "icu_datetime": ICU4X_LICENSE_SHA256,
+        "icu_decimal": ICU4X_LICENSE_SHA256,
+        "icu_locale_canonicalizer": ICU4X_LICENSE_SHA256,
+        "icu_locid": ICU4X_LICENSE_SHA256,
+        "icu_locid_macros": ICU4X_LICENSE_SHA256,
+        "icu_provider": ICU4X_LICENSE_SHA256,
+        "icu_provider_macros": ICU4X_LICENSE_SHA256,
+        "icu": ICU4X_LICENSE_SHA256,
+        "icu_uniset": ICU4X_LICENSE_SHA256,
+        "litemap": ICU4X_LICENSE_SHA256,
+        "writeable": ICU4X_LICENSE_SHA256,
+        "yoke": ICU4X_LICENSE_SHA256,
+        "yoke-derive": ICU4X_LICENSE_SHA256,
     }
 
     @staticmethod
@@ -481,7 +512,7 @@ license file's hash.
         subprocess.check_call([cargo, "update", "-p", "gkrust"], cwd=self.topsrcdir)
 
         output = subprocess.check_output(
-            [cargo, "vendor", vendor_dir], stderr=subprocess.STDOUT, cwd=self.topsrcdir
+            [cargo, "vendor", vendor_dir], cwd=self.topsrcdir
         ).decode("UTF-8")
 
         # Get the snippet of configuration that cargo vendor outputs, and
@@ -565,6 +596,39 @@ license file's hash.
             )
             self.repository.clean_directory(vendor_dir)
             sys.exit(1)
+
+        with open(os.path.join(self.topsrcdir, "Cargo.lock")) as fh:
+            cargo_lock = pytoml.load(fh)
+            failed = False
+            for package in cargo_lock.get("patch", {}).get("unused", []):
+                self.log(
+                    logging.ERROR,
+                    "unused_patch",
+                    {"crate": package["name"]},
+                    """Unused patch in top-level Cargo.toml for {crate}.""",
+                )
+                failed = True
+
+            for package in cargo_lock["package"]:
+                if package["name"] in PACKAGES_WE_ALWAYS_WANT_AN_OVERRIDE_OF:
+                    # When the in-tree version is used, there is `source` for
+                    # it in Cargo.lock, which is what we expect.
+                    if package.get("source"):
+                        self.log(
+                            logging.ERROR,
+                            "non_overridden",
+                            {
+                                "crate": package["name"],
+                                "version": package["version"],
+                                "source": package["source"],
+                            },
+                            "Crate {crate} v{version} must be overridden but isn't "
+                            "and comes from {source}.",
+                        )
+                        failed = True
+            if failed:
+                self.repository.clean_directory(vendor_dir)
+                sys.exit(1)
 
         self.repository.add_remove_files(vendor_dir)
 

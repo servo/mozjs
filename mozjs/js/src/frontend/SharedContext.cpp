@@ -8,20 +8,29 @@
 
 #include "mozilla/RefPtr.h"
 
-#include "frontend/AbstractScopePtr.h"
+#include "frontend/CompilationStencil.h"
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
 #include "frontend/ModuleSharedContext.h"
+#include "frontend/ParseContext.h"
+#include "frontend/ParseNode.h"
+#include "frontend/ParserAtom.h"
+#include "frontend/ScopeIndex.h"
+#include "frontend/ScriptIndex.h"
+#include "frontend/Stencil.h"
+#include "js/CompileOptions.h"
+#include "js/Vector.h"
 #include "vm/FunctionFlags.h"          // js::FunctionFlags
 #include "vm/GeneratorAndAsyncKind.h"  // js::GeneratorKind, js::FunctionAsyncKind
+#include "vm/JSContext.h"
 #include "vm/JSScript.h"  // js::FillImmutableFlagsFromCompileOptionsForTopLevel, js::FillImmutableFlagsFromCompileOptionsForFunction
 #include "vm/StencilEnums.h"  // ImmutableScriptFlagsEnum
-#include "wasm/AsmJS.h"
-#include "wasm/WasmModule.h"
 
 #include "frontend/ParseContext-inl.h"
-#include "vm/EnvironmentObject-inl.h"
 
 namespace js {
+
+class ModuleBuilder;
+
 namespace frontend {
 
 SharedContext::SharedContext(JSContext* cx, Kind kind,
@@ -123,26 +132,22 @@ FunctionBox::FunctionBox(JSContext* cx, SourceExtent extent,
       hasDestructuringArgs(false),
       hasDuplicateParameters(false),
       hasExprBody_(false),
+      allowReturn_(true),
       isFunctionFieldCopiedToStencil(false),
       isInitialCompilation(isInitialCompilation),
       isStandalone(false) {}
 
-void FunctionBox::initFromLazyFunction(JSFunction* fun,
+void FunctionBox::initFromLazyFunction(const ScriptStencilExtra& extra,
                                        ScopeContext& scopeContext,
                                        FunctionFlags flags,
                                        FunctionSyntaxKind kind) {
-  initFromLazyFunctionShared(fun);
+  initFromScriptStencilExtra(extra);
   initStandaloneOrLazy(scopeContext, flags, kind);
 }
 
-void FunctionBox::initFromLazyFunctionToSkip(JSFunction* fun) {
-  initFromLazyFunctionShared(fun);
-}
-
-void FunctionBox::initFromLazyFunctionShared(JSFunction* fun) {
-  BaseScript* lazy = fun->baseScript();
-  immutableFlags_ = lazy->immutableFlags();
-  extent_ = lazy->extent();
+void FunctionBox::initFromScriptStencilExtra(const ScriptStencilExtra& extra) {
+  immutableFlags_ = extra.immutableFlags;
+  extent_ = extra.extent;
 }
 
 void FunctionBox::initWithEnclosingParseContext(ParseContext* enclosing,
@@ -186,9 +191,14 @@ void FunctionBox::initWithEnclosingParseContext(ParseContext* enclosing,
       thisBinding_ = ThisBinding::Function;
     }
 
-    if (kind == FunctionSyntaxKind::FieldInitializer) {
+    if (kind == FunctionSyntaxKind::FieldInitializer ||
+        kind == FunctionSyntaxKind::StaticClassBlock) {
       setSyntheticFunction();
       allowArguments_ = false;
+      if (kind == FunctionSyntaxKind::StaticClassBlock) {
+        allowSuperCall_ = false;
+        allowReturn_ = false;
+      }
     }
   }
 
@@ -328,7 +338,8 @@ void FunctionBox::copyFunctionFields(ScriptStencil& script) {
   MOZ_ASSERT(!isFunctionFieldCopiedToStencil);
 
   if (atom_) {
-    compilationState_.parserAtoms.markUsedByStencil(atom_);
+    compilationState_.parserAtoms.markUsedByStencil(atom_,
+                                                    ParserAtom::Atomize::Yes);
     script.functionAtom = atom_;
   }
   script.functionFlags = flags_;
@@ -383,7 +394,8 @@ void FunctionBox::copyUpdatedEnclosingScopeIndex() {
 void FunctionBox::copyUpdatedAtomAndFlags() {
   ScriptStencil& script = functionStencil();
   if (atom_) {
-    compilationState_.parserAtoms.markUsedByStencil(atom_);
+    compilationState_.parserAtoms.markUsedByStencil(atom_,
+                                                    ParserAtom::Atomize::Yes);
     script.functionAtom = atom_;
   }
   script.functionFlags = flags_;

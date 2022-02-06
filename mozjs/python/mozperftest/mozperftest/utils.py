@@ -151,7 +151,9 @@ def install_package(virtualenv_manager, package, ignore_failure=False):
             return True
     with silence():
         try:
-            virtualenv_manager._run_pip(["install", package])
+            subprocess.check_call(
+                [virtualenv_manager.python_path, "-m", "pip", "install", package]
+            )
             return True
         except Exception:
             if not ignore_failure:
@@ -434,3 +436,17 @@ def get_tc_secret():
     res = session.get(secrets_url, timeout=DOWNLOAD_TIMEOUT)
     res.raise_for_status()
     return res.json()["secret"]
+
+
+def get_output_dir(output, folder=None):
+    if output is None:
+        raise Exception("Output path was not provided.")
+
+    result_dir = Path(output)
+    if folder is not None:
+        result_dir = Path(result_dir, folder)
+
+    result_dir.mkdir(parents=True, exist_ok=True)
+    result_dir = result_dir.resolve()
+
+    return result_dir

@@ -21,7 +21,6 @@ import sys
 import tarfile
 from contextlib import contextmanager
 from distutils.dir_util import copy_tree
-from distutils.file_util import copy_file
 
 from shutil import which
 
@@ -50,7 +49,7 @@ def check_run(args):
             sys.stdout.write(line.decode())
             sys.stdout.flush()
         r = p.wait()
-        if r != 0:
+        if r != 0 and os.environ.get("UPLOAD_DIR"):
             cmake_output_re = re.compile(b'See also "(.*/CMakeOutput.log)"')
             cmake_error_re = re.compile(b'See also "(.*/CMakeError.log)"')
 
@@ -63,15 +62,13 @@ def check_run(args):
             output_match = find_first_match(cmake_output_re)
             error_match = find_first_match(cmake_error_re)
 
-            def dump_file(log):
-                with open(log, "rb") as f:
-                    print("\nContents of", log, "follow\n", file=sys.stderr)
-                    print(f.read(), file=sys.stderr)
-
+            upload_dir = os.environ["UPLOAD_DIR"].encode("utf-8")
+            if output_match or error_match:
+                mkdir_p(upload_dir)
             if output_match:
-                dump_file(output_match.group(1))
+                shutil.copy2(output_match.group(1), upload_dir)
             if error_match:
-                dump_file(error_match.group(1))
+                shutil.copy2(error_match.group(1), upload_dir)
     else:
         r = subprocess.call(args)
     assert r == 0
@@ -166,50 +163,6 @@ def delete(path):
             pass
 
 
-def install_libgcc(gcc_dir, clang_dir, is_final_stage):
-    gcc_bin_dir = os.path.join(gcc_dir, "bin")
-
-    # Copy over gcc toolchain bits that clang looks for, to ensure that
-    # clang is using a consistent version of ld, since the system ld may
-    # be incompatible with the output clang produces.  But copy it to a
-    # target-specific directory so a cross-compiler to Mac doesn't pick
-    # up the (Linux-specific) ld with disastrous results.
-    #
-    # Only install this for the bootstrap process; we expect any consumers of
-    # the newly-built toolchain to provide an appropriate ld themselves.
-    if not is_final_stage:
-        x64_bin_dir = os.path.join(clang_dir, "x86_64-unknown-linux-gnu", "bin")
-        mkdir_p(x64_bin_dir)
-        shutil.copy2(os.path.join(gcc_bin_dir, "ld"), x64_bin_dir)
-
-    out = subprocess.check_output(
-        [os.path.join(gcc_bin_dir, "gcc"), "-print-libgcc-file-name"]
-    )
-
-    libgcc_dir = os.path.dirname(out.decode().rstrip())
-    clang_lib_dir = os.path.join(
-        clang_dir,
-        "lib",
-        "gcc",
-        "x86_64-unknown-linux-gnu",
-        os.path.basename(libgcc_dir),
-    )
-    mkdir_p(clang_lib_dir)
-    copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
-    libgcc_dir = os.path.join(gcc_dir, "lib64")
-    # This is necessary as long as CI runs on debian8 docker images.
-    copy_file(
-        os.path.join(libgcc_dir, "libstdc++.so.6"), os.path.join(clang_dir, "lib")
-    )
-    copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
-    libgcc_dir = os.path.join(gcc_dir, "lib32")
-    clang_lib_dir = os.path.join(clang_lib_dir, "32")
-    copy_tree(libgcc_dir, clang_lib_dir, preserve_symlinks=True)
-    include_dir = os.path.join(gcc_dir, "include")
-    clang_include_dir = os.path.join(clang_dir, "include")
-    copy_tree(include_dir, clang_include_dir, preserve_symlinks=True)
-
-
 def install_import_library(build_dir, clang_dir):
     shutil.copy2(
         os.path.join(build_dir, "lib", "clang.lib"), os.path.join(clang_dir, "lib")
@@ -259,8 +212,6 @@ def build_one_stage(
     osx_cross_compile,
     build_type,
     assertions,
-    python_path,
-    gcc_dir,
     libcxx_include_dir,
     build_wasm,
     compiler_rt_source_dir=None,
@@ -292,6 +243,9 @@ def build_one_stage(
 
     def cmake_base_args(cc, cxx, asm, ld, ar, ranlib, libtool, inst_dir):
         machine_targets = "X86;ARM;AArch64" if is_final_stage else "X86"
+        if build_wasm and is_final_stage:
+            machine_targets += ";WebAssembly"
+
         cmake_args = [
             "-GNinja",
             "-DCMAKE_C_COMPILER=%s" % slashify_path(cc[0]),
@@ -308,24 +262,35 @@ def build_one_stage(
             "-DCMAKE_INSTALL_PREFIX=%s" % inst_dir,
             "-DLLVM_TARGETS_TO_BUILD=%s" % machine_targets,
             "-DLLVM_ENABLE_ASSERTIONS=%s" % ("ON" if assertions else "OFF"),
-            "-DPYTHON_EXECUTABLE=%s" % slashify_path(python_path),
             "-DLLVM_TOOL_LIBCXX_BUILD=%s" % ("ON" if build_libcxx else "OFF"),
             "-DLLVM_ENABLE_BINDINGS=OFF",
+            "-DLLVM_ENABLE_CURL=OFF",
         ]
         if "TASK_ID" in os.environ:
             cmake_args += [
                 "-DCLANG_REPOSITORY_STRING=taskcluster-%s" % os.environ["TASK_ID"],
             ]
         if not is_final_stage:
-            cmake_args += ["-DLLVM_ENABLE_PROJECTS=clang;compiler-rt"]
-        if build_wasm:
-            cmake_args += ["-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=WebAssembly"]
-        if is_linux():
-            cmake_args += ["-DLLVM_BINUTILS_INCDIR=%s/include" % gcc_dir]
+            cmake_args += [
+                "-DLLVM_ENABLE_PROJECTS=clang;compiler-rt",
+                "-DLLVM_INCLUDE_TESTS=OFF",
+                "-DLLVM_TOOL_LLI_BUILD=OFF",
+                "-DCOMPILER_RT_BUILD_SANITIZERS=OFF",
+                "-DCOMPILER_RT_BUILD_XRAY=OFF",
+                "-DCOMPILER_RT_BUILD_MEMPROF=OFF",
+                "-DCOMPILER_RT_BUILD_LIBFUZZER=OFF",
+            ]
+
+        if is_linux() and not osx_cross_compile and is_final_stage:
+            cmake_args += ["-DLLVM_BINUTILS_INCDIR=/usr/include"]
             cmake_args += ["-DLLVM_ENABLE_LIBXML2=FORCE_ON"]
             sysroot = os.path.join(os.environ.get("MOZ_FETCHES_DIR", ""), "sysroot")
             if os.path.exists(sysroot):
                 cmake_args += ["-DCMAKE_SYSROOT=%s" % sysroot]
+                # Work around the LLVM build system not building the i386 compiler-rt
+                # because it doesn't allow to use a sysroot for that during the cmake
+                # checks.
+                cmake_args += ["-DCAN_TARGET_i386=1"]
         if is_windows():
             cmake_args.insert(-1, "-DLLVM_EXPORT_SYMBOLS_FOR_PLUGINS=ON")
             cmake_args.insert(-1, "-DLLVM_USE_CRT_RELEASE=MT")
@@ -410,10 +375,6 @@ def build_one_stage(
     # Android; we now have to provide all the necessary compiler switches to
     # make that work.
     if is_final_stage and android_targets:
-        cmake_args += [
-            "-DLLVM_LIBDIR_SUFFIX=64",
-        ]
-
         android_link_flags = "-fuse-ld=lld"
 
         for target, cfg in android_targets.items():
@@ -451,8 +412,6 @@ def build_one_stage(
     cmake_args += [src_dir]
     build_package(build_dir, cmake_args)
 
-    if is_linux():
-        install_libgcc(gcc_dir, inst_dir, is_final_stage)
     # For some reasons the import library clang.lib of clang.exe is not
     # installed, so we copy it by ourselves.
     if is_windows():
@@ -543,6 +502,7 @@ def get_tool(config, key):
 #     clang-format
 #     clang-tidy
 #     clangd
+#     run-clang-tidy
 #   include/
 #     * (nothing will be deleted here)
 #   lib/
@@ -581,6 +541,7 @@ def prune_final_dir_for_clang_tidy(final_dir, osx_cross_compile):
         "clang-tidy",
         "clangd",
         "clang-query",
+        "run-clang-tidy",
     ]
     re_clang_tidy = re.compile(r"^(" + "|".join(kept_binaries) + r")(\.exe)?$", re.I)
     for f in glob.glob("%s/bin/*" % final_dir):
@@ -637,6 +598,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "-c",
         "--config",
+        action="append",
         required=True,
         type=argparse.FileType("r"),
         help="Clang configuration file",
@@ -688,10 +650,37 @@ if __name__ == "__main__":
         cc_name = "clang-cl"
         cxx_name = "clang-cl"
 
-    config_dir = os.path.dirname(args.config.name)
-    config = json.load(args.config)
+    config = {}
+    # Merge all the configs we got from the command line.
+    for c in args.config:
+        this_config_dir = os.path.dirname(c.name)
+        this_config = json.load(c)
+        patches = this_config.get("patches")
+        if patches:
+            this_config["patches"] = [os.path.join(this_config_dir, p) for p in patches]
+        for key, value in this_config.items():
+            old_value = config.get(key)
+            if old_value is None:
+                config[key] = value
+            elif value is None:
+                if key in config:
+                    del config[key]
+            elif type(old_value) != type(value):
+                raise Exception(
+                    "{} is overriding `{}` with a value of the wrong type".format(
+                        c.name, key
+                    )
+                )
+            elif isinstance(old_value, list):
+                for v in value:
+                    if v not in old_value:
+                        old_value.append(v)
+            elif isinstance(old_value, dict):
+                raise Exception("{} is setting `{}` to a dict?".format(c.name, key))
+            else:
+                config[key] = value
 
-    stages = 3
+    stages = 2
     if "stages" in config:
         stages = int(config["stages"])
         if stages not in (1, 2, 3, 4):
@@ -711,7 +700,7 @@ if __name__ == "__main__":
                 "We only know how to do Release, Debug, RelWithDebInfo or "
                 "MinSizeRel builds"
             )
-    build_libcxx = False
+    build_libcxx = True
     if "build_libcxx" in config:
         build_libcxx = config["build_libcxx"]
         if build_libcxx not in (True, False):
@@ -754,15 +743,6 @@ if __name__ == "__main__":
         assertions = config["assertions"]
         if assertions not in (True, False):
             raise ValueError("Only boolean values are accepted for assertions.")
-    python_path = None
-    if "python_path" not in config:
-        raise ValueError("Config file needs to set python_path")
-    python_path = config["python_path"]
-    gcc_dir = None
-    if "gcc_dir" in config:
-        gcc_dir = config["gcc_dir"].format(**os.environ)
-        if not os.path.exists(gcc_dir):
-            raise ValueError("gcc_dir must point to an existing path")
     ndk_dir = None
     android_targets = None
     if "android_targets" in config:
@@ -781,9 +761,6 @@ if __name__ == "__main__":
             raise ValueError("extra_targets must be a list")
         if not all(isinstance(t, str) for t in extra_targets):
             raise ValueError("members of extra_targets should be strings")
-
-    if is_linux() and gcc_dir is None:
-        raise ValueError("Config file needs to set gcc_dir")
 
     if is_darwin() or osx_cross_compile:
         os.environ["MACOSX_DEPLOYMENT_TARGET"] = (
@@ -805,7 +782,7 @@ if __name__ == "__main__":
 
     if not args.skip_patch:
         for p in config.get("patches", []):
-            patch(os.path.join(config_dir, p), source_dir)
+            patch(p, source_dir)
 
     compiler_rt_source_link = llvm_source_dir + "/projects/compiler-rt"
 
@@ -816,6 +793,7 @@ if __name__ == "__main__":
         (compiler_rt_source_dir, compiler_rt_source_link),
         (libcxx_source_dir, llvm_source_dir + "/projects/libcxx"),
         (libcxxabi_source_dir, llvm_source_dir + "/projects/libcxxabi"),
+        (source_dir + "/cmake", llvm_source_dir + "/projects/cmake"),
     ]
     for l in symlinks:
         # On Windows, we have to re-copy the whole directory every time.
@@ -854,17 +832,11 @@ if __name__ == "__main__":
     elif is_linux():
         extra_cflags = []
         extra_cxxflags = []
-        # When building stage2 and stage3, we want the newly-built clang to pick
-        # up whatever headers were installed from the gcc we used to build stage1,
-        # always, rather than the system headers.  Providing -gcc-toolchain
-        # encourages clang to do that.
-        extra_cflags2 = ["-fPIC", "-gcc-toolchain", stage1_inst_dir]
+        extra_cflags2 = ["-fPIC"]
         # Silence clang's warnings about arguments not being used in compilation.
         extra_cxxflags2 = [
             "-fPIC",
             "-Qunused-arguments",
-            "-gcc-toolchain",
-            stage1_inst_dir,
         ]
         extra_asmflags = []
         # Avoid libLLVM internal function calls going through the PLT.
@@ -875,14 +847,6 @@ if __name__ == "__main__":
         # here.  LLVM's build system is also picky about turning on ICF, so
         # we do that explicitly here, too.
         extra_ldflags += ["-fuse-ld=gold", "-Wl,--gc-sections", "-Wl,--icf=safe"]
-
-        if "LD_LIBRARY_PATH" in os.environ:
-            os.environ["LD_LIBRARY_PATH"] = "%s/lib64/:%s" % (
-                gcc_dir,
-                os.environ["LD_LIBRARY_PATH"],
-            )
-        else:
-            os.environ["LD_LIBRARY_PATH"] = "%s/lib64/" % gcc_dir
     elif is_windows():
         extra_cflags = []
         extra_cxxflags = []
@@ -949,8 +913,6 @@ if __name__ == "__main__":
         osx_cross_compile,
         build_type,
         assertions,
-        python_path,
-        gcc_dir,
         libcxx_include_dir,
         build_wasm,
         is_final_stage=(stages == 1),
@@ -979,8 +941,6 @@ if __name__ == "__main__":
             osx_cross_compile,
             build_type,
             assertions,
-            python_path,
-            gcc_dir,
             libcxx_include_dir,
             build_wasm,
             compiler_rt_source_dir,
@@ -1012,8 +972,6 @@ if __name__ == "__main__":
             osx_cross_compile,
             build_type,
             assertions,
-            python_path,
-            gcc_dir,
             libcxx_include_dir,
             build_wasm,
             compiler_rt_source_dir,
@@ -1054,8 +1012,6 @@ if __name__ == "__main__":
             osx_cross_compile,
             build_type,
             assertions,
-            python_path,
-            gcc_dir,
             libcxx_include_dir,
             build_wasm,
             compiler_rt_source_dir,
@@ -1072,19 +1028,17 @@ if __name__ == "__main__":
         )
 
     # Copy the wasm32 builtins to the final_inst_dir if the archive is present.
-    if "wasi-sysroot" in config:
-        sysroot = config["wasi-sysroot"].format(**os.environ)
-        if os.path.isdir(sysroot):
-            for srcdir in glob.glob(
-                os.path.join(sysroot, "lib", "clang", "*", "lib", "wasi")
+    if "wasi-compiler-rt" in config:
+        compiler_rt = config["wasi-compiler-rt"].format(**os.environ)
+        if os.path.isdir(compiler_rt):
+            for libdir in glob.glob(
+                os.path.join(final_inst_dir, "lib", "clang", "*", "lib")
             ):
-                print("Copying from wasi-sysroot srcdir %s" % srcdir)
+                srcdir = os.path.join(compiler_rt, "lib", "wasi")
+                print("Copying from wasi-compiler-rt srcdir %s" % srcdir)
                 # Copy the contents of the "lib/wasi" subdirectory to the
                 # appropriate location in final_inst_dir.
-                version = os.path.basename(os.path.dirname(os.path.dirname(srcdir)))
-                destdir = os.path.join(
-                    final_inst_dir, "lib", "clang", version, "lib", "wasi"
-                )
+                destdir = os.path.join(libdir, "wasi")
                 mkdir_p(destdir)
                 copy_tree(srcdir, destdir)
 

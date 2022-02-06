@@ -19,6 +19,7 @@
 #include "js/UniquePtr.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
+#include "vm/StaticStrings.h"
 
 #include "gc/FreeOp-inl.h"
 #include "gc/StoreBuffer-inl.h"
@@ -87,10 +88,9 @@ static MOZ_ALWAYS_INLINE JSInlineString* NewInlineString(
   return s;
 }
 
-template <typename Chars>
-static MOZ_ALWAYS_INLINE JSLinearString* TryEmptyOrStaticString(JSContext* cx,
-                                                                Chars chars,
-                                                                size_t n) {
+template <typename CharT>
+static MOZ_ALWAYS_INLINE JSLinearString* TryEmptyOrStaticString(
+    JSContext* cx, const CharT* chars, size_t n) {
   // Measurements on popular websites indicate empty strings are pretty common
   // and most strings with length 1 or 2 are in the StaticStrings table. For
   // length 3 strings that's only about 1%, so we check n <= 2.
@@ -107,19 +107,20 @@ static MOZ_ALWAYS_INLINE JSLinearString* TryEmptyOrStaticString(JSContext* cx,
   return nullptr;
 }
 
-template <typename CharT, typename = std::enable_if_t<!std::is_const_v<CharT>>>
-static MOZ_ALWAYS_INLINE JSLinearString* TryEmptyOrStaticString(JSContext* cx,
-                                                                CharT* chars,
-                                                                size_t n) {
-  return TryEmptyOrStaticString(cx, const_cast<const CharT*>(chars), n);
-}
-
 } /* namespace js */
 
 MOZ_ALWAYS_INLINE bool JSString::validateLength(JSContext* maybecx,
                                                 size_t length) {
+  return validateLengthInternal<js::CanGC>(maybecx, length);
+}
+
+template <js::AllowGC allowGC>
+MOZ_ALWAYS_INLINE bool JSString::validateLengthInternal(JSContext* maybecx,
+                                                        size_t length) {
   if (MOZ_UNLIKELY(length > JSString::MAX_LENGTH)) {
-    js::ReportAllocationOverflow(maybecx);
+    if constexpr (allowGC) {
+      js::ReportAllocationOverflow(maybecx);
+    }
     return false;
   }
 
@@ -165,7 +166,7 @@ MOZ_ALWAYS_INLINE JSRope* JSRope::new_(
     typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
     typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
     size_t length, js::gc::InitialHeap heap) {
-  if (!validateLength(cx, length)) {
+  if (MOZ_UNLIKELY(!validateLengthInternal<allowGC>(cx, length))) {
     return nullptr;
   }
   JSRope* str = js::AllocateString<JSRope, allowGC>(cx, heap);
@@ -261,7 +262,7 @@ template <js::AllowGC allowGC, typename CharT>
 MOZ_ALWAYS_INLINE JSLinearString* JSLinearString::new_(
     JSContext* cx, js::UniquePtr<CharT[], JS::FreePolicy> chars, size_t length,
     js::gc::InitialHeap heap) {
-  if (!validateLength(cx, length)) {
+  if (MOZ_UNLIKELY(!validateLengthInternal<allowGC>(cx, length))) {
     return nullptr;
   }
 
@@ -374,7 +375,7 @@ MOZ_ALWAYS_INLINE void JSExternalString::init(
 MOZ_ALWAYS_INLINE JSExternalString* JSExternalString::new_(
     JSContext* cx, const char16_t* chars, size_t length,
     const JSExternalStringCallbacks* callbacks) {
-  if (!validateLength(cx, length)) {
+  if (MOZ_UNLIKELY(!validateLength(cx, length))) {
     return nullptr;
   }
   JSExternalString* str = js::Allocate<JSExternalString>(cx);

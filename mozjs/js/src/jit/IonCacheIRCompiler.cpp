@@ -5,14 +5,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/IonCacheIRCompiler.h"
-#include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
 #include <algorithm>
 
-#include "jit/ABIFunctions.h"
-#include "jit/BaselineIC.h"
 #include "jit/CacheIRCompiler.h"
+#include "jit/CacheIRWriter.h"
 #include "jit/IonIC.h"
 #include "jit/JitFrames.h"
 #include "jit/JitZone.h"
@@ -20,22 +18,23 @@
 #include "jit/Linker.h"
 #include "jit/SharedICHelpers.h"
 #include "jit/VMFunctions.h"
-#include "js/friend/DOMProxy.h"  // JS::ExpandoAndGeneration
 #include "proxy/DeadObjectProxy.h"
 #include "proxy/Proxy.h"
 #include "util/Memory.h"
+#include "vm/StaticStrings.h"
 
-#include "jit/ABIFunctionList-inl.h"
 #include "jit/JSJitFrameIter-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/VMFunctionList-inl.h"
-#include "vm/Realm-inl.h"
 
 using namespace js;
 using namespace js::jit;
 
-using mozilla::DebugOnly;
 using mozilla::Maybe;
+
+namespace JS {
+struct ExpandoAndGeneration;
+}
 
 using JS::ExpandoAndGeneration;
 
@@ -114,9 +113,10 @@ void CacheRegisterAllocator::saveIonLiveRegisters(MacroAssembler& masm,
   // Step 1. Discard any dead operands so we can reuse their registers.
   freeDeadOperandLocations(masm);
 
-  // Step 2. Figure out the size of our live regs.
-  size_t sizeOfLiveRegsInBytes = liveRegs.gprs().size() * sizeof(intptr_t) +
-                                 liveRegs.fpus().getPushSizeInBytes();
+  // Step 2. Figure out the size of our live regs.  This is consistent with
+  // the fact that we're using storeRegsInMask to generate the save code and
+  // PopRegsInMask to generate the restore code.
+  size_t sizeOfLiveRegsInBytes = masm.PushRegsInMaskSizeInBytes(liveRegs);
 
   MOZ_ASSERT(sizeOfLiveRegsInBytes > 0);
 
@@ -388,14 +388,13 @@ bool IonCacheIRCompiler::init() {
     }
     case CacheKind::OptimizeSpreadCall: {
       auto* ic = ic_->asOptimizeSpreadCallIC();
-      Register output = ic->output();
+      ValueOperand output = ic->output();
 
       available.add(output);
       available.add(ic->temp());
 
       liveRegs_.emplace(ic->liveRegs());
-      outputUnchecked_.emplace(
-          TypedOrValueRegister(MIRType::Boolean, AnyRegister(output)));
+      outputUnchecked_.emplace(output);
 
       MOZ_ASSERT(numInputs == 1);
       allocator.initInputLocation(0, ic->value());
@@ -520,6 +519,7 @@ bool IonCacheIRCompiler::init() {
     case CacheKind::TypeOf:
     case CacheKind::ToBool:
     case CacheKind::GetIntrinsic:
+    case CacheKind::NewArray:
     case CacheKind::NewObject:
       MOZ_CRASH("Unsupported IC");
   }
@@ -532,6 +532,8 @@ bool IonCacheIRCompiler::init() {
 }
 
 JitCode* IonCacheIRCompiler::compile(IonICStub* stub) {
+  AutoCreatedBy acb(masm, "IonCacheIRCompiler::compile");
+
   masm.setFramePushed(ionScript_->frameSize());
   if (cx_->runtime()->geckoProfiler().enabled()) {
     masm.enableProfilingInstrumentation();
@@ -624,6 +626,7 @@ void IonCacheIRCompiler::assertFloatRegisterAvailable(FloatRegister reg) {
     case CacheKind::TypeOf:
     case CacheKind::ToBool:
     case CacheKind::GetIntrinsic:
+    case CacheKind::NewArray:
     case CacheKind::NewObject:
       MOZ_CRASH("Unsupported IC");
   }
@@ -1103,22 +1106,6 @@ bool IonCacheIRCompiler::emitProxyGetResult(ObjOperandId objId,
   // masm.leaveExitFrame & pop locals
   masm.adjustStack(IonOOLProxyExitFrameLayout::Size());
   return true;
-}
-
-bool IonCacheIRCompiler::emitGuardFrameHasNoArgumentsObject() {
-  MOZ_CRASH("Baseline-specific op");
-}
-
-bool IonCacheIRCompiler::emitLoadFrameCalleeResult() {
-  MOZ_CRASH("Baseline-specific op");
-}
-
-bool IonCacheIRCompiler::emitLoadFrameNumActualArgsResult() {
-  MOZ_CRASH("Baseline-specific op");
-}
-
-bool IonCacheIRCompiler::emitLoadFrameArgumentResult(Int32OperandId indexId) {
-  MOZ_CRASH("Baseline-specific op");
 }
 
 bool IonCacheIRCompiler::emitFrameIsConstructingResult() {
@@ -1721,8 +1708,9 @@ bool IonCacheIRCompiler::emitGuardAndGetIterator(ObjOperandId objId,
 
   // Load our PropertyIteratorObject* and its NativeIterator.
   masm.movePtr(ImmGCPtr(iterobj), output);
-  masm.loadObjPrivate(output, PropertyIteratorObject::NUM_FIXED_SLOTS,
-                      niScratch);
+
+  Address slotAddr(output, PropertyIteratorObject::offsetOfIteratorSlot());
+  masm.loadPrivate(slotAddr, niScratch);
 
   // Ensure the iterator is reusable: see NativeIterator::isReusable.
   masm.branchIfNativeIteratorNotReusable(niScratch, failure->label());
@@ -1812,7 +1800,10 @@ void IonIC::attachCacheIRStub(JSContext* cx, const CacheIRWriter& writer,
   }
 
   JitZone* jitZone = cx->zone()->jitZone();
-  uint32_t stubDataOffset = sizeof(IonICStub);
+
+  constexpr uint32_t stubDataOffset = sizeof(IonICStub);
+  static_assert(stubDataOffset % sizeof(uint64_t) == 0,
+                "Stub fields must be aligned");
 
   // Try to reuse a previously-allocated CacheIRStubInfo.
   CacheIRStubKey::Lookup lookup(kind, ICStubEngine::IonIC, writer.codeStart(),
@@ -2022,4 +2013,38 @@ bool IonCacheIRCompiler::emitReflectGetPrototypeOfResult(ObjOperandId objId) {
 bool IonCacheIRCompiler::emitHasClassResult(ObjOperandId objId,
                                             uint32_t claspOffset) {
   MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitSameValueResult(ValOperandId lhs,
+                                             ValOperandId rhs) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitSetHasStringResult(ObjOperandId setId,
+                                                StringOperandId strId) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitMapHasStringResult(ObjOperandId mapId,
+                                                StringOperandId strId) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitMapGetStringResult(ObjOperandId mapId,
+                                                StringOperandId strId) {
+  MOZ_CRASH("Call ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitNewArrayObjectResult(uint32_t arrayLength,
+                                                  uint32_t shapeOffset,
+                                                  uint32_t siteOffset) {
+  MOZ_CRASH("NewArray ICs not used in ion");
+}
+
+bool IonCacheIRCompiler::emitNewPlainObjectResult(uint32_t numFixedSlots,
+                                                  uint32_t numDynamicSlots,
+                                                  gc::AllocKind allocKind,
+                                                  uint32_t shapeOffset,
+                                                  uint32_t siteOffset) {
+  MOZ_CRASH("NewObject ICs not used in ion");
 }

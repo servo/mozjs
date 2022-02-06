@@ -10,7 +10,6 @@
 #include "gc/WeakMap.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 #include <type_traits>
@@ -133,8 +132,8 @@ void WeakMap<K, V>::markKey(GCMarker* marker, gc::Cell* markedCell,
   // We should only be processing <weakmap,key> pairs where the key exists in
   // the weakmap. Such pairs are inserted when a weakmap is marked, and are
   // removed by barriers if the key is removed from the weakmap. Failure here
-  // probably means gcWeakKeys is not being properly traced during a minor GC,
-  // or the weakmap keys are not being updated when tenured.
+  // probably means gcEphemeronEdges is not being properly traced during a minor
+  // GC, or the weakmap keys are not being updated when tenured.
   MOZ_ASSERT(p.found());
 
   mozilla::DebugOnly<gc::Cell*> oldKey = gc::ToMarkable(p->key());
@@ -145,8 +144,8 @@ void WeakMap<K, V>::markKey(GCMarker* marker, gc::Cell* markedCell,
   MOZ_ASSERT(oldKey == gc::ToMarkable(p->key()), "no moving GC");
 }
 
-// If the entry is live, ensure its key and value are marked. Also make sure
-// the key is at least as marked as the delegate, so it cannot get discarded
+// If the entry is live, ensure its key and value are marked. Also make sure the
+// key is at least as marked as min(map, delegate), so it cannot get discarded
 // and then recreated by rewrapping the delegate.
 template <class K, class V>
 bool WeakMap<K, V>::markEntry(GCMarker* marker, K& key, V& value) {
@@ -157,6 +156,7 @@ bool WeakMap<K, V>::markEntry(GCMarker* marker, K& key, V& value) {
 
   if (delegate) {
     CellColor delegateColor = gc::detail::GetEffectiveColor(rt, delegate);
+    MOZ_ASSERT(mapColor);
     // The key needs to stay alive while both the delegate and map are live.
     CellColor proxyPreserveColor = std::min(delegateColor, mapColor);
     if (keyColor < proxyPreserveColor) {
@@ -200,7 +200,7 @@ void WeakMap<K, V>::trace(JSTracer* trc) {
     // already present on the gray mark stack, which is marked later.
     if (mapColor < marker->markColor()) {
       mapColor = marker->markColor();
-      mozilla::Unused << markEntries(marker);
+      (void)markEntries(marker);
     }
     return;
   }
@@ -223,50 +223,60 @@ void WeakMap<K, V>::trace(JSTracer* trc) {
   }
 }
 
-template <class K, class V>
-/* static */ void WeakMap<K, V>::forgetKey(UnbarrieredKey key) {
-  // Remove the key or its delegate from weakKeys.
-  if (zone()->needsIncrementalBarrier()) {
-    JSRuntime* rt = zone()->runtimeFromMainThread();
-    if (JSObject* delegate = js::gc::detail::GetDelegate(key)) {
-      js::gc::WeakKeyTable& weakKeys = delegate->zone()->gcWeakKeys(delegate);
-      rt->gc.marker.forgetWeakKey(weakKeys, this, delegate, key);
-    } else {
-      js::gc::WeakKeyTable& weakKeys = key->zone()->gcWeakKeys(key);
-      rt->gc.marker.forgetWeakKey(weakKeys, this, key, key);
+bool WeakMapBase::addImplicitEdges(gc::Cell* key, gc::Cell* delegate,
+                                   gc::TenuredCell* value) {
+  if (delegate) {
+    auto& edgeTable = delegate->zone()->gcEphemeronEdges(delegate);
+    auto* p = edgeTable.get(delegate);
+
+    gc::EphemeronEdgeVector newVector;
+    gc::EphemeronEdgeVector& edges = p ? p->value : newVector;
+
+    // Add a <weakmap, delegate> -> key edge: the key must be preserved for
+    // future lookups until either the weakmap or the delegate dies.
+    gc::EphemeronEdge keyEdge{mapColor, key};
+    if (!edges.append(keyEdge)) {
+      return false;
     }
-  }
-}
 
-template <class K, class V>
-/* static */ void WeakMap<K, V>::clear() {
-  Base::clear();
-  JSRuntime* rt = zone()->runtimeFromMainThread();
-  if (zone()->needsIncrementalBarrier()) {
-    rt->gc.marker.forgetWeakMap(this, zone());
-  }
-}
+    if (value) {
+      gc::EphemeronEdge valueEdge{mapColor, value};
+      if (!edges.append(valueEdge)) {
+        return false;
+      }
+    }
 
-/* static */ inline void WeakMapBase::addWeakEntry(
-    GCMarker* marker, gc::Cell* key, const gc::WeakMarkable& markable) {
-  auto& weakKeys = key->zone()->gcWeakKeys(key);
-  auto p = weakKeys.get(key);
+    if (!p) {
+      return edgeTable.put(delegate, std::move(newVector));
+    }
+
+    return true;
+  }
+
+  // No delegate. Insert just the key -> value edge.
+
+  if (!value) {
+    return true;
+  }
+
+  auto& edgeTable = key->zone()->gcEphemeronEdges(key);
+  auto* p = edgeTable.get(key);
+  gc::EphemeronEdge valueEdge{mapColor, value};
   if (p) {
-    gc::WeakEntryVector& weakEntries = p->value;
-    if (!weakEntries.append(markable)) {
-      marker->abortLinearWeakMarking();
-    }
+    return p->value.append(valueEdge);
   } else {
-    gc::WeakEntryVector weakEntries;
-    MOZ_ALWAYS_TRUE(weakEntries.append(markable));
-    if (!weakKeys.put(key, std::move(weakEntries))) {
-      marker->abortLinearWeakMarking();
-    }
+    gc::EphemeronEdgeVector edges;
+    MOZ_ALWAYS_TRUE(edges.append(valueEdge));
+    return edgeTable.put(key, std::move(edges));
   }
 }
 
 template <class K, class V>
 bool WeakMap<K, V>::markEntries(GCMarker* marker) {
+  // This method is called whenever the map's mark color changes. Mark values
+  // (and keys with delegates) as required for the new color and populate the
+  // ephemeron edges if we're in incremental marking mode.
+
   MOZ_ASSERT(mapColor);
   bool markedAny = false;
 
@@ -279,14 +289,18 @@ bool WeakMap<K, V>::markEntries(GCMarker* marker) {
       continue;
     }
 
+    // Adds edges to the ephemeron edges table for any keys (or delegates) where
+    // future changes to their mark color would require marking the value (or
+    // the key).
+    //
+    // Note that delegateColor >= keyColor because marking a key marks its
+    // delegate, so we only need to check whether keyColor < mapColor to tell
+    // this.
+
     JSRuntime* rt = zone()->runtimeFromAnyThread();
     CellColor keyColor =
         gc::detail::GetEffectiveColor(rt, e.front().key().get());
 
-    // Changes in the map's mark color will be handled in this code, but
-    // changes in the key's mark color are handled through the weak keys table.
-    // So we only need to populate the table if the key is less marked than the
-    // map, to catch later updates in the key's mark color.
     if (keyColor < mapColor) {
       MOZ_ASSERT(marker->weakMapAction() == JS::WeakMapTraceAction::Expand);
       // The final color of the key is not yet known. Record this weakmap and
@@ -294,11 +308,26 @@ bool WeakMap<K, V>::markEntries(GCMarker* marker) {
       // then the lookup key is the delegate (because marking the key will end
       // up marking the delegate and thereby mark the entry.)
       gc::Cell* weakKey = e.front().key();
-      gc::WeakMarkable markable(this, weakKey);
-      if (JSObject* delegate = gc::detail::GetDelegate(e.front().key())) {
-        addWeakEntry(marker, delegate, markable);
-      } else {
-        addWeakEntry(marker, weakKey, markable);
+      gc::Cell* value = gc::ToMarkable(e.front().value());
+      gc::Cell* delegate = gc::detail::GetDelegate(e.front().key());
+
+      gc::TenuredCell* tenuredValue = nullptr;
+      if (value) {
+        if (value->isTenured()) {
+          tenuredValue = &value->asTenured();
+        } else {
+          // The nursery is collected at the beginning of an incremental GC. If
+          // the value is in the nursery, we know it was allocated after the GC
+          // started and sometime later was inserted into the map, which should
+          // be a fairly rare case. To avoid needing to sweep through the
+          // ephemeron edge tables on a minor GC, just mark the value
+          // immediately.
+          TraceEdge(marker, &e.front().value(), "WeakMap entry value");
+        }
+      }
+
+      if (!addImplicitEdges(weakKey, delegate, tenuredValue)) {
+        marker->abortLinearWeakMarking();
       }
     }
   }
@@ -307,30 +336,10 @@ bool WeakMap<K, V>::markEntries(GCMarker* marker) {
 }
 
 template <class K, class V>
-void WeakMap<K, V>::postSeverDelegate(GCMarker* marker, JSObject* key) {
-  if (mapColor) {
-    // We only stored the delegate, not the key, and we're severing the
-    // delegate from the key. So store the key.
-    gc::WeakMarkable markable(this, key);
-    addWeakEntry(marker, key, markable);
-  }
-}
-
-template <class K, class V>
-void WeakMap<K, V>::postRestoreDelegate(GCMarker* marker, JSObject* key,
-                                        JSObject* delegate) {
-  if (mapColor) {
-    // We had the key stored, but are removing it. Store the delegate instead.
-    gc::WeakMarkable markable(this, key);
-    addWeakEntry(marker, delegate, markable);
-  }
-}
-
-template <class K, class V>
-void WeakMap<K, V>::sweep() {
-  /* Remove all entries whose keys remain unmarked. */
+void WeakMap<K, V>::traceWeakEdges(JSTracer* trc) {
+  // Remove all entries whose keys remain unmarked.
   for (Enum e(*this); !e.empty(); e.popFront()) {
-    if (gc::IsAboutToBeFinalized(&e.front().mutableKey())) {
+    if (!TraceWeakEdge(trc, &e.front().mutableKey(), "WeakMap key")) {
       e.removeFront();
     }
   }
@@ -389,14 +398,13 @@ template <class K, class V>
 void WeakMap<K, V>::assertEntriesNotAboutToBeFinalized() {
   for (Range r = Base::all(); !r.empty(); r.popFront()) {
     UnbarrieredKey k = r.front().key();
-    MOZ_ASSERT(!gc::IsAboutToBeFinalizedUnbarriered(&k));
+    MOZ_ASSERT(!gc::IsAboutToBeFinalizedUnbarriered(k));
     JSObject* delegate = gc::detail::GetDelegate(k);
     if (delegate) {
-      MOZ_ASSERT(!gc::IsAboutToBeFinalizedUnbarriered(&delegate),
+      MOZ_ASSERT(!gc::IsAboutToBeFinalizedUnbarriered(delegate),
                  "weakmap marking depends on a key tracing its delegate");
     }
-    MOZ_ASSERT(!gc::IsAboutToBeFinalized(&r.front().value()));
-    MOZ_ASSERT(k == r.front().key());
+    MOZ_ASSERT(!gc::IsAboutToBeFinalized(r.front().value()));
   }
 }
 #endif

@@ -76,9 +76,6 @@ struct ZoneGCStats {
   /* Number of zones collected in this GC. */
   int collectedZoneCount = 0;
 
-  /* Number of zones that could have been collected in this GC. */
-  int collectableZoneCount = 0;
-
   /* Total number of zones in the Runtime at the start of this GC. */
   int zoneCount = 0;
 
@@ -94,9 +91,7 @@ struct ZoneGCStats {
   /* Total number of compartments swept by this GC. */
   int sweptCompartmentCount = 0;
 
-  bool isFullCollection() const {
-    return collectedZoneCount == collectableZoneCount;
-  }
+  bool isFullCollection() const { return collectedZoneCount == zoneCount; }
 
   ZoneGCStats() = default;
 };
@@ -116,11 +111,9 @@ struct Trigger {
   _(Compact, "cmpct", PhaseKind::COMPACT)                           \
   _(EndCallback, "endCB", PhaseKind::GC_END)                        \
   _(MinorGC, "minor", PhaseKind::MINOR_GC)                          \
-  _(EvictNursery, "evict", PhaseKind::EVICT_NURSERY)                \
-  _(Barriers, "brrier", PhaseKind::BARRIER)
+  _(EvictNursery, "evict", PhaseKind::EVICT_NURSERY)
 
 const char* ExplainAbortReason(GCAbortReason reason);
-const char* ExplainInvocationKind(JSGCInvocationKind gckind);
 
 /*
  * Struct for collecting timing statistics on a "phase tree". The tree is
@@ -178,8 +171,9 @@ struct Statistics {
   // Resume a suspended stack of phases.
   void resumePhases();
 
-  void beginSlice(const ZoneGCStats& zoneStats, JSGCInvocationKind gckind,
-                  const SliceBudget& budget, JS::GCReason reason);
+  void beginSlice(const ZoneGCStats& zoneStats, JS::GCOptions options,
+                  const SliceBudget& budget, JS::GCReason reason,
+                  bool budgetWasIncreased);
   void endSlice();
 
   [[nodiscard]] bool startTimingMutator();
@@ -333,7 +327,7 @@ struct Statistics {
 
   ZoneGCStats zoneStats;
 
-  JSGCInvocationKind gckind;
+  JS::GCOptions gcOptions;
 
   GCAbortReason nonincrementalReason_;
 
@@ -434,8 +428,9 @@ struct Statistics {
   using ProfileDurations =
       EnumeratedArray<ProfileKey, ProfileKey::KeyCount, TimeDuration>;
 
-  TimeDuration profileThreshold_;
   bool enableProfiling_;
+  bool profileWorkers_;
+  TimeDuration profileThreshold_;
   ProfileDurations totalTimes_;
   uint64_t sliceCount_;
 
@@ -444,7 +439,7 @@ struct Statistics {
   Phase currentPhase() const;
   Phase lookupChildPhase(PhaseKind phaseKind) const;
 
-  void beginGC(JSGCInvocationKind kind, const TimeStamp& currentTime);
+  void beginGC(JS::GCOptions options, const TimeStamp& currentTime);
   void endGC();
 
   void sendGCTelemetry();
@@ -481,10 +476,10 @@ struct Statistics {
 
 struct MOZ_RAII AutoGCSlice {
   AutoGCSlice(Statistics& stats, const ZoneGCStats& zoneStats,
-              JSGCInvocationKind gckind, const SliceBudget& budget,
-              JS::GCReason reason)
+              JS::GCOptions options, const SliceBudget& budget,
+              JS::GCReason reason, bool budgetWasIncreased)
       : stats(stats) {
-    stats.beginSlice(zoneStats, gckind, budget, reason);
+    stats.beginSlice(zoneStats, options, budget, reason, budgetWasIncreased);
   }
   ~AutoGCSlice() { stats.endSlice(); }
 
@@ -525,6 +520,9 @@ struct MOZ_RAII AutoSCC {
   unsigned scc;
   mozilla::TimeStamp start;
 };
+
+void ReadProfileEnv(const char* envName, const char* helpText, bool* enableOut,
+                    bool* workersOut, mozilla::TimeDuration* thresholdOut);
 
 } /* namespace gcstats */
 

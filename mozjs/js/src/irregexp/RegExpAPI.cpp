@@ -13,6 +13,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Casting.h"
 
+#include "frontend/TokenStream.h"
 #include "gc/Zone.h"
 #include "irregexp/imported/regexp-ast.h"
 #include "irregexp/imported/regexp-bytecode-generator.h"
@@ -384,7 +385,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
   void* Visit##Kind(v8::internal::RegExp##Kind* node, void*) override { \
     uint8_t padding[FRAME_PADDING];                                     \
     dummy_ = padding; /* Prevent padding from being optimized away.*/   \
-    return (void*)CheckRecursionLimitDontReport(cx_);                   \
+    AutoCheckRecursionLimit recursion(cx_);                             \
+    return (void*)recursion.checkDontReport(cx_);                       \
   }
 
   LEAF_DEPTH(Assertion)
@@ -400,7 +402,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
   void* Visit##Kind(v8::internal::RegExp##Kind* node, void*) override { \
     uint8_t padding[FRAME_PADDING];                                     \
     dummy_ = padding; /* Prevent padding from being optimized away.*/   \
-    if (!CheckRecursionLimitDontReport(cx_)) {                          \
+    AutoCheckRecursionLimit recursion(cx_);                             \
+    if (!recursion.checkDontReport(cx_)) {                              \
       return nullptr;                                                   \
     }                                                                   \
     return node->body()->Accept(this, nullptr);                         \
@@ -416,7 +419,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
                          void*) override {
     uint8_t padding[FRAME_PADDING];
     dummy_ = padding; /* Prevent padding from being optimized away.*/
-    if (!CheckRecursionLimitDontReport(cx_)) {
+    AutoCheckRecursionLimit recursion(cx_);
+    if (!recursion.checkDontReport(cx_)) {
       return nullptr;
     }
     for (auto* child : *node->nodes()) {
@@ -430,7 +434,8 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
                          void*) override {
     uint8_t padding[FRAME_PADDING];
     dummy_ = padding; /* Prevent padding from being optimized away.*/
-    if (!CheckRecursionLimitDontReport(cx_)) {
+    AutoCheckRecursionLimit recursion(cx_);
+    if (!recursion.checkDontReport(cx_)) {
       return nullptr;
     }
     for (auto* child : *node->alternatives()) {
@@ -473,6 +478,12 @@ enum class AssembleResult {
     // which needs a jit context.
     jctx.emplace(cx, nullptr);
     stack_masm.emplace();
+#ifdef DEBUG
+    // It would be much preferable to use `class AutoCreatedBy` here, but we
+    // may be operating without an assembler at all if `useNativeCode` is
+    // `false`, so there's no place to put such a call.
+    stack_masm.ref().pushCreator("Assemble() in RegExpAPI.cpp");
+#endif
     uint32_t num_capture_registers = re->pairCount() * 2;
     masm = MakeUnique<SMRegExpMacroAssembler>(cx, stack_masm.ref(), zone, mode,
                                               num_capture_registers);
@@ -480,6 +491,7 @@ enum class AssembleResult {
     masm = MakeUnique<RegExpBytecodeGenerator>(cx->isolate, zone);
   }
   if (!masm) {
+    ReportOutOfMemory(cx);
     return AssembleResult::OutOfMemory;
   }
 
@@ -528,6 +540,14 @@ enum class AssembleResult {
   V8HandleString wrappedPattern(v8::internal::String(pattern), cx->isolate);
   RegExpCompiler::CompilationResult result = compiler->Assemble(
       cx->isolate, masm_ptr, data->node, data->capture_count, wrappedPattern);
+
+  if (useNativeCode) {
+#ifdef DEBUG
+    // See comment referencing `pushCreator` above.
+    stack_masm.ref().popCreator();
+#endif
+  }
+
   if (!result.Succeeded()) {
     MOZ_ASSERT(result.error == RegExpError::kTooLarge);
     return AssembleResult::TooLarge;
@@ -546,6 +566,7 @@ enum class AssembleResult {
         static_cast<SMRegExpMacroAssembler*>(masm.get())->tables();
     for (uint32_t i = 0; i < tables.length(); i++) {
       if (!re->addTable(std::move(tables[i]))) {
+        ReportOutOfMemory(cx);
         return AssembleResult::OutOfMemory;
       }
     }
@@ -652,7 +673,7 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
       JS_ReportErrorASCII(cx, "regexp too big");
       return false;
     case AssembleResult::OutOfMemory:
-      ReportOutOfMemory(cx);
+      MOZ_ASSERT(cx->isThrowingOutOfMemory());
       return false;
     case AssembleResult::Success:
       break;
@@ -761,6 +782,19 @@ uint32_t CaseInsensitiveCompareUnicode(const char16_t* substring1,
   return SMRegExpMacroAssembler::CaseInsensitiveCompareUnicode(
       substring1, substring2, byteLength);
 }
+
+#ifdef DEBUG
+bool IsolateShouldSimulateInterrupt(Isolate* isolate) {
+  return isolate->shouldSimulateInterrupt_ != 0;
+}
+
+void IsolateSetShouldSimulateInterrupt(Isolate* isolate) {
+  isolate->shouldSimulateInterrupt_ = 1;
+}
+void IsolateClearShouldSimulateInterrupt(Isolate* isolate) {
+  isolate->shouldSimulateInterrupt_ = 0;
+}
+#endif
 
 }  // namespace irregexp
 }  // namespace js

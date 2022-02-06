@@ -21,10 +21,17 @@
 #include "threading/Mutex.h"
 #include "wasm/WasmConstants.h"
 
+namespace mozilla {
+union Utf8Unit;
+}
+
 namespace JS {
 class OffThreadToken {};
 class ReadOnlyCompileOptions;
 class Zone;
+
+template <typename UnitT>
+class SourceText;
 }  // namespace JS
 
 namespace js {
@@ -78,6 +85,10 @@ void DestroyHelperThreadsState();
 
 // Initialize helper threads unless already initialized.
 bool EnsureHelperThreadsInitialized();
+
+size_t GetHelperThreadCount();
+size_t GetHelperThreadCPUCount();
+size_t GetMaxWasmCompilationThreads();
 
 // This allows the JS shell to override GetCPUCount() when passed the
 // --thread-count=N option.
@@ -175,12 +186,6 @@ bool HasOffThreadIonCompile(JS::Realm* realm);
 #endif
 
 /*
- * Wait for all scheduled, in progress or finished parse tasks for the runtime
- * to complete.
- */
-void WaitForOffThreadParses(JSRuntime* runtime);
-
-/*
  * Cancel all scheduled, in progress or finished parses for runtime.
  *
  * Parse tasks which have completed but for which JS::FinishOffThreadScript (or
@@ -194,39 +199,34 @@ void CancelOffThreadParses(JSRuntime* runtime);
  * Start a parse/emit cycle for a stream of source. The characters must stay
  * alive until the compilation finishes.
  */
-JS::OffThreadToken* StartOffThreadParseScript(
+
+JS::OffThreadToken* StartOffThreadCompileToStencil(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf, JS::OffThreadCompileCallback callback,
     void* callbackData);
-JS::OffThreadToken* StartOffThreadParseScript(
+JS::OffThreadToken* StartOffThreadCompileToStencil(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<mozilla::Utf8Unit>& srcBuf,
     JS::OffThreadCompileCallback callback, void* callbackData);
 
-JS::OffThreadToken* StartOffThreadParseModule(
+JS::OffThreadToken* StartOffThreadCompileModuleToStencil(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<char16_t>& srcBuf, JS::OffThreadCompileCallback callback,
     void* callbackData);
-JS::OffThreadToken* StartOffThreadParseModule(
+JS::OffThreadToken* StartOffThreadCompileModuleToStencil(
     JSContext* cx, const JS::ReadOnlyCompileOptions& options,
     JS::SourceText<mozilla::Utf8Unit>& srcBuf,
     JS::OffThreadCompileCallback callback, void* callbackData);
 
-JS::OffThreadToken* StartOffThreadDecodeScript(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
+JS::OffThreadToken* StartOffThreadDecodeStencil(
+    JSContext* cx, const JS::DecodeOptions& options,
     const JS::TranscodeRange& range, JS::OffThreadCompileCallback callback,
     void* callbackData);
 
-JS::OffThreadToken* StartOffThreadDecodeMultiScripts(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
+JS::OffThreadToken* StartOffThreadDecodeMultiStencils(
+    JSContext* cx, const JS::DecodeOptions& options,
     JS::TranscodeSources& sources, JS::OffThreadCompileCallback callback,
     void* callbackData);
-
-/*
- * Called at the end of GC to enqueue any Parse tasks that were waiting on an
- * atoms-zone GC to finish.
- */
-void EnqueuePendingParseTasksAfterGC(JSRuntime* rt);
 
 // Drain the task queues and wait for all helper threads to finish running.
 //
@@ -235,13 +235,6 @@ void EnqueuePendingParseTasksAfterGC(JSRuntime* rt);
 // never return.
 void WaitForAllHelperThreads();
 void WaitForAllHelperThreads(AutoLockHelperThreadState& lock);
-
-struct AutoEnqueuePendingParseTasksAfterGC {
-  const gc::GCRuntime& gc_;
-  explicit AutoEnqueuePendingParseTasksAfterGC(const gc::GCRuntime& gc)
-      : gc_(gc) {}
-  ~AutoEnqueuePendingParseTasksAfterGC();
-};
 
 // Enqueue a compression job to be processed later. These are started at the
 // start of the major GC after the next one.
@@ -269,10 +262,6 @@ void RunPendingSourceCompressions(JSRuntime* runtime);
 // happens on low core count machines where we are concerned about blocking
 // main-thread execution.
 bool IsOffThreadSourceCompressionEnabled();
-
-// Return whether, if a new parse task was started, it would need to wait for
-// an in-progress GC to complete before starting.
-extern bool OffThreadParsingMustWaitForGC(JSRuntime* rt);
 
 }  // namespace js
 

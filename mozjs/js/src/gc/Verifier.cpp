@@ -99,7 +99,7 @@ typedef HashMap<Cell*, VerifyNode*, DefaultHasher<Cell*>, SystemAllocPolicy>
 class js::VerifyPreTracer final : public JS::CallbackTracer {
   JS::AutoDisableGenerationalGC noggc;
 
-  void onChild(const JS::GCCellPtr& thing) override;
+  void onChild(JS::GCCellPtr thing) override;
 
  public:
   /* The gcNumber when the verification began. */
@@ -136,7 +136,7 @@ class js::VerifyPreTracer final : public JS::CallbackTracer {
  * This function builds up the heap snapshot by adding edges to the current
  * node.
  */
-void VerifyPreTracer::onChild(const JS::GCCellPtr& thing) {
+void VerifyPreTracer::onChild(JS::GCCellPtr thing) {
   MOZ_ASSERT(!IsInsideNursery(thing.asCell()));
 
   // Skip things in other runtimes.
@@ -189,6 +189,19 @@ static VerifyNode* NextNode(VerifyNode* node) {
   }
 }
 
+static void ClearMarkBitsForAllZones(GCRuntime* gc) {
+  // This does not clear the mark bits for permanent atoms, whose arenas are
+  // removed from the arena lists by GCRuntime::freezePermanentAtoms.
+
+  for (AllZonesIter zone(gc); !zone.done(); zone.next()) {
+    for (auto kind : AllAllocKinds()) {
+      for (ArenaIter arena(zone, kind); !arena.done(); arena.next()) {
+        arena->unmarkAll();
+      }
+    }
+  }
+}
+
 void gc::GCRuntime::startVerifyPreBarriers() {
   if (verifyPreData || isIncrementalGCInProgress()) {
     return;
@@ -196,8 +209,7 @@ void gc::GCRuntime::startVerifyPreBarriers() {
 
   JSContext* cx = rt->mainContextFromOwnThread();
 
-  if (IsIncrementalGCUnsafe(rt) != GCAbortReason::None ||
-      rt->hasHelperThreadZones()) {
+  if (IsIncrementalGCUnsafe(rt) != GCAbortReason::None) {
     return;
   }
 
@@ -210,12 +222,7 @@ void gc::GCRuntime::startVerifyPreBarriers() {
 
   AutoPrepareForTracing prep(cx);
 
-  {
-    AutoLockGC lock(this);
-    for (auto chunk = allNonEmptyChunks(lock); !chunk.done(); chunk.next()) {
-      chunk->markBits.clear();
-    }
-  }
+  ClearMarkBitsForAllZones(this);
 
   gcstats::AutoPhase ap(stats(), gcstats::PhaseKind::TRACE_HEAP);
 
@@ -264,7 +271,6 @@ void gc::GCRuntime::startVerifyPreBarriers() {
   marker.start();
 
   for (ZonesIter zone(this, WithAtoms); !zone.done(); zone.next()) {
-    MOZ_ASSERT(!zone->usedByHelperThread());
     zone->setNeedsIncrementalBarrier(true);
     zone->arenas.clearFreeLists();
   }
@@ -285,7 +291,7 @@ struct CheckEdgeTracer final : public JS::CallbackTracer {
   VerifyNode* node;
   explicit CheckEdgeTracer(JSRuntime* rt)
       : JS::CallbackTracer(rt), node(nullptr) {}
-  void onChild(const JS::GCCellPtr& thing) override;
+  void onChild(JS::GCCellPtr thing) override;
 };
 
 static const uint32_t MAX_VERIFIER_EDGES = 1000;
@@ -297,7 +303,7 @@ static const uint32_t MAX_VERIFIER_EDGES = 1000;
  * non-nullptr edges (i.e., the ones from the original snapshot that must have
  * been modified) must point to marked objects.
  */
-void CheckEdgeTracer::onChild(const JS::GCCellPtr& thing) {
+void CheckEdgeTracer::onChild(JS::GCCellPtr thing) {
   // Skip things in other runtimes.
   if (thing.asCell()->asTenured().runtimeFromAnyThread() != runtime()) {
     return;
@@ -367,8 +373,7 @@ void gc::GCRuntime::endVerifyPreBarriers() {
   MOZ_ASSERT(incrementalState == State::Mark);
   incrementalState = State::NotActive;
 
-  if (!compartmentCreated && IsIncrementalGCUnsafe(rt) == GCAbortReason::None &&
-      !rt->hasHelperThreadZones()) {
+  if (!compartmentCreated && IsIncrementalGCUnsafe(rt) == GCAbortReason::None) {
     CheckEdgeTracer cetrc(rt);
 
     /* Start after the roots. */
@@ -539,9 +544,9 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
    * For saving, smush all of the keys into one big table and split them back
    * up into per-zone tables when restoring.
    */
-  gc::WeakKeyTable savedWeakKeys(SystemAllocPolicy(),
-                                 runtime->randomHashCodeScrambler());
-  if (!savedWeakKeys.init()) {
+  gc::EphemeronEdgeTable savedEphemeronEdges(
+      SystemAllocPolicy(), runtime->randomHashCodeScrambler());
+  if (!savedEphemeronEdges.init()) {
     return;
   }
 
@@ -551,15 +556,15 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
     }
 
     AutoEnterOOMUnsafeRegion oomUnsafe;
-    for (gc::WeakKeyTable::Range r = zone->gcWeakKeys().all(); !r.empty();
-         r.popFront()) {
+    for (gc::EphemeronEdgeTable::Range r = zone->gcEphemeronEdges().all();
+         !r.empty(); r.popFront()) {
       MOZ_ASSERT(r.front().key->asTenured().zone() == zone);
-      if (!savedWeakKeys.put(r.front().key, std::move(r.front().value))) {
+      if (!savedEphemeronEdges.put(r.front().key, std::move(r.front().value))) {
         oomUnsafe.crash("saving weak keys table for validator");
       }
     }
 
-    if (!zone->gcWeakKeys().clear()) {
+    if (!zone->gcEphemeronEdges().clear()) {
       oomUnsafe.crash("clearing weak keys table for validator");
     }
   }
@@ -587,11 +592,7 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
       MOZ_ASSERT(gcmarker->isDrained());
       gcmarker->reset();
 
-      AutoLockGC lock(gc);
-      for (auto chunk = gc->allNonEmptyChunks(lock); !chunk.done();
-           chunk.next()) {
-        chunk->markBits.clear();
-      }
+      ClearMarkBitsForAllZones(gc);
     }
   }
 
@@ -650,18 +651,19 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
   for (GCZonesIter zone(gc); !zone.done(); zone.next()) {
     WeakMapBase::unmarkZone(zone);
     AutoEnterOOMUnsafeRegion oomUnsafe;
-    if (!zone->gcWeakKeys().clear()) {
+    if (!zone->gcEphemeronEdges().clear()) {
       oomUnsafe.crash("clearing weak keys table for validator");
     }
   }
 
   WeakMapBase::restoreMarkedWeakMaps(markedWeakMaps);
 
-  for (gc::WeakKeyTable::Range r = savedWeakKeys.all(); !r.empty();
+  for (gc::EphemeronEdgeTable::Range r = savedEphemeronEdges.all(); !r.empty();
        r.popFront()) {
     AutoEnterOOMUnsafeRegion oomUnsafe;
     Zone* zone = r.front().key->asTenured().zone();
-    if (!zone->gcWeakKeys().put(r.front().key, std::move(r.front().value))) {
+    if (!zone->gcEphemeronEdges().put(r.front().key,
+                                      std::move(r.front().value))) {
       oomUnsafe.crash("restoring weak keys table for validator");
     }
   }
@@ -694,7 +696,7 @@ void js::gc::MarkingValidator::validate() {
     MarkBitmap* incBitmap = &chunk->markBits;
 
     for (size_t i = 0; i < ArenasPerChunk; i++) {
-      if (chunk->decommittedArenas[i]) {
+      if (chunk->decommittedPages[chunk->pageIndex(i)]) {
         continue;
       }
       Arena* arena = &chunk->arenas[i];
@@ -777,7 +779,7 @@ class HeapCheckTracerBase : public JS::CallbackTracer {
   size_t failures;
 
  private:
-  void onChild(const JS::GCCellPtr& thing) override;
+  void onChild(JS::GCCellPtr thing) override;
 
   struct WorkItem {
     WorkItem(JS::GCCellPtr thing, const char* name, int parentIndex)
@@ -807,7 +809,7 @@ HeapCheckTracerBase::HeapCheckTracerBase(JSRuntime* rt,
       oom(false),
       parentIndex(-1) {}
 
-void HeapCheckTracerBase::onChild(const JS::GCCellPtr& thing) {
+void HeapCheckTracerBase::onChild(JS::GCCellPtr thing) {
   Cell* cell = thing.asCell();
   checkCell(cell);
 
@@ -822,12 +824,6 @@ void HeapCheckTracerBase::onChild(const JS::GCCellPtr& thing) {
 
   // Don't trace into GC things owned by another runtime.
   if (cell->runtimeFromAnyThread() != rt) {
-    return;
-  }
-
-  // Don't trace into GC in zones being used by helper threads.
-  Zone* zone = thing.asCell()->zone();
-  if (zone->usedByHelperThread()) {
     return;
   }
 
@@ -992,7 +988,7 @@ bool CheckGrayMarkingTracer::check(AutoTraceSession& session) {
   return failures == 0;
 }
 
-JS_FRIEND_API bool js::CheckGrayMarkingState(JSRuntime* rt) {
+JS_PUBLIC_API bool js::CheckGrayMarkingState(JSRuntime* rt) {
   MOZ_ASSERT(!JS::RuntimeHeapIsCollecting());
   MOZ_ASSERT(!rt->gc.isIncrementalGCInProgress());
   if (!rt->gc.areGrayBitsValid()) {

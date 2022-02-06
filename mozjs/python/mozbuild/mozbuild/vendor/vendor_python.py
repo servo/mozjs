@@ -7,6 +7,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 import os
 import shutil
 import subprocess
+from pathlib import Path
 
 import mozfile
 import mozpack.path as mozpath
@@ -16,21 +17,12 @@ from mozpack.files import FileFinder
 
 
 class VendorPython(MozbuildObject):
-    def vendor(self, packages=None, keep_extra_files=False):
+    def vendor(self, keep_extra_files=False):
         self.populate_logger()
         self.log_manager.enable_unstructured()
 
         vendor_dir = mozpath.join(self.topsrcdir, os.path.join("third_party", "python"))
-
-        packages = packages or []
-
         self.activate_virtualenv()
-        pip_compile = os.path.join(self.virtualenv_manager.bin_path, "pip-compile")
-        if not os.path.exists(pip_compile):
-            path = os.path.normpath(
-                os.path.join(self.topsrcdir, "third_party", "python", "pip-tools")
-            )
-            self.virtualenv_manager.install_pip_package(path, vendored=True)
         spec = os.path.join(vendor_dir, "requirements.in")
         requirements = os.path.join(vendor_dir, "requirements.txt")
 
@@ -38,18 +30,28 @@ class VendorPython(MozbuildObject):
             tmpspec = "requirements-mach-vendor-python.in"
             tmpspec_absolute = os.path.join(spec_dir, tmpspec)
             shutil.copyfile(spec, tmpspec_absolute)
-            self._update_packages(tmpspec_absolute, packages)
+            self._update_packages(tmpspec_absolute)
 
-            # resolve the dependencies and update requirements.txt
+            tmp_requirements_absolute = os.path.join(spec_dir, "requirements.txt")
+            # Copy the existing "requirements.txt" file so that the versions
+            # of transitive dependencies aren't implicitly changed.
+            shutil.copy(requirements, tmp_requirements_absolute)
+
+            # resolve the dependencies and update requirements.txt.
+            # "--allow-unsafe" is required to vendor pip and setuptools.
             subprocess.check_output(
                 [
-                    pip_compile,
+                    self.virtualenv_manager.python_path,
+                    "-m",
+                    "piptools",
+                    "compile",
                     tmpspec,
                     "--no-header",
-                    "--no-index",
+                    "--no-emit-index-url",
                     "--output-file",
-                    requirements,
+                    tmp_requirements_absolute,
                     "--generate-hashes",
+                    "--allow-unsafe",
                 ],
                 # Run pip-compile from within the temporary directory so that the "via"
                 # annotations don't have the non-deterministic temporary path in them.
@@ -58,31 +60,31 @@ class VendorPython(MozbuildObject):
 
             with TemporaryDirectory() as tmp:
                 # use requirements.txt to download archived source distributions of all packages
-                self.virtualenv_manager._run_pip(
+                subprocess.check_call(
                     [
+                        self.virtualenv_manager.python_path,
+                        "-m",
+                        "pip",
                         "download",
                         "-r",
-                        requirements,
+                        tmp_requirements_absolute,
                         "--no-deps",
                         "--dest",
                         tmp,
-                        "--no-binary",
-                        ":all:",
-                        "--disable-pip-version-check",
+                        "--abi",
+                        "none",
+                        "--platform",
+                        "any",
                     ]
                 )
+                _purge_vendor_dir(vendor_dir)
                 self._extract(tmp, vendor_dir, keep_extra_files)
 
             shutil.copyfile(tmpspec_absolute, spec)
+            shutil.copy(tmp_requirements_absolute, requirements)
             self.repository.add_remove_files(vendor_dir)
 
-    def _update_packages(self, spec, packages):
-        for package in packages:
-            if not all(package.partition("==")):
-                raise Exception(
-                    "Package {} must be in the format name==version".format(package)
-                )
-
+    def _update_packages(self, spec):
         requirements = {}
         with open(spec, "r") as f:
             comments = []
@@ -95,10 +97,6 @@ class VendorPython(MozbuildObject):
                 requirements[name] = version, comments
                 comments = []
 
-        for package in packages:
-            name, version = package.split("==")
-            requirements[name] = version, []
-
         with open(spec, "w") as f:
             for name, (version, comments) in sorted(requirements.items()):
                 if comments:
@@ -110,28 +108,70 @@ class VendorPython(MozbuildObject):
 
         ignore = ()
         if not keep_extra_files:
-            ignore = (
-                "*/doc",
-                "*/docs",
-                "*/test",
-                "*/tests",
-            )
+            ignore = ("*/doc", "*/docs", "*/test", "*/tests", "**/.git")
         finder = FileFinder(src)
-        for path, _ in finder.find("*"):
-            base, ext = os.path.splitext(path)
-            # packages extract into package-version directory name and we strip the version
-            tld = mozfile.extract(os.path.join(finder.base, path), dest, ignore=ignore)[
-                0
-            ]
-            target = os.path.join(dest, tld.rpartition("-")[0])
-            mozfile.remove(target)  # remove existing version of vendored package
-            mozfile.move(tld, target)
+        for archive, _ in finder.find("*"):
+            _, ext = os.path.splitext(archive)
+            archive_path = os.path.join(finder.base, archive)
+            if ext == ".whl":
+                # Archive is named like "$package-name-1.0-py2.py3-none-any.whl", and should
+                # have four dashes that aren't part of the package name.
+                package_name, version, spec, abi, platform_and_suffix = archive.rsplit(
+                    "-", 4
+                )
+                target_package_dir = os.path.join(dest, package_name)
+                os.mkdir(target_package_dir)
 
-            # If any files inside the vendored package were symlinks, turn them into normal files
-            # because hg.mozilla.org forbids symlinks in the repository.
-            link_finder = FileFinder(target)
-            for _, f in link_finder.find("**"):
-                if os.path.islink(f.path):
-                    link_target = os.path.realpath(f.path)
-                    os.unlink(f.path)
-                    shutil.copyfile(link_target, f.path)
+                # Extract all the contents of the wheel into the package subdirectory.
+                # We're expecting at least a code directory and a ".dist-info" directory,
+                # though there may be a ".data" directory as well.
+                mozfile.extract(archive_path, target_package_dir, ignore=ignore)
+                _denormalize_symlinks(target_package_dir)
+            else:
+                # Archive is named like "$package-name-1.0.tar.gz", and the rightmost
+                # dash should separate the package name from the rest of the archive
+                # specifier.
+                package_name, archive_postfix = archive.rsplit("-", 1)
+                package_dir = os.path.join(dest, package_name)
+
+                # The archive should only contain one top-level directory, which has
+                # the source files. We extract this directory directly to
+                # the vendor directory.
+                extracted_files = mozfile.extract(archive_path, dest, ignore=ignore)
+                assert len(extracted_files) == 1
+                extracted_package_dir = extracted_files[0]
+
+                # The extracted package dir includes the version in the name,
+                # which we don't we don't want.
+                mozfile.move(extracted_package_dir, package_dir)
+                _denormalize_symlinks(package_dir)
+
+
+def _purge_vendor_dir(vendor_dir):
+    excluded_packages = [
+        # dlmanager's package on PyPI only has metadata, but is missing the code.
+        # https://github.com/parkouss/dlmanager/issues/1
+        "dlmanager",
+        # gyp's package on PyPI doesn't have any downloadable files.
+        "gyp",
+        # We manage installing "virtualenv" package manually, and we have a custom
+        # "virtualenv.py" entry module.
+        "virtualenv",
+        # The moz.build file isn't a vendored module, so don't delete it.
+        "moz.build",
+    ]
+
+    for child in Path(vendor_dir).iterdir():
+        if child.name not in excluded_packages:
+            mozfile.remove(str(child))
+
+
+def _denormalize_symlinks(target):
+    # If any files inside the vendored package were symlinks, turn them into normal files
+    # because hg.mozilla.org forbids symlinks in the repository.
+    link_finder = FileFinder(target)
+    for _, f in link_finder.find("**"):
+        if os.path.islink(f.path):
+            link_target = os.path.realpath(f.path)
+            os.unlink(f.path)
+            shutil.copyfile(link_target, f.path)

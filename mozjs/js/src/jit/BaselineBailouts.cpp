@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/Assertions.h"
 #include "mozilla/ScopeExit.h"
 
 #include "builtin/ModuleObject.h"
@@ -21,10 +22,9 @@
 #include "jit/JitSpewer.h"
 #include "jit/mips32/Simulator-mips32.h"
 #include "jit/mips64/Simulator-mips64.h"
-#include "jit/Recover.h"
 #include "jit/RematerializedFrame.h"
 #include "jit/SharedICRegisters.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimitWithStackPointerDontReport, js::ReportOverRecursed
+#include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit, js::ReportOverRecursed
 #include "js/Utility.h"
 #include "util/Memory.h"
 #include "vm/ArgumentsObject.h"
@@ -224,7 +224,7 @@ class MOZ_STACK_CLASS BaselineStackBuilder {
   }
 
   bool needToSaveCallerArgs() const {
-    return op_ == JSOp::FunApply || IsIonInlinableGetterOrSetterOp(op_);
+    return IsIonInlinableGetterOrSetterOp(op_);
   }
 
   [[nodiscard]] bool enlarge() {
@@ -510,13 +510,6 @@ BaselineStackBuilder::BaselineStackBuilder(JSContext* cx,
   MOZ_ASSERT(bufferTotal_ >= sizeof(BaselineBailoutInfo));
 }
 
-#ifdef DEBUG
-static inline bool IsInlinableFallback(ICFallbackStub* icEntry) {
-  return icEntry->isCall_Fallback() || icEntry->isGetProp_Fallback() ||
-         icEntry->isSetProp_Fallback() || icEntry->isGetElem_Fallback();
-}
-#endif
-
 bool BaselineStackBuilder::initFrame() {
   // If we are catching an exception, we are bailing out to a catch or
   // finally block and this is the frame where we will resume. Usually the
@@ -663,7 +656,7 @@ bool BaselineStackBuilder::buildBaselineFrame() {
 
   // Get |argsObj| if present.
   ArgumentsObject* argsObj = nullptr;
-  if (script_->argumentsHasVarBinding()) {
+  if (script_->needsArgsObj()) {
     Value maybeArgsObj = iter_.read();
     MOZ_ASSERT(maybeArgsObj.isObject() || maybeArgsObj.isUndefined() ||
                maybeArgsObj.isMagic(JS_OPTIMIZED_OUT));
@@ -750,8 +743,8 @@ bool BaselineStackBuilder::buildFixedSlots() {
   return true;
 }
 
-// The caller side of inlined JSOp::FunCall, JSOp::FunApply, and
-// accessors must look like the function wasn't inlined.
+// The caller side of inlined JSOp::FunCall and accessors must look
+// like the function wasn't inlined.
 bool BaselineStackBuilder::fixUpCallerArgs(
     MutableHandleValueVector savedCallerArgs, bool* fixedUp) {
   MOZ_ASSERT(!*fixedUp);
@@ -770,11 +763,6 @@ bool BaselineStackBuilder::fixUpCallerArgs(
     // The first argument to an inlined FunCall becomes |this|,
     // if it exists. The rest are passed normally.
     inlinedArgs += GET_ARGC(pc_) > 0 ? GET_ARGC(pc_) - 1 : 0;
-  } else if (op_ == JSOp::FunApply) {
-    // We currently only support FunApplyArgs. The number of arguments
-    // passed to the inlined function is the number of arguments to the
-    // current frame.
-    inlinedArgs += blFrame()->numActualArgs();
   } else {
     MOZ_ASSERT(IsIonInlinableGetterOrSetterOp(op_));
     // Setters are passed one argument. Getters are passed none.
@@ -798,10 +786,10 @@ bool BaselineStackBuilder::fixUpCallerArgs(
     }
   }
 
-  // When we inline JSOp::FunCall or JSOp::FunApply, we bypass the
-  // native and inline the target directly. When rebuilding the stack,
-  // we need to fill in the right number of slots to make it look like
-  // the js_native was actually called.
+  // When we inline JSOp::FunCall, we bypass the native and inline the
+  // target directly. When rebuilding the stack, we need to fill in
+  // the right number of slots to make it look like the js_native was
+  // actually called.
   if (op_ == JSOp::FunCall) {
     // We must transform the stack from |target, this, args| to
     // |js_fun_call, target, this, args|. The value of |js_fun_call|
@@ -832,19 +820,6 @@ bool BaselineStackBuilder::fixUpCallerArgs(
       }
       // Skip |this|.
       iter_.skip();
-    }
-  } else if (op_ == JSOp::FunApply) {
-    // We currently only support FunApplyArgs. We must transform the
-    // stack from |target, this, arg1, ...| to |js_fun_apply, target,
-    // this, argObject|. These values will never be observed, so we
-    // can just push |undefined|.
-    JitSpew(JitSpew_BaselineBailouts,
-            "      pushing 4x undefined to fixup funapply");
-    if (!writeValue(UndefinedValue(), "StackValue") ||
-        !writeValue(UndefinedValue(), "StackValue") ||
-        !writeValue(UndefinedValue(), "StackValue") ||
-        !writeValue(UndefinedValue(), "StackValue")) {
-      return false;
     }
   }
 
@@ -976,9 +951,10 @@ bool BaselineStackBuilder::buildStubFrame(uint32_t frameSize,
 
   // Write stub pointer.
   uint32_t pcOff = script_->pcToOffset(pc_);
-  ICEntry& icEntry = script_->jitScript()->icEntryFromPCOffset(pcOff);
-  MOZ_ASSERT(IsInlinableFallback(icEntry.fallbackStub()));
-  if (!writePtr(icEntry.fallbackStub(), "StubPtr")) {
+  JitScript* jitScript = script_->jitScript();
+  const ICEntry& icEntry = jitScript->icEntryFromPCOffset(pcOff);
+  ICFallbackStub* fallback = jitScript->fallbackStubForICEntry(&icEntry);
+  if (!writePtr(fallback, "StubPtr")) {
     return false;
   }
 
@@ -996,14 +972,10 @@ bool BaselineStackBuilder::buildStubFrame(uint32_t frameSize,
   unsigned actualArgc;
   Value callee;
   if (needToSaveCallerArgs()) {
-    // For FunApply or an accessor, the arguments are not on the stack anymore,
+    // For accessors, the arguments are not on the stack anymore,
     // but they are copied in a vector and are written here.
-    if (op_ == JSOp::FunApply) {
-      actualArgc = blFrame()->numActualArgs();
-    } else {
-      actualArgc = IsSetPropOp(op_);
-    }
     callee = savedCallerArgs[0];
+    actualArgc = IsSetPropOp(op_) ? 1 : 0;
 
     // Align the stack based on the number of arguments.
     size_t afterFrameSize =
@@ -1325,13 +1297,6 @@ bool BaselineStackBuilder::validateFrame() {
     return true;
   }
 
-  // For FunApplyArgs, the reconstructed stack depth will be 4, but we
-  // may have inlined the funapply. In that case, exprStackSlots will
-  // have the real arguments in the slots, and the stack depth may not
-  // be 4. Don't assert.
-  if (op_ == JSOp::FunApply && iter_.moreFrames() && !resumeAfter()) {
-    return true;
-  }
   if (op_ == JSOp::FunCall) {
     // For fun.call(this, ...); the reconstructed stack depth will
     // include the this. When inlining that is not included.
@@ -1378,17 +1343,13 @@ void* BaselineStackBuilder::getStubReturnAddress() {
   return code.bailoutReturnAddr(BailoutReturnKind::Call);
 }
 
-static inline jsbytecode* GetNextNonLoopHeadPc(jsbytecode* pc,
-                                               jsbytecode** skippedLoopHead) {
+static inline jsbytecode* GetNextNonLoopHeadPc(jsbytecode* pc) {
   JSOp op = JSOp(*pc);
   switch (op) {
     case JSOp::Goto:
       return pc + GET_JUMP_OFFSET(pc);
 
     case JSOp::LoopHead:
-      *skippedLoopHead = pc;
-      return GetNextPc(pc);
-
     case JSOp::Nop:
       return GetNextPc(pc);
 
@@ -1406,15 +1367,22 @@ jsbytecode* BaselineStackBuilder::getResumePC() {
   // If we are resuming at a LoopHead op, resume at the next op to avoid
   // a bailout -> enter Ion -> bailout loop with --ion-eager.
   //
-  // The algorithm below is the "tortoise and the hare" algorithm. See bug
-  // 994444 for more explanation.
-  jsbytecode* skippedLoopHead = nullptr;
+  // Cycles can cause the loop below to not terminate. Empty loops are one
+  // such example:
+  //
+  //   L: loophead
+  //      goto L
+  //
+  // We do cycle detection below with the "tortoise and the hare" algorithm.
   jsbytecode* slowerPc = pc_;
   jsbytecode* fasterPc = pc_;
   while (true) {
-    slowerPc = GetNextNonLoopHeadPc(slowerPc, &skippedLoopHead);
-    fasterPc = GetNextNonLoopHeadPc(fasterPc, &skippedLoopHead);
-    fasterPc = GetNextNonLoopHeadPc(fasterPc, &skippedLoopHead);
+    // Advance fasterPc twice as fast as slowerPc.
+    slowerPc = GetNextNonLoopHeadPc(slowerPc);
+    fasterPc = GetNextNonLoopHeadPc(fasterPc);
+    fasterPc = GetNextNonLoopHeadPc(fasterPc);
+
+    // Break on cycles or at the end of goto sequences.
     if (fasterPc == slowerPc) {
       break;
     }
@@ -1550,6 +1518,9 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
   MOZ_ASSERT(*bailoutInfo == nullptr);
   MOZ_ASSERT(iter.isBailoutJS());
 
+  // Caller should have saved the exception while we perform the bailout.
+  MOZ_ASSERT(!cx->isExceptionPending());
+
   TraceLoggerThread* logger = TraceLoggerForCurrentThread(cx);
   TraceLogStopEvent(logger, TraceLogger_IonMonkey);
   TraceLogStartEvent(logger, TraceLogger_Baseline);
@@ -1638,7 +1609,6 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
   // recovered ahead of the bailout.
   SnapshotIterator snapIter(iter, activation->bailoutData()->machineState());
   if (!snapIter.initInstructionResults(recoverBailout)) {
-    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -1717,7 +1687,8 @@ bool jit::BailoutIonToBaseline(JSContext* cx, JitActivation* activation,
     overRecursed = true;
   }
 #else
-  if (!CheckRecursionLimitWithStackPointerDontReport(cx, newsp)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.checkWithStackPointerDontReport(cx, newsp)) {
     overRecursed = true;
   }
 #endif
@@ -1838,6 +1809,8 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
   // Use UniquePtr to free the bailoutInfo before we return.
   UniquePtr<BaselineBailoutInfo> bailoutInfo(bailoutInfoArg);
   bailoutInfoArg = nullptr;
+
+  MOZ_DIAGNOSTIC_ASSERT(*bailoutInfo->bailoutKind != BailoutKind::Unreachable);
 
   JSContext* cx = TlsContext.get();
   BaselineFrame* topFrame = GetTopBaselineFrame(cx);
@@ -2091,12 +2064,6 @@ bool jit::FinishBailoutToBaseline(BaselineBailoutInfo* bailoutInfoArg) {
       // invalidate and recompile.
       action = BailoutAction::InvalidateIfFrequent;
       saveFailedICHash = true;
-      break;
-
-    case BailoutKind::NotOptimizedArgumentsGuard:
-      // Optimized-arguments escaped to a slow path. Disable the optimization to
-      // prevent bailout loops.
-      JSScript::argumentsOptimizationFailed(cx, innerScript);
       break;
 
     case BailoutKind::UninitializedLexical:

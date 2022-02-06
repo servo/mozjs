@@ -16,9 +16,7 @@
 #include "frontend/Parser.h"      // ParserBase
 #include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "frontend/SharedContext.h"
-#include "vm/BigIntType.h"
 #include "vm/Printer.h"
-#include "vm/RegExpObject.h"
 #include "vm/Scope.h"  // GetScopeDataTrailingNames
 
 using namespace js;
@@ -358,13 +356,14 @@ void LabeledStatement::dumpImpl(ParserBase* parser, GenericPrinter& out,
   out.printf(")");
 }
 
-void LexicalScopeNode::dumpImpl(ParserBase* parser, GenericPrinter& out,
-                                int indent) {
+template <ParseNodeKind Kind, typename ScopeType>
+void BaseScopeNode<Kind, ScopeType>::dumpImpl(ParserBase* parser,
+                                              GenericPrinter& out, int indent) {
   const char* name = parseNodeNames[getKindAsIndex()];
   out.printf("(%s [", name);
   int nameIndent = indent + strlen(name) + 3;
   if (!isEmptyScope()) {
-    LexicalScope::ParserData* bindings = scopeBindings();
+    typename ScopeType::ParserData* bindings = scopeBindings();
     auto names = GetScopeDataTrailingNames(bindings);
     for (uint32_t i = 0; i < names.size(); i++) {
       auto index = names[i].name();

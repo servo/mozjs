@@ -11,11 +11,10 @@
 #include <stddef.h>  // size_t
 #include <stdio.h>   // FILE
 
-#include "jsapi.h"    // JSGetElementCallback
 #include "jstypes.h"  // JS_PUBLIC_API
 
-#include "js/CompileOptions.h"  // JS::CompileOptions, JS::ReadOnlyCompileOptions
-#include "js/RootingAPI.h"      // JS::Handle, JS::MutableHandle
+#include "js/CompileOptions.h"  // JS::CompileOptions, JS::ReadOnlyCompileOptions, JS::InstantiateOptions
+#include "js/RootingAPI.h"  // JS::Handle, JS::MutableHandle
 #include "js/Value.h"  // JS::Value and specializations of JS::*Handle-related types
 
 struct JS_PUBLIC_API JSContext;
@@ -91,25 +90,12 @@ extern JS_PUBLIC_API bool JS_ExecuteScript(JSContext* cx,
                                            JS::HandleObjectVector envChain,
                                            JS::Handle<JSScript*> script);
 
+// Callback for the embedding to map from a ScriptSourceObject private-value to
+// an object that is exposed as the source "element" in debugger API.  This hook
+// must be infallible, but can return nullptr if no such element exists.
+using JSSourceElementCallback = JSObject* (*)(JSContext*, JS::HandleValue);
+
 namespace JS {
-
-/**
- * Like the above, but handles a cross-compartment script. If the script is
- * cross-compartment, it is cloned into the current compartment before
- * executing.
- */
-extern JS_PUBLIC_API bool CloneAndExecuteScript(JSContext* cx,
-                                                Handle<JSScript*> script,
-                                                MutableHandle<Value> rval);
-
-/**
- * Like CloneAndExecuteScript above, but allows executing under a non-syntactic
- * environment chain.
- */
-extern JS_PUBLIC_API bool CloneAndExecuteScript(JSContext* cx,
-                                                HandleObjectVector envChain,
-                                                Handle<JSScript*> script,
-                                                MutableHandle<Value> rval);
 
 /**
  * Evaluate the given source buffer in the scope of the current global of cx,
@@ -242,8 +228,36 @@ extern JS_PUBLIC_API JSFunction* CompileFunctionUtf8(
 extern JS_PUBLIC_API void ExposeScriptToDebugger(JSContext* cx,
                                                  Handle<JSScript*> script);
 
-extern JS_PUBLIC_API void SetGetElementCallback(JSContext* cx,
-                                                JSGetElementCallback callback);
+/*
+ * JSScripts have associated with them (via their ScriptSourceObjects) some
+ * metadata used by the debugger. The following API functions are used to set
+ * that metadata on scripts, functions and modules.
+ *
+ * The metadata consists of:
+ * - A privateValue, which is used to keep some object value associated
+ *   with the script.
+ * - The elementAttributeName is used by Gecko
+ * - The introductionScript is used by the debugger to identify which
+ *   script created which. Only set for dynamicaly generated scripts.
+ * - scriptOrModule is used to transfer private value metadata from
+ *   script to script
+ *
+ * Callers using UpdateDebugMetaData need to have set deferDebugMetadata
+ * in the compile options; this hides the script from the debugger until
+ * the debug metadata is provided by the UpdateDebugMetadata call.
+ */
+extern JS_PUBLIC_API bool UpdateDebugMetadata(
+    JSContext* cx, Handle<JSScript*> script, const InstantiateOptions& options,
+    HandleValue privateValue, HandleString elementAttributeName,
+    HandleScript introScript, HandleScript scriptOrModule);
+
+// The debugger API exposes an optional "element" property on DebuggerSource
+// objects.  The callback defined here provides that value.  SpiderMonkey
+// doesn't particularly care about this, but within Firefox the "element" is the
+// HTML script tag for the script which DevTools can use for a better debugging
+// experience.
+extern JS_PUBLIC_API void SetSourceElementCallback(
+    JSContext* cx, JSSourceElementCallback callback);
 
 } /* namespace JS */
 

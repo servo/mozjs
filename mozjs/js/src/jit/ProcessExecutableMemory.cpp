@@ -22,18 +22,19 @@
 #ifdef JS_CODEGEN_ARM64
 #  include "jit/arm64/vixl/Cpu-vixl.h"
 #endif
-#include "jit/AtomicOperations.h"
 #include "jit/FlushICache.h"  // js::jit::FlushICache
 #include "threading/LockGuard.h"
 #include "threading/Mutex.h"
 #include "util/Memory.h"
 #include "util/Poison.h"
-#include "util/Windows.h"
+#include "util/WindowsWrapper.h"
 #include "vm/MutexIDs.h"
 
 #ifdef XP_WIN
 #  include "mozilla/StackWalk_windows.h"
 #  include "mozilla/WindowsVersion.h"
+#elif defined(__wasi__)
+// Nothing.
 #else
 #  include <sys/mman.h>
 #  include <unistd.h>
@@ -81,7 +82,7 @@ static void* ComputeRandomAllocationAddress() {
 static js::JitExceptionHandler sJitExceptionHandler;
 #  endif
 
-JS_FRIEND_API void js::SetJitExceptionHandler(JitExceptionHandler handler) {
+JS_PUBLIC_API void js::SetJitExceptionHandler(JitExceptionHandler handler) {
 #  ifdef NEED_JIT_UNWIND_HANDLING
   MOZ_ASSERT(!sJitExceptionHandler);
   sJitExceptionHandler = handler;
@@ -145,7 +146,6 @@ PRUNTIME_FUNCTION RuntimeFunctionCallback(DWORD64 ControlPc, PVOID Context);
 // For an explanation of the problem being solved here, see
 // SetJitExceptionFilter in jsfriendapi.h.
 static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
-#ifndef JS_ENABLE_UWP
   if (!VirtualAlloc(p, pageSize, MEM_COMMIT, PAGE_READWRITE)) {
     MOZ_CRASH();
   }
@@ -233,9 +233,6 @@ static bool RegisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
   AutoSuppressStackWalking suppress;
   return RtlInstallFunctionTableCallback((DWORD64)p | 0x3, (DWORD64)p, bytes,
                                          RuntimeFunctionCallback, NULL, NULL);
-#else
-  return false;
-#endif
 }
 
 static void UnregisterExecutableMemory(void* p, size_t bytes, size_t pageSize) {
@@ -255,11 +252,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
   void* p = nullptr;
   for (size_t i = 0; i < 10; i++) {
     void* randomAddr = ComputeRandomAllocationAddress();
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(randomAddr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (p) {
       break;
     }
@@ -267,11 +260,7 @@ static void* ReserveProcessExecutableMemory(size_t bytes) {
 
   if (!p) {
     // Try again without randomization.
-#ifdef JS_ENABLE_UWP
-    p = VirtualAllocFromApp(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#else
     p = VirtualAlloc(nullptr, bytes, MEM_RESERVE, PAGE_NOACCESS);
-#endif
     if (!p) {
       return nullptr;
     }
@@ -322,17 +311,8 @@ static DWORD ProtectionSettingToFlags(ProtectionSetting protection) {
 
 [[nodiscard]] static bool CommitPages(void* addr, size_t bytes,
                                       ProtectionSetting protection) {
-#ifdef JS_ENABLE_UWP
-  void* p = VirtualAllocFromApp(addr, bytes, MEM_COMMIT, PAGE_READWRITE);
-  if (p) {
-    ULONG oldProt;
-    bool r = VirtualProtectFromApp(addr, bytes, ProtectionSettingToFlags(protection), &oldProt);
-    MOZ_RELEASE_ASSERT(r);
-  }
-#else
   void* p = VirtualAlloc(addr, bytes, MEM_COMMIT,
                          ProtectionSettingToFlags(protection));
-#endif
   if (!p) {
     return false;
   }
@@ -345,7 +325,20 @@ static void DecommitPages(void* addr, size_t bytes) {
     MOZ_CRASH("DecommitPages failed");
   }
 }
-#else  // !XP_WIN
+#elif defined(__wasi__)
+static void* ReserveProcessExecutableMemory(size_t bytes) {
+  MOZ_CRASH("NYI for WASI.");
+  return nullptr;
+}
+[[nodiscard]] static bool CommitPages(void* addr, size_t bytes,
+                                      ProtectionSetting protection) {
+  MOZ_CRASH("NYI for WASI.");
+  return false;
+}
+static void DecommitPages(void* addr, size_t bytes) {
+  MOZ_CRASH("NYI for WASI.");
+}
+#else  // !XP_WIN && !__wasi__
 #  ifndef MAP_NORESERVE
 #    define MAP_NORESERVE 0
 #  endif
@@ -577,6 +570,9 @@ class ProcessExecutableMemory {
   }
 
   void release() {
+#if defined(__wasi__)
+    MOZ_ASSERT(!initialized());
+#else
     MOZ_ASSERT(initialized());
     MOZ_ASSERT(pages_.empty());
     MOZ_ASSERT(pagesAllocated_ == 0);
@@ -584,6 +580,7 @@ class ProcessExecutableMemory {
     base_ = nullptr;
     rng_.reset();
     MOZ_ASSERT(!initialized());
+#endif
   }
 
   void assertValidAddress(void* p, size_t bytes) const {
@@ -730,6 +727,8 @@ bool js::jit::InitProcessExecutableMemory() {
 #ifdef JS_CODEGEN_ARM64
   // Initialize instruction cache flushing.
   vixl::CPU::SetUp();
+#elif defined(__wasi__)
+  return true;
 #endif
   return execMemory.init();
 }
@@ -793,24 +792,24 @@ bool js::jit::ReprotectRegion(void* start, size_t size,
   // We use the C++ fence here -- and not AtomicOperations::fenceSeqCst() --
   // primarily because ReprotectRegion will be called while we construct our own
   // jitted atomics.  But the C++ fence is sufficient and correct, too.
+#ifdef __wasi__
+  MOZ_CRASH("NYI FOR WASI.");
+#else
   std::atomic_thread_fence(std::memory_order_seq_cst);
 
-#ifdef XP_WIN
+#  ifdef XP_WIN
   DWORD oldProtect;
   DWORD flags = ProtectionSettingToFlags(protection);
-#ifdef JS_ENABLE_UWP
-  if (!VirtualProtectFromApp(pageStart, size, flags, &oldProtect)) {
-#else
   if (!VirtualProtect(pageStart, size, flags, &oldProtect)) {
-#endif
     return false;
   }
-#else
+#  else
   unsigned flags = ProtectionSettingToFlags(protection);
   if (mprotect(pageStart, size, flags)) {
     return false;
   }
-#endif
+#  endif
+#endif  // __wasi__
 
   execMemory.assertValidAddress(pageStart, size);
   return true;

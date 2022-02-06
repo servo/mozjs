@@ -55,6 +55,79 @@ this bootstrap again.
 """
 
 
+class OSXAndroidBootstrapper(object):
+    def install_mobile_android_packages(self, mozconfig_builder, artifact_mode=False):
+        os_arch = platform.machine()
+        if os_arch != "x86_64" and os_arch != "arm64":
+            raise Exception(
+                "You need a 64-bit version of Mac OS X to build "
+                "GeckoView/Firefox for Android."
+            )
+
+        from mozboot import android
+
+        android.ensure_android(
+            "macosx",
+            os_arch,
+            artifact_mode=artifact_mode,
+            no_interactive=self.no_interactive,
+        )
+
+        if os_arch == "x86_64" or os_arch == "x86":
+            android.ensure_android(
+                "macosx",
+                os_arch,
+                system_images_only=True,
+                artifact_mode=artifact_mode,
+                no_interactive=self.no_interactive,
+                avd_manifest_path=android.AVD_MANIFEST_X86_64,
+            )
+            android.ensure_android(
+                "macosx",
+                os_arch,
+                system_images_only=True,
+                artifact_mode=artifact_mode,
+                no_interactive=self.no_interactive,
+                avd_manifest_path=android.AVD_MANIFEST_ARM,
+            )
+        else:
+            android.ensure_android(
+                "macosx",
+                os_arch,
+                system_images_only=True,
+                artifact_mode=artifact_mode,
+                no_interactive=self.no_interactive,
+                avd_manifest_path=android.AVD_MANIFEST_ARM64,
+            )
+
+    def ensure_mobile_android_packages(self):
+        from mozboot import android
+
+        arch = platform.machine()
+        android.ensure_java("macosx", arch)
+
+        if arch == "x86_64" or arch == "x86":
+            self.install_toolchain_artifact(android.MACOS_X86_64_ANDROID_AVD)
+            self.install_toolchain_artifact(android.MACOS_ARM_ANDROID_AVD)
+        elif arch == "arm64":
+            # The only emulator supported on Apple Silicon is the Arm64 one.
+            self.install_toolchain_artifact(android.MACOS_ARM64_ANDROID_AVD)
+
+    def install_mobile_android_artifact_mode_packages(self, mozconfig_builder):
+        self.install_mobile_android_packages(mozconfig_builder, artifact_mode=True)
+
+    def generate_mobile_android_mozconfig(self):
+        return self._generate_mobile_android_mozconfig()
+
+    def generate_mobile_android_artifact_mode_mozconfig(self):
+        return self._generate_mobile_android_mozconfig(artifact_mode=True)
+
+    def _generate_mobile_android_mozconfig(self, artifact_mode=False):
+        from mozboot import android
+
+        return android.generate_mozconfig("macosx", artifact_mode=artifact_mode)
+
+
 def ensure_command_line_tools():
     # We need either the command line tools or Xcode (one is sufficient).
     # Python 3, required to run this code, is not installed by default on macos
@@ -93,28 +166,12 @@ def ensure_command_line_tools():
         sys.exit(1)
 
 
-class OSXBootstrapperLight(BaseBootstrapper):
+class OSXBootstrapperLight(OSXAndroidBootstrapper, BaseBootstrapper):
     def __init__(self, version, **kwargs):
         BaseBootstrapper.__init__(self, **kwargs)
 
     def install_system_packages(self):
         ensure_command_line_tools()
-
-        if platform.machine() == "arm64":
-            # If Rosetta is installed, running `arch -x86_64 command` will
-            # run the command as x86_64, if it's a universal binary. System
-            # binaries are, so we use one: cat. With stdin set to /dev/null,
-            # it returns immediately without an error. In case of error, it
-            # means Rosetta is not installed.
-            proc = subprocess.run(
-                ["arch", "-x86_64", "cat"],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if proc.returncode != 0:
-                print("Installing Rosetta")
-                subprocess.check_call(["softwareupdate", "--install-rosetta"])
 
     # All the installs below are assumed to be handled by mach configure/build by
     # default, which is true for arm64.
@@ -124,27 +181,20 @@ class OSXBootstrapperLight(BaseBootstrapper):
     def install_browser_artifact_mode_packages(self, mozconfig_builder):
         pass
 
-    def ensure_node_packages(self, state_dir, checkout_root):
+    def ensure_node_packages(self):
         pass
 
-    def ensure_stylo_packages(self, state_dir, checkout_root):
+    def ensure_stylo_packages(self):
         pass
 
-    def ensure_clang_static_analysis_package(self, state_dir, checkout_root):
+    def ensure_clang_static_analysis_package(self):
         pass
 
-    def ensure_nasm_packages(self, state_dir, checkout_root):
+    def ensure_nasm_packages(self):
         pass
 
 
-class OSXBootstrapper(BaseBootstrapper):
-
-    INSTALL_PYTHON_GUIDANCE = (
-        "See https://firefox-source-docs.mozilla.org/setup/macos_build.html "
-        "for guidance on how to prepare your system to build Firefox. Perhaps "
-        "you need to update Xcode, or install Python using brew?"
-    )
-
+class OSXBootstrapper(OSXAndroidBootstrapper, BaseBootstrapper):
     def __init__(self, version, **kwargs):
         BaseBootstrapper.__init__(self, **kwargs)
 
@@ -176,25 +226,6 @@ class OSXBootstrapper(BaseBootstrapper):
 
     def install_browser_artifact_mode_packages(self, mozconfig_builder):
         pass
-
-    def install_mobile_android_packages(self, mozconfig_builder):
-        self.ensure_homebrew_mobile_android_packages(mozconfig_builder)
-
-    def install_mobile_android_artifact_mode_packages(self, mozconfig_builder):
-        self.ensure_homebrew_mobile_android_packages(
-            mozconfig_builder, artifact_mode=True
-        )
-
-    def generate_mobile_android_mozconfig(self):
-        return self._generate_mobile_android_mozconfig()
-
-    def generate_mobile_android_artifact_mode_mozconfig(self):
-        return self._generate_mobile_android_mozconfig(artifact_mode=True)
-
-    def _generate_mobile_android_mozconfig(self, artifact_mode=False):
-        from mozboot import android
-
-        return android.generate_mozconfig("macosx", artifact_mode=artifact_mode)
 
     def _ensure_homebrew_found(self):
         self.brew = which("brew")
@@ -254,37 +285,6 @@ class OSXBootstrapper(BaseBootstrapper):
         packages = ["yasm"]
         self._ensure_homebrew_packages(packages)
 
-    def ensure_homebrew_mobile_android_packages(
-        self, mozconfig_builder, artifact_mode=False
-    ):
-        # Multi-part process:
-        # 1. System packages.
-        # 2. Android SDK. Android NDK only if we are not in artifact mode. Android packages.
-
-        # 1. System packages.
-        packages = ["wget"]
-        self._ensure_homebrew_packages(packages)
-
-        casks = ["adoptopenjdk8"]
-        self._ensure_homebrew_casks(casks)
-
-        is_64bits = sys.maxsize > 2 ** 32
-        if not is_64bits:
-            raise Exception(
-                "You need a 64-bit version of Mac OS X to build "
-                "GeckoView/Firefox for Android."
-            )
-
-        # 2. Android pieces.
-        java_path = self.ensure_java(mozconfig_builder)
-        # Prefer our validated java binary by putting it on the path first.
-        os.environ["PATH"] = "{}{}{}".format(java_path, os.pathsep, os.environ["PATH"])
-        from mozboot import android
-
-        android.ensure_android(
-            "macosx", artifact_mode=artifact_mode, no_interactive=self.no_interactive
-        )
-
     def ensure_homebrew_installed(self):
         """
         Search for Homebrew in sys.path, if not found, prompt the user to install it.
@@ -305,61 +305,33 @@ class OSXBootstrapper(BaseBootstrapper):
                     print(BAD_PATH_ORDER % (check, brew_dir, brew_dir, check, brew_dir))
                     sys.exit(1)
 
-    def ensure_clang_static_analysis_package(self, state_dir, checkout_root):
+    def ensure_clang_static_analysis_package(self):
         from mozboot import static_analysis
 
-        self.install_toolchain_static_analysis(
-            state_dir, checkout_root, static_analysis.MACOS_CLANG_TIDY
-        )
+        self.install_toolchain_static_analysis(static_analysis.MACOS_CLANG_TIDY)
 
-    def ensure_sccache_packages(self, state_dir, checkout_root):
+    def ensure_sccache_packages(self):
         from mozboot import sccache
 
-        self.install_toolchain_artifact(state_dir, checkout_root, sccache.MACOS_SCCACHE)
-        self.install_toolchain_artifact(
-            state_dir, checkout_root, sccache.RUSTC_DIST_TOOLCHAIN, no_unpack=True
-        )
-        self.install_toolchain_artifact(
-            state_dir, checkout_root, sccache.CLANG_DIST_TOOLCHAIN, no_unpack=True
-        )
+        self.install_toolchain_artifact("sccache")
+        self.install_toolchain_artifact(sccache.RUSTC_DIST_TOOLCHAIN, no_unpack=True)
+        self.install_toolchain_artifact(sccache.CLANG_DIST_TOOLCHAIN, no_unpack=True)
 
-    def ensure_fix_stacks_packages(self, state_dir, checkout_root):
-        from mozboot import fix_stacks
+    def ensure_fix_stacks_packages(self):
+        self.install_toolchain_artifact("fix-stacks")
 
-        self.install_toolchain_artifact(
-            state_dir, checkout_root, fix_stacks.MACOS_FIX_STACKS
-        )
+    def ensure_stylo_packages(self):
+        self.install_toolchain_artifact("clang")
+        self.install_toolchain_artifact("cbindgen")
 
-    def ensure_stylo_packages(self, state_dir, checkout_root):
-        from mozboot import stylo
+    def ensure_nasm_packages(self):
+        self.install_toolchain_artifact("nasm")
 
-        self.install_toolchain_artifact(state_dir, checkout_root, stylo.MACOS_CLANG)
-        self.install_toolchain_artifact(state_dir, checkout_root, stylo.MACOS_CBINDGEN)
+    def ensure_node_packages(self):
+        self.install_toolchain_artifact("node")
 
-    def ensure_nasm_packages(self, state_dir, checkout_root):
-        from mozboot import nasm
-
-        self.install_toolchain_artifact(state_dir, checkout_root, nasm.MACOS_NASM)
-
-    def ensure_node_packages(self, state_dir, checkout_root):
-        # XXX from necessary?
-        from mozboot import node
-
-        self.install_toolchain_artifact(state_dir, checkout_root, node.OSX)
-
-    def ensure_minidump_stackwalk_packages(self, state_dir, checkout_root):
-        from mozboot import minidump_stackwalk
-
-        self.install_toolchain_artifact(
-            state_dir, checkout_root, minidump_stackwalk.MACOS_MINIDUMP_STACKWALK
-        )
-
-    def ensure_dump_syms_packages(self, state_dir, checkout_root):
-        from mozboot import dump_syms
-
-        self.install_toolchain_artifact(
-            state_dir, checkout_root, dump_syms.MACOS_DUMP_SYMS
-        )
+    def ensure_minidump_stackwalk_packages(self):
+        self.install_toolchain_artifact("minidump_stackwalk")
 
     def install_homebrew(self):
         print(BREW_INSTALL)

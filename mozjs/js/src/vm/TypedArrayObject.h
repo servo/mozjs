@@ -21,19 +21,6 @@
 #include "vm/JSObject.h"
 #include "vm/SharedArrayObject.h"
 
-#define JS_FOR_EACH_TYPED_ARRAY(MACRO) \
-  MACRO(int8_t, Int8)                  \
-  MACRO(uint8_t, Uint8)                \
-  MACRO(int16_t, Int16)                \
-  MACRO(uint16_t, Uint16)              \
-  MACRO(int32_t, Int32)                \
-  MACRO(uint32_t, Uint32)              \
-  MACRO(float, Float32)                \
-  MACRO(double, Float64)               \
-  MACRO(uint8_clamped, Uint8Clamped)   \
-  MACRO(int64_t, BigInt64)             \
-  MACRO(uint64_t, BigUint64)
-
 namespace js {
 
 /*
@@ -47,6 +34,8 @@ namespace js {
 class TypedArrayObject : public ArrayBufferViewObject {
  public:
   static_assert(js::detail::TypedArrayLengthSlot == LENGTH_SLOT,
+                "bad inlined constant in TypedData.h");
+  static_assert(js::detail::TypedArrayDataSlot == DATA_SLOT,
                 "bad inlined constant in TypedData.h");
 
   static bool sameBuffer(Handle<TypedArrayObject*> a,
@@ -78,7 +67,7 @@ class TypedArrayObject : public ArrayBufferViewObject {
     return &protoClasses[type];
   }
 
-  static constexpr size_t FIXED_DATA_START = DATA_SLOT + 1;
+  static constexpr size_t FIXED_DATA_START = RESERVED_SLOTS;
 
   // For typed arrays which can store their data inline, the array buffer
   // object is created lazily.
@@ -92,28 +81,26 @@ class TypedArrayObject : public ArrayBufferViewObject {
 
   static bool ensureHasBuffer(JSContext* cx, Handle<TypedArrayObject*> tarray);
 
-  BufferSize byteLength() const {
-    return BufferSize(length().get() * bytesPerElement());
-  }
+  size_t byteLength() const { return length() * bytesPerElement(); }
 
-  BufferSize length() const {
-    return BufferSize(size_t(getFixedSlot(LENGTH_SLOT).toPrivate()));
+  size_t length() const {
+    return size_t(getFixedSlot(LENGTH_SLOT).toPrivate());
   }
 
   Value byteLengthValue() const {
-    size_t len = byteLength().get();
+    size_t len = byteLength();
     return NumberValue(len);
   }
 
   Value lengthValue() const {
-    size_t len = length().get();
+    size_t len = length();
     return NumberValue(len);
   }
 
   bool hasInlineElements() const;
   void setInlineElements();
   uint8_t* elementsRaw() const {
-    return *(uint8_t**)((((char*)this) + ArrayBufferViewObject::dataOffset()));
+    return maybePtrFromReservedSlot<uint8_t>(DATA_SLOT);
   }
   uint8_t* elements() const {
     assertZeroLengthArrayData();
@@ -256,7 +243,7 @@ inline bool CanStartTypedArrayIndex(CharT ch) {
   }
 
   JS::AutoCheckCannotGC nogc;
-  JSAtom* atom = JSID_TO_ATOM(id);
+  JSAtom* atom = id.toAtom();
 
   if (atom->empty() || !CanStartTypedArrayIndex(atom->latin1OrTwoByteChar(0))) {
     MOZ_ASSERT(indexp->isNothing());

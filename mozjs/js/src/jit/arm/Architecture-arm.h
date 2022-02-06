@@ -9,6 +9,7 @@
 
 #include "mozilla/MathAlgorithms.h"
 
+#include <algorithm>
 #include <limits.h>
 #include <stdint.h>
 
@@ -26,18 +27,13 @@
 namespace js {
 namespace jit {
 
-// In bytes: slots needed for potential memory->memory move spills.
-//   +8 for cycles
-//   +4 for gpr spills
-//   +8 for double spills
-static const uint32_t ION_FRAME_SLACK_SIZE = 20;
-
 // These offsets are specific to nunboxing, and capture offsets into the
 // components of a js::Value.
 static const int32_t NUNBOX32_TYPE_OFFSET = 4;
 static const int32_t NUNBOX32_PAYLOAD_OFFSET = 0;
 
 static const uint32_t ShadowStackSpace = 0;
+static const uint32_t SizeOfReturnAddressAfterCall = 0u;
 
 // How far forward/back can a jump go? Provide a generous buffer for thunks.
 static const uint32_t JumpImmediateRange = 20 * 1024 * 1024;
@@ -334,6 +330,10 @@ class FloatRegisters {
 
   static const SetType AllocatableMask = AllMask & ~NonAllocatableMask;
 };
+
+static const uint32_t SpillSlotSize =
+    std::max(sizeof(Registers::RegisterContent),
+             sizeof(FloatRegisters::RegisterContent));
 
 template <typename T>
 class TypedRegisterSet;
@@ -656,6 +656,7 @@ bool HasVFPv3();
 bool HasVFP();
 bool Has32DP();
 bool HasIDIV();
+bool HasNEON();
 
 extern volatile uint32_t armHwCapFlags;
 

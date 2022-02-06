@@ -31,7 +31,7 @@
 
 #define CLASP(NAME) (&NAME##Class)
 #define OCLASP(NAME) (&NAME##Object::class_)
-#define TYPED_ARRAY_CLASP(TYPE) (&TypedArrayObject::classes[Scalar::TYPE])
+#define TYPED_ARRAY_CLASP(TYPE) (&TypedArrayObject::classes[JS::Scalar::TYPE])
 #define ERROR_CLASP(TYPE) (&ErrorObject::classes[TYPE])
 
 #ifdef JS_HAS_INTL_API
@@ -40,10 +40,16 @@
 #  define IF_INTL(REAL, IMAGINARY) IMAGINARY
 #endif
 
-#define JS_FOR_PROTOTYPES_(REAL, IMAGINARY, REAL_IF_INTL)                     \
+#ifdef ENABLE_WASM_TYPE_REFLECTIONS
+#  define IF_WASM_TYPE(REAL, IMAGINARY) REAL
+#else
+#  define IF_WASM_TYPE(REAL, IMAGINARY) IMAGINARY
+#endif
+
+#define JS_FOR_PROTOTYPES_(REAL, IMAGINARY, REAL_IF_INTL, REAL_IF_WASM_TYPE)  \
   IMAGINARY(Null, dummy)                                                      \
   REAL(Object, OCLASP(Plain))                                                 \
-  REAL(Function, &JSFunction::class_)                                         \
+  REAL(Function, &FunctionClass)                                              \
   REAL(Array, OCLASP(Array))                                                  \
   REAL(Boolean, OCLASP(Boolean))                                              \
   REAL(JSON, CLASP(JSON))                                                     \
@@ -121,15 +127,19 @@
   REAL(WasmMemory, OCLASP(WasmMemory))                                        \
   REAL(WasmTable, OCLASP(WasmTable))                                          \
   REAL(WasmGlobal, OCLASP(WasmGlobal))                                        \
+  REAL(WasmTag, OCLASP(WasmTag))                                              \
+  REAL_IF_WASM_TYPE(WasmFunction, CLASP(WasmFunction))                        \
   REAL(WasmException, OCLASP(WasmException))                                  \
-  REAL(WasmRuntimeException, OCLASP(WasmRuntimeException))                    \
   REAL(FinalizationRegistry, OCLASP(FinalizationRegistry))                    \
   REAL(WeakRef, OCLASP(WeakRef))                                              \
   REAL(Iterator, OCLASP(Iterator))                                            \
-  REAL(AsyncIterator, OCLASP(AsyncIterator))
+  REAL(AsyncIterator, OCLASP(AsyncIterator))                                  \
+  IF_RECORD_TUPLE(REAL(Record, (&RecordType::class_)))                        \
+  IF_RECORD_TUPLE(REAL(Tuple, (&TupleType::class_)))
 
-#define JS_FOR_PROTOTYPES(REAL, IMAGINARY) \
-  JS_FOR_PROTOTYPES_(REAL, IMAGINARY, IF_INTL(REAL, IMAGINARY))
+#define JS_FOR_PROTOTYPES(REAL, IMAGINARY)                      \
+  JS_FOR_PROTOTYPES_(REAL, IMAGINARY, IF_INTL(REAL, IMAGINARY), \
+                     IF_WASM_TYPE(REAL, IMAGINARY))
 
 #define JS_FOR_EACH_PROTOTYPE(MACRO) JS_FOR_PROTOTYPES(MACRO, MACRO)
 

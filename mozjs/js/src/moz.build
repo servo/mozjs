@@ -133,6 +133,7 @@ EXPORTS.js += [
     "../public/ArrayBufferMaybeShared.h",
     "../public/BigInt.h",
     "../public/BuildId.h",
+    "../public/CallAndConstruct.h",
     "../public/CallArgs.h",
     "../public/CallNonGenericMethod.h",
     "../public/CharacterEncoding.h",
@@ -140,11 +141,13 @@ EXPORTS.js += [
     "../public/ComparisonOperators.h",
     "../public/CompilationAndEvaluation.h",
     "../public/CompileOptions.h",
+    "../public/Context.h",
     "../public/ContextOptions.h",
     "../public/Conversions.h",
     "../public/Date.h",
     "../public/Debug.h",
     "../public/Equality.h",
+    "../public/ErrorInterceptor.h",
     "../public/ErrorReport.h",
     "../public/Exception.h",
     "../public/ForOfIterator.h",
@@ -155,12 +158,17 @@ EXPORTS.js += [
     "../public/GCTypeMacros.h",
     "../public/GCVariant.h",
     "../public/GCVector.h",
+    "../public/GlobalObject.h",
     "../public/HashTable.h",
     "../public/HeapAPI.h",
+    "../public/HelperThreadAPI.h",
     "../public/Id.h",
     "../public/Initialization.h",
+    "../public/Interrupt.h",
     "../public/JSON.h",
     "../public/LocaleSensitive.h",
+    "../public/MapAndSet.h",
+    "../public/MemoryCallbacks.h",
     "../public/MemoryFunctions.h",
     "../public/MemoryMetrics.h",
     "../public/Modules.h",
@@ -172,29 +180,34 @@ EXPORTS.js += [
     "../public/ProfilingFrameIterator.h",
     "../public/ProfilingStack.h",
     "../public/Promise.h",
+    "../public/PropertyAndElement.h",
     "../public/PropertyDescriptor.h",
     "../public/PropertySpec.h",
     "../public/ProtoKey.h",
     "../public/Proxy.h",
     "../public/Realm.h",
+    "../public/RealmIterators.h",
     "../public/RealmOptions.h",
     "../public/RefCounted.h",
     "../public/RegExp.h",
     "../public/RegExpFlags.h",
-    "../public/RequiredDefines.h",
     "../public/Result.h",
     "../public/RootingAPI.h",
     "../public/SavedFrameAPI.h",
     "../public/ScalarType.h",
+    "../public/ScriptPrivate.h",
     "../public/SharedArrayBuffer.h",
     "../public/SliceBudget.h",
     "../public/SourceText.h",
     "../public/StableStringChars.h",
+    "../public/Stack.h",
     "../public/Stream.h",
+    "../public/StreamConsumer.h",
     "../public/String.h",
     "../public/StructuredClone.h",
     "../public/SweepingAPI.h",
     "../public/Symbol.h",
+    "../public/TelemetryTimers.h",
     "../public/TraceKind.h",
     "../public/TraceLoggerAPI.h",
     "../public/TracingAPI.h",
@@ -212,16 +225,21 @@ EXPORTS.js += [
     "../public/Value.h",
     "../public/ValueArray.h",
     "../public/Vector.h",
+    "../public/WaitCallbacks.h",
     "../public/Warnings.h",
+    "../public/WasmFeatures.h",
     "../public/WasmModule.h",
+    "../public/WeakMap.h",
     "../public/WeakMapPtr.h",
     "../public/Wrapper.h",
+    "../public/WrapperCallbacks.h",
+    "../public/Zone.h",
 ]
 
 # This lives in mozglue/baseprofiler but we re-publish ourselves to support
 # standalone SpiderMonkey configurations.
 EXPORTS.js += [
-    "../../mozglue/baseprofiler/public/ProfilingCategoryList.h",
+    "!/mozglue/baseprofiler/public/ProfilingCategoryList.h",
 ]
 
 # Public APIs that are experimental: the precise contour of the APIs may still
@@ -233,6 +251,7 @@ EXPORTS.js.experimental += [
     "../public/experimental/Intl.h",
     "../public/experimental/JitInfo.h",
     "../public/experimental/JSStencil.h",
+    "../public/experimental/PCCountProfiling.h",
     "../public/experimental/SourceHook.h",
     "../public/experimental/TypedData.h",
 ]
@@ -248,6 +267,7 @@ EXPORTS.js.friend += [
     "../public/friend/ErrorMessages.h",
     "../public/friend/ErrorNumbers.msg",
     "../public/friend/JSMEnvironment.h",
+    "../public/friend/PerformanceHint.h",
     "../public/friend/StackLimits.h",
     "../public/friend/UsageStatistics.h",
     "../public/friend/WindowProxy.h",
@@ -319,6 +339,7 @@ UNIFIED_SOURCES += [
     "builtin/String.cpp",
     "builtin/Symbol.cpp",
     "builtin/TestingFunctions.cpp",
+    "builtin/TestingUtility.cpp",
     "builtin/WeakMapObject.cpp",
     "builtin/WeakRefObject.cpp",
     "builtin/WeakSetObject.cpp",
@@ -342,16 +363,6 @@ UNIFIED_SOURCES += [
     "threading/Mutex.cpp",
     "threading/ProtectedData.cpp",
     "threading/Thread.cpp",
-    "util/AllocationLogging.cpp",
-    "util/AllocPolicy.cpp",
-    "util/CompleteFile.cpp",
-    "util/DumpFunctions.cpp",
-    "util/NativeStack.cpp",
-    "util/Printf.cpp",
-    "util/StringBuffer.cpp",
-    "util/StructuredSpewer.cpp",
-    "util/Text.cpp",
-    "util/Unicode.cpp",
     "vm/Activation.cpp",
     "vm/ArgumentsObject.cpp",
     "vm/ArrayBufferObject.cpp",
@@ -364,7 +375,7 @@ UNIFIED_SOURCES += [
     "vm/BuiltinObjectKind.cpp",
     "vm/BytecodeLocation.cpp",
     "vm/BytecodeUtil.cpp",
-    "vm/Caches.cpp",
+    "vm/CallAndConstruct.cpp",
     "vm/CallNonGenericMethod.cpp",
     "vm/CharacterEncoding.cpp",
     "vm/CodeCoverage.cpp",
@@ -383,11 +394,12 @@ UNIFIED_SOURCES += [
     "vm/FunctionFlags.cpp",
     "vm/GeckoProfiler.cpp",
     "vm/GeneratorObject.cpp",
+    "vm/GetterSetter.cpp",
     "vm/GlobalObject.cpp",
     "vm/HelperThreads.cpp",
     "vm/Id.cpp",
     "vm/Initialization.cpp",
-    "vm/Instrumentation.cpp",
+    "vm/InternalThreadPool.cpp",
     "vm/Iteration.cpp",
     "vm/JitActivation.cpp",
     "vm/JSAtom.cpp",
@@ -401,7 +413,6 @@ UNIFIED_SOURCES += [
     "vm/MemoryMetrics.cpp",
     "vm/Modules.cpp",
     "vm/NativeObject.cpp",
-    "vm/ObjectGroup.cpp",
     "vm/OffThreadPromiseRuntimeState.cpp",
     "vm/OffThreadScriptCompilation.cpp",
     "vm/PIC.cpp",
@@ -409,6 +420,9 @@ UNIFIED_SOURCES += [
     "vm/Printer.cpp",
     "vm/Probes.cpp",
     "vm/PromiseLookup.cpp",
+    "vm/PropertyAndElement.cpp",
+    "vm/PropertyDescriptor.cpp",
+    "vm/PropMap.cpp",
     "vm/ProxyObject.cpp",
     "vm/Realm.cpp",
     "vm/RegExpObject.cpp",
@@ -418,10 +432,13 @@ UNIFIED_SOURCES += [
     "vm/Scope.cpp",
     "vm/SelfHosting.cpp",
     "vm/Shape.cpp",
+    "vm/ShapeZone.cpp",
     "vm/SharedArrayObject.cpp",
     "vm/SharedImmutableStringsCache.cpp",
     "vm/SourceHook.cpp",
     "vm/Stack.cpp",
+    "vm/StaticStrings.cpp",
+    "vm/StencilObject.cpp",
     "vm/StringType.cpp",
     "vm/SymbolType.cpp",
     "vm/TaggedProto.cpp",
@@ -444,30 +461,33 @@ UNIFIED_SOURCES += [
 #   win32 test slowdowns
 # jsmath.cpp cannot be built in unified mode because it needs to re-#define the
 #   RtlGenRandom declaration's calling convention in <ntsecapi.h> on Windows.
-# util/DoubleToString.cpp cannot be built in unified mode because we want to
-#   suppress compiler warnings in third-party dtoa.c.
-# util/Utility.cpp cannot be built in unified mode because it is needed for
-#   check-vanilla-allocations.
 # vm/Interpreter.cpp is gigantic and destroys incremental build times for any
 #   files unlucky enough to be unified with it.
 SOURCES += [
     "builtin/RegExp.cpp",
     "jsmath.cpp",
-    "util/DoubleToString.cpp",
-    "util/Utility.cpp",
     "vm/Interpreter.cpp",
     "vm/ProfilingStack.cpp",
 ]
+
+if CONFIG["ENABLE_RECORD_TUPLE"]:
+    UNIFIED_SOURCES += [
+        "builtin/RecordObject.cpp",
+        "builtin/TupleObject.cpp",
+        "vm/RecordTupleShared.cpp",
+        "vm/RecordType.cpp",
+        "vm/TupleType.cpp",
+    ]
 
 if CONFIG["JS_HAS_INTL_API"]:
     UNIFIED_SOURCES += [
         "builtin/intl/Collator.cpp",
         "builtin/intl/CommonFunctions.cpp",
         "builtin/intl/DateTimeFormat.cpp",
+        "builtin/intl/DecimalNumber.cpp",
         "builtin/intl/DisplayNames.cpp",
         "builtin/intl/IntlObject.cpp",
         "builtin/intl/LanguageTag.cpp",
-        "builtin/intl/LanguageTagGenerated.cpp",
         "builtin/intl/ListFormat.cpp",
         "builtin/intl/Locale.cpp",
         "builtin/intl/NumberFormat.cpp",
@@ -489,9 +509,19 @@ if CONFIG["ENABLE_TRACE_LOGGING"]:
     ]
 
 if CONFIG["OS_ARCH"] == "WINNT":
+    OS_LIBS += [
+        "advapi32",
+        "winmm",
+    ]
     UNIFIED_SOURCES += [
         "threading/windows/CpuCount.cpp",
         "threading/windows/WindowsThread.cpp",
+    ]
+# WASI hasn't supported thread yet so noop implementation is used.
+elif CONFIG["OS_ARCH"] == "WASI":
+    UNIFIED_SOURCES += [
+        "threading/noop/CpuCount.cpp",
+        "threading/noop/NoopThread.cpp",
     ]
 else:
     UNIFIED_SOURCES += [
@@ -522,8 +552,16 @@ if CONFIG["MOZ_VTUNE"]:
     ]
     if CONFIG["CC_TYPE"] == "gcc":
         SOURCES["vtune/ittnotify_static.c"].flags += ["-Wno-stringop-overflow"]
+        if int(CONFIG["CC_VERSION"].split(".")[0]) >= 8:
+            SOURCES["vtune/ittnotify_static.c"].flags += ["-Wno-stringop-truncation"]
 
-DIRS += ["build", "debugger", "frontend", "gc", "irregexp", "jit", "wasm"]
+DIRS += ["build", "debugger", "frontend", "gc", "irregexp", "jit", "util", "wasm"]
+
+# Bug 1739321 - clang 13+ only emits debuginfo for classes that are actually
+# constructed, and we cheat in a number of cases. The flag exists at least
+# back to clang 4.
+if CONFIG["CC_TYPE"] == "clang":
+    CXXFLAGS += ["-fstandalone-debug"]
 
 if CONFIG["JS_JITSPEW"]:
     DIRS += ["zydis"]
@@ -532,6 +570,10 @@ FINAL_LIBRARY = "js"
 
 selfhosted_inputs = [
     "../public/friend/ErrorNumbers.msg",
+    # ProfilingCategoryList.h is being indirectly included, and it must be passed
+    # here as an input, so it's generated before this self-hosted JS code
+    # generation. Otherwise, it will intermittently fail to build.
+    "!/mozglue/baseprofiler/public/ProfilingCategoryList.h",
     "builtin/TypedArrayConstants.h",
     "builtin/SelfHostingDefines.h",
     "builtin/Utilities.js",
@@ -591,6 +633,9 @@ if CONFIG["JS_HAS_CTYPES"]:
     if CONFIG["MOZ_SYSTEM_FFI"]:
         CXXFLAGS += CONFIG["MOZ_FFI_CFLAGS"]
 
-# Suppress warnings in third-party code.
-if CONFIG["CC_TYPE"] in ("clang", "gcc"):
-    SOURCES["util/DoubleToString.cpp"].flags += ["-Wno-implicit-fallthrough"]
+if CONFIG["JS_HAS_INTL_API"]:
+    DIRS += [
+        "../../intl/components",
+    ]
+
+    USE_LIBS += ["intlcomponents"]

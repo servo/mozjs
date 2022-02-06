@@ -249,11 +249,10 @@ extern PropertyName* EnvironmentCoordinateNameSlow(JSScript* script,
  *       |
  *   NonSyntacticLexicalEnvironmentObject[this=messageManager]
  *
- * D. XBL and DOM event handlers
+ * D. DOM event handlers
  *
- * XBL methods are compiled as functions with XUL elements on the env chain,
- * and DOM event handlers are compiled as functions with HTML elements on the
- * env chain. For a chain of elements e0,e1,...:
+ * DOM event handlers are compiled as functions with HTML elements on the
+ * environment chain. For a chain of elements e0,e1,...:
  *
  *      ...
  *       |
@@ -272,7 +271,7 @@ class EnvironmentObject : public NativeObject {
   // GlobalObject, or a non-syntactic environment object.
   static const uint32_t ENCLOSING_ENV_SLOT = 0;
 
-  inline void setAliasedBinding(JSContext* cx, uint32_t slot, const Value& v);
+  inline void setAliasedBinding(uint32_t slot, const Value& v);
 
   void setEnclosingEnvironment(JSObject* enclosing) {
     setReservedSlot(ENCLOSING_ENV_SLOT, ObjectOrNullValue(enclosing));
@@ -309,11 +308,9 @@ class EnvironmentObject : public NativeObject {
     return getSlot(bi.location().slot());
   }
 
-  inline void setAliasedBinding(JSContext* cx, EnvironmentCoordinate ec,
-                                const Value& v);
+  inline void setAliasedBinding(EnvironmentCoordinate ec, const Value& v);
 
-  inline void setAliasedBinding(JSContext* cx, const BindingIter& bi,
-                                const Value& v);
+  inline void setAliasedBinding(const BindingIter& bi, const Value& v);
 
   // For JITs.
   static size_t offsetOfEnclosingEnvironment() {
@@ -321,6 +318,10 @@ class EnvironmentObject : public NativeObject {
   }
 
   static uint32_t enclosingEnvironmentSlot() { return ENCLOSING_ENV_SLOT; }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+#endif /* defined(DEBUG) || defined(JS_JITSPEW) */
 };
 
 class CallObject : public EnvironmentObject {
@@ -442,14 +443,11 @@ class ModuleEnvironmentObject : public EnvironmentObject {
   bool hasImportBinding(HandlePropertyName name);
 
   bool lookupImport(jsid name, ModuleEnvironmentObject** envOut,
-                    Shape** shapeOut);
-
-  void fixEnclosingEnvironmentAfterRealmMerge(GlobalObject& global);
+                    mozilla::Maybe<PropertyInfo>* propOut);
 
  private:
   static bool lookupProperty(JSContext* cx, HandleObject obj, HandleId id,
-                             MutableHandleObject objp,
-                             MutableHandle<PropertyResult> propp);
+                             MutableHandleObject objp, PropertyResult* propp);
   static bool hasProperty(JSContext* cx, HandleObject obj, HandleId id,
                           bool* foundp);
   static bool getProperty(JSContext* cx, HandleObject obj, HandleValue receiver,
@@ -457,9 +455,9 @@ class ModuleEnvironmentObject : public EnvironmentObject {
   static bool setProperty(JSContext* cx, HandleObject obj, HandleId id,
                           HandleValue v, HandleValue receiver,
                           JS::ObjectOpResult& result);
-  static bool getOwnPropertyDescriptor(JSContext* cx, HandleObject obj,
-                                       HandleId id,
-                                       MutableHandle<PropertyDescriptor> desc);
+  static bool getOwnPropertyDescriptor(
+      JSContext* cx, HandleObject obj, HandleId id,
+      MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc);
   static bool deleteProperty(JSContext* cx, HandleObject obj, HandleId id,
                              ObjectOpResult& result);
   static bool newEnumerate(JSContext* cx, HandleObject obj,
@@ -534,7 +532,6 @@ class LexicalEnvironmentObject : public EnvironmentObject {
   static const JSClass class_;
 
   static constexpr uint32_t RESERVED_SLOTS = 2;
-  static constexpr ObjectFlags OBJECT_FLAGS = {ObjectFlag::NotExtensible};
 
  protected:
   static LexicalEnvironmentObject* createTemplateObject(JSContext* cx,
@@ -559,7 +556,24 @@ class LexicalEnvironmentObject : public EnvironmentObject {
 //
 // Used for blocks (ScopeKind::Lexical) and several other scope kinds,
 // including Catch, NamedLambda, FunctionLexical, and ClassBody.
-class BlockLexicalEnvironmentObject : public LexicalEnvironmentObject {
+class ScopedLexicalEnvironmentObject : public LexicalEnvironmentObject {
+ public:
+  static constexpr ObjectFlags OBJECT_FLAGS = {ObjectFlag::NotExtensible};
+
+  Scope& scope() const {
+    Value v = getReservedSlot(THIS_VALUE_OR_SCOPE_SLOT);
+    MOZ_ASSERT(!isExtensible() && v.isPrivateGCThing());
+    return *static_cast<Scope*>(v.toGCThing());
+  }
+
+  bool isClassBody() const { return scope().kind() == ScopeKind::ClassBody; }
+
+  void initScope(Scope* scope) {
+    initReservedSlot(THIS_VALUE_OR_SCOPE_SLOT, PrivateGCThingValue(scope));
+  }
+};
+
+class BlockLexicalEnvironmentObject : public ScopedLexicalEnvironmentObject {
  public:
   static constexpr ObjectFlags OBJECT_FLAGS = {ObjectFlag::NotExtensible};
 
@@ -586,14 +600,7 @@ class BlockLexicalEnvironmentObject : public LexicalEnvironmentObject {
 
   // The LexicalScope that created this environment.
   LexicalScope& scope() const {
-    Value v = getReservedSlot(THIS_VALUE_OR_SCOPE_SLOT);
-    MOZ_ASSERT(!isExtensible() && v.isPrivateGCThing());
-    return *static_cast<LexicalScope*>(v.toGCThing());
-  }
-
- private:
-  void initScope(LexicalScope* scope) {
-    initReservedSlot(THIS_VALUE_OR_SCOPE_SLOT, PrivateGCThingValue(scope));
+    return ScopedLexicalEnvironmentObject::scope().as<LexicalScope>();
   }
 };
 
@@ -612,6 +619,24 @@ class NamedLambdaObject : public BlockLexicalEnvironmentObject {
 
   // For JITs.
   static size_t lambdaSlot();
+};
+
+class ClassBodyLexicalEnvironmentObject
+    : public ScopedLexicalEnvironmentObject {
+ public:
+  static ClassBodyLexicalEnvironmentObject* create(
+      JSContext* cx, Handle<ClassBodyScope*> scope, HandleObject enclosing,
+      gc::InitialHeap heap);
+
+  static ClassBodyLexicalEnvironmentObject* createForFrame(
+      JSContext* cx, Handle<ClassBodyScope*> scope, AbstractFramePtr frame);
+
+  // The ClassBodyScope that created this environment.
+  ClassBodyScope& scope() const {
+    return ScopedLexicalEnvironmentObject::scope().as<ClassBodyScope>();
+  }
+
+  static uint32_t privateBrandSlot() { return JSSLOT_FREE(&class_); }
 };
 
 // Global and non-syntactic lexical environments are extensible.
@@ -786,7 +811,7 @@ class MOZ_RAII EnvironmentIter {
 
   // Constructing from a frame. Places the EnvironmentIter on the innermost
   // environment at pc.
-  EnvironmentIter(JSContext* cx, AbstractFramePtr frame, jsbytecode* pc);
+  EnvironmentIter(JSContext* cx, AbstractFramePtr frame, const jsbytecode* pc);
 
   // Constructing from an environment, scope and frame. The frame is given
   // to initialize to proper enclosing environment/scope.
@@ -907,11 +932,10 @@ class LiveEnvironmentVal {
       : frame_(ei.initialFrame()), scope_(ei.maybeScope()) {}
 
   AbstractFramePtr frame() const { return frame_; }
-  Scope* scope() const { return scope_; }
 
   void updateFrame(AbstractFramePtr frame) { frame_ = frame; }
 
-  bool needsSweep();
+  bool traceWeak(JSTracer* trc);
 };
 
 /****************************************************************************/
@@ -1018,6 +1042,10 @@ class DebugEnvironmentProxy : public ProxyObject {
   // live (and thus does not have a synthesized EnvironmentObject or a
   // snapshot)?
   bool isOptimizedOut() const;
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+#endif /* defined(DEBUG) || defined(JS_JITSPEW) */
 };
 
 /* Maintains per-realm debug environment bookkeeping information. */
@@ -1063,7 +1091,7 @@ class DebugEnvironments {
 
  public:
   void trace(JSTracer* trc);
-  void sweep();
+  void traceWeak(JSTracer* trc);
   void finish();
 #ifdef JS_GC_ZEAL
   void checkHashTablesAfterMovingGC();
@@ -1109,7 +1137,7 @@ class DebugEnvironments {
   static void onPopVar(JSContext* cx, const EnvironmentIter& ei);
   static void onPopLexical(JSContext* cx, const EnvironmentIter& ei);
   static void onPopLexical(JSContext* cx, AbstractFramePtr frame,
-                           jsbytecode* pc);
+                           const jsbytecode* pc);
   static void onPopWith(AbstractFramePtr frame);
   static void onPopModule(JSContext* cx, const EnvironmentIter& ei);
   static void onRealmUnsetIsDebuggee(Realm* realm);
@@ -1130,9 +1158,21 @@ inline bool JSObject::is<js::EnvironmentObject>() const {
 }
 
 template <>
-inline bool JSObject::is<js::BlockLexicalEnvironmentObject>() const {
+inline bool JSObject::is<js::ScopedLexicalEnvironmentObject>() const {
   return is<js::LexicalEnvironmentObject>() &&
          !as<js::LexicalEnvironmentObject>().isExtensible();
+}
+
+template <>
+inline bool JSObject::is<js::BlockLexicalEnvironmentObject>() const {
+  return is<js::ScopedLexicalEnvironmentObject>() &&
+         !as<js::ScopedLexicalEnvironmentObject>().isClassBody();
+}
+
+template <>
+inline bool JSObject::is<js::ClassBodyLexicalEnvironmentObject>() const {
+  return is<js::ScopedLexicalEnvironmentObject>() &&
+         as<js::ScopedLexicalEnvironmentObject>().isClassBody();
 }
 
 template <>
@@ -1258,7 +1298,7 @@ ModuleObject* GetModuleObjectForScript(JSScript* script);
 ModuleEnvironmentObject* GetModuleEnvironmentForScript(JSScript* script);
 
 [[nodiscard]] bool GetThisValueForDebuggerFrameMaybeOptimizedOut(
-    JSContext* cx, AbstractFramePtr frame, jsbytecode* pc,
+    JSContext* cx, AbstractFramePtr frame, const jsbytecode* pc,
     MutableHandleValue res);
 [[nodiscard]] bool GetThisValueForDebuggerSuspendedGeneratorMaybeOptimizedOut(
     JSContext* cx, AbstractGeneratorObject& genObj, JSScript* script,
@@ -1291,7 +1331,7 @@ ModuleEnvironmentObject* GetModuleEnvironmentForScript(JSScript* script);
 
 [[nodiscard]] bool GetFrameEnvironmentAndScope(JSContext* cx,
                                                AbstractFramePtr frame,
-                                               jsbytecode* pc,
+                                               const jsbytecode* pc,
                                                MutableHandleObject env,
                                                MutableHandleScope scope);
 

@@ -6,17 +6,17 @@
 
 #include "jit/WarpSnapshot.h"
 
-#include "mozilla/IntegerPrintfMacros.h"
+#include "mozilla/DebugOnly.h"
 
 #include <type_traits>
 
 #include "jit/CacheIRCompiler.h"
 #include "jit/CacheIRSpewer.h"
+#include "vm/EnvironmentObject.h"
+#include "vm/GetterSetter.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/Printer.h"
-
-#include "vm/EnvironmentObject-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -38,19 +38,14 @@ WarpSnapshot::WarpSnapshot(JSContext* cx, TempAllocator& alloc,
 #endif
 }
 
-WarpScriptSnapshot::WarpScriptSnapshot(
-    JSScript* script, const WarpEnvironment& env,
-    WarpOpSnapshotList&& opSnapshots, ModuleObject* moduleObject,
-    JSObject* instrumentationCallback,
-    mozilla::Maybe<int32_t> instrumentationScriptId,
-    mozilla::Maybe<bool> instrumentationActive)
+WarpScriptSnapshot::WarpScriptSnapshot(JSScript* script,
+                                       const WarpEnvironment& env,
+                                       WarpOpSnapshotList&& opSnapshots,
+                                       ModuleObject* moduleObject)
     : script_(script),
       environment_(env),
       opSnapshots_(std::move(opSnapshots)),
       moduleObject_(moduleObject),
-      instrumentationCallback_(instrumentationCallback),
-      instrumentationScriptId_(instrumentationScriptId),
-      instrumentationActive_(instrumentationActive),
       isArrowFunction_(script->isFunction() && script->function()->isArrow()) {}
 
 #ifdef JS_JITSPEW
@@ -161,16 +156,7 @@ void WarpLambda::dumpData(GenericPrinter& out) const {
 }
 
 void WarpRest::dumpData(GenericPrinter& out) const {
-  out.printf("    template: 0x%p\n", templateObject());
-}
-
-void WarpNewArray::dumpData(GenericPrinter& out) const {
-  out.printf("    template: 0x%p\n", templateObject());
-  out.printf("    useVMCall: %u\n", useVMCall());
-}
-
-void WarpNewObject::dumpData(GenericPrinter& out) const {
-  out.printf("    template: 0x%p\n", templateObject());
+  out.printf("    shape: 0x%p\n", shape());
 }
 
 void WarpBindGName::dumpData(GenericPrinter& out) const {
@@ -198,6 +184,14 @@ void WarpInlinedCall::dumpData(GenericPrinter& out) const {
   out.printf("    info: 0x%p\n", info_);
   cacheIRSnapshot_->dumpData(out);
 }
+
+void WarpPolymorphicTypes::dumpData(GenericPrinter& out) const {
+  out.printf("    types:\n");
+  for (auto& typeData : list_) {
+    out.printf("      %s\n", ValTypeToString(typeData.type()));
+  }
+}
+
 #endif  // JS_JITSPEW
 
 template <typename T>
@@ -251,9 +245,6 @@ void WarpScriptSnapshot::trace(JSTracer* trc) {
   if (moduleObject_) {
     TraceWarpGCPtr(trc, moduleObject_, "warp-module-obj");
   }
-  if (instrumentationCallback_) {
-    TraceWarpGCPtr(trc, instrumentationCallback_, "warp-instr-callback");
-  }
 }
 
 void WarpOpSnapshot::trace(JSTracer* trc) {
@@ -295,15 +286,7 @@ void WarpLambda::traceData(JSTracer* trc) {
 }
 
 void WarpRest::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, templateObject_, "warp-rest-template");
-}
-
-void WarpNewArray::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, templateObject_, "warp-newarray-template");
-}
-
-void WarpNewObject::traceData(JSTracer* trc) {
-  TraceWarpGCPtr(trc, templateObject_, "warp-newobject-template");
+  TraceWarpGCPtr(trc, shape_, "warp-rest-shape");
 }
 
 void WarpBindGName::traceData(JSTracer* trc) {
@@ -311,6 +294,10 @@ void WarpBindGName::traceData(JSTracer* trc) {
 }
 
 void WarpBailout::traceData(JSTracer* trc) {
+  // No GC pointers.
+}
+
+void WarpPolymorphicTypes::traceData(JSTracer* trc) {
   // No GC pointers.
 }
 
@@ -335,6 +322,12 @@ void WarpCacheIR::traceData(JSTracer* trc) {
         case StubField::Type::Shape: {
           uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
           TraceWarpStubPtr<Shape>(trc, word, "warp-cacheir-shape");
+          break;
+        }
+        case StubField::Type::GetterSetter: {
+          uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
+          TraceWarpStubPtr<GetterSetter>(trc, word,
+                                         "warp-cacheir-getter-setter");
           break;
         }
         case StubField::Type::JSObject: {
@@ -370,6 +363,13 @@ void WarpCacheIR::traceData(JSTracer* trc) {
           uint64_t data = stubInfo_->getStubRawInt64(stubData_, offset);
           Value val = Value::fromRawBits(data);
           TraceWarpGCPtr(trc, WarpGCPtr<Value>(val), "warp-cacheir-value");
+          break;
+        }
+        case StubField::Type::AllocSite: {
+          mozilla::DebugOnly<uintptr_t> word =
+              stubInfo_->getStubRawWord(stubData_, offset);
+          MOZ_ASSERT(word == uintptr_t(gc::DefaultHeap) ||
+                     word == uintptr_t(gc::TenuredHeap));
           break;
         }
         case StubField::Type::Limit:

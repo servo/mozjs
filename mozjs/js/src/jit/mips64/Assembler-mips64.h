@@ -75,10 +75,6 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // must be a volatile register.
 static constexpr Register WasmJitEntryReturnScratch = t1;
 
-// Register used to store a reference to an exception thrown by Wasm to an
-// exception handling block. Should not overlap with WasmTlsReg.
-static constexpr Register WasmExceptionReg = ABINonArgReg0;
-
 static constexpr Register InterpreterPCReg = t5;
 
 static constexpr Register JSReturnReg = v1;
@@ -188,8 +184,8 @@ static constexpr uint32_t SimdMemoryAlignment = 16;
 static constexpr uint32_t WasmStackAlignment = SimdMemoryAlignment;
 static const uint32_t WasmTrapInstructionLength = 4;
 
-// The offsets are dynamically asserted during
-// code generation in the prologue/epilogue.
+// See comments in wasm::GenerateFunctionPrologue.  The difference between these
+// is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
 static constexpr uint32_t WasmCheckedTailEntryOffset = 16u;
 

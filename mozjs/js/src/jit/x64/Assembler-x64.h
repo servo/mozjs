@@ -65,6 +65,10 @@ static constexpr FloatRegister xmm14 =
 static constexpr FloatRegister xmm15 =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Double);
 
+// Vector registers fixed for use with some instructions, e.g. PBLENDVB.
+static constexpr FloatRegister vmm0 =
+    FloatRegister(X86Encoding::xmm0, FloatRegisters::Simd128);
+
 // X86-common synonyms.
 static constexpr Register eax = rax;
 static constexpr Register ebx = rbx;
@@ -103,9 +107,9 @@ static constexpr FloatRegister ReturnDoubleReg =
     FloatRegister(X86Encoding::xmm0, FloatRegisters::Double);
 static constexpr FloatRegister ReturnSimd128Reg =
     FloatRegister(X86Encoding::xmm0, FloatRegisters::Simd128);
-static constexpr FloatRegister ScratchFloat32Reg =
+static constexpr FloatRegister ScratchFloat32Reg_ =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Single);
-static constexpr FloatRegister ScratchDoubleReg =
+static constexpr FloatRegister ScratchDoubleReg_ =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Double);
 static constexpr FloatRegister ScratchSimd128Reg =
     FloatRegister(X86Encoding::xmm15, FloatRegisters::Simd128);
@@ -232,10 +236,6 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // must be a volatile register.
 static constexpr Register WasmJitEntryReturnScratch = rbx;
 
-// Register used to store a reference to an exception thrown by Wasm to an
-// exception handling block. Should not overlap with WasmTlsReg.
-static constexpr Register WasmExceptionReg = ABINonArgReg0;
-
 static constexpr Register OsrFrameReg = IntArgReg3;
 
 static constexpr Register PreBarrierReg = rdx;
@@ -270,10 +270,10 @@ static_assert(JitStackAlignment % SimdMemoryAlignment == 0,
 static constexpr uint32_t WasmStackAlignment = SimdMemoryAlignment;
 static constexpr uint32_t WasmTrapInstructionLength = 2;
 
-// The offsets are dynamically asserted during
-// code generation in the prologue/epilogue.
+// See comments in wasm::GenerateFunctionPrologue.  The difference between these
+// is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 16u;
+static constexpr uint32_t WasmCheckedTailEntryOffset = 4u;
 
 static constexpr Scale ScalePointer = TimesEight;
 
@@ -933,6 +933,9 @@ class Assembler : public AssemblerX86Shared {
     masm.popcntq_rr(src.encoding(), dest.encoding());
   }
 
+  void imulq(Imm32 imm, Register src, Register dest) {
+    masm.imulq_ir(imm.value, src.encoding(), dest.encoding());
+  }
   void imulq(Register src, Register dest) {
     masm.imulq_rr(src.encoding(), dest.encoding());
   }
@@ -1070,6 +1073,10 @@ class Assembler : public AssemblerX86Shared {
       case Operand::MEM_REG_DISP:
         masm.cmpq_rm(rhs.encoding(), lhs.disp(), lhs.base());
         break;
+      case Operand::MEM_SCALE:
+        masm.cmpq_rm(rhs.encoding(), lhs.disp(), lhs.base(), lhs.index(),
+                     lhs.scale());
+        break;
       case Operand::MEM_ADDRESS32:
         masm.cmpq_rm(rhs.encoding(), lhs.address());
         break;
@@ -1133,6 +1140,7 @@ class Assembler : public AssemblerX86Shared {
   }
 
   void jmp(ImmPtr target, RelocationKind reloc = RelocationKind::HARDCODED) {
+    MOZ_ASSERT(hasCreator());
     JmpSrc src = masm.jmp();
     addPendingJump(src, target, reloc);
   }

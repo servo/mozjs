@@ -13,13 +13,17 @@
 
 #include "NamespaceImports.h"
 
-#include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Conversions.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 
 #include "vm/StringType.h"
 
 namespace js {
+
+namespace frontend {
+class ParserAtomsTable;
+class TaggedParserAtomIndex;
+}  // namespace frontend
 
 class GlobalObject;
 class StringBuffer;
@@ -66,8 +70,9 @@ extern bool IsInteger(double d);
  * Convert an integer or double (contained in the given value) to a string and
  * append to the given buffer.
  */
-[[nodiscard]] extern bool JS_FASTCALL
-NumberValueToStringBuffer(JSContext* cx, const Value& v, StringBuffer& sb);
+[[nodiscard]] extern bool NumberValueToStringBuffer(JSContext* cx,
+                                                    const Value& v,
+                                                    StringBuffer& sb);
 
 extern JSLinearString* IndexToString(JSContext* cx, uint32_t index);
 

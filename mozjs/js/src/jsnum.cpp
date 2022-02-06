@@ -34,6 +34,7 @@
 #if !JS_HAS_INTL_API
 #  include "js/LocaleSensitive.h"
 #endif
+#include "js/PropertyAndElement.h"  // JS_DefineFunctions
 #include "js/PropertySpec.h"
 #include "util/DoubleToString.h"
 #include "util/Memory.h"
@@ -43,6 +44,7 @@
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
+#include "vm/StaticStrings.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/Compartment-inl.h"  // For js::UnwrapAndTypeCheckThis
@@ -818,7 +820,7 @@ JSLinearString* js::Int32ToString(JSContext* cx, int32_t si) {
     return nullptr;
   }
   if (si >= 0) {
-    str->maybeInitializeIndex(si);
+    str->maybeInitializeIndexValue(si);
   }
 
   CacheNumber(cx, si, str);
@@ -831,11 +833,7 @@ template JSLinearString* js::Int32ToString<NoGC>(JSContext* cx, int32_t si);
 
 JSLinearString* js::Int32ToStringPure(JSContext* cx, int32_t si) {
   AutoUnsafeCallWithABI unsafe;
-  JSLinearString* res = Int32ToString<NoGC>(cx, si);
-  if (!res) {
-    cx->recoverFromOutOfMemory();
-  }
-  return res;
+  return Int32ToString<NoGC>(cx, si);
 }
 
 JSAtom* js::Int32ToAtom(JSContext* cx, int32_t si) {
@@ -853,7 +851,7 @@ JSAtom* js::Int32ToAtom(JSContext* cx, int32_t si) {
     indexValue.emplace(si);
   }
 
-  JSAtom* atom = Atomize(cx, start, length, js::DoNotPinAtom, indexValue);
+  JSAtom* atom = Atomize(cx, start, length, indexValue);
   if (!atom) {
     return nullptr;
   }
@@ -943,7 +941,6 @@ static bool num_toString(JSContext* cx, unsigned argc, Value* vp) {
   }
   JSString* str = NumberToStringWithBase<CanGC>(cx, d, base);
   if (!str) {
-    JS_ReportOutOfMemory(cx);
     return false;
   }
   args.rval().setString(str);
@@ -961,7 +958,6 @@ static bool num_toLocaleString(JSContext* cx, unsigned argc, Value* vp) {
 
   RootedString str(cx, NumberToStringWithBase<CanGC>(cx, d, 10));
   if (!str) {
-    JS_ReportOutOfMemory(cx);
     return false;
   }
 
@@ -1292,7 +1288,6 @@ static bool num_toPrecision(JSContext* cx, unsigned argc, Value* vp) {
   if (!args.hasDefined(0)) {
     JSString* str = NumberToStringWithBase<CanGC>(cx, d, 10);
     if (!str) {
-      JS_ReportOutOfMemory(cx);
       return false;
     }
     args.rval().setString(str);
@@ -1643,7 +1638,9 @@ static JSString* NumberToStringWithBase(JSContext* cx, double d, int base) {
 
     numStr = FracNumberToCString(cx, &cbuf, d, base);
     if (!numStr) {
-      ReportOutOfMemory(cx);
+      if constexpr (allowGC) {
+        ReportOutOfMemory(cx);
+      }
       return nullptr;
     }
     MOZ_ASSERT_IF(base == 10, !cbuf.dbuf && numStr >= cbuf.sbuf &&
@@ -1660,7 +1657,7 @@ static JSString* NumberToStringWithBase(JSContext* cx, double d, int base) {
   }
 
   if (isBase10Int && i >= 0) {
-    s->maybeInitializeIndex(i);
+    s->maybeInitializeIndexValue(i);
   }
 
   realm->dtoaCache.cache(base, d, s);
@@ -1678,11 +1675,7 @@ template JSString* js::NumberToString<NoGC>(JSContext* cx, double d);
 
 JSString* js::NumberToStringPure(JSContext* cx, double d) {
   AutoUnsafeCallWithABI unsafe;
-  JSString* res = NumberToString<NoGC>(cx, d);
-  if (!res) {
-    cx->recoverFromOutOfMemory();
-  }
-  return res;
+  return NumberToString<NoGC>(cx, d);
 }
 
 JSAtom* js::NumberToAtom(JSContext* cx, double d) {
@@ -1761,8 +1754,8 @@ JSLinearString* js::IndexToString(JSContext* cx, uint32_t index) {
   return str;
 }
 
-bool JS_FASTCALL js::NumberValueToStringBuffer(JSContext* cx, const Value& v,
-                                               StringBuffer& sb) {
+bool js::NumberValueToStringBuffer(JSContext* cx, const Value& v,
+                                   StringBuffer& sb) {
   /* Convert to C-string. */
   ToCStringBuf cbuf;
   const char* cstr;

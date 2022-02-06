@@ -13,26 +13,9 @@ import sys
 import subprocess
 import time
 from distutils.version import LooseVersion
-from mozboot.util import get_mach_virtualenv_binary
 from mozfile import which
-
-# NOTE: This script is intended to be run with a vanilla Python install.  We
-# have to rely on the standard library instead of Python 2+3 helpers like
-# the six module.
-if sys.version_info < (3,):
-    from ConfigParser import (
-        Error as ConfigParserError,
-        RawConfigParser,
-    )
-
-    input = raw_input  # noqa
-else:
-    from configparser import (
-        Error as ConfigParserError,
-        RawConfigParser,
-    )
-
-from mach.util import UserError
+from mach.util import get_state_dir, UserError
+from mach.telemetry import initialize_telemetry_setting
 
 from mozboot.base import MODERN_RUST_VERSION
 from mozboot.centosfedora import CentOSFedoraBootstrapper
@@ -48,7 +31,6 @@ from mozboot.void import VoidBootstrapper
 from mozboot.windows import WindowsBootstrapper
 from mozboot.mozillabuild import MozillaBuildBootstrapper
 from mozboot.mozconfig import find_mozconfig, MozconfigBuilder
-from mozboot.util import get_state_dir
 
 # Use distro package to retrieve linux platform information
 import distro
@@ -66,7 +48,8 @@ https://firefox-source-docs.mozilla.org/contributing/build/artifact_builds.html.
 
 Please choose the version of Firefox you want to build:
 %s
-Your choice: """
+Your choice:
+""".strip()
 
 APPLICATIONS = OrderedDict(
     [
@@ -74,21 +57,9 @@ APPLICATIONS = OrderedDict(
         ("Firefox for Desktop", "browser"),
         ("GeckoView/Firefox for Android Artifact Mode", "mobile_android_artifact_mode"),
         ("GeckoView/Firefox for Android", "mobile_android"),
+        ("SpiderMonkey JavaScript engine", "js"),
     ]
 )
-
-STATE_DIR_INFO = """
-The Firefox build system and related tools store shared, persistent state
-in a common directory on the filesystem. On this machine, that directory
-is:
-
-  {statedir}
-
-If you would like to use a different directory, hit CTRL+c and set the
-MOZBUILD_STATE_PATH environment variable to the directory you'd like to
-use and re-run the bootstrapper.
-
-Would you like to create this directory?"""
 
 FINISHED = """
 Your system should be ready to build %s!
@@ -124,34 +95,19 @@ DEBIAN_DISTROS = (
     "elementary",
     "neon",
     "pop",
+    "kali",
+    "devuan",
 )
 
 ADD_GIT_CINNABAR_PATH = """
 To add git-cinnabar to the PATH, edit your shell initialization script, which
-may be called ~/.bashrc or ~/.bash_profile or ~/.profile, and add the following
+may be called {prefix}/.bash_profile or {prefix}/.profile, and add the following
 lines:
 
-    export PATH="{}:$PATH"
+    export PATH="{cinnabar_dir}:$PATH"
 
 Then restart your shell.
 """
-
-TELEMETRY_OPT_IN_PROMPT = """
-Build system telemetry
-
-Mozilla collects data about local builds in order to make builds faster and
-improve developer tooling. To learn more about the data we intend to collect
-read here:
-
-  https://firefox-source-docs.mozilla.org/build/buildsystem/telemetry.html
-
-If you have questions, please ask in #build on Matrix:
-
-  https://chat.mozilla.org/#/room/#build:mozilla.org
-
-If you would like to opt out of data collection, select (N) at the prompt.
-
-Would you like to enable build system telemetry?"""
 
 
 OLD_REVISION_WARNING = """
@@ -170,32 +126,6 @@ You are running an older version of git ("{old_version}").
 We recommend upgrading to at least version "{minimum_recommended_version}" to improve
 performance.
 """.strip()
-
-
-def update_or_create_build_telemetry_config(path):
-    """Write a mach config file enabling build telemetry to `path`. If the file does not exist,
-    create it. If it exists, add the new setting to the existing data.
-
-    This is standalone from mach's `ConfigSettings` so we can use it during bootstrap
-    without a source checkout.
-    """
-    config = RawConfigParser()
-    if os.path.exists(path):
-        try:
-            config.read([path])
-        except ConfigParserError as e:
-            print(
-                "Your mach configuration file at `{path}` is not parseable:\n{error}".format(
-                    path=path, error=e
-                )
-            )
-            return False
-    if not config.has_section("build"):
-        config.add_section("build")
-    config.set("build", "telemetry", "true")
-    with open(path, "w") as f:
-        config.write(f)
-    return True
 
 
 class Bootstrapper(object):
@@ -227,7 +157,7 @@ class Bootstrapper(object):
                 full_distribution_name=False
             )
 
-            if dist_id in ("centos", "fedora"):
+            if dist_id in ("centos", "fedora", "rocky"):
                 cls = CentOSFedoraBootstrapper
                 args["distro"] = dist_id
             elif dist_id in DEBIAN_DISTROS:
@@ -242,7 +172,12 @@ class Bootstrapper(object):
                 cls = ArchlinuxBootstrapper
             elif dist_id in ("void"):
                 cls = VoidBootstrapper
-            elif os.path.exists("/etc/SUSE-brand"):
+            elif dist_id in (
+                "opensuse",
+                "opensuse-leap",
+                "opensuse-tumbleweed",
+                "suse",
+            ):
                 cls = OpenSUSEBootstrapper
             else:
                 raise NotImplementedError(
@@ -284,76 +219,22 @@ class Bootstrapper(object):
 
         self.instance = cls(**args)
 
-    def create_state_dir(self):
-        state_dir = get_state_dir()
-
-        if not os.path.exists(state_dir):
-            should_create_state_dir = True
-            if not self.instance.no_interactive:
-                should_create_state_dir = self.instance.prompt_yesno(
-                    prompt=STATE_DIR_INFO.format(statedir=state_dir)
-                )
-
-            # This directory is by default in $HOME, or overridden via an env
-            # var, so we probably shouldn't gate it on --no-system-changes.
-            if should_create_state_dir:
-                print("Creating global state directory: %s" % state_dir)
-                os.makedirs(state_dir, mode=0o770)
-            else:
-                raise UserError(
-                    "Need permission to create global state "
-                    "directory at %s" % state_dir
-                )
-
-        return state_dir
-
-    def maybe_install_private_packages_or_exit(self, state_dir, checkout_root):
+    def maybe_install_private_packages_or_exit(self, application):
         # Install the clang packages needed for building the style system, as
         # well as the version of NodeJS that we currently support.
         # Also install the clang static-analysis package by default
         # The best place to install our packages is in the state directory
         # we have.  We should have created one above in non-interactive mode.
-        self.instance.ensure_node_packages(state_dir, checkout_root)
-        self.instance.ensure_fix_stacks_packages(state_dir, checkout_root)
-        self.instance.ensure_minidump_stackwalk_packages(state_dir, checkout_root)
+        self.instance.ensure_node_packages()
+        self.instance.ensure_fix_stacks_packages()
+        self.instance.ensure_minidump_stackwalk_packages()
         if not self.instance.artifact_mode:
-            self.instance.ensure_stylo_packages(state_dir, checkout_root)
-            self.instance.ensure_clang_static_analysis_package(state_dir, checkout_root)
-            self.instance.ensure_nasm_packages(state_dir, checkout_root)
-            self.instance.ensure_sccache_packages(state_dir, checkout_root)
-            self.instance.ensure_lucetc_packages(state_dir, checkout_root)
-            self.instance.ensure_wasi_sysroot_packages(state_dir, checkout_root)
-            self.instance.ensure_dump_syms_packages(state_dir, checkout_root)
-
-    def check_telemetry_opt_in(self, state_dir):
-        # Don't prompt if the user already has a setting for this value.
-        if (
-            self.mach_context is not None
-            and "telemetry" in self.mach_context.settings.build
-        ):
-            return self.mach_context.settings.build.telemetry
-        # We can't prompt the user.
-        if self.instance.no_interactive:
-            return False
-        mach_python = get_mach_virtualenv_binary()
-        proc = subprocess.run(
-            [mach_python, "-c", "import glean"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        # If we couldn't install glean in the mach environment, we can't
-        # enable telemetry.
-        if proc.returncode != 0:
-            return False
-        choice = self.instance.prompt_yesno(prompt=TELEMETRY_OPT_IN_PROMPT)
-        if choice:
-            cfg_file = os.environ.get("MACHRC", os.path.join(state_dir, "machrc"))
-            if update_or_create_build_telemetry_config(cfg_file):
-                print(
-                    "\nThanks for enabling build telemetry! You can change this setting at "
-                    + "any time by editing the config file `{}`\n".format(cfg_file)
-                )
-        return choice
+            self.instance.ensure_stylo_packages()
+            self.instance.ensure_clang_static_analysis_package()
+            self.instance.ensure_nasm_packages()
+            self.instance.ensure_sccache_packages()
+        # Like 'ensure_browser_packages' or 'ensure_mobile_android_packages'
+        getattr(self.instance, "ensure_%s_packages" % application)()
 
     def check_code_submission(self, checkout_root):
         if self.instance.no_interactive or which("moz-phab"):
@@ -370,28 +251,20 @@ class Bootstrapper(object):
         mach_binary = os.path.join(checkout_root, "mach")
         subprocess.check_call((sys.executable, mach_binary, "install-moz-phab"))
 
-    def bootstrap(self):
-        if sys.version_info[0] < 3:
-            print(
-                "This script must be run with Python 3. \n"
-                'Try "python3 bootstrap.py".'
-            )
-            sys.exit(1)
-
+    def bootstrap(self, settings):
         if self.choice is None:
+            applications = APPLICATIONS
             # Like ['1. Firefox for Desktop', '2. Firefox for Android Artifact Mode', ...].
             labels = [
-                "%s. %s" % (i, name) for i, name in enumerate(APPLICATIONS.keys(), 1)
+                "%s. %s" % (i, name) for i, name in enumerate(applications.keys(), 1)
             ]
             choices = ["  {} [default]".format(labels[0])]
             choices += ["  {}".format(label) for label in labels[1:]]
             prompt = APPLICATION_CHOICE % "\n".join(choices)
             prompt_choice = self.instance.prompt_int(
-                prompt=prompt,
-                low=1,
-                high=len(APPLICATIONS),
+                prompt=prompt, low=1, high=len(applications)
             )
-            name, application = list(APPLICATIONS.items())[prompt_choice - 1]
+            name, application = list(applications.items())[prompt_choice - 1]
         elif self.choice in APPLICATIONS.keys():
             name, application = self.choice, APPLICATIONS[self.choice]
         elif self.choice in APPLICATIONS.values():
@@ -410,11 +283,29 @@ class Bootstrapper(object):
 
         self.instance.warn_if_pythonpath_is_set()
 
-        # This doesn't affect any system state and we'd like to bail out as soon
-        # as possible if this check fails.
-        self.instance.ensure_python_modern()
+        if sys.platform.startswith("darwin") and not os.environ.get(
+            "MACH_I_DO_WANT_TO_USE_ROSETTA"
+        ):
+            # If running on arm64 mac, check whether we're running under
+            # Rosetta and advise against it.
+            proc = subprocess.run(
+                ["sysctl", "-n", "sysctl.proc_translated"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+            )
+            if (
+                proc.returncode == 0
+                and proc.stdout.decode("ascii", "replace").strip() == "1"
+            ):
+                print(
+                    "Python is being emulated under Rosetta. Please use a native "
+                    "Python instead. If you still really want to go ahead, set "
+                    "the MACH_I_DO_WANT_TO_USE_ROSETTA environment variable.",
+                    file=sys.stderr,
+                )
+                return 1
 
-        state_dir = self.create_state_dir()
+        state_dir = get_state_dir()
         self.instance.state_dir = state_dir
 
         # We need to enable the loading of hgrc in case extensions are
@@ -422,21 +313,16 @@ class Bootstrapper(object):
         (checkout_type, checkout_root) = current_firefox_checkout(
             env=self.instance._hg_cleanenv(load_hgrc=True), hg=which("hg")
         )
-        self.instance.validate_environment(checkout_root)
+        self.instance.srcdir = checkout_root
+        self.instance.validate_environment()
         self._validate_python_environment()
 
         if self.instance.no_system_changes:
-            self.instance.ensure_mach_environment(checkout_root)
-            self.check_telemetry_opt_in(state_dir)
-            self.maybe_install_private_packages_or_exit(state_dir, checkout_root)
+            self.maybe_install_private_packages_or_exit(application)
             self._output_mozconfig(application, mozconfig_builder)
             sys.exit(0)
 
         self.instance.install_system_packages()
-        # Install mach environment python packages after system packages.
-        # Some mach packages require building native modules, which require
-        # tools which are installed to the system.
-        self.instance.ensure_mach_environment(checkout_root)
 
         # Like 'install_browser_packages' or 'install_mobile_android_packages'.
         getattr(self.instance, "install_%s_packages" % application)(mozconfig_builder)
@@ -470,9 +356,12 @@ class Bootstrapper(object):
                     which("git"), which("git-cinnabar"), state_dir, checkout_root
                 )
 
-        self.check_telemetry_opt_in(state_dir)
-        self.maybe_install_private_packages_or_exit(state_dir, checkout_root)
+        self.maybe_install_private_packages_or_exit(application)
         self.check_code_submission(checkout_root)
+        # Wait until after moz-phab setup to check telemetry so that employees
+        # will be automatically opted-in.
+        if not self.instance.no_interactive and not settings.mach_telemetry.is_set_up:
+            initialize_telemetry_setting(settings, checkout_root, state_dir)
 
         print(FINISHED % name)
         if not (
@@ -511,7 +400,7 @@ class Bootstrapper(object):
                     mozconfig_path,
                     raw_mozconfig,
                 )
-                print(suggestion)
+                print(suggestion, end="")
 
     def _validate_python_environment(self):
         valid = True
@@ -577,25 +466,7 @@ def update_mercurial_repo(hg, url, dest, revision):
     """Perform a clone/pull + update of a Mercurial repository."""
     # Disable common extensions whose older versions may cause `hg`
     # invocations to abort.
-    disable_exts = [
-        "bzexport",
-        "bzpost",
-        "firefoxtree",
-        "hgwatchman",
-        "mozext",
-        "mqext",
-        "qimportbz",
-        "push-to-try",
-        "reviewboard",
-    ]
-
-    def disable_extensions(args):
-        for ext in disable_exts:
-            args.extend(["--config", "extensions.%s=!" % ext])
-
     pull_args = [hg]
-    disable_extensions(pull_args)
-
     if os.path.exists(dest):
         pull_args.extend(["pull", url])
         cwd = dest
@@ -603,16 +474,17 @@ def update_mercurial_repo(hg, url, dest, revision):
         pull_args.extend(["clone", "--noupdate", url, dest])
         cwd = "/"
 
-    update_args = [hg]
-    disable_extensions(update_args)
-    update_args.extend(["update", "-r", revision])
+    update_args = [hg, "update", "-r", revision]
 
     print("=" * 80)
     print("Ensuring %s is up to date at %s" % (url, dest))
 
+    env = os.environ.copy()
+    env.update({"HGPLAIN": "1"})
+
     try:
-        subprocess.check_call(pull_args, cwd=cwd)
-        subprocess.check_call(update_args, cwd=dest)
+        subprocess.check_call(pull_args, cwd=cwd, env=env)
+        subprocess.check_call(update_args, cwd=dest, env=env)
     finally:
         print("=" * 80)
 
@@ -625,7 +497,7 @@ def current_firefox_checkout(env, hg=None):
     HG_ROOT_REVISIONS = set(
         [
             # From mozilla-unified.
-            "8ba995b74e18334ab3707f27e9eb8f4e37ba3d29",
+            "8ba995b74e18334ab3707f27e9eb8f4e37ba3d29"
         ]
     )
 
@@ -738,7 +610,19 @@ def configure_git(git, cinnabar, root_state_dir, top_src_dir):
     cinnabar_dir = update_git_tools(git, root_state_dir)
 
     if not cinnabar:
-        print(ADD_GIT_CINNABAR_PATH.format(cinnabar_dir))
+        if "MOZILLABUILD" in os.environ:
+            # Slightly modify the path on Windows to be correct
+            # for the copy/paste into the .bash_profile
+            cinnabar_dir = "/" + cinnabar_dir
+            cinnabar_dir = cinnabar_dir.replace(":", "")
+
+            print(
+                ADD_GIT_CINNABAR_PATH.format(
+                    prefix="%USERPROFILE%", cinnabar_dir=cinnabar_dir
+                )
+            )
+        else:
+            print(ADD_GIT_CINNABAR_PATH.format(prefix="~", cinnabar_dir=cinnabar_dir))
 
 
 def _warn_if_risky_revision(path):

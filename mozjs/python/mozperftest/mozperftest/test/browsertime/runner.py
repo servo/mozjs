@@ -10,7 +10,7 @@ import re
 import shutil
 from pathlib import Path
 
-from mozperftest.utils import install_package
+from mozperftest.utils import install_package, get_output_dir
 from mozperftest.test.noderunner import NodeRunner
 from mozperftest.test.browsertime.visualtools import get_dependencies, xvfb
 
@@ -76,17 +76,13 @@ class BrowsertimeRunner(NodeRunner):
             "default": "",
             "help": "Extra options passed to browsertime.js",
         },
-        "xvfb": {
-            "action": "store_true",
-            "default": False,
-            "help": "Use xvfb",
-        },
+        "xvfb": {"action": "store_true", "default": False, "help": "Use xvfb"},
         "no-window-recorder": {
             "action": "store_true",
             "default": False,
             "help": "Use the window recorder",
         },
-        "viewport-size": {"type": str, "default": "1366x695", "help": "Viewport size"},
+        "viewport-size": {"type": str, "default": "1280x1024", "help": "Viewport size"},
     }
 
     def __init__(self, env, mach_cmd):
@@ -318,21 +314,33 @@ class BrowsertimeRunner(NodeRunner):
 
         return args_list
 
+    def _line_handler(self, line):
+        line_matcher = re.compile(r"(\[\d{4}-\d{2}-\d{2}.*\])\s+([a-zA-Z]+):\s+(.*)")
+        match = line_matcher.match(line)
+        if not match:
+            return
+
+        date, level, msg = match.groups()
+        msg = msg.replace("{", "{{").replace("}", "}}")
+        level = level.lower()
+        if "error" in level:
+            self.error("Mozperftest failed to run: {}".format(msg), msg)
+        elif "warning" in level:
+            self.warning(msg)
+        else:
+            self.info(msg)
+
     def run(self, metadata):
         self._test_script = metadata.script
         self.setup()
         cycles = self.get_arg("cycles", 1)
         for cycle in range(1, cycles + 1):
+
             # Build an output directory
             output = self.get_arg("output")
-            if output is not None:
-                result_dir = pathlib.Path(output, f"browsertime-results-{cycle}")
-            else:
-                result_dir = pathlib.Path(
-                    self.topsrcdir, "artifacts", f"browsertime-results-{cycle}"
-                )
-            result_dir.mkdir(parents=True, exist_ok=True)
-            result_dir = result_dir.resolve()
+            if output is None:
+                output = pathlib.Path(self.topsrcdir, "artifacts")
+            result_dir = get_output_dir(output, f"browsertime-results-{cycle}")
 
             # Run the test cycle
             metadata.run_hook(
@@ -384,7 +392,7 @@ class BrowsertimeRunner(NodeRunner):
                 option = option.strip()
                 if not option:
                     continue
-                option = option.split("=")
+                option = option.split("=", 1)
                 if len(option) != 2:
                     self.warning(
                         f"Skipping browsertime option {option} as it "
@@ -405,9 +413,9 @@ class BrowsertimeRunner(NodeRunner):
 
         if visualmetrics and self.get_arg("xvfb"):
             with xvfb():
-                exit_code = self.node(command)
+                exit_code = self.node(command, self._line_handler)
         else:
-            exit_code = self.node(command)
+            exit_code = self.node(command, self._line_handler)
 
         if exit_code != 0:
             raise NodeException(exit_code)

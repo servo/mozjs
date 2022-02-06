@@ -9,16 +9,13 @@
 
 #include "mozilla/Attributes.h"
 
-#include <stdint.h>
-
-#include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
-#include "js/TypeDecls.h"
 #include "vm/SharedStencil.h"  // GCThingIndex
 
 namespace js {
 namespace frontend {
 
 struct BytecodeEmitter;
+class TaggedParserAtomIndex;
 
 // Class for emitting bytecode for property operation.
 //
@@ -107,7 +104,6 @@ class MOZ_STACK_CLASS PropOpEmitter {
   enum class Kind {
     Get,
     Call,
-    Set,
     Delete,
     PostIncrement,
     PreIncrement,

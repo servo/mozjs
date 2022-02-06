@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, Union
 
 from . import metrics
 from . import pings
+from . import tags
 from . import util
 
 # An (imcomplete) list of reserved keywords in Swift.
@@ -73,16 +74,43 @@ def type_name(obj: Union[metrics.Metric, pings.Ping]) -> str:
         template_args = []
         for member, suffix in generate_enums:
             if len(getattr(obj, member)):
-                template_args.append(util.Camelize(obj.name) + suffix)
+                # Ugly hack to support the newer event extras API
+                # along the deprecated API.
+                # We need to specify both generic parameters,
+                # but only for event metrics.
+                if suffix == "Extra":
+                    if isinstance(obj, metrics.Event):
+                        template_args.append("NoExtraKeys")
+                    template_args.append(util.Camelize(obj.name) + suffix)
+                else:
+                    template_args.append(util.Camelize(obj.name) + suffix)
+                    if isinstance(obj, metrics.Event):
+                        template_args.append("NoExtras")
             else:
                 if suffix == "Keys":
                     template_args.append("NoExtraKeys")
+                    template_args.append("NoExtras")
                 else:
                     template_args.append("No" + suffix)
 
         return "{}<{}>".format(class_name(obj.type), ", ".join(template_args))
 
     return class_name(obj.type)
+
+
+def extra_type_name(typ: str) -> str:
+    """
+    Returns the corresponding Kotlin type for event's extra key types.
+    """
+
+    if typ == "boolean":
+        return "Bool"
+    elif typ == "string":
+        return "String"
+    elif typ == "quantity":
+        return "Int32"
+    else:
+        return "UNSUPPORTED"
 
 
 def class_name(obj_type: str) -> str:
@@ -112,7 +140,7 @@ class Category:
     """
 
     name: str
-    objs: Dict[str, Union[metrics.Metric, pings.Ping]]
+    objs: Dict[str, Union[metrics.Metric, pings.Ping, tags.Tag]]
     contains_pings: bool
 
 
@@ -140,6 +168,7 @@ def output_swift(
             ("type_name", type_name),
             ("class_name", class_name),
             ("variable_name", variable_name),
+            ("extra_type_name", extra_type_name),
         ),
     )
 

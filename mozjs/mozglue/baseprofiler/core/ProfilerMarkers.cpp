@@ -5,7 +5,7 @@
 
 #include "mozilla/BaseProfilerMarkers.h"
 
-#include "mozilla/Likely.h"
+#include "mozilla/BaseProfilerUtils.h"
 
 #include <limits>
 
@@ -74,6 +74,58 @@ Streaming::MarkerTypeFunctionsArray() {
   return {sMarkerTypeFunctions1Based, sDeserializerCount};
 }
 
+// Only accessed on the main thread.
+// Both profilers (Base and Gecko) could be active at the same time, so keep a
+// ref-count to only allocate at most one buffer at any time.
+static int sBufferForMainThreadAddMarkerRefCount = 0;
+static ProfileChunkedBuffer* sBufferForMainThreadAddMarker = nullptr;
+
+ProfileChunkedBuffer* GetClearedBufferForMainThreadAddMarker() {
+  if (!mozilla::baseprofiler::profiler_is_main_thread()) {
+    return nullptr;
+  }
+
+  if (sBufferForMainThreadAddMarker) {
+    sBufferForMainThreadAddMarker->Clear();
+  }
+
+  return sBufferForMainThreadAddMarker;
+}
+
+MFBT_API void EnsureBufferForMainThreadAddMarker() {
+  if (!mozilla::baseprofiler::profiler_is_main_thread()) {
+    return;
+  }
+
+  if (sBufferForMainThreadAddMarkerRefCount++ == 0) {
+    // First `Ensure`, allocate the buffer.
+    MOZ_ASSERT(!sBufferForMainThreadAddMarker);
+    sBufferForMainThreadAddMarker = new ProfileChunkedBuffer(
+        ProfileChunkedBuffer::ThreadSafety::WithoutMutex,
+        MakeUnique<ProfileBufferChunkManagerSingle>(
+            ProfileBufferChunkManager::scExpectedMaximumStackSize));
+  }
+}
+
+MFBT_API void ReleaseBufferForMainThreadAddMarker() {
+  if (!mozilla::baseprofiler::profiler_is_main_thread()) {
+    return;
+  }
+
+  if (sBufferForMainThreadAddMarkerRefCount == 0) {
+    // Unexpected Release! This should not normally happen, but it's harmless in
+    // practice, it means the buffer is not alive anyway.
+    return;
+  }
+
+  MOZ_ASSERT(sBufferForMainThreadAddMarker);
+  if (--sBufferForMainThreadAddMarkerRefCount == 0) {
+    // Last `Release`, destroy the buffer.
+    delete sBufferForMainThreadAddMarker;
+    sBufferForMainThreadAddMarker = nullptr;
+  }
+}
+
 }  // namespace base_profiler_markers_detail
 
 void MarkerSchema::Stream(JSONWriter& aWriter,
@@ -126,7 +178,7 @@ void MarkerSchema::Stream(JSONWriter& aWriter,
                 if (aData.mSearchable) {
                   aWriter.BoolProperty(
                       "searchable",
-                      *aData.mSearchable == Searchable::searchable);
+                      *aData.mSearchable == Searchable::Searchable);
                 }
               },
               [&aWriter](const StaticData& aStaticData) {
@@ -146,19 +198,19 @@ void MarkerSchema::Stream(JSONWriter& aWriter,
 Span<const char> MarkerSchema::LocationToStringSpan(
     MarkerSchema::Location aLocation) {
   switch (aLocation) {
-    case Location::markerChart:
+    case Location::MarkerChart:
       return mozilla::MakeStringSpan("marker-chart");
-    case Location::markerTable:
+    case Location::MarkerTable:
       return mozilla::MakeStringSpan("marker-table");
-    case Location::timelineOverview:
+    case Location::TimelineOverview:
       return mozilla::MakeStringSpan("timeline-overview");
-    case Location::timelineMemory:
+    case Location::TimelineMemory:
       return mozilla::MakeStringSpan("timeline-memory");
-    case Location::timelineIPC:
+    case Location::TimelineIPC:
       return mozilla::MakeStringSpan("timeline-ipc");
-    case Location::timelineFileIO:
+    case Location::TimelineFileIO:
       return mozilla::MakeStringSpan("timeline-fileio");
-    case Location::stackChart:
+    case Location::StackChart:
       return mozilla::MakeStringSpan("stack-chart");
     default:
       MOZ_CRASH("Unexpected Location enum");
@@ -170,31 +222,31 @@ Span<const char> MarkerSchema::LocationToStringSpan(
 Span<const char> MarkerSchema::FormatToStringSpan(
     MarkerSchema::Format aFormat) {
   switch (aFormat) {
-    case Format::url:
+    case Format::Url:
       return mozilla::MakeStringSpan("url");
-    case Format::filePath:
+    case Format::FilePath:
       return mozilla::MakeStringSpan("file-path");
-    case Format::string:
+    case Format::String:
       return mozilla::MakeStringSpan("string");
-    case Format::duration:
+    case Format::Duration:
       return mozilla::MakeStringSpan("duration");
-    case Format::time:
+    case Format::Time:
       return mozilla::MakeStringSpan("time");
-    case Format::seconds:
+    case Format::Seconds:
       return mozilla::MakeStringSpan("seconds");
-    case Format::milliseconds:
+    case Format::Milliseconds:
       return mozilla::MakeStringSpan("milliseconds");
-    case Format::microseconds:
+    case Format::Microseconds:
       return mozilla::MakeStringSpan("microseconds");
-    case Format::nanoseconds:
+    case Format::Nanoseconds:
       return mozilla::MakeStringSpan("nanoseconds");
-    case Format::bytes:
+    case Format::Bytes:
       return mozilla::MakeStringSpan("bytes");
-    case Format::percentage:
+    case Format::Percentage:
       return mozilla::MakeStringSpan("percentage");
-    case Format::integer:
+    case Format::Integer:
       return mozilla::MakeStringSpan("integer");
-    case Format::decimal:
+    case Format::Decimal:
       return mozilla::MakeStringSpan("decimal");
     default:
       MOZ_CRASH("Unexpected Format enum");

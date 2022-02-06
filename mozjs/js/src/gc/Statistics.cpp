@@ -17,8 +17,10 @@
 
 #include "debugger/DebugAPI.h"
 #include "gc/GC.h"
+#include "gc/GCInternals.h"
 #include "gc/Memory.h"
 #include "js/friend/UsageStatistics.h"  // JS_TELEMETRY_*
+#include "util/GetPidProvider.h"
 #include "util/Text.h"
 #include "vm/HelperThreads.h"
 #include "vm/Runtime.h"
@@ -54,13 +56,15 @@ static inline auto MajorGCPhaseKinds() {
                                       PhaseKind(size_t(PhaseKind::GC_END) + 1));
 }
 
-const char* js::gcstats::ExplainInvocationKind(JSGCInvocationKind gckind) {
-  MOZ_ASSERT(gckind == GC_NORMAL || gckind == GC_SHRINK);
-  if (gckind == GC_NORMAL) {
-    return "Normal";
-  } else {
-    return "Shrinking";
+static const char* ExplainGCOptions(JS::GCOptions options) {
+  switch (options) {
+    case JS::GCOptions::Normal:
+      return "Normal";
+    case JS::GCOptions::Shrink:
+      return "Shrink";
   }
+
+  MOZ_CRASH("Unexpected GCOptions value");
 }
 
 JS_PUBLIC_API const char* JS::ExplainGCReason(JS::GCReason reason) {
@@ -376,11 +380,11 @@ UniqueChars Statistics::formatCompactSummaryMessage() const {
     return UniqueChars(nullptr);
   }
 
-  MOZ_ASSERT_IF(counts[COUNT_ARENA_RELOCATED], gckind == GC_SHRINK);
-  if (gckind == GC_SHRINK) {
+  MOZ_ASSERT_IF(counts[COUNT_ARENA_RELOCATED],
+                gcOptions == JS::GCOptions::Shrink);
+  if (gcOptions == JS::GCOptions::Shrink) {
     SprintfLiteral(
-        buffer, "Kind: %s; Relocated: %.3f MiB; ",
-        ExplainInvocationKind(gckind),
+        buffer, "Kind: %s; Relocated: %.3f MiB; ", ExplainGCOptions(gcOptions),
         double(ArenaSize * counts[COUNT_ARENA_RELOCATED]) / BYTES_PER_MB);
     if (!fragments.append(DuplicateString(buffer))) {
       return UniqueChars(nullptr);
@@ -473,7 +477,7 @@ UniqueChars Statistics::formatDetailedDescription() const {
 
   char buffer[1024];
   SprintfLiteral(
-      buffer, format, ExplainInvocationKind(gckind),
+      buffer, format, ExplainGCOptions(gcOptions),
       ExplainGCReason(slices_[0].reason), nonincremental() ? "no - " : "yes",
       nonincremental() ? ExplainAbortReason(nonincrementalReason_) : "",
       zoneStats.collectedZoneCount, zoneStats.zoneCount,
@@ -674,6 +678,8 @@ void Statistics::formatJsonDescription(JSONPrinter& json) const {
   json.property("total_zones", zoneStats.zoneCount);
   json.property("total_compartments", zoneStats.compartmentCount);
   json.property("minor_gcs", getCount(COUNT_MINOR_GC));
+  json.property("minor_gc_number", gc->minorGCCount());
+  json.property("major_gc_number", gc->majorGCCount());
   uint32_t storebufferOverflows = getCount(COUNT_STOREBUFFER_OVERFLOW);
   if (storebufferOverflows) {
     json.property("store_buffer_overflows", storebufferOverflows);
@@ -796,17 +802,10 @@ Statistics::Statistics(GCRuntime* gc)
   gcTimerFile = MaybeOpenFileFromEnv("MOZ_GCTIMER");
   gcDebugFile = MaybeOpenFileFromEnv("JS_GC_DEBUG");
 
-  const char* env = getenv("JS_GC_PROFILE");
-  if (env) {
-    if (0 == strcmp(env, "help")) {
-      fprintf(stderr,
-              "JS_GC_PROFILE=N\n"
-              "\tReport major GC's taking more than N milliseconds.\n");
-      exit(0);
-    }
-    enableProfiling_ = true;
-    profileThreshold_ = TimeDuration::FromMilliseconds(atoi(env));
-  }
+  gc::ReadProfileEnv("JS_GC_PROFILE",
+                     "Report major GCs taking more than N milliseconds for "
+                     "all or just the main runtime\n",
+                     &enableProfiling_, &profileWorkers_, &profileThreshold_);
 }
 
 Statistics::~Statistics() {
@@ -973,11 +972,10 @@ void Statistics::printStats() {
   fflush(gcTimerFile);
 }
 
-void Statistics::beginGC(JSGCInvocationKind kind,
-                         const TimeStamp& currentTime) {
+void Statistics::beginGC(JS::GCOptions options, const TimeStamp& currentTime) {
   slices_.clearAndFree();
   sccTimes.clearAndFree();
-  gckind = kind;
+  gcOptions = options;
   nonincrementalReason_ = GCAbortReason::None;
 
   preTotalHeapBytes = gc->heapSize.bytes();
@@ -1024,10 +1022,12 @@ void Statistics::sendGCTelemetry() {
   TimeDuration markGrayTotal = phaseTimes[Phase::SWEEP_MARK_GRAY] +
                                phaseTimes[Phase::SWEEP_MARK_GRAY_WEAK];
   size_t markCount = gc->marker.getMarkCount();
-  double markRate = markCount / t(markTotal);
   runtime->addTelemetry(JS_TELEMETRY_GC_PREPARE_MS, t(prepareTotal));
   runtime->addTelemetry(JS_TELEMETRY_GC_MARK_MS, t(markTotal));
-  runtime->addTelemetry(JS_TELEMETRY_GC_MARK_RATE_2, markRate);
+  if (markTotal >= TimeDuration::FromMilliseconds(1)) {
+    double markRate = double(markCount) / t(markTotal);
+    runtime->addTelemetry(JS_TELEMETRY_GC_MARK_RATE_2, uint32_t(markRate));
+  }
   runtime->addTelemetry(JS_TELEMETRY_GC_SWEEP_MS, t(phaseTimes[Phase::SWEEP]));
   if (gc->didCompactZones()) {
     runtime->addTelemetry(JS_TELEMETRY_GC_COMPACT_MS,
@@ -1131,9 +1131,9 @@ Statistics::SliceData::SliceData(const SliceBudget& budget,
       start(start),
       startFaults(startFaults) {}
 
-void Statistics::beginSlice(const ZoneGCStats& zoneStats,
-                            JSGCInvocationKind gckind,
-                            const SliceBudget& budget, JS::GCReason reason) {
+void Statistics::beginSlice(const ZoneGCStats& zoneStats, JS::GCOptions options,
+                            const SliceBudget& budget, JS::GCReason reason,
+                            bool budgetWasIncreased) {
   MOZ_ASSERT(phaseStack.empty() ||
              (phaseStack.length() == 1 && phaseStack[0] == Phase::MUTATOR));
 
@@ -1143,7 +1143,7 @@ void Statistics::beginSlice(const ZoneGCStats& zoneStats,
 
   bool first = !gc->isIncrementalGCInProgress();
   if (first) {
-    beginGC(gckind, currentTime);
+    beginGC(options, currentTime);
   }
 
   JSRuntime* runtime = gc->rt;
@@ -1164,12 +1164,14 @@ void Statistics::beginSlice(const ZoneGCStats& zoneStats,
   }
 
   runtime->addTelemetry(JS_TELEMETRY_GC_REASON, uint32_t(reason));
+  runtime->addTelemetry(JS_TELEMETRY_GC_BUDGET_WAS_INCREASED,
+                        budgetWasIncreased);
 
   // Slice callbacks should only fire for the outermost level.
   bool wasFullGC = zoneStats.isFullCollection();
   if (sliceCallback) {
     JSContext* cx = context();
-    JS::GCDescription desc(!wasFullGC, false, gckind, reason);
+    JS::GCDescription desc(!wasFullGC, false, options, reason);
     if (first) {
       (*sliceCallback)(cx, JS::GC_CYCLE_BEGIN, desc);
     }
@@ -1207,8 +1209,9 @@ void Statistics::endSlice() {
     }
   }
 
-  if (enableProfiling_ && !aborted &&
-      slices_.back().duration() >= profileThreshold_) {
+  if (!aborted &&
+      ShouldPrintProfile(gc->rt, enableProfiling_, profileWorkers_,
+                         profileThreshold_, slices_.back().duration())) {
     printSliceProfile();
   }
 
@@ -1217,7 +1220,8 @@ void Statistics::endSlice() {
     bool wasFullGC = zoneStats.isFullCollection();
     if (sliceCallback) {
       JSContext* cx = context();
-      JS::GCDescription desc(!wasFullGC, last, gckind, slices_.back().reason);
+      JS::GCDescription desc(!wasFullGC, last, gcOptions,
+                             slices_.back().reason);
       (*sliceCallback)(cx, JS::GC_SLICE_END, desc);
       if (last) {
         (*sliceCallback)(cx, JS::GC_CYCLE_END, desc);
@@ -1269,9 +1273,13 @@ void Statistics::sendSliceTelemetry(const SliceData& slice) {
       runtime->addTelemetry(JS_TELEMETRY_GC_ANIMATION_MS, t(sliceTime));
     }
 
-    // Record any phase that goes 1.5 times or 5ms over its budget.
+    // Long GC slices are those that go 1.5 times or 5ms over their budget.
     double longSliceThreshold = std::min(1.5 * budget_ms, budget_ms + 5.0);
-    if (sliceTime.ToMilliseconds() > longSliceThreshold) {
+    bool wasLongSlice = sliceTime.ToMilliseconds() > longSliceThreshold;
+    runtime->addTelemetry(JS_TELEMETRY_GC_SLICE_WAS_LONG, wasLongSlice);
+
+    // Record the longest phase in any long slice.
+    if (wasLongSlice) {
       PhaseKind longest = LongestPhaseSelfTimeInMajorGC(slice.phaseTimes);
       reportLongestPhaseInMajorGC(longest, JS_TELEMETRY_GC_SLOW_PHASE);
 
@@ -1553,10 +1561,12 @@ void Statistics::printProfileHeader() {
     return;
   }
 
-  fprintf(stderr, "MajorGC: Timestamp  Reason               States FSNR ");
-  fprintf(stderr, " %6s", "budget");
-  fprintf(stderr, " %6s", "total");
-#define PRINT_PROFILE_HEADER(name, text, phase) fprintf(stderr, " %6s", text);
+  fprintf(
+      stderr,
+      "MajorGC: PID    Runtime        Timestamp  Reason               States "
+      "FSNR   budget total ");
+#define PRINT_PROFILE_HEADER(name, text, phase) \
+  fprintf(stderr, " %-6.6s", text);
   FOR_EACH_GC_PROFILE_TIME(PRINT_PROFILE_HEADER)
 #undef PRINT_PROFILE_HEADER
   fprintf(stderr, "\n");
@@ -1577,15 +1587,16 @@ void Statistics::printSliceProfile() {
 
   TimeDuration ts = slice.end - creationTime();
 
-  bool shrinking = gckind == GC_SHRINK;
+  bool shrinking = gcOptions == JS::GCOptions::Shrink;
   bool reset = slice.resetReason != GCAbortReason::None;
   bool nonIncremental = nonincrementalReason_ != GCAbortReason::None;
   bool full = zoneStats.isFullCollection();
 
-  fprintf(stderr, "MajorGC: %10.6f %-20.20s %1d -> %1d %1s%1s%1s%1s ",
-          ts.ToSeconds(), ExplainGCReason(slice.reason),
-          int(slice.initialState), int(slice.finalState), full ? "F" : "",
-          shrinking ? "S" : "", nonIncremental ? "N" : "", reset ? "R" : "");
+  fprintf(
+      stderr, "MajorGC: %6zu %14p %10.6f %-20.20s %1d -> %1d %1s%1s%1s%1s  ",
+      size_t(getpid()), gc->rt, ts.ToSeconds(), ExplainGCReason(slice.reason),
+      int(slice.initialState), int(slice.finalState), full ? "F" : "",
+      shrinking ? "S" : "", nonIncremental ? "N" : "", reset ? "R" : "");
 
   if (!nonIncremental && !slice.budget.isUnlimited() &&
       slice.budget.isTimeBudget()) {
@@ -1610,8 +1621,9 @@ void Statistics::printSliceProfile() {
 void Statistics::printTotalProfileTimes() {
   if (enableProfiling_) {
     fprintf(stderr,
-            "MajorGC TOTALS: %7" PRIu64 " slices:                             ",
-            sliceCount_);
+            "MajorGC: %6zu %14p TOTALS: %7" PRIu64
+            " slices:                             ",
+            size_t(getpid()), gc->rt, sliceCount_);
     printProfileTimes(totalTimes_);
   }
 }

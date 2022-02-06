@@ -7,23 +7,45 @@
 #ifndef jit_BaselineCacheIRCompiler_h
 #define jit_BaselineCacheIRCompiler_h
 
+#include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
 
-#include "gc/Barrier.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include "jstypes.h"
+
 #include "jit/CacheIR.h"
 #include "jit/CacheIRCompiler.h"
+#include "jit/CacheIROpsGenerated.h"
+#include "jit/CacheIRReader.h"
+
+struct JS_PUBLIC_API JSContext;
+
+class JSScript;
 
 namespace js {
 namespace jit {
 
-class ICCacheIRStub;
+class CacheIRWriter;
 class ICFallbackStub;
+class ICScript;
+class JitCode;
+class Label;
+class MacroAssembler;
 
-ICCacheIRStub* AttachBaselineCacheIRStub(JSContext* cx,
+struct Address;
+struct Register;
+
+enum class TailCallVMFunctionId;
+
+enum class ICAttachResult { Attached, DuplicateStub, TooLarge, OOM };
+
+ICAttachResult AttachBaselineCacheIRStub(JSContext* cx,
                                          const CacheIRWriter& writer,
                                          CacheKind kind, JSScript* outerScript,
                                          ICScript* icScript,
-                                         ICFallbackStub* stub, bool* attached);
+                                         ICFallbackStub* stub);
 
 // BaselineCacheIRCompiler compiles CacheIR to BaselineIC native code.
 class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
@@ -54,9 +76,6 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   void pushFunCallArguments(Register argcReg, Register calleeReg,
                             Register scratch, Register scratch2,
                             bool isJitCall);
-  void pushFunApplyMagicArgs(Register argcReg, Register calleeReg,
-                             Register scratch, Register scratch2,
-                             bool isJitCall);
   void pushFunApplyArgsObj(Register argcReg, Register calleeReg,
                            Register scratch, Register scratch2, bool isJitCall);
   void createThis(Register argcReg, Register calleeReg, Register scratch,
@@ -73,6 +92,8 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
 
   enum class StringCode { CodeUnit, CodePoint };
   bool emitStringFromCodeResult(Int32OperandId codeId, StringCode stringCode);
+
+  void emitAtomizeString(Register str, Register temp, Label* failure);
 
   bool emitCallScriptedGetterShared(ValOperandId receiverId,
                                     uint32_t getterOffset, bool sameRealm,

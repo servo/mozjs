@@ -54,9 +54,16 @@ def _run_worker(config, paths, **lintargs):
         return result
 
     # Override warnings setup for code review
-    # Only activating when code_review_warnings is set on a linter.yml in use
-    if os.environ.get("CODE_REVIEW") == "1" and config.get("code_review_warnings"):
+    # Only disactivating when code_review_warnings is set to False on a linter.yml in use
+    if os.environ.get("CODE_REVIEW") == "1" and config.get(
+        "code_review_warnings", True
+    ):
         lintargs["show_warnings"] = True
+
+    # Override ignore thirdparty
+    # Only deactivating include_thirdparty is set on a linter.yml in use
+    if config.get("include_thirdparty", False):
+        lintargs["include_thirdparty"] = True
 
     func = supported_types[config["type"]]
     start_time = time.time()
@@ -210,6 +217,9 @@ class LintRoller(object):
             try:
                 setupargs = copy.deepcopy(self.lintargs)
                 setupargs["name"] = linter["name"]
+                setupargs["log"] = logging.LoggerAdapter(
+                    self.log, {"lintname": linter["name"]}
+                )
                 if virtualenv_manager is not None:
                     setupargs["virtualenv_manager"] = virtualenv_manager
                 start_time = time.time()
@@ -312,9 +322,10 @@ class LintRoller(object):
             if rev:
                 vcs_paths.update(self.vcs.get_changed_files("AM", rev=rev))
             if outgoing:
+                upstream = outgoing if isinstance(outgoing, str) else None
                 try:
                     vcs_paths.update(
-                        self.vcs.get_outgoing_files("AM", upstream=outgoing)
+                        self.vcs.get_outgoing_files("AM", upstream=upstream)
                     )
                 except MissingUpstreamRepo:
                     print(
@@ -343,6 +354,9 @@ class LintRoller(object):
 
         # Make sure we never spawn more processes than we have jobs.
         num_procs = min(len(jobs), num_procs) or 1
+        if sys.platform == "win32":
+            # https://github.com/python/cpython/pull/13132
+            num_procs = min(num_procs, 61)
 
         signal.signal(signal.SIGINT, _worker_sigint_handler)
         executor = ProcessPoolExecutor(num_procs)

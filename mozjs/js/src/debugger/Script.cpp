@@ -13,7 +13,6 @@
 #include <stddef.h>  // for ptrdiff_t
 #include <stdint.h>  // for uint32_t, SIZE_MAX, int32_t
 
-#include "jsapi.h"             // for CallArgs, Rooted, CallArgsFromVp
 #include "jsnum.h"             // for ToNumber
 #include "NamespaceImports.h"  // for CallArgs, RootedValue
 
@@ -27,8 +26,10 @@
 #include "gc/Tracer.h"         // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "gc/Zone.h"           // for Zone
 #include "gc/ZoneAllocator.h"  // for AddCellMemory
+#include "js/CallArgs.h"       // for CallArgs, CallArgsFromVp
 #include "js/friend/ErrorMessages.h"  // for GetErrorMessage, JSMSG_*
 #include "js/HeapAPI.h"               // for GCCellPtr
+#include "js/RootingAPI.h"            // for Rooted
 #include "js/Wrapper.h"               // for UncheckedUnwrap
 #include "vm/ArrayObject.h"           // for ArrayObject
 #include "vm/BytecodeUtil.h"          // for GET_JUMP_OFFSET
@@ -44,7 +45,7 @@
 #include "wasm/WasmDebug.h"           // for ExprLoc, DebugState
 #include "wasm/WasmInstance.h"        // for Instance
 #include "wasm/WasmJS.h"              // for WasmInstanceObject
-#include "wasm/WasmTypes.h"           // for Bytes
+#include "wasm/WasmTypeDecls.h"       // for Bytes
 
 #include "vm/BytecodeUtil-inl.h"  // for BytecodeRangeWithPosition
 #include "vm/JSAtom-inl.h"        // for ValueToId
@@ -73,25 +74,23 @@ const JSClassOps DebuggerScript::classOps_ = {
 };
 
 const JSClass DebuggerScript::class_ = {
-    "Script", JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
-    &classOps_};
+    "Script", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS), &classOps_};
 
 void DebuggerScript::trace(JSTracer* trc) {
-  JSObject* upcast = this;
   // This comes from a private pointer, so no barrier needed.
   gc::Cell* cell = getReferentCell();
   if (cell) {
     if (cell->is<BaseScript>()) {
       BaseScript* script = cell->as<BaseScript>();
       TraceManuallyBarrieredCrossCompartmentEdge(
-          trc, upcast, &script, "Debugger.Script script referent");
-      setPrivateUnbarriered(script);
+          trc, this, &script, "Debugger.Script script referent");
+      setReservedSlotGCThingAsPrivateUnbarriered(SCRIPT_SLOT, script);
     } else {
       JSObject* wasm = cell->as<JSObject>();
       TraceManuallyBarrieredCrossCompartmentEdge(
-          trc, upcast, &wasm, "Debugger.Script wasm referent");
+          trc, this, &wasm, "Debugger.Script wasm referent");
       MOZ_ASSERT(wasm->is<WasmInstanceObject>());
-      setPrivateUnbarriered(wasm);
+      setReservedSlotGCThingAsPrivateUnbarriered(SCRIPT_SLOT, wasm);
     }
   }
 }
@@ -116,8 +115,9 @@ DebuggerScript* DebuggerScript::create(JSContext* cx, HandleObject proto,
 
   scriptobj->setReservedSlot(DebuggerScript::OWNER_SLOT,
                              ObjectValue(*debugger));
-  referent.get().match(
-      [&](auto& scriptHandle) { scriptobj->setPrivateGCThing(scriptHandle); });
+  referent.get().match([&](auto& scriptHandle) {
+    scriptobj->setReservedSlotGCThingAsPrivate(SCRIPT_SLOT, scriptHandle);
+  });
 
   return scriptobj;
 }
@@ -246,7 +246,6 @@ struct MOZ_STACK_CLASS DebuggerScript::CallData {
   bool clearAllBreakpoints();
   bool isInCatchScope();
   bool getOffsetsCoverage();
-  bool setInstrumentationId();
 
   using Method = bool (CallData::*)();
 
@@ -326,7 +325,7 @@ bool DebuggerScript::CallData::getDisplayName() {
 }
 
 bool DebuggerScript::CallData::getParameterNames() {
-  if (!ensureScriptMaybeLazy()) {
+  if (!ensureScript()) {
     return false;
   }
 
@@ -503,6 +502,11 @@ static bool PushFunctionScript(JSContext* cx, Debugger* dbg, HandleFunction fun,
   }
 
   Rooted<BaseScript*> script(cx, fun->baseScript());
+  MOZ_ASSERT(script);
+  if (!script) {
+    // If the function doesn't have script, ignore it.
+    return true;
+  }
   RootedObject wrapped(cx, dbg->wrapScript(cx, script));
   if (!wrapped) {
     return false;
@@ -523,6 +527,12 @@ static bool PushInnerFunctions(JSContext* cx, Debugger* dbg, HandleObject array,
     JSObject* obj = &gcThing.as<JSObject>();
     if (obj->is<JSFunction>()) {
       fun = &obj->as<JSFunction>();
+
+      // Ignore any delazification placeholder functions. These should not be
+      // exposed to debugger in any way.
+      if (fun->isGhost()) {
+        continue;
+      }
 
       if (!PushFunctionScript(cx, dbg, fun, array)) {
         return false;
@@ -630,7 +640,7 @@ class DebuggerScript::GetPossibleBreakpointsMatcher {
       return true;
     }
 
-    RootedPlainObject entry(cx_, NewBuiltinClassInstance<PlainObject>(cx_));
+    RootedPlainObject entry(cx_, NewPlainObject(cx_));
     if (!entry) {
       return false;
     }
@@ -942,7 +952,7 @@ class DebuggerScript::GetOffsetMetadataMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -990,7 +1000,7 @@ class DebuggerScript::GetOffsetMetadataMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -1230,7 +1240,7 @@ class DebuggerScript::GetOffsetLocationMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -1303,7 +1313,7 @@ class DebuggerScript::GetOffsetLocationMatcher {
       return false;
     }
 
-    result_.set(NewBuiltinClassInstance<PlainObject>(cx_));
+    result_.set(NewPlainObject(cx_));
     if (!result_) {
       return false;
     }
@@ -1499,6 +1509,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::Swap:
     case JSOp::Pick:
     case JSOp::Unpick:
+    case JSOp::GetAliasedDebugVar:
     case JSOp::GetAliasedVar:
     case JSOp::Uint24:
     case JSOp::ResumeIndex:
@@ -1508,6 +1519,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::Not:
     case JSOp::FunctionThis:
     case JSOp::GlobalThis:
+    case JSOp::NonSyntacticGlobalThis:
     case JSOp::Callee:
     case JSOp::EnvCallee:
     case JSOp::SuperBase:
@@ -1527,6 +1539,7 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::PopLexicalEnv:
     case JSOp::FreshenLexicalEnv:
     case JSOp::RecreateLexicalEnv:
+    case JSOp::PushClassBodyEnv:
     case JSOp::Iter:
     case JSOp::MoreIter:
     case JSOp::IsNoIter:
@@ -1534,11 +1547,11 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::In:
     case JSOp::HasOwn:
     case JSOp::CheckPrivateField:
+    case JSOp::NewPrivateName:
     case JSOp::SetRval:
     case JSOp::Instanceof:
     case JSOp::DebugLeaveLexicalEnv:
     case JSOp::Debugger:
-    case JSOp::GImplicitThis:
     case JSOp::ImplicitThis:
     case JSOp::NewTarget:
     case JSOp::CheckIsObj:
@@ -1547,9 +1560,6 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::IsConstructing:
     case JSOp::OptimizeSpreadCall:
     case JSOp::ImportMeta:
-    case JSOp::InstrumentationActive:
-    case JSOp::InstrumentationCallback:
-    case JSOp::InstrumentationScriptId:
     case JSOp::EnterWith:
     case JSOp::LeaveWith:
     case JSOp::SpreadNew:
@@ -1585,6 +1595,15 @@ static bool BytecodeIsEffectful(JSOp op) {
     case JSOp::Retsub:
     case JSOp::ThrowMsg:
     case JSOp::ForceInterpreter:
+#ifdef ENABLE_RECORD_TUPLE
+    case JSOp::InitRecord:
+    case JSOp::AddRecordProperty:
+    case JSOp::AddRecordSpread:
+    case JSOp::FinishRecord:
+    case JSOp::InitTuple:
+    case JSOp::AddTupleElement:
+    case JSOp::FinishTuple:
+#endif
       return false;
   }
 
@@ -1691,7 +1710,7 @@ class DebuggerScript::GetAllColumnOffsetsMatcher {
   MutableHandleObject result_;
 
   bool appendColumnOffsetEntry(size_t lineno, size_t column, size_t offset) {
-    RootedPlainObject entry(cx_, NewBuiltinClassInstance<PlainObject>(cx_));
+    RootedPlainObject entry(cx_, NewPlainObject(cx_));
     if (!entry) {
       return false;
     }
@@ -2276,7 +2295,7 @@ bool DebuggerScript::CallData::getOffsetsCoverage() {
 
     // Create a new object with the offset, line number, column number, the
     // number of hit counts, and append it to the array.
-    item = NewObjectWithGivenProto<PlainObject>(cx, nullptr);
+    item = NewPlainObjectWithProto(cx, nullptr);
     if (!item || !DefineDataProperty(cx, item, offsetId, offsetValue) ||
         !DefineDataProperty(cx, item, lineNumberId, lineNumberValue) ||
         !DefineDataProperty(cx, item, columnNumberId, columnNumberValue) ||
@@ -2294,27 +2313,6 @@ bool DebuggerScript::CallData::getOffsetsCoverage() {
   }
 
   args.rval().setObject(*result);
-  return true;
-}
-
-bool DebuggerScript::CallData::setInstrumentationId() {
-  if (!ensureScriptMaybeLazy()) {
-    return false;
-  }
-
-  if (!obj->getInstrumentationId().isUndefined()) {
-    JS_ReportErrorASCII(cx, "Script instrumentation ID is already set");
-    return false;
-  }
-
-  if (!args.get(0).isNumber()) {
-    JS_ReportErrorASCII(cx, "Script instrumentation ID must be a number");
-    return false;
-  }
-
-  obj->setReservedSlot(INSTRUMENTATION_ID_SLOT, args.get(0));
-
-  args.rval().setUndefined();
   return true;
 }
 
@@ -2357,7 +2355,6 @@ const JSFunctionSpec DebuggerScript::methods_[] = {
     JS_DEBUG_FN("getOffsetMetadata", getOffsetMetadata, 1),
     JS_DEBUG_FN("getOffsetsCoverage", getOffsetsCoverage, 0),
     JS_DEBUG_FN("getEffectfulOffsets", getEffectfulOffsets, 1),
-    JS_DEBUG_FN("setInstrumentationId", setInstrumentationId, 1),
 
     // The following APIs are deprecated due to their reliance on the
     // under-defined 'entrypoint' concept. Make use of getPossibleBreakpoints,

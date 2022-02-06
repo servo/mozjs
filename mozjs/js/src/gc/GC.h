@@ -11,20 +11,18 @@
 #ifndef gc_GC_h
 #define gc_GC_h
 
-#include "jsapi.h"
-
 #include "gc/AllocKind.h"
 #include "gc/GCEnum.h"
 #include "js/GCAPI.h"
+#include "js/HeapAPI.h"
+#include "js/RealmIterators.h"
+#include "js/RealmOptions.h"
 #include "js/TraceKind.h"
 
-class JSExternalString;
-class JSFatInlineString;
 class JSTracer;
 
 namespace js {
 
-class AccessorShape;
 class FatInlineAtom;
 class NormalAtom;
 
@@ -35,23 +33,6 @@ namespace gc {
 class Arena;
 class TenuredChunk;
 struct Cell;
-
-/*
- * Map from C++ type to alloc kind for non-object types. JSObject does not have
- * a 1:1 mapping, so must use Arena::thingSize.
- *
- * The AllocKind is available as MapTypeToFinalizeKind<SomeType>::kind.
- */
-template <typename T>
-struct MapTypeToFinalizeKind {};
-#define EXPAND_MAPTYPETOFINALIZEKIND(allocKind, traceKind, type, sizedType, \
-                                     bgFinal, nursery, compact)             \
-  template <>                                                               \
-  struct MapTypeToFinalizeKind<type> {                                      \
-    static const AllocKind kind = AllocKind::allocKind;                     \
-  };
-FOR_EACH_NONOBJECT_ALLOCKIND(EXPAND_MAPTYPETOFINALIZEKIND)
-#undef EXPAND_MAPTYPETOFINALIZEKIND
 
 } /* namespace gc */
 
@@ -128,14 +109,6 @@ namespace gc {
 void FinishGC(JSContext* cx, JS::GCReason = JS::GCReason::FINISH_GC);
 
 void WaitForBackgroundTasks(JSContext* cx);
-
-/*
- * Merge all contents of source into target. This can only be used if source is
- * the only realm in its zone.
- */
-void MergeRealms(JS::Realm* source, JS::Realm* target);
-
-void CollectSelfHostingZone(JSContext* cx);
 
 enum VerifierType { PreBarrierVerifier };
 

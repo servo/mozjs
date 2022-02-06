@@ -6,7 +6,6 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import hashlib
 import os
-import platform
 import re
 import subprocess
 import sys
@@ -15,7 +14,6 @@ from distutils.version import LooseVersion
 from mozboot import rust
 from mozboot.util import (
     get_mach_virtualenv_binary,
-    locate_java_bin_path,
     MINIMUM_RUST_VERSION,
 )
 from mozfile import which
@@ -134,38 +132,32 @@ BROWSER_ARTIFACT_MODE_MOZCONFIG = """
 ac_add_options --enable-artifact-builds
 """.strip()
 
+JS_MOZCONFIG_TEMPLATE = """\
+# Build only the SpiderMonkey JS test shell
+ac_add_options --enable-application=js
+"""
+
 # Upgrade Mercurial older than this.
 # This should match the OLDEST_NON_LEGACY_VERSION in
 # version-control-tools/hgext/configwizard/__init__.py.
 MODERN_MERCURIAL_VERSION = LooseVersion("4.9")
 
-MODERN_PYTHON2_VERSION = LooseVersion("2.7.3")
-MODERN_PYTHON3_VERSION = LooseVersion("3.6.0")
-
 # Upgrade rust older than this.
 MODERN_RUST_VERSION = LooseVersion(MINIMUM_RUST_VERSION)
-
-# Upgrade nasm older than this.
-MODERN_NASM_VERSION = LooseVersion("2.14")
 
 
 class BaseBootstrapper(object):
     """Base class for system bootstrappers."""
-
-    INSTALL_PYTHON_GUIDANCE = (
-        "We do not have specific instructions for your platform on how to "
-        "install Python. You may find Pyenv (https://github.com/pyenv/pyenv) "
-        "helpful, if your system package manager does not provide a way to "
-        "install a recent enough Python 3 and 2."
-    )
 
     def __init__(self, no_interactive=False, no_system_changes=False):
         self.package_manager_updated = False
         self.no_interactive = no_interactive
         self.no_system_changes = no_system_changes
         self.state_dir = None
+        self.srcdir = None
+        self.configure_sandbox = None
 
-    def validate_environment(self, srcdir):
+    def validate_environment(self):
         """
         Called once the current firefox checkout has been detected.
         Platform-specific implementations should check the environment and offer advice/warnings
@@ -205,6 +197,30 @@ class BaseBootstrapper(object):
             "%s does not yet implement install_browser_packages()" % __name__
         )
 
+    def ensure_browser_packages(self):
+        """
+        Install pre-built packages needed to build Firefox for Desktop (application 'browser')
+
+        Currently this is not needed and kept for compatibility with Firefox for Android.
+        """
+        pass
+
+    def ensure_js_packages(self):
+        """
+        Install pre-built packages needed to build SpiderMonkey JavaScript Engine
+
+        Currently this is not needed and kept for compatibility with Firefox for Android.
+        """
+        pass
+
+    def ensure_browser_artifact_mode_packages(self):
+        """
+        Install pre-built packages needed to build Firefox for Desktop (application 'browser')
+
+        Currently this is not needed and kept for compatibility with Firefox for Android.
+        """
+        pass
+
     def generate_browser_mozconfig(self):
         """
         Print a message to the console detailing what the user's mozconfig
@@ -214,6 +230,19 @@ class BaseBootstrapper(object):
         entirely from configure.
         """
         pass
+
+    def install_js_packages(self, mozconfig_builder):
+        """
+        Install packages required to build SpiderMonkey JavaScript Engine
+        (application 'js').
+        """
+        return self.install_browser_packages(mozconfig_builder)
+
+    def generate_js_mozconfig(self):
+        """
+        Create a reasonable starting point for a JS shell build.
+        """
+        return JS_MOZCONFIG_TEMPLATE
 
     def install_browser_artifact_mode_packages(self, mozconfig_builder):
         """
@@ -238,13 +267,29 @@ class BaseBootstrapper(object):
 
     def install_mobile_android_packages(self, mozconfig_builder):
         """
-        Install packages required to build Firefox for Android (application
-        'mobile/android', also known as Fennec).
+        Install packages required to build GeckoView (application
+        'mobile/android').
         """
         raise NotImplementedError(
             "Cannot bootstrap GeckoView/Firefox for Android: "
             "%s does not yet implement install_mobile_android_packages()" % __name__
         )
+
+    def ensure_mobile_android_packages(self):
+        """
+        Install pre-built packages required to run GeckoView (application 'mobile/android')
+        """
+        raise NotImplementedError(
+            "Cannot bootstrap GeckoView/Firefox for Android: "
+            "%s does not yet implement ensure_mobile_android_packages()" % __name__
+        )
+
+    def ensure_mobile_android_artifact_mode_packages(self):
+        """
+        Install pre-built packages required to run GeckoView Artifact Build
+        (application 'mobile/android')
+        """
+        self.ensure_mobile_android_packages()
 
     def generate_mobile_android_mozconfig(self):
         """
@@ -282,14 +327,7 @@ class BaseBootstrapper(object):
             % __name__
         )
 
-    def ensure_mach_environment(self, checkout_root):
-        mach_binary = os.path.abspath(os.path.join(checkout_root, "mach"))
-        if not os.path.exists(mach_binary):
-            raise ValueError("mach not found at %s" % mach_binary)
-        cmd = [sys.executable, mach_binary, "create-mach-environment"]
-        subprocess.check_call(cmd, cwd=checkout_root)
-
-    def ensure_clang_static_analysis_package(self, state_dir, checkout_root):
+    def ensure_clang_static_analysis_package(self):
         """
         Install the clang static analysis package
         """
@@ -298,7 +336,7 @@ class BaseBootstrapper(object):
             % __name__
         )
 
-    def ensure_stylo_packages(self, state_dir, checkout_root):
+    def ensure_stylo_packages(self):
         """
         Install any necessary packages needed for Stylo development.
         """
@@ -306,7 +344,7 @@ class BaseBootstrapper(object):
             "%s does not yet implement ensure_stylo_packages()" % __name__
         )
 
-    def ensure_nasm_packages(self, state_dir, checkout_root):
+    def ensure_nasm_packages(self):
         """
         Install nasm.
         """
@@ -314,72 +352,78 @@ class BaseBootstrapper(object):
             "%s does not yet implement ensure_nasm_packages()" % __name__
         )
 
-    def ensure_sccache_packages(self, state_dir, checkout_root):
+    def ensure_sccache_packages(self):
         """
         Install sccache.
         """
         pass
 
-    def ensure_lucetc_packages(self, state_dir, checkout_root):
-        """
-        Install lucetc.
-        """
-        pass
-
-    def ensure_wasi_sysroot_packages(self, state_dir, checkout_root):
-        """
-        Install the wasi sysroot.
-        """
-        pass
-
-    def ensure_node_packages(self, state_dir, checkout_root):
+    def ensure_node_packages(self):
         """
         Install any necessary packages needed to supply NodeJS"""
         raise NotImplementedError(
             "%s does not yet implement ensure_node_packages()" % __name__
         )
 
-    def ensure_dump_syms_packages(self, state_dir, checkout_root):
-        """
-        Install dump_syms.
-        """
-        pass
-
-    def ensure_fix_stacks_packages(self, state_dir, checkout_root):
+    def ensure_fix_stacks_packages(self):
         """
         Install fix-stacks.
         """
         pass
 
-    def ensure_minidump_stackwalk_packages(self, state_dir, checkout_root):
+    def ensure_minidump_stackwalk_packages(self):
         """
         Install minidump_stackwalk.
         """
         pass
 
-    def install_toolchain_static_analysis(
-        self, state_dir, checkout_root, toolchain_job
-    ):
-        clang_tools_path = os.path.join(state_dir, "clang-tools")
+    def install_toolchain_static_analysis(self, toolchain_job):
+        clang_tools_path = os.path.join(self.state_dir, "clang-tools")
         if not os.path.exists(clang_tools_path):
             os.mkdir(clang_tools_path)
-        self.install_toolchain_artifact(clang_tools_path, checkout_root, toolchain_job)
+        self.install_toolchain_artifact_impl(clang_tools_path, toolchain_job)
 
-    def install_toolchain_artifact(
-        self, state_dir, checkout_root, toolchain_job, no_unpack=False
+    def install_toolchain_artifact(self, toolchain_job, no_unpack=False):
+        if no_unpack:
+            return self.install_toolchain_artifact_impl(
+                self.state_dir, toolchain_job, no_unpack
+            )
+
+        if not self.configure_sandbox:
+            from mozbuild.configure import ConfigureSandbox
+
+            # Here, we don't want an existing mozconfig to interfere with what we
+            # do, neither do we want the default for --enable-bootstrap (which is not
+            # always on) to prevent this from doing something.
+            self.configure_sandbox = sandbox = ConfigureSandbox(
+                {}, argv=["configure", "--enable-bootstrap", f"MOZCONFIG={os.devnull}"]
+            )
+            moz_configure = os.path.join(self.srcdir, "build", "moz.configure")
+            sandbox.include_file(os.path.join(moz_configure, "init.configure"))
+            # bootstrap_search_path_order has a dependency on developer_options, which
+            # is not defined in init.configure. Its value doesn't matter for us, though.
+            sandbox["developer_options"] = sandbox["always"]
+            sandbox.include_file(os.path.join(moz_configure, "bootstrap.configure"))
+
+        # Expand the `bootstrap_path` template for the given toolchain_job, and execute the
+        # expanded function via `_value_for`, which will trigger autobootstrap.
+        self.configure_sandbox._value_for(
+            self.configure_sandbox["bootstrap_path"](toolchain_job)
+        )
+
+    def install_toolchain_artifact_impl(
+        self, install_dir, toolchain_job, no_unpack=False
     ):
-        mach_binary = os.path.join(checkout_root, "mach")
+        mach_binary = os.path.join(self.srcdir, "mach")
         mach_binary = os.path.abspath(mach_binary)
         if not os.path.exists(mach_binary):
             raise ValueError("mach not found at %s" % mach_binary)
 
-        # NOTE: Use self.state_dir over the passed-in state_dir, which might be
-        # a subdirectory of the actual state directory.
         if not self.state_dir:
             raise ValueError(
                 "Need a state directory (e.g. ~/.mozbuild) to download " "artifacts"
             )
-        python_location = get_mach_virtualenv_binary(state_dir=self.state_dir)
+        python_location = get_mach_virtualenv_binary()
         if not os.path.exists(python_location):
             raise ValueError("python not found at %s" % python_location)
 
@@ -396,7 +440,7 @@ class BaseBootstrapper(object):
         if no_unpack:
             cmd += ["--no-unpack"]
 
-        subprocess.check_call(cmd, cwd=state_dir)
+        subprocess.check_call(cmd, cwd=install_dir)
 
     def run_as_root(self, command):
         if os.geteuid() != 0:
@@ -411,6 +455,29 @@ class BaseBootstrapper(object):
 
     def dnf_install(self, *packages):
         if which("dnf"):
+
+            def not_installed(package):
+                # We could check for "Error: No matching Packages to list", but
+                # checking `dnf`s exit code is sufficent.
+                # Ideally we'd invoke dnf with '--cacheonly', but there's:
+                # https://bugzilla.redhat.com/show_bug.cgi?id=2030255
+                is_installed = subprocess.run(
+                    ["dnf", "list", "--installed", package],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                )
+                if is_installed.returncode not in [0, 1]:
+                    stdout = is_installed.stdout
+                    raise Exception(
+                        f'Failed to determine whether package "{package}" is installed: "{stdout}"'
+                    )
+                return is_installed.returncode != 0
+
+            packages = list(filter(not_installed, packages))
+            if len(packages) == 0:
+                # avoid sudo prompt (support unattended re-bootstrapping)
+                return
+
             command = ["dnf", "install"]
         else:
             command = ["yum", "install"]
@@ -423,6 +490,27 @@ class BaseBootstrapper(object):
 
     def dnf_groupinstall(self, *packages):
         if which("dnf"):
+            installed = subprocess.run(
+                # Ideally we'd invoke dnf with '--cacheonly', but there's:
+                # https://bugzilla.redhat.com/show_bug.cgi?id=2030255
+                # Ideally we'd use `--installed` instead of the undocumented
+                # `installed` subcommand, but that doesn't currently work:
+                # https://bugzilla.redhat.com/show_bug.cgi?id=1884616#c0
+                ["dnf", "group", "list", "installed", "--hidden"],
+                universal_newlines=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            if installed.returncode != 0:
+                raise Exception(
+                    f'Failed to determine currently-installed package groups: "{installed.stdout}"'
+                )
+            installed_packages = (pkg.strip() for pkg in installed.stdout.split("\n"))
+            packages = list(filter(lambda p: p not in installed_packages, packages))
+            if len(packages) == 0:
+                # avoid sudo prompt (support unattended re-bootstrapping)
+                return
+
             command = ["dnf", "groupinstall"]
         else:
             command = ["yum", "groupinstall"]
@@ -497,7 +585,7 @@ class BaseBootstrapper(object):
             print("ERROR! Please enter a valid option!")
 
     def prompt_yesno(self, prompt):
-        """ Prompts the user with prompt and requires a yes/no answer."""
+        """Prompts the user with prompt and requires a yes/no answer."""
         if self.no_interactive:
             print(prompt)
             print('Selecting "Y" because context is not interactive.')
@@ -568,9 +656,6 @@ class BaseBootstrapper(object):
     def _parse_version(self, path, name=None, env=None):
         return self._parse_version_impl(path, name, env, "--version")
 
-    def _parse_version_short(self, path, name=None, env=None):
-        return self._parse_version_impl(path, name, env, "-v")
-
     def _hg_cleanenv(self, load_hgrc=False):
         """Returns a copy of the current environment updated with the HGPLAIN
         and HGRCPATH environment variables.
@@ -639,57 +724,6 @@ class BaseBootstrapper(object):
         """
         print(MERCURIAL_UNABLE_UPGRADE % (current, MODERN_MERCURIAL_VERSION))
 
-    def is_python_modern(self, major):
-        assert major in (2, 3)
-
-        our = None
-
-        if major == 3:
-            our = LooseVersion(platform.python_version())
-        else:
-            for test in ("python2.7", "python"):
-                python = which(test)
-                if python:
-                    candidate_version = self._parse_version(python, "Python")
-                    if candidate_version and candidate_version.version[0] == major:
-                        our = candidate_version
-                        break
-
-        if our is None:
-            return False, None
-
-        modern = {
-            2: MODERN_PYTHON2_VERSION,
-            3: MODERN_PYTHON3_VERSION,
-        }
-        return our >= modern[major], our
-
-    def ensure_python_modern(self):
-        modern, version = self.is_python_modern(3)
-        if modern:
-            print("Your version of Python 3 (%s) is new enough." % version)
-        else:
-            print(
-                "ERROR: Your version of Python 3 (%s) is not new enough. You "
-                "must have Python >= %s to build Firefox."
-                % (version, MODERN_PYTHON3_VERSION)
-            )
-            print(self.INSTALL_PYTHON_GUIDANCE)
-            sys.exit(1)
-        modern, version = self.is_python_modern(2)
-        if modern:
-            print("Your version of Python 2 (%s) is new enough." % version)
-        else:
-            print(
-                "WARNING: Your version of Python 2 (%s) is not new enough. "
-                "You must have Python >= %s to build Firefox. Python 2 is "
-                "not required to build, so we will proceed. However, Python "
-                "2 is required for other development tasks, like running "
-                "tests; you may like to have Python 2 installed for that "
-                "reason." % (version, MODERN_PYTHON2_VERSION)
-            )
-            print(self.INSTALL_PYTHON_GUIDANCE)
-
     def warn_if_pythonpath_is_set(self):
         if "PYTHONPATH" in os.environ:
             print(
@@ -697,17 +731,6 @@ class BaseBootstrapper(object):
                 "cause flaky installations of the requirements, and other unexpected "
                 "issues with mach. It is recommended to unset this variable."
             )
-
-    def is_nasm_modern(self):
-        nasm = which("nasm")
-        if not nasm:
-            return False
-
-        our = self._parse_version_short(nasm, "version")
-        if not our:
-            return False
-
-        return our >= MODERN_NASM_VERSION
 
     def is_rust_modern(self, cargo_bin):
         rustc = which("rustc", extra_search_dirs=[cargo_bin])
@@ -749,13 +772,7 @@ class BaseBootstrapper(object):
             # is appropriate there.
             cargo_bin = self.win_to_msys_path(cargo_bin)
             cmd = "export PATH=%s:$PATH" % cargo_bin
-        print(
-            template
-            % {
-                "cargo_bin": cargo_bin,
-                "cmd": cmd,
-            }
-        )
+        print(template % {"cargo_bin": cargo_bin, "cmd": cmd})
 
     def ensure_rust_modern(self):
         cargo_home, cargo_bin = self.cargo_home()
@@ -893,24 +910,3 @@ class BaseBootstrapper(object):
         if h.hexdigest() != hexhash:
             os.remove(dest)
             raise ValueError("Hash of downloaded file does not match expected hash")
-
-    def ensure_java(self, mozconfig_builder):
-        """Verify the presence of java.
-
-        Finds a valid Java (throwing an error if not possible) and encodes it to the mozconfig.
-        """
-
-        bin_dir = locate_java_bin_path()
-        mozconfig_builder.append(
-            """
-        # Use the same Java binary that was specified in bootstrap. This way, if the default system
-        # Java is different than what Firefox needs, users should just need to override it (with
-        # $JAVA_HOME) when running bootstrap, rather than when interacting with the build.
-        ac_add_options --with-java-bin-path={}
-        """.format(
-                bin_dir
-            )
-        )
-
-        print("Your version of Java ({}) is 1.8.".format(bin_dir))
-        return bin_dir

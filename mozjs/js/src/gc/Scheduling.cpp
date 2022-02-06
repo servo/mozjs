@@ -39,7 +39,7 @@ static constexpr double MinHeapGrowthFactor =
                     LowFrequencyEagerAllocTriggerFactor);
 
 GCSchedulingTunables::GCSchedulingTunables()
-    : gcMaxBytes_(0),
+    : gcMaxBytes_(TuningDefaults::GCMaxBytes),
       gcMinNurseryBytes_(Nursery::roundSize(TuningDefaults::GCMinNurseryBytes)),
       gcMaxNurseryBytes_(Nursery::roundSize(JS::DefaultNurseryMaxBytes)),
       gcZoneAllocThresholdBase_(TuningDefaults::GCZoneAllocThresholdBase),
@@ -71,20 +71,21 @@ GCSchedulingTunables::GCSchedulingTunables()
       minLastDitchGCPeriod_(
           TimeDuration::FromSeconds(TuningDefaults::MinLastDitchGCPeriod)),
       mallocThresholdBase_(TuningDefaults::MallocThresholdBase),
-      mallocGrowthFactor_(TuningDefaults::MallocGrowthFactor) {}
+      urgentThresholdBytes_(TuningDefaults::UrgentThresholdBytes) {}
 
 bool GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value,
                                         const AutoLockGC& lock) {
-  // Limit heap growth factor to one hundred times size of current heap.
+  // Limit various parameters to reasonable levels to catch errors.
   const double MaxHeapGrowthFactor = 100;
-  const size_t MaxNurseryBytes = 128 * 1024 * 1024;
+  const size_t MaxNurseryBytesParam = 128 * 1024 * 1024;
+  const size_t MaxHeapBytesParam = 0xffffffff;  // ~4GB, must fit in 32bit word.
 
   switch (key) {
     case JSGC_MAX_BYTES:
       gcMaxBytes_ = value;
       break;
     case JSGC_MIN_NURSERY_BYTES:
-      if (value < ArenaSize || value >= MaxNurseryBytes) {
+      if (value < SystemPageSize() || value >= MaxNurseryBytesParam) {
         return false;
       }
       value = Nursery::roundSize(value);
@@ -94,7 +95,7 @@ bool GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value,
       gcMinNurseryBytes_ = value;
       break;
     case JSGC_MAX_NURSERY_BYTES:
-      if (value < ArenaSize || value >= MaxNurseryBytes) {
+      if (value < SystemPageSize() || value >= MaxNurseryBytesParam) {
         return false;
       }
       value = Nursery::roundSize(value);
@@ -107,16 +108,17 @@ bool GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value,
       highFrequencyThreshold_ = TimeDuration::FromMilliseconds(value);
       break;
     case JSGC_SMALL_HEAP_SIZE_MAX: {
-      CheckedInt<size_t> newLimit = CheckedInt<size_t>(value) * 1024 * 1024;
-      if (!newLimit.isValid()) {
+      size_t newLimit;
+      if (!megabytesToBytes(value, &newLimit) || newLimit > MaxHeapBytesParam) {
         return false;
       }
-      setSmallHeapSizeMaxBytes(newLimit.value());
+      setSmallHeapSizeMaxBytes(newLimit);
       break;
     }
     case JSGC_LARGE_HEAP_SIZE_MIN: {
-      size_t newLimit = (size_t)value * 1024 * 1024;
-      if (newLimit == 0) {
+      size_t newLimit;
+      if (!megabytesToBytes(value, &newLimit) || newLimit == 0 ||
+          newLimit > MaxHeapBytesParam) {
         return false;
       }
       setLargeHeapSizeMinBytes(newLimit);
@@ -146,9 +148,15 @@ bool GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value,
       setLowFrequencyHeapGrowth(newGrowth);
       break;
     }
-    case JSGC_ALLOCATION_THRESHOLD:
-      gcZoneAllocThresholdBase_ = value * 1024 * 1024;
+    case JSGC_ALLOCATION_THRESHOLD: {
+      size_t threshold;
+      if (!megabytesToBytes(value, &threshold) ||
+          threshold > MaxHeapBytesParam) {
+        return false;
+      }
+      gcZoneAllocThresholdBase_ = threshold;
       break;
+    }
     case JSGC_SMALL_HEAP_INCREMENTAL_LIMIT: {
       double newFactor = value / 100.0;
       if (newFactor < 1.0f || newFactor > MaxHeapGrowthFactor) {
@@ -216,24 +224,61 @@ bool GCSchedulingTunables::setParameter(JSGCParamKey key, uint32_t value,
     case JSGC_MIN_LAST_DITCH_GC_PERIOD:
       minLastDitchGCPeriod_ = TimeDuration::FromSeconds(value);
       break;
-    case JSGC_ZONE_ALLOC_DELAY_KB:
-      zoneAllocDelayBytes_ = value * 1024;
-      break;
-    case JSGC_MALLOC_THRESHOLD_BASE:
-      mallocThresholdBase_ = value * 1024 * 1024;
-      break;
-    case JSGC_MALLOC_GROWTH_FACTOR: {
-      double newGrowth = value / 100.0;
-      if (newGrowth < MinHeapGrowthFactor || newGrowth > MaxHeapGrowthFactor) {
+    case JSGC_ZONE_ALLOC_DELAY_KB: {
+      size_t delay;
+      if (!kilobytesToBytes(value, &delay) || delay == 0 ||
+          delay > MaxHeapBytesParam) {
         return false;
       }
-      mallocGrowthFactor_ = newGrowth;
+      zoneAllocDelayBytes_ = delay;
+      break;
+    }
+    case JSGC_MALLOC_THRESHOLD_BASE: {
+      size_t threshold;
+      if (!megabytesToBytes(value, &threshold) ||
+          threshold > MaxHeapBytesParam) {
+        return false;
+      }
+      mallocThresholdBase_ = threshold;
+      break;
+    }
+    case JSGC_URGENT_THRESHOLD_MB: {
+      size_t threshold;
+      if (!megabytesToBytes(value, &threshold) ||
+          threshold > MaxHeapBytesParam) {
+        return false;
+      }
+      urgentThresholdBytes_ = threshold;
       break;
     }
     default:
       MOZ_CRASH("Unknown GC parameter.");
   }
 
+  return true;
+}
+
+/* static */
+bool GCSchedulingTunables::megabytesToBytes(uint32_t value, size_t* bytesOut) {
+  MOZ_ASSERT(bytesOut);
+  CheckedInt<size_t> size = CheckedInt<size_t>(value) * 1024 * 1024;
+  if (!size.isValid()) {
+    return false;
+  }
+
+  *bytesOut = size.value();
+  return true;
+}
+
+/* static */
+bool GCSchedulingTunables::kilobytesToBytes(uint32_t value, size_t* bytesOut) {
+  MOZ_ASSERT(bytesOut);
+  CheckedInt<size_t> size = CheckedInt<size_t>(value) * 1024;
+  if (!size.isValid()) {
+    return false;
+  }
+
+  *bytesOut = size.value();
   return true;
 }
 
@@ -296,7 +341,7 @@ void GCSchedulingTunables::resetParameter(JSGCParamKey key,
                                           const AutoLockGC& lock) {
   switch (key) {
     case JSGC_MAX_BYTES:
-      gcMaxBytes_ = 0xffffffff;
+      gcMaxBytes_ = TuningDefaults::GCMaxBytes;
       break;
     case JSGC_MIN_NURSERY_BYTES:
     case JSGC_MAX_NURSERY_BYTES:
@@ -368,11 +413,32 @@ void GCSchedulingTunables::resetParameter(JSGCParamKey key,
     case JSGC_MALLOC_THRESHOLD_BASE:
       mallocThresholdBase_ = TuningDefaults::MallocThresholdBase;
       break;
-    case JSGC_MALLOC_GROWTH_FACTOR:
-      mallocGrowthFactor_ = TuningDefaults::MallocGrowthFactor;
+    case JSGC_URGENT_THRESHOLD_MB:
+      urgentThresholdBytes_ = TuningDefaults::UrgentThresholdBytes;
       break;
     default:
       MOZ_CRASH("Unknown GC parameter.");
+  }
+}
+
+void GCSchedulingState::updateHighFrequencyMode(
+    const mozilla::TimeStamp& lastGCTime, const mozilla::TimeStamp& currentTime,
+    const GCSchedulingTunables& tunables) {
+  if (js::SupportDifferentialTesting()) {
+    return;
+  }
+
+  inHighFrequencyGCMode_ =
+      !lastGCTime.IsNull() &&
+      lastGCTime + tunables.highFrequencyThreshold() > currentTime;
+}
+
+void GCSchedulingState::updateHighFrequencyModeForReason(JS::GCReason reason) {
+  // These reason indicate that the embedding isn't triggering GC slices often
+  // enough and allocation rate is high.
+  if (reason == JS::GCReason::ALLOC_TRIGGER ||
+      reason == JS::GCReason::TOO_MUCH_MALLOC) {
+    inHighFrequencyGCMode_ = true;
   }
 }
 
@@ -408,6 +474,12 @@ void HeapThreshold::setIncrementalLimitFromStartBytes(
                uint64_t(startBytes_) + tunables.gcMaxNurseryBytes());
   incrementalLimitBytes_ = ToClampedSize(bytes);
   MOZ_ASSERT(incrementalLimitBytes_ >= startBytes_);
+
+  // Maintain the invariant that the slice threshold is always less than the
+  // incremental limit when adjusting GC parameters.
+  if (hasSliceThreshold() && sliceBytes() > incrementalLimitBytes()) {
+    sliceBytes_ = incrementalLimitBytes();
+  }
 }
 
 double HeapThreshold::eagerAllocTrigger(bool highFrequencyGC) const {
@@ -419,14 +491,48 @@ double HeapThreshold::eagerAllocTrigger(bool highFrequencyGC) const {
 
 void HeapThreshold::setSliceThreshold(ZoneAllocator* zone,
                                       const HeapSize& heapSize,
-                                      const GCSchedulingTunables& tunables) {
+                                      const GCSchedulingTunables& tunables,
+                                      bool waitingOnBGTask) {
+  // Set the allocation threshold at which to trigger the a GC slice in an
+  // ongoing incremental collection. This is used to ensure progress in
+  // allocation heavy code that may not return to the main event loop.
+  //
+  // The threshold is based on the JSGC_ZONE_ALLOC_DELAY_KB parameter, but this
+  // is reduced to increase the slice frequency as we approach the incremental
+  // limit, in the hope that we never reach it. If collector is waiting for a
+  // background task to complete, don't trigger any slices until we reach the
+  // urgent threshold.
+
+  size_t bytesRemaining = incrementalBytesRemaining(heapSize);
+  bool isUrgent = bytesRemaining < tunables.urgentThresholdBytes();
+
+  size_t delayBeforeNextSlice = tunables.zoneAllocDelayBytes();
+  if (isUrgent) {
+    double fractionRemaining =
+        double(bytesRemaining) / double(tunables.urgentThresholdBytes());
+    delayBeforeNextSlice =
+        size_t(double(delayBeforeNextSlice) * fractionRemaining);
+    MOZ_ASSERT(delayBeforeNextSlice <= tunables.zoneAllocDelayBytes());
+  } else if (waitingOnBGTask) {
+    delayBeforeNextSlice = bytesRemaining - tunables.urgentThresholdBytes();
+  }
+
   sliceBytes_ = ToClampedSize(
-      std::min(uint64_t(heapSize.bytes()) + tunables.zoneAllocDelayBytes(),
+      std::min(uint64_t(heapSize.bytes()) + uint64_t(delayBeforeNextSlice),
                uint64_t(incrementalLimitBytes_)));
 }
 
+size_t HeapThreshold::incrementalBytesRemaining(
+    const HeapSize& heapSize) const {
+  if (heapSize.bytes() >= incrementalLimitBytes_) {
+    return 0;
+  }
+
+  return incrementalLimitBytes_ - heapSize.bytes();
+}
+
 /* static */
-double GCHeapThreshold::computeZoneHeapGrowthFactorForHeapSize(
+double HeapThreshold::computeZoneHeapGrowthFactorForHeapSize(
     size_t lastBytes, const GCSchedulingTunables& tunables,
     const GCSchedulingState& state) {
   // For small zones, our collection heuristics do not matter much: favor
@@ -460,12 +566,9 @@ double GCHeapThreshold::computeZoneHeapGrowthFactorForHeapSize(
 
 /* static */
 size_t GCHeapThreshold::computeZoneTriggerBytes(
-    double growthFactor, size_t lastBytes, JSGCInvocationKind gckind,
-    const GCSchedulingTunables& tunables, const AutoLockGC& lock) {
-  size_t baseMin = gckind == GC_SHRINK
-                       ? tunables.minEmptyChunkCount(lock) * ChunkSize
-                       : tunables.gcZoneAllocThresholdBase();
-  size_t base = std::max(lastBytes, baseMin);
+    double growthFactor, size_t lastBytes, const GCSchedulingTunables& tunables,
+    const AutoLockGC& lock) {
+  size_t base = std::max(lastBytes, tunables.gcZoneAllocThresholdBase());
   double trigger = double(base) * growthFactor;
   double triggerMax =
       double(tunables.gcMaxBytes()) / tunables.largeHeapIncrementalLimit();
@@ -473,7 +576,6 @@ size_t GCHeapThreshold::computeZoneTriggerBytes(
 }
 
 void GCHeapThreshold::updateStartThreshold(size_t lastBytes,
-                                           JSGCInvocationKind gckind,
                                            const GCSchedulingTunables& tunables,
                                            const GCSchedulingState& state,
                                            bool isAtomsZone,
@@ -488,7 +590,7 @@ void GCHeapThreshold::updateStartThreshold(size_t lastBytes,
   }
 
   startBytes_ =
-      computeZoneTriggerBytes(growthFactor, lastBytes, gckind, tunables, lock);
+      computeZoneTriggerBytes(growthFactor, lastBytes, tunables, lock);
 
   setIncrementalLimitFromStartBytes(lastBytes, tunables);
 }
@@ -503,10 +605,12 @@ size_t MallocHeapThreshold::computeZoneTriggerBytes(double growthFactor,
 
 void MallocHeapThreshold::updateStartThreshold(
     size_t lastBytes, const GCSchedulingTunables& tunables,
-    const AutoLockGC& lock) {
-  startBytes_ =
-      computeZoneTriggerBytes(tunables.mallocGrowthFactor(), lastBytes,
-                              tunables.mallocThresholdBase(), lock);
+    const GCSchedulingState& state, const AutoLockGC& lock) {
+  double growthFactor =
+      computeZoneHeapGrowthFactorForHeapSize(lastBytes, tunables, state);
+
+  startBytes_ = computeZoneTriggerBytes(growthFactor, lastBytes,
+                                        tunables.mallocThresholdBase(), lock);
 
   setIncrementalLimitFromStartBytes(lastBytes, tunables);
 }

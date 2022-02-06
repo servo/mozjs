@@ -21,7 +21,6 @@
 #include <string.h>  // for strlen
 #include <utility>   // for std::move
 
-#include "jsapi.h"  // for CallArgs, Handle
 #include "jsnum.h"  // for Int32ToString
 
 #include "builtin/Array.h"      // for NewDenseCopiedArray
@@ -32,7 +31,6 @@
 #include "debugger/Object.h"               // for DebuggerObject
 #include "debugger/Script.h"               // for DebuggerScript
 #include "frontend/BytecodeCompilation.h"  // for CompileEvalScript
-#include "frontend/SharedContext.h"        // for GlobalScharedContext
 #include "gc/Barrier.h"                    // for HeapPtr
 #include "gc/FreeOp.h"                     // for JSFreeOp
 #include "gc/GC.h"                         // for MemoryUse
@@ -42,9 +40,11 @@
 #include "gc/ZoneAllocator.h"              // for AddCellMemory
 #include "jit/JSJitFrameIter.h"            // for InlineFrameIterator
 #include "jit/RematerializedFrame.h"       // for RematerializedFrame
+#include "js/CallArgs.h"                   // for CallArgs
 #include "js/friend/ErrorMessages.h"       // for GetErrorMessage, JSMSG_*
 #include "js/Object.h"                     // for SetReservedSlot
 #include "js/Proxy.h"                      // for PrivateValue
+#include "js/RootingAPI.h"                 // for Handle
 #include "js/SourceText.h"                 // for SourceText, SourceOwnership
 #include "js/StableStringChars.h"          // for AutoStableStringChars
 #include "vm/ArgumentsObject.h"            // for ArgumentsObject
@@ -69,17 +69,16 @@
 #include "vm/Stack.h"                      // for AbstractFramePtr, FrameIter
 #include "vm/StringType.h"                 // for PropertyName, JSString
 #include "wasm/WasmDebug.h"                // for DebugState
+#include "wasm/WasmDebugFrame.h"           // for DebugFrame
 #include "wasm/WasmInstance.h"             // for Instance
 #include "wasm/WasmJS.h"                   // for WasmInstanceObject
-#include "wasm/WasmTypes.h"                // for DebugFrame
 
-#include "debugger/Debugger-inl.h"  // for Debugger::fromJSObject
-#include "gc/WeakMap-inl.h"         // for WeakMap::remove
-#include "vm/Compartment-inl.h"     // for Compartment::wrap
-#include "vm/JSContext-inl.h"       // for JSContext::check
-#include "vm/JSObject-inl.h"        // for NewObjectWithGivenProto
-#include "vm/JSScript-inl.h"        // for JSScript::ensureHasAnalyzedArgsUsage
-#include "vm/NativeObject-inl.h"    // for NativeObject::global
+#include "debugger/Debugger-inl.h"    // for Debugger::fromJSObject
+#include "gc/WeakMap-inl.h"           // for WeakMap::remove
+#include "vm/Compartment-inl.h"       // for Compartment::wrap
+#include "vm/JSContext-inl.h"         // for JSContext::check
+#include "vm/JSObject-inl.h"          // for NewObjectWithGivenProto
+#include "vm/NativeObject-inl.h"      // for NativeObject::global
 #include "vm/ObjectOperations-inl.h"  // for GetProperty
 #include "vm/Realm-inl.h"             // for AutoRealm::AutoRealm
 #include "vm/Stack-inl.h"             // for AbstractFramePtr::script
@@ -200,7 +199,7 @@ const JSClassOps DebuggerFrame::classOps_ = {
 
 const JSClass DebuggerFrame::class_ = {
     "Frame",
-    JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) |
+    JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS) |
         // We require foreground finalization so we can destruct GeneratorInfo's
         // HeapPtrs.
         JSCLASS_FOREGROUND_FINALIZE,
@@ -337,7 +336,7 @@ class DebuggerFrame::GeneratorInfo {
   JSScript* generatorScript() { return generatorScript_; }
 
   bool isGeneratorScriptAboutToBeFinalized() {
-    return IsAboutToBeFinalized(&generatorScript_);
+    return IsAboutToBeFinalized(generatorScript_);
   }
 };
 
@@ -938,7 +937,11 @@ static bool EvaluateInEnv(JSContext* cx, Handle<Env*> env,
        * javascript executions sent through the debugger. Besides making up
        * a filename for these codepaths, we must allow arbitrary JS execution
        * for the Browser toolbox to function. */
-      .setSkipFilenameValidation(true);
+      .setSkipFilenameValidation(true)
+      /* Don't lazy parse. We need full-parsing to correctly support bytecode
+       * emission for private fields/methods. See EmitterScope::lookupPrivate.
+       */
+      .setForceFullParse();
 
   if (frame && frame.hasScript() && frame.script()->strict()) {
     options.setForceStrictMode();
@@ -1041,8 +1044,7 @@ Result<Completion> js::DebuggerGenericEval(
 
   // If evalWithBindings, create the inner environment.
   if (bindings) {
-    RootedPlainObject nenv(cx,
-                           NewObjectWithGivenProto<PlainObject>(cx, nullptr));
+    RootedPlainObject nenv(cx, NewPlainObjectWithProto(cx, nullptr));
     if (!nenv) {
       return cx->alreadyReportedError();
     }
@@ -1104,22 +1106,18 @@ Result<Completion> DebuggerFrame::eval(JSContext* cx, HandleDebuggerFrame frame,
   return DebuggerGenericEval(cx, chars, bindings, options, dbg, nullptr, &iter);
 }
 
-bool DebuggerFrame::isOnStack() const { return !!getPrivate(); }
-
-bool DebuggerFrame::isOnStackMaybeForwarded() const {
-  return !!getPrivateMaybeForwarded();
+bool DebuggerFrame::isOnStack() const {
+  // Note: this is equivalent to checking frameIterData() != nullptr, but works
+  // also when called from the trace hook during a moving GC.
+  return !getFixedSlot(FRAME_ITER_SLOT).isUndefined();
 }
 
 OnStepHandler* DebuggerFrame::onStepHandler() const {
-  Value value = getReservedSlot(ONSTEP_HANDLER_SLOT);
-  return value.isUndefined() ? nullptr
-                             : static_cast<OnStepHandler*>(value.toPrivate());
+  return maybePtrFromReservedSlot<OnStepHandler>(ONSTEP_HANDLER_SLOT);
 }
 
 OnPopHandler* DebuggerFrame::onPopHandler() const {
-  Value value = getReservedSlot(ONPOP_HANDLER_SLOT);
-  return value.isUndefined() ? nullptr
-                             : static_cast<OnPopHandler*>(value.toPrivate());
+  return maybePtrFromReservedSlot<OnPopHandler>(ONPOP_HANDLER_SLOT);
 }
 
 void DebuggerFrame::setOnPopHandler(JSContext* cx, OnPopHandler* handler) {
@@ -1143,7 +1141,7 @@ void DebuggerFrame::setOnPopHandler(JSContext* cx, OnPopHandler* handler) {
 }
 
 FrameIter::Data* DebuggerFrame::frameIterData() const {
-  return static_cast<FrameIter::Data*>(getPrivate());
+  return maybePtrFromReservedSlot<FrameIter::Data>(FRAME_ITER_SLOT);
 }
 
 /* static */
@@ -1176,13 +1174,14 @@ bool DebuggerFrame::requireScriptReferent(JSContext* cx,
 void DebuggerFrame::setFrameIterData(FrameIter::Data* data) {
   MOZ_ASSERT(data);
   MOZ_ASSERT(!frameIterData());
-  InitObjectPrivate(this, data, MemoryUse::DebuggerFrameIterData);
+  InitReservedSlot(this, FRAME_ITER_SLOT, data,
+                   MemoryUse::DebuggerFrameIterData);
 }
 
 void DebuggerFrame::freeFrameIterData(JSFreeOp* fop) {
   if (FrameIter::Data* data = frameIterData()) {
     fop->delete_(this, data, MemoryUse::DebuggerFrameIterData);
-    setPrivate(nullptr);
+    setReservedSlot(FRAME_ITER_SLOT, UndefinedValue());
   }
 }
 
@@ -1613,12 +1612,6 @@ static bool DebuggerArguments_getArg(JSContext* cx, unsigned argc, Value* vp) {
   RootedScript script(cx);
   if (unsigned(i) < frame.numActualArgs()) {
     script = frame.script();
-    {
-      AutoRealm ar(cx, script);
-      if (!script->ensureHasAnalyzedArgsUsage(cx)) {
-        return false;
-      }
-    }
     if (unsigned(i) < frame.numFormalArgs()) {
       for (PositionalFormalParameterIter fi(script); fi; fi++) {
         if (fi.argumentSlot() == unsigned(i)) {
@@ -1679,7 +1672,7 @@ DebuggerArguments* DebuggerArguments::create(JSContext* cx, HandleObject proto,
     }
     id = INT_TO_JSID(i);
     if (!NativeDefineAccessorProperty(cx, obj, id, getobj, nullptr,
-                                      JSPROP_ENUMERATE | JSPROP_GETTER)) {
+                                      JSPROP_ENUMERATE)) {
       return nullptr;
     }
     getobj->setExtendedSlot(0, Int32Value(i));
@@ -1936,16 +1929,16 @@ JSObject* js::IdVectorToArray(JSContext* cx, Handle<IdVector> ids) {
 
   for (size_t i = 0, len = ids.length(); i < len; i++) {
     jsid id = ids[i];
-    if (JSID_IS_INT(id)) {
-      JSString* str = Int32ToString<CanGC>(cx, JSID_TO_INT(id));
+    if (id.isInt()) {
+      JSString* str = Int32ToString<CanGC>(cx, id.toInt());
       if (!str) {
         return nullptr;
       }
       vals[i].setString(str);
-    } else if (JSID_IS_ATOM(id)) {
-      vals[i].setString(JSID_TO_STRING(id));
-    } else if (JSID_IS_SYMBOL(id)) {
-      vals[i].setSymbol(JSID_TO_SYMBOL(id));
+    } else if (id.isAtom()) {
+      vals[i].setString(id.toAtom());
+    } else if (id.isSymbol()) {
+      vals[i].setSymbol(id.toSymbol());
     } else {
       MOZ_ASSERT_UNREACHABLE(
           "IdVector must contain only string, int, and Symbol jsids");

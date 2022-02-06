@@ -34,6 +34,7 @@ consumers will need to arrange this themselves.
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+import buildconfig
 import collections
 import functools
 import glob
@@ -51,9 +52,11 @@ import tarfile
 import tempfile
 import six.moves.urllib_parse as urlparse
 import zipfile
+from contextlib import contextmanager
+from io import BufferedReader
 
 import pylru
-from taskgraph.util.taskcluster import (
+from gecko_taskgraph.util.taskcluster import (
     find_task_id,
     get_artifact_url,
     list_artifacts,
@@ -63,23 +66,13 @@ from mach.util import UserError
 
 from mozbuild.artifact_cache import ArtifactCache
 from mozbuild.artifact_builds import JOB_CHOICES
-from mozbuild.util import (
-    ensureParentDir,
-    FileAvoidWrite,
-    mkdir,
-    ensure_subprocess_env,
-)
+from mozbuild.util import ensureParentDir, FileAvoidWrite, mkdir
 import mozinstall
-from mozpack.files import (
-    JarFinder,
-    TarFinder,
-)
-from mozpack.mozjar import (
-    JarReader,
-    JarWriter,
-)
+from mozpack.files import JarFinder, TarFinder
+from mozpack.mozjar import JarReader, JarWriter
 from mozpack.packager.unpack import UnpackFinder
 import mozpack.path as mozpath
+from mozpack import executables
 
 # Number of candidate pushheads to cache per parent changeset.
 NUM_PUSHHEADS_TO_QUERY_PER_PARENT = 50
@@ -102,11 +95,19 @@ PROCESSED_SUFFIX = ".processed.jar"
 
 class ArtifactJob(object):
     trust_domain = "gecko"
-    candidate_trees = [
+    default_candidate_trees = [
+        "releases/mozilla-release",
+    ]
+    nightly_candidate_trees = [
         "mozilla-central",
         "integration/autoland",
+    ]
+    beta_candidate_trees = [
         "releases/mozilla-beta",
-        "releases/mozilla-release",
+    ]
+    # The list below list should be updated when we have new ESRs.
+    esr_candidate_trees = [
+        "releases/mozilla-esr91",
     ]
     try_tree = "try"
 
@@ -144,7 +145,6 @@ class ArtifactJob(object):
         log=None,
         download_tests=True,
         download_symbols=False,
-        download_host_bins=False,
         download_maven_zip=False,
         substs=None,
         mozbuild=None,
@@ -154,11 +154,6 @@ class ArtifactJob(object):
         if download_tests:
             self._tests_re = re.compile(
                 r"public/build/(en-US/)?target\.common\.tests\.(zip|tar\.gz)"
-            )
-        self._host_bins_re = None
-        if download_host_bins:
-            self._host_bins_re = re.compile(
-                r"public/build/host/bin/(mar|mbsdiff)(.exe)?"
             )
         self._maven_zip_re = None
         if download_maven_zip:
@@ -171,6 +166,7 @@ class ArtifactJob(object):
         elif download_symbols:
             self._symbols_archive_suffix = "crashreporter-symbols.zip"
         self._mozbuild = mozbuild
+        self._candidate_trees = None
 
     def log(self, *args, **kwargs):
         if self._log:
@@ -189,8 +185,6 @@ class ArtifactJob(object):
                 else:
                     continue
             elif self._package_re and self._package_re.match(name):
-                yield name
-            elif self._host_bins_re and self._host_bins_re.match(name):
                 yield name
             elif self._tests_re and self._tests_re.match(name):
                 tests_artifact = name
@@ -217,6 +211,11 @@ class ArtifactJob(object):
                 "found none!".format(re=self._maven_zip_re)
             )
 
+    @contextmanager
+    def get_writer(self, **kwargs):
+        with JarWriter(**kwargs) as writer:
+            yield writer
+
     def process_artifact(self, filename, processed_filename):
         if filename.endswith(ArtifactJob._test_zip_archive_suffix) and self._tests_re:
             return self.process_tests_zip_artifact(filename, processed_filename)
@@ -226,15 +225,6 @@ class ArtifactJob(object):
             self._symbols_archive_suffix
         ):
             return self.process_symbols_archive(filename, processed_filename)
-        if self._host_bins_re:
-            # Turn 'HASH-mar.exe' into 'mar.exe'.  `filename` is a path on disk
-            # without the full path to the artifact, so we must reconstruct
-            # that path here.
-            orig_basename = os.path.basename(filename).split("-", 1)[1]
-            if self._host_bins_re.match(
-                "public/build/host/bin/{}".format(orig_basename)
-            ):
-                return self.process_host_bin(filename, processed_filename)
         return self.process_package_artifact(filename, processed_filename)
 
     def process_package_artifact(self, filename, processed_filename):
@@ -247,7 +237,7 @@ class ArtifactJob(object):
 
         added_entry = False
 
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
+        with self.get_writer(file=processed_filename, compress_level=5) as writer:
             reader = JarReader(filename)
             for filename, entry in six.iteritems(reader.entries):
                 for pattern, (src_prefix, dest_prefix) in self.test_artifact_patterns:
@@ -306,7 +296,7 @@ class ArtifactJob(object):
 
         added_entry = False
 
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
+        with self.get_writer(file=processed_filename, compress_level=5) as writer:
             with tarfile.open(filename) as reader:
                 for filename, entry in TarFinder(filename, reader):
                     for (
@@ -367,7 +357,7 @@ class ArtifactJob(object):
     def process_symbols_archive(
         self, filename, processed_filename, skip_compressed=False
     ):
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
+        with self.get_writer(file=processed_filename, compress_level=5) as writer:
             for filename, entry in self.iter_artifact_archive(filename):
                 if skip_compressed and filename.endswith(".gz"):
                     self.log(
@@ -385,15 +375,6 @@ class ArtifactJob(object):
                     "Adding {destpath} to processed archive",
                 )
                 writer.add(destpath.encode("utf-8"), entry)
-
-    def process_host_bin(self, filename, processed_filename):
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
-            # Turn 'HASH-mar.exe' into 'mar.exe'.  `filename` is a path on disk
-            # without any of the path parts of the artifact, so we must inject
-            # the desired `host/bin` prefix here.
-            orig_basename = os.path.basename(filename).split("-", 1)[1]
-            destpath = mozpath.join("host/bin", orig_basename)
-            writer.add(destpath.encode("utf-8"), open(filename, "rb"))
 
     def iter_artifact_archive(self, filename):
         if filename.endswith(".zip"):
@@ -417,18 +398,34 @@ class ArtifactJob(object):
         else:
             raise RuntimeError("Unsupported archive type for %s" % filename)
 
+    @property
+    def candidate_trees(self):
+        if not self._candidate_trees:
+            self._candidate_trees = self.select_candidate_trees()
+        return self._candidate_trees
+
+    def select_candidate_trees(self):
+        version_display = buildconfig.substs.get("MOZ_APP_VERSION_DISPLAY")
+
+        if "esr" in version_display:
+            return self.esr_candidate_trees
+        elif re.search("a\d+$", version_display):
+            return self.nightly_candidate_trees
+        elif re.search("b\d+$", version_display):
+            return self.beta_candidate_trees
+
+        return self.default_candidate_trees
+
 
 class AndroidArtifactJob(ArtifactJob):
     package_re = r"public/build/geckoview_example\.apk"
     product = "mobile"
 
-    package_artifact_patterns = {
-        "**/*.so",
-    }
+    package_artifact_patterns = {"**/*.so"}
 
     def process_package_artifact(self, filename, processed_filename):
         # Extract all .so files into the root, which will get copied into dist/bin.
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
+        with self.get_writer(file=processed_filename, compress_level=5) as writer:
             for p, f in UnpackFinder(JarFinder(filename, JarReader(filename))):
                 if not any(
                     mozpath.match(p, pat) for pat in self.package_artifact_patterns
@@ -459,7 +456,7 @@ class AndroidArtifactJob(ArtifactJob):
 
         import gzip
 
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
+        with self.get_writer(file=processed_filename, compress_level=5) as writer:
             for filename, entry in self.iter_artifact_archive(filename):
                 if not filename.endswith(".gz"):
                     continue
@@ -508,7 +505,7 @@ class LinuxArtifactJob(ArtifactJob):
     def process_package_artifact(self, filename, processed_filename):
         added_entry = False
 
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
+        with self.get_writer(file=processed_filename, compress_level=5) as writer:
             with tarfile.open(filename) as reader:
                 for p, f in UnpackFinder(TarFinder(filename, reader)):
                     if not any(
@@ -537,6 +534,41 @@ class LinuxArtifactJob(ArtifactJob):
             )
 
 
+class ResignJarWriter(JarWriter):
+    def __init__(self, job, **kwargs):
+        super().__init__(**kwargs)
+        self._job = job
+
+    def add(self, name, data, mode=None):
+        if self._job._substs["HOST_OS_ARCH"] == "Darwin":
+            # Wrap in a BufferedReader so that executable.get_type can peek at the
+            # data signature without subsequent read() being affected.
+            data = BufferedReader(data)
+            if executables.get_type(data) == executables.MACHO:
+                # If the file is a Mach-O binary, we run `codesign -s - -f` against
+                # it to force a local codesign against the original binary, which is
+                # likely unsigned. As of writing, only arm64 macs require codesigned
+                # binaries, but it doesn't hurt to do it on intel macs as well
+                # preemptively, because they could end up with the same requirement
+                # in future versions of macOS.
+                tmp = tempfile.NamedTemporaryFile(delete=False)
+                try:
+                    shutil.copyfileobj(data, tmp)
+                    tmp.close()
+                    self._job.log(
+                        logging.DEBUG, "artifact", {"path": name}, "Re-signing {path}"
+                    )
+                    subprocess.check_call(
+                        ["codesign", "-s", "-", "-f", tmp.name],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    data = open(tmp.name, "rb")
+                finally:
+                    os.unlink(tmp.name)
+        super().add(name, data, mode=mode)
+
+
 class MacArtifactJob(ArtifactJob):
     package_re = r"public/build/target\.dmg"
     product = "firefox"
@@ -562,6 +594,11 @@ class MacArtifactJob(ArtifactJob):
     def paths_no_keep_path(self):
         root, paths = self._paths_no_keep_path
         return (root, [p.format(product=self.product) for p in paths])
+
+    @contextmanager
+    def get_writer(self, **kwargs):
+        with ResignJarWriter(self, **kwargs) as writer:
+            yield writer
 
     def process_package_artifact(self, filename, processed_filename):
         tempdir = tempfile.mkdtemp()
@@ -612,10 +649,10 @@ class MacArtifactJob(ArtifactJob):
                         # 'gmp-fake/1.0/libfake.dylib',
                         # 'gmp-fakeopenh264/1.0/libfakeopenh264.dylib',
                     ],
-                ),
+                )
             ]
 
-            with JarWriter(file=processed_filename, compress_level=5) as writer:
+            with self.get_writer(file=processed_filename, compress_level=5) as writer:
                 root, paths = self.paths_no_keep_path
                 finder = UnpackFinder(mozpath.join(source, root))
                 for path in paths:
@@ -627,7 +664,7 @@ class MacArtifactJob(ArtifactJob):
                             "Adding {path} to processed archive",
                         )
                         destpath = mozpath.join("bin", os.path.basename(p))
-                        writer.add(destpath.encode("utf-8"), f, mode=f.mode)
+                        writer.add(destpath.encode("utf-8"), f.open(), mode=f.mode)
 
                 for root, paths in paths_keep_path:
                     finder = UnpackFinder(mozpath.join(source, root))
@@ -694,7 +731,7 @@ class WinArtifactJob(ArtifactJob):
 
     def process_package_artifact(self, filename, processed_filename):
         added_entry = False
-        with JarWriter(file=processed_filename, compress_level=5) as writer:
+        with self.get_writer(file=processed_filename, compress_level=5) as writer:
             for p, f in UnpackFinder(JarFinder(filename, JarReader(filename))):
                 if not any(
                     mozpath.match(p, pat) for pat in self.package_artifact_patterns
@@ -723,10 +760,18 @@ class WinArtifactJob(ArtifactJob):
 class ThunderbirdMixin(object):
     trust_domain = "comm"
     product = "thunderbird"
-    candidate_trees = [
+    try_tree = "try-comm-central"
+
+    nightly_candidate_trees = [
         "comm-central",
     ]
-    try_tree = "try-comm-central"
+    beta_candidate_trees = [
+        "releases/comm-beta",
+    ]
+    # The list below list should be updated when we have new ESRs.
+    esr_candidate_trees = [
+        "releases/comm-esr91",
+    ]
 
 
 class LinuxThunderbirdArtifactJob(ThunderbirdMixin, LinuxArtifactJob):
@@ -983,7 +1028,6 @@ class Artifacts(object):
         topsrcdir=None,
         download_tests=True,
         download_symbols=False,
-        download_host_bins=False,
         download_maven_zip=False,
         no_process=False,
         mozbuild=None,
@@ -1012,7 +1056,6 @@ class Artifacts(object):
                 log=self._log,
                 download_tests=download_tests,
                 download_symbols=download_symbols,
-                download_host_bins=download_host_bins,
                 download_maven_zip=download_maven_zip,
                 substs=self._substs,
                 mozbuild=mozbuild,
@@ -1038,7 +1081,6 @@ class Artifacts(object):
     def run_hg(self, *args, **kwargs):
         env = kwargs.get("env", {})
         env["HGPLAIN"] = "1"
-        kwargs["env"] = ensure_subprocess_env(env)
         kwargs["universal_newlines"] = True
         return subprocess.check_output([self._hg] + list(args), **kwargs)
 
@@ -1057,7 +1099,7 @@ class Artifacts(object):
                 return "android-x86" + target_suffix
             if self._substs["ANDROID_CPU_ARCH"] == "arm64-v8a":
                 return "android-aarch64" + target_suffix
-            return "android-api-16" + target_suffix
+            return "android-arm" + target_suffix
 
         target_64bit = False
         if self._substs["target_cpu"] == "x86_64":

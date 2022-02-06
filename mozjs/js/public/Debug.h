@@ -25,6 +25,10 @@ namespace js {
 class Debugger;
 }  // namespace js
 
+/* Defined in vm/Debugger.cpp. */
+extern JS_PUBLIC_API bool JS_DefineDebuggerObject(JSContext* cx,
+                                                  JS::HandleObject obj);
+
 namespace JS {
 namespace dbg {
 
@@ -156,7 +160,7 @@ class Builder {
     PersistentRooted<T> value;
 
     BuiltThing(JSContext* cx, Builder& owner_,
-               T value_ = SafelyInitialized<T>())
+               T value_ = SafelyInitialized<T>::create())
         : owner(owner_), value(cx, value_) {
       owner.assertBuilt(value_);
     }

@@ -8,11 +8,10 @@
 
 #include "frontend/AbstractScopePtr.h"
 #include "frontend/BytecodeEmitter.h"
+#include "frontend/ParserAtom.h"  // ParserAtom
 #include "frontend/SharedContext.h"
 #include "frontend/TDZCheckCache.h"
 #include "vm/Opcodes.h"
-#include "vm/Scope.h"
-#include "vm/StringType.h"
 
 using namespace js;
 using namespace js::frontend;
@@ -35,12 +34,22 @@ bool NameOpEmitter::emitGet() {
         return false;
       }
       break;
-    case NameLocation::Kind::Global:
-      if (!bce_->emitAtomOp(JSOp::GetGName, name_)) {
-        //          [stack] VAL
-        return false;
+    case NameLocation::Kind::Global: {
+      MOZ_ASSERT(bce_->outermostScope().hasNonSyntacticScopeOnChain() ==
+                 bce_->sc->hasNonSyntacticScope());
+      if (bce_->sc->hasNonSyntacticScope()) {
+        if (!bce_->emitAtomOp(JSOp::GetName, name_)) {
+          //        [stack] VAL
+          return false;
+        }
+      } else {
+        if (!bce_->emitAtomOp(JSOp::GetGName, name_)) {
+          //        [stack] VAL
+          return false;
+        }
       }
       break;
+    }
     case NameLocation::Kind::Intrinsic:
       if (!bce_->emitAtomOp(JSOp::GetIntrinsic, name_)) {
         //          [stack] VAL
@@ -78,8 +87,12 @@ bool NameOpEmitter::emitGet() {
       }
       break;
     case NameLocation::Kind::EnvironmentCoordinate:
-      if (!bce_->emitEnvCoordOp(JSOp::GetAliasedVar,
-                                loc_.environmentCoordinate())) {
+    case NameLocation::Kind::DebugEnvironmentCoordinate:
+      if (!bce_->emitEnvCoordOp(
+              loc_.kind() == NameLocation::Kind::EnvironmentCoordinate
+                  ? JSOp::GetAliasedVar
+                  : JSOp::GetAliasedDebugVar,
+              loc_.environmentCoordinate())) {
         //          [stack] VAL
         return false;
       }
@@ -97,20 +110,23 @@ bool NameOpEmitter::emitGet() {
   }
 
   if (isCall()) {
+    MOZ_ASSERT(bce_->outermostScope().hasNonSyntacticScopeOnChain() ==
+               bce_->sc->hasNonSyntacticScope());
     switch (loc_.kind()) {
-      case NameLocation::Kind::Dynamic: {
-        JSOp thisOp = bce_->needsImplicitThis() ? JSOp::ImplicitThis
-                                                : JSOp::GImplicitThis;
-        if (!bce_->emitAtomOp(thisOp, name_)) {
-          //        [stack] CALLEE THIS
-          return false;
-        }
-        break;
-      }
+      case NameLocation::Kind::Dynamic:
       case NameLocation::Kind::Global:
-        if (!bce_->emitAtomOp(JSOp::GImplicitThis, name_)) {
-          //        [stack] CALLEE THIS
-          return false;
+        if (bce_->needsImplicitThis() || bce_->sc->hasNonSyntacticScope()) {
+          MOZ_ASSERT_IF(bce_->needsImplicitThis(),
+                        loc_.kind() == NameLocation::Kind::Dynamic);
+          if (!bce_->emitAtomOp(JSOp::ImplicitThis, name_)) {
+            //      [stack] CALLEE THIS
+            return false;
+          }
+        } else {
+          if (!bce_->emit1(JSOp::Undefined)) {
+            //      [stack] CALLEE UNDEF
+            return false;
+          }
         }
         break;
       case NameLocation::Kind::Intrinsic:
@@ -123,6 +139,11 @@ bool NameOpEmitter::emitGet() {
           //        [stack] CALLEE UNDEF
           return false;
         }
+        break;
+      case NameLocation::Kind::DebugEnvironmentCoordinate:
+        MOZ_CRASH(
+            "DebugEnvironmentCoordinate should only be used to get the private "
+            "brand, and so should never call.");
         break;
       case NameLocation::Kind::DynamicAnnexBVar:
         MOZ_CRASH(
@@ -144,7 +165,7 @@ bool NameOpEmitter::prepareForRhs() {
     case NameLocation::Kind::Dynamic:
     case NameLocation::Kind::Import:
     case NameLocation::Kind::DynamicAnnexBVar:
-      if (!bce_->makeAtomIndex(name_, &atomIndex_)) {
+      if (!bce_->makeAtomIndex(name_, ParserAtom::Atomize::Yes, &atomIndex_)) {
         return false;
       }
       if (loc_.kind() == NameLocation::Kind::DynamicAnnexBVar) {
@@ -164,13 +185,22 @@ bool NameOpEmitter::prepareForRhs() {
       emittedBindOp_ = true;
       break;
     case NameLocation::Kind::Global:
-      if (!bce_->makeAtomIndex(name_, &atomIndex_)) {
+      if (!bce_->makeAtomIndex(name_, ParserAtom::Atomize::Yes, &atomIndex_)) {
         return false;
       }
+      MOZ_ASSERT(bce_->outermostScope().hasNonSyntacticScopeOnChain() ==
+                 bce_->sc->hasNonSyntacticScope());
+
       if (loc_.isLexical() && isInitialize()) {
         // InitGLexical always gets the global lexical scope. It doesn't
-        // need a BindGName.
+        // need a BindName/BindGName.
         MOZ_ASSERT(bce_->innermostScope().is<GlobalScope>());
+      } else if (bce_->sc->hasNonSyntacticScope()) {
+        if (!bce_->emitAtomOp(JSOp::BindName, atomIndex_)) {
+          //        [stack] ENV
+          return false;
+        }
+        emittedBindOp_ = true;
       } else {
         if (!bce_->emitAtomOp(JSOp::BindGName, atomIndex_)) {
           //        [stack] ENV
@@ -186,6 +216,8 @@ bool NameOpEmitter::prepareForRhs() {
     case NameLocation::Kind::ArgumentSlot:
       break;
     case NameLocation::Kind::FrameSlot:
+      break;
+    case NameLocation::Kind::DebugEnvironmentCoordinate:
       break;
     case NameLocation::Kind::EnvironmentCoordinate:
       break;
@@ -244,7 +276,13 @@ bool NameOpEmitter::emitAssignment() {
     case NameLocation::Kind::Global: {
       JSOp op;
       if (emittedBindOp_) {
-        op = bce_->strictifySetNameOp(JSOp::SetGName);
+        MOZ_ASSERT(bce_->outermostScope().hasNonSyntacticScopeOnChain() ==
+                   bce_->sc->hasNonSyntacticScope());
+        if (bce_->sc->hasNonSyntacticScope()) {
+          op = bce_->strictifySetNameOp(JSOp::SetName);
+        } else {
+          op = bce_->strictifySetNameOp(JSOp::SetGName);
+        }
       } else {
         op = JSOp::InitGLexical;
       }
@@ -274,7 +312,9 @@ bool NameOpEmitter::emitAssignment() {
       break;
     case NameLocation::Kind::FrameSlot: {
       JSOp op = JSOp::SetLocal;
-      if (loc_.isLexical()) {
+      // Lexicals, Synthetics and Private Methods have very similar handling
+      // around a variety of areas, including initialization.
+      if (loc_.isLexical() || loc_.isPrivateMethod() || loc_.isSynthetic()) {
         if (isInitialize()) {
           op = JSOp::InitLexical;
         } else {
@@ -305,7 +345,9 @@ bool NameOpEmitter::emitAssignment() {
     }
     case NameLocation::Kind::EnvironmentCoordinate: {
       JSOp op = JSOp::SetAliasedVar;
-      if (loc_.isLexical()) {
+      // Lexicals, Synthetics and Private Methods have very similar handling
+      // around a variety of areas, including initialization.
+      if (loc_.isLexical() || loc_.isPrivateMethod() || loc_.isSynthetic()) {
         if (isInitialize()) {
           op = JSOp::InitAliasedLexical;
         } else {
@@ -345,6 +387,9 @@ bool NameOpEmitter::emitAssignment() {
       }
       break;
     }
+    case NameLocation::Kind::DebugEnvironmentCoordinate:
+      MOZ_CRASH("Shouldn't be assigning to a private brand");
+      break;
   }
 
 #ifdef DEBUG

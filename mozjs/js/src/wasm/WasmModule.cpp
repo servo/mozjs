@@ -19,12 +19,13 @@
 #include "wasm/WasmModule.h"
 
 #include <chrono>
-#include <thread>
 
-#include "jit/JitOptions.h"
 #include "js/BuildId.h"                 // JS::BuildIdCharVector
 #include "js/experimental/TypedData.h"  // JS_NewUint8Array
 #include "js/friend/ErrorMessages.h"    // js::GetErrorMessage, JSMSG_*
+#include "js/Printf.h"                  // JS_smprintf
+#include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_DefinePropertyById
+#include "js/StreamConsumer.h"
 #include "threading/LockGuard.h"
 #include "vm/HelperThreadState.h"  // Tier2GeneratorTask
 #include "vm/PlainObject.h"        // js::PlainObject
@@ -43,6 +44,40 @@
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
+
+static UniqueChars Tier2ResultsContext(const ScriptedCaller& scriptedCaller) {
+  return scriptedCaller.filename
+             ? JS_smprintf("%s:%d", scriptedCaller.filename.get(),
+                           scriptedCaller.line)
+             : UniqueChars();
+}
+
+static void ReportTier2ResultsOffThread(bool success,
+                                        const ScriptedCaller& scriptedCaller,
+                                        const UniqueChars& error,
+                                        const UniqueCharsVector& warnings) {
+  // Get context to describe this tier-2 task.
+  UniqueChars context = Tier2ResultsContext(scriptedCaller);
+  const char* contextString = context ? context.get() : "unknown";
+
+  // Display the main error, if any.
+  if (!success) {
+    const char* errorString = error ? error.get() : "out of memory";
+    LogOffThread("'%s': wasm tier-2 failed with '%s'.\n", contextString,
+                 errorString);
+  }
+
+  // Display warnings as a follow-up, avoiding spamming the console.
+  size_t numWarnings = std::min<size_t>(warnings.length(), 3);
+
+  for (size_t i = 0; i < numWarnings; i++) {
+    LogOffThread("'%s': wasm tier-2 warning: '%s'.\n'.", contextString,
+                 warnings[i].get());
+  }
+  if (warnings.length() > numWarnings) {
+    LogOffThread("'%s': other warnings suppressed.\n", contextString);
+  }
+}
 
 class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   SharedCompileArgs compileArgs_;
@@ -68,12 +103,29 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   void runHelperThreadTask(AutoLockHelperThreadState& locked) override {
     {
       AutoUnlockHelperThreadState unlock(locked);
-      CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_);
+
+      // Compile tier-2 and report any warning/errors as long as it's not a
+      // cancellation. Encountering a warning/error during compilation and
+      // being cancelled may race with each other, but the only observable race
+      // should be being cancelled after a warning/error is set, and that's
+      // okay.
+      UniqueChars error;
+      UniqueCharsVector warnings;
+      bool success = CompileTier2(*compileArgs_, bytecode_->bytes, *module_,
+                                  &error, &warnings, &cancelled_);
+      if (!cancelled_) {
+        // We could try to dispatch a runnable to the thread that started this
+        // compilation, so as to report the warning/error using a JSContext*.
+        // For now we just report to stderr.
+        ReportTier2ResultsOffThread(success, compileArgs_->scriptedCaller,
+                                    error, warnings);
+      }
     }
 
     // During shutdown the main thread will wait for any ongoing (cancelled)
     // tier-2 generation to shut down normally.  To do so, it waits on the
-    // CONSUMER condition for the count of finished generators to rise.
+    // HelperThreadState's condition variable for the count of finished
+    // generators to rise.
     HelperThreadState().incWasmTier2GeneratorsFinished(locked);
 
     // The task is finished, release it.
@@ -81,7 +133,7 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
   }
 
   ThreadType threadType() override {
-    return ThreadType::THREAD_TYPE_WASM_TIER2;
+    return ThreadType::THREAD_TYPE_WASM_GENERATOR_TIER2;
   }
 };
 
@@ -116,7 +168,8 @@ bool Module::finishTier2(const LinkData& linkData2,
   // Install the data in the data structures. They will not be visible
   // until commitTier2().
 
-  if (!code().setTier2(std::move(code2), linkData2)) {
+  const CodeTier* borrowedTier2;
+  if (!code().setAndBorrowTier2(std::move(code2), linkData2, &borrowedTier2)) {
     return false;
   }
 
@@ -134,9 +187,9 @@ bool Module::finishTier2(const LinkData& linkData2,
     const MetadataTier& metadataTier1 = metadata(Tier::Baseline);
 
     auto stubs1 = code().codeTier(Tier::Baseline).lazyStubs().lock();
-    auto stubs2 = code().codeTier(Tier::Optimized).lazyStubs().lock();
+    auto stubs2 = borrowedTier2->lazyStubs().lock();
 
-    MOZ_ASSERT(stubs2->empty());
+    MOZ_ASSERT(stubs2->entryStubsEmpty());
 
     Uint32Vector funcExportIndices;
     for (size_t i = 0; i < metadataTier1.funcExports.length(); i++) {
@@ -144,7 +197,7 @@ bool Module::finishTier2(const LinkData& linkData2,
       if (fe.hasEagerStubs()) {
         continue;
       }
-      if (!stubs1->hasStub(fe.funcIndex())) {
+      if (!stubs1->hasEntryStub(fe.funcIndex())) {
         continue;
       }
       if (!funcExportIndices.emplaceBack(i)) {
@@ -152,10 +205,8 @@ bool Module::finishTier2(const LinkData& linkData2,
       }
     }
 
-    const CodeTier& tier2 = code().codeTier(Tier::Optimized);
-
     Maybe<size_t> stub2Index;
-    if (!stubs2->createTier2(funcExportIndices, tier2, &stub2Index)) {
+    if (!stubs2->createTier2(funcExportIndices, *borrowedTier2, &stub2Index)) {
       return false;
     }
 
@@ -199,7 +250,7 @@ bool Module::finishTier2(const LinkData& linkData2,
 
 void Module::testingBlockOnTier2Complete() const {
   while (testingTier2Active_) {
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    ThisThread::SleepMilliseconds(1);
   }
 }
 
@@ -333,14 +384,14 @@ MutableModule Module::deserialize(const uint8_t* begin, size_t size,
 
 void Module::serialize(const LinkData& linkData,
                        JS::OptimizedEncodingListener& listener) const {
-  auto bytes = MakeUnique<JS::OptimizedEncodingBytes>();
-  if (!bytes || !bytes->resize(serializedSize(linkData))) {
+  Bytes bytes;
+  if (!bytes.resizeUninitialized(serializedSize(linkData))) {
     return;
   }
 
-  serialize(linkData, bytes->begin(), bytes->length());
+  serialize(linkData, bytes.begin(), bytes.length());
 
-  listener.storeOptimizedEncoding(std::move(bytes));
+  listener.storeOptimizedEncoding(bytes.begin(), bytes.length());
 }
 
 /* virtual */
@@ -349,8 +400,7 @@ JSObject* Module::createObject(JSContext* cx) const {
     return nullptr;
   }
 
-  RootedObject proto(
-      cx, &cx->global()->getPrototype(JSProto_WasmModule).toObject());
+  RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmModule));
   return WasmModuleObject::create(cx, *this, proto);
 }
 
@@ -373,7 +423,7 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
   uint32_t cpu = ObservedCPUFeatures();
 
   if (!buildId->reserve(buildId->length() +
-                        12 /* "()" + 8 nibbles + "m[+-]" */)) {
+                        13 /* "()" + 8 nibbles + "m[+-][+-]" */)) {
     return false;
   }
 
@@ -385,7 +435,10 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
   buildId->infallibleAppend(')');
 
   buildId->infallibleAppend('m');
-  buildId->infallibleAppend(wasm::IsHugeMemoryEnabled() ? '+' : '-');
+  buildId->infallibleAppend(wasm::IsHugeMemoryEnabled(IndexType::I32) ? '+'
+                                                                      : '-');
+  buildId->infallibleAppend(wasm::IsHugeMemoryEnabled(IndexType::I64) ? '+'
+                                                                      : '-');
 
   return true;
 }
@@ -425,7 +478,7 @@ void Module::initGCMallocBytesExcludingCode() {
 // segment/function body.
 bool Module::extractCode(JSContext* cx, Tier tier,
                          MutableHandleValue vp) const {
-  RootedPlainObject result(cx, NewBuiltinClassInstance<PlainObject>(cx));
+  RootedPlainObject result(cx, NewPlainObject(cx));
   if (!result) {
     return false;
   }
@@ -459,7 +512,7 @@ bool Module::extractCode(JSContext* cx, Tier tier,
   }
 
   for (const CodeRange& p : metadata(tier).codeRanges) {
-    RootedObject segment(cx, NewObjectWithGivenProto<PlainObject>(cx, nullptr));
+    RootedObject segment(cx, NewPlainObjectWithProto(cx, nullptr));
     if (!segment) {
       return false;
     }
@@ -513,20 +566,6 @@ bool Module::extractCode(JSContext* cx, Tier tier,
   return true;
 }
 
-static uint32_t EvaluateOffsetInitExpr(const ValVector& globalImportValues,
-                                       InitExpr initExpr) {
-  switch (initExpr.kind()) {
-    case InitExpr::Kind::Constant:
-      return initExpr.val().i32();
-    case InitExpr::Kind::GetGlobal:
-      return globalImportValues[initExpr.globalIndex()].i32();
-    case InitExpr::Kind::RefFunc:
-      break;
-  }
-
-  MOZ_CRASH("bad initializer expression");
-}
-
 #ifdef DEBUG
 static bool AllSegmentsArePassive(const DataSegmentVector& vec) {
   for (const DataSegment* seg : vec) {
@@ -550,8 +589,12 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
 
   for (const ElemSegment* seg : elemSegments_) {
     if (seg->active()) {
-      uint32_t offset =
-          EvaluateOffsetInitExpr(globalImportValues, seg->offset());
+      RootedVal offsetVal(cx);
+      if (!seg->offset().evaluate(cx, globalImportValues, instanceObj,
+                                  &offsetVal)) {
+        return false;  // OOM
+      }
+      uint32_t offset = offsetVal.get().i32();
       uint32_t count = seg->length();
 
       uint32_t tableLength = tables[seg->tableIndex]->length();
@@ -561,14 +604,14 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
         return false;
       }
 
-      if (!instance.initElems(seg->tableIndex, *seg, offset, 0, count)) {
+      if (!instance.initElems(cx, seg->tableIndex, *seg, offset, 0, count)) {
         return false;  // OOM
       }
     }
   }
 
   if (memoryObj) {
-    size_t memoryLength = memoryObj->volatileMemoryLength().get();
+    size_t memoryLength = memoryObj->volatileMemoryLength();
     uint8_t* memoryBase =
         memoryObj->buffer().dataPointerEither().unwrap(/* memcpy */);
 
@@ -577,8 +620,14 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
         continue;
       }
 
-      uint32_t offset =
-          EvaluateOffsetInitExpr(globalImportValues, seg->offset());
+      RootedVal offsetVal(cx);
+      if (!seg->offset().evaluate(cx, globalImportValues, instanceObj,
+                                  &offsetVal)) {
+        return false;  // OOM
+      }
+      uint64_t offset = memoryObj->indexType() == IndexType::I32
+                            ? offsetVal.get().i32()
+                            : offsetVal.get().i64();
       uint32_t count = seg->bytes.length();
 
       if (offset > memoryLength || memoryLength - offset < count) {
@@ -586,7 +635,7 @@ bool Module::initSegments(JSContext* cx, HandleWasmInstanceObject instanceObj,
                                  JSMSG_WASM_OUT_OF_BOUNDS);
         return false;
       }
-      memcpy(memoryBase + offset, seg->bytes.begin(), count);
+      memcpy(memoryBase + uintptr_t(offset), seg->bytes.begin(), count);
     }
   }
 
@@ -709,44 +758,46 @@ bool Module::instantiateMemory(JSContext* cx,
     return true;
   }
 
-  uint64_t declaredMin = metadata().minMemoryLength;
-  Maybe<uint64_t> declaredMax = metadata().maxMemoryLength;
-  bool declaredShared = metadata().memoryUsage == MemoryUsage::Shared;
-
+  MemoryDesc desc = *metadata().memory;
   if (memory) {
     MOZ_ASSERT_IF(metadata().isAsmJS(), memory->buffer().isPreparedForAsmJS());
     MOZ_ASSERT_IF(!metadata().isAsmJS(), memory->buffer().isWasm());
 
-    if (!CheckLimits(cx, declaredMin, declaredMax,
-                     /* defaultMax */ uint64_t(MaxMemory32Bytes()),
-                     /* actualLength */
-                     uint64_t(memory->volatileMemoryLength().get()),
-                     memory->buffer().wasmMaxSize(), metadata().isAsmJS(),
-                     "Memory")) {
+    if (memory->indexType() != desc.indexType()) {
+      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                               JSMSG_WASM_BAD_IMP_INDEX,
+                               ToString(memory->indexType()));
       return false;
     }
 
-    if (!CheckSharing(cx, declaredShared, memory->isShared())) {
+    if (!CheckLimits(cx, desc.initialPages(), desc.maximumPages(),
+                     /* defaultMax */ MaxMemoryPages(desc.indexType()),
+                     /* actualLength */
+                     memory->volatilePages(), memory->sourceMaxPages(),
+                     metadata().isAsmJS(), "Memory")) {
+      return false;
+    }
+
+    if (!CheckSharing(cx, desc.isShared(), memory->isShared())) {
       return false;
     }
   } else {
     MOZ_ASSERT(!metadata().isAsmJS());
 
-    if (declaredMin > MaxMemory32Bytes()) {
+    if (desc.initialPages() > MaxMemoryPages(desc.indexType())) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_WASM_MEM_IMP_LIMIT);
       return false;
     }
 
     RootedArrayBufferObjectMaybeShared buffer(cx);
-    if (!CreateWasmBuffer32(cx, declaredMin, declaredMax, declaredShared,
-                            &buffer)) {
+    if (!CreateWasmBuffer(cx, desc, &buffer)) {
       return false;
     }
 
-    RootedObject proto(
-        cx, &cx->global()->getPrototype(JSProto_WasmMemory).toObject());
-    memory.set(WasmMemoryObject::create(cx, buffer, proto));
+    RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmMemory));
+    memory.set(WasmMemoryObject::create(
+        cx, buffer, IsHugeMemoryEnabled(desc.indexType()), proto));
     if (!memory) {
       return false;
     }
@@ -758,15 +809,16 @@ bool Module::instantiateMemory(JSContext* cx,
 }
 
 #ifdef ENABLE_WASM_EXCEPTIONS
-bool Module::instantiateImportedException(
-    JSContext* cx, Handle<WasmExceptionObject*> exnObj,
-    WasmExceptionObjectVector& exnObjs, SharedExceptionTagVector* tags) const {
-  MOZ_ASSERT(exnObj);
-  // The check whether the EventDesc signature matches the exnObj value types
+bool Module::instantiateImportedTag(JSContext* cx,
+                                    Handle<WasmTagObject*> tagObj,
+                                    WasmTagObjectVector& tagObjs,
+                                    SharedExceptionTagVector* tags) const {
+  MOZ_ASSERT(tagObj);
+  // The check whether the TagDesc signature matches the tagObj value types
   // is done by js::wasm::GetImports().
 
-  // Collects the exception tag from the imported exception.
-  ExceptionTag& tag = exnObj->tag();
+  // Collects the exception tag from the imported tag.
+  ExceptionTag& tag = tagObj->tag();
 
   if (!tags->append(&tag)) {
     ReportOutOfMemory(cx);
@@ -776,40 +828,38 @@ bool Module::instantiateImportedException(
   return true;
 }
 
-bool Module::instantiateLocalException(JSContext* cx, const EventDesc& ed,
-                                       WasmExceptionObjectVector& exnObjs,
-                                       SharedExceptionTagVector* tags,
-                                       uint32_t exnIndex) const {
+bool Module::instantiateLocalTag(JSContext* cx, const TagDesc& ed,
+                                 WasmTagObjectVector& tagObjs,
+                                 SharedExceptionTagVector* tags,
+                                 uint32_t tagIndex) const {
   SharedExceptionTag tag;
-  // Extend exnObjs in anticipation of an exported exception object.
-  if (exnObjs.length() <= exnIndex && !exnObjs.resize(exnIndex + 1)) {
+  // Extend tagObjs in anticipation of an exported tag object.
+  if (tagObjs.length() <= tagIndex && !tagObjs.resize(tagIndex + 1)) {
     ReportOutOfMemory(cx);
     return false;
   }
 
   if (ed.isExport) {
-    // If the exception description is exported, create an export exception
+    // If the tag description is exported, create an export tag
     // object for it.
-    RootedObject proto(
-        cx, &cx->global()->getPrototype(JSProto_WasmException).toObject());
-    RootedWasmExceptionObject exnObj(
-        cx, WasmExceptionObject::create(cx, ed.type, proto));
-    if (!exnObj) {
+    RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmTag));
+    RootedWasmTagObject tagObj(cx, WasmTagObject::create(cx, ed.type, proto));
+    if (!tagObj) {
       return false;
     }
-    // Take the exception tag that was created inside the WasmExceptionObject.
-    tag = &exnObj->tag();
-    // Save the new export exception object.
-    exnObjs[exnIndex] = exnObj;
+    // Take the exception tag that was created inside the WasmTagObject.
+    tag = &tagObj->tag();
+    // Save the new export tag object.
+    tagObjs[tagIndex] = tagObj;
   } else {
-    // Create a new tag for every non exported exception.
+    // Create a new exception tag for every non exported tag.
     tag = SharedExceptionTag(cx->new_<ExceptionTag>());
     if (!tag) {
       return false;
     }
-    // The exnObj is null if the exception is neither exported nor imported.
+    // The tagObj is null if the tag is neither exported nor imported.
   }
-  // Collect a tag for every exception.
+  // Collect an exception tag for every tag.
   if (!tags->emplaceBack(tag)) {
     ReportOutOfMemory(cx);
     return false;
@@ -818,22 +868,21 @@ bool Module::instantiateLocalException(JSContext* cx, const EventDesc& ed,
   return true;
 }
 
-bool Module::instantiateExceptions(JSContext* cx,
-                                   WasmExceptionObjectVector& exnObjs,
-                                   SharedExceptionTagVector* tags) const {
-  uint32_t exnIndex = 0;
-  for (const EventDesc& ed : metadata().events) {
-    if (exnIndex < exnObjs.length()) {
-      Rooted<WasmExceptionObject*> exnObj(cx, exnObjs[exnIndex]);
-      if (!instantiateImportedException(cx, exnObj, exnObjs, tags)) {
+bool Module::instantiateTags(JSContext* cx, WasmTagObjectVector& tagObjs,
+                             SharedExceptionTagVector* tags) const {
+  uint32_t tagIndex = 0;
+  for (const TagDesc& ed : metadata().tags) {
+    if (tagIndex < tagObjs.length()) {
+      Rooted<WasmTagObject*> tagObj(cx, tagObjs[tagIndex]);
+      if (!instantiateImportedTag(cx, tagObj, tagObjs, tags)) {
         return false;
       }
     } else {
-      if (!instantiateLocalException(cx, ed, exnObjs, tags, exnIndex)) {
+      if (!instantiateLocalTag(cx, ed, tagObjs, tags, tagIndex)) {
         return false;
       }
     }
-    exnIndex++;
+    tagIndex++;
   }
   return true;
 }
@@ -878,9 +927,8 @@ bool Module::instantiateLocalTable(JSContext* cx, const TableDesc& td,
 
   SharedTable table;
   Rooted<WasmTableObject*> tableObj(cx);
-  if (td.importedOrExported) {
-    RootedObject proto(
-        cx, &cx->global()->getPrototype(JSProto_WasmTable).toObject());
+  if (td.isImportedOrExported) {
+    RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmTable));
     tableObj.set(WasmTableObject::create(cx, td.initialLength, td.maximumLength,
                                          td.elemType, proto));
     if (!tableObj) {
@@ -890,7 +938,6 @@ bool Module::instantiateLocalTable(JSContext* cx, const TableDesc& td,
   } else {
     table = Table::create(cx, td, /* HandleWasmTableObject = */ nullptr);
     if (!table) {
-      ReportOutOfMemory(cx);
       return false;
     }
   }
@@ -954,8 +1001,7 @@ static bool EnsureExportedGlobalObject(JSContext* cx,
     val.set(Val(global.type()));
   }
 
-  RootedObject proto(
-      cx, &cx->global()->getPrototype(JSProto_WasmGlobal).toObject());
+  RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmGlobal));
   RootedWasmGlobalObject go(
       cx, WasmGlobalObject::create(cx, val, global.isMutable(), proto));
   if (!go) {
@@ -1105,49 +1151,21 @@ static bool GetGlobalExport(JSContext* cx, HandleWasmInstanceObject instanceObj,
   MOZ_ASSERT(!global.isMutable());
   MOZ_ASSERT(!global.isImport());
   RootedVal globalVal(cx);
-  switch (global.kind()) {
-    case GlobalKind::Variable: {
-      const InitExpr& init = global.initExpr();
-      switch (init.kind()) {
-        case InitExpr::Kind::Constant:
-          globalVal.set(Val(init.val()));
-          break;
-        case InitExpr::Kind::GetGlobal:
-          globalVal.set(Val(globalImportValues[init.globalIndex()]));
-          break;
-        case InitExpr::Kind::RefFunc:
-          RootedFunction func(cx);
-          if (!GetFunctionExport(cx, instanceObj, funcImports,
-                                 init.refFuncIndex(), &func)) {
-            return false;
-          }
-          globalVal.set(
-              Val(ValType(RefType::func()), FuncRef::fromJSFunction(func)));
-      }
-      break;
-    }
-    case GlobalKind::Constant: {
-      globalVal.set(Val(global.constantValue()));
-      break;
-    }
-    case GlobalKind::Import: {
-      MOZ_CRASH();
-    }
+  MOZ_RELEASE_ASSERT(!global.isImport());
+  const InitExpr& init = global.initExpr();
+  if (!init.evaluate(cx, globalImportValues, instanceObj, &globalVal)) {
+    return false;
   }
-
   globalObj->val() = globalVal;
   return true;
 }
 
-static bool CreateExportObject(JSContext* cx,
-                               HandleWasmInstanceObject instanceObj,
-                               const JSFunctionVector& funcImports,
-                               const WasmTableObjectVector& tableObjs,
-                               HandleWasmMemoryObject memoryObj,
-                               const WasmExceptionObjectVector& exceptionObjs,
-                               const ValVector& globalImportValues,
-                               const WasmGlobalObjectVector& globalObjs,
-                               const ExportVector& exports) {
+static bool CreateExportObject(
+    JSContext* cx, HandleWasmInstanceObject instanceObj,
+    const JSFunctionVector& funcImports, const WasmTableObjectVector& tableObjs,
+    HandleWasmMemoryObject memoryObj, const WasmTagObjectVector& tagObjs,
+    const ValVector& globalImportValues,
+    const WasmGlobalObjectVector& globalObjs, const ExportVector& exports) {
   const Instance& instance = instanceObj->instance();
   const Metadata& metadata = instance.metadata();
   const GlobalDescVector& globals = metadata.globals;
@@ -1167,9 +1185,9 @@ static bool CreateExportObject(JSContext* cx,
   uint8_t propertyAttr = JSPROP_ENUMERATE;
 
   if (metadata.isAsmJS()) {
-    exportObj = NewBuiltinClassInstance<PlainObject>(cx);
+    exportObj = NewPlainObject(cx);
   } else {
-    exportObj = NewObjectWithGivenProto<PlainObject>(cx, nullptr);
+    exportObj = NewPlainObjectWithProto(cx, nullptr);
     propertyAttr |= JSPROP_READONLY | JSPROP_PERMANENT;
   }
   if (!exportObj) {
@@ -1213,8 +1231,8 @@ static bool CreateExportObject(JSContext* cx,
         break;
       }
 #ifdef ENABLE_WASM_EXCEPTIONS
-      case DefinitionKind::Event: {
-        val = ObjectValue(*exceptionObjs[exp.eventIndex()]);
+      case DefinitionKind::Tag: {
+        val = ObjectValue(*tagObjs[exp.tagIndex()]);
         break;
       }
 #endif
@@ -1258,7 +1276,7 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
 
   SharedExceptionTagVector tags;
 #ifdef ENABLE_WASM_EXCEPTIONS
-  if (!instantiateExceptions(cx, imports.exceptionObjs, &tags)) {
+  if (!instantiateTags(cx, imports.tagObjs, &tags)) {
     return false;
   }
 #endif
@@ -1276,12 +1294,6 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
     return false;
   }
 
-  UniqueTlsData tlsData = CreateTlsData(metadata().globalDataLength);
-  if (!tlsData) {
-    ReportOutOfMemory(cx);
-    return false;
-  }
-
   SharedCode code;
   UniqueDebugState maybeDebug;
   if (metadata().debugEnabled) {
@@ -1293,6 +1305,7 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
 
     maybeDebug = cx->make_unique<DebugState>(*code, *this);
     if (!maybeDebug) {
+      ReportOutOfMemory(cx);
       return false;
     }
   } else {
@@ -1300,16 +1313,16 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
   }
 
   instance.set(WasmInstanceObject::create(
-      cx, code, dataSegments_, elemSegments_, std::move(tlsData), memory,
-      std::move(tags), std::move(tables), imports.funcs, metadata().globals,
-      imports.globalValues, imports.globalObjs, instanceProto,
-      std::move(maybeDebug)));
+      cx, code, dataSegments_, elemSegments_, metadata().globalDataLength,
+      memory, std::move(tags), std::move(tables), imports.funcs,
+      metadata().globals, imports.globalValues, imports.globalObjs,
+      instanceProto, std::move(maybeDebug)));
   if (!instance) {
     return false;
   }
 
   if (!CreateExportObject(cx, instance, imports.funcs, tableObjs.get(), memory,
-                          imports.exceptionObjs, imports.globalValues,
+                          imports.tagObjs, imports.globalValues,
                           imports.globalObjs, exports_)) {
     return false;
   }
@@ -1320,6 +1333,7 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
   // final pre-requisite for a live instance.
 
   if (!cx->realm()->wasm.registerInstance(cx, instance)) {
+    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -1346,11 +1360,6 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
   JSUseCounter useCounter =
       metadata().isAsmJS() ? JSUseCounter::ASMJS : JSUseCounter::WASM;
   cx->runtime()->setUseCounter(instance, useCounter);
-
-  if (metadata().usesDuplicateImports) {
-    cx->runtime()->setUseCounter(instance,
-                                 JSUseCounter::WASM_DUPLICATE_IMPORTS);
-  }
 
   if (cx->options().testWasmAwaitTier2()) {
     testingBlockOnTier2Complete();

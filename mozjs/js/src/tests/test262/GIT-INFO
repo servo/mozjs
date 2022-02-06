@@ -1,12 +1,9 @@
-commit 31126581e7290f9233c29cefd93f66c6ac78f1c9
-Author: Frank Yung-Fong Tang <ftang@google.com>
-Date:   Mon Mar 8 19:31:26 2021 -0800
+commit 45a913c057892bdd26f7bc06a59a0c7420f2d3ec
+Author: Philip Chimento <pchimento@igalia.com>
+Date:   Wed Aug 11 12:31:23 2021 -0700
 
-    Change Intl.(ListFormat|DisplayNames|Segmenter) (#2952)
+    Add branding tests from Temporal (#3138)
     
-    * Change Intl.(ListFormat|DisplayNames|Segmenter)
+    Closes: #3137
     
-    Sync from ToObject to GetOptionsObject which throw TypeError
-    while the option is not object
-    
-    * Add null and false to test
+    Co-authored-by: Ms2ger <Ms2ger@igalia.com>

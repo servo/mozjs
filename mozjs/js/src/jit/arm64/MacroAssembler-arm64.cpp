@@ -6,6 +6,9 @@
 
 #include "jit/arm64/MacroAssembler-arm64.h"
 
+#include "mozilla/MathAlgorithms.h"
+#include "mozilla/Maybe.h"
+
 #include "jsmath.h"
 
 #include "jit/arm64/MoveEmitter-arm64.h"
@@ -15,8 +18,10 @@
 #include "jit/JitRuntime.h"
 #include "jit/MacroAssembler.h"
 #include "util/Memory.h"
+#include "vm/BigIntType.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
+#include "vm/StringType.h"
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -53,16 +58,32 @@ void MacroAssemblerCompat::boxValue(JSValueType type, Register src,
 }
 
 #ifdef ENABLE_WASM_SIMD
-bool MacroAssembler::MustScalarizeShiftSimd128(wasm::SimdOp op) {
-  MOZ_CRASH("NYI - ion porting interface not in use");
-}
-
 bool MacroAssembler::MustMaskShiftCountSimd128(wasm::SimdOp op, int32_t* mask) {
-  MOZ_CRASH("NYI - ion porting interface not in use");
-}
-
-bool MacroAssembler::MustScalarizeShiftSimd128(wasm::SimdOp op, Imm32 imm) {
-  MOZ_CRASH("NYI - ion porting interface not in use");
+  switch (op) {
+    case wasm::SimdOp::I8x16Shl:
+    case wasm::SimdOp::I8x16ShrU:
+    case wasm::SimdOp::I8x16ShrS:
+      *mask = 7;
+      break;
+    case wasm::SimdOp::I16x8Shl:
+    case wasm::SimdOp::I16x8ShrU:
+    case wasm::SimdOp::I16x8ShrS:
+      *mask = 15;
+      break;
+    case wasm::SimdOp::I32x4Shl:
+    case wasm::SimdOp::I32x4ShrU:
+    case wasm::SimdOp::I32x4ShrS:
+      *mask = 31;
+      break;
+    case wasm::SimdOp::I64x2Shl:
+    case wasm::SimdOp::I64x2ShrU:
+    case wasm::SimdOp::I64x2ShrS:
+      *mask = 63;
+      break;
+    default:
+      MOZ_CRASH("Unexpected shift operation");
+  }
+  return true;
 }
 #endif
 
@@ -361,6 +382,34 @@ void MacroAssemblerCompat::profilerExitFrame() {
   jump(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
 }
 
+Assembler::Condition MacroAssemblerCompat::testStringTruthy(
+    bool truthy, const ValueOperand& value) {
+  vixl::UseScratchRegisterScope temps(this);
+  const Register scratch = temps.AcquireX().asUnsized();
+  const ARMRegister scratch32(scratch, 32);
+  const ARMRegister scratch64(scratch, 64);
+
+  MOZ_ASSERT(value.valueReg() != scratch);
+
+  unboxString(value, scratch);
+  Ldr(scratch32, MemOperand(scratch64, JSString::offsetOfLength()));
+  Cmp(scratch32, Operand(0));
+  return truthy ? Condition::NonZero : Condition::Zero;
+}
+
+Assembler::Condition MacroAssemblerCompat::testBigIntTruthy(
+    bool truthy, const ValueOperand& value) {
+  vixl::UseScratchRegisterScope temps(this);
+  const Register scratch = temps.AcquireX().asUnsized();
+
+  MOZ_ASSERT(value.valueReg() != scratch);
+
+  unboxBigInt(value, scratch);
+  load32(Address(scratch, BigInt::offsetOfDigitLength()), scratch);
+  cmp32(scratch, Imm32(0));
+  return truthy ? Condition::NonZero : Condition::Zero;
+}
+
 void MacroAssemblerCompat::breakpoint() {
   // Note, other payloads are possible, but GDB is known to misinterpret them
   // sometimes and iloop on the breakpoint instead of stopping properly.
@@ -413,20 +462,25 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
 void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
                                         MemOperand srcAddr, AnyRegister outany,
                                         Register64 out64) {
-  // Not yet supported: not used by baseline compiler
-  MOZ_ASSERT(!access.isSplatSimd128Load());
-  MOZ_ASSERT(!access.isWidenSimd128Load());
+  // Reg+Reg and Reg+SmallImm addressing is directly encodable in one Load
+  // instruction, hence we expect exactly one instruction to be emitted in the
+  // window.
+  int32_t instructionsExpected = 1;
+
+  // Splat and widen however require an additional instruction to be emitted
+  // after the load, so allow one more instruction in the window.
+  if (access.isSplatSimd128Load() || access.isWidenSimd128Load()) {
+    MOZ_ASSERT(access.type() == Scalar::Float64);
+    instructionsExpected++;
+  }
 
   asMasm().memoryBarrierBefore(access.sync());
 
   {
-    // Reg+Reg addressing is directly encodable in one Load instruction, hence
-    // the AutoForbidPoolsAndNops will ensure that the access metadata is
-    // emitted at the address of the Load.  The AutoForbidPoolsAndNops will
-    // assert if we emit more than one instruction.
-
-    AutoForbidPoolsAndNops afp(this,
-                               /* max number of instructions in scope = */ 1);
+    // The AutoForbidPoolsAndNops asserts if we emit more than the expected
+    // number of instructions and thus ensures that the access metadata is
+    // emitted at the address of the Load.
+    AutoForbidPoolsAndNops afp(this, instructionsExpected);
 
     append(access, asMasm().currentOffset());
     switch (access.type()) {
@@ -460,8 +514,41 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
         Ldr(SelectFPReg(outany, out64, 32), srcAddr);
         break;
       case Scalar::Float64:
-        // LDR does the right thing also for access.isZeroExtendSimd128Load()
-        Ldr(SelectFPReg(outany, out64, 64), srcAddr);
+        if (access.isSplatSimd128Load() || access.isWidenSimd128Load()) {
+          ScratchSimd128Scope scratch_(asMasm());
+          ARMFPRegister scratch = Simd1D(scratch_);
+          Ldr(scratch, srcAddr);
+          if (access.isSplatSimd128Load()) {
+            Dup(SelectFPReg(outany, out64, 128).V2D(), scratch, 0);
+          } else {
+            MOZ_ASSERT(access.isWidenSimd128Load());
+            switch (access.widenSimdOp()) {
+              case wasm::SimdOp::V128Load8x8S:
+                Sshll(SelectFPReg(outany, out64, 128).V8H(), scratch.V8B(), 0);
+                break;
+              case wasm::SimdOp::V128Load8x8U:
+                Ushll(SelectFPReg(outany, out64, 128).V8H(), scratch.V8B(), 0);
+                break;
+              case wasm::SimdOp::V128Load16x4S:
+                Sshll(SelectFPReg(outany, out64, 128).V4S(), scratch.V4H(), 0);
+                break;
+              case wasm::SimdOp::V128Load16x4U:
+                Ushll(SelectFPReg(outany, out64, 128).V4S(), scratch.V4H(), 0);
+                break;
+              case wasm::SimdOp::V128Load32x2S:
+                Sshll(SelectFPReg(outany, out64, 128).V2D(), scratch.V2S(), 0);
+                break;
+              case wasm::SimdOp::V128Load32x2U:
+                Ushll(SelectFPReg(outany, out64, 128).V2D(), scratch.V2S(), 0);
+                break;
+              default:
+                MOZ_CRASH("Unexpected widening op for wasmLoad");
+            }
+          }
+        } else {
+          // LDR does the right thing also for access.isZeroExtendSimd128Load()
+          Ldr(SelectFPReg(outany, out64, 64), srcAddr);
+        }
         break;
       case Scalar::Simd128:
         Ldr(SelectFPReg(outany, out64, 128), srcAddr);
@@ -475,6 +562,44 @@ void MacroAssemblerCompat::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
   }
 
   asMasm().memoryBarrierAfter(access.sync());
+}
+
+// Return true if `address` can be represented as an immediate (possibly scaled
+// by the access size) in an LDR/STR type instruction.
+//
+// For more about the logic here, see vixl::MacroAssembler::LoadStoreMacro().
+static bool IsLSImmediateOffset(uint64_t address, size_t accessByteSize) {
+  // The predicates below operate on signed values only.
+  if (address > INT64_MAX) {
+    return false;
+  }
+
+  // The access size is always a power of 2, so computing the log amounts to
+  // counting trailing zeroes.
+  unsigned logAccessSize = mozilla::CountTrailingZeroes32(accessByteSize);
+  return (MacroAssemblerCompat::IsImmLSUnscaled(int64_t(address)) ||
+          MacroAssemblerCompat::IsImmLSScaled(int64_t(address), logAccessSize));
+}
+
+void MacroAssemblerCompat::wasmLoadAbsolute(
+    const wasm::MemoryAccessDesc& access, Register memoryBase, uint64_t address,
+    AnyRegister output, Register64 out64) {
+  if (!IsLSImmediateOffset(address, access.byteSize())) {
+    // The access will require the constant to be loaded into a temp register.
+    // Do so here, to keep the logic in wasmLoadImpl() tractable wrt emitting
+    // trap information.
+    //
+    // Almost all constant addresses will in practice be handled by a single MOV
+    // so do not worry about additional optimizations here.
+    vixl::UseScratchRegisterScope temps(this);
+    ARMRegister scratch = temps.AcquireX();
+    Mov(scratch, address);
+    MemOperand srcAddr(X(memoryBase), scratch);
+    wasmLoadImpl(access, srcAddr, output, out64);
+  } else {
+    MemOperand srcAddr(X(memoryBase), address);
+    wasmLoadImpl(access, srcAddr, output, out64);
+  }
 }
 
 void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
@@ -548,6 +673,24 @@ void MacroAssemblerCompat::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
   asMasm().memoryBarrierAfter(access.sync());
 }
 
+void MacroAssemblerCompat::wasmStoreAbsolute(
+    const wasm::MemoryAccessDesc& access, AnyRegister value, Register64 value64,
+    Register memoryBase, uint64_t address) {
+  // See comments in wasmLoadAbsolute.
+  unsigned logAccessSize = mozilla::CountTrailingZeroes32(access.byteSize());
+  if (address > INT64_MAX || !(IsImmLSScaled(int64_t(address), logAccessSize) ||
+                               IsImmLSUnscaled(int64_t(address)))) {
+    vixl::UseScratchRegisterScope temps(this);
+    ARMRegister scratch = temps.AcquireX();
+    Mov(scratch, address);
+    MemOperand destAddr(X(memoryBase), scratch);
+    wasmStoreImpl(access, destAddr, value, value64);
+  } else {
+    MemOperand destAddr(X(memoryBase), address);
+    wasmStoreImpl(access, destAddr, value, value64);
+  }
+}
+
 void MacroAssemblerCompat::compareSimd128Int(Assembler::Condition cond,
                                              ARMFPRegister dest,
                                              ARMFPRegister lhs,
@@ -558,7 +701,7 @@ void MacroAssemblerCompat::compareSimd128Int(Assembler::Condition cond,
       break;
     case Assembler::NotEqual:
       Cmeq(dest, lhs, rhs);
-      Mvn(lhs, lhs);
+      Mvn(dest, dest);
       break;
     case Assembler::GreaterThan:
       Cmgt(dest, lhs, rhs);
@@ -599,7 +742,7 @@ void MacroAssemblerCompat::compareSimd128Float(Assembler::Condition cond,
       break;
     case Assembler::NotEqual:
       Fcmeq(dest, lhs, rhs);
-      Mvn(lhs, lhs);
+      Mvn(dest, dest);
       break;
     case Assembler::GreaterThan:
       Fcmgt(dest, lhs, rhs);
@@ -618,121 +761,68 @@ void MacroAssemblerCompat::compareSimd128Float(Assembler::Condition cond,
   }
 }
 
-void MacroAssemblerCompat::rightShiftInt8x16(Register rhs,
-                                             FloatRegister lhsDest,
-                                             FloatRegister temp,
+void MacroAssemblerCompat::rightShiftInt8x16(FloatRegister lhs, Register rhs,
+                                             FloatRegister dest,
+                                             bool isUnsigned) {
+  ScratchSimd128Scope scratch_(asMasm());
+  ARMFPRegister shift = Simd16B(scratch_);
+
+  Dup(shift, ARMRegister(rhs, 32));
+  Neg(shift, shift);
+
+  if (isUnsigned) {
+    Ushl(Simd16B(dest), Simd16B(lhs), shift);
+  } else {
+    Sshl(Simd16B(dest), Simd16B(lhs), shift);
+  }
+}
+
+void MacroAssemblerCompat::rightShiftInt16x8(FloatRegister lhs, Register rhs,
+                                             FloatRegister dest,
                                              bool isUnsigned) {
   ScratchSimd128Scope scratch_(asMasm());
   ARMFPRegister shift = Simd8H(scratch_);
 
-  // Compute 8 - (shift & 7) in all 16-bit lanes
-  {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireW();
-    And(scratch, ARMRegister(rhs, 32), 7);
-    Neg(scratch, scratch);
-    Add(scratch, scratch, 8);
-    Dup(shift, scratch);
-  }
+  Dup(shift, ARMRegister(rhs, 32));
+  Neg(shift, shift);
 
-  // Widen high bytes, shift left variable, then recover top bytes.
   if (isUnsigned) {
-    Ushll2(Simd8H(temp), Simd16B(lhsDest), 0);
+    Ushl(Simd8H(dest), Simd8H(lhs), shift);
   } else {
-    Sshll2(Simd8H(temp), Simd16B(lhsDest), 0);
+    Sshl(Simd8H(dest), Simd8H(lhs), shift);
   }
-  Ushl(Simd8H(temp), Simd8H(temp), shift);
-  Shrn(Simd8B(temp), Simd8H(temp), 8);
-
-  // Ditto low bytes, leaving them in the correct place for the output.
-  if (isUnsigned) {
-    Ushll(Simd8H(lhsDest), Simd8B(lhsDest), 0);
-  } else {
-    Sshll(Simd8H(lhsDest), Simd8B(lhsDest), 0);
-  }
-  Ushl(Simd8H(lhsDest), Simd8H(lhsDest), shift);
-  Shrn(Simd8B(lhsDest), Simd8H(lhsDest), 8);
-
-  // Reassemble: insert the high bytes.
-  Ins(Simd2D(lhsDest), 1, Simd2D(temp), 0);
 }
 
-void MacroAssemblerCompat::rightShiftInt16x8(Register rhs,
-                                             FloatRegister lhsDest,
-                                             FloatRegister temp,
+void MacroAssemblerCompat::rightShiftInt32x4(FloatRegister lhs, Register rhs,
+                                             FloatRegister dest,
                                              bool isUnsigned) {
   ScratchSimd128Scope scratch_(asMasm());
   ARMFPRegister shift = Simd4S(scratch_);
 
-  // Compute 16 - (shift & 15) in all 32-bit lanes
-  {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireW();
-    And(scratch, ARMRegister(rhs, 32), 15);
-    Neg(scratch, scratch);
-    Add(scratch, scratch, 16);
-    Dup(shift, scratch);
-  }
+  Dup(shift, ARMRegister(rhs, 32));
+  Neg(shift, shift);
 
-  // Widen high halfwords, shift left variable, then recover top halfwords
   if (isUnsigned) {
-    Ushll2(Simd4S(temp), Simd8H(lhsDest), 0);
+    Ushl(Simd4S(dest), Simd4S(lhs), shift);
   } else {
-    Sshll2(Simd4S(temp), Simd8H(lhsDest), 0);
+    Sshl(Simd4S(dest), Simd4S(lhs), shift);
   }
-  Ushl(Simd4S(temp), Simd4S(temp), shift);
-  Shrn(Simd4H(temp), Simd4S(temp), 16);
-
-  // Ditto low halfwords
-  if (isUnsigned) {
-    Ushll(Simd4S(lhsDest), Simd4H(lhsDest), 0);
-  } else {
-    Sshll(Simd4S(lhsDest), Simd4H(lhsDest), 0);
-  }
-  Ushl(Simd4S(lhsDest), Simd4S(lhsDest), shift);
-  Shrn(Simd4H(lhsDest), Simd4S(lhsDest), 16);
-
-  // Reassemble: insert the high halfwords.
-  Ins(Simd2D(lhsDest), 1, Simd2D(temp), 0);
 }
 
-void MacroAssemblerCompat::rightShiftInt32x4(Register rhs,
-                                             FloatRegister lhsDest,
-                                             FloatRegister temp,
+void MacroAssemblerCompat::rightShiftInt64x2(FloatRegister lhs, Register rhs,
+                                             FloatRegister dest,
                                              bool isUnsigned) {
   ScratchSimd128Scope scratch_(asMasm());
   ARMFPRegister shift = Simd2D(scratch_);
 
-  // Compute 32 - (shift & 31) in all 64-bit lanes
-  {
-    vixl::UseScratchRegisterScope temps(this);
-    ARMRegister scratch = temps.AcquireX();
-    And(scratch, ARMRegister(rhs, 64), 31);
-    Neg(scratch, scratch);
-    Add(scratch, scratch, 32);
-    Dup(shift, scratch);
-  }
+  Dup(shift, ARMRegister(rhs, 64));
+  Neg(shift, shift);
 
-  // Widen high words, shift left variable, then recover top words
   if (isUnsigned) {
-    Ushll2(Simd2D(temp), Simd4S(lhsDest), 0);
+    Ushl(Simd2D(dest), Simd2D(lhs), shift);
   } else {
-    Sshll2(Simd2D(temp), Simd4S(lhsDest), 0);
+    Sshl(Simd2D(dest), Simd2D(lhs), shift);
   }
-  Ushl(Simd2D(temp), Simd2D(temp), shift);
-  Shrn(Simd2S(temp), Simd2D(temp), 32);
-
-  // Ditto high words
-  if (isUnsigned) {
-    Ushll(Simd2D(lhsDest), Simd2S(lhsDest), 0);
-  } else {
-    Sshll(Simd2D(lhsDest), Simd2S(lhsDest), 0);
-  }
-  Ushl(Simd2D(lhsDest), Simd2D(lhsDest), shift);
-  Shrn(Simd2S(lhsDest), Simd2D(lhsDest), 32);
-
-  // Reassemble: insert the high words.
-  Ins(Simd2D(lhsDest), 1, Simd2D(temp), 0);
 }
 
 void MacroAssembler::reserveStack(uint32_t amount) {
@@ -759,227 +849,372 @@ void MacroAssembler::flush() { Assembler::flush(); }
 
 // ===============================================================
 // Stack manipulation functions.
-//
-// These all assume no SIMD registers, because SIMD registers are handled with
-// other routines when that is necessary.  See lengthy comment in
-// Architecture-arm64.h.
 
-void MacroAssembler::PushRegsInMask(LiveRegisterSet set) {
+// Routines for saving/restoring registers on the stack.  The format is:
+//
+//   (highest address)
+//
+//   integer (X) regs in any order      size: 8 * # int regs
+//
+//   if # int regs is odd,
+//     then an 8 byte alignment hole    size: 0 or 8
+//
+//   double (D) regs in any order       size: 8 * # double regs
+//
+//   if # double regs is odd,
+//     then an 8 byte alignment hole    size: 0 or 8
+//
+//   vector (Q) regs in any order       size: 16 * # vector regs
+//
+//   (lowest address)
+//
+// Hence the size of the save area is 0 % 16.  And, provided that the base
+// (highest) address is 16-aligned, then the vector reg save/restore accesses
+// will also be 16-aligned, as will pairwise operations for the double regs.
+//
+// Implied by this is that the format of the double and vector dump area
+// corresponds with what FloatRegister::GetPushSizeInBytes computes.
+// See block comment in MacroAssembler.h for more details.
+
+size_t MacroAssembler::PushRegsInMaskSizeInBytes(LiveRegisterSet set) {
+  size_t numIntRegs = set.gprs().size();
+  return ((numIntRegs + 1) & ~1) * sizeof(intptr_t) +
+         FloatRegister::GetPushSizeInBytes(set.fpus());
+}
+
+// Generate code to dump the values in `set`, either on the stack if `dest` is
+// `Nothing` or working backwards from the address denoted by `dest` if it is
+// `Some`.  These two cases are combined so as to minimise the chance of
+// mistakenly generating different formats for the same `set`, given that the
+// `Some` `dest` case is used extremely rarely.
+static void PushOrStoreRegsInMask(MacroAssembler* masm, LiveRegisterSet set,
+                                  mozilla::Maybe<Address> dest) {
+  static_assert(sizeof(FloatRegisters::RegisterContent) == 16);
+
+  // If we're saving to arbitrary memory, check the destination is big enough.
+  if (dest) {
+    mozilla::DebugOnly<size_t> bytesRequired =
+        masm->PushRegsInMaskSizeInBytes(set);
+    MOZ_ASSERT(dest->offset >= 0);
+    MOZ_ASSERT(((size_t)dest->offset) >= bytesRequired);
+  }
+
+  // Note the high limit point; we'll check it again later.
+  mozilla::DebugOnly<size_t> maxExtentInitial =
+      dest ? dest->offset : masm->framePushed();
+
+  // Gather up the integer registers in groups of four, and either push each
+  // group as a single transfer so as to minimise the number of stack pointer
+  // changes, or write them individually to memory.  Take care to ensure the
+  // space used remains 16-aligned.
   for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more();) {
     vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg, vixl::NoCPUReg,
                                 vixl::NoCPUReg};
-
-    for (size_t i = 0; i < 4 && iter.more(); i++) {
+    size_t i;
+    for (i = 0; i < 4 && iter.more(); i++) {
       src[i] = ARMRegister(*iter, 64);
       ++iter;
-      adjustFrame(8);
     }
-    vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
+    MOZ_ASSERT(i > 0);
+
+    if (i == 1 || i == 3) {
+      // Ensure the stack remains 16-aligned
+      MOZ_ASSERT(!iter.more());
+      src[i] = vixl::xzr;
+      i++;
+    }
+    MOZ_ASSERT(i == 2 || i == 4);
+
+    if (dest) {
+      for (size_t j = 0; j < i; j++) {
+        Register ireg = Register::FromCode(src[j].IsZero() ? Registers::xzr
+                                                           : src[j].code());
+        dest->offset -= sizeof(intptr_t);
+        masm->storePtr(ireg, *dest);
+      }
+    } else {
+      masm->adjustFrame(i * 8);
+      masm->vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
+    }
   }
 
-  for (FloatRegisterBackwardIterator iter(set.fpus().reduceSetForPush());
-       iter.more();) {
-    vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg, vixl::NoCPUReg,
-                                vixl::NoCPUReg};
+  // Now the same for the FP double registers.  Note that because of how
+  // ReduceSetForPush works, an underlying AArch64 SIMD/FP register can either
+  // be present as a double register, or as a V128 register, but not both.
+  // Firstly, round up the registers to be pushed.
 
-    for (size_t i = 0; i < 4 && iter.more(); i++) {
-      src[i] = ARMFPRegister(*iter, 64);
-      ++iter;
-      adjustFrame(8);
+  FloatRegisterSet fpuSet(set.fpus().reduceSetForPush());
+  vixl::CPURegister allSrcs[FloatRegisters::TotalPhys];
+  size_t numAllSrcs = 0;
+
+  for (FloatRegisterBackwardIterator iter(fpuSet); iter.more(); ++iter) {
+    FloatRegister reg = *iter;
+    if (reg.isDouble()) {
+      MOZ_RELEASE_ASSERT(numAllSrcs < FloatRegisters::TotalPhys);
+      allSrcs[numAllSrcs] = ARMFPRegister(reg, 64);
+      numAllSrcs++;
+    } else {
+      MOZ_ASSERT(reg.isSimd128());
     }
-    vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
   }
+  MOZ_RELEASE_ASSERT(numAllSrcs <= FloatRegisters::TotalPhys);
+
+  if ((numAllSrcs & 1) == 1) {
+    // We've got an odd number of doubles.  In order to maintain 16-alignment,
+    // push the last register twice.  We'll skip over the duplicate in
+    // PopRegsInMaskIgnore.
+    allSrcs[numAllSrcs] = allSrcs[numAllSrcs - 1];
+    numAllSrcs++;
+  }
+  MOZ_RELEASE_ASSERT(numAllSrcs <= FloatRegisters::TotalPhys);
+  MOZ_RELEASE_ASSERT((numAllSrcs & 1) == 0);
+
+  // And now generate the transfers.
+  size_t i;
+  if (dest) {
+    for (i = 0; i < numAllSrcs; i++) {
+      FloatRegister freg =
+          FloatRegister(FloatRegisters::FPRegisterID(allSrcs[i].code()),
+                        FloatRegisters::Kind::Double);
+      dest->offset -= sizeof(double);
+      masm->storeDouble(freg, *dest);
+    }
+  } else {
+    i = 0;
+    while (i < numAllSrcs) {
+      vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg,
+                                  vixl::NoCPUReg, vixl::NoCPUReg};
+      size_t j;
+      for (j = 0; j < 4 && j + i < numAllSrcs; j++) {
+        src[j] = allSrcs[j + i];
+      }
+      masm->adjustFrame(8 * j);
+      masm->vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
+      i += j;
+    }
+  }
+  MOZ_ASSERT(i == numAllSrcs);
+
+  // Finally, deal with the SIMD (V128) registers.  This is a bit simpler
+  // as there's no need for special-casing to maintain 16-alignment.
+
+  numAllSrcs = 0;
+  for (FloatRegisterBackwardIterator iter(fpuSet); iter.more(); ++iter) {
+    FloatRegister reg = *iter;
+    if (reg.isSimd128()) {
+      MOZ_RELEASE_ASSERT(numAllSrcs < FloatRegisters::TotalPhys);
+      allSrcs[numAllSrcs] = ARMFPRegister(reg, 128);
+      numAllSrcs++;
+    }
+  }
+  MOZ_RELEASE_ASSERT(numAllSrcs <= FloatRegisters::TotalPhys);
+
+  // Generate the transfers.
+  if (dest) {
+    for (i = 0; i < numAllSrcs; i++) {
+      FloatRegister freg =
+          FloatRegister(FloatRegisters::FPRegisterID(allSrcs[i].code()),
+                        FloatRegisters::Kind::Simd128);
+      dest->offset -= FloatRegister::SizeOfSimd128;
+      masm->storeUnalignedSimd128(freg, *dest);
+    }
+  } else {
+    i = 0;
+    while (i < numAllSrcs) {
+      vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg,
+                                  vixl::NoCPUReg, vixl::NoCPUReg};
+      size_t j;
+      for (j = 0; j < 4 && j + i < numAllSrcs; j++) {
+        src[j] = allSrcs[j + i];
+      }
+      masm->adjustFrame(16 * j);
+      masm->vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
+      i += j;
+    }
+  }
+  MOZ_ASSERT(i == numAllSrcs);
+
+  // Final overrun check.
+  if (dest) {
+    MOZ_ASSERT(maxExtentInitial - dest->offset ==
+               masm->PushRegsInMaskSizeInBytes(set));
+  } else {
+    MOZ_ASSERT(masm->framePushed() - maxExtentInitial ==
+               masm->PushRegsInMaskSizeInBytes(set));
+  }
+}
+
+void MacroAssembler::PushRegsInMask(LiveRegisterSet set) {
+  PushOrStoreRegsInMask(this, set, mozilla::Nothing());
 }
 
 void MacroAssembler::storeRegsInMask(LiveRegisterSet set, Address dest,
                                      Register scratch) {
-  FloatRegisterSet fpuSet(set.fpus().reduceSetForPush());
-  unsigned numFpu = fpuSet.size();
-  int32_t diffF = fpuSet.getPushSizeInBytes();
-  int32_t diffG = set.gprs().size() * sizeof(intptr_t);
+  PushOrStoreRegsInMask(this, set, mozilla::Some(dest));
+}
 
-  MOZ_ASSERT(dest.offset >= diffG + diffF);
-
-  for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more(); ++iter) {
-    diffG -= sizeof(intptr_t);
-    dest.offset -= sizeof(intptr_t);
-    storePtr(*iter, dest);
-  }
-  MOZ_ASSERT(diffG == 0);
-
-  for (FloatRegisterBackwardIterator iter(fpuSet); iter.more(); ++iter) {
-    FloatRegister reg = *iter;
-    diffF -= reg.size();
-    numFpu -= 1;
-    dest.offset -= reg.size();
-    if (reg.isDouble()) {
-      storeDouble(reg, dest);
-    } else if (reg.isSingle()) {
-      storeFloat32(reg, dest);
+// This is a helper function for PopRegsInMaskIgnore below.  It emits the
+// loads described by dests[0] and [1] and offsets[0] and [1], generating a
+// load-pair if it can.
+static void GeneratePendingLoadsThenFlush(MacroAssembler* masm,
+                                          vixl::CPURegister* dests,
+                                          uint32_t* offsets,
+                                          uint32_t transactionSize) {
+  // Generate the loads ..
+  if (!dests[0].IsNone()) {
+    if (!dests[1].IsNone()) {
+      // [0] and [1] both present.
+      if (offsets[0] + transactionSize == offsets[1]) {
+        masm->Ldp(dests[0], dests[1],
+                  MemOperand(masm->GetStackPointer64(), offsets[0]));
+      } else {
+        // Theoretically we could check for a load-pair with the destinations
+        // switched, but our callers will never generate that.  Hence there's
+        // no loss in giving up at this point and generating two loads.
+        masm->Ldr(dests[0], MemOperand(masm->GetStackPointer64(), offsets[0]));
+        masm->Ldr(dests[1], MemOperand(masm->GetStackPointer64(), offsets[1]));
+      }
     } else {
-      MOZ_CRASH("Unknown register type.");
+      // [0] only.
+      masm->Ldr(dests[0], MemOperand(masm->GetStackPointer64(), offsets[0]));
+    }
+  } else {
+    if (!dests[1].IsNone()) {
+      // [1] only.  Can't happen because callers always fill [0] before [1].
+      MOZ_CRASH("GenerateLoadsThenFlush");
+    } else {
+      // Neither entry valid.  This can happen.
     }
   }
-  MOZ_ASSERT(numFpu == 0);
-  // Padding to keep the stack aligned, taken from the x64 and mips64
-  // implementations.
-  diffF -= diffF % sizeof(uintptr_t);
-  MOZ_ASSERT(diffF == 0);
+
+  // .. and flush.
+  dests[0] = dests[1] = vixl::NoCPUReg;
+  offsets[0] = offsets[1] = 0;
 }
 
 void MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set,
                                          LiveRegisterSet ignore) {
+  mozilla::DebugOnly<size_t> framePushedInitial = framePushed();
+
   // The offset of the data from the stack pointer.
   uint32_t offset = 0;
 
-  for (FloatRegisterIterator iter(set.fpus().reduceSetForPush());
-       iter.more();) {
-    vixl::CPURegister dest[2] = {vixl::NoCPUReg, vixl::NoCPUReg};
-    uint32_t nextOffset = offset;
+  // The set of FP/SIMD registers we need to restore.
+  FloatRegisterSet fpuSet(set.fpus().reduceSetForPush());
 
-    for (size_t i = 0; i < 2 && iter.more(); i++) {
-      if (!ignore.has(*iter)) {
-        dest[i] = ARMFPRegister(*iter, 64);
-      }
-      ++iter;
-      nextOffset += sizeof(double);
+  // The set of registers to ignore.  BroadcastToAllSizes() is used to avoid
+  // any ambiguities arising from (eg) `fpuSet` containing q17 but `ignore`
+  // containing d17.
+  FloatRegisterSet ignoreFpusBroadcasted(
+      FloatRegister::BroadcastToAllSizes(ignore.fpus()));
+
+  // First recover the SIMD (V128) registers.  This is straightforward in that
+  // we don't need to think about alignment holes.
+
+  // These three form a two-entry queue that holds loads that we know we
+  // need, but which we haven't yet emitted.
+  vixl::CPURegister pendingDests[2] = {vixl::NoCPUReg, vixl::NoCPUReg};
+  uint32_t pendingOffsets[2] = {0, 0};
+  size_t nPending = 0;
+
+  for (FloatRegisterIterator iter(fpuSet); iter.more(); ++iter) {
+    FloatRegister reg = *iter;
+    if (reg.isDouble()) {
+      continue;
+    }
+    MOZ_RELEASE_ASSERT(reg.isSimd128());
+
+    uint32_t offsetForReg = offset;
+    offset += FloatRegister::SizeOfSimd128;
+
+    if (ignoreFpusBroadcasted.hasRegisterIndex(reg)) {
+      continue;
     }
 
-    if (!dest[0].IsNone() && !dest[1].IsNone()) {
-      Ldp(dest[0], dest[1], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[0].IsNone()) {
-      Ldr(dest[0], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[1].IsNone()) {
-      Ldr(dest[1], MemOperand(GetStackPointer64(), offset + sizeof(double)));
+    MOZ_ASSERT(nPending <= 2);
+    if (nPending == 2) {
+      GeneratePendingLoadsThenFlush(this, pendingDests, pendingOffsets, 16);
+      nPending = 0;
     }
+    pendingDests[nPending] = ARMFPRegister(reg, 128);
+    pendingOffsets[nPending] = offsetForReg;
+    nPending++;
+  }
+  GeneratePendingLoadsThenFlush(this, pendingDests, pendingOffsets, 16);
+  nPending = 0;
 
-    offset = nextOffset;
+  MOZ_ASSERT((offset % 16) == 0);
+
+  // Now recover the FP double registers.  This is more tricky in that we need
+  // to skip over the lowest-addressed of them if the number of them was odd.
+
+  if ((((fpuSet.bits() & FloatRegisters::AllDoubleMask).size()) & 1) == 1) {
+    offset += sizeof(double);
   }
 
+  for (FloatRegisterIterator iter(fpuSet); iter.more(); ++iter) {
+    FloatRegister reg = *iter;
+    if (reg.isSimd128()) {
+      continue;
+    }
+    /* true but redundant, per loop above: MOZ_RELEASE_ASSERT(reg.isDouble()) */
+
+    uint32_t offsetForReg = offset;
+    offset += sizeof(double);
+
+    if (ignoreFpusBroadcasted.hasRegisterIndex(reg)) {
+      continue;
+    }
+
+    MOZ_ASSERT(nPending <= 2);
+    if (nPending == 2) {
+      GeneratePendingLoadsThenFlush(this, pendingDests, pendingOffsets, 8);
+      nPending = 0;
+    }
+    pendingDests[nPending] = ARMFPRegister(reg, 64);
+    pendingOffsets[nPending] = offsetForReg;
+    nPending++;
+  }
+  GeneratePendingLoadsThenFlush(this, pendingDests, pendingOffsets, 8);
+  nPending = 0;
+
+  MOZ_ASSERT((offset % 16) == 0);
   MOZ_ASSERT(offset == set.fpus().getPushSizeInBytes());
 
-  for (GeneralRegisterIterator iter(set.gprs()); iter.more();) {
-    vixl::CPURegister dest[2] = {vixl::NoCPUReg, vixl::NoCPUReg};
-    uint32_t nextOffset = offset;
+  // And finally recover the integer registers, again skipping an alignment
+  // hole if it exists.
 
-    for (size_t i = 0; i < 2 && iter.more(); i++) {
-      if (!ignore.has(*iter)) {
-        dest[i] = ARMRegister(*iter, 64);
-      }
-      ++iter;
-      nextOffset += sizeof(uint64_t);
-    }
-
-    if (!dest[0].IsNone() && !dest[1].IsNone()) {
-      Ldp(dest[0], dest[1], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[0].IsNone()) {
-      Ldr(dest[0], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[1].IsNone()) {
-      Ldr(dest[1], MemOperand(GetStackPointer64(), offset + sizeof(uint64_t)));
-    }
-
-    offset = nextOffset;
+  if ((set.gprs().size() & 1) == 1) {
+    offset += sizeof(uint64_t);
   }
 
-  size_t bytesPushed =
-      set.gprs().size() * sizeof(uint64_t) + set.fpus().getPushSizeInBytes();
+  for (GeneralRegisterIterator iter(set.gprs()); iter.more(); ++iter) {
+    Register reg = *iter;
+
+    uint32_t offsetForReg = offset;
+    offset += sizeof(uint64_t);
+
+    if (ignore.has(reg)) {
+      continue;
+    }
+
+    MOZ_ASSERT(nPending <= 2);
+    if (nPending == 2) {
+      GeneratePendingLoadsThenFlush(this, pendingDests, pendingOffsets, 8);
+      nPending = 0;
+    }
+    pendingDests[nPending] = ARMRegister(reg, 64);
+    pendingOffsets[nPending] = offsetForReg;
+    nPending++;
+  }
+  GeneratePendingLoadsThenFlush(this, pendingDests, pendingOffsets, 8);
+
+  MOZ_ASSERT((offset % 16) == 0);
+
+  size_t bytesPushed = PushRegsInMaskSizeInBytes(set);
   MOZ_ASSERT(offset == bytesPushed);
   freeStack(bytesPushed);
 }
-
-#ifdef ENABLE_WASM_SIMD
-void MacroAssemblerCompat::PushRegsInMaskForWasmStubs(LiveRegisterSet set) {
-  for (GeneralRegisterBackwardIterator iter(set.gprs()); iter.more();) {
-    vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg, vixl::NoCPUReg,
-                                vixl::NoCPUReg};
-
-    for (size_t i = 0; i < 4 && iter.more(); i++) {
-      src[i] = ARMRegister(*iter, 64);
-      ++iter;
-      asMasm().adjustFrame(8);
-    }
-    vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
-  }
-
-  // reduceSetForPush returns a set with the unique encodings and kind==0.  For
-  // each encoding in the set, just push the SIMD register.
-  for (FloatRegisterBackwardIterator iter(set.fpus().reduceSetForPush());
-       iter.more();) {
-    vixl::CPURegister src[4] = {vixl::NoCPUReg, vixl::NoCPUReg, vixl::NoCPUReg,
-                                vixl::NoCPUReg};
-
-    for (size_t i = 0; i < 4 && iter.more(); i++) {
-      src[i] = ARMFPRegister(*iter, 128);
-      ++iter;
-      asMasm().adjustFrame(FloatRegister::SizeOfSimd128);
-    }
-    vixl::MacroAssembler::Push(src[0], src[1], src[2], src[3]);
-  }
-}
-
-void MacroAssemblerCompat::PopRegsInMaskForWasmStubs(LiveRegisterSet set,
-                                                     LiveRegisterSet ignore) {
-  // The offset of the data from the stack pointer.
-  uint32_t offset = 0;
-
-  // See comments above
-  for (FloatRegisterIterator iter(set.fpus().reduceSetForPush());
-       iter.more();) {
-    vixl::CPURegister dest[2] = {vixl::NoCPUReg, vixl::NoCPUReg};
-    uint32_t nextOffset = offset;
-
-    for (size_t i = 0; i < 2 && iter.more(); i++) {
-      if (!ignore.has(*iter)) {
-        dest[i] = ARMFPRegister(*iter, 128);
-      }
-      ++iter;
-      nextOffset += FloatRegister::SizeOfSimd128;
-    }
-
-    if (!dest[0].IsNone() && !dest[1].IsNone()) {
-      Ldp(dest[0], dest[1], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[0].IsNone()) {
-      Ldr(dest[0], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[1].IsNone()) {
-      Ldr(dest[1], MemOperand(GetStackPointer64(), offset + 16));
-    }
-
-    offset = nextOffset;
-  }
-
-  MOZ_ASSERT(offset ==
-             FloatRegister::GetPushSizeInBytesForWasmStubs(set.fpus()));
-
-  for (GeneralRegisterIterator iter(set.gprs()); iter.more();) {
-    vixl::CPURegister dest[2] = {vixl::NoCPUReg, vixl::NoCPUReg};
-    uint32_t nextOffset = offset;
-
-    for (size_t i = 0; i < 2 && iter.more(); i++) {
-      if (!ignore.has(*iter)) {
-        dest[i] = ARMRegister(*iter, 64);
-      }
-      ++iter;
-      nextOffset += sizeof(uint64_t);
-    }
-
-    if (!dest[0].IsNone() && !dest[1].IsNone()) {
-      Ldp(dest[0], dest[1], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[0].IsNone()) {
-      Ldr(dest[0], MemOperand(GetStackPointer64(), offset));
-    } else if (!dest[1].IsNone()) {
-      Ldr(dest[1], MemOperand(GetStackPointer64(), offset + sizeof(uint64_t)));
-    }
-
-    offset = nextOffset;
-  }
-
-  size_t bytesPushed =
-      set.gprs().size() * sizeof(uint64_t) +
-      FloatRegister::GetPushSizeInBytesForWasmStubs(set.fpus());
-  MOZ_ASSERT(offset == bytesPushed);
-  asMasm().freeStack(bytesPushed);
-}
-#endif
 
 void MacroAssembler::Push(Register reg) {
   push(reg);
@@ -1538,22 +1773,36 @@ CodeOffset MacroAssembler::wasmTrapInstruction() {
 }
 
 void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
-                                       Register boundsCheckLimit,
-                                       Label* label) {
-  branch32(cond, index, boundsCheckLimit, label);
+                                       Register boundsCheckLimit, Label* ok) {
+  branch32(cond, index, boundsCheckLimit, ok);
   if (JitOptions.spectreIndexMasking) {
     csel(ARMRegister(index, 32), vixl::wzr, ARMRegister(index, 32), cond);
   }
 }
 
 void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
-                                       Address boundsCheckLimit, Label* label) {
-  MOZ_ASSERT(boundsCheckLimit.offset ==
-             offsetof(wasm::TlsData, boundsCheckLimit32));
-
-  branch32(cond, index, boundsCheckLimit, label);
+                                       Address boundsCheckLimit, Label* ok) {
+  branch32(cond, index, boundsCheckLimit, ok);
   if (JitOptions.spectreIndexMasking) {
     csel(ARMRegister(index, 32), vixl::wzr, ARMRegister(index, 32), cond);
+  }
+}
+
+void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
+                                       Register64 boundsCheckLimit, Label* ok) {
+  branchPtr(cond, index.reg, boundsCheckLimit.reg, ok);
+  if (JitOptions.spectreIndexMasking) {
+    csel(ARMRegister(index.reg, 64), vixl::xzr, ARMRegister(index.reg, 64),
+         cond);
+  }
+}
+
+void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
+                                       Address boundsCheckLimit, Label* ok) {
+  branchPtr(InvertCondition(cond), boundsCheckLimit, index.reg, ok);
+  if (JitOptions.spectreIndexMasking) {
+    csel(ARMRegister(index.reg, 64), vixl::xzr, ARMRegister(index.reg, 64),
+         cond);
   }
 }
 
@@ -1864,6 +2113,10 @@ void MacroAssembler::enterFakeExitFrameForWasm(Register cxreg, Register scratch,
   Mov(tmp, sp);  // SP may be unaligned, can't use it for memory op
   Mov(tmp2, int32_t(type));
   Str(tmp2, vixl::MemOperand(tmp, 0));
+}
+
+void MacroAssembler::widenInt32(Register r) {
+  move32To64ZeroExtend(r, Register64(r));
 }
 
 // ========================================================================
@@ -2854,7 +3107,9 @@ void MacroAssembler::copySignDouble(FloatRegister lhs, FloatRegister rhs,
   loadConstantDouble(0, scratch);
   negateDouble(scratch);
 
-  moveDouble(lhs, output);
+  if (lhs != output) {
+    moveDouble(lhs, output);
+  }
 
   bit(ARMFPRegister(output.encoding(), vixl::VectorFormat::kFormat8B),
       ARMFPRegister(rhs.encoding(), vixl::VectorFormat::kFormat8B),
@@ -2869,7 +3124,9 @@ void MacroAssembler::copySignFloat32(FloatRegister lhs, FloatRegister rhs,
   loadConstantFloat32(0, scratch);
   negateFloat(scratch);
 
-  moveFloat32(lhs, output);
+  if (lhs != output) {
+    moveFloat32(lhs, output);
+  }
 
   bit(ARMFPRegister(output.encoding(), vixl::VectorFormat::kFormat8B),
       ARMFPRegister(rhs.encoding(), vixl::VectorFormat::kFormat8B),

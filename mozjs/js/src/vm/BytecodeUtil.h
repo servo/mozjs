@@ -36,15 +36,6 @@ namespace js {
 class Sprinter;
 }  // namespace js
 
-/*
- * JS operation bytecodes.
- */
-enum class JSOp : uint8_t {
-#define ENUMERATE_OPCODE(op, ...) op,
-  FOR_EACH_OPCODE(ENUMERATE_OPCODE)
-#undef ENUMERATE_OPCODE
-};
-
 /* Shorthand for type from format. */
 
 static inline uint32_t JOF_TYPE(uint32_t fmt) { return fmt & JOF_TYPEMASK; }
@@ -575,9 +566,10 @@ inline void GetCheckPrivateFieldOperands(jsbytecode* pc,
 
   MOZ_ASSERT(*throwCondition == ThrowCondition::ThrowHas ||
              *throwCondition == ThrowCondition::ThrowHasNot ||
-             *throwCondition == ThrowCondition::NoThrow);
+             *throwCondition == ThrowCondition::OnlyCheckRhs);
 
   MOZ_ASSERT(*throwKind == ThrowMsgKind::PrivateDoubleInit ||
+             *throwKind == ThrowMsgKind::PrivateBrandDoubleInit ||
              *throwKind == ThrowMsgKind::MissingPrivateOnGet ||
              *throwKind == ThrowMsgKind::MissingPrivateOnSet);
 }

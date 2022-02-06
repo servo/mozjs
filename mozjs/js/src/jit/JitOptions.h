@@ -45,15 +45,15 @@ struct DefaultJitOptions {
   bool disableGvn;
   bool disableInlining;
   bool disableLicm;
-  bool disablePgo;
+  bool disablePruning;
   bool disableInstructionReordering;
   bool disableRangeAnalysis;
   bool disableRecoverIns;
   bool disableScalarReplacement;
   bool disableCacheIR;
   bool disableSink;
+  bool disableRedundantShapeGuards;
   bool disableBailoutLoopCheck;
-  bool scalarReplaceArguments;
   bool baselineInterpreter;
   bool baselineJit;
   bool ion;
@@ -75,6 +75,7 @@ struct DefaultJitOptions {
   bool traceRegExpAssembler;
   bool traceRegExpInterpreter;
   bool traceRegExpPeephole;
+  bool lessDebugCode;
   bool enableWasmJitExit;
   bool enableWasmJitEntry;
   bool enableWasmIonFastCalls;
@@ -144,6 +145,17 @@ inline bool IsBaselineInterpreterEnabled() {
 }
 
 }  // namespace jit
+
+extern mozilla::Atomic<bool> fuzzingSafe;
+
+static inline bool IsFuzzing() {
+#ifdef FUZZING
+  return true;
+#else
+  return fuzzingSafe;
+#endif
+}
+
 }  // namespace js
 
 #endif /* jit_JitOptions_h */

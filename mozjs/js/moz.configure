@@ -54,6 +54,7 @@ set_config("JS_ENABLE_SMOOSH", enable_smoosh)
 set_define("JS_ENABLE_SMOOSH", enable_smoosh)
 
 include("../build/moz.configure/nspr.configure", when="--enable-compile-environment")
+include("../build/moz.configure/rust.configure", when="--enable-compile-environment")
 include("../build/moz.configure/bindgen.configure", when="--enable-compile-environment")
 
 set_config("JS_STANDALONE", js_standalone)
@@ -76,18 +77,6 @@ set_define("JS_64BIT", depends(target)(lambda t: t.bitness == 64 or None))
 
 set_define("JS_PUNBOX64", depends(target)(lambda t: t.bitness == 64 or None))
 set_define("JS_NUNBOX32", depends(target)(lambda t: t.bitness == 32 or None))
-
-option("--enable-uwp",
-       default=False,
-       help="{Enable|Disable} building for UWP environments")
-
-@depends("--enable-uwp")
-def js_enable_uwp(value):
-    if value:
-        return True
-
-set_config("JS_ENABLE_UWP", js_enable_uwp)
-set_define("JS_ENABLE_UWP", js_enable_uwp)
 
 
 # SpiderMonkey as a shared library, and how its symbols are exported
@@ -114,7 +103,6 @@ def shared_js(shared_js, export_js):
 
 
 set_config("JS_SHARED_LIBRARY", shared_js)
-add_old_configure_assignment("JS_SHARED_LIBRARY", shared_js)
 
 
 @depends(shared_js, "--disable-export-js", when=js_standalone)
@@ -144,15 +132,30 @@ def static_js(value):
 set_define("MOZ_STATIC_JS", static_js)
 
 
-option(env="NO_RUST_PANIC_HOOK", when=js_standalone, help="Disable rust panic hook")
+# Enable records and tuples
+# ===================================================
+option(
+    "--enable-record-tuple",
+    default=False,
+    help="Enable records and tuples (and disables JIT)",
+)
 
-set_define("NO_RUST_PANIC_HOOK", True, when="NO_RUST_PANIC_HOOK")
 
+@depends("--enable-record-tuple")
+def enable_record_tuple(value):
+    if value:
+        return True
+
+
+set_config("ENABLE_RECORD_TUPLE", enable_record_tuple)
+set_define("ENABLE_RECORD_TUPLE", enable_record_tuple)
 
 # JIT support
 # =======================================================
-@depends(target)
-def jit_default(target):
+@depends(target, "--enable-record-tuple")
+def jit_default(target, enable_record_tuple):
+    if enable_record_tuple:
+        return False
     if target.cpu in ("x86", "x86_64", "arm", "aarch64", "mips32", "mips64"):
         return True
     return False
@@ -301,14 +304,14 @@ with only_when("--enable-compile-environment"):
     imply_option("--enable-frame-pointers", True, when=profiling)
 
 
-@depends(profiling, target, js_enable_uwp)
-def imply_vtune(value, target, uwp):
+@depends(profiling, target)
+def imply_vtune(value, target):
     ok_cpu = target.cpu in ["x86", "x86_64"]
     ok_kernel = target.kernel == "WINNT" or (
         target.kernel == "Linux" and target.os == "GNU"
     )
 
-    if value and ok_cpu and ok_kernel and not uwp:
+    if value and ok_cpu and ok_kernel:
         return True
 
 
@@ -566,30 +569,42 @@ set_define("MOZ_RUST_SIMD", rust_simd)
 # Support for wasm code generation with Cranelift
 # ==============================================================
 
+option(
+    "--enable-cranelift",
+    default=False,
+    help="{Enable|Disable} Cranelift code generator for wasm",
+)
+
 
 @depends(
-    milestone.is_nightly,
+    "--enable-cranelift",
     "--enable-jit",
     "--enable-simulator",
     target,
     target_is_windows,
 )
-def cranelift_default(is_nightly, jit_enabled, simulator, target, is_windows):
-    if is_nightly and jit_enabled and not is_windows:
-        if target.cpu == "aarch64":
-            return True
-        if simulator and simulator[0] == "arm64":
-            return True
+def enable_cranelift(value, jit_enabled, simulator, target, is_windows):
+    if not value:
+        return
+
+    if not jit_enabled:
+        die("--enable-cranelift requires --enable-jit")
+
+    if not (
+        target.cpu == "aarch64"
+        or (target.cpu == "x86_64" and simulator and simulator[0] == "arm64")
+    ):
+        die("--enable-cranelift is only supported on arm64")
+
+    if is_windows:
+        die("--enable-cranelift is not supported on windows")
+
+    return True
 
 
-option(
-    "--enable-cranelift",
-    default=cranelift_default,
-    help="{Enable|Disable} Cranelift code generator for wasm",
-)
+set_config("ENABLE_WASM_CRANELIFT", enable_cranelift)
+set_define("ENABLE_WASM_CRANELIFT", enable_cranelift)
 
-set_config("ENABLE_WASM_CRANELIFT", depends_if("--enable-cranelift")(lambda x: True))
-set_define("ENABLE_WASM_CRANELIFT", depends_if("--enable-cranelift")(lambda x: True))
 
 # Telemetry to measure compile time and generated-code runtime
 # ============================================================
@@ -621,28 +636,13 @@ set_define(
     "WASM_CODEGEN_DEBUG", depends_if("--enable-wasm-codegen-debug")(lambda x: True)
 )
 
-# Support for WebAssembly reference types.
-# =====================================================
-
-option("--disable-wasm-reftypes", help="Disable WebAssembly reference types")
-
-
-@depends("--disable-wasm-reftypes")
-def enable_wasm_reftypes(value):
-    if value:
-        return True
-
-
-set_config("ENABLE_WASM_REFTYPES", enable_wasm_reftypes)
-set_define("ENABLE_WASM_REFTYPES", enable_wasm_reftypes)
-
 # Support for WebAssembly function-references.
 # ===========================
 
 
-@depends(milestone.is_nightly, "--disable-wasm-reftypes")
-def default_wasm_function_references(is_nightly, reftypes):
-    if is_nightly and reftypes:
+@depends(milestone.is_nightly)
+def default_wasm_function_references(is_nightly):
+    if is_nightly:
         return True
 
 
@@ -653,17 +653,10 @@ option(
 )
 
 
-@depends("--enable-wasm-function-references", "--disable-wasm-reftypes")
-def wasm_function_references(value, reftypes):
-    if not value:
-        return
-
-    if reftypes:
+@depends("--enable-wasm-function-references")
+def wasm_function_references(value):
+    if value:
         return True
-
-    die(
-        "--enable-wasm-function-references only possible without --disable-wasm-reftypes"
-    )
 
 
 set_config("ENABLE_WASM_FUNCTION_REFERENCES", wasm_function_references)
@@ -726,27 +719,6 @@ set_define(
     depends_if("--enable-wasm-private-reftypes")(lambda x: True),
 )
 
-
-# Support for the WebAssembly multi-value proposal.
-# Do not remove until Cranelift supports multi-value.
-# =====================================================
-
-option(
-    "--disable-wasm-multi-value",
-    help="Disable WebAssembly multi-value blocks and function calls",
-)
-
-
-@depends("--disable-wasm-multi-value")
-def enable_wasm_multi_value(value):
-    if value:
-        return True
-
-
-set_config("ENABLE_WASM_MULTI_VALUE", enable_wasm_multi_value)
-set_define("ENABLE_WASM_MULTI_VALUE", enable_wasm_multi_value)
-
-
 # Support for WebAssembly shared memory and atomics.
 #
 # This affects the JS shell only and here to allow the use of
@@ -768,20 +740,48 @@ def enable_shared_memory(value):
 set_config("ENABLE_SHARED_MEMORY", enable_shared_memory)
 set_define("ENABLE_SHARED_MEMORY", enable_shared_memory)
 
+# Support for WebAssembly extended constant expressions
+# =====================================================
+
+
+@depends(milestone.is_nightly)
+def default_wasm_extended_const(is_nightly):
+    if is_nightly:
+        return True
+
+
+option(
+    "--enable-wasm-extended-const",
+    default=default_wasm_extended_const,
+    help="{Enable|Disable} WebAssembly extended constant expressions",
+)
+
+
+@depends("--enable-wasm-extended-const")
+def wasm_extended_const(value):
+    if value:
+        return True
+
+
+set_config("ENABLE_WASM_EXTENDED_CONST", wasm_extended_const)
+set_define("ENABLE_WASM_EXTENDED_CONST", wasm_extended_const)
 
 # Support for WebAssembly SIMD
 # =====================================================
 
 
-@depends("--enable-jit", "--enable-simulator", target)
-def default_wasm_simd(jit_enabled, simulator, target):
+@depends("--enable-jit", "--enable-simulator", "--enable-cranelift", target)
+def default_wasm_simd(jit_enabled, simulator, cranelift_enabled, target):
     if not jit_enabled:
         return
 
-    if simulator:
+    if cranelift_enabled:
         return
 
-    if target.cpu in ("x86_64", "x86"):
+    if simulator and (simulator[0] != "arm64"):
+        return
+
+    if target.cpu in ("x86_64", "x86", "aarch64"):
         return True
 
 
@@ -792,21 +792,30 @@ option(
 )
 
 
-@depends("--enable-wasm-simd", "--enable-jit", "--enable-simulator", target)
-def wasm_simd(value, jit_enabled, simulator, target):
+@depends(
+    "--enable-wasm-simd",
+    "--enable-jit",
+    "--enable-simulator",
+    "--enable-cranelift",
+    target,
+)
+def wasm_simd(value, jit_enabled, simulator, cranelift_enabled, target):
     if not value:
         return
 
     if not jit_enabled:
-        return
+        die("--enable-wasm-simd requires --enable-jit")
 
-    if simulator:
-        return
+    if cranelift_enabled:
+        die("--enable-wasm-simd is not supported for --enable-cranelift")
 
-    if target.cpu in ("x86_64", "x86"):
+    if simulator and (simulator[0] != "arm64"):
+        die("--enable-wasm-simd is not supported for simulators, except arm64")
+
+    if target.cpu in ("x86_64", "x86", "aarch64"):
         return True
 
-    die("--enable-wasm-simd only possible when targeting the x86_64/x86 jits")
+    die("--enable-wasm-simd only possible when targeting the x86_64/x86/arm64 jits")
 
 
 set_config("ENABLE_WASM_SIMD", wasm_simd)
@@ -846,6 +855,151 @@ set_config("ENABLE_WASM_SIMD_WORMHOLE", wasm_simd_wormhole)
 set_define("ENABLE_WASM_SIMD_WORMHOLE", wasm_simd_wormhole)
 
 
+# Support for WebAssembly relaxed SIMD
+# =====================================================
+
+
+@depends(milestone.is_nightly, "--enable-wasm-simd")
+def default_wasm_relaxed_simd(is_nightly, wasm_simd):
+    if is_nightly and wasm_simd:
+        return True
+
+
+option(
+    "--enable-wasm-relaxed-simd",
+    default=default_wasm_relaxed_simd,
+    help="{Enable|Disable} WebAssembly relaxed SIMD",
+)
+
+
+@depends("--enable-wasm-relaxed-simd", "--enable-wasm-simd")
+def wasm_relaxed_simd(value, wasm_simd):
+    if not value:
+        return
+
+    if not wasm_simd:
+        die("relaxed SIMD requires SIMD")
+
+    return True
+
+
+set_config("ENABLE_WASM_RELAXED_SIMD", wasm_relaxed_simd)
+set_define("ENABLE_WASM_RELAXED_SIMD", wasm_relaxed_simd)
+
+# Support for WebAssembly intgemm private intrinsics
+# =====================================================
+
+
+@depends(milestone.is_nightly)
+def default_wasm_moz_intgemm(is_nightly):
+    if is_nightly:
+        return True
+
+
+option(
+    "--enable-wasm-moz-intgemm",
+    default=default_wasm_moz_intgemm,
+    help="{Enable|Disable} WebAssembly intgemm private intrinsics",
+)
+
+
+@depends("--enable-wasm-moz-intgemm")
+def wasm_moz_intgemm(value):
+    if not value:
+        return
+
+    return True
+
+
+set_config("ENABLE_WASM_MOZ_INTGEMM", wasm_moz_intgemm)
+set_define("ENABLE_WASM_MOZ_INTGEMM", wasm_moz_intgemm)
+
+# Support for WebAssembly Memory64.
+# ===========================
+
+
+@depends(milestone.is_nightly, "--enable-cranelift", "--enable-simulator", target)
+def default_wasm_memory64(is_nightly, cranelift, simulator, target):
+    if cranelift:
+        return
+
+    if target.cpu == "mips32":
+        return
+
+    if simulator and simulator[0] == "mips32":
+        return
+
+    if is_nightly:
+        return True
+
+
+option(
+    "--enable-wasm-memory64",
+    default=default_wasm_memory64,
+    help="{Enable|Disable} WebAssembly Memory64",
+)
+
+
+@depends("--enable-wasm-memory64", "--enable-cranelift", "--enable-simulator", target)
+def wasm_memory64(value, cranelift, simulator, target):
+    if not value:
+        return
+
+    if cranelift:
+        die("Memory64 is incompatible with Cranelift")
+
+    if target.cpu == "mips32":
+        die("Memory64 is incompatible with MIPS32 target")
+
+    if simulator and simulator[0] == "mips32":
+        die("Memory64 is incompatible with MIPS32 simulator")
+
+    return True
+
+
+set_config("ENABLE_WASM_MEMORY64", wasm_memory64)
+set_define("ENABLE_WASM_MEMORY64", wasm_memory64)
+
+# Support for checking for indirect call to null via traps
+# =====================================================
+
+
+@depends(milestone.is_nightly, "--enable-jit", "--enable-simulator")
+def default_wasm_call_indirect_null(is_nightly, enable_jit, simulator):
+    if not enable_jit:
+        return
+
+    if simulator:
+        return
+
+    if is_nightly:
+        return True
+
+
+option(
+    "--enable-wasm-call-indirect-null",
+    default=default_wasm_call_indirect_null,
+    help="{Enable|Disable} WebAssembly call-indirect-to-null optimization",
+)
+
+
+@depends("--enable-wasm-call-indirect-null", "--enable-jit", "--enable-simulator")
+def wasm_call_indirect_null(value, enable_jit, simulator):
+    if not value:
+        return
+
+    if not enable_jit:
+        return
+
+    if simulator:
+        return
+
+    return True
+
+
+set_config("ENABLE_WASM_CALL_INDIRECT_NULL", wasm_call_indirect_null)
+set_define("ENABLE_WASM_CALL_INDIRECT_NULL", wasm_call_indirect_null)
+
 # Options for generating the shell as a script
 # ============================================
 option("--with-qemu-exe", nargs=1, help="Use path as an arm emulator on host platforms")
@@ -879,9 +1033,11 @@ set_config("SIXGILL_PATH", sixgill)
 
 # Support for readline
 # =====================================================
-@depends("--enable-js-shell", target_is_windows, compile_environment)
-def editline(js_shell, is_windows, compile_environment):
-    return js_shell and not is_windows and compile_environment
+
+
+@depends("--enable-js-shell", target_is_windows, compile_environment, target)
+def editline(js_shell, is_windows, compile_environment, target):
+    return js_shell and not is_windows and compile_environment and (target.os != "WASI")
 
 
 option(
@@ -928,9 +1084,19 @@ set_define(
 
 # ECMAScript Internationalization API Support (uses ICU)
 # ======================================================
-option("--with-system-icu", help="Use system ICU")
+system_lib_option("--with-system-icu", help="Use system ICU")
 
-system_icu = pkg_check_modules("MOZ_ICU", "icu-i18n >= 67.1", when="--with-system-icu")
+system_icu = pkg_check_modules("MOZ_ICU", "icu-i18n >= 70.1", when="--with-system-icu")
+
+
+@depends("--with-system-icu")
+def in_tree_icu(system_icu):
+    return not system_icu
+
+
+# Set MOZ_ICU_CFLAGS to an explicit empty value when --with-system-icu is *not* used,
+# for layout/style/extra-bindgen-flags
+set_config("MOZ_ICU_CFLAGS", [], when=in_tree_icu)
 
 set_config("MOZ_SYSTEM_ICU", True, when=system_icu)
 set_define("MOZ_SYSTEM_ICU", True, when=system_icu)
@@ -948,7 +1114,7 @@ set_config("JS_HAS_INTL_API", True, when="--with-intl-api")
 set_define("JS_HAS_INTL_API", True, when="--with-intl-api")
 
 
-@depends(check_build_environment, when="--with-intl-api")
+@depends(build_environment, when="--with-intl-api")
 @imports(_from="__builtin__", _import="open")
 @imports(_from="__builtin__", _import="ValueError")
 def icu_version(build_env):
@@ -1005,9 +1171,9 @@ set_define(
 # ==================================
 
 
-@depends(milestone.is_nightly, "--enable-wasm-multi-value")
-def default_wasm_exceptions(is_nightly, multi_value):
-    if multi_value and is_nightly:
+@depends(milestone.is_nightly)
+def default_wasm_exceptions(is_nightly):
+    if is_nightly:
         return True
 
 
@@ -1023,3 +1189,84 @@ set_config(
 set_define(
     "ENABLE_WASM_EXCEPTIONS", depends_if("--enable-wasm-exceptions")(lambda x: True)
 )
+
+set_define(
+    "_WASI_EMULATED_PROCESS_CLOCKS",
+    True,
+    when=depends(target)(lambda t: t.os == "WASI"),
+)
+
+# Enable change-array-by-copy
+# ===================================================
+def use_change_array_by_copy():
+    return False
+
+
+option(
+    "--enable-change-array-by-copy",
+    default=use_change_array_by_copy(),
+    help="{Enable|Disable} change-array-by-copy method pref/command-line option (disabled by default)",
+)
+
+
+@depends("--enable-change-array-by-copy")
+def enable_change_array_by_copy(value):
+    if value:
+        return True
+
+
+set_config("ENABLE_CHANGE_ARRAY_BY_COPY", enable_change_array_by_copy)
+set_define("ENABLE_CHANGE_ARRAY_BY_COPY", enable_change_array_by_copy)
+
+# Enable New Set methods
+# ===================================================
+def use_new_set_methods():
+    return False
+
+
+option(
+    "--enable-new-set-methods",
+    default=use_new_set_methods(),
+    help="{Enable|Disable} New Set methods pref/command-line option (disabled by default)",
+)
+
+
+@depends("--enable-new-set-methods")
+def enable_new_set_methods(value):
+    if value:
+        return True
+
+
+set_config("ENABLE_NEW_SET_METHODS", enable_new_set_methods)
+set_define("ENABLE_NEW_SET_METHODS", enable_new_set_methods)
+
+
+@depends(milestone.version)
+def js_version(version):
+    return Version(version)
+
+
+set_config("MOZJS_MAJOR_VERSION", depends(js_version.major)(lambda m: str(m)))
+set_define("MOZJS_MAJOR_VERSION", js_version.major)
+set_config("MOZJS_MINOR_VERSION", depends(js_version.minor)(lambda m: str(m)))
+set_define("MOZJS_MINOR_VERSION", js_version.minor)
+set_config("MOZJS_PATCH_VERSION", depends(js_version.patch)(lambda p: str(p)))
+set_config(
+    "MOZJS_ALPHA",
+    depends(js_version)(
+        lambda x: x.version[-2] if str(x.version[-2]) in "ab" else None
+    ),
+)
+
+
+# Check for tm_zone, tm_gmtoff in struct tm
+# ===================================================
+with only_when(compile_environment):
+    set_define(
+        "HAVE_TM_ZONE_TM_GMTOFF",
+        c_compiler.try_compile(
+            includes=["time.h"],
+            body="struct tm tm; tm.tm_zone = 0; tm.tm_gmtoff = 1;",
+            check_msg="for tm_zone and tm_gmtoff in struct tm",
+        ),
+    )

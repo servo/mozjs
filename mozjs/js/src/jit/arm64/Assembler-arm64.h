@@ -13,7 +13,7 @@
 
 #include "jit/CompactBuffer.h"
 #include "jit/shared/Disassembler-shared.h"
-#include "wasm/WasmTypes.h"
+#include "wasm/WasmTypeDecls.h"
 
 namespace js {
 namespace jit {
@@ -42,20 +42,20 @@ static constexpr ARMRegister ScratchReg2_64 = {ScratchReg2, 64};
 
 static constexpr FloatRegister ReturnDoubleReg = {FloatRegisters::d0,
                                                   FloatRegisters::Double};
-static constexpr FloatRegister ScratchDoubleReg = {FloatRegisters::d31,
-                                                   FloatRegisters::Double};
+static constexpr FloatRegister ScratchDoubleReg_ = {FloatRegisters::d31,
+                                                    FloatRegisters::Double};
 struct ScratchDoubleScope : public AutoFloatRegisterScope {
   explicit ScratchDoubleScope(MacroAssembler& masm)
-      : AutoFloatRegisterScope(masm, ScratchDoubleReg) {}
+      : AutoFloatRegisterScope(masm, ScratchDoubleReg_) {}
 };
 
 static constexpr FloatRegister ReturnFloat32Reg = {FloatRegisters::s0,
                                                    FloatRegisters::Single};
-static constexpr FloatRegister ScratchFloat32Reg = {FloatRegisters::s31,
-                                                    FloatRegisters::Single};
+static constexpr FloatRegister ScratchFloat32Reg_ = {FloatRegisters::s31,
+                                                     FloatRegisters::Single};
 struct ScratchFloat32Scope : public AutoFloatRegisterScope {
   explicit ScratchFloat32Scope(MacroAssembler& masm)
-      : AutoFloatRegisterScope(masm, ScratchFloat32Reg) {}
+      : AutoFloatRegisterScope(masm, ScratchFloat32Reg_) {}
 };
 
 #ifdef ENABLE_WASM_SIMD
@@ -70,7 +70,7 @@ struct ScratchSimd128Scope : public AutoFloatRegisterScope {
 #else
 struct ScratchSimd128Scope : public AutoFloatRegisterScope {
   explicit ScratchSimd128Scope(MacroAssembler& masm)
-      : AutoFloatRegisterScope(masm, ScratchDoubleReg) {
+      : AutoFloatRegisterScope(masm, ScratchDoubleReg_) {
     MOZ_CRASH("SIMD not enabled");
   }
 };
@@ -433,10 +433,10 @@ static_assert(CodeAlignment % SimdMemoryAlignment == 0,
 static const uint32_t WasmStackAlignment = SimdMemoryAlignment;
 static const uint32_t WasmTrapInstructionLength = 4;
 
-// The offsets are dynamically asserted during
-// code generation in the prologue/epilogue.
+// See comments in wasm::GenerateFunctionPrologue.  The difference between these
+// is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 32u;
+static constexpr uint32_t WasmCheckedTailEntryOffset = 16u;
 
 class Assembler : public vixl::Assembler {
  public:
@@ -537,7 +537,7 @@ class Assembler : public vixl::Assembler {
 
   static bool SupportsFloatingPoint() { return true; }
   static bool SupportsUnalignedAccesses() { return true; }
-  static bool SupportsFastUnalignedAccesses() { return true; }
+  static bool SupportsFastUnalignedFPAccesses() { return true; }
   static bool SupportsWasmSimd() { return true; }
 
   static bool HasRoundInstruction(RoundingMode mode) {
@@ -682,7 +682,7 @@ static constexpr Register ABINonArgReg2 = r10;
 static constexpr Register ABINonArgReg3 = r11;
 
 // This register may be volatile or nonvolatile. Avoid d31 which is the
-// ScratchDoubleReg.
+// ScratchDoubleReg_.
 static constexpr FloatRegister ABINonArgDoubleReg = {FloatRegisters::s16,
                                                      FloatRegisters::Single};
 
@@ -713,10 +713,6 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // code.  This must not overlap ReturnReg, JSReturnOperand, or WasmTlsReg.  It
 // must be a volatile register.
 static constexpr Register WasmJitEntryReturnScratch = r9;
-
-// Register used to store a reference to an exception thrown by Wasm to an
-// exception handling block. Should not overlap with WasmTlsReg.
-static constexpr Register WasmExceptionReg = ABINonArgReg2;
 
 static inline bool GetIntArgReg(uint32_t usedIntArgs, uint32_t usedFloatArgs,
                                 Register* out) {

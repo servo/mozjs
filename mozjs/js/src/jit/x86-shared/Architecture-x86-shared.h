@@ -13,6 +13,7 @@
 
 #include "mozilla/MathAlgorithms.h"
 
+#include <algorithm>
 #include <string.h>
 
 #include "jit/shared/Architecture-shared.h"
@@ -21,21 +22,6 @@
 
 namespace js {
 namespace jit {
-
-#if defined(JS_CODEGEN_X86)
-// In bytes: slots needed for potential memory->memory move spills.
-//   +8 for cycles
-//   +4 for gpr spills
-//   +8 for double spills
-static const uint32_t ION_FRAME_SLACK_SIZE = 20;
-
-#elif defined(JS_CODEGEN_X64)
-// In bytes: slots needed for potential memory->memory move spills.
-//   +8 for cycles
-//   +8 for gpr spills
-//   +8 for double spills
-static const uint32_t ION_FRAME_SLACK_SIZE = 24;
-#endif
 
 #if defined(JS_CODEGEN_X86)
 // These offsets are specific to nunboxing, and capture offsets into the
@@ -52,6 +38,8 @@ static const uint32_t ShadowStackSpace = 32;
 #else
 static const uint32_t ShadowStackSpace = 0;
 #endif
+
+static const uint32_t SizeOfReturnAddressAfterCall = sizeof(void*);
 
 static const uint32_t JumpImmediateRange = INT32_MAX;
 
@@ -271,6 +259,10 @@ class FloatRegisters {
   static const SetType WrapperMask = VolatileMask;
   static const SetType AllocatableMask = AllMask & ~NonAllocatableMask;
 };
+
+static const uint32_t SpillSlotSize =
+    std::max(sizeof(Registers::RegisterContent),
+             sizeof(FloatRegisters::RegisterContent));
 
 template <typename T>
 class TypedRegisterSet;

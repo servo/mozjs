@@ -26,31 +26,25 @@
 // All C++-implemented standard builtins library functions used in self-hosted
 // code are installed via the std_functions JSFunctionSpec[] in
 // SelfHosting.cpp.
+
+/********** List / Record specification types **********/
+
+// A "List" is an internal type used in the ECMAScript spec to define a simple
+// ordered list of values. It is never exposed to user script, but we use a
+// simple Object (with null prototype) as a convenient implementation.
 //
-// Do not create an alias to a self-hosted builtin, otherwise it will be cloned
-// twice.
-//
-// Symbol is a bare constructor without properties or methods.
-var std_Symbol = Symbol;
-
-
-/********** List specification type **********/
-
-/* Spec: ECMAScript Language Specification, 5.1 edition, 8.8 */
-function List() {
-    this.length = 0;
-}
-MakeConstructible(List, {__proto__: null});
-
-
-/********** Record specification type **********/
-
-
-/* Spec: ECMAScript Internationalization API Specification, draft, 5 */
-function Record() {
+// NOTE: This does not track a `length` field.
+function new_List() {
     return std_Object_create(null);
 }
-MakeConstructible(Record, {});
+
+
+// A "Record" is an internal type used in the ECMAScript spec to define a struct
+// made up of key / values. It is never exposed to user script, but we use a
+// simple Object (with null prototype) as a convenient implementation.
+function new_Record() {
+    return std_Object_create(null);
+}
 
 
 /********** Abstract operations defined in ECMAScript Language Specification **********/
@@ -119,7 +113,7 @@ function SpeciesConstructor(obj, defaultConstructor) {
         ThrowTypeError(JSMSG_OBJECT_REQUIRED, "object's 'constructor' property");
 
     // Steps 5.
-    var s = ctor[std_species];
+    var s = ctor[GetBuiltinSymbol("species")];
 
     // Step 6.
     if (s === undefined || s === null)
@@ -195,7 +189,7 @@ function CopyDataProperties(target, source, excludedItems) {
         if (!hasOwn(key, excludedItems) &&
             callFunction(std_Object_propertyIsEnumerable, from, key))
         {
-            _DefineDataProperty(target, key, from[key]);
+            DefineDataProperty(target, key, from[key]);
         }
     }
 
@@ -231,7 +225,7 @@ function CopyDataPropertiesUnfiltered(target, source) {
         // We abbreviate this by calling propertyIsEnumerable which is faster
         // and returns false for not defined properties.
         if (callFunction(std_Object_propertyIsEnumerable, from, key))
-            _DefineDataProperty(target, key, from[key]);
+            DefineDataProperty(target, key, from[key]);
     }
 
     // Step 7 (Return).

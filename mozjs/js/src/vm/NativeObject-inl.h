@@ -21,6 +21,7 @@
 #include "js/Result.h"
 #include "proxy/Proxy.h"
 #include "vm/JSContext.h"
+#include "vm/PropertyResult.h"
 #include "vm/ProxyObject.h"
 #include "vm/TypedArrayObject.h"
 
@@ -30,47 +31,22 @@
 #include "vm/JSObject-inl.h"
 #include "vm/Shape-inl.h"
 
+#ifdef ENABLE_RECORD_TUPLE
+// Defined in vm/RecordTupleShared.{h,cpp}. We cannot include that file
+// because it causes circular dependencies.
+extern bool js::IsExtendedPrimitive(const JSObject& obj);
+#endif
+
 namespace js {
 
 inline uint32_t NativeObject::numFixedSlotsMaybeForwarded() const {
-  return gc::MaybeForwarded(lastProperty())->numFixedSlots();
-}
-
-inline void* NativeObject::getPrivateMaybeForwarded() const {
-  MOZ_ASSERT(MaybeForwardedObjectClass(this)->hasPrivate());
-  uint32_t nfixed = numFixedSlotsMaybeForwarded();
-  HeapSlot* end = &fixedSlots()[nfixed];
-  return *reinterpret_cast<void**>(end);
+  return gc::MaybeForwarded(shape())->numFixedSlots();
 }
 
 inline uint8_t* NativeObject::fixedData(size_t nslots) const {
-  mozilla::DebugOnly<const JSClass*> clasp =
-      gc::MaybeForwardedObjectClass(this);
-  MOZ_ASSERT(ClassCanHaveFixedData(clasp));
-  MOZ_ASSERT(nslots ==
-             numFixedSlotsMaybeForwarded() + (clasp->hasPrivate() ? 1 : 0));
+  MOZ_ASSERT(ClassCanHaveFixedData(gc::MaybeForwardedObjectClass(this)));
+  MOZ_ASSERT(nslots == numFixedSlotsMaybeForwarded());
   return reinterpret_cast<uint8_t*>(&fixedSlots()[nslots]);
-}
-
-inline void NativeObject::removeLastProperty(JSContext* cx) {
-  MOZ_ASSERT(canRemoveLastProperty());
-  MOZ_ALWAYS_TRUE(setLastProperty(cx, lastProperty()->previous()));
-}
-
-inline bool NativeObject::canRemoveLastProperty() {
-  // Check that the information about the object stored in the last property's
-  // Shape is consistent with that stored in the previous shape. If not
-  // consistent, then the last property cannot be removed as it will induce a
-  // change in the object itself, and the object must be converted to dictionary
-  // mode instead.
-  MOZ_ASSERT(!inDictionaryMode());
-  Shape* previous = lastProperty()->previous().get();
-  if (previous->objectFlags() != lastProperty()->objectFlags() ||
-      previous->proto() != lastProperty()->proto()) {
-    return false;
-  }
-  MOZ_ASSERT(lastProperty()->base() == previous->base());
-  return true;
 }
 
 inline void NativeObject::initDenseElementHole(uint32_t index) {
@@ -166,6 +142,7 @@ inline void NativeObject::initDenseElements(NativeObject* src,
 inline void NativeObject::initDenseElements(const Value* src, uint32_t count) {
   MOZ_ASSERT(getDenseInitializedLength() == 0);
   MOZ_ASSERT(count <= getDenseCapacity());
+  MOZ_ASSERT(src);
   MOZ_ASSERT(isExtensible());
 
   setDenseInitializedLength(count);
@@ -449,21 +426,25 @@ inline bool NativeObject::isInWholeCellBuffer() const {
   return cells && cells->hasCell(cell);
 }
 
-/* static */ inline JS::Result<NativeObject*, JS::OOM> NativeObject::create(
+/* static */
+inline NativeObject* NativeObject::create(
     JSContext* cx, js::gc::AllocKind kind, js::gc::InitialHeap heap,
-    js::HandleShape shape) {
+    js::HandleShape shape, js::gc::AllocSite* site /* = nullptr */) {
   debugCheckNewObject(shape, kind, heap);
 
   const JSClass* clasp = shape->getObjectClass();
   MOZ_ASSERT(clasp->isNativeObject());
   MOZ_ASSERT(!clasp->isJSFunction(), "should use JSFunction::create");
+  MOZ_ASSERT(clasp != &ArrayObject::class_, "should use ArrayObject::create");
 
-  size_t nDynamicSlots =
-      calculateDynamicSlots(shape->numFixedSlots(), shape->slotSpan(), clasp);
+  const uint32_t nfixed = shape->numFixedSlots();
+  const uint32_t slotSpan = shape->slotSpan();
+  const size_t nDynamicSlots = calculateDynamicSlots(nfixed, slotSpan, clasp);
 
-  JSObject* obj = js::AllocateObject(cx, kind, nDynamicSlots, heap, clasp);
+  JSObject* obj =
+      js::AllocateObject(cx, kind, nDynamicSlots, heap, clasp, site);
   if (!obj) {
-    return cx->alreadyReportedOOM();
+    return nullptr;
   }
 
   NativeObject* nobj = static_cast<NativeObject*>(obj);
@@ -474,12 +455,8 @@ inline bool NativeObject::isInWholeCellBuffer() const {
   }
   nobj->setEmptyElements();
 
-  if (clasp->hasPrivate()) {
-    nobj->initPrivate(nullptr);
-  }
-
-  if (size_t span = shape->slotSpan()) {
-    nobj->initializeSlotRange(0, span);
+  if (slotSpan > 0) {
+    nobj->initSlots(nfixed, slotSpan);
   }
 
   if (clasp->shouldDelayMetadataBuilder()) {
@@ -510,7 +487,15 @@ MOZ_ALWAYS_INLINE bool NativeObject::updateSlotsForSpan(JSContext* cx,
     if (newSpan == oldSpan + 1) {
       initSlotUnchecked(oldSpan, UndefinedValue());
     } else {
-      initializeSlotRange(oldSpan, newSpan);
+      // Initialize slots [oldSpan, newSpan). Use the *Unchecked version because
+      // the shape's slot span does not reflect the allocated slots at this
+      // point.
+      auto initRange = [](HeapSlot* start, HeapSlot* end) {
+        for (HeapSlot* slot = start; slot < end; slot++) {
+          slot->initAsUndefined();
+        }
+      };
+      forEachSlotRangeUnchecked(oldSpan, newSpan, initRange);
     }
   } else {
     /* Trigger write barriers on the old slots before reallocating. */
@@ -549,19 +534,19 @@ MOZ_ALWAYS_INLINE void NativeObject::setEmptyDynamicSlots(
   MOZ_ASSERT(getSlotsHeader()->dictionarySlotSpan() == dictionarySlotSpan);
 }
 
-MOZ_ALWAYS_INLINE bool NativeObject::setLastProperty(JSContext* cx,
-                                                     Shape* shape) {
+MOZ_ALWAYS_INLINE bool NativeObject::setShapeAndUpdateSlots(JSContext* cx,
+                                                            Shape* newShape) {
   MOZ_ASSERT(!inDictionaryMode());
-  MOZ_ASSERT(!shape->inDictionary());
-  MOZ_ASSERT(shape->zone() == zone());
-  MOZ_ASSERT(shape->numFixedSlots() == numFixedSlots());
-  MOZ_ASSERT(shape->getObjectClass() == getClass());
+  MOZ_ASSERT(!newShape->isDictionary());
+  MOZ_ASSERT(newShape->zone() == zone());
+  MOZ_ASSERT(newShape->numFixedSlots() == numFixedSlots());
+  MOZ_ASSERT(newShape->getObjectClass() == getClass());
 
-  size_t oldSpan = lastProperty()->slotSpan();
-  size_t newSpan = shape->slotSpan();
+  size_t oldSpan = shape()->slotSpan();
+  size_t newSpan = newShape->slotSpan();
 
   if (oldSpan == newSpan) {
-    setShape(shape);
+    setShape(newShape);
     return true;
   }
 
@@ -569,7 +554,26 @@ MOZ_ALWAYS_INLINE bool NativeObject::setLastProperty(JSContext* cx,
     return false;
   }
 
-  setShape(shape);
+  setShape(newShape);
+  return true;
+}
+
+MOZ_ALWAYS_INLINE bool NativeObject::setShapeAndUpdateSlotsForNewSlot(
+    JSContext* cx, Shape* newShape, uint32_t slot) {
+  MOZ_ASSERT(!inDictionaryMode());
+  MOZ_ASSERT(!newShape->isDictionary());
+  MOZ_ASSERT(newShape->zone() == zone());
+  MOZ_ASSERT(newShape->numFixedSlots() == numFixedSlots());
+
+  MOZ_ASSERT(newShape->base() == shape()->base());
+  MOZ_ASSERT(newShape->slotSpan() == shape()->slotSpan() + 1);
+  MOZ_ASSERT(newShape->slotSpan() == slot + 1);
+
+  if (MOZ_UNLIKELY(!updateSlotsForSpan(cx, slot, slot + 1))) {
+    return false;
+  }
+
+  setShape(newShape);
   return true;
 }
 
@@ -618,16 +622,16 @@ inline bool NativeObject::denseElementsMaybeInIteration() {
  *
  *  - Otherwise no property was resolved. Set propp to NotFound and return true.
  */
-static MOZ_ALWAYS_INLINE bool CallResolveOp(
-    JSContext* cx, HandleNativeObject obj, HandleId id,
-    MutableHandle<PropertyResult> propp) {
+static MOZ_ALWAYS_INLINE bool CallResolveOp(JSContext* cx,
+                                            HandleNativeObject obj, HandleId id,
+                                            PropertyResult* propp) {
   MOZ_ASSERT(!cx->isHelperThreadContext());
 
   // Avoid recursion on (obj, id) already being resolved on cx.
   AutoResolving resolving(cx, obj, id);
   if (resolving.alreadyStarted()) {
     // Already resolving id in obj, suppress recursion.
-    propp.setRecursiveResolve();
+    propp->setRecursiveResolve();
     return true;
   }
 
@@ -638,7 +642,7 @@ static MOZ_ALWAYS_INLINE bool CallResolveOp(
   }
 
   if (!resolved) {
-    propp.setNotFound();
+    propp->setNotFound();
     return true;
   }
 
@@ -650,18 +654,18 @@ static MOZ_ALWAYS_INLINE bool CallResolveOp(
   if (JSID_IS_INT(id)) {
     uint32_t index = JSID_TO_INT(id);
     if (obj->containsDenseElement(index)) {
-      propp.setDenseElement(index);
+      propp->setDenseElement(index);
       return true;
     }
   }
 
   MOZ_ASSERT(!obj->is<TypedArrayObject>());
 
-  RootedShape shape(cx, obj->lookup(cx, id));
-  if (shape) {
-    propp.setNativeProperty(shape);
+  mozilla::Maybe<PropertyInfo> prop = obj->lookup(cx, id);
+  if (prop.isSome()) {
+    propp->setNativeProperty(*prop);
   } else {
-    propp.setNotFound();
+    propp->setNotFound();
   }
 
   return true;
@@ -677,19 +681,21 @@ template <AllowGC allowGC,
           LookupResolveMode resolveMode = LookupResolveMode::CheckResolve>
 static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
     JSContext* cx, typename MaybeRooted<NativeObject*, allowGC>::HandleType obj,
-    typename MaybeRooted<jsid, allowGC>::HandleType id,
-    typename MaybeRooted<PropertyResult, allowGC>::MutableHandleType propp) {
+    typename MaybeRooted<jsid, allowGC>::HandleType id, PropertyResult* propp) {
   // Native objects should should avoid `lookupProperty` hooks, and those that
   // use them should avoid recursively triggering lookup, and those that still
   // violate this guidance are the ModuleEnvironmentObject.
   MOZ_ASSERT_IF(obj->getOpsLookupProperty(),
                 obj->template is<ModuleEnvironmentObject>());
+#ifdef ENABLE_RECORD_TUPLE
+  MOZ_ASSERT(!js::IsExtendedPrimitive(*obj));
+#endif
 
   // Check for a native dense element.
   if (JSID_IS_INT(id)) {
     uint32_t index = JSID_TO_INT(id);
     if (obj->containsDenseElement(index)) {
-      propp.setDenseElement(index);
+      propp->setDenseElement(index);
       return true;
     }
   }
@@ -708,10 +714,10 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
 
     if (index.isSome()) {
       uint64_t idx = index.value();
-      if (idx < obj->template as<TypedArrayObject>().length().get()) {
-        propp.setTypedArrayElement(idx);
+      if (idx < obj->template as<TypedArrayObject>().length()) {
+        propp->setTypedArrayElement(idx);
       } else {
-        propp.setTypedArrayOutOfRange();
+        propp->setTypedArrayOutOfRange();
       }
       return true;
     }
@@ -719,17 +725,18 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
 
   MOZ_ASSERT(cx->compartment() == obj->compartment());
 
-  // Check for a native property. Call Shape::search directly (instead of
+  // Check for a native property. Call Shape::lookup directly (instead of
   // NativeObject::lookup) because it's inlined.
-  if (Shape* shape = obj->lastProperty()->search(cx, id)) {
-    propp.setNativeProperty(shape);
+  uint32_t index;
+  if (PropMap* map = obj->shape()->lookup(cx, id, &index)) {
+    propp->setNativeProperty(map->getPropertyInfo(index));
     return true;
   }
 
   // Some callers explicitily want us to ignore the resolve hook entirely. In
   // that case, we report the property as NotFound.
   if constexpr (resolveMode == LookupResolveMode::IgnoreResolve) {
-    propp.setNotFound();
+    propp->setNotFound();
     return true;
   }
 
@@ -739,7 +746,7 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
     static_assert(allowGC == false,
                   "CheckMayResolve can only be used with NoGC");
 
-    MOZ_ASSERT(propp.isNotFound());
+    MOZ_ASSERT(propp->isNotFound());
     return !ClassMayResolveId(cx->names(), obj->getClass(), id, obj);
   }
 
@@ -754,7 +761,7 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
     }
   }
 
-  propp.setNotFound();
+  propp->setNotFound();
   return true;
 }
 
@@ -776,7 +783,7 @@ static MOZ_ALWAYS_INLINE bool NativeLookupPropertyInline(
     typename MaybeRooted<
         std::conditional_t<allowGC == AllowGC::CanGC, JSObject*, NativeObject*>,
         allowGC>::MutableHandleType objp,
-    typename MaybeRooted<PropertyResult, allowGC>::MutableHandleType propp) {
+    PropertyResult* propp) {
   /* Search scopes starting with obj and following the prototype link. */
   typename MaybeRooted<NativeObject*, allowGC>::RootType current(cx, obj);
 
@@ -786,12 +793,12 @@ static MOZ_ALWAYS_INLINE bool NativeLookupPropertyInline(
       return false;
     }
 
-    if (propp.isFound()) {
+    if (propp->isFound()) {
       objp.set(current);
       return true;
     }
 
-    if (propp.shouldIgnoreProtoChain()) {
+    if (propp->shouldIgnoreProtoChain()) {
       break;
     }
 
@@ -815,7 +822,7 @@ static MOZ_ALWAYS_INLINE bool NativeLookupPropertyInline(
     current = &proto->as<NativeObject>();
   }
 
-  MOZ_ASSERT(propp.isNotFound());
+  MOZ_ASSERT(propp->isNotFound());
   objp.set(nullptr);
   return true;
 }
@@ -856,20 +863,21 @@ inline bool IsPackedArray(JSObject* obj) {
   return true;
 }
 
-MOZ_ALWAYS_INLINE bool AddDataPropertyNonPrototype(JSContext* cx,
-                                                   HandlePlainObject obj,
-                                                   HandleId id, HandleValue v) {
+// Like AddDataProperty but optimized for plain objects. Plain objects don't
+// have an addProperty hook.
+MOZ_ALWAYS_INLINE bool AddDataPropertyToPlainObject(JSContext* cx,
+                                                    HandlePlainObject obj,
+                                                    HandleId id,
+                                                    HandleValue v) {
   MOZ_ASSERT(!JSID_IS_INT(id));
-  MOZ_ASSERT(!obj->isUsedAsPrototype());
 
-  // If we know this is a new property we can call addProperty instead of
-  // the slower putProperty.
-  Shape* shape = NativeObject::addEnumerableDataProperty(cx, obj, id);
-  if (!shape) {
+  uint32_t slot;
+  if (!NativeObject::addProperty(cx, obj, id,
+                                 PropertyFlags::defaultDataPropFlags, &slot)) {
     return false;
   }
 
-  obj->setSlot(shape->slot(), v);
+  obj->initSlot(slot, v);
 
   MOZ_ASSERT(!obj->getClass()->getAddProperty());
   return true;

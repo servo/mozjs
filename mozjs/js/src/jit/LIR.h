@@ -17,7 +17,7 @@
 #include "jit/FixedList.h"
 #include "jit/InlineList.h"
 #include "jit/JitAllocPolicy.h"
-#include "jit/LOpcodesGenerated.h"
+#include "jit/LIROpsGenerated.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
 #include "jit/Registers.h"
@@ -196,7 +196,11 @@ class LUse : public LAllocation {
   static const uint32_t POLICY_BITS = 3;
   static const uint32_t POLICY_SHIFT = 0;
   static const uint32_t POLICY_MASK = (1 << POLICY_BITS) - 1;
+#ifdef JS_CODEGEN_ARM64
+  static const uint32_t REG_BITS = 7;
+#else
   static const uint32_t REG_BITS = 6;
+#endif
   static const uint32_t REG_SHIFT = POLICY_SHIFT + POLICY_BITS;
   static const uint32_t REG_MASK = (1 << REG_BITS) - 1;
 
@@ -542,18 +546,21 @@ class LDefinition {
     return (Policy)((bits_ >> POLICY_SHIFT) & POLICY_MASK);
   }
   Type type() const { return (Type)((bits_ >> TYPE_SHIFT) & TYPE_MASK); }
+
+  static bool isFloatRegCompatible(Type type, FloatRegister reg) {
+    if (type == FLOAT32) {
+      return reg.isSingle();
+    }
+    if (type == DOUBLE) {
+      return reg.isDouble();
+    }
+    MOZ_ASSERT(type == SIMD128);
+    return reg.isSimd128();
+  }
+
   bool isCompatibleReg(const AnyRegister& r) const {
     if (isFloatReg() && r.isFloat()) {
-      if (type() == FLOAT32) {
-        return r.fpu().isSingle();
-      }
-      if (type() == DOUBLE) {
-        return r.fpu().isDouble();
-      }
-      if (type() == SIMD128) {
-        return r.fpu().isSimd128();
-      }
-      MOZ_CRASH("Unexpected MDefinition type");
+      return isFloatRegCompatible(type(), r.fpu());
     }
     return !isFloatReg() && !r.isFloat();
   }
@@ -568,9 +575,11 @@ class LDefinition {
 #endif
   }
 
-  bool isFloatReg() const {
-    return type() == FLOAT32 || type() == DOUBLE || type() == SIMD128;
+  static bool isFloatReg(Type type) {
+    return type == FLOAT32 || type == DOUBLE || type == SIMD128;
   }
+  bool isFloatReg() const { return isFloatReg(type()); }
+
   uint32_t virtualRegister() const {
     uint32_t index = (bits_ >> VREG_SHIFT) & VREG_MASK;
     // MOZ_ASSERT(index != 0);
@@ -802,7 +811,7 @@ class LNode {
   LIR_OPCODE_LIST(LIROP)
 #undef LIROP
 
-// Note: GenerateOpcodeFiles.py generates LOpcodesGenerated.h based on this
+// Note: GenerateOpcodeFiles.py generates LIROpsGenerated.h based on this
 // macro.
 #define LIR_HEADER(opcode) \
   static constexpr LNode::Opcode classOpcode = LNode::Opcode::opcode;
@@ -1406,7 +1415,7 @@ class LSafepoint : public TempObject {
   // For call instructions, the live regs are empty. Call instructions may
   // have register inputs or temporaries, which will *not* be in the live
   // registers: if passed to the call, the values passed will be marked via
-  // MarkJitExitFrame, and no registers can be live after the instruction
+  // TraceJitExitFrame, and no registers can be live after the instruction
   // except its outputs.
   LiveRegisterSet liveRegs_;
 

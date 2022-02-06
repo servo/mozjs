@@ -13,10 +13,7 @@
 #  include "jit/PerfSpewer.h"
 #endif
 #include "jit/VMFunctions.h"
-#include "jit/x64/SharedICHelpers-x64.h"
-#ifdef MOZ_VTUNE
-#  include "vtune/VTuneWrapper.h"
-#endif
+#include "jit/x64/SharedICRegisters-x64.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
 
@@ -26,6 +23,47 @@ using namespace js;
 using namespace js::jit;
 
 using mozilla::IsPowerOfTwo;
+
+// This struct reflects the contents of the stack entry.
+// Given a `CommonFrameLayout* frame`:
+// - `frame->prevType()` should be `FrameType::CppToJSJit`.
+// - Then EnterJITStackEntry starts at:
+//   (uint8_t*)frame + frame->headerSize() + frame->prevFrameLocalSize()
+struct EnterJITStackEntry {
+  void* result;
+
+#if defined(_WIN64)
+  struct XMM {
+    using XMM128 = char[16];
+    XMM128 xmm6;
+    XMM128 xmm7;
+    XMM128 xmm8;
+    XMM128 xmm9;
+    XMM128 xmm10;
+    XMM128 xmm11;
+    XMM128 xmm12;
+    XMM128 xmm13;
+    XMM128 xmm14;
+    XMM128 xmm15;
+  } xmm;
+
+  // 16-byte aligment for xmm registers above.
+  uint64_t xmmPadding;
+
+  void* rsi;
+  void* rdi;
+#endif
+
+  void* r15;
+  void* r14;
+  void* r13;
+  void* r12;
+  void* rbx;
+  void* rbp;
+
+  // Pushed by CALL.
+  void* rip;
+};
 
 // All registers to save and restore. This includes the stack pointer, since we
 // use the ability to reference register values on the stack by index.
@@ -37,6 +75,8 @@ static const LiveRegisterSet AllRegs =
 // The trampoline use the EnterJitCode signature, with the standard x64 fastcall
 // calling convention.
 void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateEnterJIT");
+
   enterJITOffset_ = startTrampolineCode(masm);
 
   masm.assertStackAlignment(ABIStackAlignment,
@@ -59,6 +99,8 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   const Operand result = Operand(rbp, 24 + ShadowStackSpace);
 #endif
 
+  // Note: the stack pushes below must match the fields in EnterJITStackEntry.
+
   // Save old stack frame pointer, set new stack frame pointer.
   masm.push(rbp);
   masm.mov(rsp, rbp);
@@ -76,24 +118,27 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   masm.push(rsi);
 
   // 16-byte aligment for vmovdqa
-  masm.subq(Imm32(16 * 10 + 8), rsp);
+  masm.subq(Imm32(sizeof(EnterJITStackEntry::XMM) + 8), rsp);
 
-  masm.vmovdqa(xmm6, Operand(rsp, 16 * 0));
-  masm.vmovdqa(xmm7, Operand(rsp, 16 * 1));
-  masm.vmovdqa(xmm8, Operand(rsp, 16 * 2));
-  masm.vmovdqa(xmm9, Operand(rsp, 16 * 3));
-  masm.vmovdqa(xmm10, Operand(rsp, 16 * 4));
-  masm.vmovdqa(xmm11, Operand(rsp, 16 * 5));
-  masm.vmovdqa(xmm12, Operand(rsp, 16 * 6));
-  masm.vmovdqa(xmm13, Operand(rsp, 16 * 7));
-  masm.vmovdqa(xmm14, Operand(rsp, 16 * 8));
-  masm.vmovdqa(xmm15, Operand(rsp, 16 * 9));
+  masm.vmovdqa(xmm6, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm6)));
+  masm.vmovdqa(xmm7, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm7)));
+  masm.vmovdqa(xmm8, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm8)));
+  masm.vmovdqa(xmm9, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm9)));
+  masm.vmovdqa(xmm10, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm10)));
+  masm.vmovdqa(xmm11, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm11)));
+  masm.vmovdqa(xmm12, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm12)));
+  masm.vmovdqa(xmm13, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm13)));
+  masm.vmovdqa(xmm14, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm14)));
+  masm.vmovdqa(xmm15, Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm15)));
 #endif
 
   // Save arguments passed in registers needed after function call.
   masm.push(result);
 
-  // Remember stack depth without padding and arguments.
+  // End of pushes reflected in EnterJITStackEntry, i.e. EnterJITStackEntry
+  // starts at this rsp.
+  // Remember stack depth without padding and arguments, the frame descriptor
+  // will record the number of bytes pushed after this.
   masm.mov(rsp, r14);
 
   // Remember number of bytes occupied by argument vector
@@ -152,6 +197,10 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.bind(&footer);
   }
 
+  // Create the frame descriptor.
+  masm.subq(rsp, r14);
+  masm.makeFrameDescriptor(r14, FrameType::CppToJSJit, JitFrameLayout::Size());
+
   // Push the number of actual arguments.  |result| is used to store the
   // actual number of arguments without adding an extra argument to the enter
   // JIT.
@@ -162,13 +211,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   // Push the callee token.
   masm.push(token);
 
-  /*****************************************************************
-  Push the number of bytes we've pushed so far on the stack and call
-  *****************************************************************/
-  masm.subq(rsp, r14);
-
-  // Create a frame descriptor.
-  masm.makeFrameDescriptor(r14, FrameType::CppToJSJit, JitFrameLayout::Size());
+  // Push the descriptor.
   masm.push(r14);
 
   CodeLabel returnLabel;
@@ -295,6 +338,8 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   // Pop arguments and padding from stack.
   masm.pop(r14);  // Pop and decode descriptor.
   masm.shrq(Imm32(FRAMESIZE_SHIFT), r14);
+  masm.pop(r12);        // Discard calleeToken.
+  masm.pop(r12);        // Discard numActualArgs.
   masm.addq(r14, rsp);  // Remove arguments.
 
   /*****************************************************************
@@ -305,18 +350,18 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
   // Restore non-volatile registers.
 #if defined(_WIN64)
-  masm.vmovdqa(Operand(rsp, 16 * 0), xmm6);
-  masm.vmovdqa(Operand(rsp, 16 * 1), xmm7);
-  masm.vmovdqa(Operand(rsp, 16 * 2), xmm8);
-  masm.vmovdqa(Operand(rsp, 16 * 3), xmm9);
-  masm.vmovdqa(Operand(rsp, 16 * 4), xmm10);
-  masm.vmovdqa(Operand(rsp, 16 * 5), xmm11);
-  masm.vmovdqa(Operand(rsp, 16 * 6), xmm12);
-  masm.vmovdqa(Operand(rsp, 16 * 7), xmm13);
-  masm.vmovdqa(Operand(rsp, 16 * 8), xmm14);
-  masm.vmovdqa(Operand(rsp, 16 * 9), xmm15);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm6)), xmm6);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm7)), xmm7);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm8)), xmm8);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm9)), xmm9);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm10)), xmm10);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm11)), xmm11);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm12)), xmm12);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm13)), xmm13);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm14)), xmm14);
+  masm.vmovdqa(Operand(rsp, offsetof(EnterJITStackEntry::XMM, xmm15)), xmm15);
 
-  masm.addq(Imm32(16 * 10 + 8), rsp);
+  masm.addq(Imm32(sizeof(EnterJITStackEntry::XMM) + 8), rsp);
 
   masm.pop(rsi);
   masm.pop(rdi);
@@ -330,6 +375,34 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   // Restore frame pointer and return.
   masm.pop(rbp);
   masm.ret();
+}
+
+// static
+mozilla::Maybe<::JS::ProfilingFrameIterator::RegisterState>
+JitRuntime::getCppEntryRegisters(JitFrameLayout* frameStackAddress) {
+  if (frameStackAddress->prevType() != FrameType::CppToJSJit) {
+    // This is not a CppToJSJit frame, there are no C++ registers here.
+    return mozilla::Nothing{};
+  }
+
+  // The entry is (frame size stored in descriptor) bytes past the header.
+  MOZ_ASSERT(frameStackAddress->headerSize() == JitFrameLayout::Size());
+  const size_t offsetToCppEntry =
+      JitFrameLayout::Size() + frameStackAddress->prevFrameLocalSize();
+  EnterJITStackEntry* enterJITStackEntry =
+      reinterpret_cast<EnterJITStackEntry*>(
+          reinterpret_cast<uint8_t*>(frameStackAddress) + offsetToCppEntry);
+
+  // Extract native function call registers.
+  ::JS::ProfilingFrameIterator::RegisterState registerState;
+  registerState.fp = enterJITStackEntry->rbp;
+  registerState.pc = enterJITStackEntry->rip;
+  // sp should be inside the caller's frame, so set sp to the value of the stack
+  // pointer before the call to the EnterJit trampoline.
+  registerState.sp = &enterJITStackEntry->rip + 1;
+  // No lr in this world.
+  registerState.lr = nullptr;
+  return mozilla::Some(registerState);
 }
 
 // Push AllRegs in a way that is compatible with RegisterDump, regardless of
@@ -359,6 +432,8 @@ static void DumpAllRegs(MacroAssembler& masm) {
 }
 
 void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateInvalidator");
+
   // See explanatory comment in x86's JitRuntime::generateInvalidator.
 
   invalidatorOffset_ = startTrampolineCode(masm);
@@ -399,6 +474,8 @@ void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
                                             ArgumentsRectifierKind kind) {
   // Do not erase the frame pointer in this function.
 
+  AutoCreatedBy acb(masm, "JitRuntime::generateArgumentsRectifier");
+
   switch (kind) {
     case ArgumentsRectifierKind::Normal:
       argumentsRectifierOffset_ = startTrampolineCode(masm);
@@ -419,7 +496,8 @@ void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
   masm.loadPtr(Address(rsp, RectifierFrameLayout::offsetOfCalleeToken()), rax);
   masm.mov(rax, rcx);
   masm.andq(Imm32(uint32_t(CalleeTokenMask)), rcx);
-  masm.movzwl(Operand(rcx, JSFunction::offsetOfNargs()), rcx);
+  masm.load32(Operand(rcx, JSFunction::offsetOfFlagsAndArgCount()), rcx);
+  masm.rshift32(Imm32(JSFunction::ArgCountShift), rcx);
 
   // Stash another copy in r11, since we are going to do destructive operations
   // on rcx
@@ -621,6 +699,8 @@ JitRuntime::BailoutTable JitRuntime::generateBailoutTable(MacroAssembler& masm,
 
 void JitRuntime::generateBailoutHandler(MacroAssembler& masm,
                                         Label* bailoutTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateBailoutHandler");
+
   bailoutHandlerOffset_ = startTrampolineCode(masm);
 
   GenerateBailoutThunk(masm, NO_FRAME_SIZE_CLASS_ID, bailoutTail);
@@ -629,6 +709,8 @@ void JitRuntime::generateBailoutHandler(MacroAssembler& masm,
 bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
                                    const VMFunctionData& f, DynFn nativeFun,
                                    uint32_t* wrapperOffset) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateVMWrapper");
+
   *wrapperOffset = startTrampolineCode(masm);
 
   // Avoid conflicts with argument registers while discarding the result after
@@ -741,7 +823,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
 
   // Test for failure.
   switch (f.failType()) {
-    case Type_Object:
+    case Type_Cell:
       masm.branchTestPtr(Assembler::Zero, rax, rax, masm.failureLabel());
       break;
     case Type_Bool:
@@ -807,6 +889,8 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
 
 uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
                                         MIRType type) {
+  AutoCreatedBy acb(masm, "JitRuntime::generatePreBarrier");
+
   uint32_t offset = startTrampolineCode(masm);
 
   static_assert(PreBarrierReg == rdx);
@@ -852,6 +936,8 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
 
 void JitRuntime::generateExceptionTailStub(MacroAssembler& masm,
                                            Label* profilerExitTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateExceptionTailStub");
+
   exceptionTailOffset_ = startTrampolineCode(masm);
 
   masm.bind(masm.failureLabel());
@@ -860,6 +946,8 @@ void JitRuntime::generateExceptionTailStub(MacroAssembler& masm,
 
 void JitRuntime::generateBailoutTailStub(MacroAssembler& masm,
                                          Label* bailoutTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateBailoutTailStub");
+
   bailoutTailOffset_ = startTrampolineCode(masm);
   masm.bind(bailoutTail);
 
@@ -868,6 +956,8 @@ void JitRuntime::generateBailoutTailStub(MacroAssembler& masm,
 
 void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
                                                    Label* profilerExitTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateProfilerExitFrameTailStub");
+
   profilerExitFrameTailOffset_ = startTrampolineCode(masm);
   masm.bind(profilerExitTail);
 

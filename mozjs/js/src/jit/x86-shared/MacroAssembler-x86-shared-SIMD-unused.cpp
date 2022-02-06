@@ -52,13 +52,13 @@ void MacroAssemblerX86Shared::oolConvertFloat32x4ToInt32x4(
 
   ScratchSimd128Scope scratch(asMasm());
   asMasm().loadConstantSimd128Float(Int32MinX4, scratch);
-  vcmpleps(Operand(src), scratch);
+  vcmpleps(Operand(src), scratch, scratch);
   vmovmskps(scratch, temp);
   cmp32(temp, Imm32(15));
   j(Assembler::NotEqual, onConversionError);
 
   asMasm().loadConstantSimd128Float(Int32MaxX4, scratch);
-  vcmpleps(Operand(src), scratch);
+  vcmpleps(Operand(src), scratch, scratch);
   vmovmskps(scratch, temp);
   cmp32(temp, Imm32(0));
   j(Assembler::NotEqual, onConversionError);
@@ -554,7 +554,7 @@ void MacroAssemblerX86Shared::minNumFloat32x4(FloatRegister lhs, Operand rhs,
     MOZ_CRASH("Can do better by avoiding the movaps");
   } else {
     vmovaps(rhs, mask);
-    vcmpneqps(rhs, mask);
+    vcmpneqps(rhs, mask, mask);
   }
 
   if (AssemblerX86Shared::HasAVX()) {
@@ -597,7 +597,7 @@ void MacroAssemblerX86Shared::maxNumFloat32x4(FloatRegister lhs, Operand rhs,
     MOZ_CRASH("Can do better by avoiding the movaps");
   } else {
     vmovaps(rhs, mask);
-    vcmpneqps(rhs, mask);
+    vcmpneqps(rhs, mask, mask);
   }
 
   if (AssemblerX86Shared::HasAVX()) {
@@ -612,5 +612,16 @@ void MacroAssemblerX86Shared::maxNumFloat32x4(FloatRegister lhs, Operand rhs,
     vandps(Operand(mask), output, output);
     vandnps(Operand(temp), mask, mask);
     vorps(Operand(mask), output, output);
+  }
+}
+
+void MacroAssemblerX86Shared::selectX4(FloatRegister mask, FloatRegister onTrue,
+                                       FloatRegister onFalse,
+                                       FloatRegister temp,
+                                       FloatRegister output) {
+  if (AssemblerX86Shared::HasAVX()) {
+    vblendvps(mask, onTrue, onFalse, output);
+  } else {
+    selectSimd128(mask, onTrue, onFalse, temp, output);
   }
 }

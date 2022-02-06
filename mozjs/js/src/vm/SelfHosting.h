@@ -7,12 +7,13 @@
 #ifndef vm_SelfHosting_h_
 #define vm_SelfHosting_h_
 
-#include "jsapi.h"
 #include "NamespaceImports.h"
 
 #include "vm/Stack.h"
 
 namespace js {
+
+ScriptSourceObject* SelfHostingScriptSourceObject(JSContext* cx);
 
 /*
  * Check whether the given JSFunction is a self-hosted function whose
@@ -27,18 +28,7 @@ bool IsSelfHostedFunctionWithName(JSFunction* fun, JSAtom* name);
  * declaration in the self-hosted global.
  */
 PropertyName* GetClonedSelfHostedFunctionName(const JSFunction* fun);
-
-/*
- * Same as GetClonedSelfHostedFunctionName, but `fun` is guaranteed to be an
- * extended function.
- *
- * This function is supposed to be used off-thread, especially the JIT
- * compilation thread, that cannot access JSFunction.flags_, because of
- * a race condition.
- *
- * See Also: WrappedFunction.isExtended_
- */
-PropertyName* GetClonedSelfHostedFunctionNameOffMainThread(JSFunction* fun);
+void SetClonedSelfHostedFunctionName(JSFunction* fun, PropertyName* name);
 
 constexpr char ExtendedUnclonedSelfHostedFunctionNamePrefix = '$';
 
@@ -48,12 +38,16 @@ constexpr char ExtendedUnclonedSelfHostedFunctionNamePrefix = '$';
  */
 bool IsExtendedUnclonedSelfHostedFunctionName(JSAtom* name);
 
+void SetUnclonedSelfHostedCanonicalName(JSFunction* fun, JSAtom* name);
+
 bool IsCallSelfHostedNonGenericMethod(NativeImpl impl);
 
 bool ReportIncompatibleSelfHostedMethod(JSContext* cx, const CallArgs& args);
 
 /* Get the compile options used when compiling self hosted code. */
 void FillSelfHostingCompileOptions(JS::CompileOptions& options);
+
+const JSFunctionSpec* FindIntrinsicSpec(PropertyName* name);
 
 #ifdef DEBUG
 /*

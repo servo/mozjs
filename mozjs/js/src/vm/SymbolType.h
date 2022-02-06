@@ -9,8 +9,6 @@
 
 #include <stdio.h>
 
-#include "jsapi.h"
-
 #include "gc/Barrier.h"
 #include "gc/Tracer.h"
 #include "js/AllocPolicy.h"
@@ -23,10 +21,6 @@
 #include "js/Utility.h"
 #include "vm/Printer.h"
 #include "vm/StringType.h"
-
-namespace js {
-class AutoAccessAtomsZone;
-}  // namespace js
 
 namespace JS {
 
@@ -104,6 +98,8 @@ class Symbol
   void dump();  // Debugger-friendly stderr dump.
   void dump(js::GenericPrinter& out);
 #endif
+
+  static constexpr size_t offsetOfHash() { return offsetof(Symbol, hash_); }
 };
 
 } /* namespace JS */

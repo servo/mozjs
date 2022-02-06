@@ -14,7 +14,6 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/RandomNum.h"
-#include "mozilla/Unused.h"
 #include "mozilla/WrappingOperations.h"
 
 #include <cmath>
@@ -26,7 +25,7 @@
 #include "jit/InlinableNatives.h"
 #include "js/Class.h"
 #include "js/PropertySpec.h"
-#include "util/Windows.h"
+#include "util/WindowsWrapper.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
@@ -52,6 +51,12 @@ using mozilla::NegativeInfinity;
 using mozilla::NumberEqualsInt32;
 using mozilla::PositiveInfinity;
 using mozilla::WrappingMultiply;
+
+static mozilla::Atomic<bool, mozilla::Relaxed> sUseFdlibmForSinCosTan;
+
+JS_PUBLIC_API void JS::SetUseFdlibmForSinCosTan(bool value) {
+  sUseFdlibmForSinCosTan = value;
+}
 
 template <UnaryMathFunctionType F>
 static bool math_function(JSContext* cx, HandleValue val,
@@ -132,7 +137,7 @@ bool js::math_atan(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::ecmaAtan2(double y, double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   return fdlibm::atan2(y, x);
 }
 
@@ -160,7 +165,7 @@ bool js::math_atan2(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::math_ceil_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   return fdlibm::ceil(x);
 }
 
@@ -207,13 +212,25 @@ bool js::math_clz32(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-double js::math_cos_impl(double x) {
+bool js::math_use_fdlibm_for_sin_cos_tan() { return sUseFdlibmForSinCosTan; }
+
+double js::math_cos_fdlibm_impl(double x) {
+  MOZ_ASSERT(sUseFdlibmForSinCosTan);
+  AutoUnsafeCallWithABI unsafe;
+  return fdlibm::cos(x);
+}
+
+double js::math_cos_native_impl(double x) {
+  MOZ_ASSERT(!sUseFdlibmForSinCosTan);
   AutoUnsafeCallWithABI unsafe;
   return cos(x);
 }
 
 bool js::math_cos(JSContext* cx, unsigned argc, Value* vp) {
-  return math_function<math_cos_impl>(cx, argc, vp);
+  if (sUseFdlibmForSinCosTan) {
+    return math_function<math_cos_fdlibm_impl>(cx, argc, vp);
+  }
+  return math_function<math_cos_native_impl>(cx, argc, vp);
 }
 
 double js::math_exp_impl(double x) {
@@ -226,7 +243,7 @@ bool js::math_exp(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::math_floor_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   return fdlibm::floor(x);
 }
 
@@ -303,7 +320,7 @@ bool js::math_fround(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::math_log_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   return fdlibm::log(x);
 }
 
@@ -317,7 +334,7 @@ bool js::math_log(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::math_max_impl(double x, double y) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
 
   // Math.max(num, NaN) => NaN, Math.max(-0, +0) => +0
   if (x > y || IsNaN(x) || (x == y && IsNegative(y))) {
@@ -342,7 +359,7 @@ bool js::math_max(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::math_min_impl(double x, double y) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
 
   // Math.min(num, NaN) => NaN, Math.min(-0, +0) => -0
   if (x < y || IsNaN(x) || (x == y && IsNegativeZero(x))) {
@@ -387,7 +404,7 @@ bool js::minmax_impl(JSContext* cx, bool max, HandleValue a, HandleValue b,
 }
 
 double js::powi(double x, int32_t y) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   uint32_t n = Abs(y);
   double m = x;
   double p = 1;
@@ -414,7 +431,7 @@ double js::powi(double x, int32_t y) {
 }
 
 double js::ecmaPow(double x, double y) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
 
   /*
    * Use powi if the exponent is an integer-valued double. We don't have to
@@ -536,7 +553,7 @@ template double js::GetBiggestNumberLessThan<>(double x);
 template float js::GetBiggestNumberLessThan<>(float x);
 
 double js::math_round_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
 
   int32_t ignored;
   if (NumberEqualsInt32(x, &ignored)) {
@@ -583,22 +600,35 @@ js::math_round(JSContext* cx, unsigned argc, Value* vp) {
   return math_round_handle(cx, args[0], args.rval());
 }
 
-double js::math_sin_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+double js::math_sin_fdlibm_impl(double x) {
+  MOZ_ASSERT(sUseFdlibmForSinCosTan);
+  AutoUnsafeCallWithABI unsafe;
+  return fdlibm::sin(x);
+}
+
+double js::math_sin_native_impl(double x) {
+  MOZ_ASSERT(!sUseFdlibmForSinCosTan);
+  AutoUnsafeCallWithABI unsafe;
   return sin(x);
 }
 
 bool js::math_sin_handle(JSContext* cx, HandleValue val,
                          MutableHandleValue res) {
-  return math_function<math_sin_impl>(cx, val, res);
+  if (sUseFdlibmForSinCosTan) {
+    return math_function<math_sin_fdlibm_impl>(cx, val, res);
+  }
+  return math_function<math_sin_native_impl>(cx, val, res);
 }
 
 bool js::math_sin(JSContext* cx, unsigned argc, Value* vp) {
-  return math_function<math_sin_impl>(cx, argc, vp);
+  if (sUseFdlibmForSinCosTan) {
+    return math_function<math_sin_fdlibm_impl>(cx, argc, vp);
+  }
+  return math_function<math_sin_native_impl>(cx, argc, vp);
 }
 
 double js::math_sqrt_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   return sqrt(x);
 }
 
@@ -611,13 +641,23 @@ bool js::math_sqrt(JSContext* cx, unsigned argc, Value* vp) {
   return math_function<math_sqrt_impl>(cx, argc, vp);
 }
 
-double js::math_tan_impl(double x) {
+double js::math_tan_fdlibm_impl(double x) {
+  MOZ_ASSERT(sUseFdlibmForSinCosTan);
+  AutoUnsafeCallWithABI unsafe;
+  return fdlibm::tan(x);
+}
+
+double js::math_tan_native_impl(double x) {
+  MOZ_ASSERT(!sUseFdlibmForSinCosTan);
   AutoUnsafeCallWithABI unsafe;
   return tan(x);
 }
 
 bool js::math_tan(JSContext* cx, unsigned argc, Value* vp) {
-  return math_function<math_tan_impl>(cx, argc, vp);
+  if (sUseFdlibmForSinCosTan) {
+    return math_function<math_tan_fdlibm_impl>(cx, argc, vp);
+  }
+  return math_function<math_tan_native_impl>(cx, argc, vp);
 }
 
 double js::math_log10_impl(double x) {
@@ -711,7 +751,7 @@ bool js::math_atanh(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::ecmaHypot(double x, double y) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   return fdlibm::hypot(x, y);
 }
 
@@ -807,7 +847,7 @@ bool js::math_hypot_handle(JSContext* cx, HandleValueArray args,
 }
 
 double js::math_trunc_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
   return fdlibm::trunc(x);
 }
 
@@ -837,7 +877,7 @@ bool js::math_trunc(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 double js::math_sign_impl(double x) {
-  AutoUnsafeCallWithABI unsafe(UnsafeABIStrictness::AllowPendingExceptions);
+  AutoUnsafeCallWithABI unsafe;
 
   if (mozilla::IsNaN(x)) {
     return GenericNaN();
@@ -886,13 +926,22 @@ UnaryMathFunctionType js::GetUnaryMathFunctionPtr(UnaryMathFunction fun) {
     case UnaryMathFunction::Log:
       return math_log_impl;
     case UnaryMathFunction::Sin:
-      return math_sin_impl;
+      if (sUseFdlibmForSinCosTan) {
+        return math_sin_fdlibm_impl;
+      }
+      return math_sin_native_impl;
     case UnaryMathFunction::Cos:
-      return math_cos_impl;
+      if (sUseFdlibmForSinCosTan) {
+        return math_cos_fdlibm_impl;
+      }
+      return math_cos_native_impl;
     case UnaryMathFunction::Exp:
       return math_exp_impl;
     case UnaryMathFunction::Tan:
-      return math_tan_impl;
+      if (sUseFdlibmForSinCosTan) {
+        return math_tan_fdlibm_impl;
+      }
+      return math_tan_native_impl;
     case UnaryMathFunction::ATan:
       return math_atan_impl;
     case UnaryMathFunction::ASin:

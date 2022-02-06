@@ -10,6 +10,8 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/TextUtils.h"
 
+#include "jsapi.h"
+
 #include "frontend/TokenStream.h"
 #include "irregexp/RegExpAPI.h"
 #include "jit/InlinableNatives.h"
@@ -44,13 +46,18 @@ using JS::RegExpFlags;
 static PlainObject* CreateGroupsObject(JSContext* cx,
                                        HandlePlainObject groupsTemplate) {
   if (groupsTemplate->inDictionaryMode()) {
-    return NewObjectWithGivenProto<PlainObject>(cx, nullptr);
+    return NewPlainObjectWithProto(cx, nullptr);
   }
 
-  PlainObject* result;
-  JS_TRY_VAR_OR_RETURN_NULL(
-      cx, result, PlainObject::createWithTemplate(cx, groupsTemplate));
-  return result;
+  // The groups template object is stored in RegExpShared, which is shared
+  // across compartments and realms. So watch out for the case when the template
+  // object's realm is different from the current realm.
+  if (cx->realm() != groupsTemplate->realm()) {
+    return PlainObject::createWithTemplateFromDifferentRealm(cx,
+                                                             groupsTemplate);
+  }
+
+  return PlainObject::createWithTemplate(cx, groupsTemplate);
 }
 
 /*
@@ -1366,8 +1373,8 @@ static bool InterpretDollar(JSLinearString* matched, JSLinearString* string,
     return false;
   }
 
-  // ES 2021 Table 52
-  // https://tc39.es/ecma262/#table-45 (sic)
+  // ES 2021 Table 57: Replacement Text Symbol Substitutions
+  // https://tc39.es/ecma262/#table-replacement-text-symbol-substitutions
   char16_t c = currentDollar[1];
   if (IsAsciiDigit(c)) {
     /* $n, $nn */
@@ -1442,19 +1449,15 @@ static bool InterpretDollar(JSLinearString* matched, JSLinearString* string,
     case '&':
       out->init(matched, 0, matched->length());
       break;
-    case '+':
-      // SpiderMonkey extension
-      if (captures.length() == 0) {
-        out->initEmpty(matched);
-      } else {
-        GetParen(matched, captures[captures.length() - 1], out);
-      }
-      break;
     case '`':
       out->init(string, 0, position);
       break;
     case '\'':
-      out->init(string, tailPos, string->length() - tailPos);
+      if (tailPos >= string->length()) {
+        out->initEmpty(matched);
+      } else {
+        out->init(string, tailPos, string->length() - tailPos);
+      }
       break;
   }
 
@@ -1628,7 +1631,7 @@ static bool CollectNames(JSContext* cx, HandleLinearString replacement,
 static bool InitNamedCaptures(JSContext* cx, HandleLinearString replacement,
                               HandleObject groups, size_t firstDollarIndex,
                               MutableHandle<CapturesVector> namedCaptures) {
-  Rooted<GCVector<jsid>> names(cx);
+  Rooted<GCVector<jsid>> names(cx, cx);
   if (replacement->hasLatin1Chars()) {
     if (!CollectNames<Latin1Char>(cx, replacement, firstDollarIndex, &names)) {
       return false;
@@ -1763,7 +1766,7 @@ bool js::RegExpGetSubstitution(JSContext* cx, HandleArrayObject matchResult,
     captures.infallibleAppend(StringValue(captureLinear));
   }
 
-  Rooted<CapturesVector> namedCaptures(cx);
+  Rooted<CapturesVector> namedCaptures(cx, cx);
   if (groups.isObject()) {
     RootedObject groupsObj(cx, &groups.toObject());
     if (!InitNamedCaptures(cx, replacement, groupsObj, firstDollarIndex,
@@ -1893,7 +1896,7 @@ bool js::RegExpPrototypeOptimizableRaw(JSContext* cx, JSObject* proto) {
   NativeObject* nproto = static_cast<NativeObject*>(proto);
 
   Shape* shape = cx->realm()->regExps.getOptimizableRegExpPrototypeShape();
-  if (shape == nproto->lastProperty()) {
+  if (shape == nproto->shape()) {
     return true;
   }
 
@@ -2007,8 +2010,7 @@ bool js::RegExpPrototypeOptimizableRaw(JSContext* cx, JSObject* proto) {
     return false;
   }
 
-  cx->realm()->regExps.setOptimizableRegExpPrototypeShape(
-      nproto->lastProperty());
+  cx->realm()->regExps.setOptimizableRegExpPrototypeShape(nproto->shape());
   return true;
 }
 
@@ -2030,7 +2032,7 @@ bool js::RegExpInstanceOptimizableRaw(JSContext* cx, JSObject* obj,
   RegExpObject* rx = &obj->as<RegExpObject>();
 
   Shape* shape = cx->realm()->regExps.getOptimizableRegExpInstanceShape();
-  if (shape == rx->lastProperty()) {
+  if (shape == rx->shape()) {
     return true;
   }
 
@@ -2046,7 +2048,7 @@ bool js::RegExpInstanceOptimizableRaw(JSContext* cx, JSObject* obj,
     return false;
   }
 
-  cx->realm()->regExps.setOptimizableRegExpInstanceShape(rx->lastProperty());
+  cx->realm()->regExps.setOptimizableRegExpInstanceShape(rx->shape());
   return true;
 }
 

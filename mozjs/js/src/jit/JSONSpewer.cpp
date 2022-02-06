@@ -8,8 +8,6 @@
 
 #  include "jit/JSONSpewer.h"
 
-#  include <stdarg.h>
-
 #  include "jit/BacktrackingAllocator.h"
 #  include "jit/LIR.h"
 #  include "jit/MIR.h"
@@ -146,9 +144,6 @@ void JSONSpewer::spewMIR(MIRGraph* mir) {
     beginObject();
 
     property("number", block->id());
-    if (block->getHitState() == MBasicBlock::HitState::Count) {
-      property("count", block->getHitCount());
-    }
 
     beginListProperty("attributes");
     if (block->hasLastIns()) {

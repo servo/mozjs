@@ -21,9 +21,9 @@ function BigInt_toLocaleString() {
     if (locales === undefined && options === undefined) {
         // This cache only optimizes when no explicit locales and options
         // arguments were supplied.
-        if (!IsRuntimeDefaultLocale(numberFormatCache.runtimeDefaultLocale)) {
+        if (!intl_IsRuntimeDefaultLocale(numberFormatCache.runtimeDefaultLocale)) {
             numberFormatCache.numberFormat = intl_NumberFormat(locales, options);
-            numberFormatCache.runtimeDefaultLocale = RuntimeDefaultLocale();
+            numberFormatCache.runtimeDefaultLocale = intl_RuntimeDefaultLocale();
         }
         numberFormat = numberFormatCache.numberFormat;
     } else {
@@ -31,6 +31,6 @@ function BigInt_toLocaleString() {
     }
 
     // Step 3.
-    return intl_FormatNumber(numberFormat, x, /* formatToParts = */ false, /* unitStyle = */ false);
+    return intl_FormatNumber(numberFormat, x, /* formatToParts = */ false);
 }
 #endif  // JS_HAS_INTL_API

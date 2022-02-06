@@ -4,6 +4,22 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+# Updater
+# ==============================================================
+@depends(build_project)
+def updater_default(build_project):
+    return build_project != "mobile/android"
+
+
+option(
+    "--enable-updater",
+    default=updater_default,
+    help="{Enable|Disable} building the updater",
+)
+
+set_config("MOZ_UPDATER", True, when="--enable-updater")
+set_define("MOZ_UPDATER", True, when="--enable-updater")
+
 # Verify MAR signatures
 # ==============================================================
 
@@ -40,10 +56,16 @@ set_config(
 # check for, download, and install updates.
 # ==============================================================
 
+
+@depends("--enable-backgroundtasks", build_project)
+def update_agent_default(backgroundtasks, build_project):
+    return bool(backgroundtasks) and build_project == "browser"
+
+
 option(
     "--disable-update-agent",
     when=target_is_windows | target_is_osx,
-    default=True,
+    default=update_agent_default,
     help="{Enable|Disable} building update agent",
 )
 
@@ -54,14 +76,26 @@ set_config(
     ),
 )
 
+
+@depends(
+    "--enable-update-agent",
+    "--enable-backgroundtasks",
+    when=target_is_windows | target_is_osx,
+)
+def check_update_agent(update_agent, backgroundtasks):
+    if update_agent and not backgroundtasks:
+        die("--enable-backgroundtasks is required to --enable-update-agent")
+    return update_agent
+
+
 # Enable or disable the default browser agent, which monitors the user's default
 # browser setting on Windows.
 # ==============================================================================
 
 
-@depends(target)
-def default_browser_agent_default(target):
-    return target.os == "WINNT"
+@depends(target, build_project)
+def default_browser_agent_default(target, build_project):
+    return target.os == "WINNT" and build_project == "browser"
 
 
 option(

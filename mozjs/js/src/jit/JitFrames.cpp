@@ -11,14 +11,11 @@
 #include <algorithm>
 
 #include "builtin/ModuleObject.h"
-#include "gc/Marking.h"
-#include "jit/BaselineDebugModeOSR.h"
 #include "jit/BaselineFrame.h"
 #include "jit/BaselineIC.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
 #include "jit/IonScript.h"
-#include "jit/JitcodeMap.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/LIR.h"
@@ -29,8 +26,6 @@
 #include "jit/Snapshots.h"
 #include "jit/VMFunctions.h"
 #include "js/friend/DumpFunctions.h"  // js::DumpObject, js::DumpValue
-#include "vm/ArgumentsObject.h"
-#include "vm/GeckoProfiler.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
@@ -41,7 +36,6 @@
 #include "wasm/WasmInstance.h"
 
 #include "debugger/DebugAPI-inl.h"
-#include "gc/Nursery-inl.h"
 #include "jit/JSJitFrameIter-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSScript-inl.h"
@@ -1015,7 +1009,8 @@ static void TraceBaselineStubFrame(JSTracer* trc, const JSJitFrameIter& frame) {
 
   if (ICStub* stub = layout->maybeStubPtr()) {
     if (stub->isFallback()) {
-      stub->toFallbackStub()->trace(trc);
+      // Fallback stubs use runtime-wide trampoline code we don't need to trace.
+      MOZ_ASSERT(stub->usesTrampolineCode());
     } else {
       MOZ_ASSERT(stub->toCacheIRStub()->makesGCCalls());
       stub->toCacheIRStub()->trace(trc);
@@ -1163,9 +1158,6 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
       case VMFunctionData::RootString:
         TraceRoot(trc, reinterpret_cast<JSString**>(argBase), "ion-vm-args");
         break;
-      case VMFunctionData::RootFunction:
-        TraceRoot(trc, reinterpret_cast<JSFunction**>(argBase), "ion-vm-args");
-        break;
       case VMFunctionData::RootValue:
         TraceRoot(trc, reinterpret_cast<Value*>(argBase), "ion-vm-args");
         break;
@@ -1202,9 +1194,6 @@ static void TraceJitExitFrame(JSTracer* trc, const JSJitFrameIter& frame) {
         break;
       case VMFunctionData::RootString:
         TraceRoot(trc, footer->outParam<JSString*>(), "ion-vm-out");
-        break;
-      case VMFunctionData::RootFunction:
-        TraceRoot(trc, footer->outParam<JSFunction*>(), "ion-vm-out");
         break;
       case VMFunctionData::RootValue:
         TraceRoot(trc, footer->outParam<Value>(), "ion-vm-outvp");
@@ -1445,7 +1434,11 @@ RInstructionResults::~RInstructionResults() {
 bool RInstructionResults::init(JSContext* cx, uint32_t numResults) {
   if (numResults) {
     results_ = cx->make_unique<Values>();
-    if (!results_ || !results_->growBy(numResults)) {
+    if (!results_) {
+      return false;
+    }
+    if (!results_->growBy(numResults)) {
+      ReportOutOfMemory(cx);
       return false;
     }
 
@@ -2239,13 +2232,14 @@ bool InlineFrameIterator::isConstructing() const {
     InlineFrameIterator parent(TlsContext.get(), this);
     ++parent;
 
-    // Inlined Getters and Setters are never constructing.
+    // In the case of a JS frame, look up the pc from the snapshot.
     JSOp parentOp = JSOp(*parent.pc());
+
+    // Inlined Getters and Setters are never constructing.
     if (IsIonInlinableGetterOrSetterOp(parentOp)) {
       return false;
     }
 
-    // In the case of a JS frame, look up the pc from the snapshot.
     MOZ_ASSERT(IsInvokeOp(parentOp) && !IsSpreadOp(parentOp));
 
     return IsConstructOp(parentOp);

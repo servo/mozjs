@@ -74,7 +74,7 @@ function IsTypedArrayEnsuringArrayBuffer(arg) {
 // 7.3.20 SpeciesConstructor ( O, defaultConstructor )
 //
 // SpeciesConstructor function optimized for TypedArrays to avoid calling
-// _ConstructorForTypedArray, a non-inlineable runtime function, in the normal
+// ConstructorForTypedArray, a non-inlineable runtime function, in the normal
 // case.
 function TypedArraySpeciesConstructor(obj) {
     // Step 1.
@@ -85,18 +85,18 @@ function TypedArraySpeciesConstructor(obj) {
 
     // Step 3.
     if (ctor === undefined)
-        return _ConstructorForTypedArray(obj);
+        return ConstructorForTypedArray(obj);
 
     // Step 4.
     if (!IsObject(ctor))
         ThrowTypeError(JSMSG_OBJECT_REQUIRED, "object's 'constructor' property");
 
     // Steps 5.
-    var s = ctor[std_species];
+    var s = ctor[GetBuiltinSymbol("species")];
 
     // Step 6.
     if (s === undefined || s === null)
-        return _ConstructorForTypedArray(obj);
+        return ConstructorForTypedArray(obj);
 
     // Step 7.
     if (IsConstructor(s))
@@ -352,7 +352,7 @@ function TypedArrayFilter(callbackfn/*, thisArg*/) {
     var T = arguments.length > 1 ? arguments[1] : void 0;
 
     // Step 6.
-    var kept = new List();
+    var kept = new_List();
 
     // Step 8.
     var captured = 0;
@@ -1333,7 +1333,7 @@ function TypedArrayAt(index) {
 // ES6 draft rev30 (2014/12/24) 22.2.3.30 %TypedArray%.prototype.values()
 //
 // Uncloned functions with `$` prefix are allocated as extended function
-// to store the original name in `_SetCanonicalName`.
+// to store the original name in `SetCanonicalName`.
 function $TypedArrayValues() {
     // Step 1.
     var O = this;
@@ -1344,7 +1344,7 @@ function $TypedArrayValues() {
     // Step 7.
     return CreateArrayIterator(O, ITEM_KIND_VALUE);
 }
-_SetCanonicalName($TypedArrayValues, "values");
+SetCanonicalName($TypedArrayValues, "values");
 
 // ES2021 draft rev 190d474c3d8728653fbf8a5a37db1de34b9c1472
 // Plus <https://github.com/tc39/ecma262/pull/2221>
@@ -1432,7 +1432,7 @@ function TypedArrayStaticFrom(source, mapfn = undefined, thisArg = undefined) {
 
     // Step 6.
     // Inlined: GetMethod, steps 1-2.
-    var usingIterator = source[std_iterator];
+    var usingIterator = source[GetBuiltinSymbol("iterator")];
 
     // Step 7.
     // Inlined: GetMethod, step 3.
@@ -1572,7 +1572,7 @@ function $TypedArraySpecies() {
     // Step 1.
     return this;
 }
-_SetCanonicalName($TypedArraySpecies, "get [Symbol.species]");
+SetCanonicalName($TypedArraySpecies, "get [Symbol.species]");
 
 // ES2018 draft rev 0525bb33861c7f4e9850f8a222c89642947c4b9c
 // 22.2.2.1.1 Runtime Semantics: IterableToList( items, method )
@@ -1606,7 +1606,7 @@ function IterableToList(items, method) {
         // Step 4.b.
         if (next.done)
             break;
-        _DefineDataProperty(values, i++, next.value);
+        DefineDataProperty(values, i++, next.value);
     }
 
     // Step 5.
@@ -1706,14 +1706,14 @@ function $ArrayBufferSpecies() {
     // Step 1.
     return this;
 }
-_SetCanonicalName($ArrayBufferSpecies, "get [Symbol.species]");
+SetCanonicalName($ArrayBufferSpecies, "get [Symbol.species]");
 
 // Shared memory and atomics proposal (30 Oct 2016)
 function $SharedArrayBufferSpecies() {
     // Step 1.
     return this;
 }
-_SetCanonicalName($SharedArrayBufferSpecies, "get [Symbol.species]");
+SetCanonicalName($SharedArrayBufferSpecies, "get [Symbol.species]");
 
 // ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
 // 24.2.4.3 SharedArrayBuffer.prototype.slice ( start, end )
@@ -1779,3 +1779,191 @@ function SharedArrayBufferSlice(start, end) {
     // Step 19.
     return newObj;
 }
+
+#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
+
+// https://github.com/tc39/proposal-change-array-by-copy
+// TypedArray.prototype.withReversed()
+function TypedArrayWithReversed() {
+    /* Step 2. */
+    if (!IsObject(this) || !IsTypedArray(this)) {
+        return callFunction(CallTypedArrayMethodIfWrapped, this, "TypedArrayWithReversed");
+    }
+
+    // Step 1.
+    var O = this;
+
+    /* Step 3. */
+    var len = TypedArrayLength(O);
+
+    /* Step 4. */
+    var A = TypedArraySpeciesCreateWithLength(O, len);
+
+    /* Steps 5-6. */
+    for (var k = 0; k < len; k++) {
+        var from = len - k - 1;
+        var fromValue = O[from];
+        DefineDataProperty(A, k, fromValue);
+    }
+
+    /* Step 7. */
+    return A;
+}
+
+// ES2022 draft rev d03c1ec6e235a5180fa772b6178727c17974cb14
+// 10.4.5.9 IsValidIntegerIndex ( O, index )
+function isValidIntegerIndex(a, index) {
+    return (!IsDetachedBuffer(ViewedArrayBufferIfReified(a))
+            && Number_isInteger(index)
+            && !SameValue(index, -0)
+            && index >= 0
+            && index < TypedArrayLength(a));
+}
+
+// https://github.com/tc39/proposal-change-array-by-copy
+// TypedArray.prototype.withAt()
+function TypedArrayWithAt(index, value) {
+
+    /* Step 2. */
+    if (!IsObject(this) || !IsTypedArray(this)) {
+        return callFunction(CallTypedArrayMethodIfWrapped, this, "TypedArrayWithAt", index, value);
+    }
+
+    // Step 1.
+    var O = this;
+
+    /* Step 3. */
+    var len = TypedArrayLength(O);
+
+    /* Step 4. */
+    if (!Number_isInteger(index)) {
+        ThrowRangeError(JSMSG_BAD_INDEX);
+    }
+
+    /* Steps 5-6. */
+    var actualIndex = index < 0 ? (len + index) : index;
+
+    /* Step 7. */
+    if (!isValidIntegerIndex(O, actualIndex)) {
+        ThrowRangeError(JSMSG_BAD_INDEX);
+    }
+
+    /* Step 8. */
+    var A = TypedArraySpeciesCreateWithLength(O, len);
+
+    /* Steps 9-10. */
+    for (var k = 0; k < len; k++) {
+        var fromValue = k == actualIndex ? value : O[k];
+        DefineDataProperty(A, k, fromValue);
+    }
+
+    /* Step 11. */
+    return A;
+}
+
+// https://github.com/tc39/proposal-change-array-by-copy
+// TypedArray.prototype.withSorted()
+function TypedArrayWithSorted(comparefn) {
+    // Step 3.
+    if (!IsObject(this) || !IsTypedArray(this)) {
+        return callFunction(CallTypedArrayMethodIfWrapped, this, "TypedArrayWithSorted", comparefn);
+    }
+
+    // Step 1.
+    if (comparefn !== undefined) {
+        if (!IsCallable(comparefn)) {
+            ThrowTypeError(JSMSG_NOT_FUNCTION, DecompileArg(0, comparefn));
+        }
+    }
+
+    // Step 2.
+    var O = this;
+
+    // Step 4.
+    var len = TypedArrayLength(O);
+
+    var A = TypedArraySpeciesCreateWithLength(O, len);
+    for(var k = 0; k < len; k++) {
+        A[k] = O[k];
+    }
+    return callFunction(CallTypedArrayMethodIfWrapped, A, comparefn, "TypedArraySort");
+}
+
+// https://github.com/tc39/proposal-change-array-by-copy
+// TypedArray.prototype.withSpliced()
+function TypedArrayWithSpliced(start, deleteCount, ...items) {
+    /* Step 2. */
+    if (!IsObject(this) || !IsTypedArray(this)) {
+        return callFunction(CallTypedArrayMethodIfWrapped, this, "TypedArrayWithSpliced", start, deleteCount, items);
+    }
+
+    // Step 1.
+    var O = this;
+
+    // Step 3.
+    var len = TypedArrayLength(O);
+
+    // Step 4.
+    var relativeStart = ToInteger(start);
+
+    // Step 5.
+    var actualStart;
+    if (!Global_isFinite(relativeStart) && relativeStart < 0) {
+        actualStart = 0;
+    } else if (relativeStart < 0) {
+        // Step 6.
+        actualStart = std_Math_max(len + relativeStart, 0);
+    } else {
+        // Step 7.
+        actualStart = std_Math_min(relativeStart, len);
+    }
+
+    var insertCount;
+    var actualDeleteCount;
+    // Step 8.
+    if (start === undefined) {
+        insertCount = 0;
+        actualDeleteCount = 0;
+    } else if (deleteCount === undefined) {
+        // Step 9.
+        insertCount = 0;
+        actualDeleteCount = len - actualStart;
+    } else {
+        // Step 10.
+        insertCount = items === undefined ? 0 : items.length;
+        var dc = ToInteger(deleteCount);
+        actualDeleteCount = std_Math_min(len - actualStart, std_Math_max(0, dc));
+    }
+
+    // Step 11.
+    var newLen = len + insertCount - actualDeleteCount;
+
+    // Step 12.
+    var A = TypedArraySpeciesCreateWithLength(O, newLen);
+
+    // Steps 13-14
+    // Copy all the items before actualStart
+    for(var k = 0; k < actualStart; k++) {
+        var kValue = O[k];
+        DefineDataProperty(A, k, kValue);
+    }
+
+    // Step 15.
+    // Copy all the new items.
+    var k = actualStart;
+    for(var i = 0; i < insertCount; i++) {
+        DefineDataProperty(A, k++, items[i]);
+    }
+
+    // Step 16.
+    // Copy all the items after the deleted / added items
+    while(k < newLen) {
+        var from = k + actualDeleteCount - insertCount;
+        var fromValue = O[from];
+        DefineDataProperty(A, k++, fromValue);
+    }
+
+    // Step 17.
+    return A;
+}
+#endif

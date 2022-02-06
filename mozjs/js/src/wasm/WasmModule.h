@@ -23,8 +23,13 @@
 #include "js/BuildId.h"
 
 #include "wasm/WasmCode.h"
+#include "wasm/WasmException.h"
 #include "wasm/WasmJS.h"
 #include "wasm/WasmTable.h"
+
+namespace JS {
+class OptimizedEncodingListener;
+}
 
 namespace js {
 namespace wasm {
@@ -45,7 +50,7 @@ struct ImportValues {
   JSFunctionVector funcs;
   WasmTableObjectVector tables;
   WasmMemoryObject* memory;
-  WasmExceptionObjectVector exceptionObjs;
+  WasmTagObjectVector tagObjs;
   WasmGlobalObjectVector globalObjs;
   ValVector globalValues;
 
@@ -57,7 +62,7 @@ struct ImportValues {
     if (memory) {
       TraceRoot(trc, &memory, "import values memory");
     }
-    exceptionObjs.trace(trc);
+    tagObjs.trace(trc);
     globalObjs.trace(trc);
     globalValues.trace(trc);
   }
@@ -124,16 +129,15 @@ class Module : public JS::WasmModule {
   bool instantiateMemory(JSContext* cx,
                          MutableHandleWasmMemoryObject memory) const;
 #ifdef ENABLE_WASM_EXCEPTIONS
-  bool instantiateImportedException(JSContext* cx,
-                                    Handle<WasmExceptionObject*> exnObj,
-                                    WasmExceptionObjectVector& exnObjs,
-                                    SharedExceptionTagVector* tags) const;
-  bool instantiateLocalException(JSContext* cx, const EventDesc& ed,
-                                 WasmExceptionObjectVector& exnObjs,
-                                 SharedExceptionTagVector* tags,
-                                 uint32_t exnIndex) const;
-  bool instantiateExceptions(JSContext* cx, WasmExceptionObjectVector& exnObjs,
-                             SharedExceptionTagVector* tags) const;
+  bool instantiateImportedTag(JSContext* cx, Handle<WasmTagObject*> tagObj,
+                              WasmTagObjectVector& tagObjs,
+                              SharedExceptionTagVector* tags) const;
+  bool instantiateLocalTag(JSContext* cx, const TagDesc& ed,
+                           WasmTagObjectVector& tagObjs,
+                           SharedExceptionTagVector* tags,
+                           uint32_t tagIndex) const;
+  bool instantiateTags(JSContext* cx, WasmTagObjectVector& tagObjs,
+                       SharedExceptionTagVector* tags) const;
 #endif
   bool instantiateImportedTable(JSContext* cx, const TableDesc& td,
                                 Handle<WasmTableObject*> table,

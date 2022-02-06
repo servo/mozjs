@@ -18,7 +18,9 @@
 #include "jit/MIRGraph.h"
 #include "js/Conversions.h"
 #include "vm/Shape.h"
-#include "wasm/WasmTypes.h"
+#include "wasm/WasmBuiltins.h"
+#include "wasm/WasmCodegenTypes.h"
+#include "wasm/WasmTlsData.h"
 
 #include "jit/MacroAssembler-inl.h"
 #include "jit/shared/CodeGenerator-shared-inl.h"
@@ -257,7 +259,7 @@ void CodeGenerator::visitCompareExchangeTypedArrayElement64(
   Register temp2 = edx;
 
   Label fail;
-  masm.newGCBigInt(bigInt, temp2, &fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(bigInt, temp2, initialBigIntHeap(), &fail);
   masm.initializeBigInt64(arrayType, bigInt, replacement);
   masm.mov(bigInt, out);
   restoreSavedRegisters();
@@ -321,7 +323,7 @@ void CodeGenerator::visitAtomicExchangeTypedArrayElement64(
   Register temp = edx;
 
   Label fail;
-  masm.newGCBigInt(out, temp, &fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(out, temp, initialBigIntHeap(), &fail);
   masm.initializeBigInt64(arrayType, out, temp1);
   restoreSavedRegisters();
   masm.jump(ool->rejoin());
@@ -395,7 +397,7 @@ void CodeGenerator::visitAtomicTypedArrayElementBinop64(
   Register temp = edx;
 
   Label fail;
-  masm.newGCBigInt(out, temp, &fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(out, temp, initialBigIntHeap(), &fail);
   masm.initializeBigInt64(arrayType, out, temp1);
   restoreSavedRegisters();
   masm.jump(ool->rejoin());
@@ -451,9 +453,6 @@ void CodeGenerator::visitAtomicTypedArrayElementBinopForEffect64(
 
   masm.pop(edx);
 }
-
-// See ../CodeGenerator.cpp for more information.
-void CodeGenerator::visitWasmRegisterResult(LWasmRegisterResult* lir) {}
 
 void CodeGenerator::visitWasmUint32ToDouble(LWasmUint32ToDouble* lir) {
   Register input = ToRegister(lir->input());
@@ -1241,7 +1240,7 @@ void CodeGeneratorX86::emitBigIntDiv(LBigIntDiv* ins, Register dividend,
   masm.idiv(divisor);
 
   // Create and return the result.
-  masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(output, divisor, initialBigIntHeap(), fail);
   masm.initializeBigInt(output, dividend);
 }
 
@@ -1262,7 +1261,7 @@ void CodeGeneratorX86::emitBigIntMod(LBigIntMod* ins, Register dividend,
   masm.movl(output, dividend);
 
   // Create and return the result.
-  masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(output, divisor, initialBigIntHeap(), fail);
   masm.initializeBigInt(output, dividend);
 }
 
@@ -1281,6 +1280,47 @@ void CodeGenerator::visitWasmSelectI64(LWasmSelectI64* lir) {
   masm.movl(falseExpr.low, out.low);
   masm.movl(falseExpr.high, out.high);
   masm.bind(&done);
+}
+
+// We expect to handle only the case where compare is {U,}Int32 and select is
+// {U,}Int32.  Some values may be stack allocated, and the "true" input is
+// reused for the output.
+void CodeGenerator::visitWasmCompareAndSelect(LWasmCompareAndSelect* ins) {
+  bool cmpIs32bit = ins->compareType() == MCompare::Compare_Int32 ||
+                    ins->compareType() == MCompare::Compare_UInt32;
+  bool selIs32bit = ins->mir()->type() == MIRType::Int32;
+
+  MOZ_RELEASE_ASSERT(
+      cmpIs32bit && selIs32bit,
+      "CodeGenerator::visitWasmCompareAndSelect: unexpected types");
+
+  Register trueExprAndDest = ToRegister(ins->output());
+  MOZ_ASSERT(ToRegister(ins->ifTrueExpr()) == trueExprAndDest,
+             "true expr input is reused for output");
+
+  Assembler::Condition cond = Assembler::InvertCondition(
+      JSOpToCondition(ins->compareType(), ins->jsop()));
+  const LAllocation* rhs = ins->rightExpr();
+  const LAllocation* falseExpr = ins->ifFalseExpr();
+  Register lhs = ToRegister(ins->leftExpr());
+
+  if (rhs->isRegister()) {
+    if (falseExpr->isRegister()) {
+      masm.cmp32Move32(cond, lhs, ToRegister(rhs), ToRegister(falseExpr),
+                       trueExprAndDest);
+    } else {
+      masm.cmp32Load32(cond, lhs, ToRegister(rhs), ToAddress(falseExpr),
+                       trueExprAndDest);
+    }
+  } else {
+    if (falseExpr->isRegister()) {
+      masm.cmp32Move32(cond, lhs, ToAddress(rhs), ToRegister(falseExpr),
+                       trueExprAndDest);
+    } else {
+      masm.cmp32Load32(cond, lhs, ToAddress(rhs), ToAddress(falseExpr),
+                       trueExprAndDest);
+    }
+  }
 }
 
 void CodeGenerator::visitWasmReinterpretFromI64(LWasmReinterpretFromI64* lir) {
@@ -1353,6 +1393,16 @@ void CodeGenerator::visitWrapInt64ToInt32(LWrapInt64ToInt32* lir) {
   } else {
     masm.movl(ToRegister(input.high()), output);
   }
+}
+
+void CodeGenerator::visitWasmExtendU32Index(LWasmExtendU32Index*) {
+  MOZ_CRASH("64-bit only");
+}
+
+void CodeGenerator::visitWasmWrapU32Index(LWasmWrapU32Index* lir) {
+  // Generates no code on this platform because we just return the low part of
+  // the input register pair.
+  MOZ_ASSERT(ToRegister(lir->input()) == ToRegister(lir->output()));
 }
 
 void CodeGenerator::visitClzI64(LClzI64* lir) {
@@ -1447,6 +1497,14 @@ void CodeGenerator::visitInt64ToFloatingPoint(LInt64ToFloatingPoint* lir) {
   }
 }
 
+void CodeGenerator::visitBitNotI64(LBitNotI64* ins) {
+  const LInt64Allocation input = ins->getInt64Operand(0);
+  Register64 inputR = ToRegister64(input);
+  MOZ_ASSERT(inputR == ToOutRegister64(ins));
+  masm.notl(inputR.high);
+  masm.notl(inputR.low);
+}
+
 void CodeGenerator::visitTestI64AndBranch(LTestI64AndBranch* lir) {
   Register64 input = ToRegister64(lir->getInt64Operand(0));
 
@@ -1454,4 +1512,17 @@ void CodeGenerator::visitTestI64AndBranch(LTestI64AndBranch* lir) {
   jumpToBlock(lir->ifTrue(), Assembler::NonZero);
   masm.testl(input.low, input.low);
   emitBranch(Assembler::NonZero, lir->ifTrue(), lir->ifFalse());
+}
+
+void CodeGenerator::visitBitAndAndBranch(LBitAndAndBranch* baab) {
+  // LBitAndAndBranch only represents single-word ANDs, hence it can't be
+  // 64-bit here.
+  MOZ_ASSERT(!baab->is64());
+  Register regL = ToRegister(baab->left());
+  if (baab->right()->isConstant()) {
+    masm.test32(regL, Imm32(ToInt32(baab->right())));
+  } else {
+    masm.test32(regL, ToRegister(baab->right()));
+  }
+  emitBranch(baab->cond(), baab->ifTrue(), baab->ifFalse());
 }

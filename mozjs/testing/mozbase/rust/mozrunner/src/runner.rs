@@ -127,6 +127,9 @@ impl From<PrefReaderError> for RunnerError {
 #[derive(Debug)]
 pub struct FirefoxProcess {
     process: Child,
+    // The profile field is not directly used, but it is kept to avoid its
+    // Drop removing the (temporary) profile directory.
+    #[allow(dead_code)]
     profile: Profile,
 }
 
@@ -288,7 +291,9 @@ impl Runner for FirefoxRunner {
                 Arg::Other(_) | Arg::None => {}
             }
         }
-        if !seen_foreground {
+        // -foreground is only supported on Mac, and shouldn't be passed
+        // to Firefox on other platforms (bug 1720502).
+        if cfg!(target_os = "macos") && !seen_foreground {
             cmd.arg("-foreground");
         }
         if !seen_no_remote {

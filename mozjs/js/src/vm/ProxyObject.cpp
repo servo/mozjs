@@ -94,8 +94,8 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   // Try to look up the shape in the NewProxyCache.
   RootedShape shape(cx);
   if (!realm->newProxyCache.lookup(clasp, proto, shape.address())) {
-    shape =
-        EmptyShape::getInitialShape(cx, clasp, realm, proto, /* nfixed = */ 0);
+    shape = SharedShape::getInitialShape(cx, clasp, realm, proto,
+                                         /* nfixed = */ 0);
     if (!shape) {
       return nullptr;
     }
@@ -104,7 +104,7 @@ ProxyObject* ProxyObject::New(JSContext* cx, const BaseProxyHandler* handler,
   }
 
   MOZ_ASSERT(shape->realm() == realm);
-  MOZ_ASSERT(!IsAboutToBeFinalizedUnbarriered(shape.address()));
+  MOZ_ASSERT(!IsAboutToBeFinalizedUnbarriered(shape.get()));
 
   // Ensure that the wrapper has the same lifetime assumptions as the
   // wrappee. Prefer to allocate in the nursery, when possible.
@@ -198,7 +198,7 @@ void ProxyObject::nuke() {
   // to leak.
 }
 
-JS_FRIEND_API void js::detail::SetValueInProxy(Value* slot,
+JS_PUBLIC_API void js::detail::SetValueInProxy(Value* slot,
                                                const Value& value) {
   // Slots in proxies are not GCPtrValues, so do a cast whenever assigning
   // values to them which might trigger a barrier.

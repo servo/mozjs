@@ -14,7 +14,6 @@
 #include <utility>
 
 #include "jsapi.h"
-#include "jsfriendapi.h"
 #include "jsmath.h"
 #include "jsnum.h"
 
@@ -25,8 +24,10 @@
 #include "gc/Rooting.h"
 #include "js/CharacterEncoding.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/PropertyAndElement.h"    // JS_DefineProperty, JS_GetProperty
 #include "js/PropertySpec.h"
 #include "js/SavedFrameAPI.h"
+#include "js/Stack.h"
 #include "js/Vector.h"
 #include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
@@ -194,7 +195,7 @@ struct MOZ_STACK_CLASS SavedFrame::Lookup {
     MOZ_ASSERT(source);
     MOZ_ASSERT_IF(framePtr.isSome(), activation);
     if (js::SupportDifferentialTesting()) {
-      column = 0;
+      this->column = 0;
     }
   }
 
@@ -371,7 +372,7 @@ const ClassSpec SavedFrame::classSpec_ = {
 
 /* static */ const JSClass SavedFrame::class_ = {
     "SavedFrame",
-    JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(SavedFrame::JSSLOT_COUNT) |
+    JSCLASS_HAS_RESERVED_SLOTS(SavedFrame::JSSLOT_COUNT) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_SavedFrame) |
         JSCLASS_FOREGROUND_FINALIZE,
     &SavedFrameClassOps, &SavedFrame::classSpec_};
@@ -661,7 +662,7 @@ static SavedFrame* GetFirstSubsumedFrame(JSContext* cx,
                               frame, selfHosted, skippedAsync);
 }
 
-JS_FRIEND_API JSObject* GetFirstSubsumedSavedFrame(
+JS_PUBLIC_API JSObject* GetFirstSubsumedSavedFrame(
     JSContext* cx, JSPrincipals* principals, HandleObject savedFrame,
     JS::SavedFrameSelfHosted selfHosted) {
   if (!savedFrame) {
@@ -1427,12 +1428,22 @@ bool SavedStacks::insertFrames(JSContext* cx, MutableHandleSavedFrame frame,
   // parents (that can be cached) ought to have it set too.
   DebugOnly<bool> seenCached = false;
 
-  bool seenDebuggerEvalFrame = false;
+  // If we are using evalInFramePrev links to adjust the parents of debugger
+  // eval frames, we have to ensure the target frame is cached in the current
+  // realm. (This might not happen by default if the target frame is
+  // rematerialized, or if there is an async parent between the debugger eval
+  // frame and the target frame.) To accomplish this, we keep track of eval
+  // targets and ensure that we don't stop before they have all been reached.
+  Vector<AbstractFramePtr, 4, TempAllocPolicy> unreachedEvalTargets(cx);
 
   while (!iter.done()) {
     Activation& activation = *iter.activation();
     Maybe<LiveSavedFrameCache::FramePtr> framePtr =
         LiveSavedFrameCache::FramePtr::create(iter);
+
+    if (capture.is<JS::AllFrames>() && iter.hasUsableAbstractFramePtr()) {
+      unreachedEvalTargets.eraseIfEqual(iter.abstractFramePtr());
+    }
 
     if (framePtr) {
       // See the comment in Stack.h for why RematerializedFrames
@@ -1441,9 +1452,14 @@ bool SavedStacks::insertFrames(JSContext* cx, MutableHandleSavedFrame frame,
                                     framePtr->isRematerializedFrame());
       seenCached |= framePtr->hasCachedSavedFrame();
 
-      seenDebuggerEvalFrame |=
-          (framePtr->isInterpreterFrame() &&
-           framePtr->asInterpreterFrame().isDebuggerEvalFrame());
+      if (capture.is<JS::AllFrames>() && framePtr->isInterpreterFrame() &&
+          framePtr->asInterpreterFrame().isDebuggerEvalFrame()) {
+        AbstractFramePtr target =
+            framePtr->asInterpreterFrame().evalInFramePrev();
+        if (!unreachedEvalTargets.append(target)) {
+          return false;
+        }
+      }
     }
 
     if (capture.is<JS::AllFrames>() && framePtr &&
@@ -1456,8 +1472,10 @@ bool SavedStacks::insertFrames(JSContext* cx, MutableHandleSavedFrame frame,
 
       // Even though iter.hasCachedSavedFrame() was true, we may still get a
       // cache miss, if the frame's pc doesn't match the cache entry's, or if
-      // the cache was emptied due to a realm mismatch.
-      if (cachedParentFrame) {
+      // the cache was emptied due to a realm mismatch. If we got a cache hit,
+      // and we do not have to keep looking for unreached eval target frames,
+      // we can stop traversing the stack and start building the chain.
+      if (cachedParentFrame && unreachedEvalTargets.empty()) {
         break;
       }
 
@@ -1491,7 +1509,6 @@ bool SavedStacks::insertFrames(JSContext* cx, MutableHandleSavedFrame frame,
                                 nullptr,  // parent (not known yet)
                                 principals, iter.mutedErrors(), framePtr,
                                 iter.pc(), &activation)) {
-      ReportOutOfMemory(cx);
       return false;
     }
 
@@ -1546,7 +1563,7 @@ bool SavedStacks::insertFrames(JSContext* cx, MutableHandleSavedFrame frame,
         return false;
       }
       stackChain[stackChain.length() - 1].setParent(asyncParent);
-      if (!(capture.is<JS::AllFrames>() && seenDebuggerEvalFrame)) {
+      if (!capture.is<JS::AllFrames>() || unreachedEvalTargets.empty()) {
         // In the case of a JS::AllFrames capture, we will be populating the
         // LiveSavedFrameCache in the second loop. In the case where there is
         // a debugger eval frame on the stack, the second loop will use

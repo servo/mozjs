@@ -18,6 +18,8 @@
 
 namespace js {
 
+class AtomSet;
+
 /*
  * Return a printable, lossless char[] representation of a string-type atom.
  * The returned string is guaranteed to contain only ASCII characters.
@@ -30,34 +32,30 @@ class PropertyName;
 
 namespace js {
 
-class AutoAccessAtomsZone;
-
 /*
  * Atom tracing and garbage collection hooks.
  */
-void TraceAtoms(JSTracer* trc, const AutoAccessAtomsZone& access);
-
-void TraceWellKnownSymbols(JSTracer* trc);
-
-/* N.B. must correspond to boolean tagging behavior. */
-enum PinningBehavior { DoNotPinAtom = false, PinAtom = true };
+void TraceAtoms(JSTracer* trc);
 
 extern JSAtom* Atomize(
     JSContext* cx, const char* bytes, size_t length,
-    js::PinningBehavior pin = js::DoNotPinAtom,
     const mozilla::Maybe<uint32_t>& indexValue = mozilla::Nothing());
 
 extern JSAtom* Atomize(JSContext* cx, HashNumber hash, const char* bytes,
-                       size_t length, PinningBehavior pin);
+                       size_t length);
 
 template <typename CharT>
-extern JSAtom* AtomizeChars(JSContext* cx, const CharT* chars, size_t length,
-                            js::PinningBehavior pin = js::DoNotPinAtom);
+extern JSAtom* AtomizeChars(JSContext* cx, const CharT* chars, size_t length);
 
 /* Atomize characters when the value of HashString is already known. */
 template <typename CharT>
 extern JSAtom* AtomizeChars(JSContext* cx, mozilla::HashNumber hash,
                             const CharT* chars, size_t length);
+
+template <typename CharT>
+extern JSAtom* PermanentlyAtomizeChars(JSContext* cx, AtomSet& atomSet,
+                                       mozilla::HashNumber hash,
+                                       const CharT* chars, size_t length);
 
 /**
  * Create an atom whose contents are those of the |utf8ByteLength| code units
@@ -68,22 +66,22 @@ extern JSAtom* AtomizeChars(JSContext* cx, mozilla::HashNumber hash,
 extern JSAtom* AtomizeUTF8Chars(JSContext* cx, const char* utf8Chars,
                                 size_t utf8ByteLength);
 
-extern JSAtom* AtomizeString(JSContext* cx, JSString* str,
-                             js::PinningBehavior pin = js::DoNotPinAtom);
+extern JSAtom* AtomizeString(JSContext* cx, JSString* str);
 
 template <AllowGC allowGC>
 extern JSAtom* ToAtom(JSContext* cx,
                       typename MaybeRooted<JS::Value, allowGC>::HandleType v);
 
-// These functions are declared in vm/Xdr.h
-//
-// template<XDRMode mode>
-// XDRResult
-// XDRAtom(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
+/*
+ * Pin an atom so that it is never collected. Avoid using this if possible.
+ *
+ * This function does not GC.
+ */
+extern bool PinAtom(JSContext* cx, JSAtom* atom);
 
-// template<XDRMode mode>
-// XDRResult
-// XDRAtomOrNull(XDRState<mode>* xdr, js::MutableHandleAtom atomp);
+#ifdef ENABLE_RECORD_TUPLE
+extern bool EnsureAtomized(JSContext* cx, MutableHandleValue v, bool* updated);
+#endif
 
 extern JS::Handle<PropertyName*> ClassName(JSProtoKey key, JSContext* cx);
 

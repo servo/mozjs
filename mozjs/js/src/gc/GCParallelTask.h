@@ -8,6 +8,7 @@
 #define gc_GCParallelTask_h
 
 #include "mozilla/LinkedList.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/TimeStamp.h"
 
 #include <utility>
@@ -25,6 +26,10 @@
 
 namespace js {
 
+namespace gcstats {
+enum class PhaseKind : uint8_t;
+}
+
 namespace gc {
 class GCRuntime;
 }
@@ -38,6 +43,9 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
                        public HelperThreadTask {
  public:
   gc::GCRuntime* const gc;
+
+  // This can be PhaseKind::NONE for tasks that take place outside a GC.
+  const gcstats::PhaseKind phaseKind;
 
  private:
   // The state of the parallel computation.
@@ -70,10 +78,15 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
   mozilla::Atomic<bool, mozilla::MemoryOrdering::ReleaseAcquire> cancel_;
 
  public:
-  explicit GCParallelTask(gc::GCRuntime* gc)
-      : gc(gc), state_(State::Idle), duration_(nullptr), cancel_(false) {}
+  explicit GCParallelTask(gc::GCRuntime* gc, gcstats::PhaseKind phaseKind)
+      : gc(gc),
+        phaseKind(phaseKind),
+        state_(State::Idle),
+        duration_(nullptr),
+        cancel_(false) {}
   GCParallelTask(GCParallelTask&& other)
       : gc(other.gc),
+        phaseKind(other.phaseKind),
         state_(other.state_),
         duration_(nullptr),
         cancel_(false) {}
@@ -87,13 +100,16 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
 
   // The simple interface to a parallel task works exactly like pthreads.
   void start();
-  void join();
+  void join(mozilla::Maybe<mozilla::TimeStamp> deadline = mozilla::Nothing());
 
   // If multiple tasks are to be started or joined at once, it is more
   // efficient to take the helper thread lock once and use these methods.
   void startWithLockHeld(AutoLockHelperThreadState& lock);
-  void joinWithLockHeld(AutoLockHelperThreadState& lock);
-  void joinRunningOrFinishedTask(AutoLockHelperThreadState& lock);
+  void joinWithLockHeld(
+      AutoLockHelperThreadState& lock,
+      mozilla::Maybe<mozilla::TimeStamp> deadline = mozilla::Nothing());
+  void joinNonIdleTask(mozilla::Maybe<mozilla::TimeStamp> deadline,
+                       AutoLockHelperThreadState& lock);
 
   // Instead of dispatching to a helper, run the task on the current thread.
   void runFromMainThread();

@@ -42,6 +42,7 @@
 #include "proxy/Proxy.h"  // js::ProxyGetProperty
 
 #include "vm/ArgumentsObject.h"  // js::ArgumentsObject::finishForIonPure
+#include "vm/Interpreter.h"      // js::TypeOfObject
 #include "vm/NativeObject.h"     // js::NativeObject
 #include "vm/RegExpShared.h"     // js::ExecuteRegExpAtomRaw
 #include "vm/TraceLogging.h"     // js::TraceLogStartEventPrivate,
@@ -104,6 +105,8 @@ namespace jit {
   _(js::jit::AllocateBigIntNoGC)                                      \
   _(js::jit::AllocateFatInlineString)                                 \
   _(js::jit::AllocateString)                                          \
+  _(js::jit::AssertMapObjectHash)                                     \
+  _(js::jit::AssertSetObjectHash)                                     \
   _(js::jit::AssertValidBigIntPtr)                                    \
   _(js::jit::AssertValidObjectPtr)                                    \
   _(js::jit::AssertValidStringPtr)                                    \
@@ -111,6 +114,7 @@ namespace jit {
   _(js::jit::AssertValidValue)                                        \
   _(js::jit::AssumeUnreachable)                                       \
   _(js::jit::AtomicsStore64)                                          \
+  _(js::jit::AtomizeStringNoGC)                                       \
   _(js::jit::Bailout)                                                 \
   _(js::jit::BigIntNumberEqual<EqualityKind::Equal>)                  \
   _(js::jit::BigIntNumberEqual<EqualityKind::NotEqual>)               \
@@ -149,7 +153,7 @@ namespace jit {
   _(js::jit::Printf1)                                                 \
   _(js::jit::SetNativeDataPropertyPure)                               \
   _(js::jit::StringFromCharCodeNoGC)                                  \
-  _(js::jit::TypeOfObject)                                            \
+  _(js::jit::TypeOfNameObject)                                        \
   _(js::jit::WrapObjectPure)                                          \
   _(js::MapIteratorObject::next)                                      \
   _(js::NativeObject::addDenseElementPure)                            \
@@ -164,7 +168,8 @@ namespace jit {
   _(js::SetIteratorObject::next)                                      \
   _(js::StringToNumberPure)                                           \
   _(js::TraceLogStartEventPrivate)                                    \
-  _(js::TraceLogStopEventPrivate)
+  _(js::TraceLogStopEventPrivate)                                     \
+  _(js::TypeOfObject)
 
 // List of all ABI functions to be used with callWithABI, which are
 // overloaded. Each entry stores the fully qualified name of the C++ function,

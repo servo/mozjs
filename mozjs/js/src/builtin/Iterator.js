@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-function IteratorIdentity() {
+ function IteratorIdentity() {
   return this;
 }
 
@@ -36,6 +36,40 @@ function IteratorClose(iteratorRecord, value) {
   }
   // Step 5b & 9.
   return value;
+}
+
+/**
+ * ES2022 draft rev c5f683e61d5dce703650f1c90d2309c46f8c157a
+ *
+ * GetIterator ( obj [ , hint [ , method ] ] )
+ * https://tc39.es/ecma262/#sec-getiterator
+ *
+ * Optimized for single argument
+ */
+function GetIteratorSync(obj) {
+  // Steps 1 & 2 skipped as we know we want the sync iterator method
+  var method = GetMethod(obj, GetBuiltinSymbol("iterator"))
+
+  // Step 3. Let iterator be ? Call(method, obj).
+  var iterator = callContentFunction(method, obj);
+
+  // Step 4. If Type(iterator) is not Object, throw a TypeError exception.
+  if (!IsObject(iterator)) {
+    ThrowTypeError(JSMSG_NOT_ITERABLE, obj === null ? "null" : typeof obj);
+  }
+
+  // Step 5. Let nextMethod be ? GetV(iterator, "next").
+  var nextMethod = iterator.next;
+
+  // Step 6. Let iteratorRecord be the Record { [[Iterator]]: iterator, [[NextMethod]]: nextMethod, [[Done]]: false }.
+  var iteratorRecord = {
+    iterator,
+    nextMethod,
+    done: false
+  };
+
+  // Step 7. Return iteratorRecord.
+  return iteratorRecord;
 }
 
 /* Iterator Helpers proposal 1.1.1 */
@@ -77,7 +111,7 @@ function GetIteratorDirectWrapper(obj) {
   return {
     // Use a named function expression instead of a method definition, so
     // we don't create an inferred name for this function at runtime.
-    [std_iterator]: function IteratorMethod() {
+    [GetBuiltinSymbol("iterator")]: function IteratorMethod() {
       return this;
     },
     next(value) {
@@ -122,7 +156,7 @@ function IteratorStep(iteratorRecord, value) {
 /* Iterator Helpers proposal 2.1.3.3.1 */
 function IteratorFrom(O) {
   // Step 1.
-  const usingIterator = O[std_iterator];
+  const usingIterator = O[GetBuiltinSymbol("iterator")];
 
   let iteratorRecord;
   // Step 2.
@@ -598,7 +632,7 @@ function IteratorReduce(reducer/*, initialValue*/) {
 /* Iterator Helpers proposal 2.1.5.9 */
 function IteratorToArray() {
   // Step 1.
-  const iterated = {[std_iterator]: () => this};
+  const iterated = {[GetBuiltinSymbol("iterator")]: () => this};
   // Steps 2-3.
   return [...allowContentIter(iterated)];
 }

@@ -11,7 +11,7 @@
 
 #include <stdint.h>  // uint32_t
 
-#include "jstypes.h"  // JS_FRIEND_API
+#include "jstypes.h"  // JS_PUBLIC_API
 
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSObject;
@@ -27,6 +27,8 @@ class JS_PUBLIC_API JSObject;
   _(JS_TELEMETRY_GC_IS_ZONE_GC)             \
   _(JS_TELEMETRY_GC_MS)                     \
   _(JS_TELEMETRY_GC_BUDGET_MS_2)            \
+  _(JS_TELEMETRY_GC_BUDGET_WAS_INCREASED)   \
+  _(JS_TELEMETRY_GC_SLICE_WAS_LONG)         \
   _(JS_TELEMETRY_GC_BUDGET_OVERRUN)         \
   _(JS_TELEMETRY_GC_ANIMATION_MS)           \
   _(JS_TELEMETRY_GC_MAX_PAUSE_MS_2)         \
@@ -56,6 +58,9 @@ class JS_PUBLIC_API JSObject;
   _(JS_TELEMETRY_GC_TIME_BETWEEN_S)         \
   _(JS_TELEMETRY_GC_TIME_BETWEEN_SLICES_MS) \
   _(JS_TELEMETRY_GC_SLICE_COUNT)            \
+  _(JS_TELEMETRY_DESERIALIZE_BYTES)         \
+  _(JS_TELEMETRY_DESERIALIZE_ITEMS)         \
+  _(JS_TELEMETRY_DESERIALIZE_US)            \
   _(JS_TELEMETRY_GC_EFFECTIVENESS)
 
 // clang-format off
@@ -69,7 +74,7 @@ enum {
 
 using JSAccumulateTelemetryDataCallback = void (*)(int, uint32_t, const char*);
 
-extern JS_FRIEND_API void JS_SetAccumulateTelemetryCallback(
+extern JS_PUBLIC_API void JS_SetAccumulateTelemetryCallback(
     JSContext* cx, JSAccumulateTelemetryDataCallback callback);
 
 /*
@@ -79,11 +84,11 @@ extern JS_FRIEND_API void JS_SetAccumulateTelemetryCallback(
  * fixed member of the mozilla::UseCounter enum by the callback.
  */
 
-enum class JSUseCounter { ASMJS, WASM, WASM_DUPLICATE_IMPORTS };
+enum class JSUseCounter { ASMJS, WASM };
 
 using JSSetUseCounterCallback = void (*)(JSObject*, JSUseCounter);
 
-extern JS_FRIEND_API void JS_SetSetUseCounterCallback(
+extern JS_PUBLIC_API void JS_SetSetUseCounterCallback(
     JSContext* cx, JSSetUseCounterCallback callback);
 
 #endif  // js_friend_UsageStatistics_h

@@ -9,17 +9,18 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/CheckedInt.h"
 #include "mozilla/FloatingPoint.h"
+#if JS_HAS_INTL_API
+#  include "mozilla/intl/String.h"
+#endif
 #include "mozilla/PodOperations.h"
 #include "mozilla/Range.h"
 #include "mozilla/TextUtils.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 #include <limits>
 #include <string.h>
 #include <type_traits>
 
-#include "jsapi.h"
 #include "jsnum.h"
 #include "jstypes.h"
 
@@ -27,27 +28,22 @@
 #include "builtin/Boolean.h"
 #if JS_HAS_INTL_API
 #  include "builtin/intl/CommonFunctions.h"
+#  include "builtin/intl/FormatBuffer.h"
 #endif
 #include "builtin/RegExp.h"
 #include "jit/InlinableNatives.h"
 #include "js/Conversions.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
+#include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #if !JS_HAS_INTL_API
 #  include "js/LocaleSensitive.h"
 #endif
+#include "js/PropertyAndElement.h"  // JS_DefineFunctions
 #include "js/PropertySpec.h"
 #include "js/StableStringChars.h"
 #include "js/UniquePtr.h"
-#if JS_HAS_INTL_API
-#  include "unicode/uchar.h"
-#  include "unicode/unorm2.h"
-#  include "unicode/ustring.h"
-#  include "unicode/utypes.h"
-#endif
 #include "util/StringBuffer.h"
 #include "util/Unicode.h"
-#include "vm/BytecodeUtil.h"
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
 #include "vm/JSAtom.h"
@@ -58,6 +54,7 @@
 #include "vm/RegExpObject.h"
 #include "vm/RegExpStatics.h"
 #include "vm/SelfHosting.h"
+#include "vm/StaticStrings.h"
 #include "vm/ToSource.h"       // js::ValueToSource
 #include "vm/WellKnownAtom.h"  // js_*_str
 
@@ -469,7 +466,8 @@ const JSClass StringObject::class_ = {
  */
 static MOZ_ALWAYS_INLINE JSString* ToStringForStringFunction(
     JSContext* cx, const char* funName, HandleValue thisv) {
-  if (!CheckRecursionLimit(cx)) {
+  AutoCheckRecursionLimit recursion(cx);
+  if (!recursion.check(cx)) {
     return nullptr;
   }
 
@@ -633,7 +631,7 @@ static char16_t Final_Sigma(const char16_t* chars, size_t length,
 
 #if JS_HAS_INTL_API
   // Tell the analysis the BinaryProperty.contains function pointer called by
-  // u_hasBinaryProperty cannot GC.
+  // mozilla::intl::String::Is{CaseIgnorable, Cased} cannot GC.
   JS::AutoSuppressGCAnalysis nogc;
 
   bool precededByCased = false;
@@ -651,11 +649,11 @@ static char16_t Final_Sigma(const char16_t* chars, size_t length,
     // Ignore any characters with the property Case_Ignorable.
     // NB: We need to skip over all Case_Ignorable characters, even when
     // they also have the Cased binary property.
-    if (u_hasBinaryProperty(codePoint, UCHAR_CASE_IGNORABLE)) {
+    if (mozilla::intl::String::IsCaseIgnorable(codePoint)) {
       continue;
     }
 
-    precededByCased = u_hasBinaryProperty(codePoint, UCHAR_CASED);
+    precededByCased = mozilla::intl::String::IsCased(codePoint);
     break;
   }
   if (!precededByCased) {
@@ -677,11 +675,11 @@ static char16_t Final_Sigma(const char16_t* chars, size_t length,
     // Ignore any characters with the property Case_Ignorable.
     // NB: We need to skip over all Case_Ignorable characters, even when
     // they also have the Cased binary property.
-    if (u_hasBinaryProperty(codePoint, UCHAR_CASE_IGNORABLE)) {
+    if (mozilla::intl::String::IsCaseIgnorable(codePoint)) {
       continue;
     }
 
-    followedByCased = u_hasBinaryProperty(codePoint, UCHAR_CASED);
+    followedByCased = mozilla::intl::String::IsCased(codePoint);
     break;
   }
   if (!followedByCased) {
@@ -955,23 +953,15 @@ bool js::intl_toLocaleLowerCase(JSContext* cx, unsigned argc, Value* vp) {
 
   static const size_t INLINE_CAPACITY = js::intl::INITIAL_CHAR_BUFFER_SIZE;
 
-  Vector<char16_t, INLINE_CAPACITY> chars(cx);
-  if (!chars.resize(std::max(INLINE_CAPACITY, input.length()))) {
+  intl::FormatBuffer<char16_t, INLINE_CAPACITY> buffer(cx);
+
+  auto ok = mozilla::intl::String::ToLocaleLowerCase(locale, input, buffer);
+  if (ok.isErr()) {
+    intl::ReportInternalError(cx, ok.unwrapErr());
     return false;
   }
 
-  int32_t size = intl::CallICU(
-      cx,
-      [&input, locale](UChar* chars, int32_t size, UErrorCode* status) {
-        return u_strToLower(chars, size, input.begin().get(), input.length(),
-                            locale, status);
-      },
-      chars);
-  if (size < 0) {
-    return false;
-  }
-
-  JSString* result = NewStringCopyN<CanGC>(cx, chars.begin(), size);
+  JSString* result = buffer.toString(cx);
   if (!result) {
     return false;
   }
@@ -1369,23 +1359,15 @@ bool js::intl_toLocaleUpperCase(JSContext* cx, unsigned argc, Value* vp) {
 
   static const size_t INLINE_CAPACITY = js::intl::INITIAL_CHAR_BUFFER_SIZE;
 
-  Vector<char16_t, INLINE_CAPACITY> chars(cx);
-  if (!chars.resize(std::max(INLINE_CAPACITY, input.length()))) {
+  intl::FormatBuffer<char16_t, INLINE_CAPACITY> buffer(cx);
+
+  auto ok = mozilla::intl::String::ToLocaleUpperCase(locale, input, buffer);
+  if (ok.isErr()) {
+    intl::ReportInternalError(cx, ok.unwrapErr());
     return false;
   }
 
-  int32_t size = intl::CallICU(
-      cx,
-      [&input, locale](UChar* chars, int32_t size, UErrorCode* status) {
-        return u_strToUpper(chars, size, input.begin().get(), input.length(),
-                            locale, status);
-      },
-      chars);
-  if (size < 0) {
-    return false;
-  }
-
-  JSString* result = NewStringCopyN<CanGC>(cx, chars.begin(), size);
+  JSString* result = buffer.toString(cx);
   if (!result) {
     return false;
   }
@@ -1501,12 +1483,12 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  enum NormalizationForm { NFC, NFD, NFKC, NFKD };
+  using NormalizationForm = mozilla::intl::String::NormalizationForm;
 
   NormalizationForm form;
   if (!args.hasDefined(0)) {
     // Step 3.
-    form = NFC;
+    form = NormalizationForm::NFC;
   } else {
     // Step 4.
     JSLinearString* formStr = ArgToLinearString(cx, args, 0);
@@ -1516,13 +1498,13 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
 
     // Step 5.
     if (EqualStrings(formStr, cx->names().NFC)) {
-      form = NFC;
+      form = NormalizationForm::NFC;
     } else if (EqualStrings(formStr, cx->names().NFD)) {
-      form = NFD;
+      form = NormalizationForm::NFD;
     } else if (EqualStrings(formStr, cx->names().NFKC)) {
-      form = NFKC;
+      form = NormalizationForm::NFKC;
     } else if (EqualStrings(formStr, cx->names().NFKD)) {
-      form = NFKD;
+      form = NormalizationForm::NFKD;
     } else {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_INVALID_NORMALIZE_FORM);
@@ -1531,7 +1513,7 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   // Latin-1 strings are already in Normalization Form C.
-  if (form == NFC && str->hasLatin1Chars()) {
+  if (form == NormalizationForm::NFC && str->hasLatin1Chars()) {
     // Step 7.
     args.rval().setString(str);
     return true;
@@ -1545,73 +1527,27 @@ static bool str_normalize(JSContext* cx, unsigned argc, Value* vp) {
 
   mozilla::Range<const char16_t> srcChars = stableChars.twoByteRange();
 
-  // The unorm2_getXXXInstance() methods return a shared instance which must
-  // not be deleted.
-  UErrorCode status = U_ZERO_ERROR;
-  const UNormalizer2* normalizer;
-  if (form == NFC) {
-    normalizer = unorm2_getNFCInstance(&status);
-  } else if (form == NFD) {
-    normalizer = unorm2_getNFDInstance(&status);
-  } else if (form == NFKC) {
-    normalizer = unorm2_getNFKCInstance(&status);
-  } else {
-    MOZ_ASSERT(form == NFKD);
-    normalizer = unorm2_getNFKDInstance(&status);
-  }
-  if (U_FAILURE(status)) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INTERNAL_INTL_ERROR);
+  static const size_t INLINE_CAPACITY = js::intl::INITIAL_CHAR_BUFFER_SIZE;
+
+  intl::FormatBuffer<char16_t, INLINE_CAPACITY> buffer(cx);
+
+  auto alreadyNormalized =
+      mozilla::intl::String::Normalize(form, srcChars, buffer);
+  if (alreadyNormalized.isErr()) {
+    intl::ReportInternalError(cx, alreadyNormalized.unwrapErr());
     return false;
   }
 
-  int32_t spanLengthInt = unorm2_spanQuickCheckYes(
-      normalizer, srcChars.begin().get(), srcChars.length(), &status);
-  if (U_FAILURE(status)) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INTERNAL_INTL_ERROR);
-    return false;
-  }
-  MOZ_ASSERT(0 <= spanLengthInt && size_t(spanLengthInt) <= srcChars.length());
-  size_t spanLength = size_t(spanLengthInt);
+  using AlreadyNormalized = mozilla::intl::String::AlreadyNormalized;
 
   // Return if the input string is already normalized.
-  if (spanLength == srcChars.length()) {
+  if (alreadyNormalized.unwrap() == AlreadyNormalized::Yes) {
     // Step 7.
     args.rval().setString(str);
     return true;
   }
 
-  static const size_t INLINE_CAPACITY = js::intl::INITIAL_CHAR_BUFFER_SIZE;
-
-  Vector<char16_t, INLINE_CAPACITY> chars(cx);
-  if (!chars.resize(std::max(INLINE_CAPACITY, srcChars.length()))) {
-    return false;
-  }
-
-  // Copy the already normalized prefix.
-  if (spanLength > 0) {
-    PodCopy(chars.begin(), srcChars.begin().get(), spanLength);
-  }
-
-  int32_t size = intl::CallICU(
-      cx,
-      [normalizer, &srcChars, spanLength](UChar* chars, uint32_t size,
-                                          UErrorCode* status) {
-        mozilla::RangedPtr<const char16_t> remainingStart =
-            srcChars.begin() + spanLength;
-        size_t remainingLength = srcChars.length() - spanLength;
-
-        return unorm2_normalizeSecondAndAppend(normalizer, chars, spanLength,
-                                               size, remainingStart.get(),
-                                               remainingLength, status);
-      },
-      chars);
-  if (size < 0) {
-    return false;
-  }
-
-  JSString* ns = NewStringCopyN<CanGC>(cx, chars.begin(), size);
+  JSString* ns = buffer.toString(cx);
   if (!ns) {
     return false;
   }
@@ -3597,9 +3533,7 @@ static const JSFunctionSpec string_methods[] = {
     JS_SELF_HOSTED_FN("concat", "String_concat", 1, 0),
     JS_SELF_HOSTED_FN("slice", "String_slice", 2, 0),
 
-#ifdef NIGHTLY_BUILD
     JS_SELF_HOSTED_FN("at", "String_at", 1, 0),
-#endif
 
     /* HTML string methods. */
     JS_SELF_HOSTED_FN("bold", "String_bold", 0, 0),
@@ -3878,8 +3812,12 @@ Shape* StringObject::assignInitialShape(JSContext* cx,
                                         Handle<StringObject*> obj) {
   MOZ_ASSERT(obj->empty());
 
-  return NativeObject::addDataProperty(cx, obj, cx->names().length, LENGTH_SLOT,
-                                       JSPROP_PERMANENT | JSPROP_READONLY);
+  if (!NativeObject::addPropertyInReservedSlot(cx, obj, cx->names().length,
+                                               LENGTH_SLOT, {})) {
+    return nullptr;
+  }
+
+  return obj->shape();
 }
 
 JSObject* StringObject::createPrototype(JSContext* cx, JSProtoKey key) {

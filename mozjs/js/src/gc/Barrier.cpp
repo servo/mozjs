@@ -7,14 +7,16 @@
 #include "gc/Barrier.h"
 
 #include "gc/Policy.h"
-#include "jit/Ion.h"
+#include "jit/JitContext.h"
 #include "js/HashTable.h"
 #include "js/shadow/Zone.h"  // JS::shadow::Zone
 #include "js/Value.h"
 #include "vm/BigIntType.h"  // JS::BigInt
 #include "vm/EnvironmentObject.h"
 #include "vm/GeneratorObject.h"
+#include "vm/GetterSetter.h"
 #include "vm/JSObject.h"
+#include "vm/PropMap.h"
 #include "vm/Realm.h"
 #include "vm/SharedArrayObject.h"
 #include "vm/SymbolType.h"
@@ -225,7 +227,6 @@ template <typename T>
   // into another runtime. The zone's uid lock will protect against multiple
   // workers doing this simultaneously.
   MOZ_ASSERT(CurrentThreadCanAccessZone(l->zoneFromAnyThread()) ||
-             l->zoneFromAnyThread()->isSelfHostingZone() ||
              CurrentThreadIsPerformingGC());
 
   return l->zoneFromAnyThread()->getHashCodeInfallible(l);
@@ -243,8 +244,7 @@ template <typename T>
 
   MOZ_ASSERT(k);
   MOZ_ASSERT(l);
-  MOZ_ASSERT(CurrentThreadCanAccessZone(l->zoneFromAnyThread()) ||
-             l->zoneFromAnyThread()->isSelfHostingZone());
+  MOZ_ASSERT(CurrentThreadCanAccessZone(l->zoneFromAnyThread()));
 
   Zone* zone = k->zoneFromAnyThread();
   if (zone != l->zoneFromAnyThread()) {
@@ -257,7 +257,7 @@ template <typename T>
   // removed from the table later on.
   if (!zone->hasUniqueId(k)) {
     Key key = k;
-    MOZ_ASSERT(IsAboutToBeFinalizedUnbarriered(&key));
+    MOZ_ASSERT(IsAboutToBeFinalizedUnbarriered(key));
   }
   MOZ_ASSERT(zone->hasUniqueId(l));
 #endif
@@ -280,6 +280,7 @@ template struct JS_PUBLIC_API MovableCellHasher<EnvironmentObject*>;
 template struct JS_PUBLIC_API MovableCellHasher<GlobalObject*>;
 template struct JS_PUBLIC_API MovableCellHasher<JSScript*>;
 template struct JS_PUBLIC_API MovableCellHasher<BaseScript*>;
+template struct JS_PUBLIC_API MovableCellHasher<PropMap*>;
 template struct JS_PUBLIC_API MovableCellHasher<ScriptSourceObject*>;
 template struct JS_PUBLIC_API MovableCellHasher<SavedFrame*>;
 template struct JS_PUBLIC_API MovableCellHasher<WasmInstanceObject*>;

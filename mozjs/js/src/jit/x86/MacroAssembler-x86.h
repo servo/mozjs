@@ -7,12 +7,12 @@
 #ifndef jit_x86_MacroAssembler_x86_h
 #define jit_x86_MacroAssembler_x86_h
 
+#include "jit/JitOptions.h"
 #include "jit/MoveResolver.h"
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 #include "js/HeapAPI.h"
-#include "vm/BigIntType.h"  // JS::BigInt
-#include "vm/Realm.h"
-#include "wasm/WasmTypes.h"
+#include "wasm/WasmBuiltins.h"
+#include "wasm/WasmTlsData.h"
 
 namespace js {
 namespace jit {
@@ -116,6 +116,9 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
     }
   }
   Address ToType(Address base) { return ToType(Operand(base)).toAddress(); }
+  BaseIndex ToType(BaseIndex base) {
+    return ToType(Operand(base)).toBaseIndex();
+  }
 
   template <typename T>
   void add64FromMemory(const T& address, Register64 dest) {
@@ -175,6 +178,14 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
 
     load32(ToPayload(src), temp);
     store32(temp, ToPayload(dest));
+  }
+  void storePrivateValue(Register src, const Address& dest) {
+    store32(Imm32(0), ToType(dest));
+    store32(src, ToPayload(dest));
+  }
+  void storePrivateValue(ImmGCPtr imm, const Address& dest) {
+    store32(Imm32(0), ToType(dest));
+    movl(imm, Operand(ToPayload(dest)));
   }
   void loadValue(Operand src, ValueOperand val) {
     Operand payload = ToPayload(src);
@@ -598,10 +609,29 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
   void load32(AbsoluteAddress address, Register dest) {
     movl(Operand(address), dest);
   }
-  template <typename T>
-  void load64(const T& address, Register64 dest) {
-    movl(Operand(LowWord(address)), dest.low);
-    movl(Operand(HighWord(address)), dest.high);
+  void load64(const Address& address, Register64 dest) {
+    bool highBeforeLow = address.base == dest.low;
+    if (highBeforeLow) {
+      movl(Operand(HighWord(address)), dest.high);
+      movl(Operand(LowWord(address)), dest.low);
+    } else {
+      movl(Operand(LowWord(address)), dest.low);
+      movl(Operand(HighWord(address)), dest.high);
+    }
+  }
+  void load64(const BaseIndex& address, Register64 dest) {
+    // If you run into this, relax your register allocation constraints.
+    MOZ_RELEASE_ASSERT(
+        !((address.base == dest.low || address.base == dest.high) &&
+          (address.index == dest.low || address.index == dest.high)));
+    bool highBeforeLow = address.base == dest.low || address.index == dest.low;
+    if (highBeforeLow) {
+      movl(Operand(HighWord(address)), dest.high);
+      movl(Operand(LowWord(address)), dest.low);
+    } else {
+      movl(Operand(LowWord(address)), dest.low);
+      movl(Operand(HighWord(address)), dest.high);
+    }
   }
   template <typename T>
   void load64Unaligned(const T& address, Register64 dest) {
@@ -959,16 +989,8 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
     test32(operand.payloadReg(), operand.payloadReg());
     return truthy ? NonZero : Zero;
   }
-  Condition testStringTruthy(bool truthy, const ValueOperand& value) {
-    Register string = value.payloadReg();
-    cmp32(Operand(string, JSString::offsetOfLength()), Imm32(0));
-    return truthy ? Assembler::NotEqual : Assembler::Equal;
-  }
-  Condition testBigIntTruthy(bool truthy, const ValueOperand& value) {
-    Register bi = value.payloadReg();
-    cmp32(Operand(bi, BigInt::offsetOfDigitLength()), Imm32(0));
-    return truthy ? Assembler::NotEqual : Assembler::Equal;
-  }
+  Condition testStringTruthy(bool truthy, const ValueOperand& value);
+  Condition testBigIntTruthy(bool truthy, const ValueOperand& value);
 
   template <typename T>
   inline void loadInt32OrDouble(const T& src, FloatRegister dest);
@@ -1008,11 +1030,6 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared {
   inline void ensureDouble(const ValueOperand& source, FloatRegister dest,
                            Label* failure);
 
-  void loadWasmGlobalPtr(uint32_t globalDataOffset, Register dest) {
-    loadPtr(Address(WasmTlsReg,
-                    offsetof(wasm::TlsData, globalArea) + globalDataOffset),
-            dest);
-  }
   void loadWasmPinnedRegsFromTls() {
     // x86 doesn't have any pinned registers.
   }

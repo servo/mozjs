@@ -11,8 +11,6 @@
 #include "js/friend/ErrorMessages.h"      // JSMSG_*
 #include "vm/WellKnownAtom.h"             // js_*_str
 
-#include "vm/EnvironmentObject-inl.h"
-
 using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::Some;
@@ -52,6 +50,10 @@ const char* DeclarationKindString(DeclarationKind kind) {
       return "catch parameter";
     case DeclarationKind::PrivateName:
       return "private name";
+    case DeclarationKind::Synthetic:
+      return "synthetic";
+    case DeclarationKind::PrivateMethod:
+      return "private method";
   }
 
   MOZ_CRASH("Bad DeclarationKind");
@@ -442,6 +444,12 @@ bool ParseContext::isVarRedeclaredInEval(TaggedParserAtomIndex name,
     case ScopeContext::EnclosingLexicalBindingKind::CatchParameter:
       *out = Some(DeclarationKind::CatchParameter);
       break;
+    case ScopeContext::EnclosingLexicalBindingKind::Synthetic:
+      *out = Some(DeclarationKind::Synthetic);
+      break;
+    case ScopeContext::EnclosingLexicalBindingKind::PrivateMethod:
+      *out = Some(DeclarationKind::PrivateMethod);
+      break;
   }
   return true;
 }
@@ -642,16 +650,7 @@ bool ParseContext::declareFunctionArgumentsObject(
   }
 
   if (usesArguments) {
-    // There is an 'arguments' binding. Is the arguments object definitely
-    // needed?
-    //
-    // Also see the flags' comments in ContextFlags.
-    funbox->setArgumentsHasVarBinding();
-
-    // Dynamic scope access destroys all hope of optimization.
-    if (sc()->bindingsAccessedDynamically()) {
-      funbox->setAlwaysNeedsArgsObj();
-    }
+    funbox->setNeedsArgsObj();
   }
 
   return true;

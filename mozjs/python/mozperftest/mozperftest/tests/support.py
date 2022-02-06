@@ -49,9 +49,8 @@ def get_running_env(**kwargs):
         return ""
 
     def run_pip(args):
-        pip = Path(sys.executable).parent / "pip"
         subprocess.check_call(
-            [str(pip)] + args,
+            [sys.executable, "-m", "pip"] + args,
             stderr=subprocess.STDOUT,
             cwd=config.topsrcdir,
             universal_newlines=True,
@@ -61,6 +60,7 @@ def get_running_env(**kwargs):
     mach_cmd.topsrcdir = config.topsrcdir
     mach_cmd.topobjdir = config.topobjdir
     mach_cmd.distdir = config.distdir
+    mach_cmd.bindir = config.bindir
     mach_cmd._mach_context = MagicMock()
     mach_cmd._mach_context.state_dir = tempfile.mkdtemp()
     mach_cmd.run_process.return_value = 0

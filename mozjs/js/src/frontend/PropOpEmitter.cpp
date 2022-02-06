@@ -7,9 +7,9 @@
 #include "frontend/PropOpEmitter.h"
 
 #include "frontend/BytecodeEmitter.h"
+#include "frontend/ParserAtom.h"  // ParserAtom
 #include "frontend/SharedContext.h"
 #include "vm/Opcodes.h"
-#include "vm/StringType.h"
 #include "vm/ThrowMsgKind.h"  // ThrowMsgKind
 
 using namespace js;
@@ -19,7 +19,7 @@ PropOpEmitter::PropOpEmitter(BytecodeEmitter* bce, Kind kind, ObjKind objKind)
     : bce_(bce), kind_(kind), objKind_(objKind) {}
 
 bool PropOpEmitter::prepareAtomIndex(TaggedParserAtomIndex prop) {
-  return bce_->makeAtomIndex(prop, &propAtomIndex_);
+  return bce_->makeAtomIndex(prop, ParserAtom::Atomize::Yes, &propAtomIndex_);
 }
 
 bool PropOpEmitter::prepareForObj() {
@@ -67,7 +67,7 @@ bool PropOpEmitter::emitGet(TaggedParserAtomIndex prop) {
   }
 
   JSOp op = isSuper() ? JSOp::GetPropSuper : JSOp::GetProp;
-  if (!bce_->emitAtomOp(op, propAtomIndex_, ShouldInstrument::Yes)) {
+  if (!bce_->emitAtomOp(op, propAtomIndex_)) {
     //              [stack] # if Get
     //              [stack] PROP
     //              [stack] # if Call
@@ -178,7 +178,7 @@ bool PropOpEmitter::emitAssignment(TaggedParserAtomIndex prop) {
                                                  : JSOp::SetPropSuper
                : bce_->sc->strict() ? JSOp::StrictSetProp
                                     : JSOp::SetProp;
-  if (!bce_->emitAtomOp(setOp, propAtomIndex_, ShouldInstrument::Yes)) {
+  if (!bce_->emitAtomOp(setOp, propAtomIndex_)) {
     //              [stack] VAL
     return false;
   }
@@ -225,7 +225,7 @@ bool PropOpEmitter::emitIncDec(TaggedParserAtomIndex prop) {
                                               : JSOp::SetPropSuper
                : bce_->sc->strict() ? JSOp::StrictSetProp
                                     : JSOp::SetProp;
-  if (!bce_->emitAtomOp(setOp, propAtomIndex_, ShouldInstrument::Yes)) {
+  if (!bce_->emitAtomOp(setOp, propAtomIndex_)) {
     //              [stack] N? N+1
     return false;
   }

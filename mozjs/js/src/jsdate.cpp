@@ -33,6 +33,7 @@
 #include "jsnum.h"
 #include "jstypes.h"
 
+#include "js/CallAndConstruct.h"  // JS::IsCallable
 #include "js/Conversions.h"
 #include "js/Date.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
@@ -136,7 +137,7 @@ namespace {
 
 class DateTimeHelper {
  private:
-#if JS_HAS_INTL_API && !MOZ_SYSTEM_ICU
+#if JS_HAS_INTL_API
   static double localTZA(double t, DateTimeInfo::TimeZoneOffset offset);
 #else
   static int equivalentYearForDST(int year);
@@ -151,7 +152,7 @@ class DateTimeHelper {
   static double UTC(double t);
   static JSString* timeZoneComment(JSContext* cx, double utcTime,
                                    double localTime);
-#if !JS_HAS_INTL_API || MOZ_SYSTEM_ICU
+#if !JS_HAS_INTL_API
   static size_t formatTime(char* buf, size_t buflen, const char* fmt,
                            double utcTime, double localTime);
 #endif
@@ -446,7 +447,7 @@ JS_PUBLIC_API void JS::SetTimeResolutionUsec(uint32_t resolution, bool jitter) {
   sJitter = jitter;
 }
 
-#if JS_HAS_INTL_API && !MOZ_SYSTEM_ICU
+#if JS_HAS_INTL_API
 // ES2019 draft rev 0ceb728a1adbffe42b26972a6541fd7f398b1557
 // 20.3.1.7 LocalTZA ( t, isUTC )
 double DateTimeHelper::localTZA(double t, DateTimeInfo::TimeZoneOffset offset) {
@@ -568,7 +569,7 @@ double DateTimeHelper::UTC(double t) {
 
   return t - adjustTime(t - DateTimeInfo::localTZA() - msPerHour);
 }
-#endif /* JS_HAS_INTL_API && !MOZ_SYSTEM_ICU */
+#endif /* JS_HAS_INTL_API */
 
 static double LocalTime(double t) { return DateTimeHelper::localTime(t); }
 
@@ -972,6 +973,13 @@ done_date:
     }
     ++i;
     NEED_NDIGITS(2, tzHour);
+    /*
+     * Non-standard extension to the ISO date format:
+     * allow two digits for the time zone offset.
+     */
+    if (i >= length && !isStrict) {
+      goto done;
+    }
     /*
      * Non-standard extension to the ISO date format (permitted by ES5):
      * allow "-0700" as a time zone offset, not just "-07:00".
@@ -2802,7 +2810,7 @@ static bool date_toJSON(JSContext* cx, unsigned argc, Value* vp) {
   return Call(cx, toISO, obj, args.rval());
 }
 
-#if JS_HAS_INTL_API && !MOZ_SYSTEM_ICU
+#if JS_HAS_INTL_API
 JSString* DateTimeHelper::timeZoneComment(JSContext* cx, double utcTime,
                                           double localTime) {
   const char* locale = cx->runtime()->getDefaultLocale();
@@ -2906,7 +2914,7 @@ JSString* DateTimeHelper::timeZoneComment(JSContext* cx, double utcTime,
 
   return cx->names().empty;
 }
-#endif /* JS_HAS_INTL_API && !MOZ_SYSTEM_ICU */
+#endif /* JS_HAS_INTL_API */
 
 static JSString* TimeZoneComment(JSContext* cx, double utcTime,
                                  double localTime) {
@@ -3501,7 +3509,7 @@ JS_PUBLIC_API JSObject* JS::NewDateObject(JSContext* cx, ClippedTime time) {
   return NewDateObjectMsec(cx, time);
 }
 
-JS_FRIEND_API JSObject* js::NewDateObject(JSContext* cx, int year, int mon,
+JS_PUBLIC_API JSObject* js::NewDateObject(JSContext* cx, int year, int mon,
                                           int mday, int hour, int min,
                                           int sec) {
   MOZ_ASSERT(mon < 12);
@@ -3510,7 +3518,7 @@ JS_FRIEND_API JSObject* js::NewDateObject(JSContext* cx, int year, int mon,
   return NewDateObjectMsec(cx, TimeClip(UTC(msec_time)));
 }
 
-JS_FRIEND_API bool js::DateIsValid(JSContext* cx, HandleObject obj,
+JS_PUBLIC_API bool js::DateIsValid(JSContext* cx, HandleObject obj,
                                    bool* isValid) {
   ESClass cls;
   if (!GetBuiltinClass(cx, obj, &cls)) {
@@ -3552,7 +3560,7 @@ JS_PUBLIC_API bool JS::ObjectIsDate(JSContext* cx, Handle<JSObject*> obj,
   return true;
 }
 
-JS_FRIEND_API bool js::DateGetMsecSinceEpoch(JSContext* cx, HandleObject obj,
+JS_PUBLIC_API bool js::DateGetMsecSinceEpoch(JSContext* cx, HandleObject obj,
                                              double* msecsSinceEpoch) {
   ESClass cls;
   if (!GetBuiltinClass(cx, obj, &cls)) {

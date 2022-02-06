@@ -12,8 +12,6 @@
 
 #include <utility>  // for std::move
 
-#include "jsapi.h"
-
 #include "debugger/DebugAPI.h"    // for DebugAPI
 #include "debugger/Debugger.h"    // for JSBreakpointSite, Breakpoint
 #include "gc/Cell.h"              // for TenuredCell
@@ -44,7 +42,8 @@
 namespace js {
 
 const JSClass DebugScriptObject::class_ = {
-    "DebugScriptObject", JSCLASS_HAS_PRIVATE | JSCLASS_BACKGROUND_FINALIZE,
+    "DebugScriptObject",
+    JSCLASS_HAS_RESERVED_SLOTS(SlotCount) | JSCLASS_BACKGROUND_FINALIZE,
     &classOps_, JS_NULL_CLASS_SPEC};
 
 const JSClassOps DebugScriptObject::classOps_ = {
@@ -70,14 +69,14 @@ DebugScriptObject* DebugScriptObject::create(JSContext* cx,
     return nullptr;
   }
 
-  object->setPrivate(debugScript.release());
+  object->initReservedSlot(ScriptSlot, PrivateValue(debugScript.release()));
   AddCellMemory(object, nbytes, MemoryUse::ScriptDebugScript);
 
   return object;
 }
 
 DebugScript* DebugScriptObject::debugScript() const {
-  return static_cast<DebugScript*>(getPrivate());
+  return maybePtrFromReservedSlot<DebugScript>(ScriptSlot);
 }
 
 /* static */
@@ -351,7 +350,7 @@ void DebugScript::trace(JSTracer* trc) {
 /* static */
 void DebugAPI::removeDebugScript(JSFreeOp* fop, JSScript* script) {
   if (script->hasDebugScript()) {
-    if (IsAboutToBeFinalizedUnbarriered(&script)) {
+    if (IsAboutToBeFinalizedUnbarriered(script)) {
       // The script is dying and all breakpoint data will be cleaned up.
       return;
     }

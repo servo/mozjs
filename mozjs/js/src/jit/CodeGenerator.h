@@ -7,7 +7,6 @@
 #ifndef jit_CodeGenerator_h
 #define jit_CodeGenerator_h
 
-#include "jit/CacheIR.h"
 #if defined(JS_ION_PERF)
 #  include "jit/PerfSpewer.h"
 #endif
@@ -31,9 +30,13 @@
 #  error "Unknown architecture!"
 #endif
 
-#include "wasm/WasmGC.h"
-
 namespace js {
+
+namespace wasm {
+class Decoder;
+class StackMaps;
+}  // namespace wasm
+
 namespace jit {
 
 class WarpSnapshot;
@@ -52,6 +55,8 @@ class CheckOverRecursedFailure;
 class OutOfLineUnboxFloatingPoint;
 class OutOfLineStoreElementHole;
 class OutOfLineTypeOfV;
+class OutOfLineTypeOfIsNonPrimitiveV;
+class OutOfLineTypeOfIsNonPrimitiveO;
 class OutOfLineUpdateCache;
 class OutOfLineICFallback;
 class OutOfLineCallPostWriteBarrier;
@@ -96,13 +101,11 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   ~CodeGenerator();
 
   [[nodiscard]] bool generate();
-  [[nodiscard]] bool generateWasm(wasm::TypeIdDesc funcTypeId,
-                                  wasm::BytecodeOffset trapOffset,
-                                  const wasm::ArgTypeVector& argTys,
-                                  const MachineState& trapExitLayout,
-                                  size_t trapExitLayoutNumWords,
-                                  wasm::FuncOffsets* offsets,
-                                  wasm::StackMaps* stackMaps);
+  [[nodiscard]] bool generateWasm(
+      wasm::TypeIdDesc funcTypeId, wasm::BytecodeOffset trapOffset,
+      const wasm::ArgTypeVector& argTys, const MachineState& trapExitLayout,
+      size_t trapExitLayoutNumWords, wasm::FuncOffsets* offsets,
+      wasm::StackMaps* stackMaps, wasm::Decoder* decoder);
 
   [[nodiscard]] bool link(JSContext* cx, const WarpSnapshot* snapshot);
 
@@ -110,7 +113,13 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                          Register scratch);
   void emitIntToString(Register input, Register output, Label* ool);
 
+  void emitTypeOfCheck(JSValueType type, Register tag, Register output,
+                       Label* done, Label* oolObject);
+  void emitTypeOfJSType(JSValueType type, Register output);
   void emitTypeOfObject(Register obj, Register output, Label* done);
+  void emitTypeOfIsObject(MTypeOfIs* mir, Register obj, Register output,
+                          Label* success, Label* fail, Label* slowCheck);
+  void emitTypeOfIsObjectOOL(MTypeOfIs* mir, Register obj, Register output);
 
   template <typename Fn, Fn fn, class ArgSeq, class StoreOutputTo>
   void visitOutOfLineCallVM(
@@ -125,6 +134,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
       OutOfLineRegExpInstanceOptimizable* ool);
 
   void visitOutOfLineTypeOfV(OutOfLineTypeOfV* ool);
+  void visitOutOfLineTypeOfIsNonPrimitiveV(OutOfLineTypeOfIsNonPrimitiveV* ool);
+  void visitOutOfLineTypeOfIsNonPrimitiveO(OutOfLineTypeOfIsNonPrimitiveO* ool);
 
   template <SwitchTableType tableType>
   void visitOutOfLineSwitch(OutOfLineSwitch<tableType>* ool);
@@ -178,13 +189,21 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                               Register copyreg, size_t argvSrcOffset,
                               size_t argvDstOffset);
   void emitPopArguments(Register extraStackSize);
+  void emitPushArguments(Register argcreg, Register extraStackSpace,
+                         Register copyreg);
   void emitPushArrayAsArguments(Register tmpArgc, Register srcBaseAndArgc,
                                 Register scratch, size_t argvSrcOffset);
   void emitPushArguments(LApplyArgsGeneric* apply, Register extraStackSpace);
   void emitPushArguments(LApplyArgsObj* apply, Register extraStackSpace);
   void emitPushArguments(LApplyArrayGeneric* apply, Register extraStackSpace);
+  void emitPushArguments(LConstructArgsGeneric* construct,
+                         Register extraStackSpace);
   void emitPushArguments(LConstructArrayGeneric* construct,
                          Register extraStackSpace);
+
+  template <class GetInlinedArgument>
+  void emitGetInlinedArgument(GetInlinedArgument* lir, Register index,
+                              ValueOperand output);
 
   void visitNewArrayCallVM(LNewArray* lir);
   void visitNewObjectVMCall(LNewObject* lir);
@@ -194,7 +213,6 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void emitRest(LInstruction* lir, Register array, Register numActuals,
                 Register temp0, Register temp1, unsigned numFormals,
-                JSObject* templateObject, bool saveAndRestore,
                 Register resultreg);
   void emitInstanceOf(LInstruction* ins, const LAllocation* prototypeObject);
 
@@ -224,14 +242,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                            const ConstantOrRegister& id,
                            const ConstantOrRegister& value, bool strict);
 
-  [[nodiscard]] bool generateBranchV(const ValueOperand& value, Label* ifTrue,
-                                     Label* ifFalse, FloatRegister fr);
-
   void emitLambdaInit(Register resultReg, Register envChainReg,
                       const LambdaFunctionInfo& info);
-
-  void emitFilterArgumentsOrEval(LInstruction* lir, Register string,
-                                 Register temp1, Register temp2);
 
   template <class IteratorObject, class OrderedHashTable>
   void emitGetNextEntryForIterator(LGetNextEntryForIterator* lir);
@@ -252,6 +264,14 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   IonScriptCounts* maybeCreateScriptCounts();
 
+  void emitWasmCompareAndSelect(LWasmCompareAndSelect* ins);
+
+  void testValueTruthyForType(JSValueType type, ScratchTagScope& tag,
+                              const ValueOperand& value, Register scratch1,
+                              Register scratch2, FloatRegister fr,
+                              Label* ifTruthy, Label* ifFalsy,
+                              OutOfLineTestObject* ool, bool skipTypeTest);
+
   // This function behaves like testValueTruthy with the exception that it can
   // choose to let control flow fall through when the object is truthy, as
   // an optimization. Use testValueTruthy when it's required to branch to one
@@ -259,8 +279,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void testValueTruthyKernel(const ValueOperand& value,
                              const LDefinition* scratch1,
                              const LDefinition* scratch2, FloatRegister fr,
-                             Label* ifTruthy, Label* ifFalsy,
-                             OutOfLineTestObject* ool, MDefinition* valueMIR);
+                             TypeDataList observedTypes, Label* ifTruthy,
+                             Label* ifFalsy, OutOfLineTestObject* ool);
 
   // Test whether value is truthy or not and jump to the corresponding label.
   // If the value can be an object that emulates |undefined|, |ool| must be
@@ -269,8 +289,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   // truthy.
   void testValueTruthy(const ValueOperand& value, const LDefinition* scratch1,
                        const LDefinition* scratch2, FloatRegister fr,
-                       Label* ifTruthy, Label* ifFalsy,
-                       OutOfLineTestObject* ool, MDefinition* valueMIR);
+                       TypeDataList observedTypes, Label* ifTruthy,
+                       Label* ifFalsy, OutOfLineTestObject* ool);
 
   // This function behaves like testObjectEmulatesUndefined with the exception
   // that it can choose to let control flow fall through when the object

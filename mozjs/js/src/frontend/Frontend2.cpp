@@ -70,7 +70,10 @@ bool ConvertAtoms(JSContext* cx, const SmooshResult& result,
     if (!atom) {
       return false;
     }
-    compilationState.parserAtoms.markUsedByStencil(atom);
+    // We don't collect atomization information in smoosh yet.
+    // Assume it needs to be atomized.
+    compilationState.parserAtoms.markUsedByStencil(atom,
+                                                   ParserAtom::Atomize::Yes);
     allAtoms.infallibleAppend(atom);
   }
 
@@ -316,7 +319,7 @@ bool ConvertRegExpData(JSContext* cx, const SmooshResult& result,
 
     // See Parser<FullParseHandler, Unit>::newRegExp.
 
-    LifoAllocScope allocScope(&cx->tempLifoAlloc());
+    LifoAllocScope regExpAllocScope(&cx->tempLifoAlloc());
     if (!irregexp::CheckPatternSyntax(cx, ts, range, flags)) {
       return false;
     }
@@ -328,7 +331,9 @@ bool ConvertRegExpData(JSContext* cx, const SmooshResult& result,
       return false;
     }
 
-    compilationState.parserAtoms.markUsedByStencil(atom);
+    // RegExp patterm must be atomized.
+    compilationState.parserAtoms.markUsedByStencil(atom,
+                                                   ParserAtom::Atomize::Yes);
     compilationState.regExpData.infallibleEmplaceBack(atom,
                                                       JS::RegExpFlags(flags));
   }
@@ -584,10 +589,10 @@ bool Smoosh::tryCompileGlobalScriptToExtensibleStencil(
     return false;
   }
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  LifoAllocScope parserAllocScope(&cx->tempLifoAlloc());
 
   Vector<TaggedParserAtomIndex> allAtoms(cx);
-  CompilationState compilationState(cx, allocScope, input);
+  CompilationState compilationState(cx, parserAllocScope, input);
   if (!ConvertAtoms(cx, result, compilationState, allAtoms)) {
     return false;
   }

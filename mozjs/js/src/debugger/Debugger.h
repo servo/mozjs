@@ -22,7 +22,6 @@
 #include <stdint.h>  // for uint32_t, uint64_t, uintptr_t
 #include <utility>   // for std::move
 
-#include "jsapi.h"             // for Handle, UnsafeTraceRoot
 #include "jstypes.h"           // for JS_GC_ZEAL
 #include "NamespaceImports.h"  // for Value, HandleObject
 
@@ -30,13 +29,15 @@
 #include "debugger/Object.h"        // for DebuggerObject
 #include "ds/TraceableFifo.h"       // for TraceableFifo
 #include "gc/Barrier.h"             // for WeakHeapPtrGlobalObject, HeapPtr
-#include "gc/Marking.h"             // for IsAboutToBeFinalized, ToMarkable
 #include "gc/Rooting.h"             // for HandleSavedFrame, HandleAtom
 #include "gc/Tracer.h"              // for TraceNullableEdge, TraceEdge
 #include "gc/WeakMap.h"             // for WeakMap
 #include "gc/ZoneAllocator.h"       // for ZoneAllocPolicy
+#include "js/Debug.h"               // JS_DefineDebuggerObject
 #include "js/GCAPI.h"               // for GarbageCollectionEvent
 #include "js/Proxy.h"               // for PropertyDescriptor
+#include "js/RootingAPI.h"          // for Handle
+#include "js/TracingAPI.h"          // for TraceRoot
 #include "js/Wrapper.h"             // for UncheckedUnwrap
 #include "proxy/DeadObjectProxy.h"  // for IsDeadProxyObject
 #include "vm/GeneratorObject.h"     // for AbstractGeneratorObject
@@ -54,7 +55,7 @@
 class JS_PUBLIC_API JSFunction;
 
 namespace JS {
-class JS_FRIEND_API AutoStableStringChars;
+class JS_PUBLIC_API AutoStableStringChars;
 class JS_PUBLIC_API Compartment;
 class JS_PUBLIC_API Realm;
 class JS_PUBLIC_API Zone;
@@ -147,7 +148,7 @@ class Completion {
     Value value;
 
     void trace(JSTracer* trc) {
-      JS::UnsafeTraceRoot(trc, &value, "js::Completion::Return::value");
+      JS::TraceRoot(trc, &value, "js::Completion::Return::value");
     }
   };
 
@@ -158,8 +159,8 @@ class Completion {
     SavedFrame* stack;
 
     void trace(JSTracer* trc) {
-      JS::UnsafeTraceRoot(trc, &exception, "js::Completion::Throw::exception");
-      JS::UnsafeTraceRoot(trc, &stack, "js::Completion::Throw::stack");
+      JS::TraceRoot(trc, &exception, "js::Completion::Throw::exception");
+      JS::TraceRoot(trc, &stack, "js::Completion::Throw::stack");
     }
   };
 
@@ -173,8 +174,8 @@ class Completion {
     AbstractGeneratorObject* generatorObject;
 
     void trace(JSTracer* trc) {
-      JS::UnsafeTraceRoot(trc, &generatorObject,
-                          "js::Completion::InitialYield::generatorObject");
+      JS::TraceRoot(trc, &generatorObject,
+                    "js::Completion::InitialYield::generatorObject");
     }
   };
 
@@ -185,10 +186,10 @@ class Completion {
     Value iteratorResult;
 
     void trace(JSTracer* trc) {
-      JS::UnsafeTraceRoot(trc, &generatorObject,
-                          "js::Completion::Yield::generatorObject");
-      JS::UnsafeTraceRoot(trc, &iteratorResult,
-                          "js::Completion::Yield::iteratorResult");
+      JS::TraceRoot(trc, &generatorObject,
+                    "js::Completion::Yield::generatorObject");
+      JS::TraceRoot(trc, &iteratorResult,
+                    "js::Completion::Yield::iteratorResult");
     }
   };
 
@@ -199,9 +200,9 @@ class Completion {
     Value awaitee;
 
     void trace(JSTracer* trc) {
-      JS::UnsafeTraceRoot(trc, &generatorObject,
-                          "js::Completion::Await::generatorObject");
-      JS::UnsafeTraceRoot(trc, &awaitee, "js::Completion::Await::awaitee");
+      JS::TraceRoot(trc, &generatorObject,
+                    "js::Completion::Await::generatorObject");
+      JS::TraceRoot(trc, &awaitee, "js::Completion::Await::awaitee");
     }
   };
 
@@ -541,6 +542,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
     HookCount
   };
   enum {
+    JSSLOT_DEBUG_DEBUGGER,
     JSSLOT_DEBUG_PROTO_START,
     JSSLOT_DEBUG_FRAME_PROTO = JSSLOT_DEBUG_PROTO_START,
     JSSLOT_DEBUG_ENV_PROTO,
@@ -825,7 +827,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
       jsbytecode* pc, ResumeMode& resultMode, MutableHandleValue vp);
 
   [[nodiscard]] bool processParsedHandlerResult(
-      JSContext* cx, AbstractFramePtr frame, jsbytecode* pc, bool success,
+      JSContext* cx, AbstractFramePtr frame, const jsbytecode* pc, bool success,
       ResumeMode resumeMode, HandleValue value, ResumeMode& resultMode,
       MutableHandleValue vp);
 
@@ -834,7 +836,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * on the given frame, and split the result into a ResumeMode and Value.
    */
   [[nodiscard]] bool prepareResumption(JSContext* cx, AbstractFramePtr frame,
-                                       jsbytecode* pc, ResumeMode& resumeMode,
+                                       const jsbytecode* pc,
+                                       ResumeMode& resumeMode,
                                        MutableHandleValue vp);
 
   /**
@@ -941,7 +944,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * |frame|. |global| is |frame|'s global object; if nullptr or omitted, we
    * compute it ourselves from |frame|.
    */
-  using DebuggerFrameVector = GCVector<DebuggerFrame*>;
+  using DebuggerFrameVector = GCVector<DebuggerFrame*, 0, SystemAllocPolicy>;
   [[nodiscard]] static bool getDebuggerFrames(
       AbstractFramePtr frame, MutableHandle<DebuggerFrameVector> frames);
 
@@ -1154,7 +1157,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * If *vp is a magic JS_OPTIMIZED_OUT value, this produces a plain object
    * of the form { optimizedOut: true }.
    *
-   * If *vp is a magic JS_OPTIMIZED_ARGUMENTS value signifying missing
+   * If *vp is a magic JS_MISSING_ARGUMENTS value signifying missing
    * arguments, this produces a plain object of the form { missingArguments:
    * true }.
    *

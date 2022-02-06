@@ -189,13 +189,15 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   }
   masm.bind(&footer);
 
+  // Create the frame descriptor.
+  masm.subPtr(StackPointer, s4);
+  masm.makeFrameDescriptor(s4, FrameType::CppToJSJit, JitFrameLayout::Size());
+
   masm.subPtr(Imm32(2 * sizeof(uintptr_t)), StackPointer);
   masm.storePtr(s3,
                 Address(StackPointer, sizeof(uintptr_t)));  // actual arguments
   masm.storePtr(s2, Address(StackPointer, 0));              // callee token
 
-  masm.subPtr(StackPointer, s4);
-  masm.makeFrameDescriptor(s4, FrameType::CppToJSJit, JitFrameLayout::Size());
   masm.push(s4);  // descriptor
 
   CodeLabel returnLabel;
@@ -330,10 +332,14 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.addCodeLabel(oomReturnLabel);
   }
 
-  // Pop arguments off the stack.
   // s0 <- 8*argc (size of all arguments we pushed on the stack)
   masm.pop(s0);
   masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), s0);
+
+  // Discard calleeToken, numActualArgs.
+  masm.addPtr(Imm32(2 * sizeof(uintptr_t)), StackPointer);
+
+  // Pop arguments off the stack.
   masm.addPtr(s0, StackPointer);
 
   // Store the returned value into the slotVp
@@ -342,6 +348,15 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
   // Restore non-volatile registers and return.
   GenerateReturn(masm, ShortJump);
+}
+
+// static
+mozilla::Maybe<::JS::ProfilingFrameIterator::RegisterState>
+JitRuntime::getCppEntryRegisters(JitFrameLayout* frameStackAddress) {
+  // Not supported, or not implemented yet.
+  // TODO: Implement along with the corresponding stack-walker changes, in
+  // coordination with the Gecko Profiler, see bug 1635987 and follow-ups.
+  return mozilla::Nothing{};
 }
 
 void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
@@ -439,8 +454,9 @@ void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
 
   masm.mov(calleeTokenReg, numArgsReg);
   masm.andPtr(Imm32(CalleeTokenMask), numArgsReg);
-  masm.load16ZeroExtend(Address(numArgsReg, JSFunction::offsetOfNargs()),
-                        numArgsReg);
+  masm.load32(Address(numArgsReg, JSFunction::offsetOfFlagsAndArgCount()),
+              numArgsReg);
+  masm.rshift32(Imm32(JSFunction::ArgCountShift), numArgsReg);
 
   masm.as_subu(t1, numArgsReg, s3);
 
@@ -852,7 +868,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
 
   // Test for failure.
   switch (f.failType()) {
-    case Type_Object:
+    case Type_Cell:
       masm.branchTestPtr(Assembler::Zero, v0, v0, masm.failureLabel());
       break;
     case Type_Bool:

@@ -25,13 +25,8 @@ from mozbuild.configure.options import (
     OptionValue,
 )
 from mozbuild.configure.help import HelpFormatter
-from mozbuild.configure.util import (
-    ConfigureOutputHandler,
-    getpreferredencoding,
-    LineIO,
-)
+from mozbuild.configure.util import ConfigureOutputHandler, getpreferredencoding, LineIO
 from mozbuild.util import (
-    ensure_subprocess_env,
     exec_,
     memoize,
     memoized_property,
@@ -313,6 +308,8 @@ class ConfigureSandbox(dict):
                 "isinstance",
                 "len",
                 "list",
+                "max",
+                "min",
                 "range",
                 "set",
                 "sorted",
@@ -1007,6 +1004,11 @@ class ConfigureSandbox(dict):
         # Special case os and os.environ so that os.environ is our copy of
         # the environment.
         wrapped_os["environ"] = self._environ
+        # Also override some os.path functions with ours.
+        wrapped_path = {}
+        exec_("from os.path import *", {}, wrapped_path)
+        wrapped_path.update(self.OS.path.__dict__)
+        wrapped_os["path"] = ReadOnlyNamespace(**wrapped_path)
         return ReadOnlyNamespace(**wrapped_os)
 
     @memoized_property
@@ -1016,15 +1018,9 @@ class ConfigureSandbox(dict):
 
         def wrap(function):
             def wrapper(*args, **kwargs):
-                if kwargs.get("env") is None:
+                if kwargs.get("env") is None and self._environ:
                     kwargs["env"] = dict(self._environ)
-                # Subprocess on older Pythons can't handle unicode keys or
-                # values in environment dicts while subprocess on newer Pythons
-                # needs text in the env. Normalize automagically so callers
-                # don't have to deal with this.
-                kwargs["env"] = ensure_subprocess_env(
-                    kwargs["env"], encoding=system_encoding
-                )
+
                 return function(*args, **kwargs)
 
             return wrapper

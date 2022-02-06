@@ -13,13 +13,13 @@ import subprocess
 import tempfile
 from contextlib import contextmanager
 
-from pathlib2 import Path
+from pathlib import Path
 
 from appdirs import user_config_dir
 import taskcluster
 
 from mach.base import FailedCommandError
-from taskgraph import GECKO
+from gecko_taskgraph import GECKO
 
 logger = logging.getLogger(__name__)
 
@@ -111,7 +111,4 @@ def push_canary(scriptworkers, addresses, ssh_key_secret):
     with configure_ssh(ssh_key_secret):
         env = os.environ.copy()
         for task in tasks:
-            subprocess.check_call(
-                base_command + [task],
-                env=env,
-            )
+            subprocess.check_call(base_command + [task], env=env)

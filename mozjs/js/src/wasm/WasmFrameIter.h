@@ -21,14 +21,13 @@
 
 #include "js/ProfilingFrameIterator.h"
 #include "js/TypeDecls.h"
-#include "wasm/WasmTypes.h"
 
 namespace js {
 
 namespace jit {
+class JitActivation;
 class MacroAssembler;
 struct Register;
-class Label;
 enum class FrameType;
 }  // namespace jit
 
@@ -37,12 +36,13 @@ namespace wasm {
 class Code;
 class CodeRange;
 class DebugFrame;
+struct TlsData;
 class TypeIdDesc;
 class Instance;
-class ModuleSegment;
 
 struct CallableOffsets;
 struct FuncOffsets;
+struct Offsets;
 class Frame;
 
 using RegisterState = JS::ProfilingFrameIterator::RegisterState;
@@ -65,7 +65,7 @@ class WasmFrameIter {
   const CodeRange* codeRange_;
   unsigned lineOrBytecode_;
   Frame* fp_;
-  const TlsData* tls_;
+  TlsData* tls_;
   uint8_t* unwoundIonCallerFP_;
   jit::FrameType unwoundIonFrameType_;
   Unwind unwind_;
@@ -96,7 +96,7 @@ class WasmFrameIter {
   jit::FrameType unwoundIonFrameType() const;
   uint8_t* unwoundIonCallerFP() const { return unwoundIonCallerFP_; }
   Frame* frame() const { return fp_; }
-  const TlsData* tls() const { return tls_; }
+  TlsData* tls() const { return tls_; }
 
   // Returns the address of the next instruction that will execute in this
   // frame, once control returns to this frame.

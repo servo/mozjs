@@ -10,11 +10,11 @@ import six
 import sys
 import subprocess
 import traceback
+from pathlib import Path
 from textwrap import dedent
 
 from mozboot.mozconfig import find_mozconfig
 from mozpack import path as mozpath
-from mozbuild.util import ensure_subprocess_env
 
 MOZCONFIG_BAD_EXIT_CODE = """
 Evaluation of your mozconfig exited with an error. This could be triggered
@@ -79,14 +79,7 @@ class MozconfigLoader(object):
 
     IGNORE_SHELL_VARIABLES = {"_", "BASH_ARGV", "BASH_ARGV0", "BASH_ARGC"}
 
-    ENVIRONMENT_VARIABLES = {
-        "CC",
-        "CXX",
-        "CFLAGS",
-        "CXXFLAGS",
-        "LDFLAGS",
-        "MOZ_OBJDIR",
-    }
+    ENVIRONMENT_VARIABLES = {"CC", "CXX", "CFLAGS", "CXXFLAGS", "LDFLAGS", "MOZ_OBJDIR"}
 
     AUTODETECT = object()
 
@@ -140,7 +133,11 @@ class MozconfigLoader(object):
         # directly calling sh mozconfig_loader.
         shell = "sh"
         if "MOZILLABUILD" in os.environ:
-            shell = os.environ["MOZILLABUILD"] + "/msys/bin/sh"
+            mozillabuild = os.environ["MOZILLABUILD"]
+            if (Path(mozillabuild) / "msys2").exists():
+                shell = mozillabuild + "/msys2/usr/bin/sh"
+            else:
+                shell = mozillabuild + "/msys/bin/sh"
         if sys.platform == "win32":
             shell = shell + ".exe"
 
@@ -163,7 +160,7 @@ class MozconfigLoader(object):
                     command,
                     stderr=subprocess.STDOUT,
                     cwd=self.topsrcdir,
-                    env=ensure_subprocess_env(env),
+                    env=env,
                     universal_newlines=True,
                 )
             )
@@ -198,12 +195,7 @@ class MozconfigLoader(object):
             added = set2 - set1
             removed = set1 - set2
             maybe_modified = set1 & set2
-            changed = {
-                "added": {},
-                "removed": {},
-                "modified": {},
-                "unmodified": {},
-            }
+            changed = {"added": {}, "removed": {}, "modified": {}, "unmodified": {}}
 
             for key in added:
                 changed["added"][key] = vars_after[key]

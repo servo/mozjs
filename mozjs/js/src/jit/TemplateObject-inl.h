@@ -49,7 +49,7 @@ inline bool TemplateObject::isPlainObject() const {
 
 inline gc::Cell* TemplateObject::shape() const {
   Shape* shape = obj_->shape();
-  MOZ_ASSERT(!shape->inDictionary());
+  MOZ_ASSERT(!shape->isDictionary());
   return shape;
 }
 
@@ -76,9 +76,7 @@ inline uint32_t TemplateNativeObject::numFixedSlots() const {
 }
 
 inline uint32_t TemplateNativeObject::slotSpan() const {
-  // Don't call NativeObject::slotSpan, it uses shape->base->clasp and the
-  // shape's BaseShape can change when we create a ShapeTable for it.
-  return asNativeObject().shape()->slotSpan(obj_->getClass());
+  return asNativeObject().shape()->slotSpan();
 }
 
 inline Value TemplateNativeObject::getSlot(uint32_t i) const {
@@ -111,18 +109,10 @@ inline bool TemplateNativeObject::hasDynamicElements() const {
   return asNativeObject().hasDynamicElements();
 }
 
-inline bool TemplateNativeObject::hasPrivate() const {
-  return asNativeObject().hasPrivate();
-}
-
 inline gc::Cell* TemplateNativeObject::regExpShared() const {
   RegExpObject* regexp = &obj_->as<RegExpObject>();
   MOZ_ASSERT(regexp->hasShared());
   return regexp->getShared();
-}
-
-inline void* TemplateNativeObject::getPrivate() const {
-  return asNativeObject().getPrivate();
 }
 
 }  // namespace jit

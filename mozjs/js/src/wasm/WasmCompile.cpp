@@ -19,13 +19,15 @@
 #include "wasm/WasmCompile.h"
 
 #include "mozilla/Maybe.h"
-#include "mozilla/Unused.h"
 
 #include <algorithm>
 
-#include "jit/ProcessExecutableMemory.h"
+#ifndef __wasi__
+#  include "jit/ProcessExecutableMemory.h"
+#endif
+
 #include "util/Text.h"
-#include "vm/HelperThreadState.h"
+#include "vm/HelperThreads.h"
 #include "vm/Realm.h"
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmCraneliftCompile.h"
@@ -65,9 +67,6 @@ uint32_t wasm::ObservedCPUFeatures() {
 #elif defined(JS_CODEGEN_ARM64)
   MOZ_ASSERT(jit::GetARM64Flags() <= (UINT32_MAX >> ARCH_BITS));
   return ARM64 | (jit::GetARM64Flags() << ARCH_BITS);
-#elif defined(JS_CODEGEN_MIPS32)
-  MOZ_ASSERT(jit::GetMIPSFlags() <= (UINT32_MAX >> ARCH_BITS));
-  return MIPS | (jit::GetMIPSFlags() << ARCH_BITS);
 #elif defined(JS_CODEGEN_MIPS64)
   MOZ_ASSERT(jit::GetMIPSFlags() <= (UINT32_MAX >> ARCH_BITS));
   return MIPS64 | (jit::GetMIPSFlags() << ARCH_BITS);
@@ -80,20 +79,25 @@ uint32_t wasm::ObservedCPUFeatures() {
 
 FeatureArgs FeatureArgs::build(JSContext* cx, const FeatureOptions& options) {
   FeatureArgs features;
+
+#define WASM_FEATURE(NAME, LOWER_NAME, ...) \
+  features.LOWER_NAME = wasm::NAME##Available(cx);
+  JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE, WASM_FEATURE);
+#undef WASM_FEATURE
+
+  features.sharedMemory =
+      wasm::ThreadsAvailable(cx) ? Shareable::True : Shareable::False;
+
   // See comments in WasmConstants.h regarding the meaning of the wormhole
   // options.
   bool wormholeOverride =
       wasm::SimdWormholeAvailable(cx) && options.simdWormhole;
-  features.sharedMemory =
-      wasm::ThreadsAvailable(cx) ? Shareable::True : Shareable::False;
-  features.refTypes = wasm::ReftypesAvailable(cx);
-  features.functionReferences = wasm::FunctionReferencesAvailable(cx);
-  features.gcTypes = wasm::GcTypesAvailable(cx);
-  features.multiValue = wasm::MultiValuesAvailable(cx);
-  features.v128 = wasm::SimdAvailable(cx) || wormholeOverride;
-  features.hugeMemory = wasm::IsHugeMemoryEnabled();
   features.simdWormhole = wormholeOverride;
-  features.exceptions = wasm::ExceptionsAvailable(cx);
+  if (wormholeOverride) {
+    features.v128 = true;
+  }
+  features.intrinsics = options.intrinsics;
+
   return features;
 }
 
@@ -473,7 +477,7 @@ static const double spaceCutoffPct = 0.9;
 
 // Figure out whether we should use tiered compilation or not.
 static bool TieringBeneficial(uint32_t codeSize) {
-  uint32_t cpuCount = HelperThreadState().cpuCount;
+  uint32_t cpuCount = GetHelperThreadCPUCount();
   MOZ_ASSERT(cpuCount > 0);
 
   // It's mostly sensible not to background compile when there's only one
@@ -487,17 +491,15 @@ static bool TieringBeneficial(uint32_t codeSize) {
     return false;
   }
 
-  MOZ_ASSERT(HelperThreadState().threadCount >= cpuCount);
-
   // Compute the max number of threads available to do actual background
   // compilation work.
 
-  uint32_t workers = HelperThreadState().maxWasmCompilationThreads();
+  uint32_t workers = GetMaxWasmCompilationThreads();
 
   // The number of cores we will use is bounded both by the CPU count and the
-  // worker count.
+  // worker count, since the worker count already takes this into account.
 
-  uint32_t cores = std::min(cpuCount, workers);
+  uint32_t cores = workers;
 
   SystemClass cls = ClassifySystem();
 
@@ -692,7 +694,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   CompilerEnvironment compilerEnv(args);
   compilerEnv.computeParameters(d);
 
-  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, nullptr, error);
+  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, nullptr, error, warnings);
   if (!mg.init(nullptr)) {
     return nullptr;
   }
@@ -708,10 +710,10 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   return mg.finishModule(bytecode, listener);
 }
 
-void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
-                        const Module& module, Atomic<bool>* cancelled) {
-  UniqueChars error;
-  Decoder d(bytecode, 0, &error);
+bool wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
+                        const Module& module, UniqueChars* error,
+                        UniqueCharsVector* warnings, Atomic<bool>* cancelled) {
+  Decoder d(bytecode, 0, error);
 
   OptimizedBackend optimizedBackend = args.craneliftEnabled
                                           ? OptimizedBackend::Cranelift
@@ -719,31 +721,27 @@ void wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
 
   ModuleEnvironment moduleEnv(args.features);
   if (!DecodeModuleEnvironment(d, &moduleEnv)) {
-    return;
+    return false;
   }
   CompilerEnvironment compilerEnv(CompileMode::Tier2, Tier::Optimized,
                                   optimizedBackend, DebugEnabled::False);
   compilerEnv.computeParameters(d);
 
-  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, cancelled, &error);
+  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, cancelled, error,
+                     warnings);
   if (!mg.init(nullptr)) {
-    return;
+    return false;
   }
 
   if (!DecodeCodeSection(moduleEnv, d, mg)) {
-    return;
+    return false;
   }
 
   if (!DecodeModuleTail(d, &moduleEnv)) {
-    return;
+    return false;
   }
 
-  if (!mg.finishTier2(module)) {
-    return;
-  }
-
-  // The caller doesn't care about success or failure; only that compilation
-  // is inactive, so there is no success to return here.
+  return mg.finishTier2(module);
 }
 
 class StreamingDecoder {
@@ -847,7 +845,8 @@ SharedModule wasm::CompileStreaming(
     MOZ_RELEASE_ASSERT(d.done());
   }
 
-  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, &cancelled, error);
+  ModuleGenerator mg(args, &moduleEnv, &compilerEnv, &cancelled, error,
+                     warnings);
   if (!mg.init(nullptr)) {
     return nullptr;
   }

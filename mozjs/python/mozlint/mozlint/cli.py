@@ -83,9 +83,18 @@ class MozlintParser(ArgumentParser):
             },
         ],
         [
+            ["--include-third-party"],
+            {
+                "dest": "include_third-party",
+                "default": False,
+                "action": "store_true",
+                "help": "Also run the linter(s) on third-party code",
+            },
+        ],
+        [
             ["-o", "--outgoing"],
             {
-                "const": "default",
+                "const": True,
                 "nargs": "?",
                 "help": "Lint files touched by commits that are not on the remote repository. "
                 "Without arguments, finds the default remote that would be pushed to. "
@@ -215,6 +224,10 @@ class MozlintParser(ArgumentParser):
         if args.formats:
             formats = []
             for fmt in args.formats:
+                if isinstance(fmt, tuple):  # format is already processed
+                    formats.append(fmt)
+                    continue
+
                 path = None
                 if ":" in fmt:
                     # Detect optional formatter path
@@ -354,7 +367,7 @@ def run(
                 "--workdir instead. If you want to lint the entire repo, run `./mach lint .`"
             )
             # Setting the default values
-            outgoing = "default"
+            outgoing = True
             workdir = "all"
 
         # Always run bootstrapping, but return early if --setup was passed in.

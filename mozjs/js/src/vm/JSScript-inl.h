@@ -11,11 +11,8 @@
 
 #include <utility>
 
-#include "jit/BaselineJIT.h"
-#include "jit/IonAnalysis.h"
 #include "jit/IonScript.h"
 #include "jit/JitScript.h"
-#include "vm/GeneratorObject.h"  // js::AsyncGeneratorObject
 #include "vm/RegExpObject.h"
 #include "wasm/AsmJS.h"
 
@@ -160,13 +157,6 @@ inline js::Shape* JSScript::initialEnvironmentShape() const {
   return nullptr;
 }
 
-inline bool JSScript::ensureHasAnalyzedArgsUsage(JSContext* cx) {
-  if (needsArgsAnalysis()) {
-    return js::jit::AnalyzeArgumentsUsage(cx, this);
-  }
-  return true;
-}
-
 inline bool JSScript::isDebuggee() const {
   return realm()->debuggerObservesAllExecution() || hasDebugScript();
 }
@@ -179,19 +169,12 @@ inline bool js::BaseScript::hasIonScript() const {
   return hasJitScript() && jitScript()->hasIonScript();
 }
 
-inline void js::BaseScript::initSharedData(SharedImmutableScriptData* data) {
-  MOZ_ASSERT(sharedData_ == nullptr);
-  MOZ_ASSERT_IF(isGenerator() || isAsync(),
-                data->nfixed() <= AbstractGeneratorObject::FixedSlotLimit);
-  sharedData_ = data;
-}
-
 inline bool JSScript::isIonCompilingOffThread() const {
   return hasJitScript() && jitScript()->isIonCompilingOffThread();
 }
 
 inline bool JSScript::canBaselineCompile() const {
-  bool disabled = hasFlag(MutableFlags::BaselineDisabled);
+  bool disabled = baselineDisabled();
 #ifdef DEBUG
   if (hasJitScript()) {
     bool jitScriptDisabled =
@@ -203,7 +186,7 @@ inline bool JSScript::canBaselineCompile() const {
 }
 
 inline bool JSScript::canIonCompile() const {
-  bool disabled = hasFlag(MutableFlags::IonDisabled);
+  bool disabled = ionDisabled();
 #ifdef DEBUG
   if (hasJitScript()) {
     bool jitScriptDisabled =

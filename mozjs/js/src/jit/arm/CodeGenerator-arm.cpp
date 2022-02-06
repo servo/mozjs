@@ -873,7 +873,7 @@ void CodeGeneratorARM::emitBigIntDiv(LBigIntDiv* ins, Register dividend,
     masm.ma_sdiv(dividend, divisor, /* result= */ dividend);
 
     // Create and return the result.
-    masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+    masm.newGCBigInt(output, divisor, initialBigIntHeap(), fail);
     masm.initializeBigInt(output, dividend);
 
     return;
@@ -900,7 +900,7 @@ void CodeGeneratorARM::emitBigIntDiv(LBigIntDiv* ins, Register dividend,
   masm.PopRegsInMask(volatileRegs);
 
   // Create and return the result.
-  masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(output, divisor, initialBigIntHeap(), fail);
   masm.initializeBigInt(output, dividend);
 }
 
@@ -916,7 +916,7 @@ void CodeGeneratorARM::emitBigIntMod(LBigIntMod* ins, Register dividend,
     }
 
     // Create and return the result.
-    masm.newGCBigInt(output, divisor, fail, bigIntsCanBeInNursery());
+    masm.newGCBigInt(output, divisor, initialBigIntHeap(), fail);
     masm.initializeBigInt(output, dividend);
 
     return;
@@ -943,7 +943,7 @@ void CodeGeneratorARM::emitBigIntMod(LBigIntMod* ins, Register dividend,
   masm.PopRegsInMask(volatileRegs);
 
   // Create and return the result.
-  masm.newGCBigInt(output, dividend, fail, bigIntsCanBeInNursery());
+  masm.newGCBigInt(output, dividend, initialBigIntHeap(), fail);
   masm.initializeBigInt(output, divisor);
 }
 
@@ -1099,7 +1099,7 @@ void CodeGenerator::visitPopcntI(LPopcntI* ins) {
   Register input = ToRegister(ins->input());
   Register output = ToRegister(ins->output());
 
-  Register tmp = ToRegister(ins->temp());
+  Register tmp = ToRegister(ins->temp0());
 
   masm.popcnt32(input, output, tmp);
 }
@@ -1397,12 +1397,12 @@ void CodeGenerator::visitUnbox(LUnbox* unbox) {
 
 void CodeGenerator::visitDouble(LDouble* ins) {
   const LDefinition* out = ins->getDef(0);
-  masm.loadConstantDouble(ins->getDouble(), ToFloatRegister(out));
+  masm.loadConstantDouble(ins->value(), ToFloatRegister(out));
 }
 
 void CodeGenerator::visitFloat32(LFloat32* ins) {
   const LDefinition* out = ins->getDef(0);
-  masm.loadConstantFloat32(ins->getFloat(), ToFloatRegister(out));
+  masm.loadConstantFloat32(ins->value(), ToFloatRegister(out));
 }
 
 void CodeGeneratorARM::splitTagForTest(const ValueOperand& value,
@@ -1483,18 +1483,18 @@ void CodeGenerator::visitCompareFAndBranch(LCompareFAndBranch* comp) {
 }
 
 void CodeGenerator::visitBitAndAndBranch(LBitAndAndBranch* baab) {
-  ScratchRegisterScope scratch(masm);
+  // LBitAndAndBranch only represents single-word ANDs, hence it can't be
+  // 64-bit here.
+  MOZ_ASSERT(!baab->is64());
+  Register regL = ToRegister(baab->left());
   if (baab->right()->isConstant()) {
-    masm.ma_tst(ToRegister(baab->left()), Imm32(ToInt32(baab->right())),
-                scratch);
+    ScratchRegisterScope scratch(masm);
+    masm.ma_tst(regL, Imm32(ToInt32(baab->right())), scratch);
   } else {
-    masm.ma_tst(ToRegister(baab->left()), ToRegister(baab->right()));
+    masm.ma_tst(regL, ToRegister(baab->right()));
   }
   emitBranch(baab->cond(), baab->ifTrue(), baab->ifFalse());
 }
-
-// See ../CodeGenerator.cpp for more information.
-void CodeGenerator::visitWasmRegisterResult(LWasmRegisterResult* lir) {}
 
 void CodeGenerator::visitWasmUint32ToDouble(LWasmUint32ToDouble* lir) {
   masm.convertUInt32ToDouble(ToRegister(lir->input()),
@@ -1870,6 +1870,31 @@ void CodeGenerator::visitWasmSelect(LWasmSelect* ins) {
   }
 }
 
+// We expect to handle only the case where compare is {U,}Int32 and select is
+// {U,}Int32, and the "true" input is reused for the output.
+void CodeGenerator::visitWasmCompareAndSelect(LWasmCompareAndSelect* ins) {
+  bool cmpIs32bit = ins->compareType() == MCompare::Compare_Int32 ||
+                    ins->compareType() == MCompare::Compare_UInt32;
+  bool selIs32bit = ins->mir()->type() == MIRType::Int32;
+
+  MOZ_RELEASE_ASSERT(
+      cmpIs32bit && selIs32bit,
+      "CodeGenerator::visitWasmCompareAndSelect: unexpected types");
+
+  Register trueExprAndDest = ToRegister(ins->output());
+  MOZ_ASSERT(ToRegister(ins->ifTrueExpr()) == trueExprAndDest,
+             "true expr input is reused for output");
+
+  Assembler::Condition cond = Assembler::InvertCondition(
+      JSOpToCondition(ins->compareType(), ins->jsop()));
+  const LAllocation* rhs = ins->rightExpr();
+  const LAllocation* falseExpr = ins->ifFalseExpr();
+  Register lhs = ToRegister(ins->leftExpr());
+
+  masm.cmp32Move32(cond, lhs, ToRegister(rhs), ToRegister(falseExpr),
+                   trueExprAndDest);
+}
+
 void CodeGenerator::visitWasmReinterpret(LWasmReinterpret* lir) {
   MOZ_ASSERT(gen->compilingWasm());
   MWasmReinterpret* ins = lir->mir();
@@ -2026,39 +2051,6 @@ void CodeGenerator::visitWasmLoad(LWasmLoad* lir) { emitWasmLoad(lir); }
 
 void CodeGenerator::visitWasmLoadI64(LWasmLoadI64* lir) { emitWasmLoad(lir); }
 
-template <typename T>
-void CodeGeneratorARM::emitWasmUnalignedLoad(T* lir) {
-  const MWasmLoad* mir = lir->mir();
-  MIRType resultType = mir->type();
-
-  Register ptr = ToRegister(lir->ptrCopy());
-  Register tmp1 = ToRegister(lir->getTemp(1));
-
-  if (resultType == MIRType::Int64) {
-    masm.wasmUnalignedLoadI64(mir->access(), HeapReg, ptr, ptr,
-                              ToOutRegister64(lir), tmp1);
-  } else if (IsFloatingPointType(resultType)) {
-    Register tmp2(ToRegister(lir->getTemp(2)));
-    Register tmp3(Register::Invalid());
-    if (mir->access().byteSize() == 8) {
-      tmp3 = ToRegister(lir->getTemp(3));
-    }
-    masm.wasmUnalignedLoadFP(mir->access(), HeapReg, ptr, ptr,
-                             ToFloatRegister(lir->output()), tmp1, tmp2, tmp3);
-  } else {
-    masm.wasmUnalignedLoad(mir->access(), HeapReg, ptr, ptr,
-                           ToRegister(lir->output()), tmp1);
-  }
-}
-
-void CodeGenerator::visitWasmUnalignedLoad(LWasmUnalignedLoad* lir) {
-  emitWasmUnalignedLoad(lir);
-}
-
-void CodeGenerator::visitWasmUnalignedLoadI64(LWasmUnalignedLoadI64* lir) {
-  emitWasmUnalignedLoad(lir);
-}
-
 void CodeGenerator::visitWasmAddOffset(LWasmAddOffset* lir) {
   MWasmAddOffset* mir = lir->mir();
   Register base = ToRegister(lir->base());
@@ -2066,6 +2058,22 @@ void CodeGenerator::visitWasmAddOffset(LWasmAddOffset* lir) {
 
   ScratchRegisterScope scratch(masm);
   masm.ma_add(base, Imm32(mir->offset()), out, scratch, SetCC);
+
+  Label ok;
+  masm.ma_b(&ok, Assembler::CarryClear);
+  masm.wasmTrap(wasm::Trap::OutOfBounds, mir->bytecodeOffset());
+  masm.bind(&ok);
+}
+
+void CodeGenerator::visitWasmAddOffset64(LWasmAddOffset64* lir) {
+  MWasmAddOffset* mir = lir->mir();
+  Register64 base = ToRegister64(lir->base());
+  Register64 out = ToOutRegister64(lir);
+  MOZ_ASSERT(base.low != out.high && base.high != out.low);
+
+  ScratchRegisterScope scratch(masm);
+  masm.ma_add(base.low, Imm32(mir->offset()), out.low, scratch, SetCC);
+  masm.ma_adc(base.high, Imm32(mir->offset() >> 32), out.high, scratch, SetCC);
 
   Label ok;
   masm.ma_b(&ok, Assembler::CarryClear);
@@ -2102,37 +2110,6 @@ void CodeGenerator::visitWasmStore(LWasmStore* lir) { emitWasmStore(lir); }
 
 void CodeGenerator::visitWasmStoreI64(LWasmStoreI64* lir) {
   emitWasmStore(lir);
-}
-
-template <typename T>
-void CodeGeneratorARM::emitWasmUnalignedStore(T* lir) {
-  const MWasmStore* mir = lir->mir();
-  MIRType valueType = mir->value()->type();
-  Register ptr = ToRegister(lir->ptrCopy());
-  Register valOrTmp = ToRegister(lir->valueHelper());
-
-  if (valueType == MIRType::Int64) {
-    masm.wasmUnalignedStoreI64(
-        mir->access(),
-        ToRegister64(lir->getInt64Operand(LWasmUnalignedStoreI64::ValueIndex)),
-        HeapReg, ptr, ptr, valOrTmp);
-  } else if (valueType == MIRType::Float32 || valueType == MIRType::Double) {
-    FloatRegister value =
-        ToFloatRegister(lir->getOperand(LWasmUnalignedStore::ValueIndex));
-    masm.wasmUnalignedStoreFP(mir->access(), value, HeapReg, ptr, ptr,
-                              valOrTmp);
-  } else {
-    masm.wasmUnalignedStore(mir->access(), valOrTmp, HeapReg, ptr, ptr,
-                            Register::Invalid());
-  }
-}
-
-void CodeGenerator::visitWasmUnalignedStore(LWasmUnalignedStore* lir) {
-  emitWasmUnalignedStore(lir);
-}
-
-void CodeGenerator::visitWasmUnalignedStoreI64(LWasmUnalignedStoreI64* lir) {
-  emitWasmUnalignedStore(lir);
 }
 
 void CodeGenerator::visitAsmJSStoreHeap(LAsmJSStoreHeap* ins) {
@@ -2463,6 +2440,12 @@ void CodeGenerator::visitNegI(LNegI* ins) {
   masm.ma_neg(input, ToRegister(ins->output()));
 }
 
+void CodeGenerator::visitNegI64(LNegI64* ins) {
+  Register64 input = ToRegister64(ins->getInt64Operand(0));
+  MOZ_ASSERT(input == ToOutRegister64(ins));
+  masm.neg64(input);
+}
+
 void CodeGenerator::visitNegD(LNegD* ins) {
   FloatRegister input = ToFloatRegister(ins->input());
   masm.ma_vneg(input, ToFloatRegister(ins->output()));
@@ -2718,6 +2701,16 @@ void CodeGenerator::visitSignExtendInt64(LSignExtendInt64* lir) {
       break;
   }
   masm.ma_asr(Imm32(31), output.low, output.high);
+}
+
+void CodeGenerator::visitWasmExtendU32Index(LWasmExtendU32Index*) {
+  MOZ_CRASH("64-bit only");
+}
+
+void CodeGenerator::visitWasmWrapU32Index(LWasmWrapU32Index* lir) {
+  // Generates no code on this platform because we just return the low part of
+  // the input register pair.
+  MOZ_ASSERT(ToRegister(lir->input()) == ToRegister(lir->output()));
 }
 
 void CodeGenerator::visitDivOrModI64(LDivOrModI64* lir) {
@@ -3059,6 +3052,13 @@ void CodeGenerator::visitCtzI64(LCtzI64* lir) {
   masm.move32(Imm32(0), output.high);
 }
 
+void CodeGenerator::visitBitNotI64(LBitNotI64* lir) {
+  Register64 input = ToRegister64(lir->getInt64Operand(0));
+  MOZ_ASSERT(input == ToOutRegister64(lir));
+  masm.ma_mvn(input.high, input.high);
+  masm.ma_mvn(input.low, input.low);
+}
+
 void CodeGenerator::visitTestI64AndBranch(LTestI64AndBranch* lir) {
   Register64 input = ToRegister64(lir->getInt64Operand(0));
 
@@ -3123,7 +3123,7 @@ void CodeGenerator::visitNearbyIntF(LNearbyIntF*) { MOZ_CRASH("NYI"); }
 
 void CodeGenerator::visitSimd128(LSimd128* ins) { MOZ_CRASH("No SIMD"); }
 
-void CodeGenerator::visitWasmBitselectSimd128(LWasmBitselectSimd128* ins) {
+void CodeGenerator::visitWasmTernarySimd128(LWasmTernarySimd128* ins) {
   MOZ_CRASH("No SIMD");
 }
 
@@ -3143,6 +3143,11 @@ void CodeGenerator::visitWasmVariableShiftSimd128(
 
 void CodeGenerator::visitWasmConstantShiftSimd128(
     LWasmConstantShiftSimd128* ins) {
+  MOZ_CRASH("No SIMD");
+}
+
+void CodeGenerator::visitWasmSignReplicationSimd128(
+    LWasmSignReplicationSimd128* ins) {
   MOZ_CRASH("No SIMD");
 }
 

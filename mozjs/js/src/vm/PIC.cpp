@@ -66,15 +66,15 @@ bool js::ForOfPIC::Chain::initialize(JSContext* cx) {
   disabled_ = true;
 
   // Look up Array.prototype[@@iterator], ensure it's a slotful shape.
-  Shape* iterShape =
+  mozilla::Maybe<PropertyInfo> iterProp =
       arrayProto->lookup(cx, SYMBOL_TO_JSID(cx->wellKnownSymbols().iterator));
-  if (!iterShape || !iterShape->isDataProperty()) {
+  if (iterProp.isNothing() || !iterProp->isDataProperty()) {
     return true;
   }
 
   // Get the referred value, and ensure it holds the canonical ArrayValues
   // function.
-  Value iterator = arrayProto->getSlot(iterShape->slot());
+  Value iterator = arrayProto->getSlot(iterProp->slot());
   JSFunction* iterFun;
   if (!IsFunctionObject(iterator, &iterFun)) {
     return true;
@@ -84,14 +84,15 @@ bool js::ForOfPIC::Chain::initialize(JSContext* cx) {
   }
 
   // Look up the 'next' value on ArrayIterator.prototype
-  Shape* nextShape = arrayIteratorProto->lookup(cx, cx->names().next);
-  if (!nextShape || !nextShape->isDataProperty()) {
+  mozilla::Maybe<PropertyInfo> nextProp =
+      arrayIteratorProto->lookup(cx, cx->names().next);
+  if (nextProp.isNothing() || !nextProp->isDataProperty()) {
     return true;
   }
 
   // Get the referred value, ensure it holds the canonical ArrayIteratorNext
   // function.
-  Value next = arrayIteratorProto->getSlot(nextShape->slot());
+  Value next = arrayIteratorProto->getSlot(nextProp->slot());
   JSFunction* nextFun;
   if (!IsFunctionObject(next, &nextFun)) {
     return true;
@@ -101,11 +102,11 @@ bool js::ForOfPIC::Chain::initialize(JSContext* cx) {
   }
 
   disabled_ = false;
-  arrayProtoShape_ = arrayProto->lastProperty();
-  arrayProtoIteratorSlot_ = iterShape->slot();
+  arrayProtoShape_ = arrayProto->shape();
+  arrayProtoIteratorSlot_ = iterProp->slot();
   canonicalIteratorFunc_ = iterator;
-  arrayIteratorProtoShape_ = arrayIteratorProto->lastProperty();
-  arrayIteratorProtoNextSlot_ = nextShape->slot();
+  arrayIteratorProtoShape_ = arrayIteratorProto->shape();
+  arrayIteratorProtoNextSlot_ = nextProp->slot();
   canonicalNextFunc_ = next;
   return true;
 }
@@ -165,7 +166,7 @@ bool js::ForOfPIC::Chain::tryOptimizeArray(JSContext* cx,
   }
 
   // Good to optimize now, create stub to add.
-  RootedShape shape(cx, array->lastProperty());
+  RootedShape shape(cx, array->shape());
   Stub* stub = cx->new_<Stub>(shape);
   if (!stub) {
     return false;
@@ -227,7 +228,7 @@ bool js::ForOfPIC::Chain::hasMatchingStub(ArrayObject* obj) {
 
 bool js::ForOfPIC::Chain::isArrayStateStillSane() {
   // Ensure that canonical Array.prototype has matching shape.
-  if (arrayProto_->lastProperty() != arrayProtoShape_) {
+  if (arrayProto_->shape() != arrayProtoShape_) {
     return false;
   }
 
@@ -338,7 +339,8 @@ static const JSClassOps ForOfPICClassOps = {
 };
 
 const JSClass ForOfPICObject::class_ = {
-    "ForOfPIC", JSCLASS_HAS_PRIVATE | JSCLASS_BACKGROUND_FINALIZE,
+    "ForOfPIC",
+    JSCLASS_HAS_RESERVED_SLOTS(SlotCount) | JSCLASS_BACKGROUND_FINALIZE,
     &ForOfPICClassOps};
 
 /* static */
@@ -354,8 +356,7 @@ NativeObject* js::ForOfPIC::createForOfPICObject(JSContext* cx,
   if (!chain) {
     return nullptr;
   }
-  InitObjectPrivate(obj, chain, MemoryUse::ForOfPIC);
-  obj->setPrivate(chain);
+  InitReservedSlot(obj, ForOfPICObject::ChainSlot, chain, MemoryUse::ForOfPIC);
   return obj;
 }
 

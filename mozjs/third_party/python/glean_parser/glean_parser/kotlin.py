@@ -16,7 +16,9 @@ from typing import Any, Dict, List, Optional, Union  # noqa
 
 from . import metrics
 from . import pings
+from . import tags
 from . import util
+from .util import DictWrapper
 
 
 def kotlin_datatypes_filter(value: util.JSONType) -> str:
@@ -78,16 +80,45 @@ def type_name(obj: Union[metrics.Metric, pings.Ping]) -> str:
         template_args = []
         for member, suffix in generate_enums:
             if len(getattr(obj, member)):
-                template_args.append(util.camelize(obj.name) + suffix)
+                # Ugly hack to support the newer event extras API
+                # along the deprecated API.
+                # We need to specify both generic parameters,
+                # but only for event metrics.
+                # Plus `eventExtraKeys` use camelCase (lower),
+                # whereas proper class names should use CamelCase.
+                if suffix == "Extra":
+                    if isinstance(obj, metrics.Event):
+                        template_args.append("NoExtraKeys")
+                    template_args.append(util.Camelize(obj.name) + suffix)
+                else:
+                    template_args.append(util.camelize(obj.name) + suffix)
+                    if isinstance(obj, metrics.Event):
+                        template_args.append("NoExtras")
             else:
                 if suffix == "Keys":
                     template_args.append("NoExtraKeys")
+                    template_args.append("NoExtras")
                 else:
                     template_args.append("No" + suffix)
 
         return "{}<{}>".format(class_name(obj.type), ", ".join(template_args))
 
     return class_name(obj.type)
+
+
+def extra_type_name(typ: str) -> str:
+    """
+    Returns the corresponding Kotlin type for event's extra key types.
+    """
+
+    if typ == "boolean":
+        return "Boolean"
+    elif typ == "string":
+        return "String"
+    elif typ == "quantity":
+        return "Int"
+    else:
+        return "UNSUPPORTED"
 
 
 def class_name(obj_type: str) -> str:
@@ -147,9 +178,7 @@ def output_gecko_lookup(
     #   },
     #   "other-type": {}
     # }
-    gecko_metrics: OrderedDict[
-        str, OrderedDict[str, List[Dict[str, str]]]
-    ] = OrderedDict()
+    gecko_metrics: Dict[str, Dict[str, List[Dict[str, str]]]] = DictWrapper()
 
     # Define scalar-like types.
     SCALAR_LIKE_TYPES = ["boolean", "string", "quantity"]
@@ -159,8 +188,10 @@ def output_gecko_lookup(
         # Glean SDK and GeckoView. See bug 1566356 for more context.
         for metric in category_val.values():
             # This is not a Gecko metric, skip it.
-            if isinstance(metric, pings.Ping) or not getattr(
-                metric, "gecko_datapoint", False
+            if (
+                isinstance(metric, pings.Ping)
+                or isinstance(metric, tags.Tag)
+                or not getattr(metric, "gecko_datapoint", False)
             ):
                 continue
 
@@ -215,6 +246,9 @@ def output_kotlin(
         - `glean_namespace`: The package namespace of the glean library itself.
           This is where glean objects will be imported from in the generated
           code.
+        - `with_buildinfo`: If "true" a `GleanBuildInfo.kt` file is generated.
+          Otherwise generation of that file is skipped.
+          Defaults to "true".
     """
     if options is None:
         options = {}
@@ -222,29 +256,32 @@ def output_kotlin(
     namespace = options.get("namespace", "GleanMetrics")
     glean_namespace = options.get("glean_namespace", "mozilla.components.service.glean")
     namespace_package = namespace[: namespace.rfind(".")]
+    with_buildinfo = options.get("with_buildinfo", "true").lower() == "true"
 
     # Write out the special "build info" object
     template = util.get_jinja2_template(
         "kotlin.buildinfo.jinja2",
     )
 
-    # This filename needs to start with "Glean" so it can never clash with a
-    # metric category
-    with (output_dir / "GleanBuildInfo.kt").open("w", encoding="utf-8") as fd:
-        fd.write(
-            template.render(
-                namespace=namespace,
-                namespace_package=namespace_package,
-                glean_namespace=glean_namespace,
+    if with_buildinfo:
+        # This filename needs to start with "Glean" so it can never clash with a
+        # metric category
+        with (output_dir / "GleanBuildInfo.kt").open("w", encoding="utf-8") as fd:
+            fd.write(
+                template.render(
+                    namespace=namespace,
+                    namespace_package=namespace_package,
+                    glean_namespace=glean_namespace,
+                )
             )
-        )
-        fd.write("\n")
+            fd.write("\n")
 
     template = util.get_jinja2_template(
         "kotlin.jinja2",
         filters=(
             ("kotlin", kotlin_datatypes_filter),
             ("type_name", type_name),
+            ("extra_type_name", extra_type_name),
             ("class_name", class_name),
         ),
     )

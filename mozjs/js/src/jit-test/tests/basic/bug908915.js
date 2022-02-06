@@ -1,4 +1,4 @@
-// |jit-test| error: 42
+// |jit-test| error: 42; skip-if: getBuildConfiguration()['wasi']
 load(libdir + "immutable-prototype.js");
 
 // Suppress the large quantity of output on stdout (eg from calling
@@ -11,7 +11,7 @@ var ignorelist = {
     'readline': true,
     'terminate': true,
     'nukeAllCCWs': true,
-    'rateMyCacheIR': true,
+    'cacheIRHealthReport': true,
 };
 
 function f(y) {}

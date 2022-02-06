@@ -9,7 +9,7 @@
 #include <cstdlib>
 #include <type_traits>
 
-#include "vm/JSFunction.h"
+#include "vm/JSScript.h"
 
 using namespace js;
 using namespace js::jit;
@@ -93,8 +93,8 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggles whether loop invariant code motion is globally disabled.
   SET_DEFAULT(disableLicm, false);
 
-  // Toggle whether Profile Guided Optimization is globally disabled.
-  SET_DEFAULT(disablePgo, false);
+  // Toggle whether branch pruning is globally disabled.
+  SET_DEFAULT(disablePruning, false);
 
   // Toggles whether instruction reordering is globally disabled.
   SET_DEFAULT(disableInstructionReordering, false);
@@ -114,11 +114,11 @@ DefaultJitOptions::DefaultJitOptions() {
   // Toggles whether sink code motion is globally disabled.
   SET_DEFAULT(disableSink, true);
 
+  // Toggles whether redundant shape guard elimination is globally disabled.
+  SET_DEFAULT(disableRedundantShapeGuards, false);
+
   // Toggles whether we verify that we don't recompile with the same CacheIR.
   SET_DEFAULT(disableBailoutLoopCheck, false);
-
-  // Whether we use scalar replacement instead of the old arguments analysis.
-  SET_DEFAULT(scalarReplaceArguments, false);
 
   // Whether the Baseline Interpreter is enabled.
   SET_DEFAULT(baselineInterpreter, true);
@@ -303,6 +303,9 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(traceRegExpInterpreter, false);
   // Dumps the changes made by the regexp peephole optimizer to stderr
   SET_DEFAULT(traceRegExpPeephole, false);
+
+  // Controls how much assertion checking code is emitted
+  SET_DEFAULT(lessDebugCode, false);
 
   SET_DEFAULT(enableWasmJitExit, true);
   SET_DEFAULT(enableWasmJitEntry, true);

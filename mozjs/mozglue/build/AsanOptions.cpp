@@ -57,6 +57,9 @@
 //   fast_unwind_on_fatal - Use the fast (frame-pointer-based) stack unwinder
 //   to print fatal error reports. The slow unwinder doesn't work on Android.
 //
+//   intercept_tls_get_addr=0 - Work around
+//   https://github.com/google/sanitizers/issues/1322 (bug 1635327).
+//
 // !! Note: __asan_default_options is not used on Android! (bug 1576213)
 // These should be updated in:
 //   mobile/android/geckoview/src/asan/resources/lib/*/wrap.sh
@@ -72,7 +75,8 @@ extern "C" MOZ_ASAN_BLACKLIST const char* __asan_default_options() {
          ":max_free_fill_size=268435456:max_malloc_fill_size=268435456"
          ":malloc_fill_byte=228:free_fill_byte=229"
          ":handle_sigill=1"
-         ":allocator_may_return_null=1";
+         ":allocator_may_return_null=1"
+         ":intercept_tls_get_addr=0";
 }
 
 // !!! Please do not add suppressions for new leaks in Gecko code, unless they
@@ -110,6 +114,8 @@ extern "C" const char* __lsan_default_suppressions() {
 
          // Bug 1363976 - Stylo holds some global data alive forever.
          "leak:style::global_style_data\n"
+         "leak:style::sharing::SHARING_CACHE_KEY\n"
+         "leak:style::bloom::BLOOM_KEY\n"
 
          //
          // Many leaks only affect some test suites.  The suite annotations are
@@ -151,10 +157,13 @@ extern "C" const char* __lsan_default_suppressions() {
          // help diagnose these.
          //
          "leak:libcairo.so\n"
+         // https://github.com/OpenPrinting/cups/pull/317
+         "leak:libcups.so\n"
          "leak:libdl.so\n"
          "leak:libdricore.so\n"
          "leak:libdricore9.2.1.so\n"
          "leak:libGL.so\n"
+         "leak:libEGL_mesa.so\n"
          "leak:libglib-2.0.so\n"
          "leak:libglsl.so\n"
          "leak:libp11-kit.so\n"

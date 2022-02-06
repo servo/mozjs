@@ -10,13 +10,12 @@
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 
-#include "jsapi.h"  // JS_ReportErrorASCII
-
 #include "builtin/streams/MiscellaneousOperations.h"  // js::CreateAlgorithmFromUnderlyingMethod, js::InvokeOrNoop
 #include "builtin/streams/QueueWithSizes.h"  // js::{EnqueueValueWithSize,QueueIsEmpty,ResetQueue}
 #include "builtin/streams/WritableStream.h"  // js::WritableStream
 #include "builtin/streams/WritableStreamDefaultController.h"  // js::WritableStreamDefaultController
 #include "builtin/streams/WritableStreamOperations.h"  // js::WritableStream{CloseQueuedOrInFlight,DealWithRejection,{Start,Finish}Erroring,UpdateBackpressure,Mark{Close,FirstWrite}RequestInFlight}
+#include "js/CallAndConstruct.h"                       // JS::IsCallable
 #include "js/CallArgs.h"                               // JS::CallArgs{,FromVp}
 #include "js/Promise.h"     // JS::AddPromiseReactions
 #include "js/RootingAPI.h"  // JS::Handle, JS::Rooted

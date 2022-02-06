@@ -7,6 +7,8 @@ from __future__ import absolute_import
 import os
 import re
 
+from geckoprocesstypes import process_types
+
 
 def _get_default_logger():
     from mozlog import get_default_logger
@@ -181,18 +183,11 @@ def process_leak_log(
     leakThresholds = leak_thresholds or {}
     ignoreMissingLeaks = ignore_missing_leaks or []
 
-    # This list is based on kGeckoProcessTypeString. ipdlunittest processes likely
+    # This list is based on XRE_GeckoProcessTypeToString. ipdlunittest processes likely
     # are not going to produce leak logs we will ever see.
+
     knownProcessTypes = [
-        "default",
-        "forkserver",
-        "gmplugin",
-        "gpu",
-        "plugin",
-        "rdd",
-        "socket",
-        "tab",
-        "vr",
+        p.string_name for p in process_types if p.string_name != "ipdlunittest"
     ]
 
     for processType in knownProcessTypes:

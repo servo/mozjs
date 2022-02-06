@@ -220,17 +220,13 @@ for (var bad of [0xff, 1, 0x3f])
     assertErrorMessage(() => wasmEval(moduleWithSections([sigSection([v2vSig]), declSection([0]), bodySection([funcBody({locals:[], body:[BlockCode, bad, EndCode]})])])), CompileError, /(invalid .*block type)|(unknown type)/);
 
 const multiValueModule = moduleWithSections([sigSection([v2vSig]), declSection([0]), bodySection([funcBody({locals:[], body:[BlockCode, 0, EndCode]})])]);
-if (wasmMultiValueEnabled()) {
-    // In this test module, 0 denotes a void-to-void block type.
-    assertEq(WebAssembly.validate(multiValueModule), true);
-} else {
-    assertErrorMessage(() => wasmEval(multiValueModule), CompileError, /(invalid .*block type)|(unknown type)/);
-}
+// In this test module, 0 denotes a void-to-void block type.
+assertEq(WebAssembly.validate(multiValueModule), true);
 
 // Ensure all invalid opcodes rejected
 for (let op of undefinedOpcodes) {
     let binary = moduleWithSections([v2vSigSection, declSection([0]), bodySection([funcBody({locals:[], body:[op]})])]);
-    assertErrorMessage(() => wasmEval(binary), CompileError, /((unrecognized|Unknown) opcode)|(tail calls support is not enabled)|(Unexpected EOF)/);
+    assertErrorMessage(() => wasmEval(binary), CompileError, /((unrecognized|Unknown) opcode)|(tail calls support is not enabled)|(Exceptions support is not enabled)|(Unexpected EOF)/);
     assertEq(WebAssembly.validate(binary), false);
 }
 

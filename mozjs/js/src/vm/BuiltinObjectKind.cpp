@@ -8,6 +8,7 @@
 
 #include "jspubtd.h"
 
+#include "frontend/ParserAtom.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 
@@ -19,14 +20,20 @@ static JSProtoKey ToProtoKey(BuiltinObjectKind kind) {
       return JSProto_Array;
     case BuiltinObjectKind::ArrayBuffer:
       return JSProto_ArrayBuffer;
+    case BuiltinObjectKind::Int32Array:
+      return JSProto_Int32Array;
     case BuiltinObjectKind::Iterator:
       return JSProto_Iterator;
     case BuiltinObjectKind::Promise:
       return JSProto_Promise;
     case BuiltinObjectKind::RegExp:
       return JSProto_RegExp;
+    case BuiltinObjectKind::Set:
+      return JSProto_Set;
     case BuiltinObjectKind::SharedArrayBuffer:
       return JSProto_SharedArrayBuffer;
+    case BuiltinObjectKind::Symbol:
+      return JSProto_Symbol;
 
     case BuiltinObjectKind::FunctionPrototype:
       return JSProto_Function;
@@ -52,10 +59,13 @@ static bool IsPrototype(BuiltinObjectKind kind) {
   switch (kind) {
     case BuiltinObjectKind::Array:
     case BuiltinObjectKind::ArrayBuffer:
+    case BuiltinObjectKind::Int32Array:
     case BuiltinObjectKind::Iterator:
     case BuiltinObjectKind::Promise:
     case BuiltinObjectKind::RegExp:
+    case BuiltinObjectKind::Set:
     case BuiltinObjectKind::SharedArrayBuffer:
+    case BuiltinObjectKind::Symbol:
       return false;
 
     case BuiltinObjectKind::FunctionPrototype:
@@ -82,6 +92,9 @@ BuiltinObjectKind js::BuiltinConstructorForName(
   if (name == frontend::TaggedParserAtomIndex::WellKnown::ArrayBuffer()) {
     return BuiltinObjectKind::ArrayBuffer;
   }
+  if (name == frontend::TaggedParserAtomIndex::WellKnown::Int32Array()) {
+    return BuiltinObjectKind::Int32Array;
+  }
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Iterator()) {
     return BuiltinObjectKind::Iterator;
   }
@@ -91,8 +104,14 @@ BuiltinObjectKind js::BuiltinConstructorForName(
   if (name == frontend::TaggedParserAtomIndex::WellKnown::RegExp()) {
     return BuiltinObjectKind::RegExp;
   }
+  if (name == frontend::TaggedParserAtomIndex::WellKnown::Set()) {
+    return BuiltinObjectKind::Set;
+  }
   if (name == frontend::TaggedParserAtomIndex::WellKnown::SharedArrayBuffer()) {
     return BuiltinObjectKind::SharedArrayBuffer;
+  }
+  if (name == frontend::TaggedParserAtomIndex::WellKnown::Symbol()) {
+    return BuiltinObjectKind::Symbol;
   }
   return BuiltinObjectKind::None;
 }
@@ -143,6 +162,8 @@ const char* js::BuiltinObjectName(BuiltinObjectKind kind) {
       return "Array";
     case BuiltinObjectKind::ArrayBuffer:
       return "ArrayBuffer";
+    case BuiltinObjectKind::Int32Array:
+      return "Int32Array";
     case BuiltinObjectKind::Iterator:
       return "Iterator";
     case BuiltinObjectKind::Promise:
@@ -151,6 +172,10 @@ const char* js::BuiltinObjectName(BuiltinObjectKind kind) {
       return "RegExp";
     case BuiltinObjectKind::SharedArrayBuffer:
       return "SharedArrayBuffer";
+    case BuiltinObjectKind::Set:
+      return "Set";
+    case BuiltinObjectKind::Symbol:
+      return "Symbol";
 
     case BuiltinObjectKind::FunctionPrototype:
       return "Function.prototype";

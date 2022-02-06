@@ -14,10 +14,7 @@ import traceback
 
 from collections import defaultdict, OrderedDict
 from mach.mixin.logging import LoggingMixin
-from mozbuild.util import (
-    memoize,
-    OrderedDefaultDict,
-)
+from mozbuild.util import memoize, OrderedDefaultDict
 
 import mozpack.path as mozpath
 import mozinfo
@@ -82,19 +79,9 @@ from mozpack.chrome.manifest import Manifest
 
 from .reader import SandboxValidationError
 
-from ..testing import (
-    TEST_MANIFESTS,
-    REFTEST_FLAVORS,
-    SupportFilesConverter,
-)
+from ..testing import TEST_MANIFESTS, REFTEST_FLAVORS, SupportFilesConverter
 
-from .context import (
-    Context,
-    SourcePath,
-    ObjDirPath,
-    Path,
-    SubContext,
-)
+from .context import Context, SourcePath, ObjDirPath, Path, SubContext
 
 from mozbuild.base import ExecutionSummary
 
@@ -211,9 +198,7 @@ class TreeMetadataEmitter(LoggingMixin):
             ("IPDL_SOURCES", lambda c: c.sources),
             ("PREPROCESSED_IPDL_SOURCES", lambda c: c.preprocessed_sources),
         ]
-        xpcom_attrs = [
-            ("XPCOM_MANIFESTS", lambda c: c.manifests),
-        ]
+        xpcom_attrs = [("XPCOM_MANIFESTS", lambda c: c.manifests)]
 
         idl_sources = {}
         for root, cls, attrs in (
@@ -376,17 +361,9 @@ class TreeMetadataEmitter(LoggingMixin):
         "wasm": "SANDBOXED_WASM_LIBRARY_NAME",
     }
 
-    LIBSTDCXX_VAR = {
-        "host": "MOZ_LIBSTDCXX_HOST_VERSION",
-        "target": "MOZ_LIBSTDCXX_TARGET_VERSION",
-        "wasm": "MOZ_LIBSTDCXX_TARGET_VERSION",
-    }
+    ARCH_VAR = {"host": "HOST_OS_ARCH", "target": "OS_TARGET"}
 
-    STDCXXCOMPAT_NAME = {
-        "host": "host_stdc++compat",
-        "target": "stdc++compat",
-        "wasm": "stdc++compat",
-    }
+    STDCXXCOMPAT_NAME = {"host": "host_stdc++compat", "target": "stdc++compat"}
 
     def _link_libraries(self, context, obj, variable, extra_sources):
         """Add linkage declarations to a given object."""
@@ -414,7 +391,10 @@ class TreeMetadataEmitter(LoggingMixin):
             )
             and obj.cxx_link
         ):
-            if context.config.substs.get(self.LIBSTDCXX_VAR[obj.KIND]):
+            if (
+                context.config.substs.get("MOZ_STDCXX_COMPAT")
+                and context.config.substs.get(self.ARCH_VAR.get(obj.KIND)) == "Linux"
+            ):
                 self._link_library(
                     context, obj, variable, self.STDCXXCOMPAT_NAME[obj.KIND]
                 )
@@ -622,8 +602,6 @@ class TreeMetadataEmitter(LoggingMixin):
                 "crate-type %s is not permitted for %s" % (crate_type, libname), context
             )
 
-        cargo_target_dir = context.config.topobjdir
-
         dependencies = set(six.iterkeys(config.get("dependencies", {})))
 
         features = context.get(cls.FEATURES_VAR, [])
@@ -642,9 +620,8 @@ class TreeMetadataEmitter(LoggingMixin):
             crate_type,
             dependencies,
             features,
-            cargo_target_dir,
             is_gkrust,
-            **static_args
+            **static_args,
         )
 
     def _handle_gn_dirs(self, context):
@@ -671,6 +648,8 @@ class TreeMetadataEmitter(LoggingMixin):
         linkables = []
         host_linkables = []
         wasm_linkables = []
+
+        unified_build = context.config.substs.get("ENABLE_UNIFIED_BUILD", False)
 
         def add_program(prog, var):
             if var.startswith("HOST_"):
@@ -1004,11 +983,26 @@ class TreeMetadataEmitter(LoggingMixin):
                     "different value.",
                     context,
                 )
-            lib = SandboxedWasmLibrary(context, libname, real_name=wasm_lib)
+            lib = SandboxedWasmLibrary(context, wasm_lib)
             self._libs[libname].append(lib)
-            self._linkage.append((context, lib, "USE_LIBS"))
             wasm_linkables.append(lib)
             self._wasm_compile_dirs.add(context.objdir)
+
+        seen = {}
+        for symbol in ("SOURCES", "UNIFIED_SOURCES"):
+            for src in context.get(symbol, []):
+                basename = os.path.splitext(os.path.basename(src))[0]
+                if basename in seen:
+                    other_src, where = seen[basename]
+                    extra = ""
+                    if "UNIFIED_SOURCES" in (symbol, where):
+                        extra = " in non-unified builds"
+                    raise SandboxValidationError(
+                        f"{src} from {symbol} would have the same object name "
+                        f"as {other_src} from {where}{extra}.",
+                        context,
+                    )
+                seen[basename] = (src, symbol)
 
         # Only emit sources if we have linkables defined in the same context.
         # Note the linkables are not emitted in this function, but much later,
@@ -1109,7 +1103,7 @@ class TreeMetadataEmitter(LoggingMixin):
         varmap = dict(
             SOURCES=(Sources, GeneratedSources, all_suffixes),
             HOST_SOURCES=(HostSources, HostGeneratedSources, [".c", ".mm", ".cpp"]),
-            UNIFIED_SOURCES=(UnifiedSources, None, [".c", ".mm", ".cpp"]),
+            UNIFIED_SOURCES=(UnifiedSources, None, [".c", ".mm", ".m", ".cpp"]),
         )
         # Only include a WasmSources or WasmGeneratedSources context if there
         # are any WASM_SOURCES. (This is going to matter later because we inject
@@ -1142,17 +1136,6 @@ class TreeMetadataEmitter(LoggingMixin):
                 (gen_sources[variable], gen_klass),
             ):
                 # Now sort the files to let groupby work.
-                srcs = list(srcs)
-                if cls is WasmSources:
-                    srcs.append(
-                        mozpath.join(
-                            self.config.topsrcdir,
-                            (
-                                "third_party/rust/rlbox_lucet_sandbox/"
-                                "c_src/lucet_sandbox_wrapper.c"
-                            ),
-                        )
-                    )
                 sorted_files = sorted(srcs, key=canonical_suffix_for_file)
                 for canonical_suffix, files in itertools.groupby(
                     sorted_files, canonical_suffix_for_file
@@ -1163,7 +1146,13 @@ class TreeMetadataEmitter(LoggingMixin):
                         self._asm_compile_dirs.add(context.objdir)
                     arglist = [context, list(files), canonical_suffix]
                     if variable.startswith("UNIFIED_"):
-                        arglist.append(context.get("FILES_PER_UNIFIED_FILE", 16))
+                        if (
+                            unified_build is False
+                            and context.get("REQUIRES_UNIFIED_BUILD", False) is False
+                        ):
+                            arglist.append(1)
+                        else:
+                            arglist.append(context.get("FILES_PER_UNIFIED_FILE", 16))
                     obj = cls(*arglist)
                     srcs = list(obj.files)
                     if isinstance(obj, UnifiedSources) and obj.have_unified_mapping:
@@ -1270,7 +1259,7 @@ class TreeMetadataEmitter(LoggingMixin):
             if v in context and context[v]:
                 computed_flags.resolve_flags("MOZBUILD_%s" % v, context[v])
 
-        for v in ["WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"]:
+        for v in ["WASM_CFLAGS", "WASM_CXXFLAGS"]:
             if v in context and context[v]:
                 computed_wasm_flags.resolve_flags("MOZBUILD_%s" % v, context[v])
 
@@ -1323,7 +1312,6 @@ class TreeMetadataEmitter(LoggingMixin):
             computed_flags.resolve_flags("RTL", [rtl_flag])
             if not context.config.substs.get("CROSS_COMPILE"):
                 computed_host_flags.resolve_flags("RTL", [rtl_flag])
-            computed_wasm_flags.resolve_flags("RTL", [rtl_flag])
 
         generated_files = set()
         localized_generated_files = set()
@@ -1340,14 +1328,7 @@ class TreeMetadataEmitter(LoggingMixin):
             yield sub
 
         for defines_var, cls, backend_flags in (
-            (
-                "DEFINES",
-                Defines,
-                (
-                    computed_flags,
-                    computed_as_flags,
-                ),
-            ),
+            ("DEFINES", Defines, (computed_flags, computed_as_flags)),
             ("HOST_DEFINES", HostDefines, (computed_host_flags,)),
             ("WASM_DEFINES", WasmDefines, (computed_wasm_flags,)),
         ):
@@ -1484,10 +1465,7 @@ class TreeMetadataEmitter(LoggingMixin):
                     ):
                         raise SandboxValidationError(
                             ("Only source directory paths allowed in " + "%s: %s")
-                            % (
-                                var,
-                                f,
-                            ),
+                            % (var, f),
                             context,
                         )
                     if var.startswith("LOCALIZED_"):
@@ -1499,11 +1477,7 @@ class TreeMetadataEmitter(LoggingMixin):
                             else:
                                 raise SandboxValidationError(
                                     "%s paths must start with `en-US/` or "
-                                    "contain `locales/en-US/`: %s"
-                                    % (
-                                        var,
-                                        f,
-                                    ),
+                                    "contain `locales/en-US/`: %s" % (var, f),
                                     context,
                                 )
 

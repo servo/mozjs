@@ -174,6 +174,8 @@ static bool forceDoubleCacheFlush = false;
 // longer a programmatic way of setting these from JS.
 volatile uint32_t armHwCapFlags = HWCAP_UNINITIALIZED;
 
+bool CPUFlagsHaveBeenComputed() { return armHwCapFlags != HWCAP_UNINITIALIZED; }
+
 bool ParseARMHwCapFlags(const char* armHwCap) {
   uint32_t flags = 0;
 
@@ -326,6 +328,11 @@ void InitARMFlags() {
 uint32_t GetARMFlags() {
   MOZ_ASSERT(armHwCapFlags != HWCAP_UNINITIALIZED);
   return armHwCapFlags;
+}
+
+bool HasNEON() {
+  MOZ_ASSERT(armHwCapFlags != HWCAP_UNINITIALIZED);
+  return armHwCapFlags & HWCAP_NEON;
 }
 
 bool HasARMv7() {

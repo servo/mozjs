@@ -8,7 +8,6 @@
 
 #include <algorithm>
 
-#include "gc/Marking.h"
 #include "jit/AutoWritableJitCode.h"
 #if defined(JS_CODEGEN_X86)
 #  include "jit/x86/MacroAssembler-x86.h"
@@ -90,41 +89,6 @@ void AssemblerX86Shared::TraceDataRelocations(JSTracer* trc, JitCode* code,
 
 void AssemblerX86Shared::executableCopy(void* buffer) {
   masm.executableCopy(buffer);
-
-  // Crash diagnostics for bug 1124397. Check the code buffer has not been
-  // poisoned with 0xE5 bytes.
-  static const size_t MinPoisoned = 16;
-  const uint8_t* bytes = (const uint8_t*)buffer;
-  size_t len = size();
-
-  for (size_t i = 0; i < len; i += MinPoisoned) {
-    if (bytes[i] != 0xE5) {
-      continue;
-    }
-
-    size_t startOffset = i;
-    while (startOffset > 0 && bytes[startOffset - 1] == 0xE5) {
-      startOffset--;
-    }
-
-    size_t endOffset = i;
-    while (endOffset + 1 < len && bytes[endOffset + 1] == 0xE5) {
-      endOffset++;
-    }
-
-    if (endOffset - startOffset < MinPoisoned) {
-      continue;
-    }
-
-    volatile uintptr_t dump[5];
-    blackbox = dump;
-    blackbox[0] = uintptr_t(0xABCD4321);
-    blackbox[1] = uintptr_t(len);
-    blackbox[2] = uintptr_t(startOffset);
-    blackbox[3] = uintptr_t(endOffset);
-    blackbox[4] = uintptr_t(0xFFFF8888);
-    MOZ_CRASH("Corrupt code buffer");
-  }
 }
 
 void AssemblerX86Shared::processCodeLabels(uint8_t* rawCode) {
@@ -244,6 +208,12 @@ bool CPUInfo::popcntPresent = false;
 bool CPUInfo::bmi1Present = false;
 bool CPUInfo::bmi2Present = false;
 bool CPUInfo::lzcntPresent = false;
+
+namespace js {
+namespace jit {
+bool CPUFlagsHaveBeenComputed() { return CPUInfo::FlagsHaveBeenComputed(); }
+}  // namespace jit
+}  // namespace js
 
 static uintptr_t ReadXGETBV() {
   // We use a variety of low-level mechanisms to get at the xgetbv
@@ -367,5 +337,3 @@ void CPUInfo::SetSSEVersion() {
   bmi1Present = (flagsEbx & BMI1Bit);
   bmi2Present = bmi1Present && (flagsEbx & BMI2Bit);
 }
-
-volatile uintptr_t* blackbox = nullptr;

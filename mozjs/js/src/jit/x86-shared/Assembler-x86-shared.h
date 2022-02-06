@@ -19,19 +19,22 @@
 #  error "Unknown architecture!"
 #endif
 #include "jit/CompactBuffer.h"
-#include "wasm/WasmTypes.h"
+#include "wasm/WasmTypeDecls.h"
 
 namespace js {
 namespace jit {
 
+// Do not reference ScratchFloat32Reg_ directly, use ScratchFloat32Scope
+// instead.
 struct ScratchFloat32Scope : public AutoFloatRegisterScope {
   explicit ScratchFloat32Scope(MacroAssembler& masm)
-      : AutoFloatRegisterScope(masm, ScratchFloat32Reg) {}
+      : AutoFloatRegisterScope(masm, ScratchFloat32Reg_) {}
 };
 
+// Do not reference ScratchDoubleReg_ directly, use ScratchDoubleScope instead.
 struct ScratchDoubleScope : public AutoFloatRegisterScope {
   explicit ScratchDoubleScope(MacroAssembler& masm)
-      : AutoFloatRegisterScope(masm, ScratchDoubleReg) {}
+      : AutoFloatRegisterScope(masm, ScratchDoubleReg_) {}
 };
 
 struct ScratchSimd128Scope : public AutoFloatRegisterScope {
@@ -210,16 +213,12 @@ class CPUInfo {
 
   static void SetSSEVersion();
 
-  // The flags can become set at startup when we JIT non-JS code eagerly; thus
-  // we reset the flags before setting any flags explicitly during testing, so
-  // that the flags can be in a consistent state.
-
-  static void reset() {
-    maxSSEVersion = UnknownSSE;
-    maxEnabledSSEVersion = UnknownSSE;
-    avxPresent = false;
-    avxEnabled = false;
-    popcntPresent = false;
+  static void SetMaxEnabledSSEVersion(SSEVersion v) {
+    if (maxEnabledSSEVersion == UnknownSSE) {
+      maxEnabledSSEVersion = v;
+    } else {
+      maxEnabledSSEVersion = std::min(v, maxEnabledSSEVersion);
+    }
   }
 
  public:
@@ -239,30 +238,39 @@ class CPUInfo {
   static bool IsBMI2Present() { return bmi2Present; }
   static bool IsLZCNTPresent() { return lzcntPresent; }
 
+  // The SSE flags can become set at startup when we JIT non-JS code eagerly;
+  // thus we must reset the flags before setting any flags explicitly during
+  // testing, so that the flags can be in a consistent state.
+
+  static void ResetSSEFlagsForTesting() {
+    maxSSEVersion = UnknownSSE;
+    maxEnabledSSEVersion = UnknownSSE;
+    avxPresent = false;
+    avxEnabled = false;
+  }
+
+  static bool FlagsHaveBeenComputed() { return maxSSEVersion != UnknownSSE; }
+
+  // The following should be called only after calling ResetSSEFlagsForTesting.
+  // If several are called, the most restrictive setting is kept.
+
   static void SetSSE3Disabled() {
-    reset();
-    maxEnabledSSEVersion = SSE2;
+    SetMaxEnabledSSEVersion(SSE2);
     avxEnabled = false;
   }
   static void SetSSSE3Disabled() {
-    reset();
-    maxEnabledSSEVersion = SSE3;
+    SetMaxEnabledSSEVersion(SSE3);
     avxEnabled = false;
   }
   static void SetSSE41Disabled() {
-    reset();
-    maxEnabledSSEVersion = SSSE3;
+    SetMaxEnabledSSEVersion(SSSE3);
     avxEnabled = false;
   }
   static void SetSSE42Disabled() {
-    reset();
-    maxEnabledSSEVersion = SSE4_1;
+    SetMaxEnabledSSEVersion(SSE4_1);
     avxEnabled = false;
   }
-  static void SetAVXEnabled() {
-    reset();
-    avxEnabled = true;
-  }
+  static void SetAVXEnabled() { avxEnabled = true; }
 };
 
 class AssemblerX86Shared : public AssemblerShared {
@@ -447,9 +455,16 @@ class AssemblerX86Shared : public AssemblerShared {
   }
 
  public:
-  void haltingAlign(int alignment) { masm.haltingAlign(alignment); }
-  void nopAlign(int alignment) { masm.nopAlign(alignment); }
+  void haltingAlign(int alignment) {
+    MOZ_ASSERT(hasCreator());
+    masm.haltingAlign(alignment);
+  }
+  void nopAlign(int alignment) {
+    MOZ_ASSERT(hasCreator());
+    masm.nopAlign(alignment);
+  }
   void writeCodePointer(CodeLabel* label) {
+    MOZ_ASSERT(hasCreator());
     // Use -1 as dummy value. This will be patched after codegen.
     masm.jumpTablePointer(-1);
     label->patchAt()->bind(masm.size());
@@ -482,12 +497,15 @@ class AssemblerX86Shared : public AssemblerShared {
     cmovCCl(Condition::NonZero, src, dest);
   }
   void movl(Imm32 imm32, Register dest) {
+    MOZ_ASSERT(hasCreator());
     masm.movl_i32r(imm32.value, dest.encoding());
   }
   void movl(Register src, Register dest) {
+    MOZ_ASSERT(hasCreator());
     masm.movl_rr(src.encoding(), dest.encoding());
   }
   void movl(const Operand& src, Register dest) {
+    MOZ_ASSERT(hasCreator());
     switch (src.kind()) {
       case Operand::REG:
         masm.movl_rr(src.reg(), dest.encoding());
@@ -507,6 +525,7 @@ class AssemblerX86Shared : public AssemblerShared {
     }
   }
   void movl(Register src, const Operand& dest) {
+    MOZ_ASSERT(hasCreator());
     switch (dest.kind()) {
       case Operand::REG:
         masm.movl_rr(src.encoding(), dest.reg());
@@ -638,6 +657,7 @@ class AssemblerX86Shared : public AssemblerShared {
                    src.scale, dest.encoding());
   }
   void vmovsd(const Operand& src, FloatRegister dest) {
+    MOZ_ASSERT(hasCreator());
     switch (src.kind()) {
       case Operand::MEM_REG_DISP:
         vmovsd(src.toAddress(), dest);
@@ -668,6 +688,7 @@ class AssemblerX86Shared : public AssemblerShared {
                    src.scale, dest.encoding());
   }
   void vmovss(const Operand& src, FloatRegister dest) {
+    MOZ_ASSERT(hasCreator());
     switch (src.kind()) {
       case Operand::MEM_REG_DISP:
         vmovss(src.toAddress(), dest);
@@ -704,6 +725,7 @@ class AssemblerX86Shared : public AssemblerShared {
   }
   void vmovdqu(const Operand& src, FloatRegister dest) {
     MOZ_ASSERT(HasSSE2());
+    MOZ_ASSERT(hasCreator());
     switch (src.kind()) {
       case Operand::MEM_REG_DISP:
         masm.vmovdqu_mr(src.disp(), src.base(), dest.encoding());
@@ -718,6 +740,7 @@ class AssemblerX86Shared : public AssemblerShared {
   }
   void vmovdqu(FloatRegister src, const Operand& dest) {
     MOZ_ASSERT(HasSSE2());
+    MOZ_ASSERT(hasCreator());
     switch (dest.kind()) {
       case Operand::MEM_REG_DISP:
         masm.vmovdqu_rm(src.encoding(), dest.disp(), dest.base());
@@ -979,12 +1002,25 @@ class AssemblerX86Shared : public AssemblerShared {
   }
 
  public:
-  void nop() { masm.nop(); }
-  void nop(size_t n) { masm.insert_nop(n); }
-  void j(Condition cond, Label* label) { jSrc(cond, label); }
-  void jmp(Label* label) { jmpSrc(label); }
+  void nop() {
+    MOZ_ASSERT(hasCreator());
+    masm.nop();
+  }
+  void nop(size_t n) {
+    MOZ_ASSERT(hasCreator());
+    masm.insert_nop(n);
+  }
+  void j(Condition cond, Label* label) {
+    MOZ_ASSERT(hasCreator());
+    jSrc(cond, label);
+  }
+  void jmp(Label* label) {
+    MOZ_ASSERT(hasCreator());
+    jmpSrc(label);
+  }
 
   void jmp(const Operand& op) {
+    MOZ_ASSERT(hasCreator());
     switch (op.kind()) {
       case Operand::MEM_REG_DISP:
         masm.jmp_m(op.disp(), op.base());
@@ -1052,8 +1088,12 @@ class AssemblerX86Shared : public AssemblerShared {
     }
   }
 
-  void ret() { masm.ret(); }
+  void ret() {
+    MOZ_ASSERT(hasCreator());
+    masm.ret();
+  }
   void retn(Imm32 n) {
+    MOZ_ASSERT(hasCreator());
     // Remove the size of the return address which is included in the frame.
     masm.ret_i(n.value - sizeof(void*));
   }
@@ -1115,6 +1155,7 @@ class AssemblerX86Shared : public AssemblerShared {
 
   void breakpoint() { masm.int3(); }
   CodeOffset ud2() {
+    MOZ_ASSERT(hasCreator());
     CodeOffset off(masm.currentOffset());
     masm.ud2();
     return off;
@@ -1131,7 +1172,7 @@ class AssemblerX86Shared : public AssemblerShared {
   static bool HasLZCNT() { return CPUInfo::IsLZCNTPresent(); }
   static bool SupportsFloatingPoint() { return CPUInfo::IsSSE2Present(); }
   static bool SupportsUnalignedAccesses() { return true; }
-  static bool SupportsFastUnalignedAccesses() { return true; }
+  static bool SupportsFastUnalignedFPAccesses() { return true; }
   static bool SupportsWasmSimd() { return CPUInfo::IsSSE41Present(); }
   static bool HasAVX() { return CPUInfo::IsAVXPresent(); }
 
@@ -1172,6 +1213,10 @@ class AssemblerX86Shared : public AssemblerShared {
       case Operand::MEM_REG_DISP:
         masm.cmpl_rm(rhs.encoding(), lhs.disp(), lhs.base());
         break;
+      case Operand::MEM_SCALE:
+        masm.cmpl_rm(rhs.encoding(), lhs.disp(), lhs.base(), lhs.index(),
+                     lhs.scale());
+        break;
       case Operand::MEM_ADDRESS32:
         masm.cmpl_rm(rhs.encoding(), lhs.address());
         break;
@@ -1203,6 +1248,44 @@ class AssemblerX86Shared : public AssemblerShared {
   }
   void cmpw(Register rhs, Register lhs) {
     masm.cmpw_rr(rhs.encoding(), lhs.encoding());
+  }
+  void cmpw(Imm32 rhs, const Operand& lhs) {
+    switch (lhs.kind()) {
+      case Operand::REG:
+        masm.cmpw_ir(rhs.value, lhs.reg());
+        break;
+      case Operand::MEM_REG_DISP:
+        masm.cmpw_im(rhs.value, lhs.disp(), lhs.base());
+        break;
+      case Operand::MEM_SCALE:
+        masm.cmpw_im(rhs.value, lhs.disp(), lhs.base(), lhs.index(),
+                     lhs.scale());
+        break;
+      case Operand::MEM_ADDRESS32:
+        masm.cmpw_im(rhs.value, lhs.address());
+        break;
+      default:
+        MOZ_CRASH("unexpected operand kind");
+    }
+  }
+  void cmpb(Imm32 rhs, const Operand& lhs) {
+    switch (lhs.kind()) {
+      case Operand::REG:
+        masm.cmpb_ir(rhs.value, lhs.reg());
+        break;
+      case Operand::MEM_REG_DISP:
+        masm.cmpb_im(rhs.value, lhs.disp(), lhs.base());
+        break;
+      case Operand::MEM_SCALE:
+        masm.cmpb_im(rhs.value, lhs.disp(), lhs.base(), lhs.index(),
+                     lhs.scale());
+        break;
+      case Operand::MEM_ADDRESS32:
+        masm.cmpb_im(rhs.value, lhs.address());
+        break;
+      default:
+        MOZ_CRASH("unexpected operand kind");
+    }
   }
   void setCC(Condition cond, Register r) {
     masm.setCC_r(static_cast<X86Encoding::Condition>(cond), r.encoding());
@@ -2150,6 +2233,7 @@ class AssemblerX86Shared : public AssemblerShared {
   void push(const Imm32 imm) { masm.push_i(imm.value); }
 
   void push(const Operand& src) {
+    MOZ_ASSERT(hasCreator());
     switch (src.kind()) {
       case Operand::REG:
         masm.push_r(src.reg());
@@ -2164,12 +2248,16 @@ class AssemblerX86Shared : public AssemblerShared {
         MOZ_CRASH("unexpected operand kind");
     }
   }
-  void push(Register src) { masm.push_r(src.encoding()); }
+  void push(Register src) {
+    MOZ_ASSERT(hasCreator());
+    masm.push_r(src.encoding());
+  }
   void push(const Address& src) {
     masm.push_m(src.offset, src.base.encoding());
   }
 
   void pop(const Operand& src) {
+    MOZ_ASSERT(hasCreator());
     switch (src.kind()) {
       case Operand::REG:
         masm.pop_r(src.reg());
@@ -2181,7 +2269,10 @@ class AssemblerX86Shared : public AssemblerShared {
         MOZ_CRASH("unexpected operand kind");
     }
   }
-  void pop(Register src) { masm.pop_r(src.encoding()); }
+  void pop(Register src) {
+    MOZ_ASSERT(hasCreator());
+    masm.pop_r(src.encoding());
+  }
   void pop(const Address& src) { masm.pop_m(src.offset, src.base.encoding()); }
 
   void pushFlags() { masm.push_flags(); }
@@ -2205,6 +2296,15 @@ class AssemblerX86Shared : public AssemblerShared {
                 FloatRegister dest) {
     MOZ_ASSERT(HasSSE41());
     masm.vpblendw_irr(mask, src1.encoding(), src0.encoding(), dest.encoding());
+  }
+
+  void vpblendvb(FloatRegister mask, FloatRegister src1, FloatRegister src0,
+                 FloatRegister dest) {
+    MOZ_ASSERT(HasSSE41());
+    MOZ_ASSERT(mask.encoding() == X86Encoding::xmm0 &&
+                   src0.encoding() == dest.encoding(),
+               "only legacy encoding is supported");
+    masm.pblendvb_rr(src1.encoding(), dest.encoding());
   }
 
   void vpinsrb(unsigned lane, const Operand& src1, FloatRegister src0,
@@ -2593,42 +2693,41 @@ class AssemblerX86Shared : public AssemblerShared {
     }
   }
 
-  void vcmpps(uint8_t order, Operand rhs, FloatRegister srcDest) {
+  void vcmpps(uint8_t order, Operand rhs, FloatRegister lhs,
+              FloatRegister dest) {
     MOZ_ASSERT(HasSSE2());
     switch (rhs.kind()) {
       case Operand::FPREG:
-        masm.vcmpps_rr(order, rhs.fpu(), srcDest.encoding(),
-                       srcDest.encoding());
+        masm.vcmpps_rr(order, rhs.fpu(), lhs.encoding(), dest.encoding());
         break;
       case Operand::MEM_REG_DISP:
-        masm.vcmpps_mr(order, rhs.disp(), rhs.base(), srcDest.encoding(),
-                       srcDest.encoding());
+        masm.vcmpps_mr(order, rhs.disp(), rhs.base(), lhs.encoding(),
+                       dest.encoding());
         break;
       case Operand::MEM_ADDRESS32:
-        masm.vcmpps_mr(order, rhs.address(), srcDest.encoding(),
-                       srcDest.encoding());
+        masm.vcmpps_mr(order, rhs.address(), lhs.encoding(), dest.encoding());
         break;
       default:
         MOZ_CRASH("unexpected operand kind");
     }
   }
-  void vcmpeqps(const Operand& rhs, FloatRegister srcDest) {
-    vcmpps(X86Encoding::ConditionCmp_EQ, rhs, srcDest);
+  void vcmpeqps(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+    vcmpps(X86Encoding::ConditionCmp_EQ, rhs, lhs, dest);
   }
-  void vcmpltps(const Operand& rhs, FloatRegister srcDest) {
-    vcmpps(X86Encoding::ConditionCmp_LT, rhs, srcDest);
+  void vcmpltps(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+    vcmpps(X86Encoding::ConditionCmp_LT, rhs, lhs, dest);
   }
-  void vcmpleps(const Operand& rhs, FloatRegister srcDest) {
-    vcmpps(X86Encoding::ConditionCmp_LE, rhs, srcDest);
+  void vcmpleps(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+    vcmpps(X86Encoding::ConditionCmp_LE, rhs, lhs, dest);
   }
-  void vcmpunordps(const Operand& rhs, FloatRegister srcDest) {
-    vcmpps(X86Encoding::ConditionCmp_UNORD, rhs, srcDest);
+  void vcmpunordps(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+    vcmpps(X86Encoding::ConditionCmp_UNORD, rhs, lhs, dest);
   }
-  void vcmpneqps(const Operand& rhs, FloatRegister srcDest) {
-    vcmpps(X86Encoding::ConditionCmp_NEQ, rhs, srcDest);
+  void vcmpneqps(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+    vcmpps(X86Encoding::ConditionCmp_NEQ, rhs, lhs, dest);
   }
-  void vcmpordps(const Operand& rhs, FloatRegister srcDest) {
-    vcmpps(X86Encoding::ConditionCmp_ORD, rhs, srcDest);
+  void vcmpordps(const Operand& rhs, FloatRegister lhs, FloatRegister dest) {
+    vcmpps(X86Encoding::ConditionCmp_ORD, rhs, lhs, dest);
   }
   void vcmppd(uint8_t order, Operand rhs, FloatRegister srcDest) {
     switch (rhs.kind()) {
@@ -3627,11 +3726,12 @@ class AssemblerX86Shared : public AssemblerShared {
         MOZ_CRASH("unexpected operand kind");
     }
   }
-  void vpalignr(const Operand& src, FloatRegister dest, uint8_t shift) {
+  void vpalignr(const Operand& src1, FloatRegister src0, FloatRegister dest,
+                uint8_t shift) {
     MOZ_ASSERT(HasSSE3());
-    switch (src.kind()) {
+    switch (src1.kind()) {
       case Operand::FPREG:
-        masm.vpalignr_irr(shift, src.fpu(), dest.encoding());
+        masm.vpalignr_irr(shift, src1.fpu(), src0.encoding(), dest.encoding());
         break;
       default:
         MOZ_CRASH("unexpected operand kind");

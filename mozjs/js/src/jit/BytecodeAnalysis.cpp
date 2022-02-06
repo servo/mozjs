@@ -14,7 +14,6 @@
 
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
-#include "vm/BytecodeUtil-inl.h"
 #include "vm/JSScript-inl.h"
 
 using namespace js;
@@ -275,15 +274,6 @@ IonBytecodeInfo js::jit::AnalyzeBytecodeForIon(JSContext* cx,
       case JSOp::FunWithProto:
       case JSOp::GlobalOrEvalDeclInstantiation:
         result.usesEnvironmentChain = true;
-        break;
-
-      case JSOp::GetGName:
-      case JSOp::SetGName:
-      case JSOp::StrictSetGName:
-      case JSOp::GImplicitThis:
-        if (script->hasNonSyntacticScope()) {
-          result.usesEnvironmentChain = true;
-        }
         break;
 
       case JSOp::Finally:

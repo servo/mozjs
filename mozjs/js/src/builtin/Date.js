@@ -7,7 +7,7 @@
 //
 //   runtimeDefaultLocale:
 //     Locale information provided by the embedding, guiding SpiderMonkey's
-//     selection of a default locale.  See RuntimeDefaultLocale(), whose
+//     selection of a default locale.  See intl_RuntimeDefaultLocale(), whose
 //     value controls the value returned by DefaultLocale() that's what's
 //     *actually* used.
 //   icuDefaultTimeZone:
@@ -32,7 +32,7 @@
 //    consistent with cached values, then
 // 2) seeing if the desired formatter is cached and returning it if so, or else
 // 3) create the desired formatter and store and return it.
-var dateTimeFormatCache = new Record();
+var dateTimeFormatCache = new_Record();
 
 
 /**
@@ -51,11 +51,11 @@ function GetCachedFormat(format, required, defaults) {
            "dateTimeFormatCache");
 
     var formatters;
-    if (!IsRuntimeDefaultLocale(dateTimeFormatCache.runtimeDefaultLocale) ||
+    if (!intl_IsRuntimeDefaultLocale(dateTimeFormatCache.runtimeDefaultLocale) ||
         !intl_isDefaultTimeZone(dateTimeFormatCache.icuDefaultTimeZone))
     {
-        formatters = dateTimeFormatCache.formatters = new Record();
-        dateTimeFormatCache.runtimeDefaultLocale = RuntimeDefaultLocale();
+        formatters = dateTimeFormatCache.formatters = new_Record();
+        dateTimeFormatCache.runtimeDefaultLocale = intl_RuntimeDefaultLocale();
         dateTimeFormatCache.icuDefaultTimeZone = intl_defaultTimeZone();
     } else {
         formatters = dateTimeFormatCache.formatters;

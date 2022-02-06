@@ -24,8 +24,14 @@ UNSUPPORTED_FEATURES = set(
         "tail-call-optimization",
         "Intl.DateTimeFormat-quarter",
         "Intl.Segmenter",
+        "Intl.Locale-info",
         "Atomics.waitAsync",
         "legacy-regexp",
+        "json-modules",
+        "resizable-arraybuffer",
+        "Temporal",
+        "callable-boundary-realms",
+        "array-find-from-last",
     ]
 )
 FEATURE_CHECK_NEEDED = {
@@ -33,22 +39,10 @@ FEATURE_CHECK_NEEDED = {
     "FinalizationRegistry": "!this.hasOwnProperty('FinalizationRegistry')",
     "SharedArrayBuffer": "!this.hasOwnProperty('SharedArrayBuffer')",
     "WeakRef": "!this.hasOwnProperty('WeakRef')",
-    "Array.prototype.at": "!Array.prototype.at",
-    "String.prototype.at": "!String.prototype.at",
-    "TypedArray.prototype.at": "!Int32Array.prototype.at",
 }
-RELEASE_OR_BETA = set(
-    [
-        "Intl.DateTimeFormat-dayPeriod",
-        "Intl.DateTimeFormat-formatRange",
-    ]
-)
+RELEASE_OR_BETA = set([])
 SHELL_OPTIONS = {
-    "class-fields-private": "--enable-private-fields",
-    "class-static-fields-private": "--enable-private-fields",
-    "class-methods-private": "--enable-private-methods",
-    "class-static-methods-private": "--enable-private-methods",
-    "top-level-await": "--enable-top-level-await",
+    "import-assertions": "--enable-import-assertions",
 }
 
 
@@ -374,6 +368,9 @@ def convertTestFile(test262parser, testSource, testName, includeSet, strictTests
     else:
         testEpilogue = ""
 
+    if raw:
+        refTestOptions.append("test262-raw")
+
     (terms, comments) = createRefTestEntry(
         refTestOptions, refTestSkip, refTestSkipIf, errorType, isModule, isAsync
     )
@@ -661,36 +658,88 @@ def fetch_pr_files(inDir, outDir, prNumber, strictTests):
         # Closed PR, remove respective files from folder
         return print("PR %s is closed" % prNumber)
 
-    files = requests.get(
-        "https://api.github.com/repos/tc39/test262/pulls/%s/files" % prNumber
-    )
-    files.raise_for_status()
+    url = "https://api.github.com/repos/tc39/test262/pulls/%s/files" % prNumber
+    hasNext = True
 
-    for item in files.json():
-        if not item["filename"].startswith("test/"):
-            continue
+    while hasNext:
+        files = requests.get(url)
+        files.raise_for_status()
 
-        filename = item["filename"]
-        fileStatus = item["status"]
+        for item in files.json():
+            if not item["filename"].startswith("test/"):
+                continue
 
-        print("%s %s" % (fileStatus, filename))
+            filename = item["filename"]
+            fileStatus = item["status"]
 
-        # Do not add deleted files
-        if fileStatus == "removed":
-            continue
+            print("%s %s" % (fileStatus, filename))
 
-        contents = requests.get(item["raw_url"])
-        contents.raise_for_status()
+            # Do not add deleted files
+            if fileStatus == "removed":
+                continue
 
-        fileText = contents.text
+            contents = requests.get(item["raw_url"])
+            contents.raise_for_status()
 
-        filePathDirs = os.path.join(inDir, *filename.split("/")[:-1])
+            fileText = contents.text
 
-        if not os.path.isdir(filePathDirs):
-            os.makedirs(filePathDirs)
+            filePathDirs = os.path.join(inDir, *filename.split("/")[:-1])
 
-        with io.open(os.path.join(inDir, *filename.split("/")), "wb") as output_file:
-            output_file.write(fileText.encode("utf8"))
+            if not os.path.isdir(filePathDirs):
+                os.makedirs(filePathDirs)
+
+            with io.open(
+                os.path.join(inDir, *filename.split("/")), "wb"
+            ) as output_file:
+                output_file.write(fileText.encode("utf8"))
+
+        hasNext = False
+
+        # Check if the pull request changes are split over multiple pages.
+        if "link" in files.headers:
+            link = files.headers["link"]
+
+            # The links are comma separated and the entries within a link are separated by a
+            # semicolon. For example the first two links entries for PR 3199:
+            #
+            # https://api.github.com/repos/tc39/test262/pulls/3199/files
+            # """
+            # <https://api.github.com/repositories/16147933/pulls/3199/files?page=2>; rel="next",
+            # <https://api.github.com/repositories/16147933/pulls/3199/files?page=14>; rel="last"
+            # """
+            #
+            # https://api.github.com/repositories/16147933/pulls/3199/files?page=2
+            # """
+            # <https://api.github.com/repositories/16147933/pulls/3199/files?page=1>; rel="prev",
+            # <https://api.github.com/repositories/16147933/pulls/3199/files?page=3>; rel="next",
+            # <https://api.github.com/repositories/16147933/pulls/3199/files?page=14>; rel="last",
+            # <https://api.github.com/repositories/16147933/pulls/3199/files?page=1>; rel="first"
+            # """
+
+            for pages in link.split(", "):
+                (pageUrl, rel) = pages.split("; ")
+
+                assert pageUrl[0] == "<"
+                assert pageUrl[-1] == ">"
+
+                # Remove the angle brackets around the URL.
+                pageUrl = pageUrl[1:-1]
+
+                # Make sure we only request data from github and not some other place.
+                assert pageUrl.startswith("https://api.github.com/")
+
+                # Ensure the relative URL marker has the expected format.
+                assert (
+                    rel == 'rel="prev"'
+                    or rel == 'rel="next"'
+                    or rel == 'rel="first"'
+                    or rel == 'rel="last"'
+                )
+
+                # We only need the URL for the next page.
+                if rel == 'rel="next"':
+                    url = pageUrl
+                    hasNext = True
 
     process_test262(inDir, prTestsOutDir, strictTests, [])
 

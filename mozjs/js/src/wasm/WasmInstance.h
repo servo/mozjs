@@ -22,9 +22,11 @@
 #include "gc/Barrier.h"
 #include "gc/Zone.h"
 #include "vm/SharedMem.h"
+#include "wasm/TypedObject.h"
 #include "wasm/WasmCode.h"
 #include "wasm/WasmDebug.h"
 #include "wasm/WasmFrameIter.h"  // js::wasm::WasmFrameIter
+#include "wasm/WasmLog.h"
 #include "wasm/WasmProcess.h"
 #include "wasm/WasmTable.h"
 
@@ -56,12 +58,15 @@ class Instance {
   DataSegmentVector passiveDataSegments_;
   ElemSegmentVector passiveElemSegments_;
   const UniqueDebugState maybeDebug_;
+#ifdef ENABLE_WASM_GC
   bool hasGcTypes_;
+#endif
 
   // Internal helpers:
   const void** addressOfTypeId(const TypeIdDesc& typeId) const;
   FuncImportTls& funcImportTls(const FuncImport& fi);
   TableTls& tableTls(const TableDesc& td) const;
+  void* checkedCallEntry(const uint32_t functionIndex, const Tier tier) const;
 
   // Only WasmInstanceObject can call the private trace function.
   friend class js::WasmInstanceObject;
@@ -94,6 +99,9 @@ class Instance {
                        uint8_t* nextPC,
                        uintptr_t highestByteVisitedInPrevFrame);
 
+  Instance* getOriginalInstanceAndFunction(Tier tier, uint32_t funcIdx,
+                                           JSFunction** fun);
+
   JS::Realm* realm() const { return realm_; }
   const Code& code() const { return *code_; }
   const CodeTier& code(Tier t) const { return code_->codeTier(t); }
@@ -112,7 +120,6 @@ class Instance {
   size_t memoryMappedSize() const;
   SharedArrayRawBuffer* sharedMemoryBuffer() const;  // never null
   bool memoryAccessInGuardRegion(const uint8_t* addr, unsigned numBytes) const;
-  bool memoryAccessInBounds(const uint8_t* addr, unsigned numBytes) const;
   const SharedExceptionTagVector& exceptionTags() const {
     return exceptionTags_;
   }
@@ -139,7 +146,18 @@ class Instance {
   // value in args.rval.
 
   [[nodiscard]] bool callExport(JSContext* cx, uint32_t funcIndex,
-                                CallArgs args);
+                                CallArgs args,
+                                CoercionLevel level = CoercionLevel::Spec);
+
+  // Constant expression support
+
+  [[nodiscard]] bool constantRefFunc(uint32_t funcIndex,
+                                     MutableHandleFuncRef result);
+  [[nodiscard]] bool constantRttCanon(JSContext* cx, uint32_t sourceTypeIndex,
+                                      MutableHandleRttValue result);
+  [[nodiscard]] bool constantRttSub(JSContext* cx, HandleRttValue parentRtt,
+                                    uint32_t sourceChildTypeIndex,
+                                    MutableHandleRttValue result);
 
   // Return the name associated with a given function index, or generate one
   // if none was given by the module.
@@ -155,9 +173,28 @@ class Instance {
   // Called to apply a single ElemSegment at a given offset, assuming
   // that all bounds validation has already been performed.
 
-  [[nodiscard]] bool initElems(uint32_t tableIndex, const ElemSegment& seg,
-                               uint32_t dstOffset, uint32_t srcOffset,
-                               uint32_t len);
+  [[nodiscard]] bool initElems(JSContext* cx, uint32_t tableIndex,
+                               const ElemSegment& seg, uint32_t dstOffset,
+                               uint32_t srcOffset, uint32_t len);
+
+  // This will return null if an indirect stub for (func,tls) is not found in
+  // the present instance.
+  [[nodiscard]] void* getIndirectStub(uint32_t funcIndex,
+                                      TlsData* targetTlsData,
+                                      const Tier tier) const;
+  // This combines ensureIndirectStub and getIndirectStub, but returns null only
+  // on OOM (because the get should not fail).
+  [[nodiscard]] void* ensureAndGetIndirectStub(Tier tier, uint32_t funcIndex);
+  [[nodiscard]] bool createManyIndirectStubs(
+      const VectorOfIndirectStubTarget& targets, const Tier tier);
+  [[nodiscard]] bool ensureIndirectStubs(JSContext* cx,
+                                         const Uint32Vector& elemFuncIndices,
+                                         uint32_t srcOffset, uint32_t len,
+                                         const Tier tier,
+                                         const bool tableIsImportedOrExported);
+  [[nodiscard]] bool ensureIndirectStub(JSContext* cx, FuncRef* ref,
+                                        const Tier tier,
+                                        const bool tableIsImportedOrExported);
 
   // Debugger support:
 
@@ -179,31 +216,42 @@ class Instance {
  public:
   // Functions to be called directly from wasm code.
   static int32_t callImport_general(Instance*, int32_t, int32_t, uint64_t*);
-  static uint32_t memoryGrow_i32(Instance* instance, uint32_t delta);
-  static uint32_t memorySize_i32(Instance* instance);
-  static int32_t wait_i32(Instance* instance, uint32_t byteOffset,
-                          int32_t value, int64_t timeout);
-  static int32_t wait_i64(Instance* instance, uint32_t byteOffset,
-                          int64_t value, int64_t timeout);
-  static int32_t wake(Instance* instance, uint32_t byteOffset, int32_t count);
-  static int32_t memCopy32(Instance* instance, uint32_t dstByteOffset,
-                           uint32_t srcByteOffset, uint32_t len,
-                           uint8_t* memBase);
-  static int32_t memCopyShared32(Instance* instance, uint32_t dstByteOffset,
-                                 uint32_t srcByteOffset, uint32_t len,
-                                 uint8_t* memBase);
+  static uint32_t memoryGrow_m32(Instance* instance, uint32_t delta);
+  static uint64_t memoryGrow_m64(Instance* instance, uint64_t delta);
+  static uint32_t memorySize_m32(Instance* instance);
+  static uint64_t memorySize_m64(Instance* instance);
+  static int32_t memCopy_m32(Instance* instance, uint32_t dstByteOffset,
+                             uint32_t srcByteOffset, uint32_t len,
+                             uint8_t* memBase);
+  static int32_t memCopyShared_m32(Instance* instance, uint32_t dstByteOffset,
+                                   uint32_t srcByteOffset, uint32_t len,
+                                   uint8_t* memBase);
+  static int32_t memCopy_m64(Instance* instance, uint64_t dstByteOffset,
+                             uint64_t srcByteOffset, uint64_t len,
+                             uint8_t* memBase);
+  static int32_t memCopyShared_m64(Instance* instance, uint64_t dstByteOffset,
+                                   uint64_t srcByteOffset, uint64_t len,
+                                   uint8_t* memBase);
+  static int32_t memFill_m32(Instance* instance, uint32_t byteOffset,
+                             uint32_t value, uint32_t len, uint8_t* memBase);
+  static int32_t memFillShared_m32(Instance* instance, uint32_t byteOffset,
+                                   uint32_t value, uint32_t len,
+                                   uint8_t* memBase);
+  static int32_t memFill_m64(Instance* instance, uint64_t byteOffset,
+                             uint32_t value, uint64_t len, uint8_t* memBase);
+  static int32_t memFillShared_m64(Instance* instance, uint64_t byteOffset,
+                                   uint32_t value, uint64_t len,
+                                   uint8_t* memBase);
+  static int32_t memInit_m32(Instance* instance, uint32_t dstOffset,
+                             uint32_t srcOffset, uint32_t len,
+                             uint32_t segIndex);
+  static int32_t memInit_m64(Instance* instance, uint64_t dstOffset,
+                             uint32_t srcOffset, uint32_t len,
+                             uint32_t segIndex);
   static int32_t dataDrop(Instance* instance, uint32_t segIndex);
-  static int32_t memFill32(Instance* instance, uint32_t byteOffset,
-                           uint32_t value, uint32_t len, uint8_t* memBase);
-  static int32_t memFillShared32(Instance* instance, uint32_t byteOffset,
-                                 uint32_t value, uint32_t len,
-                                 uint8_t* memBase);
-  static int32_t memInit32(Instance* instance, uint32_t dstOffset,
-                           uint32_t srcOffset, uint32_t len, uint32_t segIndex);
   static int32_t tableCopy(Instance* instance, uint32_t dstOffset,
                            uint32_t srcOffset, uint32_t len,
                            uint32_t dstTableIndex, uint32_t srcTableIndex);
-  static int32_t elemDrop(Instance* instance, uint32_t segIndex);
   static int32_t tableFill(Instance* instance, uint32_t start, void* value,
                            uint32_t len, uint32_t tableIndex);
   static void* tableGet(Instance* instance, uint32_t index,
@@ -216,6 +264,19 @@ class Instance {
   static int32_t tableInit(Instance* instance, uint32_t dstOffset,
                            uint32_t srcOffset, uint32_t len, uint32_t segIndex,
                            uint32_t tableIndex);
+  static int32_t elemDrop(Instance* instance, uint32_t segIndex);
+  static int32_t wait_i32_m32(Instance* instance, uint32_t byteOffset,
+                              int32_t value, int64_t timeout);
+  static int32_t wait_i32_m64(Instance* instance, uint64_t byteOffset,
+                              int32_t value, int64_t timeout);
+  static int32_t wait_i64_m32(Instance* instance, uint32_t byteOffset,
+                              int64_t value, int64_t timeout);
+  static int32_t wait_i64_m64(Instance* instance, uint64_t byteOffset,
+                              int64_t value, int64_t timeout);
+  static int32_t wake_m32(Instance* instance, uint32_t byteOffset,
+                          int32_t count);
+  static int32_t wake_m64(Instance* instance, uint64_t byteOffset,
+                          int32_t count);
   static void* refFunc(Instance* instance, uint32_t funcIndex);
   static void preBarrierFiltering(Instance* instance, gc::Cell** location);
   static void postBarrier(Instance* instance, gc::Cell** location);
@@ -224,20 +285,28 @@ class Instance {
 #ifdef ENABLE_WASM_EXCEPTIONS
   static void* exceptionNew(Instance* instance, uint32_t exnIndex,
                             uint32_t nbytes);
-  static void* throwException(Instance* instance, JSObject* exn);
-  static uint32_t getLocalExceptionIndex(Instance* instance, JSObject* exn);
+  static int32_t throwException(Instance* instance, JSObject* exn);
+  static uint32_t consumePendingException(Instance* instance);
   static int32_t pushRefIntoExn(Instance* instance, JSObject* exn,
                                 JSObject* ref);
 #endif
   static void* arrayNew(Instance* instance, uint32_t length, void* arrayDescr);
   static int32_t refTest(Instance* instance, void* refPtr, void* rttPtr);
-  static void* rttSub(Instance* instance, void* rttPtr);
+  static void* rttSub(Instance* instance, void* rttParentPtr,
+                      void* rttSubCanonPtr);
+  static int32_t intrI8VecMul(Instance* instance, uint32_t dest, uint32_t src1,
+                              uint32_t src2, uint32_t len, uint8_t* memBase);
 };
 
 using UniqueInstance = UniquePtr<Instance>;
 
 bool ResultsToJSValue(JSContext* cx, ResultType type, void* registerResultLoc,
-                      Maybe<char*> stackResultsLoc, MutableHandleValue rval);
+                      Maybe<char*> stackResultsLoc, MutableHandleValue rval,
+                      CoercionLevel level = CoercionLevel::Spec);
+
+// Report an error to `cx` and mark it as a 'trap' so that it cannot be caught
+// by wasm exception handlers.
+void ReportTrapError(JSContext* cx, unsigned errorNumber);
 
 }  // namespace wasm
 }  // namespace js

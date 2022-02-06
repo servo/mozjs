@@ -54,6 +54,8 @@ enum EnterJitEbpArgumentOffset {
 // The trampoline use the EnterJitCode signature, with the standard cdecl
 // calling convention.
 void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateEnterJIT");
+
   enterJITOffset_ = startTrampolineCode(masm);
 
   masm.assertStackAlignment(ABIStackAlignment,
@@ -140,6 +142,10 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.bind(&footer);
   }
 
+  // Create the frame descriptor.
+  masm.subl(esp, esi);
+  masm.makeFrameDescriptor(esi, FrameType::CppToJSJit, JitFrameLayout::Size());
+
   // Push the number of actual arguments.  |result| is used to store the
   // actual number of arguments without adding an extra argument to the enter
   // JIT.
@@ -154,12 +160,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   // This address is also used for setting the constructing bit on all paths.
   masm.loadPtr(Address(ebp, ARG_STACKFRAME), OsrFrameReg);
 
-  /*****************************************************************
-  Push the number of bytes we've pushed so far on the stack and call
-  *****************************************************************/
-  // Create a frame descriptor.
-  masm.subl(esp, esi);
-  masm.makeFrameDescriptor(esi, FrameType::CppToJSJit, JitFrameLayout::Size());
+  // Push the descriptor.
   masm.push(esi);
 
   CodeLabel returnLabel;
@@ -287,6 +288,8 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   // eax <- 8*argc (size of all arguments we pushed on the stack)
   masm.pop(eax);
   masm.shrl(Imm32(FRAMESIZE_SHIFT), eax);  // Unmark EntryFrame.
+  masm.pop(ebx);                           // Discard calleeToken.
+  masm.pop(ebx);                           // Discard numActualArgs.
   masm.addl(eax, esp);
 
   // |ebp| could have been clobbered by the inner function.
@@ -312,6 +315,15 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   // Restore old stack frame pointer
   masm.pop(ebp);
   masm.ret();
+}
+
+// static
+mozilla::Maybe<::JS::ProfilingFrameIterator::RegisterState>
+JitRuntime::getCppEntryRegisters(JitFrameLayout* frameStackAddress) {
+  // Not supported, or not implemented yet.
+  // TODO: Implement along with the corresponding stack-walker changes, in
+  // coordination with the Gecko Profiler, see bug 1635987 and follow-ups.
+  return mozilla::Nothing{};
 }
 
 // Push AllRegs in a way that is compatible with RegisterDump, regardless of
@@ -341,6 +353,8 @@ static void DumpAllRegs(MacroAssembler& masm) {
 }
 
 void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateInvalidator");
+
   invalidatorOffset_ = startTrampolineCode(masm);
 
   // We do the minimum amount of work in assembly and shunt the rest
@@ -386,6 +400,8 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
 
 void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
                                             ArgumentsRectifierKind kind) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateArgumentsRectifier");
+
   switch (kind) {
     case ArgumentsRectifierKind::Normal:
       argumentsRectifierOffset_ = startTrampolineCode(masm);
@@ -406,7 +422,8 @@ void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
   masm.loadPtr(Address(esp, RectifierFrameLayout::offsetOfCalleeToken()), eax);
   masm.mov(eax, ecx);
   masm.andl(Imm32(CalleeTokenMask), ecx);
-  masm.movzwl(Operand(ecx, JSFunction::offsetOfNargs()), ecx);
+  masm.mov(Operand(ecx, JSFunction::offsetOfFlagsAndArgCount()), ecx);
+  masm.rshift32(Imm32(JSFunction::ArgCountShift), ecx);
 
   // The frame pointer and its padding are pushed on the stack.
   // Including |this|, there are (|nformals| + 1) arguments to push to the
@@ -504,7 +521,8 @@ void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
         sizeof(RectifierFrameLayout) + sizeof(Value) + sizeof(void*));
 
     masm.andl(Imm32(CalleeTokenMask), ebx);
-    masm.movzwl(Operand(ebx, JSFunction::offsetOfNargs()), ebx);
+    masm.movl(Operand(ebx, JSFunction::offsetOfFlagsAndArgCount()), ebx);
+    masm.rshift32(Imm32(JSFunction::ArgCountShift), ebx);
 
     BaseValueIndex dst(esp, ebx, sizeof(Value));
 
@@ -622,6 +640,8 @@ static void GenerateBailoutThunk(MacroAssembler& masm, uint32_t frameClass,
 JitRuntime::BailoutTable JitRuntime::generateBailoutTable(MacroAssembler& masm,
                                                           Label* bailoutTail,
                                                           uint32_t frameClass) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateBailoutTable");
+
   uint32_t offset = startTrampolineCode(masm);
 
   Label bailout;
@@ -637,6 +657,8 @@ JitRuntime::BailoutTable JitRuntime::generateBailoutTable(MacroAssembler& masm,
 
 void JitRuntime::generateBailoutHandler(MacroAssembler& masm,
                                         Label* bailoutTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateBailoutHandler");
+
   bailoutHandlerOffset_ = startTrampolineCode(masm);
 
   GenerateBailoutThunk(masm, NO_FRAME_SIZE_CLASS_ID, bailoutTail);
@@ -645,6 +667,8 @@ void JitRuntime::generateBailoutHandler(MacroAssembler& masm,
 bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
                                    const VMFunctionData& f, DynFn nativeFun,
                                    uint32_t* wrapperOffset) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateVMWrapper");
+
   *wrapperOffset = startTrampolineCode(masm);
 
   // Avoid conflicts with argument registers while discarding the result after
@@ -762,7 +786,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
 
   // Test for failure.
   switch (f.failType()) {
-    case Type_Object:
+    case Type_Cell:
       masm.branchTestPtr(Assembler::Zero, eax, eax, masm.failureLabel());
       break;
     case Type_Bool:
@@ -825,6 +849,8 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
 
 uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
                                         MIRType type) {
+  AutoCreatedBy acb(masm, "JitRuntime::generatePreBarrier");
+
   uint32_t offset = startTrampolineCode(masm);
 
   static_assert(PreBarrierReg == edx);
@@ -875,6 +901,8 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
 
 void JitRuntime::generateExceptionTailStub(MacroAssembler& masm,
                                            Label* profilerExitTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateExceptionTailStub");
+
   exceptionTailOffset_ = startTrampolineCode(masm);
 
   masm.bind(masm.failureLabel());
@@ -883,6 +911,8 @@ void JitRuntime::generateExceptionTailStub(MacroAssembler& masm,
 
 void JitRuntime::generateBailoutTailStub(MacroAssembler& masm,
                                          Label* bailoutTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateBailoutTailStub");
+
   bailoutTailOffset_ = startTrampolineCode(masm);
   masm.bind(bailoutTail);
 
@@ -891,6 +921,8 @@ void JitRuntime::generateBailoutTailStub(MacroAssembler& masm,
 
 void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
                                                    Label* profilerExitTail) {
+  AutoCreatedBy acb(masm, "JitRuntime::generateProfilerExitFrameTailStub");
+
   profilerExitFrameTailOffset_ = startTrampolineCode(masm);
   masm.bind(profilerExitTail);
 

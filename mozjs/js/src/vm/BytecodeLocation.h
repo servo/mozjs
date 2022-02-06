@@ -103,6 +103,7 @@ class BytecodeLocation {
   int32_t jumpOffset() const { return GET_JUMP_OFFSET(rawBytecode_); }
 
   inline JSAtom* getAtom(const JSScript* script) const;
+  inline JSString* getString(const JSScript* script) const;
   inline PropertyName* getPropertyName(const JSScript* script) const;
   inline JS::BigInt* getBigInt(const JSScript* script) const;
   inline JSObject* getObject(const JSScript* script) const;
@@ -205,8 +206,10 @@ class BytecodeLocation {
   bool isInvokeOp() const { return IsInvokeOp(getOp()); }
 
   bool isGetPropOp() const { return IsGetPropOp(getOp()); }
+  bool isGetElemOp() const { return IsGetElemOp(getOp()); }
 
   bool isSetPropOp() const { return IsSetPropOp(getOp()); }
+  bool isSetElemOp() const { return IsSetElemOp(getOp()); }
 
   AsyncFunctionResolveKind getAsyncFunctionResolveKind() {
     return AsyncFunctionResolveKind(GET_UINT8(rawBytecode_));

@@ -146,6 +146,22 @@ inline EnvironmentObject& InterpreterFrame::aliasedEnvironment(
   return env->as<EnvironmentObject>();
 }
 
+inline EnvironmentObject& InterpreterFrame::aliasedEnvironmentMaybeDebug(
+    EnvironmentCoordinate ec) const {
+  JSObject* env = environmentChain();
+  for (unsigned i = ec.hops(); i; i--) {
+    if (env->is<EnvironmentObject>()) {
+      env = &env->as<EnvironmentObject>().enclosingEnvironment();
+    } else {
+      MOZ_ASSERT(env->is<DebugEnvironmentProxy>());
+      env = &env->as<DebugEnvironmentProxy>().enclosingEnvironment();
+    }
+  }
+  return env->is<EnvironmentObject>()
+             ? env->as<EnvironmentObject>()
+             : env->as<DebugEnvironmentProxy>().environment();
+}
+
 template <typename SpecificEnvironment>
 inline void InterpreterFrame::pushOnEnvironmentChain(SpecificEnvironment& env) {
   MOZ_ASSERT(*environmentChain() == env.enclosingEnvironment());
@@ -602,6 +618,19 @@ inline bool AbstractFramePtr::isConstructing() const {
     return asRematerializedFrame()->isConstructing();
   }
   MOZ_CRASH("Unexpected frame");
+}
+
+inline bool AbstractFramePtr::hasCachedSavedFrame() const {
+  if (isInterpreterFrame()) {
+    return asInterpreterFrame()->hasCachedSavedFrame();
+  }
+  if (isBaselineFrame()) {
+    return asBaselineFrame()->framePrefix()->hasCachedSavedFrame();
+  }
+  if (isWasmDebugFrame()) {
+    return asWasmDebugFrame()->hasCachedSavedFrame();
+  }
+  return asRematerializedFrame()->hasCachedSavedFrame();
 }
 
 inline bool AbstractFramePtr::hasArgs() const { return isFunctionFrame(); }

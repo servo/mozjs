@@ -38,7 +38,8 @@
 // following macros and functions, which encapsulate the most common operations
 // and thus avoid the need for many #ifdefs.
 
-#  define AUTO_BASE_PROFILER_INIT
+#  define AUTO_BASE_PROFILER_INIT \
+    ::mozilla::baseprofiler::profiler_init_main_thread_id()
 
 #  define BASE_PROFILER_REGISTER_THREAD(name)
 #  define BASE_PROFILER_UNREGISTER_THREAD()
@@ -50,9 +51,6 @@
 // Function stubs for when MOZ_GECKO_PROFILER is not defined.
 
 namespace mozilla {
-// This won't be used, it's just there to allow the empty definition of
-// `profiler_capture_backtrace`.
-class ProfileChunkedBuffer {};
 
 namespace baseprofiler {
 // This won't be used, it's just there to allow the empty definition of
@@ -75,6 +73,11 @@ static inline bool profiler_capture_backtrace_into(
 static inline UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
   return nullptr;
 }
+
+static inline void profiler_init(void* stackTop) {}
+
+static inline void profiler_shutdown() {}
+
 }  // namespace baseprofiler
 }  // namespace mozilla
 
@@ -198,26 +201,23 @@ MFBT_API void profiler_unregister_thread();
 
 // Registers a DOM Window (the JS global `window`) with the profiler. Each
 // Window _roughly_ corresponds to a single document loaded within a
-// BrowsingContext. The unique IDs for both the Window and BrowsingContext are
-// recorded to allow correlating different Windows loaded within the same tab or
-// frame element.
+// browsing context. Both the Window Id and Browser Id are recorded to allow
+// correlating different Windows loaded within the same tab or frame element.
 //
 // We register pages for each navigations but we do not register
 // history.pushState or history.replaceState since they correspond to the same
-// Inner Window ID. When a Browsing context is first loaded, the first url
+// Inner Window ID. When a browsing context is first loaded, the first url
 // loaded in it will be about:blank. Because of that, this call keeps the first
 // non-about:blank registration of window and discards the previous one.
 //
-//   "aBrowsingContextID"     is the ID of the browsing context that document
-//                            belongs to. That's used to determine the tab of
-//                            that page.
+//   "aTabID"                 is the BrowserId of that document belongs to.
+//                            That's used to determine the tab of that page.
 //   "aInnerWindowID"         is the ID of the `window` global object of that
 //                            document.
 //   "aUrl"                   is the URL of the page.
 //   "aEmbedderInnerWindowID" is the inner window id of embedder. It's used to
 //                            determine sub documents of a page.
-MFBT_API void profiler_register_page(uint64_t aBrowsingContextID,
-                                     uint64_t aInnerWindowID,
+MFBT_API void profiler_register_page(uint64_t aTabD, uint64_t aInnerWindowID,
                                      const std::string& aUrl,
                                      uint64_t aEmbedderInnerWindowID);
 // Unregister page with the profiler.
@@ -307,6 +307,7 @@ class ProfilerStackCollector {
 // profiling stack, JS stack, and (optionally) native stack, passing the
 // collected frames into aCollector. aFeatures dictates which compiler features
 // are used. |Leaf| is the only relevant one.
+// Use `aThreadId`=0 to sample the current thread.
 MFBT_API void profiler_suspend_and_sample_thread(
     int aThreadId, uint32_t aFeatures, ProfilerStackCollector& aCollector,
     bool aSampleNative = true);

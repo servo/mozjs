@@ -19,10 +19,7 @@ from __future__ import absolute_import, print_function, unicode_literals
 import operator
 import os
 
-from collections import (
-    Counter,
-    OrderedDict,
-)
+from collections import Counter, OrderedDict
 from mozbuild.util import (
     HierarchicalStringList,
     ImmutableStrictOrderingOnAppendList,
@@ -40,22 +37,13 @@ from mozbuild.util import (
 
 from .. import schedules
 
-from ..testing import (
-    read_manifestparser_manifest,
-    read_reftest_manifest,
-)
+from ..testing import read_manifestparser_manifest, read_reftest_manifest
 
 import mozpack.path as mozpath
 from types import FunctionType
 
 import itertools
 import six
-
-
-# The MOZ_HARDENING_CFLAGS and MOZ_HARDENING_LDFLAGS differ depending on whether
-# the context is under $TOPOBJDIR/js/src.
-def _context_under_js_src(context):
-    return mozpath.commonprefix([context.relsrcdir, "js/src"]) != ""
 
 
 class ContextDerivedValue(object):
@@ -448,11 +436,7 @@ class LinkFlags(BaseCompileFlags):
             ("OS", self._os_ldflags(), ("LDFLAGS",)),
             (
                 "MOZ_HARDENING_LDFLAGS",
-                (
-                    context.config.substs.get("MOZ_HARDENING_LDFLAGS_JS")
-                    if _context_under_js_src(context)
-                    else context.config.substs.get("MOZ_HARDENING_LDFLAGS")
-                ),
+                context.config.substs.get("MOZ_HARDENING_LDFLAGS"),
                 ("LDFLAGS",),
             ),
             ("DEFFILE", None, ("LDFLAGS",)),
@@ -467,6 +451,15 @@ class LinkFlags(BaseCompileFlags):
                 (
                     context.config.substs.get("MOZ_OPTIMIZE_LDFLAGS", [])
                     if context.config.substs.get("MOZ_OPTIMIZE")
+                    else []
+                ),
+                ("LDFLAGS",),
+            ),
+            (
+                "CETCOMPAT",
+                (
+                    context.config.substs.get("MOZ_CETCOMPAT_LDFLAGS")
+                    if context.config.substs.get("NIGHTLY_BUILD")
                     else []
                 ),
                 ("LDFLAGS",),
@@ -562,11 +555,7 @@ class CompileFlags(TargetCompileFlags):
             ),
             (
                 "MOZ_HARDENING_CFLAGS",
-                (
-                    context.config.substs.get("MOZ_HARDENING_CFLAGS_JS")
-                    if _context_under_js_src(context)
-                    else context.config.substs.get("MOZ_HARDENING_CFLAGS")
-                ),
+                context.config.substs.get("MOZ_HARDENING_CFLAGS"),
                 ("CXXFLAGS", "CFLAGS", "CXX_LDFLAGS", "C_LDFLAGS"),
             ),
             ("DEFINES", None, ("CXXFLAGS", "CFLAGS")),
@@ -666,8 +655,13 @@ class CompileFlags(TargetCompileFlags):
                 ("CXXFLAGS", "CFLAGS"),
             ),
             (
-                "NEWPM",
-                context.config.substs.get("MOZ_NEW_PASS_MANAGER_FLAGS"),
+                "PASS_MANAGER",
+                context.config.substs.get("MOZ_PASS_MANAGER_FLAGS"),
+                ("CXXFLAGS", "CFLAGS"),
+            ),
+            (
+                "FILE_PREFIX_MAP",
+                context.config.substs.get("MOZ_FILE_PREFIX_MAP_FLAGS"),
                 ("CXXFLAGS", "CFLAGS"),
             ),
         )
@@ -712,31 +706,17 @@ class WasmFlags(TargetCompileFlags):
                 ),
                 ("WASM_CXXFLAGS", "WASM_CFLAGS"),
             ),
-            ("RTL", None, ("WASM_CXXFLAGS", "WASM_CFLAGS")),
-            (
-                "DEBUG",
-                self._debug_flags(),
-                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
-            ),
+            ("DEBUG", self._debug_flags(), ("WASM_CFLAGS", "WASM_CXXFLAGS")),
             (
                 "CLANG_PLUGIN",
                 context.config.substs.get("CLANG_PLUGIN_FLAGS"),
-                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
+                ("WASM_CFLAGS", "WASM_CXXFLAGS"),
             ),
-            (
-                "OPTIMIZE",
-                self._optimize_flags(),
-                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
-            ),
-            (
-                "FRAMEPTR",
-                context.config.substs.get("MOZ_FRAMEPTR_FLAGS"),
-                ("WASM_CFLAGS", "WASM_CXXFLAGS", "WASM_LDFLAGS"),
-            ),
+            ("OPTIMIZE", self._optimize_flags(), ("WASM_CFLAGS", "WASM_CXXFLAGS")),
             (
                 "WARNINGS_AS_ERRORS",
                 self._warnings_as_errors(),
-                ("WASM_CXXFLAGS", "WASM_CFLAGS", "WASM_LDFLAGS"),
+                ("WASM_CXXFLAGS", "WASM_CFLAGS"),
             ),
             ("MOZBUILD_CFLAGS", None, ("WASM_CFLAGS",)),
             ("MOZBUILD_CXXFLAGS", None, ("WASM_CXXFLAGS",)),
@@ -746,11 +726,6 @@ class WasmFlags(TargetCompileFlags):
                 context.config.substs.get("WASM_CXXFLAGS"),
                 ("WASM_CXXFLAGS",),
             ),
-            (
-                "WASM_LDFLAGS",
-                context.config.substs.get("WASM_LDFLAGS"),
-                ("WASM_LDFLAGS",),
-            ),
             ("WASM_DEFINES", None, ("WASM_CFLAGS", "WASM_CXXFLAGS")),
             ("MOZBUILD_WASM_CFLAGS", None, ("WASM_CFLAGS",)),
             ("MOZBUILD_WASM_CXXFLAGS", None, ("WASM_CXXFLAGS",)),
@@ -759,9 +734,20 @@ class WasmFlags(TargetCompileFlags):
                 context.config.substs.get("MOZ_NEW_PASS_MANAGER_FLAGS"),
                 ("WASM_CFLAGS", "WASM_CXXFLAGS"),
             ),
+            (
+                "FILE_PREFIX_MAP",
+                context.config.substs.get("MOZ_FILE_PREFIX_MAP_FLAGS"),
+                ("WASM_CFLAGS", "WASM_CXXFLAGS"),
+            ),
         )
 
         TargetCompileFlags.__init__(self, context)
+
+    def _debug_flags(self):
+        substs = self._context.config.substs
+        if substs.get("MOZ_DEBUG") or substs.get("MOZ_DEBUG_SYMBOLS"):
+            return ["-g"]
+        return []
 
     def _optimize_flags(self):
         if not self._context.config.substs.get("MOZ_OPTIMIZE"):
@@ -1178,12 +1164,7 @@ SchedulingComponents = ContextDerivedTypedRecord(
 )
 
 GeneratedFilesList = StrictOrderingOnAppendListWithFlagsFactory(
-    {
-        "script": six.text_type,
-        "inputs": list,
-        "force": bool,
-        "flags": list,
-    }
+    {"script": six.text_type, "inputs": list, "force": bool, "flags": list}
 )
 
 
@@ -1384,9 +1365,7 @@ class Files(SubContext):
 # Arbitrary arguments can be passed to the class constructor. The first
 # argument is always the parent context. It is up to each class to perform
 # argument validation.
-SUBCONTEXTS = [
-    Files,
-]
+SUBCONTEXTS = [Files]
 
 for cls in SUBCONTEXTS:
     if not issubclass(cls, SubContext):
@@ -1424,6 +1403,12 @@ VARIABLES = {
 
         """,
     ),
+    "REQUIRES_UNIFIED_BUILD": (
+        bool,
+        bool,
+        """Whether this module requires building in unified environment.
+        """,
+    ),
     "IS_RUST_LIBRARY": (
         bool,
         bool,
@@ -1445,17 +1430,6 @@ VARIABLES = {
         List,
         list,
         """Cargo features to activate for this library.
-
-        This variable should not be used directly; you should be using the
-        RustLibrary template instead.
-        """,
-    ),
-    "RUST_LIBRARY_TARGET_DIR": (
-        six.text_type,
-        six.text_type,
-        """Where CARGO_TARGET_DIR should point when compiling this library.  If
-        not set, it defaults to the current objdir.  It should be a relative path
-        to the current objdir; absolute paths should not be used.
 
         This variable should not be used directly; you should be using the
         RustLibrary template instead.
@@ -2497,17 +2471,6 @@ VARIABLES = {
         list,
         """Flags passed to the C++-to-wasm compiler for all of the
            C++ source files declared in this directory.
-
-           Note that the ordering of flags matters here; these flags will be
-           added to the compiler's command line in the same order as they
-           appear in the moz.build file.
-        """,
-    ),
-    "WASM_LDFLAGS": (
-        List,
-        list,
-        """Flags passed to the linker when linking wasm modules
-           declared in this directory.
 
            Note that the ordering of flags matters here; these flags will be
            added to the compiler's command line in the same order as they

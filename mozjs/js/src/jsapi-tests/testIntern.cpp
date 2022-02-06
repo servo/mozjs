@@ -16,7 +16,11 @@ BEGIN_TEST(testAtomizedIsNotPinned) {
   JS::Rooted<JSAtom*> atom(cx,
                            js::Atomize(cx, someChars, js_strlen(someChars)));
   CHECK(!JS_StringHasBeenPinned(cx, atom));
-  CHECK(JS_AtomizeAndPinJSString(cx, atom));
+
+  JS::RootedString string(cx, JS_AtomizeAndPinString(cx, someChars));
+  CHECK(string);
+  CHECK(string == atom);
+
   CHECK(JS_StringHasBeenPinned(cx, atom));
   return true;
 }
@@ -41,7 +45,7 @@ BEGIN_TEST(testPinAcrossGC) {
 static void FinalizeCallback(JSFreeOp* fop, JSFinalizeStatus status,
                              void* data) {
   if (status == JSFINALIZE_GROUP_START) {
-    sw.strOk = js::gc::IsMarkedUnbarriered(fop->runtime(), &sw.str);
+    sw.strOk = js::gc::IsMarkedUnbarriered(fop->runtime(), sw.str);
   }
 }
 END_TEST(testPinAcrossGC)

@@ -25,7 +25,7 @@ const elemId           = 9;
 const codeId           = 10;
 const dataId           = 11;
 const dataCountId      = 12;
-const eventId          = 13;
+const tagId            = 13;
 
 // User-defined section names
 const nameName         = "name";
@@ -34,7 +34,7 @@ const nameName         = "name";
 const nameTypeModule    = 0;
 const nameTypeFunction  = 1;
 const nameTypeLocal     = 2;
-const nameTypeEvent     = 3;
+const nameTypeTag       = 3;
 
 // Type codes
 const I32Code          = 0x7f;
@@ -55,10 +55,12 @@ const BlockCode        = 0x02;
 const TryCode          = 0x06;
 const CatchCode        = 0x07;
 const ThrowCode        = 0x08;
+const RethrowCode      = 0x09;
 const EndCode          = 0x0b;
 const ReturnCode       = 0x0f;
 const CallCode         = 0x10;
 const CallIndirectCode = 0x11;
+const DelegateCode     = 0x18;
 const DropCode         = 0x1a;
 const SelectCode       = 0x1b;
 const LocalGetCode     = 0x20;
@@ -131,6 +133,23 @@ const F64x2PMinCode = 0xf6;
 const F64x2PMaxCode = 0xf7;
 const V128Load32ZeroCode = 0xfc;
 const V128Load64ZeroCode = 0xfd;
+const F32x4RelaxedFmaCode = 0xaf;
+const F32x4RelaxedFmsCode = 0xb0;
+const F64x2RelaxedFmaCode = 0xcf;
+const F64x2RelaxedFmsCode = 0xd0;
+const F32x4RelaxedMin = 0xb4;
+const F32x4RelaxedMax = 0xe2;
+const F64x2RelaxedMin = 0xd4;
+const F64x2RelaxedMax = 0xee;
+const I32x4RelaxedTruncSSatF32x4 = 0xa5;
+const I32x4RelaxedTruncUSatF32x4 = 0xa6;
+const I32x4RelaxedTruncSatF64x2SZero = 0xc5;
+const I32x4RelaxedTruncSatF64x2UZero = 0xc6;
+const I8x16RelaxedSwizzle = 0xa2;
+const I8x16LaneSelect = 0xb2;
+const I16x8LaneSelect = 0xb3;
+const I32x4LaneSelect = 0xd2;
+const I64x2LaneSelect = 0xd3;
 
 // SIMD wormhole opcodes.
 const WORMHOLE_SELFTEST = 0;
@@ -150,9 +169,10 @@ const MozPrefix = 0xff;
 
 const definedOpcodes =
     [0x00, 0x01, 0x02, 0x03, 0x04, 0x05,
-     ...(wasmExceptionsEnabled() ? [0x06, 0x07, 0x08] : []),
+     ...(wasmExceptionsEnabled() ? [0x06, 0x07, 0x08, 0x09] : []),
      0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
      0x10, 0x11,
+     ...(wasmExceptionsEnabled() ? [0x18, 0x19] : []),
      0x1a, 0x1b, 0x1c,
      0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26,
      0x28, 0x29, 0x2a, 0x2b, 0x2c, 0x2d, 0x2e, 0x2f,
@@ -212,7 +232,7 @@ const FunctionCode     = 0x00;
 const TableCode        = 0x01;
 const MemoryCode       = 0x02;
 const GlobalCode       = 0x03;
-const EventCode        = 0x04;
+const TagCode          = 0x04;
 
 // ResizableFlags
 const HasMaximumFlag   = 0x1;
@@ -288,9 +308,16 @@ function sigSection(sigs) {
         body.push(...varU32(sig.args.length));
         for (let arg of sig.args)
             body.push(...varU32(arg));
-        body.push(...varU32(sig.ret == VoidCode ? 0 : 1));
-        if (sig.ret != VoidCode)
+        if (sig.ret == VoidCode) {
+            body.push(...varU32(0));
+        } else if (typeof sig.ret == "number") {
+            body.push(...varU32(1));
             body.push(...varU32(sig.ret));
+        } else {
+            body.push(...varU32(sig.ret.length));
+            for (let r of sig.ret)
+                body.push(...varU32(r));
+        }
     }
     return { name: typeId, body };
 }
@@ -342,9 +369,9 @@ function exportSection(exports) {
         } else if (exp.hasOwnProperty("memIndex")) {
             body.push(...varU32(MemoryCode));
             body.push(...varU32(exp.memIndex));
-        } else if (exp.hasOwnProperty("eventIndex")) {
-            body.push(...varU32(EventCode));
-            body.push(...varU32(exp.eventIndex));
+        } else if (exp.hasOwnProperty("tagIndex")) {
+            body.push(...varU32(TagCode));
+            body.push(...varU32(exp.tagIndex));
         } else {
             throw "Bad export " + exp;
         }
@@ -369,14 +396,14 @@ function memorySection(initialSize) {
     return { name: memoryId, body };
 }
 
-function eventSection(events) {
+function tagSection(tags) {
     var body = [];
-    body.push(...varU32(events.length));
-    for (let event of events) {
+    body.push(...varU32(tags.length));
+    for (let tag of tags) {
         body.push(...varU32(0)); // exception attribute
-        body.push(...varU32(event.type));
+        body.push(...varU32(tag.type));
     }
-    return { name: eventId, body };
+    return { name: tagId, body };
 }
 
 function dataSection(segmentArrays) {

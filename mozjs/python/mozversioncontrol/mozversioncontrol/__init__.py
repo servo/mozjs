@@ -10,9 +10,8 @@ import os
 import re
 import shutil
 import subprocess
-import sys
+from pathlib import Path
 
-from mozbuild.util import ensure_subprocess_env
 from mozfile import which
 from mozpack.files import FileListFinder
 
@@ -90,17 +89,7 @@ class Repository(object):
         self._tool = get_tool_path(tool)
         self._version = None
         self._valid_diff_filter = ("m", "a", "d")
-
-        if os.name == "nt" and sys.version_info[0] == 2:
-            self._env = {}
-            for k, v in os.environ.iteritems():
-                if isinstance(k, unicode):
-                    k = k.encode("utf8")
-                if isinstance(v, unicode):
-                    v = v.encode("utf8")
-                self._env[k] = v
-        else:
-            self._env = os.environ.copy()
+        self._env = os.environ.copy()
 
     def __enter__(self):
         return self
@@ -114,10 +103,7 @@ class Repository(object):
         cmd = (self._tool,) + args
         try:
             return subprocess.check_output(
-                cmd,
-                cwd=self.path,
-                env=ensure_subprocess_env(self._env),
-                universal_newlines=True,
+                cmd, cwd=self.path, env=self._env, universal_newlines=True
             )
         except subprocess.CalledProcessError as e:
             if e.returncode in return_codes:
@@ -153,6 +139,17 @@ class Repository(object):
     @abc.abstractproperty
     def base_ref(self):
         """Hash of revision the current topic branch is based on."""
+
+    @abc.abstractmethod
+    def base_ref_as_hg(self):
+        """Mercurial hash of revision the current topic branch is based on.
+
+        Return None if the hg hash of the base ref could not be calculated.
+        """
+
+    @abc.abstractproperty
+    def branch(self):
+        """Current branch or bookmark the checkout has active."""
 
     @abc.abstractmethod
     def get_commit_time(self):
@@ -201,7 +198,7 @@ class Repository(object):
         """
 
     @abc.abstractmethod
-    def get_outgoing_files(self, diff_filter, upstream="default"):
+    def get_outgoing_files(self, diff_filter, upstream):
         """Return a list of changed files compared to upstream.
 
         ``diff_filter`` works the same as `get_changed_files`.
@@ -290,7 +287,7 @@ class HgRepository(Repository):
         import hglib.client
 
         super(HgRepository, self).__init__(path, tool=hg)
-        self._env[b"HGPLAIN"] = b"1"
+        self._env["HGPLAIN"] = "1"
 
         # Setting this modifies a global variable and makes all future hglib
         # instances use this binary. Since the tool path was validated, this
@@ -301,11 +298,8 @@ class HgRepository(Repository):
         # Without connect=False this spawns a persistent process. We want
         # the process lifetime tied to a context manager.
         self._client = hglib.client.hgclient(
-            self.path, encoding=b"UTF-8", configs=None, connect=False
+            self.path, encoding="UTF-8", configs=None, connect=False
         )
-
-        # Work around py3 compat issues in python-hglib
-        self._client._env = ensure_subprocess_env(self._client._env)
 
     @property
     def name(self):
@@ -318,6 +312,19 @@ class HgRepository(Repository):
     @property
     def base_ref(self):
         return self._run("log", "-r", "last(ancestors(.) and public())", "-T", "{node}")
+
+    def base_ref_as_hg(self):
+        return self.base_ref
+
+    @property
+    def branch(self):
+        bookmarks_fn = os.path.join(self.path, ".hg", "bookmarks.current")
+        if os.path.exists(bookmarks_fn):
+            with open(bookmarks_fn) as f:
+                bookmark = f.read()
+                return bookmark or None
+
+        return None
 
     def __enter__(self):
         if self._client.server is None:
@@ -425,8 +432,14 @@ class HgRepository(Repository):
             template = self._files_template(diff_filter)
             return self._run("log", "-r", rev, "-T", template).splitlines()
 
-    def get_outgoing_files(self, diff_filter="ADM", upstream="default"):
+    def get_outgoing_files(self, diff_filter="ADM", upstream=None):
         template = self._files_template(diff_filter)
+
+        if not upstream:
+            return self._run(
+                "log", "-r", "draft() and ancestors(.)", "--template", template
+            ).split()
+
         return self._run(
             "outgoing",
             "-r",
@@ -475,7 +488,7 @@ class HgRepository(Repository):
         if _paths_equal(self.path, path):
             raise CannotDeleteFromRootOfRepositoryException()
         self._run("revert", path)
-        for f in self._run("st", "-un", path).split():
+        for f in self._run("st", "-un", path).splitlines():
             if os.path.isfile(f):
                 os.remove(f)
             else:
@@ -487,9 +500,7 @@ class HgRepository(Repository):
     def push_to_try(self, message):
         try:
             subprocess.check_call(
-                (self._tool, "push-to-try", "-m", message),
-                cwd=self.path,
-                env=ensure_subprocess_env(self._env),
+                (self._tool, "push-to-try", "-m", message), cwd=self.path, env=self._env
             )
         except subprocess.CalledProcessError:
             try:
@@ -523,6 +534,17 @@ class GitRepository(Repository):
         if refs:
             return refs[-1][1:]  # boundary starts with a prefix `-`
         return self.head_ref
+
+    def base_ref_as_hg(self):
+        base_ref = self.base_ref
+        try:
+            return self._run("cinnabar", "git2hg", base_ref)
+        except subprocess.CalledProcessError:
+            return
+
+    @property
+    def branch(self):
+        return self._run("branch", "--show-current").strip() or None
 
     @property
     def has_git_cinnabar(self):
@@ -571,10 +593,10 @@ class GitRepository(Repository):
 
         return self._run(*cmd).splitlines()
 
-    def get_outgoing_files(self, diff_filter="ADM", upstream="default"):
+    def get_outgoing_files(self, diff_filter="ADM", upstream=None):
         assert all(f.lower() in self._valid_diff_filter for f in diff_filter)
 
-        not_condition = "--remotes" if upstream == "default" else upstream
+        not_condition = upstream if upstream else "--remotes"
 
         files = self._run(
             "log",
@@ -655,6 +677,11 @@ def get_repository_object(path, hg="hg", git="git"):
     """Get a repository object for the repository at `path`.
     If `path` is not a known VCS repository, raise an exception.
     """
+    # If we provide a path to hg that does not match the on-disk casing (e.g.,
+    # because `path` was normcased), then the hg fsmonitor extension will call
+    # watchman with that path and watchman will spew errors.
+    path = str(Path(path).resolve())
+
     if os.path.isdir(os.path.join(path, ".hg")):
         return HgRepository(path, hg=hg)
     elif os.path.exists(os.path.join(path, ".git")):

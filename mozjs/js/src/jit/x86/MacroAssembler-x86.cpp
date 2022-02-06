@@ -17,8 +17,10 @@
 #include "jit/MacroAssembler.h"
 #include "jit/MoveEmitter.h"
 #include "util/Memory.h"
+#include "vm/BigIntType.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
+#include "vm/StringType.h"
 
 #include "jit/MacroAssembler-inl.h"
 #include "vm/JSScript-inl.h"
@@ -593,6 +595,20 @@ void MacroAssemblerX86::profilerExitFrame() {
   jump(GetJitContext()->runtime->jitRuntime()->getProfilerExitFrameTail());
 }
 
+Assembler::Condition MacroAssemblerX86::testStringTruthy(
+    bool truthy, const ValueOperand& value) {
+  Register string = value.payloadReg();
+  cmp32(Operand(string, JSString::offsetOfLength()), Imm32(0));
+  return truthy ? Assembler::NotEqual : Assembler::Equal;
+}
+
+Assembler::Condition MacroAssemblerX86::testBigIntTruthy(
+    bool truthy, const ValueOperand& value) {
+  Register bi = value.payloadReg();
+  cmp32(Operand(bi, JS::BigInt::offsetOfDigitLength()), Imm32(0));
+  return truthy ? Assembler::NotEqual : Assembler::Equal;
+}
+
 MacroAssembler& MacroAssemblerX86::asMasm() {
   return *static_cast<MacroAssembler*>(this);
 }
@@ -968,22 +984,22 @@ void MacroAssembler::wasmLoad(const wasm::MemoryAccessDesc& access,
         vmovddup(srcAddr, out.fpu());
       } else if (access.isWidenSimd128Load()) {
         switch (access.widenSimdOp()) {
-          case wasm::SimdOp::I16x8LoadS8x8:
+          case wasm::SimdOp::V128Load8x8S:
             vpmovsxbw(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I16x8LoadU8x8:
+          case wasm::SimdOp::V128Load8x8U:
             vpmovzxbw(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I32x4LoadS16x4:
+          case wasm::SimdOp::V128Load16x4S:
             vpmovsxwd(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I32x4LoadU16x4:
+          case wasm::SimdOp::V128Load16x4U:
             vpmovzxwd(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I64x2LoadS32x2:
+          case wasm::SimdOp::V128Load32x2S:
             vpmovsxdq(srcAddr, out.fpu());
             break;
-          case wasm::SimdOp::I64x2LoadU32x2:
+          case wasm::SimdOp::V128Load32x2U:
             vpmovzxdq(srcAddr, out.fpu());
             break;
           default:
@@ -1711,6 +1727,24 @@ CodeOffset MacroAssembler::moveNearAddressWithPatch(Register dest) {
 void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
                                           CodeLocationLabel target) {
   PatchDataWithValueCheck(loc, ImmPtr(target.raw()), ImmPtr(nullptr));
+}
+
+void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
+                                       Register64 boundsCheckLimit, Label* ok) {
+  Label notOk;
+  cmp32(index.high, Imm32(0));
+  j(Assembler::NonZero, &notOk);
+  wasmBoundsCheck32(cond, index.low, boundsCheckLimit.low, ok);
+  bind(&notOk);
+}
+
+void MacroAssembler::wasmBoundsCheck64(Condition cond, Register64 index,
+                                       Address boundsCheckLimit, Label* ok) {
+  Label notOk;
+  cmp32(index.high, Imm32(0));
+  j(Assembler::NonZero, &notOk);
+  wasmBoundsCheck32(cond, index.low, boundsCheckLimit, ok);
+  bind(&notOk);
 }
 
 //}}} check_macroassembler_style

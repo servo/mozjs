@@ -12,6 +12,7 @@
 #include "ds/LifoAlloc.h"
 #include "frontend/BytecodeCompilation.h"
 #include "gc/HashUtil.h"
+#include "js/CompilationAndEvaluation.h"
 #include "js/friend/ErrorMessages.h"   // js::GetErrorMessage, JSMSG_*
 #include "js/friend/JSMEnvironment.h"  // JS::NewJSMEnvironment, JS::ExecuteInJSMEnvironment, JS::GetJSMEnvironmentOfScriptedCaller, JS::IsJSMEnvironment
 #include "js/friend/WindowProxy.h"     // js::IsWindowProxy
@@ -300,7 +301,9 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
     options.setIsRunOnce(true)
         .setNoScriptRval(false)
         .setMutedErrors(mutedErrors)
-        .setScriptOrModule(maybeScript);
+        .setDeferDebugMetadata();
+
+    RootedScript introScript(cx);
 
     if (evalType == DIRECT_EVAL && IsStrictEvalPC(pc)) {
       options.setForceStrictMode();
@@ -308,8 +311,8 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
 
     if (introducerFilename) {
       options.setFileAndLine(filename, 1);
-      options.setIntroductionInfo(introducerFilename, "eval", lineno,
-                                  maybeScript, pcOffset);
+      options.setIntroductionInfo(introducerFilename, "eval", lineno, pcOffset);
+      introScript = maybeScript;
     } else {
       options.setFileAndLine("eval", 1);
       options.setIntroductionType("eval");
@@ -332,9 +335,16 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
       return false;
     }
 
-    JSScript* script =
-        frontend::CompileEvalScript(cx, options, srcBuf, enclosing, env);
+    RootedScript script(
+        cx, frontend::CompileEvalScript(cx, options, srcBuf, enclosing, env));
     if (!script) {
+      return false;
+    }
+
+    RootedValue undefValue(cx);
+    JS::InstantiateOptions instantiateOptions(options);
+    if (!JS::UpdateDebugMetadata(cx, script, instantiateOptions, undefValue,
+                                 nullptr, introScript, maybeScript)) {
       return false;
     }
 
@@ -386,22 +396,15 @@ static bool ExecuteInExtensibleLexicalEnvironment(
     Handle<ExtensibleLexicalEnvironmentObject*> env) {
   CHECK_THREAD(cx);
   cx->check(env);
+  cx->check(scriptArg);
   MOZ_RELEASE_ASSERT(scriptArg->hasNonSyntacticScope());
 
-  RootedScript script(cx, scriptArg);
-  if (script->realm() != cx->realm()) {
-    script = CloneGlobalScript(cx, script);
-    if (!script) {
-      return false;
-    }
-  }
-
   RootedValue rval(cx);
-  return ExecuteKernel(cx, script, env, UndefinedHandleValue,
+  return ExecuteKernel(cx, scriptArg, env, UndefinedHandleValue,
                        NullFramePtr() /* evalInFrame */, &rval);
 }
 
-JS_FRIEND_API bool js::ExecuteInFrameScriptEnvironment(
+JS_PUBLIC_API bool js::ExecuteInFrameScriptEnvironment(
     JSContext* cx, HandleObject objArg, HandleScript scriptArg,
     MutableHandleObject envArg) {
   RootedObject varEnv(cx, NonSyntacticVariablesObject::create(cx));
@@ -440,7 +443,7 @@ JS_FRIEND_API bool js::ExecuteInFrameScriptEnvironment(
   return true;
 }
 
-JS_FRIEND_API JSObject* JS::NewJSMEnvironment(JSContext* cx) {
+JS_PUBLIC_API JSObject* JS::NewJSMEnvironment(JSContext* cx) {
   RootedObject varEnv(cx, NonSyntacticVariablesObject::create(cx));
   if (!varEnv) {
     return nullptr;
@@ -456,14 +459,14 @@ JS_FRIEND_API JSObject* JS::NewJSMEnvironment(JSContext* cx) {
   return varEnv;
 }
 
-JS_FRIEND_API bool JS::ExecuteInJSMEnvironment(JSContext* cx,
+JS_PUBLIC_API bool JS::ExecuteInJSMEnvironment(JSContext* cx,
                                                HandleScript scriptArg,
                                                HandleObject varEnv) {
   RootedObjectVector emptyChain(cx);
   return ExecuteInJSMEnvironment(cx, scriptArg, varEnv, emptyChain);
 }
 
-JS_FRIEND_API bool JS::ExecuteInJSMEnvironment(JSContext* cx,
+JS_PUBLIC_API bool JS::ExecuteInJSMEnvironment(JSContext* cx,
                                                HandleScript scriptArg,
                                                HandleObject varEnv,
                                                HandleObjectVector targetObj) {
@@ -510,7 +513,7 @@ JS_FRIEND_API bool JS::ExecuteInJSMEnvironment(JSContext* cx,
   return ExecuteInExtensibleLexicalEnvironment(cx, scriptArg, env);
 }
 
-JS_FRIEND_API JSObject* JS::GetJSMEnvironmentOfScriptedCaller(JSContext* cx) {
+JS_PUBLIC_API JSObject* JS::GetJSMEnvironmentOfScriptedCaller(JSContext* cx) {
   FrameIter iter(cx);
   if (iter.done()) {
     return nullptr;
@@ -528,8 +531,24 @@ JS_FRIEND_API JSObject* JS::GetJSMEnvironmentOfScriptedCaller(JSContext* cx) {
   return env;
 }
 
-JS_FRIEND_API bool JS::IsJSMEnvironment(JSObject* obj) {
+JS_PUBLIC_API bool JS::IsJSMEnvironment(JSObject* obj) {
   // NOTE: This also returns true if the NonSyntacticVariablesObject was
   // created for reasons other than the JSM loader.
   return obj->is<NonSyntacticVariablesObject>();
 }
+
+#ifdef JSGC_HASH_TABLE_CHECKS
+void RuntimeCaches::checkEvalCacheAfterMinorGC() {
+  JSContext* cx = TlsContext.get();
+  for (auto r = evalCache.all(); !r.empty(); r.popFront()) {
+    const EvalCacheEntry& entry = r.front();
+    CheckGCThingAfterMovingGC(entry.str);
+    EvalCacheLookup lookup(cx);
+    lookup.str = entry.str;
+    lookup.callerScript = entry.callerScript;
+    lookup.pc = entry.pc;
+    auto ptr = evalCache.lookup(lookup);
+    MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &r.front());
+  }
+}
+#endif
