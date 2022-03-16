@@ -44,6 +44,7 @@
 #include "js/friend/ErrorMessages.h"
 #include "js/friend/WindowProxy.h"
 #include "js/experimental/JitInfo.h"
+#include "js/experimental/JSStencil.h"
 #include "js/experimental/TypedData.h"
 
 // Reexport some functions that are marked inline.
