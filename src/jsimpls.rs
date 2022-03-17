@@ -2,6 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+use jsapi::already_AddRefed;
 use jsapi::glue::JS_ForOfIteratorInit;
 use jsapi::glue::JS_ForOfIteratorNext;
 use jsapi::jsid;
@@ -35,6 +36,20 @@ impl<T> Deref for JS::Handle<T> {
     }
 }
 
+impl<T> Deref for already_AddRefed<T> {
+    type Target = T;
+
+    fn deref<'a>(&'a self) -> &'a T {
+        unsafe { &*self.mRawPtr }
+    }
+}
+
+impl<T> DerefMut for already_AddRefed<T> {
+    fn deref_mut<'a>(&'a mut self) -> &'a mut T {
+        unsafe { &mut *self.mRawPtr }
+    }
+}
+
 impl<T> Deref for JS::MutableHandle<T> {
     type Target = T;
 
@@ -52,6 +67,18 @@ impl<T> DerefMut for JS::MutableHandle<T> {
 impl Default for jsid {
     fn default() -> Self {
         JSID_VOID
+    }
+}
+
+impl Default for JS::InstantiationStorage {
+    fn default() -> Self {
+        JS::InstantiationStorage { gcOutput_: ptr::null_mut() }
+    }
+}
+
+impl Default for JS::InstantiateOptions {
+    fn default() -> Self {
+        JS::InstantiateOptions { deferDebugMetadata: false, skipFilenameValidation: false, hideScriptFromDebugger: false }
     }
 }
 

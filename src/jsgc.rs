@@ -72,6 +72,20 @@ impl RootKind for JS::Value {
     }
 }
 
+impl RootKind for JS::InstantiationStorage {
+    #[inline(always)]
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Traceable
+    }
+}
+
+impl RootKind for JS::InstantiateOptions {
+    #[inline(always)]
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Traceable
+    }
+}
+
 impl RootKind for JS::PropertyDescriptor {
     #[inline(always)]
     fn rootKind() -> JS::RootKind {
@@ -149,6 +163,22 @@ impl GCMethods for JS::Value {
     unsafe fn post_barrier(v: *mut JS::Value, prev: JS::Value, next: JS::Value) {
         JS::HeapValueWriteBarriers(v, &prev, &next);
     }
+}
+
+impl GCMethods for JS::InstantiationStorage {
+    unsafe fn initial() -> JS::InstantiationStorage {
+        JS::InstantiationStorage::default()
+    }
+
+    unsafe fn post_barrier(_: *mut JS::InstantiationStorage, _: JS::InstantiationStorage, _: JS::InstantiationStorage) {}
+}
+
+impl GCMethods for JS::InstantiateOptions {
+    unsafe fn initial() -> JS::InstantiateOptions {
+        JS::InstantiateOptions::default()
+    }
+
+    unsafe fn post_barrier(_: *mut JS::InstantiateOptions, _: JS::InstantiateOptions, _: JS::InstantiateOptions) {}
 }
 
 impl GCMethods for JS::PropertyDescriptor {
