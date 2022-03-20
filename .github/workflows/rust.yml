@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+        os: [windows-latest]
         rust: [beta, stable]
         features: ["--features debugmozjs", ""]
         exclude:
@@ -36,9 +36,6 @@ jobs:
       run: |
         Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe -Destination ./MozillaBuildSetup.exe
         .\MozillaBuildSetup.exe /S | Out-Null
-        iwr -useb get.scoop.sh | iex
-        scoop install llvm --global
-        echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
@@ -73,19 +70,6 @@ jobs:
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
         cargo test --verbose --verbose ${{ matrix.features }} --lib
-  Integrity:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v2
-    - name: Get mozjs
-      run: |
-        bash ./etc/get_mozjs.sh
-    - name: Apply patch
-      run: |
-        python3 ./etc/update.py --no-commit mozjs.tar.xz
-    - name: Check patch integrity
-      run: |
-        git diff --no-ext-diff --quiet --exit-code
   build_result:
     name: homu build finished
     runs-on: ubuntu-latest
