@@ -36,6 +36,9 @@ jobs:
       run: |
         Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe -Destination ./MozillaBuildSetup.exe
         .\MozillaBuildSetup.exe /S | Out-Null
+    - name: Install LLVM and Clang
+      if: startsWith(matrix.os, 'windows')
+      uses: KyleMayes/install-llvm-action@v1
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
