@@ -39,6 +39,8 @@ jobs:
     - name: Install LLVM and Clang
       if: startsWith(matrix.os, 'windows')
       uses: KyleMayes/install-llvm-action@v1
+      with:
+          version: "13.0"
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
