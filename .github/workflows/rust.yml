@@ -31,16 +31,16 @@ jobs:
       if: startsWith(matrix.os, 'ubuntu')
       run: |
         sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
-    - name: Install deps on windows
-      if: startsWith(matrix.os, 'windows')
-      run: |
-        Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe -Destination ./MozillaBuildSetup.exe
-        .\MozillaBuildSetup.exe /S | Out-Null
     - name: Install LLVM and Clang
       if: startsWith(matrix.os, 'windows')
       uses: KyleMayes/install-llvm-action@v1
       with:
           version: "13.0"
+    - name: Install deps on windows
+      if: startsWith(matrix.os, 'windows')
+      run: |
+        Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe -Destination ./MozillaBuildSetup.exe
+        .\MozillaBuildSetup.exe /S | Out-Null
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
