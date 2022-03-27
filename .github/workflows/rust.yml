@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest, windows-2019]
+        os: [windows-2019]
         rust: [beta, stable]
         features: ["--features debugmozjs", ""]
         exclude:
@@ -44,6 +44,9 @@ jobs:
         .\install.ps1 -RunAsAdmin
         scoop install llvm --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        dir c:\msys64\usr\bin
+        dir C:\mozilla-build\msys\bin
+        dir C:\mozilla-build\bin
     - uses: actions-rs/toolchain@v1
       with:
           profile: minimal
