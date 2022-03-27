@@ -33,6 +33,8 @@ jobs:
         sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
     - uses: msys2/setup-msys2@v2
       if: startsWith(matrix.os, 'windows')    
+      with:
+        install: base-devel
     - name: Install deps on windows
       if: startsWith(matrix.os, 'windows')
       run: |
@@ -66,7 +68,7 @@ jobs:
       if: startsWith(matrix.os, 'windows')
       shell: cmd
       env:
-        MAKE: 'C:\mozilla-build\msys\bin\make'
+        MAKE: 'C:\msys64\usr\bin\make.exe'
         MOZTOOLS_PATH: 'C:\mozilla-build\msys\bin;C:\mozilla-build\bin'
         AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
         LINKER: "lld-link.exe"
