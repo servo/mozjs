@@ -31,6 +31,8 @@ jobs:
       if: startsWith(matrix.os, 'ubuntu')
       run: |
         sudo apt install autoconf2.13 gcc-7 g++-7 ccache llvm -y
+    - uses: msys2/setup-msys2@v2
+      if: startsWith(matrix.os, 'windows')    
     - name: Install deps on windows
       if: startsWith(matrix.os, 'windows')
       run: |
