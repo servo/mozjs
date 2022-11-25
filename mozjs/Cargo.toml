@@ -36,4 +36,6 @@ libz-sys = "1.0"
 [build-dependencies]
 bindgen = { version = "0.62", default-features = false, features = ["runtime", "which-rustfmt"] }
 cc = "1.0"
+tar = "0.4.38"
 walkdir = "2"
+ruzstd = "0.3.0"

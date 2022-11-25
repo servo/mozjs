@@ -9,6 +9,7 @@ extern crate walkdir;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
@@ -94,6 +95,43 @@ fn find_make() -> OsString {
     }
 }
 
+fn install_mozmake(mozbuild_dir: &OsStr) {
+    let mozbuild_dir = Path::new(mozbuild_dir);
+    let mozmake_tar_zst_path = mozbuild_dir.join("mozmake.tar.zst");
+
+    let mut curl = Command::new("curl");
+    let result = curl.arg("-SL")
+        .arg("https://firefox-ci-tc.services.mozilla.com/api/index/v1/task/gecko.cache.level-1.toolchains.v3.win64-mozmake.latest/artifacts/public/build/mozmake.tar.zst")
+        .args(&["-o", &mozmake_tar_zst_path.display().to_string()])
+        .status()
+        .expect("Failed to install mozmake.");
+    assert!(result.success());
+
+    let mozmake_tar_zst =
+        fs::File::open(&mozmake_tar_zst_path).expect("Failed to open mozmake.tar.zst");
+    let mut mozmake_compressed =
+        ruzstd::StreamingDecoder::new(mozmake_tar_zst).expect("Failed to decode mozmake.tar.zst");
+    let mut mozmake_uncompressed = Vec::new();
+
+    mozmake_compressed
+        .read_to_end(&mut mozmake_uncompressed)
+        .expect("Failed to decode mozmake.tar.zst");
+    let mut archive = tar::Archive::new(&*mozmake_uncompressed);
+    archive
+        .unpack(mozbuild_dir.join("bin"))
+        .expect("Failed to unpack mozmake.tar");
+
+    assert!(mozbuild_dir
+        .join("bin")
+        .join("mozmake")
+        .join("mozmake.exe")
+        .exists());
+    fs::remove_file(&mozmake_tar_zst_path).expect("Failed to remove mozmake.tar.zst");
+
+    let mozmake_lock = mozbuild_dir.join("MOZMAKE_LOCK");
+    fs::write(mozmake_lock, "").expect("Failed to write to mozmake lock.");
+}
+
 fn cc_flags() -> Vec<&'static str> {
     let mut result = vec!["-DRUST_BINDGEN", "-DSTATIC_JS_API"];
 
@@ -143,8 +181,24 @@ fn build_jsapi(build_dir: &Path) {
         paths.extend(env::split_paths(&path));
         let new_path = env::join_paths(paths).unwrap();
         env::set_var("PATH", &new_path);
-        make = OsStr::new("mozmake").to_os_string();
+
+        let mozbuild_dir = env::var_os("MOZILLABUILD").unwrap_or("C:\\mozilla-build".into());
+
+        let mozmake_lock = Path::new(&mozbuild_dir).join("MOZMAKE_LOCK");
+        if !mozmake_lock.exists() {
+            install_mozmake(&mozbuild_dir);
+        }
+
+        make = OsString::from(
+            Path::new(&mozbuild_dir)
+                .join("bin")
+                .join("mozmake")
+                .join("mozmake.exe")
+                .as_os_str(),
+        );
     }
+
+    eprintln!("{:#?}", make);
 
     let mut cmd = Command::new(make);
 
