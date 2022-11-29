@@ -88,7 +88,6 @@ jobs:
       env:
         MOZILLA_BUILD: 'C:\mozilla-build'
         MOZTOOLS_PATH: 'C:\mozilla-build\msys2\bin;C:\mozilla-build\bin'
-        AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
         LINKER: "lld-link.exe"
         CC: "clang-cl.exe"
         CXX: "clang-cl.exe"
@@ -105,7 +104,6 @@ jobs:
       env:
         MOZILLA_BUILD: 'C:\mozilla-build'
         MOZTOOLS_PATH: 'C:\mozilla-build\msys2\bin;C:\mozilla-build\bin'
-        AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
         LINKER: "lld-link.exe"
         CC: "clang-cl.exe"
         CXX: "clang-cl.exe"
