@@ -84,7 +84,7 @@ jobs:
     - uses: dtolnay/rust-toolchain@stable
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
-      shell: cmd
+      shell: C:\mozilla-build\start-shell.bat -full-path -here {0}
       env:
         MOZILLA_BUILD: 'C:\mozilla-build'
         MOZTOOLS_PATH: 'C:\mozilla-build\msys2\bin;C:\mozilla-build\bin'
@@ -98,11 +98,10 @@ jobs:
         rustup install nightly-2022-11-20
         rustup default nightly
         rustup component add rust-src
-        C:\mozilla-build\start-shell.bat -full-path -here
         cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
-      shell: cmd
+      shell: C:\mozilla-build\start-shell.bat -full-path -here {0}
       env:
         MOZILLA_BUILD: 'C:\mozilla-build'
         MOZTOOLS_PATH: 'C:\mozilla-build\msys2\bin;C:\mozilla-build\bin'
@@ -113,7 +112,6 @@ jobs:
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
-        C:\mozilla-build\start-shell.bat -full-path -here
         cargo test --verbose ${{ matrix.features }} --lib
   Integrity:
     runs-on: ubuntu-latest
