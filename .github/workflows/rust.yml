@@ -86,6 +86,7 @@ jobs:
       if: contains(matrix.target, 'uwp')
       shell: cmd
       env:
+        MOZILLA_BUILD: 'C:\mozilla-build'
         MOZTOOLS_PATH: 'C:\mozilla-build\msys2\bin;C:\mozilla-build\bin'
         AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
         LINKER: "lld-link.exe"
@@ -97,11 +98,13 @@ jobs:
         rustup install nightly-2022-11-20
         rustup default nightly
         rustup component add rust-src
+        $env:MOZILLA_BUILD\start-shell.bat -full-path -here
         cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
       shell: cmd
       env:
+        MOZILLA_BUILD: 'C:\mozilla-build'
         MOZTOOLS_PATH: 'C:\mozilla-build\msys2\bin;C:\mozilla-build\bin'
         AUTOCONF: "C:/mozilla-build/msys/local/bin/autoconf-2.13"
         LINKER: "lld-link.exe"
@@ -110,6 +113,7 @@ jobs:
         PYTHON3: "C:\\mozilla-build\\python3\\python3.exe"
         LIBCLANG_PATH: "C:\\ProgramData\\scoop\\apps\\llvm\\current\\lib"
       run: |
+        $env:MOZILLA_BUILD\start-shell.bat -full-path -here
         cargo test --verbose ${{ matrix.features }} --lib
   Integrity:
     runs-on: ubuntu-latest

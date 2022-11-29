@@ -95,7 +95,7 @@ fn find_make() -> OsString {
     }
 }
 
-fn install_mozmake(mozbuild_dir: &OsStr) {
+fn install_mozmake(mozbuild_dir: &Path) {
     let mozbuild_dir = Path::new(mozbuild_dir);
     let mozmake_tar_zst_path = mozbuild_dir.join("mozmake.tar.zst");
 
@@ -175,30 +175,23 @@ fn build_jsapi(build_dir: &Path) {
 
     // Put MOZTOOLS_PATH at the beginning of PATH if specified
     if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
+		let mozbuild_dir = env::var_os("MOZILLA_BUILD").unwrap_or("C:\\mozilla-build".into());
+        let mozbuild_dir = Path::new(&mozbuild_dir);
+
         let path = env::var_os("PATH").unwrap();
         let mut paths = Vec::new();
         paths.extend(env::split_paths(&moztools));
         paths.extend(env::split_paths(&path));
+		paths.push(mozbuild_dir.join("bin").join("mozmake").into());
         let new_path = env::join_paths(paths).unwrap();
         env::set_var("PATH", &new_path);
 
-        let mozbuild_dir = env::var_os("MOZILLABUILD").unwrap_or("C:\\mozilla-build".into());
-
-        let mozmake_lock = Path::new(&mozbuild_dir).join("MOZMAKE_LOCK");
-        if !mozmake_lock.exists() {
+        if !mozbuild_dir.join("MOZMAKE_LOCK").exists() {
             install_mozmake(&mozbuild_dir);
         }
 
-        make = OsString::from(
-            Path::new(&mozbuild_dir)
-                .join("bin")
-                .join("mozmake")
-                .join("mozmake.exe")
-                .as_os_str(),
-        );
+        make = "mozmake".into();
     }
-
-    eprintln!("{:#?}", make);
 
     let mut cmd = Command::new(make);
 
