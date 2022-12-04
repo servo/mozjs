@@ -90,12 +90,12 @@ jobs:
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
       env:
-        MOZILLA_BUILD: 'C:\mozilla-build'
+        MOZILLABUILD: 'C:\mozilla-build'
         LINKER: "lld-link.exe"
         CC: "clang-cl.exe"
         CXX: "clang-cl.exe"
         PYTHON3: 'C:\mozilla-build\python3\python3.exe'
-        LIBCLANG_PATH: "C:\ProgramData\scoop\apps\llvm\current\lib"
+        LIBCLANG_PATH: 'C:\ProgramData\scoop\apps\llvm\current\lib'
       run: |
         rustup install nightly-2022-11-20
         rustup default nightly
@@ -104,12 +104,12 @@ jobs:
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
       env:
-        MOZILLA_BUILD: 'C:\mozilla-build'
+        MOZILLABUILD: 'C:\mozilla-build'
         LINKER: "lld-link.exe"
         CC: "clang-cl.exe"
         CXX: "clang-cl.exe"
         PYTHON3: 'C:\mozilla-build\python3\python3.exe'
-        LIBCLANG_PATH: "C:\ProgramData\scoop\apps\llvm\current\lib"
+        LIBCLANG_PATH: 'C:\ProgramData\scoop\apps\llvm\current\lib'
       run: |
         cargo test --verbose ${{ matrix.features }} --lib
   Integrity:
