@@ -4,15 +4,20 @@
 
 extern crate bindgen;
 extern crate cc;
+extern crate ruzstd;
+extern crate tar;
 extern crate walkdir;
 
+use ruzstd::StreamingDecoder;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
+use tar::Archive;
 use walkdir::WalkDir;
 
 const ENV_VARS: &'static [&'static str] = &[
@@ -27,8 +32,8 @@ const ENV_VARS: &'static [&'static str] = &[
     "CXXFLAGS",
     "MAKE",
     "MOZ_TOOLS",
+    "MOZILLABUILD",
     "MOZJS_FORCE_RERUN",
-    "MOZTOOLS_PATH",
     "PYTHON",
     "STLPORT_LIBS",
 ];
@@ -108,15 +113,15 @@ fn install_mozmake(mozbuild_dir: &Path) {
     assert!(result.success());
 
     let mozmake_tar_zst =
-        fs::File::open(&mozmake_tar_zst_path).expect("Failed to open mozmake.tar.zst");
+        File::open(&mozmake_tar_zst_path).expect("Failed to open mozmake.tar.zst");
     let mut mozmake_compressed =
-        ruzstd::StreamingDecoder::new(mozmake_tar_zst).expect("Failed to decode mozmake.tar.zst");
+        StreamingDecoder::new(mozmake_tar_zst).expect("Failed to decode mozmake.tar.zst");
     let mut mozmake_uncompressed = Vec::new();
 
     mozmake_compressed
         .read_to_end(&mut mozmake_uncompressed)
         .expect("Failed to decode mozmake.tar.zst");
-    let mut archive = tar::Archive::new(&*mozmake_uncompressed);
+    let mut archive = Archive::new(&*mozmake_uncompressed);
     archive
         .unpack(mozbuild_dir.join("bin"))
         .expect("Failed to unpack mozmake.tar");
@@ -170,27 +175,40 @@ fn cc_flags() -> Vec<&'static str> {
 }
 
 fn build_jsapi(build_dir: &Path) {
+    fn cmd_to_string(cmd: &Command) -> String {
+        let mut cmd_string = format!(r#""{}""#, cmd.get_program().to_string_lossy());
+        for arg in cmd.get_args() {
+            cmd_string.push_str(&format!(r#" "{}""#, arg.to_string_lossy()));
+        }
+        cmd_string
+    }
+
     let target = env::var("TARGET").unwrap();
     let mut make = find_make();
 
-    // Put MOZTOOLS_PATH at the beginning of PATH if specified
-    if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
-		let mozbuild_dir = env::var_os("MOZILLA_BUILD").unwrap_or("C:\\mozilla-build".into());
-        let mozbuild_dir = Path::new(&mozbuild_dir);
+    let mozbuild = env::var_os("MOZILLABUILD").map(|mozbuild_env| {
+        if mozbuild_env.is_empty() || mozbuild_env.to_ascii_lowercase() == "true" {
+            PathBuf::from(r#"C:\mozilla-build\"#)
+        } else {
+            PathBuf::from(&mozbuild_env)
+        }
+    });
 
+    if let Some(mozbuild_dir) = &mozbuild {
+        // Add mozmake to PATH
         let path = env::var_os("PATH").unwrap();
         let mut paths = Vec::new();
-        paths.extend(env::split_paths(&moztools));
+        paths.push(mozbuild_dir.join("bin").join("mozmake").into());
         paths.extend(env::split_paths(&path));
-		paths.push(mozbuild_dir.join("bin").join("mozmake").into());
         let new_path = env::join_paths(paths).unwrap();
         env::set_var("PATH", &new_path);
 
+        // Install mozmake if not installed
         if !mozbuild_dir.join("MOZMAKE_LOCK").exists() {
             install_mozmake(&mozbuild_dir);
         }
 
-        make = "mozmake".into();
+        make = OsString::from("mozmake");
     }
 
     let mut cmd = Command::new(make);
@@ -202,10 +220,10 @@ fn build_jsapi(build_dir: &Path) {
     ));
     cppflags.push(" ");
     cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
-    cmd.env("CPPFLAGS", cppflags);
+    cmd.env("CPPFLAGS", &cppflags);
 
     if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
-        cmd.env("MAKEFLAGS", makeflags);
+        cmd.env("MAKEFLAGS", &makeflags);
     }
 
     if target.contains("apple") || target.contains("freebsd") {
@@ -214,15 +232,41 @@ fn build_jsapi(build_dir: &Path) {
 
     let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
 
-    let result = cmd
-        .args(&["-R", "-f"])
+    cmd.args(&["-R", "-f"])
         .arg(cargo_manifest_dir.join("makefile.cargo"))
         .current_dir(&build_dir)
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
-        .env("NO_RUST_PANIC_HOOK", "1")
-        .status()
-        .expect("Failed to run `make`");
-    assert!(result.success());
+        .env("NO_RUST_PANIC_HOOK", "1");
+
+    if let Some(mozbuild_dir) = mozbuild {
+        // Create script that runs mozmake
+        let script_path = build_dir.join("mozbuild.sh");
+        let script = cmd_to_string(&cmd);
+        fs::write(&script_path, script).expect("Failed to write to mozbuild.sh");
+
+        let start_shell = mozbuild_dir.join("start-shell.bat");
+        let mut shell = Command::new(start_shell.as_os_str());
+        shell
+            .arg("-here")
+            .arg("-use-full-path")
+            .arg(script_path.display().to_string());
+
+        for (key, value) in cmd.get_envs() {
+            if let Some(value) = value {
+                shell.env(key, value);
+            }
+        }
+
+        if let Some(current_dir) = cmd.get_current_dir() {
+            shell.current_dir(current_dir);
+        }
+
+        let result = shell.status().expect("Failed to run `make`");
+        assert!(result.success());
+    } else {
+        let result = cmd.status().expect("Failed to run `make`");
+        assert!(result.success());
+    }
 
     println!(
         "cargo:rustc-link-search=native={}/js/src/build",
