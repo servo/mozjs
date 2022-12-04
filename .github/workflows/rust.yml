@@ -81,6 +81,11 @@ jobs:
         .\install.ps1 -RunAsAdmin
         scoop install llvm@14.0.6 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    # TODO: Remove this step and start-shell.bat when the MozillaBuild is updated
+    - name: Replace MozillaBuild shell
+      run: |
+        Remove-Item -Path C:\mozilla-build\start-shell.bat
+        Move-Item -Path start-shell.bat -Destination C:\mozilla-build\
     - uses: dtolnay/rust-toolchain@stable
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
