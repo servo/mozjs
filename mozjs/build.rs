@@ -83,21 +83,36 @@ fn main() {
     }
 }
 
-fn find_make() -> OsString {
-    if let Some(make) = env::var_os("MAKE") {
-        make
-    } else {
-        match Command::new("gmake").status() {
-            Ok(gmake) => {
-                if gmake.success() {
-                    OsStr::new("gmake").to_os_string()
+fn find_make() -> Option<OsString> {
+    fn check_make(name: &OsStr) -> bool {
+        let mut cmd = Command::new(name);
+        cmd.arg("--version");
+        cmd.status().map(|status| status.success()).unwrap_or(false)
+    }
+
+    env::var_os("MAKE").or_else(|| {
+        let gmake = OsString::from("gmake");
+        let make = OsString::from("make");
+        if check_make(&gmake) {
+            Some(gmake)
+        } else if check_make(&make) {
+            Some(make)
+        } else {
+            #[cfg(windows)]
+            {
+                let mozmake = OsString::from("mozmake");
+                if check_make(&mozmake) {
+                    Some(mozmake)
                 } else {
-                    OsStr::new("make").to_os_string()
+                    None
                 }
             }
-            Err(_) => OsStr::new("make").to_os_string(),
+            #[cfg(unix)]
+            {
+                None
+            }
         }
-    }
+    })
 }
 
 #[cfg(windows)]
@@ -206,15 +221,18 @@ fn build_jsapi(build_dir: &Path) {
             let new_path = env::join_paths(paths).unwrap();
             env::set_var("PATH", &new_path);
 
-            // Install mozmake if not installed
-            if !mozbuild_dir.join("MOZMAKE_LOCK").exists() {
-                install_mozmake(&mozbuild_dir);
-            }
+            if make.is_none() {
+                // Install mozmake if not installed
+                if !mozbuild_dir.join("MOZMAKE_LOCK").exists() {
+                    install_mozmake(&mozbuild_dir);
+                }
 
-            make = OsString::from("mozmake");
+                make = Some(OsString::from("mozmake"));
+            }
         }
     }
 
+    let make = make.expect("Install `make` or `gmake`");
     let mut cmd = Command::new(make);
 
     let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
