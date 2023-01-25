@@ -29,7 +29,6 @@
 #include "js/SavedFrameAPI.h"
 #include "js/ScalarType.h"
 #include "js/SourceText.h"
-#include "js/Stream.h"
 #include "js/String.h"
 #include "js/StructuredClone.h"
 #include "js/Symbol.h"

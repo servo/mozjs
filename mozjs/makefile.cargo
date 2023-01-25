@@ -9,8 +9,7 @@ CONFIGURE_FLAGS := \
 	--disable-tests \
 	--disable-export-js \
 	--disable-shared-js \
-	--build-backends=RecursiveMake \
-        --enable-js-streams
+	--build-backends=RecursiveMake
 
 ifneq (,$(MACOS_SDK_PATH))
 	CONFIGURE_FLAGS += --with-macos-sdk=$(MACOS_SDK_PATH)
