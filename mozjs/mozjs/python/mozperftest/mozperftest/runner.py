@@ -24,13 +24,12 @@ The --push-to-try flow is:
   perftest
 """
 import json
+import logging
 import os
 import shutil
 import sys
-import logging
 import tempfile
 from pathlib import Path
-
 
 TASKCLUSTER = "TASK_ID" in os.environ.keys()
 RUNNING_TESTS = "RUNNING_TESTS" in os.environ.keys()
@@ -63,10 +62,10 @@ def _activate_mach_virtualenv():
     ]
 
     from mach.site import (
-        resolve_requirements,
-        MachSiteManager,
         ExternalPythonSite,
+        MachSiteManager,
         SitePackagesSource,
+        resolve_requirements,
     )
 
     mach_site = MachSiteManager(
@@ -84,16 +83,15 @@ def _activate_mach_virtualenv():
         sys.path.append("xpcshell")
 
 
-def _create_artifacts_dir(kwargs):
-    artifacts = SRC_ROOT / "artifacts"
+def _create_artifacts_dir(kwargs, artifacts):
+    from mozperftest.utils import create_path
 
-    artifacts = artifacts / "side-by-side"
-    artifacts.mkdir(exist_ok=True)
+    return create_path(artifacts / "artifacts" / "side-by-side" / kwargs["test_name"])
 
-    artifacts = artifacts / kwargs["test_name"]
-    artifacts.mkdir(exist_ok=True)
 
-    return artifacts
+def _save_params(kwargs, artifacts):
+    with open(os.path.join(str(artifacts), "side-by-side-params.json"), "w") as file:
+        json.dump(kwargs, file, indent=4)
 
 
 def run_tests(mach_cmd, kwargs, client_args):
@@ -112,10 +110,10 @@ def run_tests(mach_cmd, kwargs, client_args):
         print(json.dumps(try_options, indent=4, sort_keys=True))
         kwargs.update(try_options)
 
-    from mozperftest.utils import build_test_list
     from mozperftest import MachEnvironment, Metadata
     from mozperftest.hooks import Hooks
     from mozperftest.script import ScriptInfo
+    from mozperftest.utils import build_test_list
 
     hooks_file = kwargs.pop("hooks", None)
     hooks = Hooks(mach_cmd, hooks_file)
@@ -177,20 +175,20 @@ def run_tests(mach_cmd, kwargs, client_args):
         hooks.cleanup()
 
 
-def run_tools(mach_cmd, kwargs, client_args):
+def run_tools(mach_cmd, kwargs):
     """This tools runner can be used directly via main or via Mach.
 
     **TODO**: Before adding any more tools, we need to split this logic out
     into a separate file that runs the tools and sets them up dynamically
     in a similar way to how we use layers.
     """
-    from mozperftest.utils import install_package
+    from mozperftest.utils import ON_TRY, install_package
 
     mach_cmd.activate_virtualenv()
     install_package(mach_cmd.virtualenv_manager, "opencv-python==4.5.4.60")
     install_package(
         mach_cmd.virtualenv_manager,
-        "mozperftest-tools==0.1.11",
+        "mozperftest-tools==0.1.12",
     )
 
     log_level = logging.INFO
@@ -203,8 +201,11 @@ def run_tools(mach_cmd, kwargs, client_args):
 
     from mozperftest_tools.side_by_side import SideBySide
 
-    artifacts = _create_artifacts_dir(kwargs)
-
+    if ON_TRY:
+        artifacts = Path(os.environ.get("MOZ_FETCHES_DIR"), "..").resolve()
+        artifacts = _create_artifacts_dir(kwargs, artifacts)
+    else:
+        artifacts = _create_artifacts_dir(kwargs, SRC_ROOT)
     tempdir = tempfile.mkdtemp()
 
     s = SideBySide(str(tempdir))
@@ -213,8 +214,9 @@ def run_tools(mach_cmd, kwargs, client_args):
     try:
         for file in os.listdir(tempdir):
             if file.startswith("cold-") or file.startswith("warm-"):
-                print(f"Copying from {tempdir}/{file} to {artifacts}/{file}")
+                print(f"Copying from {tempdir}/{file} to {artifacts}")
                 shutil.copy(Path(tempdir, file), artifacts)
+        _save_params(kwargs, artifacts)
     finally:
         shutil.rmtree(tempdir)
 
@@ -223,11 +225,11 @@ def main(argv=sys.argv[1:]):
     """Used when the runner is directly called from the shell"""
     _activate_mach_virtualenv()
 
-    from mozbuild.mozconfig import MozconfigLoader
-    from mozbuild.base import MachCommandBase, MozbuildObject
-    from mozperftest import PerftestArgumentParser, PerftestToolsArgumentParser
     from mach.logging import LoggingManager
     from mach.util import get_state_dir
+    from mozbuild.base import MachCommandBase, MozbuildObject
+    from mozbuild.mozconfig import MozconfigLoader
+    from mozperftest import PerftestArgumentParser, PerftestToolsArgumentParser
 
     mozconfig = SRC_ROOT / "browser" / "config" / "mozconfig"
     if mozconfig.exists():
@@ -266,8 +268,7 @@ def main(argv=sys.argv[1:]):
         PerftestToolsArgumentParser.tool = argv[1]
         perftools_parser = PerftestToolsArgumentParser()
         args = dict(vars(perftools_parser.parse_args(args=argv[2:])))
-        user_args = perftools_parser.get_user_args(args)
-        run_tools(mach_cmd, args, user_args)
+        run_tools(mach_cmd, args)
     else:
         perftest_parser = PerftestArgumentParser(description="vanilla perftest")
         args = dict(vars(perftest_parser.parse_args(args=argv)))

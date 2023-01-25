@@ -32,13 +32,13 @@ class ParseNode;
 // Process a module's parse tree to collate the import and export data used when
 // creating a ModuleObject.
 class MOZ_STACK_CLASS ModuleBuilder {
-  explicit ModuleBuilder(JSContext* cx,
+  explicit ModuleBuilder(JSContext* cx, ErrorContext* ec,
                          const frontend::EitherParser& eitherParser);
 
  public:
   template <class Parser>
-  explicit ModuleBuilder(JSContext* cx, Parser* parser)
-      : ModuleBuilder(cx, frontend::EitherParser(parser)) {}
+  explicit ModuleBuilder(JSContext* cx, ErrorContext* ec, Parser* parser)
+      : ModuleBuilder(cx, ec, frontend::EitherParser(parser)) {}
 
   bool processImport(frontend::BinaryNode* importNode);
   bool processExport(frontend::ParseNode* exportNode);
@@ -50,7 +50,7 @@ class MOZ_STACK_CLASS ModuleBuilder {
 
   // During BytecodeEmitter we note top-level functions, and afterwards we must
   // call finishFunctionDecls on the list.
-  bool noteFunctionDeclaration(JSContext* cx, uint32_t funIndex);
+  bool noteFunctionDeclaration(ErrorContext* ec, uint32_t funIndex);
   void finishFunctionDecls(frontend::StencilModuleMetadata& metadata);
 
   void noteAsync(frontend::StencilModuleMetadata& metadata);
@@ -67,6 +67,7 @@ class MOZ_STACK_CLASS ModuleBuilder {
               frontend::TaggedParserAtomIndexHasher>;
 
   JSContext* cx_;
+  ErrorContext* ec_;
   frontend::EitherParser eitherParser_;
 
   // These are populated while parsing.
@@ -77,7 +78,7 @@ class MOZ_STACK_CLASS ModuleBuilder {
   AtomSet exportNames_;
 
   // These are populated while emitting bytecode.
-  frontend::FunctionDeclarationVector functionDecls_;
+  FunctionDeclarationVector functionDecls_;
 
   frontend::StencilModuleEntry* importEntryFor(
       frontend::TaggedParserAtomIndex localName) const;

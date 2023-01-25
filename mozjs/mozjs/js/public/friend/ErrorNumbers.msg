@@ -382,6 +382,7 @@ MSG_DEF(JSMSG_ILLEGAL_PRIVATE_FIELD,   0, JSEXN_SYNTAXERR, "private fields aren'
 MSG_DEF(JSMSG_ILLEGAL_PRIVATE_NAME,    0, JSEXN_SYNTAXERR, "private names aren't valid in this context")
 MSG_DEF(JSMSG_INVALID_PRIVATE_NAME_PRECEDENCE,    0, JSEXN_SYNTAXERR, "invalid use of private name due to operator precedence")
 MSG_DEF(JSMSG_INVALID_PRIVATE_NAME_IN_UNARY_EXPR,    0, JSEXN_SYNTAXERR, "invalid use of private name in unary expression without object reference")
+MSG_DEF(JSMSG_ILLEGAL_PRIVATE_EXOTIC,  0, JSEXN_TYPEERR, "private fields or private methods aren't allowed on this exotic object")
 MSG_DEF(JSMSG_PRIVATE_FIELD_DOUBLE,    0, JSEXN_TYPEERR, "Initializing an object twice is an error with private fields")
 MSG_DEF(JSMSG_PRIVATE_BRAND_DOUBLE,    0, JSEXN_TYPEERR, "Initializing an object twice is an error with private methods")
 MSG_DEF(JSMSG_CURLY_AFTER_ASSERT,      0, JSEXN_SYNTAXERR, "missing '{' after assert")
@@ -453,7 +454,7 @@ MSG_DEF(JSMSG_WASM_BAD_IMPORT_ARG,     0, JSEXN_TYPEERR,     "second argument mu
 MSG_DEF(JSMSG_WASM_BAD_IMPORT_FIELD,   1, JSEXN_TYPEERR,     "import object field '{0}' is not an Object")
 MSG_DEF(JSMSG_WASM_BAD_REF_NONNULLABLE_VALUE,  0, JSEXN_TYPEERR,     "cannot pass null to non-nullable WebAssembly reference")
 MSG_DEF(JSMSG_WASM_BAD_FUNCREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass WebAssembly exported functions to funcref")
-MSG_DEF(JSMSG_WASM_BAD_EQREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a TypedObject to an eqref")
+MSG_DEF(JSMSG_WASM_BAD_EQREF_VALUE,  0, JSEXN_TYPEERR,     "can only pass a WebAssembly GC object to an eqref")
 MSG_DEF(JSMSG_WASM_BAD_VAL_TYPE,       0, JSEXN_TYPEERR,     "cannot pass v128 to or from JS")
 MSG_DEF(JSMSG_WASM_BAD_STRING_VAL_TYPE,    0, JSEXN_TYPEERR,     "bad value type")
 MSG_DEF(JSMSG_WASM_BAD_STRING_IDX_TYPE,    0, JSEXN_TYPEERR,     "bad index type")
@@ -797,5 +798,8 @@ MSG_DEF(JSMSG_SHADOW_REALM_WRAPPED_EXECUTION_FAILURE_DETAIL,    1, JSEXN_TYPEERR
 MSG_DEF(JSMSG_SHADOW_REALM_EXPORT_NOT_STRING,    0, JSEXN_TYPEERR, "exportName must be a string")
 MSG_DEF(JSMSG_SHADOW_REALM_IMPORTVALUE_FAILED,    0, JSEXN_TYPEERR, "import value failed")
 MSG_DEF(JSMSG_SHADOW_REALM_VALUE_NOT_EXPORTED,    0, JSEXN_TYPEERR, "value not exported")
+
+// Decorators
+MSG_DEF(JSMSG_DECORATOR_INVALID_RETURN_TYPE, 0, JSEXN_TYPEERR, "Invalid value returned from decorator: decorators can only return undefined or a callable")
 
 //clang-format on

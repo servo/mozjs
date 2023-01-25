@@ -429,7 +429,7 @@ class SourceCoords {
   }
 
  public:
-  SourceCoords(JSContext* cx, uint32_t initialLineNumber,
+  SourceCoords(ErrorContext* ec, uint32_t initialLineNumber,
                uint32_t initialOffset);
 
   [[nodiscard]] bool add(uint32_t lineNum, uint32_t lineStartOffset);
@@ -1263,7 +1263,7 @@ class SourceUnits {
     return *(ptr - 1);
   }
 
-  Unit getCodeUnit() {
+  MOZ_ALWAYS_INLINE Unit getCodeUnit() {
     return *ptr++;  // this will nullptr-crash if poisoned
   }
 
@@ -1584,7 +1584,7 @@ class TokenStreamCharsShared {
  protected:
   explicit TokenStreamCharsShared(JSContext* cx, ErrorContext* ec,
                                   ParserAtomsTable* parserAtoms)
-      : cx(cx), ec(ec), charBuffer(cx), parserAtoms(parserAtoms) {}
+      : cx(cx), ec(ec), charBuffer(ec), parserAtoms(parserAtoms) {}
 
   [[nodiscard]] bool copyCharBufferTo(
       JSContext* cx, UniquePtr<char16_t[], JS::FreePolicy>* destination);
@@ -1642,9 +1642,11 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
 
   void ungetCodeUnit(int32_t c) {
     if (c == EOF) {
+      MOZ_ASSERT(sourceUnits.atEnd());
       return;
     }
 
+    MOZ_ASSERT(sourceUnits.previousCodeUnit() == toUnit(c));
     sourceUnits.ungetCodeUnit();
   }
 
@@ -1666,7 +1668,7 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
    * Try to match an ASCII LineTerminator code point.  Return true iff it was
    * matched.
    */
-  bool matchLineTerminator(char expect) {
+  MOZ_NEVER_INLINE bool matchLineTerminator(char expect) {
     MOZ_ASSERT(expect == '\r' || expect == '\n');
     return this->sourceUnits.internalMatchCodeUnit(Unit(expect));
   }
@@ -2088,7 +2090,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
    *
    * This may change the current |sourceUnits| offset.
    */
-  [[nodiscard]] bool getFullAsciiCodePoint(int32_t lead) {
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool getFullAsciiCodePoint(int32_t lead) {
     MOZ_ASSERT(isAsciiCodePoint(lead),
                "non-ASCII code units must be handled separately");
     MOZ_ASSERT(toUnit(lead) == this->sourceUnits.previousCodeUnit(),
@@ -2102,7 +2104,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     return updateLineInfoForEOL();
   }
 
-  [[nodiscard]] MOZ_ALWAYS_INLINE bool updateLineInfoForEOL() {
+  [[nodiscard]] MOZ_NEVER_INLINE bool updateLineInfoForEOL() {
     return anyCharsAccess().internalUpdateLineInfoForEOL(
         this->sourceUnits.offset());
   }
@@ -2496,7 +2498,21 @@ class MOZ_STACK_CLASS TokenStreamSpecific
    * updating internal line-counter state if needed. Return true on success.
    * Return false on failure.
    */
-  [[nodiscard]] bool getCodePoint();
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool getCodePoint() {
+    int32_t unit = getCodeUnit();
+    if (MOZ_UNLIKELY(unit == EOF)) {
+      MOZ_ASSERT(anyCharsAccess().flags.isEOF,
+                 "flags.isEOF should have been set by getCodeUnit()");
+      return true;
+    }
+
+    if (isAsciiCodePoint(unit)) {
+      return getFullAsciiCodePoint(unit);
+    }
+
+    char32_t cp;
+    return getNonAsciiCodePoint(unit, &cp);
+  }
 
   // If there is an invalid escape in a template, report it and return false,
   // otherwise return true.

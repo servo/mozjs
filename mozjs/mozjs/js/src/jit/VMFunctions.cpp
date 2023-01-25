@@ -744,6 +744,23 @@ JSString* StringFromCodePoint(JSContext* cx, int32_t codePoint) {
   return rval.toString();
 }
 
+JSLinearString* LinearizeForCharAccessPure(JSString* str) {
+  AutoUnsafeCallWithABI unsafe;
+
+  // Should only be called on ropes.
+  MOZ_ASSERT(str->isRope());
+
+  // ensureLinear is intentionally called with a nullptr to avoid OOM reporting.
+  return str->ensureLinear(nullptr);
+}
+
+JSLinearString* LinearizeForCharAccess(JSContext* cx, JSString* str) {
+  // Should only be called on ropes.
+  MOZ_ASSERT(str->isRope());
+
+  return str->ensureLinear(cx);
+}
+
 bool SetProperty(JSContext* cx, HandleObject obj, Handle<PropertyName*> name,
                  HandleValue value, bool strict, jsbytecode* pc) {
   RootedId id(cx, NameToId(name));
@@ -1290,28 +1307,6 @@ JSString* StringReplace(JSContext* cx, HandleString string,
   return str_replace_string_raw(cx, string, pattern, repl);
 }
 
-bool SetDenseElementPure(JSContext* cx, NativeObject* obj, int32_t index,
-                         Value* value) {
-  AutoUnsafeCallWithABI unsafe;
-
-  // This function is called from Ion code for StoreElementHole's OOL path.
-  // In this case we know the object is native, extensible, and has no indexed
-  // properties.
-  MOZ_ASSERT(obj->isExtensible());
-  MOZ_ASSERT(!obj->isIndexed());
-  MOZ_ASSERT(index >= 0);
-  MOZ_ASSERT(!obj->is<TypedArrayObject>());
-  MOZ_ASSERT_IF(obj->is<ArrayObject>(),
-                obj->as<ArrayObject>().lengthIsWritable());
-
-  DenseElementResult result =
-      obj->setOrExtendDenseElements(cx, index, value, 1);
-  if (result == DenseElementResult::Failure) {
-    cx->recoverFromOutOfMemory();
-  }
-  return result == DenseElementResult::Success;
-}
-
 void AssertValidBigIntPtr(JSContext* cx, JS::BigInt* bi) {
   AutoUnsafeCallWithABI unsafe;
   // FIXME: check runtime?
@@ -1696,10 +1691,9 @@ bool GetNativeDataPropertyPure(JSContext* cx, JSObject* obj, PropertyName* name,
 }
 
 bool GetNativeDataPropertyPureFallback(JSContext* cx, JSObject* obj,
-                                       PropertyName* name, Value* vp) {
+                                       PropertyKey id, Value* vp) {
   AutoUnsafeCallWithABI unsafe;
 
-  jsid id = NameToId(name);
   Shape* receiverShape = obj->shape();
   MegamorphicCache& cache = cx->caches().megamorphicCache;
   MegamorphicCache::Entry* entry = nullptr;

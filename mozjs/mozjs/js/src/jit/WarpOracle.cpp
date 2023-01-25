@@ -22,6 +22,7 @@
 #include "jit/TrialInlining.h"
 #include "jit/TypeData.h"
 #include "jit/WarpBuilder.h"
+#include "util/DifferentialTesting.h"
 #include "vm/BuiltinObjectKind.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
@@ -187,7 +188,8 @@ AbortReasonOr<WarpSnapshot*> WarpOracle::createSnapshot() {
   HashNumber hash = icScript->hash();
   if (outerScript_->jitScript()->hasFailedICHash()) {
     HashNumber oldHash = outerScript_->jitScript()->getFailedICHash();
-    MOZ_ASSERT_IF(hash == oldHash, cx_->hadResourceExhaustion());
+    MOZ_ASSERT_IF(hash == oldHash && !js::SupportDifferentialTesting(),
+                  cx_->hadResourceExhaustion());
   }
   snapshot->setICHash(hash);
 #endif
@@ -388,14 +390,6 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
         if (!moduleObject) {
           moduleObject = GetModuleObjectForScript(script_);
           MOZ_ASSERT(moduleObject->isTenured());
-        }
-        break;
-      }
-
-      case JSOp::CallSiteObj: {
-        // Prepare the object so that WarpBuilder can just push it as constant.
-        if (!ProcessCallSiteObjOperation(cx_, script_, loc.toRawBytecode())) {
-          return abort(AbortReason::Error);
         }
         break;
       }
@@ -681,6 +675,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::InitHiddenElemSetter:
       case JSOp::NewTarget:
       case JSOp::Object:
+      case JSOp::CallSiteObj:
       case JSOp::CheckIsObj:
       case JSOp::CheckObjCoercible:
       case JSOp::FunWithProto:

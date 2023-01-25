@@ -103,6 +103,7 @@ enum class GCAbortReason {
   _(PropMapChildren)                       \
   _(PropMapTable)                          \
   _(ModuleBindingMap)                      \
+  _(ModuleCyclicFields)                    \
   _(BaselineScript)                        \
   _(IonScript)                             \
   _(ArgumentsData)                         \
@@ -128,7 +129,6 @@ enum class GCAbortReason {
   _(WasmTableTable)                        \
   _(WasmExceptionData)                     \
   _(WasmTagType)                           \
-  _(WasmRttValueChildren)                  \
   _(FileObjectFile)                        \
   _(Debugger)                              \
   _(DebuggerFrameGeneratorInfo)            \

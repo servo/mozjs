@@ -513,11 +513,9 @@ static void StoreRegisterResult(MacroAssembler& masm, const FuncExport& fe,
           MOZ_CRASH("V128 not supported in StoreABIReturn");
 #endif
         case ValType::F32:
-          masm.canonicalizeFloat(result.fpr());
           masm.storeFloat32(result.fpr(), Address(loc, 0));
           break;
         case ValType::F64:
-          masm.canonicalizeDouble(result.fpr());
           masm.storeDouble(result.fpr(), Address(loc, 0));
           break;
         case ValType::Ref:
@@ -1167,26 +1165,17 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
         break;
       }
       case ValType::Ref: {
-        switch (funcType.args()[i].refTypeKind()) {
-          case RefType::Extern: {
-            ScratchTagScope tag(masm, scratchV);
-            masm.splitTagForTest(scratchV, tag);
+        // Guarded against by temporarilyUnsupportedReftypeForEntry()
+        MOZ_RELEASE_ASSERT(funcType.args()[i].refType().isExtern());
+        ScratchTagScope tag(masm, scratchV);
+        masm.splitTagForTest(scratchV, tag);
 
-            // For object inputs, we handle object and null inline, everything
-            // else requires an actual box and we go out of line to allocate
-            // that.
-            masm.branchTestObject(Assembler::Equal, tag, &next);
-            masm.branchTestNull(Assembler::Equal, tag, &next);
-            masm.jump(&oolCall);
-            break;
-          }
-          case RefType::Func:
-          case RefType::Eq:
-          case RefType::TypeIndex: {
-            // Guarded against by temporarilyUnsupportedReftypeForEntry()
-            MOZ_CRASH("unexpected argument type when calling from the jit");
-          }
-        }
+        // For object inputs, we handle object and null inline, everything
+        // else requires an actual box and we go out of line to allocate
+        // that.
+        masm.branchTestObject(Assembler::Equal, tag, &next);
+        masm.branchTestNull(Assembler::Equal, tag, &next);
+        masm.jump(&oolCall);
         break;
       }
       case ValType::V128: {
@@ -1350,21 +1339,12 @@ static bool GenerateJitEntry(MacroAssembler& masm, size_t funcExportIndex,
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
       }
       case ValType::Ref: {
-        switch (results[0].refTypeKind()) {
-          case RefType::Func:
-          case RefType::Eq:
-            // For FuncRef and EqRef use the AnyRef path for now, since that
-            // will work.
-          case RefType::Extern:
-            // Per comment above, the call may have clobbered the instance
-            // register, so reload since unboxing will need it.
-            GenerateJitEntryLoadInstance(masm);
-            UnboxAnyrefIntoValueReg(masm, InstanceReg, ReturnReg,
-                                    JSReturnOperand, WasmJitEntryReturnScratch);
-            break;
-          case RefType::TypeIndex:
-            MOZ_CRASH("unexpected return type when calling from ion to wasm");
-        }
+        STATIC_ASSERT_ANYREF_IS_JSOBJECT;
+        // Per comment above, the call may have clobbered the instance
+        // register, so reload since unboxing will need it.
+        GenerateJitEntryLoadInstance(masm);
+        UnboxAnyrefIntoValueReg(masm, InstanceReg, ReturnReg, JSReturnOperand,
+                                WasmJitEntryReturnScratch);
         break;
       }
     }
@@ -1635,20 +1615,11 @@ void wasm::GenerateDirectCallFromJit(MacroAssembler& masm, const FuncExport& fe,
         GenPrintF64(DebugChannel::Function, masm, ReturnDoubleReg);
         break;
       case wasm::ValType::Ref:
-        switch (results[0].refTypeKind()) {
-          case wasm::RefType::Func:
-          case wasm::RefType::Eq:
-            // For FuncRef and EqRef, use the AnyRef path for now, since that
-            // will work.
-          case wasm::RefType::Extern:
-            // The call to wasm above preserves the InstanceReg, we don't
-            // need to reload it here.
-            UnboxAnyrefIntoValueReg(masm, InstanceReg, ReturnReg,
-                                    JSReturnOperand, WasmJitEntryReturnScratch);
-            break;
-          case wasm::RefType::TypeIndex:
-            MOZ_CRASH("unexpected return type when calling from ion to wasm");
-        }
+        STATIC_ASSERT_ANYREF_IS_JSOBJECT;
+        // The call to wasm above preserves the InstanceReg, we don't
+        // need to reload it here.
+        UnboxAnyrefIntoValueReg(masm, InstanceReg, ReturnReg, JSReturnOperand,
+                                WasmJitEntryReturnScratch);
         break;
       case wasm::ValType::V128:
         MOZ_CRASH("unexpected return type when calling from ion to wasm");
@@ -1958,13 +1929,13 @@ static void FillArgumentArrayForJitExit(MacroAssembler& masm, Register instance,
 static bool GenerateImportFunction(jit::MacroAssembler& masm,
                                    const FuncImport& fi,
                                    const FuncType& funcType,
-                                   TypeIdDesc funcTypeId,
+                                   CallIndirectId callIndirectId,
                                    FuncOffsets* offsets) {
   AutoCreatedBy acb(masm, "wasm::GenerateImportFunction");
 
   AssertExpectedSP(masm);
 
-  GenerateFunctionPrologue(masm, funcTypeId, Nothing(), offsets);
+  GenerateFunctionPrologue(masm, callIndirectId, Nothing(), offsets);
 
   MOZ_ASSERT(masm.framePushed() == 0);
   const unsigned sizeOfInstanceSlot = sizeof(void*);
@@ -2033,10 +2004,10 @@ bool wasm::GenerateImportFunctions(const ModuleEnvironment& env,
   for (uint32_t funcIndex = 0; funcIndex < imports.length(); funcIndex++) {
     const FuncImport& fi = imports[funcIndex];
     const FuncType& funcType = *env.funcs[funcIndex].type;
-    TypeIdDesc funcTypeId = *env.funcs[funcIndex].typeId;
+    CallIndirectId callIndirectId = CallIndirectId::forFunc(env, funcIndex);
 
     FuncOffsets offsets;
-    if (!GenerateImportFunction(masm, fi, funcType, funcTypeId, &offsets)) {
+    if (!GenerateImportFunction(masm, fi, funcType, callIndirectId, &offsets)) {
       return false;
     }
     if (!code->codeRanges.emplaceBack(funcIndex, /* bytecodeOffset = */ 0,
@@ -2197,23 +2168,11 @@ static bool GenerateImportInterpExit(MacroAssembler& masm, const FuncImport& fi,
         GenPrintF64(DebugChannel::Import, masm, ReturnDoubleReg);
         break;
       case ValType::Ref:
-        switch (registerResultType.refTypeKind()) {
-          case RefType::Func:
-            masm.loadPtr(argv, ReturnReg);
-            GenPrintf(DebugChannel::Import, masm, "wasm-import[%u]; returns ",
-                      funcImportIndex);
-            GenPrintPtr(DebugChannel::Import, masm, ReturnReg);
-            break;
-          case RefType::Extern:
-          case RefType::Eq:
-            masm.loadPtr(argv, ReturnReg);
-            GenPrintf(DebugChannel::Import, masm, "wasm-import[%u]; returns ",
-                      funcImportIndex);
-            GenPrintPtr(DebugChannel::Import, masm, ReturnReg);
-            break;
-          case RefType::TypeIndex:
-            MOZ_CRASH("No Ref support here yet");
-        }
+        STATIC_ASSERT_ANYREF_IS_JSOBJECT;
+        masm.loadPtr(argv, ReturnReg);
+        GenPrintf(DebugChannel::Import, masm, "wasm-import[%u]; returns ",
+                  funcImportIndex);
+        GenPrintPtr(DebugChannel::Import, masm, ReturnReg);
         break;
     }
   }
@@ -2404,16 +2363,10 @@ static bool GenerateImportJitExit(MacroAssembler& masm, const FuncImport& fi,
         GenPrintF64(DebugChannel::Import, masm, ReturnDoubleReg);
         break;
       case ValType::Ref:
-        switch (results[0].refTypeKind()) {
-          case RefType::Extern:
-            BoxValueIntoAnyref(masm, JSReturnOperand, ReturnReg, &oolConvert);
-            GenPrintPtr(DebugChannel::Import, masm, ReturnReg);
-            break;
-          case RefType::Func:
-          case RefType::Eq:
-          case RefType::TypeIndex:
-            MOZ_CRASH("typed reference returned by import (jit exit) NYI");
-        }
+        // Guarded by temporarilyUnsupportedReftypeForExit()
+        MOZ_RELEASE_ASSERT(results[0].refType().isExtern());
+        BoxValueIntoAnyref(masm, JSReturnOperand, ReturnReg, &oolConvert);
+        GenPrintPtr(DebugChannel::Import, masm, ReturnReg);
         break;
     }
   }
@@ -2508,17 +2461,10 @@ static bool GenerateImportJitExit(MacroAssembler& masm, const FuncImport& fi,
           }
           break;
         case ValType::Ref:
-          switch (results[0].refTypeKind()) {
-            case RefType::Extern:
-              masm.call(SymbolicAddress::BoxValue_Anyref);
-              masm.branchTestPtr(Assembler::Zero, ReturnReg, ReturnReg,
-                                 throwLabel);
-              break;
-            case RefType::Func:
-            case RefType::Eq:
-            case RefType::TypeIndex:
-              MOZ_CRASH("Unsupported convert type");
-          }
+          // Guarded by temporarilyUnsupportedReftypeForExit()
+          MOZ_RELEASE_ASSERT(results[0].refType().isExtern());
+          masm.call(SymbolicAddress::BoxValue_Anyref);
+          masm.branchTestPtr(Assembler::Zero, ReturnReg, ReturnReg, throwLabel);
           break;
         default:
           MOZ_CRASH("Unsupported convert type");

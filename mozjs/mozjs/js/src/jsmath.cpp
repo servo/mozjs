@@ -25,6 +25,7 @@
 #include "jit/InlinableNatives.h"
 #include "js/Class.h"
 #include "js/PropertySpec.h"
+#include "util/DifferentialTesting.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
 #include "vm/Time.h"
@@ -519,7 +520,11 @@ double js::math_random_impl(JSContext* cx) {
 
 static bool math_random(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setDouble(math_random_impl(cx));
+  if (js::SupportDifferentialTesting()) {
+    args.rval().setDouble(0);
+  } else {
+    args.rval().setDouble(math_random_impl(cx));
+  }
   return true;
 }
 
@@ -1070,11 +1075,7 @@ static const JSPropertySpec math_static_properties[] = {
     JS_PS_END};
 
 static JSObject* CreateMathObject(JSContext* cx, JSProtoKey key) {
-  Handle<GlobalObject*> global = cx->global();
-  RootedObject proto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
-  if (!proto) {
-    return nullptr;
-  }
+  RootedObject proto(cx, &cx->global()->getObjectPrototype());
   return NewTenuredObjectWithGivenProto(cx, &MathClass, proto);
 }
 

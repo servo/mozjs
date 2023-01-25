@@ -936,11 +936,12 @@ void MacroAssemblerX86Shared::minMaxFloat32x4AVX(bool isMin, FloatRegister lhs,
   if (isMin) {
     vminps(Operand(rhs), lhs, temp2);             // min lhs, rhs
     vminps(Operand(lhs), rhs, temp1);             // min rhs, lhs
+    vorps(temp1, temp2, output);                  // fix min(-0, 0) with OR
   } else {
     vmaxps(Operand(rhs), lhs, temp2);             // max lhs, rhs
     vmaxps(Operand(lhs), rhs, temp1);             // max rhs, lhs
+    vandps(temp1, temp2, output);                 // fix max(-0, 0) with AND
   }
-  vorps(temp1, temp2, output);                    // fix min(-0, 0) with OR
   vcmpunordps(Operand(rhsCopy), lhsCopy, temp1);  // lhs UNORD rhs
   vptest(temp1, temp1);                           // check if any unordered
   j(Assembler::Equal, &l);                        //   and exit if not
@@ -1028,11 +1029,12 @@ void MacroAssemblerX86Shared::minMaxFloat64x2AVX(bool isMin, FloatRegister lhs,
   if (isMin) {
     vminpd(Operand(rhs), lhs, temp2);             // min lhs, rhs
     vminpd(Operand(lhs), rhs, temp1);             // min rhs, lhs
+    vorpd(temp1, temp2, output);                  // fix min(-0, 0) with OR
   } else {
     vmaxpd(Operand(rhs), lhs, temp2);             // max lhs, rhs
     vmaxpd(Operand(lhs), rhs, temp1);             // max rhs, lhs
+    vandpd(temp1, temp2, output);                 // fix max(-0, 0) with AND
   }
-  vorpd(temp1, temp2, output);                    // fix min(-0, 0) with OR
   vcmpunordpd(Operand(rhsCopy), lhsCopy, temp1);  // lhs UNORD rhs
   vptest(temp1, temp1);                           // check if any unordered
   j(Assembler::Equal, &l);                        //   and exit if not
@@ -1490,12 +1492,20 @@ void MacroAssemblerX86Shared::dotBFloat16x8ThenAdd(FloatRegister lhs,
   FloatRegister rhsCopy = asMasm().moveSimd128IntIfNotAVX(rhs, temp);
   vpslld(Imm32(16), lhsCopy, scratch);
   vpslld(Imm32(16), rhsCopy, temp);
-  asMasm().mulFloat32x4(scratch, temp, scratch);
-  asMasm().addFloat32x4(dest, scratch, dest);
+  if (HasFMA()) {
+    vfmadd231ps(temp, scratch, dest);
+  } else {
+    asMasm().mulFloat32x4(scratch, temp, scratch);
+    asMasm().addFloat32x4(dest, scratch, dest);
+  }
   // The temp has 0 in low half-word. Use pblendw instead of `& 0xFFFF0000`.
   FloatRegister tempCopy = asMasm().moveSimd128IntIfNotAVX(temp, scratch);
   vpblendw(0xAA, lhs, tempCopy, scratch);
   vpblendw(0xAA, rhs, temp, temp);
-  asMasm().mulFloat32x4(scratch, temp, scratch);
-  asMasm().addFloat32x4(dest, scratch, dest);
+  if (HasFMA()) {
+    vfmadd231ps(temp, scratch, dest);
+  } else {
+    asMasm().mulFloat32x4(scratch, temp, scratch);
+    asMasm().addFloat32x4(dest, scratch, dest);
+  }
 }

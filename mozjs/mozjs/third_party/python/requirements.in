@@ -1,6 +1,6 @@
 appdirs==1.4.4
 attrs==19.2.0
-blessings==1.7
+blessed==1.19.1
 cbor2==4.0.1
 colorama==0.4.5
 compare-locales==8.2.1
@@ -11,7 +11,7 @@ ecdsa==0.15
 esprima==4.0.1
 fluent.migrate==0.11
 fluent.syntax==0.18.1
-glean_parser==6.1.2
+glean_parser==6.3.0
 # Pin importlib-metadata to a version compatible with poetry
 importlib-metadata==1.7.0
 jsmin==2.1.0
@@ -40,7 +40,7 @@ setuptools==51.2.0
 six==1.13.0
 slugid==2.0.0
 taskcluster==44.2.2
-taskcluster-taskgraph==3.2.1
+taskcluster-taskgraph==3.5.1
 taskcluster-urls==13.0.1
 tqdm==4.62.3
 urllib3==1.26

@@ -56,22 +56,22 @@ struct NativeIterator;
  * is erroneously included in the measurement; see bug 562553.
  */
 class DtoaCache {
-  double d;
+  double dbl;
   int base;
-  JSLinearString* s;  // if s==nullptr, d and base are not valid
+  JSLinearString* str;  // if str==nullptr, dbl and base are not valid
 
  public:
-  DtoaCache() : s(nullptr) {}
-  void purge() { s = nullptr; }
+  DtoaCache() : str(nullptr) {}
+  void purge() { str = nullptr; }
 
-  JSLinearString* lookup(int base, double d) {
-    return this->s && base == this->base && d == this->d ? this->s : nullptr;
+  JSLinearString* lookup(int b, double d) {
+    return str && b == base && d == dbl ? str : nullptr;
   }
 
-  void cache(int base, double d, JSLinearString* s) {
-    this->base = base;
-    this->d = d;
-    this->s = s;
+  void cache(int b, double d, JSLinearString* s) {
+    base = b;
+    dbl = d;
+    str = s;
   }
 
 #ifdef JSGC_HASH_TABLE_CHECKS
@@ -126,13 +126,13 @@ class NewProxyCache {
 // a recently created object's shape, we can use this shape directly.
 class NewPlainObjectWithPropsCache {
   static const size_t NumEntries = 4;
-  mozilla::Array<Shape*, NumEntries> entries_;
+  mozilla::Array<SharedShape*, NumEntries> entries_;
 
  public:
   NewPlainObjectWithPropsCache() { purge(); }
 
-  Shape* lookup(IdValuePair* properties, size_t nproperties) const;
-  void add(Shape* shape);
+  SharedShape* lookup(IdValuePair* properties, size_t nproperties) const;
+  void add(SharedShape* shape);
 
   void purge() {
     for (size_t i = 0; i < NumEntries; i++) {
@@ -240,10 +240,6 @@ class ObjectWeakMap;
 // objects in a realm. To make sure the correct ObjectRealm is used for an
 // object, use of the ObjectRealm::get(obj) static method is required.
 class ObjectRealm {
-  using NativeIteratorSentinel =
-      js::UniquePtr<js::NativeIterator, JS::FreePolicy>;
-  NativeIteratorSentinel iteratorSentinel_;
-
   // All non-syntactic lexical environments in the realm. These are kept in a
   // map because when loading scripts into a non-syntactic environment, we
   // need to use the same lexical environment to persist lexical bindings.
@@ -253,10 +249,6 @@ class ObjectRealm {
   void operator=(const ObjectRealm&) = delete;
 
  public:
-  // List of potentially active iterators that may need deleted property
-  // suppression.
-  js::NativeIterator* enumerators = nullptr;
-
   // Map from array buffers to views sharing that storage.
   JS::WeakCache<js::InnerViewTable> innerViews;
 
@@ -272,21 +264,15 @@ class ObjectRealm {
   static inline ObjectRealm& get(const JSObject* obj);
 
   explicit ObjectRealm(JS::Zone* zone);
-  ~ObjectRealm();
-
-  [[nodiscard]] bool init(JSContext* cx);
 
   void finishRoots();
   void trace(JSTracer* trc);
   void sweepAfterMinorGC(JSTracer* trc);
-  void traceWeakNativeIterators(JSTracer* trc);
 
   void addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
                               size_t* innerViewsArg,
                               size_t* objectMetadataTablesArg,
                               size_t* nonSyntacticLexicalEnvironmentsArg);
-
-  MOZ_ALWAYS_INLINE bool objectMaybeInIteration(JSObject* obj);
 
   js::NonSyntacticLexicalEnvironmentObject*
   getOrCreateNonSyntacticLexicalEnvironment(JSContext* cx,
@@ -407,6 +393,7 @@ class JS::Realm : public JS::shadow::Realm {
 
   bool isSystem_ = false;
   bool allocatedDuringIncrementalGC_;
+  bool initializingGlobal_ = true;
 
   js::UniquePtr<js::coverage::LCovRealm> lcovRealm_ = nullptr;
 
@@ -467,7 +454,7 @@ class JS::Realm : public JS::shadow::Realm {
   Realm(JS::Compartment* comp, const JS::RealmOptions& options);
   ~Realm();
 
-  [[nodiscard]] bool init(JSContext* cx, JSPrincipals* principals);
+  void init(JSContext* cx, JSPrincipals* principals);
   void destroy(JS::GCContext* gcx);
 
   void addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
@@ -523,7 +510,11 @@ class JS::Realm : public JS::shadow::Realm {
   /* True if a global exists and it's not being collected. */
   inline bool hasLiveGlobal() const;
 
+  /* True if a global exists and has been successfully initialized. */
+  inline bool hasInitializedGlobal() const;
+
   inline void initGlobal(js::GlobalObject& global);
+  void clearInitializingGlobal() { initializingGlobal_ = false; }
 
   /*
    * This method traces data that is live iff we know that this realm's
@@ -546,7 +537,6 @@ class JS::Realm : public JS::shadow::Realm {
 
   void sweepAfterMinorGC(JSTracer* trc);
   void traceWeakDebugEnvironmentEdges(JSTracer* trc);
-  void traceWeakObjectRealm(JSTracer* trc);
   void traceWeakRegExps(JSTracer* trc);
 
   void clearScriptCounts();

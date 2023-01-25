@@ -1201,7 +1201,7 @@ XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
 
   if (mode == XDR_DECODE) {
     // Allocate a new ScriptSource and root it with the holder.
-    source = do_AddRef(cx->new_<ScriptSource>());
+    source = do_AddRef(ec->getAllocator()->new_<ScriptSource>());
     if (!source) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }
@@ -1238,7 +1238,7 @@ XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
     }
     MOZ_TRY(xdr->codeCharsZ(chars));
     if (mode == XDR_DECODE) {
-      if (!source->setFilename(cx, ec, std::move(chars.ref<UniqueChars>()))) {
+      if (!source->setFilename(ec, std::move(chars.ref<UniqueChars>()))) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
@@ -1268,7 +1268,7 @@ XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
     MOZ_TRY(xdr->codeCharsZ(chars));
     if (mode == XDR_DECODE) {
       if (!source->setSourceMapURL(
-              cx, ec, std::move(chars.ref<UniqueTwoByteChars>()))) {
+              ec, std::move(chars.ref<UniqueTwoByteChars>()))) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
@@ -1428,12 +1428,12 @@ void StencilIncrementalEncoderPtr::reset() {
 bool StencilIncrementalEncoderPtr::setInitial(
     JSContext* cx,
     UniquePtr<frontend::ExtensibleCompilationStencil>&& initial) {
-  merger_ = cx->new_<frontend::CompilationStencilMerger>();
+  AutoReportFrontendContext ec(cx);
+  merger_ = ec.getAllocator()->new_<frontend::CompilationStencilMerger>();
   if (!merger_) {
     return false;
   }
 
-  AutoReportFrontendContext ec(cx);
   return merger_->setInitial(
       &ec,
       std::forward<UniquePtr<frontend::ExtensibleCompilationStencil>>(initial));

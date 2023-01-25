@@ -75,8 +75,16 @@ bool wasm::ToRefType(JSContext* cx, JSLinearString* typeLinearStr,
   } else if (StringEqualsLiteral(typeLinearStr, "externref")) {
     *out = RefType::extern_();
 #ifdef ENABLE_WASM_GC
+  } else if (GcAvailable(cx) && StringEqualsLiteral(typeLinearStr, "anyref")) {
+    *out = RefType::any();
   } else if (GcAvailable(cx) && StringEqualsLiteral(typeLinearStr, "eqref")) {
     *out = RefType::eq();
+  } else if (GcAvailable(cx) &&
+             StringEqualsLiteral(typeLinearStr, "structref")) {
+    *out = RefType::struct_();
+  } else if (GcAvailable(cx) &&
+             StringEqualsLiteral(typeLinearStr, "arrayref")) {
+    *out = RefType::array();
 #endif
   } else {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
@@ -87,9 +95,9 @@ bool wasm::ToRefType(JSContext* cx, JSLinearString* typeLinearStr,
   return true;
 }
 
-UniqueChars wasm::ToString(RefType type) {
+UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
   // Try to emit a shorthand version first
-  if (type.isNullable() && !type.isTypeIndex()) {
+  if (type.isNullable() && !type.isTypeRef()) {
     const char* literal = nullptr;
     switch (type.kind()) {
       case RefType::Func:
@@ -98,11 +106,23 @@ UniqueChars wasm::ToString(RefType type) {
       case RefType::Extern:
         literal = "externref";
         break;
+      case RefType::Any:
+        literal = "anyref";
+        break;
       case RefType::Eq:
         literal = "eqref";
         break;
-      case RefType::TypeIndex:
-        MOZ_ASSERT_UNREACHABLE();
+      case RefType::Struct:
+        literal = "structref";
+        break;
+      case RefType::Array:
+        literal = "arrayref";
+        break;
+      case RefType::TypeRef: {
+        uint32_t typeIndex = types->indexOf(*type.typeDef());
+        return JS_smprintf("(ref %s%d)", type.isNullable() ? "null " : "",
+                           typeIndex);
+      }
     }
     return DuplicateString(literal);
   }
@@ -116,19 +136,32 @@ UniqueChars wasm::ToString(RefType type) {
     case RefType::Extern:
       heapType = "extern";
       break;
+    case RefType::Any:
+      heapType = "any";
+      break;
     case RefType::Eq:
       heapType = "eq";
       break;
-    case RefType::TypeIndex:
+    case RefType::Struct:
+      heapType = "struct";
+      break;
+    case RefType::Array:
+      heapType = "array";
+      break;
+    case RefType::TypeRef: {
+      uint32_t typeIndex = types->indexOf(*type.typeDef());
       return JS_smprintf("(ref %s%d)", type.isNullable() ? "null " : "",
-                         type.typeIndex());
+                         typeIndex);
+    }
   }
   return JS_smprintf("(ref %s%s)", type.isNullable() ? "null " : "", heapType);
 }
 
-UniqueChars wasm::ToString(ValType type) { return ToString(type.fieldType()); }
+UniqueChars wasm::ToString(ValType type, const TypeContext* types) {
+  return ToString(type.fieldType(), types);
+}
 
-UniqueChars wasm::ToString(FieldType type) {
+UniqueChars wasm::ToString(FieldType type, const TypeContext* types) {
   const char* literal = nullptr;
   switch (type.kind()) {
     case FieldType::I8:
@@ -153,11 +186,12 @@ UniqueChars wasm::ToString(FieldType type) {
       literal = "f64";
       break;
     case FieldType::Ref:
-      return ToString(type.refType());
+      return ToString(type.refType(), types);
   }
   return DuplicateString(literal);
 }
 
-UniqueChars wasm::ToString(const Maybe<ValType>& type) {
-  return type ? ToString(type.ref()) : JS_smprintf("%s", "void");
+UniqueChars wasm::ToString(const Maybe<ValType>& type,
+                           const TypeContext* types) {
+  return type ? ToString(type.ref(), types) : JS_smprintf("%s", "void");
 }

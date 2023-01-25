@@ -15,8 +15,8 @@ using namespace js;
 
 void ShapeZone::fixupPropMapShapeTableAfterMovingGC() {
   for (PropMapShapeSet::Enum e(propMapShapes); !e.empty(); e.popFront()) {
-    Shape* shape = MaybeForwarded(e.front().unbarrieredGet());
-    SharedPropMap* map = MaybeForwarded(shape->propMap())->asShared();
+    SharedShape* shape = MaybeForwarded(e.front().unbarrieredGet());
+    SharedPropMap* map = shape->propMapMaybeForwarded();
     BaseShape* base = MaybeForwarded(shape->base());
 
     PropMapShapeSet::Lookup lookup(base, shape->numFixedSlots(), map,
@@ -63,11 +63,11 @@ void ShapeZone::checkTablesAfterMovingGC() {
   }
 
   for (auto r = propMapShapes.all(); !r.empty(); r.popFront()) {
-    Shape* shape = r.front().unbarrieredGet();
+    SharedShape* shape = r.front().unbarrieredGet();
     CheckGCThingAfterMovingGC(shape);
 
     using Lookup = PropMapShapeHasher::Lookup;
-    Lookup lookup(shape->base(), shape->numFixedSlots(), shape->sharedPropMap(),
+    Lookup lookup(shape->base(), shape->numFixedSlots(), shape->propMap(),
                   shape->propMapLength(), shape->objectFlags());
     PropMapShapeSet::Ptr ptr = propMapShapes.lookup(lookup);
     MOZ_RELEASE_ASSERT(ptr.found() && &*ptr == &r.front());

@@ -15,13 +15,40 @@ from mozbuild.base import MozbuildObject
 from mozfile import TemporaryDirectory
 from mozpack.files import FileFinder
 
+EXCLUDED_PACKAGES = {
+    # dlmanager's package on PyPI only has metadata, but is missing the code.
+    # https://github.com/parkouss/dlmanager/issues/1
+    "dlmanager",
+    # gyp's package on PyPI doesn't have any downloadable files.
+    "gyp",
+    # We keep some wheels vendored in "_venv" for use in Mozharness
+    "_venv",
+    # We manage vendoring "vsdownload" with a moz.yaml file (there is no module
+    # on PyPI).
+    "vsdownload",
+    # The moz.build file isn't a vendored module, so don't delete it.
+    "moz.build",
+    "requirements.in",
+    # The ansicon package contains DLLs and we don't want to arbitrarily vendor
+    # them since they could be unsafe. This module should rarely be used in practice
+    # (it's a fallback for old versions of windows). We've intentionally vendored a
+    # modified 'dummy' version of it so that the dependency checks still succeed, but
+    # if it ever is attempted to be used, it will fail gracefully.
+    "ansicon",
+}
+
 
 class VendorPython(MozbuildObject):
+    def __init__(self, *args, **kwargs):
+        MozbuildObject.__init__(self, *args, virtualenv_name="vendor", **kwargs)
+
     def vendor(self, keep_extra_files=False):
         from mach.python_lockfile import PoetryHandle
 
         self.populate_logger()
         self.log_manager.enable_unstructured()
+
+        self.apply_patches()
 
         vendor_dir = Path(self.topsrcdir) / "third_party" / "python"
         requirements_in = vendor_dir / "requirements.in"
@@ -71,8 +98,15 @@ class VendorPython(MozbuildObject):
                 _purge_vendor_dir(vendor_dir)
                 self._extract(tmp, vendor_dir, keep_extra_files)
 
-            shutil.copy(lockfiles.pip_lockfile, str(vendor_dir / "requirements.txt"))
-            shutil.copy(lockfiles.poetry_lockfile, str(poetry_lockfile))
+            requirements_out = vendor_dir / "requirements.txt"
+
+            # since requirements.out and poetry.lockfile are both outputs from
+            # third party code, they may contain carriage returns on Windows. We
+            # should strip the carriage returns to maintain consistency in our output
+            # regardless of which platform is doing the vendoring. We can do this and
+            # the copying at the same time to minimize reads and writes.
+            _copy_file_strip_carriage_return(lockfiles.pip_lockfile, requirements_out)
+            _copy_file_strip_carriage_return(lockfiles.poetry_lockfile, poetry_lockfile)
             self.repository.add_remove_files(vendor_dir)
 
     def _extract(self, src, dest, keep_extra_files=False):
@@ -91,6 +125,13 @@ class VendorPython(MozbuildObject):
                 package_name, version, spec, abi, platform_and_suffix = archive.rsplit(
                     "-", 4
                 )
+
+                if package_name in EXCLUDED_PACKAGES:
+                    print(
+                        f"'{package_name}' is on the exclusion list and will not be vendored."
+                    )
+                    continue
+
                 target_package_dir = os.path.join(dest, package_name)
                 os.mkdir(target_package_dir)
 
@@ -106,6 +147,12 @@ class VendorPython(MozbuildObject):
                 package_name, archive_postfix = archive.rsplit("-", 1)
                 package_dir = os.path.join(dest, package_name)
 
+                if package_name in EXCLUDED_PACKAGES:
+                    print(
+                        f"'{package_name}' is on the exclusion list and will not be vendored."
+                    )
+                    continue
+
                 # The archive should only contain one top-level directory, which has
                 # the source files. We extract this directory directly to
                 # the vendor directory.
@@ -118,10 +165,52 @@ class VendorPython(MozbuildObject):
                 mozfile.move(extracted_package_dir, package_dir)
                 _denormalize_symlinks(package_dir)
 
+    def apply_patches(self):
+        self._patch_poetry_pypi_repository()
+
+    def _patch_poetry_pypi_repository(self):
+        # There is a bug in Poetry 1.2.0a2 caused by a breaking change
+        # on PyPi's end: https://github.com/pypi/warehouse/pull/11775
+        # This bug was fixed in Poetry 1.2.0b3, but 1.2.0b1 dropped
+        # support for Python 3.6, which is a requirement for us.
+        # As a temporary workaround, we can patch the fix into our
+        # virtualenv's copy of Poetry. This patch should be removed
+        # once we switch to using a newer version of Poetry.
+        venv = self.virtualenv_manager._virtualenv
+
+        # Get the last element since on Windows the
+        # first element is the virtualenv root
+        site_packages = Path(venv.site_packages_dirs()[-1])
+        expected_poetry_dist_info = site_packages / "poetry-1.2.0a2.dist-info"
+
+        # If the specific release of poetry isn't in the site-packages directory
+        # we should not attempt to patch.
+        if not expected_poetry_dist_info.exists():
+            print(
+                f'The version of Poetry that needs patching ("{expected_poetry_dist_info.name}") '
+                f'could not be found in the "{self.virtualenv_manager._site_name}" virtualenv. '
+                f"Can this patch be removed?"
+            )
+            return
+
+        file_to_patch = site_packages / "poetry" / "repositories" / "pypi_repository.py"
+
+        with file_to_patch.open(mode="r") as file:
+            contents = file.read()
+
+        contents = contents.replace(
+            'version_info = json_data["releases"][version]',
+            'version_info = json_data["urls"]',
+        )
+
+        print(f'Patching "{file_to_patch}"')
+        with file_to_patch.open(mode="w") as file:
+            file.write(contents)
+
 
 def _sort_requirements_in(requirements_in: Path):
     requirements = {}
-    with open(requirements_in) as f:
+    with requirements_in.open(mode="r", newline="\n") as f:
         comments = []
         for line in f.readlines():
             line = line.strip()
@@ -132,7 +221,7 @@ def _sort_requirements_in(requirements_in: Path):
             requirements[name] = version, comments
             comments = []
 
-    with open(requirements_in, "w") as f:
+    with requirements_in.open(mode="w", newline="\n") as f:
         for name, (version, comments) in sorted(requirements.items()):
             if comments:
                 f.write("{}\n".format("\n".join(comments)))
@@ -140,42 +229,32 @@ def _sort_requirements_in(requirements_in: Path):
 
 
 def remove_environment_markers_from_requirements_txt(requirements_txt: Path):
-    with open(requirements_txt) as f:
+    with requirements_txt.open(mode="r", newline="\n") as f:
         lines = f.readlines()
     markerless_lines = []
+    continuation_token = " \\"
     for line in lines:
-        if not line.startswith(" ") and not line.startswith("#"):
+        line = line.rstrip()
+
+        if not line.startswith(" ") and not line.startswith("#") and ";" in line:
+            has_continuation_token = line.endswith(continuation_token)
             # The first line of each requirement looks something like:
             #   package-name==X.Y; python_version>=3.7
-            # We can scrub the environment marker by splitting on the
-            # semicolon
-            markerless_lines.append(line.split(";")[0])
+            # We can scrub the environment marker by splitting on the semicolon
+            line = line.split(";")[0]
+            if has_continuation_token:
+                line += continuation_token
+            markerless_lines.append(line)
         else:
             markerless_lines.append(line)
-    with open(requirements_txt, "w") as f:
-        f.writelines(markerless_lines)
+
+    with requirements_txt.open(mode="w", newline="\n") as f:
+        f.write("\n".join(markerless_lines))
 
 
 def _purge_vendor_dir(vendor_dir):
-    excluded_packages = [
-        # dlmanager's package on PyPI only has metadata, but is missing the code.
-        # https://github.com/parkouss/dlmanager/issues/1
-        "dlmanager",
-        # gyp's package on PyPI doesn't have any downloadable files.
-        "gyp",
-        # We manage installing "virtualenv" package manually, and we have a custom
-        # "virtualenv.py" entry module.
-        "virtualenv",
-        # We manage vendoring "vsdownload" with a moz.yaml file (there is no module
-        # on PyPI).
-        "vsdownload",
-        # The moz.build file isn't a vendored module, so don't delete it.
-        "moz.build",
-        "requirements.in",
-    ]
-
     for child in Path(vendor_dir).iterdir():
-        if child.name not in excluded_packages:
+        if child.name not in EXCLUDED_PACKAGES:
             mozfile.remove(str(child))
 
 
@@ -188,3 +267,7 @@ def _denormalize_symlinks(target):
             link_target = os.path.realpath(f.path)
             os.unlink(f.path)
             shutil.copyfile(link_target, f.path)
+
+
+def _copy_file_strip_carriage_return(file_src: Path, file_dst):
+    shutil.copyfileobj(file_src.open(mode="r"), file_dst.open(mode="w", newline="\n"))

@@ -4,28 +4,27 @@
 
 from __future__ import absolute_import, print_function, unicode_literals
 
+import functools
+import glob
+import logging
 import os
 import re
-import sys
-import glob
 import shutil
-import logging
+import sys
 import tarfile
 import tempfile
-import requests
-import functools
 
 import mozfile
 import mozpack.path as mozpath
-
+import requests
 from mozbuild.base import MozbuildObject
 from mozbuild.vendor.rewrite_mozbuild import (
+    MozBuildRewriteException,
     add_file_to_moz_build_file,
     remove_file_from_moz_build_file,
-    MozBuildRewriteException,
 )
 
-DEFAULT_EXCLUDE_FILES = [".git*"]
+DEFAULT_EXCLUDE_FILES = [".git*", ".git*/**"]
 DEFAULT_KEEP_FILES = ["**/moz.build", "**/moz.yaml"]
 DEFAULT_INCLUDE_FILES = []
 
@@ -78,27 +77,7 @@ class VendorManifest(MozbuildObject):
                 self.yaml_file
             )
 
-        self.source_host = self.get_source_host()
-
-        # Check that updatebot key is available for libraries with existing
-        # moz.yaml files but missing updatebot information
-        if "vendoring" in self.manifest:
-            ref_type = self.manifest["vendoring"]["tracking"]
-            if revision == "tip":
-                new_revision, timestamp = self.source_host.upstream_commit("HEAD")
-            elif ref_type == "tag":
-                new_revision, timestamp = self.source_host.upstream_tag(revision)
-            else:
-                new_revision, timestamp = self.source_host.upstream_commit(revision)
-        else:
-            ref_type = "commit"
-            new_revision, timestamp = self.source_host.upstream_commit(revision)
-
-        self.logInfo(
-            {"ref_type": ref_type, "ref": new_revision, "timestamp": timestamp},
-            "Latest {ref_type} is {ref} from {timestamp}",
-        )
-
+        # ==========================================================
         # If we're only patching; do that
         if "patches" in self.manifest["vendoring"] and patch_mode == "only":
             self.import_local_patches(
@@ -108,20 +87,43 @@ class VendorManifest(MozbuildObject):
             )
             return
 
+        # ==========================================================
+        self.source_host = self.get_source_host()
+
+        ref_type = self.manifest["vendoring"].get("tracking", "commit")
+        flavor = self.manifest["vendoring"].get("flavor", "regular")
+        # Individiual files are special
+
+        if revision == "tip":
+            # This case allows us to force-update a tag-tracking library to master
+            new_revision, timestamp = self.source_host.upstream_commit("HEAD")
+        elif ref_type == "tag":
+            new_revision, timestamp = self.source_host.upstream_tag(revision)
+        else:
+            new_revision, timestamp = self.source_host.upstream_commit(revision)
+
+        self.logInfo(
+            {"ref_type": ref_type, "ref": new_revision, "timestamp": timestamp},
+            "Latest {ref_type} is {ref} from {timestamp}",
+        )
+
+        # ==========================================================
         if not force and self.manifest["origin"]["revision"] == new_revision:
             # We're up to date, don't do anything
             self.logInfo({}, "Latest upstream matches in-tree.")
             return
-        elif check_for_update:
+        elif flavor != "individual-file" and check_for_update:
             # Only print the new revision to stdout
             print("%s %s" % (new_revision, timestamp))
             return
 
-        flavor = self.manifest["vendoring"].get("flavor", "regular")
+        # ==========================================================
         if flavor == "regular":
             self.process_regular(
                 new_revision, timestamp, ignore_modified, add_to_exports
             )
+        elif flavor == "individual-files":
+            self.process_individual(new_revision, timestamp, ignore_modified)
         elif flavor == "rust":
             self.process_rust(
                 command_context,
@@ -154,6 +156,64 @@ class VendorManifest(MozbuildObject):
 
         self.update_yaml(new_revision, timestamp)
 
+    def process_individual(self, new_revision, timestamp, ignore_modified):
+        # This design is used because there is no github API to query
+        # for the last commit that modified a file; nor a way to get file
+        # blame.  So really all we can do is just download and replace the
+        # files and see if they changed...
+
+        def download_and_write_file(url, destination):
+            self.logInfo(
+                {"local_file": destination, "url": url},
+                "Downloading {local_file} from {url}...",
+            )
+
+            with mozfile.NamedTemporaryFile() as tmpfile:
+                try:
+                    req = requests.get(url, stream=True)
+                    for data in req.iter_content(4096):
+                        tmpfile.write(data)
+                    tmpfile.seek(0)
+
+                    shutil.copy2(tmpfile.name, destination)
+                except Exception as e:
+                    raise (e)
+
+        # Only one of these loops will have content, so just do them both
+        for f in self.manifest["vendoring"].get("individual-files", []):
+            url = self.source_host.upstream_path_to_file(new_revision, f["upstream"])
+            destination = self.get_full_path(f["destination"])
+            download_and_write_file(url, destination)
+
+        for f in self.manifest["vendoring"].get("individual-files-list", []):
+            url = self.source_host.upstream_path_to_file(
+                new_revision,
+                self.manifest["vendoring"]["individual-files-default-upstream"] + f,
+            )
+            destination = self.get_full_path(
+                self.manifest["vendoring"]["individual-files-default-destination"] + f
+            )
+            download_and_write_file(url, destination)
+
+        self.spurious_check(new_revision, ignore_modified)
+
+        self.logInfo({}, "Checking for update actions")
+        self.update_files(new_revision)
+
+        self.update_yaml(new_revision, timestamp)
+
+        self.logInfo({"rev": new_revision}, "Updated to '{rev}'.")
+
+        if "patches" in self.manifest["vendoring"]:
+            # Remind the user
+            self.log(
+                logging.CRITICAL,
+                "vendor",
+                {},
+                "Patches present in manifest!!! Please run "
+                "'./mach vendor --patch-mode only' after commiting changes.",
+            )
+
     def process_regular(self, new_revision, timestamp, ignore_modified, add_to_exports):
 
         if self.should_perform_step("fetch"):
@@ -161,11 +221,8 @@ class VendorManifest(MozbuildObject):
         else:
             self.logInfo({}, "Skipping fetching upstream source.")
 
-        if self.should_perform_step("update-actions"):
-            self.logInfo({}, "Updating files")
-            self.update_files(new_revision)
-        else:
-            self.logInfo({}, "Skipping running the update actions.")
+        self.logInfo({}, "Checking for update actions")
+        self.update_files(new_revision)
 
         if self.should_perform_step("hg-add"):
             self.logInfo({}, "Registering changes with version control.")
@@ -267,7 +324,11 @@ class VendorManifest(MozbuildObject):
                 paths.extend(glob.iglob(pattern_full_path, recursive=True))
         # Remove folder names from list of paths in order to avoid prematurely
         # truncating directories elsewhere
-        return [mozpath.normsep(path) for path in paths if not os.path.isdir(path)]
+        # Sort the final list to ensure we preserve 01_, 02_ ordering for e.g. *.patch globs
+        final_paths = sorted(
+            [mozpath.normsep(path) for path in paths if not os.path.isdir(path)]
+        )
+        return final_paths
 
     def fetch_and_unpack(self, revision):
         """Fetch and unpack upstream source"""
@@ -414,7 +475,10 @@ class VendorManifest(MozbuildObject):
 
     def spurious_check(self, revision, ignore_modified):
         changed_files = set(
-            [os.path.abspath(f) for f in self.repository.get_changed_files()]
+            [
+                os.path.abspath(f)
+                for f in self.repository.get_changed_files(mode="staged")
+            ]
         )
         generated_files = set(
             [
@@ -558,6 +622,8 @@ class VendorManifest(MozbuildObject):
                     if "GECKO_PATH" not in os.environ
                     else {}
                 )
+                # We also add a signal to scripts that they are running under mach vendor
+                extra_env["MACH_VENDOR"] = "1"
                 self.run_process(
                     args=[command] + args,
                     cwd=run_dir,

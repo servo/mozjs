@@ -44,6 +44,11 @@ class ICState {
   // Baseline IC.
   bool usedByTranspiler_ : 1;
 
+  // Whether stubs attached to this IC have been folded together into
+  // a single stub. Used as a hint when attaching additional stubs to
+  // try folding them too.
+  bool hasFoldedStub_ : 1;
+
   // Number of optimized stubs currently attached to this IC.
   uint8_t numOptimizedStubs_;
 
@@ -92,9 +97,7 @@ class ICState {
     return true;
   }
 
-  // If this returns true, we transitioned to a new mode and the caller
-  // should discard all stubs.
-  [[nodiscard]] MOZ_ALWAYS_INLINE bool maybeTransition() {
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool shouldTransition() {
     // Note: we cannot assert that numOptimizedStubs_ <= MaxOptimizedStubs
     // because old-style baseline ICs may attach more stubs than
     // MaxOptimizedStubs allows.
@@ -103,6 +106,15 @@ class ICState {
     }
     if (numOptimizedStubs_ < MaxOptimizedStubs &&
         numFailures_ < maxFailures()) {
+      return false;
+    }
+    return true;
+  }
+
+  // If this returns true, we transitioned to a new mode and the caller
+  // should discard all stubs.
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool maybeTransition() {
+    if (!shouldTransition()) {
       return false;
     }
     if (numFailures_ == maxFailures() || mode() == Mode::Megamorphic) {
@@ -123,6 +135,7 @@ class ICState {
 #endif
     trialInliningState_ = uint32_t(TrialInliningState::Initial);
     usedByTranspiler_ = false;
+    hasFoldedStub_ = false;
     numOptimizedStubs_ = 0;
     numFailures_ = 0;
   }
@@ -154,6 +167,10 @@ class ICState {
   void clearUsedByTranspiler() { usedByTranspiler_ = false; }
   void setUsedByTranspiler() { usedByTranspiler_ = true; }
   bool usedByTranspiler() const { return usedByTranspiler_; }
+
+  void clearHasFoldedStub() { hasFoldedStub_ = false; }
+  void setHasFoldedStub() { hasFoldedStub_ = true; }
+  bool hasFoldedStub() const { return hasFoldedStub_; }
 
   TrialInliningState trialInliningState() const {
     return TrialInliningState(trialInliningState_);

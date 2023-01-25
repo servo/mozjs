@@ -35,6 +35,7 @@ TEST_HARNESS_BINS = [
     "BadCertAndPinningServer",
     "DelegatedCredentialsServer",
     "EncryptedClientHelloServer",
+    "FaultyServer",
     "GenerateOCSPResponse",
     "OCSPStaplingServer",
     "SanctionsTestServer",
@@ -298,7 +299,7 @@ ARCHIVE_FILES = {
         {
             "source": buildconfig.topsrcdir,
             "base": "",
-            "pattern": "third_party/python/virtualenv/**",
+            "pattern": "third_party/python/_venv/**",
         },
         {
             "source": buildconfig.topsrcdir,

@@ -16,15 +16,17 @@
 #include "gc/Barrier.h"        // HeapPtr
 #include "gc/ZoneAllocator.h"  // CellAllocPolicy
 #include "js/Class.h"          // JSClass, ObjectOpResult
-#include "js/Id.h"             // jsid
+#include "js/GCVector.h"
+#include "js/Id.h"  // jsid
 #include "js/Modules.h"
 #include "js/Proxy.h"       // BaseProxyHandler
 #include "js/RootingAPI.h"  // Rooted, Handle, MutableHandle
 #include "js/TypeDecls.h"  // HandleValue, HandleId, HandleObject, HandleScript, MutableHandleValue, MutableHandleIdVector, MutableHandleObject
 #include "js/UniquePtr.h"  // UniquePtr
 #include "vm/JSObject.h"   // JSObject
-#include "vm/NativeObject.h"  // NativeObject
-#include "vm/ProxyObject.h"   // ProxyObject
+#include "vm/NativeObject.h"   // NativeObject
+#include "vm/ProxyObject.h"    // ProxyObject
+#include "vm/SharedStencil.h"  // FunctionDeclarationVector
 
 class JSAtom;
 class JSScript;
@@ -38,12 +40,12 @@ class Value;
 namespace js {
 
 class ArrayObject;
+class CyclicModuleFields;
 class ListObject;
-class PromiseObject;
-class ScriptSourceObject;
-
 class ModuleEnvironmentObject;
 class ModuleObject;
+class PromiseObject;
+class ScriptSourceObject;
 
 class ModuleRequestObject : public NativeObject {
  public:
@@ -59,72 +61,70 @@ class ModuleRequestObject : public NativeObject {
   ArrayObject* assertions() const;
 };
 
-class ImportEntryObject : public NativeObject {
- public:
-  enum {
-    ModuleRequestSlot = 0,
-    ImportNameSlot,
-    LocalNameSlot,
-    LineNumberSlot,
-    ColumnNumberSlot,
-    SlotCount
-  };
+class ImportEntry {
+  const HeapPtr<ModuleRequestObject*> moduleRequest_;
+  const HeapPtr<JSAtom*> importName_;
+  const HeapPtr<JSAtom*> localName_;
+  const uint32_t lineNumber_;
+  const uint32_t columnNumber_;
 
-  static const JSClass class_;
-  static bool isInstance(HandleValue value);
-  static ImportEntryObject* create(JSContext* cx, HandleObject moduleRequest,
-                                   Handle<JSAtom*> maybeImportName,
-                                   Handle<JSAtom*> localName,
-                                   uint32_t lineNumber, uint32_t columnNumber);
-  ModuleRequestObject* moduleRequest() const;
-  JSAtom* importName() const;
-  JSAtom* localName() const;
-  uint32_t lineNumber() const;
-  uint32_t columnNumber() const;
+ public:
+  ImportEntry(Handle<ModuleRequestObject*> moduleRequest,
+              Handle<JSAtom*> maybeImportName, Handle<JSAtom*> localName,
+              uint32_t lineNumber, uint32_t columnNumber);
+
+  ModuleRequestObject* moduleRequest() const { return moduleRequest_; }
+  JSAtom* importName() const { return importName_; }
+  JSAtom* localName() const { return localName_; }
+  uint32_t lineNumber() const { return lineNumber_; }
+  uint32_t columnNumber() const { return columnNumber_; }
+
+  void trace(JSTracer* trc);
 };
 
-class ExportEntryObject : public NativeObject {
- public:
-  enum {
-    ExportNameSlot = 0,
-    ModuleRequestSlot,
-    ImportNameSlot,
-    LocalNameSlot,
-    LineNumberSlot,
-    ColumnNumberSlot,
-    SlotCount
-  };
+using ImportEntryVector = GCVector<ImportEntry, 0, SystemAllocPolicy>;
 
-  static const JSClass class_;
-  static bool isInstance(HandleValue value);
-  static ExportEntryObject* create(JSContext* cx,
-                                   Handle<JSAtom*> maybeExportName,
-                                   HandleObject maybeModuleRequest,
-                                   Handle<JSAtom*> maybeImportName,
-                                   Handle<JSAtom*> maybeLocalName,
-                                   uint32_t lineNumber, uint32_t columnNumber);
-  JSAtom* exportName() const;
-  ModuleRequestObject* moduleRequest() const;
-  JSAtom* importName() const;
-  JSAtom* localName() const;
-  uint32_t lineNumber() const;
-  uint32_t columnNumber() const;
+class ExportEntry {
+  const HeapPtr<JSAtom*> exportName_;
+  const HeapPtr<ModuleRequestObject*> moduleRequest_;
+  const HeapPtr<JSAtom*> importName_;
+  const HeapPtr<JSAtom*> localName_;
+  const uint32_t lineNumber_;
+  const uint32_t columnNumber_;
+
+ public:
+  ExportEntry(Handle<JSAtom*> maybeExportName,
+              Handle<ModuleRequestObject*> maybeModuleRequest,
+              Handle<JSAtom*> maybeImportName, Handle<JSAtom*> maybeLocalName,
+              uint32_t lineNumber, uint32_t columnNumber);
+  JSAtom* exportName() const { return exportName_; }
+  ModuleRequestObject* moduleRequest() const { return moduleRequest_; }
+  JSAtom* importName() const { return importName_; }
+  JSAtom* localName() const { return localName_; }
+  uint32_t lineNumber() const { return lineNumber_; }
+  uint32_t columnNumber() const { return columnNumber_; }
+
+  void trace(JSTracer* trc);
 };
 
-class RequestedModuleObject : public NativeObject {
- public:
-  enum { ModuleRequestSlot = 0, LineNumberSlot, ColumnNumberSlot, SlotCount };
+using ExportEntryVector = GCVector<ExportEntry, 0, SystemAllocPolicy>;
 
-  static const JSClass class_;
-  static bool isInstance(HandleValue value);
-  static RequestedModuleObject* create(JSContext* cx,
-                                       HandleObject moduleRequest,
-                                       uint32_t lineNumber,
-                                       uint32_t columnNumber);
-  ModuleRequestObject* moduleRequest() const;
-  uint32_t lineNumber() const;
-  uint32_t columnNumber() const;
+class RequestedModule {
+  const HeapPtr<ModuleRequestObject*> moduleRequest_;
+  const uint32_t lineNumber_;
+  const uint32_t columnNumber_;
+
+ public:
+  RequestedModule(Handle<ModuleRequestObject*> moduleRequest,
+                  uint32_t lineNumber, uint32_t columnNumber);
+  ModuleRequestObject* moduleRequest() const { return moduleRequest_; }
+  uint32_t lineNumber() const { return lineNumber_; }
+  uint32_t columnNumber() const { return columnNumber_; }
+
+  void trace(JSTracer* trc);
 };
+
+using RequestedModuleVector = GCVector<RequestedModule, 0, SystemAllocPolicy>;
 
 class ResolvedBindingObject : public NativeObject {
  public:
@@ -249,7 +249,7 @@ class ModuleNamespaceObject : public ProxyObject {
 
 // Value types of [[Status]] in a Cyclic Module Record
 // https://tc39.es/ecma262/#table-cyclic-module-fields
-enum class ModuleStatus : int32_t {
+enum class ModuleStatus : int8_t {
   Unlinked,
   Linking,
   Linked,
@@ -264,55 +264,35 @@ enum class ModuleStatus : int32_t {
   Evaluated_Error
 };
 
-// Special values for ModuleObject's AsyncEvaluatingPostOrderSlot slot, which is
-// used to implement the AsyncEvaluation field of cyclic module records.
+// Special values for CyclicModuleFields' asyncEvaluatingPostOrderSlot field,
+// which is used as part of the implementation of the AsyncEvaluation field of
+// cyclic module records.
 //
-// The spec requires us to distinguish true, false, and 'never previously set to
-// true', as well as the order in which the field was set to true for async
-// evaluating modules.
+// The spec requires us to be able to tell the order in which the field was set
+// to true for async evaluating modules.
 //
-// This is arranged by using an integer to record the order. Undefined is used
-// to mean false and any integer value true. While a module is async evaluating
-// the integer value gives the order that the field was set to true. After
-// evaluation is complete the value is set to ASYNC_EVALUATING_POST_ORDER_TRUE,
-// which still signifies true but loses the order information.
+// This is arranged by using an integer to record the order. After evaluation is
+// complete the value is set to ASYNC_EVALUATING_POST_ORDER_CLEARED.
 //
 // See https://tc39.es/ecma262/#sec-cyclic-module-records for field defintion.
 // See https://tc39.es/ecma262/#sec-async-module-execution-fulfilled for sort
 // requirement.
 
-// True value that also indicates that the field was previously true.
-constexpr uint32_t ASYNC_EVALUATING_POST_ORDER_TRUE = 0;
-
-// Initial value for the runtime's counter used to generate these values; the
-// first non-false value.
+// Initial value for the runtime's counter used to generate these values.
 constexpr uint32_t ASYNC_EVALUATING_POST_ORDER_INIT = 1;
+
+// Value that the field is set to after being cleared.
+constexpr uint32_t ASYNC_EVALUATING_POST_ORDER_CLEARED = 0;
 
 class ModuleObject : public NativeObject {
  public:
+  // Module fields including those for AbstractModuleRecords described by:
+  // https://tc39.es/ecma262/#sec-abstract-module-records
   enum ModuleSlot {
     ScriptSlot = 0,
     EnvironmentSlot,
     NamespaceSlot,
-    StatusSlot,
-    EvaluationErrorSlot,
-    MetaObjectSlot,
-    ScriptSourceObjectSlot,
-    RequestedModulesSlot,
-    ImportEntriesSlot,
-    LocalExportEntriesSlot,
-    IndirectExportEntriesSlot,
-    StarExportEntriesSlot,
-    ImportBindingsSlot,
-    FunctionDeclarationsSlot,
-    DFSIndexSlot,
-    DFSAncestorIndexSlot,
-    HasTopLevelAwaitSlot,
-    AsyncEvaluatingPostOrderSlot,
-    TopLevelCapabilitySlot,
-    AsyncParentModulesSlot,
-    PendingAsyncDependenciesSlot,
-    CycleRootSlot,
+    CyclicModuleFieldsSlot,
     SlotCount
   };
 
@@ -328,12 +308,13 @@ class ModuleObject : public NativeObject {
   void setInitialEnvironment(
       Handle<ModuleEnvironmentObject*> initialEnvironment);
 
-  void initStatusSlot();
-  void initImportExportData(Handle<ArrayObject*> requestedModules,
-                            Handle<ArrayObject*> importEntries,
-                            Handle<ArrayObject*> localExportEntries,
-                            Handle<ArrayObject*> indirectExportEntries,
-                            Handle<ArrayObject*> starExportEntries);
+  void initFunctionDeclarations(UniquePtr<FunctionDeclarationVector> decls);
+  void initImportExportData(
+      MutableHandle<RequestedModuleVector> requestedModules,
+      MutableHandle<ImportEntryVector> importEntries,
+      MutableHandle<ExportEntryVector> localExportEntries,
+      MutableHandle<ExportEntryVector> indirectExportEntries,
+      MutableHandle<ExportEntryVector> starExportEntries);
   static bool Freeze(JSContext* cx, Handle<ModuleObject*> self);
 #ifdef DEBUG
   static bool AssertFrozen(JSContext* cx, Handle<ModuleObject*> self);
@@ -354,11 +335,11 @@ class ModuleObject : public NativeObject {
   Value evaluationError() const;
   JSObject* metaObject() const;
   ScriptSourceObject* scriptSourceObject() const;
-  ArrayObject& requestedModules() const;
-  ArrayObject& importEntries() const;
-  ArrayObject& localExportEntries() const;
-  ArrayObject& indirectExportEntries() const;
-  ArrayObject& starExportEntries() const;
+  const RequestedModuleVector& requestedModules() const;
+  const ImportEntryVector& importEntries() const;
+  const ExportEntryVector& localExportEntries() const;
+  const ExportEntryVector& indirectExportEntries() const;
+  const ExportEntryVector& starExportEntries() const;
   IndirectBindingMap& importBindings();
 
   void setStatus(ModuleStatus newStatus);
@@ -380,7 +361,6 @@ class ModuleObject : public NativeObject {
   ListObject* asyncParentModules() const;
   mozilla::Maybe<uint32_t> maybePendingAsyncDependencies() const;
   uint32_t pendingAsyncDependencies() const;
-  bool hasAsyncEvaluatingPostOrder() const;
   mozilla::Maybe<uint32_t> maybeAsyncEvaluatingPostOrder() const;
   uint32_t getAsyncEvaluatingPostOrder() const;
   void clearAsyncEvaluatingPostOrder();
@@ -410,14 +390,12 @@ class ModuleObject : public NativeObject {
 
   static bool createEnvironment(JSContext* cx, Handle<ModuleObject*> self);
 
-  bool initAsyncSlots(JSContext* cx, bool hasTopLevelAwait,
-                      HandleObject asyncParentModulesList);
+  void initAsyncSlots(JSContext* cx, bool hasTopLevelAwait,
+                      Handle<ListObject*> asyncParentModules);
 
   static bool GatherAsyncParentCompletions(
       JSContext* cx, Handle<ModuleObject*> module,
       MutableHandle<ArrayObject*> execList);
-  // NOTE: accessor for FunctionDeclarationsSlot is defined inside
-  // ModuleObject.cpp as static function.
 
  private:
   static const JSClassOps classOps_;
@@ -425,7 +403,9 @@ class ModuleObject : public NativeObject {
   static void trace(JSTracer* trc, JSObject* obj);
   static void finalize(JS::GCContext* gcx, JSObject* obj);
 
-  bool hasImportBindings() const;
+  bool hasCyclicModuleFields() const;
+  CyclicModuleFields* cyclicModuleFields();
+  const CyclicModuleFields* cyclicModuleFields() const;
 };
 
 JSObject* GetOrCreateModuleMetaObject(JSContext* cx, HandleObject module);

@@ -293,9 +293,7 @@ void JSContext::onOutOfMemory() {
 JS_PUBLIC_API void js::ReportOutOfMemory(JSContext* cx) {
   MaybeReportOutOfMemoryForDifferentialTesting();
 
-  if (cx->isHelperThreadContext()) {
-    return cx->addPendingOutOfMemory();
-  }
+  MOZ_ASSERT(cx->isMainThreadContext());
 
   cx->onOutOfMemory();
 }
@@ -345,6 +343,7 @@ JS_PUBLIC_API void js::ReportOverRecursed(JSContext* maybecx) {
   if (!maybecx) {
     return;
   }
+  MOZ_ASSERT(maybecx->isMainThreadContext());
 
   maybecx->onOverRecursed();
 }
@@ -373,6 +372,10 @@ void js::ReportOversizedAllocation(JSContext* cx, const unsigned errorNumber) {
 }
 
 void js::ReportAllocationOverflow(JSContext* cx) {
+  if (js::SupportDifferentialTesting()) {
+    fprintf(stderr, "ReportAllocationOverflow called\n");
+  }
+
   if (!cx) {
     return;
   }
@@ -980,7 +983,6 @@ mozilla::GenericErrorResult<JS::Error> JSContext::alreadyReportedError() {
 JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     : runtime_(runtime),
       kind_(ContextKind::Uninitialized),
-      nurserySuppressions_(this),
       options_(this, options),
       freeUnusedMemory(false),
       measuringExecutionTime_(this, false),
@@ -999,6 +1001,10 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
 #endif
       dtoaState(this, nullptr),
       suppressGC(this, 0),
+#ifdef FUZZING_JS_FUZZILLI
+      executionHash(1),
+      executionHashInputs(0),
+#endif
 #ifdef DEBUG
       noNurseryAllocationCheck(this, 0),
       disableStrictProxyCheckingCount(this, 0),
@@ -1027,7 +1033,6 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
 #endif
       generatingError(this, false),
       cycleDetectorVector_(this, this),
-      watchtowerTestingCallback_(this),
       data(nullptr),
       asyncStackForNewActivations_(this),
       asyncCauseForNewActivations(this, nullptr),
@@ -1174,19 +1179,24 @@ void JSContext::setPendingException(HandleValue value,
 
 bool JSContext::getPendingException(MutableHandleValue rval) {
   MOZ_ASSERT(isExceptionPending());
-  rval.set(unwrappedException());
+
+  RootedValue exception(this, unwrappedException());
   if (zone()->isAtomsZone()) {
+    rval.set(exception);
     return true;
   }
+
   Rooted<SavedFrame*> stack(this, unwrappedExceptionStack());
   JS::ExceptionStatus prevStatus = status;
   clearPendingException();
-  if (!compartment()->wrap(this, rval)) {
+  if (!compartment()->wrap(this, &exception)) {
     return false;
   }
-  this->check(rval);
-  setPendingException(rval, stack);
+  this->check(exception);
+  setPendingException(exception, stack);
   status = prevStatus;
+
+  rval.set(exception);
   return true;
 }
 

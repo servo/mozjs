@@ -1074,6 +1074,30 @@
 - name: BigIntBitNot
   gen_boilerplate: false
 
+- name: Int32ToStringWithBase
+  result_type: WordSized
+  operands:
+    input: WordSized
+    base: WordSized
+  num_temps: 2
+  mir_op: true
+
+- name: NumberParseInt
+  result_type: BoxedValue
+  operands:
+    string: WordSized
+    radix: WordSized
+  num_temps: 1
+  call_instruction: true
+  mir_op: true
+
+- name: DoubleParseInt
+  result_type: WordSized
+  operands:
+    number: WordSized
+  num_temps: 1
+  mir_op: true
+
 # Adds two string, returning a string.
 - name: Concat
   result_type: WordSized
@@ -1082,8 +1106,33 @@
     rhs: WordSized
   num_temps: 5
 
+# Linearize a string before a character access.
+- name: LinearizeForCharAccess
+  result_type: WordSized
+  operands:
+    str: WordSized
+    index: WordSized
+  mir_op: true
+
 # Get uint16 character code from a string.
 - name: CharCodeAt
+  result_type: WordSized
+  operands:
+    str: WordSized
+    index: WordSized
+  num_temps: 2
+
+# Get uint16 character code from a string. Return NaN on out-of-bounds.
+- name: CharCodeAtMaybeOutOfBounds
+  result_type: BoxedValue
+  operands:
+    str: WordSized
+    index: WordSized
+  num_temps: 2
+
+# Get uint16 character code from a string and convert it to a string. Return
+# the empty string on out-of-bounds.
+- name: CharAtMaybeOutOfBounds
   result_type: WordSized
   operands:
     str: WordSized
@@ -2145,6 +2194,13 @@
   call_instruction: true
   mir_op: DeleteElement
 
+- name: ObjectToIterator
+  result_type: WordSized
+  operands:
+    object: WordSized
+  num_temps: 3
+  mir_op: true
+
 - name: ValueToIterator
   result_type: WordSized
   operands:
@@ -2390,6 +2446,11 @@
     symbol: WordSized
   mir_op: true
 
+- name: GuardSpecificInt32
+  operands:
+    num: WordSized
+  mir_op: true
+
 - name: GuardStringToIndex
   result_type: WordSized
   operands:
@@ -2412,6 +2473,14 @@
   operands:
     in: WordSized
   num_temps: 1
+  mir_op: true
+
+- name: GuardMultipleShapes
+  result_type: WordSized
+  operands:
+    object: WordSized
+    shapeList: WordSized
+  num_temps: 4
   mir_op: true
 
 - name: GuardProto
@@ -2522,7 +2591,7 @@
   operands:
     object: WordSized
     id: BoxedValue
-  num_temps: 2
+  num_temps: 3
   call_instruction: true
   mir_op: true
 
@@ -2795,6 +2864,7 @@
   arguments:
     offset: size_t
     type: MIRType
+    wideningOp: MWideningOp
 
 - name: WasmLoadSlotI64
   result_type: Int64
@@ -2810,6 +2880,7 @@
   arguments:
     offset: size_t
     type: MIRType
+    narrowingOp: MNarrowingOp
 
 - name: WasmStoreSlotI64
   operands:
@@ -3151,6 +3222,11 @@
   operands:
     index: WordSized
 
+- name: GuardInt32Range
+  operands:
+    input: WordSized
+  mir_op: true
+
 - name: GuardIndexIsNotDenseElement
   operands:
     object: WordSized
@@ -3303,6 +3379,11 @@
     setObject: WordSized
     input: BoxedValue
 
+- name: SetObjectSize
+  result_type: WordSized
+  operands:
+    setObject: WordSized
+
 - name: MapObjectHasNonBigInt
   result_type: WordSized
   operands:
@@ -3364,6 +3445,11 @@
   operands:
     mapObject: WordSized
     input: BoxedValue
+
+- name: MapObjectSize
+  result_type: WordSized
+  operands:
+    mapObject: WordSized
 
 - name: BigIntAsUintN
   result_type: WordSized
@@ -3750,5 +3836,16 @@
   gen_boilerplate: false
 
 - name: WasmAtomicExchangeI64
+  gen_boilerplate: false
+#endif
+
+#ifdef FUZZING_JS_FUZZILLI
+- name: FuzzilliHashT
+  gen_boilerplate: false
+
+- name: FuzzilliHashV
+  gen_boilerplate: false
+
+- name: FuzzilliHashStore
   gen_boilerplate: false
 #endif

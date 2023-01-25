@@ -22,6 +22,7 @@
 
 #include "builtin/BigInt.h"
 #include "builtin/MapObject.h"
+#include "builtin/Object.h"
 #include "builtin/String.h"
 #include "builtin/Symbol.h"
 #include "builtin/WeakSetObject.h"
@@ -756,7 +757,7 @@ static MOZ_ALWAYS_INLINE NativeObject* NewObject(JSContext* cx,
     kind = ForegroundToBackgroundAllocKind(kind);
   }
 
-  Rooted<Shape*> shape(
+  Rooted<SharedShape*> shape(
       cx, SharedShape::getInitialShape(cx, clasp, cx->realm(), proto, nfixed,
                                        ObjectFlags()));
   if (!shape) {
@@ -804,39 +805,6 @@ NativeObject* js::NewObjectWithClassProto(JSContext* cx, const JSClass* clasp,
 
   Rooted<TaggedProto> taggedProto(cx, TaggedProto(proto));
   return NewObject(cx, clasp, taggedProto, allocKind, newKind);
-}
-
-bool js::NewObjectScriptedCall(JSContext* cx, MutableHandleObject pobj) {
-  gc::AllocKind allocKind = NewObjectGCKind();
-  NewObjectKind newKind = GenericObject;
-
-  JSObject* obj = NewPlainObjectWithAllocKind(cx, allocKind, newKind);
-  if (!obj) {
-    return false;
-  }
-
-  pobj.set(obj);
-  return true;
-}
-
-JSObject* js::CreateThis(JSContext* cx, const JSClass* newclasp,
-                         HandleObject callee) {
-  RootedObject proto(cx);
-  if (!GetPrototypeFromConstructor(
-          cx, callee, JSCLASS_CACHED_PROTO_KEY(newclasp), &proto)) {
-    return nullptr;
-  }
-
-  gc::AllocKind kind = NewObjectGCKind();
-
-  if (newclasp == &PlainObject::class_) {
-    if (proto) {
-      return NewPlainObjectWithProtoAndAllocKind(cx, proto, kind);
-    }
-    return NewPlainObjectWithAllocKind(cx, kind);
-  }
-
-  return NewObjectWithClassProto(cx, newclasp, proto, kind);
 }
 
 bool js::GetPrototypeFromConstructor(JSContext* cx, HandleObject newTarget,
@@ -977,21 +945,21 @@ static bool InitializePropertiesFromCompatibleNativeObject(
   }
 
   // If there are no properties to copy, we're done.
-  if (!src->shape()->sharedPropMap()) {
+  if (!src->sharedShape()->propMap()) {
     return true;
   }
 
-  Rooted<Shape*> shape(cx);
+  Rooted<SharedShape*> shape(cx);
   if (src->staticPrototype() == dst->staticPrototype()) {
-    shape = src->shape();
+    shape = src->sharedShape();
   } else {
     // We need to generate a new shape for dst that has dst's proto but all
     // the property information from src.  Note that we asserted above that
     // dst's object flags are empty.
-    Shape* srcShape = src->shape();
+    SharedShape* srcShape = src->sharedShape();
     ObjectFlags objFlags;
     objFlags = CopyPropMapObjectFlags(objFlags, srcShape->objectFlags());
-    Rooted<SharedPropMap*> map(cx, srcShape->sharedPropMap());
+    Rooted<SharedPropMap*> map(cx, srcShape->propMap());
     uint32_t mapLength = srcShape->propMapLength();
     shape = SharedShape::getPropMapShape(cx, dst->shape()->base(),
                                          dst->numFixedSlots(), map, mapLength,
@@ -1001,7 +969,7 @@ static bool InitializePropertiesFromCompatibleNativeObject(
     }
   }
 
-  uint32_t oldSpan = dst->shape()->slotSpan();
+  uint32_t oldSpan = dst->sharedShape()->slotSpan();
   uint32_t newSpan = shape->slotSpan();
   if (!dst->setShapeAndAddNewSlots(cx, shape, oldSpan, newSpan)) {
     return false;
@@ -1477,10 +1445,7 @@ NativeObject* js::InitClass(JSContext* cx, HandleObject obj,
    */
   RootedObject protoProto(cx, protoProto_);
   if (!protoProto) {
-    protoProto = GlobalObject::getOrCreateObjectPrototype(cx, cx->global());
-    if (!protoProto) {
-      return nullptr;
-    }
+    protoProto = &cx->global()->getObjectPrototype();
   }
 
   return DefineConstructorAndPrototype(cx, obj, atom, protoProto, clasp,
@@ -1512,13 +1477,7 @@ bool js::GetObjectFromIncumbentGlobal(JSContext* cx, MutableHandleObject obj) {
     return true;
   }
 
-  {
-    AutoRealm ar(cx, globalObj);
-    obj.set(GlobalObject::getOrCreateObjectPrototype(cx, globalObj));
-    if (!obj) {
-      return false;
-    }
-  }
+  obj.set(&globalObj->getObjectPrototype());
 
   // The object might be from a different compartment, so wrap it.
   if (obj && !cx->compartment()->wrap(cx, obj)) {
@@ -2166,16 +2125,6 @@ bool js::SetImmutablePrototype(JSContext* cx, HandleObject obj,
     return Proxy::setImmutablePrototype(cx, obj, succeeded);
   }
 
-  // If this is a global object, resolve the Object class first to ensure the
-  // global's prototype is set to Object.prototype before we mark the global as
-  // having an immutable prototype.
-  if (obj->is<GlobalObject>()) {
-    Handle<GlobalObject*> global = obj.as<GlobalObject>();
-    if (!GlobalObject::ensureConstructor(cx, global, JSProto_Object)) {
-      return false;
-    }
-  }
-
   if (!JSObject::setFlag(cx, obj, ObjectFlag::ImmutablePrototype)) {
     return false;
   }
@@ -2236,6 +2185,15 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
       !cx->realm()->creationOptions().getArrayGroupingEnabled() &&
       (id == NameToId(cx->names().group) ||
        id == NameToId(cx->names().groupToMap))) {
+    return true;
+  }
+
+  // It's gently surprising that this is JSProto_Function, but the trick
+  // to realize is that this is a -constructor function-, not a function
+  // on the prototype; and the proto of the constructor is JSProto_Function.
+  if (key == JSProto_Function &&
+      !cx->realm()->creationOptions().getArrayFromAsyncEnabled() &&
+      id == NameToId(cx->names().fromAsync)) {
     return true;
   }
 #endif
@@ -2363,17 +2321,37 @@ bool JS::OrdinaryToPrimitive(JSContext* cx, HandleObject obj, JSType hint,
   if (hint == JSTYPE_STRING) {
     id = NameToId(cx->names().toString);
 
-    /* Optimize (new String(...)).toString(). */
+    bool calledToString = false;
     if (clasp == &StringObject::class_) {
+      // Optimize (new String(...)).toString().
       StringObject* nobj = &obj->as<StringObject>();
       if (HasNativeMethodPure(nobj, cx->names().toString, str_toString, cx)) {
         vp.setString(nobj->unbox());
         return true;
       }
+    } else if (clasp == &PlainObject::class_) {
+      JSFunction* fun;
+      if (GetPropertyPure(cx, obj, id, vp.address()) &&
+          IsFunctionObject(vp, &fun)) {
+        // Common case: we have a toString function. Try to short-circuit if
+        // it's Object.prototype.toString and there's no @@toStringTag.
+        if (fun->maybeNative() == obj_toString &&
+            !MaybeHasInterestingSymbolProperty(
+                cx, obj, cx->wellKnownSymbols().toStringTag)) {
+          vp.setString(cx->names().objectObject);
+          return true;
+        }
+        if (!js::Call(cx, vp, obj, vp)) {
+          return false;
+        }
+        calledToString = true;
+      }
     }
 
-    if (!MaybeCallMethod(cx, obj, id, vp)) {
-      return false;
+    if (!calledToString) {
+      if (!MaybeCallMethod(cx, obj, id, vp)) {
+        return false;
+      }
     }
     if (vp.isPrimitive()) {
       return true;
@@ -2389,17 +2367,15 @@ bool JS::OrdinaryToPrimitive(JSContext* cx, HandleObject obj, JSType hint,
   } else {
     id = NameToId(cx->names().valueOf);
 
-    /* Optimize new String(...).valueOf(). */
     if (clasp == &StringObject::class_) {
+      // Optimize new String(...).valueOf().
       StringObject* nobj = &obj->as<StringObject>();
       if (HasNativeMethodPure(nobj, cx->names().valueOf, str_toString, cx)) {
         vp.setString(nobj->unbox());
         return true;
       }
-    }
-
-    /* Optimize new Number(...).valueOf(). */
-    if (clasp == &NumberObject::class_) {
+    } else if (clasp == &NumberObject::class_) {
+      // Optimize new Number(...).valueOf().
       NumberObject* nobj = &obj->as<NumberObject>();
       if (HasNativeMethodPure(nobj, cx->names().valueOf, num_valueOf, cx)) {
         vp.setNumber(nobj->unbox());
@@ -3463,10 +3439,6 @@ void JSObject::traceChildren(JSTracer* trc) {
   // will see updated fields and slots.
   if (clasp->hasTrace()) {
     clasp->doTrace(trc, this);
-  }
-
-  if (trc->isMarkingTracer()) {
-    GCMarker::fromTracer(trc)->markImplicitEdges(this);
   }
 }
 

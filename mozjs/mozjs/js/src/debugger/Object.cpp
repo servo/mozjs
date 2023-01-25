@@ -104,7 +104,9 @@ void DebuggerObject::trace(JSTracer* trc) {
   if (JSObject* referent = maybeReferent()) {
     TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
                                                "Debugger.Object referent");
-    setReservedSlotGCThingAsPrivateUnbarriered(OBJECT_SLOT, referent);
+    if (referent != maybeReferent()) {
+      setReservedSlotGCThingAsPrivateUnbarriered(OBJECT_SLOT, referent);
+    }
   }
 }
 
@@ -1285,14 +1287,12 @@ bool DebuggerObject::CallData::createSource() {
     compileOptions.setIntroductionType("inlineScript");
   }
 
-  Vector<char16_t> textChars(cx);
-  if (!CopyStringToVector(cx, text, textChars)) {
+  AutoStableStringChars linearChars(cx);
+  if (!linearChars.initTwoByte(cx, text)) {
     return false;
   }
-
   JS::SourceText<char16_t> srcBuf;
-  if (!srcBuf.init(cx, textChars.begin(), text->length(),
-                   JS::SourceOwnership::Borrowed)) {
+  if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
     return false;
   }
 

@@ -33,10 +33,11 @@ using JS::AutoCheckCannotGC;
 bool Shape::replaceShape(JSContext* cx, HandleObject obj,
                          ObjectFlags objectFlags, TaggedProto proto,
                          uint32_t nfixed) {
-  MOZ_ASSERT(!obj->shape()->isDictionary());
+  MOZ_ASSERT(obj->shape()->isShared());
 
   Shape* newShape;
   if (obj->shape()->propMap()) {
+    Handle<NativeObject*> nobj = obj.as<NativeObject>();
     Rooted<BaseShape*> base(cx, obj->shape()->base());
     if (proto != base->proto()) {
       Rooted<TaggedProto> protoRoot(cx, proto);
@@ -45,7 +46,7 @@ bool Shape::replaceShape(JSContext* cx, HandleObject obj,
         return false;
       }
     }
-    Rooted<SharedPropMap*> map(cx, obj->shape()->sharedPropMap());
+    Rooted<SharedPropMap*> map(cx, nobj->sharedShape()->propMap());
     uint32_t mapLength = obj->shape()->propMapLength();
     newShape = SharedShape::getPropMapShape(cx, base, nfixed, map, mapLength,
                                             objectFlags);
@@ -125,7 +126,7 @@ NativeObject::maybeConvertToDictionaryForAdd(JSContext* cx,
   if (obj->inDictionaryMode()) {
     return true;
   }
-  SharedPropMap* map = obj->shape()->sharedPropMap();
+  SharedPropMap* map = obj->sharedShape()->propMap();
   if (!map) {
     return true;
   }
@@ -172,18 +173,18 @@ bool NativeObject::addCustomDataProperty(JSContext* cx,
       return false;
     }
 
-    Rooted<DictionaryPropMap*> map(cx, obj->shape()->dictionaryPropMap());
+    Rooted<DictionaryPropMap*> map(cx, obj->dictionaryShape()->propMap());
     uint32_t mapLength = obj->shape()->propMapLength();
     if (!DictionaryPropMap::addProperty(cx, clasp, &map, &mapLength, id, flags,
                                         SHAPE_INVALID_SLOT, &objectFlags)) {
       return false;
     }
 
-    obj->shape()->updateNewDictionaryShape(objectFlags, map, mapLength);
+    obj->dictionaryShape()->updateNewShape(objectFlags, map, mapLength);
     return true;
   }
 
-  Rooted<SharedPropMap*> map(cx, obj->shape()->sharedPropMap());
+  Rooted<SharedPropMap*> map(cx, obj->sharedShape()->propMap());
   uint32_t mapLength = obj->shape()->propMapLength();
   if (!SharedPropMap::addCustomDataProperty(cx, clasp, &map, &mapLength, id,
                                             flags, &objectFlags)) {
@@ -201,7 +202,8 @@ bool NativeObject::addCustomDataProperty(JSContext* cx,
   return true;
 }
 
-static ShapeSetForAdd* MakeShapeSetForAdd(Shape* shape1, Shape* shape2) {
+static ShapeSetForAdd* MakeShapeSetForAdd(SharedShape* shape1,
+                                          SharedShape* shape2) {
   MOZ_ASSERT(shape1 != shape2);
   MOZ_ASSERT(shape1->propMapLength() == shape2->propMapLength());
 
@@ -221,13 +223,14 @@ static ShapeSetForAdd* MakeShapeSetForAdd(Shape* shape1, Shape* shape2) {
   return hash.release();
 }
 
-static MOZ_ALWAYS_INLINE Shape* LookupShapeForAdd(Shape* shape, PropertyKey key,
-                                                  PropertyFlags flags,
-                                                  uint32_t* slot) {
+static MOZ_ALWAYS_INLINE SharedShape* LookupShapeForAdd(Shape* shape,
+                                                        PropertyKey key,
+                                                        PropertyFlags flags,
+                                                        uint32_t* slot) {
   ShapeCachePtr cache = shape->cache();
 
   if (cache.isSingleShapeForAdd()) {
-    Shape* newShape = cache.toSingleShapeForAdd();
+    SharedShape* newShape = cache.toSingleShapeForAdd();
     if (newShape->lastPropertyMatchesForAdd(key, flags, slot)) {
       return newShape;
     }
@@ -238,14 +241,14 @@ static MOZ_ALWAYS_INLINE Shape* LookupShapeForAdd(Shape* shape, PropertyKey key,
     ShapeSetForAdd* set = cache.toShapeSetForAdd();
     ShapeForAddHasher::Lookup lookup(key, flags);
     if (auto p = set->lookup(lookup)) {
-      Shape* newShape = *p;
+      SharedShape* newShape = *p;
       *slot = newShape->lastProperty().slot();
       return newShape;
     }
     return nullptr;
   }
 
-  MOZ_ASSERT(cache.isNone() || cache.isShapeWithProto());
+  MOZ_ASSERT(!cache.isForAdd());
   return nullptr;
 }
 
@@ -288,7 +291,7 @@ bool NativeObject::addProperty(JSContext* cx, Handle<NativeObject*> obj,
     return false;
   }
 
-  if (Shape* shape = LookupShapeForAdd(obj->shape(), id, flags, slot)) {
+  if (auto* shape = LookupShapeForAdd(obj->shape(), id, flags, slot)) {
     return obj->setShapeAndAddNewSlot(cx, shape, *slot);
   }
 
@@ -312,14 +315,14 @@ bool NativeObject::addProperty(JSContext* cx, Handle<NativeObject*> obj,
       return false;
     }
 
-    obj->shape()->updateNewDictionaryShape(objectFlags, map, mapLength);
+    obj->dictionaryShape()->updateNewShape(objectFlags, map, mapLength);
     return true;
   }
 
   ObjectFlags objectFlags = obj->shape()->objectFlags();
   const JSClass* clasp = obj->shape()->getObjectClass();
 
-  Rooted<SharedPropMap*> map(cx, obj->shape()->sharedPropMap());
+  Rooted<SharedPropMap*> map(cx, obj->sharedShape()->propMap());
   uint32_t mapLength = obj->shape()->propMapLength();
 
   if (!SharedPropMap::addProperty(cx, clasp, &map, &mapLength, id, flags,
@@ -328,7 +331,7 @@ bool NativeObject::addProperty(JSContext* cx, Handle<NativeObject*> obj,
   }
 
   bool allocatedNewShape;
-  Shape* newShape = SharedShape::getPropMapShape(
+  SharedShape* newShape = SharedShape::getPropMapShape(
       cx, obj->shape()->base(), obj->shape()->numFixedSlots(), map, mapLength,
       objectFlags, &allocatedNewShape);
   if (!newShape) {
@@ -355,10 +358,10 @@ bool NativeObject::addProperty(JSContext* cx, Handle<NativeObject*> obj,
   }
 
   ShapeCachePtr& cache = oldShape->cacheRef();
-  if (cache.isNone() || cache.isShapeWithProto()) {
+  if (!cache.isForAdd()) {
     cache.setSingleShapeForAdd(newShape);
   } else if (cache.isSingleShapeForAdd()) {
-    Shape* prevShape = cache.toSingleShapeForAdd();
+    SharedShape* prevShape = cache.toSingleShapeForAdd();
     if (ShapeSetForAdd* set = MakeShapeSetForAdd(prevShape, newShape)) {
       cache.setShapeSetForAdd(set);
       AddCellMemory(oldShape, sizeof(ShapeSetForAdd),
@@ -370,6 +373,18 @@ bool NativeObject::addProperty(JSContext* cx, Handle<NativeObject*> obj,
   }
 
   return true;
+}
+
+void Shape::maybeCacheIterator(JSContext* cx, PropertyIteratorObject* iter) {
+  if (!cache().isNone() && !cache().isIterator()) {
+    // If we're already caching other shape data, skip caching the iterator.
+    return;
+  }
+  if (MOZ_UNLIKELY(!RegisterShapeCache(cx, this))) {
+    // Ignore OOM. The cache is just an optimization.
+    return;
+  }
+  cacheRef().setIterator(iter);
 }
 
 /* static */
@@ -400,7 +415,7 @@ bool NativeObject::addPropertyInReservedSlot(JSContext* cx,
   ObjectFlags objectFlags = obj->shape()->objectFlags();
   const JSClass* clasp = obj->shape()->getObjectClass();
 
-  Rooted<SharedPropMap*> map(cx, obj->shape()->sharedPropMap());
+  Rooted<SharedPropMap*> map(cx, obj->sharedShape()->propMap());
   uint32_t mapLength = obj->shape()->propMapLength();
   if (!SharedPropMap::addPropertyInReservedSlot(cx, clasp, &map, &mapLength, id,
                                                 flags, slot, &objectFlags)) {
@@ -528,7 +543,7 @@ bool NativeObject::changeProperty(JSContext* cx, Handle<NativeObject*> obj,
         }
       }
 
-      Shape* newShape = SharedShape::getPropMapShape(
+      SharedShape* newShape = SharedShape::getPropMapShape(
           cx, obj->shape()->base(), obj->shape()->numFixedSlots(), sharedMap,
           mapLength, objectFlags);
       if (!newShape) {
@@ -536,7 +551,7 @@ bool NativeObject::changeProperty(JSContext* cx, Handle<NativeObject*> obj,
       }
 
       if (MOZ_LIKELY(oldProp.hasSlot())) {
-        MOZ_ASSERT(obj->shape()->slotSpan() == newShape->slotSpan());
+        MOZ_ASSERT(obj->sharedShape()->slotSpan() == newShape->slotSpan());
         obj->setShape(newShape);
         return true;
       }
@@ -573,7 +588,7 @@ bool NativeObject::changeProperty(JSContext* cx, Handle<NativeObject*> obj,
 
   propMap->asDictionary()->changeProperty(cx, clasp, propIndex, flags, slot,
                                           &objectFlags);
-  obj->shape()->setObjectFlags(objectFlags);
+  obj->dictionaryShape()->setObjectFlagsOfNewShape(objectFlags);
 
   *slotOut = slot;
   return true;
@@ -661,7 +676,7 @@ bool NativeObject::changeCustomDataPropAttributes(JSContext* cx,
 
   propMap->asDictionary()->changePropertyFlags(cx, clasp, propIndex, flags,
                                                &objectFlags);
-  obj->shape()->setObjectFlags(objectFlags);
+  obj->dictionaryShape()->setObjectFlagsOfNewShape(objectFlags);
   return true;
 }
 
@@ -672,7 +687,7 @@ void NativeObject::maybeFreeDictionaryPropSlots(JSContext* cx,
   // handle the case where there's a single slotless property, to support arrays
   // (array.length is a custom data property).
 
-  MOZ_ASSERT(shape()->dictionaryPropMap() == map);
+  MOZ_ASSERT(dictionaryShape()->propMap() == map);
   MOZ_ASSERT(shape()->propMapLength() == mapLength);
 
   if (mapLength > 1 || map->previous()) {
@@ -709,7 +724,7 @@ void NativeObject::setShapeAndRemoveLastSlot(JSContext* cx, Shape* newShape,
                                              uint32_t slot) {
   MOZ_ASSERT(!inDictionaryMode());
   MOZ_ASSERT(!newShape->isDictionary());
-  MOZ_ASSERT(newShape->slotSpan() == slot);
+  MOZ_ASSERT(newShape->asShared().slotSpan() == slot);
 
   uint32_t numFixed = newShape->numFixedSlots();
   if (slot < numFixed) {
@@ -775,8 +790,8 @@ bool NativeObject::removeProperty(JSContext* cx, Handle<NativeObject*> obj,
       Rooted<SharedPropMap*> sharedMap(cx, map->asShared());
       SharedPropMap::getPrevious(&sharedMap, &mapLength);
 
-      Shape* shape = obj->shape();
-      Shape* newShape;
+      SharedShape* shape = obj->sharedShape();
+      SharedShape* newShape;
       if (sharedMap) {
         newShape = SharedShape::getPropMapShape(
             cx, shape->base(), shape->numFixedSlots(), sharedMap, mapLength,
@@ -838,7 +853,7 @@ bool NativeObject::removeProperty(JSContext* cx, Handle<NativeObject*> obj,
 
   DictionaryPropMap::removeProperty(cx, &dictMap, &mapLength, table, ptr);
 
-  obj->shape()->updateNewDictionaryShape(obj->shape()->objectFlags(), dictMap,
+  obj->dictionaryShape()->updateNewShape(obj->shape()->objectFlags(), dictMap,
                                          mapLength);
 
   // If we just deleted the last property, consider shrinking the slots. We only
@@ -875,7 +890,7 @@ bool NativeObject::densifySparseElements(JSContext* cx,
   ObjectFlags objectFlags = obj->shape()->objectFlags();
   objectFlags.clearFlag(ObjectFlag::Indexed);
 
-  obj->shape()->updateNewDictionaryShape(objectFlags, map, mapLength);
+  obj->dictionaryShape()->updateNewShape(objectFlags, map, mapLength);
 
   obj->maybeFreeDictionaryPropSlots(cx, map, mapLength);
 
@@ -904,25 +919,25 @@ bool NativeObject::freezeOrSealProperties(JSContext* cx,
     if (!generateNewDictionaryShape(cx, obj)) {
       return false;
     }
-    DictionaryPropMap* map = obj->shape()->dictionaryPropMap();
+    DictionaryPropMap* map = obj->dictionaryShape()->propMap();
     map->freezeOrSealProperties(cx, level, clasp, mapLength, &objectFlags);
-    obj->shape()->updateNewDictionaryShape(objectFlags, map, mapLength);
+    obj->dictionaryShape()->updateNewShape(objectFlags, map, mapLength);
     return true;
   }
 
-  Rooted<SharedPropMap*> map(cx, obj->shape()->sharedPropMap());
+  Rooted<SharedPropMap*> map(cx, obj->sharedShape()->propMap());
   if (!SharedPropMap::freezeOrSealProperties(cx, level, clasp, &map, mapLength,
                                              &objectFlags)) {
     return false;
   }
 
-  Shape* newShape = SharedShape::getPropMapShape(cx, obj->shape()->base(),
-                                                 obj->numFixedSlots(), map,
-                                                 mapLength, objectFlags);
+  SharedShape* newShape = SharedShape::getPropMapShape(
+      cx, obj->shape()->base(), obj->numFixedSlots(), map, mapLength,
+      objectFlags);
   if (!newShape) {
     return false;
   }
-  MOZ_ASSERT(obj->shape()->slotSpan() == newShape->slotSpan());
+  MOZ_ASSERT(obj->sharedShape()->slotSpan() == newShape->slotSpan());
 
   obj->setShape(newShape);
   return true;
@@ -938,7 +953,7 @@ bool NativeObject::generateNewDictionaryShape(JSContext* cx,
   MOZ_ASSERT(obj->inDictionaryMode());
 
   Rooted<BaseShape*> base(cx, obj->shape()->base());
-  Rooted<DictionaryPropMap*> map(cx, obj->shape()->dictionaryPropMap());
+  Rooted<DictionaryPropMap*> map(cx, obj->dictionaryShape()->propMap());
   uint32_t mapLength = obj->shape()->propMapLength();
 
   Shape* shape =
@@ -964,10 +979,11 @@ bool JSObject::setFlag(JSContext* cx, HandleObject obj, ObjectFlag flag) {
   objectFlags.setFlag(flag);
 
   if (obj->is<NativeObject>() && obj->as<NativeObject>().inDictionaryMode()) {
-    if (!NativeObject::generateNewDictionaryShape(cx, obj.as<NativeObject>())) {
+    Handle<NativeObject*> nobj = obj.as<NativeObject>();
+    if (!NativeObject::generateNewDictionaryShape(cx, nobj)) {
       return false;
     }
-    obj->shape()->setObjectFlags(objectFlags);
+    nobj->dictionaryShape()->setObjectFlagsOfNewShape(objectFlags);
     return true;
   }
 
@@ -1015,7 +1031,7 @@ bool JSObject::setProtoUnchecked(JSContext* cx, HandleObject obj,
       return false;
     }
 
-    nobj->shape()->setBase(nbase);
+    nobj->dictionaryShape()->setBaseOfNewShape(nbase);
     return true;
   }
 
@@ -1033,7 +1049,7 @@ bool NativeObject::changeNumFixedSlotsAfterSwap(JSContext* cx,
     if (!NativeObject::generateNewDictionaryShape(cx, obj)) {
       return false;
     }
-    obj->shape()->setNumFixedSlots(nfixed);
+    obj->dictionaryShape()->setNumFixedSlotsOfNewShape(nfixed);
     return true;
   }
 
@@ -1085,16 +1101,18 @@ BaseShape* BaseShape::get(JSContext* cx, const JSClass* clasp, JS::Realm* realm,
   return nbase;
 }
 
-Shape* SharedShape::new_(JSContext* cx, Handle<BaseShape*> base,
-                         ObjectFlags objectFlags, uint32_t nfixed,
-                         Handle<SharedPropMap*> map, uint32_t mapLength) {
-  return cx->newCell<Shape>(base, objectFlags, nfixed, map, mapLength, false);
+// static
+SharedShape* SharedShape::new_(JSContext* cx, Handle<BaseShape*> base,
+                               ObjectFlags objectFlags, uint32_t nfixed,
+                               Handle<SharedPropMap*> map, uint32_t mapLength) {
+  return cx->newCell<SharedShape>(base, objectFlags, nfixed, map, mapLength);
 }
 
-Shape* DictionaryShape::new_(JSContext* cx, Handle<BaseShape*> base,
-                             ObjectFlags objectFlags, uint32_t nfixed,
-                             Handle<DictionaryPropMap*> map,
-                             uint32_t mapLength) {
+// static
+DictionaryShape* DictionaryShape::new_(JSContext* cx, Handle<BaseShape*> base,
+                                       ObjectFlags objectFlags, uint32_t nfixed,
+                                       Handle<DictionaryPropMap*> map,
+                                       uint32_t mapLength) {
   return cx->newCell<DictionaryShape>(base, objectFlags, nfixed, map,
                                       mapLength);
 }
@@ -1104,7 +1122,8 @@ MOZ_ALWAYS_INLINE HashNumber ShapeForAddHasher::hash(const Lookup& l) {
   return mozilla::AddToHash(hash, l.flags.toRaw());
 }
 
-MOZ_ALWAYS_INLINE bool ShapeForAddHasher::match(Shape* shape, const Lookup& l) {
+MOZ_ALWAYS_INLINE bool ShapeForAddHasher::match(SharedShape* shape,
+                                                const Lookup& l) {
   uint32_t slot;
   return shape->lastPropertyMatchesForAdd(l.key, l.flags, &slot);
 }
@@ -1130,9 +1149,10 @@ void Shape::dump() const {
 #endif  // DEBUG
 
 /* static */
-Shape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
-                                    JS::Realm* realm, TaggedProto proto,
-                                    size_t nfixed, ObjectFlags objectFlags) {
+SharedShape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
+                                          JS::Realm* realm, TaggedProto proto,
+                                          size_t nfixed,
+                                          ObjectFlags objectFlags) {
   MOZ_ASSERT(cx->compartment() == realm->compartment());
   MOZ_ASSERT_IF(proto.isObject(),
                 cx->isInsideCurrentCompartment(proto.toObject()));
@@ -1145,7 +1165,7 @@ Shape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
       JSObject* protoObj = proto.toObject();
       Shape* protoObjShape = protoObj->shape();
       if (protoObjShape->cache().isShapeWithProto()) {
-        Shape* shape = protoObjShape->cache().toShapeWithProto();
+        SharedShape* shape = protoObjShape->cache().toShapeWithProto();
         if (shape->numFixedSlots() == nfixed &&
             shape->objectFlags() == objectFlags &&
             shape->getObjectClass() == clasp && shape->realm() == realm &&
@@ -1187,8 +1207,7 @@ Shape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
     if (proto.isObject()) {
       JSObject* protoObj = proto.toObject();
       Shape* protoShape = protoObj->shape();
-      if ((protoShape->cache().isShapeWithProto() ||
-           protoShape->cache().isNone()) &&
+      if (!protoShape->cache().isForAdd() &&
           RegisterShapeCache(cx, protoShape)) {
         protoShape->cacheRef().setShapeWithProto(*ptr);
       }
@@ -1202,7 +1221,7 @@ Shape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
     return nullptr;
   }
 
-  Rooted<Shape*> shape(
+  Rooted<SharedShape*> shape(
       cx, SharedShape::new_(cx, nbase, objectFlags, nfixed, nullptr, 0));
   if (!shape) {
     return nullptr;
@@ -1217,19 +1236,18 @@ Shape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
 }
 
 /* static */
-Shape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
-                                    JS::Realm* realm, TaggedProto proto,
-                                    gc::AllocKind kind,
-                                    ObjectFlags objectFlags) {
+SharedShape* SharedShape::getInitialShape(JSContext* cx, const JSClass* clasp,
+                                          JS::Realm* realm, TaggedProto proto,
+                                          gc::AllocKind kind,
+                                          ObjectFlags objectFlags) {
   return getInitialShape(cx, clasp, realm, proto, GetGCKindSlots(kind),
                          objectFlags);
 }
 
 /* static */
-Shape* SharedShape::getPropMapShape(JSContext* cx, BaseShape* base,
-                                    size_t nfixed, Handle<SharedPropMap*> map,
-                                    uint32_t mapLength, ObjectFlags objectFlags,
-                                    bool* allocatedNewShape) {
+SharedShape* SharedShape::getPropMapShape(
+    JSContext* cx, BaseShape* base, size_t nfixed, Handle<SharedPropMap*> map,
+    uint32_t mapLength, ObjectFlags objectFlags, bool* allocatedNewShape) {
   MOZ_ASSERT(cx->compartment() == base->compartment());
   MOZ_ASSERT_IF(base->proto().isObject(),
                 cx->isInsideCurrentCompartment(base->proto().toObject()));
@@ -1251,7 +1269,7 @@ Shape* SharedShape::getPropMapShape(JSContext* cx, BaseShape* base,
   }
 
   Rooted<BaseShape*> baseRoot(cx, base);
-  Rooted<Shape*> shape(
+  Rooted<SharedShape*> shape(
       cx, SharedShape::new_(cx, baseRoot, objectFlags, nfixed, map, mapLength));
   if (!shape) {
     return nullptr;
@@ -1270,7 +1288,7 @@ Shape* SharedShape::getPropMapShape(JSContext* cx, BaseShape* base,
 }
 
 /* static */
-Shape* SharedShape::getInitialOrPropMapShape(
+SharedShape* SharedShape::getInitialOrPropMapShape(
     JSContext* cx, const JSClass* clasp, JS::Realm* realm, TaggedProto proto,
     size_t nfixed, Handle<SharedPropMap*> map, uint32_t mapLength,
     ObjectFlags objectFlags) {
@@ -1289,7 +1307,8 @@ Shape* SharedShape::getInitialOrPropMapShape(
 }
 
 /* static */
-void SharedShape::insertInitialShape(JSContext* cx, Handle<Shape*> shape) {
+void SharedShape::insertInitialShape(JSContext* cx,
+                                     Handle<SharedShape*> shape) {
   using Lookup = InitialShapeHasher::Lookup;
   Lookup lookup(shape->getObjectClass(), shape->realm(), shape->proto(),
                 shape->numFixedSlots(), shape->objectFlags());
@@ -1300,7 +1319,7 @@ void SharedShape::insertInitialShape(JSContext* cx, Handle<Shape*> shape) {
 
   // The metadata callback can end up causing redundant changes of the initial
   // shape.
-  Shape* initialShape = *p;
+  SharedShape* initialShape = *p;
   if (initialShape == shape) {
     return;
   }

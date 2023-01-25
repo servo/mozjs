@@ -41,6 +41,7 @@
 #include "js/Object.h"  // JS::GetBuiltinClass
 #include "js/PropertySpec.h"
 #include "js/Wrapper.h"
+#include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/DateObject.h"
@@ -1517,10 +1518,17 @@ static bool date_parse(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 static ClippedTime NowAsMillis(JSContext* cx) {
+  if (js::SupportDifferentialTesting()) {
+    return TimeClip(0);
+  }
+
   double now = PRMJ_Now();
   bool clampAndJitter = cx->realm()->behaviors().clampAndJitterTime();
+  bool shouldResistFingerprinting =
+      cx->realm()->behaviors().shouldResistFingerprinting();
   if (clampAndJitter && sReduceMicrosecondTimePrecisionCallback) {
-    now = sReduceMicrosecondTimePrecisionCallback(now, cx);
+    now = sReduceMicrosecondTimePrecisionCallback(
+        now, shouldResistFingerprinting, cx);
   } else if (clampAndJitter && sResolutionUsec) {
     double clamped = floor(now / sResolutionUsec) * sResolutionUsec;
 
@@ -3173,13 +3181,16 @@ static bool date_toSource(JSContext* cx, unsigned argc, Value* vp) {
   if (!sb.append("(new Date(") ||
       !NumberValueToStringBuffer(unwrapped->UTCTime(), sb) ||
       !sb.append("))")) {
+    sb.failure();
     return false;
   }
 
   JSString* str = sb.finishString();
   if (!str) {
+    sb.failure();
     return false;
   }
+  sb.ok();
   args.rval().setString(str);
   return true;
 }

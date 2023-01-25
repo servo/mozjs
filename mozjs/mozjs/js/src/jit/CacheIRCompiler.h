@@ -808,9 +808,6 @@ class MOZ_RAII CacheIRCompiler {
            !allocator.isDeadAfterInstruction(objId);
   }
 
-  void emitRegisterEnumerator(Register enumeratorsList, Register iter,
-                              Register scratch);
-
  private:
   void emitPostBarrierShared(Register obj, const ConstantOrRegister& val,
                              Register scratch, Register maybeIndex);
@@ -864,6 +861,10 @@ class MOZ_RAII CacheIRCompiler {
                                                         IntPtrOperandId indexId,
                                                         uint32_t valueId);
 
+  void emitActivateIterator(Register objBeingIterated, Register iterObject,
+                            Register nativeIter, Register scratch,
+                            Register scratch2, uint32_t enumeratorsAddrOffset);
+
   CACHE_IR_COMPILER_SHARED_GENERATED
 
   void emitLoadStubField(StubFieldOffset val, Register dest);
@@ -876,12 +877,12 @@ class MOZ_RAII CacheIRCompiler {
   uintptr_t readStubWord(uint32_t offset, StubField::Type type) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     MOZ_ASSERT((offset % sizeof(uintptr_t)) == 0);
-    return writer_.readStubFieldForIon(offset, type).asWord();
+    return writer_.readStubField(offset, type).asWord();
   }
   uint64_t readStubInt64(uint32_t offset, StubField::Type type) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);
     MOZ_ASSERT((offset % sizeof(uintptr_t)) == 0);
-    return writer_.readStubFieldForIon(offset, type).asInt64();
+    return writer_.readStubField(offset, type).asInt64();
   }
   int32_t int32StubField(uint32_t offset) {
     MOZ_ASSERT(stubFieldPolicy_ == StubFieldPolicy::Constant);

@@ -51,7 +51,6 @@
 #include "vm/GeckoProfiler.h"
 #include "vm/JSScript.h"
 #include "vm/OffThreadPromiseRuntimeState.h"  // js::OffThreadPromiseRuntimeState
-#include "vm/SharedImmutableStringsCache.h"
 #include "vm/SharedStencil.h"  // js::SharedImmutableScriptDataTable
 #include "vm/Stack.h"
 #include "wasm/WasmTypeDecls.h"
@@ -109,7 +108,6 @@ class Simulator;
 namespace frontend {
 struct CompilationInput;
 struct CompilationStencil;
-class WellKnownParserAtoms;
 }  // namespace frontend
 
 // [SMDOC] JS Engine Threading
@@ -263,7 +261,7 @@ class Metrics {
   struct Enumeration {
     using SourceType = int;
     static uint32_t convert(SourceType sample) {
-      MOZ_ASSERT(sample <= 100);
+      MOZ_ASSERT(sample >= 0 && sample <= 100);
       return static_cast<uint32_t>(sample);
     }
   };
@@ -274,7 +272,7 @@ class Metrics {
   struct Percentage {
     using SourceType = int;
     static uint32_t convert(SourceType sample) {
-      MOZ_ASSERT(sample <= 100);
+      MOZ_ASSERT(sample >= 0 && sample <= 100);
       return static_cast<uint32_t>(sample);
     }
   };
@@ -453,6 +451,8 @@ struct JSRuntime {
   js::MainThreadData<const js::DOMCallbacks*> DOMcallbacks;
   js::MainThreadData<JSDestroyPrincipalsOp> destroyPrincipals;
   js::MainThreadData<JSReadPrincipalsOp> readPrincipals;
+
+  js::MainThreadData<JS::EnsureCanAddPrivateElementOp> canAddPrivateElement;
 
   /* Optional warning reporter. */
   js::MainThreadData<JS::WarningReporter> warningReporter;
@@ -678,6 +678,10 @@ struct JSRuntime {
   js::MainThreadData<JS::PersistentRooted<js::ScriptAndCountsVector>*>
       scriptAndCountsVector;
 
+  using RootedPlainObjVec = JS::PersistentRooted<
+      JS::GCVector<js::PlainObject*, 0, js::SystemAllocPolicy>>;
+  js::MainThreadData<js::UniquePtr<RootedPlainObjVec>> watchtowerTestingLog;
+
  private:
   /* Code coverage output. */
   js::UnprotectedData<js::coverage::LCovRuntime> lcovOutput_;
@@ -780,26 +784,6 @@ struct JSRuntime {
 #endif
 
  private:
-  mozilla::Maybe<js::SharedImmutableStringsCache> sharedImmutableStrings_;
-
- public:
-  // If this particular JSRuntime has a SharedImmutableStringsCache, return a
-  // pointer to it, otherwise return nullptr.
-  js::SharedImmutableStringsCache* maybeThisRuntimeSharedImmutableStrings() {
-    return sharedImmutableStrings_.isSome() ? &*sharedImmutableStrings_
-                                            : nullptr;
-  }
-
-  // Get a reference to this JSRuntime's or its parent's
-  // SharedImmutableStringsCache.
-  js::SharedImmutableStringsCache& sharedImmutableStrings() {
-    MOZ_ASSERT_IF(parentRuntime, !sharedImmutableStrings_);
-    MOZ_ASSERT_IF(!parentRuntime, sharedImmutableStrings_);
-    return parentRuntime ? parentRuntime->sharedImmutableStrings()
-                         : *sharedImmutableStrings_;
-  }
-
- private:
   js::WriteOnceData<bool> beingDestroyed_;
 
  public:
@@ -826,9 +810,7 @@ struct JSRuntime {
 
  public:
   bool initializeAtoms(JSContext* cx);
-  bool initializeParserAtoms(JSContext* cx);
   void finishAtoms();
-  void finishParserAtoms();
   bool atomsAreFinished() const { return !atoms_; }
 
   js::AtomsTable* atomsForSweeping() {
@@ -867,7 +849,6 @@ struct JSRuntime {
 
   // Cached pointers to various permanent property names.
   js::WriteOnceData<JSAtomState*> commonNames;
-  js::WriteOnceData<js::frontend::WellKnownParserAtoms*> commonParserNames;
 
   // All permanent atoms in the runtime, other than those in staticStrings.
   // Access to this does not require a lock because it is frozen and thus

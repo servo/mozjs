@@ -34,7 +34,7 @@ using mozilla::CheckedInt;
 using mozilla::PodZero;
 
 Table::Table(JSContext* cx, const TableDesc& desc,
-             Handle<WasmTableObject*> maybeObject, UniqueFuncRefArray functions)
+             Handle<WasmTableObject*> maybeObject, FuncRefVector&& functions)
     : maybeObject_(maybeObject),
       observers_(cx->zone()),
       functions_(std::move(functions)),
@@ -65,9 +65,9 @@ SharedTable Table::create(JSContext* cx, const TableDesc& desc,
 
   switch (desc.elemType.tableRepr()) {
     case TableRepr::Func: {
-      UniqueFuncRefArray functions(
-          cx->pod_calloc<FunctionTableElem>(desc.initialLength));
-      if (!functions) {
+      FuncRefVector functions;
+      if (!functions.resize(desc.initialLength)) {
+        ReportOutOfMemory(cx);
         return nullptr;
       }
       return SharedTable(
@@ -137,7 +137,7 @@ uint8_t* Table::instanceElements() const {
   if (repr() == TableRepr::Ref) {
     return (uint8_t*)objects_.begin();
   }
-  return (uint8_t*)functions_.get();
+  return (uint8_t*)functions_.begin();
 }
 
 const FunctionTableElem& Table::getFuncRef(uint32_t index) const {
@@ -235,6 +235,31 @@ void Table::fillAnyRef(uint32_t index, uint32_t fillCount, AnyRef ref) {
   }
 }
 
+bool Table::getValue(JSContext* cx, uint32_t index,
+                     MutableHandleValue result) const {
+  switch (repr()) {
+    case TableRepr::Func: {
+      MOZ_RELEASE_ASSERT(!isAsmJS());
+      RootedFunction fun(cx);
+      if (!getFuncRef(cx, index, &fun)) {
+        return false;
+      }
+      result.setObjectOrNull(fun);
+      return true;
+    }
+    case TableRepr::Ref: {
+      if (!ValType(elemType_).isExposable()) {
+        JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                                 JSMSG_WASM_BAD_VAL_TYPE);
+        return false;
+      }
+      return ToJSValue(cx, &objects_[index], ValType(elemType_), result);
+    }
+    default:
+      MOZ_CRASH();
+  }
+}
+
 void Table::setNull(uint32_t index) {
   switch (repr()) {
     case TableRepr::Func: {
@@ -266,7 +291,7 @@ bool Table::copy(JSContext* cx, const Table& srcTable, uint32_t dstIndex,
         gc::PreWriteBarrier(dst.instance->objectUnbarriered());
       }
 
-      FunctionTableElem& src = srcTable.functions_[srcIndex];
+      const FunctionTableElem& src = srcTable.functions_[srcIndex];
       dst.code = src.code;
       dst.instance = src.instance;
 
@@ -304,6 +329,8 @@ bool Table::copy(JSContext* cx, const Table& srcTable, uint32_t dstIndex,
 }
 
 uint32_t Table::grow(uint32_t delta) {
+  MOZ_RELEASE_ASSERT(elemType_.isNullable());
+
   // This isn't just an optimization: movingGrowable() assumes that
   // onMovingGrowTable does not fire when length == maximum.
   if (!delta) {
@@ -327,18 +354,9 @@ uint32_t Table::grow(uint32_t delta) {
   switch (repr()) {
     case TableRepr::Func: {
       MOZ_RELEASE_ASSERT(!isAsmJS_);
-      // Note that realloc does not release functions_'s pointee on failure
-      // which is exactly what we need here.
-      FunctionTableElem* newFunctions = js_pod_realloc<FunctionTableElem>(
-          functions_.get(), length_, newLength.value());
-      if (!newFunctions) {
+      if (!functions_.resize(newLength.value())) {
         return -1;
       }
-      (void)functions_.release();
-      functions_.reset(newFunctions);
-
-      // Realloc does not zero the delta for us.
-      PodZero(newFunctions + length_, delta);
       break;
     }
     case TableRepr::Ref: {
@@ -386,7 +404,7 @@ bool Table::addMovingGrowObserver(JSContext* cx, WasmInstanceObject* instance) {
 
 size_t Table::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
   if (isFunction()) {
-    return mallocSizeOf(functions_.get());
+    return functions_.sizeOfExcludingThis(mallocSizeOf);
   }
   return objects_.sizeOfExcludingThis(mallocSizeOf);
 }

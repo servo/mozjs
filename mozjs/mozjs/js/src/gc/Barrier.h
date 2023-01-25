@@ -530,8 +530,7 @@ class PreBarriered : public WriteBarriered<T> {
  public:
   PreBarriered() : WriteBarriered<T>(JS::SafelyInitialized<T>::create()) {}
   /*
-   * Allow implicit construction for use in generic contexts, such as
-   * DebuggerWeakMap::markKeys.
+   * Allow implicit construction for use in generic contexts.
    */
   MOZ_IMPLICIT PreBarriered(const T& v) : WriteBarriered<T>(v) {}
 
@@ -1096,6 +1095,28 @@ class MOZ_HEAP_CLASS ImmutableTenuredPtr {
 
   T get() const { return value; }
   const T* address() { return &value; }
+};
+
+// Template to remove any barrier wrapper and get the underlying type.
+template <typename T>
+struct RemoveBarrier {
+  using Type = T;
+};
+template <typename T>
+struct RemoveBarrier<HeapPtr<T>> {
+  using Type = T;
+};
+template <typename T>
+struct RemoveBarrier<GCPtr<T>> {
+  using Type = T;
+};
+template <typename T>
+struct RemoveBarrier<PreBarriered<T>> {
+  using Type = T;
+};
+template <typename T>
+struct RemoveBarrier<WeakHeapPtr<T>> {
+  using Type = T;
 };
 
 #if MOZ_IS_GCC

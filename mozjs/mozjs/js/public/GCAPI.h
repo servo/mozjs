@@ -130,14 +130,6 @@ typedef enum JSGCParamKey {
   JSGC_SLICE_TIME_BUDGET_MS = 9,
 
   /**
-   * Maximum size the GC mark stack can grow to.
-   *
-   * Pref: none
-   * Default: MarkStack::DefaultCapacity
-   */
-  JSGC_MARK_STACK_LIMIT = 10,
-
-  /**
    * The "do we collect?" decision depends on various parameters and can be
    * summarised as:
    *
@@ -284,6 +276,14 @@ typedef enum JSGCParamKey {
    * Default: CompactingEnabled
    */
   JSGC_COMPACTING_ENABLED = 23,
+
+  /**
+   * Whether parallel marking is enabled.
+   *
+   * Pref: javascript.options.mem.gc_parallel_marking
+   * Default: ParallelMarkingEnabled
+   */
+  JSGC_PARALLEL_MARKING_ENABLED = 24,
 
   /**
    * Limit of how far over the incremental trigger threshold we allow the heap

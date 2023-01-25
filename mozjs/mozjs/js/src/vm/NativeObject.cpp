@@ -525,7 +525,7 @@ DenseElementResult NativeObject::maybeDensifySparseElements(
 
   obj->ensureDenseInitializedLength(newInitializedLength, 0);
 
-  if (ObjectRealm::get(obj).objectMaybeInIteration(obj)) {
+  if (cx->compartment()->objectMaybeInIteration(obj)) {
     // Mark the densified elements as maybe-in-iteration. See also the comment
     // in GetIterator.
     obj->markDenseElementsMaybeInIteration();
@@ -998,7 +998,7 @@ bool NativeObject::allocDictionarySlot(JSContext* cx, Handle<NativeObject*> obj,
   MOZ_ASSERT(slotSpan >= JSSLOT_FREE(obj->getClass()));
 
   // Try to pull a free slot from the slot-number free list.
-  DictionaryPropMap* map = obj->shape()->dictionaryPropMap();
+  DictionaryPropMap* map = obj->dictionaryShape()->propMap();
   uint32_t last = map->freeList();
   if (last != SHAPE_INVALID_SLOT) {
 #ifdef DEBUG
@@ -1042,7 +1042,7 @@ void NativeObject::freeDictionarySlot(uint32_t slot) {
   MOZ_ASSERT(inDictionaryMode());
   MOZ_ASSERT(slot < slotSpan());
 
-  DictionaryPropMap* map = shape()->dictionaryPropMap();
+  DictionaryPropMap* map = dictionaryShape()->propMap();
   uint32_t last = map->freeList();
 
   // Can't afford to check the whole free list, but let's check the head.
@@ -1344,7 +1344,7 @@ bool js::AddSlotAndCallAddPropHook(JSContext* cx, Handle<NativeObject*> obj,
   MOZ_ASSERT(!id.isInt());
 
   uint32_t slot = newShape->lastProperty().slot();
-  if (!obj->setShapeAndAddNewSlot(cx, newShape, slot)) {
+  if (!obj->setShapeAndAddNewSlot(cx, &newShape->asShared(), slot)) {
     return false;
   }
   obj->initSlot(slot, v);

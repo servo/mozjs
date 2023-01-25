@@ -78,21 +78,19 @@ class RegExpObject : public NativeObject {
    * encoding their initial properties. Return the shape after
    * changing |obj|'s last property to it.
    */
-  static Shape* assignInitialShape(JSContext* cx, Handle<RegExpObject*> obj);
+  static SharedShape* assignInitialShape(JSContext* cx,
+                                         Handle<RegExpObject*> obj);
 
   /* Accessors. */
 
   static unsigned lastIndexSlot() { return LAST_INDEX_SLOT; }
 
   static bool isInitialShape(RegExpObject* rx) {
-    ShapePropertyIter<NoGC> iter(rx->shape());
-    if (iter.done() || !iter->isDataProperty()) {
-      return false;
-    }
-    if (iter->slot() != LAST_INDEX_SLOT) {
-      return false;
-    }
-    return true;
+    // RegExpObject has a non-configurable lastIndex property, so there must be
+    // at least one property.
+    MOZ_ASSERT(!rx->empty());
+    PropertyInfoWithKey prop = rx->getLastProperty();
+    return prop.isDataProperty() && prop.slot() == LAST_INDEX_SLOT;
   }
 
   const Value& getLastIndex() const { return getReservedSlot(LAST_INDEX_SLOT); }

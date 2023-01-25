@@ -43,12 +43,12 @@ namespace wasm {
 using mozilla::Atomic;
 
 class FuncImport;
-class WasmFrameIter;
-
 struct FuncImportInstanceData;
-struct TableInstanceData;
+class GlobalDesc;
 struct TableDesc;
+struct TableInstanceData;
 struct TagDesc;
+class WasmFrameIter;
 
 // Instance represents a wasm instance and provides all the support for runtime
 // execution of code in the instance. Instances share various immutable data
@@ -172,6 +172,9 @@ class alignas(16) Instance {
   // worthwhile.
   uint32_t* debugFilter_;
 
+  // The exclusive maximum index of a global that has been initialized so far.
+  uint32_t maxInitializedGlobalsIndexPlus1_;
+
 #ifdef ENABLE_WASM_GC
   // A flag to control whether a pass to trace types in global data is
   // necessary or not. Purely an optimization
@@ -187,7 +190,8 @@ class alignas(16) Instance {
   MOZ_ALIGNED_DECL(16, char globalArea_);
 
   // Internal helpers:
-  const void** addressOfTypeId(const TypeIdDesc& typeId) const;
+  const void** addressOfTypeId(uint32_t typeIndex) const;
+  const void* addressOfGlobalCell(const GlobalDesc& globalDesc) const;
   FuncImportInstanceData& funcImportInstanceData(const FuncImport& fi);
   TableInstanceData& tableInstanceData(const TableDesc& td) const;
   GCPtr<WasmTagObject*>& tagInstanceData(const TagDesc& td) const;
@@ -199,14 +203,14 @@ class alignas(16) Instance {
   bool callImport(JSContext* cx, uint32_t funcImportIndex, unsigned argc,
                   uint64_t* argv);
 
-  Instance(JSContext* cx, Handle<WasmInstanceObject*> object, SharedCode code,
-           Handle<WasmMemoryObject*> memory, SharedTableVector&& tables,
-           UniqueDebugState maybeDebug);
+  Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
+           const SharedCode& code, Handle<WasmMemoryObject*> memory,
+           SharedTableVector&& tables, UniqueDebugState maybeDebug);
   ~Instance();
 
  public:
   static Instance* create(JSContext* cx, Handle<WasmInstanceObject*> object,
-                          SharedCode code, uint32_t globalDataLength,
+                          const SharedCode& code, uint32_t globalDataLength,
                           Handle<WasmMemoryObject*> memory,
                           SharedTableVector&& tables,
                           UniqueDebugState maybeDebug);
@@ -338,6 +342,7 @@ class alignas(16) Instance {
 
   // Constant expression support
 
+  void constantGlobalGet(uint32_t globalIndex, MutableHandleVal result);
   [[nodiscard]] bool constantRefFunc(uint32_t funcIndex,
                                      MutableHandleFuncRef result);
 
@@ -460,7 +465,8 @@ class alignas(16) Instance {
                             uint32_t numElements, void* arrayDescr,
                             uint32_t segIndex);
   static void* arrayNewElem(Instance* instance, uint32_t segElemIndex,
-                            uint32_t size, void* arrayDescr, uint32_t segIndex);
+                            uint32_t numElements, void* arrayDescr,
+                            uint32_t segIndex);
   static int32_t arrayCopy(Instance* instance, void* dstArray,
                            uint32_t dstIndex, void* srcArray, uint32_t srcIndex,
                            uint32_t numElements, uint32_t elementSize);

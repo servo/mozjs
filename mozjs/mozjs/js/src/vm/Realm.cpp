@@ -42,10 +42,6 @@ Realm::DebuggerVectorEntry::DebuggerVectorEntry(js::Debugger* dbg_,
 ObjectRealm::ObjectRealm(JS::Zone* zone)
     : innerViews(zone, zone), iteratorCache(zone) {}
 
-ObjectRealm::~ObjectRealm() {
-  MOZ_ASSERT(enumerators == iteratorSentinel_.get());
-}
-
 Realm::Realm(Compartment* comp, const JS::RealmOptions& options)
     : JS::shadow::Realm(comp),
       zone_(comp->zone()),
@@ -74,18 +70,7 @@ Realm::~Realm() {
   runtime_->numRealms--;
 }
 
-bool ObjectRealm::init(JSContext* cx) {
-  NativeIteratorSentinel sentinel(NativeIterator::allocateSentinel(cx));
-  if (!sentinel) {
-    return false;
-  }
-
-  iteratorSentinel_ = std::move(sentinel);
-  enumerators = iteratorSentinel_.get();
-  return true;
-}
-
-bool Realm::init(JSContext* cx, JSPrincipals* principals) {
+void Realm::init(JSContext* cx, JSPrincipals* principals) {
   /*
    * As a hack, we clear our timezone cache every time we create a new realm.
    * This ensures that the cache is always relatively fresh, but shouldn't
@@ -94,10 +79,6 @@ bool Realm::init(JSContext* cx, JSPrincipals* principals) {
    */
   js::ResetTimeZoneInternal(ResetTimeZoneMode::DontResetIfOffsetUnchanged);
 
-  if (!objects_.init(cx)) {
-    return false;
-  }
-
   if (principals) {
     // Any realm with the trusted principals -- and there can be
     // multiple -- is a system realm.
@@ -105,8 +86,6 @@ bool Realm::init(JSContext* cx, JSPrincipals* principals) {
     JS_HoldPrincipals(principals);
     principals_ = principals;
   }
-
-  return true;
 }
 
 bool JSRuntime::createJitRuntime(JSContext* cx) {
@@ -155,9 +134,7 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
     return false;
   }
 
-  if (!jitRealm->initialize(cx, zone()->allocNurseryStrings)) {
-    return false;
-  }
+  jitRealm->initialize(zone()->allocNurseryStrings);
 
   jitRealm_ = std::move(jitRealm);
   return true;
@@ -166,7 +143,7 @@ bool Realm::ensureJitRealmExists(JSContext* cx) {
 #ifdef JSGC_HASH_TABLE_CHECKS
 
 void js::DtoaCache::checkCacheAfterMovingGC() {
-  MOZ_ASSERT(!s || !IsForwarded(s));
+  MOZ_ASSERT(!str || !IsForwarded(str));
 }
 
 #endif  // JSGC_HASH_TABLE_CHECKS
@@ -361,25 +338,6 @@ void Realm::traceWeakDebugEnvironmentEdges(JSTracer* trc) {
   if (debugEnvs_) {
     debugEnvs_->traceWeak(trc);
   }
-}
-
-void ObjectRealm::traceWeakNativeIterators(JSTracer* trc) {
-  /* Sweep list of native iterators. */
-  NativeIterator* ni = enumerators->next();
-  while (ni != enumerators) {
-    JSObject* iterObj = ni->iterObj();
-    NativeIterator* next = ni->next();
-    if (!TraceManuallyBarrieredWeakEdge(trc, &iterObj,
-                                        "ObjectRealm::enumerators")) {
-      ni->unlink();
-    }
-    MOZ_ASSERT(&ObjectRealm::get(ni->objectBeingIterated()) == this);
-    ni = next;
-  }
-}
-
-void Realm::traceWeakObjectRealm(JSTracer* trc) {
-  objects_.traceWeakNativeIterators(trc);
 }
 
 void Realm::fixupAfterMovingGC(JSTracer* trc) {
@@ -716,17 +674,17 @@ JS_PUBLIC_API bool JS::MaybeFreezeCtorAndPrototype(JSContext* cx,
 
 JS_PUBLIC_API JSObject* JS::GetRealmObjectPrototype(JSContext* cx) {
   CHECK_THREAD(cx);
-  return GlobalObject::getOrCreateObjectPrototype(cx, cx->global());
+  return &cx->global()->getObjectPrototype();
 }
 
 JS_PUBLIC_API JS::Handle<JSObject*> JS::GetRealmObjectPrototypeHandle(
     JSContext* cx) {
-  return GlobalObject::getOrCreateObjectPrototypeHandle(cx, cx->global());
+  return cx->global()->getObjectPrototypeHandle();
 }
 
 JS_PUBLIC_API JSObject* JS::GetRealmFunctionPrototype(JSContext* cx) {
   CHECK_THREAD(cx);
-  return GlobalObject::getOrCreateFunctionPrototype(cx, cx->global());
+  return &cx->global()->getFunctionPrototype();
 }
 
 JS_PUBLIC_API JSObject* JS::GetRealmArrayPrototype(JSContext* cx) {

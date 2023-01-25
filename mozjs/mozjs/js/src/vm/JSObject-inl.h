@@ -75,7 +75,7 @@ MOZ_ALWAYS_INLINE uint32_t js::NativeObject::calculateDynamicSlots() const {
 }
 
 /* static */ MOZ_ALWAYS_INLINE uint32_t
-js::NativeObject::calculateDynamicSlots(Shape* shape) {
+js::NativeObject::calculateDynamicSlots(SharedShape* shape) {
   return calculateDynamicSlots(shape->numFixedSlots(), shape->slotSpan(),
                                shape->getObjectClass());
 }
@@ -503,9 +503,6 @@ inline T* NewBuiltinClassInstance(JSContext* cx, gc::AllocKind allocKind,
   JSObject* obj = NewBuiltinClassInstance(cx, &T::class_, allocKind, newKind);
   return obj ? &obj->as<T>() : nullptr;
 }
-
-// Used to optimize calls to (new Object())
-bool NewObjectScriptedCall(JSContext* cx, MutableHandleObject obj);
 
 static inline gc::AllocKind GuessArrayGCKind(size_t numElements) {
   if (numElements) {

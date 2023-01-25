@@ -13,6 +13,7 @@
 #include "vm/PropertyResult.h"
 
 #include "gc/GCContext-inl.h"
+#include "gc/Marking-inl.h"
 #include "vm/PropMap-inl.h"
 
 namespace js {
@@ -34,7 +35,7 @@ template <class ObjectSubclass>
   Rooted<Shape*> emptyShape(cx, obj->shape());
 
   // If no initial shape was assigned, do so.
-  Rooted<Shape*> shape(cx, ObjectSubclass::assignInitialShape(cx, obj));
+  Rooted<SharedShape*> shape(cx, ObjectSubclass::assignInitialShape(cx, obj));
   if (!shape) {
     return false;
   }
@@ -68,6 +69,12 @@ inline void Shape::finalize(JS::GCContext* gcx) {
   if (!cache_.isNone()) {
     purgeCache(gcx);
   }
+}
+
+inline SharedPropMap* SharedShape::propMapMaybeForwarded() const {
+  MOZ_ASSERT(isShared());
+  PropMap* propMap = propMap_;
+  return propMap ? MaybeForwarded(propMap)->asShared() : nullptr;
 }
 
 static inline JS::PropertyAttributes GetPropertyAttributes(

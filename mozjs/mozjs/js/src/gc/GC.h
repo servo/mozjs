@@ -49,7 +49,6 @@ class TenuredChunk;
   _("unusedChunks", JSGC_UNUSED_CHUNKS, false)                             \
   _("totalChunks", JSGC_TOTAL_CHUNKS, false)                               \
   _("sliceTimeBudgetMS", JSGC_SLICE_TIME_BUDGET_MS, true)                  \
-  _("markStackLimit", JSGC_MARK_STACK_LIMIT, true)                         \
   _("highFrequencyTimeLimit", JSGC_HIGH_FREQUENCY_TIME_LIMIT, true)        \
   _("smallHeapSizeMax", JSGC_SMALL_HEAP_SIZE_MAX, true)                    \
   _("largeHeapSizeMin", JSGC_LARGE_HEAP_SIZE_MIN, true)                    \
@@ -66,6 +65,7 @@ class TenuredChunk;
   _("minEmptyChunkCount", JSGC_MIN_EMPTY_CHUNK_COUNT, true)                \
   _("maxEmptyChunkCount", JSGC_MAX_EMPTY_CHUNK_COUNT, true)                \
   _("compactingEnabled", JSGC_COMPACTING_ENABLED, true)                    \
+  _("parallelMarkingEnabled", JSGC_PARALLEL_MARKING_ENABLED, true)         \
   _("minLastDitchGCPeriod", JSGC_MIN_LAST_DITCH_GC_PERIOD, true)           \
   _("nurseryFreeThresholdForIdleCollection",                               \
     JSGC_NURSERY_FREE_THRESHOLD_FOR_IDLE_COLLECTION, true)                 \

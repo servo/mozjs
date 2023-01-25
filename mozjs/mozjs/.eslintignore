@@ -76,6 +76,7 @@ devtools/shared/css/generated/properties-db.js
 devtools/client/webconsole/test/node/fixtures/stubs/*.js
 !devtools/client/webconsole/test/node/fixtures/stubs/index.js
 devtools/client/shared/components/test/node/stubs/reps/*.js
+devtools/client/shared/source-map-loader/test/browser/fixtures/*.js
 
 # Ignore devtools files testing sourcemaps / code style
 devtools/client/framework/test/code_*
@@ -221,7 +222,7 @@ toolkit/components/translation/cld2/
 
 # Uses preprocessing
 toolkit/mozapps/update/tests/data/xpcshellConstantsPP.js
-toolkit/modules/AppConstants.jsm
+toolkit/modules/AppConstants.sys.mjs
 
 # Tests of ESLint command.
 tools/lint/test/files
@@ -240,3 +241,4 @@ browser/extensions/translations/extension/
 
 # "scaffolding" used by uniffi which isn't valid JS in its original form.
 toolkit/components/uniffi-bindgen-gecko-js/src/templates/js/
+toolkit/components/uniffi-bindgen-gecko-js/components/generated/*

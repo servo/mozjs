@@ -44,12 +44,12 @@ class Table : public ShareableBase<Table> {
   using InstanceSet = JS::WeakCache<GCHashSet<
       WeakHeapPtr<WasmInstanceObject*>,
       MovableCellHasher<WeakHeapPtr<WasmInstanceObject*>>, SystemAllocPolicy>>;
-  using UniqueFuncRefArray = UniquePtr<FunctionTableElem[], JS::FreePolicy>;
+  using FuncRefVector = Vector<FunctionTableElem, 0, SystemAllocPolicy>;
 
   WeakHeapPtr<WasmTableObject*> maybeObject_;
   InstanceSet observers_;
-  UniqueFuncRefArray functions_;  // either functions_ has data
-  TableAnyRefVector objects_;     //   or objects_, but not both
+  FuncRefVector functions_;    // either functions_ has data
+  TableAnyRefVector objects_;  // or objects_, but not both
   const RefType elemType_;
   const bool isAsmJS_;
   uint32_t length_;
@@ -58,7 +58,7 @@ class Table : public ShareableBase<Table> {
   template <class>
   friend struct js::MallocProvider;
   Table(JSContext* cx, const TableDesc& desc,
-        Handle<WasmTableObject*> maybeObject, UniqueFuncRefArray functions);
+        Handle<WasmTableObject*> maybeObject, FuncRefVector&& functions);
   Table(JSContext* cx, const TableDesc& desc,
         Handle<WasmTableObject*> maybeObject, TableAnyRefVector&& objects);
 
@@ -98,6 +98,10 @@ class Table : public ShareableBase<Table> {
 
   AnyRef getAnyRef(uint32_t index) const;
   void fillAnyRef(uint32_t index, uint32_t fillCount, AnyRef ref);
+
+  // Get the element at index and convert it to a JS value.
+  [[nodiscard]] bool getValue(JSContext* cx, uint32_t index,
+                              MutableHandleValue result) const;
 
   void setNull(uint32_t index);
 

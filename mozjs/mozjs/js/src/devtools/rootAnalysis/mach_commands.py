@@ -13,21 +13,15 @@ import os
 import sys
 import textwrap
 
-from mach.base import FailedCommandError, MachError
-from mach.decorators import (
-    CommandArgument,
-    Command,
-    SubCommand,
-)
-from mach.registrar import Registrar
-
-from mozbuild.mozconfig import MozconfigLoader
-
 # Command files like this are listed in build/mach_initialize.py in alphabetical
 # order, but we need to access commands earlier in the sorted order to grab
 # their arguments. Force them to load now.
 import mozbuild.artifact_commands  # NOQA: F401
 import mozbuild.build_commands  # NOQA: F401
+from mach.base import FailedCommandError, MachError
+from mach.decorators import Command, CommandArgument, SubCommand
+from mach.registrar import Registrar
+from mozbuild.mozconfig import MozconfigLoader
 
 
 # Use a decorator to copy command arguments off of the named command. Instead
@@ -313,12 +307,15 @@ def inner_compile(command_context, **kwargs):
 
     # Validate the mozconfig.
 
-    # Require an explicit --enable-application=APP (even if you just
+    # Require an explicit --enable-project/application=APP (even if you just
     # want to build the default browser application.)
     loader = MozconfigLoader(command_context.topsrcdir)
     mozconfig = loader.read_mozconfig(mozconfig_path)
     configure_args = mozconfig["configure_args"]
-    if "--enable-application=%s" % app not in configure_args:
+    if (
+        "--enable-project=%s" % app not in configure_args
+        and "--enable-application=%s" % app not in configure_args
+    ):
         raise Exception("mozconfig %s builds wrong project" % mozconfig_path)
     if not any("--with-compiler-wrapper" in a for a in configure_args):
         raise Exception("mozconfig must wrap compiles")

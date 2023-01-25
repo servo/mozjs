@@ -360,7 +360,7 @@ static const size_t GCMinNurseryBytes = 256 * 1024;
  *
  * This must be greater than 1.3 to maintain performance on splay-latency.
  */
-static const double SmallHeapIncrementalLimit = 1.40;
+static const double SmallHeapIncrementalLimit = 1.50;
 
 /* JSGC_LARGE_HEAP_INCREMENTAL_LIMIT */
 static const double LargeHeapIncrementalLimit = 1.10;
@@ -406,6 +406,9 @@ static const bool PerZoneGCEnabled = false;
 
 /* JSGC_COMPACTING_ENABLED */
 static const bool CompactingEnabled = true;
+
+/* JSGC_PARALLEL_MARKING_ENABLED */
+static const bool ParallelMarkingEnabled = false;
 
 /* JSGC_BALANCED_HEAP_LIMITS_ENABLED */
 static const bool BalancedHeapLimitsEnabled = false;
@@ -906,26 +909,6 @@ class JitHeapThreshold : public HeapThreshold {
  public:
   explicit JitHeapThreshold(size_t bytes) { startBytes_ = bytes; }
 };
-
-struct SharedMemoryUse {
-  explicit SharedMemoryUse(MemoryUse use) : count(0), nbytes(0) {
-#ifdef DEBUG
-    this->use = use;
-#endif
-  }
-
-  size_t count;
-  size_t nbytes;
-#ifdef DEBUG
-  MemoryUse use;
-#endif
-};
-
-// A map which tracks shared memory uses (shared in the sense that an allocation
-// can be referenced by more than one GC thing in a zone). This allows us to
-// only account for the memory once.
-using SharedMemoryMap =
-    HashMap<void*, SharedMemoryUse, DefaultHasher<void*>, SystemAllocPolicy>;
 
 #ifdef DEBUG
 

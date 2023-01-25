@@ -414,8 +414,8 @@ JSObject* ErrorObject::createConstructor(JSContext* cx, JSProtoKey key) {
 }
 
 /* static */
-Shape* js::ErrorObject::assignInitialShape(JSContext* cx,
-                                           Handle<ErrorObject*> obj) {
+SharedShape* js::ErrorObject::assignInitialShape(JSContext* cx,
+                                                 Handle<ErrorObject*> obj) {
   MOZ_ASSERT(obj->empty());
 
   constexpr PropertyFlags propFlags = {PropertyFlag::Configurable,
@@ -436,7 +436,7 @@ Shape* js::ErrorObject::assignInitialShape(JSContext* cx,
     return nullptr;
   }
 
-  return obj->shape();
+  return obj->sharedShape();
 }
 
 /* static */
@@ -759,38 +759,51 @@ JSString* js::ErrorToSource(JSContext* cx, HandleObject obj) {
 
   JSStringBuilder sb(cx);
   if (!sb.append("(new ") || !sb.append(name) || !sb.append("(")) {
+    sb.failure();
     return nullptr;
   }
 
   if (!sb.append(message)) {
+    sb.failure();
     return nullptr;
   }
 
   if (!filename->empty()) {
     if (!sb.append(", ") || !sb.append(filename)) {
+      sb.failure();
       return nullptr;
     }
   }
   if (lineno != 0) {
     /* We have a line, but no filename, add empty string */
     if (filename->empty() && !sb.append(", \"\"")) {
+      sb.failure();
       return nullptr;
     }
 
     JSString* linenumber = ToString<CanGC>(cx, linenoVal);
     if (!linenumber) {
+      sb.failure();
       return nullptr;
     }
     if (!sb.append(", ") || !sb.append(linenumber)) {
+      sb.failure();
       return nullptr;
     }
   }
 
   if (!sb.append("))")) {
+    sb.failure();
     return nullptr;
   }
 
-  return sb.finishString();
+  auto* result = sb.finishString();
+  if (!result) {
+    sb.failure();
+    return nullptr;
+  }
+  sb.ok();
+  return result;
 }
 
 /*

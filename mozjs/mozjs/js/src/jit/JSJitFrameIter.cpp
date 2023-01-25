@@ -434,7 +434,7 @@ bool JSJitFrameIter::verifyReturnAddressUsingNativeToBytecodeMap() {
           resumePCinCurrentFrame_, entry->nativeStartAddr(),
           entry->nativeEndAddr());
 
-  JitcodeGlobalEntry::BytecodeLocationVector location;
+  BytecodeLocationVector location;
   uint32_t depth = UINT32_MAX;
   if (!entry->callStackAtAddr(rt, resumePCinCurrentFrame_, location, &depth)) {
     return false;
@@ -602,7 +602,7 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
 
   JSScript* callee = frameScript();
 
-  MOZ_ASSERT(entry->isIon() || entry->isBaseline() ||
+  MOZ_ASSERT(entry->isIon() || entry->isIonIC() || entry->isBaseline() ||
              entry->isBaselineInterpreter() || entry->isDummy());
 
   // Treat dummy lookups as an empty frame sequence.
@@ -613,10 +613,17 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
     return true;
   }
 
+  // For IonICEntry, use the corresponding IonEntry.
+  if (entry->isIonIC()) {
+    entry = table->lookup(entry->asIonIC().rejoinAddr());
+    MOZ_ASSERT(entry);
+    MOZ_RELEASE_ASSERT(entry->isIon());
+  }
+
   if (entry->isIon()) {
     // If looked-up callee doesn't match frame callee, don't accept
     // lastProfilingCallSite
-    if (entry->ionEntry().getScript(0) != callee) {
+    if (entry->asIon().getScript(0) != callee) {
       return false;
     }
 
@@ -628,7 +635,7 @@ bool JSJitProfilingFrameIterator::tryInitWithTable(JitcodeGlobalTable* table,
   if (entry->isBaseline()) {
     // If looked-up callee doesn't match frame callee, don't accept
     // lastProfilingCallSite
-    if (forLastCallSite && entry->baselineEntry().script() != callee) {
+    if (forLastCallSite && entry->asBaseline().script() != callee) {
       return false;
     }
 

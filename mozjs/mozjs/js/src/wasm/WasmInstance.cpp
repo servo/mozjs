@@ -93,53 +93,18 @@ static_assert(Instance::offsetOfLastCommonJitField() < 128);
 //
 // Functions and invocation.
 
-class FuncTypeIdSet {
-  using Map =
-      HashMap<const FuncType*, uint32_t, FuncTypeHashPolicy, SystemAllocPolicy>;
-  Map map_;
+const void** Instance::addressOfTypeId(uint32_t typeIndex) const {
+  return (const void**)(globalData() + typeIndex * sizeof(void*));
+}
 
- public:
-  ~FuncTypeIdSet() {
-    MOZ_ASSERT_IF(!JSRuntime::hasLiveRuntimes(), map_.empty());
+const void* Instance::addressOfGlobalCell(const GlobalDesc& global) const {
+  const void* cell = globalData() + global.offset();
+  // Indirect globals store a pointer to their cell in the instance global
+  // data. Dereference it to find the real cell.
+  if (global.isIndirect()) {
+    cell = *(const void**)cell;
   }
-
-  bool allocateFuncTypeId(JSContext* cx, const FuncType& funcType,
-                          const void** funcTypeId) {
-    Map::AddPtr p = map_.lookupForAdd(funcType);
-    if (p) {
-      MOZ_ASSERT(p->value() > 0);
-      p->value()++;
-      *funcTypeId = p->key();
-      return true;
-    }
-
-    UniquePtr<FuncType> clone = MakeUnique<FuncType>();
-    if (!clone || !clone->clone(funcType) || !map_.add(p, clone.get(), 1)) {
-      ReportOutOfMemory(cx);
-      return false;
-    }
-
-    *funcTypeId = clone.release();
-    MOZ_ASSERT(!(uintptr_t(*funcTypeId) & TypeIdDesc::ImmediateBit));
-    return true;
-  }
-
-  void deallocateFuncTypeId(const FuncType& funcType, const void* funcTypeId) {
-    Map::Ptr p = map_.lookup(funcType);
-    MOZ_RELEASE_ASSERT(p && p->key() == funcTypeId && p->value() > 0);
-
-    p->value()--;
-    if (!p->value()) {
-      js_delete(p->key());
-      map_.remove(p);
-    }
-  }
-};
-
-ExclusiveData<FuncTypeIdSet> funcTypeIdSet(mutexid::WasmFuncTypeIdSet);
-
-const void** Instance::addressOfTypeId(const TypeIdDesc& typeId) const {
-  return (const void**)(globalData() + typeId.globalDataOffset());
+  return cell;
 }
 
 FuncImportInstanceData& Instance::funcImportInstanceData(const FuncImport& fi) {
@@ -352,7 +317,7 @@ static int32_t PerformWait(Instance* instance, PtrT byteOffset, ValT value,
   mozilla::Maybe<mozilla::TimeDuration> timeout;
   if (timeout_ns >= 0) {
     timeout = mozilla::Some(
-        mozilla::TimeDuration::FromMicroseconds(timeout_ns / 1000));
+        mozilla::TimeDuration::FromMicroseconds(double(timeout_ns) / 1000));
   }
 
   MOZ_ASSERT(byteOffset <= SIZE_MAX, "Bounds check is broken");
@@ -895,8 +860,7 @@ bool Instance::initElems(uint32_t tableIndex, const ElemSegment& seg,
 
 #ifdef ENABLE_WASM_GC
 RttValue* Instance::rttCanon(uint32_t typeIndex) const {
-  const TypeIdDesc& typeId = metadata().typeIds[typeIndex];
-  return *(RttValue**)addressOfTypeId(typeId);
+  return *(RttValue**)addressOfTypeId(typeIndex);
 }
 
 #endif  // ENABLE_WASM_GC
@@ -1564,7 +1528,7 @@ RttValue* Instance::rttCanon(uint32_t typeIndex) const {
 // Instance creation and related.
 
 Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
-                   SharedCode code, Handle<WasmMemoryObject*> memory,
+                   const SharedCode& code, Handle<WasmMemoryObject*> memory,
                    SharedTableVector&& tables, UniqueDebugState maybeDebug)
     : realm_(cx->realm()),
       jsJitArgsRectifier_(
@@ -1578,7 +1542,8 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
       memory_(memory),
       tables_(std::move(tables)),
       maybeDebug_(std::move(maybeDebug)),
-      debugFilter_(nullptr)
+      debugFilter_(nullptr),
+      maxInitializedGlobalsIndexPlus1_(0)
 #ifdef ENABLE_WASM_GC
       ,
       hasGcTypes_(false)
@@ -1587,7 +1552,7 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
 }
 
 Instance* Instance::create(JSContext* cx, Handle<WasmInstanceObject*> object,
-                           SharedCode code, uint32_t globalDataLength,
+                           const SharedCode& code, uint32_t globalDataLength,
                            Handle<WasmMemoryObject*> memory,
                            SharedTableVector&& tables,
                            UniqueDebugState maybeDebug) {
@@ -1713,64 +1678,31 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
   }
 
   // Allocate in the global type sets for structural type checks
-  if (!metadata().types.empty()) {
-#ifdef ENABLE_WASM_GC
-    if (GcAvailable(cx)) {
-      // Transfer and allocate type objects for the struct types in the module
-      MutableTypeContext tycx = js_new<TypeContext>();
-      if (!tycx || !tycx->clone(metadata().types)) {
-        return false;
-      }
-
-      for (uint32_t typeIndex = 0; typeIndex < metadata().types.length();
-           typeIndex++) {
-        const TypeDef& typeDef = metadata().types[typeIndex];
-        const TypeIdDesc& typeId = metadata().typeIds[typeIndex];
-        if (!typeId.isGlobal() ||
-            (!typeDef.isStructType() && !typeDef.isArrayType())) {
-          continue;
-        }
-
-        Rooted<RttValue*> rttValue(
-            cx, RttValue::rttCanon(cx, TypeHandle(tycx, typeIndex)));
-        if (!rttValue) {
-          return false;
-        }
-        // We do not need to use a barrier here because RttValue is always
-        // tenured
-        MOZ_ASSERT(rttValue.get()->isTenured());
-        *((GCPtr<JSObject*>*)addressOfTypeId(typeId)) = rttValue;
-        hasGcTypes_ = true;
-      }
-    }
-#endif
-
-    // Handle functions specially (for now) as they're guaranteed to be
-    // acyclical and can use simpler hash-consing logic.
-    ExclusiveData<FuncTypeIdSet>::Guard lockedFuncTypeIdSet =
-        funcTypeIdSet.lock();
-
-    for (uint32_t typeIndex = 0; typeIndex < metadata().types.length();
-         typeIndex++) {
-      const TypeDef& typeDef = metadata().types[typeIndex];
-      const TypeIdDesc& typeId = metadata().typeIds[typeIndex];
-      if (!typeId.isGlobal()) {
-        continue;
-      }
+  const SharedTypeContext& types = metadata().types;
+  if (!types->empty()) {
+    for (uint32_t typeIndex = 0; typeIndex < types->length(); typeIndex++) {
+      const TypeDef& typeDef = types->type(typeIndex);
       switch (typeDef.kind()) {
         case TypeDefKind::Func: {
-          const FuncType& funcType = typeDef.funcType();
-          const void* funcTypeId;
-          if (!lockedFuncTypeIdSet->allocateFuncTypeId(cx, funcType,
-                                                       &funcTypeId)) {
-            return false;
-          }
-          *addressOfTypeId(typeId) = funcTypeId;
+          *addressOfTypeId(typeIndex) = &typeDef;
           break;
         }
+#ifdef ENABLE_WASM_GC
         case TypeDefKind::Struct:
-        case TypeDefKind::Array:
-          continue;
+        case TypeDefKind::Array: {
+          Rooted<RttValue*> rttValue(
+              cx, RttValue::rttCanon(cx, TypeHandle(types, typeIndex)));
+          if (!rttValue) {
+            return false;
+          }
+          // We do not need to use a barrier here because RttValue is always
+          // tenured
+          MOZ_ASSERT(rttValue.get()->isTenured());
+          *((GCPtr<JSObject*>*)addressOfTypeId(typeIndex)) = rttValue;
+          hasGcTypes_ = true;
+          break;
+        }
+#endif
         default:
           MOZ_CRASH();
       }
@@ -1781,7 +1713,14 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
   //
   // This must be performed after we have initialized runtime types as a global
   // initializer may reference them.
-  for (size_t i = 0; i < metadata().globals.length(); i++) {
+  //
+  // We increment `maxInitializedGlobalsIndexPlus1_` every iteration of the
+  // loop, as we call out to `InitExpr::evaluate` which may call
+  // `constantGlobalGet` which uses this value to assert we're never accessing
+  // uninitialized globals.
+  maxInitializedGlobalsIndexPlus1_ = 0;
+  for (size_t i = 0; i < metadata().globals.length();
+       i++, maxInitializedGlobalsIndexPlus1_ = i) {
     const GlobalDesc& global = metadata().globals[i];
 
     // Constants are baked into the code, never stored in the global area.
@@ -1805,7 +1744,7 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
         RootedVal val(cx);
         const InitExpr& init = global.initExpr();
         Rooted<WasmInstanceObject*> instanceObj(cx, object());
-        if (!init.evaluate(cx, globalImportValues, instanceObj, &val)) {
+        if (!init.evaluate(cx, instanceObj, &val)) {
           return false;
         }
 
@@ -1827,6 +1766,9 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
     }
   }
 
+  // All globals were initialized
+  MOZ_ASSERT(maxInitializedGlobalsIndexPlus1_ == metadata().globals.length());
+
   // Take references to the passive data segments
   if (!passiveDataSegments_.resize(dataSegments.length())) {
     return false;
@@ -1842,7 +1784,7 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
     return false;
   }
   for (size_t i = 0; i < elemSegments.length(); i++) {
-    if (elemSegments[i]->kind != ElemSegment::Kind::Active) {
+    if (elemSegments[i]->kind == ElemSegment::Kind::Passive) {
       passiveElemSegments_[i] = elemSegments[i];
     }
   }
@@ -1852,24 +1794,6 @@ bool Instance::init(JSContext* cx, const JSFunctionVector& funcImports,
 
 Instance::~Instance() {
   realm_->wasm.unregisterInstance(*this);
-
-  if (!metadata().types.empty()) {
-    ExclusiveData<FuncTypeIdSet>::Guard lockedFuncTypeIdSet =
-        funcTypeIdSet.lock();
-
-    for (uint32_t typeIndex = 0; typeIndex < metadata().types.length();
-         typeIndex++) {
-      const TypeDef& typeDef = metadata().types[typeIndex];
-      const TypeIdDesc& typeId = metadata().typeIds[typeIndex];
-      if (!typeDef.isFuncType() || !typeId.isGlobal()) {
-        continue;
-      }
-      const FuncType& funcType = typeDef.funcType();
-      if (const void* funcTypeId = *addressOfTypeId(typeId)) {
-        lockedFuncTypeIdSet->deallocateFuncTypeId(funcType, funcTypeId);
-      }
-    }
-  }
 
   if (debugFilter_) {
     js_free(debugFilter_);
@@ -1961,15 +1885,13 @@ void Instance::tracePrivate(JSTracer* trc) {
   TraceNullableEdge(trc, &memory_, "wasm buffer");
 #ifdef ENABLE_WASM_GC
   if (hasGcTypes_) {
-    for (uint32_t typeIndex = 0; typeIndex < metadata().types.length();
+    for (uint32_t typeIndex = 0; typeIndex < metadata().types->length();
          typeIndex++) {
-      const TypeDef& typeDef = metadata().types[typeIndex];
-      const TypeIdDesc& typeId = metadata().typeIds[typeIndex];
-      if (!typeId.isGlobal() ||
-          (!typeDef.isStructType() && !typeDef.isArrayType())) {
+      const TypeDef& typeDef = metadata().types->type(typeIndex);
+      if (!typeDef.isStructType() && !typeDef.isArrayType()) {
         continue;
       }
-      TraceNullableEdge(trc, ((GCPtr<JSObject*>*)addressOfTypeId(typeId)),
+      TraceNullableEdge(trc, ((GCPtr<JSObject*>*)addressOfTypeId(typeIndex)),
                         "wasm rtt value");
     }
   }
@@ -2405,7 +2327,7 @@ bool Instance::callExport(JSContext* cx, uint32_t funcIndex, CallArgs args,
     }
     if (type.isRefRepr()) {
       // Ensure we don't have a temporarily unsupported Ref type in callExport
-      MOZ_RELEASE_ASSERT(!type.isTypeIndex());
+      MOZ_RELEASE_ASSERT(!type.isTypeRef());
       void* ptr = *reinterpret_cast<void**>(rawArgLoc);
       // Store in rooted array until no more GC is possible.
       RootedAnyRef ref(cx, AnyRef::fromCompiledCode(ptr));
@@ -2491,6 +2413,23 @@ void Instance::setPendingException(HandleAnyRef exn) {
   pendingExceptionTag_ = GetExceptionTag(exn.get().asJSObject());
 }
 
+void Instance::constantGlobalGet(uint32_t globalIndex,
+                                 MutableHandleVal result) {
+  MOZ_RELEASE_ASSERT(globalIndex < maxInitializedGlobalsIndexPlus1_);
+  const GlobalDesc& global = metadata().globals[globalIndex];
+
+  // Constant globals are baked into the code and never stored in global data.
+  if (global.isConstant()) {
+    // We can just re-evaluate the global initializer to get the value.
+    result.set(Val(global.constantValue()));
+    return;
+  }
+
+  // Otherwise, we need to load the initialized value from its cell.
+  const void* cell = addressOfGlobalCell(global);
+  result.address()->initFromHeapLocation(global.type(), cell);
+}
+
 bool Instance::constantRefFunc(uint32_t funcIndex,
                                MutableHandleFuncRef result) {
   void* fnref = Instance::refFunc(this, funcIndex);
@@ -2570,6 +2509,7 @@ JSString* Instance::createDisplayURL(JSContext* cx) {
 
   JSStringBuilder result(cx);
   if (!result.append("wasm:")) {
+    result.failure();
     return nullptr;
   }
 
@@ -2579,39 +2519,51 @@ JSString* Instance::createDisplayURL(JSContext* cx) {
     JSString* filenamePrefix = EncodeURI(cx, filename, strlen(filename));
     if (!filenamePrefix) {
       if (cx->isThrowingOutOfMemory()) {
+        result.failure();
         return nullptr;
       }
 
+      result.failure();
       MOZ_ASSERT(!cx->isThrowingOverRecursed());
       cx->clearPendingException();
       return nullptr;
     }
 
     if (!result.append(filenamePrefix)) {
+      result.failure();
       return nullptr;
     }
   }
 
   if (metadata().debugEnabled) {
     if (!result.append(":")) {
+      result.failure();
       return nullptr;
     }
 
     const ModuleHash& hash = metadata().debugHash;
     for (unsigned char byte : hash) {
-      char digit1 = byte / 16, digit2 = byte % 16;
+      unsigned char digit1 = byte / 16, digit2 = byte % 16;
       if (!result.append(
               (char)(digit1 < 10 ? digit1 + '0' : digit1 + 'a' - 10))) {
+        result.failure();
         return nullptr;
       }
       if (!result.append(
               (char)(digit2 < 10 ? digit2 + '0' : digit2 + 'a' - 10))) {
+        result.failure();
         return nullptr;
       }
     }
   }
 
-  return result.finishString();
+  auto* resultString = result.finishString();
+  if (!resultString) {
+    result.failure();
+    return nullptr;
+  }
+  result.ok();
+  return resultString;
 }
 
 WasmBreakpointSite* Instance::getOrCreateBreakpointSite(JSContext* cx,
@@ -2679,5 +2631,4 @@ void wasm::ReportTrapError(JSContext* cx, unsigned errorNumber) {
 
   MOZ_ASSERT(exn.isObject() && exn.toObject().is<ErrorObject>());
   exn.toObject().as<ErrorObject>().setFromWasmTrap();
-  return;
 }

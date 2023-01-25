@@ -6,7 +6,9 @@
 
 #include "jit/BaselineCacheIRCompiler.h"
 
+#include "gc/GC.h"
 #include "jit/CacheIR.h"
+#include "jit/CacheIRCloner.h"
 #include "jit/CacheIRWriter.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
@@ -22,9 +24,11 @@
 #include "vm/JSAtom.h"
 #include "vm/StaticStrings.h"
 
+#include "jit/JitScript-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SharedICHelpers-inl.h"
 #include "jit/VMFunctionList-inl.h"
+#include "vm/List-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -1136,7 +1140,8 @@ bool BaselineCacheIRCompiler::emitIsTypedArrayResult(ObjOperandId objId,
 }
 
 bool BaselineCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
-                                                       Int32OperandId indexId) {
+                                                       Int32OperandId indexId,
+                                                       bool handleOOB) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
   Register str = allocator.useRegister(masm, strId);
@@ -1145,18 +1150,34 @@ bool BaselineCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   AutoScratchRegisterMaybeOutputType scratch2(allocator, masm, output);
   AutoScratchRegister scratch3(allocator, masm);
 
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
   // Bounds check, load string char.
-  masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
-                            scratch1, failure->label());
-  masm.loadStringChar(str, index, scratch1, scratch2, scratch3,
-                      failure->label());
+  Label done;
+  Label loadFailed;
+  if (!handleOOB) {
+    FailurePath* failure;
+    if (!addFailurePath(&failure)) {
+      return false;
+    }
 
-  allocator.discardStack(masm);
+    masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                              scratch1, failure->label());
+    masm.loadStringChar(str, index, scratch1, scratch2, scratch3,
+                        failure->label());
+
+    allocator.discardStack(masm);
+  } else {
+    // Discard the stack before jumping to |done|.
+    allocator.discardStack(masm);
+
+    // Return the empty string for out-of-bounds access.
+    masm.movePtr(ImmGCPtr(cx_->names().empty), scratch2);
+
+    // This CacheIR op is always preceded by |LinearizeForCharAccess|, so we're
+    // guaranteed to see no nested ropes.
+    masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                              scratch1, &done);
+    masm.loadStringChar(str, index, scratch1, scratch2, scratch3, &loadFailed);
+  }
 
   // Load StaticString for this char. For larger code units perform a VM call.
   Label vmCall;
@@ -1165,8 +1186,12 @@ bool BaselineCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   masm.movePtr(ImmPtr(&cx_->staticStrings().unitStaticTable), scratch2);
   masm.loadPtr(BaseIndex(scratch2, scratch1, ScalePointer), scratch2);
 
-  Label done;
   masm.jump(&done);
+
+  if (handleOOB) {
+    masm.bind(&loadFailed);
+    masm.assumeUnreachable("loadStringChar can't fail for linear strings");
+  }
 
   {
     masm.bind(&vmCall);
@@ -1274,6 +1299,10 @@ bool BaselineCacheIRCompiler::emitMathRandomResult(uint32_t rngOffset) {
 
   masm.randomDouble(scratch1, scratchFloat, scratch2,
                     output.valueReg().toRegister64());
+
+  if (js::SupportDifferentialTesting()) {
+    masm.loadConstantDouble(0.0, scratchFloat);
+  }
 
   masm.boxDouble(scratchFloat, output.valueReg(), scratchFloat);
   return true;
@@ -1813,64 +1842,6 @@ bool BaselineCacheIRCompiler::emitLoadArgumentDynamicSlot(ValOperandId resultId,
   return true;
 }
 
-bool BaselineCacheIRCompiler::emitGuardAndGetIterator(
-    ObjOperandId objId, uint32_t iterOffset, uint32_t enumeratorsAddrOffset,
-    ObjOperandId resultId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-  AutoScratchRegister niScratch(allocator, masm);
-
-  Address iterAddr(stubAddress(iterOffset));
-  Address enumeratorsAddr(stubAddress(enumeratorsAddrOffset));
-
-  Register output = allocator.defineRegister(masm, resultId);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // Load our PropertyIteratorObject* and its NativeIterator.
-  masm.loadPtr(iterAddr, output);
-
-  Address slotAddr(output, PropertyIteratorObject::offsetOfIteratorSlot());
-  masm.loadPrivate(slotAddr, niScratch);
-
-  // Ensure the iterator is reusable: see NativeIterator::isReusable.
-  masm.branchIfNativeIteratorNotReusable(niScratch, failure->label());
-
-  // 'objectBeingIterated_' must be nullptr, so we don't need a pre-barrier.
-  Address iterObjAddr(niScratch, NativeIterator::offsetOfObjectBeingIterated());
-#ifdef DEBUG
-  Label ok;
-  masm.branchPtr(Assembler::Equal, iterObjAddr, ImmPtr(nullptr), &ok);
-  masm.assumeUnreachable("iterator with non-null object");
-  masm.bind(&ok);
-#endif
-
-  // Mark iterator as active.
-  Address iterFlagsAddr(niScratch, NativeIterator::offsetOfFlagsAndCount());
-  masm.storePtr(obj, iterObjAddr);
-  masm.or32(Imm32(NativeIterator::Flags::Active), iterFlagsAddr);
-
-  // Post-write barrier for stores to 'objectBeingIterated_'.
-  emitPostBarrierSlot(output,
-                      TypedOrValueRegister(MIRType::Object, AnyRegister(obj)),
-                      scratch1);
-
-  // Chain onto the active iterator stack. Note that Baseline CacheIR stub
-  // code is shared across compartments within a Zone, so we can't bake in
-  // compartment->enumerators here.
-  masm.loadPtr(enumeratorsAddr, scratch1);
-  masm.loadPtr(Address(scratch1, 0), scratch1);
-  emitRegisterEnumerator(scratch1, niScratch, scratch2);
-
-  return true;
-}
-
 bool BaselineCacheIRCompiler::emitGuardDOMExpandoMissingOrGuardShape(
     ValOperandId expandoId, uint32_t shapeOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -2025,6 +1996,11 @@ bool BaselineCacheIRCompiler::init(CacheKind kind) {
     case CacheKind::CloseIter:
       MOZ_ASSERT(numInputs == 1);
       allocator.initInputLocation(0, R0.scratchReg(), JSVAL_TYPE_OBJECT);
+#if defined(JS_NUNBOX32)
+      // availableGeneralRegs can't know that CloseIter is only using
+      // the payloadReg and not typeReg on x86.
+      available.add(R0.typeReg());
+#endif
       break;
   }
 
@@ -2052,6 +2028,284 @@ static ICStubSpace* StubSpaceForStub(bool makesGCCalls, JSScript* script,
     return icScript->jitScriptStubSpace();
   }
   return script->zone()->jitZone()->optimizedStubSpace();
+}
+
+static const uint32_t MaxFoldedShapes = 16;
+
+bool js::jit::TryFoldingStubs(JSContext* cx, ICFallbackStub* fallback,
+                              JSScript* script, ICScript* icScript) {
+  ICEntry* icEntry = icScript->icEntryForStub(fallback);
+  ICStub* entryStub = icEntry->firstStub();
+
+  // Don't fold unless there are at least two stubs.
+  if (entryStub == fallback) {
+    return true;
+  }
+  ICCacheIRStub* firstStub = entryStub->toCacheIRStub();
+  if (firstStub->next()->isFallback()) {
+    return true;
+  }
+
+  const uint8_t* firstStubData = firstStub->stubDataStart();
+  const CacheIRStubInfo* stubInfo = firstStub->stubInfo();
+
+  // Check to see if:
+  //   a) all of the stubs in this chain have the exact same code.
+  //   b) all of the stubs have the same stub field data, except
+  //      for a single GuardShape where they differ.
+  //   c) at least one stub after the first has a non-zero entry count.
+  //
+  // If all of these conditions hold, then we generate a single stub
+  // that covers all the existing cases by replacing GuardShape with
+  // GuardMultipleShapes.
+
+  uint32_t numActive = 0;
+  Maybe<uint32_t> foldableFieldOffset;
+  RootedValue shape(cx);
+  RootedValueVector shapeList(cx);
+
+  auto addShape = [&shapeList, cx](uintptr_t rawShape) -> bool {
+    Shape* shape = reinterpret_cast<Shape*>(rawShape);
+    if (cx->compartment() != shape->compartment()) {
+      return false;
+    }
+    if (!shapeList.append(PrivateGCThingValue(shape))) {
+      cx->recoverFromOutOfMemory();
+      return false;
+    }
+    return true;
+  };
+
+  for (ICCacheIRStub* other = firstStub->nextCacheIR(); other;
+       other = other->nextCacheIR()) {
+    // Verify that the stubs share the same code.
+    if (other->stubInfo() != stubInfo) {
+      return true;
+    }
+    const uint8_t* otherStubData = other->stubDataStart();
+
+    if (other->enteredCount() > 0) {
+      numActive++;
+    }
+
+    uint32_t fieldIndex = 0;
+    size_t offset = 0;
+    while (stubInfo->fieldType(fieldIndex) != StubField::Type::Limit) {
+      StubField::Type fieldType = stubInfo->fieldType(fieldIndex);
+
+      if (StubField::sizeIsWord(fieldType)) {
+        uintptr_t firstRaw = stubInfo->getStubRawWord(firstStubData, offset);
+        uintptr_t otherRaw = stubInfo->getStubRawWord(otherStubData, offset);
+
+        if (firstRaw != otherRaw) {
+          if (fieldType != StubField::Type::Shape) {
+            // Case 1: a field differs that is not a Shape. We only support
+            // folding GuardShape to GuardMultipleShapes.
+            return true;
+          }
+          if (foldableFieldOffset.isNothing()) {
+            // Case 2: this is the first field where the stub data differs.
+            foldableFieldOffset.emplace(offset);
+            if (!addShape(firstRaw) || !addShape(otherRaw)) {
+              return true;
+            }
+          } else if (*foldableFieldOffset == offset) {
+            // Case 3: this is the corresponding offset in a different stub.
+            if (!addShape(otherRaw)) {
+              return true;
+            }
+          } else {
+            // Case 4: we have found more than one field that differs.
+            return true;
+          }
+        }
+      } else {
+        MOZ_ASSERT(StubField::sizeIsInt64(fieldType));
+
+        // We do not support folding any ops with int64-sized fields.
+        if (stubInfo->getStubRawInt64(firstStubData, offset) !=
+            stubInfo->getStubRawInt64(otherStubData, offset)) {
+          return true;
+        }
+      }
+
+      offset += StubField::sizeInBytes(fieldType);
+      fieldIndex++;
+    }
+
+    // We should never attach two completely identical stubs.
+    MOZ_ASSERT(foldableFieldOffset.isSome());
+  }
+
+  if (numActive == 0) {
+    return true;
+  }
+
+  // Clone the CacheIR, replacing GuardShape with GuardMultipleShapes.
+  CacheIRWriter writer(cx);
+  CacheIRReader reader(stubInfo);
+  CacheIRCloner cloner(firstStub);
+
+  // Initialize the operands.
+  CacheKind cacheKind = stubInfo->kind();
+  for (uint32_t i = 0; i < NumInputsForCacheKind(cacheKind); i++) {
+    writer.setInputOperandId(i);
+  }
+
+  bool success = false;
+  while (reader.more()) {
+    CacheOp op = reader.readOp();
+    switch (op) {
+      case CacheOp::GuardShape: {
+        ObjOperandId objId = reader.objOperandId();
+        uint32_t shapeOffset = reader.stubOffset();
+        if (shapeOffset == *foldableFieldOffset) {
+          // Ensure that the allocation of the ListObject doesn't trigger a GC
+          // and free the stubInfo we're currently reading. Note that
+          // AutoKeepJitScripts isn't sufficient, because optimized stubs can be
+          // discarded even if the JitScript is preserved.
+          gc::AutoSuppressGC suppressGC(cx);
+
+          Rooted<ListObject*> shapeObj(cx, ListObject::create(cx));
+          if (!shapeObj) {
+            return false;
+          }
+          for (uint32_t i = 0; i < shapeList.length(); i++) {
+            if (!shapeObj->append(cx, shapeList[i])) {
+              cx->recoverFromOutOfMemory();
+              return false;
+            }
+          }
+
+          writer.guardMultipleShapes(objId, shapeObj);
+          success = true;
+        } else {
+          Shape* shape = stubInfo->getStubField<Shape*>(firstStub, shapeOffset);
+          writer.guardShape(objId, shape);
+        }
+        break;
+      }
+      default:
+        cloner.cloneOp(op, reader, writer);
+        break;
+    }
+  }
+  if (!success) {
+    // If the shape field that differed was not part of a GuardShape,
+    // we can't fold these stubs together.
+    return true;
+  }
+
+  // Replace the existing stubs with the new folded stub.
+  fallback->discardStubs(cx, icEntry);
+
+  ICAttachResult result = AttachBaselineCacheIRStub(
+      cx, writer, cacheKind, script, icScript, fallback, "StubFold");
+  if (result == ICAttachResult::OOM) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+  MOZ_ASSERT(result == ICAttachResult::Attached);
+
+  fallback->setHasFoldedStub();
+  return true;
+}
+
+static bool AddToFoldedStub(JSContext* cx, const CacheIRWriter& writer,
+                            ICScript* icScript, ICFallbackStub* fallback) {
+  ICEntry* icEntry = icScript->icEntryForStub(fallback);
+  ICStub* entryStub = icEntry->firstStub();
+
+  // We only update folded stubs if they're the only stub in the IC.
+  if (entryStub == fallback) {
+    return false;
+  }
+  ICCacheIRStub* stub = entryStub->toCacheIRStub();
+  if (!stub->next()->isFallback()) {
+    return false;
+  }
+
+  const CacheIRStubInfo* stubInfo = stub->stubInfo();
+  const uint8_t* stubData = stub->stubDataStart();
+
+  Maybe<uint32_t> shapeFieldOffset;
+  RootedValue newShape(cx);
+  Rooted<ListObject*> foldedShapes(cx);
+
+  CacheIRReader stubReader(stubInfo);
+  CacheIRReader newReader(writer);
+  while (newReader.more() && stubReader.more()) {
+    CacheOp newOp = newReader.readOp();
+    CacheOp stubOp = stubReader.readOp();
+    switch (stubOp) {
+      case CacheOp::GuardMultipleShapes: {
+        // Check that the new stub has a corresponding GuardShape.
+        if (newOp != CacheOp::GuardShape) {
+          return false;
+        }
+
+        // Check that the object being guarded is the same.
+        if (newReader.objOperandId() != stubReader.objOperandId()) {
+          return false;
+        }
+
+        // Check that the field offset is the same.
+        uint32_t newShapeOffset = newReader.stubOffset();
+        uint32_t stubShapesOffset = stubReader.stubOffset();
+        if (newShapeOffset != stubShapesOffset) {
+          return false;
+        }
+        MOZ_ASSERT(shapeFieldOffset.isNothing());
+        shapeFieldOffset.emplace(newShapeOffset);
+
+        // Get the shape from the new stub
+        StubField shapeField =
+            writer.readStubField(newShapeOffset, StubField::Type::Shape);
+        Shape* shape = reinterpret_cast<Shape*>(shapeField.asWord());
+        newShape = PrivateGCThingValue(shape);
+
+        // Get the shape array from the old stub.
+        JSObject* shapeList =
+            stubInfo->getStubField<JSObject*>(stub, stubShapesOffset);
+        foldedShapes = &shapeList->as<ListObject>();
+        MOZ_ASSERT(foldedShapes->compartment() == shape->compartment());
+        break;
+      }
+      default: {
+        // Check that the op is the same.
+        if (newOp != stubOp) {
+          return false;
+        }
+
+        // Check that the arguments are the same.
+        uint32_t argLength = CacheIROpInfos[size_t(newOp)].argLength;
+        for (uint32_t i = 0; i < argLength; i++) {
+          if (newReader.readByte() != stubReader.readByte()) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+
+  MOZ_ASSERT(shapeFieldOffset.isSome());
+
+  // Check to verify that all the other stub fields are the same.
+  if (!writer.stubDataEqualsIgnoring(stubData, *shapeFieldOffset)) {
+    return false;
+  }
+
+  // Limit the maximum number of shapes we will add before giving up.
+  if (foldedShapes->length() == MaxFoldedShapes) {
+    return false;
+  }
+
+  if (!foldedShapes->append(cx, newShape)) {
+    cx->recoverFromOutOfMemory();
+    return false;
+  }
+
+  return true;
 }
 
 ICAttachResult js::jit::AttachBaselineCacheIRStub(
@@ -2149,6 +2403,21 @@ ICAttachResult js::jit::AttachBaselineCacheIRStub(
             outerScript->filename(), outerScript->lineno(),
             outerScript->column());
     return ICAttachResult::DuplicateStub;
+  }
+
+  // Try including this case in an existing folded stub.
+  if (stub->hasFoldedStub() && AddToFoldedStub(cx, writer, icScript, stub)) {
+    // Instead of adding a new stub, we have added a new case to an
+    // existing folded stub. We do not have to invalidate Warp,
+    // because the ListObject that stores the cases is shared between
+    // baseline and Warp. Reset the entered count for the fallback
+    // stub so that we can still transpile, and reset the bailout
+    // counter if we have already been transpiled.
+    stub->resetEnteredCount();
+    if (stub->usedByTranspiler() && outerScript->hasIonScript()) {
+      outerScript->ionScript()->resetNumFixableBailouts();
+    }
+    return ICAttachResult::Attached;
   }
 
   // Time to allocate and attach a new stub.
@@ -3145,7 +3414,7 @@ bool BaselineCacheIRCompiler::emitNewPlainObjectResult(uint32_t numFixedSlots,
     masm.loadPtr(shapeAddr, shape);  // This might have been overwritten.
     masm.Push(shape);
 
-    using Fn = JSObject* (*)(JSContext*, Handle<Shape*>, gc::AllocKind,
+    using Fn = JSObject* (*)(JSContext*, Handle<SharedShape*>, gc::AllocKind,
                              gc::AllocSite*);
     callVM<Fn, NewPlainObjectBaselineFallback>(masm);
 

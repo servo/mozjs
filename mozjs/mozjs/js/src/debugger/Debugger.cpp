@@ -57,6 +57,7 @@
 #include "jit/BaselineJIT.h"           // for FinishDiscardBaselineScript
 #include "jit/Invalidation.h"         // for RecompileInfoVector
 #include "jit/JitContext.h"           // for JitContext
+#include "jit/JitOptions.h"           // for fuzzingSafe
 #include "jit/JitScript.h"            // for JitScript
 #include "jit/JSJitFrameIter.h"       // for InlineFrameIterator
 #include "jit/RematerializedFrame.h"  // for RematerializedFrame
@@ -3852,6 +3853,13 @@ void DebugAPI::slowPathTraceGeneratorFrame(JSTracer* tracer,
     return;
   }
 
+  mozilla::Maybe<AutoLockGC> lock;
+  GCMarker* marker = GCMarker::fromTracer(tracer);
+  if (marker->isParallelMarking()) {
+    // Synchronise access to generatorFrames.
+    lock.emplace(marker->runtime());
+  }
+
   for (Realm::DebuggerVectorEntry& entry : generator->realm()->getDebuggers()) {
     Debugger* dbg = entry.dbg.unbarrieredGet();
 
@@ -5957,6 +5965,13 @@ bool Debugger::CallData::findObjects() {
     return false;
   }
 
+  // Returning internal objects (such as self-hosting intrinsics) to JS is not
+  // fuzzing-safe. We still want to call parseQuery/findObjects when fuzzing so
+  // just clear the Vector here.
+  if (fuzzingSafe) {
+    query.objects.clear();
+  }
+
   size_t length = query.objects.length();
   Rooted<ArrayObject*> result(cx, NewDenseFullyAllocatedArray(cx, length));
   if (!result) {
@@ -5990,7 +6005,7 @@ bool Debugger::CallData::findAllGlobals() {
         continue;
       }
 
-      if (!r->hasLiveGlobal()) {
+      if (!r->hasInitializedGlobal()) {
         continue;
       }
 
@@ -6119,7 +6134,7 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::NoScopeBindingCache scopeCache;
-  frontend::CompilationState compilationState(cx, allocScope, input.get());
+  frontend::CompilationState compilationState(cx, &ec, allocScope, input.get());
   if (!compilationState.init(cx, &ec, &scopeCache)) {
     return false;
   }

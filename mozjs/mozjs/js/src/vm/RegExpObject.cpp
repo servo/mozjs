@@ -245,8 +245,8 @@ RegExpShared* RegExpObject::createShared(JSContext* cx,
   return shared;
 }
 
-Shape* RegExpObject::assignInitialShape(JSContext* cx,
-                                        Handle<RegExpObject*> self) {
+SharedShape* RegExpObject::assignInitialShape(JSContext* cx,
+                                              Handle<RegExpObject*> self) {
   MOZ_ASSERT(self->empty());
 
   static_assert(LAST_INDEX_SLOT == 0);
@@ -258,7 +258,7 @@ Shape* RegExpObject::assignInitialShape(JSContext* cx,
     return nullptr;
   }
 
-  return self->shape();
+  return self->sharedShape();
 }
 
 void RegExpObject::initIgnoringLastIndex(JSAtom* source, RegExpFlags flags) {
@@ -423,21 +423,33 @@ JSLinearString* js::EscapeRegExpPattern(JSContext* cx, Handle<JSAtom*> src) {
 
   // We may never need to use |sb|. Start using it lazily.
   JSStringBuilder sb(cx);
-
+  bool escapeFailed = false;
   if (src->hasLatin1Chars()) {
     JS::AutoCheckCannotGC nogc;
-    if (!::EscapeRegExpPattern(sb, src->latin1Chars(nogc), src->length())) {
-      return nullptr;
-    }
+    escapeFailed =
+        !::EscapeRegExpPattern(sb, src->latin1Chars(nogc), src->length());
   } else {
     JS::AutoCheckCannotGC nogc;
-    if (!::EscapeRegExpPattern(sb, src->twoByteChars(nogc), src->length())) {
-      return nullptr;
-    }
+    escapeFailed =
+        !::EscapeRegExpPattern(sb, src->twoByteChars(nogc), src->length());
+  }
+  if (escapeFailed) {
+    sb.failure();
+    return nullptr;
   }
 
   // Step 3.
-  return sb.empty() ? src : sb.finishString();
+  if (sb.empty()) {
+    sb.ok();
+    return src;
+  }
+  auto* result = sb.finishString();
+  if (!result) {
+    sb.failure();
+    return nullptr;
+  }
+  sb.ok();
+  return result;
 }
 
 // ES6 draft rev32 21.2.5.14. Optimized for RegExpObject.
@@ -454,38 +466,53 @@ JSLinearString* RegExpObject::toString(JSContext* cx,
   JSStringBuilder sb(cx);
   size_t len = escapedSrc->length();
   if (!sb.reserve(len + 2)) {
+    sb.failure();
     return nullptr;
   }
   sb.infallibleAppend('/');
   if (!sb.append(escapedSrc)) {
+    sb.failure();
     return nullptr;
   }
   sb.infallibleAppend('/');
 
   // Steps 5-7.
   if (obj->hasIndices() && !sb.append('d')) {
+    sb.failure();
     return nullptr;
   }
   if (obj->global() && !sb.append('g')) {
+    sb.failure();
     return nullptr;
   }
   if (obj->ignoreCase() && !sb.append('i')) {
+    sb.failure();
     return nullptr;
   }
   if (obj->multiline() && !sb.append('m')) {
+    sb.failure();
     return nullptr;
   }
   if (obj->dotAll() && !sb.append('s')) {
+    sb.failure();
     return nullptr;
   }
   if (obj->unicode() && !sb.append('u')) {
+    sb.failure();
     return nullptr;
   }
   if (obj->sticky() && !sb.append('y')) {
+    sb.failure();
     return nullptr;
   }
 
-  return sb.finishString();
+  auto* result = sb.finishString();
+  if (!result) {
+    sb.failure();
+    return nullptr;
+  }
+  sb.ok();
+  return result;
 }
 
 template <typename CharT>
@@ -543,15 +570,6 @@ RegExpShared::RegExpShared(JSAtom* source, RegExpFlags flags)
     : CellWithTenuredGCPointer(source), pairCount_(0), flags(flags) {}
 
 void RegExpShared::traceChildren(JSTracer* trc) {
-  // Discard code to avoid holding onto ExecutablePools.
-  gc::GCRuntime* gc = &trc->runtime()->gc;
-  // Bug 1758095: isIncrementalGCInProgress() also returns true when called from
-  // the collector during a non-incremental GC.
-  if (trc->isMarkingTracer() && gc->isIncrementalGCInProgress() &&
-      gc->isShrinkingGC()) {
-    discardJitCode();
-  }
-
   TraceNullableCellHeaderEdge(trc, this, "RegExpShared source");
   if (kind() == RegExpShared::Kind::Atom) {
     TraceNullableEdge(trc, &patternAtom_, "RegExpShared pattern atom");

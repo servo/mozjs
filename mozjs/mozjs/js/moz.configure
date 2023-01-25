@@ -179,24 +179,6 @@ def enable_decorators(value):
 set_config("ENABLE_DECORATORS", enable_decorators)
 set_define("ENABLE_DECORATORS", enable_decorators)
 
-# Enable JS Streams
-# ===================================================
-option(
-    "--enable-js-streams",
-    default=False,
-    help="Enable non-default JS Streams implementation",
-)
-
-
-@depends("--enable-js-streams")
-def enable_js_streams(value):
-    if value:
-        return True
-
-
-set_config("MOZ_JS_STREAMS", enable_js_streams)
-set_define("MOZ_JS_STREAMS", enable_js_streams)
-
 # JIT support
 # =======================================================
 @depends(target, "--enable-record-tuple")
@@ -697,33 +679,6 @@ def wasm_gc(value, function_references):
 set_config("ENABLE_WASM_GC", wasm_gc)
 set_define("ENABLE_WASM_GC", wasm_gc)
 
-
-# Support for WebAssembly private ref types.
-# Prevent (ref T) types from being exposed to JS content so that wasm need do
-# no typechecking at the JS/wasm boundary
-# ===========================================================================
-
-
-@depends(milestone.is_nightly, "--enable-wasm-gc")
-def default_wasm_private_reftypes(is_nightly, gc):
-    if gc and is_nightly:
-        return True
-
-
-option(
-    "--enable-wasm-private-reftypes",
-    default=default_wasm_private_reftypes,
-    help="{Enable|Disable} WebAssembly private reference types",
-)
-
-set_config(
-    "WASM_PRIVATE_REFTYPES",
-    depends_if("--enable-wasm-private-reftypes")(lambda x: True),
-)
-set_define(
-    "WASM_PRIVATE_REFTYPES",
-    depends_if("--enable-wasm-private-reftypes")(lambda x: True),
-)
 
 # Support for WebAssembly shared memory and atomics.
 #

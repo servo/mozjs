@@ -42,11 +42,9 @@ struct V128 {
   }
 
   template <typename T>
-  T extractLane(unsigned lane) const {
-    T result;
+  void extractLane(unsigned lane, T* result) const {
     MOZ_ASSERT(lane < 16 / sizeof(T));
-    memcpy(&result, bytes + sizeof(T) * lane, sizeof(T));
-    return result;
+    memcpy(result, bytes + sizeof(T) * lane, sizeof(T));
   }
 
   template <typename T>
@@ -267,8 +265,8 @@ Value UnboxFuncRef(FuncRef val);
 class LitVal {
  public:
   union Cell {
-    int32_t i32_;
-    int64_t i64_;
+    uint32_t i32_;
+    uint64_t i64_;
     float f32_;
     double f64_;
     wasm::V128 v128_;
@@ -276,26 +274,22 @@ class LitVal {
 
     Cell() : v128_() {}
     ~Cell() = default;
+
+    WASM_CHECK_CACHEABLE_POD(i32_, i64_, f32_, f64_, v128_);
+    WASM_ALLOW_NON_CACHEABLE_POD_FIELD(
+        ref_,
+        "The pointer value in ref_ is guaranteed to always be null in a "
+        "LitVal.");
   };
 
  protected:
   ValType type_;
   Cell cell_;
 
-  // We check the fields of cell_ here instead of in the union to avoid a
-  // template issue. In addition, Cell is only cacheable POD when used in
-  // LitVal and not Val, so checking here makes sense.
-  WASM_CHECK_CACHEABLE_POD(type_, cell_.i32_, cell_.i64_, cell_.f32_,
-                           cell_.f64_, cell_.v128_);
-  WASM_ALLOW_NON_CACHEABLE_POD_FIELD(
-      cell_.ref_,
-      "The pointer value in ref_ is guaranteed to always be null in a LitVal.");
-
  public:
   LitVal() : type_(ValType()), cell_{} {}
 
   explicit LitVal(ValType type) : type_(type) {
-    MOZ_ASSERT(type.isDefaultable());
     switch (type.kind()) {
       case ValType::Kind::I32: {
         cell_.i32_ = 0;
@@ -369,9 +363,11 @@ class LitVal {
     MOZ_ASSERT(type_ == ValType::V128);
     return cell_.v128_;
   }
+
+  WASM_DECLARE_FRIEND_SERIALIZE(LitVal);
 };
 
-WASM_DECLARE_CACHEABLE_POD(LitVal);
+WASM_DECLARE_CACHEABLE_POD(LitVal::Cell);
 
 // A Val is a LitVal that can contain (non-null) pointers to GC things. All Vals
 // must be used with the rooting APIs as they may contain JS objects.
@@ -439,12 +435,13 @@ class MOZ_NON_PARAM Val : public LitVal {
 
   // Initialize from `loc` which is a rooted location and needs no barriers.
   void initFromRootedLocation(ValType type, const void* loc);
+  void initFromHeapLocation(ValType type, const void* loc);
 
   // Write to `loc` which is a rooted location and needs no barriers.
   void writeToRootedLocation(void* loc, bool mustWrite64) const;
 
   // Read from `loc` which is in the heap.
-  void readFromHeapLocation(void* loc);
+  void readFromHeapLocation(const void* loc);
   // Write to `loc` which is in the heap and must be barriered.
   void writeToHeapLocation(void* loc) const;
 

@@ -20,9 +20,7 @@ if sys.version_info[0] < 3:
 else:
     from importlib.abc import MetaPathFinder
 
-
 from types import ModuleType
-
 
 STATE_DIR_FIRST_RUN = """
 Mach and the build system store shared state in a common directory
@@ -30,11 +28,9 @@ on the filesystem. The following directory will be created:
 
   {}
 
-If you would like to use a different directory, hit CTRL+c, set the
-MOZBUILD_STATE_PATH environment variable to the directory you'd like to
-use, and run Mach again.
-
-Press ENTER/RETURN to continue or CTRL+c to abort.
+If you would like to use a different directory, rename or move it to your
+desired location, and set the MOZBUILD_STATE_PATH environment variable
+accordingly.
 """.strip()
 
 
@@ -145,7 +141,7 @@ def initialize(topsrcdir):
         )
     ]
 
-    from mach.util import setenv, get_state_dir
+    from mach.util import get_state_dir, setenv
 
     state_dir = _create_state_dir()
 
@@ -157,7 +153,6 @@ def initialize(topsrcdir):
 
     import mach.base
     import mach.main
-
     from mach.main import MachCommandReference
 
     # Centralized registry of available mach commands
@@ -369,6 +364,7 @@ def initialize(topsrcdir):
         "storybook": MachCommandReference(
             "browser/components/storybook/mach_commands.py"
         ),
+        "widgets": MachCommandReference("toolkit/content/widgets/mach_commands.py"),
     }
 
     # Set a reasonable limit to the number of open files.
@@ -585,11 +581,6 @@ def _create_state_dir():
         if not os.path.exists(state_dir):
             if not os.environ.get("MOZ_AUTOMATION"):
                 print(STATE_DIR_FIRST_RUN.format(state_dir))
-                try:
-                    sys.stdin.readline()
-                    print("\n")
-                except KeyboardInterrupt:
-                    sys.exit(1)
 
             print("Creating default state directory: {}".format(state_dir))
 

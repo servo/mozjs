@@ -239,6 +239,15 @@
     obj: ObjId
     shape: ShapeField
 
+- name: GuardMultipleShapes
+  shared: true
+  transpile: true
+  cost_estimate: 2
+  custom_writer: true
+  args:
+    obj: ObjId
+    shapes: ObjectField
+
 - name: GuardProto
   shared: false
   transpile: true
@@ -474,6 +483,14 @@
     sym: SymbolId
     expected: SymbolField
 
+- name: GuardSpecificInt32
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    num: Int32Id
+    expected: Int32Imm
+
 - name: GuardNoDenseElements
   shared: true
   transpile: true
@@ -514,7 +531,7 @@
     result: NumberId
 
 - name: GuardAndGetIterator
-  shared: false
+  shared: true
   transpile: false
   cost_estimate: 4
   args:
@@ -699,6 +716,17 @@
     result: ObjId
     obj: ObjectField
 
+# This is just LoadObject with extra information for the purpose of optimizing
+# out shape guards if we're just storing to slots of the receiver object.
+- name: LoadProtoObject
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    result: ObjId
+    protoObj: ObjectField
+    receiverObj: ObjId
+
 - name: LoadProto
   shared: true
   transpile: true
@@ -801,6 +829,14 @@
     obj: ObjId
     id: ValId
     hasOwn: BoolImm
+
+- name: ObjectToIteratorResult
+  shared: true
+  transpile: true
+  cost_estimate: 5
+  args:
+    obj: ObjId
+    enumeratorsAddr: RawPointerField
 
 - name: ValueToIteratorResult
   shared: true
@@ -1409,6 +1445,21 @@
     input: NumberId
     fun: UnaryMathFunctionImm
 
+- name: NumberParseIntResult
+  shared: true
+  transpile: true
+  cost_estimate: 5
+  args:
+    str: StringId
+    radix: Int32Id
+
+- name: DoubleParseIntResult
+  shared: true
+  transpile: true
+  cost_estimate: 2
+  args:
+    num: NumberId
+
 - name: ObjectToStringResult
   shared: true
   transpile: true
@@ -1636,6 +1687,14 @@
   args:
     input: NumberId
     result: StringId
+
+- name: Int32ToStringWithBaseResult
+  shared: true
+  transpile: true
+  cost_estimate: 3
+  args:
+    input: Int32Id
+    base: Int32Id
 
 - name: BooleanToString
   shared: true
@@ -1943,6 +2002,15 @@
   args:
     obj: ObjId
 
+- name: LinearizeForCharAccess
+  shared: true
+  transpile: true
+  cost_estimate: 4
+  args:
+    str: StringId
+    index: Int32Id
+    result: StringId
+
 - name: LoadStringCharResult
   shared: false
   transpile: true
@@ -1950,6 +2018,7 @@
   args:
     str: StringId
     index: Int32Id
+    handleOOB: BoolImm
 
 - name: LoadStringCharCodeResult
   shared: true
@@ -1958,6 +2027,7 @@
   args:
     str: StringId
     index: Int32Id
+    handleOOB: BoolImm
 
 - name: LoadStringLengthResult
   shared: true
@@ -2775,6 +2845,13 @@
     set: ObjId
     obj: ObjId
 
+- name: SetSizeResult
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    set: ObjId
+
 - name: MapHasResult
   shared: true
   transpile: true
@@ -2871,6 +2948,13 @@
     map: ObjId
     obj: ObjId
 
+- name: MapSizeResult
+  shared: true
+  transpile: true
+  cost_estimate: 1
+  args:
+    map: ObjId
+
 - name: ArrayFromArgumentsObjectResult
   shared: true
   transpile: true
@@ -2921,3 +3005,12 @@
   args:
     val: ValId
     mustBeRecovered: BoolImm
+
+#ifdef FUZZING_JS_FUZZILLI
+- name: FuzzilliHashResult
+  shared: true
+  transpile: true
+  cost_estimate: 4
+  args:
+    val: ValId
+#endif

@@ -5,6 +5,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import argparse
+import errno
 import itertools
 import json
 import logging
@@ -17,26 +18,21 @@ import subprocess
 import sys
 import tempfile
 import time
-import errno
+from pathlib import Path
 
 import mozbuild.settings  # noqa need @SettingsProvider hook to execute
 import mozpack.path as mozpath
-
-from pathlib import Path
 from mach.decorators import (
+    Command,
     CommandArgument,
     CommandArgumentGroup,
-    Command,
     SettingsProvider,
     SubCommand,
 )
-
-from mozbuild.base import (
-    BinaryNotFoundException,
-    BuildEnvironmentNotFoundException,
-    MachCommandConditions as conditions,
-    MozbuildObject,
-)
+from mozbuild.base import BinaryNotFoundException, BuildEnvironmentNotFoundException
+from mozbuild.base import MachCommandConditions as conditions
+from mozbuild.base import MozbuildObject
+from mozbuild.util import MOZBUILD_METRICS_PATH
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -105,21 +101,20 @@ def watch(command_context, verbose=False):
         sys.exit(3)
 
 
-@Command("cargo", category="build", description="Invoke cargo in useful ways.")
-def cargo(command_context):
-    """Invoke cargo in useful ways."""
-    command_context._sub_mach(["help", "cargo"])
-    return 1
-
-
-@SubCommand(
+@Command(
     "cargo",
-    "check",
-    description="Run `cargo check` on a given crate.  Defaults to gkrust.",
+    category="build",
+    description="Run `cargo <cargo_command>` on a given crate.  Defaults to gkrust.",
+    metrics_path=MOZBUILD_METRICS_PATH,
+)
+@CommandArgument(
+    "cargo_command",
+    default=None,
+    choices=["check", "udeps", "audit", "clippy"],
+    help="The cargo subcommand to run.",
 )
 @CommandArgument(
     "--all-crates",
-    default=None,
     action="store_true",
     help="Check all of the crates in the tree.",
 )
@@ -127,7 +122,7 @@ def cargo(command_context):
 @CommandArgument(
     "--jobs",
     "-j",
-    default="1",
+    default="0",
     nargs="?",
     metavar="jobs",
     type=int,
@@ -139,14 +134,47 @@ def cargo(command_context):
     action="store_true",
     help="Emit error messages as JSON.",
 )
-def check(
+@CommandArgument(
+    "--no-errors",
+    action="store_true",
+    help="Do not return an error exit code if the subcommands errors out.",
+)
+@CommandArgument(
+    "subcommand_args",
+    nargs=argparse.REMAINDER,
+    help="These arguments are passed as-is to the cargo subcommand.",
+)
+def cargo(
     command_context,
+    cargo_command,
     all_crates=None,
     crates=None,
     jobs=0,
     verbose=False,
     message_format_json=False,
+    no_errors=False,
+    subcommand_args=[],
 ):
+
+    from mozbuild.controller.building import BuildDriver
+
+    command_context.log_manager.enable_all_structured_loggers()
+
+    if cargo_command in ["check", "udeps", "clippy"]:
+        try:
+            command_context.config_environment
+        except BuildEnvironmentNotFoundException:
+            build = command_context._spawn(BuildDriver)
+            ret = build.build(
+                command_context.metrics,
+                what=["pre-export", "export"],
+                jobs=jobs,
+                verbose=verbose,
+                mach_context=command_context._mach_context,
+            )
+            if ret != 0:
+                return ret
+
     # XXX duplication with `mach vendor rust`
     crates_and_roots = {
         "gkrust": "toolkit/library/rust",
@@ -156,7 +184,7 @@ def check(
 
     if all_crates:
         crates = crates_and_roots.keys()
-    elif crates is None or crates == []:
+    elif not crates:
         crates = ["gkrust"]
 
     for crate in crates:
@@ -168,16 +196,25 @@ def check(
             )
             return 1
 
-        check_targets = [
-            "force-cargo-library-check",
-            "force-cargo-host-library-check",
-            "force-cargo-program-check",
-            "force-cargo-host-program-check",
+        targets = [
+            "force-cargo-library-%s" % cargo_command,
+            "force-cargo-host-library-%s" % cargo_command,
+            "force-cargo-program-%s" % cargo_command,
+            "force-cargo-host-program-%s" % cargo_command,
         ]
+
+        if subcommand_args:
+            targets = targets + ["cargo_extra_cli_flags=%s" % " ".join(subcommand_args)]
+        if cargo_command == "audit":
+            targets = targets + [
+                "cargo_build_flags=-f %s/Cargo.lock" % command_context.topsrcdir
+            ]
 
         append_env = {}
         if message_format_json:
             append_env["USE_CARGO_JSON_MESSAGE_FORMAT"] = "1"
+        if no_errors:
+            append_env["CARGO_NO_ERR"] = "1"
 
         ret = command_context._run_make(
             srcdir=False,
@@ -185,7 +222,7 @@ def check(
             ensure_exit_code=0,
             silent=not verbose,
             print_directory=False,
-            target=check_targets,
+            target=targets,
             num_jobs=jobs,
             append_env=append_env,
         )
@@ -871,8 +908,9 @@ def gtest(
             pass_thru=True,
         )
 
-    from mozprocess import ProcessHandlerMixin
     import functools
+
+    from mozprocess import ProcessHandlerMixin
 
     def handle_line(job_id, line):
         # Prepend the jobId
@@ -926,7 +964,7 @@ def android_gtest(
     setup_logging("mach-gtest", {}, {default_format: sys.stdout}, format_args)
 
     # ensure that a device is available and test app is installed
-    from mozrunner.devices.android_device import verify_android_device, get_adb_path
+    from mozrunner.devices.android_device import get_adb_path, verify_android_device
 
     verify_android_device(
         command_context, install=install, app=package, device_serial=device_serial
@@ -1026,8 +1064,8 @@ def install(command_context, **kwargs):
     """Install a package."""
     if conditions.is_android(command_context):
         from mozrunner.devices.android_device import (
-            verify_android_device,
             InstallIntent,
+            verify_android_device,
         )
 
         ret = (
@@ -1366,9 +1404,9 @@ def _run_android(
     use_existing_process=False,
 ):
     from mozrunner.devices.android_device import (
-        verify_android_device,
-        _get_device,
         InstallIntent,
+        _get_device,
+        verify_android_device,
     )
     from six.moves import shlex_quote
 
@@ -1762,7 +1800,7 @@ def _run_desktop(
     stacks,
     show_dump_stats,
 ):
-    from mozprofile import Profile, Preferences
+    from mozprofile import Preferences, Profile
 
     try:
         if packaged:
@@ -2086,7 +2124,34 @@ def repackage(command_context):
     scriptworkers in order to bundle things up into shippable formats, such as a
     .dmg on OSX or an installer exe on Windows.
     """
-    print("Usage: ./mach repackage [dmg|installer|mar] [args...]")
+    print("Usage: ./mach repackage [dmg|pkg|installer|mar] [args...]")
+
+
+@SubCommand(
+    "repackage", "deb", description="Repackage a tar file into a .deb for Linux"
+)
+@CommandArgument("--input", "-i", type=str, required=True, help="Input filename")
+@CommandArgument("--output", "-o", type=str, required=True, help="Output filename")
+@CommandArgument("--arch", type=str, required=True, help="One of ['x86', 'x86_64']")
+@CommandArgument(
+    "--templates",
+    type=str,
+    required=True,
+    help="Location of the templates used to generate the debian/ directory files",
+)
+def repackage_deb(command_context, input, output, arch, templates):
+    if not os.path.exists(input):
+        print("Input file does not exist: %s" % input)
+        return 1
+
+    template_dir = os.path.join(
+        command_context.topsrcdir,
+        templates,
+    )
+
+    from mozbuild.repackaging.deb import repackage_deb
+
+    repackage_deb(input, output, template_dir, arch)
 
 
 @SubCommand("repackage", "dmg", description="Repackage a tar file into a .dmg for OSX")
@@ -2097,16 +2162,22 @@ def repackage_dmg(command_context, input, output):
         print("Input file does not exist: %s" % input)
         return 1
 
-    if not os.path.exists(os.path.join(command_context.topobjdir, "config.status")):
-        print(
-            "config.status not found.  Please run |mach configure| "
-            "prior to |mach repackage|."
-        )
-        return 1
-
     from mozbuild.repackaging.dmg import repackage_dmg
 
     repackage_dmg(input, output)
+
+
+@SubCommand("repackage", "pkg", description="Repackage a tar file into a .pkg for OSX")
+@CommandArgument("--input", "-i", type=str, required=True, help="Input filename")
+@CommandArgument("--output", "-o", type=str, required=True, help="Output filename")
+def repackage_pkg(command_context, input, output):
+    if not os.path.exists(input):
+        print("Input file does not exist: %s" % input)
+        return 1
+
+    from mozbuild.repackaging.pkg import repackage_pkg
+
+    repackage_pkg(input, output)
 
 
 @SubCommand(
@@ -2386,30 +2457,10 @@ def repackage_msix(
             )
             return 1
 
-    template = os.path.join(
-        command_context.topsrcdir, "browser", "installer", "windows", "msix"
-    )
-
-    # Discard everything after a '#' comment character.
-    locale_allowlist = set(
-        locale.partition("#")[0].strip().lower()
-        for locale in open(os.path.join(template, "msix-all-locales")).readlines()
-        if locale.partition("#")[0].strip()
-    )
-
-    # Release (official) and Beta share branding.
-    branding = os.path.join(
-        command_context.topsrcdir,
-        "browser",
-        "branding",
-        channel if channel != "beta" else "official",
-    )
-
     output = repackage_msix(
         input,
+        command_context.topsrcdir,
         channel=channel,
-        template=template,
-        branding=branding,
         arch=arch,
         displayname=identity_name,
         vendor=vendor,
@@ -2417,7 +2468,6 @@ def repackage_msix(
         publisher_display_name=publisher_display_name,
         version=version,
         distribution_dirs=distribution_dirs,
-        locale_allowlist=locale_allowlist,
         # Configure this run.
         force=True,
         verbose=verbose,

@@ -21,6 +21,7 @@
 #include "jsmath.h"
 
 #include "frontend/CompilationStencil.h"
+#include "frontend/ParserAtom.h"  // frontend::WellKnownParserAtoms
 #include "gc/GC.h"
 #include "gc/PublicIterators.h"
 #include "jit/IonCompileTask.h"
@@ -39,7 +40,8 @@
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
 #include "vm/PromiseObject.h"  // js::PromiseObject
-#include "vm/Warnings.h"       // js::WarnNumberUC
+#include "vm/SharedImmutableStringsCache.h"
+#include "vm/Warnings.h"  // js::WarnNumberUC
 #include "wasm/WasmSignalHandlers.h"
 
 #include "debugger/DebugAPI-inl.h"
@@ -77,6 +79,9 @@ const JSSecurityCallbacks js::NullSecurityCallbacks = {};
 static const JSWrapObjectCallbacks DefaultWrapObjectCallbacks = {
     TransparentObjectWrapper, nullptr};
 
+extern bool DefaultHostEnsureCanAddPrivateElementCallback(JSContext* cx,
+                                                          HandleValue val);
+
 static size_t ReturnZeroSize(const void* p) { return 0; }
 
 JSRuntime::JSRuntime(JSRuntime* parentRuntime)
@@ -100,6 +105,7 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       DOMcallbacks(nullptr),
       destroyPrincipals(nullptr),
       readPrincipals(nullptr),
+      canAddPrivateElement(&DefaultHostEnsureCanAddPrivateElementCallback),
       warningReporter(nullptr),
       selfHostedLazyScript(),
       geckoProfiler_(thisFromCtor()),
@@ -121,6 +127,7 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       defaultLocale(nullptr),
       profilingScripts(false),
       scriptAndCountsVector(nullptr),
+      watchtowerTestingLog(nullptr),
       lcovOutput_(),
       jitRuntime_(nullptr),
       gc(thisFromCtor()),
@@ -201,13 +208,6 @@ bool JSRuntime::init(JSContext* cx, uint32_t maxbytes) {
   // Also see the comment in JS::Realm::init().
   js::ResetTimeZoneInternal(ResetTimeZoneMode::DontResetIfOffsetUnchanged);
 
-  if (!parentRuntime) {
-    sharedImmutableStrings_ = js::SharedImmutableStringsCache::Create();
-    if (!sharedImmutableStrings_) {
-      return false;
-    }
-  }
-
   return true;
 }
 
@@ -219,6 +219,8 @@ void JSRuntime::destroyRuntime() {
 #ifdef JS_HAS_INTL_API
   sharedIntlData.ref().destroyInstance();
 #endif
+
+  watchtowerTestingLog.ref().reset();
 
   // Caches might hold on ScriptData which are saved in the ScriptDataTable.
   // Clear all stencils from caches to remove ScriptDataTable entries.
@@ -313,14 +315,15 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
   rtSizes->object += mallocSizeOf(this);
 
   rtSizes->atomsTable += atoms().sizeOfIncludingThis(mallocSizeOf);
-  rtSizes->gc.marker += gc.marker.sizeOfExcludingThis(mallocSizeOf);
+  rtSizes->gc.marker += gc.markers.sizeOfExcludingThis(mallocSizeOf);
+  for (auto& marker : gc.markers) {
+    rtSizes->gc.marker += marker->sizeOfIncludingThis(mallocSizeOf);
+  }
 
   if (!parentRuntime) {
     rtSizes->atomsTable += mallocSizeOf(staticStrings);
     rtSizes->atomsTable += mallocSizeOf(commonNames);
     rtSizes->atomsTable += permanentAtoms()->sizeOfIncludingThis(mallocSizeOf);
-    rtSizes->atomsTable +=
-        commonParserNames.ref()->sizeOfIncludingThis(mallocSizeOf);
 
     rtSizes->selfHostStencil =
         selfHostStencilInput_->sizeOfIncludingThis(mallocSizeOf) +
@@ -341,9 +344,13 @@ void JSRuntime::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
       gc.nursery().sizeOfMallocedBuffers(mallocSizeOf);
   gc.storeBuffer().addSizeOfExcludingThis(mallocSizeOf, &rtSizes->gc);
 
-  if (sharedImmutableStrings_) {
+  if (isMainRuntime()) {
     rtSizes->sharedImmutableStringsCache +=
-        sharedImmutableStrings_->sizeOfExcludingThis(mallocSizeOf);
+        js::SharedImmutableStringsCache::getSingleton().sizeOfExcludingThis(
+            mallocSizeOf);
+    rtSizes->atomsTable +=
+        js::frontend::WellKnownParserAtoms::getSingleton().sizeOfExcludingThis(
+            mallocSizeOf);
   }
 
 #ifdef JS_HAS_INTL_API

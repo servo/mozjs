@@ -895,7 +895,7 @@ bool ParserBase::noteUsedNameInternal(TaggedParserAtomIndex name,
     return true;
   }
 
-  return usedNames_.noteUse(cx_, name, visibility, pc_->scriptId(), scope->id(),
+  return usedNames_.noteUse(ec_, name, visibility, pc_->scriptId(), scope->id(),
                             tokenPosition);
 }
 
@@ -1077,14 +1077,13 @@ static MOZ_ALWAYS_INLINE void InitializeBindingData(
   data->length = count;
 }
 
-Maybe<GlobalScope::ParserData*> NewGlobalScopeData(JSContext* cx,
-                                                   ErrorContext* ec,
+Maybe<GlobalScope::ParserData*> NewGlobalScopeData(ErrorContext* ec,
                                                    ParseContext::Scope& scope,
                                                    LifoAlloc& alloc,
                                                    ParseContext* pc) {
-  ParserBindingNameVector vars(cx);
-  ParserBindingNameVector lets(cx);
-  ParserBindingNameVector consts(cx);
+  ParserBindingNameVector vars(ec);
+  ParserBindingNameVector lets(ec);
+  ParserBindingNameVector consts(ec);
 
   bool allBindingsClosedOver = pc->sc()->allBindingsClosedOver();
   for (BindingIter bi = scope.bindings(pc); bi; bi++) {
@@ -1140,18 +1139,17 @@ Maybe<GlobalScope::ParserData*> NewGlobalScopeData(JSContext* cx,
 
 Maybe<GlobalScope::ParserData*> ParserBase::newGlobalScopeData(
     ParseContext::Scope& scope) {
-  return NewGlobalScopeData(cx_, ec_, scope, stencilAlloc(), pc_);
+  return NewGlobalScopeData(ec_, scope, stencilAlloc(), pc_);
 }
 
-Maybe<ModuleScope::ParserData*> NewModuleScopeData(JSContext* cx,
-                                                   ErrorContext* ec,
+Maybe<ModuleScope::ParserData*> NewModuleScopeData(ErrorContext* ec,
                                                    ParseContext::Scope& scope,
                                                    LifoAlloc& alloc,
                                                    ParseContext* pc) {
-  ParserBindingNameVector imports(cx);
-  ParserBindingNameVector vars(cx);
-  ParserBindingNameVector lets(cx);
-  ParserBindingNameVector consts(cx);
+  ParserBindingNameVector imports(ec);
+  ParserBindingNameVector vars(ec);
+  ParserBindingNameVector lets(ec);
+  ParserBindingNameVector consts(ec);
 
   bool allBindingsClosedOver =
       pc->sc()->allBindingsClosedOver() || scope.tooBigToOptimize();
@@ -1209,14 +1207,14 @@ Maybe<ModuleScope::ParserData*> NewModuleScopeData(JSContext* cx,
 
 Maybe<ModuleScope::ParserData*> ParserBase::newModuleScopeData(
     ParseContext::Scope& scope) {
-  return NewModuleScopeData(cx_, ec_, scope, stencilAlloc(), pc_);
+  return NewModuleScopeData(ec_, scope, stencilAlloc(), pc_);
 }
 
-Maybe<EvalScope::ParserData*> NewEvalScopeData(JSContext* cx, ErrorContext* ec,
+Maybe<EvalScope::ParserData*> NewEvalScopeData(ErrorContext* ec,
                                                ParseContext::Scope& scope,
                                                LifoAlloc& alloc,
                                                ParseContext* pc) {
-  ParserBindingNameVector vars(cx);
+  ParserBindingNameVector vars(ec);
 
   // Treat all bindings as closed over in non-strict eval.
   bool allBindingsClosedOver =
@@ -1251,15 +1249,15 @@ Maybe<EvalScope::ParserData*> NewEvalScopeData(JSContext* cx, ErrorContext* ec,
 
 Maybe<EvalScope::ParserData*> ParserBase::newEvalScopeData(
     ParseContext::Scope& scope) {
-  return NewEvalScopeData(cx_, ec_, scope, stencilAlloc(), pc_);
+  return NewEvalScopeData(ec_, scope, stencilAlloc(), pc_);
 }
 
 Maybe<FunctionScope::ParserData*> NewFunctionScopeData(
-    JSContext* cx, ErrorContext* ec, ParseContext::Scope& scope,
-    bool hasParameterExprs, LifoAlloc& alloc, ParseContext* pc) {
-  ParserBindingNameVector positionalFormals(cx);
-  ParserBindingNameVector formals(cx);
-  ParserBindingNameVector vars(cx);
+    ErrorContext* ec, ParseContext::Scope& scope, bool hasParameterExprs,
+    LifoAlloc& alloc, ParseContext* pc) {
+  ParserBindingNameVector positionalFormals(ec);
+  ParserBindingNameVector formals(ec);
+  ParserBindingNameVector vars(ec);
 
   bool allBindingsClosedOver =
       pc->sc()->allBindingsClosedOver() || scope.tooBigToOptimize();
@@ -1321,7 +1319,7 @@ Maybe<FunctionScope::ParserData*> NewFunctionScopeData(
         // exprs, which induces a separate var environment, should be the
         // special bindings.
         MOZ_ASSERT_IF(hasParameterExprs,
-                      FunctionScope::isSpecialName(cx, bi.name()));
+                      FunctionScope::isSpecialName(bi.name()));
         if (!vars.append(binding)) {
           return Nothing();
         }
@@ -1381,8 +1379,8 @@ bool FunctionScopeHasClosedOverBindings(ParseContext* pc) {
 
 Maybe<FunctionScope::ParserData*> ParserBase::newFunctionScopeData(
     ParseContext::Scope& scope, bool hasParameterExprs) {
-  return NewFunctionScopeData(cx_, ec_, scope, hasParameterExprs,
-                              stencilAlloc(), pc_);
+  return NewFunctionScopeData(ec_, scope, hasParameterExprs, stencilAlloc(),
+                              pc_);
 }
 
 VarScope::ParserData* NewEmptyVarScopeData(ErrorContext* ec, LifoAlloc& alloc,
@@ -1390,11 +1388,11 @@ VarScope::ParserData* NewEmptyVarScopeData(ErrorContext* ec, LifoAlloc& alloc,
   return NewEmptyBindingData<VarScope>(ec, alloc, numBindings);
 }
 
-Maybe<VarScope::ParserData*> NewVarScopeData(JSContext* cx, ErrorContext* ec,
+Maybe<VarScope::ParserData*> NewVarScopeData(ErrorContext* ec,
                                              ParseContext::Scope& scope,
                                              LifoAlloc& alloc,
                                              ParseContext* pc) {
-  ParserBindingNameVector vars(cx);
+  ParserBindingNameVector vars(ec);
 
   bool allBindingsClosedOver =
       pc->sc()->allBindingsClosedOver() || scope.tooBigToOptimize();
@@ -1442,16 +1440,15 @@ static bool VarScopeHasBindings(ParseContext* pc) {
 
 Maybe<VarScope::ParserData*> ParserBase::newVarScopeData(
     ParseContext::Scope& scope) {
-  return NewVarScopeData(cx_, ec_, scope, stencilAlloc(), pc_);
+  return NewVarScopeData(ec_, scope, stencilAlloc(), pc_);
 }
 
-Maybe<LexicalScope::ParserData*> NewLexicalScopeData(JSContext* cx,
-                                                     ErrorContext* ec,
+Maybe<LexicalScope::ParserData*> NewLexicalScopeData(ErrorContext* ec,
                                                      ParseContext::Scope& scope,
                                                      LifoAlloc& alloc,
                                                      ParseContext* pc) {
-  ParserBindingNameVector lets(cx);
-  ParserBindingNameVector consts(cx);
+  ParserBindingNameVector lets(ec);
+  ParserBindingNameVector consts(ec);
 
   bool allBindingsClosedOver =
       pc->sc()->allBindingsClosedOver() || scope.tooBigToOptimize();
@@ -1523,15 +1520,15 @@ bool LexicalScopeHasClosedOverBindings(ParseContext* pc,
 
 Maybe<LexicalScope::ParserData*> ParserBase::newLexicalScopeData(
     ParseContext::Scope& scope) {
-  return NewLexicalScopeData(cx_, ec_, scope, stencilAlloc(), pc_);
+  return NewLexicalScopeData(ec_, scope, stencilAlloc(), pc_);
 }
 
 Maybe<ClassBodyScope::ParserData*> NewClassBodyScopeData(
-    JSContext* cx, ErrorContext* ec, ParseContext::Scope& scope,
-    LifoAlloc& alloc, ParseContext* pc) {
-  ParserBindingNameVector privateBrand(cx);
-  ParserBindingNameVector synthetics(cx);
-  ParserBindingNameVector privateMethods(cx);
+    ErrorContext* ec, ParseContext::Scope& scope, LifoAlloc& alloc,
+    ParseContext* pc) {
+  ParserBindingNameVector privateBrand(ec);
+  ParserBindingNameVector synthetics(ec);
+  ParserBindingNameVector privateMethods(ec);
 
   bool allBindingsClosedOver =
       pc->sc()->allBindingsClosedOver() || scope.tooBigToOptimize();
@@ -1580,7 +1577,7 @@ Maybe<ClassBodyScope::ParserData*> NewClassBodyScopeData(
     // To simplify initialization of the bindings, we concatenate the
     // synthetics+privateBrand vector such that the private brand is always the
     // first element, as ordering is important. See comments in ClassBodyScope.
-    ParserBindingNameVector brandAndSynthetics(cx);
+    ParserBindingNameVector brandAndSynthetics(ec);
     if (!brandAndSynthetics.appendAll(privateBrand)) {
       return Nothing();
     }
@@ -1607,7 +1604,7 @@ Maybe<ClassBodyScope::ParserData*> NewClassBodyScopeData(
 
 Maybe<ClassBodyScope::ParserData*> ParserBase::newClassBodyScopeData(
     ParseContext::Scope& scope) {
-  return NewClassBodyScopeData(cx_, ec_, scope, stencilAlloc(), pc_);
+  return NewClassBodyScopeData(ec_, scope, stencilAlloc(), pc_);
 }
 
 template <>
@@ -1671,7 +1668,7 @@ bool PerHandlerParser<ParseHandler>::checkForUndefinedPrivateFields(
     return true;
   }
 
-  Vector<UnboundPrivateName, 8> unboundPrivateNames(cx_);
+  Vector<UnboundPrivateName, 8> unboundPrivateNames(ec_);
   if (!usedNames_.getUnboundPrivateNames(unboundPrivateNames)) {
     return false;
   }
@@ -2584,7 +2581,7 @@ bool ParserBase::leaveInnerFunction(ParseContext* outerpc) {
 
 TaggedParserAtomIndex ParserBase::prefixAccessorName(
     PropertyType propType, TaggedParserAtomIndex propAtom) {
-  StringBuffer prefixed(cx_);
+  StringBuffer prefixed(cx_, ec_);
   if (propType == PropertyType::Setter) {
     if (!prefixed.append("set ")) {
       return TaggedParserAtomIndex::null();
@@ -6395,8 +6392,8 @@ GeneralParser<ParseHandler, Unit>::consequentOrAlternative(
 template <class ParseHandler, typename Unit>
 typename ParseHandler::TernaryNodeType
 GeneralParser<ParseHandler, Unit>::ifStatement(YieldHandling yieldHandling) {
-  Vector<Node, 4> condList(cx_), thenList(cx_);
-  Vector<uint32_t, 4> posList(cx_);
+  Vector<Node, 4> condList(ec_), thenList(ec_);
+  Vector<uint32_t, 4> posList(ec_);
   Node elseBranch;
 
   ParseContext::Statement stmt(pc_, StatementKind::If);
@@ -7725,7 +7722,7 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
   }
 
 #ifdef ENABLE_DECORATORS
-  ListNodeType decorators;
+  ListNodeType decorators = null();
   if (tt == TokenKind::At) {
     decorators = decoratorList(yieldHandling);
     if (!decorators) {
@@ -7825,7 +7822,7 @@ bool GeneralParser<ParseHandler, Unit>::classMember(
       // ...
       // Step 3. Let privateStateDesc be the string-concatenation of name
       // and " accessor storage".
-      StringBuffer privateStateDesc(cx_);
+      StringBuffer privateStateDesc(cx_, ec_);
       if (!privateStateDesc.append(this->parserAtoms(), propAtom)) {
         return false;
       }
@@ -8359,7 +8356,7 @@ GeneralParser<ParseHandler, Unit>::classDefinition(
   // We're leaving a class definition that was not itself nested within a class
   if (!isInClass) {
     mozilla::Maybe<UnboundPrivateName> maybeUnboundName;
-    if (!usedNames_.hasUnboundPrivateNames(cx_, maybeUnboundName)) {
+    if (!usedNames_.hasUnboundPrivateNames(ec_, maybeUnboundName)) {
       return null();
     }
     if (maybeUnboundName) {
@@ -9039,7 +9036,7 @@ GeneralParser<ParseHandler, Unit>::synthesizePrivateMethodInitializer(
 
   // Synthesize a name for the lexical variable that will store the
   // accessor body.
-  StringBuffer storedMethodName(cx_);
+  StringBuffer storedMethodName(cx_, ec_);
   if (!storedMethodName.append(this->parserAtoms(), propAtom)) {
     return null();
   }

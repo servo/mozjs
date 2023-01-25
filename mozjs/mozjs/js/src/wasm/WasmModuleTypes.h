@@ -46,7 +46,6 @@ using mozilla::Nothing;
 using mozilla::Span;
 
 class FuncType;
-class TypeIdDesc;
 
 // A Module can either be asm.js or wasm.
 
@@ -197,8 +196,7 @@ enum class FuncFlags : uint8_t {
 // A FuncDesc describes a single function definition.
 
 struct FuncDesc {
-  FuncType* type;
-  TypeIdDesc* typeId;
+  const FuncType* type;
   // Bit pack to keep this struct small on 32-bit systems
   uint32_t typeIndex : 24;
   FuncFlags flags : 8;
@@ -208,11 +206,8 @@ struct FuncDesc {
   static_assert(sizeof(FuncFlags) == sizeof(uint8_t));
 
   FuncDesc() = default;
-  FuncDesc(FuncType* type, TypeIdDesc* typeId, uint32_t typeIndex)
-      : type(type),
-        typeId(typeId),
-        typeIndex(typeIndex),
-        flags(FuncFlags::None) {}
+  FuncDesc(const FuncType* type, uint32_t typeIndex)
+      : type(type), typeIndex(typeIndex), flags(FuncFlags::None) {}
 
   bool isExported() const {
     return uint8_t(flags) & uint8_t(FuncFlags::Exported);
@@ -342,7 +337,7 @@ using GlobalDescVector = Vector<GlobalDesc, 0, SystemAllocPolicy>;
 
 // The TagOffsetVector represents the offsets in the layout of the
 // data buffer stored in a Wasm exception.
-using TagOffsetVector = Vector<uint32_t, 0, SystemAllocPolicy>;
+using TagOffsetVector = Vector<uint32_t, 2, SystemAllocPolicy>;
 
 struct TagType : AtomicRefCounted<TagType> {
   ValTypeVector argTypes_;
@@ -619,9 +614,6 @@ struct TableDesc {
   uint32_t initialLength;
   Maybe<uint32_t> maximumLength;
 
-  WASM_CHECK_CACHEABLE_POD(elemType, isImportedOrExported, isAsmJS,
-                           globalDataOffset, initialLength, maximumLength);
-
   TableDesc() = default;
   TableDesc(RefType elemType, uint32_t initialLength,
             Maybe<uint32_t> maximumLength, bool isAsmJS,
@@ -633,8 +625,6 @@ struct TableDesc {
         initialLength(initialLength),
         maximumLength(maximumLength) {}
 };
-
-WASM_DECLARE_CACHEABLE_POD(TableDesc);
 
 using TableDescVector = Vector<TableDesc, 0, SystemAllocPolicy>;
 

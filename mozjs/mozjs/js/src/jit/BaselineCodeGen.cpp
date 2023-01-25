@@ -303,13 +303,15 @@ MethodStatus BaselineCompiler::compile() {
       return Method_Error;
     }
 
-    JitcodeGlobalEntry::BaselineEntry entry;
-    entry.init(code, code->raw(), code->rawEnd(), script, str.release());
+    auto entry = MakeJitcodeGlobalEntry<BaselineEntry>(
+        cx, code, code->raw(), code->rawEnd(), script, std::move(str));
+    if (!entry) {
+      return Method_Error;
+    }
 
     JitcodeGlobalTable* globalTable =
         cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
-    if (!globalTable->addEntry(entry)) {
-      entry.destroy();
+    if (!globalTable->addEntry(std::move(entry))) {
       ReportOutOfMemory(cx);
       return Method_Error;
     }
@@ -2414,34 +2416,9 @@ bool BaselineInterpreterCodeGen::emit_Object() {
   return true;
 }
 
-template <>
-bool BaselineCompilerCodeGen::emit_CallSiteObj() {
-  RootedScript script(cx, handler.script());
-  JSObject* cso = ProcessCallSiteObjOperation(cx, script, handler.pc());
-  if (!cso) {
-    return false;
-  }
-
-  frame.push(ObjectValue(*cso));
-  return true;
-}
-
-template <>
-bool BaselineInterpreterCodeGen::emit_CallSiteObj() {
-  prepareVMCall();
-
-  pushBytecodePCArg();
-  pushScriptArg();
-
-  using Fn = ArrayObject* (*)(JSContext*, HandleScript, const jsbytecode*);
-  if (!callVM<Fn, ProcessCallSiteObjOperation>()) {
-    return false;
-  }
-
-  // Box and push return value.
-  masm.tagValue(JSVAL_TYPE_OBJECT, ReturnReg, R0);
-  frame.push(R0);
-  return true;
+template <typename Handler>
+bool BaselineCodeGen<Handler>::emit_CallSiteObj() {
+  return emit_Object();
 }
 
 template <typename Handler>
@@ -6628,12 +6605,15 @@ bool BaselineInterpreterGenerator::generate(BaselineInterpreter& interpreter) {
 
     // Register BaselineInterpreter code with the profiler's JitCode table.
     {
-      JitcodeGlobalEntry::BaselineInterpreterEntry entry;
-      entry.init(code, code->raw(), code->rawEnd());
+      auto entry = MakeJitcodeGlobalEntry<BaselineInterpreterEntry>(
+          cx, code, code->raw(), code->rawEnd());
+      if (!entry) {
+        return false;
+      }
 
       JitcodeGlobalTable* globalTable =
           cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
-      if (!globalTable->addEntry(entry)) {
+      if (!globalTable->addEntry(std::move(entry))) {
         ReportOutOfMemory(cx);
         return false;
       }

@@ -12,7 +12,6 @@ from mozbuild.base import MachCommandConditions as conditions
 
 _TRY_PLATFORMS = {
     "g5-browsertime": "perftest-android-hw-g5-browsertime",
-    "p2-browsertime": "perftest-android-hw-p2-browsertime",
     "linux-xpcshell": "perftest-linux-try-xpcshell",
     "mac-xpcshell": "perftest-macosx-try-xpcshell",
     "linux-browsertime": "perftest-linux-try-browsertime",
@@ -287,4 +286,4 @@ def run_tools(command_context, **kwargs):
 def run_side_by_side(command_context, **kwargs):
     from mozperftest.runner import run_tools
 
-    run_tools(command_context, kwargs, {})
+    run_tools(command_context, kwargs)

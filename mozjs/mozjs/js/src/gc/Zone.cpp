@@ -35,7 +35,7 @@ using namespace js::gc;
 Zone* const Zone::NotOnList = reinterpret_cast<Zone*>(1);
 
 ZoneAllocator::ZoneAllocator(JSRuntime* rt, Kind kind)
-    : JS::shadow::Zone(rt, &rt->gc.barrierTracer, kind),
+    : JS::shadow::Zone(rt, rt->gc.marker().tracer(), kind),
       jitHeapThreshold(jit::MaxCodeBytesPerProcess * 0.8) {}
 
 ZoneAllocator::~ZoneAllocator() {
@@ -483,6 +483,13 @@ void Zone::discardJitCode(JS::GCContext* gcx, const DiscardOptions& options) {
     jitScript->resetActive();
   }
 
+  // Also clear references to jit code from RegExpShared cells at this point.
+  // This avoid holding onto ExecutablePools.
+  for (auto regExp = cellIterUnsafe<RegExpShared>(); !regExp.done();
+       regExp.next()) {
+    regExp->discardJitCode();
+  }
+
   /*
    * When scripts contains pointers to nursery things, the store buffer
    * can contain entries that point into the optimized stub space. Since
@@ -534,14 +541,14 @@ void JS::Zone::beforeClearDelegateInternal(JSObject* wrapper,
   MOZ_ASSERT(js::gc::detail::GetDelegate(wrapper) == delegate);
   MOZ_ASSERT(needsIncrementalBarrier());
   MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(this));
-  runtimeFromMainThread()->gc.marker.severWeakDelegate(wrapper, delegate);
+  runtimeFromMainThread()->gc.marker().severWeakDelegate(wrapper, delegate);
 }
 
 void JS::Zone::afterAddDelegateInternal(JSObject* wrapper) {
   MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(this));
   JSObject* delegate = js::gc::detail::GetDelegate(wrapper);
   if (delegate) {
-    runtimeFromMainThread()->gc.marker.restoreWeakDelegate(wrapper, delegate);
+    runtimeFromMainThread()->gc.marker().restoreWeakDelegate(wrapper, delegate);
   }
 }
 

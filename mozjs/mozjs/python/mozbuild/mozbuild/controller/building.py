@@ -12,18 +12,13 @@ import logging
 import os
 import re
 import shutil
-import six
 import subprocess
 import sys
 import time
-
-from collections import (
-    Counter,
-    namedtuple,
-    OrderedDict,
-)
+from collections import Counter, OrderedDict, namedtuple
 from textwrap import TextWrapper
 
+import six
 from mach.site import CommandSiteManager
 
 try:
@@ -31,28 +26,19 @@ try:
 except Exception:
     psutil = None
 
+import mozfile
+import mozpack.path as mozpath
 from mach.mixin.logging import LoggingMixin
 from mach.util import get_state_dir
-import mozfile
 from mozsystemmonitor.resourcemonitor import SystemResourceMonitor
 from mozterm.widgets import Footer
 
-import mozpack.path as mozpath
-
-from .clobber import Clobberer
-from ..base import MozbuildObject
 from ..backend import get_backend_class
+from ..base import MozbuildObject
+from ..compilation.warnings import WarningsCollector, WarningsDatabase
 from ..testing import install_test_files
-from ..compilation.warnings import (
-    WarningsCollector,
-    WarningsDatabase,
-)
-from ..util import (
-    FileAvoidWrite,
-    mkdir,
-    resolve_target_to_make,
-)
-
+from ..util import FileAvoidWrite, mkdir, resolve_target_to_make
+from .clobber import Clobberer
 
 FINDER_SLOW_MESSAGE = """
 ===================
@@ -648,7 +634,7 @@ class TerminalLoggingHandler(logging.Handler):
 class BuildProgressFooter(Footer):
     """Handles display of a build progress indicator in a terminal.
 
-    When mach builds inside a blessings-supported terminal, it will render
+    When mach builds inside a blessed-supported terminal, it will render
     progress information collected from a BuildMonitor. This class converts the
     state of BuildMonitor into terminal output.
     """
@@ -689,10 +675,13 @@ class OutputManager(LoggingMixin):
         terminal = log_manager.terminal
 
         # TODO convert terminal footer to config file setting.
-        if not terminal or os.environ.get("MACH_NO_TERMINAL_FOOTER", None):
+        if not terminal:
             return
         if os.environ.get("INSIDE_EMACS", None):
             return
+
+        if os.environ.get("MACH_NO_TERMINAL_FOOTER", None):
+            footer = None
 
         self.t = terminal
         self.footer = footer
@@ -776,11 +765,11 @@ class StaticAnalysisFooter(Footer):
         processed = monitor.num_files_processed
         percent = "(%.2f%%)" % (processed * 100.0 / total)
         parts = [
-            ("dim", "Processing"),
+            ("bright_black", "Processing"),
             ("yellow", str(processed)),
-            ("dim", "of"),
+            ("bright_black", "of"),
             ("yellow", str(total)),
-            ("dim", "files"),
+            ("bright_black", "files"),
             ("green", percent),
         ]
         if monitor.current_file:
@@ -1517,6 +1506,13 @@ class BuildDriver(MozbuildObject):
 
             suppressed_by_dir = Counter()
 
+            THIRD_PARTY_CODE = "third-party code"
+            suppressed = set(
+                w.replace("-Wno-error=", "-W")
+                for w in substs.get("WARNINGS_CFLAGS", [])
+                + substs.get("WARNINGS_CXXFLAGS", [])
+                if w.startswith("-Wno-error=")
+            )
             warnings = []
             for warning in sorted(monitor.instance_warnings):
                 path = mozpath.normsep(warning["filename"])
@@ -1525,20 +1521,26 @@ class BuildDriver(MozbuildObject):
 
                 warning["normpath"] = path
 
-                if (
-                    path.startswith(LOCAL_SUPPRESS_DIRS)
-                    and "MOZ_AUTOMATION" not in os.environ
-                ):
-                    for d in LOCAL_SUPPRESS_DIRS:
-                        if path.startswith(d):
-                            suppressed_by_dir[d] += 1
-                            break
+                if "MOZ_AUTOMATION" not in os.environ:
+                    if path.startswith(LOCAL_SUPPRESS_DIRS):
+                        suppressed_by_dir[THIRD_PARTY_CODE] += 1
+                        continue
 
-                    continue
+                    if warning["flag"] in suppressed:
+                        suppressed_by_dir[os.path.dirname(path)] += 1
+                        continue
 
                 warnings.append(warning)
 
-            for d, count in sorted(suppressed_by_dir.items()):
+            if THIRD_PARTY_CODE in suppressed_by_dir:
+                suppressed_third_party_code = [
+                    (THIRD_PARTY_CODE, suppressed_by_dir.pop(THIRD_PARTY_CODE))
+                ]
+            else:
+                suppressed_third_party_code = []
+            for d, count in suppressed_third_party_code + sorted(
+                suppressed_by_dir.items()
+            ):
                 self.log(
                     logging.WARNING,
                     "suppressed_warning",

@@ -783,8 +783,45 @@
 - name: BigIntBitNot
   gen_boilerplate: false
 
+- name: Int32ToStringWithBase
+  operands:
+    input: Int32
+    base: Int32
+  result_type: String
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+
+- name: NumberParseInt
+  operands:
+    string: String
+    radix: Int32
+  result_type: Value
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+  possibly_calls: true
+
+- name: DoubleParseInt
+  operands:
+    number: Double
+  result_type: Int32
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+
 - name: Concat
   gen_boilerplate: false
+
+- name: LinearizeForCharAccess
+  operands:
+    string: String
+    index: Int32
+  result_type: String
+  movable: true
+  congruent_to: if_operands_equal
+  # Strings are immutable, so there is no implicit dependency.
+  alias_set: none
 
 - name: CharCodeAt
   operands:
@@ -799,6 +836,28 @@
   compute_range: custom
   can_recover: true
   clone: true
+
+# Similar to CharCodeAt, but also supports out-of-bounds access.
+- name: CharCodeAtMaybeOutOfBounds
+  operands:
+    string: String
+    index: Int32
+  result_type: Value
+  movable: true
+  congruent_to: if_operands_equal
+  # Strings are immutable, so there is no implicit dependency.
+  alias_set: none
+
+# Like CharCodeAtMaybeOutOfBounds, this operation also supports out-of-bounds access.
+- name: CharAtMaybeOutOfBounds
+  operands:
+    string: String
+    index: Int32
+  result_type: String
+  movable: true
+  congruent_to: if_operands_equal
+  # Strings are immutable, so there is no implicit dependency.
+  alias_set: none
 
 - name: FromCharCode
   operands:
@@ -1382,6 +1441,16 @@
   alias_set: custom
   might_alias: custom
 
+- name: GuardMultipleShapes
+  operands:
+    object: Object
+    shapeList: Object
+  result_type: Object
+  guard: true
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: custom
+
 - name: GuardProto
   gen_boilerplate: false
 
@@ -1480,7 +1549,7 @@
   operands:
     object: Object
   arguments:
-    name: PropertyName*
+    name: PropertyKey
   result_type: Value
   # Bails when non-native or accessor properties are encountered, so we can't
   # DCE this instruction.
@@ -1497,6 +1566,7 @@
   # Bails when non-native or accessor properties are encountered, so we can't
   # DCE this instruction.
   guard: true
+  folds_to: custom
   congruent_to: if_operands_equal
   alias_set: custom
   possibly_calls: true
@@ -1639,6 +1709,17 @@
 
 - name: GuardSpecificSymbol
   gen_boilerplate: false
+
+- name: GuardSpecificInt32
+  operands:
+    num: Int32
+  arguments:
+    expected: int32_t
+  result_type: Int32
+  guard: true
+  movable: true
+  folds_to: custom
+  alias_set: none
 
 - name: GuardStringToIndex
   operands:
@@ -1795,6 +1876,14 @@
 
 - name: GetDOMMember
   gen_boilerplate: false
+
+- name: ObjectToIterator
+  operands:
+    object: Object
+  arguments:
+    enumeratorsAddr: NativeIteratorListHead*
+  result_type:
+    Object
 
 - name: ValueToIterator
   operands:
@@ -2222,6 +2311,13 @@
 - name: ObjectStaticProto
   gen_boilerplate: false
 
+# This is basically just a limited case of Constant, for objects which are
+# the prototype of another object and will be used for a GuardShape. It
+# includes a reference to the receiver object so we can eliminate redundant
+# shape guards.
+- name: ConstantProto
+  gen_boilerplate: false
+
 - name: BuiltinObject
   arguments:
     builtinObjectKind: BuiltinObjectKind
@@ -2302,6 +2398,19 @@
 - name: GuardInt32IsNonNegative
   operands:
     index: Int32
+  result_type: Int32
+  guard: true
+  movable: true
+  congruent_to: if_operands_equal
+  folds_to: custom
+  alias_set: none
+
+- name: GuardInt32Range
+  operands:
+    input: Int32
+  arguments:
+    minimum: int32_t
+    maximum: int32_t
   result_type: Int32
   guard: true
   movable: true
@@ -2531,6 +2640,14 @@
   alias_set: custom
   possibly_calls: true
 
+- name: SetObjectSize
+  operands:
+    set: Object
+  result_type: Int32
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: custom
+
 - name: MapObjectHasNonBigInt
   operands:
     map: Object
@@ -2610,6 +2727,14 @@
   congruent_to: if_operands_equal
   alias_set: custom
   possibly_calls: true
+
+- name: MapObjectSize
+  operands:
+    map: Object
+  result_type: Int32
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: custom
 
 - name: WasmNeg
   gen_boilerplate: false
@@ -2823,14 +2948,22 @@
 - name: IonToWasmCall
   gen_boilerplate: false
 
-- name: WasmLoadObjectField
+- name: WasmLoadField
   gen_boilerplate: false
 
-- name: WasmLoadObjectDataField
+- name: WasmLoadFieldKA
   gen_boilerplate: false
 
-- name: WasmStoreObjectDataField
+- name: WasmStoreFieldKA
   gen_boilerplate: false
 
-- name: WasmStoreObjectDataRefField
+- name: WasmStoreFieldRefKA
   gen_boilerplate: false
+
+#ifdef FUZZING_JS_FUZZILLI
+- name: FuzzilliHash
+  gen_boilerplate: false
+
+- name: FuzzilliHashStore
+  gen_boilerplate: false
+#endif

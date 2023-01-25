@@ -573,12 +573,10 @@ CompilerEnvironment::CompilerEnvironment(const CompileArgs& args)
     : state_(InitialWithArgs), args_(&args) {}
 
 CompilerEnvironment::CompilerEnvironment(CompileMode mode, Tier tier,
-                                         OptimizedBackend optimizedBackend,
                                          DebugEnabled debugEnabled)
     : state_(InitialWithModeTierDebug),
       mode_(mode),
       tier_(tier),
-      optimizedBackend_(optimizedBackend),
       debug_(debugEnabled) {}
 
 void CompilerEnvironment::computeParameters() {
@@ -623,8 +621,6 @@ void CompilerEnvironment::computeParameters(Decoder& d) {
     mode_ = CompileMode::Once;
     tier_ = hasSecondTier ? Tier::Optimized : Tier::Baseline;
   }
-
-  optimizedBackend_ = OptimizedBackend::Ion;
 
   debug_ = debugEnabled ? DebugEnabled::True : DebugEnabled::False;
 
@@ -678,7 +674,7 @@ static bool DecodeCodeSection(const ModuleEnvironment& env, DecoderT& d,
   }
 
   for (uint32_t funcDefIndex = 0; funcDefIndex < numFuncDefs; funcDefIndex++) {
-    if (!DecodeFunctionBody(d, mg, env.numFuncImports() + funcDefIndex)) {
+    if (!DecodeFunctionBody(d, mg, env.numFuncImports + funcDefIndex)) {
       return false;
     }
   }
@@ -698,7 +694,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
   Decoder d(bytecode.bytes, 0, error, warnings);
 
   ModuleEnvironment moduleEnv(args.features);
-  if (!DecodeModuleEnvironment(d, &moduleEnv)) {
+  if (!moduleEnv.init() || !DecodeModuleEnvironment(d, &moduleEnv)) {
     return nullptr;
   }
   CompilerEnvironment compilerEnv(args);
@@ -725,14 +721,12 @@ bool wasm::CompileTier2(const CompileArgs& args, const Bytes& bytecode,
                         UniqueCharsVector* warnings, Atomic<bool>* cancelled) {
   Decoder d(bytecode, 0, error);
 
-  OptimizedBackend optimizedBackend = OptimizedBackend::Ion;
-
   ModuleEnvironment moduleEnv(args.features);
-  if (!DecodeModuleEnvironment(d, &moduleEnv)) {
+  if (!moduleEnv.init() || !DecodeModuleEnvironment(d, &moduleEnv)) {
     return false;
   }
   CompilerEnvironment compilerEnv(CompileMode::Tier2, Tier::Optimized,
-                                  optimizedBackend, DebugEnabled::False);
+                                  DebugEnabled::False);
   compilerEnv.computeParameters(d);
 
   ModuleGenerator mg(args, &moduleEnv, &compilerEnv, cancelled, error,
@@ -835,6 +829,9 @@ SharedModule wasm::CompileStreaming(
     UniqueCharsVector* warnings) {
   CompilerEnvironment compilerEnv(args);
   ModuleEnvironment moduleEnv(args.features);
+  if (!moduleEnv.init()) {
+    return nullptr;
+  }
 
   {
     Decoder d(envBytes, 0, error, warnings);

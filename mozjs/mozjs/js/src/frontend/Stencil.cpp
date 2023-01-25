@@ -1271,7 +1271,7 @@ mozilla::Maybe<NameLocation> ScopeContext::getPrivateFieldLocation(
 }
 
 bool CompilationInput::initScriptSource(JSContext* cx, ErrorContext* ec) {
-  source = do_AddRef(cx->new_<ScriptSource>());
+  source = do_AddRef(ec->getAllocator()->new_<ScriptSource>());
   if (!source) {
     return false;
   }
@@ -1808,7 +1808,7 @@ static bool CreateLazyScript(JSContext* cx,
 // NOTE: Keep this in sync with `js::NewFunctionWithProto`.
 static JSFunction* CreateFunctionFast(JSContext* cx,
                                       CompilationAtomCache& atomCache,
-                                      Handle<Shape*> shape,
+                                      Handle<SharedShape*> shape,
                                       const ScriptStencil& script,
                                       const ScriptStencilExtra& scriptExtra) {
   MOZ_ASSERT(
@@ -1928,7 +1928,7 @@ static bool InstantiateScriptSourceObject(JSContext* cx,
 
 // Instantiate ModuleObject. Further initialization is done after the associated
 // BaseScript is instantiated in InstantiateTopLevel.
-static bool InstantiateModuleObject(JSContext* cx,
+static bool InstantiateModuleObject(JSContext* cx, ErrorContext* ec,
                                     CompilationAtomCache& atomCache,
                                     const CompilationStencil& stencil,
                                     CompilationGCOutput& gcOutput) {
@@ -1940,7 +1940,7 @@ static bool InstantiateModuleObject(JSContext* cx,
   }
 
   Rooted<ModuleObject*> module(cx, gcOutput.module);
-  return stencil.moduleMetadata->initModule(cx, atomCache, module);
+  return stencil.moduleMetadata->initModule(cx, ec, atomCache, module);
 }
 
 // Instantiate JSFunctions for each FunctionBox.
@@ -1958,16 +1958,16 @@ static bool InstantiateFunctions(JSContext* cx, ErrorContext* ec,
   // Most JSFunctions will be have the same Shape so we can compute it now to
   // allow fast object creation. Generators / Async will use the slow path
   // instead.
-  Rooted<Shape*> functionShape(cx,
-                               GlobalObject::getFunctionShapeWithDefaultProto(
-                                   cx, /* extended = */ false));
+  Rooted<SharedShape*> functionShape(
+      cx, GlobalObject::getFunctionShapeWithDefaultProto(
+              cx, /* extended = */ false));
   if (!functionShape) {
     return false;
   }
 
-  Rooted<Shape*> extendedShape(cx,
-                               GlobalObject::getFunctionShapeWithDefaultProto(
-                                   cx, /* extended = */ true));
+  Rooted<SharedShape*> extendedShape(
+      cx, GlobalObject::getFunctionShapeWithDefaultProto(
+              cx, /* extended = */ true));
   if (!extendedShape) {
     return false;
   }
@@ -1988,9 +1988,9 @@ static bool InstantiateFunctions(JSContext* cx, ErrorContext* ec,
 
     JSFunction* fun;
     if (useFastPath) {
-      Handle<Shape*> shape = scriptStencil.functionFlags.isExtended()
-                                 ? extendedShape
-                                 : functionShape;
+      Handle<SharedShape*> shape = scriptStencil.functionFlags.isExtended()
+                                       ? extendedShape
+                                       : functionShape;
       fun =
           CreateFunctionFast(cx, atomCache, shape, scriptStencil, scriptExtra);
     } else {
@@ -2158,7 +2158,6 @@ static bool InstantiateTopLevel(JSContext* cx, CompilationInput& input,
     script->outermostScope()->as<ModuleScope>().initModule(module);
 
     module->initScriptSlots(script);
-    module->initStatusSlot();
 
     if (!ModuleObject::createEnvironment(cx, module)) {
       return false;
@@ -2401,7 +2400,8 @@ bool CompilationStencil::instantiateStencils(JSContext* cx,
                                              CompilationInput& input,
                                              const CompilationStencil& stencil,
                                              CompilationGCOutput& gcOutput) {
-  if (!prepareForInstantiate(cx, input.atomCache, stencil, gcOutput)) {
+  AutoReportFrontendContext ec(cx);
+  if (!prepareForInstantiate(&ec, input.atomCache, stencil, gcOutput)) {
     return false;
   }
 
@@ -2440,7 +2440,7 @@ bool CompilationStencil::instantiateStencilAfterPreparation(
       MOZ_ASSERT(input.enclosingScope.environmentChainLength() ==
                  ModuleScope::EnclosingEnvironmentChainLength);
 
-      if (!InstantiateModuleObject(cx, atomCache, stencil, gcOutput)) {
+      if (!InstantiateModuleObject(cx, &ec, atomCache, stencil, gcOutput)) {
         return false;
       }
     }
@@ -2695,16 +2695,15 @@ bool CompilationStencil::delazifySelfHostedFunction(
 
 /* static */
 bool CompilationStencil::prepareForInstantiate(
-    JSContext* cx, CompilationAtomCache& atomCache,
+    ErrorContext* ec, CompilationAtomCache& atomCache,
     const CompilationStencil& stencil, CompilationGCOutput& gcOutput) {
   // Reserve the `gcOutput` vectors.
-  AutoReportFrontendContext ec(cx);
-  if (!gcOutput.ensureReserved(&ec, stencil.scriptData.size(),
+  if (!gcOutput.ensureReserved(ec, stencil.scriptData.size(),
                                stencil.scopeData.size())) {
     return false;
   }
 
-  return atomCache.allocate(&ec, stencil.parserAtomData.size());
+  return atomCache.allocate(ec, stencil.parserAtomData.size());
 }
 
 bool CompilationStencil::serializeStencils(JSContext* cx,
@@ -2761,33 +2760,31 @@ bool CompilationStencil::deserializeStencils(JSContext* cx, ErrorContext* ec,
   return true;
 }
 
-ExtensibleCompilationStencil::ExtensibleCompilationStencil(JSContext* cx,
-                                                           ScriptSource* source)
+ExtensibleCompilationStencil::ExtensibleCompilationStencil(ScriptSource* source)
     : alloc(CompilationStencil::LifoAllocChunkSize),
       source(source),
-      parserAtoms(cx->runtime(), alloc) {}
+      parserAtoms(alloc) {}
 
 ExtensibleCompilationStencil::ExtensibleCompilationStencil(
-    JSContext* cx, CompilationInput& input)
+    CompilationInput& input)
     : canLazilyParse(CanLazilyParse(input.options)),
       alloc(CompilationStencil::LifoAllocChunkSize),
       source(input.source),
-      parserAtoms(cx->runtime(), alloc) {}
+      parserAtoms(alloc) {}
 
 ExtensibleCompilationStencil::ExtensibleCompilationStencil(
-    JSContext* cx, const JS::ReadOnlyCompileOptions& options,
-    RefPtr<ScriptSource> source)
+    const JS::ReadOnlyCompileOptions& options, RefPtr<ScriptSource> source)
     : canLazilyParse(CanLazilyParse(options)),
       alloc(CompilationStencil::LifoAllocChunkSize),
       source(std::move(source)),
-      parserAtoms(cx->runtime(), alloc) {}
+      parserAtoms(alloc) {}
 
-CompilationState::CompilationState(JSContext* cx,
+CompilationState::CompilationState(JSContext* cx, ErrorContext* ec,
                                    LifoAllocScope& parserAllocScope,
                                    CompilationInput& input)
-    : ExtensibleCompilationStencil(cx, input),
+    : ExtensibleCompilationStencil(input),
       directives(input.options.forceStrictMode()),
-      usedNames(cx),
+      usedNames(ec),
       parserAllocScope(parserAllocScope),
       input(input) {}
 
@@ -4718,7 +4715,7 @@ bool CompilationState::appendScriptStencilAndData(ErrorContext* ec) {
 }
 
 bool CompilationState::appendGCThings(
-    JSContext* cx, ErrorContext* ec, ScriptIndex scriptIndex,
+    ErrorContext* ec, ScriptIndex scriptIndex,
     mozilla::Span<const TaggedScriptThingIndex> things) {
   MOZ_ASSERT(gcThingData.length() <= UINT32_MAX);
 
@@ -5301,15 +5298,16 @@ JS::TranscodeResult JS::DecodeStencil(JSContext* cx,
                                       const JS::DecodeOptions& options,
                                       const JS::TranscodeRange& range,
                                       JS::Stencil** stencilOut) {
-  RefPtr<ScriptSource> source = cx->new_<ScriptSource>();
+  AutoReportFrontendContext ec(cx);
+  RefPtr<ScriptSource> source = ec.getAllocator()->new_<ScriptSource>();
   if (!source) {
     return TranscodeResult::Throw;
   }
-  RefPtr<JS::Stencil> stencil(cx->new_<CompilationStencil>(source));
+  RefPtr<JS::Stencil> stencil(
+      ec.getAllocator()->new_<CompilationStencil>(source));
   if (!stencil) {
     return TranscodeResult::Throw;
   }
-  AutoReportFrontendContext ec(cx);
   XDRStencilDecoder decoder(cx, &ec, range);
   XDRResult res = decoder.codeStencil(options, *stencil);
   if (res.isErr()) {

@@ -188,19 +188,18 @@ class GlobalObjectData {
   HeapPtr<PropertyIteratorObject*> emptyIterator;
 
   // Cached shape for new arrays with Array.prototype as prototype.
-  HeapPtr<Shape*> arrayShapeWithDefaultProto;
+  HeapPtr<SharedShape*> arrayShapeWithDefaultProto;
 
   // Shape for PlainObject with %Object.prototype% as proto, for each object
   // AllocKind.
-  using PlainObjectShapeArray =
-      mozilla::EnumeratedArray<PlainObjectSlotsKind,
-                               PlainObjectSlotsKind::Limit, HeapPtr<Shape*>>;
+  using PlainObjectShapeArray = mozilla::EnumeratedArray<
+      PlainObjectSlotsKind, PlainObjectSlotsKind::Limit, HeapPtr<SharedShape*>>;
   PlainObjectShapeArray plainObjectShapesWithDefaultProto;
 
   // Shape for JSFunction with %Function.prototype% as proto, for both
   // non-extended and extended functions.
-  HeapPtr<Shape*> functionShapeWithDefaultProto;
-  HeapPtr<Shape*> extendedFunctionShapeWithDefaultProto;
+  HeapPtr<SharedShape*> functionShapeWithDefaultProto;
+  HeapPtr<SharedShape*> extendedFunctionShapeWithDefaultProto;
 
   // Global state for regular expressions.
   UniquePtr<RegExpStatics> regExpStatics;
@@ -476,44 +475,26 @@ class GlobalObject : public NativeObject {
     return res ? &res->template as<T>() : nullptr;
   }
 
-  static JSObject* getOrCreateObjectPrototype(JSContext* cx,
-                                              Handle<GlobalObject*> global) {
-    if (!global->functionObjectClassesInitialized()) {
-      if (!ensureConstructor(cx, global, JSProto_Object)) {
-        return nullptr;
-      }
-    }
-    return &global->getPrototype(JSProto_Object);
+  // Object, Function, and eval are eagerly resolved when creating the global.
+  JSObject& getObjectPrototype() {
+    MOZ_ASSERT(functionObjectClassesInitialized());
+    return getPrototype(JSProto_Object);
   }
-
-  static Handle<JSObject*> getOrCreateObjectPrototypeHandle(
-      JSContext* cx, Handle<GlobalObject*> global) {
-    if (!global->functionObjectClassesInitialized()) {
-      if (!ensureConstructor(cx, global, JSProto_Object)) {
-        return nullptr;
-      }
-    }
-    return global->getPrototypeHandle(JSProto_Object);
+  Handle<JSObject*> getObjectPrototypeHandle() {
+    MOZ_ASSERT(functionObjectClassesInitialized());
+    return getPrototypeHandle(JSProto_Object);
   }
-
-  static JSObject* getOrCreateFunctionConstructor(
-      JSContext* cx, Handle<GlobalObject*> global) {
-    if (!global->functionObjectClassesInitialized()) {
-      if (!ensureConstructor(cx, global, JSProto_Object)) {
-        return nullptr;
-      }
-    }
-    return &global->getConstructor(JSProto_Function);
+  JSObject& getFunctionConstructor() {
+    MOZ_ASSERT(functionObjectClassesInitialized());
+    return getConstructor(JSProto_Function);
   }
-
-  static JSObject* getOrCreateFunctionPrototype(JSContext* cx,
-                                                Handle<GlobalObject*> global) {
-    if (!global->functionObjectClassesInitialized()) {
-      if (!ensureConstructor(cx, global, JSProto_Object)) {
-        return nullptr;
-      }
-    }
-    return &global->getPrototype(JSProto_Function);
+  JSObject& getFunctionPrototype() {
+    MOZ_ASSERT(functionObjectClassesInitialized());
+    return getPrototype(JSProto_Function);
+  }
+  JSFunction& getEvalFunction() {
+    MOZ_ASSERT(data().eval);
+    return *data().eval;
   }
 
   static NativeObject* getOrCreateArrayPrototype(JSContext* cx,
@@ -954,9 +935,6 @@ class GlobalObject : public NativeObject {
   static JSObject* getOrCreateThrowTypeError(JSContext* cx,
                                              Handle<GlobalObject*> global);
 
-  static bool getOrCreateEval(JSContext* cx, Handle<GlobalObject*> global,
-                              MutableHandleObject eval);
-
   // Infallibly test whether the given value is the eval function for this
   // global.
   bool valueIsEval(const Value& val);
@@ -1032,43 +1010,44 @@ class GlobalObject : public NativeObject {
     data().sourceURLsHolder.unbarrieredSet(nullptr);
   }
 
-  Shape* maybeArrayShapeWithDefaultProto() const {
+  SharedShape* maybeArrayShapeWithDefaultProto() const {
     return data().arrayShapeWithDefaultProto;
   }
 
-  static Shape* getArrayShapeWithDefaultProto(JSContext* cx) {
-    if (Shape* shape = cx->global()->data().arrayShapeWithDefaultProto;
+  static SharedShape* getArrayShapeWithDefaultProto(JSContext* cx) {
+    if (SharedShape* shape = cx->global()->data().arrayShapeWithDefaultProto;
         MOZ_LIKELY(shape)) {
       return shape;
     }
     return createArrayShapeWithDefaultProto(cx);
   }
-  static Shape* createArrayShapeWithDefaultProto(JSContext* cx);
+  static SharedShape* createArrayShapeWithDefaultProto(JSContext* cx);
 
-  static Shape* getPlainObjectShapeWithDefaultProto(JSContext* cx,
-                                                    gc::AllocKind kind) {
+  static SharedShape* getPlainObjectShapeWithDefaultProto(JSContext* cx,
+                                                          gc::AllocKind kind) {
     PlainObjectSlotsKind slotsKind = PlainObjectSlotsKindFromAllocKind(kind);
-    Shape* shape =
+    SharedShape* shape =
         cx->global()->data().plainObjectShapesWithDefaultProto[slotsKind];
     if (MOZ_LIKELY(shape)) {
       return shape;
     }
     return createPlainObjectShapeWithDefaultProto(cx, kind);
   }
-  static Shape* createPlainObjectShapeWithDefaultProto(JSContext* cx,
-                                                       gc::AllocKind kind);
+  static SharedShape* createPlainObjectShapeWithDefaultProto(
+      JSContext* cx, gc::AllocKind kind);
 
-  static Shape* getFunctionShapeWithDefaultProto(JSContext* cx, bool extended) {
+  static SharedShape* getFunctionShapeWithDefaultProto(JSContext* cx,
+                                                       bool extended) {
     GlobalObjectData& data = cx->global()->data();
-    Shape* shape = extended ? data.extendedFunctionShapeWithDefaultProto
-                            : data.functionShapeWithDefaultProto;
+    SharedShape* shape = extended ? data.extendedFunctionShapeWithDefaultProto
+                                  : data.functionShapeWithDefaultProto;
     if (MOZ_LIKELY(shape)) {
       return shape;
     }
     return createFunctionShapeWithDefaultProto(cx, extended);
   }
-  static Shape* createFunctionShapeWithDefaultProto(JSContext* cx,
-                                                    bool extended);
+  static SharedShape* createFunctionShapeWithDefaultProto(JSContext* cx,
+                                                          bool extended);
 
   PropertyIteratorObject* maybeEmptyIterator() const {
     return data().emptyIterator;

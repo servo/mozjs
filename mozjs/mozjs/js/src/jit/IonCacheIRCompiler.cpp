@@ -12,7 +12,9 @@
 #include "jit/CacheIRCompiler.h"
 #include "jit/CacheIRWriter.h"
 #include "jit/IonIC.h"
+#include "jit/JitcodeMap.h"
 #include "jit/JitFrames.h"
+#include "jit/JitRuntime.h"
 #include "jit/JitZone.h"
 #include "jit/JSJitFrameIter.h"
 #include "jit/Linker.h"
@@ -1313,7 +1315,8 @@ bool IonCacheIRCompiler::emitAllocateAndStoreDynamicSlot(
 }
 
 bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
-                                                  Int32OperandId indexId) {
+                                                  Int32OperandId indexId,
+                                                  bool handleOOB) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
   AutoOutputRegister output(*this);
   Register str = allocator.useRegister(masm, strId);
@@ -1328,10 +1331,23 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   }
 
   // Bounds check, load string char.
-  masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
-                            scratch1, failure->label());
-  masm.loadStringChar(str, index, scratch1, scratch2, scratch3,
-                      failure->label());
+  Label done;
+  Label loadFailed;
+  if (!handleOOB) {
+    masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                              scratch1, failure->label());
+    masm.loadStringChar(str, index, scratch1, scratch2, scratch3,
+                        failure->label());
+  } else {
+    // Return the empty string for out-of-bounds access.
+    masm.movePtr(ImmGCPtr(cx_->runtime()->emptyString), scratch2);
+
+    // This CacheIR op is always preceded by |LinearizeForCharAccess|, so we're
+    // guaranteed to see no nested ropes.
+    masm.spectreBoundsCheck32(index, Address(str, JSString::offsetOfLength()),
+                              scratch1, &done);
+    masm.loadStringChar(str, index, scratch1, scratch2, scratch3, &loadFailed);
+  }
 
   // Load StaticString for this char. For larger code units perform a VM call.
   Label vmCall;
@@ -1340,8 +1356,12 @@ bool IonCacheIRCompiler::emitLoadStringCharResult(StringOperandId strId,
   masm.movePtr(ImmPtr(&cx_->staticStrings().unitStaticTable), scratch2);
   masm.loadPtr(BaseIndex(scratch2, scratch1, ScalePointer), scratch2);
 
-  Label done;
   masm.jump(&done);
+
+  if (handleOOB) {
+    masm.bind(&loadFailed);
+    masm.assumeUnreachable("loadStringChar can't fail for linear strings");
+  }
 
   {
     masm.bind(&vmCall);
@@ -1653,64 +1673,6 @@ bool IonCacheIRCompiler::emitReturnFromIC() {
   return true;
 }
 
-bool IonCacheIRCompiler::emitGuardAndGetIterator(ObjOperandId objId,
-                                                 uint32_t iterOffset,
-                                                 uint32_t enumeratorsAddrOffset,
-                                                 ObjOperandId resultId) {
-  JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
-  Register obj = allocator.useRegister(masm, objId);
-
-  AutoScratchRegister scratch1(allocator, masm);
-  AutoScratchRegister scratch2(allocator, masm);
-  AutoScratchRegister niScratch(allocator, masm);
-
-  PropertyIteratorObject* iterobj =
-      &objectStubField(iterOffset)->as<PropertyIteratorObject>();
-  NativeIterator** enumerators =
-      rawPointerStubField<NativeIterator**>(enumeratorsAddrOffset);
-
-  Register output = allocator.defineRegister(masm, resultId);
-
-  FailurePath* failure;
-  if (!addFailurePath(&failure)) {
-    return false;
-  }
-
-  // Load our PropertyIteratorObject* and its NativeIterator.
-  masm.movePtr(ImmGCPtr(iterobj), output);
-
-  Address slotAddr(output, PropertyIteratorObject::offsetOfIteratorSlot());
-  masm.loadPrivate(slotAddr, niScratch);
-
-  // Ensure the iterator is reusable: see NativeIterator::isReusable.
-  masm.branchIfNativeIteratorNotReusable(niScratch, failure->label());
-
-  // 'objectBeingIterated_' must be nullptr, so we don't need a pre-barrier.
-  Address iterObjAddr(niScratch, NativeIterator::offsetOfObjectBeingIterated());
-#ifdef DEBUG
-  Label ok;
-  masm.branchPtr(Assembler::Equal, iterObjAddr, ImmPtr(nullptr), &ok);
-  masm.assumeUnreachable("iterator with non-null object");
-  masm.bind(&ok);
-#endif
-
-  // Mark iterator as active.
-  Address iterFlagsAddr(niScratch, NativeIterator::offsetOfFlagsAndCount());
-  masm.storePtr(obj, iterObjAddr);
-  masm.or32(Imm32(NativeIterator::Flags::Active), iterFlagsAddr);
-
-  // Post-write barrier for stores to 'objectBeingIterated_'.
-  emitPostBarrierSlot(output,
-                      TypedOrValueRegister(MIRType::Object, AnyRegister(obj)),
-                      scratch1);
-
-  // Chain onto the active iterator stack.
-  masm.loadPtr(AbsoluteAddress(enumerators), scratch1);
-  emitRegisterEnumerator(scratch1, niScratch, scratch2);
-
-  return true;
-}
-
 bool IonCacheIRCompiler::emitGuardDOMExpandoMissingOrGuardShape(
     ValOperandId expandoId, uint32_t shapeOffset) {
   JitSpew(JitSpew_Codegen, "%s", __FUNCTION__);
@@ -1847,6 +1809,23 @@ void IonIC::attachCacheIRStub(JSContext* cx, const CacheIRWriter& writer,
   JitCode* code = compiler.compile(newStub);
   if (!code) {
     return;
+  }
+
+  // Add an entry to the profiler's code table, so that the profiler can
+  // identify this as Ion code.
+  if (ionScript->hasProfilingInstrumentation()) {
+    uint8_t* addr = rejoinAddr(ionScript);
+    auto entry = MakeJitcodeGlobalEntry<IonICEntry>(cx, code, code->raw(),
+                                                    code->rawEnd(), addr);
+    if (!entry) {
+      cx->recoverFromOutOfMemory();
+      return;
+    }
+
+    auto* globalTable = cx->runtime()->jitRuntime()->getJitcodeGlobalTable();
+    if (!globalTable->addEntry(std::move(entry))) {
+      return;
+    }
   }
 
   attachStub(newStub, code);

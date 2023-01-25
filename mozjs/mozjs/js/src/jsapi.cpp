@@ -913,46 +913,39 @@ JS_PUBLIC_API bool JS_ResolveStandardClass(JSContext* cx, HandleObject obj,
     return GlobalObject::maybeResolveGlobalThis(cx, global, resolved);
   }
 
-  do {
-    // Try for class constructors/prototypes named by well-known atoms.
-    const JSStdName* stdnm =
-        LookupStdName(cx->names(), idAtom, standard_class_names);
+  // Try for class constructors/prototypes named by well-known atoms.
+  const JSStdName* stdnm =
+      LookupStdName(cx->names(), idAtom, standard_class_names);
+  if (!stdnm) {
+    // Try less frequently used top-level functions and constants.
+    stdnm = LookupStdName(cx->names(), idAtom, builtin_property_names);
     if (!stdnm) {
-      // Try less frequently used top-level functions and constants.
-      stdnm = LookupStdName(cx->names(), idAtom, builtin_property_names);
-      if (!stdnm) {
-        break;
-      }
+      return true;
     }
+  }
 
-    if (GlobalObject::skipDeselectedConstructor(cx, stdnm->key) ||
-        SkipUneval(id, cx)) {
-      break;
-    }
+  JSProtoKey key = stdnm->key;
+  if (key == JSProto_Null || GlobalObject::skipDeselectedConstructor(cx, key) ||
+      SkipUneval(id, cx)) {
+    return true;
+  }
 
-    if (JSProtoKey key = stdnm->key; key != JSProto_Null) {
-      // If this class is anonymous (or it's "SharedArrayBuffer" but that global
-      // constructor isn't supposed to be defined), then it doesn't exist as a
-      // global property, so we won't resolve anything.
-      const JSClass* clasp = ProtoKeyToClass(key);
-      if ((!clasp || clasp->specShouldDefineConstructor()) &&
-          !SkipSharedArrayBufferConstructor(key, global)) {
-        if (!GlobalObject::ensureConstructor(cx, global, key)) {
-          return false;
-        }
+  // If this class is anonymous (or it's "SharedArrayBuffer" but that global
+  // constructor isn't supposed to be defined), then it doesn't exist as a
+  // global property, so we won't resolve anything.
+  const JSClass* clasp = ProtoKeyToClass(key);
+  if (clasp && !clasp->specShouldDefineConstructor()) {
+    return true;
+  }
+  if (SkipSharedArrayBufferConstructor(key, global)) {
+    return true;
+  }
 
-        *resolved = true;
-        return true;
-      }
-    }
-  } while (false);
-
-  // There is no such property to resolve. An ordinary resolve hook would
-  // just return true at this point. But the global object is special in one
-  // more way: its prototype chain is lazily initialized. That is,
-  // global->getProto() might be null right now because we haven't created
-  // Object.prototype yet. Force it now.
-  return GlobalObject::getOrCreateObjectPrototype(cx, global);
+  if (!GlobalObject::ensureConstructor(cx, global, key)) {
+    return false;
+  }
+  *resolved = true;
+  return true;
 }
 
 JS_PUBLIC_API bool JS_MayResolveStandardClass(const JSAtomState& names, jsid id,
@@ -1388,11 +1381,11 @@ JS_PUBLIC_API bool JS_UpdateWeakPointerAfterGCUnbarriered(JSTracer* trc,
 
 JS_PUBLIC_API void JS_SetGCParameter(JSContext* cx, JSGCParamKey key,
                                      uint32_t value) {
-  MOZ_ALWAYS_TRUE(cx->runtime()->gc.setParameter(key, value));
+  MOZ_ALWAYS_TRUE(cx->runtime()->gc.setParameter(cx, key, value));
 }
 
 JS_PUBLIC_API void JS_ResetGCParameter(JSContext* cx, JSGCParamKey key) {
-  cx->runtime()->gc.resetParameter(key);
+  cx->runtime()->gc.resetParameter(cx, key);
 }
 
 JS_PUBLIC_API uint32_t JS_GetGCParameter(JSContext* cx, JSGCParamKey key) {
@@ -1430,7 +1423,7 @@ JS_PUBLIC_API void JS_SetGCParametersBasedOnAvailableMemory(
       {JSGC_LOW_FREQUENCY_HEAP_GROWTH, 150},
       {JSGC_ALLOCATION_THRESHOLD, 27},
       {JSGC_MALLOC_THRESHOLD_BASE, 38},
-      {JSGC_SMALL_HEAP_INCREMENTAL_LIMIT, 140},
+      {JSGC_SMALL_HEAP_INCREMENTAL_LIMIT, 150},
       {JSGC_LARGE_HEAP_INCREMENTAL_LIMIT, 110},
       {JSGC_URGENT_THRESHOLD_MB, 16}};
 
@@ -1803,6 +1796,7 @@ JS_PUBLIC_API JSObject* JS_NewObject(JSContext* cx, const JSClass* clasp) {
 
   MOZ_ASSERT(!clasp->isJSFunction());
   MOZ_ASSERT(clasp != &PlainObject::class_);
+  MOZ_ASSERT(clasp != &ArrayObject::class_);
   MOZ_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
 
   return NewBuiltinClassInstance(cx, clasp);
@@ -1823,6 +1817,7 @@ JS_PUBLIC_API JSObject* JS_NewObjectWithGivenProto(JSContext* cx,
 
   MOZ_ASSERT(!clasp->isJSFunction());
   MOZ_ASSERT(clasp != &PlainObject::class_);
+  MOZ_ASSERT(clasp != &ArrayObject::class_);
   MOZ_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
 
   return NewObjectWithGivenProto(cx, clasp, proto);
@@ -1842,13 +1837,25 @@ JS_PUBLIC_API JSObject* JS_NewObjectForConstructor(JSContext* cx,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
+  MOZ_ASSERT(!clasp->isJSFunction());
+  MOZ_ASSERT(clasp != &PlainObject::class_);
+  MOZ_ASSERT(clasp != &ArrayObject::class_);
+  MOZ_ASSERT(!(clasp->flags & JSCLASS_IS_GLOBAL));
+
   if (!ThrowIfNotConstructing(cx, args, clasp->name)) {
     return nullptr;
   }
 
   RootedObject newTarget(cx, &args.newTarget().toObject());
   cx->check(newTarget);
-  return CreateThis(cx, clasp, newTarget);
+
+  RootedObject proto(cx);
+  if (!GetPrototypeFromConstructor(cx, newTarget,
+                                   JSCLASS_CACHED_PROTO_KEY(clasp), &proto)) {
+    return nullptr;
+  }
+
+  return NewObjectWithClassProto(cx, clasp, proto);
 }
 
 JS_PUBLIC_API bool JS_IsNative(JSObject* obj) {
@@ -1863,6 +1870,11 @@ JS_PUBLIC_API void JS::AssertObjectBelongsToCurrentThread(JSObject* obj) {
 JS_PUBLIC_API void JS::SetFilenameValidationCallback(
     JS::FilenameValidationCallback cb) {
   js::gFilenameValidationCallback = cb;
+}
+
+JS_PUBLIC_API void JS::SetHostEnsureCanAddPrivateElementHook(
+    JSContext* cx, JS::EnsureCanAddPrivateElementOp op) {
+  cx->runtime()->canAddPrivateElement = op;
 }
 
 /*** Standard internal methods **********************************************/
@@ -3413,7 +3425,8 @@ JS_PUBLIC_API bool JS_Stringify(JSContext* cx, MutableHandleValue vp,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(replacer, space);
-  StringBuffer sb(cx);
+  AutoReportFrontendContext ec(cx);
+  StringBuffer sb(cx, &ec);
   if (!sb.ensureTwoByteChars()) {
     return false;
   }
@@ -3433,7 +3446,8 @@ JS_PUBLIC_API bool JS::ToJSONMaybeSafely(JSContext* cx, JS::HandleObject input,
   CHECK_THREAD(cx);
   cx->check(input);
 
-  StringBuffer sb(cx);
+  AutoReportFrontendContext ec(cx);
+  StringBuffer sb(cx, &ec);
   if (!sb.ensureTwoByteChars()) {
     return false;
   }
@@ -4580,6 +4594,17 @@ JS_PUBLIC_API bool JS::FinishIncrementalEncoding(JSContext* cx,
     return false;
   }
   return true;
+}
+
+JS_PUBLIC_API void JS::AbortIncrementalEncoding(JS::HandleScript script) {
+  if (!script) {
+    return;
+  }
+  script->scriptSource()->xdrAbortEncoder();
+}
+
+JS_PUBLIC_API void JS::AbortIncrementalEncoding(JS::Handle<JSObject*> module) {
+  module->as<ModuleObject>().scriptSourceObject()->source()->xdrAbortEncoder();
 }
 
 bool JS::IsWasmModuleObject(HandleObject obj) {

@@ -23,8 +23,9 @@
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // JS_STACK_GROWTH_DIRECTION
 #include "js/friend/WindowProxy.h"    // js::ToWindowIfWindowProxy
-#include "js/Object.h"                // JS::GetClass
-#include "js/PropertyAndElement.h"    // JS_DefineProperty
+#include "js/HashTable.h"
+#include "js/Object.h"              // JS::GetClass
+#include "js/PropertyAndElement.h"  // JS_DefineProperty
 #include "js/Proxy.h"
 #include "js/Stack.h"   // JS::NativeStackLimitMax
 #include "js/String.h"  // JS::detail::StringToLinearStringSlow
@@ -453,7 +454,8 @@ JS_PUBLIC_API JSObject* js::GetStaticPrototype(JSObject* obj) {
 
 JS_PUBLIC_API bool js::GetRealmOriginalEval(JSContext* cx,
                                             MutableHandleObject eval) {
-  return GlobalObject::getOrCreateEval(cx, cx->global(), eval);
+  eval.set(&cx->global()->getEvalFunction());
+  return true;
 }
 
 void JS::detail::SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
@@ -763,8 +765,47 @@ JS_PUBLIC_API JS::Value js::MaybeGetScriptPrivate(JSObject* object) {
   return object->as<ScriptSourceObject>().getPrivate();
 }
 
-JS_PUBLIC_API uint64_t js::GetGCHeapUsageForObjectZone(JSObject* obj) {
-  return obj->zone()->gcHeapSize.bytes();
+JS_PUBLIC_API uint64_t js::GetMemoryUsageForZone(Zone* zone) {
+  // We do not include zone->sharedMemoryUseCounts since that's already included
+  // in zone->mallocHeapSize.
+  return zone->gcHeapSize.bytes() + zone->mallocHeapSize.bytes() +
+         zone->jitHeapSize.bytes();
+}
+
+JS_PUBLIC_API const gc::SharedMemoryMap& js::GetSharedMemoryUsageForZone(
+    Zone* zone) {
+  return zone->sharedMemoryUseCounts;
+}
+
+JS_PUBLIC_API uint64_t js::GetGCHeapUsage(JSContext* cx) {
+  mozilla::CheckedInt<uint64_t> sum = 0;
+  using SharedSet = js::HashSet<void*, PointerHasher<void*>, SystemAllocPolicy>;
+  SharedSet sharedVisited;
+
+  for (ZonesIter zone(cx->runtime(), WithAtoms); !zone.done(); zone.next()) {
+    sum += GetMemoryUsageForZone(zone);
+
+    const gc::SharedMemoryMap& shared = GetSharedMemoryUsageForZone(zone);
+    for (auto iter = shared.iter(); !iter.done(); iter.next()) {
+      void* sharedMem = iter.get().key();
+      SharedSet::AddPtr addShared = sharedVisited.lookupForAdd(sharedMem);
+      if (addShared) {
+        // We *have* seen this shared memory before.
+
+        // Because shared memory is already included in
+        // GetMemoryUsageForZone() above, and we've seen it for a
+        // previous zone, we subtract it here so it's not counted more
+        // than once.
+        sum -= iter.get().value().nbytes;
+      } else if (!sharedVisited.add(addShared, sharedMem)) {
+        // OOM, abort counting (usually causing an over-estimate).
+        break;
+      }
+    }
+  }
+
+  MOZ_ASSERT(sum.isValid(), "Memory calculation under/over flowed");
+  return sum.value();
 }
 
 #ifdef DEBUG

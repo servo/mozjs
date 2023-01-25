@@ -282,7 +282,7 @@ bool FunctionEmitter::emitTopLevelFunction(GCThingIndex index) {
     // For modules, we record the function and instantiate the binding
     // during ModuleInstantiate(), before the script is run.
     return bce_->sc->asModuleContext()->builder.noteFunctionDeclaration(
-        bce_->cx, index);
+        bce_->ec, index);
   }
 
   MOZ_ASSERT(bce_->sc->isGlobalContext() || bce_->sc->isEvalContext());
@@ -360,12 +360,12 @@ bool FunctionScriptEmitter::prepareForParameters() {
   }
 
   if (funbox_->needsPromiseResult()) {
-    if (funbox_->hasParameterExprs) {
-      if (!asyncEmitter_->prepareForParamsWithExpression()) {
+    if (funbox_->hasParameterExprs || funbox_->hasDestructuringArgs) {
+      if (!asyncEmitter_->prepareForParamsWithExpressionOrDestructuring()) {
         return false;
       }
     } else {
-      if (!asyncEmitter_->prepareForParamsWithoutExpression()) {
+      if (!asyncEmitter_->prepareForParamsWithoutExpressionOrDestructuring()) {
         return false;
       }
     }

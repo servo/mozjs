@@ -65,17 +65,15 @@ def get_timeout_multiplier(test_type, run_info_data, **kwargs):
             multiplier = 2
 
     if test_type == "reftest":
-        if (
-            run_info_data["debug"]
-            or run_info_data.get("asan")
-            or run_info_data.get("tsan")
-        ):
+        if (run_info_data["debug"] or
+            run_info_data.get("asan") or
+            run_info_data.get("tsan")):
             return 4 * multiplier
         else:
             return 2 * multiplier
-    elif (
-        run_info_data["debug"] or run_info_data.get("asan") or run_info_data.get("tsan")
-    ):
+    elif (run_info_data["debug"] or
+          run_info_data.get("asan") or
+          run_info_data.get("tsan")):
         if run_info_data.get("ccov"):
             return 4 * multiplier
         else:
@@ -249,7 +247,7 @@ def get_environ(logger, binary, debug_info, stylo_threads, headless,
     # Disable window occlusion. Bug 1733955
     env["MOZ_WINDOW_OCCLUSION"] = "0"
     if chaos_mode_flags is not None:
-        env["MOZ_CHAOSMODE"] = str(chaos_mode_flags)
+        env["MOZ_CHAOSMODE"] = hex(chaos_mode_flags)
     if headless:
         env["MOZ_HEADLESS"] = "1"
     return env

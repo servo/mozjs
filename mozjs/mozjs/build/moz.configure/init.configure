@@ -794,6 +794,12 @@ def target_is_windows(target):
         return True
 
 
+@depends(host)
+def host_is_windows(host):
+    if host.kernel == "WINNT":
+        return True
+
+
 set_define("_WINDOWS", target_is_windows)
 set_define("WIN32", target_is_windows)
 set_define("XP_WIN", target_is_windows)
@@ -823,21 +829,27 @@ def target_is_osx(target):
         return True
 
 
+@depends(host)
+def host_is_osx(host):
+    if host.os == "OSX":
+        return True
+
+
 set_define("XP_MACOSX", target_is_osx)
 
 
 @depends(target)
-def target_is_linux(target):
+def target_has_linux_kernel(target):
     if target.kernel == "Linux":
         return True
 
 
-set_define("XP_LINUX", target_is_linux)
+set_define("XP_LINUX", target_has_linux_kernel)
 
 
 @depends(target)
 def target_is_linux_or_wasi(target):
-    if target.kernel in ("Linux", "WASI"):
+    if (target.kernel == "Linux" and target.os == "GNU") or target.kernel == "WASI":
         return True
 
 
@@ -1118,6 +1130,23 @@ def mozbuild_state_path(path, _):
     if path:
         return normalize_path(path[0])
     return normalize_path(os.path.expanduser(os.path.join("~", ".mozbuild")))
+
+
+@depends("MOZILLABUILD", shell, host_is_windows)
+@imports(_from="pathlib", _import="Path")
+def mozillabuild_bin_paths(mozillabuild, shell, host_is_windows):
+    paths = []
+    if not mozillabuild or not host_is_windows:
+        return paths
+    paths.append(os.path.dirname(shell))
+    paths.append(str(Path(mozillabuild[0]) / "bin"))
+    return paths
+
+
+@depends(mozillabuild_bin_paths)
+@imports("os")
+def prefer_mozillabuild_path(mozillabuild_bin_paths):
+    return mozillabuild_bin_paths + os.environ["PATH"].split(os.pathsep)
 
 
 # A template providing a shorthand for setting a variable. The created

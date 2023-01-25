@@ -11,7 +11,6 @@
 #include "mozilla/Attributes.h"
 
 #include <stdint.h>
-#include <utility>
 
 #include "jstypes.h"
 #include "NamespaceImports.h"
@@ -64,7 +63,11 @@ class MOZ_RAII IRGenerator {
   CacheKind cacheKind_;
   ICState::Mode mode_;
   bool isFirstStub_;
-  UniqueChars stubName_;
+
+  // Important: This pointer may be passed to the profiler. If this is non-null,
+  // it must point to a C string literal with static lifetime, not a heap- or
+  // stack- allocated string.
+  const char* stubName_ = nullptr;
 
   IRGenerator(const IRGenerator&) = delete;
   IRGenerator& operator=(const IRGenerator&) = delete;
@@ -96,7 +99,9 @@ class MOZ_RAII IRGenerator {
 
   const CacheIRWriter& writerRef() const { return writer; }
   CacheKind cacheKind() const { return cacheKind_; }
-  const char* stubName() const { return stubName_.get(); }
+
+  // See comment on `stubName_` above.
+  const char* stubName() const { return stubName_; }
 
   static constexpr char* NotAttached = nullptr;
 };
@@ -119,6 +124,10 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
                                                  HandleId id);
   AttachDecision tryAttachRegExp(HandleObject obj, ObjOperandId objId,
                                  HandleId id);
+  AttachDecision tryAttachMap(HandleObject obj, ObjOperandId objId,
+                              HandleId id);
+  AttachDecision tryAttachSet(HandleObject obj, ObjOperandId objId,
+                              HandleId id);
   AttachDecision tryAttachModuleNamespace(HandleObject obj, ObjOperandId objId,
                                           HandleId id);
   AttachDecision tryAttachWindowProxy(HandleObject obj, ObjOperandId objId,
@@ -207,7 +216,7 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
   // matches |id|.
   void maybeEmitIdGuard(jsid id);
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   GetPropIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc,
@@ -226,7 +235,7 @@ class MOZ_RAII GetNameIRGenerator : public IRGenerator {
   AttachDecision tryAttachGlobalNameGetter(ObjOperandId objId, HandleId id);
   AttachDecision tryAttachEnvironmentName(ObjOperandId objId, HandleId id);
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   GetNameIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc,
@@ -244,7 +253,7 @@ class MOZ_RAII BindNameIRGenerator : public IRGenerator {
   AttachDecision tryAttachGlobalName(ObjOperandId objId, HandleId id);
   AttachDecision tryAttachEnvironmentName(ObjOperandId objId, HandleId id);
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   BindNameIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc,
@@ -342,7 +351,7 @@ class MOZ_RAII SetPropIRGenerator : public IRGenerator {
 
   AttachDecision tryAttachStub();
   AttachDecision tryAttachAddSlotStub(Handle<Shape*> oldShape);
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
   DeferType deferType() const { return deferType_; }
 };
@@ -378,7 +387,7 @@ class MOZ_RAII HasPropIRGenerator : public IRGenerator {
   AttachDecision tryAttachProxyElement(HandleObject obj, ObjOperandId objId,
                                        ValOperandId keyId);
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   // NOTE: Argument order is PROPERTY, OBJECT
@@ -397,7 +406,7 @@ class MOZ_RAII CheckPrivateFieldIRGenerator : public IRGenerator {
                                  jsid key, ValOperandId keyId,
                                  PropertyResult prop);
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   CheckPrivateFieldIRGenerator(JSContext* cx, HandleScript script,
@@ -411,7 +420,7 @@ class MOZ_RAII InstanceOfIRGenerator : public IRGenerator {
   HandleValue lhsVal_;
   HandleObject rhsObj_;
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   InstanceOfIRGenerator(JSContext*, HandleScript, jsbytecode*, ICState,
@@ -425,7 +434,7 @@ class MOZ_RAII TypeOfIRGenerator : public IRGenerator {
 
   AttachDecision tryAttachPrimitive(ValOperandId valId);
   AttachDecision tryAttachObject(ValOperandId valId);
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   TypeOfIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc, ICState state,
@@ -447,7 +456,7 @@ class MOZ_RAII GetIteratorIRGenerator : public IRGenerator {
 
   AttachDecision tryAttachStub();
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 };
 
 class MOZ_RAII OptimizeSpreadCallIRGenerator : public IRGenerator {
@@ -464,7 +473,7 @@ class MOZ_RAII OptimizeSpreadCallIRGenerator : public IRGenerator {
 
   AttachDecision tryAttachStub();
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 };
 
 enum class StringChar { CodeAt, At };
@@ -484,9 +493,10 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   ScriptedThisResult getThisShapeForScripted(HandleFunction calleeFunc,
                                              MutableHandle<Shape*> result);
 
+  ObjOperandId emitFunCallOrApplyGuard(Int32OperandId argcId);
   ObjOperandId emitFunCallGuard(Int32OperandId argcId);
-  std::pair<ObjOperandId, ObjOperandId> emitFunApplyGuard(
-      Int32OperandId argcId, CallFlags::ArgFormat format);
+  ObjOperandId emitFunApplyGuard(Int32OperandId argcId);
+  ObjOperandId emitFunApplyArgsGuard(CallFlags::ArgFormat format);
 
   AttachDecision tryAttachFunCall(HandleFunction calleeFunc);
   AttachDecision tryAttachFunApply(HandleFunction calleeFunc);
@@ -497,7 +507,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachCallNative(HandleFunction calleeFunc);
   AttachDecision tryAttachCallHook(HandleObject calleeObj);
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   CallIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc, JSOp op,
@@ -526,7 +536,7 @@ class MOZ_RAII InlinableNativeIRGenerator {
 
   void emitNativeCalleeGuard();
 
-  ObjOperandId emitNativeCalleeGuardAndLoadArgsArray();
+  ObjOperandId emitLoadArgsArray();
 
   void initializeInputOperand() {
     // The input operand is already initialized for FunCall and FunApplyArray.
@@ -570,7 +580,7 @@ class MOZ_RAII InlinableNativeIRGenerator {
   AttachDecision tryAttachUnsafeGetReservedSlot(InlinableNative native);
   AttachDecision tryAttachUnsafeSetReservedSlot();
   AttachDecision tryAttachIsSuspendedGenerator();
-  AttachDecision tryAttachToObject(InlinableNative native);
+  AttachDecision tryAttachToObject();
   AttachDecision tryAttachToInteger();
   AttachDecision tryAttachToLength();
   AttachDecision tryAttachIsObject();
@@ -633,8 +643,11 @@ class MOZ_RAII InlinableNativeIRGenerator {
   AttachDecision tryAttachNewRegExpStringIterator();
   AttachDecision tryAttachArrayIteratorPrototypeOptimizable();
   AttachDecision tryAttachObjectCreate();
+  AttachDecision tryAttachObjectConstructor();
   AttachDecision tryAttachArrayConstructor();
   AttachDecision tryAttachTypedArrayConstructor();
+  AttachDecision tryAttachNumber();
+  AttachDecision tryAttachNumberParseInt();
   AttachDecision tryAttachNumberToString();
   AttachDecision tryAttachReflectGetPrototypeOf();
   AttachDecision tryAttachAtomicsCompareExchange();
@@ -659,8 +672,11 @@ class MOZ_RAII InlinableNativeIRGenerator {
   AttachDecision tryAttachSetHas();
   AttachDecision tryAttachMapHas();
   AttachDecision tryAttachMapGet();
+#ifdef FUZZING_JS_FUZZILLI
+  AttachDecision tryAttachFuzzilliHash();
+#endif
 
-  void trackAttached(const char* name) {
+  void trackAttached(const char* name /* must be a C string literal */) {
     return generator_.trackAttached(name);
   }
 
@@ -708,7 +724,7 @@ class MOZ_RAII CompareIRGenerator : public IRGenerator {
   AttachDecision tryAttachBigIntNumber(ValOperandId lhsId, ValOperandId rhsId);
   AttachDecision tryAttachBigIntString(ValOperandId lhsId, ValOperandId rhsId);
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   CompareIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc, ICState state,
@@ -729,7 +745,7 @@ class MOZ_RAII ToBoolIRGenerator : public IRGenerator {
   AttachDecision tryAttachObject();
   AttachDecision tryAttachBigInt();
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   ToBoolIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc, ICState state,
@@ -741,7 +757,7 @@ class MOZ_RAII ToBoolIRGenerator : public IRGenerator {
 class MOZ_RAII GetIntrinsicIRGenerator : public IRGenerator {
   HandleValue val_;
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   GetIntrinsicIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
@@ -762,7 +778,7 @@ class MOZ_RAII UnaryArithIRGenerator : public IRGenerator {
   AttachDecision tryAttachStringInt32();
   AttachDecision tryAttachStringNumber();
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   UnaryArithIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
@@ -780,7 +796,7 @@ class MOZ_RAII ToPropertyKeyIRGenerator : public IRGenerator {
   AttachDecision tryAttachString();
   AttachDecision tryAttachSymbol();
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   ToPropertyKeyIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
@@ -795,15 +811,13 @@ class MOZ_RAII BinaryArithIRGenerator : public IRGenerator {
   HandleValue rhs_;
   HandleValue res_;
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
   AttachDecision tryAttachInt32();
   AttachDecision tryAttachDouble();
   AttachDecision tryAttachBitwise();
   AttachDecision tryAttachStringConcat();
   AttachDecision tryAttachStringObjectConcat();
-  AttachDecision tryAttachStringNumberConcat();
-  AttachDecision tryAttachStringBooleanConcat();
   AttachDecision tryAttachBigInt();
   AttachDecision tryAttachStringInt32Arith();
 
@@ -822,7 +836,7 @@ class MOZ_RAII NewArrayIRGenerator : public IRGenerator {
   HandleObject templateObject_;
   BaselineFrame* frame_;
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   NewArrayIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
@@ -840,7 +854,7 @@ class MOZ_RAII NewObjectIRGenerator : public IRGenerator {
   HandleObject templateObject_;
   BaselineFrame* frame_;
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   NewObjectIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
@@ -859,7 +873,7 @@ class MOZ_RAII CloseIterIRGenerator : public IRGenerator {
   HandleObject iter_;
   CompletionKind kind_;
 
-  void trackAttached(const char* name);
+  void trackAttached(const char* name /* must be a C string literal */);
 
  public:
   CloseIterIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,

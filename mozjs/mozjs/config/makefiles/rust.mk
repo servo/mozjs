@@ -41,9 +41,7 @@ endif
 # of cargo when running via `mach`.
 ifdef MACH_STDOUT_ISATTY
 ifeq (,$(findstring --color,$(cargo_build_flags)))
-ifeq (WINNT,$(HOST_OS_ARCH))
-# Bug 1417003: color codes are non-trivial on Windows.  For now,
-# prefer black and white to broken color codes.
+ifdef NO_ANSI
 cargo_build_flags += --color=never
 else
 cargo_build_flags += --color=always
@@ -164,7 +162,7 @@ rust_host_cc_env_name := $(subst -,_,$(RUST_HOST_TARGET))
 # moment.
 export CC_$(rust_host_cc_env_name)=$(filter-out $(HOST_CC_BASE_FLAGS),$(HOST_CC))
 export CXX_$(rust_host_cc_env_name)=$(filter-out $(HOST_CXX_BASE_FLAGS),$(HOST_CXX))
-# We don't have a HOST_AR. If rust needs one, assume it's going to pick an appropriate one.
+export AR_$(rust_host_cc_env_name)=$(HOST_AR)
 
 rust_cc_env_name := $(subst -,_,$(RUST_TARGET))
 
@@ -256,7 +254,7 @@ endif
 export RUSTC_BOOTSTRAP
 endif
 
-target_rust_ltoable := force-cargo-library-build
+target_rust_ltoable := force-cargo-library-build force-cargo-library-udeps force-cargo-library-clippy
 target_rust_nonltoable := force-cargo-test-run force-cargo-library-check $(foreach b,build check,force-cargo-program-$(b))
 
 ifdef MOZ_PGO_RUST
@@ -288,7 +286,7 @@ $(target_rust_nonltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) 
 TARGET_RECIPES := $(target_rust_ltoable) $(target_rust_nonltoable)
 
 HOST_RECIPES := \
-  $(foreach a,library program,$(foreach b,build check,force-cargo-host-$(a)-$(b)))
+  $(foreach a,library program,$(foreach b,build check udeps clippy,force-cargo-host-$(a)-$(b)))
 
 $(HOST_RECIPES): RUSTFLAGS:=$(rustflags_override)
 
@@ -303,7 +301,7 @@ endif
 # don't use the prefix when make -n is used, so that cargo doesn't run
 # in that case)
 define RUN_CARGO
-$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)$(CARGO) $(1) $(cargo_build_flags)
+$(if $(findstring n,$(filter-out --%, $(MAKEFLAGS))),,+)$(CARGO) $(1) $(cargo_build_flags) $(cargo_extra_cli_flags)
 endef
 
 # This function is intended to be called by:
@@ -321,9 +319,30 @@ define CARGO_CHECK
 $(call RUN_CARGO,check)
 endef
 
+ifdef CARGO_NO_ERR
+define CARGO_UDEPS
+-$(call RUN_CARGO,udeps)
+endef
+define CARGO_AUDIT
+-$(call RUN_CARGO,audit)
+endef
+else
+define CARGO_UDEPS
+$(call RUN_CARGO,udeps)
+endef
+define CARGO_AUDIT
+$(call RUN_CARGO,audit)
+endef
+endif
+
+define CARGO_CLIPPY
+$(call RUN_CARGO,clippy)
+endef
+
 cargo_host_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_HOST_TARGET))_LINKER
 cargo_linker_env_var := CARGO_TARGET_$(call varize,$(RUST_TARGET))_LINKER
 
+export MOZ_CLANG_NEWER_THAN_RUSTC_LLVM
 export MOZ_CARGO_WRAP_LDFLAGS
 export MOZ_CARGO_WRAP_LD
 export MOZ_CARGO_WRAP_LD_CXX
@@ -450,10 +469,27 @@ endif
 endif
 endif
 
+SUGGEST_INSTALL_ON_FAILURE = (ret=$$?; if [ $$ret = 101 ]; then echo If $1 is not installed, install it using: cargo install $1; fi; exit $$ret)
+
 force-cargo-library-check:
 	$(call CARGO_CHECK) --lib $(cargo_target_flag) $(rust_features_flag)
+
+force-cargo-library-clippy:
+	$(call CARGO_CLIPPY) --lib $(cargo_target_flag) $(rust_features_flag)
+
+force-cargo-library-audit:
+	$(call CARGO_AUDIT) || $(call SUGGEST_INSTALL_ON_FAILURE,cargo-audit)
+
+force-cargo-library-udeps:
+	$(call CARGO_UDEPS) --lib $(cargo_target_flag) $(rust_features_flag) || $(call SUGGEST_INSTALL_ON_FAILURE,cargo-udeps)
 else
 force-cargo-library-check:
+	@true
+force-cargo-library-udeps:
+	@true
+force-cargo-library-clippy:
+	@true
+force-cargo-library-audit:
 	@true
 endif # RUST_LIBRARY_FILE
 
@@ -487,8 +523,23 @@ $(HOST_RUST_LIBRARY_FILE): force-cargo-host-library-build ;
 
 force-cargo-host-library-check:
 	$(call CARGO_CHECK) --lib $(cargo_host_flag) $(host_rust_features_flag)
+
+force-cargo-host-library-clippy:
+	$(call CARGO_CLIPPY) --lib $(cargo_host_flag) $(host_rust_features_flag)
+
+force-cargo-host-library-audit:
+	$(call CARGO_AUDIT) --lib $(filter-out --release $(cargo_target_flag)) $(host_rust_features_flag)
+
+force-cargo-host-library-udeps:
+	$(call CARGO_UDEPS) --lib $(cargo_host_flag) $(host_rust_features_flag)
 else
 force-cargo-host-library-check:
+	@true
+force-cargo-host-library-clippy:
+	@true
+force-cargo-host-library-audit:
+	@true
+force-cargo-host-library-udeps:
 	@true
 endif # HOST_RUST_LIBRARY_FILE
 
@@ -502,8 +553,23 @@ $(RUST_PROGRAMS): force-cargo-program-build ;
 
 force-cargo-program-check:
 	$(call CARGO_CHECK) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
+
+force-cargo-program-clippy:
+	$(call CARGO_CLIPPY) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
+
+force-cargo-program-audit:
+	$(call CARGO_AUDIT) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(filter-out --release $(cargo_target_flag))
+
+force-cargo-program-udeps:
+	$(call CARGO_UDEPS) $(addprefix --bin ,$(RUST_CARGO_PROGRAMS)) $(cargo_target_flag)
 else
 force-cargo-program-check:
+	@true
+force-cargo-program-clippy:
+	@true
+force-cargo-program-audit:
+	@true
+force-cargo-program-udeps:
 	@true
 endif # RUST_PROGRAMS
 ifdef HOST_RUST_PROGRAMS
@@ -517,7 +583,25 @@ $(HOST_RUST_PROGRAMS): force-cargo-host-program-build ;
 force-cargo-host-program-check:
 	$(REPORT_BUILD)
 	$(call CARGO_CHECK) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
+
+force-cargo-host-program-clippy:
+	$(REPORT_BUILD)
+	$(call CARGO_CLIPPY) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
+
+force-cargo-host-program-audit:
+	$(REPORT_BUILD)
+	$(call CARGO_CHECK) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(filter-out --release $(cargo_target_flag))
+
+force-cargo-host-program-udeps:
+	$(REPORT_BUILD)
+	$(call CARGO_UDEPS) $(addprefix --bin ,$(HOST_RUST_CARGO_PROGRAMS)) $(cargo_host_flag)
 else
 force-cargo-host-program-check:
+	@true
+force-cargo-host-program-clippy:
+	@true
+force-cargo-host-program-audit:
+	@true
+force-cargo-host-program-udeps:
 	@true
 endif # HOST_RUST_PROGRAMS

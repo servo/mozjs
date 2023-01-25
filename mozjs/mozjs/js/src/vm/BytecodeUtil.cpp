@@ -1336,11 +1336,12 @@ static bool DecompileAtPCForStackDump(
     JSContext* cx, HandleScript script,
     const OffsetAndDefIndex& offsetAndDefIndex, Sprinter* sp);
 
-static bool PrintShapeProperties(JSContext* cx, Sprinter* sp, Shape* shape) {
+static bool PrintShapeProperties(JSContext* cx, Sprinter* sp,
+                                 SharedShape* shape) {
   // Add all property keys to a vector to allow printing them in property
   // definition order.
   Vector<PropertyKey> props(cx);
-  for (ShapePropertyIter<NoGC> iter(shape); !iter.done(); iter++) {
+  for (SharedShapePropertyIter<NoGC> iter(shape); !iter.done(); iter++) {
     if (!props.append(iter->key())) {
       return false;
     }
@@ -1560,7 +1561,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
     }
 
     case JOF_SHAPE: {
-      Shape* shape = script->getShape(pc);
+      SharedShape* shape = script->getShape(pc);
       if (!sp->put(" ")) {
         return 0;
       }
@@ -2427,7 +2428,7 @@ static bool DecompileExpressionFromStack(JSContext* cx, int spindex,
   FrameIter frameIter(cx);
 
   if (frameIter.done() || !frameIter.hasScript() ||
-      frameIter.realm() != cx->realm()) {
+      frameIter.realm() != cx->realm() || frameIter.inPrologue()) {
     return true;
   }
 
@@ -2443,11 +2444,6 @@ static bool DecompileExpressionFromStack(JSContext* cx, int spindex,
   jsbytecode* valuepc = frameIter.pc();
 
   MOZ_ASSERT(script->containsPC(valuepc));
-
-  // Give up if in prologue.
-  if (valuepc < script->main()) {
-    return true;
-  }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   BytecodeParser parser(cx, allocScope.alloc(), frameIter.script());

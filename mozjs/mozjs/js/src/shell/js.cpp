@@ -14,6 +14,7 @@
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/mozalloc.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/RandomNum.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
@@ -604,14 +605,14 @@ bool shell::enableTestWasmAwaitTier2 = false;
 bool shell::enableSourcePragmas = true;
 bool shell::enableAsyncStacks = false;
 bool shell::enableAsyncStackCaptureDebuggeeOnly = false;
-bool shell::enableStreams = false;
 bool shell::enableWeakRefs = false;
 bool shell::enableToSource = false;
 bool shell::enablePropertyErrorMessageFix = false;
 bool shell::enableIteratorHelpers = false;
 bool shell::enableShadowRealms = false;
 #ifdef NIGHTLY_BUILD
-bool shell::enableArrayGrouping = true;
+bool shell::enableArrayGrouping = false;
+bool shell::enableArrayFromAsync = false;
 #endif
 #ifdef ENABLE_CHANGE_ARRAY_BY_COPY
 bool shell::enableChangeArrayByCopy = false;
@@ -1676,6 +1677,10 @@ static void ReportCantOpenErrorUnknownEncoding(JSContext* cx,
       return false;
     }
   }
+#ifdef FUZZING_JS_FUZZILLI
+  fprintf(stderr, "executionHash is 0x%x with %d inputs\n", cx->executionHash,
+          cx->executionHashInputs);
+#endif
   return true;
 }
 
@@ -2404,15 +2409,13 @@ static bool Evaluate(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
     } else {
-      AutoStableStringChars codeChars(cx);
-      if (!codeChars.initTwoByte(cx, code)) {
+      AutoStableStringChars linearChars(cx);
+      if (!linearChars.initTwoByte(cx, code)) {
         return false;
       }
-      mozilla::Range<const char16_t> chars = codeChars.twoByteRange();
 
       JS::SourceText<char16_t> srcBuf;
-      if (!srcBuf.init(cx, chars.begin().get(), chars.length(),
-                       JS::SourceOwnership::Borrowed)) {
+      if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
         return false;
       }
 
@@ -2624,14 +2627,13 @@ static bool Run(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  AutoStableStringChars chars(cx);
-  if (!chars.initTwoByte(cx, str)) {
+  AutoStableStringChars linearChars(cx);
+  if (!linearChars.initTwoByte(cx, str)) {
     return false;
   }
 
   JS::SourceText<char16_t> srcBuf;
-  if (!srcBuf.init(cx, chars.twoByteRange().begin().get(), str->length(),
-                   JS::SourceOwnership::Borrowed)) {
+  if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
     return false;
   }
 
@@ -3510,6 +3512,44 @@ static bool DummyPreserveWrapperCallback(JSContext* cx, HandleObject obj) {
 static bool DummyHasReleasedWrapperCallback(HandleObject obj) { return true; }
 
 #ifdef FUZZING_JS_FUZZILLI
+static bool fuzzilli_hash(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setUndefined();
+
+  if (argc != 1) {
+    return true;
+  }
+  uint32_t hash;
+  JS::Handle<JS::Value> v = args.get(0);
+  if (v.isInt32()) {
+    int32_t i = v.toInt32();
+    hash = FuzzilliHashDouble((double)i);
+  } else if (v.isDouble()) {
+    double d = v.toDouble();
+    d = JS::CanonicalizeNaN(d);
+    hash = FuzzilliHashDouble(d);
+  } else if (v.isNull()) {
+    hash = FuzzilliHashDouble(1.0);
+  } else if (v.isUndefined()) {
+    hash = FuzzilliHashDouble(2.0);
+  } else if (v.isBoolean()) {
+    hash = FuzzilliHashDouble(3.0 + v.toBoolean());
+  } else if (v.isBigInt()) {
+    JS::BigInt* bigInt = v.toBigInt();
+    hash = FuzzilliHashBigInt(bigInt);
+  } else if (v.isObject()) {
+    JSObject& obj = v.toObject();
+    FuzzilliHashObject(cx, &obj);
+    return true;
+  } else {
+    hash = 0;
+  }
+
+  cx->executionHashInputs += 1;
+  cx->executionHash = mozilla::RotateLeft(cx->executionHash + hash, 1);
+  return true;
+}
+
 // We have to assume that the fuzzer will be able to call this function e.g. by
 // enumerating the properties of the global object and eval'ing them. As such
 // this function is implemented in a way that requires passing some magic value
@@ -3571,6 +3611,12 @@ static bool Fuzzilli(JSContext* cx, unsigned argc, Value* vp) {
     }
     fprintf(fzliout, "%s\n", bytes.get());
     fflush(fzliout);
+  } else if (StringEqualsAscii(operation, "FUZZILLI_RANDOM")) {
+    // This is an entropy source which can be called during fuzzing.
+    // Its currently used to tests whether Fuzzilli detects non-deterministic
+    // behavior.
+    args.rval().setInt32(static_cast<uint32_t>(mozilla::RandomUint64OrDie()));
+    return true;
   }
 
   args.rval().setUndefined();
@@ -3841,7 +3887,6 @@ static void SetStandardRealmOptions(JS::RealmOptions& options) {
   options.creationOptions()
       .setSharedMemoryAndAtomicsEnabled(enableSharedMemory)
       .setCoopAndCoepEnabled(false)
-      .setStreamsEnabled(enableStreams)
       .setWeakRefsEnabled(enableWeakRefs
                               ? JS::WeakRefSpecifier::EnabledWithCleanupSome
                               : JS::WeakRefSpecifier::Disabled)
@@ -3851,6 +3896,7 @@ static void SetStandardRealmOptions(JS::RealmOptions& options) {
       .setShadowRealmsEnabled(enableShadowRealms)
 #ifdef NIGHTLY_BUILD
       .setArrayGroupingEnabled(enableArrayGrouping)
+      .setArrayFromAsyncEnabled(enableArrayFromAsync)
 #endif
 #ifdef ENABLE_CHANGE_ARRAY_BY_COPY
       .setChangeArrayByCopyEnabled(enableChangeArrayByCopy)
@@ -4843,15 +4889,13 @@ static bool ParseModule(JSContext* cx, unsigned argc, Value* vp) {
   }
   options.setModule();
 
-  AutoStableStringChars stableChars(cx);
-  if (!stableChars.initTwoByte(cx, scriptContents)) {
+  AutoStableStringChars linearChars(cx);
+  if (!linearChars.initTwoByte(cx, scriptContents)) {
     return false;
   }
 
-  const char16_t* chars = stableChars.twoByteRange().begin().get();
   JS::SourceText<char16_t> srcBuf;
-  if (!srcBuf.init(cx, chars, scriptContents->length(),
-                   JS::SourceOwnership::Borrowed)) {
+  if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
     return false;
   }
 
@@ -5334,7 +5378,7 @@ static bool DumpAST(JSContext* cx, const JS::ReadOnlyCompileOptions& options,
   if (goal == frontend::ParseGoal::Script) {
     pn = parser.parse();
   } else {
-    ModuleBuilder builder(cx, &parser);
+    ModuleBuilder builder(cx, &ec, &parser);
 
     SourceExtent extent = SourceExtent::makeGlobalExtent(length);
     ModuleSharedContext modulesc(cx, &ec, options, builder, extent);
@@ -5607,7 +5651,7 @@ static bool FrontendTest(JSContext* cx, unsigned argc, Value* vp,
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::NoScopeBindingCache scopeCache;
-  frontend::CompilationState compilationState(cx, allocScope, input.get());
+  frontend::CompilationState compilationState(cx, &ec, allocScope, input.get());
   if (!compilationState.init(cx, &ec, &scopeCache)) {
     return false;
   }
@@ -5684,7 +5728,7 @@ static bool SyntaxParse(JSContext* cx, unsigned argc, Value* vp) {
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   frontend::NoScopeBindingCache scopeCache;
-  frontend::CompilationState compilationState(cx, allocScope, input.get());
+  frontend::CompilationState compilationState(cx, &ec, allocScope, input.get());
   if (!compilationState.init(cx, &ec, &scopeCache)) {
     return false;
   }
@@ -8146,13 +8190,12 @@ static bool EntryPoints(JSContext* cx, unsigned argc, Value* vp) {
         return false;
       }
 
-      AutoStableStringChars stableChars(cx);
-      if (!stableChars.initTwoByte(cx, codeString)) {
+      AutoStableStringChars linearChars(cx);
+      if (!linearChars.initTwoByte(cx, codeString)) {
         return false;
       }
       JS::SourceText<char16_t> srcBuf;
-      if (!srcBuf.init(cx, stableChars.twoByteRange().begin().get(),
-                       codeString->length(), JS::SourceOwnership::Borrowed)) {
+      if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
         return false;
       }
 
@@ -9338,6 +9381,22 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 // clang-format on
 
 // clang-format off
+#ifdef FUZZING_JS_FUZZILLI
+static const JSFunctionSpec shell_function_fuzzilli_hash[] = {
+    JS_INLINABLE_FN("fuzzilli_hash", fuzzilli_hash, 1, 0, FuzzilliHash),
+    JS_FS_END
+};
+#endif
+// clang-format on
+
+// clang-format off
+static const JSFunctionSpecWithHelp diff_testing_unsafe_functions[] = {
+
+    JS_FS_HELP_END
+};
+// clang-format on
+
+// clang-format off
 static const JSFunctionSpecWithHelp fuzzing_unsafe_functions[] = {
     JS_FN_HELP("getSelfHostedValue", GetSelfHostedValue, 1, 0,
 "getSelfHostedValue()",
@@ -10229,6 +10288,11 @@ static JSObject* NewGlobalObject(JSContext* cx, JS::RealmOptions& options,
         !JS_DefineProfilingFunctions(cx, glob)) {
       return nullptr;
     }
+#ifdef FUZZING_JS_FUZZILLI
+    if (!JS_DefineFunctions(cx, glob, shell_function_fuzzilli_hash)) {
+      return nullptr;
+    }
+#endif
     if (!js::DefineTestingFunctions(cx, glob, fuzzingSafe,
                                     disableOOMFunctions)) {
       return nullptr;
@@ -10250,32 +10314,39 @@ static JSObject* NewGlobalObject(JSContext* cx, JS::RealmOptions& options,
       return nullptr;
     }
 
-    RootedObject performanceObj(cx, JS_NewObject(cx, nullptr));
-    if (!performanceObj) {
-      return nullptr;
-    }
-    if (!JS_DefineFunctionsWithHelp(cx, performanceObj,
-                                    performance_functions)) {
-      return nullptr;
-    }
-    RootedObject mozMemoryObj(cx, JS_NewObject(cx, nullptr));
-    if (!mozMemoryObj) {
-      return nullptr;
-    }
-    RootedObject gcObj(cx, gc::NewMemoryInfoObject(cx));
-    if (!gcObj) {
-      return nullptr;
-    }
-    if (!JS_DefineProperty(cx, glob, "performance", performanceObj,
-                           JSPROP_ENUMERATE)) {
-      return nullptr;
-    }
-    if (!JS_DefineProperty(cx, performanceObj, "mozMemory", mozMemoryObj,
-                           JSPROP_ENUMERATE)) {
-      return nullptr;
-    }
-    if (!JS_DefineProperty(cx, mozMemoryObj, "gc", gcObj, JSPROP_ENUMERATE)) {
-      return nullptr;
+    if (!js::SupportDifferentialTesting()) {
+      if (!JS_DefineFunctionsWithHelp(cx, glob,
+                                      diff_testing_unsafe_functions)) {
+        return nullptr;
+      }
+
+      RootedObject performanceObj(cx, JS_NewObject(cx, nullptr));
+      if (!performanceObj) {
+        return nullptr;
+      }
+      if (!JS_DefineFunctionsWithHelp(cx, performanceObj,
+                                      performance_functions)) {
+        return nullptr;
+      }
+      RootedObject mozMemoryObj(cx, JS_NewObject(cx, nullptr));
+      if (!mozMemoryObj) {
+        return nullptr;
+      }
+      RootedObject gcObj(cx, gc::NewMemoryInfoObject(cx));
+      if (!gcObj) {
+        return nullptr;
+      }
+      if (!JS_DefineProperty(cx, glob, "performance", performanceObj,
+                             JSPROP_ENUMERATE)) {
+        return nullptr;
+      }
+      if (!JS_DefineProperty(cx, performanceObj, "mozMemory", mozMemoryObj,
+                             JSPROP_ENUMERATE)) {
+        return nullptr;
+      }
+      if (!JS_DefineProperty(cx, mozMemoryObj, "gc", gcObj, JSPROP_ENUMERATE)) {
+        return nullptr;
+      }
     }
 
     /* Initialize FakeDOMObject. */
@@ -10601,7 +10672,6 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enableAsyncStacks = !op.getBoolOption("no-async-stacks");
   enableAsyncStackCaptureDebuggeeOnly =
       op.getBoolOption("async-stacks-capture-debuggee-only");
-  enableStreams = !op.getBoolOption("no-streams");
   enableWeakRefs = !op.getBoolOption("disable-weak-refs");
   enableToSource = !op.getBoolOption("disable-tosource");
   enablePropertyErrorMessageFix =
@@ -10610,6 +10680,7 @@ static bool SetContextOptions(JSContext* cx, const OptionParser& op) {
   enableShadowRealms = op.getBoolOption("enable-shadow-realms");
 #ifdef NIGHTLY_BUILD
   enableArrayGrouping = op.getBoolOption("enable-array-grouping");
+  enableArrayFromAsync = op.getBoolOption("enable-array-from-async");
 #endif
 #ifdef ENABLE_CHANGE_ARRAY_BY_COPY
   enableChangeArrayByCopy = op.getBoolOption("enable-change-array-by-copy");
@@ -11247,9 +11318,18 @@ static int Shell(JSContext* cx, OptionParser* op) {
       fflush(stdout);
       fflush(stderr);
       // Send return code to parent and reset edge counters.
-      int status = (result & 0xff) << 8;
-      MOZ_RELEASE_ASSERT(write(REPRL_CWFD, &status, 4) == 4);
+      struct {
+        int status;
+        uint32_t execHash;
+        uint32_t execHashInputs;
+      } s;
+      s.status = (result & 0xff) << 8;
+      s.execHash = cx->executionHash;
+      s.execHashInputs = cx->executionHashInputs;
+      MOZ_RELEASE_ASSERT(write(REPRL_CWFD, &s, 12) == 12);
       __sanitizer_cov_reset_edgeguards();
+      cx->executionHash = 1;
+      cx->executionHashInputs = 0;
     }
 #endif
 
@@ -11423,7 +11503,7 @@ static bool SetGCParameterFromArg(JSContext* cx, char* arg) {
 
   uint32_t paramValue = uint32_t(value);
   if (value == ULONG_MAX || value != paramValue ||
-      !cx->runtime()->gc.setParameter(key, paramValue)) {
+      !cx->runtime()->gc.setParameter(cx, key, paramValue)) {
     fprintf(stderr, "Error: Value %s is out of range for GC parameter '%s'\n",
             valueStr, name);
     return false;
@@ -11575,9 +11655,6 @@ int main(int argc, char** argv) {
       !op.addBoolOption('\0', "less-debug-code",
                         "Emit less machine code for "
                         "checking assertions under DEBUG.") ||
-      !op.addBoolOption('\0', "enable-streams",
-                        "Enable WHATWG Streams (default)") ||
-      !op.addBoolOption('\0', "no-streams", "Disable WHATWG Streams") ||
       !op.addBoolOption('\0', "disable-weak-refs", "Disable weak references") ||
       !op.addBoolOption('\0', "disable-tosource", "Disable toSource/uneval") ||
       !op.addBoolOption('\0', "disable-property-error-message-fix",
@@ -11587,6 +11664,8 @@ int main(int argc, char** argv) {
                         "Enable iterator helpers") ||
       !op.addBoolOption('\0', "enable-shadow-realms", "Enable ShadowRealms") ||
       !op.addBoolOption('\0', "enable-array-grouping",
+                        "Enable Array.fromAsync") ||
+      !op.addBoolOption('\0', "enable-array-from-async",
                         "Enable Array Grouping") ||
 #ifdef ENABLE_CHANGE_ARRAY_BY_COPY
       !op.addBoolOption('\0', "enable-change-array-by-copy",
@@ -11788,6 +11867,8 @@ int main(int argc, char** argv) {
       !op.addBoolOption('\0', "no-ggc", "Disable Generational GC") ||
       !op.addBoolOption('\0', "no-cgc", "Disable Compacting GC") ||
       !op.addBoolOption('\0', "no-incremental-gc", "Disable Incremental GC") ||
+      !op.addBoolOption('\0', "enable-parallel-marking",
+                        "Turn on parallel marking") ||
       !op.addStringOption('\0', "nursery-strings", "on/off",
                           "Allocate strings in the nursery") ||
       !op.addStringOption('\0', "nursery-bigints", "on/off",
@@ -12247,6 +12328,11 @@ int main(int argc, char** argv) {
 
   bool incrementalGC = !op.getBoolOption("no-incremental-gc");
   JS_SetGCParameter(cx, JSGC_INCREMENTAL_GC_ENABLED, incrementalGC);
+
+  if (op.getBoolOption("enable-parallel-marking")) {
+    JS_SetGCParameter(cx, JSGC_PARALLEL_MARKING_ENABLED, true);
+  }
+
   JS_SetGCParameter(cx, JSGC_SLICE_TIME_BUDGET_MS, 5);
 
   JS_SetGCParameter(cx, JSGC_PER_ZONE_GC_ENABLED, true);

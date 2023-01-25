@@ -389,9 +389,9 @@ class ScopeStencil {
       BaseParserScopeData* baseData) const;
 
   template <typename SpecificEnvironmentType>
-  [[nodiscard]] bool createSpecificShape(JSContext* cx, ScopeKind kind,
-                                         BaseScopeData* scopeData,
-                                         MutableHandle<Shape*> shape) const;
+  [[nodiscard]] bool createSpecificShape(
+      JSContext* cx, ScopeKind kind, BaseScopeData* scopeData,
+      MutableHandle<SharedShape*> shape) const;
 
   template <typename SpecificScopeType, typename SpecificEnvironmentType>
   Scope* createSpecificScope(JSContext* cx, CompilationAtomCache& atomCache,
@@ -440,11 +440,6 @@ class ScopeStencil {
     return false;
   }
 };
-
-// See JSOp::Lambda for interepretation of this index.
-using FunctionDeclaration = GCThingIndex;
-using FunctionDeclarationVector =
-    Vector<FunctionDeclaration, 0, js::SystemAllocPolicy>;
 
 class StencilModuleAssertion {
  public:
@@ -631,7 +626,8 @@ class StencilModuleMetadata
 
   StencilModuleMetadata() = default;
 
-  bool initModule(JSContext* cx, CompilationAtomCache& atomCache,
+  bool initModule(JSContext* cx, ErrorContext* ec,
+                  CompilationAtomCache& atomCache,
                   JS::Handle<ModuleObject*> module) const;
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {

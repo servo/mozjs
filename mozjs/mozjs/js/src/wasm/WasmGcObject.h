@@ -11,7 +11,6 @@
 #include "mozilla/Maybe.h"
 
 #include "gc/Allocator.h"
-#include "gc/WeakMap.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/JSObject.h"
 #include "wasm/WasmTypeDef.h"
@@ -28,7 +27,7 @@ class WasmGcObject;
 
 class RttValue : public NativeObject {
  private:
-  static RttValue* create(JSContext* cx, wasm::TypeHandle handle);
+  static RttValue* create(JSContext* cx, const wasm::TypeHandle& handle);
 
  public:
   static const JSClass class_;
@@ -36,15 +35,11 @@ class RttValue : public NativeObject {
   enum Slot {
     TypeContext = 0,  // Manually refcounted reference to TypeContext
     TypeDef = 1,      // Raw pointer to TypeDef owned by TypeContext
-    Parent = 2,       // Parent rtt for runtime casting
-    Children = 3,     // Child rtts for rtt.sub caching
     // Maximum number of slots
-    SlotCount = 4,
+    SlotCount = 2,
   };
 
-  static RttValue* rttCanon(JSContext* cx, wasm::TypeHandle handle);
-  static RttValue* rttSub(JSContext* cx, js::Handle<RttValue*> parent,
-                          js::Handle<RttValue*> subCanon);
+  static RttValue* rttCanon(JSContext* cx, const wasm::TypeHandle& handle);
 
   bool isNewborn() { return getReservedSlot(Slot::TypeContext).isUndefined(); }
 
@@ -57,21 +52,7 @@ class RttValue : public NativeObject {
         .toPrivate();
   }
 
-  wasm::TypeHandle typeHandle() const {
-    return wasm::TypeHandle(typeContext(), typeDef());
-  }
-
   wasm::TypeDefKind kind() const { return typeDef().kind(); }
-
-  RttValue* parent() const {
-    return (RttValue*)getReservedSlot(Slot::Parent).toObjectOrNull();
-  }
-
-  ObjectWeakMap* maybeChildren() const {
-    return (ObjectWeakMap*)getReservedSlot(Slot::Children).toPrivate();
-  }
-  ObjectWeakMap& children() const { return *maybeChildren(); }
-  bool ensureChildren(JSContext* cx);
 
   // PropOffset is a uint32_t that is used to carry information about the
   // location of an value from RttValue::lookupProperty to
@@ -108,7 +89,6 @@ class RttValue : public NativeObject {
     return lookupProperty(cx, object, id, &offset, &type);
   }
 
-  static void trace(JSTracer* trc, JSObject* obj);
   static void finalize(JS::GCContext* gcx, JSObject* obj);
 };
 
@@ -235,7 +215,9 @@ class WasmStructObject : public WasmGcObject {
   static const JSClass class_;
 
   // Owned pointer to a malloc'd block containing out-of-line fields, or
-  // nullptr if none.
+  // nullptr if none.  Note that MIR alias analysis assumes this is readonly
+  // for the life of the object; do not change it once the object is created.
+  // See MWasmLoadObjectField::congruentTo.
   uint8_t* outlineData_;
 
   // The inline (wasm-struct-level) data fields.  This must be a multiple of
@@ -353,6 +335,11 @@ inline uint8_t* WasmStructObject::fieldOffsetToAddress(FieldType fieldType,
   return ((uint8_t*)(areaIsOutline ? outlineData_ : &inlineData_[0])) +
          areaOffset;
 }
+
+// Ensure that faulting loads/stores for WasmStructObject and WasmArrayObject
+// are in the NULL pointer guard page.
+static_assert(WasmStructObject_MaxInlineBytes <= wasm::NullPtrGuardSize);
+static_assert(sizeof(WasmArrayObject) <= wasm::NullPtrGuardSize);
 
 }  // namespace js
 

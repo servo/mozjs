@@ -172,7 +172,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   js::WriteOnceData<js::ContextKind> kind_;
 
   friend class js::gc::AutoSuppressNurseryCellAlloc;
-  js::ContextData<size_t> nurserySuppressions_;
 
   js::ContextData<JS::ContextOptions> options_;
 
@@ -336,8 +335,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   js::OffThreadFrontendErrors* offThreadFrontendErrors() const {
     return errors_;
   }
-
-  bool isNurseryAllocSuppressed() const { return nurserySuppressions_; }
 
   // Threads may freely access any data in their realm, compartment and zone.
   JS::Compartment* compartment() const {
@@ -522,6 +519,11 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
    */
   js::ContextData<int32_t> suppressGC;
 
+#ifdef FUZZING_JS_FUZZILLI
+  uint32_t executionHash;
+  uint32_t executionHashInputs;
+#endif
+
 #ifdef DEBUG
   js::ContextData<size_t> noNurseryAllocationCheck;
 
@@ -682,17 +684,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
   const js::AutoCycleDetector::Vector& cycleDetectorVector() const {
     return cycleDetectorVector_.ref();
-  }
-
- private:
-  js::ContextData<JS::PersistentRooted<JSFunction*>> watchtowerTestingCallback_;
-
- public:
-  JSFunction*& watchtowerTestingCallbackRef() {
-    if (!watchtowerTestingCallback_.ref().initialized()) {
-      watchtowerTestingCallback_.ref().init(this);
-    }
-    return watchtowerTestingCallback_.ref().get();
   }
 
   /* Client opaque pointer. */
@@ -1172,22 +1163,6 @@ class MOZ_RAII AutoUnsafeCallWithABI {
       UnsafeABIStrictness unused_ = UnsafeABIStrictness::NoExceptions) {}
 #endif
 };
-
-namespace gc {
-
-// Note that this class does not suppress buffer allocation/reallocation in the
-// nursery, only Cells themselves.
-class MOZ_RAII AutoSuppressNurseryCellAlloc {
-  JSContext* cx_;
-
- public:
-  explicit AutoSuppressNurseryCellAlloc(JSContext* cx) : cx_(cx) {
-    cx_->nurserySuppressions_++;
-  }
-  ~AutoSuppressNurseryCellAlloc() { cx_->nurserySuppressions_--; }
-};
-
-}  // namespace gc
 
 } /* namespace js */
 

@@ -121,7 +121,9 @@ void DebuggerSource::trace(JSTracer* trc) {
   if (JSObject* referent = getReferentRawObject()) {
     TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
                                                "Debugger.Source referent");
-    setReservedSlotGCThingAsPrivateUnbarriered(SOURCE_SLOT, referent);
+    if (referent != getReferentRawObject()) {
+      setReservedSlotGCThingAsPrivateUnbarriered(SOURCE_SLOT, referent);
+    }
   }
 }
 
@@ -528,7 +530,7 @@ bool DebuggerSource::CallData::setSourceMapURL() {
   }
 
   AutoReportFrontendContext ec(cx);
-  if (!ss->setSourceMapURL(cx, &ec, std::move(chars))) {
+  if (!ss->setSourceMapURL(&ec, std::move(chars))) {
     return false;
   }
 

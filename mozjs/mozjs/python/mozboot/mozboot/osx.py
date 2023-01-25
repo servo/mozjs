@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import platform
 import subprocess
 import sys
@@ -14,11 +12,10 @@ try:
 except ImportError:
     from urllib.request import urlopen
 
-from packaging.version import Version
-
+from mach.util import to_optional_path, to_optional_str
 from mozboot.base import BaseBootstrapper
 from mozfile import which
-from mach.util import to_optional_path, to_optional_str
+from packaging.version import Version
 
 HOMEBREW_BOOTSTRAP = (
     "https://raw.githubusercontent.com/Homebrew/install/master/install.sh"
@@ -166,20 +163,8 @@ class OSXBootstrapperLight(OSXAndroidBootstrapper, BaseBootstrapper):
     def install_browser_artifact_mode_packages(self, mozconfig_builder):
         pass
 
-    def ensure_node_packages(self):
-        pass
-
-    def ensure_stylo_packages(self):
-        pass
-
     def ensure_clang_static_analysis_package(self):
         pass
-
-    def ensure_nasm_packages(self):
-        pass
-
-    def ensure_minidump_stackwalk_packages(self):
-        self.install_toolchain_artifact("minidump-stackwalk")
 
 
 class OSXBootstrapper(OSXAndroidBootstrapper, BaseBootstrapper):
@@ -289,30 +274,18 @@ class OSXBootstrapper(OSXAndroidBootstrapper, BaseBootstrapper):
     def ensure_clang_static_analysis_package(self):
         from mozboot import static_analysis
 
-        self.install_toolchain_static_analysis(static_analysis.MACOS_CLANG_TIDY)
+        if platform.machine() == "arm64":
+            self.install_toolchain_static_analysis(
+                static_analysis.MACOS_AARCH64_CLANG_TIDY
+            )
+        else:
+            self.install_toolchain_static_analysis(static_analysis.MACOS_CLANG_TIDY)
 
     def ensure_sccache_packages(self):
         from mozboot import sccache
 
-        self.install_toolchain_artifact("sccache")
         self.install_toolchain_artifact(sccache.RUSTC_DIST_TOOLCHAIN, no_unpack=True)
         self.install_toolchain_artifact(sccache.CLANG_DIST_TOOLCHAIN, no_unpack=True)
-
-    def ensure_fix_stacks_packages(self):
-        self.install_toolchain_artifact("fix-stacks")
-
-    def ensure_stylo_packages(self):
-        self.install_toolchain_artifact("clang")
-        self.install_toolchain_artifact("cbindgen")
-
-    def ensure_nasm_packages(self):
-        self.install_toolchain_artifact("nasm")
-
-    def ensure_node_packages(self):
-        self.install_toolchain_artifact("node")
-
-    def ensure_minidump_stackwalk_packages(self):
-        self.install_toolchain_artifact("minidump-stackwalk")
 
     def install_homebrew(self):
         print(BREW_INSTALL)

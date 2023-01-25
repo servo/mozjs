@@ -13,7 +13,14 @@
 #define jit_MIR_h
 
 #include "mozilla/Array.h"
+#ifdef JS_JITSPEW
+#  include "mozilla/Attributes.h"  // MOZ_STACK_CLASS
+#endif
 #include "mozilla/MacroForEach.h"
+#ifdef JS_JITSPEW
+#  include "mozilla/Sprintf.h"
+#  include "mozilla/Vector.h"
+#endif
 
 #include <algorithm>
 #include <initializer_list>
@@ -54,6 +61,7 @@ extern uint32_t MIRTypeToABIResultSize(jit::MIRType);
 }  // namespace wasm
 
 class GenericPrinter;
+class NativeIteratorListHead;
 class StringObject;
 
 enum class UnaryMathFunction : uint8_t;
@@ -61,6 +69,34 @@ enum class UnaryMathFunction : uint8_t;
 bool CurrentThreadIsIonCompiling();
 
 namespace jit {
+
+#ifdef JS_JITSPEW
+// Helper for debug printing.  Avoids creating a MIR.h <--> MIRGraph.h cycle.
+// Implementation of this needs to see inside `MBasicBlock`; that is possible
+// in MIR.cpp since it also includes MIRGraph.h, whereas this file does not.
+class MBasicBlock;
+uint32_t GetMBasicBlockId(const MBasicBlock* block);
+
+// Helper class for debug printing.  This class allows `::getExtras` methods
+// to add strings to be printed, on a per-MIR-node basis.  The strings are
+// copied into storage owned by this class when `::add` is called, so the
+// `::getExtras` methods do not need to be concerned about storage management.
+class MOZ_STACK_CLASS ExtrasCollector {
+  mozilla::Vector<UniqueChars, 4> strings_;
+
+ public:
+  // Add `str` to the collection.  A copy, owned by this object, is made.  In
+  // case of OOM the call has no effect.
+  void add(const char* str) {
+    UniqueChars dup = DuplicateString(str);
+    if (dup) {
+      (void)strings_.append(std::move(dup));
+    }
+  }
+  size_t count() const { return strings_.length(); }
+  UniqueChars get(size_t ix) { return std::move(strings_[ix]); }
+};
+#endif
 
 // Forward declarations of MIR types.
 #define FORWARD_DECLARE(op) class M##op;
@@ -358,10 +394,31 @@ class AliasSet {
     // The pendingException slot on the wasm instance object.
     WasmPendingException = 1 << 18,
 
-    Last = WasmPendingException,
+    // The fuzzilliHash slot
+    FuzzilliHash = 1 << 19,
+
+    // The WasmStructObject::inlineData_[..] storage area
+    WasmStructInlineDataArea = 1 << 20,
+
+    // The WasmStructObject::outlineData_ pointer only
+    WasmStructOutlineDataPointer = 1 << 21,
+
+    // The malloc'd block that WasmStructObject::outlineData_ points at
+    WasmStructOutlineDataArea = 1 << 22,
+
+    // The WasmArrayObject::numElements_ field
+    WasmArrayNumElements = 1 << 23,
+
+    // The WasmArrayObject::data_ pointer only
+    WasmArrayDataPointer = 1 << 24,
+
+    // The malloc'd block that WasmArrayObject::data_ points at
+    WasmArrayDataArea = 1 << 25,
+
+    Last = WasmArrayDataArea,
 
     Any = Last | (Last - 1),
-    NumCategories = 19,
+    NumCategories = 26,
 
     // Indicates load or store.
     Store_ = 1 << 31
@@ -536,6 +593,10 @@ class MDefinition : public MNode {
   void dump() const override;
   void dumpLocation(GenericPrinter& out) const;
   void dumpLocation() const;
+  // Dump any other stuff the node wants to have printed in `extras`.  The
+  // added strings are copied, with the `ExtrasCollector` taking ownership of
+  // the copies.
+  virtual void getExtras(ExtrasCollector* extras) {}
 #endif
 
   // Also for LICM. Test whether this definition is likely to be a call, which
@@ -590,6 +651,7 @@ class MDefinition : public MNode {
 
   virtual HashNumber valueHash() const;
   virtual bool congruentTo(const MDefinition* ins) const { return false; }
+  const MDefinition* skipObjectGuards() const;
   bool congruentIfOperandsEqual(const MDefinition* ins) const;
   virtual MDefinition* foldsTo(TempAllocator& alloc);
   virtual void analyzeEdgeCasesForward();
@@ -1498,6 +1560,30 @@ class MWasmFloatConstant : public MNullaryInstruction {
     return SimdConstant::CreateX16(u.s128_);
   }
 #endif
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    char buf[64];
+    switch (type()) {
+      case MIRType::Float32:
+        SprintfLiteral(buf, "f32{%e}", (double)u.f32_);
+        break;
+      case MIRType::Double:
+        SprintfLiteral(buf, "f64{%e}", u.f64_);
+        break;
+#  ifdef ENABLE_WASM_SIMD
+      case MIRType::Simd128:
+        SprintfLiteral(buf, "v128{[1]=%016llx:[0]=%016llx}",
+                       (unsigned long long int)u.bits_[1],
+                       (unsigned long long int)u.bits_[0]);
+        break;
+#  endif
+      default:
+        SprintfLiteral(buf, "!!getExtras: missing case!!");
+        break;
+    }
+    extras->add(buf);
+  }
+#endif
 };
 
 class MParameter : public MNullaryInstruction {
@@ -1724,21 +1810,27 @@ class MGoto : public MAryControlInstruction<0, 1>, public NoTypePolicy::Data {
 
   MBasicBlock* target() { return getSuccessor(TargetIndex); }
   AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    char buf[64];
+    SprintfLiteral(buf, "Block%u", GetMBasicBlockId(target()));
+    extras->add(buf);
+  }
+#endif
 };
 
 // Tests if the input instruction evaluates to true or false, and jumps to the
 // start of a corresponding basic block.
 class MTest : public MAryControlInstruction<1, 2>, public TestPolicy::Data {
+  // It is allowable to specify `trueBranch` or `falseBranch` as nullptr and
+  // patch it in later.
   MTest(MDefinition* ins, MBasicBlock* trueBranch, MBasicBlock* falseBranch)
       : MAryControlInstruction(classOpcode) {
     initOperand(0, ins);
     setSuccessor(TrueBranchIndex, trueBranch);
     setSuccessor(FalseBranchIndex, falseBranch);
   }
-
-  // Variant which may patch the ifTrue branch later.
-  MTest(MDefinition* ins, MBasicBlock* falseBranch)
-      : MTest(ins, nullptr, falseBranch) {}
 
   TypeDataList observedTypes_;
 
@@ -1771,6 +1863,15 @@ class MTest : public MAryControlInstruction<1, 2>, public TestPolicy::Data {
 
 #ifdef DEBUG
   bool isConsistentFloat32Use(MUse* use) const override { return true; }
+#endif
+
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    char buf[64];
+    SprintfLiteral(buf, "true->Block%u false->Block%u",
+                   GetMBasicBlockId(ifTrue()), GetMBasicBlockId(ifFalse()));
+    extras->add(buf);
+  }
 #endif
 };
 
@@ -2768,6 +2869,71 @@ class MCompare : public MBinaryInstruction, public ComparePolicy::Data {
     }
     MOZ_CRASH("unexpected compare type");
   }
+
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    const char* ty = nullptr;
+    switch (compareType_) {
+      case Compare_Undefined:
+        ty = "Undefined";
+        break;
+      case Compare_Null:
+        ty = "Null";
+        break;
+      case Compare_Int32:
+        ty = "Int32";
+        break;
+      case Compare_UInt32:
+        ty = "UInt32";
+        break;
+      case Compare_Int64:
+        ty = "Int64";
+        break;
+      case Compare_UInt64:
+        ty = "UInt64";
+        break;
+      case Compare_UIntPtr:
+        ty = "UIntPtr";
+        break;
+      case Compare_Double:
+        ty = "Double";
+        break;
+      case Compare_Float32:
+        ty = "Float32";
+        break;
+      case Compare_String:
+        ty = "String";
+        break;
+      case Compare_Symbol:
+        ty = "Symbol";
+        break;
+      case Compare_Object:
+        ty = "Object";
+        break;
+      case Compare_BigInt:
+        ty = "BigInt";
+        break;
+      case Compare_BigInt_Int32:
+        ty = "BigInt_Int32";
+        break;
+      case Compare_BigInt_Double:
+        ty = "BigInt_Double";
+        break;
+      case Compare_BigInt_String:
+        ty = "BigInt_String";
+        break;
+      case Compare_RefOrNull:
+        ty = "RefOrNull";
+        break;
+      default:
+        ty = "!!unknown!!";
+        break;
+    };
+    char buf[64];
+    SprintfLiteral(buf, "ty=%s jsop=%s", ty, CodeName(jsop()));
+    extras->add(buf);
+  }
+#endif
 };
 
 // Takes a typed value and returns an untyped value.
@@ -6743,15 +6909,13 @@ class MStoreHoleValueElement : public MBinaryInstruction,
   ALLOW_CLONE(MStoreHoleValueElement)
 };
 
-// Like MStoreElement, but supports indexes >= initialized length. The downside
-// is that we cannot hoist the elements vector and bounds check, since this
-// instruction may update the (initialized) length and reallocate the elements
-// vector.
+// Like MStoreElement, but also supports index == initialized length. The
+// downside is that we cannot hoist the elements vector and bounds check, since
+// this instruction may update the (initialized) length and reallocate the
+// elements vector.
 class MStoreElementHole
     : public MQuaternaryInstruction,
       public MixPolicy<SingleObjectPolicy, NoFloatPolicy<3>>::Data {
-  bool needsNegativeIntCheck_ = true;
-
   MStoreElementHole(MDefinition* object, MDefinition* elements,
                     MDefinition* index, MDefinition* value)
       : MQuaternaryInstruction(classOpcode, object, elements, index, value) {
@@ -6765,15 +6929,11 @@ class MStoreElementHole
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, object), (1, elements), (2, index), (3, value))
 
-  bool needsNegativeIntCheck() const { return needsNegativeIntCheck_; }
-
   AliasSet getAliasSet() const override {
     // StoreElementHole can update the initialized length, the array length
     // or reallocate obj->elements.
     return AliasSet::Store(AliasSet::ObjectFields | AliasSet::Element);
   }
-
-  void collectRangeInfoPreTrunc() override;
 
   ALLOW_CLONE(MStoreElementHole)
 };
@@ -9015,6 +9175,34 @@ class MObjectStaticProto : public MUnaryInstruction,
   }
 };
 
+class MConstantProto
+    : public MBinaryInstruction,
+      public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1>>::Data {
+  explicit MConstantProto(MDefinition* protoObject, MDefinition* receiverObject)
+      : MBinaryInstruction(classOpcode, protoObject, receiverObject) {
+    MOZ_ASSERT(protoObject->isConstant());
+    setResultType(MIRType::Object);
+    setMovable();
+  }
+
+  ALLOW_CLONE(MConstantProto)
+
+ public:
+  INSTRUCTION_HEADER(ConstantProto)
+  TRIVIAL_NEW_WRAPPERS
+  NAMED_OPERANDS((0, protoObject), (1, receiverObject))
+
+  HashNumber valueHash() const override;
+
+  bool congruentTo(const MDefinition* ins) const override {
+    return ins->isConstantProto() && ins->getOperand(0) == getOperand(0) &&
+           getOperand(1)->skipObjectGuards() ==
+               ins->getOperand(1)->skipObjectGuards();
+  }
+
+  AliasSet getAliasSet() const override { return AliasSet::None(); }
+};
+
 // Flips the input's sign bit, independently of the rest of the number's
 // payload. Note this is different from multiplying by minus-one, which has
 // side-effects for e.g. NaNs.
@@ -9060,6 +9248,24 @@ class MWasmBinaryBitwise : public MBinaryInstruction,
   }
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
+
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    const char* what = "!!unknown!!";
+    switch (subOpcode()) {
+      case SubOpcode::And:
+        what = "And";
+        break;
+      case SubOpcode::Or:
+        what = "Or";
+        break;
+      case SubOpcode::Xor:
+        what = "Xor";
+        break;
+    }
+    extras->add(what);
+  }
+#endif
 
  private:
   SubOpcode subOpcode_;
@@ -9176,8 +9382,11 @@ class MWasmHeapBase : public MUnaryInstruction, public NoTypePolicy::Data {
 class MWasmBoundsCheck : public MBinaryInstruction, public NoTypePolicy::Data {
  public:
   enum Target {
-    Memory,
-    Table,
+    // Linear memory at index zero, which is the only memory allowed so far.
+    Memory0,
+    // Everything else.  Currently comprises tables, and arrays in the GC
+    // proposal.
+    Unknown
   };
 
  private:
@@ -9206,7 +9415,7 @@ class MWasmBoundsCheck : public MBinaryInstruction, public NoTypePolicy::Data {
 
   AliasSet getAliasSet() const override { return AliasSet::None(); }
 
-  bool isMemory() const { return target_ == MWasmBoundsCheck::Memory; }
+  bool isMemory() const { return target_ == MWasmBoundsCheck::Memory0; }
 
   bool isRedundant() const { return !isGuard(); }
 
@@ -9313,6 +9522,14 @@ class MWasmLoad
     }
     return AliasSet::Load(AliasSet::WasmHeap);
   }
+
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    char buf[64];
+    SprintfLiteral(buf, "(offs=%lld)", (long long int)access().offset64());
+    extras->add(buf);
+  }
+#endif
 };
 
 class MWasmStore : public MVariadicInstruction, public NoTypePolicy::Data {
@@ -9350,6 +9567,14 @@ class MWasmStore : public MVariadicInstruction, public NoTypePolicy::Data {
   AliasSet getAliasSet() const override {
     return AliasSet::Store(AliasSet::WasmHeap);
   }
+
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    char buf[64];
+    SprintfLiteral(buf, "(offs=%lld)", (long long int)access().offset64());
+    extras->add(buf);
+  }
+#endif
 };
 
 class MAsmJSMemoryAccess {
@@ -9788,6 +10013,14 @@ class MWasmDerivedPointer : public MUnaryInstruction,
     return congruentIfOperandsEqual(ins) &&
            ins->toWasmDerivedPointer()->offset() == offset();
   }
+
+#ifdef JS_JITSPEW
+  void getExtras(ExtrasCollector* extras) override {
+    char buf[64];
+    SprintfLiteral(buf, "(offs=%lld)", (long long int)offset_);
+    extras->add(buf);
+  }
+#endif
 
   ALLOW_CLONE(MWasmDerivedPointer)
 };
@@ -10704,119 +10937,247 @@ class MIonToWasmCall final : public MVariadicInstruction,
 #endif
 };
 
-// Load a field stored at a fixed offset on a wasm object. This field may be
-// any value type, including references. No barriers are performed.
-class MWasmLoadObjectField : public MUnaryInstruction,
-                             public NoTypePolicy::Data {
-  uint32_t offset_;
+// For accesses to wasm object fields, we need to be able to describe 8- and
+// 16-bit accesses.  But MIRType can't represent those.  Hence these two
+// supplemental enums, used for reading and writing fields respectively.
 
-  MWasmLoadObjectField(MDefinition* obj, uint32_t offset, MIRType type)
-      : MUnaryInstruction(classOpcode, obj), offset_(offset) {
+// Indicates how to widen an 8- or 16-bit value (when it is read from memory).
+enum class MWideningOp : uint8_t { None, FromU16, FromS16, FromU8, FromS8 };
+
+// Indicates how to narrow a 32-bit value (when it is written to memory).  The
+// operation is a simple truncate.
+enum class MNarrowingOp : uint8_t { None, To16, To8 };
+
+// Load an object field stored at a fixed offset from a base pointer.  This
+// field may be any value type, including references.  No barriers are
+// performed.
+class MWasmLoadField : public MUnaryInstruction, public NoTypePolicy::Data {
+  uint32_t offset_;
+  MWideningOp wideningOp_;
+  AliasSet aliases_;
+
+  MWasmLoadField(MDefinition* obj, uint32_t offset, MIRType type,
+                 MWideningOp wideningOp, AliasSet aliases)
+      : MUnaryInstruction(classOpcode, obj),
+        offset_(offset),
+        wideningOp_(wideningOp),
+        aliases_(aliases) {
+    // "if you want to widen the value when it is loaded, the destination type
+    // must be Int32".
+    MOZ_ASSERT_IF(wideningOp != MWideningOp::None, type == MIRType::Int32);
+    MOZ_ASSERT(
+        aliases.flags() ==
+            AliasSet::Load(AliasSet::WasmStructOutlineDataPointer).flags() ||
+        aliases.flags() ==
+            AliasSet::Load(AliasSet::WasmArrayNumElements).flags() ||
+        aliases.flags() ==
+            AliasSet::Load(AliasSet::WasmArrayDataPointer).flags() ||
+        aliases.flags() == AliasSet::Load(AliasSet::Any).flags());
     setResultType(type);
   }
 
  public:
-  INSTRUCTION_HEADER(WasmLoadObjectField)
+  INSTRUCTION_HEADER(WasmLoadField)
   TRIVIAL_NEW_WRAPPERS
   NAMED_OPERANDS((0, obj))
 
   uint32_t offset() const { return offset_; }
-
-  AliasSet getAliasSet() const override {
-    return AliasSet::Load(AliasSet::Any);
+  MWideningOp wideningOp() const { return wideningOp_; }
+  AliasSet getAliasSet() const override { return aliases_; }
+  bool congruentTo(const MDefinition* ins) const override {
+    // In the limited case where this insn is used to read
+    // WasmStructObject::outlineData_ (the field itself, not what it points
+    // at), we allow commoning up to happen.  This is OK because
+    // WasmStructObject::outlineData_ is readonly for the life of the
+    // WasmStructObject.
+    if (!ins->isWasmLoadField()) {
+      return false;
+    }
+    const MWasmLoadField* other = ins->toWasmLoadField();
+    return ins->isWasmLoadField() && congruentIfOperandsEqual(ins) &&
+           offset() == other->offset() && wideningOp() == other->wideningOp() &&
+           getAliasSet().flags() == other->getAliasSet().flags() &&
+           getAliasSet().flags() ==
+               AliasSet::Load(AliasSet::WasmStructOutlineDataPointer).flags();
   }
 };
 
-// Load a field stored at a fixed offset within a wasm object's data buffer.
-// This field may be any value type, including references. No barriers are
+// Load a object field stored at a fixed offset from a base pointer.  This
+// field may be any value type, including references.  No barriers are
 // performed.
 //
-// This instruction takes the object owner of the data buffer as an input but
-// does not generate code to access it. This instruction extends the lifetime
-// of the owner object so that it cannot be collected while the data buffer
-// pointer is live.
-class MWasmLoadObjectDataField : public MBinaryInstruction,
-                                 public NoTypePolicy::Data {
+// This instruction takes a pointer to a second object `ka`, which it is
+// necessary to keep alive.  It is expected that `ka` holds a reference to
+// `obj`, but this is not enforced and no code is generated to access `ka`.
+// This instruction extends the lifetime of `ka` so that it, and hence `obj`,
+// cannot be collected while `obj` is live.  This is necessary if `obj` does
+// not point to a GC-managed object.
+class MWasmLoadFieldKA : public MBinaryInstruction, public NoTypePolicy::Data {
   uint32_t offset_;
+  MWideningOp wideningOp_;
+  AliasSet aliases_;
 
-  MWasmLoadObjectDataField(MDefinition* obj, MDefinition* data, uint32_t offset,
-                           MIRType type)
-      : MBinaryInstruction(classOpcode, obj, data), offset_(offset) {
+  MWasmLoadFieldKA(MDefinition* ka, MDefinition* obj, uint32_t offset,
+                   MIRType type, MWideningOp wideningOp, AliasSet aliases)
+      : MBinaryInstruction(classOpcode, ka, obj),
+        offset_(offset),
+        wideningOp_(wideningOp),
+        aliases_(aliases) {
+    MOZ_ASSERT_IF(wideningOp != MWideningOp::None, type == MIRType::Int32);
+    MOZ_ASSERT(
+        aliases.flags() ==
+            AliasSet::Load(AliasSet::WasmStructInlineDataArea).flags() ||
+        aliases.flags() ==
+            AliasSet::Load(AliasSet::WasmStructOutlineDataArea).flags() ||
+        aliases.flags() ==
+            AliasSet::Load(AliasSet::WasmArrayDataArea).flags() ||
+        aliases.flags() == AliasSet::Load(AliasSet::Any).flags());
     setResultType(type);
   }
 
  public:
-  INSTRUCTION_HEADER(WasmLoadObjectDataField)
+  INSTRUCTION_HEADER(WasmLoadFieldKA)
   TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, obj), (1, data))
+  NAMED_OPERANDS((0, ka), (1, obj))
 
   uint32_t offset() const { return offset_; }
+  MWideningOp wideningOp() const { return wideningOp_; }
 
-  AliasSet getAliasSet() const override {
-    return AliasSet::Load(AliasSet::Any);
-  }
+  AliasSet getAliasSet() const override { return aliases_; }
 };
 
-// Store a value to a field at a fixed offset within a wasm object's data
-// buffer. This field may be any value type, _excluding_ references. References
+// Store a value to an object field at a fixed offset from a base pointer.
+// This field may be any value type, _excluding_ references.  References
 // _must_ use the 'Ref' variant of this instruction.
 //
-// This instruction takes the object owner of the data buffer as an input but
-// does not generate code to access it. This instruction extends the lifetime
-// of the owner object so that it cannot be collected while the data buffer
-// pointer is live.
-class MWasmStoreObjectDataField : public MTernaryInstruction,
-                                  public NoTypePolicy::Data {
+// This instruction takes a second object `ka` that must be kept alive, as
+// described for MWasmLoadFieldKA above.
+class MWasmStoreFieldKA : public MTernaryInstruction,
+                          public NoTypePolicy::Data {
   uint32_t offset_;
+  MNarrowingOp narrowingOp_;
+  AliasSet aliases_;
 
-  MWasmStoreObjectDataField(MDefinition* obj, MDefinition* data,
-                            uint32_t offset, MDefinition* value)
-      : MTernaryInstruction(classOpcode, obj, data, value), offset_(offset) {
+  MWasmStoreFieldKA(MDefinition* ka, MDefinition* obj, uint32_t offset,
+                    MDefinition* value, MNarrowingOp narrowingOp,
+                    AliasSet aliases)
+      : MTernaryInstruction(classOpcode, ka, obj, value),
+        offset_(offset),
+        narrowingOp_(narrowingOp),
+        aliases_(aliases) {
     MOZ_ASSERT(value->type() != MIRType::RefOrNull);
+    // "if you want to narrow the value when it is stored, the source type
+    // must be Int32".
+    MOZ_ASSERT_IF(narrowingOp != MNarrowingOp::None,
+                  value->type() == MIRType::Int32);
+    MOZ_ASSERT(
+        aliases.flags() ==
+            AliasSet::Store(AliasSet::WasmStructInlineDataArea).flags() ||
+        aliases.flags() ==
+            AliasSet::Store(AliasSet::WasmStructOutlineDataArea).flags() ||
+        aliases.flags() ==
+            AliasSet::Store(AliasSet::WasmArrayDataArea).flags() ||
+        aliases.flags() == AliasSet::Store(AliasSet::Any).flags());
   }
 
  public:
-  INSTRUCTION_HEADER(WasmStoreObjectDataField)
+  INSTRUCTION_HEADER(WasmStoreFieldKA)
   TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, obj), (1, data), (2, value))
+  NAMED_OPERANDS((0, ka), (1, obj), (2, value))
 
   uint32_t offset() const { return offset_; }
+  MNarrowingOp narrowingOp() const { return narrowingOp_; }
 
-  AliasSet getAliasSet() const override {
-    return AliasSet::Store(AliasSet::Any);
-  }
+  AliasSet getAliasSet() const override { return aliases_; }
 };
 
-// Store a reference value to a field within a wasm object's data buffer. This
-// instruction emits a pre-barrier. A post barrier _must_ be performed
-// separately.
+// Store a reference value to a location which (it is assumed) is within a
+// wasm object.  This instruction emits a pre-barrier.  A post barrier _must_
+// be performed separately.
 //
-// This instruction takes the object owner of the data buffer as an input but
-// does not generate code to access it. This instruction extends the lifetime
-// of the owner object so that it cannot be collected while the data buffer
-// pointer is live.
-class MWasmStoreObjectDataRefField : public MAryInstruction<4>,
-                                     public NoTypePolicy::Data {
-  MWasmStoreObjectDataRefField(MDefinition* instance, MDefinition* obj,
-                               MDefinition* valueAddr, MDefinition* value)
-      : MAryInstruction<4>(classOpcode) {
-    MOZ_ASSERT(valueAddr->type() == MIRType::Pointer);
+// This instruction takes a second object `ka` that must be kept alive, as
+// described for MWasmLoadFieldKA above.
+class MWasmStoreFieldRefKA : public MAryInstruction<4>,
+                             public NoTypePolicy::Data {
+  AliasSet aliases_;
+
+  MWasmStoreFieldRefKA(MDefinition* instance, MDefinition* ka,
+                       MDefinition* valueAddr, MDefinition* value,
+                       AliasSet aliases)
+      : MAryInstruction<4>(classOpcode), aliases_(aliases) {
+    MOZ_ASSERT(valueAddr->type() == MIRType::Pointer ||
+               valueAddr->type() == TargetWordMIRType());
     MOZ_ASSERT(value->type() == MIRType::RefOrNull);
+    MOZ_ASSERT(
+        aliases.flags() ==
+            AliasSet::Store(AliasSet::WasmStructInlineDataArea).flags() ||
+        aliases.flags() ==
+            AliasSet::Store(AliasSet::WasmStructOutlineDataArea).flags() ||
+        aliases.flags() ==
+            AliasSet::Store(AliasSet::WasmArrayDataArea).flags() ||
+        aliases.flags() == AliasSet::Store(AliasSet::Any).flags());
     initOperand(0, instance);
-    initOperand(1, obj);
+    initOperand(1, ka);
     initOperand(2, valueAddr);
     initOperand(3, value);
   }
 
  public:
-  INSTRUCTION_HEADER(WasmStoreObjectDataRefField)
+  INSTRUCTION_HEADER(WasmStoreFieldRefKA)
   TRIVIAL_NEW_WRAPPERS
-  NAMED_OPERANDS((0, instance), (1, obj), (2, valueAddr), (3, value))
+  NAMED_OPERANDS((0, instance), (1, ka), (2, valueAddr), (3, value))
+
+  AliasSet getAliasSet() const override { return aliases_; }
+};
+
+#ifdef FUZZING_JS_FUZZILLI
+class MFuzzilliHash : public MUnaryInstruction, public NoTypePolicy::Data {
+  explicit MFuzzilliHash(MDefinition* obj)
+      : MUnaryInstruction(classOpcode, obj) {
+    setResultType(MIRType::Int32);
+    setMovable();
+  }
+
+ public:
+  INSTRUCTION_HEADER(FuzzilliHash);
+  TRIVIAL_NEW_WRAPPERS
+  ALLOW_CLONE(MFuzzilliHash)
+
+#  ifdef DEBUG
+  bool isConsistentFloat32Use(MUse* use) const override { return true; }
+#  endif
 
   AliasSet getAliasSet() const override {
-    return AliasSet::Store(AliasSet::Any);
+    MDefinition* obj = getOperand(0);
+    if (obj->type() == MIRType::Object || obj->type() == MIRType::Value) {
+      return AliasSet::Load(AliasSet::ObjectFields | AliasSet::FixedSlot |
+                            AliasSet::DynamicSlot | AliasSet::Element |
+                            AliasSet::UnboxedElement);
+    }
+    return AliasSet::None();
   }
 };
+
+class MFuzzilliHashStore : public MUnaryInstruction, public NoTypePolicy::Data {
+  explicit MFuzzilliHashStore(MDefinition* obj)
+      : MUnaryInstruction(classOpcode, obj) {
+    MOZ_ASSERT(obj->type() == MIRType::Int32);
+
+    setResultType(MIRType::None);
+  }
+
+ public:
+  INSTRUCTION_HEADER(FuzzilliHashStore);
+  TRIVIAL_NEW_WRAPPERS
+  ALLOW_CLONE(MFuzzilliHashStore)
+
+  // this is a store and hence effectful, however no other load can
+  // alias with the store
+  AliasSet getAliasSet() const override {
+    return AliasSet::Store(AliasSet::FuzzilliHash);
+  }
+};
+#endif
 
 #undef INSTRUCTION_HEADER
 

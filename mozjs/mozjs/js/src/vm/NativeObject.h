@@ -587,6 +587,9 @@ class NativeObject : public JSObject {
   }
 
  public:
+  SharedShape* sharedShape() const { return &shape()->asShared(); }
+  DictionaryShape* dictionaryShape() const { return &shape()->asDictionary(); }
+
   PropertyInfoWithKey getLastProperty() const {
     return shape()->lastProperty();
   }
@@ -610,13 +613,15 @@ class NativeObject : public JSObject {
 
   // Update the object's shape and allocate slots if needed to match the shape's
   // slot span.
-  MOZ_ALWAYS_INLINE bool setShapeAndAddNewSlots(JSContext* cx, Shape* newShape,
+  MOZ_ALWAYS_INLINE bool setShapeAndAddNewSlots(JSContext* cx,
+                                                SharedShape* newShape,
                                                 uint32_t oldSpan,
                                                 uint32_t newSpan);
 
   // Methods optimized for adding/removing a single slot. Must only be used for
   // non-dictionary objects.
-  MOZ_ALWAYS_INLINE bool setShapeAndAddNewSlot(JSContext* cx, Shape* newShape,
+  MOZ_ALWAYS_INLINE bool setShapeAndAddNewSlot(JSContext* cx,
+                                               SharedShape* newShape,
                                                uint32_t slot);
   void setShapeAndRemoveLastSlot(JSContext* cx, Shape* newShape, uint32_t slot);
 
@@ -659,7 +664,8 @@ class NativeObject : public JSObject {
   inline bool isInWholeCellBuffer() const;
 
   static inline NativeObject* create(JSContext* cx, gc::AllocKind kind,
-                                     gc::InitialHeap heap, Handle<Shape*> shape,
+                                     gc::InitialHeap heap,
+                                     Handle<SharedShape*> shape,
                                      gc::AllocSite* site = nullptr);
 
 #ifdef DEBUG
@@ -733,7 +739,7 @@ class NativeObject : public JSObject {
     }
   }
   void initDynamicSlots(uint32_t numSlots) {
-    MOZ_ASSERT(numSlots == shape()->slotSpan() - numFixedSlots());
+    MOZ_ASSERT(numSlots == sharedShape()->slotSpan() - numFixedSlots());
     HeapSlot* slots = slots_;
     for (uint32_t i = 0; i < numSlots; i++) {
       slots[i].initAsUndefined();
@@ -814,7 +820,7 @@ class NativeObject : public JSObject {
   inline uint32_t numFixedSlotsMaybeForwarded() const;
 
   uint32_t numUsedFixedSlots() const {
-    uint32_t nslots = shape()->slotSpan();
+    uint32_t nslots = sharedShape()->slotSpan();
     return std::min(nslots, numFixedSlots());
   }
 
@@ -823,7 +829,7 @@ class NativeObject : public JSObject {
       return dictionaryModeSlotSpan();
     }
     MOZ_ASSERT(getSlotsHeader()->dictionarySlotSpan() == 0);
-    return shape()->slotSpan();
+    return sharedShape()->slotSpan();
   }
 
   uint32_t dictionaryModeSlotSpan() const {
@@ -1258,7 +1264,7 @@ class NativeObject : public JSObject {
   static MOZ_ALWAYS_INLINE uint32_t calculateDynamicSlots(uint32_t nfixed,
                                                           uint32_t span,
                                                           const JSClass* clasp);
-  static MOZ_ALWAYS_INLINE uint32_t calculateDynamicSlots(Shape* shape);
+  static MOZ_ALWAYS_INLINE uint32_t calculateDynamicSlots(SharedShape* shape);
 
   ObjectSlots* getSlotsHeader() const { return ObjectSlots::fromSlots(slots_); }
 

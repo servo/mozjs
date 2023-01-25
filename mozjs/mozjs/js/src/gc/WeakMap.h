@@ -152,10 +152,6 @@ class WeakMapBase : public mozilla::LinkedListElement<WeakMapBase> {
   inline bool addImplicitEdges(gc::Cell* key, gc::Cell* delegate,
                                gc::TenuredCell* value);
 
-  // Any weakmap key types that want to participate in the non-iterative
-  // ephemeron marking must override this method.
-  virtual void markKey(GCMarker* marker, gc::Cell* markedCell, gc::Cell* l) = 0;
-
   virtual bool markEntries(GCMarker* marker) = 0;
 
 #ifdef JS_GC_ZEAL
@@ -177,18 +173,6 @@ class WeakMapBase : public mozilla::LinkedListElement<WeakMapBase> {
 
   friend class JS::Zone;
 };
-
-namespace detail {
-
-template <typename T>
-struct RemoveBarrier {};
-
-template <typename T>
-struct RemoveBarrier<js::HeapPtr<T>> {
-  using Type = T;
-};
-
-}  // namespace detail
 
 template <class Key, class Value>
 class WeakMap
@@ -217,7 +201,7 @@ class WeakMap
   // Resolve ambiguity with LinkedListElement<>::remove.
   using Base::remove;
 
-  using UnbarrieredKey = typename detail::RemoveBarrier<Key>::Type;
+  using UnbarrieredKey = typename RemoveBarrier<Key>::Type;
 
   explicit WeakMap(JSContext* cx, JSObject* memOf = nullptr);
   explicit WeakMap(JS::Zone* zone, JSObject* memOf = nullptr);
@@ -281,10 +265,8 @@ class WeakMap
   }
 #endif
 
-  void markKey(GCMarker* marker, gc::Cell* markedCell,
-               gc::Cell* origKey) override;
-
-  bool markEntry(GCMarker* marker, Key& key, Value& value);
+  bool markEntry(GCMarker* marker, Key& key, Value& value,
+                 bool populateWeakKeysTable);
 
   void trace(JSTracer* trc) override;
 

@@ -250,14 +250,10 @@ static bool EnumerateNativeProperties(JSContext* cx, Handle<NativeObject*> pobj,
       Rooted<RecordType*> rec(cx);
       if (RecordObject::maybeUnbox(pobj, &rec)) {
         Rooted<ArrayObject*> keys(cx, rec->keys());
-        RootedId id(cx);
-        RootedString key(cx);
 
         for (size_t i = 0; i < keys->length(); i++) {
-          key.set(keys->getDenseElement(i).toString());
-          if (!JS_StringToId(cx, key, &id)) {
-            return false;
-          }
+          JSAtom* key = &keys->getDenseElement(i).toString()->asAtom();
+          PropertyKey id = AtomToId(key);
           if (!Enumerate<CheckForDuplicates>(cx, pobj, id,
                                              /* enumerable = */ true, flags,
                                              visited, props)) {
@@ -269,13 +265,13 @@ static bool EnumerateNativeProperties(JSContext* cx, Handle<NativeObject*> pobj,
       } else {
         mozilla::Maybe<TupleType&> tup = TupleObject::maybeUnbox(pobj);
         if (tup) {
-          uint32_t len = (*tup).length();
-          RootedId id(cx);
+          uint32_t len = tup->length();
 
           for (size_t i = 0; i < len; i++) {
-            if (!JS_IndexToId(cx, i, &id)) {
-              return false;
-            }
+            // We expect tuple indices not to get so large that `i` won't
+            // fit into an `int32_t`.
+            MOZ_ASSERT(PropertyKey::fitsInInt(i));
+            PropertyKey id = PropertyKey::Int(i);
             if (!Enumerate<CheckForDuplicates>(cx, pobj, id,
                                                /* enumerable = */ true, flags,
                                                visited, props)) {
@@ -703,13 +699,12 @@ JS_PUBLIC_API bool js::GetPropertyKeys(JSContext* cx, HandleObject obj,
                   props);
 }
 
-static inline void RegisterEnumerator(NativeIterator* ni) {
+static inline void RegisterEnumerator(JSContext* cx, NativeIterator* ni) {
   MOZ_ASSERT(ni->objectBeingIterated());
-  ObjectRealm& realm = ObjectRealm::get(ni->objectBeingIterated());
 
   // Register non-escaping native enumerators (for-in) with the current
   // context.
-  ni->link(realm.enumerators);
+  ni->link(cx->compartment()->enumeratorsAddr());
 
   MOZ_ASSERT(!ni->isActive());
   ni->markActive();
@@ -717,9 +712,10 @@ static inline void RegisterEnumerator(NativeIterator* ni) {
 
 static PropertyIteratorObject* NewPropertyIteratorObject(JSContext* cx) {
   const JSClass* clasp = &PropertyIteratorObject::class_;
-  Rooted<Shape*> shape(cx, SharedShape::getInitialShape(
-                               cx, clasp, cx->realm(), TaggedProto(nullptr),
-                               ITERATOR_FINALIZE_KIND));
+  Rooted<SharedShape*> shape(
+      cx,
+      SharedShape::getInitialShape(cx, clasp, cx->realm(), TaggedProto(nullptr),
+                                   ITERATOR_FINALIZE_KIND));
   if (!shape) {
     return nullptr;
   }
@@ -777,34 +773,6 @@ static PropertyIteratorObject* CreatePropertyIterator(
   }
 
   return propIter;
-}
-
-/**
- * Initialize a sentinel NativeIterator whose purpose is only to act as the
- * start/end of the circular linked list of NativeIterators in
- * ObjectRealm::enumerators.
- */
-NativeIterator::NativeIterator() {
-  // Do our best to enforce that nothing in |this| except the two fields set
-  // below is ever observed.
-  AlwaysPoison(static_cast<void*>(this), JS_NEW_NATIVE_ITERATOR_PATTERN,
-               sizeof(*this), MemCheckKind::MakeUndefined);
-
-  // These are the only two fields in sentinel NativeIterators that are
-  // examined, in ObjectRealm::traceWeakNativeIterators. Everything else is
-  // only examined *if* it's a NativeIterator being traced by a
-  // PropertyIteratorObject that owns it, and nothing owns this iterator.
-  prev_ = next_ = this;
-}
-
-NativeIterator* NativeIterator::allocateSentinel(JSContext* cx) {
-  NativeIterator* ni = js_new<NativeIterator>();
-  if (!ni) {
-    ReportOutOfMemory(cx);
-    return nullptr;
-  }
-
-  return ni;
 }
 
 static HashNumber HashIteratorShape(Shape* shape) {
@@ -927,9 +895,50 @@ static inline bool CanCompareIterableObjectToCache(JSObject* obj) {
   return false;
 }
 
+static bool CanStoreInIteratorCache(JSObject* obj) {
+  do {
+    MOZ_ASSERT(obj->as<NativeObject>().getDenseInitializedLength() == 0);
+
+    // Typed arrays have indexed properties not captured by the Shape guard.
+    // Enumerate hooks may add extra properties.
+    if (MOZ_UNLIKELY(ClassCanHaveExtraEnumeratedProperties(obj->getClass()))) {
+      return false;
+    }
+
+    obj = obj->staticPrototype();
+  } while (obj);
+
+  return true;
+}
+
 static MOZ_ALWAYS_INLINE PropertyIteratorObject* LookupInIteratorCache(
     JSContext* cx, JSObject* obj, uint32_t* numShapes) {
   MOZ_ASSERT(*numShapes == 0);
+
+  if (obj->shape()->cache().isIterator() &&
+      CanCompareIterableObjectToCache(obj)) {
+    PropertyIteratorObject* iterobj = obj->shape()->cache().toIterator();
+    NativeIterator* ni = iterobj->getNativeIterator();
+    MOZ_ASSERT(*ni->shapesBegin() == obj->shape());
+    if (!ni->isReusable()) {
+      return nullptr;
+    }
+
+    // Verify shapes of proto chain.
+    JSObject* pobj = obj;
+    for (GCPtr<Shape*>* s = ni->shapesBegin() + 1; s != ni->shapesEnd(); s++) {
+      Shape* shape = *s;
+      pobj = pobj->staticPrototype();
+      if (pobj->shape() != shape) {
+        return nullptr;
+      }
+      if (!CanCompareIterableObjectToCache(pobj)) {
+        return nullptr;
+      }
+    }
+    MOZ_ASSERT(CanStoreInIteratorCache(obj));
+    return iterobj;
+  }
 
   Vector<Shape*, 8> shapes(cx);
   HashNumber shapesHash = 0;
@@ -972,28 +981,14 @@ static MOZ_ALWAYS_INLINE PropertyIteratorObject* LookupInIteratorCache(
   return iterobj;
 }
 
-static bool CanStoreInIteratorCache(JSObject* obj) {
-  do {
-    MOZ_ASSERT(obj->as<NativeObject>().getDenseInitializedLength() == 0);
-
-    // Typed arrays have indexed properties not captured by the Shape guard.
-    // Enumerate hooks may add extra properties.
-    if (MOZ_UNLIKELY(ClassCanHaveExtraEnumeratedProperties(obj->getClass()))) {
-      return false;
-    }
-
-    obj = obj->staticPrototype();
-  } while (obj);
-
-  return true;
-}
-
 [[nodiscard]] static bool StoreInIteratorCache(
     JSContext* cx, JSObject* obj, PropertyIteratorObject* iterobj) {
   MOZ_ASSERT(CanStoreInIteratorCache(obj));
 
   NativeIterator* ni = iterobj->getNativeIterator();
   MOZ_ASSERT(ni->shapeCount() > 0);
+
+  obj->shape()->maybeCacheIterator(cx, iterobj);
 
   IteratorHashPolicy::Lookup lookup(
       reinterpret_cast<Shape**>(ni->shapesBegin()), ni->shapeCount(),
@@ -1029,7 +1024,7 @@ bool js::EnumerateProperties(JSContext* cx, HandleObject obj,
   return Snapshot(cx, obj, 0, props);
 }
 
-static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
+JSObject* js::GetIterator(JSContext* cx, HandleObject obj) {
   MOZ_ASSERT(!obj->is<PropertyIteratorObject>());
   MOZ_ASSERT(cx->compartment() == obj->compartment(),
              "We may end up allocating shapes in the wrong zone!");
@@ -1039,7 +1034,7 @@ static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
           LookupInIteratorCache(cx, obj, &numShapes)) {
     NativeIterator* ni = iterobj->getNativeIterator();
     ni->initObjectBeingIterated(*obj);
-    RegisterEnumerator(ni);
+    RegisterEnumerator(cx, ni);
     return iterobj;
   }
 
@@ -1072,7 +1067,7 @@ static JSObject* GetIterator(JSContext* cx, HandleObject obj) {
   if (!iterobj) {
     return nullptr;
   }
-  RegisterEnumerator(iterobj->getNativeIterator());
+  RegisterEnumerator(cx, iterobj->getNativeIterator());
 
   cx->check(iterobj);
 
@@ -1608,21 +1603,19 @@ static bool SuppressDeletedProperty(JSContext* cx, NativeIterator* ni,
  */
 static bool SuppressDeletedPropertyHelper(JSContext* cx, HandleObject obj,
                                           Handle<JSLinearString*> str) {
-  NativeIterator* enumeratorList = ObjectRealm::get(obj).enumerators;
-  NativeIterator* ni = enumeratorList->next();
-
-  while (ni != enumeratorList) {
+  NativeIteratorListIter iter(cx->compartment()->enumeratorsAddr());
+  while (!iter.done()) {
+    NativeIterator* ni = iter.next();
     if (!SuppressDeletedProperty(cx, ni, obj, str)) {
       return false;
     }
-    ni = ni->next();
   }
 
   return true;
 }
 
 bool js::SuppressDeletedProperty(JSContext* cx, HandleObject obj, jsid id) {
-  if (MOZ_LIKELY(!ObjectRealm::get(obj).objectMaybeInIteration(obj))) {
+  if (MOZ_LIKELY(!cx->compartment()->objectMaybeInIteration(obj))) {
     return true;
   }
 
@@ -1639,7 +1632,7 @@ bool js::SuppressDeletedProperty(JSContext* cx, HandleObject obj, jsid id) {
 
 bool js::SuppressDeletedElement(JSContext* cx, HandleObject obj,
                                 uint32_t index) {
-  if (MOZ_LIKELY(!ObjectRealm::get(obj).objectMaybeInIteration(obj))) {
+  if (MOZ_LIKELY(!cx->compartment()->objectMaybeInIteration(obj))) {
     return true;
   }
 
@@ -1669,10 +1662,9 @@ void js::AssertDenseElementsNotIterated(NativeObject* obj) {
   static constexpr uint32_t MaxPropsToCheck = 10;
   uint32_t propsChecked = 0;
 
-  NativeIterator* enumeratorList = ObjectRealm::get(obj).enumerators;
-  NativeIterator* ni = enumeratorList->next();
-
-  while (ni != enumeratorList) {
+  NativeIteratorListIter iter(obj->compartment()->enumeratorsAddr());
+  while (!iter.done()) {
+    NativeIterator* ni = iter.next();
     if (ni->objectBeingIterated() == obj &&
         !ni->maybeHasIndexedPropertiesFromProto()) {
       for (GCPtr<JSLinearString*>* idp = ni->nextProperty();
@@ -1686,7 +1678,6 @@ void js::AssertDenseElementsNotIterated(NativeObject* obj) {
         }
       }
     }
-    ni = ni->next();
   }
 }
 #endif

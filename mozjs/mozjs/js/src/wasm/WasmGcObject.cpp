@@ -60,10 +60,10 @@ static const JSClassOps RttValueClassOps = {
     RttValue::finalize,  // finalize
     nullptr,             // call
     nullptr,             // construct
-    RttValue::trace,     // trace
+    nullptr,             // trace
 };
 
-RttValue* RttValue::create(JSContext* cx, TypeHandle handle) {
+RttValue* RttValue::create(JSContext* cx, const TypeHandle& handle) {
   Rooted<RttValue*> rtt(cx,
                         NewTenuredObjectWithGivenProto<RttValue>(cx, nullptr));
   if (!rtt) {
@@ -77,8 +77,6 @@ RttValue* RttValue::create(JSContext* cx, TypeHandle handle) {
   rtt->initReservedSlot(RttValue::TypeContext,
                         PrivateValue((void*)typeContext.get()));
   rtt->initReservedSlot(RttValue::TypeDef, PrivateValue((void*)&handle.def()));
-  rtt->initReservedSlot(RttValue::Parent, NullValue());
-  rtt->initReservedSlot(RttValue::Children, PrivateValue(nullptr));
 
   MOZ_ASSERT(!rtt->isNewborn());
 
@@ -96,44 +94,8 @@ const JSClass js::RttValue::class_ = {
         JSCLASS_HAS_RESERVED_SLOTS(RttValue::SlotCount),
     &RttValueClassOps};
 
-RttValue* RttValue::rttCanon(JSContext* cx, TypeHandle handle) {
+RttValue* RttValue::rttCanon(JSContext* cx, const TypeHandle& handle) {
   return RttValue::create(cx, handle);
-}
-
-RttValue* RttValue::rttSub(JSContext* cx, Handle<RttValue*> parent,
-                           Handle<RttValue*> subCanon) {
-  if (!parent->ensureChildren(cx)) {
-    return nullptr;
-  }
-
-  ObjectWeakMap& parentChildren = parent->children();
-  if (JSObject* child = parentChildren.lookup(subCanon)) {
-    return &child->as<RttValue>();
-  }
-
-  Rooted<RttValue*> rtt(cx, create(cx, parent->typeHandle()));
-  if (!rtt) {
-    return nullptr;
-  }
-  rtt->setReservedSlot(RttValue::Parent, ObjectValue(*parent.get()));
-  if (!parentChildren.add(cx, subCanon, rtt)) {
-    return nullptr;
-  }
-  return rtt;
-}
-
-bool RttValue::ensureChildren(JSContext* cx) {
-  if (maybeChildren()) {
-    return true;
-  }
-  Rooted<UniquePtr<ObjectWeakMap>> children(cx,
-                                            cx->make_unique<ObjectWeakMap>(cx));
-  if (!children) {
-    return false;
-  }
-  setReservedSlot(Slot::Children, PrivateValue(children.release()));
-  AddCellMemory(this, sizeof(ObjectWeakMap), MemoryUse::WasmRttValueChildren);
-  return true;
 }
 
 bool RttValue::lookupProperty(JSContext* cx, Handle<WasmGcObject*> object,
@@ -194,18 +156,6 @@ bool RttValue::lookupProperty(JSContext* cx, Handle<WasmGcObject*> object,
 }
 
 /* static */
-void RttValue::trace(JSTracer* trc, JSObject* obj) {
-  auto* rttValue = &obj->as<RttValue>();
-  if (rttValue->isNewborn()) {
-    return;
-  }
-
-  if (ObjectWeakMap* children = rttValue->maybeChildren()) {
-    children->trace(trc);
-  }
-}
-
-/* static */
 void RttValue::finalize(JS::GCContext* gcx, JSObject* obj) {
   auto* rttValue = &obj->as<RttValue>();
 
@@ -218,11 +168,6 @@ void RttValue::finalize(JS::GCContext* gcx, JSObject* obj) {
   // creation
   rttValue->typeContext()->Release();
   rttValue->setReservedSlot(Slot::TypeContext, PrivateValue(nullptr));
-
-  // Free the lazy-allocated children map, if any
-  if (ObjectWeakMap* children = rttValue->maybeChildren()) {
-    gcx->delete_(obj, children, MemoryUse::WasmRttValueChildren);
-  }
 }
 
 //=========================================================================
@@ -409,14 +354,16 @@ bool WasmGcObject::loadValue(JSContext* cx, const RttValue::PropOffset& offset,
   // like to access it so we erase (ref T) with eqref when loading. This is
   // safe as (ref T) <: eqref and we're not in the writing case where we
   // would need to perform a type check.
-  if (type.isTypeIndex()) {
+  if (type.isTypeRef()) {
     type = RefType::fromTypeCode(TypeCode::EqRef, true);
   }
+
   if (!type.isExposable()) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_VAL_TYPE);
     return false;
   }
+
   if (is<WasmStructObject>()) {
     // `offset` is the field offset, without regard to the in/out-line split.
     // That is handled by the call to `fieldOffsetToAddress`.
@@ -428,31 +375,24 @@ bool WasmGcObject::loadValue(JSContext* cx, const RttValue::PropOffset& offset,
                        rtt.typeDef().structType().size_);
     return ToJSValue(cx, structObj.fieldOffsetToAddress(type, offset.get()),
                      type, vp);
-  } else {
-    MOZ_ASSERT(is<WasmArrayObject>());
-    WasmArrayObject& arrayObj = as<WasmArrayObject>();
-    if (offset.get() == UINT32_MAX) {
-      // This denotes "length"
-      uint32_t numElements = arrayObj.numElements_;
-      // We can't use `ToJSValue(.., ValType::I32, ..)` here since it will
-      // treat the integer as signed, which it isn't.  `vp.set(..)` will
-      // coerce correctly to a JS::Value, though.
-      vp.set(NumberValue(numElements));
-      return true;
-    }
-    return ToJSValue(cx, arrayObj.data_ + offset.get(), type, vp);
   }
+
+  MOZ_ASSERT(is<WasmArrayObject>());
+  WasmArrayObject& arrayObj = as<WasmArrayObject>();
+  if (offset.get() == UINT32_MAX) {
+    // This denotes "length"
+    uint32_t numElements = arrayObj.numElements_;
+    // We can't use `ToJSValue(.., ValType::I32, ..)` here since it will
+    // treat the integer as signed, which it isn't.  `vp.set(..)` will
+    // coerce correctly to a JS::Value, though.
+    vp.set(NumberValue(numElements));
+    return true;
+  }
+  return ToJSValue(cx, arrayObj.data_ + offset.get(), type, vp);
 }
 
 bool WasmGcObject::isRuntimeSubtype(Handle<RttValue*> rtt) const {
-  RttValue* current = &rttValue();
-  while (current != nullptr) {
-    if (current == rtt.get()) {
-      return true;
-    }
-    current = current->parent();
-  }
-  return false;
+  return TypeDef::isSubTypeOf(&rttValue().typeDef(), &rtt->typeDef());
 }
 
 bool WasmGcObject::obj_newEnumerate(JSContext* cx, HandleObject obj,
@@ -485,7 +425,7 @@ bool WasmGcObject::obj_newEnumerate(JSContext* cx, HandleObject obj,
   }
   RootedId id(cx);
   for (size_t index = 0; index < indexCount; index++) {
-    id = PropertyKey::Int(index);
+    id = PropertyKey::Int(int32_t(index));
     properties.infallibleAppend(id);
   }
 
@@ -588,10 +528,12 @@ WasmArrayObject* WasmArrayObject::createArray(JSContext* cx,
   MOZ_ASSERT(rtt->kind() == wasm::TypeDefKind::Array);
 
   // Calculate the byte length of the outline storage, being careful to check
-  // for overflow. We stick to uint32_t as an implicit implementation limit.
+  // for overflow.  Note this logic assumes that MaxArrayPayloadBytes is
+  // within uint32_t range.
   CheckedUint32 outlineBytes = rtt->typeDef().arrayType().elementType_.size();
   outlineBytes *= numElements;
-  if (!outlineBytes.isValid()) {
+  if (!outlineBytes.isValid() ||
+      outlineBytes.value() > uint32_t(MaxArrayPayloadBytes)) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_ARRAY_IMP_LIMIT);
     return nullptr;
@@ -664,7 +606,7 @@ void WasmArrayObject::fillVal(const Val& val, uint32_t itemIndex,
                               uint32_t len) {
   const ArrayType& arrayType = rttValue_->typeDef().arrayType();
   size_t elementSize = arrayType.elementType_.size();
-  uint8_t* data = data_;
+  uint8_t* data = data_ + elementSize * itemIndex;
   MOZ_ASSERT(itemIndex <= numElements_ && len <= numElements_ - itemIndex);
   for (uint32_t i = 0; i < len; i++) {
     WriteValTo(val, arrayType.elementType_, data);

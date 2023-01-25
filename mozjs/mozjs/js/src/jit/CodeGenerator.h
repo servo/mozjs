@@ -106,7 +106,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   [[nodiscard]] bool generate();
   [[nodiscard]] bool generateWasm(
-      wasm::TypeIdDesc funcTypeId, wasm::BytecodeOffset trapOffset,
+      wasm::CallIndirectId callIndirectId, wasm::BytecodeOffset trapOffset,
       const wasm::ArgTypeVector& argTys, const RegisterOffsets& trapExitLayout,
       size_t trapExitLayoutNumWords, wasm::FuncOffsets* offsets,
       wasm::StackMaps* stackMaps, wasm::Decoder* decoder);
@@ -368,6 +368,13 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   // Bit mask of JitRealm stubs that are to be read-barriered.
   uint32_t realmStubsToReadBarrier_;
+
+#ifdef FUZZING_JS_FUZZILLI
+  void emitFuzzilliHashDouble(FloatRegister floatDouble, Register scratch,
+                              Register output);
+  void emitFuzzilliHashObject(LInstruction* lir, Register obj, Register output);
+  void emitFuzzilliHashBigInt(Register bigInt, Register output);
+#endif
 
 #define LIR_OP(op) void visit##op(L##op* ins);
   LIR_OPCODE_LIST(LIR_OP)

@@ -54,8 +54,8 @@
 # NOTE: If you add new phases here the current next phase kind number can be
 # found at the end of js/src/gc/StatsPhasesGenerated.inc
 
-import re
 import collections
+import re
 
 
 class PhaseKind:
@@ -125,7 +125,11 @@ PhaseKindGraphRoots = [
         "MARK",
         "Mark",
         6,
-        [getPhaseKind("MARK_ROOTS"), addPhaseKind("MARK_DELAYED", "Mark Delayed", 8)],
+        [
+            getPhaseKind("MARK_ROOTS"),
+            addPhaseKind("MARK_DELAYED", "Mark Delayed", 8),
+            getPhaseKind("JOIN_PARALLEL_TASKS"),
+        ],
     ),
     addPhaseKind(
         "SWEEP",
@@ -153,6 +157,7 @@ PhaseKindGraphRoots = [
                         "SWEEP_MARK_INCOMING_GRAY", "Mark Incoming Gray Pointers", 14
                     ),
                     addPhaseKind("SWEEP_MARK_GRAY", "Mark Gray", 15),
+                    getPhaseKind("JOIN_PARALLEL_TASKS"),
                 ],
             ),
             addPhaseKind(
