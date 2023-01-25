@@ -38,19 +38,6 @@ index 4fbca27fa..d61b97916 100644
            out.printf("Processing store ");
            def->printName(out);
            out.printf(" (flags %x)\n", set.flags());
-diff --git a/js/src/jit/IonAnalysis.cpp b/js/src/jit/IonAnalysis.cpp
-index 199c7f99c..0ce9e9e19 100644
---- a/js/src/jit/IonAnalysis.cpp
-+++ b/js/src/jit/IonAnalysis.cpp
-@@ -4316,7 +4316,7 @@ void jit::DumpMIRExpressions(MIRGraph& graph, const CompileInfo& info,
-     return;
-   }
- 
--  Fprinter& out = JitSpewPrinter();
-+  GenericPrinter& out = JitSpewPrinter();
-   out.printf("===== %s =====\n", phase);
- 
-   size_t depth = 2;
 diff --git a/js/src/jit/JitSpewer.cpp b/js/src/jit/JitSpewer.cpp
 index 4fcf78b05..2f947ae1b 100644
 --- a/js/src/jit/JitSpewer.cpp
