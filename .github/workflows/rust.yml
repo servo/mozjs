@@ -20,15 +20,6 @@ jobs:
     - uses: actions/checkout@v2
     - name: Install deps
       run: brew install python autoconf@2.13 ccache llvm yasm
-    # TODO: Remove this step when the compatibility issue between mozjs and
-    #       Homebrew's Python 3.10 formula (servo/rust-mozjs#559) is truly fixed
-    - name: Select Python 3.9
-      run: |
-        brew install python@3.9
-        cd $(dirname $(which python3.9))
-        rm -f python3 pip3
-        ln -s python3.9 python3
-        ln -s pip3.9 pip3
     - uses: dtolnay/rust-toolchain@stable
     - name: ccache cache files
       uses: actions/cache@v1.1.0
@@ -70,6 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
+        #target: [""]
         target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     steps:
     - uses: actions/checkout@v2
@@ -79,7 +71,7 @@ jobs:
         .\MozillaBuildSetup.exe /S | Out-Null
         iwr -useb get.scoop.sh -outfile 'install.ps1'
         .\install.ps1 -RunAsAdmin
-        scoop install llvm@14.0.6 --global
+        scoop install llvm@15.0.7 --global
         echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     # TODO: Remove this step and start-shell.bat when the MozillaBuild is updated
     - name: Replace MozillaBuild shell
@@ -87,6 +79,12 @@ jobs:
         Remove-Item -Path C:\mozilla-build\start-shell.bat
         Move-Item -Path start-shell.bat -Destination C:\mozilla-build\
     - uses: dtolnay/rust-toolchain@stable
+      if: (!contains(matrix.target, 'uwp'))
+    - uses: dtolnay/rust-toolchain@master
+      if: contains(matrix.target, 'uwp')
+      with:
+        toolchain: "nightly-2023-02-02"
+        components: rust-src
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
       env:
@@ -97,9 +95,7 @@ jobs:
         PYTHON3: 'C:\mozilla-build\python3\python3.exe'
         LIBCLANG_PATH: 'C:\ProgramData\scoop\apps\llvm\current\lib'
       run: |
-        rustup install nightly-2022-11-20
-        rustup default nightly
-        rustup component add rust-src
+        rustc --version --verbose
         cargo build --verbose ${{ matrix.features }} -Z build-std=std,panic_abort --target ${{ matrix.target }}
     - name: Build Windows
       if: contains(matrix.target, 'uwp') != true
