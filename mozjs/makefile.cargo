@@ -79,7 +79,7 @@ ifneq ($(HOST),$(TARGET))
         endif
     endif
 
-    ifeq ($(WINDOWS),)
+    ifeq (,$(WINDOWS))
         CC ?= $(TARGET)-gcc
         CPP ?= $(TARGET)-gcc -E
         CXX ?= $(TARGET)-g++
@@ -87,28 +87,25 @@ ifneq ($(HOST),$(TARGET))
         CONFIGURE_FLAGS += --target=$(TARGET) --disable-gold
     endif
 
-else
+else ifeq (,$(WINDOWS))
 
-    ifeq (,$(WINDOWS))
-        ifeq (freebsd,$(findstring freebsd,$(TARGET)))
-            # Does not symlink clang as "gcc" like macOS does
-            CC ?= clang
-            CPP ?= clang -E
-            CXX ?= clang++
-        else
-            CC ?= cc
-            CPP ?= cc -E
-            CXX ?= c++
-        endif
-        AR ?= ar
+    ifeq (freebsd,$(findstring freebsd,$(TARGET)))
+        # Does not symlink clang as "gcc" like macOS does
+        CC ?= clang
+        CPP ?= clang -E
+        CXX ?= clang++
+    else
+        CC ?= cc
+        CPP ?= cc -E
+        CXX ?= c++
+    endif
+    AR ?= ar
 
-        # check if python2 is a valid Python executable, otherwise fall back to python
-        ifeq (, $(findstring Python 2.,$(shell python2 --version 2> /dev/null)))
-            PYTHON ?= python2
-        else
-            PYTHON ?= python
-        endif
-
+    # check if python3 is a valid Python executable, otherwise fall back to python
+    ifeq (,$(findstring Python 3.,$(shell python3 --version 2> /dev/null)))
+        PYTHON ?= python3
+    else
+        PYTHON ?= python
     endif
 
 endif
@@ -125,29 +122,28 @@ ifneq (,$(CCACHE))
     CONFIGURE_FLAGS += --with-ccache=$(CCACHE)
 endif
 
-ifneq ($(WINDOWS),)
+ifneq (,$(WINDOWS))
     # Visual Studio build
-    NEED_WIN_PYTHON := 1
 
-    # There's no cygpath in mozilla-build, and we're expecting to
-    # be building with MOZ_BUILD_TOOLS, so do our best
-    OUT_DIR:=$(subst \,/,$(OUT_DIR))
+    OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
 
-ifeq ($(findstring x86_64,$(TARGET)),x86_64)
-    # This is the correct target for MSVC builds
-    CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
-else ifeq ($(findstring i686,$(TARGET)),i686)
-    # This is the correct target for MSVC builds
-    CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=x86_64-pc-mingw32
-else ifeq ($(findstring aarch64,$(TARGET)),aarch64)
-    # This is the correct target for MSVC builds
-    CONFIGURE_FLAGS += --target=aarch64-windows-mingw32 --host=x86_64-pc-mingw32
-endif
+    # Fake out the SM build with a dummy dir here; just needs $(MOZ_TOOLS)/bin
+    # to exist
     MOZ_TOOLS=/
+
+    ifeq ($(findstring x86_64,$(TARGET)),x86_64)
+        # This is the correct target for MSVC builds
+        CONFIGURE_FLAGS += --target=x86_64-pc-mingw32 --host=x86_64-pc-mingw32
+    else ifeq ($(findstring i686,$(TARGET)),i686)
+        # This is the correct target for MSVC builds
+        CONFIGURE_FLAGS += --target=i686-pc-mingw32 --host=x86_64-pc-mingw32
+    else ifeq ($(findstring aarch64,$(TARGET)),aarch64)
+        # This is the correct target for MSVC builds
+        CONFIGURE_FLAGS += --target=aarch64-windows-mingw32 --host=x86_64-pc-mingw32
+    endif
 
 else ifeq ($(MSYSTEM),MINGW64)
     # MSYS2/MINGW64 build
-    NEED_WIN_PYTHON := 1
 
     # msys2 sets CC=cc as default. however, there is no `cc.exe`.
     # overwrite it here.
@@ -159,24 +155,8 @@ else ifeq ($(MSYSTEM),MINGW64)
     # cargo uses Windows native path. msys2 make unfortunately doesn't understand it.
     OUT_DIR:=$(shell cygpath "$(OUT_DIR)")
 
-    # Fake out the SM build with a dummy dir here; just needs $(MOZ_TOOLS)/bin
-    # to exist
     MOZ_TOOLS=/
 endif
-
-# If we need to do extra work to find an appropriate python on
-# Windows, do it here
-# ifeq ($(NEED_WIN_PYTHON),1)
-#     ifneq (,$(NATIVE_WIN32_PYTHON))
-#         PYTHON := $(NATIVE_WIN32_PYTHON)
-#     else ifneq (,$(wildcard c:/python27/python.exe))
-#         PYTHON := c:/python27/python.exe
-#     else
-#         $(message You must either have the Native Win32 python installed in C:/python27, or set NATIVE_WIN32_PYTHON to point to the appropriate python.exe.)
-#         $(message Download the Python installer from  https://www.python.org/downloads/release/python-2710/)
-#         $(error Native Win32 Python not found)
-#     endif
-# endif
 
 .PHONY : all maybe-configure
 
