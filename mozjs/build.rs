@@ -204,6 +204,7 @@ fn build_jsapi(build_dir: &Path) {
 
     let mozbuild = env::var_os("MOZILLABUILD").map(|mozbuild_env| {
         if mozbuild_env.is_empty() || mozbuild_env.to_ascii_lowercase() == "true" {
+            env::set_var("MOZILLABUILD", r#"C:\mozilla-build\"#);
             PathBuf::from(r#"C:\mozilla-build\"#)
         } else {
             PathBuf::from(&mozbuild_env)

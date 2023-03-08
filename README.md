@@ -38,7 +38,7 @@ Under Windows:
 set LIBCLANG_PATH=C:\Program Files\LLVM\lib
 ```
 
-3. Set environment variables so the build script can find Python 2.7 and Autoconf 2.13:
+3. Set environment variables so the build script can find the build tools.
 ```
 set CC=clang-cl.exe
 set CXX=clang-cl.exe
