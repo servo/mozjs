@@ -7,6 +7,7 @@ on:
 
 env:
   #CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
   SHELL: /bin/bash
 
 jobs:
@@ -16,45 +17,51 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+      CCACHE: "sccache"
+      CARGO_INCREMENTAL: 0
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
+    - name: Get LLVM version from rustc
+      run: |
+        echo "LLVM=$(rustc -vV | sed -n 's|LLVM version: ||p' | cut -d. -f1)" >> $GITHUB_ENV
     - name: Install deps
-      run: brew install python autoconf@2.13 ccache llvm yasm
-    - uses: dtolnay/rust-toolchain@stable
-    - name: ccache cache files
-      uses: actions/cache@v1.1.0
+      run: brew install python autoconf@2.13 llvm@${{ env.LLVM }} yasm
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.2
       with:
-        path: .ccache
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        version: "v0.4.0"
     - name: Build
       run: |
-        ccache -z
-        ccache cargo build --verbose ${{ matrix.features }}
-        ccache cargo test --verbose ${{ matrix.features }}
-        ccache -s
+        cargo build --verbose ${{ matrix.features }}
+        cargo test --verbose ${{ matrix.features }}
   linux:
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: "sccache"
+      CCACHE: "sccache"
+      CARGO_INCREMENTAL: 0
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", ""]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
+    - uses: dtolnay/rust-toolchain@stable
     - name: Install deps
       run: |
-        sudo apt install autoconf2.13 ccache llvm -y
-    - uses: dtolnay/rust-toolchain@stable
-    - name: ccache cache files
-      uses: actions/cache@v1.1.0
+        sudo apt install autoconf2.13 llvm -y
+    - name: Run sccache-cache
+      uses: mozilla-actions/sccache-action@v0.0.2
       with:
-        path: .ccache
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        version: "v0.4.0"
     - name: Build
       run: |
-        ccache -z
-        ccache cargo build --verbose ${{ matrix.features }}
-        ccache cargo test --verbose ${{ matrix.features }}
-        ccache -s
+        cargo build --verbose ${{ matrix.features }}
+        cargo test --verbose ${{ matrix.features }}
   windows:
     runs-on: windows-latest
     strategy:
@@ -64,15 +71,7 @@ jobs:
         #target: [""]
         target: ["", "aarch64-uwp-windows-msvc", "x86_64-uwp-windows-msvc"]
     steps:
-    - uses: actions/checkout@v2
-    - name: Install deps
-      run: |
-        Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe -Destination ./MozillaBuildSetup.exe
-        .\MozillaBuildSetup.exe /S | Out-Null
-        iwr -useb get.scoop.sh -outfile 'install.ps1'
-        .\install.ps1 -RunAsAdmin
-        scoop install llvm@15.0.7 --global
-        echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+    - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
       if: (!contains(matrix.target, 'uwp'))
     - uses: dtolnay/rust-toolchain@master
@@ -80,6 +79,18 @@ jobs:
       with:
         toolchain: "nightly-2023-02-02"
         components: rust-src
+    - name: Get LLVM version from rustc
+      shell: bash
+      run: |
+        echo "LLVM=$(rustc -vV | sed -n 's|LLVM version: ||p')" >> $GITHUB_ENV
+    - name: Install deps
+      run: |
+        Start-BitsTransfer -Source https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe -Destination ./MozillaBuildSetup.exe
+        .\MozillaBuildSetup.exe /S | Out-Null
+        iwr -useb get.scoop.sh -outfile 'install.ps1'
+        .\install.ps1 -RunAsAdmin
+        scoop install llvm@${{ env.LLVM }} --global
+        echo "C:\ProgramData\scoop\shims;C:\Users\runneradmin\scoop\shims" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
     - name: Build uwp
       if: contains(matrix.target, 'uwp')
       shell: cmd
@@ -112,7 +123,7 @@ jobs:
   Integrity:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v3
     - name: Get mozjs
       run: |
         bash ./mozjs/etc/get_mozjs.sh
