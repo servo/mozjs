@@ -29,30 +29,21 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 Under Windows:
 
 1. Follow the directions at
-   https://developer.mozilla.org/en-US/docs/Mozilla/Developer_guide/Build_Instructions/Windows_Prerequisites
+   https://firefox-source-docs.mozilla.org/setup/windows_build.html.
+   (Steps 1.1 and 1.2)
 
-2. Open up a shell configured to use Visual Studio. This could be the
-   one included with Visual Studio (e.g. Visual Studio 2017 / X64 Native
-   Tools Command Prompt for VS 2017) or a shell in which you have run
-```
-"c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-```
-
-3. Set the `MOZTOOLS_PATH` environment variable to point to the tools from the Mozilla Build Package:
-```
-set MOZTOOLS_PATH=C:\mozilla-build\msys\bin;C:\mozilla-build\bin
-```
-
-4. Download and install Clang for Windows (64 bit) from https://releases.llvm.org/download.html
+2. Download and install Clang for Windows (64 bit) from https://releases.llvm.org/download.html
    and set the `LIBCLANG_PATH` environment variable to its `lib` directory:
 ```
 set LIBCLANG_PATH=C:\Program Files\LLVM\lib
 ```
 
-5. Set environment variables so the build script can find Python 2.7 and Autoconf 2.13:
+3. Set environment variables so the build script can find the build tools.
 ```
-set AUTOCONF=C:\mozilla-build\msys\local\bin\autoconf-2.13
-set NATIVE_WIN32_PYTHON=C:\mozilla-build\python\python2.7.exe
+set CC=clang-cl.exe
+set CXX=clang-cl.exe
+set LINKER=lld-link.exe
+set MOZILLABUILD=C:\mozilla-build
 ```
 
 You can now build and test the crate using cargo:
