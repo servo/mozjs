@@ -81,6 +81,11 @@ impl<T: Traceable + 'static> RootedTraceableBox<T> {
         }
         RootedTraceableBox { ptr: traceable }
     }
+
+    /// Returns underlying pointer
+    pub unsafe fn ptr(&self) -> *mut T {
+        self.ptr
+    }
 }
 
 impl<T> RootedTraceableBox<Heap<T>>
