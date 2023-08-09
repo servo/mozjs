@@ -249,7 +249,7 @@ macro_rules! impl_traceable_tuple {
             #[allow(non_snake_case)]
             #[inline]
             unsafe fn trace(&self, trc: *mut JSTracer) {
-                let ($($name,)+) = self;
+                let ($(ref $name,)+) = *self;
                 $($name.trace(trc);)+
             }
         }
