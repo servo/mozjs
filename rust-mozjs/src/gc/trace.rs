@@ -331,6 +331,7 @@ impl_traceable_fnptr! { A B C D E F G H I J }
 impl_traceable_fnptr! { A B C D E F G H I J K }
 impl_traceable_fnptr! { A B C D E F G H I J K L }
 
+/// For use on non-jsmanaged types
 macro_rules! impl_traceable_simple {
     ($($ty:ty $(,)?)+) => {
         $(
@@ -381,6 +382,7 @@ unsafe impl<'a> Traceable for &'a str {
     unsafe fn trace(&self, _: *mut JSTracer) {}
 }
 
+/// Holds a set of JSTraceables that need to be rooted
 pub struct RootedTraceableSet {
     set: Vec<*const dyn Traceable>,
 }
