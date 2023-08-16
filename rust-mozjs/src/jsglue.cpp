@@ -1019,7 +1019,7 @@ void EncodeStringToUTF8(JSContext* cx, JS::HandleString str,
 }
 
 JSString* EnsureLinearString(JSContext* cx, JSString* str) {
-  return JS_EnsureLinearString(cx, str);
+  return reinterpret_cast<JSString*>(JS_EnsureLinearString(cx, str));
 }
 
 JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, void* aQueue) {
