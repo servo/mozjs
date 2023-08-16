@@ -1018,6 +1018,10 @@ void EncodeStringToUTF8(JSContext* cx, JS::HandleString str,
   cb(chars.get());
 }
 
+JSString* EnsureLinearString(JSContext* cx, JSString* str) {
+  return JS_EnsureLinearString(cx, str);
+}
+
 JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, void* aQueue) {
   return new RustJobQueue(*aTraps, aQueue);
 }
