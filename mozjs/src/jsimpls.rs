@@ -393,7 +393,7 @@ impl JS::ObjectOpResult {
     }
 
     pub fn fail(&mut self, code: JSErrNum) -> bool {
-        assert_ne!(self.code_, JS::ObjectOpResult_SpecialCodes::OkCode as usize);
+        assert_ne!(code, JS::ObjectOpResult_SpecialCodes::OkCode as usize);
         self.code_ = code as usize;
         true
     }
@@ -478,9 +478,7 @@ impl JS::ObjectOpResult {
     #[deprecated]
     #[allow(non_snake_case)]
     pub fn failNoNamedSetter(&mut self) -> bool {
-        assert_ne!(self.code_, ObjectOpResult_SpecialCodes::OkCode as usize);
-        self.code_ = JSErrNum::JSMSG_NO_NAMED_SETTER as usize;
-        true
+        self.fail_no_named_setter()
     }
 }
 
