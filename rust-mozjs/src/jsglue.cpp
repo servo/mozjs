@@ -1022,10 +1022,6 @@ JSString* JS_ForgetStringLinearness(JSLinearString* str) {
   return JS_FORGET_STRING_LINEARNESS(str);
 }
 
-JSString* EnsureLinearString(JSContext* cx, JSString* str) {
-  return JS_FORGET_STRING_LINEARNESS(JS_EnsureLinearString(cx, str));
-}
-
 JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, void* aQueue) {
   return new RustJobQueue(*aTraps, aQueue);
 }
