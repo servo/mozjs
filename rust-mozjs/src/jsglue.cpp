@@ -1018,6 +1018,10 @@ void EncodeStringToUTF8(JSContext* cx, JS::HandleString str,
   cb(chars.get());
 }
 
+JSString* JS_ForgetStringLinearness(JSLinearString* str) {
+  return JS_FORGET_STRING_LINEARNESS(str);
+}
+
 JSString* EnsureLinearString(JSContext* cx, JSString* str) {
   return JS_FORGET_STRING_LINEARNESS(JS_EnsureLinearString(cx, str));
 }
