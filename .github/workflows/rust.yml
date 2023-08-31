@@ -71,6 +71,7 @@ jobs:
         LINKER: "lld-link.exe"
         CC: "clang-cl"
         CXX: "clang-cl"
+        MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-3.2"
     steps:
     - uses: actions/checkout@v3
     - uses: dtolnay/rust-toolchain@stable
@@ -84,7 +85,7 @@ jobs:
       run: |
         echo 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Tools\LLVM\bin' | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
         curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-3.2.zip" --create-dirs -o target/dependencies/moztools.zip
-        cd target/dependencies && unzip -qo moztools.zip -d . && mkdir moztools && mv moztools-3.2 moztools/3.2
+        cd target/dependencies && unzip -qo moztools.zip -d .
     - name: Run sccache-cache
       uses: mozilla-actions/sccache-action@v0.0.3
       with:

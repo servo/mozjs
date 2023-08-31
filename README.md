@@ -29,8 +29,8 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
 ## Windows
 
-1. Install [MozillaBuild 3.4][mozbuild].
-   [mozbuild]: https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe
+1. Install [MozillaBuild 3.4](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe)
+   or download and unzip [MozTools 3.2](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-3.2.zip)
 
 2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
 
@@ -46,8 +46,19 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
    the dependencies above:
 
    ```shell
-    set MOZILLA_BUILD=C:\mozilla-build
     set LIBCLANG_PATH=C:\Program Files\LLVM\lib
+   ```
+
+   If you installed MozillaBuild in 1.:
+
+   ```shell
+    set MOZILLA_BUILD=C:\mozilla-build
+   ```
+
+   or if you unzipped MozTools in 1.:
+
+   ```shell
+    set MOZTOOLS_PATH=C:\path\to\moztools-3.2
    ```
 
 ## Run Cargo
@@ -76,7 +87,7 @@ mozjs_sys = { path = "../mozjs/mozjs" }
 In order to upgrade to a new version of SpiderMonkey:
 
 1. Find the mozilla-release commit for the desired version of SpiderMonkey, at
-   https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg.
+   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg>.
    You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
    Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
 
@@ -98,7 +109,7 @@ In order to upgrade to a new version of SpiderMonkey:
 To get a dev environment with shell.nix:
 
 ```sh
-$ nix-shell
+nix-shell
 ```
 
 To configure rust-analyzer in Visual Studio Code:

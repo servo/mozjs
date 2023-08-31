@@ -22,11 +22,11 @@ use jsgc::RootKind;
 use jsid::VoidId;
 use jsval::UndefinedValue;
 
+use jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_void;
 use std::ptr;
-use jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
 
 impl<T> Deref for JS::Handle<T> {
     type Target = T;
@@ -484,9 +484,7 @@ impl JS::ObjectOpResult {
 
 impl Default for ObjectOpResult {
     fn default() -> ObjectOpResult {
-        ObjectOpResult {
-            code_: ObjectOpResult_SpecialCodes::Uninitialized as usize,
-        }
+        ObjectOpResult { code_: ObjectOpResult_SpecialCodes::Uninitialized as usize }
     }
 }
 

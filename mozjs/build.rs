@@ -25,7 +25,7 @@ const ENV_VARS: &'static [&'static str] = &[
     "CXX",
     "CXXFLAGS",
     "MAKE",
-    "MOZ_TOOLS_PATH",
+    "MOZTOOLS_PATH",
     "MOZJS_FORCE_RERUN",
     "PYTHON",
     "STLPORT_LIBS",
@@ -39,7 +39,7 @@ const EXTRA_FILES: &'static [&'static str] = &[
 ];
 
 /// Which version of moztools we expect
-const MOZ_TOOLS_VER: &str = "3.2";
+const MOZTOOLS_VERSION: &str = "3.2";
 
 fn main() {
     // https://github.com/servo/mozjs/issues/113
@@ -148,7 +148,7 @@ fn cargo_target_dir() -> PathBuf {
 fn find_moztools() -> Option<PathBuf> {
     let cargo_target_dir = cargo_target_dir();
     let deps_dir = cargo_target_dir.join("dependencies");
-    let moztools_path = deps_dir.join("moztools").join(MOZ_TOOLS_VER);
+    let moztools_path = deps_dir.join("moztools").join(MOZTOOLS_VERSION);
 
     if moztools_path.exists() {
         Some(moztools_path)
@@ -163,7 +163,7 @@ fn build_jsapi(build_dir: &Path) {
 
     #[cfg(windows)]
     {
-        let moztools = if let Some(moztools) = env::var_os("MOZ_TOOLS_PATH") {
+        let moztools = if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
             PathBuf::from(moztools)
         } else if let Some(moztools) = find_moztools() {
             // moztools already in target/dependencies/moztools-*
@@ -172,7 +172,10 @@ fn build_jsapi(build_dir: &Path) {
             // For now we also support mozilla build
             PathBuf::from(moz_build)
         } else {
-            panic!("MozTools not found!");
+            panic!(
+                "MozTools or MozillaBuild not found!\n \
+                Follow instructions on: https://github.com/servo/mozjs?tab=readme-ov-file#windows"
+            );
         };
         let mut paths = Vec::new();
         paths.push(moztools.join("msys").join("bin"));
