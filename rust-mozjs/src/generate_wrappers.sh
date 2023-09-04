@@ -27,5 +27,12 @@ grep_heur() {
   grep -v 'MutableHandleObjectVector' # GetDebuggeeGlobals has it
 }
 
-grep_heur target/debug/build/mozjs_sys-*/out/build/jsapi.rs | $gsed 's/\(.*\)/wrap!(jsapi: \1);/g'  > rust-mozjs/src/jsapi_wrappers.in
-grep_heur rust-mozjs/src/glue/mod.rs | $gsed 's/\(.*\)/wrap!(glue: \1);/g'  > rust-mozjs/src/glue_wrappers.in
+# clone file and reformat
+cp target/debug/build/mozjs_sys-*/out/build/jsapi.rs target/jsapi.rs
+rustfmt target/jsapi.rs --config max_width=1000
+cp rust-mozjs/src/glue.rs target/glue.rs
+rustfmt target/glue.rs --config max_width=1000
+
+# parse file
+grep_heur target/jsapi.rs | $gsed 's/\(.*\)/wrap!(jsapi: \1);/g'  > rust-mozjs/src/jsapi_wrappers.in
+grep_heur target/glue.rs | $gsed 's/\(.*\)/wrap!(glue: \1);/g'  > rust-mozjs/src/glue_wrappers.in
