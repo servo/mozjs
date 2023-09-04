@@ -102,7 +102,9 @@ In order to upgrade to a new version of SpiderMonkey:
 
 5. Update `etc/COMMIT` with the commit number.
 
-6. Build and test the bindings as above, then submit a PR!
+6. Run `./rust-mozjs/src/generate_wrappers.sh` to regenerate wrappers.
+
+7. Build and test the bindings as above, then submit a PR!
 
 # NixOS users
 
