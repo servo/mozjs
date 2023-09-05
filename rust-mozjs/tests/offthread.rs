@@ -52,7 +52,7 @@ fn evaluate() {
         let _ac = JSAutoRealm::new(context, global.get());
 
         let src = "1 + 1".to_string();
-        let mut options = CompileOptionsWrapper::new(context, "", 1);
+        let options = CompileOptionsWrapper::new(context, "", 1);
         (*options.ptr)._base.forceAsync = true;
         let options_ptr = options.ptr as *const _;
         assert!(CanCompileOffThread(context, options_ptr, src.len()));
