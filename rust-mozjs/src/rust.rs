@@ -1093,6 +1093,7 @@ pub mod wrappers {
     use crate::jsapi;
     use crate::jsapi::jsid;
     use crate::jsapi::mozilla::Utf8Unit;
+    use crate::jsapi::BigInt;
     use crate::jsapi::CallArgs;
     use crate::jsapi::CloneDataPolicy;
     use crate::jsapi::CompartmentTransplantCallback;
@@ -1238,6 +1239,7 @@ pub mod jsapi_wrapped {
     use crate::glue;
     use crate::jsapi;
     use crate::jsapi::mozilla::Utf8Unit;
+    use crate::jsapi::BigInt;
     use crate::jsapi::CallArgs;
     use crate::jsapi::CloneDataPolicy;
     use crate::jsapi::CompartmentTransplantCallback;
