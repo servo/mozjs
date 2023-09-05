@@ -531,7 +531,9 @@ impl JS::ObjectOpResult {
 
 impl Default for ObjectOpResult {
     fn default() -> ObjectOpResult {
-        ObjectOpResult { code_: ObjectOpResult_SpecialCodes::Uninitialized as usize }
+        ObjectOpResult {
+            code_: ObjectOpResult_SpecialCodes::Uninitialized as usize,
+        }
     }
 }
 

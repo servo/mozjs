@@ -5,8 +5,8 @@ use crate::c_str;
 use crate::glue::{CallObjectRootTracer, CallValueRootTracer};
 use crate::jsapi;
 use crate::jsapi::{AutoGCRooter, AutoGCRooterKind, JSContext, JSObject, JSTracer, Value};
-use mozjs_sys::jsgc::{CustomAutoRooterVFTable, RootKind};
 use crate::rust::{Handle, MutableHandle};
+use mozjs_sys::jsgc::{CustomAutoRooterVFTable, RootKind};
 
 /// Similarly to `Traceable` trait, it's used to specify tracing of various types
 /// that are used in conjunction with `CustomAutoRooter`.

@@ -1,7 +1,7 @@
 use crate::gc::{RootedTraceableSet, Traceable};
 use crate::jsapi::{Heap, JSTracer};
-use mozjs_sys::jsgc::GCMethods;
 use crate::rust::Handle;
+use mozjs_sys::jsgc::GCMethods;
 use std::ops::{Deref, DerefMut};
 
 /// A vector of items to be rooted with `RootedVec`.
