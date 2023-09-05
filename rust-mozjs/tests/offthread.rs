@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#[macro_use]
-extern crate mozjs;
-
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::mpsc::{channel, Sender};
@@ -14,6 +11,7 @@ use mozjs::jsapi::{
     JSAutoRealm, JS_NewGlobalObject, OffThreadToken, OnNewGlobalHookOption,
 };
 use mozjs::jsval::UndefinedValue;
+use mozjs::rooted;
 use mozjs::rust::{
     transform_str_to_source_text, wrappers::JS_ExecuteScript, CompileOptionsWrapper,
     FinishOffThreadStencil, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS,

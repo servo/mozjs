@@ -1,7 +1,7 @@
-use jsapi::js::frontend::CompilationStencil;
-use jsapi::*;
-use std::os::raw::{c_char, c_void};
-use std::{mem, ptr};
+use crate::jsapi::js::frontend::CompilationStencil;
+use crate::jsapi::*;
+use ::std::os::raw::{c_char, c_void};
+use ::std::{mem, ptr};
 
 pub enum Action {}
 unsafe impl Sync for ProxyTraps {}
