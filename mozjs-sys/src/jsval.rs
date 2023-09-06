@@ -14,90 +14,109 @@ use crate::jsapi::JS::Symbol;
 use crate::jsapi::JS::TraceKind;
 use crate::jsapi::JS::Value;
 
-use libc::c_void;
 use std::default::Default;
-use std::mem;
+use std::ffi::c_void;
 
 pub type JSVal = Value;
 
 #[cfg(target_pointer_width = "64")]
 const JSVAL_TAG_SHIFT: usize = 47;
 
-#[cfg(target_pointer_width = "64")]
-const JSVAL_TAG_MAX_DOUBLE: u32 = 0x1FFF0u32;
+#[cfg(target_pointer_width = "32")]
+const JSVAL_TAG_SHIFT: usize = 32;
+
+const JSVAL_TAG_MAX_DOUBLE: u32 = 0x1FFF0;
 
 #[cfg(target_pointer_width = "32")]
 const JSVAL_TAG_CLEAR: u32 = 0xFFFFFF80;
 
-#[cfg(target_pointer_width = "64")]
-#[repr(u32)]
-#[allow(dead_code)]
-enum ValueTag {
-    INT32 = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_INT32 as u32),
-    UNDEFINED = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_UNDEFINED as u32),
-    STRING = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_STRING as u32),
-    SYMBOL = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
-    BIGINT = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_BIGINT as u32),
-    BOOLEAN = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
-    MAGIC = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_MAGIC as u32),
-    NULL = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_NULL as u32),
-    OBJECT = JSVAL_TAG_MAX_DOUBLE | (JSValueType::JSVAL_TYPE_OBJECT as u32),
+const CELL_ALIGN_MASK: u64 = (1 << 3) - 1;
+
+macro_rules! value_tag {
+    (enum $name:ident { $($variant:ident = $value_type:path,)* }) => {
+        #[cfg(target_pointer_width = "64")]
+        #[repr(u32)]
+        #[allow(dead_code)]
+        enum $name {
+            $(
+                $variant = JSVAL_TAG_MAX_DOUBLE | ($value_type as u32),
+            )*
+        }
+
+        #[cfg(target_pointer_width = "32")]
+        #[repr(u32)]
+        #[allow(dead_code)]
+        enum $name {
+            $(
+                $variant = JSVAL_TAG_CLEAR | ($value_type as u32),
+            )*
+        }
+    };
 }
 
-#[cfg(target_pointer_width = "32")]
-#[repr(u32)]
-#[allow(dead_code)]
-enum ValueTag {
-    PRIVATE = 0,
-    INT32 = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_INT32 as u32),
-    UNDEFINED = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_UNDEFINED as u32),
-    STRING = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_STRING as u32),
-    SYMBOL = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
-    BIGINT = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_BIGINT as u32),
-    BOOLEAN = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
-    MAGIC = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_MAGIC as u32),
-    NULL = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_NULL as u32),
-    OBJECT = JSVAL_TAG_CLEAR as u32 | (JSValueType::JSVAL_TYPE_OBJECT as u32),
+value_tag! {
+    enum ValueTag {
+        INT32 = JSValueType::JSVAL_TYPE_INT32,
+        UNDEFINED = JSValueType::JSVAL_TYPE_UNDEFINED,
+        NULL = JSValueType::JSVAL_TYPE_NULL,
+        BOOLEAN = JSValueType::JSVAL_TYPE_BOOLEAN,
+        MAGIC = JSValueType::JSVAL_TYPE_MAGIC,
+        STRING = JSValueType::JSVAL_TYPE_STRING,
+        SYMBOL = JSValueType::JSVAL_TYPE_SYMBOL,
+        PRIVATE_GCTHING = JSValueType::JSVAL_TYPE_PRIVATE_GCTHING,
+        BIGINT = JSValueType::JSVAL_TYPE_BIGINT,
+        OBJECT = JSValueType::JSVAL_TYPE_OBJECT,
+    }
 }
 
-#[cfg(target_pointer_width = "64")]
 #[repr(u64)]
 #[allow(dead_code)]
 enum ValueShiftedTag {
-    MAX_DOUBLE = ((JSVAL_TAG_MAX_DOUBLE as u64) << JSVAL_TAG_SHIFT) | 0xFFFFFFFFu64,
+    MAX_DOUBLE = ((JSVAL_TAG_MAX_DOUBLE as u64) << JSVAL_TAG_SHIFT) | 0xFFFFFFFF,
     INT32 = (ValueTag::INT32 as u64) << JSVAL_TAG_SHIFT,
     UNDEFINED = (ValueTag::UNDEFINED as u64) << JSVAL_TAG_SHIFT,
-    STRING = (ValueTag::STRING as u64) << JSVAL_TAG_SHIFT,
-    SYMBOL = (ValueTag::SYMBOL as u64) << JSVAL_TAG_SHIFT,
-    BIGINT = (ValueTag::BIGINT as u64) << JSVAL_TAG_SHIFT,
+    NULL = (ValueTag::NULL as u64) << JSVAL_TAG_SHIFT,
     BOOLEAN = (ValueTag::BOOLEAN as u64) << JSVAL_TAG_SHIFT,
     MAGIC = (ValueTag::MAGIC as u64) << JSVAL_TAG_SHIFT,
-    NULL = (ValueTag::NULL as u64) << JSVAL_TAG_SHIFT,
+    STRING = (ValueTag::STRING as u64) << JSVAL_TAG_SHIFT,
+    SYMBOL = (ValueTag::SYMBOL as u64) << JSVAL_TAG_SHIFT,
+    PRIVATE_GCTHING = (ValueTag::PRIVATE_GCTHING as u64) << JSVAL_TAG_SHIFT,
+    BIGINT = (ValueTag::BIGINT as u64) << JSVAL_TAG_SHIFT,
     OBJECT = (ValueTag::OBJECT as u64) << JSVAL_TAG_SHIFT,
 }
 
 const JSVAL_PAYLOAD_MASK: u64 = 0x00007FFFFFFFFFFF;
 
 #[inline(always)]
-fn AsJSVal(val: u64) -> JSVal {
-    JSVal { asBits_: val }
+fn BuildJSVal(tag: ValueTag, payload: u64) -> JSVal {
+    JSVal {
+        asBits_: ((tag as u32 as u64) << JSVAL_TAG_SHIFT) | payload,
+    }
 }
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
-fn BuildJSVal(tag: ValueTag, payload: u64) -> JSVal {
-    AsJSVal(((tag as u32 as u64) << JSVAL_TAG_SHIFT) | payload)
+fn AssertGCPointerValid(bits: u64) {
+    assert_eq!(bits >> JSVAL_TAG_SHIFT, 0)
 }
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-fn BuildJSVal(tag: ValueTag, payload: u64) -> JSVal {
-    AsJSVal(((tag as u32 as u64) << 32) | payload)
+fn AssertIsGCPointerValid(bits: u64) {}
+
+#[cfg(target_pointer_width = "64")]
+#[inline(always)]
+fn AssertGCPointerAlignment(bits: u64) {
+    assert_eq!(bits & CELL_ALIGN_MASK, 0);
 }
 
+#[cfg(target_pointer_width = "32")]
 #[inline(always)]
-pub fn NullValue() -> JSVal {
-    BuildJSVal(ValueTag::NULL, 0)
+fn AssertGCPointerAlignment(bits: u64) {}
+
+#[inline(always)]
+pub fn Int32Value(i: i32) -> JSVal {
+    BuildJSVal(ValueTag::INT32, i as u32 as u64)
 }
 
 #[inline(always)]
@@ -106,25 +125,15 @@ pub fn UndefinedValue() -> JSVal {
 }
 
 #[inline(always)]
-pub fn Int32Value(i: i32) -> JSVal {
-    BuildJSVal(ValueTag::INT32, i as u32 as u64)
+pub fn NullValue() -> JSVal {
+    BuildJSVal(ValueTag::NULL, 0)
 }
 
-#[cfg(target_pointer_width = "64")]
 #[inline(always)]
 pub fn DoubleValue(f: f64) -> JSVal {
-    let bits: u64 = unsafe { mem::transmute(f) };
+    let bits: u64 = f.to_bits();
     assert!(bits <= ValueShiftedTag::MAX_DOUBLE as u64);
-    AsJSVal(bits)
-}
-
-#[cfg(target_pointer_width = "32")]
-#[inline(always)]
-pub fn DoubleValue(f: f64) -> JSVal {
-    let bits: u64 = unsafe { mem::transmute(f) };
-    let val = AsJSVal(bits);
-    assert!(val.is_double());
-    val
+    JSVal { asBits_: bits }
 }
 
 #[inline(always)]
@@ -136,19 +145,25 @@ pub fn UInt32Value(ui: u32) -> JSVal {
     }
 }
 
-#[cfg(target_pointer_width = "64")]
 #[inline(always)]
 pub fn StringValue(s: &JSString) -> JSVal {
     let bits = s as *const JSString as usize as u64;
-    assert!((bits >> JSVAL_TAG_SHIFT) == 0);
+    AssertGCPointerValid(bits);
     BuildJSVal(ValueTag::STRING, bits)
 }
 
-#[cfg(target_pointer_width = "32")]
 #[inline(always)]
-pub fn StringValue(s: &JSString) -> JSVal {
-    let bits = s as *const JSString as usize as u64;
-    BuildJSVal(ValueTag::STRING, bits)
+pub fn SymbolValue(s: &Symbol) -> JSVal {
+    let bits = s as *const Symbol as usize as u64;
+    AssertGCPointerValid(bits);
+    BuildJSVal(ValueTag::SYMBOL, bits)
+}
+
+#[inline(always)]
+pub fn BigIntValue(s: &BigInt) -> JSVal {
+    let bits = s as *const BigInt as usize as u64;
+    AssertGCPointerValid(bits);
+    BuildJSVal(ValueTag::BIGINT, bits)
 }
 
 #[inline(always)]
@@ -156,18 +171,10 @@ pub fn BooleanValue(b: bool) -> JSVal {
     BuildJSVal(ValueTag::BOOLEAN, b as u64)
 }
 
-#[cfg(target_pointer_width = "64")]
 #[inline(always)]
 pub fn ObjectValue(o: *mut JSObject) -> JSVal {
     let bits = o as usize as u64;
-    assert!((bits >> JSVAL_TAG_SHIFT) == 0);
-    BuildJSVal(ValueTag::OBJECT, bits)
-}
-
-#[cfg(target_pointer_width = "32")]
-#[inline(always)]
-pub fn ObjectValue(o: *mut JSObject) -> JSVal {
-    let bits = o as usize as u64;
+    AssertGCPointerValid(bits);
     BuildJSVal(ValueTag::OBJECT, bits)
 }
 
@@ -180,42 +187,12 @@ pub fn ObjectOrNullValue(o: *mut JSObject) -> JSVal {
     }
 }
 
-#[cfg(target_pointer_width = "64")]
-#[inline(always)]
-pub fn SymbolValue(s: &Symbol) -> JSVal {
-    let bits = s as *const Symbol as usize as u64;
-    assert!((bits >> JSVAL_TAG_SHIFT) == 0);
-    BuildJSVal(ValueTag::SYMBOL, bits)
-}
-
-#[cfg(target_pointer_width = "32")]
-#[inline(always)]
-pub fn SymbolValue(s: &Symbol) -> JSVal {
-    let bits = s as *const Symbol as usize as u64;
-    BuildJSVal(ValueTag::SYMBOL, bits)
-}
-
-#[cfg(target_pointer_width = "64")]
-#[inline(always)]
-pub fn BigIntValue(s: &BigInt) -> JSVal {
-    let bits = s as *const BigInt as usize as u64;
-    assert!((bits >> JSVAL_TAG_SHIFT) == 0);
-    BuildJSVal(ValueTag::BIGINT, bits)
-}
-
-#[cfg(target_pointer_width = "32")]
-#[inline(always)]
-pub fn BigIntValue(s: &BigInt) -> JSVal {
-    let bits = s as *const BigInt as usize as u64;
-    BuildJSVal(ValueTag::BIGINT, bits)
-}
-
 #[inline(always)]
 pub fn PrivateValue(o: *const c_void) -> JSVal {
     let ptrBits = o as usize as u64;
     #[cfg(target_pointer_width = "64")]
     assert_eq!(ptrBits & 0xFFFF000000000000, 0);
-    AsJSVal(ptrBits)
+    JSVal { asBits_: ptrBits }
 }
 
 impl JSVal {
@@ -224,28 +201,31 @@ impl JSVal {
         self.asBits_
     }
 
-    #[inline(always)]
     #[cfg(target_pointer_width = "64")]
+    #[inline(always)]
+    fn payload(&self) -> u64 {
+        self.asBits_ & JSVAL_PAYLOAD_MASK
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[inline(always)]
+    fn payload(&self) -> u32 {
+        (self.asBits_ & 0xFFFFFFFF) as u32
+    }
+
+    #[inline(always)]
+    fn toTag(&self) -> u64 {
+        self.asBits_ >> JSVAL_TAG_SHIFT
+    }
+
+    #[inline(always)]
     pub fn is_undefined(&self) -> bool {
         self.asBits() == ValueShiftedTag::UNDEFINED as u64
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_undefined(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::UNDEFINED as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn is_null(&self) -> bool {
         self.asBits() == ValueShiftedTag::NULL as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_null(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::NULL as u64
     }
 
     #[inline(always)]
@@ -254,183 +234,117 @@ impl JSVal {
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn is_boolean(&self) -> bool {
-        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::BOOLEAN as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_boolean(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::BOOLEAN as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn is_int32(&self) -> bool {
-        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::INT32 as u64
+        self.toTag() == ValueTag::INT32 as u64
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_int32(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::INT32 as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn is_double(&self) -> bool {
         self.asBits() <= ValueShiftedTag::MAX_DOUBLE as u64
     }
 
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_double(&self) -> bool {
-        (self.asBits() >> 32) <= JSVAL_TAG_CLEAR as u64
-    }
-
-    #[inline(always)]
     #[cfg(target_pointer_width = "64")]
+    #[inline(always)]
     pub fn is_number(&self) -> bool {
         const JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_NUMBER_SET: u64 = ValueShiftedTag::BOOLEAN as u64;
         self.asBits() < JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_NUMBER_SET
     }
 
-    #[inline(always)]
     #[cfg(target_pointer_width = "32")]
+    #[inline(always)]
     pub fn is_number(&self) -> bool {
+        assert_ne!(self.toTag(), JSVAL_TAG_CLEAR as u64);
         const JSVAL_UPPER_INCL_TAG_OF_NUMBER_SET: u64 = ValueTag::INT32 as u64;
-        (self.asBits() >> 32) <= JSVAL_UPPER_INCL_TAG_OF_NUMBER_SET
+        self.toTag() <= JSVAL_UPPER_INCL_TAG_OF_NUMBER_SET
+    }
+
+    #[inline(always)]
+    pub fn is_string(&self) -> bool {
+        self.toTag() == ValueTag::STRING as u64
+    }
+
+    #[inline(always)]
+    pub fn is_symbol(&self) -> bool {
+        self.toTag() == ValueTag::SYMBOL as u64
     }
 
     #[inline(always)]
     #[cfg(target_pointer_width = "64")]
+    pub fn is_bigint(&self) -> bool {
+        self.toTag() == ValueTag::BIGINT as u64
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[inline(always)]
+    pub fn is_object(&self) -> bool {
+        assert!(self.toTag() <= ValueTag::OBJECT as u64);
+        self.asBits() >= ValueShiftedTag::OBJECT as u64
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[inline(always)]
+    pub fn is_object(&self) -> bool {
+        self.toTag() == ValueTag::OBJECT as u64
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[inline(always)]
     pub fn is_primitive(&self) -> bool {
         const JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_PRIMITIVE_SET: u64 = ValueShiftedTag::OBJECT as u64;
         self.asBits() < JSVAL_UPPER_EXCL_SHIFTED_TAG_OF_PRIMITIVE_SET
     }
 
-    #[inline(always)]
     #[cfg(target_pointer_width = "32")]
+    #[inline(always)]
     pub fn is_primitive(&self) -> bool {
         const JSVAL_UPPER_EXCL_TAG_OF_PRIMITIVE_SET: u64 = ValueTag::OBJECT as u64;
-        (self.asBits() >> 32) < JSVAL_UPPER_EXCL_TAG_OF_PRIMITIVE_SET
+        self.toTag() < JSVAL_UPPER_EXCL_TAG_OF_PRIMITIVE_SET
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn is_string(&self) -> bool {
-        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::STRING as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_string(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::STRING as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn is_object(&self) -> bool {
-        assert!((self.asBits() >> JSVAL_TAG_SHIFT) <= ValueTag::OBJECT as u64);
-        self.asBits() >= ValueShiftedTag::OBJECT as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_object(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::OBJECT as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn is_object_or_null(&self) -> bool {
-        const JSVAL_LOWER_INCL_SHIFTED_TAG_OF_OBJ_OR_NULL_SET: u64 = ValueShiftedTag::NULL as u64;
-        assert!((self.asBits() >> JSVAL_TAG_SHIFT) <= ValueTag::OBJECT as u64);
-        self.asBits() >= JSVAL_LOWER_INCL_SHIFTED_TAG_OF_OBJ_OR_NULL_SET
+        self.is_object() || self.is_null()
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_object_or_null(&self) -> bool {
-        const JSVAL_LOWER_INCL_TAG_OF_OBJ_OR_NULL_SET: u64 = ValueTag::NULL as u64;
-        assert!((self.asBits() >> 32) <= ValueTag::OBJECT as u64);
-        (self.asBits() >> 32) >= JSVAL_LOWER_INCL_TAG_OF_OBJ_OR_NULL_SET
+    pub fn is_numeric(&self) -> bool {
+        self.is_number() || self.is_bigint()
     }
 
-    #[inline(always)]
     #[cfg(target_pointer_width = "64")]
-    pub fn is_magic(&self) -> bool {
-        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::MAGIC as u64
-    }
-
     #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_magic(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::MAGIC as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn is_symbol(&self) -> bool {
-        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::SYMBOL as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_symbol(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::SYMBOL as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn is_bigint(&self) -> bool {
-        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::BIGINT as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn is_bigint(&self) -> bool {
-        (self.asBits() >> 32) == ValueTag::BIGINT as u64
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn is_gcthing(&self) -> bool {
         const JSVAL_LOWER_INCL_SHIFTED_TAG_OF_GCTHING_SET: u64 = ValueShiftedTag::STRING as u64;
         self.asBits() >= JSVAL_LOWER_INCL_SHIFTED_TAG_OF_GCTHING_SET
     }
 
-    #[inline(always)]
     #[cfg(target_pointer_width = "32")]
+    #[inline(always)]
     pub fn is_gcthing(&self) -> bool {
         const JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET: u64 = ValueTag::STRING as u64;
-        (self.asBits() >> 32) >= JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET
+        self.toTag() >= JSVAL_LOWER_INCL_TAG_OF_GCTHING_SET
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn to_boolean(&self) -> bool {
-        assert!(self.is_boolean());
-        (self.asBits() & JSVAL_PAYLOAD_MASK) != 0
+    pub fn is_boolean(&self) -> bool {
+        (self.asBits() >> JSVAL_TAG_SHIFT) == ValueTag::BOOLEAN as u64
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn to_boolean(&self) -> bool {
-        (self.asBits() & 0x00000000FFFFFFFF) != 0
+    pub fn is_magic(&self) -> bool {
+        self.toTag() == ValueTag::MAGIC as u64
     }
 
     #[inline(always)]
     pub fn to_int32(&self) -> i32 {
         assert!(self.is_int32());
-        (self.asBits() & 0x00000000FFFFFFFF) as i32
+        (self.asBits() & 0xFFFFFFFF) as i32
     }
 
     #[inline(always)]
     pub fn to_double(&self) -> f64 {
         assert!(self.is_double());
-        unsafe { mem::transmute(self.asBits()) }
+        f64::from_bits(self.asBits())
     }
 
     #[inline(always)]
@@ -447,16 +361,25 @@ impl JSVal {
     #[cfg(target_pointer_width = "64")]
     pub fn to_string(&self) -> *mut JSString {
         assert!(self.is_string());
-        let ptrBits = self.asBits() & JSVAL_PAYLOAD_MASK;
+        let ptrBits = self.payload();
+        AssertGCPointerAlignment(ptrBits);
         ptrBits as usize as *mut JSString
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn to_string(&self) -> *mut JSString {
-        assert!(self.is_string());
-        let ptrBits: u32 = (self.asBits() & 0x00000000FFFFFFFF) as u32;
-        ptrBits as *mut JSString
+    pub fn to_symbol(&self) -> *mut Symbol {
+        assert!(self.is_symbol());
+        let ptrBits = self.payload();
+        AssertGCPointerAlignment(ptrBits);
+        ptrBits as usize as *mut Symbol
+    }
+
+    #[inline(always)]
+    pub fn to_bigint(&self) -> *mut BigInt {
+        assert!(self.is_bigint());
+        let ptrBits = self.payload();
+        AssertGCPointerAlignment(ptrBits);
+        ptrBits as usize as *mut BigInt
     }
 
     #[inline(always)]
@@ -469,8 +392,8 @@ impl JSVal {
     #[cfg(target_pointer_width = "64")]
     pub fn to_object_or_null(&self) -> *mut JSObject {
         assert!(self.is_object_or_null());
-        let ptrBits = self.asBits() & JSVAL_PAYLOAD_MASK;
-        assert!((ptrBits & 0x7) == 0);
+        let ptrBits = self.payload();
+        AssertGCPointerAlignment(ptrBits);
         ptrBits as usize as *mut JSObject
     }
 
@@ -483,19 +406,18 @@ impl JSVal {
     }
 
     #[inline(always)]
-    pub fn to_symbol(&self) -> *mut Symbol {
-        assert!(self.is_symbol());
-        let ptrBits = self.asBits() & JSVAL_PAYLOAD_MASK;
-        assert!((ptrBits & 0x7) == 0);
-        ptrBits as usize as *mut Symbol
+    pub fn to_gcthing(&self) -> *mut c_void {
+        assert!(self.is_gcthing());
+        let ptrBits = self.payload();
+        AssertGCPointerAlignment(ptrBits);
+        ptrBits as *mut c_void
     }
 
     #[inline(always)]
-    pub fn to_bigint(&self) -> *mut BigInt {
-        assert!(self.is_bigint());
-        let ptrBits = self.asBits() & JSVAL_PAYLOAD_MASK;
-        assert!((ptrBits & 0x7) == 0);
-        ptrBits as usize as *mut BigInt
+    #[cfg(target_pointer_width = "64")]
+    pub fn to_boolean(&self) -> bool {
+        assert!(self.is_boolean());
+        self.payload() != 0
     }
 
     #[inline(always)]
@@ -504,23 +426,6 @@ impl JSVal {
         #[cfg(target_pointer_width = "64")]
         assert_eq!(self.asBits() & 0xFFFF000000000000, 0);
         self.asBits() as usize as *const c_void
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
-    pub fn to_gcthing(&self) -> *mut c_void {
-        assert!(self.is_gcthing());
-        let ptrBits = self.asBits() & JSVAL_PAYLOAD_MASK;
-        assert!((ptrBits & 0x7) == 0);
-        ptrBits as *mut c_void
-    }
-
-    #[inline(always)]
-    #[cfg(target_pointer_width = "32")]
-    pub fn to_gcthing(&self) -> *mut c_void {
-        assert!(self.is_gcthing());
-        let ptrBits: u32 = (self.asBits() & 0x00000000FFFFFFFF) as u32;
-        ptrBits as *mut c_void
     }
 
     #[inline(always)]
@@ -544,6 +449,7 @@ impl JSVal {
 }
 
 impl Default for JSVal {
+    #[inline(always)]
     fn default() -> JSVal {
         UndefinedValue()
     }
