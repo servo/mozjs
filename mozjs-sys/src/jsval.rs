@@ -102,7 +102,7 @@ fn AssertGCPointerValid(bits: u64) {
 
 #[cfg(target_pointer_width = "32")]
 #[inline(always)]
-fn AssertIsGCPointerValid(bits: u64) {}
+fn AssertGCPointerValid(bits: u64) {}
 
 #[cfg(target_pointer_width = "64")]
 #[inline(always)]
@@ -269,7 +269,6 @@ impl JSVal {
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn is_bigint(&self) -> bool {
         self.toTag() == ValueTag::BIGINT as u64
     }
@@ -358,11 +357,10 @@ impl JSVal {
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn to_string(&self) -> *mut JSString {
         assert!(self.is_string());
         let ptrBits = self.payload();
-        AssertGCPointerAlignment(ptrBits);
+        AssertGCPointerAlignment(ptrBits as u64);
         ptrBits as usize as *mut JSString
     }
 
@@ -370,7 +368,7 @@ impl JSVal {
     pub fn to_symbol(&self) -> *mut Symbol {
         assert!(self.is_symbol());
         let ptrBits = self.payload();
-        AssertGCPointerAlignment(ptrBits);
+        AssertGCPointerAlignment(ptrBits as u64);
         ptrBits as usize as *mut Symbol
     }
 
@@ -378,7 +376,7 @@ impl JSVal {
     pub fn to_bigint(&self) -> *mut BigInt {
         assert!(self.is_bigint());
         let ptrBits = self.payload();
-        AssertGCPointerAlignment(ptrBits);
+        AssertGCPointerAlignment(ptrBits as u64);
         ptrBits as usize as *mut BigInt
     }
 
@@ -409,12 +407,11 @@ impl JSVal {
     pub fn to_gcthing(&self) -> *mut c_void {
         assert!(self.is_gcthing());
         let ptrBits = self.payload();
-        AssertGCPointerAlignment(ptrBits);
+        AssertGCPointerAlignment(ptrBits as u64);
         ptrBits as *mut c_void
     }
 
     #[inline(always)]
-    #[cfg(target_pointer_width = "64")]
     pub fn to_boolean(&self) -> bool {
         assert!(self.is_boolean());
         self.payload() != 0
