@@ -26,7 +26,4 @@ mozjs_sys = { path = "../mozjs" }
 
 [build-dependencies]
 cc.workspace = true
-bindgen = { version = "0.66", default-features = false, features = [
-    "runtime",
-    "which-rustfmt",
-] }
+bindgen.workspace = true
