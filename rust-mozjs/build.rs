@@ -80,6 +80,10 @@ fn main() {
         .allowlist_file("./src/jsglue.cpp")
         .allowlist_recursively(false);
 
+    if let Ok(bindgen_flags) = env::var("CLANGFLAGS") {
+        builder = builder.clang_args(bindgen_flags.split(' '));
+    }
+
     if msvc {
         builder = builder.clang_args([
             &format!("-FI{}", confdefs_path.to_string_lossy()),
