@@ -183,7 +183,7 @@ fn build_jsapi(build_dir: &Path) {
         make = OsStr::new("mozmake").to_os_string();
     }
 
-    let mut cmd = Command::new(make);
+    let mut cmd = Command::new(make.clone());
 
     let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
     let mut cppflags = OsString::from("-I");
@@ -211,7 +211,7 @@ fn build_jsapi(build_dir: &Path) {
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
         .env("NO_RUST_PANIC_HOOK", "1")
         .status()
-        .expect(format!("Failed to run `{}`", make));
+        .expect(&format!("Failed to run `{:?}`", make));
     assert!(result.success());
 
     println!(
