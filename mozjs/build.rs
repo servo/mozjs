@@ -36,7 +36,7 @@ const EXTRA_FILES: &'static [&'static str] = &[
 ];
 
 /// Which version of moztools we expect
-const MOZTOOLS_VERSION: &str = "3.2";
+const MOZTOOLS_VERSION: &str = "4.0";
 
 fn main() {
     // https://github.com/servo/mozjs/issues/113

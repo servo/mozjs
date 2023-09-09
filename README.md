@@ -29,8 +29,8 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
 ## Windows
 
-1. Install [MozillaBuild 3.4](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-3.4.exe)
-   or download and unzip [MozTools 3.2](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-3.2.zip)
+1. Install [MozillaBuild 4.0](https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-4.0.2.exe)
+   or download and unzip [MozTools 4.0](https://github.com/sagudev/servo-build-deps/releases/download/moztools-4.0/moztools-4.0.zip)
 
 2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
 
