@@ -211,7 +211,7 @@ fn build_jsapi(build_dir: &Path) {
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
         .env("NO_RUST_PANIC_HOOK", "1")
         .status()
-        .expect("Failed to run `make`");
+        .expect(format!("Failed to run `{}`", make));
     assert!(result.success());
 
     println!(
