@@ -74,7 +74,7 @@ jobs:
       LINKER: "lld-link.exe"
       CC: "clang-cl"
       CXX: "clang-cl"
-      MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-3.2"
+      MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-4.0"
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
