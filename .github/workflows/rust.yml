@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install deps
-        run: brew install python autoconf@2.13 llvm yasm
+        run: brew install python llvm yasm
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
         with:
@@ -53,7 +53,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install deps
         run: |
-          sudo apt install autoconf2.13 llvm -y
+          sudo apt install llvm -y
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
         with:

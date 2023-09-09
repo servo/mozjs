@@ -13,11 +13,11 @@ are in the [rust-mozjs directory][r-m].
 
 ## Linux
 
-Install Clang (at least version 3.9) and autoconf v 2.13, for example on a
+Install Clang (at least version 3.9), for example on a
 Debian-based Linux:
 
 ```sh
-sudo apt-get install clang-6.0 autoconf2.13
+sudo apt-get install clang-6.0
 ```
 
 If you have more than one version of Clang installed, you can set the `LIBCLANG_PATH`

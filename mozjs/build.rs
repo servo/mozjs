@@ -180,17 +180,6 @@ fn build_jsapi(build_dir: &Path) {
         paths.extend(env::split_paths(&env::var_os("PATH").unwrap()));
         env::set_var("PATH", &env::join_paths(paths).unwrap());
 
-        if env::var_os("AUTOCONF").is_none() {
-            env::set_var(
-                "AUTOCONF",
-                moztools
-                    .join("msys")
-                    .join("local")
-                    .join("bin")
-                    .join("autoconf-2.13"),
-            );
-        }
-
         make = OsStr::new("mozmake").to_os_string();
     }
 
