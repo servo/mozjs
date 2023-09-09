@@ -86,7 +86,7 @@ jobs:
           components: rust-src
       - name: Install deps
         run: |
-          curl -SL "https://github.com/sagudev/servo-build-deps/releases/download/moztools-4.0/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
+          curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
           cd target/dependencies && unzip -qo moztools.zip -d .
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
