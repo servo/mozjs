@@ -175,7 +175,7 @@ fn build_jsapi(build_dir: &Path) {
             );
         };
         let mut paths = Vec::new();
-        paths.push(moztools.join("msys").join("bin"));
+        paths.push(moztools.join("msys2").join("usr").join("bin"));
         paths.push(moztools.join("bin"));
         paths.extend(env::split_paths(&env::var_os("PATH").unwrap()));
         env::set_var("PATH", &env::join_paths(paths).unwrap());
