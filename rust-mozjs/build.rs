@@ -5,17 +5,20 @@
 use std::env;
 use std::path::PathBuf;
 
-fn cc_flags() -> Vec<&'static str> {
+fn cc_flags(bindgen: bool) -> Vec<&'static str> {
     let mut result = vec!["-DSTATIC_JS_API"];
 
     if env::var("CARGO_FEATURE_DEBUGMOZJS").is_ok() {
         result.push("-DDEBUG");
 
-        if cfg!(target_os = "windows") {
-            result.push("-Od");
-        } else {
-            result.push("-g");
-            result.push("-O0");
+        // bindgen doesn't like this
+        if !bindgen {
+            if cfg!(target_os = "windows") {
+                result.push("-Od");
+            } else {
+                result.push("-g");
+                result.push("-O0");
+            }
         }
     }
 
@@ -41,25 +44,26 @@ fn main() {
         .cpp(true)
         .file("src/jsglue.cpp")
         .include(&include_path);
-    for flag in cc_flags() {
+    for flag in cc_flags(false) {
         build.flag_if_supported(flag);
     }
 
     let confdefs_path: PathBuf = [&outdir, "js", "src", "js-confdefs.h"].iter().collect();
-    if build.get_compiler().is_like_msvc() {
+    let msvc = if build.get_compiler().is_like_msvc() {
         build.flag(&format!("-FI{}", confdefs_path.to_string_lossy()));
         build.define("WIN32", "");
         build.flag("-Zi");
         build.flag("-GR-");
         build.flag("-std:c++17");
+        true
     } else {
         build.flag("-fPIC");
         build.flag("-fno-rtti");
         build.flag("-std=c++17");
-        build.define("JS_NO_JSVAL_JSID_STRUCT_TYPES", "");
         build.flag("-include");
         build.flag(&confdefs_path.to_string_lossy());
-    }
+        false
+    };
 
     build.compile("jsglue");
     println!("cargo:rerun-if-changed=src/jsglue.cpp");
@@ -67,23 +71,34 @@ fn main() {
         .header("./src/jsglue.cpp")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks))
         .size_t_is_usize(true)
-        //.enable_cxx_namespaces()
         .formatter(bindgen::Formatter::Rustfmt)
-        .clang_args(cc_flags())
+        .clang_arg("-x")
+        .clang_arg("c++")
+        .clang_args(cc_flags(true))
         .clang_args(["-I", &include_path.to_string_lossy()])
-        .clang_args([
-            "-fPIC",
-            "-fno-rtti",
-            "-std=c++17",
-            "-DJS_NO_JSVAL_JSID_STRUCT_TYPES",
-        ])
-        .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")])
         .enable_cxx_namespaces()
         .allowlist_file("./src/jsglue.cpp")
         .allowlist_recursively(false);
 
+    if msvc {
+        builder = builder.clang_args([
+            &format!("-FI{}", confdefs_path.to_string_lossy()),
+            "-DWIN32",
+            "-GR-",
+            "-std=c++17",
+        ])
+    } else {
+        builder = builder
+            .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
+            .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")])
+    }
+
     for ty in BLACKLIST_TYPES {
         builder = builder.blocklist_type(ty);
+    }
+
+    for ty in OPAQUE_TYPES {
+        builder = builder.opaque_type(ty);
     }
 
     for &(module, raw_line) in MODULE_RAW_LINES {
@@ -107,6 +122,27 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "already_AddRefed",
     // we don't want it null
     "EncodedStringCallback",
+];
+
+/// Types that should be treated as an opaque blob of bytes whenever they show
+/// up within a whitelisted type.
+///
+/// These are types which are too tricky for bindgen to handle, and/or use C++
+/// features that don't have an equivalent in rust, such as partial template
+/// specialization.
+const OPAQUE_TYPES: &'static [&'static str] = &[
+    "JS::Auto.*Impl",
+    "JS::StackGCVector.*",
+    "JS::PersistentRooted.*",
+    "JS::detail::CallArgsBase.*",
+    "js::detail::UniqueSelector.*",
+    "mozilla::BufferList",
+    "mozilla::Maybe.*",
+    "mozilla::UniquePtr.*",
+    "mozilla::Variant",
+    "mozilla::Hash.*",
+    "mozilla::detail::Hash.*",
+    "RefPtr_Proxy.*",
 ];
 
 /// Map mozjs_sys mod namespaces to bindgen mod namespaces
