@@ -3,8 +3,10 @@ use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
     CallStringTracer, CallSymbolTracer, CallValueTracer,
 };
-use crate::jsapi::JS::{BigInt, JobQueue, Symbol};
-use crate::jsapi::{jsid, Heap, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
+use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
+use mozjs_sys::jsapi::js::TraceValueArray;
+use mozjs_sys::jsapi::JS::{BigInt, JobQueue, Symbol};
+use mozjs_sys::jsgc::{Heap, ValueArray};
 use std::any::TypeId;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell, UnsafeCell};
@@ -188,6 +190,13 @@ unsafe impl<T: Traceable, const COUNT: usize> Traceable for [T; COUNT] {
         for v in self.iter() {
             v.trace(tracer);
         }
+    }
+}
+
+unsafe impl<const N: usize> Traceable for ValueArray<N> {
+    #[inline]
+    unsafe fn trace(&self, tracer: *mut JSTracer) {
+        TraceValueArray(tracer, N, self.get_mut_ptr());
     }
 }
 

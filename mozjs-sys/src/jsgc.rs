@@ -185,6 +185,52 @@ impl GCMethods for JS::PropertyDescriptor {
     }
 }
 
+/// A fixed-size array of values, for use inside Rooted<>.
+///
+/// https://searchfox.org/mozilla-central/source/js/public/ValueArray.h#31
+pub struct ValueArray<const N: usize> {
+    elements: [JS::Value; N],
+}
+
+impl<const N: usize> ValueArray<N> {
+    pub fn new(elements: [JS::Value; N]) -> Self {
+        Self { elements }
+    }
+
+    pub fn to_handle_value_array(&self) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: N,
+            elements_: self.elements.as_ptr(),
+        }
+    }
+
+    pub unsafe fn get_ptr(&self) -> *const JS::Value {
+        self.elements.as_ptr()
+    }
+
+    pub unsafe fn get_mut_ptr(&self) -> *mut JS::Value {
+        self.elements.as_ptr() as *mut _
+    }
+}
+
+impl<const N: usize> RootKind for ValueArray<N> {
+    fn rootKind() -> JS::RootKind {
+        JS::RootKind::Traceable
+    }
+}
+
+impl<const N: usize> GCMethods for ValueArray<N> {
+    unsafe fn initial() -> Self {
+        Self {
+            elements: [JS::Value::initial(); N],
+        }
+    }
+    unsafe fn post_barrier(_: *mut Self, _: Self, _: Self) {}
+}
+
+/// RootedValueArray roots an internal fixed-size array of Values
+pub type RootedValueArray<const N: usize> = Rooted<ValueArray<N>>;
+
 /// Heap values encapsulate GC concerns of an on-heap reference to a JS
 /// object. This means that every reference to a JS object on heap must
 /// be realized through this structure.
