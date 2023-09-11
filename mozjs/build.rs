@@ -76,6 +76,7 @@ fn main() {
     }
 }
 
+#[cfg(unix)]
 fn find_make() -> OsString {
     if let Some(make) = env::var_os("MAKE") {
         make
@@ -156,7 +157,7 @@ fn find_moztools() -> Option<PathBuf> {
 
 fn build_jsapi(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
-    let mut make = find_make();
+    let make;
 
     #[cfg(windows)]
     {
@@ -181,6 +182,11 @@ fn build_jsapi(build_dir: &Path) {
         env::set_var("PATH", &env::join_paths(paths).unwrap());
 
         make = OsStr::new("mozmake").to_os_string();
+    }
+
+    #[cfg(unix)]
+    {
+        make = find_make();
     }
 
     let mut cmd = Command::new(make.clone());
