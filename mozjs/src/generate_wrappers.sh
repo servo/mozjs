@@ -27,12 +27,15 @@ grep_heur() {
   grep -v 'MutableHandleObjectVector' # GetDebuggeeGlobals has it
 }
 
-# clone file and reformat
-cp target/debug/build/mozjs_sys-*/out/build/jsapi.rs target/jsapi.rs
-rustfmt target/jsapi.rs --config max_width=1000
-cp target/debug/build/mozjs-*/out/gluebindings.rs target/glue.rs
-rustfmt target/glue.rs --config max_width=1000
+find_fmt_parse() {
+  # clone file and reformat
+  # this $(find) only gets last modified file
+  cp $(find target -name "$1" -printf "%T@ %p\n" | sort -n | tail -n 1 | tr ' ' '\n' | tail -n 1) "target/wrap_$1"
+  rustfmt "target/wrap_$1" --config max_width=1000
+  
+  # parse file
+  grep_heur "target/wrap_$1" | $gsed 's/\(.*\)/wrap!('"$2"': \1);/g'  > "mozjs/src/$2_wrappers.in"
+}
 
-# parse file
-grep_heur target/jsapi.rs | $gsed 's/\(.*\)/wrap!(jsapi: \1);/g'  > mozjs/src/jsapi_wrappers.in
-grep_heur target/glue.rs | $gsed 's/\(.*\)/wrap!(glue: \1);/g'  > mozjs/src/glue_wrappers.in
+find_fmt_parse jsapi.rs jsapi
+find_fmt_parse gluebindings.rs glue
