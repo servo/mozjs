@@ -30,43 +30,27 @@ const JSVAL_TAG_MAX_DOUBLE: u32 = 0x1FFF0;
 #[cfg(target_pointer_width = "32")]
 const JSVAL_TAG_CLEAR: u32 = 0xFFFFFF80;
 
+#[cfg(target_pointer_width = "64")]
+const JSVAL_TAG_BOX: u32 = JSVAL_TAG_MAX_DOUBLE;
+
+#[cfg(target_pointer_width = "32")]
+const JSVAL_TAG_BOX: u32 = JSVAL_TAG_CLEAR;
+
 const CELL_ALIGN_MASK: u64 = (1 << 3) - 1;
 
-macro_rules! value_tag {
-    (enum $name:ident { $($variant:ident = $value_type:path,)* }) => {
-        #[cfg(target_pointer_width = "64")]
-        #[repr(u32)]
-        #[allow(dead_code)]
-        enum $name {
-            $(
-                $variant = JSVAL_TAG_MAX_DOUBLE | ($value_type as u32),
-            )*
-        }
-
-        #[cfg(target_pointer_width = "32")]
-        #[repr(u32)]
-        #[allow(dead_code)]
-        enum $name {
-            $(
-                $variant = JSVAL_TAG_CLEAR | ($value_type as u32),
-            )*
-        }
-    };
-}
-
-value_tag! {
-    enum ValueTag {
-        INT32 = JSValueType::JSVAL_TYPE_INT32,
-        UNDEFINED = JSValueType::JSVAL_TYPE_UNDEFINED,
-        NULL = JSValueType::JSVAL_TYPE_NULL,
-        BOOLEAN = JSValueType::JSVAL_TYPE_BOOLEAN,
-        MAGIC = JSValueType::JSVAL_TYPE_MAGIC,
-        STRING = JSValueType::JSVAL_TYPE_STRING,
-        SYMBOL = JSValueType::JSVAL_TYPE_SYMBOL,
-        PRIVATE_GCTHING = JSValueType::JSVAL_TYPE_PRIVATE_GCTHING,
-        BIGINT = JSValueType::JSVAL_TYPE_BIGINT,
-        OBJECT = JSValueType::JSVAL_TYPE_OBJECT,
-    }
+#[repr(u32)]
+#[allow(dead_code)]
+enum ValueTag {
+    INT32 = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_INT32 as u32),
+    UNDEFINED = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_UNDEFINED as u32),
+    NULL = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_NULL as u32),
+    BOOLEAN = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_BOOLEAN as u32),
+    MAGIC = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_MAGIC as u32),
+    STRING = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_STRING as u32),
+    SYMBOL = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_SYMBOL as u32),
+    PRIVATE_GCTHING = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_PRIVATE_GCTHING as u32),
+    BIGINT = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_BIGINT as u32),
+    OBJECT = JSVAL_TAG_BOX | (JSValueType::JSVAL_TYPE_OBJECT as u32),
 }
 
 #[repr(u64)]
