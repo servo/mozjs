@@ -83,6 +83,31 @@ jobs:
         run: |
           cargo test --verbose ${{ matrix.features }}
 
+  windows-arm:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        features: ["--features debugmozjs", ""]
+    env:
+      LINKER: "lld-link.exe"
+      CC: "clang-cl"
+      CXX: "clang-cl"
+      MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-4.0"
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: "aarch64-pc-windows-msvc"
+      - name: Install deps
+        run: |
+          curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
+          cd target/dependencies && unzip -qo moztools.zip -d .
+      - name: Build Windows on Arm
+        shell: cmd
+        run: |
+          cargo build --verbose --target aarch64-pc-windows-msvc ${{ matrix.features }}
+
   android:
     runs-on: ubuntu-latest
     steps:
@@ -127,7 +152,7 @@ jobs:
   build_result:
     name: Result
     runs-on: ubuntu-latest
-    needs: ["mac", "linux", "windows", "android"]
+    needs: ["mac", "linux", "windows", "windows-arm", "android"]
     if: ${{ always() }}
     steps:
       - name: Mark the job as successful
