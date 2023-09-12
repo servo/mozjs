@@ -94,6 +94,8 @@ jobs:
       CC: "clang-cl"
       CXX: "clang-cl"
       MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-4.0"
+      CCACHE: sccache
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
@@ -103,6 +105,8 @@ jobs:
         run: |
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
           cd target/dependencies && unzip -qo moztools.zip -d .
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.3
       - name: Build Windows on Arm
         shell: cmd
         run: |
