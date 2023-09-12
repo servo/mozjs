@@ -36,6 +36,7 @@ const EXTRA_FILES: &'static [&'static str] = &[
 ];
 
 /// Which version of moztools we expect
+#[cfg(windows)]
 const MOZTOOLS_VERSION: &str = "4.0";
 
 fn main() {
@@ -76,7 +77,7 @@ fn main() {
     }
 }
 
-#[cfg(unix)]
+#[cfg(not(windows))]
 fn find_make() -> OsString {
     if let Some(make) = env::var_os("MAKE") {
         make
@@ -131,6 +132,7 @@ fn cc_flags() -> Vec<&'static str> {
     result
 }
 
+#[cfg(windows)]
 fn cargo_target_dir() -> PathBuf {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let mut dir = out_dir.as_path();
@@ -143,6 +145,7 @@ fn cargo_target_dir() -> PathBuf {
     panic!("$OUT_DIR is not in target")
 }
 
+#[cfg(windows)]
 fn find_moztools() -> Option<PathBuf> {
     let cargo_target_dir = cargo_target_dir();
     let deps_dir = cargo_target_dir.join("dependencies");
@@ -184,7 +187,7 @@ fn build_jsapi(build_dir: &Path) {
         make = OsStr::new("mozmake").to_os_string();
     }
 
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     {
         make = find_make();
     }
