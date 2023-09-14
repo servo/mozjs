@@ -1,27 +1,5 @@
 [target.aarch64-unknown-linux-gnu]
-image = "ghcr.io/sagudev/cross/aarch64-unknown-linux-gnu:23"
-# this is not part of cross dockerfile because we want minimal cross changes
-pre-build = [
-    "dpkg --add-architecture arm64",
-    "apt-get update && apt-get install --assume-yes --no-install-recommends python3 python3-distutils llvm llvm-dev lld libclang-dev clang dpkg-dev",
-]
-# use clang
-env.passthrough = [
-    "CC=clang -target aarch64-unknown-linux-gnu -isysroot=/usr/aarch64-linux-gnu --sysroot=/ -fuse-ld=lld",
-    "CXX=clang++ -target aarch64-unknown-linux-gnu -isysroot=/usr/aarch64-linux-gnu --sysroot=/ -fuse-ld=lld",
-    "BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu=-isysroot=/usr/aarch64-linux-gnu --sysroot=/ -fuse-ld=lld",
-]
+image = "ghcr.io/sagudev/cross-aarch64-unknown-linux-gnu:docker-images"
 
 [target.armv7-unknown-linux-gnueabihf]
-image = "ghcr.io/sagudev/cross/armv7-unknown-linux-gnueabihf:23"
-# this is not part of cross dockerfile because we want minimal cross changes
-pre-build = [
-    "dpkg --add-architecture armhf",
-    "apt-get update && apt-get install --assume-yes --no-install-recommends python3 python3-distutils llvm llvm-dev lld libclang-dev clang dpkg-dev",
-]
-# use clang
-env.passthrough = [
-    "CC=clang -target armv7-unknown-linux-gnueabihf -isysroot=/usr/arm-linux-gnueabihf --sysroot=/ -fuse-ld=lld",
-    "CXX=clang++ -target armv7-unknown-linux-gnueabihf -isysroot=/usr/arm-linux-gnueabihf --sysroot=/ -fuse-ld=lld",
-    "BINDGEN_EXTRA_CLANG_ARGS_armv7_unknown_linux_gnueabihf=-isysroot=/usr/arm-linux-gnueabihf --sysroot=/ -fuse-ld=lld",
-]
+image = "ghcr.io/sagudev/cross-armv7-unknown-linux-gnueabihf:docker-images"
