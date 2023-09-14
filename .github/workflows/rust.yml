@@ -119,7 +119,7 @@ jobs:
         target:
           - aarch64-unknown-linux-gnu
           - armv7-unknown-linux-gnueabihf
-    container: ghcr.io/sagudev/cross-${{ matrix.target }}:docker-images
+    container: ghcr.io/servo/cross-${{ matrix.target }}:main
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
