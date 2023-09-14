@@ -58,10 +58,8 @@ ifneq ($(HOST),$(TARGET))
 		# Reset TARGET variable because armv7 target name used by Rust is not
 		# the same as the target name needed for the CXX toolchain.
 		TARGET = arm-linux-gnueabihf
-		# fpu according to cross-rs
 		CONFIGURE_FLAGS += \
 			--with-arch=armv7-a \
-			--with-fpu=vfpv3-d16 \
 			$(NULL)
 	endif
 
