@@ -61,8 +61,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        target: ["x64", "arm64"]
         features: ["--features debugmozjs", ""]
-        target: ["", "--target aarch64-pc-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
       CC: "clang-cl"
@@ -82,9 +82,15 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Build Windows
+        if: matrix.target == "x64"
         shell: cmd
         run: |
-          cargo test --verbose ${{ matrix.target }} ${{ matrix.features }}
+          cargo test --verbose ${{ matrix.features }}
+      - name: Build Windows on Arm
+        if: matrix.target == "aarch64"
+        shell: cmd
+        run: |
+          cargo build --verbose --target aarch64-pc-windows-msvc ${{ matrix.features }}
 
   android:
     runs-on: ubuntu-latest
