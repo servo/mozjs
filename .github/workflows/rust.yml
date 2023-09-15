@@ -92,7 +92,7 @@ jobs:
         run: |
           cargo test --verbose ${{ matrix.features }}
       - name: Build Windows on Arm
-        if: matrix.target == 'aarch64'
+        if: matrix.target == 'arm64'
         shell: cmd
         run: |
           cargo build --verbose --target aarch64-pc-windows-msvc ${{ matrix.features }}
