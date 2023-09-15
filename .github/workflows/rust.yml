@@ -63,6 +63,11 @@ jobs:
       matrix:
         target: ["x64", "arm64"]
         features: ["--features debugmozjs", ""]
+        include:
+          - target: x64
+            toolchain: ""
+          - target: arm64
+            toolchain: aarch64-pc-windows-msvc
     env:
       LINKER: "lld-link.exe"
       CC: "clang-cl"
@@ -74,7 +79,7 @@ jobs:
       - uses: actions/checkout@v3
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: "aarch64-pc-windows-msvc"
+          targets: ${{ matrix.toolchain }}
       - name: Install deps
         run: |
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
