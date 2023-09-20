@@ -1,0 +1,66 @@
+name: CI
+on:
+  push:
+    branches: [main]
+    tags-ignore: [dev]
+  pull_request:
+    branches: [main]
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build_engine:
+    name: Build Engine
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: true
+
+    - name: Cache SpiderMonkey tarball
+      uses: actions/cache@v2
+      id: sm-cache
+      with:
+        path: |
+          dist
+        key: cache-${{ hashFiles('build-engine.sh') }}-${{ hashFiles('gecko-revision') }}-${{ hashFiles('object-files.list') }}
+
+    - name: "Build and bundle SpiderMonkey"
+      if: steps.sm-cache.outputs.cache-hit != 'true'
+      run: |
+        mkdir dist
+        sudo apt-get update -y
+        bash ./build-engine.sh release
+        tar -a -cf dist/spidermonkey-wasm-static-lib_release.tar.gz release
+        rm -rf release obj-release
+        bash ./build-engine.sh debug
+        tar -a -cf dist/spidermonkey-wasm-static-lib_debug.tar.gz debug
+
+    - name: Calculate tag name
+      run: |
+        name=rev_$GITHUB_SHA
+        echo ::set-output name=val::$name
+        echo TAG=$name >> $GITHUB_ENV
+      id: tagname
+
+    # Upload tarball as an artifact of the github action run, so the output
+    # can be inspected for pull requests.
+    - name: Upload tarball
+      uses: actions/upload-artifact@v1
+      if: github.event_name != 'push' || (github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/v'))
+      with:
+        name: spidermonkey-wasm-static-lib.zip
+        path: dist/
+
+    # ... and if this was an actual push (tag or `main`) then we publish a
+    # new release. This'll automatically publish a tag release or update `dev`
+    # with this `sha`
+    - run: cd .github/actions/github-release && npm install --production
+    - name: Publish Release
+      uses: ./.github/actions/github-release
+      if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+      with:
+        files: "dist/*.tar.gz"
+        name: ${{ steps.tagname.outputs.val }}
+        token: ${{ secrets.GITHUB_TOKEN }}

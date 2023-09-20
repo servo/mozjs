@@ -1,13 +1,10 @@
 mod generated {
-    #![allow(non_upper_case_globals)]
-    #![allow(non_camel_case_types)]
-    #![allow(non_snake_case)]
-    include!(concat!(env!("OUT_DIR"), "/gluebindings.rs"));
+    pub(super) mod gluebindings;
 }
 
 use core::mem;
 
-pub use generated::root::*;
+pub use generated::gluebindings::root::*;
 
 pub type EncodedStringCallback = fn(*const core::ffi::c_char);
 

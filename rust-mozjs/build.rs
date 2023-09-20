@@ -38,19 +38,23 @@ fn main() {
     //let mut build = cxx_build::bridge("src/jsglue.rs"); // returns a cc::Build;
     let mut build = cc::Build::new();
     let outdir = env::var("DEP_MOZJS_OUTDIR").unwrap();
-    let include_path: PathBuf = [&outdir, "dist", "include"].iter().collect();
+    let include_path: PathBuf = [&outdir, "include"].iter().collect();
 
     build
         .cpp(true)
+        .compiler("clang++")
         .file("src/jsglue.cpp")
         .include(&include_path);
     for flag in cc_flags(false) {
         build.flag_if_supported(flag);
     }
 
-    let confdefs_path: PathBuf = [&outdir, "js", "src", "js-confdefs.h"].iter().collect();
+    build.flag("--target=wasm32-wasi");
+    build.flag("--sysroot=/opt/wasix-sysroot");
+
+    // let confdefs_path: PathBuf = [&outdir, "js", "src", "js-confdefs.h"].iter().collect();
     let msvc = if build.get_compiler().is_like_msvc() {
-        build.flag(&format!("-FI{}", confdefs_path.to_string_lossy()));
+        // build.flag(&format!("-FI{}", confdefs_path.to_string_lossy()));
         build.define("WIN32", "");
         build.flag("-Zi");
         build.flag("-GR-");
@@ -60,59 +64,60 @@ fn main() {
         build.flag("-fPIC");
         build.flag("-fno-rtti");
         build.flag("-std=c++17");
-        build.flag("-include");
-        build.flag(&confdefs_path.to_string_lossy());
+        // build.flag("-include");
+        // build.flag(&confdefs_path.to_string_lossy());
         false
     };
 
     build.compile("jsglue");
     println!("cargo:rerun-if-changed=src/jsglue.cpp");
-    let mut builder = bindgen::Builder::default()
-        .header("./src/jsglue.cpp")
-        .parse_callbacks(Box::new(bindgen::CargoCallbacks))
-        .size_t_is_usize(true)
-        .formatter(bindgen::Formatter::Rustfmt)
-        .clang_arg("-x")
-        .clang_arg("c++")
-        .clang_args(cc_flags(true))
-        .clang_args(["-I", &include_path.to_string_lossy()])
-        .enable_cxx_namespaces()
-        .allowlist_file("./src/jsglue.cpp")
-        .allowlist_recursively(false);
 
-    if msvc {
-        builder = builder.clang_args([
-            &format!("-FI{}", confdefs_path.to_string_lossy()),
-            "-DWIN32",
-            "-GR-",
-            "-std=c++17",
-        ])
-    } else {
-        builder = builder
-            .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
-            .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")])
-    }
+    // let mut builder = bindgen::Builder::default()
+    //     .header("./src/jsglue.cpp")
+    //     .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+    //     .size_t_is_usize(true)
+    //     .formatter(bindgen::Formatter::Rustfmt)
+    //     .clang_arg("-x")
+    //     .clang_arg("c++")
+    //     .clang_args(cc_flags(true))
+    //     .clang_args(["-I", &include_path.to_string_lossy()])
+    //     .enable_cxx_namespaces()
+    //     .allowlist_file("./src/jsglue.cpp")
+    //     .allowlist_recursively(false);
 
-    for ty in BLACKLIST_TYPES {
-        builder = builder.blocklist_type(ty);
-    }
+    // if msvc {
+    //     builder = builder.clang_args([
+    //         &format!("-FI{}", confdefs_path.to_string_lossy()),
+    //         "-DWIN32",
+    //         "-GR-",
+    //         "-std=c++17",
+    //     ])
+    // } else {
+    //     builder = builder
+    //         .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
+    //         .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")])
+    // }
 
-    for ty in OPAQUE_TYPES {
-        builder = builder.opaque_type(ty);
-    }
+    // for ty in BLACKLIST_TYPES {
+    //     builder = builder.blocklist_type(ty);
+    // }
 
-    for &(module, raw_line) in MODULE_RAW_LINES {
-        builder = builder.module_raw_line(module, raw_line);
-    }
-    let bindings = builder
-        .generate()
-        .expect("Unable to generate bindings to jsglue");
+    // for ty in OPAQUE_TYPES {
+    //     builder = builder.opaque_type(ty);
+    // }
 
-    // Write the bindings to the $OUT_DIR/bindings.rs file.
-    let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("gluebindings.rs");
-    bindings
-        .write_to_file(out_path)
-        .expect("Couldn't write bindings!");
+    // for &(module, raw_line) in MODULE_RAW_LINES {
+    //     builder = builder.module_raw_line(module, raw_line);
+    // }
+    // let bindings = builder
+    //     .generate()
+    //     .expect("Unable to generate bindings to jsglue");
+
+    // // Write the bindings to the $OUT_DIR/bindings.rs file.
+    // let out_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("gluebindings.rs");
+    // bindings
+    //     .write_to_file(out_path)
+    //     .expect("Couldn't write bindings!");
 }
 
 /// Types that have generic arguments must be here or else bindgen does not generate <T>

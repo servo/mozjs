@@ -832,7 +832,7 @@ bool AppendToRootedObjectVector(JS::PersistentRootedObjectVector* v,
 
 void DeleteRootedObjectVector(JS::PersistentRootedObjectVector* v) { delete v; }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__wasi__)
 #  include <malloc.h>
 #elif defined(__APPLE__)
 #  include <malloc/malloc.h>
@@ -846,7 +846,7 @@ void DeleteRootedObjectVector(JS::PersistentRootedObjectVector* v) { delete v; }
 
 // SpiderMonkey-in-Rust currently uses system malloc, not jemalloc.
 static size_t MallocSizeOf(const void* aPtr) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__wasi__)
   return malloc_usable_size((void*)aPtr);
 #elif defined(__APPLE__)
   return malloc_size((void*)aPtr);

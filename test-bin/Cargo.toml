@@ -1,0 +1,11 @@
+[package]
+name = "test-bin"
+version = "0.1.0"
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+mozjs_sys ={ path="../mozjs" }

@@ -37,3 +37,4 @@ libz-sys = "1.1"
 bindgen.workspace = true
 cc.workspace = true
 walkdir = "2"
+copy_dir = "0.1.3"

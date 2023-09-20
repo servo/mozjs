@@ -3,9 +3,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use bindgen::Formatter;
+use std::collections::btree_map::Entry;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs;
+use std::fs::{self, read_dir};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
@@ -35,10 +36,6 @@ const EXTRA_FILES: &'static [&'static str] = &[
     "src/jsglue.cpp",
 ];
 
-/// Which version of moztools we expect
-#[cfg(windows)]
-const MOZTOOLS_VERSION: &str = "4.0";
-
 fn main() {
     // https://github.com/servo/mozjs/issues/113
     env::set_var("MOZCONFIG", "");
@@ -54,9 +51,8 @@ fn main() {
 
     fs::create_dir_all(&build_dir).expect("could not create build dir");
 
-    build_jsapi(&build_dir);
+    copy_jsapi(&build_dir);
     build_jsglue(&build_dir);
-    build_jsapi_bindings(&build_dir);
 
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
         for var in ENV_VARS {
@@ -77,22 +73,22 @@ fn main() {
     }
 }
 
-#[cfg(not(windows))]
-fn find_make() -> OsString {
-    if let Some(make) = env::var_os("MAKE") {
-        make
-    } else {
-        match Command::new("gmake").status() {
-            Ok(gmake) => {
-                if gmake.success() {
-                    OsStr::new("gmake").to_os_string()
-                } else {
-                    OsStr::new("make").to_os_string()
-                }
-            }
-            Err(_) => OsStr::new("make").to_os_string(),
-        }
+fn copy_jsapi(build_dir: &Path) {
+    // TODO: run the download script
+    fs::remove_dir_all(build_dir).unwrap();
+    fs::create_dir(build_dir).unwrap();
+    for entry in read_dir("spidermonkey/release").unwrap() {
+        let path = entry.unwrap().path();
+        let mut target = build_dir.to_path_buf();
+        let name = path.components().last().unwrap();
+        target.push(name);
+        copy_dir::copy_dir(path, target).unwrap();
     }
+
+    println!("cargo:rustc-link-search=native=/opt/wasix-sysroot/lib/wasm32-wasi");
+    println!("cargo:rustc-link-search=native={}/lib", build_dir.display());
+    println!("cargo:rustc-link-lib=static=js_static");
+    println!("cargo:rustc-link-lib=c++");
 }
 
 fn cc_flags() -> Vec<&'static str> {
@@ -132,268 +128,29 @@ fn cc_flags() -> Vec<&'static str> {
     result
 }
 
-#[cfg(windows)]
-fn cargo_target_dir() -> PathBuf {
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
-    let mut dir = out_dir.as_path();
-    while let Some(target_dir) = dir.parent() {
-        if target_dir.file_name().unwrap().to_string_lossy() == "target" {
-            return target_dir.to_path_buf();
-        }
-        dir = target_dir;
-    }
-    panic!("$OUT_DIR is not in target")
-}
-
-#[cfg(windows)]
-fn find_moztools() -> Option<PathBuf> {
-    let cargo_target_dir = cargo_target_dir();
-    let deps_dir = cargo_target_dir.join("dependencies");
-    let moztools_path = deps_dir.join("moztools").join(MOZTOOLS_VERSION);
-
-    if moztools_path.exists() {
-        Some(moztools_path)
-    } else {
-        None
-    }
-}
-
-fn build_jsapi(build_dir: &Path) {
-    let target = env::var("TARGET").unwrap();
-    let make;
-
-    #[cfg(windows)]
-    {
-        let moztools = if let Some(moztools) = env::var_os("MOZTOOLS_PATH") {
-            PathBuf::from(moztools)
-        } else if let Some(moztools) = find_moztools() {
-            // moztools already in target/dependencies/moztools-*
-            moztools
-        } else if let Some(moz_build) = env::var_os("MOZILLA_BUILD") {
-            // For now we also support mozilla build
-            PathBuf::from(moz_build)
-        } else {
-            panic!(
-                "MozTools or MozillaBuild not found!\n \
-                Follow instructions on: https://github.com/servo/mozjs?tab=readme-ov-file#windows"
-            );
-        };
-        let mut paths = Vec::new();
-        paths.push(moztools.join("msys2").join("usr").join("bin"));
-        paths.push(moztools.join("bin"));
-        paths.extend(env::split_paths(&env::var_os("PATH").unwrap()));
-        env::set_var("PATH", &env::join_paths(paths).unwrap());
-
-        make = OsStr::new("mozmake").to_os_string();
-    }
-
-    #[cfg(not(windows))]
-    {
-        make = find_make();
-    }
-
-    let mut cmd = Command::new(make.clone());
-
-    let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
-    let mut cppflags = OsString::from("-I");
-    cppflags.push(OsString::from(
-        encoding_c_mem_include_dir.replace("\\", "/"),
-    ));
-    cppflags.push(" ");
-    // add zlib from libz-sys to include path
-    if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
-        cppflags.push(format!("-I{} ", zlib_include_dir.replace("\\", "/")));
-    }
-    // add zlib.pc into pkg-config's search path
-    // this is only needed when libz-sys builds zlib from source
-    if let Ok(zlib_root_dir) = env::var("DEP_Z_ROOT") {
-        let mut pkg_config_path = OsString::from(format!(
-            "{}/lib/pkgconfig",
-            zlib_root_dir.replace("\\", "/")
-        ));
-        if let Some(env_pkg_config_path) = env::var_os("PKG_CONFIG_PATH") {
-            pkg_config_path.push(":");
-            pkg_config_path.push(env_pkg_config_path);
-        }
-        cmd.env("PKG_CONFIG_PATH", pkg_config_path);
-    }
-    cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
-    cmd.env("CPPFLAGS", cppflags);
-
-    if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
-        cmd.env("MAKEFLAGS", makeflags);
-    }
-
-    if target.contains("apple") || target.contains("freebsd") {
-        cmd.env("CXXFLAGS", "-stdlib=libc++");
-    }
-
-    let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-
-    let result = cmd
-        .args(&["-R", "-f"])
-        .arg(cargo_manifest_dir.join("makefile.cargo"))
-        .current_dir(&build_dir)
-        .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
-        .env("NO_RUST_PANIC_HOOK", "1")
-        .status()
-        .expect(&format!("Failed to run `{:?}`", make));
-    assert!(result.success());
-
-    println!(
-        "cargo:rustc-link-search=native={}/js/src/build",
-        build_dir.display()
-    );
-    println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
-    if target.contains("windows") {
-        println!(
-            "cargo:rustc-link-search=native={}/dist/bin",
-            build_dir.display()
-        );
-        println!("cargo:rustc-link-lib=winmm");
-        println!("cargo:rustc-link-lib=psapi");
-        println!("cargo:rustc-link-lib=user32");
-        println!("cargo:rustc-link-lib=Dbghelp");
-        if target.contains("gnu") {
-            println!("cargo:rustc-link-lib=stdc++");
-        }
-    } else if target.contains("apple") || target.contains("freebsd") {
-        println!("cargo:rustc-link-lib=c++");
-    } else {
-        println!("cargo:rustc-link-lib=stdc++");
-    }
-}
-
 fn build_jsglue(build_dir: &Path) {
     let mut build = cc::Build::new();
     build.cpp(true);
+    build.compiler("clang++");
 
     for flag in cc_flags() {
         build.flag_if_supported(flag);
     }
 
-    let config = format!("{}/js/src/js-confdefs.h", build_dir.display());
     if build.get_compiler().is_like_msvc() {
         build.flag_if_supported("-std:c++17");
-        build.flag("-FI");
     } else {
-        build.flag("-include");
+        build.flag("--std=c++17");
     }
+
+    build.flag("--target=wasm32-wasi");
+    build.flag("--sysroot=/opt/wasix-sysroot");
+
     build
-        .flag(&config)
         .file("src/jsglue.cpp")
-        .include(build_dir.join("dist/include"))
-        .include(build_dir.join("js/src"))
+        .include(build_dir.join("include"))
         .out_dir(build_dir.join("glue"))
         .compile("jsglue");
-}
-
-/// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
-/// Rust.
-///
-/// To add or remove which functions, types, and variables get bindings
-/// generated, see the `const` configuration variables below.
-fn build_jsapi_bindings(build_dir: &Path) {
-    // By default, constructors, destructors and methods declared in .h files are inlined,
-    // so their symbols aren't available. Adding the -fkeep-inlined-functions option
-    // causes the jsapi library to bloat from 500M to 6G, so that's not an option.
-    let mut config = bindgen::CodegenConfig::all();
-    config &= !bindgen::CodegenConfig::CONSTRUCTORS;
-    config &= !bindgen::CodegenConfig::DESTRUCTORS;
-    config &= !bindgen::CodegenConfig::METHODS;
-
-    let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_59)
-        .header("./src/jsglue.hpp")
-        // Translate every enum with the "rustified enum" strategy. We should
-        // investigate switching to the "constified module" strategy, which has
-        // similar ergonomics but avoids some potential Rust UB footguns.
-        .rustified_enum(".*")
-        .size_t_is_usize(true)
-        .enable_cxx_namespaces()
-        .with_codegen_config(config)
-        .formatter(Formatter::Rustfmt)
-        .clang_arg("-I")
-        .clang_arg(build_dir.join("dist/include").to_str().expect("UTF-8"))
-        .clang_arg("-I")
-        .clang_arg(build_dir.join("js/src").to_str().expect("UTF-8"))
-        .clang_arg("-x")
-        .clang_arg("c++");
-
-    let target = env::var("TARGET").unwrap();
-    if target.contains("windows") {
-        builder = builder.clang_arg("-fms-compatibility");
-    }
-
-    if let Ok(flags) = env::var("CXXFLAGS") {
-        for flag in flags.split_whitespace() {
-            builder = builder.clang_arg(flag);
-        }
-    }
-
-    if let Ok(flags) = env::var("CLANGFLAGS") {
-        for flag in flags.split_whitespace() {
-            builder = builder.clang_arg(flag);
-        }
-    }
-
-    for flag in cc_flags() {
-        builder = builder.clang_arg(flag);
-    }
-
-    builder = builder.clang_arg("-include");
-    builder = builder.clang_arg(
-        build_dir
-            .join("js/src/js-confdefs.h")
-            .to_str()
-            .expect("UTF-8"),
-    );
-
-    println!(
-        "Generting bindings {:?} {}.",
-        builder.command_line_flags(),
-        bindgen::clang_version().full
-    );
-
-    for ty in UNSAFE_IMPL_SYNC_TYPES {
-        builder = builder.raw_line(format!("unsafe impl Sync for root::{} {{}}", ty));
-    }
-
-    for ty in WHITELIST_TYPES {
-        builder = builder.allowlist_type(ty);
-    }
-
-    for var in WHITELIST_VARS {
-        builder = builder.allowlist_var(var);
-    }
-
-    for func in WHITELIST_FUNCTIONS {
-        builder = builder.allowlist_function(func);
-    }
-
-    for func in BLACKLIST_FUNCTIONS {
-        builder = builder.blocklist_function(func);
-    }
-
-    for ty in OPAQUE_TYPES {
-        builder = builder.opaque_type(ty);
-    }
-
-    for ty in BLACKLIST_TYPES {
-        builder = builder.blocklist_type(ty);
-    }
-
-    for &(module, raw_line) in MODULE_RAW_LINES {
-        builder = builder.module_raw_line(module, raw_line);
-    }
-
-    let bindings = builder
-        .generate()
-        .expect("Should generate JSAPI bindings OK");
-
-    bindings
-        .write_to_file(build_dir.join("jsapi.rs"))
-        .expect("Should write bindings to file OK");
 }
 
 /// JSAPI types for which we should implement `Sync`.
@@ -432,6 +189,7 @@ const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
     "JS_.*",
     ".*_TO_JSID",
     "JS_DeprecatedStringHasLatin1Chars",
+    "JS_ForOfIteratorInit",
 ];
 
 /// Functions we do not want to generate bindings to.

@@ -1,0 +1,9 @@
+/gecko-dev
+/obj-release
+/obj-debug
+/release
+/debug
+/dist
+/mozconfig-*
+.DS_Store
+.vscode
