@@ -84,7 +84,6 @@ fn main() {
         builder = builder.clang_args([
             &format!("-FI{}", confdefs_path.to_string_lossy()),
             "-DWIN32",
-            "-GR-",
             "-std=c++17",
         ])
     } else {
