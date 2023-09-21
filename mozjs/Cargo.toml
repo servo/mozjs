@@ -21,7 +21,7 @@ lazy_static = "1"
 libc.workspace = true
 log = "0.4"
 num-traits = "0.2"
-mozjs_sys = { path = "../mozjs" }
+mozjs_sys = { path = "../mozjs-sys" }
 
 [build-dependencies]
 cc.workspace = true

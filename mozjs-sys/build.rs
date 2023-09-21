@@ -49,7 +49,7 @@ fn main() {
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let build_dir = out_dir.join("build");
 
-    // Used by rust-mozjs downstream, don't remove.
+    // Used by mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
     fs::create_dir_all(&build_dir).expect("could not create build dir");
@@ -235,7 +235,6 @@ fn build_jsapi(build_dir: &Path) {
     }
 
     let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
-
     let result = cmd
         .args(&["-R", "-f"])
         .arg(cargo_manifest_dir.join("makefile.cargo"))

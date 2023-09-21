@@ -1,4 +1,4 @@
-# rust-mozjs
+# mozjs
 
 Rust bindings to SpiderMonkey
 

@@ -34,5 +34,5 @@ cp target/debug/build/mozjs-*/out/gluebindings.rs target/glue.rs
 rustfmt target/glue.rs --config max_width=1000
 
 # parse file
-grep_heur target/jsapi.rs | $gsed 's/\(.*\)/wrap!(jsapi: \1);/g'  > rust-mozjs/src/jsapi_wrappers.in
-grep_heur target/glue.rs | $gsed 's/\(.*\)/wrap!(glue: \1);/g'  > rust-mozjs/src/glue_wrappers.in
+grep_heur target/jsapi.rs | $gsed 's/\(.*\)/wrap!(jsapi: \1);/g'  > mozjs/src/jsapi_wrappers.in
+grep_heur target/glue.rs | $gsed 's/\(.*\)/wrap!(glue: \1);/g'  > mozjs/src/glue_wrappers.in
