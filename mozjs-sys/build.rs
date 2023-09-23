@@ -356,7 +356,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
     );
 
     println!(
-        "Generting bindings {:?} {}.",
+        "Generating bindings {:?} {}.",
         builder.command_line_flags(),
         bindgen::clang_version().full
     );
