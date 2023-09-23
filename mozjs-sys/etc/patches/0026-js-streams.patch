@@ -7797,19 +7797,6 @@ index 000000000..beb42ff8e
 +}  // namespace js
 +
 +#endif  // builtin_streams_TeeState_h
-diff --git a/js/src/fuzz-tests/tests.cpp b/js/src/fuzz-tests/tests.cpp
-index f6002bd73..7ae58726f 100644
---- a/js/src/fuzz-tests/tests.cpp
-+++ b/js/src/fuzz-tests/tests.cpp
-@@ -33,7 +33,7 @@ static const JSClass* getGlobalClass() {
- static JSObject* jsfuzz_createGlobal(JSContext* cx, JSPrincipals* principals) {
-   /* Create the global object. */
-   JS::RealmOptions options;
--  options.creationOptions().setWeakRefsEnabled(
-+  options.creationOptions().setStreamsEnabled(true).setWeakRefsEnabled(
-       JS::WeakRefSpecifier::EnabledWithCleanupSome);
-   return JS_NewGlobalObject(cx, getGlobalClass(), principals,
-                             JS::FireOnNewGlobalHook, options);
 diff --git a/js/src/jsapi-tests/moz.build b/js/src/jsapi-tests/moz.build
 index 41ee13969..1b9e8d7f3 100644
 --- a/js/src/jsapi-tests/moz.build
@@ -7817,7 +7804,7 @@ index 41ee13969..1b9e8d7f3 100644
 @@ -168,6 +168,11 @@ if not CONFIG["JS_CODEGEN_NONE"]:
          "testsJit.cpp",
      ]
- 
+
 +if CONFIG["MOZ_JS_STREAMS"]:
 +    UNIFIED_SOURCES += [
 +        "testReadableStream.cpp",

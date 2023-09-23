@@ -1,3 +1,8 @@
+# we do not need testing (last famous words)
+- /js/src/fuzz-tests
+- /js/src/jit-test
+- /js/src/tests
+
 # js-ctypes is deprecated.
 - /js/src/ctypes
 
@@ -6,12 +11,13 @@
 - /js/src/devtools/plot-octane.R
 - /js/src/octane
 
-# Remove binast crate, it's Rust code and this is used for codegen only anyway.
-- /js/src/frontend/binast
+# Remove smoosh crate, it's Rust code and this is experimental anyway.
+- /js/src/frontend/smoosh
 
 # Get rid of all the internal Rust code cause crates.io really doesn't like that.
 - /build/moz.configure/rust.configure
 - /build/workspace-hack
+- /build/rust
 - /js/rust
 - /js/src/build.rs
 - /js/src/Cargo.toml
@@ -21,8 +27,9 @@
 - /mozglue/static/rust
 - /python/mozbuild/mozbuild/test/backend/data
 - /python/mozbuild/mozbuild/test/frontend/data
-- /testing/mozbaze/rust
+- /testing/mozbase/rust
 - /third_party/rust
+- Cargo.toml
 
 # Include the rest.
 + /*
