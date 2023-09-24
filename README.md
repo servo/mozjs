@@ -1,17 +1,17 @@
-This repository contains Rust bindings for [SpiderMonkey][sm] for use with
-[Servo][s].
+# Mozjs (Rust bindings for SpiderMonkey)
 
-[sm]: https://spidermonkey.dev/
-[s]: https://servo.org/
-
-This repository contains two crates:
+This repository contains Rust bindings for [SpiderMonkey](https://spidermonkey.dev/)
+that are battle-tested in [Servo](https://servo.org/), split in two crates:
 
 - `mozjs-sys`:  SpiderMonkey and low-level Rust bindings to its C++ API.
 - `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
-# Building
+Mozjs is currently tracking SpiderMonkey on [ESR-115](https://searchfox.org/mozilla-esr115/source/) branch
+(currently version 115.3).
 
-## Linux
+## Building
+
+### Linux
 
 Install Python, Clang and `build-essential`, for example on a Debian-based Linux:
 
@@ -26,7 +26,7 @@ environment variable, for example:
 export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 ```
 
-## Windows
+### Windows
 
 1. Download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip).
 
@@ -48,7 +48,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
     set MOZTOOLS_PATH=C:\path\to\moztools-4.0
    ```
 
-## Run Cargo
+### Run Cargo
 
 You can now build and test the crate using cargo:
 
@@ -59,7 +59,15 @@ cargo build --features debugmozjs
 cargo test --features debugmozjs
 ```
 
-# Building servo against your local mozjs
+### Usage for downstream consumers
+
+Mozjs is currently not published to crates.io, but it can be used from git (binaries should use lockfile instead of `rev`):
+
+```toml
+mozjs = { git = "https://github.com/servo/mozjs", rev = "latest-commit-hash" }
+```
+
+## Building servo against your local mozjs
 
 Assuming your local `servo` and `mozjs` directories are siblings, you can build `servo` against `mozjs` by adding the following to `servo/Cargo.toml`:
 
@@ -68,31 +76,34 @@ Assuming your local `servo` and `mozjs` directories are siblings, you can build 
 mozjs = { path = "../mozjs/mozjs" }
 ```
 
-# Upgrading
+## Upgrading
 
 In order to upgrade to a new version of SpiderMonkey:
 
-1. Find the mozilla-release commit for the desired version of SpiderMonkey, at
-   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg>.
+1. Find the mozilla-esr115 commit for the desired version of SpiderMonkey, at
+   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-esr115&filter-searchStr=spidermonkey%20pkg>.
    You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
    Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
 
 2. Click on the SM(pkg) link, which will open a panel with details of the
    commit, including an artefact uploaded link, with a name of the form
-   mozjs-*version*.tar.bz2. Download it and save it locally.
+   mozjs-*version*.tar.xz. Download it and save it locally.
 
-3. Look at the patches in `etc/patches/*.patch`, and remove any that no longer apply
+3. Look at the patches in `mozjs-sys/etc/patches/*.patch`, and remove any that no longer apply
    (with a bit of luck this will be all of them).
 
-4. Run `python3 ./etc/update.py path/to/tarball`.
+4. Run `python3 ./mozjs-sys/etc/update.py path/to/tarball`.
 
-5. Update `etc/COMMIT` with the commit number.
+5. Update `mozjs-sys/etc/COMMIT` with the commit number.
 
 6. Run `./mozjs/src/generate_wrappers.sh` to regenerate wrappers.
 
 7. Build and test the bindings as above, then submit a PR!
 
-# NixOS users
+8. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
+until it's tested against servo.
+
+## NixOS users
 
 To get a dev environment with shell.nix:
 
@@ -110,7 +121,7 @@ To configure rust-analyzer in Visual Studio Code:
 }
 ```
 
-# Editor support
+## Editor support
 
 If you are working on the Rust code only, rust-analyzer should work perfectly out of the box, though NixOS users will need to configure rust-analyzer to wrap cargo invocations (see above).
 
@@ -118,13 +129,13 @@ But if you are working on the C++ code, editor support is only really possible i
 
 This guide assumes that your code is checked out at:
 
-* **~/code/mozjs** for this repo
-* **~/code/mozilla-unified** for upstream SpiderMonkey
-* (NixOS users only) **~/code/nixpkgs-mozilla** for [mozilla/nixpkgs-mozilla](https://github.com/mozilla/nixpkgs-mozilla)
+- **~/code/mozjs** for this repo
+- **~/code/mozilla-unified** for upstream SpiderMonkey
+- (NixOS users only) **~/code/nixpkgs-mozilla** for [mozilla/nixpkgs-mozilla](https://github.com/mozilla/nixpkgs-mozilla)
 
 **NixOS users:** some steps have a note in \[brackets] saying they need to be wrapped in nix-shell. Those commands should be wrapped as follows:
 
-```
+```shell
 nix-shell ~/code/nixpkgs-mozilla/release.nix -A gecko.x86_64-linux.clang --run '...'
 ```
 
@@ -136,7 +147,7 @@ Start by checking out mozilla-unified ([Building Firefox on Linux](https://firef
 
 Now create your MOZCONFIG file ([Building and testing SpiderMonkey](https://firefox-source-docs.mozilla.org/js/build.html)). I recommend (and this guide assumes) that the file is named `debug.mozconfig`, because simple names like `debug` can cause MozconfigFindException problems. The file should look like this:
 
-```
+```shell
 # Build only the JS shell
 ac_add_options --enable-project=js
 
@@ -154,13 +165,13 @@ mk_add_options MOZ_OBJDIR=@TOPSRCDIR@/obj-debug-@CONFIG_GUESS@
 
 If you are a NixOS user, clone [mozilla/nixpkgs-mozilla](https://github.com/mozilla/nixpkgs-mozilla) next to your `mozilla-unified` checkout, and add the following line to the start of your `debug.mozconfig`:
 
-```
+```shell
 . ./.mozconfig.nix-shell
 ```
 
 You will need to generate your Visual Studio Code config and compilation database against central at least once, before you can do so against the commit we forked from (`mozjs/etc/COMMIT`).
 
-```
+```console
 ~/code/mozilla-unified $ MOZCONFIG=debug.mozconfig ./mach ide vscode
 ```
 
@@ -168,7 +179,7 @@ You will need to generate your Visual Studio Code config and compilation databas
 
 Otherwise you might get an error with lots of exclamation marks:
 
-```
+```console
 ~/code/mozilla-unified $ MOZCONFIG=debug.mozconfig ./mach ide vscode
 [snip]
  0:05.80 Unable to locate clangd in /home/delan/code/mozilla-unified/.mozbuild/clang-tools/clang-tidy/bin.
@@ -180,7 +191,7 @@ Otherwise you might get an error with lots of exclamation marks:
 
 Now switch to the commit we forked from, and generate them again.
 
-```
+```console
 ~/code/mozilla-unified $ hg update -r $(cat ../mozjs/mozjs/etc/COMMIT)
 ~/code/mozilla-unified $ MOZCONFIG=debug.mozconfig ./mach ide vscode
 ```
@@ -195,20 +206,20 @@ If there are no problems in the margin, and you can Go To Definition, you’re d
 
 If you are a NixOS user and see this in the clangd output panel:
 
-```
+```console
 [Error - 7:38:13 pm] Clang Language Server client: couldn't create connection to server.
 Launching server using command /home/delan/code/mozilla-unified/.mozbuild/clang-tools/clang-tidy/bin/clangd failed. Error: spawn /home/delan/code/mozilla-unified/.mozbuild/clang-tools/clang-tidy/bin/clangd ENOENT
 ```
 
 Then you need to replace the mozbuild toolchain’s clangd with one that has been patchelf’d:
 
-```
+```console
 ~/code/mozilla-unified $ ln -sf ~/.nix-profile/bin/clangd .mozbuild/clang-tools/clang-tidy/bin/clangd
 ```
 
 If you see this in the clangd output panel:
 
-```
+```console
 I[19:20:28.001] Indexed /home/delan/code/mozilla-unified/js/src/jit/LIR.cpp (61040 symbols, 244267 refs, 738 files)
 I[19:20:28.001] Failed to compile /home/delan/code/mozilla-unified/js/src/jit/LIR.cpp, index may be incomplete
 I[19:20:28.087] --> $/progress
@@ -216,7 +227,7 @@ I[19:20:28.087] --> $/progress
 
 Then the commands in your compilation database might be incorrect. You can try running one of the commands in a terminal to see what happens:
 
-```
+```console
 ~/code/mozilla-unified $ ( f=$PWD/obj-debug-x86_64-pc-linux-gnu/clangd/compile_commands.json; set -x; cd $(< $f jq -r '.[0].directory'); $(< $f jq -r '.[0].command') )
 +/run/current-system/sw/bin/zsh:252> jq -r '.[0].directory'
 +/run/current-system/sw/bin/zsh:252> cd /home/delan/code/mozilla-unified/obj-debug-x86_64-pc-linux-gnu/js/src
@@ -227,7 +238,7 @@ gcc: error: unrecognized command-line option ‘-ferror-limit=0’
 
 In this case, it was because your compiler was gcc (which supports `-fmax-errors` but not `-ferror-limit`), but it should always be clang (which supports both) when working with clangd. If you are a NixOS user, make sure you use the `clang` derivation, not the `gcc` derivation, when generating your compilation database:
 
-```
+```console
 ~/code/mozilla-unified $ nix-shell ~/code/nixpkgs-mozilla/release.nix -A gecko.x86_64-linux.clang --run 'MOZCONFIG=debug.mozconfig ./mach ide vscode'
                                                                                             ^^^^^
 ```
@@ -236,7 +247,7 @@ In this case, it was because your compiler was gcc (which supports `-fmax-errors
 
 Start by making a source tarball from your local upstream SpiderMonkey checkout. [TODO(@delan) the default xz compression is very slow here, we should add an option upstream to make it faster]
 
-```
+```console
 ~/code/mozilla-unified $ AUTOMATION=1 DIST=$PWD/../mozjs/mozjs/etc js/src/make-source-package.py
 ```
 
@@ -244,25 +255,25 @@ Start by making a source tarball from your local upstream SpiderMonkey checkout.
 
 Now update your vendored copy of SpiderMonkey from that tarball. This creates a commit replacing `mozjs/mozjs` with the *unpatched* contents of the tarball, leaving the changes made by reapplying our patches in your working directory diff (`git diff`).
 
-```
+```console
 ~/code/mozjs $ python3 mozjs/etc/update.py mozjs/etc/mozjs-107.0.0.tar.xz
 ```
 
 Then do a (mixed) reset to remove the commit and unstage its changes.
 
-```
+```console
 ~/code/mozjs $ git reset @~
 ```
 
 Your working directory diff (`git diff`) should now contain (and only contain) the changes you’ve made to your upstream SpiderMonkey checkout. If you see changes to `mozjs/mozjs/js/src/old-configure` [TODO(@delan) why does this happen?], you may need to undo them:
 
-```
+```console
 ~/code/mozjs $ git restore -W mozjs/mozjs/js/src/old-configure
 ```
 
 Otherwise you might get the build failure below:
 
-```
+```console
 ~/code/mozjs $ cargo build
 [snip]
   configure: error: can not find sources in /home/delan/code/mozjs/mozjs/mozjs/js/src or ..
@@ -277,6 +288,6 @@ Otherwise you might get the build failure below:
 
 Now you can build the Rust crates against your modified version of SpiderMonkey!
 
-```
+```console
 ~/code/mozjs $ cargo build
 ```
