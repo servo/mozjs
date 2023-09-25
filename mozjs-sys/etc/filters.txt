@@ -2,6 +2,7 @@
 - /js/src/fuzz-tests
 - /js/src/jit-test
 - /js/src/tests
+- /testing/web-platform
 
 # js-ctypes is deprecated.
 - /js/src/ctypes
