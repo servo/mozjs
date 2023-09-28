@@ -27,15 +27,16 @@ grep_heur() {
   grep -v 'MutableHandleObjectVector' # GetDebuggeeGlobals has it
 }
 
-find_fmt_parse() {
-  # clone file and reformat
+# usage find_latest_version_of_file_and_parse $input_file $out_wrapper_module_name
+find_latest_version_of_file_and_parse() {
+  # clone file and reformat (this is needed for grep_heur to work properly)
   # this $(find) only gets last modified file
   cp $(find target -name "$1" -printf "%T@ %p\n" | sort -n | tail -n 1 | tr ' ' '\n' | tail -n 1) "target/wrap_$1"
   rustfmt "target/wrap_$1" --config max_width=1000
   
-  # parse file
+  # parse reformated file
   grep_heur "target/wrap_$1" | $gsed 's/\(.*\)/wrap!('"$2"': \1);/g'  > "mozjs/src/$2_wrappers.in"
 }
 
-find_fmt_parse jsapi.rs jsapi
-find_fmt_parse gluebindings.rs glue
+find_latest_version_of_file_and_parse jsapi.rs jsapi
+find_latest_version_of_file_and_parse gluebindings.rs glue
