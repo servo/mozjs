@@ -49,3 +49,9 @@ fn run(rt: Runtime) {
     // Your application code here. This may include JSAPI calls to create your
     // own custom JS objects and run scripts.
 }
+
+/// For `cargo test` to actually run example
+#[test]
+fn minimal_example() {
+    main()
+}
