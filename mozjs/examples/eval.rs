@@ -59,3 +59,9 @@ fn main() {
     assert!(!runtime.cx().is_null(), "failed to create JSContext");
     run(runtime);
 }
+
+/// For `cargo test` to actually run example
+#[test]
+fn eval_example() {
+    main()
+}

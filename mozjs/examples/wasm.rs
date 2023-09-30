@@ -178,3 +178,9 @@ fn main() {
     assert!(!runtime.cx().is_null(), "failed to create JSContext");
     run(runtime);
 }
+
+/// For `cargo test` to actually run example
+#[test]
+fn wasm_example() {
+    main()
+}
