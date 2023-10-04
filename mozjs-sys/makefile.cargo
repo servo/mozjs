@@ -9,8 +9,11 @@ CONFIGURE_FLAGS := \
 	--disable-tests \
 	--disable-export-js \
 	--disable-shared-js \
-	--build-backends=RecursiveMake \
-	--enable-js-streams
+	--build-backends=RecursiveMake
+
+ifneq (,$(CARGO_FEATURE_STREAMS))
+    CONFIGURE_FLAGS += --enable-js-streams
+endif
 
 ifneq (,$(CARGO_FEATURE_JITSPEW))
     CONFIGURE_FLAGS += --enable-jitspew
