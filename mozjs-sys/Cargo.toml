@@ -26,6 +26,7 @@ doctest = false
 debugmozjs = []
 profilemozjs = []
 jitspew = []
+streams = []
 
 [dependencies]
 encoding_c = "0.9.8"
