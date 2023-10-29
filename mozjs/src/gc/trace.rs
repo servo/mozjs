@@ -29,7 +29,7 @@ use std::sync::atomic::{
 };
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Instant, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::rust::{Runtime, Stencil};
 use crate::typedarray::{TypedArray, TypedArrayElement};
@@ -396,7 +396,7 @@ impl_traceable_simple!(AtomicI8, AtomicI16, AtomicI32, AtomicI64, AtomicIsize);
 impl_traceable_simple!(AtomicU8, AtomicU16, AtomicU32, AtomicU64, AtomicUsize);
 impl_traceable_simple!(Cow<'static, str>);
 impl_traceable_simple!(TypeId);
-impl_traceable_simple!(SystemTime, Instant);
+impl_traceable_simple!(Duration, Instant, SystemTime);
 impl_traceable_simple!(PathBuf);
 impl_traceable_simple!(Range<u64>);
 impl_traceable_simple!(JoinHandle<()>);
