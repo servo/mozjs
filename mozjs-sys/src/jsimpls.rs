@@ -189,13 +189,7 @@ impl JS::AutoGCRooter {
 
     pub unsafe fn remove_from_root_stack(&mut self) {
         assert!(*self.stackTop == self);
-        // This hoop-jumping is needed because bindgen gives stackTop
-        // the type *const *mut AutoGCRooter, so we need to make it
-        // mutable before setting it.
-        // https://github.com/rust-lang-nursery/rust-bindgen/issues/511
-        #[allow(non_snake_case)]
-        let autoGCRooters = &*self.stackTop as *const _ as *mut _;
-        *autoGCRooters = self.down;
+        *self.stackTop = self.down;
     }
 }
 
