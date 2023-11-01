@@ -1020,7 +1020,7 @@ void JS_GetReservedSlot(JSObject* obj, uint32_t index, JS::Value* dest) {
   *dest = JS::GetReservedSlot(obj, index);
 }
 
-void GetRegExpFlags(JSContext* cx, JS::HandleObject obj, JS::RegExpFlags* flags) {
+void JS_GetRegExpFlags(JSContext* cx, JS::HandleObject obj, JS::RegExpFlags* flags) {
   *flags = JS::GetRegExpFlags(cx, obj);
 }
 
