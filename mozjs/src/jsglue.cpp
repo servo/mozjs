@@ -23,6 +23,7 @@
 #include "js/Principals.h"
 #include "js/Promise.h"
 #include "js/Proxy.h"
+#include "js/RegExp.h"
 #include "js/ScalarType.h"
 #include "js/Stream.h"
 #include "js/StructuredClone.h"
@@ -985,13 +986,12 @@ bool WriteBytesToJSStructuredCloneData(const uint8_t* src, size_t len,
   return dest->AppendBytes(reinterpret_cast<const char*>(src), len);
 }
 
-// MSVC uses a different calling conventions for functions
+// MSVC uses a different calling convention for functions
 // that return non-POD values. Unfortunately, this includes anything
-// with a constructor, such as JS::Value, so we can't call these
-// from Rust. These wrapper functions are only here to
-// ensure the calling convention is right.
-// https://docs.microsoft.com/en-us/cpp/build/return-values-cpp
-// https://mozilla.logbot.info/jsapi/20180622#c14918658
+// with a constructor, such as JS::Value and JS::RegExpFlags, so we 
+// can't call these from Rust. These wrapper functions are only here
+// to ensure the calling convention is right.
+// https://web.archive.org/web/20180929193700/https://mozilla.logbot.info/jsapi/20180622#c14918658
 
 void JS_GetPromiseResult(JS::HandleObject promise,
                          JS::MutableHandleValue dest) {
@@ -1018,6 +1018,10 @@ void JS_GetEmptyStringValue(JSContext* cx, JS::Value* dest) {
 
 void JS_GetReservedSlot(JSObject* obj, uint32_t index, JS::Value* dest) {
   *dest = JS::GetReservedSlot(obj, index);
+}
+
+void JS_GetRegExpFlags(JSContext* cx, JS::HandleObject obj, JS::RegExpFlags* flags) {
+  *flags = JS::GetRegExpFlags(cx, obj);
 }
 
 // keep this in sync with EncodedStringCallback in glue.rs
