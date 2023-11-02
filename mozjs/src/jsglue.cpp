@@ -988,7 +988,7 @@ bool WriteBytesToJSStructuredCloneData(const uint8_t* src, size_t len,
 
 // MSVC uses a different calling convention for functions
 // that return non-POD values. Unfortunately, this includes anything
-// with a constructor, such as JS::Value as JS::RegExpFlags, so we 
+// with a constructor, such as JS::Value and JS::RegExpFlags, so we 
 // can't call these from Rust. These wrapper functions are only here
 // to ensure the calling convention is right.
 // https://web.archive.org/web/20180929193700/https://mozilla.logbot.info/jsapi/20180622#c14918658
