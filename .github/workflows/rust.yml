@@ -7,6 +7,9 @@ on:
   workflow_dispatch:
   merge_group:
     types: [checks_requested]
+  schedule:
+    # Runs at 03:30, every Saturday
+    - cron: "30 3 * * 6"
 
 env:
   RUST_BACKTRACE: 1
