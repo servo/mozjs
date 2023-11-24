@@ -271,11 +271,12 @@ fn build_jsapi(build_dir: &Path) {
 
 fn build_jsglue(build_dir: &Path) {
     let mut build = cc::Build::new();
+    // "-undefined" and "dynamic_lookup" to avoid compiler's complain about linking
     build.cpp(true)
          .shared_flag(true)
          .flag("-undefined")
          .flag("dynamic_lookup")
-         .flag_if_supported("-std=g++17");
+         .flag_if_supported("-std=g++17"); // this seems mac specific, we already have gnu++ in cc_flags(), yet it only seems to be working with g++
 
     for flag in cc_flags() {
         build.flag_if_supported(flag);
@@ -299,7 +300,7 @@ fn build_jsglue(build_dir: &Path) {
     //We had static libs in /glue, make sure we have shared object at the same path
     let glue_dir = build_dir.join("glue");
     std::fs::create_dir_all(&glue_dir).expect("Failed to create glue directory");
-    let file = glue_dir.join("jsglue.dylib");
+    let file = glue_dir.join(format!("{}.dylib", "jsglue"));
     let mut cmd = build.get_compiler().to_command();
     cmd.arg("src/jsglue.cpp")
        .arg("-o")

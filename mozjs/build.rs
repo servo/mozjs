@@ -37,18 +37,22 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
 fn main() {
     //let mut build = cxx_build::bridge("src/jsglue.rs"); // returns a cc::Build;
     let mut build = cc::Build::new();
-    let outdir = env::var("DEP_MOZJS_OUTDIR").unwrap();
-    let include_path: PathBuf = [&outdir, "dist", "include"].iter().collect();
+    let out_dir = env::var("DEP_MOZJS_OUTDIR").unwrap();
+    let include_path: PathBuf = [&out_dir, "dist", "include"].iter().collect();
 
     build
         .cpp(true)
         .file("src/jsglue.cpp")
+        .shared_flag(true)
+        .flag("-undefined")
+        .flag("dynamic_lookup")
         .include(&include_path);
+
     for flag in cc_flags(false) {
         build.flag_if_supported(flag);
     }
 
-    let confdefs_path: PathBuf = [&outdir, "js", "src", "js-confdefs.h"].iter().collect();
+    let confdefs_path: PathBuf = [&out_dir, "js", "src", "js-confdefs.h"].iter().collect();
     let msvc = if build.get_compiler().is_like_msvc() {
         build.flag(&format!("-FI{}", confdefs_path.to_string_lossy()));
         build.define("WIN32", "");
@@ -65,7 +69,19 @@ fn main() {
         false
     };
 
-    build.compile("jsglue");
+    let out_dir_path = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let file = out_dir_path.join(format!("{}.dylib", "jsglue"));
+    let mut cmd = build.get_compiler().to_command();
+    cmd.arg("src/jsglue.cpp")
+       .arg("-o")
+       .arg(&file);
+
+    println!("cargo:rustc-link-lib=dylib=jsglue");
+    println!("cargo:rustc-link-search=native={}", out_dir_path.display());
+
+    let status = cmd.status().expect("Failed to link the dynamic library");
+    assert!(status.success(), "Linking failed");
+
     println!("cargo:rerun-if-changed=src/jsglue.cpp");
     let mut builder = bindgen::Builder::default()
         .header("./src/jsglue.cpp")
