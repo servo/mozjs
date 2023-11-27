@@ -300,7 +300,7 @@ fn build_jsglue(build_dir: &Path) {
     //We had static libs in /glue, make sure we have shared object at the same path
     let glue_dir = build_dir.join("glue");
     std::fs::create_dir_all(&glue_dir).expect("Failed to create glue directory");
-    let file = glue_dir.join(format!("{}.dylib", "jsglue"));
+    let file = glue_dir.join(format!("{}.dylib", "libjsglue"));
     let mut cmd = build.get_compiler().to_command();
     cmd.arg("src/jsglue.cpp")
        .arg("-o")

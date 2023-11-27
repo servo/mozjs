@@ -70,7 +70,7 @@ fn main() {
     };
 
     let out_dir_path = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let file = out_dir_path.join(format!("{}.dylib", "jsglue"));
+    let file = out_dir_path.join(format!("{}.dylib", "libjsglue"));
     let mut cmd = build.get_compiler().to_command();
     cmd.arg("src/jsglue.cpp")
        .arg("-o")
