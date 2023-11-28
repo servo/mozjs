@@ -41,6 +41,9 @@ else:
     Library("js")
     USE_LIBS += ["mozglue"]
 
+# We should remove this, we don't want both static and dynamic lib
+FORCE_STATIC_LIB = True
+STATIC_LIBRARY_NAME = "js_static"
 
 if CONFIG["JS_HAS_INTL_API"]:
     USE_LIBS += [
@@ -89,7 +92,18 @@ if CONFIG["MOZ_NEEDS_LIBATOMIC"]:
 
 OS_LIBS += CONFIG["REALTIME_LIBS"]
 
+NO_EXPAND_LIBS = True
+
 DIST_INSTALL = True
 
 # Run SpiderMonkey style checker after linking the static library. This avoids
 # running the script for no-op builds.
+GeneratedFile(
+    "spidermonkey_checks",
+    script="/config/run_spidermonkey_checks.py",
+    inputs=[
+        "!%sjs_static.%s" % (CONFIG["LIB_PREFIX"], CONFIG["LIB_SUFFIX"]),
+        "/config/check_macroassembler_style.py",
+        "/config/check_js_opcode.py",
+    ],
+)
