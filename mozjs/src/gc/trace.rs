@@ -3,7 +3,7 @@ use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
     CallStringTracer, CallSymbolTracer, CallValueTracer,
 };
-use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, Value};
+use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, PropertyDescriptor, Value};
 use mozjs_sys::jsapi::js::TraceValueArray;
 use mozjs_sys::jsapi::JS::{BigInt, JobQueue, Symbol};
 use mozjs_sys::jsgc::{Heap, ValueArray};
@@ -113,6 +113,19 @@ unsafe impl Traceable for Heap<jsid> {
     unsafe fn trace(&self, trc: *mut JSTracer) {
         CallIdTracer(trc, self as *const _ as *mut Self, c_str!("id"));
     }
+}
+
+unsafe impl Traceable for Heap<PropertyDescriptor> {
+	#[inline]
+	unsafe fn trace(&self, trc: *mut JSTracer) {
+		if !self.getter_.is_null() {
+			CallObjectTracer(trc, &self.getter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("object"));
+        }
+		if !self.setter_.is_null() {
+			CallObjectTracer(trc, &self.setter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("object"));
+        }
+		CallValueTracer(trc, &self.value_ as *const _ as *mut Heap<JSVal>, c_str!("object"));
+	}
 }
 
 unsafe impl<T: Traceable> Traceable for Rc<T> {
