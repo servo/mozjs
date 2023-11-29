@@ -118,12 +118,13 @@ unsafe impl Traceable for Heap<jsid> {
 unsafe impl Traceable for Heap<PropertyDescriptor> {
 	#[inline]
 	unsafe fn trace(&self, trc: *mut JSTracer) {
-		CallValueTracer(trc, &self.value_ as *const _ as *mut Heap<Value>, c_str!("PropertyDescriptor::value"));
-		if !self.getter_.is_null() {
-			CallObjectTracer(trc, &self.getter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("PropertyDescriptor::getter"));
+		let desc = &*self.get_unsafe();
+		CallValueTracer(trc, &desc.value_ as *const _ as *mut Heap<Value>, c_str!("PropertyDescriptor::value"));
+		if !desc.getter_.is_null() {
+			CallObjectTracer(trc, &desc.getter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("PropertyDescriptor::getter"));
         }
-		if !self.setter_.is_null() {
-			CallObjectTracer(trc, &self.setter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("PropertyDescriptor::setter"));
+		if !desc.setter_.is_null() {
+			CallObjectTracer(trc, &desc.setter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("PropertyDescriptor::setter"));
         }
 	}
 }
