@@ -3,7 +3,9 @@ use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
     CallStringTracer, CallSymbolTracer, CallValueTracer,
 };
-use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, PropertyDescriptor, Value};
+use crate::jsapi::{
+    jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, PropertyDescriptor, Value,
+};
 use mozjs_sys::jsapi::js::TraceValueArray;
 use mozjs_sys::jsapi::JS::{BigInt, JobQueue, Symbol};
 use mozjs_sys::jsgc::{Heap, ValueArray};
@@ -116,17 +118,29 @@ unsafe impl Traceable for Heap<jsid> {
 }
 
 unsafe impl Traceable for Heap<PropertyDescriptor> {
-	#[inline]
-	unsafe fn trace(&self, trc: *mut JSTracer) {
-		let desc = &*self.get_unsafe();
-		CallValueTracer(trc, &desc.value_ as *const _ as *mut Heap<Value>, c_str!("PropertyDescriptor::value"));
-		if !desc.getter_.is_null() {
-			CallObjectTracer(trc, &desc.getter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("PropertyDescriptor::getter"));
+    #[inline]
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        let desc = &*self.get_unsafe();
+        CallValueTracer(
+            trc,
+            &desc.value_ as *const _ as *mut Heap<Value>,
+            c_str!("PropertyDescriptor::value"),
+        );
+        if !desc.getter_.is_null() {
+            CallObjectTracer(
+                trc,
+                &desc.getter_ as *const _ as *mut Heap<*mut JSObject>,
+                c_str!("PropertyDescriptor::getter"),
+            );
         }
-		if !desc.setter_.is_null() {
-			CallObjectTracer(trc, &desc.setter_ as *const _ as *mut Heap<*mut JSObject>, c_str!("PropertyDescriptor::setter"));
+        if !desc.setter_.is_null() {
+            CallObjectTracer(
+                trc,
+                &desc.setter_ as *const _ as *mut Heap<*mut JSObject>,
+                c_str!("PropertyDescriptor::setter"),
+            );
         }
-	}
+    }
 }
 
 unsafe impl<T: Traceable> Traceable for Rc<T> {
