@@ -8,7 +8,6 @@ use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
 use crate::jsid::VoidId;
 use std::cell::UnsafeCell;
 use std::ffi::c_void;
-use std::mem;
 use std::ptr;
 
 /// A trait for JS types that can be registered as roots.
@@ -116,9 +115,9 @@ impl GCMethods for *mut JSFunction {
     }
     unsafe fn post_barrier(v: *mut *mut JSFunction, prev: *mut JSFunction, next: *mut JSFunction) {
         JS::HeapObjectWriteBarriers(
-            mem::transmute(v),
-            mem::transmute(prev),
-            mem::transmute(next),
+            v as *mut *mut JSObject,
+            prev as *mut JSObject,
+            next as *mut JSObject,
         );
     }
 }
