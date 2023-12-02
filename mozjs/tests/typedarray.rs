@@ -9,7 +9,7 @@ use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::typedarray;
-use mozjs::typedarray::{CreateWith, Float32Array, Uint32Array};
+use mozjs::typedarray::{BigInt64Array, CreateWith, Float32Array, Uint32Array};
 
 #[test]
 fn typedarray() {
@@ -97,5 +97,15 @@ fn typedarray() {
         typedarray!(in(context) let mut array: Float32Array = rval.get());
         array.as_mut().unwrap().update(&[0.5, 1.0, 2.0]);
         assert_eq!(array.unwrap().as_slice(), &[0.5, 1.0, 2.0, 2.0, 4.0]);
+
+        rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
+        assert!(BigInt64Array::create(context, CreateWith::Slice(&[-6, -1, 0, 2, 5]), rval.handle_mut()).is_ok());
+
+        typedarray!(in(context) let array: BigInt64Array = rval.get());
+        assert_eq!(array.unwrap().as_slice(), &[-6, -1, 0, 2, 5]);
+
+        typedarray!(in(context) let mut array: BigInt64Array = rval.get());
+        array.as_mut().unwrap().update(&[-12, -2, -1]);
+        assert_eq!(array.unwrap().as_slice(), &[-12, -2, -1, 2, 5]);
     }
 }
