@@ -9,7 +9,7 @@ use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::typedarray;
-use mozjs::typedarray::{CreateWith, Uint32Array};
+use mozjs::typedarray::{CreateWith, Float32Array, Uint32Array};
 
 #[test]
 fn typedarray() {
@@ -42,7 +42,7 @@ fn typedarray() {
         assert!(rval.is_object());
 
         typedarray!(in(context) let array: Uint8Array = rval.to_object());
-        assert_eq!(array.unwrap().as_slice(), &[0, 2, 4][..]);
+        assert_eq!(array.unwrap().as_slice(), &[0, 2, 4]);
 
         typedarray!(in(context) let array: Uint8Array = rval.to_object());
         assert_eq!(array.unwrap().len(), 3);
@@ -62,11 +62,11 @@ fn typedarray() {
         );
 
         typedarray!(in(context) let array: Uint32Array = rval.get());
-        assert_eq!(array.unwrap().as_slice(), &[1, 3, 5][..]);
+        assert_eq!(array.unwrap().as_slice(), &[1, 3, 5]);
 
         typedarray!(in(context) let mut array: Uint32Array = rval.get());
         array.as_mut().unwrap().update(&[2, 4, 6]);
-        assert_eq!(array.unwrap().as_slice(), &[2, 4, 6][..]);
+        assert_eq!(array.unwrap().as_slice(), &[2, 4, 6]);
 
         rooted!(in(context) let rval = ptr::null_mut::<JSObject>());
         typedarray!(in(context) let array: Uint8Array = rval.get());
@@ -87,5 +87,15 @@ fn typedarray() {
 
         typedarray!(in(context) let view: ArrayBufferView = rval.get());
         assert_eq!(view.unwrap().is_shared(), false);
+
+        rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
+        assert!(Float32Array::create(context, CreateWith::Slice(&[0.25, 0.5, 1.0, 2.0, 4.0]), rval.handle_mut()).is_ok());
+
+        typedarray!(in(context) let array: Float32Array = rval.get());
+        assert_eq!(array.unwrap().as_slice(), &[0.25, 0.5, 1.0, 2.0, 4.0]);
+
+        typedarray!(in(context) let mut array: Float32Array = rval.get());
+        array.as_mut().unwrap().update(&[0.5, 1.0, 2.0]);
+        assert_eq!(array.unwrap().as_slice(), &[0.5, 1.0, 2.0, 2.0, 4.0]);
     }
 }
