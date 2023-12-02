@@ -98,6 +98,18 @@ fn AssertGCPointerAlignment(bits: u64) {
 #[inline(always)]
 fn AssertGCPointerAlignment(bits: u64) {}
 
+#[cfg(target_pointer_width = "64")]
+#[inline(always)]
+fn IsValidUserModePointer(bits: u64) -> bool {
+    bits & 0xFFFF_0000_0000_0000 == 0
+}
+
+#[cfg(target_pointer_width = "32")]
+#[inline(always)]
+fn IsValidUserModePointer(_: u64) -> bool {
+    true
+}
+
 #[inline(always)]
 pub fn Int32Value(i: i32) -> JSVal {
     BuildJSVal(ValueTag::INT32, i as u32 as u64)
@@ -115,9 +127,11 @@ pub fn NullValue() -> JSVal {
 
 #[inline(always)]
 pub fn DoubleValue(f: f64) -> JSVal {
-    let bits: u64 = f.to_bits();
-    assert!(bits <= ValueShiftedTag::MAX_DOUBLE as u64);
-    JSVal { asBits_: bits }
+    let val = JSVal {
+        asBits_: f.to_bits(),
+    };
+    assert!(val.is_double());
+    val
 }
 
 #[inline(always)]
@@ -174,8 +188,7 @@ pub fn ObjectOrNullValue(o: *mut JSObject) -> JSVal {
 #[inline(always)]
 pub fn PrivateValue(o: *const c_void) -> JSVal {
     let ptrBits = o as usize as u64;
-    #[cfg(target_pointer_width = "64")]
-    assert_eq!(ptrBits & 0xFFFF000000000000, 0);
+    assert!(IsValidUserModePointer(ptrBits));
     JSVal { asBits_: ptrBits }
 }
 
@@ -222,9 +235,16 @@ impl JSVal {
         self.toTag() == ValueTag::INT32 as u64
     }
 
+    #[cfg(target_pointer_width = "64")]
     #[inline(always)]
     pub fn is_double(&self) -> bool {
         self.asBits() <= ValueShiftedTag::MAX_DOUBLE as u64
+    }
+
+    #[cfg(target_pointer_width = "32")]
+    #[inline(always)]
+    pub fn is_double(&self) -> bool {
+        (self.asBits() >> JSVAL_TAG_SHIFT) as u32 <= JSVAL_TAG_CLEAR
     }
 
     #[cfg(target_pointer_width = "64")]
@@ -402,10 +422,13 @@ impl JSVal {
     }
 
     #[inline(always)]
+    pub fn is_private(&self) -> bool {
+        self.is_double() && IsValidUserModePointer(self.asBits())
+    }
+
+    #[inline(always)]
     pub fn to_private(&self) -> *const c_void {
-        assert!(self.is_double());
-        #[cfg(target_pointer_width = "64")]
-        assert_eq!(self.asBits() & 0xFFFF000000000000, 0);
+        assert!(self.is_private());
         self.asBits() as usize as *const c_void
     }
 
