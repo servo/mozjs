@@ -547,7 +547,7 @@ impl JS::ForOfIterator {
 }
 
 impl<T> mozilla::Range<T> {
-    pub fn new(start: &mut T, end: &mut T) -> mozilla::Range<T> {
+    pub fn new(start: *mut T, end: *mut T) -> mozilla::Range<T> {
         mozilla::Range {
             mStart: mozilla::RangedPtr {
                 mPtr: start,
