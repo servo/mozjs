@@ -18,6 +18,7 @@ use crate::jsapi::JSPropertySpec;
 use crate::jsapi::JSPropertySpec_Kind;
 use crate::jsapi::JSPropertySpec_Name;
 use crate::jsapi::JS;
+use crate::jsapi::mozilla;
 use crate::jsgc::RootKind;
 use crate::jsid::VoidId;
 use crate::jsval::UndefinedValue;
@@ -543,4 +544,28 @@ impl JS::ForOfIterator {
     pub unsafe fn next(&mut self, val: JS::MutableHandleValue, done: *mut bool) -> bool {
         JS_ForOfIteratorNext(self, val, done)
     }
+}
+
+impl<T> mozilla::Range<T> {
+	pub fn new(start: &mut T, end: &mut T) -> mozilla::Range<T> {
+		mozilla::Range {
+			mStart: mozilla::RangedPtr {
+				mPtr: start,
+				#[cfg(feature = "debugmozjs")]
+				mRangeStart: start,
+				#[cfg(feature = "debugmozjs")]
+				mRangeEnd: end,
+				_phantom_0: PhantomData,
+			},
+			mEnd: mozilla::RangedPtr {
+				mPtr: end,
+				#[cfg(feature = "debugmozjs")]
+				mRangeStart: start,
+				#[cfg(feature = "debugmozjs")]
+				mRangeEnd: end,
+				_phantom_0: PhantomData,
+			},
+			_phantom_0: PhantomData,
+		}
+	}
 }
