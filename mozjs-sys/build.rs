@@ -30,7 +30,6 @@ const ENV_VARS: &'static [&'static str] = &[
 
 const EXTRA_FILES: &'static [&'static str] = &[
     "makefile.cargo",
-    "src/rustfmt.toml",
     "src/jsglue.hpp",
     "src/jsglue.cpp",
 ];
