@@ -5,6 +5,7 @@
 use crate::jsapi::glue::JS_ForOfIteratorInit;
 use crate::jsapi::glue::JS_ForOfIteratorNext;
 use crate::jsapi::jsid;
+use crate::jsapi::mozilla;
 use crate::jsapi::JSAutoRealm;
 use crate::jsapi::JSContext;
 use crate::jsapi::JSErrNum;
@@ -18,12 +19,11 @@ use crate::jsapi::JSPropertySpec;
 use crate::jsapi::JSPropertySpec_Kind;
 use crate::jsapi::JSPropertySpec_Name;
 use crate::jsapi::JS;
-use crate::jsapi::mozilla;
 use crate::jsgc::RootKind;
 use crate::jsid::VoidId;
 use crate::jsval::UndefinedValue;
 
-use crate::jsapi::JS::{ObjectOpResult, ObjectOpResult_SpecialCodes};
+use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::os::raw::c_void;
@@ -88,7 +88,7 @@ impl<T> JS::Handle<T> {
     pub unsafe fn from_marked_location(ptr: *const T) -> JS::Handle<T> {
         JS::Handle {
             ptr: ptr as *mut T,
-            _phantom_0: ::std::marker::PhantomData,
+            _phantom_0: PhantomData,
         }
     }
 }
@@ -97,7 +97,7 @@ impl<T> JS::MutableHandle<T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> JS::MutableHandle<T> {
         JS::MutableHandle {
             ptr,
-            _phantom_0: ::std::marker::PhantomData,
+            _phantom_0: PhantomData,
         }
     }
 
@@ -380,9 +380,9 @@ impl JSNativeWrapper {
 impl<T> JS::Rooted<T> {
     pub fn new_unrooted() -> JS::Rooted<T> {
         JS::Rooted {
-            stack: ::std::ptr::null_mut(),
-            prev: ::std::ptr::null_mut(),
-            ptr: unsafe { ::std::mem::zeroed() },
+            stack: ptr::null_mut(),
+            prev: ptr::null_mut(),
+            ptr: unsafe { std::mem::zeroed() },
         }
     }
 
@@ -524,10 +524,10 @@ impl JS::ObjectOpResult {
     }
 }
 
-impl Default for ObjectOpResult {
-    fn default() -> ObjectOpResult {
-        ObjectOpResult {
-            code_: ObjectOpResult_SpecialCodes::Uninitialized as usize,
+impl Default for JS::ObjectOpResult {
+    fn default() -> JS::ObjectOpResult {
+        JS::ObjectOpResult {
+            code_: JS::ObjectOpResult_SpecialCodes::Uninitialized as usize,
         }
     }
 }
@@ -547,25 +547,25 @@ impl JS::ForOfIterator {
 }
 
 impl<T> mozilla::Range<T> {
-	pub fn new(start: &mut T, end: &mut T) -> mozilla::Range<T> {
-		mozilla::Range {
-			mStart: mozilla::RangedPtr {
-				mPtr: start,
-				#[cfg(feature = "debugmozjs")]
-				mRangeStart: start,
-				#[cfg(feature = "debugmozjs")]
-				mRangeEnd: end,
-				_phantom_0: PhantomData,
-			},
-			mEnd: mozilla::RangedPtr {
-				mPtr: end,
-				#[cfg(feature = "debugmozjs")]
-				mRangeStart: start,
-				#[cfg(feature = "debugmozjs")]
-				mRangeEnd: end,
-				_phantom_0: PhantomData,
-			},
-			_phantom_0: PhantomData,
-		}
-	}
+    pub fn new(start: &mut T, end: &mut T) -> mozilla::Range<T> {
+        mozilla::Range {
+            mStart: mozilla::RangedPtr {
+                mPtr: start,
+                #[cfg(feature = "debugmozjs")]
+                mRangeStart: start,
+                #[cfg(feature = "debugmozjs")]
+                mRangeEnd: end,
+                _phantom_0: PhantomData,
+            },
+            mEnd: mozilla::RangedPtr {
+                mPtr: end,
+                #[cfg(feature = "debugmozjs")]
+                mRangeStart: start,
+                #[cfg(feature = "debugmozjs")]
+                mRangeEnd: end,
+                _phantom_0: PhantomData,
+            },
+            _phantom_0: PhantomData,
+        }
+    }
 }
