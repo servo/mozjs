@@ -89,7 +89,12 @@ fn typedarray() {
         assert_eq!(view.unwrap().is_shared(), false);
 
         rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
-        assert!(Float32Array::create(context, CreateWith::Slice(&[0.25, 0.5, 1.0, 2.0, 4.0]), rval.handle_mut()).is_ok());
+        assert!(Float32Array::create(
+            context,
+            CreateWith::Slice(&[0.25, 0.5, 1.0, 2.0, 4.0]),
+            rval.handle_mut()
+        )
+        .is_ok());
 
         typedarray!(in(context) let array: Float32Array = rval.get());
         assert_eq!(array.unwrap().as_slice(), &[0.25, 0.5, 1.0, 2.0, 4.0]);
@@ -99,7 +104,12 @@ fn typedarray() {
         assert_eq!(array.unwrap().as_slice(), &[0.5, 1.0, 2.0, 2.0, 4.0]);
 
         rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
-        assert!(BigInt64Array::create(context, CreateWith::Slice(&[-6, -1, 0, 2, 5]), rval.handle_mut()).is_ok());
+        assert!(BigInt64Array::create(
+            context,
+            CreateWith::Slice(&[-6, -1, 0, 2, 5]),
+            rval.handle_mut()
+        )
+        .is_ok());
 
         typedarray!(in(context) let array: BigInt64Array = rval.get());
         assert_eq!(array.unwrap().as_slice(), &[-6, -1, 0, 2, 5]);
