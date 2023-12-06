@@ -1,0 +1,42 @@
+diff --git a/build/moz.configure/toolchain.configure b/build/moz.configure/toolchain.configure
+index 3f91d7153..abe78a50c 100755
+--- a/build/moz.configure/toolchain.configure
++++ b/build/moz.configure/toolchain.configure
+@@ -1752,10 +1752,9 @@ def select_linker_tmpl(host_or_target):
+             die("Unsupported linker " + linker)
+ 
+         # Check the kind of linker
+-        version_check = ["-Wl,--version"]
+         cmd_base = c_compiler.wrapper + [c_compiler.compiler] + c_compiler.flags
+ 
+-        def try_linker(linker):
++        def try_linker(linker, version_check="-Wl,--version"):
+             # Generate the compiler flag
+             if linker == "ld64":
+                 linker_flag = ["-fuse-ld=ld"]
+@@ -1763,7 +1762,7 @@ def select_linker_tmpl(host_or_target):
+                 linker_flag = ["-fuse-ld=" + linker]
+             else:
+                 linker_flag = []
+-            cmd = cmd_base + linker_flag + version_check
++            cmd = cmd_base + linker_flag + [version_check]
+             if toolchain_flags:
+                 cmd += toolchain_flags
+ 
+@@ -1779,11 +1778,14 @@ def select_linker_tmpl(host_or_target):
+             # ensure consistent output.
+             env["LC_ALL"] = "C"
+             retcode, stdout, stderr = get_cmd_output(*cmd, env=env)
+-            if retcode == 1 and "Logging ld64 options" in stderr:
++            if retcode == 1 and ("Logging ld64 options" in stderr or "PROGRAM:ld  PROJECT:dyld" in stderr):
+                 kind = "ld64"
+ 
+             elif retcode != 0:
+-                return None
++                if version_check == "-Wl,--version":
++                    return try_linker(linker, "-Wl,-v")
++                else:
++                    return None
+ 
+             elif "mold" in stdout:
+                 kind = "mold"
