@@ -70,6 +70,10 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
                                         bool ignoreSelfHostedFrames,
                                         JS::StackCapture*);
 
+size_t GetLinearStringLength(JSLinearString* s);
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
+JSLinearString* AtomToLinearString(JSAtom* atom);
+
 // Reexport some methods
 
 bool JS_ForOfIteratorInit(
@@ -101,10 +105,6 @@ void JS_ValueSetNull(JS::Value* value);
 bool JS_ValueIsNull(const JS::Value* value);
 
 bool JS_ValueIsUndefined(const JS::Value* value);
-
-size_t GetLinearStringLength(JSLinearString* s);
-uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
-JSLinearString* AtomToLinearString(JSAtom* atom);
 
 // These types are using maybe so we manually unwrap them in these wrappers
 

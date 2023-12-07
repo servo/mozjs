@@ -4,7 +4,7 @@
 
 #![allow(unused_extern_crates)]
 
-// This extern crates are needed for linking
+// These extern crates are needed for linking
 extern crate encoding_c;
 extern crate encoding_c_mem;
 extern crate libz_sys;
@@ -31,7 +31,7 @@ mod generated {
 }*/
 
 /// Configure a panic hook to redirect rust panics to MFBT's MOZ_Crash.
-/// See https://searchfox.org/mozilla-esr115/source/mozglue/static/rust/lib.rs#106
+/// See <https://searchfox.org/mozilla-esr115/source/mozglue/static/rust/lib.rs#106>
 #[no_mangle]
 pub extern "C" fn install_rust_hooks() {
     //std::panic::set_hook(Box::new(panic_hook));

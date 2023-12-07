@@ -56,6 +56,18 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
   mozilla::PodAssign(capture, &subsumed);
 }
 
+size_t GetLinearStringLength(JSLinearString* s) {
+  return JS::GetLinearStringLength(s);
+}
+
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx) {
+  return JS::GetLinearStringCharAt(s, idx);
+}
+
+JSLinearString* AtomToLinearString(JSAtom* atom) {
+  return JS::AtomToLinearString(atom);
+}
+
 // Reexport some methods
 
 bool JS_ForOfIteratorInit(
@@ -101,18 +113,6 @@ bool JS_ValueIsNull(const JS::Value* value) { return value->isNull(); }
 
 bool JS_ValueIsUndefined(const JS::Value* value) {
   return value->isUndefined();
-}
-
-size_t GetLinearStringLength(JSLinearString* s) {
-  return JS::GetLinearStringLength(s);
-}
-
-uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx) {
-  return JS::GetLinearStringCharAt(s, idx);
-}
-
-JSLinearString* AtomToLinearString(JSAtom* atom) {
-  return JS::AtomToLinearString(atom);
 }
 
 // These types are using maybe so we manually unwrap them in these wrappers

@@ -417,6 +417,7 @@ const WHITELIST_TYPES: &'static [&'static str] = &["JS.*", "js::.*", "mozilla::.
 
 /// Global variables we want to generate bindings to.
 const WHITELIST_VARS: &'static [&'static str] = &[
+    "JS::FalseHandleValue",
     "JS::NullHandleValue",
     "JS::TrueHandleValue",
     "JS::UndefinedHandleValue",
@@ -424,19 +425,16 @@ const WHITELIST_VARS: &'static [&'static str] = &[
     "JSFUN_.*",
     "JSITER_.*",
     "JSPROP_.*",
-    "JSREG_.*",
     "JS_.*",
     "js::Proxy.*",
 ];
 
 /// Functions we want to generate bindings to.
 const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
-    "ExceptionStackOrNull",
     "glue::.*",
     "JS::.*",
     "js::.*",
     "JS_.*",
-    ".*_TO_JSID",
     "JS_DeprecatedStringHasLatin1Chars",
 ];
 
@@ -479,10 +477,9 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
 /// features that don't have an equivalent in rust, such as partial template
 /// specialization.
 const OPAQUE_TYPES: &'static [&'static str] = &[
-    "JS::Auto.*Impl",
     "JS::StackGCVector.*",
     "JS::PersistentRooted.*",
-    "JS::detail::CallArgsBase.*",
+    "JS::detail::CallArgsBase",
     "js::detail::UniqueSelector.*",
     "mozilla::BufferList",
     "mozilla::Maybe.*",
@@ -510,7 +507,7 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::MutableHandleVector",
     "JS::Rooted.*Vector",
     "JS::RootedValueArray",
-    // Classes we don't use and we cannot generate theri
+    // Classes we don't use and we cannot generate their
     // types properly from bindgen so we'll skip them for now.
     "JS::dbg::Builder",
     "JS::dbg::Builder_BuiltThing",
