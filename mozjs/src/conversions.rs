@@ -36,7 +36,7 @@ use crate::jsapi::{Heap, JS_DefineElement, JS_GetLatin1StringCharsAndLength};
 use crate::jsapi::{JSContext, JSObject, JSString, RootedObject, RootedValue};
 use crate::jsapi::{JS_DeprecatedStringHasLatin1Chars, JS_NewUCStringCopyN, JSPROP_ENUMERATE};
 use crate::jsapi::{JS_GetTwoByteStringCharsAndLength, NewArrayObject1};
-use crate::jsval::{BooleanValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
+use crate::jsval::{BooleanValue, Int32Value, DoubleValue, NullValue, UInt32Value, UndefinedValue};
 use crate::jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolValue};
 use crate::rooted;
 use crate::rust::maybe_wrap_value;
@@ -50,7 +50,6 @@ use std::borrow::Cow;
 use std::mem;
 use std::rc::Rc;
 use std::{ptr, slice};
-use mozjs_sys::jsval::DoubleValue;
 
 trait As<O>: Copy {
     fn cast(self) -> O;
