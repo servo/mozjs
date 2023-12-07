@@ -29,7 +29,6 @@
 #![deny(missing_docs)]
 
 use crate::error::throw_type_error;
-use crate::glue::RUST_JS_NumberValue;
 use crate::jsapi::AssertSameCompartment;
 use crate::jsapi::JS;
 use crate::jsapi::{ForOfIterator, ForOfIterator_NonIterableBehavior};
@@ -51,6 +50,7 @@ use std::borrow::Cow;
 use std::mem;
 use std::rc::Rc;
 use std::{ptr, slice};
+use mozjs_sys::jsval::DoubleValue;
 
 trait As<O>: Copy {
     fn cast(self) -> O;
@@ -391,7 +391,7 @@ impl FromJSValConvertible for u32 {
 impl ToJSValConvertible for i64 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self as f64, &mut *rval);
+        rval.set(DoubleValue(*self as f64));
     }
 }
 
@@ -411,7 +411,7 @@ impl FromJSValConvertible for i64 {
 impl ToJSValConvertible for u64 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self as f64, &mut *rval);
+        rval.set(DoubleValue(*self as f64));
     }
 }
 
@@ -431,7 +431,7 @@ impl FromJSValConvertible for u64 {
 impl ToJSValConvertible for f32 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self as f64, &mut *rval);
+        rval.set(DoubleValue(*self as f64));
     }
 }
 
@@ -452,7 +452,7 @@ impl FromJSValConvertible for f32 {
 impl ToJSValConvertible for f64 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self, &mut *rval);
+        rval.set(DoubleValue(*self))
     }
 }
 

@@ -30,6 +30,7 @@ JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone) {
   return JS::shadow::Zone::from(zone);
 }
 
+// Currently Unused, see jsimpls.rs (JS::CallArgs::from_vp)
 JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp) {
   return JS::CallArgsFromVp(argc, vp);
 }
