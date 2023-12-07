@@ -81,7 +81,6 @@ wrap!(jsapi: pub fn NewPromiseObject(cx: *mut JSContext, executor: HandleObject)
 wrap!(jsapi: pub fn IsPromiseObject(obj: HandleObject) -> bool);
 wrap!(jsapi: pub fn GetPromiseState(promise: HandleObject) -> PromiseState);
 wrap!(jsapi: pub fn GetPromiseID(promise: HandleObject) -> u64);
-wrap!(jsapi: pub fn GetPromiseResult(promise: HandleObject) -> Value);
 wrap!(jsapi: pub fn GetPromiseIsHandled(promise: HandleObject) -> bool);
 wrap!(jsapi: pub fn SetSettledPromiseIsHandled(cx: *mut JSContext, promise: HandleObject) -> bool);
 wrap!(jsapi: pub fn SetAnyPromiseIsHandled(cx: *mut JSContext, promise: HandleObject) -> bool);
@@ -114,7 +113,6 @@ wrap!(jsapi: pub fn ClearRegExpStatics(cx: *mut JSContext, obj: HandleObject) ->
 wrap!(jsapi: pub fn ExecuteRegExp(cx: *mut JSContext, obj: HandleObject, reobj: HandleObject, chars: *const u16, length: usize, indexp: *mut usize, test: bool, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn ExecuteRegExpNoStatics(cx: *mut JSContext, reobj: HandleObject, chars: *const u16, length: usize, indexp: *mut usize, test: bool, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn ObjectIsRegExp(cx: *mut JSContext, obj: HandleObject, isRegExp: *mut bool) -> bool);
-wrap!(jsapi: pub fn GetRegExpFlags(cx: *mut JSContext, obj: HandleObject) -> RegExpFlags);
 wrap!(jsapi: pub fn GetRegExpSource(cx: *mut JSContext, obj: HandleObject) -> *mut JSString);
 wrap!(jsapi: pub fn CheckRegExpSyntax(cx: *mut JSContext, chars: *const u16, length: usize, flags: RegExpFlags, error: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn GetSavedFrameSource(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, sourcep: MutableHandle<*mut JSString>, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
@@ -374,3 +372,4 @@ wrap!(jsapi: pub fn JS_GetPropertyDescriptor(cx: *mut JSContext, obj: HandleObje
 wrap!(jsapi: pub fn JS_GetUCPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn SetPropertyIgnoringNamedGetter(cx: *mut JSContext, obj: HandleObject, id: HandleId, v: HandleValue, receiver: HandleValue, ownDesc: Handle<PropertyDescriptor>, result: *mut ObjectOpResult) -> bool);
 wrap!(jsapi: pub fn CreateError(cx: *mut JSContext, type_: JSExnType, stack: HandleObject, fileName: HandleString, lineNumber: u32, columnNumber: u32, report: *mut JSErrorReport, message: HandleString, cause: HandleValue, rval: MutableHandleValue) -> bool);
+wrap!(jsapi: pub fn GetExceptionCause(exc: *mut JSObject, dest: MutableHandleValue));
