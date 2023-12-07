@@ -457,6 +457,8 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::GetRegExpFlags",
     "JS::GetScriptPrivate",
     "JS::GetScriptTranscodingBuildId",
+    "JS::GetScriptedCallerPrivate",
+    "JS::MaybeGetScriptPrivate",
     "JS::dbg::FireOnGarbageCollectionHook",
     "JS_EncodeStringToUTF8BufferPartial",
     "JS_GetEmptyStringValue",

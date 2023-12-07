@@ -237,11 +237,12 @@ JSExnType GetErrorType(const JS::Value& val) {
   return *type;
 }
 
-JS::Value GetExceptionCause(JSObject* exc) {
+void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest) {
   auto cause = JS::GetExceptionCause(exc);
   if (cause.isNothing()) {
-    return JS::NullValue();
+    dest.setNull();
+  } else {
+    dest.set(*cause);
   }
-  return *cause;
 }
 }  // namespace glue

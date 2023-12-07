@@ -125,7 +125,7 @@ bool CreateError(JSContext* cx, JSExnType type, JS::HandleObject stack,
 
 JSExnType GetErrorType(const JS::Value& val);
 
-JS::Value GetExceptionCause(JSObject* exc);
+void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest);
 
 }  // namespace glue
 
