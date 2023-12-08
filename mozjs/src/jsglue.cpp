@@ -15,11 +15,12 @@
 #endif
 
 #include "assert.h"
+#include "js/BigInt.h" // JS::StringToBigInt
 #include "js/BuildId.h"
 #include "js/Class.h"
 #include "js/Id.h"
 #include "js/MemoryMetrics.h"
-#include "js/Modules.h"  // include for JS::GetModulePrivate
+#include "js/Modules.h"  // JS::GetModulePrivate
 #include "js/Principals.h"
 #include "js/Promise.h"
 #include "js/Proxy.h"
@@ -554,6 +555,12 @@ bool ShouldMeasureObject(JSObject* obj, nsISupports** iface) {
   }
   return false;
 }
+
+typedef mozilla::Range<const JS::Latin1Char> RangeLatin1;
+
+typedef mozilla::Range<const char16_t> RangeConstUtf16;
+
+typedef mozilla::Range<char16_t> RangeUtf16;
 
 extern "C" {
 
@@ -1119,6 +1126,24 @@ void FinishOffThreadStencil(
 ) {
   already_AddRefed<JS::Stencil> retval = JS::FinishOffThreadStencil(cx, token, storage);
   *stencil = std::move(retval);
+}
+
+JS::BigInt* JS_StringToBigInt(JSContext* cx, mozilla::Range<const JS::Latin1Char> chars) {
+    return JS::StringToBigInt(cx, chars);
+}
+
+JS::BigInt* JS_StringToBigInt1(JSContext* cx, mozilla::Range<const char16_t> chars) {
+    return JS::StringToBigInt(cx, chars);
+}
+
+bool CopyStringChars(JSContext* cx, mozilla::Range<char16_t> dest,
+                                      JSString* str) {
+    return JS_CopyStringChars(cx, dest, str);
+}
+
+JS::Latin1CharsZ LossyTwoByteCharsToNewLatin1CharsZ(
+    JSContext* cx, const mozilla::Range<const char16_t> tbchars) {
+    return JS::LossyTwoByteCharsToNewLatin1CharsZ(cx, tbchars);
 }
 
 }  // extern "C"

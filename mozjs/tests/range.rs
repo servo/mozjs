@@ -1,8 +1,9 @@
 use std::ptr;
 
 use mozjs::jsapi::mozilla::Range;
-use mozjs::jsapi::{BigIntIsUint64, JS_NewGlobalObject, StringToBigInt, StringToBigInt1};
+use mozjs::jsapi::{BigIntIsUint64, JS_NewGlobalObject};
 use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption};
+use mozjs::glue::{JS_StringToBigInt, JS_StringToBigInt1};
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
@@ -29,7 +30,7 @@ fn range() {
         let mut string = int.to_string();
         let range = string.as_bytes_mut().as_mut_ptr_range();
         let chars = Range::new(range.start, range.end);
-        rooted!(in(context) let bigint = StringToBigInt(context, chars));
+        rooted!(in(context) let bigint = JS_StringToBigInt(context, chars));
         assert!(!bigint.get().is_null());
 
         let mut result = 0;
@@ -39,7 +40,7 @@ fn range() {
         let mut chars: Vec<_> = string.encode_utf16().collect();
         let range = chars.as_mut_ptr_range();
         let chars = Range::new(range.start, range.end);
-        rooted!(in(context) let bigint = StringToBigInt1(context, chars));
+        rooted!(in(context) let bigint = JS_StringToBigInt1(context, chars));
         assert!(!bigint.get().is_null());
 
         let mut result = 0;
