@@ -1,9 +1,9 @@
 use std::ptr;
 
+use mozjs::glue::{JS_StringToBigInt, JS_StringToBigInt1};
 use mozjs::jsapi::mozilla::Range;
 use mozjs::jsapi::{BigIntIsUint64, JS_NewGlobalObject};
 use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption};
-use mozjs::glue::{JS_StringToBigInt, JS_StringToBigInt1};
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 

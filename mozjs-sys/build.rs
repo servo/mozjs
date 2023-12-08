@@ -28,11 +28,8 @@ const ENV_VARS: &'static [&'static str] = &[
     "STLPORT_LIBS",
 ];
 
-const EXTRA_FILES: &'static [&'static str] = &[
-    "makefile.cargo",
-    "src/jsglue.hpp",
-    "src/jsglue.cpp",
-];
+const EXTRA_FILES: &'static [&'static str] =
+    &["makefile.cargo", "src/jsglue.hpp", "src/jsglue.cpp"];
 
 /// Which version of moztools we expect
 #[cfg(windows)]
