@@ -1128,22 +1128,22 @@ void FinishOffThreadStencil(
   *stencil = std::move(retval);
 }
 
-JS::BigInt* JS_StringToBigInt(JSContext* cx, mozilla::Range<const JS::Latin1Char> chars) {
-    return JS::StringToBigInt(cx, chars);
+JS::BigInt* JS_StringToBigInt(JSContext* cx, const mozilla::Range<const JS::Latin1Char>* chars) {
+    return JS::StringToBigInt(cx, *chars);
 }
 
-JS::BigInt* JS_StringToBigInt1(JSContext* cx, mozilla::Range<const char16_t> chars) {
-    return JS::StringToBigInt(cx, chars);
+JS::BigInt* JS_StringToBigInt1(JSContext* cx, const mozilla::Range<const char16_t>* chars) {
+    return JS::StringToBigInt(cx, *chars);
 }
 
-bool CopyStringChars(JSContext* cx, mozilla::Range<char16_t> dest,
+bool CopyStringChars(JSContext* cx, const mozilla::Range<char16_t>* dest,
                                       JSString* str) {
-    return JS_CopyStringChars(cx, dest, str);
+    return JS_CopyStringChars(cx, *dest, str);
 }
 
 JS::Latin1CharsZ LossyTwoByteCharsToNewLatin1CharsZ(
-    JSContext* cx, const mozilla::Range<const char16_t> tbchars) {
-    return JS::LossyTwoByteCharsToNewLatin1CharsZ(cx, tbchars);
+    JSContext* cx, const mozilla::Range<const char16_t>* tbchars) {
+    return JS::LossyTwoByteCharsToNewLatin1CharsZ(cx, *tbchars);
 }
 
 }  // extern "C"
