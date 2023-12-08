@@ -30,6 +30,7 @@ JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone) {
   return JS::shadow::Zone::from(zone);
 }
 
+// Currently Unused, see jsimpls.rs (JS::CallArgs::from_vp)
 JS::CallArgs JS_CallArgsFromVp(unsigned argc, JS::Value* vp) {
   return JS::CallArgsFromVp(argc, vp);
 }
@@ -54,6 +55,18 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
   JS::StackCapture subsumed =
       JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
   mozilla::PodAssign(capture, &subsumed);
+}
+
+size_t GetLinearStringLength(JSLinearString* s) {
+  return JS::GetLinearStringLength(s);
+}
+
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx) {
+  return JS::GetLinearStringCharAt(s, idx);
+}
+
+JSLinearString* AtomToLinearString(JSAtom* atom) {
+  return JS::AtomToLinearString(atom);
 }
 
 // Reexport some methods
@@ -101,18 +114,6 @@ bool JS_ValueIsNull(const JS::Value* value) { return value->isNull(); }
 
 bool JS_ValueIsUndefined(const JS::Value* value) {
   return value->isUndefined();
-}
-
-size_t GetLinearStringLength(JSLinearString* s) {
-  return JS::GetLinearStringLength(s);
-}
-
-uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx) {
-  return JS::GetLinearStringCharAt(s, idx);
-}
-
-JSLinearString* AtomToLinearString(JSAtom* atom) {
-  return JS::AtomToLinearString(atom);
 }
 
 // These types are using maybe so we manually unwrap them in these wrappers
@@ -236,11 +237,12 @@ JSExnType GetErrorType(const JS::Value& val) {
   return *type;
 }
 
-JS::Value GetExceptionCause(JSObject* exc) {
+void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest) {
   auto cause = JS::GetExceptionCause(exc);
   if (cause.isNothing()) {
-    return JS::NullValue();
+    dest.setNull();
+  } else {
+    dest.set(*cause);
   }
-  return *cause;
 }
 }  // namespace glue

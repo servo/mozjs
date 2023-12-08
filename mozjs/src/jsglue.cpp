@@ -591,16 +591,8 @@ bool InvokeHasOwn(const void* handler, JSContext* cx, JS::HandleObject proxy,
                                                                    id, bp);
 }
 
-void RUST_JS_NumberValue(double d, JS::Value* dest) {
-  *dest = JS_NumberValue(d);
-}
-
 const JSJitInfo* RUST_FUNCTION_VALUE_TO_JITINFO(JS::Value v) {
   return FUNCTION_VALUE_TO_JITINFO(v);
-}
-
-JS::CallArgs CreateCallArgsFromVp(unsigned argc, JS::Value* vp) {
-  return JS::CallArgsFromVp(argc, vp);
 }
 
 bool CallJitGetterOp(const JSJitInfo* info, JSContext* cx,
@@ -1002,8 +994,16 @@ void JS_GetScriptPrivate(JSScript* script, JS::MutableHandleValue dest) {
   dest.set(JS::GetScriptPrivate(script));
 }
 
+void JS_MaybeGetScriptPrivate(JSObject* obj, JS::MutableHandleValue dest) {
+  dest.set(js::MaybeGetScriptPrivate(obj));
+}
+
 void JS_GetModulePrivate(JSObject* module, JS::MutableHandleValue dest) {
   dest.set(JS::GetModulePrivate(module));
+}
+
+void JS_GetScriptedCallerPrivate(JSContext* cx, JS::MutableHandleValue dest) {
+  dest.set(JS::GetScriptedCallerPrivate(cx));
 }
 
 void JS_GetNaNValue(JSContext* cx, JS::Value* dest) { *dest = JS::NaNValue(); }

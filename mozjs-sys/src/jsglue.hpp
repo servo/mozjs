@@ -70,6 +70,10 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
                                         bool ignoreSelfHostedFrames,
                                         JS::StackCapture*);
 
+size_t GetLinearStringLength(JSLinearString* s);
+uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
+JSLinearString* AtomToLinearString(JSAtom* atom);
+
 // Reexport some methods
 
 bool JS_ForOfIteratorInit(
@@ -102,10 +106,6 @@ bool JS_ValueIsNull(const JS::Value* value);
 
 bool JS_ValueIsUndefined(const JS::Value* value);
 
-size_t GetLinearStringLength(JSLinearString* s);
-uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
-JSLinearString* AtomToLinearString(JSAtom* atom);
-
 // These types are using maybe so we manually unwrap them in these wrappers
 
 bool FromPropertyDescriptor(JSContext *cx, JS::Handle<JS::PropertyDescriptor> desc, JS::MutableHandle<JS::Value> vp);
@@ -125,7 +125,7 @@ bool CreateError(JSContext* cx, JSExnType type, JS::HandleObject stack,
 
 JSExnType GetErrorType(const JS::Value& val);
 
-JS::Value GetExceptionCause(JSObject* exc);
+void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest);
 
 }  // namespace glue
 

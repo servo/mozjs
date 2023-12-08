@@ -29,7 +29,6 @@
 #![deny(missing_docs)]
 
 use crate::error::throw_type_error;
-use crate::glue::RUST_JS_NumberValue;
 use crate::jsapi::AssertSameCompartment;
 use crate::jsapi::JS;
 use crate::jsapi::{ForOfIterator, ForOfIterator_NonIterableBehavior};
@@ -37,7 +36,7 @@ use crate::jsapi::{Heap, JS_DefineElement, JS_GetLatin1StringCharsAndLength};
 use crate::jsapi::{JSContext, JSObject, JSString, RootedObject, RootedValue};
 use crate::jsapi::{JS_DeprecatedStringHasLatin1Chars, JS_NewUCStringCopyN, JSPROP_ENUMERATE};
 use crate::jsapi::{JS_GetTwoByteStringCharsAndLength, NewArrayObject1};
-use crate::jsval::{BooleanValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
+use crate::jsval::{BooleanValue, DoubleValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
 use crate::jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolValue};
 use crate::rooted;
 use crate::rust::maybe_wrap_value;
@@ -391,7 +390,7 @@ impl FromJSValConvertible for u32 {
 impl ToJSValConvertible for i64 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self as f64, &mut *rval);
+        rval.set(DoubleValue(*self as f64));
     }
 }
 
@@ -411,7 +410,7 @@ impl FromJSValConvertible for i64 {
 impl ToJSValConvertible for u64 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self as f64, &mut *rval);
+        rval.set(DoubleValue(*self as f64));
     }
 }
 
@@ -431,7 +430,7 @@ impl FromJSValConvertible for u64 {
 impl ToJSValConvertible for f32 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self as f64, &mut *rval);
+        rval.set(DoubleValue(*self as f64));
     }
 }
 
@@ -452,7 +451,7 @@ impl FromJSValConvertible for f32 {
 impl ToJSValConvertible for f64 {
     #[inline]
     unsafe fn to_jsval(&self, _cx: *mut JSContext, mut rval: MutableHandleValue) {
-        RUST_JS_NumberValue(*self, &mut *rval);
+        rval.set(DoubleValue(*self))
     }
 }
 
