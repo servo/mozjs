@@ -556,12 +556,6 @@ bool ShouldMeasureObject(JSObject* obj, nsISupports** iface) {
   return false;
 }
 
-typedef mozilla::Range<const JS::Latin1Char> RangeLatin1;
-
-typedef mozilla::Range<const char16_t> RangeConstUtf16;
-
-typedef mozilla::Range<char16_t> RangeUtf16;
-
 extern "C" {
 
 JSPrincipals* CreateRustJSPrincipals(const JSPrincipalsCallbacks& callbacks,
