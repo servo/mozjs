@@ -171,8 +171,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check formatting
+      - name: Check Rust formatting
         run: cargo fmt --check
+      - name: Check C++ formatting
+        uses: jidicula/clang-format-action@v4.11.0
+        with:
+          clang-format-version: "18"
+          exclude-regex: mozjs-sys\/mozjs
       - name: Get mozjs
         run: |
           bash ./mozjs-sys/etc/get_mozjs.sh
