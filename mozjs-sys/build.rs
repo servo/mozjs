@@ -31,8 +31,8 @@ const ENV_VARS: &'static [&'static str] = &[
 const EXTRA_FILES: &'static [&'static str] = &[
     "makefile.cargo",
     "src/rustfmt.toml",
-    "src/jsglue.hpp",
-    "src/jsglue.cpp",
+    "src/jsapi.hpp",
+    "src/jsapi.cpp",
 ];
 
 /// Which version of moztools we expect
@@ -54,8 +54,8 @@ fn main() {
 
     fs::create_dir_all(&build_dir).expect("could not create build dir");
 
+    build_spidermonkey(&build_dir);
     build_jsapi(&build_dir);
-    build_jsglue(&build_dir);
     build_jsapi_bindings(&build_dir);
 
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
@@ -158,7 +158,7 @@ fn find_moztools() -> Option<PathBuf> {
     }
 }
 
-fn build_jsapi(build_dir: &Path) {
+fn build_spidermonkey(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let make;
 
@@ -269,7 +269,7 @@ fn build_jsapi(build_dir: &Path) {
     }
 }
 
-fn build_jsglue(build_dir: &Path) {
+fn build_jsapi(build_dir: &Path) {
     let mut build = cc::Build::new();
     build.cpp(true);
 
@@ -287,11 +287,11 @@ fn build_jsglue(build_dir: &Path) {
     }
     build
         .flag(&config)
-        .file("src/jsglue.cpp")
+        .file("src/jsapi.cpp")
         .include(build_dir.join("dist/include"))
         .include(build_dir.join("js/src"))
-        .out_dir(build_dir.join("glue"))
-        .compile("jsglue");
+        .out_dir(build_dir)
+        .compile("jsapi");
 }
 
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
@@ -310,7 +310,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
 
     let mut builder = bindgen::builder()
         .rust_target(bindgen::RustTarget::Stable_1_59)
-        .header("./src/jsglue.hpp")
+        .header("./src/jsapi.hpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
         // similar ergonomics but avoids some potential Rust UB footguns.
