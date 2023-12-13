@@ -4,7 +4,6 @@ description = "Rust bindings to the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
 version = "0.14.1"
 authors = ["The Servo Project Developers"]
-build = "build.rs"
 license.workspace = true
 edition.workspace = true
 

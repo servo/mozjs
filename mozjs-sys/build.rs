@@ -57,6 +57,7 @@ fn main() {
     build_spidermonkey(&build_dir);
     build_jsapi(&build_dir);
     build_jsapi_bindings(&build_dir);
+    jsglue::build(&build_dir);
 
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
         for var in ENV_VARS {
@@ -549,4 +550,158 @@ fn ignore(path: &Path) -> bool {
             .iter()
             .any(|&ignored| extension == ignored)
     })
+}
+
+mod jsglue {
+    use std::env;
+    use std::path::{Path, PathBuf};
+
+    fn cc_flags(bindgen: bool) -> Vec<&'static str> {
+        let mut result = vec!["-DSTATIC_JS_API"];
+
+        if env::var("CARGO_FEATURE_DEBUGMOZJS").is_ok() {
+            result.push("-DDEBUG");
+
+            // bindgen doesn't like this
+            if !bindgen {
+                if cfg!(target_os = "windows") {
+                    result.push("-Od");
+                } else {
+                    result.push("-g");
+                    result.push("-O0");
+                }
+            }
+        }
+
+        if env::var("CARGO_FEATURE_PROFILEMOZJS").is_ok() {
+            result.push("-fno-omit-frame-pointer");
+        }
+
+        result.push("-Wno-c++0x-extensions");
+        result.push("-Wno-return-type-c-linkage");
+        result.push("-Wno-invalid-offsetof");
+        result.push("-Wno-unused-parameter");
+
+        result
+    }
+
+    pub fn build(outdir: &Path) {
+        //let mut build = cxx_build::bridge("src/jsglue.rs"); // returns a cc::Build;
+        let mut build = cc::Build::new();
+        let include_path: PathBuf = outdir.join("dist/include");
+
+        build
+            .cpp(true)
+            .file("src/jsglue.cpp")
+            .include(&include_path);
+        for flag in cc_flags(false) {
+            build.flag_if_supported(flag);
+        }
+
+        let confdefs_path: PathBuf = outdir.join("js/src/js-confdefs.h");
+        let msvc = if build.get_compiler().is_like_msvc() {
+            build.flag(&format!("-FI{}", confdefs_path.to_string_lossy()));
+            build.define("WIN32", "");
+            build.flag("-Zi");
+            build.flag("-GR-");
+            build.flag("-std:c++17");
+            true
+        } else {
+            build.flag("-fPIC");
+            build.flag("-fno-rtti");
+            build.flag("-std=c++17");
+            build.flag("-include");
+            build.flag(&confdefs_path.to_string_lossy());
+            false
+        };
+
+        build.compile("jsglue");
+        println!("cargo:rerun-if-changed=src/jsglue.cpp");
+        let mut builder = bindgen::Builder::default()
+            .header("./src/jsglue.cpp")
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .size_t_is_usize(true)
+            .formatter(bindgen::Formatter::Rustfmt)
+            .clang_arg("-x")
+            .clang_arg("c++")
+            .clang_args(cc_flags(true))
+            .clang_args(["-I", &include_path.to_string_lossy()])
+            .enable_cxx_namespaces()
+            .allowlist_file("./src/jsglue.cpp")
+            .allowlist_recursively(false);
+
+        if msvc {
+            builder = builder.clang_args([
+                "-fms-compatibility",
+                &format!("-FI{}", confdefs_path.to_string_lossy()),
+                "-DWIN32",
+                "-std=c++17",
+            ])
+        } else {
+            builder = builder
+                .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
+                .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")])
+        }
+
+        for ty in BLACKLIST_TYPES {
+            builder = builder.blocklist_type(ty);
+        }
+
+        for ty in OPAQUE_TYPES {
+            builder = builder.opaque_type(ty);
+        }
+
+        for &(module, raw_line) in MODULE_RAW_LINES {
+            builder = builder.module_raw_line(module, raw_line);
+        }
+        let bindings = builder
+            .generate()
+            .expect("Unable to generate bindings to jsglue");
+
+        bindings
+            .write_to_file(outdir.join("gluebindings.rs"))
+            .expect("Couldn't write bindings!");
+    }
+
+    /// Types that have generic arguments must be here or else bindgen does not generate <T>
+    /// as it treats them as opaque types
+    const BLACKLIST_TYPES: &'static [&'static str] = &[
+        "JS::.*",
+        "already_AddRefed",
+        // we don't want it null
+        "EncodedStringCallback",
+    ];
+
+    /// Types that should be treated as an opaque blob of bytes whenever they show
+    /// up within a whitelisted type.
+    ///
+    /// These are types which are too tricky for bindgen to handle, and/or use C++
+    /// features that don't have an equivalent in rust, such as partial template
+    /// specialization.
+    const OPAQUE_TYPES: &'static [&'static str] = &[
+        "JS::Auto.*Impl",
+        "JS::StackGCVector.*",
+        "JS::PersistentRooted.*",
+        "JS::detail::CallArgsBase.*",
+        "js::detail::UniqueSelector.*",
+        "mozilla::BufferList",
+        "mozilla::Maybe.*",
+        "mozilla::UniquePtr.*",
+        "mozilla::Variant",
+        "mozilla::Hash.*",
+        "mozilla::detail::Hash.*",
+        "RefPtr_Proxy.*",
+    ];
+
+    /// Map mozjs_sys mod namespaces to bindgen mod namespaces
+    const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
+        ("root", "pub(crate) use crate::jsapi::*;"),
+        ("root", "pub use crate::glue::EncodedStringCallback;"),
+        ("root::js", "pub(crate) use crate::jsapi::js::*;"),
+        (
+            "root::mozilla",
+            "pub(crate) use crate::jsapi::mozilla::*;",
+        ),
+        ("root::JS", "pub(crate) use crate::jsapi::JS::*;"),
+    ];
 }
