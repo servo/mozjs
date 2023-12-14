@@ -18,7 +18,7 @@ const ENV_VARS: &'static [&'static str] = &[
     "CFLAGS",
     "CLANGFLAGS",
     "CPP",
-        "CPPFLAGS",
+    "CPPFLAGS",
     "CXX",
     "CXXFLAGS",
     "MAKE",
