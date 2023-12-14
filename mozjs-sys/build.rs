@@ -698,10 +698,7 @@ mod jsglue {
         ("root", "pub(crate) use crate::jsapi::*;"),
         ("root", "pub use crate::glue::EncodedStringCallback;"),
         ("root::js", "pub(crate) use crate::jsapi::js::*;"),
-        (
-            "root::mozilla",
-            "pub(crate) use crate::jsapi::mozilla::*;",
-        ),
+        ("root::mozilla", "pub(crate) use crate::jsapi::mozilla::*;"),
         ("root::JS", "pub(crate) use crate::jsapi::JS::*;"),
     ];
 }
