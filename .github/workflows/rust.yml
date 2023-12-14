@@ -30,7 +30,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
-        run: brew install llvm yasm
+        run: |
+          # Unlink and re-link to prevent errors when github mac runner images
+          # https://github.com/actions/setup-python/issues/577
+          brew list -1 | grep python | while read formula; do brew unlink $formula; brew link --overwrite $formula; done
+          brew install llvm yasm
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Build
