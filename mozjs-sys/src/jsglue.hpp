@@ -8,6 +8,7 @@
 #define _JSGLUE_INCLUDED
 
 #include "js/ArrayBuffer.h"
+#include "js/ArrayBufferMaybeShared.h"
 #include "js/BigInt.h"
 #include "js/BuildId.h"
 #include "js/CompilationAndEvaluation.h"
@@ -29,6 +30,7 @@
 #include "js/RegExp.h"
 #include "js/SavedFrameAPI.h"
 #include "js/ScalarType.h"
+#include "js/SharedArrayBuffer.h"
 #include "js/SourceText.h"
 #include "js/Stream.h"
 #include "js/String.h"
