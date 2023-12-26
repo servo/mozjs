@@ -50,7 +50,6 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 
-
 namespace glue {
 
 // Reexport some functions that are marked inline.
@@ -110,14 +109,36 @@ bool JS_ValueIsUndefined(const JS::Value* value);
 
 // These types are using maybe so we manually unwrap them in these wrappers
 
-bool FromPropertyDescriptor(JSContext *cx, JS::Handle<JS::PropertyDescriptor> desc, JS::MutableHandle<JS::Value> vp);
-bool JS_GetOwnPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
-bool JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name, JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
-bool JS_GetOwnUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
-bool JS_GetPropertyDescriptorById(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool* isNone);
-bool JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char* name, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool* isNone);
-bool JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen, JS::MutableHandle<JS::PropertyDescriptor> desc, JS::MutableHandleObject holder, bool* isNone);
-bool SetPropertyIgnoringNamedGetter(JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue v, JS::HandleValue receiver, JS::Handle<JS::PropertyDescriptor> ownDesc, JS::ObjectOpResult& result);
+bool FromPropertyDescriptor(JSContext* cx,
+                            JS::Handle<JS::PropertyDescriptor> desc,
+                            JS::MutableHandle<JS::Value> vp);
+bool JS_GetOwnPropertyDescriptorById(
+    JSContext* cx, JS::HandleObject obj, JS::HandleId id,
+    JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
+bool JS_GetOwnPropertyDescriptor(JSContext* cx, JS::HandleObject obj,
+                                 const char* name,
+                                 JS::MutableHandle<JS::PropertyDescriptor> desc,
+                                 bool* isNone);
+bool JS_GetOwnUCPropertyDescriptor(
+    JSContext* cx, JS::HandleObject obj, const char16_t* name, size_t namelen,
+    JS::MutableHandle<JS::PropertyDescriptor> desc, bool* isNone);
+bool JS_GetPropertyDescriptorById(
+    JSContext* cx, JS::HandleObject obj, JS::HandleId id,
+    JS::MutableHandle<JS::PropertyDescriptor> desc,
+    JS::MutableHandleObject holder, bool* isNone);
+bool JS_GetPropertyDescriptor(JSContext* cx, JS::HandleObject obj,
+                              const char* name,
+                              JS::MutableHandle<JS::PropertyDescriptor> desc,
+                              JS::MutableHandleObject holder, bool* isNone);
+bool JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj,
+                                const char16_t* name, size_t namelen,
+                                JS::MutableHandle<JS::PropertyDescriptor> desc,
+                                JS::MutableHandleObject holder, bool* isNone);
+bool SetPropertyIgnoringNamedGetter(JSContext* cx, JS::HandleObject obj,
+                                    JS::HandleId id, JS::HandleValue v,
+                                    JS::HandleValue receiver,
+                                    JS::Handle<JS::PropertyDescriptor> ownDesc,
+                                    JS::ObjectOpResult& result);
 
 bool CreateError(JSContext* cx, JSExnType type, JS::HandleObject stack,
                  JS::HandleString fileName, uint32_t lineNumber,

@@ -28,12 +28,8 @@ const ENV_VARS: &'static [&'static str] = &[
     "STLPORT_LIBS",
 ];
 
-const EXTRA_FILES: &'static [&'static str] = &[
-    "makefile.cargo",
-    "src/rustfmt.toml",
-    "src/jsglue.hpp",
-    "src/jsglue.cpp",
-];
+const EXTRA_FILES: &'static [&'static str] =
+    &["makefile.cargo", "src/jsglue.hpp", "src/jsglue.cpp"];
 
 /// Which version of moztools we expect
 #[cfg(windows)]
@@ -458,8 +454,11 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::GetScriptPrivate",
     "JS::GetScriptTranscodingBuildId",
     "JS::GetScriptedCallerPrivate",
+    "JS::LossyTwoByteCharsToNewLatin1CharsZ",
     "JS::MaybeGetScriptPrivate",
+    "JS::StringToBigInt",
     "JS::dbg::FireOnGarbageCollectionHook",
+    "JS_CopyStringChars",
     "JS_EncodeStringToUTF8BufferPartial",
     "JS_GetEmptyStringValue",
     "JS_GetErrorType",

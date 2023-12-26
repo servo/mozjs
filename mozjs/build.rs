@@ -120,6 +120,7 @@ fn main() {
 const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::.*",
     "already_AddRefed",
+    "mozilla::Range",
     // we don't want it null
     "EncodedStringCallback",
 ];
