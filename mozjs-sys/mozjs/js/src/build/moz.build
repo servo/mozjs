@@ -41,6 +41,7 @@ else:
     Library("js")
     USE_LIBS += ["mozglue"]
 
+# We should remove this, we don't want both static and dynamic lib
 FORCE_STATIC_LIB = True
 STATIC_LIBRARY_NAME = "js_static"
 

@@ -96,7 +96,7 @@ fn find_make() -> OsString {
 }
 
 fn cc_flags() -> Vec<&'static str> {
-    let mut result = vec!["-DRUST_BINDGEN", "-DSTATIC_JS_API"];
+    let mut result = vec!["-DRUST_BINDGEN", "-DJS_SHARED_LIBRARY"];
 
     if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
         result.extend(&["-DJS_GC_ZEAL", "-DDEBUG", "-DJS_DEBUG"]);
@@ -249,7 +249,7 @@ fn build_jsapi(build_dir: &Path) {
         "cargo:rustc-link-search=native={}/js/src/build",
         build_dir.display()
     );
-    println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
+    println!("cargo:rustc-link-lib=dylib=mozjs-115"); // Must come before c++
     if target.contains("windows") {
         println!(
             "cargo:rustc-link-search=native={}/dist/bin",
@@ -271,7 +271,12 @@ fn build_jsapi(build_dir: &Path) {
 
 fn build_jsglue(build_dir: &Path) {
     let mut build = cc::Build::new();
-    build.cpp(true);
+    // "-undefined" and "dynamic_lookup" to avoid compiler's complain about linking
+    build.cpp(true)
+         .shared_flag(true)
+         .flag("-undefined")
+         .flag("dynamic_lookup")
+         .flag_if_supported("-std=g++17"); // this seems mac specific, we already have gnu++ in cc_flags(), yet it only seems to be working with g++
 
     for flag in cc_flags() {
         build.flag_if_supported(flag);
@@ -279,19 +284,33 @@ fn build_jsglue(build_dir: &Path) {
 
     let config = format!("{}/js/src/js-confdefs.h", build_dir.display());
     if build.get_compiler().is_like_msvc() {
-        build.flag_if_supported("-std:c++17");
-        build.flag("-FI");
+        build
+            .flag_if_supported("-std:c++17")
+            .flag("-FI");
     } else {
-        build.flag("-std=c++17");
-        build.flag("-include");
+        build
+            .flag("-std=c++17")
+            .flag("-include");
     }
-    build
-        .flag(&config)
-        .file("src/jsglue.cpp")
-        .include(build_dir.join("dist/include"))
-        .include(build_dir.join("js/src"))
-        .out_dir(build_dir.join("glue"))
-        .compile("jsglue");
+
+    build.flag(&config)
+         .include(build_dir.join("dist/include"))
+         .include(build_dir.join("js/src"));
+
+    //We had static libs in /glue, make sure we have shared object at the same path
+    let glue_dir = build_dir.join("glue");
+    std::fs::create_dir_all(&glue_dir).expect("Failed to create glue directory");
+    let file = glue_dir.join(format!("{}.dylib", "libjsglue"));
+    let mut cmd = build.get_compiler().to_command();
+    cmd.arg("src/jsglue.cpp")
+       .arg("-o")
+       .arg(&file);
+
+    println!("cargo:rustc-link-lib=dylib=jsglue");
+    println!("cargo:rustc-link-search=native={}", glue_dir.display());
+
+    let status = cmd.status().expect("Failed to link the dynamic library");
+    assert!(status.success(), "Linking failed");
 }
 
 /// Invoke bindgen on the JSAPI headers to produce raw FFI bindings for use from
