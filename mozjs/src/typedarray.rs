@@ -9,6 +9,8 @@
 use crate::conversions::ConversionResult;
 use crate::conversions::FromJSValConvertible;
 use crate::conversions::ToJSValConvertible;
+use crate::glue::GetBigInt64ArrayLengthAndData;
+use crate::glue::GetBigUint64ArrayLengthAndData;
 use crate::glue::GetFloat32ArrayLengthAndData;
 use crate::glue::GetFloat64ArrayLengthAndData;
 use crate::glue::GetInt16ArrayLengthAndData;
@@ -26,6 +28,8 @@ use crate::jsapi::JSContext;
 use crate::jsapi::JSObject;
 use crate::jsapi::JSTracer;
 use crate::jsapi::JS_GetArrayBufferViewType;
+use crate::jsapi::JS_GetBigInt64ArrayData;
+use crate::jsapi::JS_GetBigUint64ArrayData;
 use crate::jsapi::JS_GetFloat32ArrayData;
 use crate::jsapi::JS_GetFloat64ArrayData;
 use crate::jsapi::JS_GetInt16ArrayData;
@@ -36,6 +40,8 @@ use crate::jsapi::JS_GetUint16ArrayData;
 use crate::jsapi::JS_GetUint32ArrayData;
 use crate::jsapi::JS_GetUint8ArrayData;
 use crate::jsapi::JS_GetUint8ClampedArrayData;
+use crate::jsapi::JS_NewBigInt64Array;
+use crate::jsapi::JS_NewBigUint64Array;
 use crate::jsapi::JS_NewFloat32Array;
 use crate::jsapi::JS_NewFloat64Array;
 use crate::jsapi::JS_NewInt16Array;
@@ -49,6 +55,8 @@ use crate::jsapi::NewArrayBuffer;
 use crate::jsapi::Type;
 use crate::jsapi::UnwrapArrayBuffer;
 use crate::jsapi::UnwrapArrayBufferView;
+use crate::jsapi::UnwrapBigInt64Array;
+use crate::jsapi::UnwrapBigUint64Array;
 use crate::jsapi::UnwrapFloat32Array;
 use crate::jsapi::UnwrapFloat64Array;
 use crate::jsapi::UnwrapInt16Array;
@@ -355,6 +363,14 @@ typed_array_element!(
     JS_GetUint32ArrayData
 );
 typed_array_element!(
+    BigUint64,
+    u64,
+    UnwrapBigUint64Array,
+    GetBigUint64ArrayLengthAndData,
+    JS_NewBigUint64Array,
+    JS_GetBigUint64ArrayData
+);
+typed_array_element!(
     Int8,
     i8,
     UnwrapInt8Array,
@@ -377,6 +393,14 @@ typed_array_element!(
     GetInt32ArrayLengthAndData,
     JS_NewInt32Array,
     JS_GetInt32ArrayData
+);
+typed_array_element!(
+    BigInt64,
+    i64,
+    UnwrapBigInt64Array,
+    GetBigInt64ArrayLengthAndData,
+    JS_NewBigInt64Array,
+    JS_GetBigInt64ArrayData
 );
 typed_array_element!(
     Float32,
@@ -433,6 +457,8 @@ array_alias!(Uint16Array, HeapUint16Array, Uint16);
 array_alias!(Int16Array, HeapInt16Array, Int16);
 array_alias!(Uint32Array, HeapUint32Array, Uint32);
 array_alias!(Int32Array, HeapInt32Array, Int32);
+array_alias!(BigUint64Array, HeapBigUint64Array, BigUint64);
+array_alias!(BigInt64Array, HeapBigInt64Array, BigInt64);
 array_alias!(Float32Array, HeapFloat32Array, Float32);
 array_alias!(Float64Array, HeapFloat64Array, Float64);
 array_alias!(ArrayBuffer, HeapArrayBuffer, ArrayBufferU8);
