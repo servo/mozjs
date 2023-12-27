@@ -3,9 +3,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use bindgen::Formatter;
+use flate2::Compression;
+use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use tar::Archive;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
@@ -54,10 +58,20 @@ fn main() {
 
     fs::create_dir_all(&build_dir).expect("could not create build dir");
 
-    build_spidermonkey(&build_dir);
-    build_jsapi(&build_dir);
-    build_jsapi_bindings(&build_dir);
-    jsglue::build(&build_dir);
+    let mirror = env::var_os("MOZJS_MIRROR");
+    if mirror.is_some() {
+        download_static_lib_binaries(&PathBuf::from(mirror.unwrap()), &build_dir);
+    } else {
+        build_spidermonkey(&build_dir);
+        build_jsapi(&build_dir);
+        build_jsapi_bindings(&build_dir);
+        jsglue::build(&build_dir);
+
+        // If this env variable is set, create the compressed tarball of spidermonkey.
+        if env::var_os("MOZJS_CREATE_MIRROR").is_some() {
+            compress_static_lib(&build_dir).expect("Failed to compress static lib binaries.");
+        }
+    }
 
     if env::var_os("MOZJS_FORCE_RERUN").is_none() {
         for var in ENV_VARS {
@@ -615,6 +629,7 @@ mod jsglue {
             false
         };
 
+        build.out_dir(outdir);
         build.compile("jsglue");
         println!("cargo:rerun-if-changed=src/jsglue.cpp");
         let mut builder = bindgen::Builder::default()
@@ -702,3 +717,65 @@ mod jsglue {
         ("root::JS", "pub(crate) use crate::jsapi::JS::*;"),
     ];
 }
+
+/// Compress spidermonkey build into a tarball with necessary static binaries and bindgen wrappers.
+fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
+    let tar_gz = File::create("libjs.tar.gz")?;
+    let enc = GzEncoder::new(tar_gz, Compression::default());
+    let mut tar = tar::Builder::new(enc);
+    // This is the static library of spidermonkey.
+    tar.append_file("libjs_static.a", &mut File::open(build_dir.join("js/src/build/libjs_static.a")).unwrap())?;
+    // The bindgen binaries and generated rust files for mozjs.
+    tar.append_file("libjsapi.a", &mut File::open(build_dir.join("libjsapi.a")).unwrap())?;
+    tar.append_file("libjsglue.a", &mut File::open(build_dir.join("libjsglue.a")).unwrap())?;
+    tar.append_file("jsapi.rs", &mut File::open(build_dir.join("jsapi.rs")).unwrap())?;
+    tar.append_file("gluebindings.rs", &mut File::open(build_dir.join("gluebindings.rs")).unwrap())?;
+    Ok(())
+}
+
+/// Decompress the mirror of spidermonkey build to to build directory.
+fn decompress_static_lib(mirror: &Path, build_dir: &Path) -> Result<(), std::io::Error> {
+    let tar_gz = File::open(mirror)?;
+    let tar = GzDecoder::new(tar_gz);
+    let mut archive = Archive::new(tar);
+    archive.unpack(build_dir)?;
+    Ok(())
+}
+
+/// Download static library tarball instead of building it from source.
+fn download_static_lib_binaries(mirror: &Path, build_dir: &Path) {
+    // Only download the files if build directory doesn't exist.
+    if !build_dir.exists() {
+        // TODO download from https
+        decompress_static_lib(mirror, build_dir).expect("Failed to decompress statuc libs");
+    }
+
+    // Link static lib binaries
+    let target = env::var("TARGET").unwrap();
+    println!(
+        "cargo:rustc-link-search=native={}",
+        build_dir.display()
+    );
+    println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
+    if target.contains("windows") {
+        println!(
+            "cargo:rustc-link-search=native={}",
+            build_dir.display()
+        );
+        println!("cargo:rustc-link-lib=winmm");
+        println!("cargo:rustc-link-lib=psapi");
+        println!("cargo:rustc-link-lib=user32");
+        println!("cargo:rustc-link-lib=Dbghelp");
+        if target.contains("gnu") {
+            println!("cargo:rustc-link-lib=stdc++");
+        }
+    } else if target.contains("apple") || target.contains("freebsd") {
+        println!("cargo:rustc-link-lib=c++");
+    } else {
+        println!("cargo:rustc-link-lib=stdc++");
+    }
+    // Link bindgen binaries
+    println!("cargo:rustc-link-lib=static=jsapi");
+    println!("cargo:rustc-link-lib=static=jsglue");
+}
+
