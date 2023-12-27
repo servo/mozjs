@@ -3,16 +3,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use bindgen::Formatter;
-use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
-use tar::Archive;
+use flate2::Compression;
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
+use tar::Archive;
 use walkdir::WalkDir;
 
 const ENV_VARS: &'static [&'static str] = &[
@@ -724,12 +724,27 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
     // This is the static library of spidermonkey.
-    tar.append_file("libjs_static.a", &mut File::open(build_dir.join("js/src/build/libjs_static.a")).unwrap())?;
+    tar.append_file(
+        "libjs_static.a",
+        &mut File::open(build_dir.join("js/src/build/libjs_static.a")).unwrap(),
+    )?;
     // The bindgen binaries and generated rust files for mozjs.
-    tar.append_file("libjsapi.a", &mut File::open(build_dir.join("libjsapi.a")).unwrap())?;
-    tar.append_file("libjsglue.a", &mut File::open(build_dir.join("libjsglue.a")).unwrap())?;
-    tar.append_file("jsapi.rs", &mut File::open(build_dir.join("jsapi.rs")).unwrap())?;
-    tar.append_file("gluebindings.rs", &mut File::open(build_dir.join("gluebindings.rs")).unwrap())?;
+    tar.append_file(
+        "libjsapi.a",
+        &mut File::open(build_dir.join("libjsapi.a")).unwrap(),
+    )?;
+    tar.append_file(
+        "libjsglue.a",
+        &mut File::open(build_dir.join("libjsglue.a")).unwrap(),
+    )?;
+    tar.append_file(
+        "jsapi.rs",
+        &mut File::open(build_dir.join("jsapi.rs")).unwrap(),
+    )?;
+    tar.append_file(
+        "gluebindings.rs",
+        &mut File::open(build_dir.join("gluebindings.rs")).unwrap(),
+    )?;
     Ok(())
 }
 
@@ -752,16 +767,10 @@ fn download_static_lib_binaries(mirror: &Path, build_dir: &Path) {
 
     // Link static lib binaries
     let target = env::var("TARGET").unwrap();
-    println!(
-        "cargo:rustc-link-search=native={}",
-        build_dir.display()
-    );
+    println!("cargo:rustc-link-search=native={}", build_dir.display());
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
     if target.contains("windows") {
-        println!(
-            "cargo:rustc-link-search=native={}",
-            build_dir.display()
-        );
+        println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
@@ -778,4 +787,3 @@ fn download_static_lib_binaries(mirror: &Path, build_dir: &Path) {
     println!("cargo:rustc-link-lib=static=jsapi");
     println!("cargo:rustc-link-lib=static=jsglue");
 }
-
