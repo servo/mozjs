@@ -1,8 +1,10 @@
+//! Rust wrappers for mozjs's glue module
+
 mod generated {
     #![allow(non_upper_case_globals)]
     #![allow(non_camel_case_types)]
     #![allow(non_snake_case)]
-    include!(concat!(env!("OUT_DIR"), "/gluebindings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/build/gluebindings.rs"));
 }
 
 use core::mem;

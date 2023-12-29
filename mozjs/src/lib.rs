@@ -47,11 +47,11 @@ mod consts;
 pub mod conversions;
 pub mod error;
 pub mod gc;
-pub mod glue;
 pub mod panic;
 pub mod typedarray;
 
 pub use crate::consts::*;
+pub use mozjs_sys::glue;
 pub use mozjs_sys::jsid;
 pub use mozjs_sys::jsval;
 
