@@ -27,6 +27,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 ```
 
 ### Windows
+0. disable windows defender for better performance
 
 1. Download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip).
 
@@ -39,7 +40,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
 4. make sure you have python3 installed and added into PATH
 
-5. Set the following environment variables according to where you installed
+6. Set the following environment variables according to where you installed
    the dependencies above:
    adding llvm and clang into PATH
    ```shell
@@ -50,9 +51,9 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
     $env:LD="lld-link"
    ```
 
-6. if error shows command in `maybe-configure` failed, try to modify `mozjs/mozjs/js/src` replace line8 `PYTHON3="${PYTHON3:-python3}"` with `PYTHON3="${PYTHON3:-python}"`
+7. if error shows command in `maybe-configure` failed, try to modify `mozjs/mozjs/js/src` replace line8 `PYTHON3="${PYTHON3:-python3}"` with `PYTHON3="${PYTHON3:-python}"`
 
-7. if following error shows, try to modify your Visual Studio installation and add the ATL/MFC through C++ desktop development
+8. if following error shows, try to modify your Visual Studio installation and add the ATL/MFC through C++ desktop development
    ```
    ERROR: Cannot find the ATL/MFC headers in the Visual C++ directory (C:/PROGRA~1/MICROS~3/2022/COMMUN~1/VC/Tools/MSVC/1437~1.328). Please install them
    ```
@@ -145,6 +146,32 @@ This guide assumes that your code is checked out at:
 
 ```shell
 nix-shell ~/code/nixpkgs-mozilla/release.nix -A gecko.x86_64-linux.clang --run '...'
+```
+
+## Windows editor setup
+for vscode with rust-analyzer
+
+create `.vscode/settings.json` in your project root directory
+
+add following content to it
+
+```json
+{
+    "terminal.integrated.env.windows": {
+        "LIBCLANG_PATH": "C:\\Program Files\\LLVM\\lib",
+        "MOZTOOLS_PATH": "C:\\path\\to\\moztools-4.0",
+        "CC": "clang-cl",
+        "CXX": "clang-cl",
+        "LD": "lld-link",
+    },
+    "rust-analyzer.cargo.extraEnv": {
+        "LIBCLANG_PATH": "C:\\Program Files\\LLVM\\lib",
+        "MOZTOOLS_PATH": "C:\\path\\to\\moztools-4.0",
+        "CC": "clang-cl",
+        "CXX": "clang-cl",
+        "LD": "lld-link",
+    }
+}
 ```
 
 ## C++ editor setup
