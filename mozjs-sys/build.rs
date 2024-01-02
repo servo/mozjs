@@ -56,12 +56,11 @@ fn main() {
     // Used by mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
-    fs::create_dir_all(&build_dir).expect("could not create build dir");
-
     let mirror = env::var_os("MOZJS_MIRROR");
     if mirror.is_some() {
         download_static_lib_binaries(&PathBuf::from(mirror.unwrap()), &build_dir);
     } else {
+        fs::create_dir_all(&build_dir).expect("could not create build dir");
         build_spidermonkey(&build_dir);
         build_jsapi(&build_dir);
         build_jsapi_bindings(&build_dir);
