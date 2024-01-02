@@ -719,6 +719,15 @@ mod jsglue {
 
 /// Compress spidermonkey build into a tarball with necessary static binaries and bindgen wrappers.
 fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
+    // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
+    // TODO: Maybe we could separate symbols for thos who still want the debug ability.
+    // https://github.com/GabrielMajeri/separate-symbols
+    let status = Command::new("strip")
+        .arg(build_dir.join("js/src/build/libjs_static.a"))
+        .status()
+        .unwrap();
+    assert!(status.success());
+
     let tar_gz = File::create("libjs.tar.gz")?;
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
