@@ -722,28 +722,36 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let tar_gz = File::create("libjs.tar.gz")?;
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
-    // This is the static library of spidermonkey.
-    tar.append_file(
-        "libjs_static.a",
-        &mut File::open(build_dir.join("js/src/build/libjs_static.a")).unwrap(),
-    )?;
-    // The bindgen binaries and generated rust files for mozjs.
-    tar.append_file(
-        "libjsapi.a",
-        &mut File::open(build_dir.join("libjsapi.a")).unwrap(),
-    )?;
-    tar.append_file(
-        "libjsglue.a",
-        &mut File::open(build_dir.join("libjsglue.a")).unwrap(),
-    )?;
-    tar.append_file(
-        "jsapi.rs",
-        &mut File::open(build_dir.join("jsapi.rs")).unwrap(),
-    )?;
-    tar.append_file(
-        "gluebindings.rs",
-        &mut File::open(build_dir.join("gluebindings.rs")).unwrap(),
-    )?;
+
+    let target = env::var("TARGET").unwrap();
+    if target.contains("windows") {
+        // FIXME We can't figure how to include all symbols into the static file.
+        // So we compress whole build dir as workaround.
+        tar.append_dir_all(".", build_dir)?;
+    } else {
+        // This is the static library of spidermonkey.
+        tar.append_file(
+            "js/src/build/libjs_static.a",
+            &mut File::open(build_dir.join("js/src/build/libjs_static.a")).unwrap(),
+        )?;
+        // The bindgen binaries and generated rust files for mozjs.
+        tar.append_file(
+            "libjsapi.a",
+            &mut File::open(build_dir.join("libjsapi.a")).unwrap(),
+        )?;
+        tar.append_file(
+            "libjsglue.a",
+            &mut File::open(build_dir.join("libjsglue.a")).unwrap(),
+        )?;
+        tar.append_file(
+            "jsapi.rs",
+            &mut File::open(build_dir.join("jsapi.rs")).unwrap(),
+        )?;
+        tar.append_file(
+            "gluebindings.rs",
+            &mut File::open(build_dir.join("gluebindings.rs")).unwrap(),
+        )?;
+    }
     Ok(())
 }
 
@@ -761,15 +769,17 @@ fn download_static_lib_binaries(mirror: &Path, build_dir: &Path) {
     // Only download the files if build directory doesn't exist.
     if !build_dir.exists() {
         // TODO download from https
-        decompress_static_lib(mirror, build_dir).expect("Failed to decompress statuc libs");
+        decompress_static_lib(mirror, build_dir).expect("Failed to decompress static libs");
     }
 
     // Link static lib binaries
     let target = env::var("TARGET").unwrap();
-    println!("cargo:rustc-link-search=native={}", build_dir.display());
+    println!(
+        "cargo:rustc-link-search=native={}/js/src/build",
+        build_dir.display()
+    );
     println!("cargo:rustc-link-lib=static=js_static"); // Must come before c++
     if target.contains("windows") {
-        println!("cargo:rustc-link-search=native={}", build_dir.display());
         println!("cargo:rustc-link-lib=winmm");
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
@@ -783,6 +793,7 @@ fn download_static_lib_binaries(mirror: &Path, build_dir: &Path) {
         println!("cargo:rustc-link-lib=stdc++");
     }
     // Link bindgen binaries
+    println!("cargo:rustc-link-search=native={}", build_dir.display());
     println!("cargo:rustc-link-lib=static=jsapi");
     println!("cargo:rustc-link-lib=static=jsglue");
 }
