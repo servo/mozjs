@@ -30,24 +30,32 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
 1. Download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip).
 
-2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
+2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>. but under LLVM 14 is not able to build, so please check `https://github.com/vovkos/llvm-package-windows` for newer version instead of compiling yourself.
 
-3. Open up a shell configured to use Visual Studio. This could be the
-   one included with Visual Studio (e.g. Visual Studio 2017 / X64 Native
-   Tools Command Prompt for VS 2017) or a shell in which you have run:
+3. make sure you have installed Visual Studio 2022 with C++ desktop development with
+   - Windows 11 SDK
+   - ATL
+   - MFC
 
-   ```shell
-   "c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
-   ```
+4. make sure you have python3 installed and added into PATH
 
-4. Set the following environment variables according to where you installed
+5. Set the following environment variables according to where you installed
    the dependencies above:
-
+   adding llvm and clang into PATH
    ```shell
-    set LIBCLANG_PATH=C:\Program Files\LLVM\lib
-    set MOZTOOLS_PATH=C:\path\to\moztools-4.0
+    $env:LIBCLANG_PATH="C:\Program Files\LLVM\lib"
+    $env:MOZTOOLS_PATH="C:\path\to\moztools-4.0"
+    $env:CC="clang-cl"
+    $env:CXX="clang-cl"
+    $env:LD="lld-link"
    ```
 
+6. if error shows command in `maybe-configure` failed, try to modify `mozjs/mozjs/js/src` replace line8 `PYTHON3="${PYTHON3:-python3}"` with `PYTHON3="${PYTHON3:-python}"`
+
+7. if following error shows, try to modify your Visual Studio installation and add the ATL/MFC through C++ desktop development
+   ```
+   ERROR: Cannot find the ATL/MFC headers in the Visual C++ directory (C:/PROGRA~1/MICROS~3/2022/COMMUN~1/VC/Tools/MSVC/1437~1.328). Please install them
+   ```
 ### Run Cargo
 
 You can now build and test the crate using cargo:
