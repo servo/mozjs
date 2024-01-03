@@ -15,6 +15,7 @@ env:
   RUST_BACKTRACE: 1
   SHELL: /bin/bash
   CARGO_INCREMENTAL: 0
+  MOZJS_CREATE_MIRROR: 1
 
 jobs:
   mac:
