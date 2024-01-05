@@ -27,22 +27,37 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 ```
 
 ### Windows
-0. disable windows defender for better performance
-
 1. Download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip).
 
-2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>. but under LLVM 14 is not able to build, so please check `https://github.com/vovkos/llvm-package-windows` for newer version instead of compiling yourself.
+2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>. 
+   > Note: LLVM under 14 is not able to build mozjs-sys.
 
-3. make sure you have installed Visual Studio 2022 with C++ desktop development with
+3. Download and install `Visual Studio 2022` with `C++ desktop development` with following features:
    - Windows 11 SDK
    - ATL
    - MFC
+  
+    If you want to build in command line, you can download [vs_buildtools.exe](https://aka.ms/vs/17/release/vs_buildtools.exe) linked from and run the following command:
+   ```
+   vs_BuildTools.exe^
+      --add Microsoft.Component.MSBuild^
+      --add Microsoft.VisualStudio.Component.CoreBuildTools^
+      --add Microsoft.VisualStudio.Workload.MSBuildTools^
+      --add Microsoft.VisualStudio.Component.Windows11SDK^
+      --add Microsoft.VisualStudio.Component.VC.CoreBuildTools^
+      --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64^
+      --add Microsoft.VisualStudio.Component.VC.Redist.14.Latest^
+      --add Microsoft.VisualStudio.Component.VC.ATL^
+      --add Microsoft.VisualStudio.Component.VC.ATLMFC^
+      --add Microsoft.VisualStudio.Component.VC.CoreIde^
+      --add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core^
+      --add Microsoft.VisualStudio.Workload.VCTools
+   ```
 
-4. make sure you have python3 installed and added into PATH
+1. Install Python3 and add into PATH.
 
-6. Set the following environment variables according to where you installed
+2. Set the following environment variables according to where you installed
    the dependencies above:
-   adding llvm and clang into PATH
    ```shell
     $env:LIBCLANG_PATH="C:\Program Files\LLVM\lib"
     $env:MOZTOOLS_PATH="C:\path\to\moztools-4.0"
@@ -50,13 +65,29 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
     $env:CXX="clang-cl"
     $env:LD="lld-link"
    ```
+   for better experience, you can set LLVM and MozTools in your system PATH and ENV variables.
 
-7. if error shows command in `maybe-configure` failed, try to modify `mozjs/mozjs/js/src` replace line8 `PYTHON3="${PYTHON3:-python3}"` with `PYTHON3="${PYTHON3:-python}"`
+3. If cargo build throw out error shows command in `maybe-configure` failed,
+   ```
+   error: failed to run custom build command for `mozjs-sys v0.1.0 ...
+   // bunch of error messages
+   maybe-configure:
+	[[ $(JSSRC)/configure -ot $(JSSRC)/configure.in ]] && touch $(JSSRC)/configure || true
+	[[ $(JSSRC)/old-configure -ot $(JSSRC)/old-configure.in ]] && touch $(JSSRC)/old-configure || true
+	! [[ $(JSSRC)/configure.in -ot $(JSSRC)/configure ]] && touch $(JSSRC)/configure || true
+	! [[ $(JSSRC)/old-configure.in -ot $(JSSRC)/old-configure ]] && touch $(JSSRC)/old-configure || true
+	if [[ $(JSSRC)/configure -nt config.status ]] ; then \
+	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
+	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
+	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
+	  AS="$(AS)" AR="$(AR)" \
+	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
+	fi
 
-8. if following error shows, try to modify your Visual Studio installation and add the ATL/MFC through C++ desktop development
+   exit code: not 0
    ```
-   ERROR: Cannot find the ATL/MFC headers in the Visual C++ directory (C:/PROGRA~1/MICROS~3/2022/COMMUN~1/VC/Tools/MSVC/1437~1.328). Please install them
-   ```
+   try to modify `mozjs/mozjs/js/src` replace line  `PYTHON3="${PYTHON3:-python3}"` with `PYTHON3="${PYTHON3:-python}"`
+
 ### Run Cargo
 
 You can now build and test the crate using cargo:
@@ -146,32 +177,6 @@ This guide assumes that your code is checked out at:
 
 ```shell
 nix-shell ~/code/nixpkgs-mozilla/release.nix -A gecko.x86_64-linux.clang --run '...'
-```
-
-## Windows editor setup
-for vscode with rust-analyzer
-
-create `.vscode/settings.json` in your project root directory
-
-add following content to it
-
-```json
-{
-    "terminal.integrated.env.windows": {
-        "LIBCLANG_PATH": "C:\\Program Files\\LLVM\\lib",
-        "MOZTOOLS_PATH": "C:\\path\\to\\moztools-4.0",
-        "CC": "clang-cl",
-        "CXX": "clang-cl",
-        "LD": "lld-link",
-    },
-    "rust-analyzer.cargo.extraEnv": {
-        "LIBCLANG_PATH": "C:\\Program Files\\LLVM\\lib",
-        "MOZTOOLS_PATH": "C:\\path\\to\\moztools-4.0",
-        "CC": "clang-cl",
-        "CXX": "clang-cl",
-        "LD": "lld-link",
-    }
-}
 ```
 
 ## C++ editor setup
