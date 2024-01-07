@@ -60,7 +60,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
 5. Set the following environment variables according to where you installed
    the dependencies above:
-   ```shell
+   ```powershell
     $env:LIBCLANG_PATH="C:\Program Files\LLVM\lib"
     $env:MOZTOOLS_PATH="C:\path\to\moztools-4.0"
     $env:CC="clang-cl"
