@@ -33,7 +33,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
    > Note: LLVM under 14 is not able to build mozjs-sys.
 
 3. Download and install `Visual Studio 2022` with `C++ desktop development` with following features:
-   - Windows 11 SDK
+   - Windows 10 SDK
    - ATL
    - MFC
   
