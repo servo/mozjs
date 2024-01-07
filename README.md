@@ -58,7 +58,7 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
   - Ensure that Python is added to the system `PATH`
   - Ensure that a `PYTHON` and `PYTHON3` environment variable point to the Python binary (ie `C:\Python311\python.exe`
 
-2. Set the following environment variables according to where you installed
+5. Set the following environment variables according to where you installed
    the dependencies above:
    ```shell
     $env:LIBCLANG_PATH="C:\Program Files\LLVM\lib"
