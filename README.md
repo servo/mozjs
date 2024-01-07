@@ -54,7 +54,9 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
       --add Microsoft.VisualStudio.Workload.VCTools
    ```
 
-1. Install Python3 and add into PATH.
+4. Install [Python 3.11](https://www.python.org/downloads/windows/).
+  - Ensure that Python is added to the system `PATH`
+  - Ensure that a `PYTHON` and `PYTHON3` environment variable point to the Python binary (ie `C:\Python311\python.exe`
 
 2. Set the following environment variables according to where you installed
    the dependencies above:
