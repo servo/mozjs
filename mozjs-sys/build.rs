@@ -729,6 +729,19 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
         // So we compress whole build dir as workaround.
         tar.append_dir_all(".", build_dir)?;
     } else {
+        // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
+        // TODO: Maybe we could separate symbols for thos who still want the debug ability.
+        // https://github.com/GabrielMajeri/separate-symbols
+        let mut strip = Command::new("strip");
+        if !target.contains("apple") {
+            strip.arg("--strip-debug");
+        };
+        let status = strip
+            .arg(build_dir.join("js/src/build/libjs_static.a"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+
         // This is the static library of spidermonkey.
         tar.append_file(
             "js/src/build/libjs_static.a",
