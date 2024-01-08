@@ -719,11 +719,11 @@ mod jsglue {
 
 /// Compress spidermonkey build into a tarball with necessary static binaries and bindgen wrappers.
 fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
-    let tar_gz = File::create("libjs.tar.gz")?;
+    let target = env::var("TARGET").unwrap();
+    let tar_gz = File::create(String::from("libmozjs-") + &target + ".tar.gz")?;
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
 
-    let target = env::var("TARGET").unwrap();
     if target.contains("windows") {
         // FIXME We can't figure how to include all symbols into the static file.
         // So we compress whole build dir as workaround.
