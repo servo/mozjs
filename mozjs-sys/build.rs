@@ -8,7 +8,8 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::env;
 use std::ffi::{OsStr, OsString};
-use std::fs::{self, File};
+use std::fs;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
@@ -56,9 +57,8 @@ fn main() {
     // Used by mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
-    let mirror = env::var_os("MOZJS_MIRROR");
-    if mirror.is_some() {
-        download_static_lib_binaries(&PathBuf::from(mirror.unwrap()), &build_dir);
+    if let Some(mirror) = env::var_os("MOZJS_MIRROR") {
+        download_static_lib_binaries(&PathBuf::from(mirror), &build_dir);
     } else {
         fs::create_dir_all(&build_dir).expect("could not create build dir");
         build_spidermonkey(&build_dir);
@@ -720,7 +720,7 @@ mod jsglue {
 /// Compress spidermonkey build into a tarball with necessary static binaries and bindgen wrappers.
 fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let target = env::var("TARGET").unwrap();
-    let tar_gz = File::create(String::from("libmozjs-") + &target + ".tar.gz")?;
+    let tar_gz = File::create(format!("libmozjs-{}.tar.gz", target))?;
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
 
