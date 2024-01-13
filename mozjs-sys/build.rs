@@ -619,7 +619,7 @@ mod jsglue {
         println!("cargo:rerun-if-changed=src/jsglue.cpp");
         let mut builder = bindgen::Builder::default()
             .header("./src/jsglue.cpp")
-            .parse_callbacks(Box::new(bindgen::CargoCallbacks))
+            .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
             .size_t_is_usize(true)
             .formatter(bindgen::Formatter::Rustfmt)
             .clang_arg("-x")
