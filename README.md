@@ -27,25 +27,50 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 ```
 
 ### Windows
-
 1. Download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip).
 
-2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>.
+2. Download and install Clang (LLVM version 14 or greater) for Windows (64 bit) from <https://releases.llvm.org/download.html>. 
+ 
+3. Download and install `Visual Studio 2019` or `Visual Studio 2022` with the `C++ desktop development` component and the following features:
 
-3. Open up a shell configured to use Visual Studio. This could be the
-   one included with Visual Studio (e.g. Visual Studio 2017 / X64 Native
-   Tools Command Prompt for VS 2017) or a shell in which you have run:
+   - Windows 10 SDK
+   - ATL
+   - MFC
+  
+   To install these dependencies from the command line, you can download 
+   [vs_buildtools.exe](https://aka.ms/vs/17/release/vs_buildtools.exe)
+   and run the following command:
 
-   ```shell
-   "c:\Program Files (x86)\Microsoft Visual Studio\2017\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+   ```
+   vs_BuildTools.exe^
+      --add Microsoft.Component.MSBuild^
+      --add Microsoft.VisualStudio.Component.CoreBuildTools^
+      --add Microsoft.VisualStudio.Workload.MSBuildTools^
+      --add Microsoft.VisualStudio.Component.Windows11SDK^
+      --add Microsoft.VisualStudio.Component.VC.CoreBuildTools^
+      --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64^
+      --add Microsoft.VisualStudio.Component.VC.Redist.14.Latest^
+      --add Microsoft.VisualStudio.Component.VC.ATL^
+      --add Microsoft.VisualStudio.Component.VC.ATLMFC^
+      --add Microsoft.VisualStudio.Component.VC.CoreIde^
+      --add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core^
+      --add Microsoft.VisualStudio.Workload.VCTools
    ```
 
-4. Set the following environment variables according to where you installed
-   the dependencies above:
+4. Install [Python 3.11](https://www.python.org/downloads/windows/).
 
-   ```shell
-    set LIBCLANG_PATH=C:\Program Files\LLVM\lib
-    set MOZTOOLS_PATH=C:\path\to\moztools-4.0
+  - Ensure that Python is added to the system `PATH`
+  - Ensure that a `PYTHON` and `PYTHON3` environment variable point to the Python binary (ie `C:\Python311\python.exe`
+
+5. Set the following environment variables according to where you installed
+   the dependencies above:
+   
+   ```powershell
+    $env:LIBCLANG_PATH="C:\Program Files\LLVM\lib"
+    $env:MOZTOOLS_PATH="C:\path\to\moztools-4.0"
+    $env:CC="clang-cl"
+    $env:CXX="clang-cl"
+    $env:LD="lld-link"
    ```
 
 ### Run Cargo
