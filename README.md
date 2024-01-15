@@ -29,15 +29,18 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 ### Windows
 1. Download and unzip [MozTools 4.0](https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip).
 
-2. Download and install Clang for Windows (64 bit) from <https://releases.llvm.org/download.html>. 
-   > Note: LLVM under 14 is not able to build mozjs-sys.
+2. Download and install Clang (LLVM version 14 or greater) for Windows (64 bit) from <https://releases.llvm.org/download.html>. 
+ 
+3. Download and install `Visual Studio 2019` or `Visual Studio 2022` with the `C++ desktop development` component and the following features:
 
-3. Download and install `Visual Studio 2022` with `C++ desktop development` with following features:
    - Windows 10 SDK
    - ATL
    - MFC
   
-    If you want to build in command line, you can download [vs_buildtools.exe](https://aka.ms/vs/17/release/vs_buildtools.exe) linked from and run the following command:
+   To install these dependencies from the command line, you can download 
+   [vs_buildtools.exe](https://aka.ms/vs/17/release/vs_buildtools.exe)
+   and run the following command:
+
    ```
    vs_BuildTools.exe^
       --add Microsoft.Component.MSBuild^
@@ -55,11 +58,13 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
    ```
 
 4. Install [Python 3.11](https://www.python.org/downloads/windows/).
+
   - Ensure that Python is added to the system `PATH`
   - Ensure that a `PYTHON` and `PYTHON3` environment variable point to the Python binary (ie `C:\Python311\python.exe`
 
 5. Set the following environment variables according to where you installed
    the dependencies above:
+   
    ```powershell
     $env:LIBCLANG_PATH="C:\Program Files\LLVM\lib"
     $env:MOZTOOLS_PATH="C:\path\to\moztools-4.0"
@@ -67,28 +72,6 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
     $env:CXX="clang-cl"
     $env:LD="lld-link"
    ```
-   for better experience, you can set LLVM and MozTools in your system PATH and ENV variables.
-
-3. If cargo build throw out error shows command in `maybe-configure` failed,
-   ```
-   error: failed to run custom build command for `mozjs-sys v0.1.0 ...
-   // bunch of error messages
-   maybe-configure:
-	[[ $(JSSRC)/configure -ot $(JSSRC)/configure.in ]] && touch $(JSSRC)/configure || true
-	[[ $(JSSRC)/old-configure -ot $(JSSRC)/old-configure.in ]] && touch $(JSSRC)/old-configure || true
-	! [[ $(JSSRC)/configure.in -ot $(JSSRC)/configure ]] && touch $(JSSRC)/configure || true
-	! [[ $(JSSRC)/old-configure.in -ot $(JSSRC)/old-configure ]] && touch $(JSSRC)/old-configure || true
-	if [[ $(JSSRC)/configure -nt config.status ]] ; then \
-	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
-	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
-	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
-	  AS="$(AS)" AR="$(AR)" \
-	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
-	fi
-
-   exit code: not 0
-   ```
-   try to modify `mozjs/mozjs/js/src` replace line  `PYTHON3="${PYTHON3:-python3}"` with `PYTHON3="${PYTHON3:-python}"`
 
 ### Run Cargo
 
