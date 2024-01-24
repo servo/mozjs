@@ -32,7 +32,7 @@ streams = []
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 libc.workspace = true
-libz-sys = "1.1"
+libz-sys = "1.1.13"
 
 [build-dependencies]
 bindgen.workspace = true
