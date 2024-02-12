@@ -252,8 +252,10 @@ impl<T: TypedArrayElementCreator + TypedArrayElement, S: JSObjectStorage> TypedA
     }
 
     ///  Update an existed JS typed array
-    pub unsafe fn update(&mut self, data: &[T::Element]) {
-        Self::update_raw(data, self.object.as_raw());
+    pub fn update(&mut self, data: &[T::Element]) {
+        unsafe {
+            Self::update_raw(data, self.object.as_raw());
+        }
     }
 
     unsafe fn update_raw(data: &[T::Element], result: *mut JSObject) {
