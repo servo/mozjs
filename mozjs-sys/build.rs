@@ -329,6 +329,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
         // investigate switching to the "constified module" strategy, which has
         // similar ergonomics but avoids some potential Rust UB footguns.
         .rustified_enum(".*")
+        .derive_partialeq(true)
         .size_t_is_usize(true)
         .enable_cxx_namespaces()
         .with_codegen_config(config)
