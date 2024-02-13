@@ -414,7 +414,9 @@ typed_array_element!(
     ArrayBufferViewU8,
     u8,
     UnwrapArrayBufferView,
-    GetArrayBufferViewLengthAndData
+    GetArrayBufferViewLengthAndData,
+    NewArrayBuffer,
+    GetArrayBufferData
 );
 
 // Default type aliases, uses bare pointer by default, since stack lifetime
