@@ -38,3 +38,5 @@ libz-sys = "1.1.13"
 bindgen.workspace = true
 cc.workspace = true
 walkdir = "2"
+flate2 = "1"
+tar = "0.4"
