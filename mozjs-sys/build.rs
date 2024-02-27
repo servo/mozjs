@@ -718,10 +718,24 @@ mod jsglue {
     ];
 }
 
+// Get cargo target directory. There's no env variable for build script yet.
+// See https://github.com/rust-lang/cargo/issues/9661 for more info.
+fn get_cargo_target_dir(build_dir: &Path) -> Option<&Path> {
+    let skip_triple = std::env::var("TARGET").unwrap() == std::env::var("HOST").unwrap();
+    let skip_parent_dirs = if skip_triple { 5 } else { 6 };
+    let mut current = build_dir;
+    for _ in 0..skip_parent_dirs {
+        current = current.parent()?;
+    }
+
+    Some(current)
+}
+
 /// Compress spidermonkey build into a tarball with necessary static binaries and bindgen wrappers.
 fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let target = env::var("TARGET").unwrap();
-    let tar_gz = File::create(format!("libmozjs-{}.tar.gz", target))?;
+    let target_dir = get_cargo_target_dir(build_dir).unwrap().display();
+    let tar_gz = File::create(format!("{}/libmozjs-{}.tar.gz", target_dir, target))?;
     let enc = GzEncoder::new(tar_gz, Compression::default());
     let mut tar = tar::Builder::new(enc);
 
@@ -771,7 +785,13 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
 
 /// Decompress the archive of spidermonkey build to to build directory.
 fn decompress_static_lib(archive: &Path, build_dir: &Path) -> Result<(), std::io::Error> {
-    let tar_gz = File::open(archive)?;
+    // Try to open the archive from provided path. If it doesn't exist, try to open it as relative
+    // path from workspace.
+    let tar_gz = File::open(archive).unwrap_or({
+        let mut workspace_dir = get_cargo_target_dir(build_dir).unwrap().to_path_buf();
+        workspace_dir.pop();
+        File::open(workspace_dir.join(archive)).unwrap()
+    });
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
     archive.unpack(build_dir)?;
