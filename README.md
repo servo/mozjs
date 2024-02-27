@@ -89,8 +89,8 @@ cargo test --features debugmozjs
 Spidermonkey is very large which could take a long time to compile. If you are looking for prebuilt version of mozjs, you
 can ask someone to build it and share to you to link it. Mozjs currently offer two environment variables to enable such work:
 
-- `MOZJS_CREATE_MIRROR=1` can create a spidermonkey tarball for release usage.
-- `MOZJS_MIRROR=absolute/path/to/libmozjs.tar.gz` can use this tarball to extract and link the static libraries without compiling spidermonkey and bindgen wrappers.
+- `MOZJS_CREATE_ARCHIVE=1` can create a spidermonkey tarball for release usage.
+- `MOZJS_ARCHIVE=absolute/path/to/libmozjs.tar.gz` can use this tarball to extract and link the static libraries without compiling spidermonkey and bindgen wrappers.
 
 ### Usage for downstream consumers
 

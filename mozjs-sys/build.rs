@@ -57,8 +57,8 @@ fn main() {
     // Used by mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
-    if let Some(mirror) = env::var_os("MOZJS_MIRROR") {
-        download_static_lib_binaries(&PathBuf::from(mirror), &build_dir);
+    if let Some(archive) = env::var_os("MOZJS_ARCHIVE") {
+        download_static_lib_binaries(&PathBuf::from(archive), &build_dir);
     } else {
         fs::create_dir_all(&build_dir).expect("could not create build dir");
         build_spidermonkey(&build_dir);
@@ -67,7 +67,7 @@ fn main() {
         jsglue::build(&build_dir);
 
         // If this env variable is set, create the compressed tarball of spidermonkey.
-        if env::var_os("MOZJS_CREATE_MIRROR").is_some() {
+        if env::var_os("MOZJS_CREATE_ARCHIVE").is_some() {
             compress_static_lib(&build_dir).expect("Failed to compress static lib binaries.");
         }
     }
@@ -769,9 +769,9 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-/// Decompress the mirror of spidermonkey build to to build directory.
-fn decompress_static_lib(mirror: &Path, build_dir: &Path) -> Result<(), std::io::Error> {
-    let tar_gz = File::open(mirror)?;
+/// Decompress the archive of spidermonkey build to to build directory.
+fn decompress_static_lib(archive: &Path, build_dir: &Path) -> Result<(), std::io::Error> {
+    let tar_gz = File::open(archive)?;
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
     archive.unpack(build_dir)?;
@@ -779,11 +779,11 @@ fn decompress_static_lib(mirror: &Path, build_dir: &Path) -> Result<(), std::io:
 }
 
 /// Download static library tarball instead of building it from source.
-fn download_static_lib_binaries(mirror: &Path, build_dir: &Path) {
+fn download_static_lib_binaries(archive: &Path, build_dir: &Path) {
     // Only download the files if build directory doesn't exist.
     if !build_dir.exists() {
         // TODO download from https
-        decompress_static_lib(mirror, build_dir).expect("Failed to decompress static libs");
+        decompress_static_lib(archive, build_dir).expect("Failed to decompress static libs");
     }
 
     // Link static lib binaries
