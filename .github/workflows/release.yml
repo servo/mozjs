@@ -1,4 +1,4 @@
-name: Rust
+name: Prebuilt mozjs release
 
 on:
   push:
