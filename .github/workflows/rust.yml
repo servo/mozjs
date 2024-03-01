@@ -116,7 +116,7 @@ jobs:
       fail-fast: false
       matrix:
         features: ["--features debugmozjs", "--features streams"]
-        target: ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
+        target: ["", "--target aarch64-pc-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
       CC: "clang-cl"
@@ -139,24 +139,24 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo build --verbose --target ${{ matrix.target }} ${{ matrix.features }}
+          cargo build --verbose ${{ matrix.target }} ${{ matrix.features }}
       - name: Test Windows
         if: ${{ !contains(matrix.target, 'aarch64') }}
         shell: cmd
         run: |
-          cargo test --tests --examples --verbose --target ${{ matrix.target }} ${{ matrix.features }}
+          cargo test --tests --examples --verbose ${{ matrix.target }} ${{ matrix.features }}
       - name: Upload artifact
         if: ${{ contains(matrix.features, '--features streams') }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
+          path: ./target/libmozjs-x86_64-pc-windows-msvc.tar.gz
           name: libmozjs-x86_64-pc-windows-msvc.tar.gz
       - name: Upload release asset
         if: ${{ !contains(matrix.target, 'aarch64') && contains(matrix.features, '--features streams') && needs.create-draft-release.outputs.release-id != '' }}
         uses: actions/upload-release-asset@v1
         with:
           upload_url: https://uploads.github.com/repos/${{ github.repository_owner }}/mozjs/releases/${{ needs.create-draft-release.outputs.release-id }}/assets{?name,label}
-          asset_path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
+          asset_path: ./target/libmozjs-x86_64-pc-windows-msvc.tar.gz
           asset_name: libmozjs-x86_64-pc-windows-msvc.tar.gz
           asset_content_type: application/tar+gzip
 
