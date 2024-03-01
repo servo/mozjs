@@ -17,7 +17,6 @@ env:
   CARGO_INCREMENTAL: 0
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   MOZJS_CREATE_ARCHIVE: 1
-  REPO: ${{ github.repository_owner }}/mozjs
 
 jobs:
   mac:
@@ -29,12 +28,10 @@ jobs:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-13 }
     runs-on: ${{ matrix.platform.os }}
-    needs: create-draft-release
     env:
       RUSTC_WRAPPER: sccache
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
-      RELEASE_ID: ${{ needs.create-draft-release.outputs.release-id }}
     steps:
       - uses: actions/checkout@v4
       - name: Install deps
@@ -55,23 +52,13 @@ jobs:
         with:
           path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
           name: libmozjs-${{ matrix.platform.target }}.tar.gz
-      - name: Upload release asset
-        if: ${{ contains(matrix.features, '--features streams') && needs.create-draft-release.outputs.release-id != '' }}
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: https://uploads.github.com/repos/${{ github.repository_owner }}/mozjs/releases/${{ needs.create-draft-release.outputs.release-id }}/assets{?name,label}
-          asset_path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
-          asset_name: libmozjs-${{ matrix.platform.target }}.tar.gz
-          asset_content_type: application/tar+gzip
 
   linux:
     env:
       RUSTC_WRAPPER: "sccache"
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
-      RELEASE_ID: ${{ needs.create-draft-release.outputs.release-id }}
     runs-on: ubuntu-latest
-    needs: create-draft-release
     strategy:
       fail-fast: false
       matrix:
@@ -100,18 +87,9 @@ jobs:
         with:
           path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
           name: libmozjs-x86_64-unknown-linux-gnu.tar.gz
-      - name: Upload release asset
-        if: ${{ contains(matrix.features, '--features streams') && needs.create-draft-release.outputs.release-id != '' }}
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: https://uploads.github.com/repos/${{ github.repository_owner }}/mozjs/releases/${{ needs.create-draft-release.outputs.release-id }}/assets{?name,label}
-          asset_path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
-          asset_name: libmozjs-x86_64-unknown-linux-gnu.tar.gz
-          asset_content_type: application/tar+gzip
 
   windows:
     runs-on: windows-latest
-    needs: create-draft-release
     strategy:
       fail-fast: false
       matrix:
@@ -124,7 +102,6 @@ jobs:
       MOZTOOLS_PATH: "${{ github.workspace }}\\target\\dependencies\\moztools-4.0"
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
-      RELEASE_ID: ${{ needs.create-draft-release.outputs.release-id }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -146,19 +123,11 @@ jobs:
         run: |
           cargo test --tests --examples --verbose ${{ matrix.target }} ${{ matrix.features }}
       - name: Upload artifact
-        if: ${{ contains(matrix.features, '--features streams') }}
+        if: ${{ !contains(matrix.target, 'aarch64') && contains(matrix.features, '--features streams') }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/libmozjs-x86_64-pc-windows-msvc.tar.gz
           name: libmozjs-x86_64-pc-windows-msvc.tar.gz
-      - name: Upload release asset
-        if: ${{ !contains(matrix.target, 'aarch64') && contains(matrix.features, '--features streams') && needs.create-draft-release.outputs.release-id != '' }}
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: https://uploads.github.com/repos/${{ github.repository_owner }}/mozjs/releases/${{ needs.create-draft-release.outputs.release-id }}/assets{?name,label}
-          asset_path: ./target/libmozjs-x86_64-pc-windows-msvc.tar.gz
-          asset_name: libmozjs-x86_64-pc-windows-msvc.tar.gz
-          asset_content_type: application/tar+gzip
 
   android:
     runs-on: ubuntu-latest
@@ -220,63 +189,11 @@ jobs:
         run: |
           git diff --staged --no-ext-diff --quiet --exit-code
 
-  create-draft-release:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create draft release
-        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-        id: create-release
-        run: |
-          NIGHTLY_TAG=$(date "+%F")
-          RELEASE_URL=$(gh release create "${NIGHTLY_TAG}" \
-            --draft \
-            --title "${NIGHTLY_TAG}" \
-            --notes 'Version release based on servo/mozjs@${{ github.sha }}' \
-            --repo ${REPO})
-          TEMP_TAG=$(basename "$RELEASE_URL")
-          RELEASE_ID=$( \
-            gh api -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "/repos/${REPO}/releases/tags/${TEMP_TAG}" \
-            | jq '.id' \
-          )
-          echo "RELEASE_ID=${RELEASE_ID}" >> ${GITHUB_OUTPUT}
-    outputs:
-      release-id: ${{ steps.create-release.outputs.RELEASE_ID }}
-
-  publish-release:
-    name: Publish release
-    runs-on: ubuntu-latest
-    needs:
-      ["create-draft-release", "mac", "linux", "windows"]
-    env:
-      RELEASE_ID: ${{ needs.create-draft-release.outputs.release-id }}
-    steps:
-      - name: Publish as latest (success)
-        if: ${{ needs.create-draft-release.outputs.release-id != '' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-        run: |
-          gh api \
-            --method PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            /repos/${REPO}/releases/${RELEASE_ID} \
-            -F draft=false
-      - name: Publish as latest (failure)
-        if: ${{ needs.create-draft-release.outputs.release-id != '' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
-        run: |
-          gh api \
-            --method PATCH \
-            -H "Accept: application/vnd.github+json" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            /repos/${REPO}/releases/${RELEASE_ID} \
-            -F prerelease=true -F draft=false
-          exit 1
-
   build_result:
     name: Result
     runs-on: ubuntu-latest
     needs:
-      ["android", "linux", "linux-cross-compile", "mac", "windows", "integrity", "create-draft-release", "publish-release"]
+      ["android", "linux", "linux-cross-compile", "mac", "windows", "integrity"]
     if: ${{ always() }}
     steps:
       - name: Mark the job as successful
@@ -285,3 +202,18 @@ jobs:
       - name: Mark the job as unsuccessful
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
+
+  publish-release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: build_result
+    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish release
+        run: |
+          RELEASE_TAG=$(date "+%F")
+          gh release create ${RELEASE_TAG} ./*.tar.gz
