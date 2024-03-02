@@ -213,7 +213,19 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - name: Publish release
+      - id: release
         run: |
-          RELEASE_TAG=$(date "+%F")
+          RELEASE_TAG=$(date "+%F-%H-%M")
           gh release create ${RELEASE_TAG} ./*.tar.gz
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
+    outputs:
+      release-tag: ${{ steps.release.outputs.RELEASE_TAG }}
+
+  verify-release:
+    name: Verify release
+    needs: publish-release
+    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    uses: ./.github/workflows/release.yml
+    with:
+      release-tag: ${{ needs.publish-release.outputs.release-tag }}
+
