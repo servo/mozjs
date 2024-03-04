@@ -14,10 +14,9 @@ env:
   RUST_BACKTRACE: 1
   SHELL: /bin/bash
   CARGO_INCREMENTAL: 0
-  MOZJS_ARCHIVE: libmozjs.tar.gz
 
 jobs:
-  release-tag:
+  release:
     runs-on: ubuntu-latest
     steps:
       - id: tag-name
@@ -28,7 +27,7 @@ jobs:
             echo "RELEASE_TAG=${{ github.ref_name }}" >> ${GITHUB_OUTPUT}
           fi
     outputs:
-      release-tag: ${{ steps.tag-name.outputs.RELEASE_TAG }}
+      tag: ${{ steps.tag-name.outputs.RELEASE_TAG }}
 
   verify-artifact:
     strategy:
@@ -40,12 +39,20 @@ jobs:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
     runs-on: ${{ matrix.platform.os }}
-    needs: release-tag
+    needs: release
+    env:
+      MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
     steps:
       - uses: actions/checkout@v4
-      - name: Download prebuilt mozjs
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ needs.release.outputs.tag == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+      - name: Download prebuilt mozjs from release
+        if: ${{ needs.release.outputs.tag != '' }}
         run: |
-          curl -L https://github.com/${{ github.repository_owner }}/mozjs/releases/download/${{ needs.release-tag.outputs.release-tag }}/libmozjs-${{ matrix.platform.target }}.tar.gz -o libmozjs.tar.gz
+          curl -L https://github.com/${{ github.repository_owner }}/mozjs/releases/download/${{ needs.release.outputs.tag }}/libmozjs-${{ matrix.platform.target }}.tar.gz -o libmozjs-${{ matrix.platform.target }}.tar.gz
       - name: Build
         run: |
           cargo build --verbose --features streams

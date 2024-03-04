@@ -23,7 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["--features debugmozjs", "--features streams"]
+        features: ["debugmozjs", "streams"]
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-13 }
@@ -44,10 +44,10 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Build
         run: |
-          cargo build --verbose ${{ matrix.features }}
-          cargo test --tests --examples --verbose ${{ matrix.features }}
+          cargo build --verbose --features ${{ matrix.features }}
+          cargo test --tests --examples --verbose --features ${{ matrix.features }}
       - name: Upload artifact
-        if: ${{ contains(matrix.features, '--features streams') }}
+        if: ${{ contains(matrix.features, 'streams') }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
@@ -62,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["--features debugmozjs", "--features streams"]
+        features: ["debugmozjs", "streams"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -73,16 +73,16 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Build
         run: |
-          cargo build --verbose ${{ matrix.features }}
-          cargo test --tests --examples --verbose ${{ matrix.features }}
+          cargo build --verbose --features ${{ matrix.features }}
+          cargo test --tests --examples --verbose --features ${{ matrix.features }}
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
-        if: ${{ matrix.features == '--features streams' }}
+        if: ${{ matrix.features == 'streams' }}
         run: |
           bash ./mozjs/src/generate_wrappers.sh
           git diff --quiet --exit-code
       - name: Upload artifact
-        if: ${{ contains(matrix.features, '--features streams') }}
+        if: ${{ contains(matrix.features, 'streams') }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
@@ -93,7 +93,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["--features debugmozjs", "--features streams"]
+        features: ["debugmozjs", "streams"]
         target: ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
@@ -116,14 +116,14 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo build --verbose --target ${{ matrix.target }} ${{ matrix.features }}
+          cargo build --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
       - name: Test Windows
         if: ${{ !contains(matrix.target, 'aarch64') }}
         shell: cmd
         run: |
-          cargo test --tests --examples --verbose --target ${{ matrix.target }} ${{ matrix.features }}
+          cargo test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
       - name: Upload artifact
-        if: ${{ !contains(matrix.target, 'aarch64') && contains(matrix.features, '--features streams') }}
+        if: ${{ !contains(matrix.target, 'aarch64') && contains(matrix.features, 'streams') }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
@@ -208,13 +208,14 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       ["linux", "mac", "windows"]
-    if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
       - id: release
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
         run: |
           RELEASE_TAG=$(date "+%F-%H-%M")
           gh release create ${RELEASE_TAG} ./*.tar.gz
