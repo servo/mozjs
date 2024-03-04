@@ -43,7 +43,13 @@ jobs:
     needs: release-tag
     steps:
       - uses: actions/checkout@v4
-      - name: Download prebuilt mozjs
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ needs.release-tag.outputs.release-tag == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+      - name: Download prebuilt mozjs from release
+        if: ${{ needs.release-tag.outputs.release-tag != '' }}
         run: |
           curl -L https://github.com/${{ github.repository_owner }}/mozjs/releases/download/${{ needs.release-tag.outputs.release-tag }}/libmozjs-${{ matrix.platform.target }}.tar.gz -o libmozjs.tar.gz
       - name: Build
