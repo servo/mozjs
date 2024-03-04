@@ -56,4 +56,4 @@ jobs:
       - name: Build
         run: |
           cargo build --verbose --features streams
-          cargo test --tests --examples --verbose ${{ matrix.features }}
+          cargo test --tests --examples --verbose --features streams
