@@ -2,7 +2,6 @@
 name: Version Release Check
 
 on:
-  pull_request:
   release:
     types: [published]
   workflow_call:
@@ -25,12 +24,10 @@ jobs:
     steps:
       - id: tag-name
         run: |
-          if [[ ${{ github.event_name }} == 'workflow_call' ]]; then
+          if [[ '${{ inputs.release-tag }}' != '' ]]; then
             echo "RELEASE_TAG=${{ inputs.release-tag }}" >> ${GITHUB_OUTPUT}
-          elif [[ ${{ github.event_name }} == 'release' ]]; then
+          elif [[ '${{ github.event_name }}' == 'release' ]]; then
             echo "RELEASE_TAG=${{ github.ref_name }}" >> ${GITHUB_OUTPUT}
-          else
-            echo "RELEASE_TAG='2024-03-02-06-57'" >> ${GITHUB_OUTPUT}
           fi
     outputs:
       release-tag: ${{ steps.tag-name.outputs.RELEASE_TAG }}
