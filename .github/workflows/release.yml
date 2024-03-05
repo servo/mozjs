@@ -16,20 +16,7 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - id: tag-name
-        run: |
-          if [[ '${{ inputs.release-tag }}' != '' ]]; then
-            echo "RELEASE_TAG=${{ inputs.release-tag }}" >> ${GITHUB_OUTPUT}
-          elif [[ '${{ github.event_name }}' == 'release' ]]; then
-            echo "RELEASE_TAG=${{ github.ref_name }}" >> ${GITHUB_OUTPUT}
-          fi
-    outputs:
-      tag: ${{ steps.tag-name.outputs.RELEASE_TAG }}
-
-  verify-artifact:
+  verify-archive:
     strategy:
       fail-fast: false
       matrix:
@@ -39,20 +26,20 @@ jobs:
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
     runs-on: ${{ matrix.platform.os }}
-    needs: release
     env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
       MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
     steps:
       - uses: actions/checkout@v4
       - name: Download prebuilt mozjs from artifact
-        if: ${{ needs.release.outputs.tag == '' }}
+        if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
           name: libmozjs-${{ matrix.platform.target }}.tar.gz
       - name: Download prebuilt mozjs from release
-        if: ${{ needs.release.outputs.tag != '' }}
+        if: ${{ env.RELEASE_TAG != '' }}
         run: |
-          curl -L https://github.com/${{ github.repository_owner }}/mozjs/releases/download/${{ needs.release.outputs.tag }}/libmozjs-${{ matrix.platform.target }}.tar.gz -o libmozjs-${{ matrix.platform.target }}.tar.gz
+          curl -L https://github.com/${{ github.repository_owner }}/mozjs/releases/download/${{ env.RELEASE_TAG }}/libmozjs-${{ matrix.platform.target }}.tar.gz -o libmozjs-${{ matrix.platform.target }}.tar.gz
       - name: Build
         run: |
           cargo build --verbose --features streams
