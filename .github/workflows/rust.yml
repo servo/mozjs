@@ -200,16 +200,14 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - name: Publish release if tag doesn't exist
-        id: check-tag
+      - id: check-tag
         if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
         run: |
           RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
-          git fetch --tags --quiet
-          if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
-            gh release create ${{ steps.check-tag.outputs.RELEASE_TAG }} ./*.tar.gz
-          fi
           echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
+      - name: Publish release
+        if: ${{ steps.check-tag.outputs.RELEASE_TAG != '' }}
+        run: gh release create ${{ steps.check-tag.outputs.RELEASE_TAG }} ./*.tar.gz || exit 0
     outputs:
       release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
 
