@@ -15,14 +15,19 @@ env:
   RUST_BACKTRACE: 1
   SHELL: /bin/bash
   CARGO_INCREMENTAL: 0
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  MOZJS_CREATE_ARCHIVE: 1
 
 jobs:
   mac:
-    runs-on: macos-13
     strategy:
       fail-fast: false
       matrix:
-        features: ["--features debugmozjs", ""]
+        features: ["debugmozjs", "streams"]
+        platform:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+    runs-on: ${{ matrix.platform.os }}
     env:
       RUSTC_WRAPPER: sccache
       CCACHE: sccache
@@ -39,8 +44,15 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Build
         run: |
-          cargo build --verbose ${{ matrix.features }}
-          cargo test --tests --examples --verbose ${{ matrix.features }}
+          cargo build --verbose --features ${{ matrix.features }}
+          cargo test --tests --examples --verbose --features ${{ matrix.features }}
+      - name: Upload artifact
+        if: ${{ contains(matrix.features, 'streams') }}
+        uses: actions/upload-artifact@v4
+        with:
+          path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+
   linux:
     env:
       RUSTC_WRAPPER: "sccache"
@@ -50,7 +62,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["--features debugmozjs", ""]
+        features: ["debugmozjs", "streams"]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -61,21 +73,27 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.3
       - name: Build
         run: |
-          cargo build --verbose ${{ matrix.features }}
-          cargo test --tests --examples --verbose ${{ matrix.features }}
+          cargo build --verbose --features ${{ matrix.features }}
+          cargo test --tests --examples --verbose --features ${{ matrix.features }}
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
-        if: ${{ matrix.features == '' }}
+        if: ${{ matrix.features == 'streams' }}
         run: |
           bash ./mozjs/src/generate_wrappers.sh
           git diff --quiet --exit-code
+      - name: Upload artifact
+        if: ${{ contains(matrix.features, 'streams') }}
+        uses: actions/upload-artifact@v4
+        with:
+          path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
+          name: libmozjs-x86_64-unknown-linux-gnu.tar.gz
 
   windows:
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        features: ["--features debugmozjs", ""]
+        features: ["debugmozjs", "streams"]
         target: ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
@@ -98,12 +116,18 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo build --verbose --target ${{ matrix.target }} ${{ matrix.features }}
+          cargo build --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
       - name: Test Windows
         if: ${{ !contains(matrix.target, 'aarch64') }}
         shell: cmd
         run: |
-          cargo test --tests --examples --verbose --target ${{ matrix.target }} ${{ matrix.features }}
+          cargo test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
+      - name: Upload artifact
+        if: ${{ !contains(matrix.target, 'aarch64') && contains(matrix.features, 'streams') }}
+        uses: actions/upload-artifact@v4
+        with:
+          path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
+          name: libmozjs-x86_64-pc-windows-msvc.tar.gz
 
   android:
     runs-on: ubuntu-latest
@@ -165,11 +189,43 @@ jobs:
         run: |
           git diff --staged --no-ext-diff --quiet --exit-code
 
+  publish-release:
+    name: Check version and publish release
+    runs-on: ubuntu-latest
+    needs:
+      ["linux", "mac", "windows"]
+    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Publish release if tag doesn't exist
+        id: check-tag
+        if: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
+        run: |
+          RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
+          git fetch --tags --quiet
+          if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
+            gh release create ${RELEASE_TAG} ./*.tar.gz
+          fi
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
+    outputs:
+      release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
+
+  verify-release:
+    name: Verify release
+    needs: publish-release
+    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    uses: ./.github/workflows/release.yml
+    with:
+      release-tag: ${{ needs.publish-release.outputs.release-tag }}
+
   build_result:
     name: Result
     runs-on: ubuntu-latest
     needs:
-      ["android", "linux", "linux-cross-compile", "mac", "windows", "integrity"]
+      ["android", "linux", "linux-cross-compile", "mac", "windows", "integrity", "publish-release", "verify-release"]
     if: ${{ always() }}
     steps:
       - name: Mark the job as successful
@@ -178,3 +234,4 @@ jobs:
       - name: Mark the job as unsuccessful
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
+
