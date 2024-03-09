@@ -207,7 +207,7 @@ jobs:
           RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
           git fetch --tags --quiet
           if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
-            gh release create ${{ steps.check-tag.outputs.RELEASE_TAG }} ./*.tar.gz
+            gh release create ${RELEASE_TAG} ./*.tar.gz
           fi
           echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
     outputs:
