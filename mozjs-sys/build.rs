@@ -57,9 +57,20 @@ fn main() {
     // Used by mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
-    if let Some(archive) = env::var_os("MOZJS_ARCHIVE") {
-        download_static_lib_binaries(&PathBuf::from(archive), &build_dir);
-    } else {
+    // Link to pre-built archive first if it exists.
+    let build_from_source = match env::var_os("MOZJS_ARCHIVE") {
+        Some(archive) => match link_static_lib_binaries(&PathBuf::from(archive), &build_dir) {
+            Ok(()) => false,
+            Err(e) => {
+                println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
+                true
+            }
+        },
+        None => true,
+    };
+
+    // Builing from source if there's no archive.
+    if build_from_source {
         fs::create_dir_all(&build_dir).expect("could not create build dir");
         build_spidermonkey(&build_dir);
         build_jsapi(&build_dir);
@@ -796,11 +807,11 @@ fn decompress_static_lib(archive: &Path, build_dir: &Path) -> Result<(), std::io
 }
 
 /// Download static library tarball instead of building it from source.
-fn download_static_lib_binaries(archive: &Path, build_dir: &Path) {
+fn link_static_lib_binaries(archive: &Path, build_dir: &Path) -> Result<(), std::io::Error> {
     // Only download the files if build directory doesn't exist.
     if !build_dir.exists() {
         // TODO download from https
-        decompress_static_lib(archive, build_dir).expect("Failed to decompress static libs");
+        decompress_static_lib(archive, build_dir)?;
     }
 
     // Link static lib binaries
@@ -827,4 +838,5 @@ fn download_static_lib_binaries(archive: &Path, build_dir: &Path) {
     println!("cargo:rustc-link-search=native={}", build_dir.display());
     println!("cargo:rustc-link-lib=static=jsapi");
     println!("cargo:rustc-link-lib=static=jsglue");
+    Ok(())
 }
