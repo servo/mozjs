@@ -1754,7 +1754,7 @@ def select_linker_tmpl(host_or_target):
         # Check the kind of linker
         cmd_base = c_compiler.wrapper + [c_compiler.compiler] + c_compiler.flags
 
-        def try_linker(linker, version_check="-Wl,--version"):
+        def try_linker(linker, version_check="-Wl", "--version"):
             # Generate the compiler flag
             if linker == "ld64":
                 linker_flag = ["-fuse-ld=ld"]
