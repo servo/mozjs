@@ -21,26 +21,29 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { target: aarch64-apple-darwin, os: macos-14 }
-          - { target: x86_64-apple-darwin, os: macos-13 }
-          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
-          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: libmozjs-aarch64-apple-darwin.tar.gz, os: macos-14 }
+          - { target: libmozjs-x86_64-apple-darwin.tar.gz, os: macos-13 }
+          - { target: libmozjs-x86_64-unknown-linux-gnu.tar.gz, os: ubuntu-latest }
+          - { target: libmozjs-x86_64-pc-windows-msvc.tar.gz, os: windows-latest }
     runs-on: ${{ matrix.platform.os }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
-      MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
     steps:
       - uses: actions/checkout@v4
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
-          name: libmozjs-${{ matrix.platform.target }}.tar.gz
-      - name: Download prebuilt mozjs from release
-        if: ${{ env.RELEASE_TAG != '' }}
+          name: ${{ matrix.platform.target }}
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          MOZJS_ARCHIVE: ${{ matrix.platform.target }}
         run: |
-          curl -L https://github.com/${{ github.repository_owner }}/mozjs/releases/download/${{ env.RELEASE_TAG }}/libmozjs-${{ matrix.platform.target }}.tar.gz -o libmozjs-${{ matrix.platform.target }}.tar.gz
-      - name: Build
+          cargo build --verbose --features streams
+          cargo test --tests --examples --verbose --features streams
+      - name: Build from auto-download
+        if: ${{ env.RELEASE_TAG != '' }}
         run: |
           cargo build --verbose --features streams
           cargo test --tests --examples --verbose --features streams
