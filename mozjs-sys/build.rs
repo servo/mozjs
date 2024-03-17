@@ -58,15 +58,17 @@ fn main() {
     println!("cargo:outdir={}", build_dir.display());
 
     // Link to pre-built archive first if it exists.
-    let build_from_source = match env::var_os("MOZJS_FROM_SOURCE") {
-        Some(_) => true,
-        None => match link_static_lib_binaries(&build_dir) {
+    let create_archive = env::var_os("MOZJS_CREATE_ARCHIVE").is_some();
+    let build_from_source = if env::var_os("MOZJS_FROM_SOURCE").is_some() || create_archive {
+        true
+    } else {
+        match link_static_lib_binaries(&build_dir) {
             Ok(()) => false,
             Err(e) => {
                 println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
                 true
             }
-        },
+        }
     };
 
     // Builing from source if there's no archive.
@@ -78,7 +80,7 @@ fn main() {
         jsglue::build(&build_dir);
 
         // If this env variable is set, create the compressed tarball of spidermonkey.
-        if env::var_os("MOZJS_CREATE_ARCHIVE").is_some() {
+        if create_archive {
             compress_static_lib(&build_dir).expect("Failed to compress static lib binaries.");
         }
     }
@@ -835,14 +837,15 @@ fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
 
 /// Link static library tarball instead of building it from source.
 fn link_static_lib_binaries(build_dir: &Path) -> Result<(), std::io::Error> {
-    let archive = if let Ok(archive) = env::var("MOZJS_ARCHIVE") {
+    if let Ok(archive) = env::var("MOZJS_ARCHIVE") {
         // If there's archive variable, assume it's a url base to download first
         // If not, assign it as a local path
-        download_archive(Some(&archive)).unwrap_or(PathBuf::from(archive))
+        let archive = download_archive(Some(&archive)).unwrap_or(PathBuf::from(archive));
+        decompress_static_lib(&archive, build_dir).unwrap();
     } else {
-        download_archive(None)?
+        let archive = download_archive(None)?;
+        decompress_static_lib(&archive, build_dir)?;
     };
-    decompress_static_lib(&archive, build_dir)?;
 
     // Link static lib binaries
     let target = env::var("TARGET").unwrap();
