@@ -61,6 +61,12 @@ fn main() {
     let create_archive = env::var_os("MOZJS_CREATE_ARCHIVE").is_some();
     let build_from_source = if env::var_os("MOZJS_FROM_SOURCE").is_some() || create_archive {
         true
+    } else if env::var("CARGO_FEATURE_DEBUGMOZJS").is_ok() {
+        println!("cargo:info=debug-mozjs feature is enabled. Building from source directly.");
+        true
+    } else if !env::var("CARGO_FEATURE_STREAMS").is_ok() {
+        println!("cargo:info=streams feature isn't enabled. Building from source directly.");
+        true
     } else {
         match link_static_lib_binaries(&build_dir) {
             Ok(()) => false,
