@@ -21,10 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         platform:
-          - { target: libmozjs-aarch64-apple-darwin.tar.gz, os: macos-14 }
-          - { target: libmozjs-x86_64-apple-darwin.tar.gz, os: macos-13 }
-          - { target: libmozjs-x86_64-unknown-linux-gnu.tar.gz, os: ubuntu-latest }
-          - { target: libmozjs-x86_64-pc-windows-msvc.tar.gz, os: windows-latest }
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
     runs-on: ${{ matrix.platform.os }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
@@ -34,11 +34,11 @@ jobs:
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
-          name: ${{ matrix.platform.target }}
+          name: libmozjs-${{ matrix.platform.target }}.tar.gz
       - name: Build from archive
         if: ${{ env.RELEASE_TAG == '' }}
         env:
-          MOZJS_ARCHIVE: ${{ matrix.platform.target }}
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
         run: |
           cargo build --verbose --features streams
           cargo test --tests --examples --verbose --features streams
