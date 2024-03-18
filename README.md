@@ -127,7 +127,7 @@ In order to upgrade to a new version of SpiderMonkey:
 
 4. Run `python3 ./mozjs-sys/etc/update.py path/to/tarball`.
 
-5. Update `mozjs-sys/etc/COMMIT` with the commit number.
+5. Update `mozjs-sys/etc/COMMIT` with the commit number and mozjs-sys version with SpiderMonkey version.
 
 6. Run `./mozjs/src/generate_wrappers.sh` to regenerate wrappers.
 
