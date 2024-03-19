@@ -11,8 +11,8 @@ Mozjs is currently tracking SpiderMonkey on [ESR-115](https://searchfox.org/mozi
 
 ## Binary Build
 
-Spidermonkey is very large which could take a long time to compile. Mozjs provides prebuilt archive to download and link during build script by default.
-You can also create your own archive and link to it. Mozjs currently offer two environment variables to enable such work:
+Spidermonkey is very large which could take a long time to compile. If `streams` feature is enabled, mozjs provides prebuilt archive to download
+and link during build script by default. You can also create your own archive and link to it. Mozjs currently offer two environment variables to enable such work:
 
 - `MOZJS_CREATE_ARCHIVE=1` can create a spidermonkey tarball for release usage. It will be created in `target` directory.
 - `MOZJS_ARCHIVE` can use this tarball without compiling spidermonkey and bindgen wrappers. It has 2 usages to specify the archive:
@@ -22,7 +22,7 @@ You can also create your own archive and link to it. Mozjs currently offer two e
 
 ## Building from Source
 
-If `MOZJS_FROM_SOURCE=1` is enabled or steps to link prebuilt archive fails, mozjs will try to build the spidermonky from source. 
+If `MOZJS_FROM_SOURCE=1` or `MOZJS_CREATE_ARCHIVE` are enabled or steps to link prebuilt archive fails, mozjs will try to build the spidermonky from source. 
 
 ### Linux
 
