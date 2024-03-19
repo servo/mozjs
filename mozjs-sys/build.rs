@@ -138,8 +138,9 @@ fn cc_flags() -> Vec<&'static str> {
 
     let is_apple = target.contains("apple");
     let is_freebsd = target.contains("freebsd");
+    let is_ohos = target.contains("ohos");
 
-    if is_apple || is_freebsd {
+    if is_apple || is_freebsd || is_ohos {
         result.push("-stdlib=libc++");
     }
 
@@ -244,7 +245,7 @@ fn build_spidermonkey(build_dir: &Path) {
         cmd.env("MAKEFLAGS", makeflags);
     }
 
-    if target.contains("apple") || target.contains("freebsd") {
+    if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         cmd.env("CXXFLAGS", "-stdlib=libc++");
     }
 
@@ -276,7 +277,7 @@ fn build_spidermonkey(build_dir: &Path) {
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
-    } else if target.contains("apple") || target.contains("freebsd") {
+    } else if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         println!("cargo:rustc-link-lib=c++");
     } else {
         println!("cargo:rustc-link-lib=stdc++");
@@ -821,7 +822,7 @@ fn download_static_lib_binaries(archive: &Path, build_dir: &Path) {
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
-    } else if target.contains("apple") || target.contains("freebsd") {
+    } else if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         println!("cargo:rustc-link-lib=c++");
     } else {
         println!("cargo:rustc-link-lib=stdc++");
