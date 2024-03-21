@@ -78,7 +78,7 @@ ifneq ($(HOST),$(TARGET))
 		# non-developer builds, but NDK r25c ships with only lld.
 		CONFIGURE_FLAGS += \
 			--without-system-zlib \
-			--with-android-ndk=$(ANDROID_NDK_HOME) \
+			--with-android-ndk=$(ANDROID_NDK_ROOT) \
 			--with-android-version=$(ANDROID_API_LEVEL) \
 			--enable-linker=lld \
 			$(NULL)

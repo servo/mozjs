@@ -69,16 +69,16 @@ def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
 
 def create_environment_for_build() -> Dict[str, str]:
     env = os.environ.copy()
-    if "ANDROID_NDK_HOME" not in env:
-        raise Exception("Please set the ANDROID_NDK_HOME environment variable.")
+    if "ANDROID_NDK_ROOT" not in env:
+        raise Exception("Please set the ANDROID_NDK_ROOT environment variable.")
 
-    ndk_home_dir = env["ANDROID_NDK_HOME"]
+    ndk_home_dir = env["ANDROID_NDK_ROOT"]
 
     # Check if the NDK version is 21
     if not os.path.isfile(os.path.join(ndk_home_dir, 'source.properties')):
         raise Exception(
             "ANDROID_NDK should have file `source.properties`.\n" +
-            "The environment variable ANDROID_NDK_HOME may be set at a wrong path."
+            "The environment variable ANDROID_NDK_ROOT may be set at a wrong path."
         )
 
     with open(os.path.join(ndk_home_dir, 'source.properties'), encoding="utf8") as ndk_properties:
