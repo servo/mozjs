@@ -60,16 +60,16 @@ fn main() {
     // Link to pre-built archive first if it exists.
     let create_archive = env::var_os("MOZJS_CREATE_ARCHIVE").is_some();
     let build_from_source = if env::var_os("MOZJS_FROM_SOURCE").is_some() {
-        println!("cargo:info=Environment variable MOZJS_FROM_SOURCE is set. Building from source directly.");
+        println!("Environment variable MOZJS_FROM_SOURCE is set. Building from source directly.");
         true
     } else if create_archive {
-        println!("cargo:info=Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly.");
+        println!("Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly.");
         true
     } else if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-        println!("cargo:info=debug-mozjs feature is enabled. Building from source directly.");
+        println!("debug-mozjs feature is enabled. Building from source directly.");
         true
     } else if !env::var_os("CARGO_FEATURE_STREAMS").is_some() {
-        println!("cargo:info=streams feature isn't enabled. Building from source directly.");
+        println!("streams feature isn't enabled. Building from source directly.");
         true
     } else {
         match link_static_lib_binaries(&build_dir) {
