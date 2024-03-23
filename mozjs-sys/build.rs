@@ -63,7 +63,9 @@ fn main() {
         println!("Environment variable MOZJS_FROM_SOURCE is set. Building from source directly.");
         true
     } else if create_archive {
-        println!("Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly.");
+        println!(
+            "Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly."
+        );
         true
     } else if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
         println!("debug-mozjs feature is enabled. Building from source directly.");
