@@ -57,8 +57,16 @@ fn main() {
     // Used by mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
-    // Check if we can link with pre-built archive first, and decide if it needs to build from source.
-    if should_build_from_source(&build_dir) {
+    // Check if we can link with pre-built archive , and decide if it needs to build from source.
+    let mut build_from_source = should_build_from_source();
+    if !build_from_source {
+        if let Err(e) = link_static_lib_binaries(&build_dir) {
+            println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
+            build_from_source = true;
+        }
+    }
+
+    if build_from_source {
         fs::create_dir_all(&build_dir).expect("could not create build dir");
         build_spidermonkey(&build_dir);
         build_jsapi(&build_dir);
@@ -92,7 +100,7 @@ fn main() {
 
 /// Check env variable conditions to decide if we need to link pre-built archive first.
 /// And then return bool value to notify if we need to build from source instead.
-fn should_build_from_source(build_dir: &Path) -> bool {
+fn should_build_from_source() -> bool {
     if env::var_os("MOZJS_FROM_SOURCE").is_some() {
         println!("Environment variable MOZJS_FROM_SOURCE is set. Building from source directly.");
         true
@@ -108,13 +116,7 @@ fn should_build_from_source(build_dir: &Path) -> bool {
         println!("streams feature isn't enabled. Building from source directly.");
         true
     } else {
-        match link_static_lib_binaries(&build_dir) {
-            Ok(()) => false,
-            Err(e) => {
-                println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
-                true
-            }
-        }
+        false
     }
 }
 
@@ -854,6 +856,7 @@ fn link_static_lib_binaries(build_dir: &Path) -> Result<(), std::io::Error> {
     if let Ok(archive) = env::var("MOZJS_ARCHIVE") {
         // If the archive variable is present, assume it's a URL base to download from.
         let archive = download_archive(Some(&archive)).unwrap_or(PathBuf::from(archive));
+        // Panic directly since the archive is specified manually.
         decompress_static_lib(&archive, build_dir).unwrap();
     } else {
         let archive = download_archive(None)?;

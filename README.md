@@ -11,14 +11,14 @@ Mozjs is currently tracking SpiderMonkey on [ESR-115](https://searchfox.org/mozi
 
 ## Building from Pre-built Archive
 
-SpiderMonkey is very large which could take a long time to compile. If building with default
-feature, `mozjs` provides a pre-built archive which can be linked against. You can also create
+SpiderMonkey is very large and can take a long time to compile. If building with default
+features, `mozjs` provides a pre-built archive which can be linked against. You can also create
 your own archive and link to it. `mozjs` currently offers two environment variables to enable
 this feature:
 
-- `MOZJS_CREATE_ARCHIVE=1` will create a SpiderMonkey binary tarball for release usage. It will
+- `MOZJS_CREATE_ARCHIVE=1` will create a SpiderMonkey binary archive for release usage. It will
    be created in the `target` directory.
-- `MOZJS_ARCHIVE` can be used to build against a pre-built archive. Using this flag compiling
+- `MOZJS_ARCHIVE` can be used to build against a pre-built archive. Using this flag, compiling
    SpiderMonkey and the bindgen wrappers is unnecessary. There are two ways to use it:
    - `MOZJS_ARCHIVE=path/to/libmozjs.tar.gz`: This option will look for the archive at the local
       path, extract it, and then link against the static libraries included in the archive.
