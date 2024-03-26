@@ -221,10 +221,6 @@ fn build_spidermonkey(build_dir: &Path) {
         encoding_c_mem_include_dir.replace("\\", "/"),
     ));
     cppflags.push(" ");
-    // add zlib from libz-sys to include path
-    if let Ok(zlib_include_dir) = env::var("DEP_Z_INCLUDE") {
-        cppflags.push(format!("-I{} ", zlib_include_dir.replace("\\", "/")));
-    }
     // add zlib.pc into pkg-config's search path
     // this is only needed when libz-sys builds zlib from source
     if let Ok(zlib_root_dir) = env::var("DEP_Z_ROOT") {
