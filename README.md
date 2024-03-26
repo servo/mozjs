@@ -9,27 +9,36 @@ that are battle-tested in [Servo](https://servo.org/), split in two crates:
 Mozjs is currently tracking SpiderMonkey on [ESR-115](https://searchfox.org/mozilla-esr115/source/) branch
 (currently version 115.3).
 
-## Binary Build
+## Building from Pre-built Archive
 
-Spidermonkey is very large which could take a long time to compile. If `streams` feature is enabled, mozjs provides prebuilt archive to download
-and link during build script by default. You can also create your own archive and link to it. Mozjs currently offer two environment variables to enable such work:
+SpiderMonkey is very large which could take a long time to compile. If building with default
+feature, `mozjs` provides a pre-built archive which can be linked against. You can also create
+your own archive and link to it. `mozjs` currently offers two environment variables to enable
+this feature:
 
-- `MOZJS_CREATE_ARCHIVE=1` can create a spidermonkey tarball for release usage. It will be created in `target` directory.
-- `MOZJS_ARCHIVE` can use this tarball without compiling spidermonkey and bindgen wrappers. It has 2 usages to specify the archive:
-   - `MOZJS_ARCHIVE=path/to/libmozjs.tar.gz` will find the tarball in local path, extract, and then link to the static libraries.
-   - `MOZJS_ARCHIVE=https://url/to/release/page` will download the archive with provided url as base, extract, and then link to it. The base url should
-   be similar to `https://github.com/servo/mozjs/releases/download`. The build script will append the version and target accordingly.
+- `MOZJS_CREATE_ARCHIVE=1` will create a SpiderMonkey binary tarball for release usage. It will
+   be created in the `target` directory.
+- `MOZJS_ARCHIVE` can be used to build against a pre-built archive. Using this flag compiling
+   SpiderMonkey and the bindgen wrappers is unnecessary. There are two ways to use it:
+   - `MOZJS_ARCHIVE=path/to/libmozjs.tar.gz`: This option will look for the archive at the local
+      path, extract it, and then link against the static libraries included in the archive.
+   - `MOZJS_ARCHIVE=https://url/to/release/page`: This option will download the archive from
+      the provided base URL, extract it, and then link against the static libraries included in the
+      archive. The base URL should  be similar to `https://github.com/servo/mozjs/releases/`.
+      The build script will append the version and target accordingly. See the files at the example
+      URL for more details.
 
 ## Building from Source
 
-If `MOZJS_FROM_SOURCE=1` or `MOZJS_CREATE_ARCHIVE` are enabled or steps to link prebuilt archive fails, mozjs will try to build the spidermonky from source. 
+If `MOZJS_FROM_SOURCE=1` or `MOZJS_CREATE_ARCHIVE` are enabled or linking against a
+pre-built archive fails, `mozjs` will build SpiderMonkey from source.
 
 ### Linux
 
 Install Python, Clang and `build-essential`, for example on a Debian-based Linux:
 
 ```sh
-sudo apt-get install build-essential python3 python3-distutils llvm libclang-dev clang
+sudo apt-get install build-essential python3 python3-distutils llvm libclang-dev clang curl
 ```
 
 If you have more than one version of Clang installed, you can set the `LIBCLANG_PATH`
