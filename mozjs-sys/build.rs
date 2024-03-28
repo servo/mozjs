@@ -57,9 +57,16 @@ fn main() {
     // Used by mozjs downstream, don't remove.
     println!("cargo:outdir={}", build_dir.display());
 
-    if let Some(archive) = env::var_os("MOZJS_ARCHIVE") {
-        download_static_lib_binaries(&PathBuf::from(archive), &build_dir);
-    } else {
+    // Check if we can link with pre-built archive , and decide if it needs to build from source.
+    let mut build_from_source = should_build_from_source();
+    if !build_from_source {
+        if let Err(e) = link_static_lib_binaries(&build_dir) {
+            println!("cargo:warning=Failed to link pre-built archive by {e}. Building from source instead.");
+            build_from_source = true;
+        }
+    }
+
+    if build_from_source {
         fs::create_dir_all(&build_dir).expect("could not create build dir");
         build_spidermonkey(&build_dir);
         build_jsapi(&build_dir);
@@ -88,6 +95,28 @@ fn main() {
         for file in EXTRA_FILES {
             println!("cargo:rerun-if-changed={}", file);
         }
+    }
+}
+
+/// Check env variable conditions to decide if we need to link pre-built archive first.
+/// And then return bool value to notify if we need to build from source instead.
+fn should_build_from_source() -> bool {
+    if env::var_os("MOZJS_FROM_SOURCE").is_some() {
+        println!("Environment variable MOZJS_FROM_SOURCE is set. Building from source directly.");
+        true
+    } else if env::var_os("MOZJS_CREATE_ARCHIVE").is_some() {
+        println!(
+            "Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly."
+        );
+        true
+    } else if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
+        println!("debug-mozjs feature is enabled. Building from source directly.");
+        true
+    } else if !env::var_os("CARGO_FEATURE_STREAMS").is_some() {
+        println!("streams feature isn't enabled. Building from source directly.");
+        true
+    } else {
+        false
     }
 }
 
@@ -787,7 +816,7 @@ fn decompress_static_lib(archive: &Path, build_dir: &Path) -> Result<(), std::io
     let tar_gz = File::open(archive).unwrap_or({
         let mut workspace_dir = get_cargo_target_dir(build_dir).unwrap().to_path_buf();
         workspace_dir.pop();
-        File::open(workspace_dir.join(archive)).unwrap()
+        File::open(workspace_dir.join(archive))?
     });
     let tar = GzDecoder::new(tar_gz);
     let mut archive = Archive::new(tar);
@@ -795,13 +824,44 @@ fn decompress_static_lib(archive: &Path, build_dir: &Path) -> Result<(), std::io
     Ok(())
 }
 
-/// Download static library tarball instead of building it from source.
-fn download_static_lib_binaries(archive: &Path, build_dir: &Path) {
-    // Only download the files if build directory doesn't exist.
-    if !build_dir.exists() {
-        // TODO download from https
-        decompress_static_lib(archive, build_dir).expect("Failed to decompress static libs");
+/// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
+/// it will use `servo/mozjs`'s release page as the base URL.
+fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
+    let base = base.unwrap_or("https://github.com/servo/mozjs/releases/download");
+    let version = env::var("CARGO_PKG_VERSION").unwrap();
+    let target = env::var("TARGET").unwrap();
+    let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("libmozjs.tar.gz");
+    if !archive_path.exists() {
+        if !Command::new("curl")
+            .arg("-L")
+            .arg("-f")
+            .arg("-s")
+            .arg("-o")
+            .arg(&archive_path)
+            .arg(format!(
+                "{base}/mozjs-sys-v{version}/libmozjs-{target}.tar.gz"
+            ))
+            .status()?
+            .success()
+        {
+            return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+        }
     }
+
+    Ok(archive_path)
+}
+
+/// Link against the static library archive instead of building SpiderMonkey from source.
+fn link_static_lib_binaries(build_dir: &Path) -> Result<(), std::io::Error> {
+    if let Ok(archive) = env::var("MOZJS_ARCHIVE") {
+        // If the archive variable is present, assume it's a URL base to download from.
+        let archive = download_archive(Some(&archive)).unwrap_or(PathBuf::from(archive));
+        // Panic directly since the archive is specified manually.
+        decompress_static_lib(&archive, build_dir).unwrap();
+    } else {
+        let archive = download_archive(None)?;
+        decompress_static_lib(&archive, build_dir)?;
+    };
 
     // Link static lib binaries
     let target = env::var("TARGET").unwrap();
@@ -827,4 +887,5 @@ fn download_static_lib_binaries(archive: &Path, build_dir: &Path) {
     println!("cargo:rustc-link-search=native={}", build_dir.display());
     println!("cargo:rustc-link-lib=static=jsapi");
     println!("cargo:rustc-link-lib=static=jsglue");
+    Ok(())
 }

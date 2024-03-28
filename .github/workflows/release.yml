@@ -28,7 +28,6 @@ jobs:
     runs-on: ${{ matrix.platform.os }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
-      MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
     steps:
       - uses: actions/checkout@v4
       - name: Download prebuilt mozjs from artifact
@@ -36,11 +35,15 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: libmozjs-${{ matrix.platform.target }}.tar.gz
-      - name: Download prebuilt mozjs from release
-        if: ${{ env.RELEASE_TAG != '' }}
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
         run: |
-          curl -L https://github.com/${{ github.repository_owner }}/mozjs/releases/download/${{ env.RELEASE_TAG }}/libmozjs-${{ matrix.platform.target }}.tar.gz -o libmozjs-${{ matrix.platform.target }}.tar.gz
-      - name: Build
+          cargo build --verbose --features streams
+          cargo test --tests --examples --verbose --features streams
+      - name: Build from auto-download
+        if: ${{ env.RELEASE_TAG != '' }}
         run: |
           cargo build --verbose --features streams
           cargo test --tests --examples --verbose --features streams
