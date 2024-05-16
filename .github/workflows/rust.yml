@@ -144,7 +144,7 @@ jobs:
           targets: armv7-linux-androideabi
       - name: Build
         env:
-          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           ./android-build cargo build --target="armv7-linux-androideabi"
 
