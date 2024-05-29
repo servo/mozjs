@@ -926,8 +926,8 @@ fn get_cc_rs_env(var_base: &str) -> Option<String> {
 /// Like `get_cc_rs_env()` but returns the OsString value.
 fn get_cc_rs_env_os(var_base: &str) -> Option<OsString> {
     fn get_env(var: &str) -> Option<OsString> {
-        let value = env::var_os(var)?;
         println!("cargo:rerun-if-env-changed={}", var);
+        let value = env::var_os(var)?;
         Some(value)
     }
     let target = env::var("TARGET").expect("Cargo should set TARGET");
