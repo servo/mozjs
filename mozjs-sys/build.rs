@@ -33,6 +33,20 @@ const ENV_VARS: &'static [&'static str] = &[
     "STLPORT_LIBS",
 ];
 
+// For `cc-rs` `TARGET_XX` variables override non prefixed variables,
+// so we should mimic this behavior when building spidermonkey to have a consistent experience.
+const SM_TARGET_ENV_VARS: &'static [&'static str] = &[
+    "AR",
+    "AS",
+    "CC",
+    "CFLAGS",
+    "CLANGFLAGS",
+    "CPP",
+    "CPPFLAGS",
+    "CXX",
+    "CXXFLAGS",
+];
+
 const EXTRA_FILES: &'static [&'static str] = &[
     "makefile.cargo",
     "src/rustfmt.toml",
@@ -244,6 +258,14 @@ fn build_spidermonkey(build_dir: &Path) {
 
     let mut cmd = Command::new(make.clone());
 
+    // Set key environment variables, such as AR, CC, CXX based on what `cc-rs`
+    // would choose.
+    for var_base in SM_TARGET_ENV_VARS {
+        if let Some(value) = get_cc_rs_env_os(var_base) {
+            cmd.env(var_base, value);
+        }
+    }
+
     let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
     let mut cppflags = OsString::from("-I");
     cppflags.push(OsString::from(
@@ -257,13 +279,13 @@ fn build_spidermonkey(build_dir: &Path) {
             "{}/lib/pkgconfig",
             zlib_root_dir.replace("\\", "/")
         ));
-        if let Some(env_pkg_config_path) = env::var_os("PKG_CONFIG_PATH") {
+        if let Some(env_pkg_config_path) = get_cc_rs_env_os("PKG_CONFIG_PATH") {
             pkg_config_path.push(":");
             pkg_config_path.push(env_pkg_config_path);
         }
         cmd.env("PKG_CONFIG_PATH", pkg_config_path);
     }
-    cppflags.push(env::var_os("CPPFLAGS").unwrap_or_default());
+    cppflags.push(get_cc_rs_env_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
 
     if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
@@ -372,13 +394,13 @@ fn build_jsapi_bindings(build_dir: &Path) {
         builder = builder.clang_arg("-fms-compatibility");
     }
 
-    if let Ok(flags) = env::var("CXXFLAGS") {
+    if let Some(flags) = get_cc_rs_env("CXXFLAGS") {
         for flag in flags.split_whitespace() {
             builder = builder.clang_arg(flag);
         }
     }
 
-    if let Ok(flags) = env::var("CLANGFLAGS") {
+    if let Some(flags) = get_cc_rs_env("CLANGFLAGS") {
         for flag in flags.split_whitespace() {
             builder = builder.clang_arg(flag);
         }
@@ -888,4 +910,36 @@ fn link_static_lib_binaries(build_dir: &Path) -> Result<(), std::io::Error> {
     println!("cargo:rustc-link-lib=static=jsapi");
     println!("cargo:rustc-link-lib=static=jsglue");
     Ok(())
+}
+
+/// Returns the value `cc-rs` would use for `var_base`
+///
+/// Since we build parts of our code without cc-rs by directly invoking spidermonkey,
+/// we should first adjust key environment variables like `CC`, `CXX`, `AR` etc. to
+/// have the values that users of `cc-rs` would expect.
+///
+/// Adapted from https://github.com/rust-lang/cc-rs/blob/3ba23569a623074748a3030f382afd22483555df/src/lib.rs#L3617
+fn get_cc_rs_env(var_base: &str) -> Option<String> {
+    get_cc_rs_env_os(var_base).map(|val| val.to_str().expect("Not a valid string.").to_string())
+}
+
+/// Like `get_cc_rs_env()` but returns the OsString value.
+fn get_cc_rs_env_os(var_base: &str) -> Option<OsString> {
+    fn get_env(var: &str) -> Option<OsString> {
+        println!("cargo:rerun-if-env-changed={}", var);
+        let value = env::var_os(var)?;
+        Some(value)
+    }
+    let target = env::var("TARGET").expect("Cargo should set TARGET");
+    // `cc-rs` does `if host == target { "HOST" } else { "TARGET" }`, which is not
+    // correct when cross-compiling to the same target-triple (e.g. different sysroot).
+    // For mozjs we should be correct to always use the target compiler, as it seems
+    // very unlikely that anybody would use mozjs in build-tooling.
+    let kind = "TARGET";
+    let target_u = target.replace('-', "_");
+    let res = get_env(&format!("{}_{}", var_base, target))
+        .or_else(|| get_env(&format!("{}_{}", var_base, target_u)))
+        .or_else(|| get_env(&format!("{}_{}", kind, var_base)))
+        .or_else(|| get_env(var_base))?;
+    Some(res)
 }
