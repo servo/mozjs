@@ -7,7 +7,7 @@ that are battle-tested in [Servo](https://servo.org/), split in two crates:
 - `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
 Mozjs is currently tracking SpiderMonkey on [ESR-115](https://searchfox.org/mozilla-esr115/source/) branch
-(currently version 115.3).
+(currently version 115.13).
 
 ## Building from Pre-built Archive
 
