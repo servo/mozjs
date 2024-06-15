@@ -41,7 +41,7 @@ jobs:
           brew list -1 | grep python | while read formula; do brew unlink $formula; brew link --overwrite $formula; done
           brew install llvm yasm
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Build
         run: |
           cargo build --verbose --features ${{ matrix.features }}
@@ -70,7 +70,7 @@ jobs:
         run: |
           sudo apt install llvm -y
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Build
         run: |
           cargo build --verbose --features ${{ matrix.features }}
@@ -112,7 +112,7 @@ jobs:
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
           cd target/dependencies && unzip -qo moztools.zip -d .
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.3
+        uses: mozilla-actions/sccache-action@v0.0.4
       - name: Build Windows
         shell: cmd
         run: |
