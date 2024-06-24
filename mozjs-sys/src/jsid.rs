@@ -6,7 +6,8 @@
 
 use crate::jsapi::JS::Symbol;
 use crate::jsapi::{jsid, JSString};
-use libc::c_void;
+
+use std::ffi::c_void;
 
 #[deprecated]
 pub const JSID_VOID: jsid = VoidId();
