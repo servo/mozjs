@@ -675,7 +675,7 @@ mod jsglue {
             build.flag("-fno-rtti");
             build.flag("-std=c++17");
             build.flag("-include");
-            build.flag(&confdefs_path.to_string_lossy());
+            build.flag(&*confdefs_path.to_string_lossy());
             false
         };
 
