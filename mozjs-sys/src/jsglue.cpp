@@ -624,6 +624,10 @@ const void* CreateWrapperProxyHandler(const ProxyTraps* aTraps) {
   return new WrapperProxyHandler(*aTraps);
 }
 
+void DeleteWrapperProxyHandler(const void* handler) {
+  delete static_cast<const WrapperProxyHandler*>(handler);
+}
+
 const void* GetCrossCompartmentWrapper() {
   return &js::CrossCompartmentWrapper::singleton;
 }
