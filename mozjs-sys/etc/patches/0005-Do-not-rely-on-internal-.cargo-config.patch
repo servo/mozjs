@@ -5,38 +5,46 @@ Subject: [PATCH] Do not rely on internal .cargo/config
 
 
 diff --git a/config/recurse.mk b/config/recurse.mk
-index 4188e9e2136d..21984e7f808a 100644
+index 7956578ac..7ff2ec209 100644
 --- a/config/recurse.mk
 +++ b/config/recurse.mk
-@@ -205,18 +205,6 @@ endif
+@@ -201,24 +201,6 @@ endif
  # Those need to depend on config/export for system wrappers.
  $(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/host: config/export
- 
+
 -# Rust targets, and export targets that run cbindgen need
--# $topobjdir/.cargo/config to be preprocessed first. Ideally, we'd only set it
+-# $topobjdir/.cargo/config.toml to be preprocessed first. Ideally, we'd only set it
 -# as a dependency of the rust targets, but unfortunately, that pushes Make to
 -# execute them much later than we'd like them to be when the file doesn't exist
 -# prior to Make running. So we also set it as a dependency of pre-export, which
 -# ensures it exists before recursing the rust targets and the export targets
 -# that run cbindgen, tricking Make into keeping them early.
--$(rust_targets): $(DEPTH)/.cargo/config
+-# When $topobjdir/.cargo/config exists from an old build, we also remove it because
+-# cargo will prefer to use it rather than config.toml.
+-CARGO_CONFIG_DEPS = $(DEPTH)/.cargo/config.toml
+-ifneq (,$(wildcard $(DEPTH)/.cargo/config))
+-CARGO_CONFIG_DEPS += $(MDDEPDIR)/cargo-config-cleanup.stub
+-endif
+-$(rust_targets): $(CARGO_CONFIG_DEPS)
 -ifndef TEST_MOZBUILD
--pre-export:: $(DEPTH)/.cargo/config
+-recurse_pre-export: $(CARGO_CONFIG_DEPS)
 -endif
 -
- # When building gtest as part of the build (LINK_GTEST_DURING_COMPILE),
- # force the build system to get to it first, so that it can be linked
- # quickly without LTO, allowing the build system to go ahead with
+ $(MDDEPDIR)/cargo-config-cleanup.stub:
+ 	rm $(DEPTH)/.cargo/config
+ 	touch $@
 diff --git a/moz.build b/moz.build
-index 94419df73ada..487b8b4dbabd 100644
+index 9db27fd05..a330fd1aa 100644
 --- a/moz.build
 +++ b/moz.build
-@@ -163,6 +163,4 @@ if CONFIG['MOZ_BUILD_APP']:
+@@ -183,10 +183,6 @@ if CONFIG["MOZ_BUILD_APP"]:
  else:
      include("/toolkit/toolkit.mozbuild")
  
--OBJDIR_PP_FILES[".cargo"] += [".cargo/config.in"]
+-OBJDIR_PP_FILES[".cargo"] += [
+-    CONFIG["MOZ_OVERRIDE_CARGO_CONFIG"] or ".cargo/config.toml.in"
+-]
 -
  DEFINES["top_srcdir"] = TOPSRCDIR
-
+ 
  SPHINX_TREES["contributing"] = "docs/contributing"
