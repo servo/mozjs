@@ -142,17 +142,24 @@ using jsid = JS::PropertyKey;
 #endif
 
 // Follows the same pattern as IF_RECORD_TUPLE
-#ifdef MOZ_JS_STREAMS
-#  define IF_JS_STREAMS(x, ...) x
-#else
-#  define IF_JS_STREAMS(x, ...) __VA_ARGS__
-#endif
-
-// Follows the same pattern as IF_RECORD_TUPLE
 #ifdef ENABLE_DECORATORS
 #  define IF_DECORATORS(x, ...) x
 #else
 #  define IF_DECORATORS(x, ...) __VA_ARGS__
+#endif
+
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+#  define IF_EXPLICIT_RESOURCE_MANAGEMENT(x, ...) x
+#else
+#  define IF_EXPLICIT_RESOURCE_MANAGEMENT(x, ...) __VA_ARGS__
+#endif
+
+// Helper macros to combine build flags
+// TODO: need to find more generalised way to combine build flags
+#if defined(ENABLE_EXPLICIT_RESOURCE_MANAGEMENT) || defined(ENABLE_DECORATORS)
+#  define IF_EXPLICIT_RESOURCE_MANAGEMENT_OR_DECORATORS(x, ...) x
+#else
+#  define IF_EXPLICIT_RESOURCE_MANAGEMENT_OR_DECORATORS(x, ...) __VA_ARGS__
 #endif
 
 #endif /* js_TypeDecls_h */

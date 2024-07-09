@@ -26,7 +26,9 @@ import mozpack.path as mozpath
 import mozversioncontrol
 import requests
 from fluent.syntax.parser import FluentParser
+from hglib.error import ServerError
 from mozpack.chrome.manifest import Manifest, ManifestLocale, parse_manifest
+from redo import retry
 
 from mozbuild.configure.util import Version
 
@@ -73,14 +75,18 @@ def get_dt_from_hg(path):
 
     url = pushlog_api_url.format(repo_url, cs)
     session = requests.Session()
-    try:
-        response = session.get(url)
-    except Exception as e:
-        msg = "Failed to retrieve push timestamp using {}\nError: {}".format(url, e)
-        raise Exception(msg)
 
-    data = response.json()
+    def get_pushlog():
+        try:
+            response = session.get(url)
+            response.raise_for_status()
+        except Exception as e:
+            msg = "Failed to retrieve push timestamp using {}\nError: {}".format(url, e)
+            raise Exception(msg)
 
+        return response.json()
+
+    data = retry(get_pushlog)
     try:
         date = data["pushdate"][0]
     except KeyError as exc:
@@ -113,7 +119,16 @@ def get_dt_from_hg(path):
 def get_timestamp_for_locale(path):
     dt = None
     if os.path.isdir(os.path.join(path, ".hg")):
-        dt = get_dt_from_hg(path)
+        dt = None
+        # This can be removed once we're no longer repacking from hg l10n repos.
+        try:
+            dt = get_dt_from_hg(path)
+        except ServerError as se:
+            # This rare condition can happen if we try to repack from a
+            # git l10n repository after having already repacked from an
+            # hg l10n repository on the same machine.
+            if "sharedpath points to nonexistent directory" not in str(se):
+                raise se
 
     if dt is None:
         dt = get_build_date()
@@ -370,7 +385,7 @@ def parse_chrome_manifest(path, base_path, chrome_entries):
 ###
 def get_version_maybe_buildid(app_version):
     def _extract_numeric_part(part):
-        matches = re.compile("[^\d]").search(part)
+        matches = re.compile(r"[^\d]").search(part)
         if matches:
             part = part[0 : matches.start()]
         if len(part) == 0:

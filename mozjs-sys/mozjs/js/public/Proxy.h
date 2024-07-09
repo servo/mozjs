@@ -156,7 +156,7 @@ class JS_PUBLIC_API Wrapper;
  * explicit override for the method in SecurityWrapper. See bug 945826 comment
  * 0.
  */
-class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
+class JS_PUBLIC_API BaseProxyHandler {
   /*
    * Sometimes it's desirable to designate groups of proxy handlers as
    * "similar". For this, we use the notion of a "family": A consumer-provided
@@ -230,9 +230,9 @@ class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
    *
    * enter() allows the policy to specify whether the caller may perform |act|
    * on the proxy's |id| property. In the case when |act| is CALL, |id| is
-   * generally JSID_VOID.  The |mayThrow| parameter indicates whether a
-   * handler that wants to throw custom exceptions when denying should do so
-   * or not.
+   * generally JS::PropertyKey::isVoid.  The |mayThrow| parameter indicates
+   * whether a handler that wants to throw custom exceptions when denying
+   * should do so or not.
    *
    * The |act| parameter to enter() specifies the action being performed.
    * If |bp| is false, the method suggests that the caller throw (though it

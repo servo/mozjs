@@ -18,7 +18,6 @@
 #include "vm/PromiseObject.h"  // js::PromiseObject
 #include "vm/Realm.h"
 #include "vm/SelfHosting.h"
-#include "vm/WellKnownAtom.h"  // js_*_str
 
 #include "vm/JSObject-inl.h"
 #include "vm/List-inl.h"
@@ -307,43 +306,15 @@ AsyncGeneratorRequest* AsyncGeneratorRequest::create(
 
 // ES2022 draft rev 193211a3d889a61e74ef7da1475dfa356e029f29
 //
-// AsyncGeneratorUnwrapYieldResumption ( resumptionValue )
-// https://tc39.es/ecma262/#sec-asyncgeneratorunwrapyieldresumption
-//
-// Steps 1-2.
-[[nodiscard]] static bool AsyncGeneratorUnwrapYieldResumptionAndResume(
-    JSContext* cx, Handle<AsyncGeneratorObject*> generator,
-    CompletionKind completionKind, HandleValue resumptionValue) {
-  // Step 1. If resumptionValue.[[Type]] is not return, return
-  //         Completion(resumptionValue).
-  if (completionKind != CompletionKind::Return) {
-    return AsyncGeneratorResume(cx, generator, completionKind, resumptionValue);
-  }
-
-  // Step 2. Let awaited be Await(resumptionValue.[[Value]]).
-  //
-  // Since we don't have the place that handles return from yield
-  // inside the generator, handle the case here, with extra state
-  // State_AwaitingYieldReturn.
-  generator->setAwaitingYieldReturn();
-
-  const PromiseHandler onFulfilled =
-      PromiseHandler::AsyncGeneratorYieldReturnAwaitedFulfilled;
-  const PromiseHandler onRejected =
-      PromiseHandler::AsyncGeneratorYieldReturnAwaitedRejected;
-
-  return InternalAsyncGeneratorAwait(cx, generator, resumptionValue,
-                                     onFulfilled, onRejected);
-}
-
-// ES2022 draft rev 193211a3d889a61e74ef7da1475dfa356e029f29
-//
 // AsyncGeneratorYield ( value )
 // https://tc39.es/ecma262/#sec-asyncgeneratoryield
 //
 // Stesp 10-13.
 [[nodiscard]] static bool AsyncGeneratorYield(
     JSContext* cx, Handle<AsyncGeneratorObject*> generator, HandleValue value) {
+  // Step 13.a.
+  generator->setSuspendedYield();
+
   // Step 10. Perform
   //          ! AsyncGeneratorCompleteStep(generator, completion, false,
   //                                       previousRealm).
@@ -351,37 +322,8 @@ AsyncGeneratorRequest* AsyncGeneratorRequest::create(
     return false;
   }
 
-  // Step 11. Let queue be generator.[[AsyncGeneratorQueue]].
-  // Step 12. If queue is not empty, then
-  // Step 13. Else,
-  // (reordered)
-  if (generator->isQueueEmpty()) {
-    // Step 13.a. Set generator.[[AsyncGeneratorState]] to suspendedYield.
-    generator->setSuspendedYield();
-
-    // Steps 13.b-c are done in caller.
-
-    // Step 13.d. Return undefined.
-    return true;
-  }
-
-  // Step 12. If queue is not empty, then
-  // Step 12.a. NOTE: Execution continues without suspending the generator.
-
-  // Step 12.b. Let toYield be the first element of queue.
-  Rooted<AsyncGeneratorRequest*> toYield(
-      cx, AsyncGeneratorObject::peekRequest(generator));
-  if (!toYield) {
-    return false;
-  }
-
-  // Step 12.c. Let resumptionValue be toYield.[[Completion]].
-  CompletionKind completionKind = toYield->completionKind();
-  RootedValue resumptionValue(cx, toYield->completionValue());
-
-  // Step 12.d. Return AsyncGeneratorUnwrapYieldResumption(resumptionValue).
-  return AsyncGeneratorUnwrapYieldResumptionAndResume(
-      cx, generator, completionKind, resumptionValue);
+  // Steps 11-13.
+  return AsyncGeneratorDrainQueue(cx, generator);
 }
 
 // ES2022 draft rev 193211a3d889a61e74ef7da1475dfa356e029f29
@@ -603,7 +545,11 @@ AsyncGeneratorRequest* AsyncGeneratorRequest::create(
 [[nodiscard]] static bool AsyncGeneratorDrainQueue(
     JSContext* cx, Handle<AsyncGeneratorObject*> generator) {
   // Step 1. Assert: generator.[[AsyncGeneratorState]] is completed.
-  MOZ_ASSERT(generator->isCompleted());
+  MOZ_ASSERT(!generator->isExecuting());
+  MOZ_ASSERT(!generator->isAwaitingYieldReturn());
+  if (generator->isAwaitingReturn()) {
+    return true;
+  }
 
   // Step 2. Let queue be generator.[[AsyncGeneratorQueue]].
   // Step 3. If queue is empty, return.
@@ -625,6 +571,29 @@ AsyncGeneratorRequest* AsyncGeneratorRequest::create(
 
     // Step 5.b. Let completion be next.[[Completion]].
     CompletionKind completionKind = next->completionKind();
+
+    if (completionKind != CompletionKind::Normal) {
+      if (generator->isSuspendedStart()) {
+        generator->setCompleted();
+      }
+    }
+    if (!generator->isCompleted()) {
+      MOZ_ASSERT(generator->isSuspendedStart() ||
+                 generator->isSuspendedYield());
+
+      RootedValue argument(cx, next->completionValue());
+
+      if (completionKind == CompletionKind::Return) {
+        generator->setAwaitingYieldReturn();
+
+        return InternalAsyncGeneratorAwait(
+            cx, generator, argument,
+            PromiseHandler::AsyncGeneratorYieldReturnAwaitedFulfilled,
+            PromiseHandler::AsyncGeneratorYieldReturnAwaitedRejected);
+      }
+
+      return AsyncGeneratorResume(cx, generator, completionKind, argument);
+    }
 
     // Step 5.c. If completion.[[Type]] is return, then
     if (completionKind == CompletionKind::Return) {
@@ -656,6 +625,12 @@ AsyncGeneratorRequest* AsyncGeneratorRequest::create(
                                             true)) {
         return false;
       }
+    }
+
+    MOZ_ASSERT(!generator->isExecuting());
+    MOZ_ASSERT(!generator->isAwaitingYieldReturn());
+    if (generator->isAwaitingReturn()) {
+      return true;
     }
 
     // Step 5.d.iii. If queue is empty, set done to true.
@@ -768,8 +743,7 @@ class MOZ_STACK_CLASS MaybeEnterAsyncGeneratorRealm {
 
 [[nodiscard]] static bool AsyncGeneratorMethodSanityCheck(
     JSContext* cx, Handle<AsyncGeneratorObject*> generator) {
-  if (generator->isCompleted() || generator->isSuspendedStart() ||
-      generator->isSuspendedYield()) {
+  if (generator->isSuspendedStart() || generator->isSuspendedYield()) {
     // The spec assumes the queue is empty when async generator methods are
     // called with those state, but our debugger allows calling those methods
     // in unexpected state, such as before suspendedStart.
@@ -820,47 +794,14 @@ bool js::AsyncGeneratorNext(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Step 5. Let state be generator.[[AsyncGeneratorState]].
-  // Step 6. If state is completed, then
-  if (generator->isCompleted()) {
-    // Step 6.a. Let iteratorResult be
-    //           ! CreateIterResultObject(undefined, true).
-    JSObject* resultObj =
-        CreateIterResultObject(cx, UndefinedHandleValue, true);
-    if (!resultObj) {
+  // Steps 5-10.
+  if (!AsyncGeneratorEnqueue(cx, generator, CompletionKind::Normal,
+                             completionValue, resultPromise)) {
+    return false;
+  }
+  if (!generator->isExecuting() && !generator->isAwaitingYieldReturn()) {
+    if (!AsyncGeneratorDrainQueue(cx, generator)) {
       return false;
-    }
-
-    // Step 6.b. Perform
-    //           ! Call(promiseCapability.[[Resolve]], undefined,
-    //                  « iteratorResult »).
-    RootedValue resultValue(cx, ObjectValue(*resultObj));
-    if (!ResolvePromiseInternal(cx, resultPromise, resultValue)) {
-      return false;
-    }
-  } else {
-    // Step 7. Let completion be NormalCompletion(value).
-    // Step 8. Perform
-    //         ! AsyncGeneratorEnqueue(generator, completion,
-    //                                 promiseCapability).
-    if (!AsyncGeneratorEnqueue(cx, generator, CompletionKind::Normal,
-                               completionValue, resultPromise)) {
-      return false;
-    }
-
-    // Step 9. If state is either suspendedStart or suspendedYield, then
-    if (generator->isSuspendedStart() || generator->isSuspendedYield()) {
-      RootedValue resumptionValue(cx, completionValue);
-      // Step 9.a. Perform ! AsyncGeneratorResume(generator, completion).
-      if (!AsyncGeneratorResume(cx, generator, CompletionKind::Normal,
-                                resumptionValue)) {
-        return false;
-      }
-    } else {
-      // Step 10. Else,
-      // Step 10.a. Assert: state is either executing or awaiting-return.
-      MOZ_ASSERT(generator->isExecuting() || generator->isAwaitingReturn() ||
-                 generator->isAwaitingYieldReturn());
     }
   }
 
@@ -918,29 +859,11 @@ bool js::AsyncGeneratorReturn(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Step 7. Let state be generator.[[AsyncGeneratorState]].
-  // Step 8. If state is either suspendedStart or completed, then
-  if (generator->isSuspendedStart() || generator->isCompleted()) {
-    // Step 8.a. Set generator.[[AsyncGeneratorState]] to awaiting-return.
-    generator->setAwaitingReturn();
-
-    // Step 8.b. Perform ! AsyncGeneratorAwaitReturn(generator).
-    if (!AsyncGeneratorAwaitReturn(cx, generator, completionValue)) {
+  // Steps 7-10.
+  if (!generator->isExecuting() && !generator->isAwaitingYieldReturn()) {
+    if (!AsyncGeneratorDrainQueue(cx, generator)) {
       return false;
     }
-  } else if (generator->isSuspendedYield()) {
-    // Step 9. Else if state is suspendedYield, then
-
-    // Step 9.a. Perform ! AsyncGeneratorResume(generator, completion).
-    if (!AsyncGeneratorUnwrapYieldResumptionAndResume(
-            cx, generator, CompletionKind::Return, completionValue)) {
-      return false;
-    }
-  } else {
-    // Step 10. Else,
-    // Step 10.a. Assert: state is either executing or awaiting-return.
-    MOZ_ASSERT(generator->isExecuting() || generator->isAwaitingReturn() ||
-               generator->isAwaitingYieldReturn());
   }
 
   // Step 11. Return promiseCapability.[[Promise]].
@@ -985,43 +908,14 @@ bool js::AsyncGeneratorThrow(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  // Step 5. Let state be generator.[[AsyncGeneratorState]].
-  // Step 6. If state is suspendedStart, then
-  if (generator->isSuspendedStart()) {
-    // Step 6.a. Set generator.[[AsyncGeneratorState]] to completed.
-    // Step 6.b. Set state to completed.
-    generator->setCompleted();
+  // Steps 5-11.
+  if (!AsyncGeneratorEnqueue(cx, generator, CompletionKind::Throw,
+                             completionValue, resultPromise)) {
+    return false;
   }
-
-  // Step 7. If state is completed, then
-  if (generator->isCompleted()) {
-    // Step 7.a. Perform
-    //           ! Call(promiseCapability.[[Reject]], undefined, « exception »).
-    if (!RejectPromiseInternal(cx, resultPromise, completionValue)) {
+  if (!generator->isExecuting() && !generator->isAwaitingYieldReturn()) {
+    if (!AsyncGeneratorDrainQueue(cx, generator)) {
       return false;
-    }
-  } else {
-    // Step 8. Let completion be ThrowCompletion(exception).
-    // Step 9. Perform
-    //         ! AsyncGeneratorEnqueue(generator, completion,
-    //                                 promiseCapability).
-    if (!AsyncGeneratorEnqueue(cx, generator, CompletionKind::Throw,
-                               completionValue, resultPromise)) {
-      return false;
-    }
-
-    // Step 10. If state is suspendedYield, then
-    if (generator->isSuspendedYield()) {
-      // Step 10.a. Perform ! AsyncGeneratorResume(generator, completion).
-      if (!AsyncGeneratorResume(cx, generator, CompletionKind::Throw,
-                                completionValue)) {
-        return false;
-      }
-    } else {
-      // Step 11. Else,
-      // Step 11.a. Assert: state is either executing or awaiting-return.
-      MOZ_ASSERT(generator->isExecuting() || generator->isAwaitingReturn() ||
-                 generator->isAwaitingYieldReturn());
     }
   }
 
@@ -1072,7 +966,7 @@ bool js::AsyncGeneratorThrow(JSContext* cx, unsigned argc, Value* vp) {
   if (!CallSelfHostedFunction(cx, funName, thisOrRval, args, &thisOrRval)) {
     // 25.5.3.2, steps 5.f, 5.g.
     if (!generator->isClosed()) {
-      generator->setClosed();
+      generator->setClosed(cx);
     }
     return AsyncGeneratorThrown(cx, generator);
   }
@@ -1221,20 +1115,30 @@ const JSClass AsyncFromSyncIteratorObject::class_ = {
     "AsyncFromSyncIteratorObject",
     JSCLASS_HAS_RESERVED_SLOTS(AsyncFromSyncIteratorObject::Slots)};
 
-// ES2019 draft rev c012f9c70847559a1d9dc0d35d35b27fec42911e
-// 25.1.4.1 CreateAsyncFromSyncIterator
+/*
+ * ES2024 draft rev 53454a9a596d90473d2152ef04656d605162cd4c
+ *
+ * CreateAsyncFromSyncIterator ( syncIteratorRecord )
+ * https://tc39.es/ecma262/#sec-createasyncfromsynciterator
+ */
 JSObject* js::CreateAsyncFromSyncIterator(JSContext* cx, HandleObject iter,
                                           HandleValue nextMethod) {
-  // Steps 1-3.
+  // Steps 1-5.
   return AsyncFromSyncIteratorObject::create(cx, iter, nextMethod);
 }
 
-// ES2019 draft rev c012f9c70847559a1d9dc0d35d35b27fec42911e
-// 25.1.4.1 CreateAsyncFromSyncIterator
+/*
+ * ES2024 draft rev 53454a9a596d90473d2152ef04656d605162cd4c
+ *
+ * CreateAsyncFromSyncIterator ( syncIteratorRecord )
+ * https://tc39.es/ecma262/#sec-createasyncfromsynciterator
+ */
 /* static */
 JSObject* AsyncFromSyncIteratorObject::create(JSContext* cx, HandleObject iter,
                                               HandleValue nextMethod) {
-  // Step 1.
+  // Step 1. Let asyncIterator be
+  //         OrdinaryObjectCreate(%AsyncFromSyncIteratorPrototype%, «
+  //         [[SyncIteratorRecord]] »).
   RootedObject proto(cx,
                      GlobalObject::getOrCreateAsyncFromSyncIteratorPrototype(
                          cx, cx->global()));
@@ -1248,34 +1152,47 @@ JSObject* AsyncFromSyncIteratorObject::create(JSContext* cx, HandleObject iter,
     return nullptr;
   }
 
-  // Step 2.
+  // Step 3. Let nextMethod be ! Get(asyncIterator, "next").
+  // (done in caller)
+
+  // Step 2. Set asyncIterator.[[SyncIteratorRecord]] to syncIteratorRecord.
+  // Step 4. Let iteratorRecord be the Iterator Record { [[Iterator]]:
+  //         asyncIterator, [[NextMethod]]: nextMethod, [[Done]]: false }.
   asyncIter->init(iter, nextMethod);
 
-  // Step 3 (Call to 7.4.1 GetIterator).
-  // 7.4.1 GetIterator, steps 1-5 are a no-op (*).
-  // 7.4.1 GetIterator, steps 6-8 are implemented in bytecode.
-  //
-  // (*) With <https://github.com/tc39/ecma262/issues/1172> fixed.
+  // Step 5. Return iteratorRecord.
   return asyncIter;
 }
 
-// ES2019 draft rev c012f9c70847559a1d9dc0d35d35b27fec42911e
-// 25.1.4.2.1 %AsyncFromSyncIteratorPrototype%.next
+/**
+ * ES2024 draft rev 53454a9a596d90473d2152ef04656d605162cd4c
+ *
+ * %AsyncFromSyncIteratorPrototype%.next ( [ value ] )
+ * https://tc39.es/ecma262/#sec-%asyncfromsynciteratorprototype%.next
+ */
 static bool AsyncFromSyncIteratorNext(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   return AsyncFromSyncIteratorMethod(cx, args, CompletionKind::Normal);
 }
 
-// ES2019 draft rev c012f9c70847559a1d9dc0d35d35b27fec42911e
-// 25.1.4.2.2 %AsyncFromSyncIteratorPrototype%.return
+/**
+ * ES2024 draft rev 53454a9a596d90473d2152ef04656d605162cd4c
+ *
+ * %AsyncFromSyncIteratorPrototype%.return ( [ value ] )
+ * https://tc39.es/ecma262/#sec-%asyncfromsynciteratorprototype%.return
+ */
 static bool AsyncFromSyncIteratorReturn(JSContext* cx, unsigned argc,
                                         Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   return AsyncFromSyncIteratorMethod(cx, args, CompletionKind::Return);
 }
 
-// ES2019 draft rev c012f9c70847559a1d9dc0d35d35b27fec42911e
-// 25.1.4.2.3 %AsyncFromSyncIteratorPrototype%.throw
+/**
+ * ES2024 draft rev 53454a9a596d90473d2152ef04656d605162cd4c
+ *
+ * %AsyncFromSyncIteratorPrototype%.throw ( [ value ] )
+ * https://tc39.es/ecma262/#sec-%asyncfromsynciteratorprototype%.throw
+ */
 static bool AsyncFromSyncIteratorThrow(JSContext* cx, unsigned argc,
                                        Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -1299,7 +1216,10 @@ bool GlobalObject::initAsyncFromSyncIteratorProto(
     return false;
   }
 
-  // 25.1.4.2 The %AsyncFromSyncIteratorPrototype% Object
+  // ES2024 draft rev 53454a9a596d90473d2152ef04656d605162cd4c
+  //
+  // The %AsyncFromSyncIteratorPrototype% Object
+  // https://tc39.es/ecma262/#sec-%asyncfromsynciteratorprototype%-object
   RootedObject asyncFromSyncIterProto(
       cx, GlobalObject::createBlankPrototypeInheriting(cx, &PlainObject::class_,
                                                        asyncIterProto));
@@ -1309,7 +1229,7 @@ bool GlobalObject::initAsyncFromSyncIteratorProto(
   if (!DefinePropertiesAndFunctions(cx, asyncFromSyncIterProto, nullptr,
                                     async_from_sync_iter_methods) ||
       !DefineToStringTag(cx, asyncFromSyncIterProto,
-                         cx->names().AsyncFromSyncIterator)) {
+                         cx->names().Async_from_Sync_Iterator_)) {
     return false;
   }
 
@@ -1369,14 +1289,14 @@ static bool AsyncIteratorConstructor(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
   // Step 1.
-  if (!ThrowIfNotConstructing(cx, args, js_AsyncIterator_str)) {
+  if (!ThrowIfNotConstructing(cx, args, "AsyncIterator")) {
     return false;
   }
   // Throw TypeError if NewTarget is the active function object, preventing the
   // Iterator constructor from being used directly.
   if (args.callee() == args.newTarget().toObject()) {
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_BOGUS_CONSTRUCTOR, js_AsyncIterator_str);
+                              JSMSG_BOGUS_CONSTRUCTOR, "AsyncIterator");
     return false;
   }
 
@@ -1408,7 +1328,7 @@ static const ClassSpec AsyncIteratorObjectClassSpec = {
 };
 
 const JSClass AsyncIteratorObject::class_ = {
-    js_AsyncIterator_str,
+    "AsyncIterator",
     JSCLASS_HAS_CACHED_PROTO(JSProto_AsyncIterator),
     JS_NULL_CLASS_OPS,
     &AsyncIteratorObjectClassSpec,
