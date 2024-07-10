@@ -30,7 +30,7 @@
 - /python/mozbuild/mozbuild/test/frontend/data
 - /testing/mozbase/rust
 - /third_party/rust
-- Cargo.toml
+- /Cargo.toml
 
 # Include the rest.
 + /*
