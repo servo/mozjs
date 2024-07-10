@@ -1129,14 +1129,4 @@ void SetAccessorPropertyDescriptor(
   desc.set(JS::PropertyDescriptor::Accessor(getter, setter, attrs));
 }
 
-void FinishOffThreadStencil(
-  JSContext* cx,
-  JS::OffThreadToken* token,
-  JS::InstantiationStorage* storage,
-  already_AddRefed<JS::Stencil>* stencil
-) {
-  already_AddRefed<JS::Stencil> retval = JS::FinishOffThreadStencil(cx, token, storage);
-  *stencil = std::move(retval);
-}
-
 }  // extern "C"

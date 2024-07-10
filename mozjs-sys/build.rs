@@ -513,7 +513,6 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::EncodeStencil",
     "JS::FinishDecodeMultiStencilsOffThread",
     "JS::FinishIncrementalEncoding",
-    "JS::FinishOffThreadStencil",
     "JS::FromPropertyDescriptor",
     "JS::GetExceptionCause",
     "JS::GetModulePrivate",

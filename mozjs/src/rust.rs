@@ -521,19 +521,6 @@ impl Stencil {
     }
 }
 
-pub unsafe fn FinishOffThreadStencil(
-    cx: *mut JSContext,
-    token: *mut OffThreadToken,
-    storage: *mut InstantiationStorage,
-) -> Stencil {
-    let mut stencil = already_AddRefed {
-        mRawPtr: std::ptr::null_mut(),
-        _phantom_0: PhantomData,
-    };
-    crate::glue::FinishOffThreadStencil(cx, token, storage, &mut stencil);
-    return Stencil { inner: stencil };
-}
-
 // ___________________________________________________________________________
 // Fast inline converters
 
