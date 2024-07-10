@@ -164,6 +164,15 @@ class RustJSExternalStringCallbacks final : public JSExternalStringCallbacks {
                       mozilla::MallocSizeOf mallocSizeOf) const override {
     return mTraps.sizeOfBuffer(privateData, chars, mallocSizeOf);
   }
+
+  void finalize(JS::Latin1Char* chars) const override {
+    MOZ_ASSERT(false, "Latin1Char is not implemented for RustJSExternalStringCallbacks");
+  }
+
+  size_t sizeOfBuffer(const JS::Latin1Char* chars,
+                      mozilla::MallocSizeOf mallocSizeOf) const override {
+    MOZ_ASSERT(false, "Latin1Char is not implemented for RustJSExternalStringCallbacks");
+  }
 };
 
 struct ProxyTraps {
