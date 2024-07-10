@@ -35,6 +35,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "mozilla/Unused.h"
+#include "js/ColumnNumber.h"
 
 typedef bool (*WantToMeasure)(JSObject* obj);
 typedef size_t (*GetSize)(JSObject* obj);
@@ -1091,9 +1092,11 @@ void StreamConsumerNoteResponseURLs(JS::StreamConsumer* sc,
 bool DescribeScriptedCaller(JSContext* cx, char* buffer, size_t buflen,
                             uint32_t* line, uint32_t* col) {
   JS::AutoFilename filename;
-  if (!JS::DescribeScriptedCaller(cx, &filename, line, col)) {
+  JS::ColumnNumberOneOrigin column;
+  if (!JS::DescribeScriptedCaller(cx, &filename, line, &column)) {
     return false;
   }
+  *col = column.oneOriginValue() - 1;
   strncpy(buffer, filename.get(), buflen);
   return true;
 }

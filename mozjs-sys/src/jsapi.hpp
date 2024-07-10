@@ -49,6 +49,7 @@
 #include "js/shadow/Shape.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
+#include "js/ColumnNumber.h"
 
 
 namespace glue {
