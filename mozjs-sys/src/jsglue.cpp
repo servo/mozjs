@@ -77,6 +77,8 @@ class RustJobQueue : public JS::JobQueue {
     MOZ_ASSERT(false, "runJobs should not be invoked");
   }
 
+  bool isDrainingStopped() const override { return false; }
+
  private:
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) {
     MOZ_ASSERT(false, "saveJobQueue should not be invoked");
