@@ -12,7 +12,7 @@ import sys
 from typing import Dict, Optional
 
 
-SUPPORTED_NDK_VERSION = '25'
+SUPPORTED_NDK_VERSION = '26'
 API_LEVEL = '30'
 
 
