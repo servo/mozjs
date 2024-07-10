@@ -84,6 +84,8 @@ fn main() {
 
     if build_from_source {
         fs::create_dir_all(&build_dir).expect("could not create build dir");
+        //TODO: use this and remove `no-rust-unicode-bidi.patch`
+        //cbindgen_bidi(&build_dir);
         build_spidermonkey(&build_dir);
         build_jsapi(&build_dir);
         build_jsapi_bindings(&build_dir);
@@ -217,6 +219,22 @@ fn find_moztools() -> Option<PathBuf> {
         None
     }
 }
+
+/*
+fn cbindgen_bidi(build_dir: &Path) {
+    /// Appends intl/bidi to `root`
+    fn root_to_bidi(root: &Pah) -> PathBuf {
+        root.join("intl").join("bidi")
+    }
+    let mozjs_sys_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+
+    cbindgen::Builder::new()
+      .with_crate(root_to_bidi(mozjs_sys_dir.join("mozjs")).join("rust").join("unicode-bidi-ffi"))
+      .generate()
+      .expect("Unable to generate bindings")
+      .write_to_file(root_to_bidi(build_dir).join("unicode_bidi_ffi_generated.h"));
+}
+*/
 
 fn build_spidermonkey(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
