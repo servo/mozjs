@@ -31,6 +31,7 @@
 - /testing/mozbase/rust
 - /third_party/rust
 - /Cargo.toml
+- /modules/zlib
 
 # Include the rest.
 + /*
