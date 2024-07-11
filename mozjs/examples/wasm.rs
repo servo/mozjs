@@ -6,7 +6,7 @@
 //! and do some setup on both of these. You also need to enter a "realm"
 //! (environment within one global object) before you can execute code.
 
-use ::std::ffi::{c_char, c_uchar};
+use ::std::ffi::c_char;
 use ::std::ptr;
 use ::std::ptr::null_mut;
 
@@ -19,6 +19,9 @@ use mozjs::rust::SIMPLE_GLOBAL_CLASS;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime};
 use mozjs_sys::jsgc::ValueArray;
 
+#[repr(align(8))]
+struct Aligned8ByteArray<const N: usize>([u8; N]);
+
 /// hi.wat:
 /// ```
 /// (module
@@ -28,12 +31,12 @@ use mozjs_sys::jsgc::ValueArray;
 ///    call $bar
 ///  ))
 ///```
-const HI_WASM: [c_uchar; 56] = [
+const HI_WASM: Aligned8ByteArray<56> = Aligned8ByteArray([
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00, 0x01, 0x0a, 0x02, 0x60, 0x01, 0x7f, 0x01, 0x7f,
     0x60, 0x00, 0x01, 0x7f, 0x02, 0x0b, 0x01, 0x03, 0x65, 0x6e, 0x76, 0x03, 0x62, 0x61, 0x72, 0x00,
     0x00, 0x03, 0x02, 0x01, 0x01, 0x07, 0x07, 0x01, 0x03, 0x66, 0x6f, 0x6f, 0x00, 0x01, 0x0a, 0x08,
     0x01, 0x06, 0x00, 0x41, 0x2a, 0x10, 0x00, 0x0b,
-];
+]);
 
 unsafe extern "C" fn bar(_cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
     let args = CallArgs::from_vp(vp, argc);
@@ -76,13 +79,16 @@ fn run(rt: Runtime) {
             &mut wasm_instance.handle_mut()
         ));
 
+        // ptr needs to be aligned to 8
+        assert!(HI_WASM.0.as_ptr() as usize % 8 == 0);
+
         // Construct Wasm module from bytes.
         rooted!(in(rt.cx()) let mut module = null_mut::<JSObject>());
         {
             let array_buffer = JS::NewArrayBufferWithUserOwnedContents(
                 rt.cx(),
-                HI_WASM.len(),
-                HI_WASM.as_ptr() as _,
+                HI_WASM.0.len(),
+                HI_WASM.0.as_ptr() as _,
             );
             assert!(!array_buffer.is_null());
 
