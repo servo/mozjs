@@ -326,6 +326,19 @@ fn build_spidermonkey(build_dir: &Path) {
         .status()
         .expect(&format!("Failed to run `{:?}`", make));
     assert!(result.success());
+    if target.contains("windows") {
+        let mut make_static = cc::Build::new();
+        make_static.out_dir(build_dir.join("js/src/build"));
+        std::fs::read_to_string(build_dir.join("js/src/build/js_static_lib.list"))
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .for_each(|obj| {
+                make_static.object(obj);
+            });
+        make_static.static_flag(true);
+        make_static.compile("js_static");
+    }
 
     println!(
         "cargo:rustc-link-search=native={}/js/src/build",
@@ -807,9 +820,35 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let mut tar = tar::Builder::new(enc);
 
     if target.contains("windows") {
-        // FIXME We can't figure how to include all symbols into the static file.
-        // So we compress whole build dir as workaround.
-        tar.append_dir_all(".", build_dir)?;
+        let status = Command::new("llvm-strip.exe")
+            .arg("--strip-debug")
+            .arg(build_dir.join("js/src/build/js_static.lib"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        // This is the static library of spidermonkey.
+        tar.append_file(
+            "js/src/build/js_static.lib",
+            &mut File::open(build_dir.join("js/src/build/js_static.lib")).unwrap(),
+        )?;
+        // The bindgen binaries and generated rust files for mozjs.
+        tar.append_file(
+            "jsapi.lib",
+            &mut File::open(build_dir.join("jsapi.lib")).unwrap(),
+        )?;
+        tar.append_file(
+            "jsglue.lib",
+            &mut File::open(build_dir.join("jsglue.lib")).unwrap(),
+        )?;
+        tar.append_file(
+            "jsapi.rs",
+            &mut File::open(build_dir.join("jsapi.rs")).unwrap(),
+        )?;
+        tar.append_file(
+            "gluebindings.rs",
+            &mut File::open(build_dir.join("gluebindings.rs")).unwrap(),
+        )?;
     } else {
         // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
         // TODO: Maybe we could separate symbols for thos who still want the debug ability.
