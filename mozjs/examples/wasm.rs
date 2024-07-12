@@ -21,7 +21,7 @@ use mozjs_sys::jsgc::ValueArray;
 
 #[repr(align(8))]
 /// Wrapper that enforces alignment of 8
-struct Aligned8(T);
+struct Aligned8<T>(T);
 
 /// hi.wat:
 /// ```
