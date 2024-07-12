@@ -50,6 +50,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "js/ColumnNumber.h"
+#include "js/UniquePtr.h"
 
 
 namespace glue {
@@ -76,6 +77,12 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
 size_t GetLinearStringLength(JSLinearString* s);
 uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx);
 JSLinearString* AtomToLinearString(JSAtom* atom);
+
+// Wrappers around UniquePtr functions
+
+JSObject* NewExternalArrayBuffer(
+    JSContext* cx, size_t nbytes, void* contents,
+    JS::BufferContentsFreeFunc freeFunc, void* freeUserData = nullptr);
 
 // Reexport some methods
 
