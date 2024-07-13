@@ -649,7 +649,7 @@ pub unsafe extern "C" fn report_warning(_cx: *mut JSContext, report: *mut JSErro
     };
 
     let lineno = (*report)._base.lineno;
-    let column = (*report)._base.column._base - 1;
+    let column = (*report)._base.column._base;
 
     let msg_ptr = (*report)._base.message_.data_ as *const u8;
     let msg_len = (0usize..)
