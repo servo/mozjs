@@ -498,6 +498,9 @@ unsafe impl Sync for Stencil {}*/
 
 impl Drop for Stencil {
     fn drop(&mut self) {
+        if (self.is_null()) {
+            return;
+        }
         unsafe {
             StencilRelease(self.inner.mRawPtr);
         }
