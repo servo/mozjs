@@ -263,8 +263,8 @@ fn build_spidermonkey(build_dir: &Path) {
     // Set key environment variables, such as AR, CC, CXX based on what `cc-rs`
     // would choose.
     for var_base in SM_TARGET_ENV_VARS {
-        if let Some(value) = get_cc_rs_env_os(var_base) {
-            cmd.env(var_base, value);
+        if let Some(value) = get_cc_rs_env(var_base) {
+            cmd.env(var_base, value.replace("\\", "/"));
         }
     }
 
@@ -281,9 +281,9 @@ fn build_spidermonkey(build_dir: &Path) {
             "{}/lib/pkgconfig",
             zlib_root_dir.replace("\\", "/")
         ));
-        if let Some(env_pkg_config_path) = get_cc_rs_env_os("PKG_CONFIG_PATH") {
+        if let Some(env_pkg_config_path) = get_cc_rs_env("PKG_CONFIG_PATH") {
             pkg_config_path.push(":");
-            pkg_config_path.push(env_pkg_config_path);
+            pkg_config_path.push(env_pkg_config_path.replace("\\", "/"));
         }
         cmd.env("PKG_CONFIG_PATH", pkg_config_path);
     }
