@@ -305,6 +305,9 @@ fn build_spidermonkey(build_dir: &Path) {
         }
         cmd.env("PKG_CONFIG_PATH", pkg_config_path);
     }
+    if let Ok(include) = std::env::var("DEP_Z_INCLUDE") {
+        cppflags.push(format!("-I{include}").replace("\\", "/"));
+    }
     cppflags.push(get_cc_rs_env_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
 
