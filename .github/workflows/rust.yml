@@ -137,7 +137,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r25c
+          ndk-version: r26c
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -181,7 +181,7 @@ jobs:
           python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
           # Run `git add` here to force CRLF converted into LF
           # so that we can check diff properly in next run
-          git add --all mozjs
+          git add --all mozjs-sys
       - name: Check patch integrity
         working-directory: ./mozjs-sys
         # Because we've added files in previous run, we need to
@@ -192,8 +192,7 @@ jobs:
   publish-release:
     name: Check version and publish release
     runs-on: ubuntu-latest
-    needs:
-      ["linux", "mac", "windows"]
+    needs: ["linux", "mac", "windows"]
     if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     steps:
       - uses: actions/checkout@v4
@@ -225,7 +224,16 @@ jobs:
     name: Result
     runs-on: ubuntu-latest
     needs:
-      ["android", "linux", "linux-cross-compile", "mac", "windows", "integrity", "publish-release", "verify-release"]
+      [
+        "android",
+        "linux",
+        "linux-cross-compile",
+        "mac",
+        "windows",
+        "integrity",
+        "publish-release",
+        "verify-release",
+      ]
     if: ${{ always() }}
     steps:
       - name: Mark the job as successful
@@ -234,4 +242,3 @@ jobs:
       - name: Mark the job as unsuccessful
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: exit 1
-

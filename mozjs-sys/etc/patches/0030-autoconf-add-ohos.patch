@@ -1,21 +1,22 @@
 diff --git a/build/autoconf/config.sub b/build/autoconf/config.sub
---- a/build/autoconf/config.sub	(revision 20f7934762a6a1d4751353c8d024a0185ba85547)
-+++ b/build/autoconf/config.sub	(revision 1d3dc1d7b53439ce8f799526ddbbe0f833b8ef0f)
-@@ -1754,7 +1754,7 @@
+index 2c6a07ab3..273b0b934 100755
+--- a/build/autoconf/config.sub
++++ b/build/autoconf/config.sub
+@@ -1768,7 +1768,7 @@ case $os in
  	     | onefs* | tirtos* | phoenix* | fuchsia* | redox* | bme* \
  	     | midnightbsd* | amdhsa* | unleashed* | emscripten* | wasi* \
  	     | nsk* | powerunix* | genode* | zvmoe* | qnx* | emx* | zephyr* \
--	     | fiwix* )
-+	     | fiwix* | ohos* )
+-	     | fiwix* | mlibc* | cos* | mbr* | ironclad* )
++	     | fiwix* | mlibc* | cos* | mbr* | ironclad* | ohos* )
  		;;
  	# This one is extra strict with allowed versions
  	sco3.2v2 | sco3.2v[4-9]* | sco5v6*)
-@@ -1772,7 +1772,7 @@
- # (given a valid OS), if there is a kernel.
- case $kernel-$os in
- 	linux-gnu* | linux-dietlibc* | linux-android* | linux-newlib* \
--		   | linux-musl* | linux-relibc* | linux-uclibc* )
-+		   | linux-musl* | linux-relibc* | linux-uclibc* | linux-ohos* )
+@@ -1829,7 +1829,7 @@ esac
+ case $kernel-$os-$obj in
+ 	linux-gnu*- | linux-android*- | linux-dietlibc*- | linux-llvm*- \
+ 		    | linux-mlibc*- | linux-musl*- | linux-newlib*- \
+-		    | linux-relibc*- | linux-uclibc*- )
++		    | linux-relibc*- | linux-uclibc*- | linux-ohos* )
  		;;
- 	uclinux-uclibc* )
+ 	uclinux-uclibc*- )
  		;;

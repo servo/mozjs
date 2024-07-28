@@ -1,11 +1,12 @@
 diff --git a/js/moz.configure b/js/moz.configure
-index 682a52de6..cf6b34dfe 100644
+index cccb64899..af30e7622 100644
 --- a/js/moz.configure
 +++ b/js/moz.configure
-@@ -172,6 +172,24 @@ def enable_decorators(value):
+@@ -171,6 +171,25 @@ def enable_decorators(value):
  set_config("ENABLE_DECORATORS", enable_decorators)
  set_define("ENABLE_DECORATORS", enable_decorators)
  
++
 +# Enable JS Streams
 +# ===================================================
 +option(
@@ -24,32 +25,33 @@ index 682a52de6..cf6b34dfe 100644
 +set_config("MOZ_JS_STREAMS", enable_js_streams)
 +set_define("MOZ_JS_STREAMS", enable_js_streams)
 +
- # JIT support
- # =======================================================
- @depends(target, "--enable-record-tuple")
+ # Enable explicit resource management
+ # ===================================================
+ option(
 diff --git a/js/public/ProtoKey.h b/js/public/ProtoKey.h
-index 398e1f03f..a24bf2579 100644
+index fe8a191f0..d119308ce 100644
 --- a/js/public/ProtoKey.h
 +++ b/js/public/ProtoKey.h
-@@ -111,6 +111,16 @@
-   REAL(AsyncFunction, CLASP(AsyncFunction))                                  \
-   REAL(GeneratorFunction, CLASP(GeneratorFunction))                          \
-   REAL(AsyncGeneratorFunction, CLASP(AsyncGeneratorFunction))                \
-+  IF_JS_STREAMS(REAL(ReadableStream, &js::ReadableStream::class_))             \
-+  IF_JS_STREAMS(REAL(ReadableStreamDefaultReader,                              \
-+                     &js::ReadableStreamDefaultReader::class_))                \
-+  IF_JS_STREAMS(REAL(ReadableStreamDefaultController,                          \
-+                     &js::ReadableStreamDefaultController::class_))            \
-+  IF_JS_STREAMS(REAL(ReadableByteStreamController,                             \
-+                     &js::ReadableByteStreamController::class_))               \
-+  IF_JS_STREAMS(                                                               \
-+      REAL(ByteLengthQueuingStrategy, &js::ByteLengthQueuingStrategy::class_)) \
-+  IF_JS_STREAMS(REAL(CountQueuingStrategy, &js::CountQueuingStrategy::class_)) \
-   REAL(WebAssembly, OCLASP(WasmNamespace))                                   \
-   REAL(WasmModule, OCLASP(WasmModule))                                       \
-   REAL(WasmInstance, OCLASP(WasmInstance))                                   \
+@@ -134,6 +134,17 @@
+   REAL(AsyncFunction, CLASP(AsyncFunction))                                 \
+   REAL(GeneratorFunction, CLASP(GeneratorFunction))                         \
+   REAL(AsyncGeneratorFunction, CLASP(AsyncGeneratorFunction))               \
++  IF_JS_STREAMS(REAL(ReadableStream, &js::ReadableStream::class_))          \
++  IF_JS_STREAMS(REAL(ReadableStreamDefaultReader,                           \
++                     &js::ReadableStreamDefaultReader::class_))             \
++  IF_JS_STREAMS(REAL(ReadableStreamDefaultController,                       \
++                     &js::ReadableStreamDefaultController::class_))         \
++  IF_JS_STREAMS(REAL(ReadableByteStreamController,                          \
++                     &js::ReadableByteStreamController::class_))            \
++  IF_JS_STREAMS(REAL(ByteLengthQueuingStrategy,                             \
++           &js::ByteLengthQueuingStrategy::class_))                         \
++  IF_JS_STREAMS(REAL(CountQueuingStrategy,                                  \
++           &js::CountQueuingStrategy::class_))                              \
+   REAL(WebAssembly, OCLASP(WasmNamespace))                                  \
+   REAL(WasmModule, OCLASP(WasmModule))                                      \
+   REAL(WasmInstance, OCLASP(WasmInstance))                                  \
 diff --git a/js/public/RealmOptions.h b/js/public/RealmOptions.h
-index 2f5cef8d6..a08737a7f 100644
+index b3ab20915..f199a1ee3 100644
 --- a/js/public/RealmOptions.h
 +++ b/js/public/RealmOptions.h
 @@ -172,6 +172,19 @@ class JS_PUBLIC_API RealmCreationOptions {
@@ -69,17 +71,17 @@ index 2f5cef8d6..a08737a7f 100644
 +    return *this;
 +  }
 +
-   WeakRefSpecifier getWeakRefsEnabled() const { return weakRefs_; }
-   RealmCreationOptions& setWeakRefsEnabled(WeakRefSpecifier spec) {
-     weakRefs_ = spec;
-@@ -279,6 +292,7 @@ class JS_PUBLIC_API RealmCreationOptions {
+   bool getToSourceEnabled() const { return toSource_; }
+   RealmCreationOptions& setToSourceEnabled(bool flag) {
+     toSource_ = flag;
+@@ -237,6 +250,7 @@ class JS_PUBLIC_API RealmCreationOptions {
    bool sharedMemoryAndAtomics_ = false;
    bool defineSharedArrayBufferConstructor_ = true;
    bool coopAndCoep_ = false;
 +  bool streams_ = false;
    bool toSource_ = false;
-   bool propertyErrorMessageFix_ = false;
-   bool iteratorHelpers_ = false;
+ 
+   bool secureContext_ = false;
 diff --git a/js/public/Stream.h b/js/public/Stream.h
 new file mode 100644
 index 000000000..1b889d248
@@ -578,7 +580,7 @@ index 000000000..1b889d248
 +
 +#endif  // js_Stream_h
 diff --git a/js/public/TypeDecls.h b/js/public/TypeDecls.h
-index 1686b1917..779cee75f 100644
+index d82405b17..adaf40e93 100644
 --- a/js/public/TypeDecls.h
 +++ b/js/public/TypeDecls.h
 @@ -141,6 +141,13 @@ using jsid = JS::PropertyKey;
@@ -1128,7 +1130,7 @@ index 000000000..c108b2cd0
 +      return PromiseRejectedWithPendingError(cx);
 +    }
 +
-+    RootedArrayBufferObject buffer(cx, &bufferObj->as<ArrayBufferObject>());
++    Rooted<ArrayBufferObject*> buffer(cx, &bufferObj->as<ArrayBufferObject>());
 +
 +    // Step 5.c: Let pullIntoDescriptor be
 +    //           Record {[[buffer]]: buffer.[[Value]],
@@ -1417,10 +1419,10 @@ index 000000000..7ecb95862
 +
 +#endif /* builtin_Stream_h */
 diff --git a/js/src/builtin/TestingFunctions.cpp b/js/src/builtin/TestingFunctions.cpp
-index d9034c886..73ef62ded 100644
+index 4e10adcbf..ef8f88598 100644
 --- a/js/src/builtin/TestingFunctions.cpp
 +++ b/js/src/builtin/TestingFunctions.cpp
-@@ -4110,6 +4110,12 @@ static bool RejectPromise(JSContext* cx, unsigned argc, Value* vp) {
+@@ -4542,6 +4542,12 @@ static bool RejectPromise(JSContext* cx, unsigned argc, Value* vp) {
    return result;
  }
  
@@ -1433,7 +1435,7 @@ index d9034c886..73ef62ded 100644
  static unsigned finalizeCount = 0;
  
  static void finalize_counter_finalize(JS::GCContext* gcx, JSObject* obj) {
-@@ -8857,6 +8863,10 @@ JS_FN_HELP("rejectPromise", RejectPromise, 2, 0,
+@@ -9648,6 +9654,10 @@ JS_FN_HELP("rejectPromise", RejectPromise, 2, 0,
  "rejectPromise(promise, reason)",
  "  Reject a Promise by calling the JSAPI function JS::RejectPromise."),
  
@@ -1613,7 +1615,7 @@ index 000000000..3334471fb
 +#endif  // builtin_streams_MiscellaneousOperations_inl_h
 diff --git a/js/src/builtin/streams/MiscellaneousOperations.cpp b/js/src/builtin/streams/MiscellaneousOperations.cpp
 new file mode 100644
-index 000000000..268960624
+index 000000000..be9beb5bb
 --- /dev/null
 +++ b/js/src/builtin/streams/MiscellaneousOperations.cpp
 @@ -0,0 +1,193 @@
@@ -2122,7 +2124,7 @@ index 000000000..fa73cdc7c
 +#endif  // builtin_streams_QueueWithSizes_inl_h
 diff --git a/js/src/builtin/streams/QueueWithSizes.cpp b/js/src/builtin/streams/QueueWithSizes.cpp
 new file mode 100644
-index 000000000..db99d3a8a
+index 000000000..baa8290cd
 --- /dev/null
 +++ b/js/src/builtin/streams/QueueWithSizes.cpp
 @@ -0,0 +1,171 @@
@@ -5309,7 +5311,7 @@ index 000000000..6b94da841
 +
 +  // Step 6: Return the result of reacting to sourceCancelPromise with a
 +  //         fulfillment step that returns undefined.
-+  Handle<PropertyName*> funName = cx->names().empty;
++  Handle<PropertyName*> funName = cx->names().empty_;
 +  Rooted<JSFunction*> returnUndefined(
 +      cx, NewNativeFunction(cx, ReturnUndefined, 0, funName,
 +                            gc::AllocKind::FUNCTION, GenericObject));
@@ -7798,13 +7800,13 @@ index 000000000..beb42ff8e
 +
 +#endif  // builtin_streams_TeeState_h
 diff --git a/js/src/jsapi-tests/moz.build b/js/src/jsapi-tests/moz.build
-index 41ee13969..1b9e8d7f3 100644
+index e24b9bf43..d31caa78b 100644
 --- a/js/src/jsapi-tests/moz.build
 +++ b/js/src/jsapi-tests/moz.build
-@@ -168,6 +168,11 @@ if not CONFIG["JS_CODEGEN_NONE"]:
+@@ -173,6 +173,11 @@ if not CONFIG["JS_CODEGEN_NONE"]:
          "testsJit.cpp",
      ]
-
+ 
 +if CONFIG["MOZ_JS_STREAMS"]:
 +    UNIFIED_SOURCES += [
 +        "testReadableStream.cpp",
@@ -9015,10 +9017,10 @@ index 000000000..edae08265
 +    StreamTestFixture,
 +    testReadableStream_ReadableStreamDefaultReaderRead_CrossCompartment)
 diff --git a/js/src/moz.build b/js/src/moz.build
-index e2e313d7c..12cd2d053 100755
+index 539d98f6c..184cdfe10 100755
 --- a/js/src/moz.build
 +++ b/js/src/moz.build
-@@ -198,6 +198,7 @@ EXPORTS.js += [
+@@ -201,6 +201,7 @@ EXPORTS.js += [
      "../public/SourceText.h",
      "../public/StableStringChars.h",
      "../public/Stack.h",
@@ -9026,27 +9028,37 @@ index e2e313d7c..12cd2d053 100755
      "../public/StreamConsumer.h",
      "../public/String.h",
      "../public/StructuredClone.h",
+@@ -445,6 +445,25 @@ UNIFIED_SOURCES += [
+     "vm/Xdr.cpp",
+ ]
+ 
++if CONFIG["MOZ_JS_STREAMS"]:
++    UNIFIED_SOURCES += [
++        "builtin/Stream.cpp",
++        "builtin/streams/MiscellaneousOperations.cpp",
++        "builtin/streams/PullIntoDescriptor.cpp",
++        "builtin/streams/QueueingStrategies.cpp",
++        "builtin/streams/QueueWithSizes.cpp",
++        "builtin/streams/ReadableStream.cpp",
++        "builtin/streams/ReadableStreamBYOBReader.cpp",
++        "builtin/streams/ReadableStreamDefaultController.cpp",
++        "builtin/streams/ReadableStreamDefaultControllerOperations.cpp",
++        "builtin/streams/ReadableStreamDefaultReader.cpp",
++        "builtin/streams/ReadableStreamInternals.cpp",
++        "builtin/streams/ReadableStreamOperations.cpp",
++        "builtin/streams/ReadableStreamReader.cpp",
++        "builtin/streams/StreamAPI.cpp",
++        "builtin/streams/TeeState.cpp",
++    ]
++
+ # builtin/RegExp.cpp cannot be built in unified mode because it causes huge
+ #   win32 test slowdowns
+ # jsmath.cpp cannot be built in unified mode because it needs to re-#define the
 diff --git a/js/src/shell/js.cpp b/js/src/shell/js.cpp
-index 6c64dde26..8c350a048 100644
+index 9b849a9b7..907374858 100644
 --- a/js/src/shell/js.cpp
 +++ b/js/src/shell/js.cpp
-@@ -618,6 +618,7 @@ bool shell::enableTestWasmAwaitTier2 = false;
- bool shell::enableSourcePragmas = true;
- bool shell::enableAsyncStacks = false;
- bool shell::enableAsyncStackCaptureDebuggeeOnly = false;
-+bool shell::enableStreams = false;
- bool shell::enableWeakRefs = false;
- bool shell::enableToSource = false;
- bool shell::enablePropertyErrorMessageFix = false;
-@@ -3884,6 +3885,7 @@ static void SetStandardRealmOptions(JS::RealmOptions& options) {
-   options.creationOptions()
-       .setSharedMemoryAndAtomicsEnabled(enableSharedMemory)
-       .setCoopAndCoepEnabled(false)
-+      .setStreamsEnabled(enableStreams)
-       .setWeakRefsEnabled(enableWeakRefs
-                               ? JS::WeakRefSpecifier::EnabledWithCleanupSome
-                               : JS::WeakRefSpecifier::Disabled)
-@@ -11366,6 +11368,9 @@ bool InitOptionParser(OptionParser& op) {
+@@ -12147,6 +12147,9 @@ bool InitOptionParser(OptionParser& op) {
        !op.addBoolOption('\0', "less-debug-code",
                          "Emit less machine code for "
                          "checking assertions under DEBUG.") ||
@@ -9056,19 +9068,11 @@ index 6c64dde26..8c350a048 100644
        !op.addBoolOption('\0', "disable-weak-refs", "Disable weak references") ||
        !op.addBoolOption('\0', "disable-tosource", "Disable toSource/uneval") ||
        !op.addBoolOption('\0', "disable-property-error-message-fix",
-@@ -11888,6 +11893,7 @@ bool SetContextOptions(JSContext* cx, const OptionParser& op) {
-   enableAsyncStacks = !op.getBoolOption("no-async-stacks");
-   enableAsyncStackCaptureDebuggeeOnly =
-       op.getBoolOption("async-stacks-capture-debuggee-only");
-+  enableStreams = !op.getBoolOption("no-streams");
-   enableWeakRefs = !op.getBoolOption("disable-weak-refs");
-   enableToSource = !op.getBoolOption("disable-tosource");
-   enablePropertyErrorMessageFix =
 diff --git a/js/src/shell/jsshell.h b/js/src/shell/jsshell.h
-index e6566a6da..385f46600 100644
+index 67536a8f6..d3dead828 100644
 --- a/js/src/shell/jsshell.h
 +++ b/js/src/shell/jsshell.h
-@@ -122,6 +122,11 @@ extern bool enableTestWasmAwaitTier2;
+@@ -117,6 +117,11 @@ extern bool enableTestWasmAwaitTier2;
  extern bool enableSourcePragmas;
  extern bool enableAsyncStacks;
  extern bool enableAsyncStackCaptureDebuggeeOnly;
@@ -9081,10 +9085,10 @@ index e6566a6da..385f46600 100644
  extern bool enableToSource;
  extern bool enablePropertyErrorMessageFix;
 diff --git a/js/src/vm/GlobalObject.cpp b/js/src/vm/GlobalObject.cpp
-index 6924cce0a..3ad2a75a9 100644
+index cd50c9ddc..a42601331 100644
 --- a/js/src/vm/GlobalObject.cpp
 +++ b/js/src/vm/GlobalObject.cpp
-@@ -25,6 +25,11 @@
+@@ -26,6 +26,11 @@
  #include "builtin/FinalizationRegistryObject.h"
  #include "builtin/MapObject.h"
  #include "builtin/ShadowRealm.h"
@@ -9094,12 +9098,12 @@ index 6924cce0a..3ad2a75a9 100644
 +#include "builtin/streams/ReadableStreamController.h"  // js::Readable{StreamDefault,ByteStream}Controller
 +#include "builtin/streams/ReadableStreamReader.h"  // js::ReadableStreamDefaultReader
  #include "builtin/Symbol.h"
- #include "builtin/WeakMapObject.h"
- #include "builtin/WeakRefObject.h"
-@@ -176,6 +181,15 @@ bool GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key) {
+ #ifdef JS_HAS_TEMPORAL_API
+ #  include "builtin/temporal/Calendar.h"
+@@ -211,6 +216,15 @@ bool GlobalObject::skipDeselectedConstructor(JSContext* cx, JSProtoKey key) {
+     case JSProto_PluralRules:
      case JSProto_RelativeTimeFormat:
        return false;
- #endif
 +#ifdef MOZ_JS_STREAMS
 +    case JSProto_ReadableStream:
 +    case JSProto_ReadableStreamDefaultReader:
@@ -9110,5 +9114,5 @@ index 6924cce0a..3ad2a75a9 100644
 +      return !cx->realm()->creationOptions().getStreamsEnabled();
 +#endif
  
-     // Return true if the given constructor has been disabled at run-time.
-     case JSProto_Atomics:
+     case JSProto_Segmenter:
+ #  if defined(MOZ_ICU4X)

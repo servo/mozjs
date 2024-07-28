@@ -66,7 +66,7 @@ mozilla::detail::MutexImpl::MutexImpl() {
                     "mozilla::detail::MutexImpl::MutexImpl: "
                     "pthread_mutexattr_settype failed");
 #  elif defined(POLICY_KIND)
-  (pthread_mutexattr_setpolicy_np(&attr, POLICY_KIND),
+  TRY_CALL_PTHREADS(pthread_mutexattr_setpolicy_np(&attr, POLICY_KIND),
                     "mozilla::detail::MutexImpl::MutexImpl: "
                     "pthread_mutexattr_setpolicy_np failed");
 #  endif

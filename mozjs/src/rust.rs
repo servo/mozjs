@@ -44,7 +44,7 @@ use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use crate::jsapi::{Evaluate2, HandleValueArray, StencilRelease};
-use crate::jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow, OffThreadToken};
+use crate::jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow};
 use crate::jsapi::{
     JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue,
 };
@@ -521,19 +521,6 @@ impl Stencil {
     }
 }
 
-pub unsafe fn FinishOffThreadStencil(
-    cx: *mut JSContext,
-    token: *mut OffThreadToken,
-    storage: *mut InstantiationStorage,
-) -> Stencil {
-    let mut stencil = already_AddRefed {
-        mRawPtr: std::ptr::null_mut(),
-        _phantom_0: PhantomData,
-    };
-    crate::glue::FinishOffThreadStencil(cx, token, storage, &mut stencil);
-    return Stencil { inner: stencil };
-}
-
 // ___________________________________________________________________________
 // Fast inline converters
 
@@ -653,7 +640,7 @@ pub unsafe extern "C" fn report_warning(_cx: *mut JSContext, report: *mut JSErro
             .collect()
     }
 
-    let fnptr = (*report)._base.filename;
+    let fnptr = (*report)._base.filename.data_;
     let fname = if !fnptr.is_null() {
         let c_str = CStr::from_ptr(fnptr);
         latin1_to_string(c_str.to_bytes())
@@ -662,7 +649,7 @@ pub unsafe extern "C" fn report_warning(_cx: *mut JSContext, report: *mut JSErro
     };
 
     let lineno = (*report)._base.lineno;
-    let column = (*report)._base.column;
+    let column = (*report)._base.column._base;
 
     let msg_ptr = (*report)._base.message_.data_ as *const u8;
     let msg_len = (0usize..)
@@ -1100,9 +1087,12 @@ pub mod wrappers {
     use crate::jsapi::BigInt;
     use crate::jsapi::CallArgs;
     use crate::jsapi::CloneDataPolicy;
+    use crate::jsapi::ColumnNumberOneOrigin;
     use crate::jsapi::CompartmentTransplantCallback;
+    use crate::jsapi::JSONParseHandler;
     use crate::jsapi::Latin1Char;
     use crate::jsapi::PropertyKey;
+    use crate::jsapi::TaggedColumnNumberOneOrigin;
     //use jsapi::DynamicImportStatus;
     use crate::jsapi::ESClass;
     use crate::jsapi::ExceptionStackBehavior;
@@ -1248,6 +1238,7 @@ pub mod jsapi_wrapped {
     use crate::jsapi::BigInt;
     use crate::jsapi::CallArgs;
     use crate::jsapi::CloneDataPolicy;
+    use crate::jsapi::ColumnNumberOneOrigin;
     use crate::jsapi::CompartmentTransplantCallback;
     use crate::jsapi::ESClass;
     use crate::jsapi::ExceptionStackBehavior;
@@ -1261,6 +1252,7 @@ pub mod jsapi_wrapped {
     use crate::jsapi::JSFunctionSpec;
     use crate::jsapi::JSFunctionSpecWithHelp;
     use crate::jsapi::JSJitInfo;
+    use crate::jsapi::JSONParseHandler;
     use crate::jsapi::JSONWriteCallback;
     use crate::jsapi::JSPrincipals;
     use crate::jsapi::JSPropertySpec;
@@ -1288,6 +1280,7 @@ pub mod jsapi_wrapped {
     use crate::jsapi::StructuredCloneScope;
     use crate::jsapi::Symbol;
     use crate::jsapi::SymbolCode;
+    use crate::jsapi::TaggedColumnNumberOneOrigin;
     use crate::jsapi::TwoByteChars;
     use crate::jsapi::UniqueChars;
     use crate::jsapi::Value;

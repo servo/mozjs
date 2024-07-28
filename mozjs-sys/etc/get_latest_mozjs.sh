@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-REPO=mozilla-esr115
+REPO=mozilla-esr128
 
 # get commit and appropriet mozjs tar
 jobs=( $(curl "https://treeherder.mozilla.org/api/project/$REPO/push/?full=true&count=20" | jq '.results[].id') )

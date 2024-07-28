@@ -69,6 +69,44 @@ JSLinearString* AtomToLinearString(JSAtom* atom) {
   return JS::AtomToLinearString(atom);
 }
 
+// Wrappers around UniquePtr functions
+/**
+* Create a new ArrayBuffer with the given contents. The contents must not be
+* modified by any other code, internal or external.
+*
+* !!! IMPORTANT !!!
+* If and only if an ArrayBuffer is successfully created and returned,
+* ownership of |contents| is transferred to the new ArrayBuffer.
+*
+* When the ArrayBuffer is ready to be disposed of, `freeFunc(contents,
+* freeUserData)` will be called to release the ArrayBuffer's reference on the
+* contents.
+*
+* `freeFunc()` must not call any JSAPI functions that could cause a garbage
+* collection.
+*
+* The caller must keep the buffer alive until `freeFunc()` is called, or, if
+* `freeFunc` is null, until the JSRuntime is destroyed.
+*
+* The caller must not access the buffer on other threads. The JS engine will
+* not allow the buffer to be transferred to other threads. If you try to
+* transfer an external ArrayBuffer to another thread, the data is copied to a
+* new malloc buffer. `freeFunc()` must be threadsafe, and may be called from
+* any thread.
+*
+* This allows ArrayBuffers to be used with embedder objects that use reference
+* counting, for example. In that case the caller is responsible
+* for incrementing the reference count before passing the contents to this
+* function. This also allows using non-reference-counted contents that must be
+* freed with some function other than free().
+*/
+JSObject* NewExternalArrayBuffer(
+    JSContext* cx, size_t nbytes, void* contents,
+    JS::BufferContentsFreeFunc freeFunc, void* freeUserData) {
+  js::UniquePtr<void, JS::BufferContentsDeleter> dataPtr{contents, {freeFunc, freeUserData}};
+  return NewExternalArrayBuffer(cx, nbytes, std::move(dataPtr));
+}
+
 // Reexport some methods
 
 bool JS_ForOfIteratorInit(
@@ -224,7 +262,9 @@ bool CreateError(JSContext* cx, JSExnType type, JS::HandleObject stack,
                  JS::HandleString message, JS::HandleValue cause,
                  JS::MutableHandleValue rval) {
   return JS::CreateError(
-      cx, type, stack, fileName, lineNumber, columnNumber, report, message,
+      cx, type, stack, fileName, lineNumber,
+      JS::ColumnNumberOneOrigin(columnNumber),
+      report, message,
       JS::Rooted<mozilla::Maybe<JS::Value>>(cx, mozilla::ToMaybe(&cause)),
       rval);
 }

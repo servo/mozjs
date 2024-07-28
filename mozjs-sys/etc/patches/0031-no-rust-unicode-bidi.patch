@@ -1,0 +1,25 @@
+diff --git a/intl/components/src/Bidi.h b/intl/components/src/Bidi.h
+index 8db74173e..9f771048b 100644
+--- a/intl/components/src/Bidi.h
++++ b/intl/components/src/Bidi.h
+@@ -10,7 +10,7 @@
+ // Use the Rust unicode-bidi crate to back the Bidi component.
+ // (Define to 0 to use the legacy ICU4C implementation instead,
+ // until that code is removed altogether.)
+-#define USE_RUST_UNICODE_BIDI 1
++#define USE_RUST_UNICODE_BIDI 0
+ 
+ #if USE_RUST_UNICODE_BIDI
+ #  include "mozilla/intl/unicode_bidi_ffi_generated.h"
+diff --git a/js/src/moz.build b/js/src/moz.build
+index 90dca3e7f..539d98f6c 100755
+--- a/js/src/moz.build
++++ b/js/src/moz.build
+@@ -643,7 +643,6 @@ if CONFIG["JS_HAS_CTYPES"]:
+ if CONFIG["JS_HAS_INTL_API"]:
+     if CONFIG["JS_STANDALONE"]:
+         DIRS += [
+-            "../../intl/bidi",
+             "../../intl/components",
+         ]
+ 

@@ -8,7 +8,7 @@ use std::ptr;
 
 use mozjs::jsapi::JSPROP_ENUMERATE;
 use mozjs::jsapi::{
-    GetRealmObjectPrototype, JS_NewGlobalObject, JS_NewObjectWithGivenProto, JS_SetGCZeal,
+    GetRealmObjectPrototype, JS_NewGlobalObject, JS_NewObjectWithGivenProto, SetGCZeal,
 };
 use mozjs::jsapi::{
     JSAutoRealm, JSClass, JSContext, JSFunction, JSFunctionSpec, JSNativeWrapper, JSObject,
@@ -27,7 +27,7 @@ fn rooting() {
     let c_option = RealmOptions::default();
 
     unsafe {
-        JS_SetGCZeal(context, 2, 1);
+        SetGCZeal(context, 2, 1);
         rooted!(in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,

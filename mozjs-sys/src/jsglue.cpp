@@ -35,6 +35,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "mozilla/Unused.h"
+#include "js/ColumnNumber.h"
 
 typedef bool (*WantToMeasure)(JSObject* obj);
 typedef size_t (*GetSize)(JSObject* obj);
@@ -75,6 +76,8 @@ class RustJobQueue : public JS::JobQueue {
   virtual void runJobs(JSContext* cx) {
     MOZ_ASSERT(false, "runJobs should not be invoked");
   }
+
+  bool isDrainingStopped() const override { return false; }
 
  private:
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) {
@@ -160,6 +163,15 @@ class RustJSExternalStringCallbacks final : public JSExternalStringCallbacks {
   size_t sizeOfBuffer(const char16_t* chars,
                       mozilla::MallocSizeOf mallocSizeOf) const override {
     return mTraps.sizeOfBuffer(privateData, chars, mallocSizeOf);
+  }
+
+  void finalize(JS::Latin1Char* chars) const override {
+    MOZ_ASSERT(false, "Latin1Char is not implemented for RustJSExternalStringCallbacks");
+  }
+
+  size_t sizeOfBuffer(const JS::Latin1Char* chars,
+                      mozilla::MallocSizeOf mallocSizeOf) const override {
+    MOZ_ASSERT(false, "Latin1Char is not implemented for RustJSExternalStringCallbacks");
   }
 };
 
@@ -1091,9 +1103,11 @@ void StreamConsumerNoteResponseURLs(JS::StreamConsumer* sc,
 bool DescribeScriptedCaller(JSContext* cx, char* buffer, size_t buflen,
                             uint32_t* line, uint32_t* col) {
   JS::AutoFilename filename;
-  if (!JS::DescribeScriptedCaller(cx, &filename, line, col)) {
+  JS::ColumnNumberOneOrigin column;
+  if (!JS::DescribeScriptedCaller(cx, &filename, line, &column)) {
     return false;
   }
+  *col = column.oneOriginValue() - 1;
   strncpy(buffer, filename.get(), buflen);
   return true;
 }
@@ -1113,16 +1127,6 @@ void SetAccessorPropertyDescriptor(
     uint32_t attrs
 ) {
   desc.set(JS::PropertyDescriptor::Accessor(getter, setter, attrs));
-}
-
-void FinishOffThreadStencil(
-  JSContext* cx,
-  JS::OffThreadToken* token,
-  JS::InstantiationStorage* storage,
-  already_AddRefed<JS::Stencil>* stencil
-) {
-  already_AddRefed<JS::Stencil> retval = JS::FinishOffThreadStencil(cx, token, storage);
-  *stencil = std::move(retval);
 }
 
 }  // extern "C"

@@ -7,6 +7,7 @@
 // These extern crates are needed for linking
 extern crate encoding_c;
 extern crate encoding_c_mem;
+extern crate icu_capi;
 extern crate libz_sys;
 
 // The jsimpls module just implements traits so can be private

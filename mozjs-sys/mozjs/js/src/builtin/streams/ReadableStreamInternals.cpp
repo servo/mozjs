@@ -159,7 +159,7 @@ static bool ReturnUndefined(JSContext* cx, unsigned argc, Value* vp) {
 
   // Step 6: Return the result of reacting to sourceCancelPromise with a
   //         fulfillment step that returns undefined.
-  Handle<PropertyName*> funName = cx->names().empty;
+  Handle<PropertyName*> funName = cx->names().empty_;
   Rooted<JSFunction*> returnUndefined(
       cx, NewNativeFunction(cx, ReturnUndefined, 0, funName,
                             gc::AllocKind::FUNCTION, GenericObject));

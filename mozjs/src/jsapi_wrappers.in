@@ -20,6 +20,7 @@ wrap!(jsapi: pub fn SetWindowProxy(cx: *mut JSContext, global: HandleObject, win
 wrap!(jsapi: pub fn IsArgumentsObject(obj: HandleObject) -> bool);
 wrap!(jsapi: pub fn EnqueueJob(cx: *mut JSContext, job: HandleObject) -> bool);
 wrap!(jsapi: pub fn AssertSameCompartment1(cx: *mut JSContext, v: HandleValue));
+wrap!(jsapi: pub fn NewFunctionByIdWithReservedAndProto(cx: *mut JSContext, native: JSNative, proto: HandleObject, nargs: ::std::os::raw::c_uint, flags: ::std::os::raw::c_uint, id: jsid) -> *mut JSFunction);
 wrap!(jsapi: pub fn GetObjectProto(cx: *mut JSContext, obj: HandleObject, proto: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn GetRealmOriginalEval(cx: *mut JSContext, eval: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn GetPropertyKeys(cx: *mut JSContext, obj: HandleObject, flags: ::std::os::raw::c_uint, props: MutableHandleIdVector) -> bool);
@@ -53,14 +54,16 @@ wrap!(jsapi: pub fn CompileFunctionUtf8(cx: *mut JSContext, envChain: HandleObje
 wrap!(jsapi: pub fn ExposeScriptToDebugger(cx: *mut JSContext, script: Handle<*mut JSScript>));
 wrap!(jsapi: pub fn UpdateDebugMetadata(cx: *mut JSContext, script: Handle<*mut JSScript>, options: *const InstantiateOptions, privateValue: HandleValue, elementAttributeName: HandleString, introScript: HandleScript, scriptOrModule: HandleScript) -> bool);
 wrap!(jsapi: pub fn OrdinaryToPrimitive(cx: *mut JSContext, obj: HandleObject, type_: JSType, vp: MutableHandleValue) -> bool);
+wrap!(jsapi: pub fn ToGetterId(cx: *mut JSContext, id: Handle<PropertyKey>, getterId: MutableHandle<PropertyKey>) -> bool);
+wrap!(jsapi: pub fn ToSetterId(cx: *mut JSContext, id: Handle<PropertyKey>, setterId: MutableHandle<PropertyKey>) -> bool);
 wrap!(jsapi: pub fn ObjectIsDate(cx: *mut JSContext, obj: HandleObject, isDate: *mut bool) -> bool);
 wrap!(jsapi: pub fn StrictlyEqual(cx: *mut JSContext, v1: Handle<Value>, v2: Handle<Value>, equal: *mut bool) -> bool);
 wrap!(jsapi: pub fn LooselyEqual(cx: *mut JSContext, v1: Handle<Value>, v2: Handle<Value>, equal: *mut bool) -> bool);
 wrap!(jsapi: pub fn SameValue(cx: *mut JSContext, v1: Handle<Value>, v2: Handle<Value>, same: *mut bool) -> bool);
-wrap!(jsapi: pub fn ToGetterId(cx: *mut JSContext, id: Handle<PropertyKey>, getterId: MutableHandle<PropertyKey>) -> bool);
-wrap!(jsapi: pub fn ToSetterId(cx: *mut JSContext, id: Handle<PropertyKey>, setterId: MutableHandle<PropertyKey>) -> bool);
 wrap!(jsapi: pub fn ToJSONMaybeSafely(cx: *mut JSContext, input: HandleObject, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
 wrap!(jsapi: pub fn ToJSON(cx: *mut JSContext, value: Handle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
+wrap!(jsapi: pub fn ParseJSONWithHandler(chars: *const Latin1Char, len: u32, handler: *mut JSONParseHandler) -> bool);
+wrap!(jsapi: pub fn ParseJSONWithHandler1(chars: *const u16, len: u32, handler: *mut JSONParseHandler) -> bool);
 wrap!(jsapi: pub fn AddSizeOfTab(cx: *mut JSContext, obj: HandleObject, mallocSizeOf: MallocSizeOf, opv: *mut ObjectPrivateVisitor, sizes: *mut TabSizes) -> bool);
 wrap!(jsapi: pub fn FinishDynamicModuleImport(cx: *mut JSContext, evaluationPromise: HandleObject, referencingPrivate: Handle<Value>, moduleRequest: HandleObject, promise: HandleObject) -> bool);
 wrap!(jsapi: pub fn ModuleLink(cx: *mut JSContext, moduleRecord: HandleObject) -> bool);
@@ -68,7 +71,7 @@ wrap!(jsapi: pub fn ModuleEvaluate(cx: *mut JSContext, moduleRecord: HandleObjec
 wrap!(jsapi: pub fn ThrowOnModuleEvaluationFailure(cx: *mut JSContext, evaluationPromise: HandleObject, errorBehaviour: ModuleErrorBehaviour) -> bool);
 wrap!(jsapi: pub fn GetRequestedModulesCount(cx: *mut JSContext, moduleRecord: HandleObject) -> u32);
 wrap!(jsapi: pub fn GetRequestedModuleSpecifier(cx: *mut JSContext, moduleRecord: HandleObject, index: u32) -> *mut JSString);
-wrap!(jsapi: pub fn GetRequestedModuleSourcePos(cx: *mut JSContext, moduleRecord: HandleObject, index: u32, lineNumber: *mut u32, columnNumber: *mut u32));
+wrap!(jsapi: pub fn GetRequestedModuleSourcePos(cx: *mut JSContext, moduleRecord: HandleObject, index: u32, lineNumber: *mut u32, columnNumber: *mut ColumnNumberOneOrigin));
 wrap!(jsapi: pub fn GetModuleScript(moduleRecord: HandleObject) -> *mut JSScript);
 wrap!(jsapi: pub fn CreateModuleRequest(cx: *mut JSContext, specifierArg: Handle<*mut JSString>) -> *mut JSObject);
 wrap!(jsapi: pub fn GetModuleRequestSpecifier(cx: *mut JSContext, moduleRequestArg: HandleObject) -> *mut JSString);
@@ -96,7 +99,7 @@ wrap!(jsapi: pub fn AddPromiseReactionsIgnoringUnhandledRejection(cx: *mut JSCon
 wrap!(jsapi: pub fn GetPromiseUserInputEventHandlingState(promise: HandleObject) -> PromiseUserInputEventHandlingState);
 wrap!(jsapi: pub fn SetPromiseUserInputEventHandlingState(promise: HandleObject, state: PromiseUserInputEventHandlingState) -> bool);
 wrap!(jsapi: pub fn GetWaitForAllPromise(cx: *mut JSContext, promises: HandleObjectVector) -> *mut JSObject);
-wrap!(jsapi: pub fn ObjectToCompletePropertyDescriptor(cx: *mut JSContext, obj: HandleObject, descriptor: Handle<Value>, desc: MutableHandle<PropertyDescriptor>) -> bool);
+wrap!(jsapi: pub fn ToCompletePropertyDescriptor(cx: *mut JSContext, descriptor: Handle<Value>, desc: MutableHandle<PropertyDescriptor>) -> bool);
 wrap!(jsapi: pub fn NewSymbol(cx: *mut JSContext, description: Handle<*mut JSString>) -> *mut Symbol);
 wrap!(jsapi: pub fn GetSymbolFor(cx: *mut JSContext, key: Handle<*mut JSString>) -> *mut Symbol);
 wrap!(jsapi: pub fn GetSymbolDescription(symbol: Handle<*mut Symbol>) -> *mut JSString);
@@ -118,7 +121,7 @@ wrap!(jsapi: pub fn CheckRegExpSyntax(cx: *mut JSContext, chars: *const u16, len
 wrap!(jsapi: pub fn GetSavedFrameSource(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, sourcep: MutableHandle<*mut JSString>, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
 wrap!(jsapi: pub fn GetSavedFrameSourceId(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, sourceIdp: *mut u32, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
 wrap!(jsapi: pub fn GetSavedFrameLine(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, linep: *mut u32, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
-wrap!(jsapi: pub fn GetSavedFrameColumn(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, columnp: *mut u32, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
+wrap!(jsapi: pub fn GetSavedFrameColumn(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, columnp: *mut TaggedColumnNumberOneOrigin, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
 wrap!(jsapi: pub fn GetSavedFrameFunctionDisplayName(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, namep: MutableHandle<*mut JSString>, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
 wrap!(jsapi: pub fn GetSavedFrameAsyncCause(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, asyncCausep: MutableHandle<*mut JSString>, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
 wrap!(jsapi: pub fn GetSavedFrameAsyncParent(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, asyncParentp: MutableHandleObject, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
@@ -170,8 +173,8 @@ wrap!(jsapi: pub fn SetKeys(cx: *mut JSContext, obj: HandleObject, rval: Mutable
 wrap!(jsapi: pub fn SetValues(cx: *mut JSContext, obj: HandleObject, rval: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn SetEntries(cx: *mut JSContext, obj: HandleObject, rval: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn SetForEach(cx: *mut JSContext, obj: HandleObject, callbackFn: HandleValue, thisVal: HandleValue) -> bool);
-wrap!(jsapi: pub fn GetWeakMapEntry(cx: *mut JSContext, mapObj: HandleObject, key: HandleObject, val: MutableHandleValue) -> bool);
-wrap!(jsapi: pub fn SetWeakMapEntry(cx: *mut JSContext, mapObj: HandleObject, key: HandleObject, val: HandleValue) -> bool);
+wrap!(jsapi: pub fn GetWeakMapEntry(cx: *mut JSContext, mapObj: HandleObject, key: HandleValue, val: MutableHandleValue) -> bool);
+wrap!(jsapi: pub fn SetWeakMapEntry(cx: *mut JSContext, mapObj: HandleObject, key: HandleValue, val: HandleValue) -> bool);
 wrap!(jsapi: pub fn ProtoKeyToId(cx: *mut JSContext, key: JSProtoKey, idp: MutableHandleId));
 wrap!(jsapi: pub fn ToPrimitive(cx: *mut JSContext, obj: HandleObject, hint: JSType, vp: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn OrdinaryHasInstance(cx: *mut JSContext, objArg: HandleObject, v: HandleValue, bp: *mut bool) -> bool);
@@ -186,13 +189,13 @@ wrap!(jsapi: pub fn JS_ExecuteScript(cx: *mut JSContext, script: Handle<*mut JSS
 wrap!(jsapi: pub fn JS_ExecuteScript1(cx: *mut JSContext, script: Handle<*mut JSScript>) -> bool);
 wrap!(jsapi: pub fn JS_ExecuteScript2(cx: *mut JSContext, envChain: HandleObjectVector, script: Handle<*mut JSScript>, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ExecuteScript3(cx: *mut JSContext, envChain: HandleObjectVector, script: Handle<*mut JSScript>) -> bool);
+wrap!(jsapi: pub fn JS_EncodeStringToUTF8(cx: *mut JSContext, str_: Handle<*mut JSString>) -> UniqueChars);
 wrap!(jsapi: pub fn JS_Stringify(cx: *mut JSContext, value: MutableHandle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON(cx: *mut JSContext, chars: *const u16, len: u32, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON1(cx: *mut JSContext, str_: Handle<*mut JSString>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON2(cx: *mut JSContext, chars: *const Latin1Char, len: u32, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSONWithReviver(cx: *mut JSContext, chars: *const u16, len: u32, reviver: Handle<Value>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSONWithReviver1(cx: *mut JSContext, str_: Handle<*mut JSString>, reviver: Handle<Value>, vp: MutableHandle<Value>) -> bool);
-wrap!(jsapi: pub fn JS_EncodeStringToUTF8(cx: *mut JSContext, str_: Handle<*mut JSString>) -> UniqueChars);
 wrap!(jsapi: pub fn JS_NewDependentString(cx: *mut JSContext, str_: Handle<*mut JSString>, start: usize, length: usize) -> *mut JSString);
 wrap!(jsapi: pub fn JS_ConcatStrings(cx: *mut JSContext, left: Handle<*mut JSString>, right: Handle<*mut JSString>) -> *mut JSString);
 wrap!(jsapi: pub fn JS_ReadStructuredClone(cx: *mut JSContext, data: *const JSStructuredCloneData, version: u32, scope: StructuredCloneScope, vp: MutableHandleValue, cloneDataPolicy: *const CloneDataPolicy, optionalCallbacks: *const JSStructuredCloneCallbacks, closure: *mut ::std::os::raw::c_void) -> bool);
@@ -225,6 +228,8 @@ wrap!(jsapi: pub fn JS_NewBigInt64ArrayFromArray(cx: *mut JSContext, array: Hand
 wrap!(jsapi: pub fn JS_NewBigInt64ArrayWithBuffer(cx: *mut JSContext, arrayBuffer: HandleObject, byteOffset: usize, length: i64) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_NewBigUint64ArrayFromArray(cx: *mut JSContext, array: HandleObject) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_NewBigUint64ArrayWithBuffer(cx: *mut JSContext, arrayBuffer: HandleObject, byteOffset: usize, length: i64) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_NewFloat16ArrayFromArray(cx: *mut JSContext, array: HandleObject) -> *mut JSObject);
+wrap!(jsapi: pub fn JS_NewFloat16ArrayWithBuffer(cx: *mut JSContext, arrayBuffer: HandleObject, byteOffset: usize, length: i64) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_GetArrayBufferViewBuffer(cx: *mut JSContext, obj: HandleObject, isSharedMemory: *mut bool) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_NewDataView(cx: *mut JSContext, buffer: HandleObject, byteOffset: usize, byteLength: usize) -> *mut JSObject);
 wrap!(jsapi: pub fn JS_CallFunctionValue(cx: *mut JSContext, obj: HandleObject, fval: Handle<Value>, args: *const HandleValueArray, rval: MutableHandle<Value>) -> bool);
@@ -295,7 +300,7 @@ wrap!(jsapi: pub fn JS_DeletePropertyById(cx: *mut JSContext, obj: HandleObject,
 wrap!(jsapi: pub fn JS_DeleteProperty(cx: *mut JSContext, obj: HandleObject, name: *const ::std::os::raw::c_char, result: *mut ObjectOpResult) -> bool);
 wrap!(jsapi: pub fn JS_DeleteUCProperty(cx: *mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, result: *mut ObjectOpResult) -> bool);
 wrap!(jsapi: pub fn JS_DeleteElement(cx: *mut JSContext, obj: HandleObject, index: u32, result: *mut ObjectOpResult) -> bool);
-wrap!(jsapi: pub fn JS_DeletePropertyById1(cx: *mut JSContext, obj: HandleObject, id: jsid) -> bool);
+wrap!(jsapi: pub fn JS_DeletePropertyById1(cx: *mut JSContext, obj: HandleObject, id: Handle<jsid>) -> bool);
 wrap!(jsapi: pub fn JS_DeleteProperty1(cx: *mut JSContext, obj: HandleObject, name: *const ::std::os::raw::c_char) -> bool);
 wrap!(jsapi: pub fn JS_DeleteElement1(cx: *mut JSContext, obj: HandleObject, index: u32) -> bool);
 wrap!(jsapi: pub fn JS_DefineObject(cx: *mut JSContext, obj: HandleObject, name: *const ::std::os::raw::c_char, clasp: *const JSClass, attrs: ::std::os::raw::c_uint) -> *mut JSObject);
@@ -345,6 +350,8 @@ wrap!(jsapi: pub fn JS_PreventExtensions(cx: *mut JSContext, obj: HandleObject, 
 wrap!(jsapi: pub fn JS_SetImmutablePrototype(cx: *mut JSContext, obj: HandleObject, succeeded: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_AssignObject(cx: *mut JSContext, target: HandleObject, src: HandleObject) -> bool);
 wrap!(jsapi: pub fn JS_SetAllNonReservedSlotsToUndefined(obj: HandleObject));
+wrap!(jsapi: pub fn JS_GetFunctionId(cx: *mut JSContext, fun: Handle<*mut JSFunction>, name: MutableHandle<*mut JSString>) -> bool);
+wrap!(jsapi: pub fn JS_GetFunctionDisplayId(cx: *mut JSContext, fun: Handle<*mut JSFunction>, name: MutableHandle<*mut JSString>) -> bool);
 wrap!(jsapi: pub fn JS_GetFunctionLength(cx: *mut JSContext, fun: HandleFunction, length: *mut u16) -> bool);
 wrap!(jsapi: pub fn JS_GetFunctionScript(cx: *mut JSContext, fun: HandleFunction) -> *mut JSScript);
 wrap!(jsapi: pub fn JS_DecompileScript(cx: *mut JSContext, script: Handle<*mut JSScript>) -> *mut JSString);

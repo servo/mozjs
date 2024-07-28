@@ -84,6 +84,8 @@ fn main() {
 
     if build_from_source {
         fs::create_dir_all(&build_dir).expect("could not create build dir");
+        //TODO: use this and remove `no-rust-unicode-bidi.patch`
+        //cbindgen_bidi(&build_dir);
         build_spidermonkey(&build_dir);
         build_jsapi(&build_dir);
         build_jsapi_bindings(&build_dir);
@@ -218,6 +220,22 @@ fn find_moztools() -> Option<PathBuf> {
     }
 }
 
+/*
+fn cbindgen_bidi(build_dir: &Path) {
+    /// Appends intl/bidi to `root`
+    fn root_to_bidi(root: &Pah) -> PathBuf {
+        root.join("intl").join("bidi")
+    }
+    let mozjs_sys_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
+
+    cbindgen::Builder::new()
+      .with_crate(root_to_bidi(mozjs_sys_dir.join("mozjs")).join("rust").join("unicode-bidi-ffi"))
+      .generate()
+      .expect("Unable to generate bindings")
+      .write_to_file(root_to_bidi(build_dir).join("unicode_bidi_ffi_generated.h"));
+}
+*/
+
 fn build_spidermonkey(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let make;
@@ -287,6 +305,9 @@ fn build_spidermonkey(build_dir: &Path) {
         }
         cmd.env("PKG_CONFIG_PATH", pkg_config_path);
     }
+    if let Ok(include) = std::env::var("DEP_Z_INCLUDE") {
+        cppflags.push(format!("-I{include}").replace("\\", "/"));
+    }
     cppflags.push(get_cc_rs_env_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
 
@@ -308,6 +329,19 @@ fn build_spidermonkey(build_dir: &Path) {
         .status()
         .expect(&format!("Failed to run `{:?}`", make));
     assert!(result.success());
+    if target.contains("windows") {
+        let mut make_static = cc::Build::new();
+        make_static.out_dir(build_dir.join("js/src/build"));
+        std::fs::read_to_string(build_dir.join("js/src/build/js_static_lib.list"))
+            .unwrap()
+            .lines()
+            .map(String::from)
+            .for_each(|obj| {
+                make_static.object(obj);
+            });
+        make_static.static_flag(true);
+        make_static.compile("js_static");
+    }
 
     println!(
         "cargo:rustc-link-search=native={}/js/src/build",
@@ -513,7 +547,6 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
     "JS::EncodeStencil",
     "JS::FinishDecodeMultiStencilsOffThread",
     "JS::FinishIncrementalEncoding",
-    "JS::FinishOffThreadStencil",
     "JS::FromPropertyDescriptor",
     "JS::GetExceptionCause",
     "JS::GetModulePrivate",
@@ -790,9 +823,35 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let mut tar = tar::Builder::new(enc);
 
     if target.contains("windows") {
-        // FIXME We can't figure how to include all symbols into the static file.
-        // So we compress whole build dir as workaround.
-        tar.append_dir_all(".", build_dir)?;
+        let status = Command::new("llvm-strip.exe")
+            .arg("--strip-debug")
+            .arg(build_dir.join("js/src/build/js_static.lib"))
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        // This is the static library of spidermonkey.
+        tar.append_file(
+            "js/src/build/js_static.lib",
+            &mut File::open(build_dir.join("js/src/build/js_static.lib")).unwrap(),
+        )?;
+        // The bindgen binaries and generated rust files for mozjs.
+        tar.append_file(
+            "jsapi.lib",
+            &mut File::open(build_dir.join("jsapi.lib")).unwrap(),
+        )?;
+        tar.append_file(
+            "jsglue.lib",
+            &mut File::open(build_dir.join("jsglue.lib")).unwrap(),
+        )?;
+        tar.append_file(
+            "jsapi.rs",
+            &mut File::open(build_dir.join("jsapi.rs")).unwrap(),
+        )?;
+        tar.append_file(
+            "gluebindings.rs",
+            &mut File::open(build_dir.join("gluebindings.rs")).unwrap(),
+        )?;
     } else {
         // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
         // TODO: Maybe we could separate symbols for thos who still want the debug ability.

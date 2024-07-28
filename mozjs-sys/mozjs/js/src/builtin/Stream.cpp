@@ -525,7 +525,7 @@ JS_STREAMS_CLASS_SPEC(ReadableByteStreamController, 0, SlotCount,
       return PromiseRejectedWithPendingError(cx);
     }
 
-    RootedArrayBufferObject buffer(cx, &bufferObj->as<ArrayBufferObject>());
+    Rooted<ArrayBufferObject*> buffer(cx, &bufferObj->as<ArrayBufferObject>());
 
     // Step 5.c: Let pullIntoDescriptor be
     //           Record {[[buffer]]: buffer.[[Value]],
