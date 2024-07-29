@@ -49,12 +49,8 @@ const SM_TARGET_ENV_VARS: &'static [&'static str] = &[
     "OBJCOPY",
 ];
 
-const EXTRA_FILES: &'static [&'static str] = &[
-    "makefile.cargo",
-    "src/rustfmt.toml",
-    "src/jsapi.hpp",
-    "src/jsapi.cpp",
-];
+const EXTRA_FILES: &'static [&'static str] =
+    &["makefile.cargo", "src/rustfmt.toml", "src/jsapi.cpp"];
 
 /// Which version of moztools we expect
 #[cfg(windows)]
@@ -408,7 +404,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
 
     let mut builder = bindgen::builder()
         .rust_target(bindgen::RustTarget::Stable_1_59)
-        .header("./src/jsapi.hpp")
+        .header("./src/jsapi.cpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
         // similar ergonomics but avoids some potential Rust UB footguns.
