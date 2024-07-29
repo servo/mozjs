@@ -823,13 +823,6 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let mut tar = tar::Builder::new(enc);
 
     if target.contains("windows") {
-        let status = Command::new("llvm-strip.exe")
-            .arg("--strip-debug")
-            .arg(build_dir.join("js/src/build/js_static.lib"))
-            .status()
-            .unwrap();
-        assert!(status.success());
-
         // This is the static library of spidermonkey.
         tar.append_file(
             "js/src/build/js_static.lib",
@@ -910,7 +903,7 @@ fn decompress_static_lib(archive: &Path, build_dir: &Path) -> Result<(), std::io
 /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
 /// it will use `servo/mozjs`'s release page as the base URL.
 fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
-    let base = base.unwrap_or("https://github.com/servo/mozjs/releases/download");
+    let base = base.unwrap_or("https://github.com/servo/mozjs/releases");
     let version = env::var("CARGO_PKG_VERSION").unwrap();
     let target = env::var("TARGET").unwrap();
     let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("libmozjs.tar.gz");
@@ -922,7 +915,7 @@ fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
             .arg("-o")
             .arg(&archive_path)
             .arg(format!(
-                "{base}/mozjs-sys-v{version}/libmozjs-{target}.tar.gz"
+                "{base}/download/mozjs-sys-v{version}/libmozjs-{target}.tar.gz"
             ))
             .status()?
             .success()

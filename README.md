@@ -24,7 +24,7 @@ this feature:
       path, extract it, and then link against the static libraries included in the archive.
    - `MOZJS_ARCHIVE=https://url/to/release/page`: This option will download the archive from
       the provided base URL, extract it, and then link against the static libraries included in the
-      archive. The base URL should  be similar to `https://github.com/servo/mozjs/releases/`.
+      archive. The base URL should  be similar to `https://github.com/servo/mozjs/releases`.
       The build script will append the version and target accordingly. See the files at the example
       URL for more details.
 
