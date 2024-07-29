@@ -4,7 +4,51 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsapi.hpp"
+#include "jsapi.h"
+
+#include "js/ArrayBuffer.h"
+#include "js/ArrayBufferMaybeShared.h"
+#include "js/BigInt.h"
+#include "js/BuildId.h"
+#include "js/ColumnNumber.h"
+#include "js/CompilationAndEvaluation.h"
+#include "js/ContextOptions.h"
+#include "js/Conversions.h"
+#include "js/Date.h"
+#include "js/Equality.h"
+#include "js/ForOfIterator.h"
+#include "js/Id.h"
+#include "js/Initialization.h"
+#include "js/JSON.h"
+#include "js/MemoryMetrics.h"
+#include "js/Modules.h"
+#include "js/Object.h"
+#include "js/Promise.h"
+#include "js/PropertySpec.h"
+#include "js/Proxy.h"
+#include "js/Realm.h"
+#include "js/RegExp.h"
+#include "js/SavedFrameAPI.h"
+#include "js/ScalarType.h"
+#include "js/SharedArrayBuffer.h"
+#include "js/SourceText.h"
+#include "js/Stream.h"
+#include "js/String.h"
+#include "js/StructuredClone.h"
+#include "js/Symbol.h"
+#include "js/UniquePtr.h"
+#include "js/Utility.h"
+#include "js/Warnings.h"
+#include "js/WasmModule.h"
+#include "js/experimental/JSStencil.h"
+#include "js/experimental/JitInfo.h"
+#include "js/experimental/TypedData.h"
+#include "js/friend/DOMProxy.h"
+#include "js/friend/ErrorMessages.h"
+#include "js/friend/WindowProxy.h"
+#include "js/shadow/Object.h"
+#include "js/shadow/Shape.h"
+#include "jsfriendapi.h"
 
 namespace glue {
 
@@ -70,6 +114,7 @@ JSLinearString* AtomToLinearString(JSAtom* atom) {
 }
 
 // Wrappers around UniquePtr functions
+
 /**
  * Create a new ArrayBuffer with the given contents. The contents must not be
  * modified by any other code, internal or external.
@@ -292,3 +337,56 @@ void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest) {
   }
 }
 }  // namespace glue
+
+// There's a couple of classes from pre-57 releases of SM that bindgen can't
+// deal with. https://github.com/rust-lang-nursery/rust-bindgen/issues/851
+// https://bugzilla.mozilla.org/show_bug.cgi?id=1277338
+// https://rust-lang-nursery.github.io/rust-bindgen/replacing-types.html
+
+/**
+ * <div rustbindgen replaces="JS::CallArgs"></div>
+ */
+
+class MOZ_STACK_CLASS CallArgsReplacement {
+ protected:
+  JS::Value* argv_;
+  unsigned argc_;
+  bool constructing_ : 1;
+  bool ignoresReturnValue_ : 1;
+#ifdef JS_DEBUG
+  JS::detail::IncludeUsedRval wantUsedRval_;
+#endif
+};
+
+/**
+ * <div rustbindgen replaces="JSJitMethodCallArgs"></div>
+ */
+
+class JSJitMethodCallArgsReplacement {
+ private:
+  JS::Value* argv_;
+  unsigned argc_;
+  bool constructing_ : 1;
+  bool ignoresReturnValue_ : 1;
+#ifdef JS_DEBUG
+  JS::detail::NoUsedRval wantUsedRval_;
+#endif
+};
+
+/// <div rustbindgen replaces="JS::MutableHandleIdVector"></div>
+struct MutableHandleIdVector_Simple {
+  void* ptr;
+};
+static_assert(sizeof(JS::MutableHandleIdVector) ==
+                  sizeof(MutableHandleIdVector_Simple),
+              "wrong handle size");
+
+/// <div rustbindgen replaces="JS::HandleObjectVector"></div>
+struct HandleObjectVector_Simple {
+  void* ptr;
+};
+
+/// <div rustbindgen replaces="JS::MutableHandleObjectVector"></div>
+struct MutableHandleObjectVector_Simple {
+  void* ptr;
+};
