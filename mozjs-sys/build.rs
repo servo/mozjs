@@ -823,13 +823,6 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
     let mut tar = tar::Builder::new(enc);
 
     if target.contains("windows") {
-        let status = Command::new("llvm-strip.exe")
-            .arg("--strip-debug")
-            .arg(build_dir.join("js/src/build/js_static.lib"))
-            .status()
-            .unwrap();
-        assert!(status.success());
-
         // This is the static library of spidermonkey.
         tar.append_file(
             "js/src/build/js_static.lib",
