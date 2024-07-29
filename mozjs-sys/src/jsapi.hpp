@@ -84,6 +84,9 @@ JSObject* NewExternalArrayBuffer(
     JSContext* cx, size_t nbytes, void* contents,
     JS::BufferContentsFreeFunc freeFunc, void* freeUserData = nullptr);
 
+JSObject* NewArrayBufferWithContents(
+    JSContext* cx, size_t nbytes, void* contents);
+
 // Reexport some methods
 
 bool JS_ForOfIteratorInit(
