@@ -111,6 +111,7 @@ macro_rules! impl_num {
     };
 }
 
+// lower upper bound per: https://webidl.spec.whatwg.org/#abstract-opdef-converttoint
 impl_num!(u8, 0, u8::MIN, u8::MAX);
 impl_num!(u16, 0, u16::MIN, u16::MAX);
 impl_num!(u32, 0, u32::MIN, u32::MAX);
