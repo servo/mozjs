@@ -45,7 +45,6 @@ use crate::rust::{HandleValue, MutableHandleValue};
 use crate::rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToUint64};
 use libc;
 use log::debug;
-use num_traits::{Bounded, Zero};
 use std::borrow::Cow;
 use std::mem;
 use std::rc::Rc;
@@ -91,6 +90,40 @@ impl_as!(i32, i32);
 impl_as!(u32, u32);
 impl_as!(i64, i64);
 impl_as!(u64, u64);
+
+/// Similar to num_traits, but we use need to be able to customize values
+pub trait Number {
+    /// Zero value of this type
+    const ZERO: Self;
+    /// Smallest finite number this type can represent
+    const MIN: Self;
+    /// Largest finite number this type can represent
+    const MAX: Self;
+}
+
+macro_rules! impl_num {
+    ($N:ty, $zero:expr, $min:expr, $max:expr) => {
+        impl Number for $N {
+            const ZERO: $N = $zero;
+            const MIN: $N = $min;
+            const MAX: $N = $max;
+        }
+    };
+}
+
+// lower upper bound per: https://webidl.spec.whatwg.org/#abstract-opdef-converttoint
+impl_num!(u8, 0, u8::MIN, u8::MAX);
+impl_num!(u16, 0, u16::MIN, u16::MAX);
+impl_num!(u32, 0, u32::MIN, u32::MAX);
+impl_num!(u64, 0, 0, (1 << 53) - 1);
+
+impl_num!(i8, 0, i8::MIN, i8::MAX);
+impl_num!(i16, 0, i16::MIN, i16::MAX);
+impl_num!(i32, 0, i32::MIN, i32::MAX);
+impl_num!(i64, 0, -(1 << 53) + 1, (1 << 53) - 1);
+
+impl_num!(f32, 0.0, f32::MIN, f32::MAX);
+impl_num!(f64, 0.0, f64::MIN, f64::MAX);
 
 /// A trait to convert Rust types to `JSVal`s.
 pub trait ToJSValConvertible {
@@ -146,9 +179,10 @@ pub enum ConversionBehavior {
 
 /// Try to cast the number to a smaller type, but
 /// if it doesn't fit, it will return an error.
+// https://searchfox.org/mozilla-esr128/rev/1aa97f9d67f7a7231e62af283eaa02a6b31380e1/dom/bindings/PrimitiveConversions.h#166
 unsafe fn enforce_range<D>(cx: *mut JSContext, d: f64) -> Result<ConversionResult<D>, ()>
 where
-    D: Bounded + As<f64>,
+    D: Number + As<f64>,
     f64: As<D>,
 {
     if d.is_infinite() {
@@ -156,8 +190,8 @@ where
         return Err(());
     }
 
-    let rounded = d.round();
-    if D::min_value().cast() <= rounded && rounded <= D::max_value().cast() {
+    let rounded = d.signum() * d.abs().floor();
+    if D::MIN.cast() <= rounded && rounded <= D::MAX.cast() {
         Ok(ConversionResult::Success(rounded.cast()))
     } else {
         throw_type_error(cx, "value out of range in an EnforceRange argument");
@@ -170,15 +204,15 @@ where
 /// the destination type.
 fn clamp_to<D>(d: f64) -> D
 where
-    D: Bounded + As<f64> + Zero,
+    D: Number + As<f64>,
     f64: As<D>,
 {
     if d.is_nan() {
-        D::zero()
-    } else if d > D::max_value().cast() {
-        D::max_value()
-    } else if d < D::min_value().cast() {
-        D::min_value()
+        D::ZERO
+    } else if d > D::MAX.cast() {
+        D::MAX
+    } else if d < D::MIN.cast() {
+        D::MIN
     } else {
         d.cast()
     }
@@ -235,8 +269,8 @@ unsafe fn convert_int_from_jsval<T, M>(
     convert_fn: unsafe fn(*mut JSContext, HandleValue) -> Result<M, ()>,
 ) -> Result<ConversionResult<T>, ()>
 where
-    T: Bounded + Zero + As<f64>,
-    M: Zero + As<T>,
+    T: Number + As<f64>,
+    M: Number + As<T>,
     f64: As<T>,
 {
     match option {
