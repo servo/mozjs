@@ -178,6 +178,7 @@ pub enum ConversionBehavior {
 
 /// Try to cast the number to a smaller type, but
 /// if it doesn't fit, it will return an error.
+// https://searchfox.org/mozilla-esr128/rev/1aa97f9d67f7a7231e62af283eaa02a6b31380e1/dom/bindings/PrimitiveConversions.h#166
 unsafe fn enforce_range<D>(cx: *mut JSContext, d: f64) -> Result<ConversionResult<D>, ()>
 where
     D: Number + As<f64>,
@@ -188,7 +189,7 @@ where
         return Err(());
     }
 
-    let rounded = d.round();
+    let rounded = d.signum() * d.abs().floor();
     if D::MIN.cast() <= rounded && rounded <= D::MAX.cast() {
         Ok(ConversionResult::Success(rounded.cast()))
     } else {
