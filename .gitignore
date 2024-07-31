@@ -1,6 +1,7 @@
 /doc
 /target
 /Cargo.lock
+/.vscode
 
 # Keep this in sync with ignore() in build.rs
 
