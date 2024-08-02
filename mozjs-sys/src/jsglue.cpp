@@ -147,8 +147,8 @@ struct JSExternalStringCallbacksTraps {
   void (*latin1Finalize)(const void* privateData, JS::Latin1Char* chars);
   void (*utf16Finalize)(const void* privateData, char16_t* chars);
   size_t (*latin1SizeOfBuffer)(const void* privateData,
-                              const JS::Latin1Char* chars,
-                              mozilla::MallocSizeOf mallocSizeOf);
+                               const JS::Latin1Char* chars,
+                               mozilla::MallocSizeOf mallocSizeOf);
   size_t (*utf16SizeOfBuffer)(const void* privateData, const char16_t* chars,
                               mozilla::MallocSizeOf mallocSizeOf);
 };
