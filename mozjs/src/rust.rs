@@ -44,7 +44,7 @@ use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use crate::jsapi::{Evaluate2, HandleValueArray, StencilRelease};
-use crate::jsapi::{InitSelfHostedCode, InstantiationStorage, IsWindowSlow};
+use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
 use crate::jsapi::{
     JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue,
 };
@@ -498,7 +498,7 @@ unsafe impl Sync for Stencil {}*/
 
 impl Drop for Stencil {
     fn drop(&mut self) {
-        if (self.is_null()) {
+        if self.is_null() {
             return;
         }
         unsafe {
