@@ -1,0 +1,18 @@
+diff --git a/build/moz.configure/init.configure b/build/moz.configure/init.configure
+--- a/build/moz.configure/init.configure	(revision dbffebd0937c14d3c73ce9be4798da15cb2f369d)
++++ b/build/moz.configure/init.configure	(revision 8a1dbb7da45148151dbb0d05d969118103cfa8d0)
+@@ -950,6 +950,14 @@
+ set_define("ANDROID", target_is_android)
+
+
++@depends(target)
++def target_is_ohos(target):
++    return target.raw_os.endswith("-ohos")
++
++
++set_define("XP_OHOS", target_is_ohos)
++
++
+ @depends(target)
+ def target_is_openbsd(target):
+     if target.kernel == "OpenBSD":
