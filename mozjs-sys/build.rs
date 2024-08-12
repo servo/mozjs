@@ -303,6 +303,7 @@ fn build_spidermonkey(build_dir: &Path) {
     }
     if let Ok(include) = std::env::var("DEP_Z_INCLUDE") {
         cppflags.push(format!("-I{include}").replace("\\", "/"));
+        cppflags.push(" ");
     }
     cppflags.push(get_cc_rs_env_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
