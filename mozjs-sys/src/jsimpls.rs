@@ -304,8 +304,8 @@ impl JS::CallArgs {
     }
 
     #[inline]
-    pub unsafe fn is_constructing(&self) -> bool {
-        (*self.argv_.offset(-1)).is_magic()
+    pub fn is_constructing(&self) -> bool {
+        unsafe { (*self.argv_.offset(-1)).is_magic() }
     }
 }
 
