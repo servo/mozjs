@@ -1,6 +1,7 @@
-# Taken from https://searchfox.org/mozilla-central/rev/aa1bb4f0ca8bfda4b117d1befca47b72d5dd6d5d/.clang-format
+# Adapted from https://hg.mozilla.org/mozilla-central/file/12bd668f66103e727d3198e600cb25aa4ea8b6dc/.clang-format
 
 BasedOnStyle: Google
+ColumnLimit: 80
 
 IndentPPDirectives: AfterHash
 StatementMacros: [MARKUPMAP, ASSERT_TRUE, ASSERT_FALSE, TEST, CHECK]

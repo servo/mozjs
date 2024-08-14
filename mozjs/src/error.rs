@@ -9,6 +9,7 @@
 use crate::jsapi::{JSContext, JSErrorFormatString, JSExnType, JS_ReportErrorNumberUTF8};
 use libc;
 use std::ffi::CString;
+use std::ptr::addr_of;
 use std::{mem, os, ptr};
 
 /// Format string used to throw javascript errors.
@@ -43,8 +44,8 @@ unsafe extern "C" fn get_error_message(
 ) -> *const JSErrorFormatString {
     let num: JSExnType = mem::transmute(error_number);
     match num {
-        JSExnType::JSEXN_TYPEERR => &TYPE_ERROR_FORMAT_STRING as *const JSErrorFormatString,
-        JSExnType::JSEXN_RANGEERR => &RANGE_ERROR_FORMAT_STRING as *const JSErrorFormatString,
+        JSExnType::JSEXN_TYPEERR => addr_of!(TYPE_ERROR_FORMAT_STRING),
+        JSExnType::JSEXN_RANGEERR => addr_of!(RANGE_ERROR_FORMAT_STRING),
         _ => panic!(
             "Bad js error number given to get_error_message: {}",
             error_number

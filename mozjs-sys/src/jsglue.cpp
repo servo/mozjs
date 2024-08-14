@@ -144,9 +144,13 @@ class RustReadableStreamUnderlyingSource
 };
 
 struct JSExternalStringCallbacksTraps {
-  void (*finalize)(const void* privateData, char16_t* chars);
-  size_t (*sizeOfBuffer)(const void* privateData, const char16_t* chars,
-                         mozilla::MallocSizeOf mallocSizeOf);
+  void (*latin1Finalize)(const void* privateData, JS::Latin1Char* chars);
+  void (*utf16Finalize)(const void* privateData, char16_t* chars);
+  size_t (*latin1SizeOfBuffer)(const void* privateData,
+                               const JS::Latin1Char* chars,
+                               mozilla::MallocSizeOf mallocSizeOf);
+  size_t (*utf16SizeOfBuffer)(const void* privateData, const char16_t* chars,
+                              mozilla::MallocSizeOf mallocSizeOf);
 };
 
 class RustJSExternalStringCallbacks final : public JSExternalStringCallbacks {
@@ -158,26 +162,22 @@ class RustJSExternalStringCallbacks final : public JSExternalStringCallbacks {
                                 void* privateData)
       : mTraps(aTraps), privateData(privateData) {}
 
-  void finalize(char16_t* chars) const override {
-    return mTraps.finalize(privateData, chars);
-  }
-
-  size_t sizeOfBuffer(const char16_t* chars,
-                      mozilla::MallocSizeOf mallocSizeOf) const override {
-    return mTraps.sizeOfBuffer(privateData, chars, mallocSizeOf);
-  }
-
   void finalize(JS::Latin1Char* chars) const override {
-    MOZ_ASSERT(
-        false,
-        "Latin1Char is not implemented for RustJSExternalStringCallbacks");
+    return mTraps.latin1Finalize(privateData, chars);
+  }
+
+  void finalize(char16_t* chars) const override {
+    return mTraps.utf16Finalize(privateData, chars);
   }
 
   size_t sizeOfBuffer(const JS::Latin1Char* chars,
                       mozilla::MallocSizeOf mallocSizeOf) const override {
-    MOZ_ASSERT(
-        false,
-        "Latin1Char is not implemented for RustJSExternalStringCallbacks");
+    return mTraps.latin1SizeOfBuffer(privateData, chars, mallocSizeOf);
+  }
+
+  size_t sizeOfBuffer(const char16_t* chars,
+                      mozilla::MallocSizeOf mallocSizeOf) const override {
+    return mTraps.utf16SizeOfBuffer(privateData, chars, mallocSizeOf);
   }
 };
 
