@@ -31,7 +31,7 @@ streams = []
 [dependencies]
 libc.workspace = true
 # SM depends on them and we provide them using cargo
-libz-sys = "1.1.13"
+libz-sys = "1.1.19"
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 # unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }
