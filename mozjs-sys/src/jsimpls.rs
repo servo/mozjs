@@ -302,6 +302,11 @@ impl JS::CallArgs {
             JS::MutableHandleValue::from_marked_location(self.argv_.offset(self.argc_ as isize))
         }
     }
+
+    #[inline]
+    pub fn is_constructing(&self) -> bool {
+        unsafe { (*self.argv_.offset(-1)).is_magic() }
+    }
 }
 
 impl JSJitSetterCallArgs {
