@@ -123,6 +123,8 @@ fn should_build_from_source() -> bool {
             "Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly."
         );
         true
+    } else if env::var_os("MOZJS_ARCHIVE").is_some() {
+        false
     } else if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
         println!("debug-mozjs feature is enabled. Building from source directly.");
         true
