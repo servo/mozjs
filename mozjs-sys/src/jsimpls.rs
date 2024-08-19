@@ -19,6 +19,7 @@ use crate::jsapi::JSPropertySpec;
 use crate::jsapi::JSPropertySpec_Kind;
 use crate::jsapi::JSPropertySpec_Name;
 use crate::jsapi::JS;
+use crate::jsapi::JS::Scalar::Type;
 use crate::jsgc::RootKind;
 use crate::jsid::VoidId;
 use crate::jsval::UndefinedValue;
@@ -571,6 +572,22 @@ impl<T> mozilla::Range<T> {
                 _phantom_0: PhantomData,
             },
             _phantom_0: PhantomData,
+        }
+    }
+}
+
+impl Type {
+    /// Returns byte size of Type (if possible to determine)
+    ///
+    /// <https://searchfox.org/mozilla-central/rev/396a6123691f7ab3ffb449dcbe95304af6f9df3c/js/public/ScalarType.h#66>
+    pub const fn byte_size(&self) -> Option<usize> {
+        match self {
+            Type::Int8 | Type::Uint8 | Type::Uint8Clamped => Some(1),
+            Type::Int16 | Type::Uint16 | Type::Float16 => Some(2),
+            Type::Int32 | Type::Uint32 | Type::Float32 => Some(4),
+            Type::Int64 | Type::Float64 | Type::BigInt64 | Type::BigUint64 => Some(8),
+            Type::Simd128 => Some(16),
+            Type::MaxTypedArrayViewType => None,
         }
     }
 }
