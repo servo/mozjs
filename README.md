@@ -27,6 +27,20 @@ this feature:
       archive. The base URL should  be similar to `https://github.com/servo/mozjs/releases`.
       The build script will append the version and target accordingly. See the files at the example
       URL for more details.
+- `MOZJS_ATTESTATION` allows uses [Github Attestations] to verify the integrity of the prebuilt archive
+  and that the archive was built by in CI, for a valid commit on the main branch of the servo/mozjs repo.
+  Attestation verification requires having a recent version of the github cli tool [gh] installed.
+  If artifact verification is enabled and reports an error, the prebuilt archive will be discarded and 
+  mozjs will be built from source instead.
+  Available values are:
+  - unset (default): Enable artifact verification when possible ([gh] is installed and recent enough).
+  - `MOZJS_ATTESTATION=<0|false|off>`: Disable artifact verification.
+  - `MOZJS_ATTESTATION=<1|true|on|lenient>`: Enable artifact verification and fallback to compiling from source if 
+      verification fails or is not possible.
+  - `MOZJS_ATTESTATION=<2|strict|force>`: Fail the build if artifact verification fails.
+
+[Github Attestations]: https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds
+[gh]: https://cli.github.com/
 
 ## Building from Source
 

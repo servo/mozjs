@@ -7,12 +7,15 @@ use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 use std::env;
+use std::env::VarError;
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
+use std::sync::LazyLock;
+use std::time::Instant;
 use tar::Archive;
 use walkdir::WalkDir;
 
@@ -905,6 +908,72 @@ fn decompress_static_lib(archive: &Path, build_dir: &Path) -> Result<(), std::io
     Ok(())
 }
 
+static ATTESTATION_AVAILABLE: LazyLock<bool> = LazyLock::new(|| {
+    Command::new("gh")
+        .arg("attestation")
+        .arg("--help")
+        .output()
+        .is_ok_and(|output| output.status.success())
+});
+
+enum AttestationType {
+    /// Fallback to compiling from source on failure
+    Lenient,
+    /// Abort the build on failure
+    Strict,
+}
+
+enum ArtifactAttestation {
+    /// Do not verify the attestation artifact.
+    Disabled,
+    /// Verify the attestation artifact
+    Enabled(AttestationType),
+}
+
+impl ArtifactAttestation {
+    const ENV_VAR_NAME: &'static str = "MOZJS_ATTESTATION";
+
+    fn from_env_str(value: &str) -> Self {
+        match value {
+            "0" | "off" | "false" => ArtifactAttestation::Disabled,
+            "1" | "on" | "true" | "lenient" => {
+                ArtifactAttestation::Enabled(AttestationType::Lenient)
+            }
+            "2" | "strict" | "force" => ArtifactAttestation::Enabled(AttestationType::Strict),
+            other => {
+                println!(
+                    "cargo:warning=`{}` set to unsupported value: {other}",
+                    Self::ENV_VAR_NAME
+                );
+                ArtifactAttestation::Enabled(AttestationType::Lenient)
+            }
+        }
+    }
+
+    fn from_env() -> Self {
+        match env::var(Self::ENV_VAR_NAME) {
+            Ok(value) => {
+                let lower = value.to_lowercase();
+                return Self::from_env_str(&lower);
+            }
+            Err(VarError::NotPresent) => {}
+            Err(VarError::NotUnicode(_)) => {
+                println!(
+                    "cargo:warning={} value must be valid unicode.",
+                    Self::ENV_VAR_NAME
+                );
+            }
+        }
+        // When the environment variable is not set or invalid,
+        // we enable attestation if possible.
+        if *ATTESTATION_AVAILABLE {
+            ArtifactAttestation::Enabled(AttestationType::Lenient)
+        } else {
+            ArtifactAttestation::Disabled
+        }
+    }
+}
+
 /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
 /// it will use `servo/mozjs`'s release page as the base URL.
 fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
@@ -913,6 +982,8 @@ fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
     let target = env::var("TARGET").unwrap();
     let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("libmozjs.tar.gz");
     if !archive_path.exists() {
+        eprintln!("Trying to download prebuilt mozjs static library from Github Releases");
+        let curl_start = Instant::now();
         if !Command::new("curl")
             .arg("-L")
             .arg("-f")
@@ -927,8 +998,51 @@ fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
         {
             return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
         }
-    }
+        eprintln!(
+            "Successfully downloaded mozjs archive in {} ms",
+            curl_start.elapsed().as_millis()
+        );
+        let attestation = ArtifactAttestation::from_env();
+        if let ArtifactAttestation::Enabled(kind) = attestation {
+            let start = Instant::now();
+            if !*ATTESTATION_AVAILABLE {
+                println!(
+                    "cargo:warning=Artifact attestation enabled, but not available. \
+                     Please refer to the documentation for available values for {}",
+                    ArtifactAttestation::ENV_VAR_NAME
+                );
+            }
+            let mut attestation_cmd = Command::new("gh");
+            attestation_cmd
+                .arg("attestation")
+                .arg("verify")
+                .arg(&archive_path)
+                .arg("-R")
+                .arg("servo/mozjs");
 
+            let attestation_duration = start.elapsed();
+            eprintln!(
+                "Artifact evaluation took {} ms",
+                attestation_duration.as_millis()
+            );
+
+            if let Err(output) = attestation_cmd.output() {
+                println!(
+                    "cargo:warning=Failed to verify the artifact downloaded from CI: {output:?}"
+                );
+                // Remove the file so the build-script will redownload next time.
+                let _ = fs::remove_file(&archive_path).inspect_err(|e| {
+                    println!("cargo:warning=Failed to delete archive: {e}");
+                });
+                match kind {
+                    AttestationType::Strict => panic!("Artifact verification failed!"),
+                    AttestationType::Lenient => {
+                        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+                    }
+                }
+            }
+        }
+    }
     Ok(archive_path)
 }
 
