@@ -147,6 +147,8 @@ jobs:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           ./android-build cargo build --target="armv7-linux-androideabi"
+      - run: cargo install cargo-tai
+      - run: cargo-tai tests --target armv7-linux-androideabi
 
   ohos:
     name: "OpenHarmony build"
