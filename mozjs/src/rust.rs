@@ -41,8 +41,13 @@ use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
 use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
+use crate::jsapi::OwningCompileOptions_for_fc;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
+use crate::jsapi::{
+    DeleteOwningCompileOptions, OwningCompileOptions, PersistentRootedObjectVector,
+    ReadOnlyCompileOptions, RootingContext,
+};
 use crate::jsapi::{Evaluate2, HandleValueArray, StencilRelease};
 use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
 use crate::jsapi::{
@@ -56,11 +61,11 @@ use crate::jsapi::{JS_DefineFunctions, JS_DefineProperties, JS_DestroyContext, J
 use crate::jsapi::{JS_EnumerateStandardClasses, JS_GetRuntime, JS_GlobalObjectTraceHook};
 use crate::jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
-use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
 use crate::jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
 use crate::jsval::ObjectValue;
+use crate::offthread::FrontendContext;
 use crate::panic::maybe_resume_unwind;
 use lazy_static::lazy_static;
 use log::{debug, warn};
@@ -470,6 +475,30 @@ impl Drop for RootedObjectVectorWrapper {
     }
 }
 
+pub struct OwningCompileOptionsWrapper {
+    pub ptr: *mut OwningCompileOptions,
+}
+
+impl OwningCompileOptionsWrapper {
+    pub fn new_for_fc(fc: &FrontendContext, options: *const ReadOnlyCompileOptions) -> Self {
+        Self {
+            ptr: unsafe { OwningCompileOptions_for_fc(**fc, options) },
+        }
+    }
+
+    pub fn read_only(&self) -> &ReadOnlyCompileOptions {
+        unsafe { &(*self.ptr)._base }
+    }
+}
+
+unsafe impl Send for OwningCompileOptionsWrapper {}
+
+impl Drop for OwningCompileOptionsWrapper {
+    fn drop(&mut self) {
+        unsafe { DeleteOwningCompileOptions(self.ptr) }
+    }
+}
+
 pub struct CompileOptionsWrapper {
     pub ptr: *mut ReadOnlyCompileOptions,
 }
@@ -493,8 +522,7 @@ pub struct Stencil {
     inner: already_AddRefed<CompilationStencil>,
 }
 
-/*unsafe impl Send for Stencil {}
-unsafe impl Sync for Stencil {}*/
+unsafe impl Send for Stencil {}
 
 impl Drop for Stencil {
     fn drop(&mut self) {
@@ -518,6 +546,10 @@ impl Deref for Stencil {
 impl Stencil {
     pub fn is_null(&self) -> bool {
         self.inner.mRawPtr.is_null()
+    }
+
+    pub unsafe fn from_raw(inner: already_AddRefed<CompilationStencil>) -> Self {
+        Self { inner }
     }
 }
 
