@@ -148,12 +148,18 @@ all: maybe-configure
 # The second two time checks handle the case of configure.in and configure having
 # the same timestamp (e.g. after a git checkout)
 JSSRC := '$(SRC_DIR)'/js/src
+# Keep track of all input variables to configure, so we don't skip reconfigure
+# when we do need to reconfigure
+CONFIGURE_INPUTS := "$(CC)$(CFLAGS)$(CPP)$(CPPFLAGS)$(CXX)$(CXXFLAGS)$(AS)$(AR)$(CONFIGURE_FLAGS)"
+LAST_CONFIGURE_INPUTS := "$(shell cat reconfigure.inputs)"
 maybe-configure:
 	[[ $(JSSRC)/configure -ot $(JSSRC)/configure.in ]] && touch $(JSSRC)/configure || true
 	[[ $(JSSRC)/old-configure -ot $(JSSRC)/old-configure.in ]] && touch $(JSSRC)/old-configure || true
+	[[ $(LAST_CONFIGURE_INPUTS) != $(CONFIGURE_INPUTS) ]] && touch $(JSSRC)/configure || true
 	! [[ $(JSSRC)/configure.in -ot $(JSSRC)/configure ]] && touch $(JSSRC)/configure || true
 	! [[ $(JSSRC)/old-configure.in -ot $(JSSRC)/old-configure ]] && touch $(JSSRC)/old-configure || true
 	if [[ $(JSSRC)/configure -nt config.status ]] ; then \
+	  ( echo "$(CONFIGURE_INPUTS)" > reconfigure.inputs ); \
 	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
 	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
 	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
