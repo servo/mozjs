@@ -186,7 +186,7 @@ jobs:
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
         run: |
-          ./ohos-build cargo build --release --target="${{ matrix.target }}"
+          ./ohos-build cargo build --target="${{ matrix.target }}" --features "streams"
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         if: ${{ inputs.release }}
