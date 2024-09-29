@@ -1,0 +1,31 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  merge_group:
+    types: [checks_requested]
+  schedule:
+    # Runs at 03:30, every Saturday
+    - cron: "30 3 * * 6"
+
+# dispatches build workflow with different permissions
+jobs:
+  elevated:
+    if: ${{ github.event_name == 'push' }}
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    uses: ./.github/workflows/build.yml
+    with:
+      release: true
+    secrets: inherit
+  normal:
+    if: ${{ github.event_name != 'push' }}
+    uses: ./.github/workflows/build.yml
+    with:
+      release: false
+    secrets: inherit
