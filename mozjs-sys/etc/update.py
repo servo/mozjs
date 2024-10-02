@@ -9,6 +9,7 @@ import tempfile
 
 TARGET = "mozjs-sys/mozjs"
 
+
 def extract_tarball(tarball, commit):
     print("Extracting tarball.")
 
@@ -20,24 +21,33 @@ def extract_tarball(tarball, commit):
 
         contents = os.listdir(directory)
         if len(contents) != 1:
-            raise Exception("Found more than one directory in the tarball: %s" %
-                            ", ".join(contents))
+            raise Exception(
+                "Found more than one directory in the tarball: %s" % ", ".join(contents)
+            )
         subdirectory = contents[0]
 
-        subprocess.check_call([
-            "rsync",
-            "--delete-excluded",
-            "--filter=merge mozjs-sys/etc/filters.txt",
-            "--prune-empty-dirs",
-            "--quiet",
-            "--recursive",
-            os.path.join(directory, subdirectory, ""),
-            os.path.join(TARGET, ""),
-        ])
+        subprocess.check_call(
+            [
+                "rsync",
+                "--delete-excluded",
+                "--filter=merge mozjs-sys/etc/filters.txt",
+                "--prune-empty-dirs",
+                "--quiet",
+                "--recursive",
+                os.path.join(directory, subdirectory, ""),
+                os.path.join(TARGET, ""),
+            ]
+        )
 
     if commit:
-        subprocess.check_call(["git", "add", "--all", TARGET], stdout=subprocess.DEVNULL)
-        subprocess.check_call(["git", "commit", "-m", "Update SpiderMonkey"], stdout=subprocess.DEVNULL)
+        subprocess.check_call(
+            ["git", "add", "--all", TARGET], stdout=subprocess.DEVNULL
+        )
+        subprocess.check_call(
+            ["git", "commit", "-s", "-m", "Update SpiderMonkey"],
+            stdout=subprocess.DEVNULL,
+        )
+
 
 def apply_patches():
     print("Applying patches.")
@@ -49,7 +59,11 @@ def apply_patches():
     )
     for p in patches:
         print("  Applying patch: %s." % p)
-        subprocess.check_call(["git", "apply", "--reject", "--directory=" + TARGET, p], stdout=subprocess.DEVNULL)
+        subprocess.check_call(
+            ["git", "apply", "--reject", "--directory=" + TARGET, p],
+            stdout=subprocess.DEVNULL,
+        )
+
 
 def main(args):
     extract = None
@@ -67,6 +81,8 @@ def main(args):
     if patch:
         apply_patches()
 
+
 if __name__ == "__main__":
     import sys
+
     main(sys.argv[1:])
