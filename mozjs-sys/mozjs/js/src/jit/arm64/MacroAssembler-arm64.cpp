@@ -22,6 +22,7 @@
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
 #include "vm/StringType.h"
+#include "wasm/WasmStubs.h"
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -378,16 +379,7 @@ void MacroAssemblerCompat::handleFailureWithHandlerTail(Label* profilerExitTail,
 
   // Found a wasm catch handler, restore state and jump to it.
   bind(&wasmCatch);
-  loadPtr(Address(PseudoStackPointer, ResumeFromException::offsetOfTarget()),
-          r0);
-  loadPtr(
-      Address(PseudoStackPointer, ResumeFromException::offsetOfFramePointer()),
-      r29);
-  loadPtr(
-      Address(PseudoStackPointer, ResumeFromException::offsetOfStackPointer()),
-      PseudoStackPointer);
-  syncStackPtr();
-  Br(x0);
+  wasm::GenerateJumpToCatchHandler(asMasm(), PseudoStackPointer, r0, r1);
 
   MOZ_ASSERT(GetStackPointer64().Is(PseudoStackPointer64));
 }
@@ -3414,7 +3406,7 @@ void MacroAssembler::shiftIndex32AndAdd(Register indexTemp32, int shift,
 }
 
 #ifdef ENABLE_WASM_TAIL_CALLS
-void MacroAssembler::wasmMarkSlowCall() { Mov(x28, x28); }
+void MacroAssembler::wasmMarkCallAsSlow() { Mov(x28, x28); }
 
 const int32_t SlowCallMarker = 0xaa1c03fc;
 
@@ -3424,6 +3416,14 @@ void MacroAssembler::wasmCheckSlowCallsite(Register ra, Label* notSlow,
   Ldr(W(temp2), MemOperand(X(ra), 0));
   Cmp(W(temp2), Operand(SlowCallMarker));
   B(Assembler::NotEqual, notSlow);
+}
+
+CodeOffset MacroAssembler::wasmMarkedSlowCall(const wasm::CallSiteDesc& desc,
+                                              const Register reg) {
+  AutoForbidPoolsAndNops afp(this, !GetStackPointer64().Is(vixl::sp) ? 3 : 2);
+  CodeOffset offset = call(desc, reg);
+  wasmMarkCallAsSlow();
+  return offset;
 }
 #endif  // ENABLE_WASM_TAIL_CALLS
 
