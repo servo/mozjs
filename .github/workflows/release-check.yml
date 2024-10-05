@@ -49,3 +49,38 @@ jobs:
         run: |
           cargo build --verbose --features streams
           cargo test --tests --examples --verbose --features streams
+
+  verify-archive-ohos:
+    name: "Verify archive OpenHarmony"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: ["aarch64-unknown-linux-ohos", "x86_64-unknown-linux-ohos"]
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup OpenHarmony SDK
+        id: setup_sdk
+        uses: openharmony-rs/setup-ohos-sdk@v0.1
+        with:
+          version: "4.1"
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ env.RELEASE_TAG == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
+        run: |
+          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose --features streams
+      - name: Build from auto-download (arch ${{ matrix.target }})
+        if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
+          MOZJS_ATTESTATION: strict
+        run: |
+          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose --features "streams"
