@@ -44,6 +44,8 @@ jobs:
           cargo test --tests --examples --verbose --features streams
       - name: Build from auto-download
         if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          MOZJS_ATTESTATION: strict
         run: |
           cargo build --verbose --features streams
           cargo test --tests --examples --verbose --features streams
