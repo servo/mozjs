@@ -55,6 +55,7 @@ use crate::jsapi::{JSString, Object, PersistentRootedIdVector};
 use crate::jsapi::{JS_DefineFunctions, JS_DefineProperties, JS_DestroyContext, JS_ShutDown};
 use crate::jsapi::{JS_EnumerateStandardClasses, JS_GetRuntime, JS_GlobalObjectTraceHook};
 use crate::jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
+use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWait};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
 use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
@@ -293,6 +294,8 @@ pub struct Runtime {
     /// to represent the resulting ownership graph and risk destroying a Runtime on
     /// the wrong thread.
     outstanding_children: Arc<()>,
+    /// Raw pointer used by thread safe SyncJSContext
+    mt_cx: Arc<Mutex<Option<*mut JSContext>>>,
 }
 
 impl Runtime {
@@ -301,6 +304,11 @@ impl Runtime {
         let cx = CONTEXT.with(|context| context.get());
         assert!(!cx.is_null());
         cx
+    }
+
+    /// Returns thread safe SyncJSContext
+    pub fn get_sync(&self) -> SyncJSContext {
+        SyncJSContext(self.mt_cx.clone())
     }
 
     /// Creates a new `JSContext`.
@@ -370,6 +378,7 @@ impl Runtime {
             _parent_child_count: parent.map(|p| p.children_of_parent),
             cx: js_context,
             outstanding_children: Arc::new(()),
+            mt_cx: Arc::new(Mutex::new(Some(js_context))),
         }
     }
 
@@ -417,6 +426,7 @@ impl Runtime {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
+        *self.mt_cx.lock().unwrap() = None;
         assert_eq!(
             Arc::strong_count(&self.outstanding_children),
             1,
@@ -429,6 +439,35 @@ impl Drop for Runtime {
                 assert_eq!(context.get(), self.cx);
                 context.set(ptr::null_mut());
             });
+        }
+    }
+}
+
+/// JSContext that is Send and Sync
+/// but supports only limited (thread safe) operations
+pub struct SyncJSContext(Arc<Mutex<Option<*mut JSContext>>>);
+
+unsafe impl Send for SyncJSContext {}
+unsafe impl Sync for SyncJSContext {}
+
+// We expose only methods that are defined as thread safe in spidermonkey
+// https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/src/vm/JSContext.h#848
+impl SyncJSContext {
+    /// JS_RequestInterruptCallback
+    pub fn request_interrupt_callback(&self) {
+        if let Some(&cx) = self.0.lock().unwrap().as_ref() {
+            unsafe {
+                JS_RequestInterruptCallback(cx);
+            }
+        }
+    }
+
+    /// JS_RequestInterruptCallbackCanWait
+    pub fn request_interrupt_callback_can_wait(&self) {
+        if let Some(&cx) = self.0.lock().unwrap().as_ref() {
+            unsafe {
+                JS_RequestInterruptCallbackCanWait(cx);
+            }
         }
     }
 }
