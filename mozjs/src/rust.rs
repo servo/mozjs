@@ -16,7 +16,7 @@ use std::ptr;
 use std::slice;
 use std::str;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
@@ -294,8 +294,10 @@ pub struct Runtime {
     /// to represent the resulting ownership graph and risk destroying a Runtime on
     /// the wrong thread.
     outstanding_children: Arc<()>,
-    /// Raw pointer used by thread safe SyncJSContext
-    mt_cx: Arc<Mutex<Option<*mut JSContext>>>,
+    /// An `Option` that holds the same pointer as `cx`.
+    /// This is shared with all [`ThreadSafeJSContext`]s, so
+    /// they can detect when its destroyed on the main thread.
+    thread_safe_handle: Arc<RwLock<Option<*mut JSContext>>>,
 }
 
 impl Runtime {
@@ -306,9 +308,9 @@ impl Runtime {
         cx
     }
 
-    /// Returns thread safe SyncJSContext
-    pub fn get_sync(&self) -> SyncJSContext {
-        SyncJSContext(self.mt_cx.clone())
+    /// Create a [`ThreadSafeJSContext`] that can detect when this `Runtime` is destroyed.
+    pub fn thread_safe_js_context(&self) -> ThreadSafeJSContext {
+        ThreadSafeJSContext(self.thread_safe_handle.clone())
     }
 
     /// Creates a new `JSContext`.
@@ -378,7 +380,7 @@ impl Runtime {
             _parent_child_count: parent.map(|p| p.children_of_parent),
             cx: js_context,
             outstanding_children: Arc::new(()),
-            mt_cx: Arc::new(Mutex::new(Some(js_context))),
+            thread_safe_handle: Arc::new(RwLock::new(Some(js_context))),
         }
     }
 
@@ -426,7 +428,7 @@ impl Runtime {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        *self.mt_cx.lock().unwrap() = None;
+        *self.thread_safe_handle.write().unwrap() = None;
         assert_eq!(
             Arc::strong_count(&self.outstanding_children),
             1,
@@ -443,29 +445,33 @@ impl Drop for Runtime {
     }
 }
 
-/// JSContext that is Send and Sync
-/// but supports only limited (thread safe) operations
+/// A version of the [`JSContext`] that can be used from other threads and is thus
+/// `Send` and `Sync`. This should only ever expose operations that are marked as
+/// thread-safe by the SpiderMonkey API.
+// (only use atomic fields in JSContext)
 #[derive(Clone)]
-pub struct SyncJSContext(Arc<Mutex<Option<*mut JSContext>>>);
+pub struct ThreadSafeJSContext(Arc<RwLock<Option<*mut JSContext>>>);
 
-unsafe impl Send for SyncJSContext {}
-unsafe impl Sync for SyncJSContext {}
+unsafe impl Send for ThreadSafeJSContext {}
+unsafe impl Sync for ThreadSafeJSContext {}
 
-// We expose only methods that are defined as thread safe in spidermonkey
-// https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/src/vm/JSContext.h#848
-impl SyncJSContext {
-    /// JS_RequestInterruptCallback
+impl ThreadSafeJSContext {
+    /// Call`JS_RequestInterruptCallback` from the SpiderMonkey API.
+    /// This is thread-safe according to
+    /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback(&self) {
-        if let Some(&cx) = self.0.lock().unwrap().as_ref() {
+        if let Some(&cx) = self.0.read().unwrap().as_ref() {
             unsafe {
                 JS_RequestInterruptCallback(cx);
             }
         }
     }
 
-    /// JS_RequestInterruptCallbackCanWait
+    /// Call`JS_RequestInterruptCallbackCanWait` from the SpiderMonkey API.
+    /// This is thread-safe according to
+    /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback_can_wait(&self) {
-        if let Some(&cx) = self.0.lock().unwrap().as_ref() {
+        if let Some(&cx) = self.0.read().unwrap().as_ref() {
             unsafe {
                 JS_RequestInterruptCallbackCanWait(cx);
             }
