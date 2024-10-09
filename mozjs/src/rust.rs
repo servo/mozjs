@@ -445,6 +445,7 @@ impl Drop for Runtime {
 
 /// JSContext that is Send and Sync
 /// but supports only limited (thread safe) operations
+#[derive(Clone)]
 pub struct SyncJSContext(Arc<Mutex<Option<*mut JSContext>>>);
 
 unsafe impl Send for SyncJSContext {}
