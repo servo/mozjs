@@ -428,7 +428,7 @@ impl Runtime {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
-        *self.thread_safe_handle.write().unwrap() = None;
+        self.thread_safe_handle.write().unwrap().take();
         assert_eq!(
             Arc::strong_count(&self.outstanding_children),
             1,
