@@ -296,7 +296,7 @@ pub struct Runtime {
     outstanding_children: Arc<()>,
     /// An `Option` that holds the same pointer as `cx`.
     /// This is shared with all [`ThreadSafeJSContext`]s, so
-    /// they can detect when its destroyed on the main thread.
+    /// they can detect when it's destroyed on the main thread.
     thread_safe_handle: Arc<RwLock<Option<*mut JSContext>>>,
 }
 
@@ -447,8 +447,7 @@ impl Drop for Runtime {
 
 /// A version of the [`JSContext`] that can be used from other threads and is thus
 /// `Send` and `Sync`. This should only ever expose operations that are marked as
-/// thread-safe by the SpiderMonkey API.
-// (only use atomic fields in JSContext)
+/// thread-safe by the SpiderMonkey API, ie ones that only atomic fields in JSContext.
 #[derive(Clone)]
 pub struct ThreadSafeJSContext(Arc<RwLock<Option<*mut JSContext>>>);
 
@@ -456,7 +455,7 @@ unsafe impl Send for ThreadSafeJSContext {}
 unsafe impl Sync for ThreadSafeJSContext {}
 
 impl ThreadSafeJSContext {
-    /// Call`JS_RequestInterruptCallback` from the SpiderMonkey API.
+    /// Call `JS_RequestInterruptCallback` from the SpiderMonkey API.
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback(&self) {
@@ -467,7 +466,7 @@ impl ThreadSafeJSContext {
         }
     }
 
-    /// Call`JS_RequestInterruptCallbackCanWait` from the SpiderMonkey API.
+    /// Call `JS_RequestInterruptCallbackCanWait` from the SpiderMonkey API.
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback_can_wait(&self) {
