@@ -20,6 +20,7 @@
 #include "util/Memory.h"
 #include "vm/JitActivation.h"  // jit::JitActivation
 #include "vm/JSContext.h"
+#include "wasm/WasmStubs.h"
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -2061,12 +2062,7 @@ void MacroAssemblerRiscv64Compat::handleFailureWithHandlerTail(
 
   // Found a wasm catch handler, restore state and jump to it.
   bind(&wasmCatch);
-  loadPtr(Address(sp, ResumeFromException::offsetOfTarget()), a1);
-  loadPtr(Address(StackPointer, ResumeFromException::offsetOfFramePointer()),
-          FramePointer);
-  loadPtr(Address(StackPointer, ResumeFromException::offsetOfStackPointer()),
-          StackPointer);
-  jump(a1);
+  wasm::GenerateJumpToCatchHandler(asMasm(), sp, a1, a2);
 }
 
 CodeOffset MacroAssemblerRiscv64Compat::toggledJump(Label* label) {
@@ -4334,7 +4330,7 @@ void MacroAssembler::widenInt32(Register r) {
 }
 
 #ifdef ENABLE_WASM_TAIL_CALLS
-void MacroAssembler::wasmMarkSlowCall() { mv(ra, ra); }
+void MacroAssembler::wasmMarkCallAsSlow() { mv(ra, ra); }
 
 const int32_t SlowCallMarker = 0x8093;  // addi ra, ra, 0
 
@@ -4343,6 +4339,14 @@ void MacroAssembler::wasmCheckSlowCallsite(Register ra_, Label* notSlow,
   MOZ_ASSERT(ra_ != temp2);
   load32(Address(ra_, 0), temp2);
   branch32(Assembler::NotEqual, temp2, Imm32(SlowCallMarker), notSlow);
+}
+
+CodeOffset MacroAssembler::wasmMarkedSlowCall(const wasm::CallSiteDesc& desc,
+                                              const Register reg) {
+  BlockTrampolinePoolScope block_trampoline_pool(this, 2);
+  CodeOffset offset = call(desc, reg);
+  wasmMarkCallAsSlow();
+  return offset;
 }
 #endif  // ENABLE_WASM_TAIL_CALLS
 //}}} check_macroassembler_style

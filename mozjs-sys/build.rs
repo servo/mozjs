@@ -847,10 +847,11 @@ fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
             &mut File::open(build_dir.join("gluebindings.rs")).unwrap(),
         )?;
     } else {
+        let strip_bin = get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into());
         // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
         // TODO: Maybe we could separate symbols for thos who still want the debug ability.
         // https://github.com/GabrielMajeri/separate-symbols
-        let mut strip = Command::new("strip");
+        let mut strip = Command::new(strip_bin);
         if !target.contains("apple") {
             strip.arg("--strip-debug");
         };
