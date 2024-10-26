@@ -964,13 +964,7 @@ impl ArtifactAttestation {
                 );
             }
         }
-        // When the environment variable is not set or invalid,
-        // we enable attestation if possible.
-        if *ATTESTATION_AVAILABLE {
-            ArtifactAttestation::Enabled(AttestationType::Lenient)
-        } else {
-            ArtifactAttestation::Disabled
-        }
+        ArtifactAttestation::Disabled
     }
 }
 

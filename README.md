@@ -33,7 +33,7 @@ this feature:
   If artifact verification is enabled and reports an error, the prebuilt archive will be discarded and 
   mozjs will be built from source instead.
   Available values are:
-  - unset (default): Enable artifact verification when possible ([gh] is installed and recent enough).
+  - unset (default): Equivalent to `off`.
   - `MOZJS_ATTESTATION=<0|false|off>`: Disable artifact verification.
   - `MOZJS_ATTESTATION=<1|true|on|lenient>`: Enable artifact verification and fallback to compiling from source if 
       verification fails or is not possible.
