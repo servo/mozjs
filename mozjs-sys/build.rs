@@ -968,6 +968,46 @@ impl ArtifactAttestation {
     }
 }
 
+/// Use GitHub artifact attestation to verify the artifact is not corrupt.
+fn attest_artifact(kind: AttestationType, archive_path: &Path) -> Result<(), std::io::Error> {
+    let start = Instant::now();
+    if !*ATTESTATION_AVAILABLE {
+        println!(
+            "cargo:warning=Artifact attestation enabled, but not available. \
+                     Please refer to the documentation for available values for {}",
+            ArtifactAttestation::ENV_VAR_NAME
+        );
+    }
+    let mut attestation_cmd = Command::new("gh");
+    attestation_cmd
+        .arg("attestation")
+        .arg("verify")
+        .arg(&archive_path)
+        .arg("-R")
+        .arg("servo/mozjs");
+
+    let attestation_duration = start.elapsed();
+    eprintln!(
+        "Artifact evaluation took {} ms",
+        attestation_duration.as_millis()
+    );
+
+    if let Err(output) = attestation_cmd.output() {
+        println!("cargo:warning=Failed to verify the artifact downloaded from CI: {output:?}");
+        // Remove the file so the build-script will redownload next time.
+        let _ = fs::remove_file(&archive_path).inspect_err(|e| {
+            println!("cargo:warning=Failed to delete archive: {e}");
+        });
+        match kind {
+            AttestationType::Strict => panic!("Artifact verification failed!"),
+            AttestationType::Lenient => {
+                return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Download the SpiderMonkey archive with cURL using the provided base URL. If it's None,
 /// it will use `servo/mozjs`'s release page as the base URL.
 fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
@@ -998,43 +1038,7 @@ fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
         );
         let attestation = ArtifactAttestation::from_env();
         if let ArtifactAttestation::Enabled(kind) = attestation {
-            let start = Instant::now();
-            if !*ATTESTATION_AVAILABLE {
-                println!(
-                    "cargo:warning=Artifact attestation enabled, but not available. \
-                     Please refer to the documentation for available values for {}",
-                    ArtifactAttestation::ENV_VAR_NAME
-                );
-            }
-            let mut attestation_cmd = Command::new("gh");
-            attestation_cmd
-                .arg("attestation")
-                .arg("verify")
-                .arg(&archive_path)
-                .arg("-R")
-                .arg("servo/mozjs");
-
-            let attestation_duration = start.elapsed();
-            eprintln!(
-                "Artifact evaluation took {} ms",
-                attestation_duration.as_millis()
-            );
-
-            if let Err(output) = attestation_cmd.output() {
-                println!(
-                    "cargo:warning=Failed to verify the artifact downloaded from CI: {output:?}"
-                );
-                // Remove the file so the build-script will redownload next time.
-                let _ = fs::remove_file(&archive_path).inspect_err(|e| {
-                    println!("cargo:warning=Failed to delete archive: {e}");
-                });
-                match kind {
-                    AttestationType::Strict => panic!("Artifact verification failed!"),
-                    AttestationType::Lenient => {
-                        return Err(std::io::Error::from(std::io::ErrorKind::InvalidData));
-                    }
-                }
-            }
+            attest_artifact(kind, &archive_path)?;
         }
     }
     Ok(archive_path)
