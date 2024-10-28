@@ -943,6 +943,10 @@ void CallValueRootTracer(JSTracer* trc, JS::Value* valp, const char* name) {
   JS::TraceRoot(trc, valp, name);
 }
 
+void CallPropertyDescriptorTracer(JSTracer* trc, JS::PropertyDescriptor* desc) {
+  desc->trace(trc);
+}
+
 bool IsDebugBuild() {
 #ifdef JS_DEBUG
   return true;
