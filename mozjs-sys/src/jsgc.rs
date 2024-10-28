@@ -68,7 +68,7 @@ impl RootKind for JS::Value {
     const KIND: JS::RootKind = JS::RootKind::Value;
 }
 
-impl RootKind for JS::PropertyDescriptor {
+impl<T: TraceableTrace> RootKind for T {
     type Vtable = *const RootedVFTable;
     const VTABLE: Self::Vtable = &<Self as TraceableTrace>::VTABLE;
     const KIND: JS::RootKind = JS::RootKind::Traceable;
@@ -96,7 +96,7 @@ impl RootedVFTable {
 /// `Rooted<T>` with a T that uses the Traceable RootKind uses dynamic dispatch on the C++ side
 /// for custom tracing. This trait provides trace logic via a vtable when creating a Rust instance
 /// of the object.
-pub unsafe trait TraceableTrace: Sized + RootKind {
+pub unsafe trait TraceableTrace: Sized {
     const VTABLE: RootedVFTable = RootedVFTable {
         padding: RootedVFTable::PADDING,
         trace: Self::trace,
@@ -265,12 +265,6 @@ impl<const N: usize> ValueArray<N> {
     pub unsafe fn get_mut_ptr(&self) -> *mut JS::Value {
         self.elements.as_ptr() as *mut _
     }
-}
-
-impl<const N: usize> RootKind for ValueArray<N> {
-    type Vtable = *const RootedVFTable;
-    const VTABLE: Self::Vtable = &<Self as TraceableTrace>::VTABLE;
-    const KIND: JS::RootKind = JS::RootKind::Traceable;
 }
 
 unsafe impl<const N: usize> TraceableTrace for ValueArray<N> {
