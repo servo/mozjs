@@ -111,14 +111,12 @@ pub unsafe trait TraceableTrace: Sized {
     /// Used by `TraceableTrace` implementer to trace its contents.
     /// Corresponds to virtual `trace` call in a `Rooted` that inherits from
     /// StackRootedTraceableBase (C++).
-    fn do_trace(&mut self, trc: *mut JSTracer);
+    unsafe fn do_trace(&mut self, trc: *mut JSTracer);
 }
 
 unsafe impl TraceableTrace for JS::PropertyDescriptor {
-    fn do_trace(&mut self, trc: *mut JSTracer) {
-        unsafe {
-            CallPropertyDescriptorTracer(trc, self);
-        }
+    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
+        CallPropertyDescriptorTracer(trc, self);
     }
 }
 
@@ -268,10 +266,8 @@ impl<const N: usize> ValueArray<N> {
 }
 
 unsafe impl<const N: usize> TraceableTrace for ValueArray<N> {
-    fn do_trace(&mut self, trc: *mut JSTracer) {
-        unsafe {
-            TraceValueArray(trc, N, self.get_mut_ptr());
-        }
+    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
+        TraceValueArray(trc, N, self.get_mut_ptr());
     }
 }
 
