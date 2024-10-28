@@ -24,6 +24,10 @@ impl SM {
         let engine = JSEngine::init().unwrap();
         let rt = Runtime::new(engine.handle());
         let cx = rt.cx();
+        #[cfg(feature = "debugmozjs")]
+        unsafe {
+            mozjs::jsapi::SetGCZeal(cx, 2, 1);
+        }
         let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
         let c_option = RealmOptions::default();
         rooted!(in(cx) let global = unsafe {JS_NewGlobalObject(
