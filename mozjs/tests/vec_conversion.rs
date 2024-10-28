@@ -19,7 +19,7 @@ fn vec_conversion() {
     let engine = JSEngine::init().unwrap();
     let runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
-    
+
     #[cfg(feature = "debugmozjs")]
     unsafe {
         mozjs::jsapi::SetGCZeal(context, 2, 1);
