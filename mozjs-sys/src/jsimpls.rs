@@ -20,7 +20,7 @@ use crate::jsapi::JSPropertySpec_Kind;
 use crate::jsapi::JSPropertySpec_Name;
 use crate::jsapi::JS;
 use crate::jsapi::JS::Scalar::Type;
-use crate::jsgc::RootKind;
+use crate::jsgc::{RootKind, RootedBase};
 use crate::jsid::VoidId;
 use crate::jsval::UndefinedValue;
 
@@ -383,42 +383,49 @@ impl JSNativeWrapper {
     }
 }
 
-impl<T> JS::Rooted<T> {
-    pub fn new_unrooted() -> JS::Rooted<T> {
-        JS::Rooted {
-            stack: ptr::null_mut(),
-            prev: ptr::null_mut(),
-            ptr: unsafe { std::mem::zeroed() },
-        }
-    }
-
-    unsafe fn get_rooting_context(cx: *mut JSContext) -> *mut JS::RootingContext {
-        cx as *mut JS::RootingContext
-    }
-
-    unsafe fn get_root_stack(cx: *mut JSContext) -> *mut *mut JS::Rooted<*mut c_void>
-    where
-        T: RootKind,
-    {
-        let kind = T::rootKind() as usize;
-        let rooting_cx = Self::get_rooting_context(cx);
-        &mut (*rooting_cx).stackRoots_[kind] as *mut _ as *mut _
-    }
-
-    pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext)
-    where
-        T: RootKind,
-    {
-        let stack = Self::get_root_stack(cx);
+impl RootedBase {
+    unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext, kind: JS::RootKind) {
+        let stack = Self::get_root_stack(cx, kind);
         self.stack = stack;
         self.prev = *stack;
 
         *stack = self as *mut _ as usize as _;
     }
 
-    pub unsafe fn remove_from_root_stack(&mut self) {
+    unsafe fn remove_from_root_stack(&mut self) {
         assert!(*self.stack == self as *mut _ as usize as _);
         *self.stack = self.prev;
+    }
+
+    unsafe fn get_root_stack(cx: *mut JSContext, kind: JS::RootKind) -> *mut *mut RootedBase {
+        let kind = kind as usize;
+        let rooting_cx = Self::get_rooting_context(cx);
+        &mut (*rooting_cx).stackRoots_[kind] as *mut _ as *mut _
+    }
+
+    unsafe fn get_rooting_context(cx: *mut JSContext) -> *mut JS::RootingContext {
+        cx as *mut JS::RootingContext
+    }
+}
+
+impl<T: RootKind> JS::Rooted<T> {
+    pub fn new_unrooted() -> JS::Rooted<T> {
+        JS::Rooted {
+            vtable: T::VTABLE,
+            base: RootedBase {
+                stack: ptr::null_mut(),
+                prev: ptr::null_mut(),
+            },
+            ptr: unsafe { std::mem::zeroed() },
+        }
+    }
+
+    pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
+        self.base.add_to_root_stack(cx, T::KIND)
+    }
+
+    pub unsafe fn remove_from_root_stack(&mut self) {
+        self.base.remove_from_root_stack()
     }
 }
 
