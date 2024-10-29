@@ -28,7 +28,10 @@ const ENV_VARS: &'static [&'static str] = &[
     "CXXFLAGS",
     "MAKE",
     "MOZTOOLS_PATH",
+    "MOZJS_ARCHIVE",
+    "MOZJS_CREATE_ARCHIVE",
     "MOZJS_FORCE_RERUN",
+    "MOZJS_FROM_SOURCE",
     "PYTHON",
     "STLPORT_LIBS",
 ];
