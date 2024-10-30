@@ -40,6 +40,7 @@
 #include "js/Utility.h"
 #include "js/Warnings.h"
 #include "js/WasmModule.h"
+#include "js/experimental/CompileScript.h"
 #include "js/experimental/JSStencil.h"
 #include "js/experimental/JitInfo.h"
 #include "js/experimental/TypedData.h"
@@ -66,6 +67,16 @@ void DeleteRealmOptions(JS::RealmOptions* options) { delete options; }
 JS::OwningCompileOptions* JS_NewOwningCompileOptions(JSContext* cx) {
   JS::OwningCompileOptions* result = new JS::OwningCompileOptions(cx);
   return result;
+}
+
+JS::OwningCompileOptions* OwningCompileOptions_for_fc(
+    JS::FrontendContext* fc, const JS::ReadOnlyCompileOptions& rhs) {
+  JS::OwningCompileOptions* oco = new JS::OwningCompileOptions(
+      JS::OwningCompileOptions::ForFrontendContext());
+  if (!oco->copy(fc, rhs)) {
+    return nullptr;
+  }
+  return oco;
 }
 
 void DeleteOwningCompileOptions(JS::OwningCompileOptions* opts) { delete opts; }

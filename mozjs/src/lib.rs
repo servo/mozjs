@@ -47,6 +47,7 @@ mod consts;
 pub mod conversions;
 pub mod error;
 pub mod gc;
+pub mod offthread;
 pub mod panic;
 pub mod typedarray;
 
