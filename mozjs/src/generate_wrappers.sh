@@ -36,6 +36,8 @@ find_latest_version_of_file_and_parse() {
   
   # parse reformated file
   grep_heur "target/wrap_$1" | $gsed 's/\(.*\)/wrap!('"$2"': \1);/g'  > "mozjs/src/$2_wrappers.in"
+  $gsed -i '/Readable/i \
+  #[cfg(feature = "streams")]' "mozjs/src/$2_wrappers.in"
 }
 
 find_latest_version_of_file_and_parse jsapi.rs jsapi

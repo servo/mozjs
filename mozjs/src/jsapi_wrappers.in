@@ -162,24 +162,43 @@ wrap!(jsapi: pub fn GetSavedFrameAsyncCause(cx: *mut JSContext, principals: *mut
 wrap!(jsapi: pub fn GetSavedFrameAsyncParent(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, asyncParentp: MutableHandleObject, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
 wrap!(jsapi: pub fn GetSavedFrameParent(cx: *mut JSContext, principals: *mut JSPrincipals, savedFrame: HandleObject, parentp: MutableHandleObject, selfHosted: SavedFrameSelfHosted) -> SavedFrameResult);
 wrap!(jsapi: pub fn ConvertSavedFrameToPlainObject(cx: *mut JSContext, savedFrame: HandleObject, selfHosted: SavedFrameSelfHosted) -> *mut JSObject);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn NewReadableDefaultStreamObject(cx: *mut JSContext, underlyingSource: HandleObject, size: HandleFunction, highWaterMark: f64, proto: HandleObject) -> *mut JSObject);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn NewReadableExternalSourceStreamObject(cx: *mut JSContext, underlyingSource: *mut ReadableStreamUnderlyingSource, nsISupportsObject_alreadyAddreffed: *mut ::std::os::raw::c_void, proto: HandleObject) -> *mut JSObject);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamGetExternalUnderlyingSource(cx: *mut JSContext, stream: HandleObject, source: *mut *mut ReadableStreamUnderlyingSource) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamReleaseExternalUnderlyingSource(cx: *mut JSContext, stream: HandleObject) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamUpdateDataAvailableFromSource(cx: *mut JSContext, stream: HandleObject, availableData: u32) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamGetMode(cx: *mut JSContext, stream: HandleObject, mode: *mut ReadableStreamMode) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamIsReadable(cx: *mut JSContext, stream: HandleObject, result: *mut bool) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamIsLocked(cx: *mut JSContext, stream: HandleObject, result: *mut bool) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamIsDisturbed(cx: *mut JSContext, stream: HandleObject, result: *mut bool) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamCancel(cx: *mut JSContext, stream: HandleObject, reason: HandleValue) -> *mut JSObject);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamGetReader(cx: *mut JSContext, stream: HandleObject, mode: ReadableStreamReaderMode) -> *mut JSObject);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamTee(cx: *mut JSContext, stream: HandleObject, branch1Stream: MutableHandleObject, branch2Stream: MutableHandleObject) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamClose(cx: *mut JSContext, stream: HandleObject) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamReaderIsClosed(cx: *mut JSContext, reader: HandleObject, result: *mut bool) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamEnqueue(cx: *mut JSContext, stream: HandleObject, chunk: HandleValue) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamError(cx: *mut JSContext, stream: HandleObject, error: HandleValue) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamReaderCancel(cx: *mut JSContext, reader: HandleObject, reason: HandleValue) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamReaderReleaseLock(cx: *mut JSContext, reader: HandleObject) -> bool);
+  #[cfg(feature = "streams")]
 wrap!(jsapi: pub fn ReadableStreamDefaultReaderRead(cx: *mut JSContext, reader: HandleObject) -> *mut JSObject);
 wrap!(jsapi: pub fn IsWasmModuleObject(obj: HandleObject) -> bool);
 wrap!(jsapi: pub fn GetWasmModule(obj: HandleObject) -> RefPtr<WasmModule>);
