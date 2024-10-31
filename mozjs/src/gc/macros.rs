@@ -18,10 +18,12 @@ macro_rules! rooted {
     };
 	(in($cx:expr) let $($var:ident)+: $type:ty) => {
         let mut __root = $crate::jsapi::Rooted::new_unrooted();
+        // SAFETY:
+        // We're immediately storing the initial value in a rooted location.
         let $($var)+: $crate::gc::RootedGuard<$type> = $crate::gc::RootedGuard::new(
             $cx,
             &mut __root,
-            <$type as $crate::gc::GCMethods>::initial(),
+            unsafe { <$type as $crate::gc::GCMethods>::initial() },
         );
     };
 }
