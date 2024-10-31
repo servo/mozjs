@@ -26,7 +26,9 @@
 #include "js/Proxy.h"
 #include "js/RegExp.h"
 #include "js/ScalarType.h"
-#include "js/Stream.h"
+#ifdef MOZ_JS_STREAMS
+#  include "js/Stream.h"
+#endif
 #include "js/StructuredClone.h"
 #include "js/Wrapper.h"
 #include "js/experimental/JSStencil.h"
@@ -86,6 +88,7 @@ class RustJobQueue : public JS::JobQueue {
   }
 };
 
+#ifdef MOZ_JS_STREAMS
 struct ReadableStreamUnderlyingSourceTraps {
   void (*requestData)(const void* source, JSContext* cx,
                       JS::HandleObject stream, size_t desiredSize);
@@ -142,6 +145,7 @@ class RustReadableStreamUnderlyingSource
 
   virtual void finalize() { return mTraps.finalize(this); }
 };
+#endif
 
 struct JSExternalStringCallbacksTraps {
   void (*latin1Finalize)(const void* privateData, JS::Latin1Char* chars);
@@ -1075,6 +1079,7 @@ JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue) {
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
 
+#ifdef MOZ_JS_STREAMS
 JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
     const ReadableStreamUnderlyingSourceTraps* aTraps, const void* aSource) {
   return new RustReadableStreamUnderlyingSource(*aTraps, aSource);
@@ -1084,6 +1089,7 @@ void DeleteReadableStreamUnderlyingSource(
     JS::ReadableStreamUnderlyingSource* source) {
   delete source;
 }
+#endif
 
 JSExternalStringCallbacks* CreateJSExternalStringCallbacks(
     const JSExternalStringCallbacksTraps* aTraps, void* privateData) {
