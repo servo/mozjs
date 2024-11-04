@@ -738,11 +738,9 @@ mod jsglue {
             .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")]);
 
         if msvc {
-            builder = builder
-                .clang_args(["-fms-compatibility", "-DWIN32", "-std=c++17"])
+            builder = builder.clang_args(["-fms-compatibility", "-DWIN32", "-std=c++17"])
         } else {
-            builder = builder
-                .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
+            builder = builder.clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
         }
 
         for ty in BLACKLIST_TYPES {
