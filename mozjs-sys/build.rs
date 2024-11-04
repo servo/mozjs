@@ -704,7 +704,8 @@ mod jsglue {
 
         let confdefs_path: PathBuf = outdir.join("js/src/js-confdefs.h");
         let msvc = if build.get_compiler().is_like_msvc() {
-            build.flag(&format!("-FI{}", confdefs_path.to_string_lossy()));
+            build.flag("-FI");
+            build.flag(&confdefs_path);
             build.define("WIN32", "");
             build.flag("-Zi");
             build.flag("-GR-");
@@ -736,12 +737,9 @@ mod jsglue {
             .allowlist_recursively(false);
 
         if msvc {
-            builder = builder.clang_args([
-                "-fms-compatibility",
-                &format!("-FI {}", confdefs_path.to_string_lossy()),
-                "-DWIN32",
-                "-std=c++17",
-            ])
+            builder = builder
+                .clang_args(["-fms-compatibility", "-DWIN32", "-std=c++17"])
+                .clang_args(["-FI", &confdefs_path.to_str().expect("UTF-8")]);
         } else {
             builder = builder
                 .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
