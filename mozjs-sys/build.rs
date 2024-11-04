@@ -704,7 +704,8 @@ mod jsglue {
 
         let confdefs_path: PathBuf = outdir.join("js/src/js-confdefs.h");
         let msvc = if build.get_compiler().is_like_msvc() {
-            build.flag(&format!("-FI{}", confdefs_path.to_string_lossy()));
+            build.flag("-FI");
+            build.flag(&confdefs_path);
             build.define("WIN32", "");
             build.flag("-Zi");
             build.flag("-GR-");
@@ -733,19 +734,13 @@ mod jsglue {
             .clang_args(["-I", &include_path.to_string_lossy()])
             .enable_cxx_namespaces()
             .allowlist_file("./src/jsglue.cpp")
-            .allowlist_recursively(false);
+            .allowlist_recursively(false)
+            .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")]);
 
         if msvc {
-            builder = builder.clang_args([
-                "-fms-compatibility",
-                &format!("-FI{}", confdefs_path.to_string_lossy()),
-                "-DWIN32",
-                "-std=c++17",
-            ])
+            builder = builder.clang_args(["-fms-compatibility", "-DWIN32", "-std=c++17"])
         } else {
-            builder = builder
-                .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
-                .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")])
+            builder = builder.clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
         }
 
         for ty in BLACKLIST_TYPES {
