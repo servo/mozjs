@@ -738,7 +738,7 @@ mod jsglue {
         if msvc {
             builder = builder.clang_args([
                 "-fms-compatibility",
-                &format!("-FI{}", confdefs_path.to_string_lossy()),
+                &format!("-FI {}", confdefs_path.to_string_lossy()),
                 "-DWIN32",
                 "-std=c++17",
             ])
