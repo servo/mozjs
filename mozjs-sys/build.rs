@@ -734,16 +734,15 @@ mod jsglue {
             .clang_args(["-I", &include_path.to_string_lossy()])
             .enable_cxx_namespaces()
             .allowlist_file("./src/jsglue.cpp")
-            .allowlist_recursively(false);
+            .allowlist_recursively(false)
+            .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")]);
 
         if msvc {
             builder = builder
                 .clang_args(["-fms-compatibility", "-DWIN32", "-std=c++17"])
-                .clang_args(["-FI", &confdefs_path.to_str().expect("UTF-8")]);
         } else {
             builder = builder
                 .clang_args(["-fPIC", "-fno-rtti", "-std=c++17"])
-                .clang_args(["-include", &confdefs_path.to_str().expect("UTF-8")])
         }
 
         for ty in BLACKLIST_TYPES {
