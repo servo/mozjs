@@ -11,6 +11,7 @@ use crate::jsid::VoidId;
 use std::cell::UnsafeCell;
 use std::ffi::{c_char, c_void};
 use std::mem;
+use std::ops::DerefMut;
 use std::ptr;
 
 /// A trait for JS types that can be registered as roots.
@@ -114,6 +115,21 @@ pub unsafe trait TraceableTrace: Sized {
     unsafe fn do_trace(&mut self, trc: *mut JSTracer);
 }
 
+unsafe impl<T: TraceableTrace> TraceableTrace for Option<T> {
+    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
+        match self {
+            Some(ref mut s) => s.do_trace(trc),
+            None => {}
+        }
+    }
+}
+
+unsafe impl<T: TraceableTrace> TraceableTrace for Box<T> {
+    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
+        self.deref_mut().do_trace(trc)
+    }
+}
+
 unsafe impl TraceableTrace for JS::PropertyDescriptor {
     unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
         CallPropertyDescriptorTracer(trc, self);
@@ -151,6 +167,14 @@ pub trait GCMethods {
 
     /// Place a post-write barrier
     unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self);
+}
+
+impl<T> GCMethods for Option<T> {
+    unsafe fn initial() -> Self {
+        None
+    }
+
+    unsafe fn post_barrier(_v: *mut Self, _prev: Self, _next: Self) {}
 }
 
 impl GCMethods for *mut JSObject {
