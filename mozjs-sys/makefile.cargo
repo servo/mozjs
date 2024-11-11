@@ -11,6 +11,10 @@ CONFIGURE_FLAGS := \
 	--disable-shared-js \
 	--build-backends=RecursiveMake
 
+ifeq (,$(CARGO_FEATURE_JIT))
+    CONFIGURE_FLAGS += --disable-jit
+endif
+
 ifneq (,$(CARGO_FEATURE_JITSPEW))
     CONFIGURE_FLAGS += --enable-jitspew
 endif
@@ -77,7 +81,7 @@ ifneq ($(HOST),$(TARGET))
 	endif
 
 	ifeq (aarch64-unknown-linux-gnu,$(TARGET))
-	    # Reset TARGET variable because aarch64 target name used by Rust is not 
+	    # Reset TARGET variable because aarch64 target name used by Rust is not
 		# the same as the target name needed for the CXX toolchain.
 		TARGET = aarch64-linux-gnu
 	endif
