@@ -11,6 +11,10 @@ CONFIGURE_FLAGS := \
 	--disable-shared-js \
 	--build-backends=RecursiveMake
 
+ifeq (,$(CARGO_FEATURE_JIT))
+    CONFIGURE_FLAGS += --disable-jit
+endif
+
 ifneq (,$(CARGO_FEATURE_STREAMS))
     CONFIGURE_FLAGS += --enable-js-streams
 endif

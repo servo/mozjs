@@ -137,6 +137,9 @@ fn should_build_from_source() -> bool {
     } else if !env::var_os("CARGO_FEATURE_STREAMS").is_some() {
         println!("streams feature isn't enabled. Building from source directly.");
         true
+    } else if !env::var_os("CARGO_FEATURE_JIT").is_some() {
+        println!("jit feature isn't enabled. Building from source directly.");
+        true
     } else {
         false
     }
