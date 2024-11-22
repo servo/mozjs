@@ -61,28 +61,28 @@ class RustJobQueue : public JS::JobQueue {
   RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
       : mTraps(aTraps), mQueue(aQueue) {}
 
-  virtual JSObject* getIncumbentGlobal(JSContext* cx) {
+  virtual JSObject* getIncumbentGlobal(JSContext* cx) override {
     return mTraps.getIncumbentGlobal(mQueue, cx);
   }
 
   virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
                                  JS::HandleObject job,
                                  JS::HandleObject allocationSite,
-                                 JS::HandleObject incumbentGlobal) {
+                                 JS::HandleObject incumbentGlobal) override {
     return mTraps.enqueuePromiseJob(mQueue, cx, promise, job, allocationSite,
                                     incumbentGlobal);
   }
 
-  virtual bool empty() const { return mTraps.empty(mQueue); }
+  virtual bool empty() const override { return mTraps.empty(mQueue); }
 
-  virtual void runJobs(JSContext* cx) {
+  virtual void runJobs(JSContext* cx) override {
     MOZ_ASSERT(false, "runJobs should not be invoked");
   }
 
   bool isDrainingStopped() const override { return false; }
 
  private:
-  virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) {
+  virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
     MOZ_ASSERT(false, "saveJobQueue should not be invoked");
     return nullptr;
   }
