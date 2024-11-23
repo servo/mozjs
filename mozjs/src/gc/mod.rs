@@ -2,7 +2,7 @@ pub use crate::gc::collections::*;
 pub use crate::gc::custom::*;
 pub use crate::gc::root::*;
 pub use crate::gc::trace::*;
-pub use mozjs_sys::jsgc::{GCMethods, RootKind};
+pub use mozjs_sys::jsgc::{GCMethods, RootKind, TraceableTrace};
 
 mod collections;
 mod custom;

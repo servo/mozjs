@@ -40,6 +40,12 @@ unsafe impl<T: CustomTrace> CustomTrace for Option<T> {
     }
 }
 
+unsafe impl<T: CustomTrace> CustomTrace for Box<T> {
+    fn trace(&self, trc: *mut JSTracer) {
+        self.deref().trace(trc);
+    }
+}
+
 unsafe impl<T: CustomTrace> CustomTrace for Vec<T> {
     fn trace(&self, trc: *mut JSTracer) {
         for elem in self {
