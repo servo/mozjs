@@ -158,7 +158,7 @@ JSObject* NewExternalArrayBuffer(JSContext* cx, size_t nbytes, void* contents,
 JSObject* NewArrayBufferWithContents(JSContext* cx, size_t nbytes,
                                      void* contents) {
   js::UniquePtr<void, JS::FreePolicy> dataPtr{contents};
-  return NewArrayBufferWithContents(cx, nbytes, contents);
+  return JS::NewArrayBufferWithContents(cx, nbytes, std::move(dataPtr));
 }
 
 // Reexport some methods
