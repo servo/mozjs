@@ -142,6 +142,15 @@ fn should_build_from_source() -> bool {
     }
 }
 
+/// Returns the Rust version bindgen should target
+pub(crate) fn minimum_rust_target() -> bindgen::RustTarget {
+    let Ok(rust_target) = bindgen::RustTarget::stable(80, 0) else {
+        // `InvalidRustTarget` does not implement Debug, so we manually panic.
+        panic!("Unsupported Rust target")
+    };
+    rust_target
+}
+
 #[cfg(not(windows))]
 fn find_make() -> OsString {
     if let Some(make) = env::var_os("MAKE") {
@@ -411,14 +420,8 @@ fn build_jsapi_bindings(build_dir: &Path) {
     config &= !bindgen::CodegenConfig::DESTRUCTORS;
     config &= !bindgen::CodegenConfig::METHODS;
 
-    // Note: the error type currently of bindgen doesn't implement debug, so unwrap / expect
-    // don't work
-    let Ok(rust_target) = bindgen::RustTarget::stable(80, 0) else {
-        panic!("Unsupported Rust target")
-    };
-
     let mut builder = bindgen::builder()
-        .rust_target(rust_target)
+        .rust_target(minimum_rust_target())
         .header("./src/jsapi.cpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
@@ -766,6 +769,7 @@ mod jsglue {
         println!("cargo:rerun-if-changed=src/jsglue.cpp");
         let mut builder = bindgen::Builder::default()
             .header("./src/jsglue.cpp")
+            .rust_target(super::minimum_rust_target())
             .parse_callbacks(Box::new(CustomCargoCallbacks::new()))
             .size_t_is_usize(true)
             .formatter(bindgen::Formatter::Rustfmt)
