@@ -630,6 +630,7 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::MutableHandleVector",
     "JS::Rooted.*Vector",
     "JS::RootedValueArray",
+    "js::ProfilingStackFrame.*",
     // Classes we don't use and we cannot generate their
     // types properly from bindgen so we'll skip them for now.
     "JS::dbg::Builder",
