@@ -369,9 +369,11 @@ impl Runtime {
         });
 
         #[cfg(target_pointer_width = "64")]
-        InitSelfHostedCode(js_context, [0u64; 2], None);
+        let cache = crate::jsapi::__BindgenOpaqueArray::<u64, 2>::default();
         #[cfg(target_pointer_width = "32")]
-        InitSelfHostedCode(js_context, [0u32; 2], None);
+        let cache = crate::jsapi::__BindgenOpaqueArray::<u32, 2>::default();
+
+        InitSelfHostedCode(js_context, cache, None);
 
         SetWarningReporter(js_context, Some(report_warning));
 

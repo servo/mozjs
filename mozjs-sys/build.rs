@@ -411,8 +411,14 @@ fn build_jsapi_bindings(build_dir: &Path) {
     config &= !bindgen::CodegenConfig::DESTRUCTORS;
     config &= !bindgen::CodegenConfig::METHODS;
 
+    // Note: the error type currently of bindgen doesn't implement debug, so unwrap / expect
+    // don't work
+    let Ok(rust_target) = bindgen::RustTarget::stable(80, 0) else {
+        panic!("Unsupported Rust target")
+    };
+
     let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_59)
+        .rust_target(rust_target)
         .header("./src/jsapi.cpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
