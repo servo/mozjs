@@ -27,7 +27,6 @@ use crate::jsval::{JSVal, UndefinedValue};
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use std::os::raw::c_void;
 use std::ptr;
 
 impl<T> Deref for JS::Handle<T> {
