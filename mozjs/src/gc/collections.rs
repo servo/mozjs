@@ -9,7 +9,10 @@ use std::ops::{Deref, DerefMut};
 /// A vector of items to be rooted with `RootedVec`.
 /// Guaranteed to be empty when not rooted.
 #[cfg_attr(feature = "crown", allow(crown::unrooted_must_root))]
-#[cfg_attr(feature = "crown", crown::unrooted_must_root_lint::allow_unrooted_interior)]
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct RootableVec<T: Traceable> {
     v: Vec<T>,
 }
@@ -28,7 +31,10 @@ unsafe impl<T: Traceable> Traceable for RootableVec<T> {
 }
 
 /// A vector of items rooted for the lifetime 'a.
-#[cfg_attr(feature = "crown", crown::unrooted_must_root_lint::allow_unrooted_interior)]
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct RootedVec<'a, T: Traceable + 'static> {
     root: &'a mut RootableVec<T>,
 }

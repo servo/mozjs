@@ -1,7 +1,7 @@
 use crate::c_str;
 use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
-    CallStringTracer, CallSymbolTracer, CallValueTracer, CallValueRootTracer
+    CallStringTracer, CallSymbolTracer, CallValueRootTracer, CallValueTracer,
 };
 use crate::jsapi::{
     jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, PropertyDescriptor, Value,

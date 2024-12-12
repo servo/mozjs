@@ -20,7 +20,7 @@ use crate::jsapi::JSPropertySpec_Kind;
 use crate::jsapi::JSPropertySpec_Name;
 use crate::jsapi::JS;
 use crate::jsapi::JS::Scalar::Type;
-use crate::jsgc::{RootKind, RootedBase, Rooted, ValueArray};
+use crate::jsgc::{RootKind, Rooted, RootedBase, ValueArray};
 use crate::jsid::VoidId;
 use crate::jsval::{JSVal, UndefinedValue};
 
