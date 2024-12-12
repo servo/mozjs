@@ -16,7 +16,7 @@ use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::jsapi_wrapped::{Construct1, JS_GetProperty, JS_SetProperty};
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
-use mozjs::rust::{JSEngine, RealmOptions, Runtime, IntoHandle};
+use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime};
 use mozjs_sys::jsgc::ValueArray;
 
 #[repr(align(8))]

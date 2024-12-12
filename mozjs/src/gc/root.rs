@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
-use crate::jsapi::{JS, jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value};
+use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
 use mozjs_sys::jsgc::{GCMethods, RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
