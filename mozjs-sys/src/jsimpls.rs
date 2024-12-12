@@ -20,9 +20,9 @@ use crate::jsapi::JSPropertySpec_Kind;
 use crate::jsapi::JSPropertySpec_Name;
 use crate::jsapi::JS;
 use crate::jsapi::JS::Scalar::Type;
-use crate::jsgc::{RootKind, RootedBase};
+use crate::jsgc::{RootKind, RootedBase, Rooted, ValueArray};
 use crate::jsid::VoidId;
-use crate::jsval::UndefinedValue;
+use crate::jsval::{JSVal, UndefinedValue};
 
 use std::marker::PhantomData;
 use std::ops::Deref;
@@ -132,17 +132,37 @@ impl JS::HandleValue {
 }
 
 impl JS::HandleValueArray {
-    pub fn new() -> JS::HandleValueArray {
+    pub fn empty() -> JS::HandleValueArray {
         JS::HandleValueArray {
             length_: 0,
             elements_: ptr::null(),
         }
     }
+}
 
-    pub unsafe fn from_rooted_slice(values: &[JS::Value]) -> JS::HandleValueArray {
+impl<const N: usize> From<&Rooted<ValueArray<N>>> for JS::HandleValueArray {
+    fn from(array: &Rooted<ValueArray<N>>) -> JS::HandleValueArray {
         JS::HandleValueArray {
-            length_: values.len(),
-            elements_: values.as_ptr(),
+            length_: N,
+            elements_: unsafe { array.ptr.get_ptr() },
+        }
+    }
+}
+
+impl From<&JS::CallArgs> for JS::HandleValueArray {
+    fn from(args: &JS::CallArgs) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: args.argc_ as usize,
+            elements_: args.argv_ as *const _,
+        }
+    }
+}
+
+impl From<JS::Handle<JSVal>> for JS::HandleValueArray {
+    fn from(handle: JS::Handle<JSVal>) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: 1,
+            elements_: handle.ptr,
         }
     }
 }

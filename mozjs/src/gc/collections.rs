@@ -1,7 +1,9 @@
 use crate::gc::{RootedTraceableSet, Traceable};
 use crate::jsapi::{Heap, JSTracer};
 use crate::rust::Handle;
+use mozjs_sys::jsapi::JS;
 use mozjs_sys::jsgc::GCMethods;
+use mozjs_sys::jsval::JSVal;
 use std::ops::{Deref, DerefMut};
 
 /// A vector of items to be rooted with `RootedVec`.
@@ -26,6 +28,15 @@ unsafe impl<T: Traceable> Traceable for RootableVec<T> {
 /// A vector of items rooted for the lifetime 'a.
 pub struct RootedVec<'a, T: Traceable + 'static> {
     root: &'a mut RootableVec<T>,
+}
+
+impl From<&RootedVec<'_, JSVal>> for JS::HandleValueArray {
+    fn from(vec: &RootedVec<'_, JSVal>) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: vec.root.v.len(),
+            elements_: vec.root.v.as_ptr(),
+        }
+    }
 }
 
 impl<'a, T: Traceable + 'static> RootedVec<'a, T> {

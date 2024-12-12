@@ -1,7 +1,7 @@
 use crate::c_str;
 use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
-    CallStringTracer, CallSymbolTracer, CallValueTracer,
+    CallStringTracer, CallSymbolTracer, CallValueTracer, CallValueRootTracer
 };
 use crate::jsapi::{
     jsid, JSFunction, JSObject, JSScript, JSString, JSTracer, PropertyDescriptor, Value,
@@ -107,6 +107,13 @@ unsafe impl Traceable for Heap<Value> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
         CallValueTracer(trc, self as *const _ as *mut Self, c_str!("value"));
+    }
+}
+
+unsafe impl Traceable for Value {
+    #[inline]
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        CallValueRootTracer(trc, self as *const _ as *mut Self, c_str!("value"));
     }
 }
 
