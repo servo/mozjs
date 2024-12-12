@@ -46,6 +46,17 @@ impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
         }
         RootedVec { root }
     }
+
+    pub fn from_iter<I>(root: &'a mut RootableVec<T>, iter: I) -> Self
+    where
+        I: Iterator<Item = T>,
+    {
+        unsafe {
+            RootedTraceableSet::add(root);
+        }
+        root.v.extend(iter);
+        RootedVec { root }
+    }
 }
 
 impl<'a, T: Traceable + 'static> Drop for RootedVec<'a, T> {
