@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
-use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value};
+use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
 use mozjs_sys::jsgc::{GCMethods, RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
@@ -10,6 +10,7 @@ use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::MutableHandle as RawMutableHandle;
 use mozjs_sys::jsgc::IntoHandle as IntoRawHandle;
 use mozjs_sys::jsgc::IntoMutableHandle as IntoRawMutableHandle;
+use mozjs_sys::jsgc::ValueArray;
 
 /// Rust API for keeping a Rooted value in the context's root stack.
 /// Example usage: `rooted!(in(cx) let x = UndefinedValue());`.
@@ -66,6 +67,12 @@ impl<'a, T: 'a + RootKind + GCMethods> Drop for RootedGuard<'a, T> {
             self.root.ptr = T::initial();
             self.root.remove_from_root_stack();
         }
+    }
+}
+
+impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleValueArray {
+    fn from(array: &RootedGuard<'a, ValueArray<N>>) -> JS::HandleValueArray {
+        JS::HandleValueArray::from(&*array.root)
     }
 }
 

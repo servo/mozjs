@@ -16,7 +16,7 @@ use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::jsapi_wrapped::{Construct1, JS_GetProperty, JS_SetProperty};
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
-use mozjs::rust::{JSEngine, RealmOptions, Runtime};
+use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime};
 use mozjs_sys::jsgc::ValueArray;
 
 #[repr(align(8))]
@@ -94,10 +94,7 @@ fn run(rt: Runtime) {
             assert!(!array_buffer.is_null());
 
             rooted!(in(rt.cx()) let val = ObjectValue(array_buffer));
-            let args = HandleValueArray {
-                length_: 1,
-                elements_: &*val,
-            };
+            let args = HandleValueArray::from(val.handle().into_handle());
 
             assert!(Construct1(
                 rt.cx(),
@@ -134,12 +131,11 @@ fn run(rt: Runtime) {
             ));
 
             rooted!(in(rt.cx()) let mut args = ValueArray::new([ObjectValue(module.get()), ObjectValue(imports.get())]));
-            let handle = args.handle();
 
             assert!(Construct1(
                 rt.cx(),
                 wasm_instance.handle(),
-                &handle.to_handle_value_array(),
+                &HandleValueArray::from(&args),
                 &mut instance.handle_mut()
             ));
         }
@@ -169,7 +165,7 @@ fn run(rt: Runtime) {
             rt.cx(),
             JS::UndefinedHandleValue,
             foo.handle().into(),
-            &HandleValueArray::new(),
+            &HandleValueArray::empty(),
             rval.handle_mut().into()
         ));
 

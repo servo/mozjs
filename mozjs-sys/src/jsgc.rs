@@ -249,13 +249,6 @@ impl<const N: usize> ValueArray<N> {
         Self { elements }
     }
 
-    pub fn to_handle_value_array(&self) -> JS::HandleValueArray {
-        JS::HandleValueArray {
-            length_: N,
-            elements_: self.elements.as_ptr(),
-        }
-    }
-
     pub unsafe fn get_ptr(&self) -> *const JS::Value {
         self.elements.as_ptr()
     }
