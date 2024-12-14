@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::glue::CallPropertyDescriptorTracer;
-use crate::jsapi::js::TraceValueArray;
 use crate::jsapi::JS;
 use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
 use crate::jsid::VoidId;
@@ -67,9 +65,9 @@ impl RootKind for JS::Value {
     const KIND: JS::RootKind = JS::RootKind::Value;
 }
 
-impl<T: TraceableTrace> RootKind for T {
+impl<T: Rootable> RootKind for T {
     type Vtable = *const RootedVFTable;
-    const VTABLE: Self::Vtable = &<Self as TraceableTrace>::VTABLE;
+    const VTABLE: Self::Vtable = &<Self as Rootable>::VTABLE;
     const KIND: JS::RootKind = JS::RootKind::Traceable;
 }
 
@@ -92,40 +90,25 @@ impl RootedVFTable {
     pub const PADDING: [usize; 2] = [0, 0];
 }
 
-/// `Rooted<T>` with a T that uses the Traceable RootKind uses dynamic dispatch on the C++ side
-/// for custom tracing. This trait provides trace logic via a vtable when creating a Rust instance
-/// of the object.
-pub unsafe trait TraceableTrace: Sized {
+/// Marker trait that allows any type that implements the [trace::Traceable] trait to be used
+/// with the [Rooted] type.
+///
+/// `Rooted<T>` relies on dynamic dispatch in C++ when T uses the Traceable RootKind.
+/// This trait initializes the vtable when creating a Rust instance of the Rooted object.
+pub trait Rootable: crate::trace::Traceable + Sized {
     const VTABLE: RootedVFTable = RootedVFTable {
         padding: RootedVFTable::PADDING,
-        trace: Self::trace,
+        trace: <Self as Rootable>::trace,
     };
 
     unsafe extern "C" fn trace(this: *mut c_void, trc: *mut JSTracer, _name: *const c_char) {
         let rooted = this as *mut Rooted<Self>;
         let rooted = rooted.as_mut().unwrap();
-        Self::do_trace(&mut rooted.ptr, trc);
-    }
-
-    /// Used by `TraceableTrace` implementer to trace its contents.
-    /// Corresponds to virtual `trace` call in a `Rooted` that inherits from
-    /// StackRootedTraceableBase (C++).
-    unsafe fn do_trace(&mut self, trc: *mut JSTracer);
-}
-
-unsafe impl<T: TraceableTrace> TraceableTrace for Option<T> {
-    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
-        if let Some(inner) = self.as_mut() {
-            inner.do_trace(trc)
-        }
+        <Self as crate::trace::Traceable>::trace(&mut rooted.ptr, trc);
     }
 }
 
-unsafe impl TraceableTrace for JS::PropertyDescriptor {
-    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
-        CallPropertyDescriptorTracer(trc, self);
-    }
-}
+impl<T: Rootable> Rootable for Option<T> {}
 
 // The C++ representation of Rooted<T> inherits from StackRootedBase, which
 // contains the actual pointers that get manipulated. The Rust representation
@@ -152,6 +135,7 @@ pub struct Rooted<T: RootKind> {
     pub ptr: T,
 }
 
+/// Trait that provides a GC-safe default value for the given type, if one exists.
 pub trait Initialize: Sized {
     /// Create a default value. If there is no meaningful default possible, returns None.
     /// SAFETY:
@@ -275,6 +259,8 @@ impl GCMethods for JS::Value {
     }
 }
 
+impl Rootable for JS::PropertyDescriptor {}
+
 impl Initialize for JS::PropertyDescriptor {
     unsafe fn initial() -> Option<JS::PropertyDescriptor> {
         Some(JS::PropertyDescriptor::default())
@@ -311,11 +297,7 @@ impl<const N: usize> ValueArray<N> {
     }
 }
 
-unsafe impl<const N: usize> TraceableTrace for ValueArray<N> {
-    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
-        TraceValueArray(trc, N, self.get_mut_ptr());
-    }
-}
+impl<const N: usize> Rootable for ValueArray<N> {}
 
 impl<const N: usize> Initialize for ValueArray<N> {
     unsafe fn initial() -> Option<Self> {
