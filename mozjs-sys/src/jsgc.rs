@@ -143,7 +143,10 @@ pub struct RootedBase {
 
 // Annoyingly, bindgen can't cope with SM's use of templates, so we have to roll our own.
 #[repr(C)]
-#[derive(Debug)]
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct Rooted<T: RootKind> {
     pub vtable: T::Vtable,
     pub base: RootedBase,

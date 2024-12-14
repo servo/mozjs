@@ -26,6 +26,7 @@ doctest = false
 debugmozjs = []
 profilemozjs = []
 jitspew = []
+crown = []
 
 [dependencies]
 libc.workspace = true

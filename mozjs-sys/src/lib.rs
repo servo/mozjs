@@ -3,6 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #![allow(unused_extern_crates)]
+#![cfg_attr(feature = "crown", feature(register_tool))]
+#![cfg_attr(feature = "crown", register_tool(crown))]
 
 // These extern crates are needed for linking
 extern crate encoding_c;
