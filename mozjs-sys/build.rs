@@ -142,6 +142,15 @@ fn should_build_from_source() -> bool {
     }
 }
 
+/// Returns the Rust version bindgen should target
+pub(crate) fn minimum_rust_target() -> bindgen::RustTarget {
+    let Ok(rust_target) = bindgen::RustTarget::stable(80, 0) else {
+        // `InvalidRustTarget` does not implement Debug, so we manually panic.
+        panic!("Unsupported Rust target")
+    };
+    rust_target
+}
+
 #[cfg(not(windows))]
 fn find_make() -> OsString {
     if let Some(make) = env::var_os("MAKE") {
@@ -412,7 +421,7 @@ fn build_jsapi_bindings(build_dir: &Path) {
     config &= !bindgen::CodegenConfig::METHODS;
 
     let mut builder = bindgen::builder()
-        .rust_target(bindgen::RustTarget::Stable_1_59)
+        .rust_target(minimum_rust_target())
         .header("./src/jsapi.cpp")
         // Translate every enum with the "rustified enum" strategy. We should
         // investigate switching to the "constified module" strategy, which has
@@ -621,6 +630,7 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::MutableHandleVector",
     "JS::Rooted.*Vector",
     "JS::RootedValueArray",
+    "js::ProfilingStackFrame.*",
     // Classes we don't use and we cannot generate their
     // types properly from bindgen so we'll skip them for now.
     "JS::dbg::Builder",
@@ -760,6 +770,7 @@ mod jsglue {
         println!("cargo:rerun-if-changed=src/jsglue.cpp");
         let mut builder = bindgen::Builder::default()
             .header("./src/jsglue.cpp")
+            .rust_target(super::minimum_rust_target())
             .parse_callbacks(Box::new(CustomCargoCallbacks::new()))
             .size_t_is_usize(true)
             .formatter(bindgen::Formatter::Rustfmt)
