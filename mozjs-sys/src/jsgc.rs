@@ -114,6 +114,14 @@ pub unsafe trait TraceableTrace: Sized {
     unsafe fn do_trace(&mut self, trc: *mut JSTracer);
 }
 
+unsafe impl<T: TraceableTrace> TraceableTrace for Option<T> {
+    unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
+        if let Some(inner) = self.as_mut() {
+            inner.do_trace(trc)
+        }
+    }
+}
+
 unsafe impl TraceableTrace for JS::PropertyDescriptor {
     unsafe fn do_trace(&mut self, trc: *mut JSTracer) {
         CallPropertyDescriptorTracer(trc, self);
