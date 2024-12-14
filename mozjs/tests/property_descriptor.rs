@@ -47,7 +47,7 @@ fn property_descriptor() {
         assert!(JS_DefineProperty(
             context,
             object.handle().into(),
-            b"property\0" as *const u8 as *const libc::c_char,
+            c"property".as_ptr(),
             property.handle().into(),
             attrs
         ));
@@ -59,7 +59,7 @@ fn property_descriptor() {
         assert!(JS_GetPropertyDescriptor(
             context,
             object.handle().into(),
-            b"property\0" as *const u8 as *const libc::c_char,
+            c"property".as_ptr(),
             descriptor.handle_mut().into(),
             holder.handle_mut().into(),
             &mut is_none
@@ -81,28 +81,28 @@ fn property_descriptor() {
         assert!(JS_GetProperty(
             context,
             desc_object.handle().into(),
-            b"value\0" as *const u8 as *const libc::c_char,
+            c"value".as_ptr(),
             rval.handle_mut().into()
         ));
         assert_eq!(rval.get().to_int32(), 32);
         assert!(JS_GetProperty(
             context,
             desc_object.handle().into(),
-            b"configurable\0" as *const u8 as *const libc::c_char,
+            c"configurable".as_ptr(),
             rval.handle_mut().into()
         ));
         assert!(!rval.get().to_boolean());
         assert!(JS_GetProperty(
             context,
             desc_object.handle().into(),
-            b"enumerable\0" as *const u8 as *const libc::c_char,
+            c"enumerable".as_ptr(),
             rval.handle_mut().into()
         ));
         assert!(rval.get().to_boolean());
         assert!(JS_GetProperty(
             context,
             desc_object.handle().into(),
-            b"writable\0" as *const u8 as *const libc::c_char,
+            c"writable".as_ptr(),
             rval.handle_mut().into()
         ));
         assert!(!rval.get().to_boolean());

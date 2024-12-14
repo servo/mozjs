@@ -63,20 +63,20 @@ fn run(rt: Runtime) {
         assert!(JS_GetProperty(
             rt.cx(),
             global.handle(),
-            b"WebAssembly\0".as_ptr() as *const c_char,
+            c"WebAssembly".as_ptr(),
             &mut wasm.handle_mut()
         ));
         rooted!(in(rt.cx()) let mut wasm_obj = wasm.to_object());
         assert!(JS_GetProperty(
             rt.cx(),
             wasm_obj.handle(),
-            b"Module\0".as_ptr() as *const c_char,
+            c"Module".as_ptr(),
             &mut wasm_module.handle_mut()
         ));
         assert!(JS_GetProperty(
             rt.cx(),
             wasm_obj.handle(),
-            b"Instance\0".as_ptr() as *const c_char,
+            c"Instance".as_ptr(),
             &mut wasm_instance.handle_mut()
         ));
 
@@ -113,7 +113,7 @@ fn run(rt: Runtime) {
             let function = JS_DefineFunction(
                 rt.cx(),
                 env_import_obj.handle().into(),
-                b"bar\0".as_ptr() as *const c_char,
+                c"bar".as_ptr(),
                 Some(bar),
                 1,
                 0,
@@ -126,7 +126,7 @@ fn run(rt: Runtime) {
             assert!(JS_SetProperty(
                 rt.cx(),
                 imports.handle(),
-                b"env\0".as_ptr() as *const c_char,
+                c"env".as_ptr(),
                 env_import.handle()
             ));
 
@@ -146,7 +146,7 @@ fn run(rt: Runtime) {
         assert!(JS_GetProperty(
             rt.cx(),
             instance.handle(),
-            b"exports\0".as_ptr() as *const c_char,
+            c"exports".as_ptr(),
             &mut exports.handle_mut()
         ));
 
@@ -155,7 +155,7 @@ fn run(rt: Runtime) {
         assert!(JS_GetProperty(
             rt.cx(),
             exports_obj.handle(),
-            b"foo\0".as_ptr() as *const c_char,
+            c"foo".as_ptr(),
             &mut foo.handle_mut()
         ));
 

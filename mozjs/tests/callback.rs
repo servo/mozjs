@@ -38,7 +38,7 @@ fn callback() {
         let function = JS_DefineFunction(
             context,
             global.handle().into(),
-            b"puts\0".as_ptr() as *const libc::c_char,
+            c"puts".as_ptr(),
             Some(puts),
             1,
             0,
@@ -57,10 +57,7 @@ unsafe extern "C" fn puts(context: *mut JSContext, argc: u32, vp: *mut Value) ->
     let args = CallArgs::from_vp(vp, argc);
 
     if args.argc_ != 1 {
-        JS_ReportErrorASCII(
-            context,
-            b"puts() requires exactly 1 argument\0".as_ptr() as *const libc::c_char,
-        );
+        JS_ReportErrorASCII(context, c"puts() requires exactly 1 argument".as_ptr());
         return false;
     }
 

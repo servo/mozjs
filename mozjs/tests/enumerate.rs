@@ -64,7 +64,7 @@ fn enumerate() {
         assert!(JS_StringEqualsAscii(
             context,
             id.get(),
-            b"a\0" as *const _ as *const _,
+            c"a".as_ptr(),
             &mut matches
         ));
         assert!(matches);
