@@ -150,30 +150,52 @@ pub struct Rooted<T: RootKind> {
     pub ptr: T,
 }
 
+pub trait Initialize: Sized {
+    /// Create a default value. If there is no meaningful default possible, returns None.
+    /// SAFETY:
+    ///   The default must not be a value that can be meaningfully garbage collected.
+    unsafe fn initial() -> Option<Self>;
+}
+
+impl<T> Initialize for Option<T> {
+    unsafe fn initial() -> Option<Self> {
+        Some(None)
+    }
+}
+
 /// A trait for types which can place appropriate GC barriers.
 /// * https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/Internals/Garbage_collection#Incremental_marking
 /// * https://dxr.mozilla.org/mozilla-central/source/js/src/gc/Barrier.h
-pub trait GCMethods {
+pub trait GCMethods: Initialize {
     /// Create a default value
-    unsafe fn initial() -> Self;
+    unsafe fn initial() -> Self {
+        <Self as Initialize>::initial()
+            .expect("Types used with heap GC methods must have a valid default")
+    }
 
     /// Place a post-write barrier
     unsafe fn post_barrier(v: *mut Self, prev: Self, next: Self);
 }
 
-impl GCMethods for *mut JSObject {
-    unsafe fn initial() -> *mut JSObject {
-        ptr::null_mut()
+impl Initialize for *mut JSObject {
+    unsafe fn initial() -> Option<*mut JSObject> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSObject {
     unsafe fn post_barrier(v: *mut *mut JSObject, prev: *mut JSObject, next: *mut JSObject) {
         JS::HeapObjectWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for *mut JSFunction {
-    unsafe fn initial() -> *mut JSFunction {
-        ptr::null_mut()
+impl Initialize for *mut JSFunction {
+    unsafe fn initial() -> Option<*mut JSFunction> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSFunction {
     unsafe fn post_barrier(v: *mut *mut JSFunction, prev: *mut JSFunction, next: *mut JSFunction) {
         JS::HeapObjectWriteBarriers(
             mem::transmute(v),
@@ -183,60 +205,81 @@ impl GCMethods for *mut JSFunction {
     }
 }
 
-impl GCMethods for *mut JSString {
-    unsafe fn initial() -> *mut JSString {
-        ptr::null_mut()
+impl Initialize for *mut JSString {
+    unsafe fn initial() -> Option<*mut JSString> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSString {
     unsafe fn post_barrier(v: *mut *mut JSString, prev: *mut JSString, next: *mut JSString) {
         JS::HeapStringWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for *mut JS::Symbol {
-    unsafe fn initial() -> *mut JS::Symbol {
-        ptr::null_mut()
+impl Initialize for *mut JS::Symbol {
+    unsafe fn initial() -> Option<*mut JS::Symbol> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JS::Symbol {
     unsafe fn post_barrier(_: *mut *mut JS::Symbol, _: *mut JS::Symbol, _: *mut JS::Symbol) {}
 }
 
-impl GCMethods for *mut JS::BigInt {
-    unsafe fn initial() -> *mut JS::BigInt {
-        ptr::null_mut()
+impl Initialize for *mut JS::BigInt {
+    unsafe fn initial() -> Option<*mut JS::BigInt> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JS::BigInt {
     unsafe fn post_barrier(v: *mut *mut JS::BigInt, prev: *mut JS::BigInt, next: *mut JS::BigInt) {
         JS::HeapBigIntWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for *mut JSScript {
-    unsafe fn initial() -> *mut JSScript {
-        ptr::null_mut()
+impl Initialize for *mut JSScript {
+    unsafe fn initial() -> Option<*mut JSScript> {
+        Some(ptr::null_mut())
     }
+}
+
+impl GCMethods for *mut JSScript {
     unsafe fn post_barrier(v: *mut *mut JSScript, prev: *mut JSScript, next: *mut JSScript) {
         JS::HeapScriptWriteBarriers(v, prev, next);
     }
 }
 
-impl GCMethods for jsid {
-    unsafe fn initial() -> jsid {
-        VoidId()
+impl Initialize for jsid {
+    unsafe fn initial() -> Option<jsid> {
+        Some(VoidId())
     }
+}
+
+impl GCMethods for jsid {
     unsafe fn post_barrier(_: *mut jsid, _: jsid, _: jsid) {}
 }
 
-impl GCMethods for JS::Value {
-    unsafe fn initial() -> JS::Value {
-        JS::Value::default()
+impl Initialize for JS::Value {
+    unsafe fn initial() -> Option<JS::Value> {
+        Some(JS::Value::default())
     }
+}
+
+impl GCMethods for JS::Value {
     unsafe fn post_barrier(v: *mut JS::Value, prev: JS::Value, next: JS::Value) {
         JS::HeapValueWriteBarriers(v, &prev, &next);
     }
 }
 
-impl GCMethods for JS::PropertyDescriptor {
-    unsafe fn initial() -> JS::PropertyDescriptor {
-        JS::PropertyDescriptor::default()
+impl Initialize for JS::PropertyDescriptor {
+    unsafe fn initial() -> Option<JS::PropertyDescriptor> {
+        Some(JS::PropertyDescriptor::default())
     }
+}
+
+impl GCMethods for JS::PropertyDescriptor {
     unsafe fn post_barrier(
         _: *mut JS::PropertyDescriptor,
         _: JS::PropertyDescriptor,
@@ -272,13 +315,12 @@ unsafe impl<const N: usize> TraceableTrace for ValueArray<N> {
     }
 }
 
-impl<const N: usize> GCMethods for ValueArray<N> {
-    unsafe fn initial() -> Self {
-        Self {
-            elements: [JS::Value::initial(); N],
-        }
+impl<const N: usize> Initialize for ValueArray<N> {
+    unsafe fn initial() -> Option<Self> {
+        Some(Self {
+            elements: [<JS::Value as GCMethods>::initial(); N],
+        })
     }
-    unsafe fn post_barrier(_: *mut Self, _: Self, _: Self) {}
 }
 
 /// RootedValueArray roots an internal fixed-size array of Values
@@ -379,7 +421,7 @@ impl<T: GCMethods + Copy> Drop for Heap<T> {
     fn drop(&mut self) {
         unsafe {
             let ptr = self.ptr.get();
-            T::post_barrier(ptr, *ptr, T::initial());
+            T::post_barrier(ptr, *ptr, <T as GCMethods>::initial());
         }
     }
 }
