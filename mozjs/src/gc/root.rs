@@ -15,6 +15,10 @@ use mozjs_sys::jsgc::ValueArray;
 /// Rust API for keeping a Rooted value in the context's root stack.
 /// Example usage: `rooted!(in(cx) let x = UndefinedValue());`.
 /// `RootedGuard::new` also works, but the macro is preferred.
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct RootedGuard<'a, T: 'a + RootKind + Initialize> {
     root: &'a mut Rooted<T>,
 }
