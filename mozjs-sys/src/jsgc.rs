@@ -6,7 +6,6 @@ use crate::glue::CallPropertyDescriptorTracer;
 use crate::jsapi::js::TraceValueArray;
 use crate::jsapi::JS;
 use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
-
 use crate::jsid::VoidId;
 use std::cell::UnsafeCell;
 use std::ffi::{c_char, c_void};
