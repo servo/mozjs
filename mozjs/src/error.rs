@@ -8,30 +8,24 @@
 
 use crate::jsapi::{JSContext, JSErrorFormatString, JSExnType, JS_ReportErrorNumberUTF8};
 use libc;
-use std::ffi::CString;
-use std::ptr::addr_of;
+use std::ffi::{CStr, CString};
 use std::{mem, os, ptr};
 
 /// Format string used to throw javascript errors.
-static ERROR_FORMAT_STRING_STRING: [libc::c_char; 4] = [
-    '{' as libc::c_char,
-    '0' as libc::c_char,
-    '}' as libc::c_char,
-    0 as libc::c_char,
-];
+static ERROR_FORMAT_STRING_STRING: &CStr = c"{0}";
 
 /// Format string struct used to throw `TypeError`s.
 static mut TYPE_ERROR_FORMAT_STRING: JSErrorFormatString = JSErrorFormatString {
-    name: b"RUSTMSG_TYPE_ERROR\0" as *const _ as *const libc::c_char,
-    format: &ERROR_FORMAT_STRING_STRING as *const libc::c_char,
+    name: c"RUSTMSG_TYPE_ERROR".as_ptr(),
+    format: ERROR_FORMAT_STRING_STRING.as_ptr(),
     argCount: 1,
     exnType: JSExnType::JSEXN_TYPEERR as i16,
 };
 
 /// Format string struct used to throw `RangeError`s.
 static mut RANGE_ERROR_FORMAT_STRING: JSErrorFormatString = JSErrorFormatString {
-    name: b"RUSTMSG_RANGE_ERROR\0" as *const _ as *const libc::c_char,
-    format: &ERROR_FORMAT_STRING_STRING as *const libc::c_char,
+    name: c"RUSTMSG_RANGE_ERROR".as_ptr(),
+    format: ERROR_FORMAT_STRING_STRING.as_ptr(),
     argCount: 1,
     exnType: JSExnType::JSEXN_RANGEERR as i16,
 };
@@ -44,8 +38,8 @@ unsafe extern "C" fn get_error_message(
 ) -> *const JSErrorFormatString {
     let num: JSExnType = mem::transmute(error_number);
     match num {
-        JSExnType::JSEXN_TYPEERR => addr_of!(TYPE_ERROR_FORMAT_STRING),
-        JSExnType::JSEXN_RANGEERR => addr_of!(RANGE_ERROR_FORMAT_STRING),
+        JSExnType::JSEXN_TYPEERR => &raw const TYPE_ERROR_FORMAT_STRING,
+        JSExnType::JSEXN_RANGEERR => &raw const RANGE_ERROR_FORMAT_STRING,
         _ => panic!(
             "Bad js error number given to get_error_message: {}",
             error_number

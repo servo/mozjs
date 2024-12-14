@@ -1,4 +1,3 @@
-use crate::c_str;
 use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
     CallStringTracer, CallSymbolTracer, CallValueRootTracer, CallValueTracer,
@@ -51,7 +50,7 @@ unsafe impl Traceable for Heap<*mut JSFunction> {
         if self.get().is_null() {
             return;
         }
-        CallFunctionTracer(trc, self as *const _ as *mut Self, c_str!("function"));
+        CallFunctionTracer(trc, self as *const _ as *mut Self, c"function".as_ptr());
     }
 }
 
@@ -61,7 +60,7 @@ unsafe impl Traceable for Heap<*mut JSObject> {
         if self.get().is_null() {
             return;
         }
-        CallObjectTracer(trc, self as *const _ as *mut Self, c_str!("object"));
+        CallObjectTracer(trc, self as *const _ as *mut Self, c"object".as_ptr());
     }
 }
 
@@ -70,7 +69,7 @@ unsafe impl Traceable for Heap<*mut Symbol> {
         if self.get().is_null() {
             return;
         }
-        CallSymbolTracer(trc, self as *const _ as *mut Self, c_str!("symbol"));
+        CallSymbolTracer(trc, self as *const _ as *mut Self, c"symbol".as_ptr());
     }
 }
 
@@ -79,7 +78,7 @@ unsafe impl Traceable for Heap<*mut BigInt> {
         if self.get().is_null() {
             return;
         }
-        CallBigIntTracer(trc, self as *const _ as *mut Self, c_str!("bigint"));
+        CallBigIntTracer(trc, self as *const _ as *mut Self, c"bigint".as_ptr());
     }
 }
 
@@ -89,7 +88,7 @@ unsafe impl Traceable for Heap<*mut JSScript> {
         if self.get().is_null() {
             return;
         }
-        CallScriptTracer(trc, self as *const _ as *mut Self, c_str!("script"));
+        CallScriptTracer(trc, self as *const _ as *mut Self, c"script".as_ptr());
     }
 }
 
@@ -99,28 +98,28 @@ unsafe impl Traceable for Heap<*mut JSString> {
         if self.get().is_null() {
             return;
         }
-        CallStringTracer(trc, self as *const _ as *mut Self, c_str!("string"));
+        CallStringTracer(trc, self as *const _ as *mut Self, c"string".as_ptr());
     }
 }
 
 unsafe impl Traceable for Heap<Value> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallValueTracer(trc, self as *const _ as *mut Self, c_str!("value"));
+        CallValueTracer(trc, self as *const _ as *mut Self, c"value".as_ptr());
     }
 }
 
 unsafe impl Traceable for Value {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallValueRootTracer(trc, self as *const _ as *mut Self, c_str!("value"));
+        CallValueRootTracer(trc, self as *const _ as *mut Self, c"value".as_ptr());
     }
 }
 
 unsafe impl Traceable for Heap<jsid> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallIdTracer(trc, self as *const _ as *mut Self, c_str!("id"));
+        CallIdTracer(trc, self as *const _ as *mut Self, c"id".as_ptr());
     }
 }
 
@@ -131,20 +130,20 @@ unsafe impl Traceable for Heap<PropertyDescriptor> {
         CallValueTracer(
             trc,
             &desc.value_ as *const _ as *mut Heap<Value>,
-            c_str!("PropertyDescriptor::value"),
+            c"PropertyDescriptor::value".as_ptr(),
         );
         if !desc.getter_.is_null() {
             CallObjectTracer(
                 trc,
                 &desc.getter_ as *const _ as *mut Heap<*mut JSObject>,
-                c_str!("PropertyDescriptor::getter"),
+                c"PropertyDescriptor::getter".as_ptr(),
             );
         }
         if !desc.setter_.is_null() {
             CallObjectTracer(
                 trc,
                 &desc.setter_ as *const _ as *mut Heap<*mut JSObject>,
-                c_str!("PropertyDescriptor::setter"),
+                c"PropertyDescriptor::setter".as_ptr(),
             );
         }
     }

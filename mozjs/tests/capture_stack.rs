@@ -36,7 +36,7 @@ fn capture_stack() {
         let function = JS_DefineFunction(
             context,
             global.handle().into(),
-            b"print_stack\0".as_ptr() as *const libc::c_char,
+            c"print_stack".as_ptr(),
             Some(print_stack),
             0,
             0,

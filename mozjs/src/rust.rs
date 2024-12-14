@@ -827,7 +827,7 @@ static SIMPLE_GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
 
 /// This is a simple `JSClass` for global objects, primarily intended for tests.
 pub static SIMPLE_GLOBAL_CLASS: JSClass = JSClass {
-    name: b"Global\0" as *const u8 as *const _,
+    name: c"Global".as_ptr(),
     flags: JSCLASS_IS_GLOBAL
         | ((JSCLASS_GLOBAL_SLOT_COUNT & JSCLASS_RESERVED_SLOTS_MASK)
             << JSCLASS_RESERVED_SLOTS_SHIFT),

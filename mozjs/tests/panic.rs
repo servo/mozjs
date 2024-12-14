@@ -37,7 +37,7 @@ fn test_panic() {
         let function = JS_DefineFunction(
             context,
             global.handle().into(),
-            b"test\0".as_ptr() as *const _,
+            c"test".as_ptr(),
             Some(test),
             0,
             0,
