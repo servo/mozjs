@@ -4,7 +4,7 @@
 
 use crate::glue::{
     CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
-    CallStringTracer, CallSymbolTracer, CallValueRootTracer, CallValueTracer,
+    CallStringTracer, CallSymbolTracer, CallValueRootTracer, CallValueTracer, CallPropertyDescriptorTracer
 };
 use crate::jsapi::js::TraceValueArray;
 use crate::jsapi::JS::{PropertyDescriptor, Value};
@@ -123,29 +123,10 @@ unsafe impl Traceable for Heap<jsid> {
     }
 }
 
-unsafe impl Traceable for Heap<PropertyDescriptor> {
+unsafe impl Traceable for PropertyDescriptor {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
-        let desc = &*self.get_unsafe();
-        CallValueTracer(
-            trc,
-            &desc.value_ as *const _ as *mut Heap<Value>,
-            c"PropertyDescriptor::value".as_ptr(),
-        );
-        if !desc.getter_.is_null() {
-            CallObjectTracer(
-                trc,
-                &desc.getter_ as *const _ as *mut Heap<*mut JSObject>,
-                c"PropertyDescriptor::getter".as_ptr(),
-            );
-        }
-        if !desc.setter_.is_null() {
-            CallObjectTracer(
-                trc,
-                &desc.setter_ as *const _ as *mut Heap<*mut JSObject>,
-                c"PropertyDescriptor::setter".as_ptr(),
-            );
-        }
+        CallPropertyDescriptorTracer(trc, self as *const _ as *mut _);
     }
 }
 
