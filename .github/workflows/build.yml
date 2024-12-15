@@ -61,7 +61,7 @@ jobs:
       RUSTC_WRAPPER: "sccache"
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04 # Needed for artifacts to work on older systems (due to glibc)
     strategy:
       fail-fast: false
       matrix:
