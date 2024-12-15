@@ -65,6 +65,7 @@ use crate::jsval::ObjectValue;
 use crate::panic::maybe_resume_unwind;
 use lazy_static::lazy_static;
 use log::{debug, warn};
+use mozjs_sys::jsapi::JS::SavedFrameResult;
 pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
 
 use crate::rooted;
@@ -1025,6 +1026,34 @@ impl<'a> CapturedJSStack<'a> {
             }
 
             Some(jsstr_to_string(self.cx, string_handle.get()))
+        }
+    }
+
+    /// Executes the provided closure for each frame on the js stack
+    pub fn for_each_stack_frame<F>(&self, mut f: F)
+    where
+        F: FnMut(Handle<*mut JSObject>),
+    {
+        rooted!(in(self.cx) let mut current_element = self.stack.clone());
+        rooted!(in(self.cx) let mut next_element = ptr::null_mut::<JSObject>());
+
+        loop {
+            f(current_element.handle());
+
+            unsafe {
+                let result = jsapi::GetSavedFrameParent(
+                    self.cx,
+                    ptr::null_mut(),
+                    current_element.handle().into_handle(),
+                    next_element.handle_mut().into_handle_mut(),
+                    jsapi::SavedFrameSelfHosted::Include,
+                );
+
+                if result != SavedFrameResult::Ok || next_element.is_null() {
+                    return;
+                }
+            }
+            current_element.set(next_element.get());
         }
     }
 }
