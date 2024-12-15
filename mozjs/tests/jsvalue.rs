@@ -4,11 +4,8 @@
 
 use std::ptr;
 
-use mozjs::jsapi::{JSAutoRealm, JSObject, JS_NewGlobalObject, OnNewGlobalHookOption, Type};
-use mozjs::jsval::{
-    BigIntValue, BooleanValue, DoubleValue, Int32Value, NullValue, ObjectValue, StringValue,
-    UndefinedValue,
-};
+use mozjs::jsapi::{JS_NewGlobalObject, OnNewGlobalHookOption};
+use mozjs::jsval::{BooleanValue, DoubleValue, Int32Value, NullValue, UndefinedValue};
 use mozjs::rooted;
 use mozjs::rust::{
     HandleObject, JSEngine, RealmOptions, RootedGuard, Runtime, SIMPLE_GLOBAL_CLASS,
