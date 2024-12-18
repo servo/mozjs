@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", "streams"]
+        features: ["debugmozjs", '""']
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-13 }
@@ -45,12 +45,12 @@ jobs:
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && contains(matrix.features, 'streams') }}
+        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
         with:
           subject-path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
 
       - name: Upload artifact
-        if: ${{ contains(matrix.features, 'streams') }}
+        if: ${{ matrix.features != 'debugmozjs' }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
@@ -65,7 +65,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", "streams"]
+        features: ["debugmozjs", '""']
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -80,19 +80,19 @@ jobs:
           cargo test --tests --examples --verbose --features ${{ matrix.features }}
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
-        if: ${{ matrix.features == 'streams' }}
+        if: ${{ matrix.features != 'debugmozjs' }}
         run: |
           bash ./mozjs/src/generate_wrappers.sh
           git diff --quiet --exit-code
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && contains(matrix.features, 'streams') }}
+        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
         with:
           subject-path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
 
       - name: Upload artifact
-        if: ${{ contains(matrix.features, 'streams') }}
+        if: ${{ matrix.features != 'debugmozjs' }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
@@ -103,7 +103,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", "streams"]
+        features: ["debugmozjs", '""']
         target: ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
@@ -135,12 +135,12 @@ jobs:
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && !contains(matrix.target, 'aarch64') && contains(matrix.features, 'streams') }}
+        if: ${{ inputs.release && !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' }}
         with:
           subject-path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
 
       - name: Upload artifact
-        if: ${{ !contains(matrix.target, 'aarch64') && contains(matrix.features, 'streams') }}
+        if: ${{ !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
@@ -186,7 +186,7 @@ jobs:
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
         run: |
-          ./ohos-build cargo build --target="${{ matrix.target }}" --features "streams"
+          ./ohos-build cargo build --target="${{ matrix.target }}"
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         if: ${{ inputs.release }}
