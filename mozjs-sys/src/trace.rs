@@ -3,8 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::glue::{
-    CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer, CallScriptTracer,
-    CallStringTracer, CallSymbolTracer, CallValueRootTracer, CallValueTracer, CallPropertyDescriptorTracer
+    CallBigIntTracer, CallFunctionTracer, CallIdTracer, CallObjectTracer,
+    CallPropertyDescriptorTracer, CallScriptTracer, CallStringTracer, CallSymbolTracer,
+    CallValueRootTracer, CallValueTracer,
 };
 use crate::jsapi::js::TraceValueArray;
 use crate::jsapi::JS::{PropertyDescriptor, Value};
