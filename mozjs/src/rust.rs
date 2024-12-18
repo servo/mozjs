@@ -1194,12 +1194,6 @@ pub mod wrappers {
     use crate::jsapi::PromiseState;
     use crate::jsapi::PromiseUserInputEventHandlingState;
     use crate::jsapi::ReadOnlyCompileOptions;
-    #[cfg(feature = "streams")]
-    use crate::jsapi::ReadableStreamMode;
-    #[cfg(feature = "streams")]
-    use crate::jsapi::ReadableStreamReaderMode;
-    #[cfg(feature = "streams")]
-    use crate::jsapi::ReadableStreamUnderlyingSource;
     use crate::jsapi::Realm;
     use crate::jsapi::RefPtr;
     use crate::jsapi::RegExpFlags;
@@ -1347,12 +1341,6 @@ pub mod jsapi_wrapped {
     use crate::jsapi::PromiseUserInputEventHandlingState;
     use crate::jsapi::PropertyKey;
     use crate::jsapi::ReadOnlyCompileOptions;
-    #[cfg(feature = "streams")]
-    use crate::jsapi::ReadableStreamMode;
-    #[cfg(feature = "streams")]
-    use crate::jsapi::ReadableStreamReaderMode;
-    #[cfg(feature = "streams")]
-    use crate::jsapi::ReadableStreamUnderlyingSource;
     use crate::jsapi::Realm;
     use crate::jsapi::RefPtr;
     use crate::jsapi::RegExpFlags;
