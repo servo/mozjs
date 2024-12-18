@@ -6,10 +6,8 @@
 
 use std::ptr;
 
-use mozjs::jsapi::{
-    GetRealmObjectPrototype, JS_NewGlobalObject, SetGCZeal,
-};
-use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption, Value, JSTracer};
+use mozjs::jsapi::{GetRealmObjectPrototype, JS_NewGlobalObject, SetGCZeal};
+use mozjs::jsapi::{JSAutoRealm, JSTracer, OnNewGlobalHookOption, Value};
 use mozjs::jsval::ObjectValue;
 use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
@@ -22,7 +20,9 @@ unsafe impl mozjs::gc::Traceable for ContainsGCValue {
 }
 
 impl mozjs::gc::Initialize for ContainsGCValue {
-    unsafe fn initial() -> Option<ContainsGCValue> { None }
+    unsafe fn initial() -> Option<ContainsGCValue> {
+        None
+    }
 }
 
 struct ContainsGCValue {
@@ -56,6 +56,9 @@ fn rooting() {
             val: ObjectValue(prototype_proto.get())
         }));
         assert_eq!(some_container.val.to_object(), prototype_proto.get());
-        assert_eq!(some_container.val, some_optional_container.as_ref().unwrap().val);
+        assert_eq!(
+            some_container.val,
+            some_optional_container.as_ref().unwrap().val
+        );
     }
 }
