@@ -27,6 +27,7 @@ debugmozjs = []
 profilemozjs = []
 jitspew = []
 streams = []
+crown = []
 
 [dependencies]
 libc.workspace = true
