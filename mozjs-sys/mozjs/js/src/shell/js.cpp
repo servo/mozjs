@@ -12148,9 +12148,6 @@ bool InitOptionParser(OptionParser& op) {
       !op.addBoolOption('\0', "less-debug-code",
                         "Emit less machine code for "
                         "checking assertions under DEBUG.") ||
-      !op.addBoolOption('\0', "enable-streams",
-                        "Enable WHATWG Streams (default)") ||
-      !op.addBoolOption('\0', "no-streams", "Disable WHATWG Streams") ||
       !op.addBoolOption('\0', "disable-weak-refs", "Disable weak references") ||
       !op.addBoolOption('\0', "disable-tosource", "Disable toSource/uneval") ||
       !op.addBoolOption('\0', "disable-property-error-message-fix",

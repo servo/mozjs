@@ -1,4 +1,3 @@
-
 name: Version Release Check
 
 on:
@@ -40,15 +39,15 @@ jobs:
         env:
           MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
         run: |
-          cargo build --verbose --features streams
-          cargo test --tests --examples --verbose --features streams
+          cargo build --verbose
+          cargo test --tests --examples --verbose
       - name: Build from auto-download
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           MOZJS_ATTESTATION: strict
         run: |
-          cargo build --verbose --features streams
-          cargo test --tests --examples --verbose --features streams
+          cargo build --verbose
+          cargo test --tests --examples --verbose
 
   verify-archive-ohos:
     name: "Verify archive OpenHarmony"
@@ -80,11 +79,11 @@ jobs:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
           MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
         run: |
-          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose --features streams
+          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose
       - name: Build from auto-download (arch ${{ matrix.target }})
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
           MOZJS_ATTESTATION: strict
         run: |
-          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose --features "streams"
+          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose

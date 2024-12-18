@@ -32,9 +32,6 @@
 #include "js/ScalarType.h"
 #include "js/SharedArrayBuffer.h"
 #include "js/SourceText.h"
-#ifdef MOZ_JS_STREAMS
-#  include "js/Stream.h"
-#endif
 #include "js/String.h"
 #include "js/StructuredClone.h"
 #include "js/Symbol.h"
