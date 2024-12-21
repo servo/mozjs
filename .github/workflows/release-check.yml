@@ -19,6 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-13 }
@@ -33,21 +34,21 @@ jobs:
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
-          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
       - name: Build from archive
         if: ${{ env.RELEASE_TAG == '' }}
         env:
-          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
         run: |
-          cargo build --verbose
-          cargo test --tests --examples --verbose
+          cargo build --verbose --features "${{ matrix.features }}"
+          cargo test --tests --examples --verbose --features "${{ matrix.features }}"
       - name: Build from auto-download
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           MOZJS_ATTESTATION: strict
         run: |
-          cargo build --verbose
-          cargo test --tests --examples --verbose
+          cargo build --verbose --features "${{ matrix.features }}"
+          cargo test --tests --examples --verbose --features "${{ matrix.features }}"
 
   verify-archive-ohos:
     name: "Verify archive OpenHarmony"
