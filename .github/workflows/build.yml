@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-13 }
@@ -40,21 +40,20 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.4
       - name: Build
         run: |
-          cargo build --verbose --features ${{ matrix.features }}
-          cargo test --tests --examples --verbose --features ${{ matrix.features }}
+          cargo build --verbose --features "${{ matrix.features }}"
+          cargo test --tests --examples --verbose --features "${{ matrix.features }}"
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
+        if: ${{ inputs.release }}
         with:
-          subject-path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
+          subject-path: ./target/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
       - name: Upload artifact
-        if: ${{ matrix.features != 'debugmozjs' }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
-          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+          path: ./target/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   linux:
     env:
@@ -65,7 +64,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -76,8 +75,8 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.4
       - name: Build
         run: |
-          cargo build --verbose --features ${{ matrix.features }}
-          cargo test --tests --examples --verbose --features ${{ matrix.features }}
+          cargo build --verbose --features "${{ matrix.features }}"
+          cargo test --tests --examples --verbose --features "${{ matrix.features }}"
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
@@ -87,23 +86,22 @@ jobs:
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
+        if: ${{ inputs.release }}
         with:
-          subject-path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
+          subject-path: ./target/libmozjs-x86_64-unknown-linux-gnu${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
       - name: Upload artifact
-        if: ${{ matrix.features != 'debugmozjs' }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
-          name: libmozjs-x86_64-unknown-linux-gnu.tar.gz
+          path: ./target/libmozjs-x86_64-unknown-linux-gnu${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-x86_64-unknown-linux-gnu${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   windows:
     runs-on: windows-latest
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
         target: ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
     env:
       LINKER: "lld-link.exe"
@@ -126,25 +124,25 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo build --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
+          cargo build --verbose --target ${{ matrix.target }} --features "${{ matrix.features }}"
       - name: Test Windows
         if: ${{ !contains(matrix.target, 'aarch64') }}
         shell: cmd
         run: |
-          cargo test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
+          cargo test --tests --examples --verbose --target ${{ matrix.target }} --features "${{ matrix.features }}"
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' }}
+        if: ${{ inputs.release && !contains(matrix.target, 'aarch64') }}
         with:
-          subject-path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
+          subject-path: ./target/${{ matrix.target }}/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
       - name: Upload artifact
-        if: ${{ !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' }}
+        if: ${{ !contains(matrix.target, 'aarch64') }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
-          name: libmozjs-x86_64-pc-windows-msvc.tar.gz
+          path: ./target/${{ matrix.target }}/libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   android:
     runs-on: ubuntu-latest
