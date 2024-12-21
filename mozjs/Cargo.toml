@@ -30,7 +30,9 @@ mozjs_sys = { version = "=0.140.5-9", path = "../mozjs-sys" }
 num-traits = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-criterion = { version = "0.6", default-features = false, features = ["html_reports"] }
+criterion = { version = "0.6", default-features = false, features = [
+    "html_reports",
+] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = "0.6"
