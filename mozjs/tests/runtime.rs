@@ -40,7 +40,7 @@ fn runtime() {
     let (sender, receiver) = channel();
     thread::spawn(move || {
         let runtime = unsafe { Runtime::create_with_parent(parent) };
-        assert!(!Runtime::get().is_null());
+        assert!(Runtime::get().is_some());
         drop(runtime);
         let _ = sender.send(());
     });
@@ -48,7 +48,7 @@ fn runtime() {
 }
 
 unsafe extern "C" fn finalize(_fop: *mut GCContext, _object: *mut JSObject) {
-    assert!(!Runtime::get().is_null());
+    assert!(Runtime::get().is_some());
 }
 
 static CLASS_OPS: JSClassOps = JSClassOps {

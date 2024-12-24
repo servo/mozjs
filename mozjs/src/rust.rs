@@ -12,7 +12,7 @@ use std::ffi::CStr;
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
-use std::ptr;
+use std::ptr::{self, NonNull};
 use std::slice;
 use std::str;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -303,10 +303,9 @@ pub struct Runtime {
 
 impl Runtime {
     /// Get the `JSContext` for this thread.
-    pub fn get() -> *mut JSContext {
+    pub fn get() -> Option<NonNull<JSContext>> {
         let cx = CONTEXT.with(|context| context.get());
-        assert!(!cx.is_null());
-        cx
+        NonNull::new(cx)
     }
 
     /// Create a [`ThreadSafeJSContext`] that can detect when this `Runtime` is destroyed.
