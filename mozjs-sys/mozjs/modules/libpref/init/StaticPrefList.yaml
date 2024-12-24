@@ -3165,13 +3165,13 @@
 
 # Limit of location change caused by content scripts in a time span per
 # BrowsingContext. This includes calls to History and Location APIs.
-- name: dom.navigation.locationChangeRateLimit.count
+- name: dom.navigation.navigationRateLimit.count
   type: uint32_t
   value: 200
   mirror: always
 
 # Time span in seconds for location change rate limit.
-- name: dom.navigation.locationChangeRateLimit.timespan
+- name: dom.navigation.navigationRateLimit.timespan
   type: uint32_t
   value: 10
   mirror: always
@@ -5647,6 +5647,13 @@
   value: 5000
   mirror: always
 #endif
+
+# If true, open system preferences for the user when geolocation is requested
+# by the user but OS geolocation permission is not available.
+- name: geo.prompt.open_system_prefs
+  type: bool
+  value: true
+  mirror: always
 
 #---------------------------------------------------------------------------
 # Prefs starting with "gfx."
@@ -12066,6 +12073,34 @@
   value: true
   mirror: never
 
+# Whether or not we use MS Entra SSO to network.microsoft-sso-authority-list sites.
+- name: network.http.microsoft-entra-sso.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# Whether microsoft-entra-sso is enabled for the default (0) container.
+# To enable SSO for additional containers, add a new pref like
+# `network.http.microsoft-entra-sso.container-enabled.${containerId}` = true
+- name: network.http.microsoft-entra-sso.container-enabled.0
+  type: bool
+  value: true
+  mirror: never
+
+# To specify the list of trusted Microsoft Single Sign-On (SSO) authority URLs
+# This is needed for macOS unlike Windows where we send every URL to SSO
+- name: network.microsoft-sso-authority-list
+  type: String
+  value: >-
+    login.microsoft.com,
+    login.microsoftonline.com,
+    sts.windows.net,
+    login.partner.microsoftonline.cn,
+    login.chinacloudapi.cn,
+    login.microsoftonline.us,
+    login-us.microsoftonline.com
+  mirror: never
+
 # The factor by which to increase the keepalive timeout when the
 # NS_HTTP_LARGE_KEEPALIVE flag is used for a connection
 - name: network.http.largeKeepaliveFactor
@@ -12946,10 +12981,15 @@
 
 # When the TRR confirmation is set to CONFIRM_FAILED due to many failures in
 # a row, we set a timer to retry. This has an exponential backoff up to
-# 64 seconds.
+# network.trr.max-retry-timeout-ms (64 seconds by default)
 - name: network.trr.retry-timeout-ms
   type: RelaxedAtomicUint32
   value: 125
+  mirror: always
+
+- name: network.trr.max-retry-timeout-ms
+  type: RelaxedAtomicUint32
+  value: 64000
   mirror: always
 
 # Retry with no TRR when the response contained only 0.0.0.0 or ::
@@ -13153,7 +13193,30 @@
 
 - name: network.http.http2.enabled.deps
   type: RelaxedAtomicBool
-  value: true
+  value: false
+  mirror: always
+
+# When true, Firefox will send Extensivle prioritization scheme
+# PRIORITY_UPDATE frames.
+- name: network.http.http2.priority_updates
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# This pref controls whether to send the
+# SETTINGS_NO_RFC7540_PRIORITIES when stream dependencies
+# are disabled, and extensible prioritization scheme is in use.
+# defaults to false as some servers panic when they see this (bug 1928600)
+- name: network.http.http2.send_NO_RFC7540_PRI
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
+# This pref controls whether to send PRIORITY_UPDATE
+# frames for pushed streams.
+- name: network.http.http2.push_priority_update
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 - name: network.http.http2.enforce-tls-profile
@@ -13203,7 +13266,15 @@
 
 - name: network.http.http2.allow-push
   type: RelaxedAtomicBool
-  value: true
+  value: false
+  mirror: always
+
+# When true, Firefox will send a SETTINGS_MAX_CONCURRENT_STREAMS
+# parameter when push is disabled. Chrome doesn't send this,
+# so some servers misbehave when we do. See Bug 1919750.
+- name: network.http.http2.send-push-max-concurrent-frame
+  type: RelaxedAtomicBool
+  value: false
   mirror: always
 
 - name: network.http.http2.push-allowance
