@@ -31,6 +31,7 @@
 #include "js/experimental/JSStencil.h"
 #include "js/experimental/JitInfo.h"
 #include "js/experimental/TypedData.h"
+#include "js/friend/DumpFunctions.h"
 #include "js/friend/ErrorMessages.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
@@ -1069,6 +1070,18 @@ void SetAccessorPropertyDescriptor(
     JS::MutableHandle<JS::PropertyDescriptor> desc, JS::HandleObject getter,
     JS::HandleObject setter, uint32_t attrs) {
   desc.set(JS::PropertyDescriptor::Accessor(getter, setter, attrs));
+}
+
+void DumpJSStack(JSContext* cx, bool showArgs, bool showLocals,
+                 bool showThisProps) {
+  JS::AutoSaveExceptionState state(cx);
+
+  JS::UniqueChars buf =
+      JS::FormatStackDump(cx, showArgs, showLocals, showThisProps);
+
+  state.restore();
+
+  printf("%s\n", buf.get());
 }
 
 }  // extern "C"
