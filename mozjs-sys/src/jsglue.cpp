@@ -26,9 +26,6 @@
 #include "js/Proxy.h"
 #include "js/RegExp.h"
 #include "js/ScalarType.h"
-#ifdef MOZ_JS_STREAMS
-#  include "js/Stream.h"
-#endif
 #include "js/StructuredClone.h"
 #include "js/Wrapper.h"
 #include "js/experimental/JSStencil.h"
@@ -88,65 +85,6 @@ class RustJobQueue : public JS::JobQueue {
     return nullptr;
   }
 };
-
-#ifdef MOZ_JS_STREAMS
-struct ReadableStreamUnderlyingSourceTraps {
-  void (*requestData)(const void* source, JSContext* cx,
-                      JS::HandleObject stream, size_t desiredSize);
-  void (*writeIntoReadRequestBuffer)(const void* source, JSContext* cx,
-                                     JS::HandleObject stream,
-                                     JS::HandleObject chunk, size_t length,
-                                     size_t* bytesWritten);
-  void (*cancel)(const void* source, JSContext* cx, JS::HandleObject stream,
-                 JS::HandleValue reason, JS::Value* resolve_to);
-  void (*onClosed)(const void* source, JSContext* cx, JS::HandleObject stream);
-  void (*onErrored)(const void* source, JSContext* cx, JS::HandleObject stream,
-                    JS::HandleValue reason);
-  void (*finalize)(JS::ReadableStreamUnderlyingSource* source);
-};
-
-class RustReadableStreamUnderlyingSource
-    : public JS::ReadableStreamUnderlyingSource {
-  ReadableStreamUnderlyingSourceTraps mTraps;
-  const void* mSource;
-
- public:
-  RustReadableStreamUnderlyingSource(
-      const ReadableStreamUnderlyingSourceTraps& aTraps, const void* aSource)
-      : mTraps(aTraps), mSource(aSource) {}
-
-  virtual void requestData(JSContext* cx, JS::HandleObject stream,
-                           size_t desiredSize) {
-    return mTraps.requestData(mSource, cx, stream, desiredSize);
-  }
-
-  virtual void writeIntoReadRequestBuffer(JSContext* cx,
-                                          JS::HandleObject stream,
-                                          JS::HandleObject chunk, size_t length,
-                                          size_t* bytesWritten) {
-    return mTraps.writeIntoReadRequestBuffer(mSource, cx, stream, chunk, length,
-                                             bytesWritten);
-  }
-
-  virtual JS::Value cancel(JSContext* cx, JS::HandleObject stream,
-                           JS::HandleValue reason) {
-    JS::Value resolve_to;
-    mTraps.cancel(mSource, cx, stream, reason, &resolve_to);
-    return resolve_to;
-  }
-
-  virtual void onClosed(JSContext* cx, JS::HandleObject stream) {
-    return mTraps.onClosed(mSource, cx, stream);
-  }
-
-  virtual void onErrored(JSContext* cx, JS::HandleObject stream,
-                         JS::HandleValue reason) {
-    return mTraps.onErrored(mSource, cx, stream, reason);
-  }
-
-  virtual void finalize() { return mTraps.finalize(this); }
-};
-#endif
 
 struct JSExternalStringCallbacksTraps {
   void (*latin1Finalize)(const void* privateData, JS::Latin1Char* chars);
@@ -1079,18 +1017,6 @@ JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue) {
 }
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
-
-#ifdef MOZ_JS_STREAMS
-JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
-    const ReadableStreamUnderlyingSourceTraps* aTraps, const void* aSource) {
-  return new RustReadableStreamUnderlyingSource(*aTraps, aSource);
-}
-
-void DeleteReadableStreamUnderlyingSource(
-    JS::ReadableStreamUnderlyingSource* source) {
-  delete source;
-}
-#endif
 
 JSExternalStringCallbacks* CreateJSExternalStringCallbacks(
     const JSExternalStringCallbacksTraps* aTraps, void* privateData) {
