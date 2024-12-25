@@ -22,7 +22,6 @@ use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use crate::conversions::jsstr_to_string;
 use crate::default_heapsize;
-pub use crate::gc::Traceable as Trace;
 pub use crate::gc::*;
 use crate::glue::AppendToRootedObjectVector;
 use crate::glue::{CreateRootedIdVector, CreateRootedObjectVector};
@@ -67,6 +66,7 @@ use lazy_static::lazy_static;
 use log::{debug, warn};
 use mozjs_sys::jsapi::JS::SavedFrameResult;
 pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
+pub use mozjs_sys::trace::Traceable as Trace;
 
 use crate::rooted;
 

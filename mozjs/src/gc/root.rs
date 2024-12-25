@@ -3,7 +3,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr;
 
 use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
-use mozjs_sys::jsgc::{GCMethods, RootKind, Rooted};
+use mozjs_sys::jsgc::{Initialize, RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
 use crate::jsapi::HandleValue as RawHandleValue;
@@ -15,11 +15,15 @@ use mozjs_sys::jsgc::ValueArray;
 /// Rust API for keeping a Rooted value in the context's root stack.
 /// Example usage: `rooted!(in(cx) let x = UndefinedValue());`.
 /// `RootedGuard::new` also works, but the macro is preferred.
-pub struct RootedGuard<'a, T: 'a + RootKind + GCMethods> {
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
+pub struct RootedGuard<'a, T: 'a + RootKind + Initialize> {
     root: &'a mut Rooted<T>,
 }
 
-impl<'a, T: 'a + RootKind + GCMethods> RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind + Initialize> RootedGuard<'a, T> {
     pub fn new(cx: *mut JSContext, root: &'a mut Rooted<T>, initial: T) -> Self {
         root.ptr = initial;
         unsafe {
@@ -48,23 +52,28 @@ impl<'a, T: 'a + RootKind + GCMethods> RootedGuard<'a, T> {
     }
 }
 
-impl<'a, T: 'a + RootKind + GCMethods> Deref for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind + Initialize> Deref for RootedGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         &self.root.ptr
     }
 }
 
-impl<'a, T: 'a + RootKind + GCMethods> DerefMut for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind + Initialize> DerefMut for RootedGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.root.ptr
     }
 }
 
-impl<'a, T: 'a + RootKind + GCMethods> Drop for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind + Initialize> Drop for RootedGuard<'a, T> {
     fn drop(&mut self) {
+        // SAFETY:
+        //  All implementations are expected to return meaningful defaults that
+        //  do not contain non-default GC pointers.
+        if let Some(val) = unsafe { T::initial() } {
+            self.root.ptr = val;
+        }
         unsafe {
-            self.root.ptr = T::initial();
             self.root.remove_from_root_stack();
         }
     }
