@@ -25,6 +25,7 @@ use crate::jsid::VoidId;
 use crate::jsval::{JSVal, UndefinedValue};
 
 use std::marker::PhantomData;
+use std::mem;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::ptr;
@@ -143,7 +144,7 @@ impl<const N: usize> From<&Rooted<ValueArray<N>>> for JS::HandleValueArray {
     fn from(array: &Rooted<ValueArray<N>>) -> JS::HandleValueArray {
         JS::HandleValueArray {
             length_: N,
-            elements_: unsafe { array.ptr.get_ptr() },
+            elements_: unsafe { array.ptr.assume_init_ref().get_ptr() },
         }
     }
 }
@@ -435,7 +436,7 @@ impl<T: RootKind> JS::Rooted<T> {
                 stack: ptr::null_mut(),
                 prev: ptr::null_mut(),
             },
-            ptr: unsafe { std::mem::zeroed() },
+            ptr: mem::MaybeUninit::zeroed(),
         }
     }
 
