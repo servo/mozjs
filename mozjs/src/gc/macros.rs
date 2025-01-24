@@ -26,19 +26,13 @@ macro_rules! rooted_vec {
         let mut __root = $crate::gc::RootableVec::new_unrooted();
         let mut $name = $crate::gc::RootedVec::new(&mut __root);
     };
-    (let mut $name:ident: $type:ty) => {
+    (let $name:ident <- $iter:expr) => {
         let mut __root = $crate::gc::RootableVec::new_unrooted();
-        let mut $name: $crate::gc::RootedVec<$type> = $crate::gc::RootedVec::new(&mut __root);
+        let $name = $crate::gc::RootedVec::from_iter(&mut __root, $iter);
     };
-    (let mut $name:ident = $init:expr) => {
+    (let mut $name:ident <- $iter:expr) => {
         let mut __root = $crate::gc::RootableVec::new_unrooted();
-        let mut $name = $crate::gc::RootedVec::new(&mut __root);
-        ::std::iter::Extend::extend(&mut $name, $init);
-    };
-    (let mut $name:ident: $type:ty = $init:expr) => {
-        let mut __root = $crate::gc::RootableVec::new_unrooted();
-        let mut $name: $crate::gc::RootedVec<$type> = $crate::gc::RootedVec::new(&mut __root);
-        ::std::iter::Extend::extend(&mut $name, $init);
+        let mut $name = $crate::gc::RootedVec::from_iter(&mut __root, $iter);
     };
 }
 
