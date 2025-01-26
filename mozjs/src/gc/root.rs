@@ -1,9 +1,10 @@
 use std::marker::PhantomData;
+use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
 
 use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
-use mozjs_sys::jsgc::{Initialize, RootKind, Rooted};
+use mozjs_sys::jsgc::{RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
 use crate::jsapi::HandleValue as RawHandleValue;
@@ -19,13 +20,13 @@ use mozjs_sys::jsgc::ValueArray;
     feature = "crown",
     crown::unrooted_must_root_lint::allow_unrooted_interior
 )]
-pub struct RootedGuard<'a, T: 'a + RootKind + Initialize> {
+pub struct RootedGuard<'a, T: 'a + RootKind> {
     root: &'a mut Rooted<T>,
 }
 
-impl<'a, T: 'a + RootKind + Initialize> RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     pub fn new(cx: *mut JSContext, root: &'a mut Rooted<T>, initial: T) -> Self {
-        root.ptr = initial;
+        root.ptr.write(initial);
         unsafe {
             root.add_to_root_stack(cx);
         }
@@ -33,46 +34,55 @@ impl<'a, T: 'a + RootKind + Initialize> RootedGuard<'a, T> {
     }
 
     pub fn handle(&'a self) -> Handle<'a, T> {
-        Handle::new(&self.root.ptr)
+        Handle::new(&self)
     }
 
     pub fn handle_mut(&mut self) -> MutableHandle<T> {
-        unsafe { MutableHandle::from_marked_location(&mut self.root.ptr) }
+        unsafe { MutableHandle::from_marked_location(self.deref_mut()) }
     }
 
     pub fn get(&self) -> T
     where
         T: Copy,
     {
-        self.root.ptr
+        // SAFETY: The rooted value is initialized as long as we exist
+        unsafe { self.root.ptr.assume_init() }
     }
 
     pub fn set(&mut self, v: T) {
-        self.root.ptr = v;
+        // SAFETY: The rooted value is initialized as long as we exist
+        unsafe {
+            // Make sure the drop impl for T is called
+            self.root.ptr.assume_init_drop()
+        }
+        self.root.ptr.write(v);
     }
 }
 
-impl<'a, T: 'a + RootKind + Initialize> Deref for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
-        &self.root.ptr
+        // SAFETY: The rooted value is initialized as long as we exist
+        unsafe { self.root.ptr.assume_init_ref() }
     }
 }
 
-impl<'a, T: 'a + RootKind + Initialize> DerefMut for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind> DerefMut for RootedGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
-        &mut self.root.ptr
+        // SAFETY: The rooted value is initialized as long as we exist
+        unsafe { self.root.ptr.assume_init_mut() }
     }
 }
 
-impl<'a, T: 'a + RootKind + Initialize> Drop for RootedGuard<'a, T> {
+impl<'a, T: 'a + RootKind> Drop for RootedGuard<'a, T> {
     fn drop(&mut self) {
-        // SAFETY:
-        //  All implementations are expected to return meaningful defaults that
-        //  do not contain non-default GC pointers.
-        if let Some(val) = unsafe { T::initial() } {
-            self.root.ptr = val;
+        // SAFETY: The rooted value is initialized as long as we exist
+        unsafe {
+            // Make sure the drop impl for T is called
+            self.root.ptr.assume_init_drop()
         }
+        self.root.ptr = MaybeUninit::zeroed();
+
         unsafe {
             self.root.remove_from_root_stack();
         }
