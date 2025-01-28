@@ -5,7 +5,6 @@ repository.workspace = true
 version = "0.128.9-2"
 authors = ["Mozilla"]
 links = "mozjs"
-build = "build.rs"
 license.workspace = true
 exclude = [
   "mozjs/js/src/tests/**",
