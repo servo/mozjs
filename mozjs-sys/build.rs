@@ -633,241 +633,204 @@ fn ignore(path: &Path) -> bool {
     })
 }
 
-mod bindings {
-    use super::BuildTarget;
-
-    impl BuildTarget {
-        pub(crate) fn unsafe_impl_sync_types(self) -> &'static [&'static str] {
-            match self {
-                BuildTarget::JSApi => jsapi::UNSAFE_IMPL_SYNC_TYPES,
-                BuildTarget::JSGlue => &[],
-            }
-        }
-
-        pub(crate) fn whitelist_types(self) -> &'static [&'static str] {
-            match self {
-                BuildTarget::JSApi => jsapi::WHITELIST_TYPES,
-                BuildTarget::JSGlue => &[],
-            }
-        }
-
-        pub(crate) fn whitelist_vars(self) -> &'static [&'static str] {
-            match self {
-                BuildTarget::JSApi => jsapi::WHITELIST_VARS,
-                BuildTarget::JSGlue => &[],
-            }
-        }
-
-        pub(crate) fn whitelist_functions(self) -> &'static [&'static str] {
-            match self {
-                BuildTarget::JSApi => jsapi::WHITELIST_FUNCTIONS,
-                BuildTarget::JSGlue => &[],
-            }
-        }
-
-        pub(crate) fn blacklist_types(self) -> &'static [&'static str] {
-            match self {
-                BuildTarget::JSApi => jsapi::BLACKLIST_TYPES,
-                BuildTarget::JSGlue => jsglue::BLACKLIST_TYPES,
-            }
-        }
-
-        pub(crate) fn blacklist_functions(self) -> &'static [&'static str] {
-            match self {
-                BuildTarget::JSApi => jsapi::BLACKLIST_FUNCTIONS,
-                BuildTarget::JSGlue => &[],
-            }
-        }
-
-        pub(crate) fn opaque_types(self) -> &'static [&'static str] {
-            match self {
-                BuildTarget::JSApi => jsapi::OPAQUE_TYPES,
-                BuildTarget::JSGlue => jsglue::OPAQUE_TYPES,
-            }
-        }
-
-        pub(crate) fn module_raw_lines(self) -> &'static [(&'static str, &'static str)] {
-            match self {
-                BuildTarget::JSApi => jsapi::MODULE_RAW_LINES,
-                BuildTarget::JSGlue => jsglue::MODULE_RAW_LINES,
-            }
+impl BuildTarget {
+    /// Types for which we should implement `Sync`.
+    fn unsafe_impl_sync_types(self) -> &'static [&'static str] {
+        match self {
+            BuildTarget::JSApi => &[
+                "JSClass",
+                "JSFunctionSpec",
+                "JSNativeWrapper",
+                "JSPropertySpec",
+                "JSTypedMethodJitInfo",
+            ],
+            BuildTarget::JSGlue => &[],
         }
     }
 
-    mod jsapi {
-        /// JSAPI types for which we should implement `Sync`.
-        pub(crate) const UNSAFE_IMPL_SYNC_TYPES: &'static [&'static str] = &[
-            "JSClass",
-            "JSFunctionSpec",
-            "JSNativeWrapper",
-            "JSPropertySpec",
-            "JSTypedMethodJitInfo",
-        ];
-
-        /// Types which we want to generate bindings for (and every other type they
-        /// transitively use).
-        pub(crate) const WHITELIST_TYPES: &'static [&'static str] =
-            &["JS.*", "js::.*", "mozilla::.*"];
-
-        /// Global variables we want to generate bindings to.
-        pub(crate) const WHITELIST_VARS: &'static [&'static str] = &[
-            "JS::FalseHandleValue",
-            "JS::NullHandleValue",
-            "JS::TrueHandleValue",
-            "JS::UndefinedHandleValue",
-            "JSCLASS_.*",
-            "JSFUN_.*",
-            "JSITER_.*",
-            "JSPROP_.*",
-            "JS_.*",
-            "js::Proxy.*",
-        ];
-
-        /// Functions we want to generate bindings to.
-        pub(crate) const WHITELIST_FUNCTIONS: &'static [&'static str] = &[
-            "glue::.*",
-            "JS::.*",
-            "js::.*",
-            "JS_.*",
-            "JS_DeprecatedStringHasLatin1Chars",
-        ];
-
-        /// Types for which we should NEVER generate bindings, even if it is used within
-        /// a type or function signature that we are generating bindings for.
-        pub(crate) const BLACKLIST_TYPES: &'static [&'static str] = &[
-            // We'll be using libc::FILE.
-            "FILE",
-            // We provide our own definition because we need to express trait bounds in
-            // the definition of the struct to make our Drop implementation correct.
-            "JS::Heap",
-            // We provide our own definition because SM's use of templates
-            // is more than bindgen can cope with.
-            "JS::Rooted",
-            // We don't need them and bindgen doesn't like them.
-            "JS::HandleVector",
-            "JS::MutableHandleVector",
-            "JS::Rooted.*Vector",
-            "JS::RootedValueArray",
-            "js::ProfilingStackFrame.*",
-            // Classes that we don't use, and that we cannot generate their
-            // types properly from bindgen, so we'll skip them for now.
-            "JS::dbg::Builder",
-            "JS::dbg::Builder_BuiltThing",
-            "JS::dbg::Builder_Object",
-            "JS::dbg::Builder_Object_Base",
-            "JS::dbg::BuilderOrigin",
-        ];
-
-        /// Functions we do not want to generate bindings to.
-        pub(crate) const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
-            "JS::CopyAsyncStack",
-            "JS::CreateError",
-            "JS::DecodeMultiStencilsOffThread",
-            "JS::DecodeStencilOffThread",
-            "JS::DescribeScriptedCaller",
-            "JS::EncodeStencil",
-            "JS::FinishDecodeMultiStencilsOffThread",
-            "JS::FinishIncrementalEncoding",
-            "JS::FromPropertyDescriptor",
-            "JS::GetExceptionCause",
-            "JS::GetModulePrivate",
-            "JS::GetOptimizedEncodingBuildId",
-            "JS::GetPromiseResult",
-            "JS::GetRegExpFlags",
-            "JS::GetScriptPrivate",
-            "JS::GetScriptTranscodingBuildId",
-            "JS::GetScriptedCallerPrivate",
-            "JS::MaybeGetScriptPrivate",
-            "JS::NewArrayBufferWithContents",
-            "JS::NewExternalArrayBuffer",
-            "JS::dbg::FireOnGarbageCollectionHook",
-            "JS_EncodeStringToUTF8BufferPartial",
-            "JS_GetEmptyStringValue",
-            "JS_GetErrorType",
-            "JS_GetOwnPropertyDescriptorById",
-            "JS_GetOwnPropertyDescriptor",
-            "JS_GetOwnUCPropertyDescriptor",
-            "JS_GetPropertyDescriptorById",
-            "JS_GetPropertyDescriptor",
-            "JS_GetReservedSlot",
-            "JS_GetUCPropertyDescriptor",
-            "JS_NewLatin1String",
-            "JS_NewUCStringDontDeflate",
-            "JS_NewUCString",
-            "JS_PCToLineNumber",
-            "js::AppendUnique",
-            "js::SetPropertyIgnoringNamedGetter",
-            "std::.*",
-        ];
-
-        /// Types that should be treated as an opaque blob of bytes whenever they show
-        /// up within a whitelisted type.
-        ///
-        /// These are types which are too tricky for bindgen to handle, and/or use C++
-        /// features that don't have an equivalent in rust, such as partial template
-        /// specialization.
-        pub(crate) const OPAQUE_TYPES: &'static [&'static str] = &[
-            "JS::StackGCVector.*",
-            "JS::PersistentRooted.*",
-            "JS::detail::CallArgsBase",
-            "js::detail::UniqueSelector.*",
-            "mozilla::BufferList",
-            "mozilla::Maybe.*",
-            "mozilla::UniquePtr.*",
-            "mozilla::Variant",
-            "mozilla::Hash.*",
-            "mozilla::detail::Hash.*",
-            "RefPtr_Proxy.*",
-            "std::.*",
-        ];
-
-        /// Definitions for types that were blacklisted
-        pub(crate) const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
-            ("root", "pub type FILE = ::libc::FILE;"),
-            ("root::JS", "pub type Heap<T> = crate::jsgc::Heap<T>;"),
-            ("root::JS", "pub type Rooted<T> = crate::jsgc::Rooted<T>;"),
-        ];
+    /// Types which we want to generate bindings for (and every other type they
+    /// transitively use).
+    fn whitelist_types(self) -> &'static [&'static str] {
+        match self {
+            BuildTarget::JSApi => &["JS.*", "js::.*", "mozilla::.*"],
+            BuildTarget::JSGlue => &[],
+        }
     }
 
-    mod jsglue {
-        /// Types that have generic arguments must be here or else bindgen does not generate <T>
-        /// as it treats them as opaque types
-        pub(crate) const BLACKLIST_TYPES: &'static [&'static str] = &[
-            "JS::.*",
-            "already_AddRefed",
-            // we don't want it null
-            "EncodedStringCallback",
-        ];
+    /// Global variables we want to generate bindings to.
+    fn whitelist_vars(self) -> &'static [&'static str] {
+        match self {
+            BuildTarget::JSApi => &[
+                "JS::FalseHandleValue",
+                "JS::NullHandleValue",
+                "JS::TrueHandleValue",
+                "JS::UndefinedHandleValue",
+                "JSCLASS_.*",
+                "JSFUN_.*",
+                "JSITER_.*",
+                "JSPROP_.*",
+                "JS_.*",
+                "js::Proxy.*",
+            ],
+            BuildTarget::JSGlue => &[],
+        }
+    }
 
-        /// Types that should be treated as an opaque blob of bytes whenever they show
-        /// up within a whitelisted type.
-        ///
-        /// These are types which are too tricky for bindgen to handle, and/or use C++
-        /// features that don't have an equivalent in rust, such as partial template
-        /// specialization.
-        pub(crate) const OPAQUE_TYPES: &'static [&'static str] = &[
-            "JS::Auto.*Impl",
-            "JS::StackGCVector.*",
-            "JS::PersistentRooted.*",
-            "JS::detail::CallArgsBase.*",
-            "js::detail::UniqueSelector.*",
-            "mozilla::BufferList",
-            "mozilla::Maybe.*",
-            "mozilla::UniquePtr.*",
-            "mozilla::Variant",
-            "mozilla::Hash.*",
-            "mozilla::detail::Hash.*",
-            "RefPtr_Proxy.*",
-        ];
+    /// Functions we want to generate bindings to.
+    fn whitelist_functions(self) -> &'static [&'static str] {
+        match self {
+            BuildTarget::JSApi => &[
+                "glue::.*",
+                "JS::.*",
+                "js::.*",
+                "JS_.*",
+                "JS_DeprecatedStringHasLatin1Chars",
+            ],
+            BuildTarget::JSGlue => &[],
+        }
+    }
 
-        /// Map mozjs_sys mod namespaces to bindgen mod namespaces
-        pub(crate) const MODULE_RAW_LINES: &'static [(&'static str, &'static str)] = &[
-            ("root", "pub(crate) use crate::jsapi::*;"),
-            ("root", "pub use crate::glue::EncodedStringCallback;"),
-            ("root::js", "pub(crate) use crate::jsapi::js::*;"),
-            ("root::mozilla", "pub(crate) use crate::jsapi::mozilla::*;"),
-            ("root::JS", "pub(crate) use crate::jsapi::JS::*;"),
-        ];
+    /// Types for which we should NEVER generate bindings, even if it is used within
+    /// a type or function signature that we are generating bindings for.
+    ///
+    /// Types that have generic arguments must be here or else, bindgen does not generate <T>
+    /// as it treats them as opaque types.
+    fn blacklist_types(self) -> &'static [&'static str] {
+        match self {
+            BuildTarget::JSApi => &[
+                // We'll be using libc::FILE.
+                "FILE",
+                // We provide our own definition because we need to express trait bounds in
+                // the definition of the struct to make our Drop implementation correct.
+                "JS::Heap",
+                // We provide our own definition because SM's use of templates
+                // is more than bindgen can cope with.
+                "JS::Rooted",
+                // We don't need them and bindgen doesn't like them.
+                "JS::HandleVector",
+                "JS::MutableHandleVector",
+                "JS::Rooted.*Vector",
+                "JS::RootedValueArray",
+                "js::ProfilingStackFrame.*",
+                // Classes that we don't use, and that we cannot generate their
+                // types properly from bindgen, so we'll skip them for now.
+                "JS::dbg::Builder",
+                "JS::dbg::Builder_BuiltThing",
+                "JS::dbg::Builder_Object",
+                "JS::dbg::Builder_Object_Base",
+                "JS::dbg::BuilderOrigin",
+            ],
+            BuildTarget::JSGlue => &[
+                "JS::.*",
+                "already_AddRefed",
+                // we don't want it null
+                "EncodedStringCallback",
+            ],
+        }
+    }
+
+    /// Functions we do not want to generate bindings to.
+    fn blacklist_functions(self) -> &'static [&'static str] {
+        match self {
+            BuildTarget::JSApi => &[
+                "JS::CopyAsyncStack",
+                "JS::CreateError",
+                "JS::DecodeMultiStencilsOffThread",
+                "JS::DecodeStencilOffThread",
+                "JS::DescribeScriptedCaller",
+                "JS::EncodeStencil",
+                "JS::FinishDecodeMultiStencilsOffThread",
+                "JS::FinishIncrementalEncoding",
+                "JS::FromPropertyDescriptor",
+                "JS::GetExceptionCause",
+                "JS::GetModulePrivate",
+                "JS::GetOptimizedEncodingBuildId",
+                "JS::GetPromiseResult",
+                "JS::GetRegExpFlags",
+                "JS::GetScriptPrivate",
+                "JS::GetScriptTranscodingBuildId",
+                "JS::GetScriptedCallerPrivate",
+                "JS::MaybeGetScriptPrivate",
+                "JS::NewArrayBufferWithContents",
+                "JS::NewExternalArrayBuffer",
+                "JS::dbg::FireOnGarbageCollectionHook",
+                "JS_EncodeStringToUTF8BufferPartial",
+                "JS_GetEmptyStringValue",
+                "JS_GetErrorType",
+                "JS_GetOwnPropertyDescriptorById",
+                "JS_GetOwnPropertyDescriptor",
+                "JS_GetOwnUCPropertyDescriptor",
+                "JS_GetPropertyDescriptorById",
+                "JS_GetPropertyDescriptor",
+                "JS_GetReservedSlot",
+                "JS_GetUCPropertyDescriptor",
+                "JS_NewLatin1String",
+                "JS_NewUCStringDontDeflate",
+                "JS_NewUCString",
+                "JS_PCToLineNumber",
+                "js::AppendUnique",
+                "js::SetPropertyIgnoringNamedGetter",
+                "std::.*",
+            ],
+            BuildTarget::JSGlue => &[],
+        }
+    }
+
+    /// Types that should be treated as an opaque blob of bytes whenever they show
+    /// up within a whitelisted type.
+    ///
+    /// These are types which are too tricky for bindgen to handle, and/or use C++
+    /// features that don't have an equivalent in rust, such as partial template
+    /// specialization.
+    fn opaque_types(self) -> &'static [&'static str] {
+        match self {
+            BuildTarget::JSApi => &[
+                "JS::StackGCVector.*",
+                "JS::PersistentRooted.*",
+                "JS::detail::CallArgsBase",
+                "js::detail::UniqueSelector.*",
+                "mozilla::BufferList",
+                "mozilla::Maybe.*",
+                "mozilla::UniquePtr.*",
+                "mozilla::Variant",
+                "mozilla::Hash.*",
+                "mozilla::detail::Hash.*",
+                "RefPtr_Proxy.*",
+                "std::.*",
+            ],
+            BuildTarget::JSGlue => &[
+                "JS::Auto.*Impl",
+                "JS::StackGCVector.*",
+                "JS::PersistentRooted.*",
+                "JS::detail::CallArgsBase.*",
+                "js::detail::UniqueSelector.*",
+                "mozilla::BufferList",
+                "mozilla::Maybe.*",
+                "mozilla::UniquePtr.*",
+                "mozilla::Variant",
+                "mozilla::Hash.*",
+                "mozilla::detail::Hash.*",
+                "RefPtr_Proxy.*",
+            ],
+        }
+    }
+
+    /// Raw lines that go at the start of each module.
+    fn module_raw_lines(self) -> &'static [(&'static str, &'static str)] {
+        match self {
+            BuildTarget::JSApi => &[
+                ("root", "pub type FILE = ::libc::FILE;"),
+                ("root::JS", "pub type Heap<T> = crate::jsgc::Heap<T>;"),
+                ("root::JS", "pub type Rooted<T> = crate::jsgc::Rooted<T>;"),
+            ],
+            BuildTarget::JSGlue => &[
+                ("root", "pub(crate) use crate::jsapi::*;"),
+                ("root", "pub use crate::glue::EncodedStringCallback;"),
+                ("root::js", "pub(crate) use crate::jsapi::js::*;"),
+                ("root::mozilla", "pub(crate) use crate::jsapi::mozilla::*;"),
+                ("root::JS", "pub(crate) use crate::jsapi::JS::*;"),
+            ],
+        }
     }
 }
 
