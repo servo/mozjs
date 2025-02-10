@@ -19,21 +19,21 @@ fn runtime() {
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(*context, 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
-        rooted!(in(context) let _object = JS_NewObject(context, &CLASS as *const _));
+        let _ac = JSAutoRealm::new(*context, global.get());
+        rooted!(in(*context) let _object = JS_NewObject(*context, &CLASS as *const _));
     }
 
     let parent = runtime.prepare_for_new_child();

@@ -22,35 +22,35 @@ fn vec_conversion() {
 
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(*context, 2, 1);
     }
 
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
-        assert!(InitRealmStandardClasses(context));
+        let _ac = JSAutoRealm::new(*context, global.get());
+        assert!(InitRealmStandardClasses(*context));
 
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(in(*context) let mut rval = UndefinedValue());
 
         let orig_vec: Vec<f32> = vec![1.0, 2.9, 3.0];
-        orig_vec.to_jsval(context, rval.handle_mut());
-        let converted = Vec::<f32>::from_jsval(context, rval.handle(), ()).unwrap();
+        orig_vec.to_jsval(*context, rval.handle_mut());
+        let converted = Vec::<f32>::from_jsval(*context, rval.handle(), ()).unwrap();
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
 
         let orig_vec: Vec<i32> = vec![1, 2, 3];
-        orig_vec.to_jsval(context, rval.handle_mut());
+        orig_vec.to_jsval(*context, rval.handle_mut());
         let converted =
-            Vec::<i32>::from_jsval(context, rval.handle(), ConversionBehavior::Default).unwrap();
+            Vec::<i32>::from_jsval(*context, rval.handle(), ConversionBehavior::Default).unwrap();
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
 
@@ -64,14 +64,15 @@ fn vec_conversion() {
             )
             .is_ok());
         let converted =
-            Vec::<i32>::from_jsval(context, rval.handle(), ConversionBehavior::Default).unwrap();
+            Vec::<i32>::from_jsval(*context, rval.handle(), ConversionBehavior::Default).unwrap();
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
 
         assert!(runtime
             .evaluate_script(global.handle(), "({})", "test", 1, rval.handle_mut())
             .is_ok());
-        let converted = Vec::<i32>::from_jsval(context, rval.handle(), ConversionBehavior::Default);
+        let converted =
+            Vec::<i32>::from_jsval(*context, rval.handle(), ConversionBehavior::Default);
         assert!(match converted {
             Ok(ConversionResult::Failure(_)) => true,
             _ => false,

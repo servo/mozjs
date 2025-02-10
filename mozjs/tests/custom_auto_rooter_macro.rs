@@ -32,10 +32,10 @@ fn custom_auto_rooter_macro() {
     let runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
 
-    auto_root!(in(context) let vec = vec![TraceCheck::new(), TraceCheck::new()]);
+    auto_root!(in(*context) let vec = vec![TraceCheck::new(), TraceCheck::new()]);
 
     unsafe {
-        JS_GC(context, GCReason::API);
+        JS_GC(*context, GCReason::API);
     }
 
     vec.iter()

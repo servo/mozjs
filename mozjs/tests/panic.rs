@@ -19,23 +19,23 @@ fn test_panic() {
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(*context, 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(*context, global.get());
 
         let function = JS_DefineFunction(
-            context,
+            *context,
             global.handle().into(),
             c"test".as_ptr(),
             Some(test),
@@ -44,7 +44,7 @@ fn test_panic() {
         );
         assert!(!function.is_null());
 
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(in(*context) let mut rval = UndefinedValue());
         let _ =
             runtime.evaluate_script(global.handle(), "test();", "test.js", 0, rval.handle_mut());
     }

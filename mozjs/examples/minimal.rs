@@ -40,8 +40,8 @@ fn run(rt: Runtime) {
     // This demonstrates the way Rust uses the C++ garbage collector: using the rooted! macro to
     // indicate when the GC can collect them.
     let options = RealmOptions::default();
-    rooted!(in(cx) let _global = unsafe {
-        JS_NewGlobalObject(cx, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
+    rooted!(in(*cx) let _global = unsafe {
+        JS_NewGlobalObject(*cx, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
                            OnNewGlobalHookOption::FireOnNewGlobalHook,
                            &*options)
     });

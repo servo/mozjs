@@ -19,21 +19,21 @@ fn enumerate() {
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(*context, 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
 
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(in(*context) let mut rval = UndefinedValue());
         assert!(runtime
             .evaluate_script(
                 global.handle(),
@@ -45,24 +45,24 @@ fn enumerate() {
             .is_ok());
         assert!(rval.is_object());
 
-        rooted!(in(context) let object = rval.to_object());
-        let mut ids = IdVector::new(context);
+        rooted!(in(*context) let object = rval.to_object());
+        let mut ids = IdVector::new(*context);
         assert!(GetPropertyKeys(
-            context,
+            *context,
             object.handle().into(),
             JSITER_OWNONLY,
             ids.handle_mut(),
         ));
 
         assert_eq!(ids.len(), 1);
-        rooted!(in(context) let id = ids[0]);
+        rooted!(in(*context) let id = ids[0]);
 
         assert!(id.is_string());
-        rooted!(in(context) let id = id.to_string());
+        rooted!(in(*context) let id = id.to_string());
 
         let mut matches = false;
         assert!(JS_StringEqualsAscii(
-            context,
+            *context,
             id.get(),
             c"a".as_ptr(),
             &mut matches

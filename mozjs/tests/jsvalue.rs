@@ -22,13 +22,13 @@ unsafe fn tester<F: Fn(RootedGuard<JSVal>)>(
     test: F,
 ) {
     let cx = rt.cx();
-    rooted!(in(cx) let mut rval = UndefinedValue());
+    rooted!(in(*cx) let mut rval = UndefinedValue());
     assert!(rt
         .evaluate_script(global, js, "test", 1, rval.handle_mut())
         .is_ok());
     test(rval);
 
-    rooted!(in(cx) let mut val = rust);
+    rooted!(in(*cx) let mut val = rust);
     test(val);
 }
 
@@ -39,14 +39,14 @@ fn jsvalues() {
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(*context, 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,

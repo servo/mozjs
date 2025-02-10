@@ -38,21 +38,21 @@ fn rooting() {
     let c_option = RealmOptions::default();
 
     unsafe {
-        SetGCZeal(context, 2, 1);
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        SetGCZeal(*context, 2, 1);
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(*context, global.get());
 
-        rooted!(in(context) let prototype_proto = GetRealmObjectPrototype(context));
-        rooted!(in(context) let some_container = ContainsGCValue {
+        rooted!(in(*context) let prototype_proto = GetRealmObjectPrototype(context));
+        rooted!(in(*context) let some_container = ContainsGCValue {
             val: ObjectValue(prototype_proto.get())
         });
-        rooted!(in(context) let some_optional_container = Some(ContainsGCValue {
+        rooted!(in(*context) let some_optional_container = Some(ContainsGCValue {
             val: ObjectValue(prototype_proto.get())
         }));
         assert_eq!(some_container.val.to_object(), prototype_proto.get());

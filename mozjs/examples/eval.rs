@@ -23,8 +23,9 @@ use mozjs::rust::{JSEngine, RealmOptions, Runtime};
 
 fn run(rt: Runtime) {
     let options = RealmOptions::default();
-    rooted!(in(rt.cx()) let global = unsafe {
-        JS_NewGlobalObject(rt.cx(), &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
+    let cx = rt.cx();
+    rooted!(in(*cx) let global = unsafe {
+        JS_NewGlobalObject(*cx, &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
                            OnNewGlobalHookOption::FireOnNewGlobalHook,
                            &*options)
     });
@@ -37,7 +38,7 @@ fn run(rt: Runtime) {
      * The return value comes back here. If it could be a GC thing, you must add it to the
      * GC's "root set" with the rooted! macro.
      */
-    rooted!(in(rt.cx()) let mut rval = UndefinedValue());
+    rooted!(in(*cx) let mut rval = UndefinedValue());
 
     /*
      * Some example source in a string. This is equivalent to JS_EvaluateScript in C++.
