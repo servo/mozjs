@@ -392,8 +392,11 @@ impl Runtime {
     }
 
     /// Returns the `JSContext` object.
-    pub fn cx(&self) -> *mut JSContext {
-        self.cx
+    pub fn cx<'a>(&self) -> crate::context::JSContext<'a> {
+        crate::context::JSContext {
+            raw: self.cx,
+            anchor: std::marker::PhantomData,
+        }
     }
 
     pub fn evaluate_script(
@@ -409,12 +412,13 @@ impl Runtime {
             filename, script
         );
 
-        let _ac = JSAutoRealm::new(self.cx(), glob.get());
-        let options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num) };
+        let cx = self.cx();
+        let _ac = JSAutoRealm::new(*cx, glob.get());
+        let options = unsafe { CompileOptionsWrapper::new(*cx, filename, line_num) };
 
         unsafe {
             let mut source = transform_str_to_source_text(&script);
-            if !Evaluate2(self.cx(), options.ptr, &mut source, rval.into()) {
+            if !Evaluate2(*cx, options.ptr, &mut source, rval.into()) {
                 debug!("...err!");
                 maybe_resume_unwind();
                 Err(())
