@@ -431,9 +431,8 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         self.thread_safe_handle.write().unwrap().take();
-        assert_eq!(
-            Arc::strong_count(&self.outstanding_children),
-            1,
+        assert!(
+            Arc::get_mut(&mut self.outstanding_children).is_some(),
             "This runtime still has live children."
         );
         unsafe {
