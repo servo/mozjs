@@ -100,7 +100,6 @@ pub struct Handle<'a, T: 'a> {
     pub(crate) ptr: &'a T,
 }
 
-#[derive(Copy, Clone)]
 pub struct MutableHandle<'a, T: 'a> {
     pub(crate) ptr: *mut T,
     anchor: PhantomData<&'a mut T>,
@@ -158,6 +157,19 @@ impl<'a, T> IntoRawHandle for MutableHandle<'a, T> {
 }
 
 impl<'a, T> IntoRawMutableHandle for MutableHandle<'a, T> {
+    fn into_handle_mut(self) -> RawMutableHandle<T> {
+        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
+    }
+}
+
+impl<'a, 'b, T> IntoRawHandle for &'a mut MutableHandle<'b, T> {
+    type Target = T;
+    fn into_handle(self) -> RawHandle<T> {
+        unsafe { RawHandle::from_marked_location(self.ptr) }
+    }
+}
+
+impl<'a, 'b, T> IntoRawMutableHandle for &'a mut MutableHandle<'b, T> {
     fn into_handle_mut(self) -> RawMutableHandle<T> {
         unsafe { RawMutableHandle::from_marked_location(self.ptr) }
     }
