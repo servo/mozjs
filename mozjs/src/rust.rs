@@ -399,7 +399,7 @@ impl Runtime {
         script: &str,
         filename: &str,
         line_num: u32,
-        rval: MutableHandleValue,
+        rval: &mut MutableHandleValue,
     ) -> Result<(), ()> {
         debug!(
             "Evaluating script from {} with content {}",
@@ -874,7 +874,7 @@ pub unsafe fn is_window(obj: *mut JSObject) -> bool {
 }
 
 #[inline]
-pub unsafe fn try_to_outerize(mut rval: MutableHandleValue) {
+pub unsafe fn try_to_outerize(rval: &mut MutableHandleValue) {
     let obj = rval.to_object();
     if is_window(obj) {
         let obj = ToWindowProxyIfWindowSlow(obj);
@@ -884,24 +884,24 @@ pub unsafe fn try_to_outerize(mut rval: MutableHandleValue) {
 }
 
 #[inline]
-pub unsafe fn try_to_outerize_object(mut rval: MutableHandleObject) {
-    if is_window(*rval) {
-        let obj = ToWindowProxyIfWindowSlow(*rval);
+pub unsafe fn try_to_outerize_object(rval: &mut MutableHandleObject) {
+    if is_window(rval.get()) {
+        let obj = ToWindowProxyIfWindowSlow(rval.get());
         assert!(!obj.is_null());
         rval.set(obj);
     }
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object(cx: *mut JSContext, obj: MutableHandleObject) {
-    if get_object_realm(*obj) != get_context_realm(cx) {
+pub unsafe fn maybe_wrap_object(cx: *mut JSContext, obj: &mut MutableHandleObject) {
+    if get_object_realm(obj.get()) != get_context_realm(cx) {
         assert!(JS_WrapObject(cx, obj.into()));
     }
     try_to_outerize_object(obj);
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub unsafe fn maybe_wrap_object_value(cx: *mut JSContext, rval: &mut MutableHandleValue) {
     assert!(rval.is_object());
     let obj = rval.to_object();
     if get_object_realm(obj) != get_context_realm(cx) {
@@ -912,7 +912,7 @@ pub unsafe fn maybe_wrap_object_value(cx: *mut JSContext, rval: MutableHandleVal
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object_or_null_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub unsafe fn maybe_wrap_object_or_null_value(cx: *mut JSContext, rval: &mut MutableHandleValue) {
     assert!(rval.is_object_or_null());
     if !rval.is_null() {
         maybe_wrap_object_value(cx, rval);
@@ -920,7 +920,7 @@ pub unsafe fn maybe_wrap_object_or_null_value(cx: *mut JSContext, rval: MutableH
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub unsafe fn maybe_wrap_value(cx: *mut JSContext, rval: &mut MutableHandleValue) {
     if rval.is_string() {
         assert!(JS_WrapValue(cx, rval.into()));
     } else if rval.is_object() {
@@ -1231,7 +1231,7 @@ pub mod jsapi_wrapped {
             wrap!(@inner $saved <> ($($declargs)* $arg: Handle<$gentype> , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandle<$gentype> , )  <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandle<$gentype> , )  <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: Handle, $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($declargs)* $arg: Handle , )  <> ($($acc,)* $arg.into(),) <> $($rest)*);
@@ -1264,22 +1264,22 @@ pub mod jsapi_wrapped {
             wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleFunction , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleId , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleId , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleObject , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleObject , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleScript , $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleScript , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleString , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleString , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleSymbol , $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleSymbol , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleValue , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleValue , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <>  ($($acc:expr,)*) <> $arg:ident: $type:ty, $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($declargs)* $arg: $type,) <> ($($acc,)* $arg,) <> $($rest)*);
@@ -1360,3 +1360,4 @@ pub mod jsapi_wrapped {
     include!("jsapi_wrappers.in.rs");
     include!("glue_wrappers.in.rs");
 }
+
