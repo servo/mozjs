@@ -62,7 +62,6 @@ use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint1
 use crate::jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
 use crate::jsval::ObjectValue;
 use crate::panic::maybe_resume_unwind;
-use lazy_static::lazy_static;
 use log::{debug, warn};
 use mozjs_sys::jsapi::JS::SavedFrameResult;
 pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
@@ -159,9 +158,7 @@ enum EngineState {
     ShutDown,
 }
 
-lazy_static! {
-    static ref ENGINE_STATE: Mutex<EngineState> = Mutex::new(EngineState::Uninitialized);
-}
+static ENGINE_STATE: Mutex<EngineState> = Mutex::new(EngineState::Uninitialized);
 
 #[derive(Debug)]
 pub enum JSEngineError {
