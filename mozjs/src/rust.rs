@@ -1209,8 +1209,8 @@ pub mod wrappers {
     };
     use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
     use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    include!("jsapi_wrappers.in");
-    include!("glue_wrappers.in");
+    include!("jsapi_wrappers.in.rs");
+    include!("glue_wrappers.in.rs");
 }
 
 /** Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments.
@@ -1357,6 +1357,6 @@ pub mod jsapi_wrapped {
     };
     use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
     use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    include!("jsapi_wrappers.in");
-    include!("glue_wrappers.in");
+    include!("jsapi_wrappers.in.rs");
+    include!("glue_wrappers.in.rs");
 }
