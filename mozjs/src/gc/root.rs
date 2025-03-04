@@ -184,7 +184,7 @@ impl<'a, T> MutableHandle<'a, T> {
         unsafe { Handle::new(&*self.ptr) }
     }
 
-    pub fn new(ptr: &'a mut T) -> Self {
+    pub(crate) fn new(ptr: &'a mut T) -> Self {
         Self {
             ptr,
             anchor: PhantomData,
