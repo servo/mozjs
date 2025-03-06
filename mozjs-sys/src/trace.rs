@@ -138,13 +138,6 @@ unsafe impl<T: Traceable> Traceable for Rc<T> {
     }
 }
 
-unsafe impl<T: Traceable> Traceable for Arc<T> {
-    #[inline]
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        (**self).trace(trc);
-    }
-}
-
 unsafe impl<T: Traceable + ?Sized> Traceable for Box<T> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
