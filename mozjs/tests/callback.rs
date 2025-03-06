@@ -64,12 +64,13 @@ unsafe extern "C" fn puts(context: *mut JSContext, argc: u32, vp: *mut Value) ->
     let arg = mozjs::rust::Handle::from_raw(args.get(0));
     let js = mozjs::rust::ToString(context, arg);
     rooted!(in(context) let message_root = js);
-    EncodeStringToUTF8(context, message_root.handle().into(), |message| {
+    unsafe extern "C" fn cb(message: *const core::ffi::c_char) {
         let message = CStr::from_ptr(message);
         let message = str::from_utf8(message.to_bytes()).unwrap();
         assert_eq!(message, "Test Iñtërnâtiônàlizætiøn ┬─┬ノ( º _ ºノ) ");
         println!("{}", message);
-    });
+    }
+    EncodeStringToUTF8(context, message_root.handle().into(), cb);
 
     args.rval().set(UndefinedValue());
     true

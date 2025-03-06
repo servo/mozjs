@@ -11,7 +11,7 @@ use core::mem;
 
 pub use generated::root::*;
 
-pub type EncodedStringCallback = fn(*const core::ffi::c_char);
+pub type EncodedStringCallback = unsafe extern "C" fn(*const core::ffi::c_char);
 
 // manual glue stuff
 unsafe impl Sync for ProxyTraps {}
