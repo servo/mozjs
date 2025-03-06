@@ -29,6 +29,7 @@
 #![deny(missing_docs)]
 
 use crate::error::throw_type_error;
+use crate::gc::HandleObject;
 use crate::jsapi::AssertSameCompartment;
 use crate::jsapi::JS;
 use crate::jsapi::{ForOfIterator, ForOfIterator_NonIterableBehavior};
@@ -749,6 +750,14 @@ impl ToJSValConvertible for *mut JSObject {
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: &mut MutableHandleValue) {
         rval.set(ObjectOrNullValue(*self));
         maybe_wrap_object_or_null_value(cx, rval);
+    }
+}
+
+impl ToJSValConvertible for HandleObject<'_> {
+    #[inline]
+    unsafe fn to_jsval(&self, cx: *mut JSContext, rval: &mut MutableHandleValue) {
+        let obj = self.get();
+        obj.to_jsval(cx, rval)
     }
 }
 
