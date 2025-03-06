@@ -21,20 +21,20 @@ fn external_string() {
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(*context, 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(*context, global.get());
 
         let latin1_base = "test latin-1";
         let latin1_boxed = latin1_base.as_bytes().to_vec().into_boxed_slice();
@@ -44,13 +44,13 @@ fn external_string() {
             &EXTERNAL_STRING_CALLBACKS_TRAPS,
             latin1_base.len() as *mut c_void,
         );
-        rooted!(in(context) let latin1_jsstr = JS_NewExternalStringLatin1(
-            context,
+        rooted!(in(*context) let latin1_jsstr = JS_NewExternalStringLatin1(
+            *context,
             latin1_chars,
             latin1_base.len(),
             callbacks
         ));
-        assert_eq!(jsstr_to_string(context, latin1_jsstr.get()), latin1_base);
+        assert_eq!(jsstr_to_string(*context, latin1_jsstr.get()), latin1_base);
 
         let utf16_base = "test utf-16 $€ \u{10437}\u{24B62}";
         let utf16_boxed = utf16_base
@@ -64,13 +64,13 @@ fn external_string() {
             &EXTERNAL_STRING_CALLBACKS_TRAPS,
             utf16_len as *mut c_void,
         );
-        rooted!(in(context) let utf16_jsstr = JS_NewExternalUCString(
-            context,
+        rooted!(in(*context) let utf16_jsstr = JS_NewExternalUCString(
+            *context,
             utf16_chars,
             utf16_len,
             callbacks
         ));
-        assert_eq!(jsstr_to_string(context, utf16_jsstr.get()), utf16_base);
+        assert_eq!(jsstr_to_string(*context, utf16_jsstr.get()), utf16_base);
     }
 }
 

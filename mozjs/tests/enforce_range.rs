@@ -26,18 +26,18 @@ impl SM {
         let cx = rt.cx();
         #[cfg(feature = "debugmozjs")]
         unsafe {
-            mozjs::jsapi::SetGCZeal(cx, 2, 1);
+            mozjs::jsapi::SetGCZeal(*cx, 2, 1);
         }
         let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
         let c_option = RealmOptions::default();
-        rooted!(in(cx) let global = unsafe {JS_NewGlobalObject(
-            cx,
+        rooted!(in(*cx) let global = unsafe {JS_NewGlobalObject(
+            *cx,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         )});
-        let _ac = JSAutoRealm::new(cx, global.get());
+        let _ac = JSAutoRealm::new(*cx, global.get());
         Self {
             _engine: engine,
             rt,
@@ -52,7 +52,7 @@ impl SM {
         js: &str,
     ) -> Result<T, ()> {
         let cx = self.rt.cx();
-        rooted!(in(cx) let mut rval = UndefinedValue());
+        rooted!(in(*cx) let mut rval = UndefinedValue());
         unsafe {
             self.rt
                 .evaluate_script(
@@ -63,17 +63,17 @@ impl SM {
                     rval.handle_mut(),
                 )
                 .unwrap();
-            assert!(!JS_IsExceptionPending(cx));
+            assert!(!JS_IsExceptionPending(*cx));
             match <T as FromJSValConvertible>::from_jsval(
-                cx,
+                *cx,
                 rval.handle(),
                 ConversionBehavior::EnforceRange,
             ) {
                 Ok(ConversionResult::Success(t)) => Ok(t),
                 Ok(ConversionResult::Failure(e)) => panic!("{e}"),
                 Err(()) => {
-                    assert!(JS_IsExceptionPending(cx));
-                    JS_ClearPendingException(cx);
+                    assert!(JS_IsExceptionPending(*cx));
+                    JS_ClearPendingException(*cx);
                     Err(())
                 }
             }
