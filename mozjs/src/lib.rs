@@ -31,6 +31,10 @@
 //!
 
 pub mod jsapi {
+    // Resolve ambiguous imports
+    pub use mozjs_sys::jsapi::js::detail;
+    pub use mozjs_sys::jsapi::JS::{FrontendContext, MemoryUse};
+
     pub use mozjs_sys::jsapi::glue::*;
     pub use mozjs_sys::jsapi::js::detail::*;
     pub use mozjs_sys::jsapi::js::*;

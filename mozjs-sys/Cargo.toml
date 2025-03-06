@@ -27,6 +27,7 @@ debugmozjs = []
 profilemozjs = []
 jitspew = []
 crown = []
+oom_with_hook = []
 
 [dependencies]
 libc.workspace = true
