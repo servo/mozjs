@@ -100,7 +100,6 @@ pub struct Handle<'a, T: 'a> {
     pub(crate) ptr: &'a T,
 }
 
-#[derive(Copy, Clone)]
 pub struct MutableHandle<'a, T: 'a> {
     pub(crate) ptr: *mut T,
     anchor: PhantomData<&'a mut T>,
@@ -163,10 +162,21 @@ impl<'a, T> IntoRawMutableHandle for MutableHandle<'a, T> {
     }
 }
 
-impl<'a, T> Deref for Handle<'a, T> {
+impl<'a, 'b, T> IntoRawHandle for &'a mut MutableHandle<'b, T> {
     type Target = T;
+    fn into_handle(self) -> RawHandle<T> {
+        unsafe { RawHandle::from_marked_location(self.ptr) }
+    }
+}
 
-    fn deref(&self) -> &T {
+impl<'a, 'b, T> IntoRawMutableHandle for &'a mut MutableHandle<'b, T> {
+    fn into_handle_mut(self) -> RawMutableHandle<T> {
+        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
+    }
+}
+
+impl<'a, T> Handle<'a, T> {
+    pub unsafe fn as_ref(&self) -> &T {
         self.ptr
     }
 }
@@ -205,26 +215,88 @@ impl<'a, T> MutableHandle<'a, T> {
         unsafe { *self.ptr = v }
     }
 
+    /// SAFETY: A GC must not be triggered while this reference exists
+    pub unsafe fn as_ref(&self) -> &T {
+        unsafe { &*self.ptr }
+    }
+
+    /// SAFETY: A GC must not be triggered while this reference exists
+    pub unsafe fn as_mut_ref(&mut self) -> &mut T {
+        unsafe { &mut *self.ptr }
+    }
+
     pub(crate) fn raw(&mut self) -> RawMutableHandle<T> {
         unsafe { RawMutableHandle::from_marked_location(self.ptr) }
     }
 }
 
-impl<'a, T> Deref for MutableHandle<'a, T> {
-    type Target = T;
+impl MutableHandleValue<'_> {
+    pub fn is_null(&self) -> bool {
+        self.get().is_null()
+    }
 
-    fn deref(&self) -> &T {
-        unsafe { &*self.ptr }
+    pub fn is_undefined(&self) -> bool {
+        self.get().is_undefined()
+    }
+
+    pub fn is_null_or_undefined(&self) -> bool {
+        self.get().is_null_or_undefined()
+    }
+
+    pub fn is_boolean(&self) -> bool {
+        self.get().is_boolean()
+    }
+
+    pub fn is_int32(&self) -> bool {
+        self.get().is_int32()
+    }
+
+    pub fn is_number(&self) -> bool {
+        self.get().is_number()
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        self.get().is_symbol()
+    }
+
+    pub fn is_string(&self) -> bool {
+        self.get().is_string()
+    }
+
+    pub fn is_object(&self) -> bool {
+        self.get().is_object()
+    }
+
+    pub fn is_object_or_null(&self) -> bool {
+        self.get().is_object_or_null()
+    }
+
+    pub fn to_boolean(&self) -> bool {
+        self.get().to_boolean()
+    }
+
+    pub fn to_int32(&self) -> i32 {
+        self.get().to_int32()
+    }
+
+    pub fn to_number(&self) -> f64 {
+        self.get().to_number()
+    }
+
+    pub fn to_symbol(&self) -> *mut Symbol {
+        self.get().to_symbol()
+    }
+
+    pub fn to_string(&self) -> *mut JSString {
+        self.get().to_string()
+    }
+
+    pub fn to_object(&self) -> *mut JSObject {
+        self.get().to_object()
     }
 }
 
-impl<'a, T> DerefMut for MutableHandle<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.ptr }
-    }
-}
-
-impl HandleValue<'static> {
+impl HandleValue<'_> {
     pub fn null() -> Self {
         unsafe { Self::from_raw(RawHandleValue::null()) }
     }
@@ -232,12 +304,87 @@ impl HandleValue<'static> {
     pub fn undefined() -> Self {
         unsafe { Self::from_raw(RawHandleValue::undefined()) }
     }
+
+    pub fn is_null(&self) -> bool {
+        self.get().is_null()
+    }
+
+    pub fn is_undefined(&self) -> bool {
+        self.get().is_undefined()
+    }
+
+    pub fn is_null_or_undefined(&self) -> bool {
+        self.get().is_null_or_undefined()
+    }
+
+    pub fn is_boolean(&self) -> bool {
+        self.get().is_boolean()
+    }
+
+    pub fn is_number(&self) -> bool {
+        self.get().is_number()
+    }
+
+    pub fn is_int32(&self) -> bool {
+        self.get().is_int32()
+    }
+
+    pub fn is_symbol(&self) -> bool {
+        self.get().is_symbol()
+    }
+
+    pub fn is_string(&self) -> bool {
+        self.get().is_string()
+    }
+
+    pub fn is_object(&self) -> bool {
+        self.get().is_object()
+    }
+
+    pub fn is_object_or_null(&self) -> bool {
+        self.get().is_object_or_null()
+    }
+
+    pub fn to_boolean(&self) -> bool {
+        self.get().to_boolean()
+    }
+
+    pub fn to_int32(&self) -> i32 {
+        self.get().to_int32()
+    }
+
+    pub fn to_number(&self) -> f64 {
+        self.get().to_number()
+    }
+
+    pub fn to_symbol(&self) -> *mut Symbol {
+        self.get().to_symbol()
+    }
+
+    pub fn to_string(&self) -> *mut JSString {
+        self.get().to_string()
+    }
+
+    pub fn to_object(&self) -> *mut JSObject {
+        self.get().to_object()
+    }
 }
+
 
 const ConstNullValue: *mut JSObject = ptr::null_mut();
 
-impl<'a> HandleObject<'a> {
+impl HandleObject<'_> {
     pub fn null() -> Self {
         unsafe { HandleObject::from_marked_location(&ConstNullValue) }
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.get().is_null()
+    }
+}
+
+impl MutableHandleObject<'_> {
+    pub fn is_null(&self) -> bool {
+        self.get().is_null()
     }
 }

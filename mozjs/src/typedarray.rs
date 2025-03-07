@@ -112,7 +112,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> FromJSValConvertible for TypedArr
 
 impl<T: TypedArrayElement, S: JSObjectStorage> ToJSValConvertible for TypedArray<T, S> {
     #[inline]
-    unsafe fn to_jsval(&self, cx: *mut JSContext, rval: MutableHandleValue) {
+    unsafe fn to_jsval(&self, cx: *mut JSContext, rval: &mut MutableHandleValue) {
         ToJSValConvertible::to_jsval(&self.object.as_raw(), cx, rval);
     }
 }
@@ -232,7 +232,7 @@ impl<T: TypedArrayElementCreator + TypedArrayElement, S: JSObjectStorage> TypedA
     pub unsafe fn create(
         cx: *mut JSContext,
         with: CreateWith<T::Element>,
-        mut result: MutableHandleObject,
+        result: &mut MutableHandleObject,
     ) -> Result<(), ()> {
         let length = match with {
             CreateWith::Length(len) => len,

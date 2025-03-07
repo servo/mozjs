@@ -62,7 +62,7 @@ fn typedarray() {
 
         rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
         assert!(
-            Uint32Array::create(context, CreateWith::Slice(&[1, 3, 5]), rval.handle_mut()).is_ok()
+            Uint32Array::create(context, CreateWith::Slice(&[1, 3, 5]), &mut rval.handle_mut()).is_ok()
         );
 
         typedarray!(in(context) let array: Uint32Array = rval.get());
@@ -77,7 +77,7 @@ fn typedarray() {
         assert!(array.is_err());
 
         rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
-        assert!(Uint32Array::create(context, CreateWith::Length(5), rval.handle_mut()).is_ok());
+        assert!(Uint32Array::create(context, CreateWith::Length(5), &mut rval.handle_mut()).is_ok());
 
         typedarray!(in(context) let array: Uint32Array = rval.get());
         assert_eq!(array.unwrap().as_slice(), &[0, 0, 0, 0, 0]);
