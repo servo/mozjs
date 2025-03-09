@@ -893,9 +893,9 @@ pub unsafe fn try_to_outerize_object(mut rval: MutableHandleObject) {
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object(cx: *mut JSContext, obj: MutableHandleObject) {
+pub unsafe fn maybe_wrap_object(cx: *mut JSContext, mut obj: MutableHandleObject) {
     if get_object_realm(*obj) != get_context_realm(cx) {
-        assert!(JS_WrapObject(cx, obj.into()));
+        assert!(JS_WrapObject(cx, obj.reborrow().into()));
     }
     try_to_outerize_object(obj);
 }
@@ -1231,13 +1231,13 @@ pub mod jsapi_wrapped {
             wrap!(@inner $saved <> ($($declargs)* $arg: Handle<$gentype> , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandle<$gentype> , )  <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandle<$gentype> , )  <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: Handle, $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($declargs)* $arg: Handle , )  <> ($($acc,)* $arg.into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandle, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandle , )  <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandle , )  <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleFunction , $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($declargs)* $arg: HandleFunction , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
@@ -1261,25 +1261,25 @@ pub mod jsapi_wrapped {
             wrap!(@inner $saved <> ($($declargs)* $arg: HandleValue , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleFunction , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleFunction , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandleFunction , ) <> ($($acc,)* (*arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleId , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandleId , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleObject , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandleObject , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleScript , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleScript , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandleScript , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleString , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandleString , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleSymbol , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleSymbol , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandleSymbol , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleValue , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
+            wrap!(@inner $saved <> ($($declargs)* $arg: MutableHandleValue , ) <> ($($acc,)* ($arg).into(),) <> $($rest)*);
         };
         (@inner $saved:tt <> ($($declargs:tt)*) <>  ($($acc:expr,)*) <> $arg:ident: $type:ty, $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($declargs)* $arg: $type,) <> ($($acc,)* $arg,) <> $($rest)*);
