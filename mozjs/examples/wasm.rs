@@ -13,7 +13,7 @@ use mozjs::jsapi::*;
 use mozjs::jsval::ObjectValue;
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
-use mozjs::rust::jsapi_wrapped::{Construct1, JS_GetProperty, JS_SetProperty};
+use mozjs::rust::wrappers::{Construct1, JS_GetProperty, JS_SetProperty};
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
 use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime};
 use mozjs_sys::jsgc::ValueArray;
