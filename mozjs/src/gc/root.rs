@@ -100,7 +100,6 @@ pub struct Handle<'a, T: 'a> {
     pub(crate) ptr: &'a T,
 }
 
-#[derive(Copy, Clone)]
 pub struct MutableHandle<'a, T: 'a> {
     pub(crate) ptr: *mut T,
     anchor: PhantomData<&'a mut T>,
@@ -203,6 +202,26 @@ impl<'a, T> MutableHandle<'a, T> {
         T: Copy,
     {
         unsafe { *self.ptr = v }
+    }
+
+    /// Creates a copy of this object, with a shorter lifetime, that holds a
+    /// mutable borrow on the original object. When you write code that wants
+    /// to use a `MutableHandle` more than once, you will typically need to
+    /// call `reborrow` on all but the last usage. The same way that you might
+    /// naively clone a type to allow it to be passed to multiple functions.
+    ///
+    /// This is the same thing that happens with regular mutable references,
+    /// except there the compiler implicitly inserts the reborrow calls. Until
+    /// rust gains a feature to implicitly reborrow other types, we have to do
+    /// it by hand.
+    pub fn reborrow<'b>(&'b mut self) -> MutableHandle<'b, T>
+    where
+        'a: 'b,
+    {
+        MutableHandle {
+            ptr: self.ptr,
+            anchor: PhantomData,
+        }
     }
 
     pub(crate) fn raw(&mut self) -> RawMutableHandle<T> {

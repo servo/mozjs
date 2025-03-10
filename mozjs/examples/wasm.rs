@@ -6,7 +6,6 @@
 //! and do some setup on both of these. You also need to enter a "realm"
 //! (environment within one global object) before you can execute code.
 
-use ::std::ffi::c_char;
 use ::std::ptr;
 use ::std::ptr::null_mut;
 
@@ -14,7 +13,7 @@ use mozjs::jsapi::*;
 use mozjs::jsval::ObjectValue;
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
-use mozjs::rust::jsapi_wrapped::{Construct1, JS_GetProperty, JS_SetProperty};
+use mozjs::rust::wrappers::{Construct1, JS_GetProperty, JS_SetProperty};
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
 use mozjs::rust::{IntoHandle, JSEngine, RealmOptions, Runtime};
 use mozjs_sys::jsgc::ValueArray;
@@ -64,20 +63,20 @@ fn run(rt: Runtime) {
             rt.cx(),
             global.handle(),
             c"WebAssembly".as_ptr(),
-            &mut wasm.handle_mut()
+            wasm.handle_mut()
         ));
         rooted!(in(rt.cx()) let mut wasm_obj = wasm.to_object());
         assert!(JS_GetProperty(
             rt.cx(),
             wasm_obj.handle(),
             c"Module".as_ptr(),
-            &mut wasm_module.handle_mut()
+            wasm_module.handle_mut()
         ));
         assert!(JS_GetProperty(
             rt.cx(),
             wasm_obj.handle(),
             c"Instance".as_ptr(),
-            &mut wasm_instance.handle_mut()
+            wasm_instance.handle_mut()
         ));
 
         // ptr needs to be aligned to 8
@@ -100,7 +99,7 @@ fn run(rt: Runtime) {
                 rt.cx(),
                 wasm_module.handle(),
                 &args,
-                &mut module.handle_mut()
+                module.handle_mut()
             ))
         }
 
@@ -136,7 +135,7 @@ fn run(rt: Runtime) {
                 rt.cx(),
                 wasm_instance.handle(),
                 &HandleValueArray::from(&args),
-                &mut instance.handle_mut()
+                instance.handle_mut()
             ));
         }
 
@@ -147,7 +146,7 @@ fn run(rt: Runtime) {
             rt.cx(),
             instance.handle(),
             c"exports".as_ptr(),
-            &mut exports.handle_mut()
+            exports.handle_mut()
         ));
 
         rooted!(in(rt.cx()) let mut exports_obj = exports.to_object());
@@ -156,7 +155,7 @@ fn run(rt: Runtime) {
             rt.cx(),
             exports_obj.handle(),
             c"foo".as_ptr(),
-            &mut foo.handle_mut()
+            foo.handle_mut()
         ));
 
         // call foo and get its result
