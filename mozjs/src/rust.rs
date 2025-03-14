@@ -1065,7 +1065,7 @@ macro_rules! capture_stack {
     }
 }
 
-/// Wrappers for JSAPI methods that ačept lifetimed Handle and MutableHandle arguments
+/// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments
 pub mod wrappers {
     macro_rules! wrap {
         // The invocation of @inner has the following form:
