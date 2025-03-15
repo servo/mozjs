@@ -45,6 +45,7 @@ use crate::rust::{HandleValue, MutableHandleValue};
 use crate::rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToUint64};
 use libc;
 use log::debug;
+use mozjs_sys::jsgc::Rooted;
 use std::borrow::Cow;
 use std::mem;
 use std::rc::Rc;
@@ -664,7 +665,7 @@ struct ForOfIteratorGuard<'a> {
 impl<'a> ForOfIteratorGuard<'a> {
     fn new(cx: *mut JSContext, root: &'a mut ForOfIterator) -> Self {
         unsafe {
-            root.iterator.add_to_root_stack(cx);
+            Rooted::add_to_root_stack(&raw mut root.iterator, cx);
         }
         ForOfIteratorGuard { root }
     }

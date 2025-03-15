@@ -21,16 +21,21 @@ use mozjs_sys::jsgc::ValueArray;
     crown::unrooted_must_root_lint::allow_unrooted_interior
 )]
 pub struct RootedGuard<'a, T: 'a + RootKind> {
-    root: &'a mut Rooted<T>,
+    root: *mut Rooted<T>,
+    anchor: PhantomData<&'a mut Rooted<T>>,
 }
 
 impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     pub fn new(cx: *mut JSContext, root: &'a mut Rooted<T>, initial: T) -> Self {
         root.ptr.write(initial);
         unsafe {
-            root.add_to_root_stack(cx);
+            let root: *mut Rooted<T> = root;
+            Rooted::add_to_root_stack(root, cx);
+            RootedGuard {
+                root,
+                anchor: PhantomData,
+            }
         }
-        RootedGuard { root }
     }
 
     pub fn handle(&'a self) -> Handle<'a, T> {
@@ -46,16 +51,16 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
         T: Copy,
     {
         // SAFETY: The rooted value is initialized as long as we exist
-        unsafe { self.root.ptr.assume_init() }
+        unsafe { (*self.root).ptr.assume_init() }
     }
 
     pub fn set(&mut self, v: T) {
         // SAFETY: The rooted value is initialized as long as we exist
         unsafe {
             // Make sure the drop impl for T is called
-            self.root.ptr.assume_init_drop()
+            (*self.root).ptr.assume_init_drop();
+            (*self.root).ptr.write(v);
         }
-        self.root.ptr.write(v);
     }
 }
 
@@ -63,14 +68,14 @@ impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         // SAFETY: The rooted value is initialized as long as we exist
-        unsafe { self.root.ptr.assume_init_ref() }
+        unsafe { (*self.root).ptr.assume_init_ref() }
     }
 }
 
 impl<'a, T: 'a + RootKind> DerefMut for RootedGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T {
         // SAFETY: The rooted value is initialized as long as we exist
-        unsafe { self.root.ptr.assume_init_mut() }
+        unsafe { (*self.root).ptr.assume_init_mut() }
     }
 }
 
@@ -79,19 +84,19 @@ impl<'a, T: 'a + RootKind> Drop for RootedGuard<'a, T> {
         // SAFETY: The rooted value is initialized as long as we exist
         unsafe {
             // Make sure the drop impl for T is called
-            self.root.ptr.assume_init_drop()
+            (*self.root).ptr.assume_init_drop();
+            (*self.root).ptr = MaybeUninit::zeroed();
         }
-        self.root.ptr = MaybeUninit::zeroed();
 
         unsafe {
-            self.root.remove_from_root_stack();
+            (*self.root).remove_from_root_stack();
         }
     }
 }
 
 impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleValueArray {
     fn from(array: &RootedGuard<'a, ValueArray<N>>) -> JS::HandleValueArray {
-        JS::HandleValueArray::from(&*array.root)
+        JS::HandleValueArray::from(unsafe { &*array.root })
     }
 }
 

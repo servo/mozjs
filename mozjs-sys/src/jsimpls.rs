@@ -404,12 +404,12 @@ impl JSNativeWrapper {
 }
 
 impl RootedBase {
-    unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext, kind: JS::RootKind) {
+    unsafe fn add_to_root_stack(this: *mut Self, cx: *mut JSContext, kind: JS::RootKind) {
         let stack = Self::get_root_stack(cx, kind);
-        self.stack = stack;
-        self.prev = *stack;
+        (*this).stack = stack;
+        (*this).prev = *stack;
 
-        *stack = self as *mut _ as usize as _;
+        *stack = this as usize as _;
     }
 
     unsafe fn remove_from_root_stack(&mut self) {
@@ -440,8 +440,9 @@ impl<T: RootKind> JS::Rooted<T> {
         }
     }
 
-    pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext) {
-        self.base.add_to_root_stack(cx, T::KIND)
+    pub unsafe fn add_to_root_stack(this: *mut Self, cx: *mut JSContext) {
+        let base = unsafe { &raw mut (*this).base };
+        RootedBase::add_to_root_stack(base, cx, T::KIND)
     }
 
     pub unsafe fn remove_from_root_stack(&mut self) {
