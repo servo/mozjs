@@ -109,13 +109,6 @@ unsafe impl Traceable for Heap<Value> {
     }
 }
 
-unsafe impl Traceable for Value {
-    #[inline]
-    unsafe fn trace(&self, trc: *mut JSTracer) {
-        CallValueRootTracer(trc, self as *const _ as *mut Self, c"value".as_ptr());
-    }
-}
-
 unsafe impl Traceable for Heap<jsid> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {

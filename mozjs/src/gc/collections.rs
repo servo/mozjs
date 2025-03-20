@@ -2,9 +2,10 @@ use crate::gc::RootedTraceableSet;
 use crate::jsapi::{Heap, JSTracer};
 use crate::rust::Handle;
 use mozjs_sys::jsapi::JS;
-use mozjs_sys::jsgc::GCMethods;
+use mozjs_sys::jsgc::{GCMethods, RootKind};
 use mozjs_sys::jsval::JSVal;
 use mozjs_sys::trace::Traceable;
+use std::cell::UnsafeCell;
 use std::ops::{Deref, DerefMut};
 
 /// A vector of items to be rooted with `RootedVec`.
@@ -40,11 +41,21 @@ pub struct RootedVec<'a, T: Traceable + 'static> {
     root: &'a mut RootableVec<T>,
 }
 
-impl From<&RootedVec<'_, JSVal>> for JS::HandleValueArray {
-    fn from(vec: &RootedVec<'_, JSVal>) -> JS::HandleValueArray {
+impl<T> RootedVec<'_, Heap<T>>
+where
+    T: 'static + GCMethods + Copy,
+    Heap<T>: Traceable,
+{
+    pub fn push_heap(&mut self, v: T) {
+        self.root.v.push(Heap{ ptr: UnsafeCell::new(v) })
+    }
+}
+
+impl From<&RootedVec<'_, Heap<JSVal>>> for JS::HandleValueArray {
+    fn from(vec: &RootedVec<'_, Heap<JSVal>>) -> JS::HandleValueArray {
         JS::HandleValueArray {
             length_: vec.root.v.len(),
-            elements_: vec.root.v.as_ptr(),
+            elements_: vec.root.v.as_ptr().cast(),
         }
     }
 }
