@@ -8,10 +8,8 @@
 #include "prenv.h"
 #include "prprf.h"
 #include <string.h>
-#if defined(ANDROID)
+#ifdef ANDROID
 #include <android/log.h>
-#elif defined(OHOS)
-#  include <hilog/log.h>
 #endif
 
 /*
@@ -105,19 +103,6 @@ static void OutputDebugStringA(const char* msg) {
         char savebyte = buf[nb];                             \
         buf[nb] = '\0';                                      \
         __android_log_write(ANDROID_LOG_INFO, "PRLog", buf); \
-        buf[nb] = savebyte;                                  \
-    } else {                                                 \
-        PR_Write(fd, buf, nb);                               \
-    }                                                        \
-    PR_END_MACRO
-#elif defined(OHOS)
-#define _PUT_LOG(fd, buf, nb)                                \
-    PR_BEGIN_MACRO                                           \
-    if (fd == _pr_stderr) {                                  \
-        char savebyte = buf[nb];                             \
-        buf[nb] = '\0';                                      \
-        (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "PRLog",   \
-               "%{public}s\n", buf);             \
         buf[nb] = savebyte;                                  \
     } else {                                                 \
         PR_Write(fd, buf, nb);                               \
@@ -566,8 +551,6 @@ PR_IMPLEMENT(void) PR_Abort(void)
     PR_LogPrint("Aborting");
 #ifdef ANDROID
     __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
-#elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog", "Aborting\n");
 #endif
     abort();
 }
@@ -584,9 +567,6 @@ PR_IMPLEMENT(void) PR_Assert(const char *s, const char *file, PRIntn ln)
 #elif defined(ANDROID)
     __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n",
                          s, file, ln);
-#elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog",
-                        "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
 #endif
     abort();
 }
