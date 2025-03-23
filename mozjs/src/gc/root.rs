@@ -100,10 +100,17 @@ impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleVal
     }
 }
 
-#[derive(Clone, Copy)]
 pub struct Handle<'a, T: 'a> {
     pub(crate) ptr: &'a T,
 }
+
+impl<T> Clone for Handle<'_, T> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<T> Copy for Handle<'_, T> {}
 
 pub struct MutableHandle<'a, T: 'a> {
     pub(crate) ptr: *mut T,
