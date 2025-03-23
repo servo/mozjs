@@ -167,6 +167,29 @@ pub trait FromJSValConvertible: Sized {
     ) -> Result<ConversionResult<Self>, ()>;
 }
 
+/// A trait to convert `JSVal`s to Rust types inside of Rc wrappers.
+pub trait FromJSValConvertibleRc: Sized {
+    /// Convert `val` to type `Self`.
+    /// If it returns `Err(())`, a JSAPI exception is pending.
+    /// If it returns `Ok(Failure(reason))`, there is no pending JSAPI exception.
+    unsafe fn from_jsval(
+        cx: *mut JSContext,
+        val: HandleValue,
+    ) -> Result<ConversionResult<Rc<Self>>, ()>;
+}
+
+impl<T: FromJSValConvertibleRc> FromJSValConvertible for Rc<T> {
+    type Config = ();
+
+    unsafe fn from_jsval(
+        cx: *mut JSContext,
+        val: HandleValue,
+        _option: (),
+    ) -> Result<ConversionResult<Rc<T>>, ()> {
+        <T as FromJSValConvertibleRc>::from_jsval(cx, val)
+    }
+}
+
 /// Behavior for converting out-of-range integers.
 #[derive(PartialEq, Eq, Clone)]
 pub enum ConversionBehavior {
