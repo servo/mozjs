@@ -112,6 +112,13 @@ impl<T> JS::MutableHandle<T> {
     {
         unsafe { *self.ptr = v }
     }
+
+    /// The returned pointer is aliased by a pointer that the GC will read
+    /// through, and thus `&mut` references created from it must not be held
+    /// across GC pauses.
+    pub fn as_ptr(self) -> *mut T {
+        self.ptr
+    }
 }
 
 impl JS::HandleValue {
