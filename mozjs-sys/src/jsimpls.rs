@@ -27,7 +27,6 @@ use crate::jsval::{JSVal, UndefinedValue};
 use std::marker::PhantomData;
 use std::mem;
 use std::ops::Deref;
-use std::ops::DerefMut;
 use std::ptr;
 
 impl<T> Deref for JS::Handle<T> {
@@ -43,12 +42,6 @@ impl<T> Deref for JS::MutableHandle<T> {
 
     fn deref<'a>(&'a self) -> &'a T {
         unsafe { &*self.ptr }
-    }
-}
-
-impl<T> DerefMut for JS::MutableHandle<T> {
-    fn deref_mut<'a>(&'a mut self) -> &'a mut T {
-        unsafe { &mut *self.ptr }
     }
 }
 
