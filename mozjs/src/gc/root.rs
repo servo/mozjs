@@ -249,12 +249,6 @@ impl<'a, T> Deref for MutableHandle<'a, T> {
     }
 }
 
-impl<'a, T> DerefMut for MutableHandle<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.ptr }
-    }
-}
-
 impl HandleValue<'static> {
     pub fn null() -> Self {
         unsafe { Self::from_raw(RawHandleValue::null()) }
