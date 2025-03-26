@@ -128,6 +128,10 @@ impl<T> Clone for Handle<'_, T> {
 
 impl<T> Copy for Handle<'_, T> {}
 
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 pub struct MutableHandle<'a, T: 'a> {
     pub(crate) ptr: *mut T,
     anchor: PhantomData<&'a mut T>,
