@@ -50,6 +50,13 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
         // SAFETY: self.root points to an inbounds allocation
         unsafe { (&raw mut (*self.root).ptr).cast() }
     }
+
+    /// Safety: GC must not run during the lifetime of the returned reference.
+    pub unsafe fn as_mut<'b>(&'b mut self) -> &'b mut T
+    where
+        'a: 'b,
+    {
+        &mut *(self.as_ptr())
     }
 
     pub fn get(&self) -> T
@@ -70,18 +77,21 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     }
 }
 
+impl<'a, T> RootedGuard<'a, Option<T>>
+where
+    Option<T>: RootKind,
+{
+    pub fn take(&mut self) -> Option<T> {
+        // Safety: No GC occurs during take call
+        unsafe { self.as_mut().take() }
+    }
+}
+
 impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
         // SAFETY: The rooted value is initialized as long as we exist
         unsafe { (*self.root).ptr.assume_init_ref() }
-    }
-}
-
-impl<'a, T: 'a + RootKind> DerefMut for RootedGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        // SAFETY: The rooted value is initialized as long as we exist
-        unsafe { (*self.root).ptr.assume_init_mut() }
     }
 }
 
