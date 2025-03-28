@@ -35,10 +35,10 @@ fn virtual_trace_called() {
     let context = runtime.cx();
 
     let mut rooter = CustomAutoRooter::new(TraceCheck::new());
-    let guard = rooter.root(context);
+    let guard = rooter.root(*context);
 
     unsafe {
-        JS_GC(context, GCReason::API);
+        JS_GC(*context, GCReason::API);
     }
 
     assert!(guard.trace_was_called.get());
