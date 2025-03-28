@@ -1,15 +1,15 @@
 #[macro_export]
 macro_rules! rooted {
 	(in($cx:expr) let $($var:ident)+ = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
+        let mut __root = ::std::mem::MaybeUninit::uninit();
         let $($var)+ = $crate::gc::RootedGuard::new($cx, &mut __root, $init);
     };
 	(in($cx:expr) let $($var:ident)+: $type:ty = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
+        let mut __root = ::std::mem::MaybeUninit::uninit();
         let $($var)+: $crate::gc::RootedGuard<$type> = $crate::gc::RootedGuard::new($cx, &mut __root, $init);
     };
 	(in($cx:expr) let $($var:ident)+: $type:ty) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
+        let mut __root = ::std::mem::MaybeUninit::uninit();
         // SAFETY:
         // We're immediately storing the initial value in a rooted location.
         let $($var)+: $crate::gc::RootedGuard<$type> = $crate::gc::RootedGuard::new(

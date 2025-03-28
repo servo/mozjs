@@ -722,8 +722,8 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         let zero = mem::zeroed();
         let mut iterator = ForOfIterator {
             cx_: cx,
-            iterator: RootedObject::new_unrooted(),
-            nextMethod: RootedValue::new_unrooted(),
+            iterator: RootedObject::new_unrooted(ptr::null_mut()),
+            nextMethod: RootedValue::new_unrooted(JSVal { asBits_: 0 }),
             index: ::std::u32::MAX, // NOT_ARRAY
             ..zero
         };
@@ -737,7 +737,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
             return Err(());
         }
 
-        if iterator.iterator.ptr.assume_init_ref().is_null() {
+        if iterator.iterator.ptr.is_null() {
             return Ok(ConversionResult::Failure("Value is not iterable".into()));
         }
 

@@ -26,10 +26,10 @@ pub struct RootedGuard<'a, T: 'a + RootKind> {
 }
 
 impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
-    pub fn new(cx: *mut JSContext, root: &'a mut Rooted<T>, initial: T) -> Self {
-        root.ptr.write(initial);
+    pub fn new(cx: *mut JSContext, root: &'a mut MaybeUninit<Rooted<T>>, initial: T) -> Self {
+        let root: *mut Rooted<T> = root.write(Rooted::new_unrooted(initial));
+
         unsafe {
-            let root: *mut Rooted<T> = root;
             Rooted::add_to_root_stack(root, cx);
             RootedGuard {
                 root,
@@ -48,7 +48,7 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
 
     pub fn as_ptr(&self) -> *mut T {
         // SAFETY: self.root points to an inbounds allocation
-        unsafe { (&raw mut (*self.root).ptr).cast() }
+        unsafe { (&raw mut (*self.root).ptr) }
     }
 
     /// Safety: GC must not run during the lifetime of the returned reference.
@@ -63,17 +63,12 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     where
         T: Copy,
     {
-        // SAFETY: The rooted value is initialized as long as we exist
-        unsafe { (*self.root).ptr.assume_init() }
+        *self.deref()
     }
 
     pub fn set(&mut self, v: T) {
-        // SAFETY: The rooted value is initialized as long as we exist
-        unsafe {
-            // Make sure the drop impl for T is called
-            (*self.root).ptr.assume_init_drop();
-            (*self.root).ptr.write(v);
-        }
+        // SAFETY: GC does not run during this block
+        unsafe { *self.as_mut() = v };
     }
 }
 
@@ -90,18 +85,18 @@ where
 impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
-        // SAFETY: The rooted value is initialized as long as we exist
-        unsafe { (*self.root).ptr.assume_init_ref() }
+        unsafe { &(*self.root).ptr }
     }
 }
 
 impl<'a, T: 'a + RootKind> Drop for RootedGuard<'a, T> {
     fn drop(&mut self) {
-        // SAFETY: The rooted value is initialized as long as we exist
+        // SAFETY: The `drop_in_place` invariants are upheld:
+        // https://doc.rust-lang.org/std/ptr/fn.drop_in_place.html#safety
         unsafe {
-            // Make sure the drop impl for T is called
-            (*self.root).ptr.assume_init_drop();
-            (*self.root).ptr = MaybeUninit::zeroed();
+            let ptr = self.as_ptr();
+            ptr::drop_in_place(ptr);
+            ptr.write_bytes(0, 1);
         }
 
         unsafe {
