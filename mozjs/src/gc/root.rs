@@ -236,6 +236,14 @@ impl<'a, T> MutableHandle<'a, T> {
         unsafe { *self.ptr = v }
     }
 
+    /// Safety: GC must not run during the lifetime of the returned reference.
+    pub unsafe fn as_mut<'b>(&'b mut self) -> &'b mut T
+    where
+        'a: 'b,
+    {
+        &mut *(self.ptr)
+    }
+
     /// Creates a copy of this object, with a shorter lifetime, that holds a
     /// mutable borrow on the original object. When you write code that wants
     /// to use a `MutableHandle` more than once, you will typically need to
@@ -261,17 +269,18 @@ impl<'a, T> MutableHandle<'a, T> {
     }
 }
 
+impl<'a, T> MutableHandle<'a, Option<T>> {
+    pub fn take(&mut self) -> Option<T> {
+        // Safety: No GC occurs during take call
+        unsafe { self.as_mut().take() }
+    }
+}
+
 impl<'a, T> Deref for MutableHandle<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
         unsafe { &*self.ptr }
-    }
-}
-
-impl<'a, T> DerefMut for MutableHandle<'a, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        unsafe { &mut *self.ptr }
     }
 }
 
