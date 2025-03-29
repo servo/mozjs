@@ -25,7 +25,6 @@ use crate::jsid::VoidId;
 use crate::jsval::{JSVal, UndefinedValue};
 
 use std::marker::PhantomData;
-use std::mem;
 use std::ops::Deref;
 use std::ptr;
 
@@ -144,7 +143,7 @@ impl<const N: usize> From<&Rooted<ValueArray<N>>> for JS::HandleValueArray {
     fn from(array: &Rooted<ValueArray<N>>) -> JS::HandleValueArray {
         JS::HandleValueArray {
             length_: N,
-            elements_: unsafe { array.ptr.assume_init_ref().get_ptr() },
+            elements_: array.data.get_ptr(),
         }
     }
 }
@@ -429,14 +428,14 @@ impl RootedBase {
 }
 
 impl<T: RootKind> JS::Rooted<T> {
-    pub fn new_unrooted() -> JS::Rooted<T> {
+    pub fn new_unrooted(initial: T) -> JS::Rooted<T> {
         JS::Rooted {
             vtable: T::VTABLE,
             base: RootedBase {
                 stack: ptr::null_mut(),
                 prev: ptr::null_mut(),
             },
-            ptr: mem::MaybeUninit::zeroed(),
+            data: initial,
         }
     }
 
