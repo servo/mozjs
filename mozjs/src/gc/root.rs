@@ -48,7 +48,7 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
 
     pub fn as_ptr(&self) -> *mut T {
         // SAFETY: self.root points to an inbounds allocation
-        unsafe { (&raw mut (*self.root).ptr) }
+        unsafe { (&raw mut (*self.root).data) }
     }
 
     /// Safety: GC must not run during the lifetime of the returned reference.
@@ -85,7 +85,7 @@ where
 impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &T {
-        unsafe { &(*self.root).ptr }
+        unsafe { &(*self.root).data }
     }
 }
 

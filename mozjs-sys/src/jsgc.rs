@@ -104,7 +104,7 @@ pub trait Rootable: crate::trace::Traceable + Sized {
     unsafe extern "C" fn trace(this: *mut c_void, trc: *mut JSTracer, _name: *const c_char) {
         let rooted = this as *mut Rooted<Self>;
         let rooted = rooted.as_mut().unwrap();
-        <Self as crate::trace::Traceable>::trace(&mut rooted.ptr, trc);
+        <Self as crate::trace::Traceable>::trace(&mut rooted.data, trc);
     }
 }
 
@@ -132,7 +132,7 @@ pub struct RootedBase {
 pub struct Rooted<T: RootKind> {
     pub vtable: T::Vtable,
     pub base: RootedBase,
-    pub ptr: T,
+    pub data: T,
 }
 
 /// Trait that provides a GC-safe default value for the given type, if one exists.

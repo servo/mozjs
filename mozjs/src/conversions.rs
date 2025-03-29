@@ -737,7 +737,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
             return Err(());
         }
 
-        if iterator.iterator.ptr.is_null() {
+        if iterator.iterator.data.is_null() {
             return Ok(ConversionResult::Failure("Value is not iterable".into()));
         }
 

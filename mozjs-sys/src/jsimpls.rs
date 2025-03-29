@@ -143,7 +143,7 @@ impl<const N: usize> From<&Rooted<ValueArray<N>>> for JS::HandleValueArray {
     fn from(array: &Rooted<ValueArray<N>>) -> JS::HandleValueArray {
         JS::HandleValueArray {
             length_: N,
-            elements_: array.ptr.get_ptr(),
+            elements_: array.data.get_ptr(),
         }
     }
 }
@@ -435,7 +435,7 @@ impl<T: RootKind> JS::Rooted<T> {
                 stack: ptr::null_mut(),
                 prev: ptr::null_mut(),
             },
-            ptr: initial,
+            data: initial,
         }
     }
 
