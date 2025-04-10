@@ -155,7 +155,6 @@ enum EngineState {
     Uninitialized,
     InitFailed,
     Initialized,
-    ShutDown,
 }
 
 static ENGINE_STATE: Mutex<EngineState> = Mutex::new(EngineState::Uninitialized);
@@ -163,7 +162,6 @@ static ENGINE_STATE: Mutex<EngineState> = Mutex::new(EngineState::Uninitialized)
 #[derive(Debug)]
 pub enum JSEngineError {
     AlreadyInitialized,
-    AlreadyShutDown,
     InitFailed,
 }
 
@@ -199,7 +197,6 @@ impl JSEngine {
         match *state {
             EngineState::Initialized => return Err(JSEngineError::AlreadyInitialized),
             EngineState::InitFailed => return Err(JSEngineError::InitFailed),
-            EngineState::ShutDown => return Err(JSEngineError::AlreadyShutDown),
             EngineState::Uninitialized => (),
         }
         if unsafe { !JS_Init() } {
@@ -236,7 +233,7 @@ impl Drop for JSEngine {
                 0,
                 "There are outstanding JS engine handles"
             );
-            *state = EngineState::ShutDown;
+            *state = EngineState::Uninitialized;
             unsafe {
                 JS_ShutDown();
             }
