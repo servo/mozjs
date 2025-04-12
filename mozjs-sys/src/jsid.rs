@@ -44,6 +44,13 @@ pub fn SymbolId(symbol: *mut Symbol) -> jsid {
     AsPropertyKey((symbol as usize) | (PropertyKeyTag::Symbol as usize))
 }
 
+#[inline(always)]
+pub fn StringId(s: *mut JSString) -> jsid {
+    assert!(!s.is_null());
+    assert_eq!((s as usize) & JSID_TYPE_MASK, 0);
+    AsPropertyKey((s as usize) | (PropertyKeyTag::String as usize))
+}
+
 impl jsid {
     #[inline(always)]
     fn asBits(&self) -> usize {
