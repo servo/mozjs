@@ -45,6 +45,7 @@ pub fn SymbolId(symbol: *mut Symbol) -> jsid {
 }
 
 #[inline(always)]
+/// <https://searchfox.org/mozilla-central/rev/1f65969e57c757146e3e548614b49d3a4168eeb8/js/public/Id.h#183>
 pub fn StringId(s: *mut JSString) -> jsid {
     assert!(!s.is_null());
     assert_eq!((s as usize) & JSID_TYPE_MASK, 0);
