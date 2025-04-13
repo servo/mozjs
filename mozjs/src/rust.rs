@@ -1072,6 +1072,9 @@ pub mod wrappers {
         // @inner (input args) <> (accumulator) <> unparsed tokens
         // when `unparsed tokens == \eps`, accumulator contains the final result
 
+        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: *const Handle<$gentype:ty>, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($acc,)* if $arg.is_null() { std::ptr::null() } else { &(*$arg).into() },) <> $($rest)*);
+        };
         (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
         };

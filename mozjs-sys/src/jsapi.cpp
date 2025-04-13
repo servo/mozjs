@@ -295,15 +295,14 @@ bool JS_GetUCPropertyDescriptor(JSContext* cx, JS::HandleObject obj,
   return result;
 }
 
-bool SetPropertyIgnoringNamedGetter(JSContext* cx, JS::HandleObject obj,
-                                    JS::HandleId id, JS::HandleValue v,
-                                    JS::HandleValue receiver,
-                                    JS::Handle<JS::PropertyDescriptor> ownDesc,
-                                    JS::ObjectOpResult& result) {
+bool SetPropertyIgnoringNamedGetter(
+    JSContext* cx, JS::HandleObject obj, JS::HandleId id, JS::HandleValue v,
+    JS::HandleValue receiver, const JS::Handle<JS::PropertyDescriptor>* ownDesc,
+    JS::ObjectOpResult& result) {
   return js::SetPropertyIgnoringNamedGetter(
       cx, obj, id, v, receiver,
       JS::Rooted<mozilla::Maybe<JS::PropertyDescriptor>>(
-          cx, mozilla::ToMaybe(&ownDesc)),
+          cx, mozilla::ToMaybe(ownDesc)),
       result);
 }
 
