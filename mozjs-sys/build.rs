@@ -149,7 +149,7 @@ fn should_build_from_source() -> bool {
             );
         }
         from_source
-    } else if env_var_bool_value("MOZJS_CREATE_ARCHIVE").is_some() {
+    } else if env_var_bool_value("MOZJS_CREATE_ARCHIVE") == Some(true) {
         println!(
             "Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly."
         );
