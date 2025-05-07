@@ -118,13 +118,38 @@ fn main() {
     }
 }
 
+/// Returns the value of an environment variable as a boolean if set
+///
+/// If the variable is set without a value, that is interpreted as `true`
+///
+/// ### Panics
+///
+/// Panics if the value was set, but could not be interpreted as a boolean.
+fn env_var_bool_value(name: &str) -> Option<bool> {
+    let Some(os_val) = env::var_os(name) else {
+        return None;
+    };
+    let val_lowercase = os_val.to_string_lossy().to_lowercase();
+    match val_lowercase.as_str() {
+        "1" | "on" | "true" | "yes" | "" => Some(true),
+        "0" | "off" | "false" | "no" => Some(false),
+        _other => {
+            panic!("Expected `{name}` to have a boolean-ish value, but got `{os_val:?}`");
+        }
+    }
+}
+
 /// Check env variable conditions to decide if we need to link pre-built archive first.
 /// And then return bool value to notify if we need to build from source instead.
 fn should_build_from_source() -> bool {
-    if env::var_os("MOZJS_FROM_SOURCE").is_some() {
-        println!("Environment variable MOZJS_FROM_SOURCE is set. Building from source directly.");
-        true
-    } else if env::var_os("MOZJS_CREATE_ARCHIVE").is_some() {
+    if let Some(from_source) = env_var_bool_value("MOZJS_FROM_SOURCE") {
+        if from_source {
+            println!(
+                "Environment variable MOZJS_FROM_SOURCE is set. Building from source directly."
+            );
+        }
+        from_source
+    } else if env_var_bool_value("MOZJS_CREATE_ARCHIVE") == Some(true) {
         println!(
             "Environment variable MOZJS_CREATE_ARCHIVE is set. Building from source directly."
         );
