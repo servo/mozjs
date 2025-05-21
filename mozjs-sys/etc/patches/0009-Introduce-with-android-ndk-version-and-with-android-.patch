@@ -3,14 +3,14 @@ index 333a5ea499..8be5bc9052 100644
 --- a/build/moz.configure/android-ndk.configure
 +++ b/build/moz.configure/android-ndk.configure
 @@ -22,6 +22,10 @@ option(
-     help="location where the Android NDK can be found{|}",
+     help="Location where the Android NDK can be found{|}",
  )
  
 +option("--with-android-ndk-version", nargs=1, help="android NDK version")
 +
 +option("--with-android-platform", nargs=1, help="location of the Android platform")
 +
- option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
+ option("--with-android-toolchain", nargs=1, help="Location of the Android toolchain")
  
  option(
 @@ -89,17 +93,20 @@ def ndk(value):
