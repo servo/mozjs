@@ -719,6 +719,11 @@ impl BuildTarget {
                 "JS::dbg::Builder_Object",
                 "JS::dbg::Builder_Object_Base",
                 "JS::dbg::BuilderOrigin",
+                "JS::RootedTuple",
+                "mozilla::external::AtomicRefCounted",
+                "mozilla::ProfilerStringView",
+                "mozilla::ProfilerString8View",
+                "mozilla::ProfilerString16View",
             ],
             BuildTarget::JSGlue => &[
                 "JS::.*",
@@ -797,6 +802,9 @@ impl BuildTarget {
                 "mozilla::detail::Hash.*",
                 "RefPtr_Proxy.*",
                 "std::.*",
+                "mozilla::baseprofiler::BaseProfilerProcessId",
+                "mozilla::baseprofiler::BaseProfilerThreadId",
+                "mozilla::MarkerThreadId",
             ],
             BuildTarget::JSGlue => &[
                 "JS::Auto.*Impl",

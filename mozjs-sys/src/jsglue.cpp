@@ -43,7 +43,7 @@ typedef size_t (*GetSize)(JSObject* obj);
 WantToMeasure gWantToMeasure = nullptr;
 
 struct JobQueueTraps {
-  JSObject* (*getIncumbentGlobal)(const void* queue, JSContext* cx);
+  bool (*getHostDefinedData)(const void* queue, JSContext* cx, JS::MutableHandle<JSObject*> data);
   bool (*enqueuePromiseJob)(const void* queue, JSContext* cx,
                             JS::HandleObject promise, JS::HandleObject job,
                             JS::HandleObject allocationSite,
@@ -59,10 +59,10 @@ class RustJobQueue : public JS::JobQueue {
   RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
       : mTraps(aTraps), mQueue(aQueue) {}
 
-  virtual JSObject* getIncumbentGlobal(JSContext* cx) override {
-    return mTraps.getIncumbentGlobal(mQueue, cx);
+  virtual bool getHostDefinedData(JSContext* cx,
+                                  JS::MutableHandle<JSObject*> data) const {
+    return mTraps.getHostDefinedData(mQueue, cx, data);
   }
-
   virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
                                  JS::HandleObject job,
                                  JS::HandleObject allocationSite,
@@ -1053,7 +1053,7 @@ bool DescribeScriptedCaller(JSContext* cx, char* buffer, size_t buflen,
                             uint32_t* line, uint32_t* col) {
   JS::AutoFilename filename;
   JS::ColumnNumberOneOrigin column;
-  if (!JS::DescribeScriptedCaller(cx, &filename, line, &column)) {
+  if (!JS::DescribeScriptedCaller(&filename, cx, line, &column)) {
     return false;
   }
   *col = column.oneOriginValue() - 1;
