@@ -634,6 +634,9 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "mozilla::detail::Hash.*",
     "RefPtr_Proxy.*",
     "std::.*",
+    "mozilla::baseprofiler::BaseProfilerProcessId",
+    "mozilla::baseprofiler::BaseProfilerThreadId",
+    "mozilla::MarkerThreadId",
 ];
 
 /// Types for which we should NEVER generate bindings, even if it is used within
@@ -660,6 +663,11 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::dbg::Builder_Object",
     "JS::dbg::Builder_Object_Base",
     "JS::dbg::BuilderOrigin",
+    "JS::RootedTuple",
+    "mozilla::external::AtomicRefCounted",
+    "mozilla::ProfilerStringView",
+    "mozilla::ProfilerString8View",
+    "mozilla::ProfilerString16View",
 ];
 
 /// Definitions for types that were blacklisted
