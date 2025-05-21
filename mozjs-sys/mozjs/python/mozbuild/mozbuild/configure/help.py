@@ -52,8 +52,24 @@ class HelpFormatter(object):
             ret.append("  " + category + ":")
             for option in options:
                 opt = option.option
+                if option.metavar:
+                    if option.nargs == "?":
+                        opt += f"[={option.metavar}]"
+                    elif option.nargs == "*":
+                        opt += f"[={option.metavar},...]"
+                    elif option.nargs == "+":
+                        opt += f"={option.metavar},..."
+                    else:
+                        opt += "=" + ",".join([f"{option.metavar}"] * option.nargs)
                 if option.choices:
-                    opt += "={%s}" % ",".join(option.choices)
+                    if option.nargs == "?":
+                        opt += "[={%s}]" % ",".join(option.choices)
+                    elif option.nargs == "*":
+                        opt += "[={%s},...]" % ",".join(option.choices)
+                    elif option.nargs == "+":
+                        opt += "={%s},..." % ",".join(option.choices)
+                    else:
+                        opt += "={%s}" % ",".join(option.choices)
                 help = self.format_help(option)
                 if len(option.default):
                     if help:

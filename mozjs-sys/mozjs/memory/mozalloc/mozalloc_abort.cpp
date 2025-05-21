@@ -9,8 +9,6 @@
 
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(OHOS)
-#  include <hilog/log.h>
 #endif
 #ifdef MOZ_WIDGET_ANDROID
 #  include "APKOpen.h"
@@ -23,14 +21,11 @@
 #include "mozilla/Sprintf.h"
 
 void mozalloc_abort(const char* const msg) {
-#ifdef ANDROID
-  __android_log_print(ANDROID_LOG_ERROR, "Gecko", "mozalloc_abort: %s", msg);
-#elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "Gecko",
-         "mozalloc_abort: %{public}s\n", msg);
-#else
+#ifndef ANDROID
   fputs(msg, stderr);
   fputs("\n", stderr);
+#else
+  __android_log_print(ANDROID_LOG_ERROR, "Gecko", "mozalloc_abort: %s", msg);
 #endif
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -63,7 +58,7 @@ void fillAbortMessage(char (&msg)[N], uintptr_t retAddress) {
 #endif
 
 #if defined(XP_UNIX) && !defined(MOZ_ASAN) && !defined(MOZ_TSAN) && \
-    !defined(LIBFUZZER)
+    !defined(MOZ_UBSAN)
 // Define abort() here, so that it is used instead of the system abort(). This
 // lets us control the behavior when aborting, in order to get better results
 // on *NIX platforms. See mozalloc_abort for details.
@@ -80,8 +75,9 @@ void fillAbortMessage(char (&msg)[N], uintptr_t retAddress) {
 // The same applies to ThreadSanitizer when run with "halt_on_error=1" in
 // combination with "abort_on_error=1".
 //
-// When building with libFuzzer, it pulls in the UndefinedBehaviorSanitizer
-// runtime which also requires the same workaround as with ASan or TSan.
+// When building for fuzzing without ASan or TSan, we automatically pull in the
+// UndefinedBehaviorSanitizer runtime which also requires the same workaround
+// as with ASan or TSan.
 extern "C" void abort(void) {
 #  ifdef MOZ_WIDGET_ANDROID
   char msg[64] = {};

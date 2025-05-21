@@ -30,6 +30,7 @@ FLAVORS = (
     "webpagetest",
     "mochitest",
     "custom-script",
+    "alert",
 )
 
 
@@ -65,11 +66,6 @@ class Options:
             "help": "Script containing hooks. Can be a path or a URL.",
         },
         "--verbose": {"action": "store_true", "default": False, "help": "Verbose mode"},
-        "--push-to-try": {
-            "action": "store_true",
-            "default": False,
-            "help": "Pushin the test to try",
-        },
         "--try-platform": {
             "nargs": "*",
             "type": str,
@@ -107,11 +103,20 @@ class Options:
                 "geckoview",
                 "fenix",
                 "refbrow",
+                "focus",
             ],
             "help": (
                 "Shorthand name of application that is being tested. "
                 "Used in perfherder data, and other layers such as the "
                 "BinarySetup layer for getting the binary path, and version."
+            ),
+        },
+        "--gecko-profile": {
+            "action": "store_true",
+            "default": False,
+            "help": (
+                "Run tests with gecko profiling enabled (assumes test layer "
+                "has implemented it)."
             ),
         },
     }
