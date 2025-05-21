@@ -29,9 +29,6 @@
 
 using js::wasm::Pages;
 using mozilla::DebugOnly;
-using mozilla::Maybe;
-using mozilla::Nothing;
-using mozilla::Some;
 
 using namespace js;
 using namespace js::jit;
@@ -94,7 +91,8 @@ SharedArrayRawBuffer* SharedArrayRawBuffer::Allocate(bool isGrowable,
 }
 
 WasmSharedArrayRawBuffer* WasmSharedArrayRawBuffer::AllocateWasm(
-    wasm::IndexType indexType, Pages initialPages, wasm::Pages clampedMaxPages,
+    wasm::AddressType addressType, Pages initialPages,
+    wasm::Pages clampedMaxPages,
     const mozilla::Maybe<wasm::Pages>& sourceMaxPages,
     const mozilla::Maybe<size_t>& mappedSize) {
   // Prior code has asserted that initial pages is within our implementation
@@ -117,7 +115,7 @@ WasmSharedArrayRawBuffer* WasmSharedArrayRawBuffer::AllocateWasm(
   uint64_t mappedSizeWithHeader = computedMappedSize + gc::SystemPageSize();
   uint64_t accessibleSizeWithHeader = accessibleSize + gc::SystemPageSize();
 
-  void* p = MapBufferMemory(indexType, mappedSizeWithHeader,
+  void* p = MapBufferMemory(addressType, mappedSizeWithHeader,
                             accessibleSizeWithHeader);
   if (!p) {
     return nullptr;
@@ -126,7 +124,7 @@ WasmSharedArrayRawBuffer* WasmSharedArrayRawBuffer::AllocateWasm(
   uint8_t* buffer = reinterpret_cast<uint8_t*>(p) + gc::SystemPageSize();
   uint8_t* base = buffer - sizeof(WasmSharedArrayRawBuffer);
   return new (base) WasmSharedArrayRawBuffer(
-      buffer, length, indexType, clampedMaxPages,
+      buffer, length, addressType, clampedMaxPages,
       sourceMaxPages.valueOr(Pages(0)), computedMappedSize);
 }
 
@@ -153,7 +151,7 @@ void WasmSharedArrayRawBuffer::tryGrowMaxPagesInPlace(Pages deltaMaxPages) {
 }
 
 bool WasmSharedArrayRawBuffer::wasmGrowToPagesInPlace(const Lock&,
-                                                      wasm::IndexType t,
+                                                      wasm::AddressType t,
                                                       wasm::Pages newPages) {
   // Check that the new pages is within our allowable range. This will
   // simultaneously check against the maximum specified in source and our
@@ -284,12 +282,14 @@ void SharedArrayRawBuffer::dropReference() {
   // This was the final reference, so release the buffer.
   if (isWasm()) {
     WasmSharedArrayRawBuffer* wasmBuf = toWasmBuffer();
-    wasm::IndexType indexType = wasmBuf->wasmIndexType();
+    wasm::AddressType addressType = wasmBuf->wasmAddressType();
     uint8_t* basePointer = wasmBuf->basePointer();
     size_t mappedSizeWithHeader = wasmBuf->mappedSize() + gc::SystemPageSize();
+    size_t committedSize = wasmBuf->volatileByteLength() + gc::SystemPageSize();
     // Call the destructor to destroy the growLock_ Mutex.
     wasmBuf->~WasmSharedArrayRawBuffer();
-    UnmapBufferMemory(indexType, basePointer, mappedSizeWithHeader);
+    UnmapBufferMemory(addressType, basePointer, mappedSizeWithHeader,
+                      committedSize);
   } else {
     js_delete(this);
   }
@@ -446,30 +446,27 @@ bool SharedArrayBufferObject::class_constructor(JSContext* cx, unsigned argc,
 
   // Step 3.
   mozilla::Maybe<uint64_t> maxByteLength;
-  if (JS::Prefs::experimental_sharedarraybuffer_growable()) {
-    // Inline call to GetArrayBufferMaxByteLengthOption.
-    if (args.get(1).isObject()) {
-      Rooted<JSObject*> options(cx, &args[1].toObject());
+  // Inline call to GetArrayBufferMaxByteLengthOption.
+  if (args.get(1).isObject()) {
+    Rooted<JSObject*> options(cx, &args[1].toObject());
 
-      Rooted<Value> val(cx);
-      if (!GetProperty(cx, options, options, cx->names().maxByteLength, &val)) {
+    Rooted<Value> val(cx);
+    if (!GetProperty(cx, options, options, cx->names().maxByteLength, &val)) {
+      return false;
+    }
+    if (!val.isUndefined()) {
+      uint64_t maxByteLengthInt;
+      if (!ToIndex(cx, val, &maxByteLengthInt)) {
         return false;
       }
-      if (!val.isUndefined()) {
-        uint64_t maxByteLengthInt;
-        if (!ToIndex(cx, val, &maxByteLengthInt)) {
-          return false;
-        }
 
-        // 25.2.2.1 AllocateSharedArrayBuffer, step 3.a.
-        if (byteLength > maxByteLengthInt) {
-          JS_ReportErrorNumberASCII(
-              cx, GetErrorMessage, nullptr,
-              JSMSG_ARRAYBUFFER_LENGTH_LARGER_THAN_MAXIMUM);
-          return false;
-        }
-        maxByteLength = mozilla::Some(maxByteLengthInt);
+      // 25.2.2.1 AllocateSharedArrayBuffer, step 3.a.
+      if (byteLength > maxByteLengthInt) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                  JSMSG_ARRAYBUFFER_LENGTH_LARGER_THAN_MAXIMUM);
+        return false;
       }
+      maxByteLength = mozilla::Some(maxByteLengthInt);
     }
   }
 

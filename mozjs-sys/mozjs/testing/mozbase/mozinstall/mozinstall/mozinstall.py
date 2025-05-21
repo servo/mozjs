@@ -41,7 +41,7 @@ class InvalidSource(Exception):
     """Thrown when the specified source is not a recognized file type.
 
     Supported types:
-    Linux:   tar.gz, tar.bz2
+    Linux:   tar.gz, tar.bz2, tar.xz
     Mac:     dmg
     Windows: zip, exe
 
@@ -99,7 +99,7 @@ def get_binary(path, app_name):
 
 
 def install(src, dest):
-    """Install a zip, exe, tar.gz, tar.bz2 or dmg file, and return the path of
+    """Install a zip, exe, tar.gz, tar.bz2, tar.xz or dmg file, and return the path of
     the installation folder.
 
     :param src: Path to the install file
@@ -168,7 +168,7 @@ def is_installer(src):
     """Tests if the given file is a valid installer package.
 
     Supported types:
-    Linux:   tar.gz, tar.bz2
+    Linux:   tar.gz, tar.bz2, tar.xz
     Mac:     dmg
     Windows: zip, exe
 
@@ -375,13 +375,28 @@ def _get_msix_install_location(pkg):
                             cmd = (
                                 f'powershell.exe "Get-AppxPackage" "-Name" "{pkgname}"'
                             )
+                            # Powershell "helpfully" wraps long lines and there's
+                            # no tidy way to tell it not to, so we'll have to
+                            # reconstruct the value. Output could look like this:
+                            # InstallLocation   : C:\Program
+                            #                     Files\WindowsApps\...
+                            # Don't strip trailing spaces. The space between
+                            # "Program" and "Files" is at the end of the first
+                            # line. (Not in this comment, due to linting.)
+                            location = None
                             for line in (
                                 subprocess.check_output(cmd)
                                 .decode("utf-8")
                                 .splitlines()
                             ):
                                 if line.startswith("InstallLocation"):
-                                    return "C:{}".format(line.split(":")[-1].strip())
+                                    location = line[line.find(": ") + 2 :]
+                                elif location is not None:
+                                    if line.startswith(" "):
+                                        location += line.lstrip()
+                                    else:
+                                        break
+                            return location
 
     raise Exception(f"Couldn't find install location of {pkg}")
 

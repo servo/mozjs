@@ -4,8 +4,11 @@
 
 # This script generates jit/CacheIROpsGenerated.h from CacheIROps.yaml
 
+import io
+import os
+import os.path
+
 import buildconfig
-import six
 import yaml
 from mozbuild.preprocessor import Preprocessor
 
@@ -40,7 +43,7 @@ def load_yaml(yaml_path):
     # the YAML file.
     pp = Preprocessor()
     pp.context.update(buildconfig.defines["ALLDEFINES"])
-    pp.out = six.StringIO()
+    pp.out = io.StringIO()
     pp.do_filter("substitution")
     pp.do_include(yaml_path)
     contents = pp.out.getvalue()
@@ -126,7 +129,7 @@ def gen_writer_method(name, args, custom_writer):
     ret_type = "void"
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             cpp_type, write_method = arg_writer_info[arg_type]
             if arg_name == "result":
                 ret_type = cpp_type
@@ -229,7 +232,7 @@ def gen_compiler_method(name, args):
     method_args = []
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             cpp_type, suffix, readexpr = arg_reader_info[arg_type]
             cpp_name = arg_name + suffix
             cpp_args.append(cpp_name)
@@ -318,7 +321,7 @@ def gen_spewer_method(name, args):
     args_code = ""
     if args:
         is_first = True
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             _, suffix, readexpr = arg_reader_info[arg_type]
             arg_name += suffix
             spew_method = arg_spewer_method[arg_type]
@@ -355,7 +358,7 @@ def gen_clone_method(name, args):
 
     args_code = ""
     if args:
-        for arg_name, arg_type in six.iteritems(args):
+        for arg_name, arg_type in args.items():
             if arg_type == "RawId":
                 arg_type = "ValId"
 
@@ -550,3 +553,28 @@ def generate_cacheirops_header(c_out, yaml_path):
     contents += "\n\n"
 
     generate_header(c_out, "jit_CacheIROpsGenerated_h", contents)
+
+
+def read_aot_ics(ic_path):
+    ics = ""
+    idx = 0
+    for entry in os.scandir(ic_path):
+        if entry.is_file() and os.path.basename(entry.path).startswith("IC-"):
+            with open(entry.path) as f:
+                content = f.read().strip()
+                ics += "  _(%d, %s) \\\n" % (idx, content)
+                idx += 1
+    return ics
+
+
+def generate_aot_ics_header(c_out, ic_path):
+    """Generate CacheIROpsGenerated.h from AOT IC corpus."""
+
+    # Read in all ICs from js/src/ics/IC-*.
+    ics = read_aot_ics(ic_path)
+
+    contents = "#define JS_AOT_IC_DATA(_) \\\n"
+    contents += ics
+    contents += "\n"
+
+    generate_header(c_out, "jit_CacheIRAOTGenerated_h", contents)

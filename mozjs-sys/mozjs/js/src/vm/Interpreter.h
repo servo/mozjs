@@ -15,6 +15,10 @@
 
 #include "vm/BuiltinObjectKind.h"
 #include "vm/CheckIsObjectKind.h"  // CheckIsObjectKind
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+#  include "vm/ErrorObject.h"
+#  include "vm/UsingHint.h"
+#endif
 #include "vm/Stack.h"
 
 namespace js {
@@ -611,10 +615,10 @@ bool GetAndClearExceptionAndStack(JSContext* cx, MutableHandleValue res,
                                   MutableHandle<SavedFrame*> stack);
 
 bool DeleteNameOperation(JSContext* cx, Handle<PropertyName*> name,
-                         HandleObject scopeObj, MutableHandleValue res);
+                         HandleObject envChain, MutableHandleValue res);
 
-bool ImplicitThisOperation(JSContext* cx, HandleObject scopeObj,
-                           Handle<PropertyName*> name, MutableHandleValue res);
+void ImplicitThisOperation(JSContext* cx, HandleObject env,
+                           MutableHandleValue res);
 
 bool InitPropGetterSetterOperation(JSContext* cx, jsbytecode* pc,
                                    HandleObject obj, Handle<PropertyName*> name,
@@ -636,10 +640,21 @@ bool SpreadCallOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
 bool OptimizeSpreadCall(JSContext* cx, HandleValue arg,
                         MutableHandleValue result);
 
-bool OptimizeGetIterator(JSContext* cx, HandleValue arg, bool* result);
+bool OptimizeGetIterator(const Value& arg, JSContext* cx);
 
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
-bool DisposeDisposablesOnScopeLeave(JSContext* cx, JS::Handle<JSObject*> env);
+enum class SyncDisposalClosureSlots : uint8_t {
+  Method,
+};
+bool SyncDisposalClosure(JSContext* cx, unsigned argc, JS::Value* vp);
+
+ErrorObject* CreateSuppressedError(JSContext* cx, JS::Handle<JS::Value> error,
+                                   JS::Handle<JS::Value> suppressed);
+
+bool AddDisposableResourceToCapability(JSContext* cx, JS::Handle<JSObject*> env,
+                                       JS::Handle<JS::Value> val,
+                                       JS::Handle<JS::Value> method,
+                                       bool needsClosure, UsingHint hint);
 #endif
 
 ArrayObject* ArrayFromArgumentsObject(JSContext* cx,
@@ -684,12 +699,6 @@ void ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber,
 
 void ReportInNotObjectError(JSContext* cx, HandleValue lref, HandleValue rref);
 
-// The parser only reports redeclarations that occurs within a single
-// script. Due to the extensibility of the global lexical scope, we also check
-// for redeclarations during runtime in JSOp::GlobalOrEvalDeclInstantation.
-void ReportRuntimeRedeclaration(JSContext* cx, Handle<PropertyName*> name,
-                                const char* redeclKind);
-
 bool ThrowCheckIsObject(JSContext* cx, CheckIsObjectKind kind);
 
 bool ThrowUninitializedThis(JSContext* cx);
@@ -697,8 +706,6 @@ bool ThrowUninitializedThis(JSContext* cx);
 bool ThrowInitializedThis(JSContext* cx);
 
 bool ThrowObjectCoercible(JSContext* cx, HandleValue value);
-
-bool DefaultClassConstructor(JSContext* cx, unsigned argc, Value* vp);
 
 bool Debug_CheckSelfHosted(JSContext* cx, HandleValue funVal);
 

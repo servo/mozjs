@@ -19,21 +19,17 @@ option(
     "--with-android-ndk",
     nargs=1,
     default=default_android_ndk_root,
-    help="location where the Android NDK can be found{|}",
+    help="Location where the Android NDK can be found{|}",
 )
 
-option("--with-android-ndk-version", nargs=1, help="android NDK version")
-
-option("--with-android-platform", nargs=1, help="location of the Android platform")
-
-option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
+option("--with-android-toolchain", nargs=1, help="Location of the Android toolchain")
 
 option(
-    "--with-android-lldb-server", nargs=1, help="location of the Android LLDB server"
+    "--with-android-lldb-server", nargs=1, help="Location of the Android LLDB server"
 )
 
 option(
-    "--with-android-googlevr-sdk", nargs=1, help="location of the Android GoogleVR SDK"
+    "--with-android-googlevr-sdk", nargs=1, help="Location of the Android GoogleVR SDK"
 )
 
 
@@ -46,7 +42,7 @@ def min_android_version():
 option(
     "--with-android-version",
     nargs=1,
-    help="android platform version{|}",
+    help="Android platform version{|}",
     default=min_android_version,
 )
 
@@ -91,19 +87,16 @@ def ndk(value):
 set_config("ANDROID_NDK", ndk)
 
 
-@depends("--with-android-ndk-version", ndk)
+@depends(ndk)
 @checking("for android ndk version")
 @imports(_from="__builtin__", _import="open")
 @imports(_from="mozboot.android", _import="NDK_VERSION")
 @imports(_from="mozboot.android", _import="get_ndk_version")
 @imports(_from="mozboot.android", _import="GetNdkVersionError")
-def ndk_version(value, ndk):
+def ndk_version(ndk):
     if not ndk:
         # Building 'js/src' for non-Android.
         return
-
-    if value:
-        return value[0]
 
     try:
         major, minor, human = get_ndk_version(ndk)
@@ -157,15 +150,13 @@ def android_toolchain(host, ndk, toolchain):
         return toolchain
     die("You have to specify --with-android-toolchain=" "/path/to/ndk/toolchain.")
 
-@depends("--with-android-platform", target, android_toolchain)
+
+@depends(target, android_toolchain)
 @checking("for android sysroot directory")
 @imports(_from="os.path", _import="isdir")
-def android_sysroot(value, target, android_toolchain):
+def android_sysroot(target, android_toolchain):
     if target.os != "Android":
         return
-
-    if value:
-        return value[0]
 
     search_dirs = [
         os.path.join(android_toolchain, "sysroot"),
@@ -250,7 +241,7 @@ option(
 @imports(_from="os.path", _import="isfile")
 def stlport_libs(value, ndk):
     if value and len(value):
-        return value[0].split()
+        return value.split()
     if not ndk:
         return
 
@@ -279,23 +270,6 @@ def android_flags(extra_toolchain_flags):
         ldflags=extra_toolchain_flags,
         asflags=extra_toolchain_flags + ["-DANDROID"],
     )
-
-
-add_old_configure_assignment(
-    "ANDROID_CFLAGS", depends(android_flags)(lambda f: f.cflags)
-)
-
-add_old_configure_assignment(
-    "ANDROID_CXXFLAGS", depends(android_flags)(lambda f: f.cxxflags)
-)
-
-add_old_configure_assignment(
-    "ANDROID_LDFLAGS", depends(android_flags)(lambda f: f.ldflags)
-)
-
-add_old_configure_assignment(
-    "ANDROID_ASFLAGS", depends(android_flags)(lambda f: f.asflags)
-)
 
 
 @depends(extra_toolchain_flags)
@@ -343,5 +317,4 @@ def googlevr_sdk(value, target):
 
 set_define("MOZ_ANDROID_GOOGLE_VR", googlevr_sdk.enabled)
 set_config("MOZ_ANDROID_GOOGLE_VR", googlevr_sdk.enabled)
-set_config("MOZ_ANDROID_GOOGLE_VR_INCLUDE", googlevr_sdk.include)
 set_config("MOZ_ANDROID_GOOGLE_VR_LIBS", googlevr_sdk.libs)

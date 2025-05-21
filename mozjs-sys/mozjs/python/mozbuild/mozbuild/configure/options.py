@@ -94,12 +94,12 @@ class OptionValue(tuple):
             )
 
         # Allow explicit tuples to be compared.
-        if type(other) == tuple:
+        if type(other) is tuple:
             return tuple.__eq__(self, other)
         elif isinstance(other, bool):
             return bool(self) == other
         # Else we're likely an OptionValue class.
-        elif type(other) != type(self):
+        elif type(other) is not type(self):
             return False
         else:
             return super(OptionValue, self).__eq__(other)
@@ -206,6 +206,7 @@ class Option(object):
         "choices",
         "help",
         "possible_origins",
+        "metavar",
         "category",
         "define_depth",
     )
@@ -220,6 +221,7 @@ class Option(object):
         choices=None,
         category=None,
         help=None,
+        metavar=None,
         define_depth=0,
     ):
         if not name and not env:
@@ -270,6 +272,12 @@ class Option(object):
             raise InvalidOptionError("DefineDepth must be an integer")
         if not help:
             raise InvalidOptionError("A help string must be provided")
+        if metavar and not nargs:
+            raise InvalidOptionError("A metavar can only be given when nargs is set")
+        if metavar and not name:
+            raise InvalidOptionError(
+                "metavar must not be set on environment-only option"
+            )
         if possible_origins and not istupleofstrings(possible_origins):
             raise InvalidOptionError("possible_origins must be a tuple of strings")
         self.possible_origins = possible_origins
@@ -337,23 +345,31 @@ class Option(object):
                 raise InvalidOptionError("Not enough `choices` for `nargs`")
         self.choices = choices
         self.help = help
+        self.metavar = metavar
         self.category = category or _infer_option_category(define_depth)
 
     @staticmethod
-    def split_option(option):
+    def split_option(option, values_separator=","):
         """Split a flag or variable into a prefix, a name and values
 
         Variables come in the form NAME=values (no prefix).
         Flags come in the form --name=values or --prefix-name=values
         where prefix is one of 'with', 'without', 'enable' or 'disable'.
-        The '=values' part is optional. Values are separated with commas.
+        The '=values' part is optional. Values are separated with
+        `values_separator`. If `values_separator` is None, there is at
+        most one value.
         """
         if not isinstance(option, six.string_types):
             raise InvalidOptionError("Option must be a string")
 
-        elements = option.split("=", 1)
-        name = elements[0]
-        values = tuple(elements[1].split(",")) if len(elements) == 2 else ()
+        name, eq, values = option.partition("=")
+        if eq:
+            if values_separator is None:
+                values = (values,)
+            else:
+                values = tuple(values.split(values_separator))
+        else:
+            values = ()
         if name.startswith("--"):
             name = name[2:]
             if not name.islower():
@@ -429,7 +445,10 @@ class Option(object):
                 % (option, origin, ", ".join(self.possible_origins))
             )
 
-        prefix, name, values = self.split_option(option)
+        kwargs = {}
+        if self.maxargs <= 1:
+            kwargs["values_separator"] = None
+        prefix, name, values = self.split_option(option, **kwargs)
         option = self._join_option(prefix, name)
 
         assert name in (self.name, self.env)

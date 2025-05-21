@@ -75,8 +75,8 @@ GeneratedFile(
 EXPORTS += [
     "!public/ProfilingCategoryList.h",
     "public/BaseProfiler.h",
-    "public/BaseProfilerSharedLibraries.h",
     "public/BaseProfilingCategory.h",
+    "public/SharedLibraries.h",
 ]
 
 EXPORTS.mozilla += [
@@ -93,6 +93,7 @@ EXPORTS.mozilla += [
     "public/BaseProfilerState.h",
     "public/BaseProfilerUtils.h",
     "public/FailureLatch.h",
+    "public/Flow.h",
     "public/leb128iterator.h",
     "public/ModuloBuffer.h",
     "public/PowerOfTwo.h",
@@ -113,6 +114,7 @@ EXPORTS.mozilla += [
 
 UNIFIED_SOURCES += [
     "core/BaseAndGeckoProfilerDetail.cpp",
+    "core/Flow.cpp",
     "core/ProfilerUtils.cpp",
 ]
 

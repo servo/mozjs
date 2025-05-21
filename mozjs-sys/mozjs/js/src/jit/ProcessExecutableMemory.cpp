@@ -584,15 +584,9 @@ static unsigned ProtectionSettingToFlags(ProtectionSetting protection) {
 #    endif
   return true;
 #  else
-  unsigned prot_flags = ProtectionSettingToFlags(protection);
-  int flags = MAP_FIXED | MAP_PRIVATE | MAP_ANON;
-#    ifdef XP_OHOS
-  // Required for JIT code on HarmonyOS.
-  // Since MAP_EXECUTABLE is documented to be ignored on Linux, we
-  // unconditionally enable it for all OpenHarmony distributions.
-  flags |= MAP_EXECUTABLE;
-#    endif
-  void* p = MozTaggedAnonymousMmap(addr, bytes, prot_flags, flags, -1, 0,
+  unsigned flags = ProtectionSettingToFlags(protection);
+  void* p = MozTaggedAnonymousMmap(addr, bytes, flags,
+                                   MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0,
                                    "js-executable-memory");
   if (p == MAP_FAILED) {
     return false;
@@ -850,6 +844,10 @@ void* ProcessExecutableMemory::allocate(size_t bytes,
     return nullptr;
   }
 
+#if !defined(__wasi__)
+  gc::RecordMemoryAlloc(bytes);
+#endif
+
   SetMemCheckKind(p, bytes, checkKind);
 
   return p;
@@ -873,6 +871,9 @@ void ProcessExecutableMemory::deallocate(void* addr, size_t bytes,
   MOZ_MAKE_MEM_NOACCESS(addr, bytes);
   if (decommit) {
     DecommitPages(addr, bytes);
+#if !defined(__wasi__)
+    gc::RecordMemoryFree(bytes);
+#endif
   }
 
   LockGuard<Mutex> guard(lock_);
@@ -890,7 +891,7 @@ void ProcessExecutableMemory::deallocate(void* addr, size_t bytes,
   }
 }
 
-static ProcessExecutableMemory execMemory;
+MOZ_RUNINIT static ProcessExecutableMemory execMemory;
 
 void* js::jit::AllocateExecutableMemory(size_t bytes,
                                         ProtectionSetting protection,

@@ -549,7 +549,7 @@ class FileRecordJSONEncoder(json.JSONEncoder):
                 "FileRecordJSONEncoder is only for FileRecord and lists of FileRecords, "
                 "not %s" % obj.__class__.__name__
             )
-            log.warn(err)
+            log.warning(err)
             raise FileRecordJSONEncoderException(err)
         else:
             rv = {
@@ -577,7 +577,6 @@ class FileRecordJSONEncoder(json.JSONEncoder):
 
 
 class FileRecordJSONDecoder(json.JSONDecoder):
-
     """I help the json module materialize a FileRecord from
     a JSON file.  I understand FileRecords and lists of
     FileRecords.  I ignore things that I don't expect for now"""
@@ -860,7 +859,7 @@ def touch(f):
     try:
         os.utime(f, None)
     except OSError:
-        log.warn("impossible to update utime of file %s" % f)
+        log.warning("impossible to update utime of file %s" % f)
 
 
 def _urlopen(req):
@@ -963,6 +962,64 @@ def validate_tar_member(member, path):
         raise Exception("Attempted setuid or setgid in tar file: " + member.name)
 
 
+class TarFile(tarfile.TarFile):
+    def _tooltool_do_extract(
+        self, extract, member, path="", set_attrs=True, numeric_owner=False, **kwargs
+    ):
+        deferred_links = getattr(self, "_deferred_links", None)
+        if not isinstance(member, tarfile.TarInfo):
+            member = self.getmember(member)
+        targetpath = os.path.normcase(os.path.join(path, member.name))
+
+        if deferred_links is not None and member.issym():
+            if os.path.lexists(targetpath):
+                # Avoid FileExistsError on following os.symlink.
+                os.unlink(targetpath)
+            try:
+                os.symlink(member.linkname, targetpath)
+            except (NotImplementedError, OSError):
+                # On Windows, os.symlink can fail, in this case fallback to
+                # creating a copy. If the destination was not already created,
+                # defer the link creation.
+                source = os.path.normcase(
+                    os.path.join(os.path.dirname(targetpath), member.linkname)
+                )
+
+                if source in self._extracted_members:
+                    shutil.copy(source, targetpath)
+                    self.chown(member, targetpath, numeric_owner)
+                else:
+                    deferred_links.setdefault(source, []).append(
+                        (member, targetpath, numeric_owner)
+                    )
+            return
+
+        extract(member, path, set_attrs, numeric_owner=numeric_owner, **kwargs)
+        if deferred_links is not None:
+            for tarinfo, linkpath, numeric_owner in deferred_links.pop(targetpath, []):
+                shutil.copy(targetpath, linkpath)
+                self.chown(tarinfo, linkpath, numeric_owner)
+            self._extracted_members.add(targetpath)
+
+    def extract(self, *args, **kwargs):
+        self._tooltool_do_extract(super(TarFile, self).extract, *args, **kwargs)
+
+    # extractall in versions for cpython that implement PEP 706 call _extract_one
+    # instead of extract.
+    def _extract_one(self, *args, **kwargs):
+        self._tooltool_do_extract(super(TarFile, self)._extract_one, *args, **kwargs)
+
+    def extractall(self, *args, **kwargs):
+        self._deferred_links = {}
+        self._extracted_members = set()
+        super(TarFile, self).extractall(*args, **kwargs)
+        for links in self._deferred_links.values():
+            for tarinfo, linkpath, numeric_owner in links:
+                log.warn("Cannot create dangling symbolic link: %s", linkpath)
+        delattr(self, "_deferred_links")
+        delattr(self, "_extracted_members")
+
+
 def safe_extract(tar, path=".", *, numeric_owner=False):
     def _files(tar, path):
         for member in tar:
@@ -982,7 +1039,7 @@ def unpack_file(filename):
         base_file, tar_ext = os.path.splitext(tar_file)
         clean_path(base_file)
         log.info('untarring "%s"' % filename)
-        with tarfile.open(filename) as tar:
+        with TarFile.open(filename) as tar:
             safe_extract(tar)
     elif os.path.isfile(filename) and filename.endswith(".tar.zst"):
         import zstandard
@@ -992,7 +1049,7 @@ def unpack_file(filename):
         log.info('untarring "%s"' % filename)
         dctx = zstandard.ZstdDecompressor()
         with dctx.stream_reader(open(filename, "rb")) as fileobj:
-            with tarfile.open(fileobj=fileobj, mode="r|") as tar:
+            with TarFile.open(fileobj=fileobj, mode="r|") as tar:
                 safe_extract(tar)
     elif os.path.isfile(filename) and zipfile.is_zipfile(filename):
         base_file = filename.replace(".zip", "")
@@ -1080,7 +1137,7 @@ def fetch_files(
                 else:
                     # the file copied from the cache is invalid, better to
                     # clean up the cache version itself as well
-                    log.warn(
+                    log.warning(
                         "File %s retrieved from cache is invalid! I am deleting it from the "
                         "cache as well" % f.filename
                     )
@@ -1289,9 +1346,7 @@ def _s3_upload(filename, file):
     try:
         req_path = "%s?%s" % (url.path, url.query) if url.query else url.path
         with open(filename, "rb") as f:
-            content = f.read()
-            content_length = len(content)
-            f.seek(0)
+            content_length = file["size"]
             conn.request(
                 "PUT",
                 req_path,
@@ -1510,7 +1565,7 @@ def process_command(options, args):
         )
     elif cmd == "delete":
         if not options.get("digest"):
-            log.critical("change-visibility command requires a digest option")
+            log.critical("delete command requires a digest option")
             return False
         return delete_instances(
             options.get("base_url"),
@@ -1524,7 +1579,18 @@ def process_command(options, args):
 
 def main(argv, _skip_logging=False):
     # Set up option parsing
-    parser = optparse.OptionParser()
+    usage = """usage: %prog [options] command [FILES]
+
+Supported commands are:
+    - list: list files in the manifest
+    - validate: validate the manifest
+    - add: add records for FILES to the manifest
+    - purge: cleans up the cache folder
+    - fetch: retrieve files listed in the manifest (or FILES if specified)
+    - upload: upload files listed in the manifest; message is required
+    - change-visibility: sets the visibility of the file identified by the given digest
+    - delete: deletes the file identified by the given digest"""
+    parser = optparse.OptionParser(usage=usage)
     parser.add_option(
         "-q",
         "--quiet",

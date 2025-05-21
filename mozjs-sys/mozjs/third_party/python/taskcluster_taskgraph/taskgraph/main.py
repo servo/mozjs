@@ -88,7 +88,9 @@ def get_filtered_taskgraph(taskgraph, tasksregex, exclude_keys):
                     if regexprogram.match(dep):
                         filterededges.add((key, dep, depname))
 
-        taskgraph = TaskGraph(filteredtasks, Graph(set(filteredtasks), filterededges))
+        taskgraph = TaskGraph(
+            filteredtasks, Graph(frozenset(filteredtasks), frozenset(filterededges))
+        )
 
     if exclude_keys:
         for label, task in taskgraph.tasks.items():
@@ -226,30 +228,32 @@ def generate_taskgraph(options, parameters, overrides, logdir):
 
 @command(
     "tasks",
-    help="Show all tasks in the taskgraph.",
+    help="Show the full task set in the task graph. The full task set includes all tasks defined by any kind, without edges (dependencies) between them.",
     defaults={"graph_attr": "full_task_set"},
 )
 @command(
-    "full", help="Show the full taskgraph.", defaults={"graph_attr": "full_task_graph"}
+    "full",
+    help="Show the full task graph. The full task graph consists of the full task set, with edges (dependencies) between tasks.",
+    defaults={"graph_attr": "full_task_graph"},
 )
 @command(
     "target",
-    help="Show the set of target tasks.",
+    help="Show the target task set in the task graph. The target task set includes the tasks which have indicated they should be run, without edges (dependencies) between them.",
     defaults={"graph_attr": "target_task_set"},
 )
 @command(
     "target-graph",
-    help="Show the target graph.",
+    help="Show the target task graph. The target task graph consists of the target task set, with edges (dependencies) between tasks.",
     defaults={"graph_attr": "target_task_graph"},
 )
 @command(
     "optimized",
-    help="Show the optimized graph.",
+    help="Show the optimized task graph, which is the target task set with tasks optimized out (filtered, omitted, or replaced) and edges representing dependencies.",
     defaults={"graph_attr": "optimized_task_graph"},
 )
 @command(
     "morphed",
-    help="Show the morphed graph.",
+    help="Show the morphed graph, which is the optimized task graph with additional morphs applied. It retains the same meaning as the optimized task graph but in a form more palatable to TaskCluster.",
     defaults={"graph_attr": "morphed_task_graph"},
 )
 @argument("--root", "-r", help="root of the taskgraph definition relative to topsrcdir")
@@ -322,7 +326,7 @@ def generate_taskgraph(options, parameters, overrides, logdir):
     "--tasks-regex",
     "--tasks",
     default=None,
-    help="only return tasks with labels matching this regular " "expression.",
+    help="only return tasks with labels matching this regular expression.",
 )
 @argument(
     "--exclude-key",
@@ -490,7 +494,7 @@ def show_taskgraph(options):
             base_path = os.path.join(
                 diffdir, f"{options['graph_attr']}_{base_rev_file}"
             )
-            cur_path = os.path.join(diffdir, f"{options['graph_attr']}_{cur_rev_file}")
+            cur_path = os.path.join(diffdir, f"{options['graph_attr']}_{cur_rev_file}")  # type: ignore
 
             params_name = None
             if len(parameters) > 1:
@@ -753,7 +757,7 @@ def action_callback(options):
     "--parameters",
     "-p",
     default="",
-    help="parameters file (.yml or .json; see " "`taskcluster/docs/parameters.rst`)`",
+    help="parameters file (.yml or .json; see `taskcluster/docs/parameters.rst`)`",
 )
 @argument("--task-id", default=None, help="TaskId to which the action applies")
 @argument(
@@ -859,7 +863,7 @@ def init_taskgraph(options):
             shutil.rmtree(tg_dir)
 
     # Populate some defaults from the current repository.
-    context = {"project_name": root.name}
+    context = {"project_name": root.name, "taskgraph_version": taskgraph.__version__}
 
     try:
         repo_url = repo.get_url(remote=repo.remote_name)
@@ -895,7 +899,7 @@ def init_taskgraph(options):
         directory="template",
         extra_context=context,
         no_input=options["no_input"],
-        output_dir=root.parent,
+        output_dir=str(root.parent),
         overwrite_if_exists=True,
     )
 

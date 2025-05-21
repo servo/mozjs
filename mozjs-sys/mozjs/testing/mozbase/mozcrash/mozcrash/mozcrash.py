@@ -14,6 +14,7 @@ import tempfile
 import traceback
 import zipfile
 from collections import namedtuple
+from urllib.request import urlopen
 
 import mozfile
 import mozinfo
@@ -201,6 +202,8 @@ ABORT_SIGNATURES = (
     "rust_begin_unwind",
     # This started showing up when we enabled dumping inlined functions
     "MOZ_Crash(char const*, int, char const*)",
+    # This also appears as an inlined function after bug 1858670
+    "MOZ_CrashSequence(void*, long)",
     "<alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call",
 )
 
@@ -290,7 +293,7 @@ class CrashInfo(object):
             self.remove_symbols = True
             self.logger.info("Downloading symbols from: %s" % self.symbols_path)
             # Get the symbols and write them to a temporary zipfile
-            data = six.moves.urllib.request.urlopen(self.symbols_path)
+            data = urlopen(self.symbols_path)
             with tempfile.TemporaryFile() as symbols_file:
                 symbols_file.write(data.read())
                 # extract symbols to a temporary directory (which we'll delete after
@@ -424,21 +427,20 @@ class CrashInfo(object):
                     signature = processed_crash.get("signature")
                     pid = processed_crash.get("pid")
 
-        else:
-            if not self.stackwalk_binary:
-                errors.append(
-                    "MINIDUMP_STACKWALK not set, can't process dump. Either set "
-                    "MINIDUMP_STACKWALK or use mach bootstrap --no-system-changes "
-                    "to install minidump-stackwalk."
-                )
-            elif self.stackwalk_binary and not os.path.exists(self.stackwalk_binary):
-                errors.append(
-                    "MINIDUMP_STACKWALK binary not found: %s. Use mach bootstrap "
-                    "--no-system-changes to install minidump-stackwalk."
-                    % self.stackwalk_binary
-                )
-            elif not os.access(self.stackwalk_binary, os.X_OK):
-                errors.append("This user cannot execute the MINIDUMP_STACKWALK binary.")
+        elif not self.stackwalk_binary:
+            errors.append(
+                "MINIDUMP_STACKWALK not set, can't process dump. Either set "
+                "MINIDUMP_STACKWALK or use mach bootstrap --no-system-changes "
+                "to install minidump-stackwalk."
+            )
+        elif self.stackwalk_binary and not os.path.exists(self.stackwalk_binary):
+            errors.append(
+                "MINIDUMP_STACKWALK binary not found: %s. Use mach bootstrap "
+                "--no-system-changes to install minidump-stackwalk."
+                % self.stackwalk_binary
+            )
+        elif not os.access(self.stackwalk_binary, os.X_OK):
+            errors.append("This user cannot execute the MINIDUMP_STACKWALK binary.")
 
         if os.path.exists(extra):
             annotations = self._parse_extra_file(extra)
@@ -548,7 +550,7 @@ class CrashInfo(object):
             except OSError:
                 pass
 
-        shutil.move(path, self.dump_save_path)
+        shutil.copy(path, self.dump_save_path)
         self.logger.info(
             "Saved minidump as {}".format(
                 os.path.join(self.dump_save_path, os.path.basename(path))
@@ -556,7 +558,7 @@ class CrashInfo(object):
         )
 
         if os.path.isfile(extra):
-            shutil.move(extra, self.dump_save_path)
+            shutil.copy(extra, self.dump_save_path)
             self.logger.info(
                 "Saved app info as {}".format(
                     os.path.join(self.dump_save_path, os.path.basename(extra))

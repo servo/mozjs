@@ -24,7 +24,6 @@
 #include "vm/StringType.h"
 #include "vm/TypedArrayObject.h"
 
-#include "gc/Heap-inl.h"
 #include "gc/Marking-inl.h"
 #include "gc/ObjectKind-inl.h"
 #include "vm/Compartment-inl.h"
@@ -32,12 +31,6 @@
 #include "vm/JSObject-inl.h"
 #include "vm/Realm-inl.h"
 #include "vm/Shape-inl.h"
-
-#ifdef ENABLE_RECORD_TUPLE
-// Defined in vm/RecordTupleShared.{h,cpp}. We cannot include that file
-// because it causes circular dependencies.
-extern bool js::IsExtendedPrimitive(const JSObject& obj);
-#endif
 
 namespace js {
 
@@ -471,12 +464,6 @@ inline DenseElementResult NativeObject::setOrExtendDenseElements(
   return DenseElementResult::Success;
 }
 
-inline bool NativeObject::isInWholeCellBuffer() const {
-  const gc::TenuredCell* cell = &asTenured();
-  gc::ArenaCellSet* cells = cell->arena()->bufferedCells();
-  return cells && cells->hasCell(cell);
-}
-
 /* static */
 inline NativeObject* NativeObject::create(
     JSContext* cx, js::gc::AllocKind kind, js::gc::Heap heap,
@@ -728,9 +715,6 @@ static MOZ_ALWAYS_INLINE bool NativeLookupOwnPropertyInline(
   // violate this guidance are the ModuleEnvironmentObject.
   MOZ_ASSERT_IF(obj->getOpsLookupProperty(),
                 obj->template is<ModuleEnvironmentObject>());
-#ifdef ENABLE_RECORD_TUPLE
-  MOZ_ASSERT(!js::IsExtendedPrimitive(*obj));
-#endif
 
   // Check for a native dense element.
   if (id.isInt()) {

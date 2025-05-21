@@ -331,6 +331,8 @@ class alignas(uintptr_t) BaselineScript final
 
   uint8_t* nativeCodeForOSREntry(uint32_t pcOffset);
 
+  static uint8_t* OSREntryForFrame(BaselineFrame* frame);
+
   void copyRetAddrEntries(const RetAddrEntry* entries);
   void copyOSREntries(const OSREntry* entries);
   void copyDebugTrapEntries(const DebugTrapEntry* entries);
@@ -454,8 +456,17 @@ enum class BailoutReason {
     BaselineBailoutInfo** bailoutInfo,
     const ExceptionBailoutInfo* exceptionInfo, BailoutReason reason);
 
+enum class BaselineOption : uint8_t {
+  ForceDebugInstrumentation = 1 << 0,
+  ForceMainThreadCompilation = 1 << 1,
+};
+
+using BaselineOptions = EnumFlags<BaselineOption>;
+
+bool DispatchOffThreadBaselineBatch(JSContext* cx);
+
 MethodStatus BaselineCompile(JSContext* cx, JSScript* script,
-                             bool forceDebugInstrumentation = false);
+                             BaselineOptions options);
 
 // Class storing the generated Baseline Interpreter code for the runtime.
 class BaselineInterpreter {

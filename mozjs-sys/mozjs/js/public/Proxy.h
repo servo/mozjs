@@ -100,6 +100,10 @@ class JS_PUBLIC_API Wrapper;
  * organized in the following hierarchy:
  *
  *     BaseProxyHandler
+ *     |  |
+ *     |  NurseryAllocableProxyHandler
+ *     |                         // allocated in the nursery; disallows
+ *     |                         // overriding finalize method
  *     |
  *     ForwardingProxyHandler    // has a target and forwards internal methods
  *     |
@@ -156,7 +160,7 @@ class JS_PUBLIC_API Wrapper;
  * explicit override for the method in SecurityWrapper. See bug 945826 comment
  * 0.
  */
-class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
+class JS_PUBLIC_API BaseProxyHandler {
   /*
    * Sometimes it's desirable to designate groups of proxy handlers as
    * "similar". For this, we use the notion of a "family": A consumer-provided
@@ -378,6 +382,17 @@ class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
   virtual bool isScripted() const { return false; }
 };
 
+class JS_PUBLIC_API NurseryAllocableProxyHandler : public BaseProxyHandler {
+  using BaseProxyHandler::BaseProxyHandler;
+
+  // Don't allow overriding the default finalize method.
+  void finalize(JS::GCContext* gcx, JSObject* proxy) const final {
+    BaseProxyHandler::finalize(gcx, proxy);
+  }
+  // Can allocate in the nursery as long as we use the default finalize method.
+  bool canNurseryAllocate() const override { return true; }
+};
+
 extern JS_PUBLIC_DATA const JSClass ProxyClass;
 
 inline bool IsProxy(const JSObject* obj) {
@@ -463,12 +478,12 @@ constexpr ptrdiff_t ProxyReservedSlots::offsetOfPrivateSlot() {
          offsetof(ProxyValueArray, privateSlot);
 }
 
-// All proxies share the same data layout. Following the object's shape and
-// type, the proxy has a ProxyDataLayout structure with a pointer to an array
-// of values and the proxy's handler. This is designed both so that proxies can
-// be easily swapped with other objects (via RemapWrapper) and to mimic the
-// layout of other objects (proxies and other objects have the same size) so
-// that common code can access either type of object.
+// All proxies share the same data layout. Following the object's shape, the
+// proxy has a ProxyDataLayout structure with a pointer to an array of values
+// and the proxy's handler. This is designed both so that proxies can be easily
+// swapped with other objects (via RemapWrapper) and to mimic the layout of
+// other objects (proxies and other objects have the same size) so that common
+// code can access either type of object.
 //
 // See GetReservedOrProxyPrivateSlot below.
 struct ProxyDataLayout {
@@ -554,9 +569,8 @@ inline void SetProxyReservedSlot(JSObject* obj, size_t n,
 
 inline void SetProxyPrivate(JSObject* obj, const JS::Value& value) {
 #ifdef DEBUG
-  if (gc::detail::ObjectIsMarkedBlack(obj)) {
-    JS::AssertValueIsNotGray(value);
-  }
+  JS::AssertObjectIsNotGray(obj);
+  JS::AssertValueIsNotGray(value);
 #endif
 
   JS::Value* vp = &detail::GetProxyDataLayout(obj)->values()->privateSlot;
@@ -741,14 +755,14 @@ constexpr unsigned CheckProxyFlags() {
   return Flags;
 }
 
-#define PROXY_CLASS_DEF_WITH_CLASS_SPEC(name, flags, classSpec)            \
-  {                                                                        \
-    name,                                                                  \
-        JSClass::NON_NATIVE | JSCLASS_IS_PROXY |                           \
-            JSCLASS_DELAY_METADATA_BUILDER | js::CheckProxyFlags<flags>(), \
-        &js::ProxyClassOps, classSpec, &js::ProxyClassExtension,           \
-        &js::ProxyObjectOps                                                \
-  }
+#define PROXY_CLASS_DEF_WITH_CLASS_SPEC(name, flags, classSpec)              \
+  {name,                                                                     \
+   JSClass::NON_NATIVE | JSCLASS_IS_PROXY | JSCLASS_DELAY_METADATA_BUILDER | \
+       js::CheckProxyFlags<flags>(),                                         \
+   &js::ProxyClassOps,                                                       \
+   classSpec,                                                                \
+   &js::ProxyClassExtension,                                                 \
+   &js::ProxyObjectOps}
 
 #define PROXY_CLASS_DEF(name, flags) \
   PROXY_CLASS_DEF_WITH_CLASS_SPEC(name, flags, JS_NULL_CLASS_SPEC)

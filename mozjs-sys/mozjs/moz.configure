@@ -24,7 +24,7 @@ option(
     "--enable-artifact-build-symbols",
     nargs="?",
     choices=("full",),
-    help="Download symbols when artifact builds are enabled.",
+    help="Download symbols when artifact builds are enabled",
 )
 
 
@@ -51,8 +51,8 @@ def imply_disable_compile_environment(value):
 option(
     env="MOZ_BUILD_HOOK",
     nargs=1,
-    help="moz.build file that will be executed as if it were appended to"
-    " every moz.build in the tree.",
+    help="Path to the moz.build file that will be executed as if it were "
+    "appended to every moz.build in the tree",
 )
 
 
@@ -70,7 +70,7 @@ set_config("MOZ_BUILD_HOOK", moz_build_hook)
 option(
     env="MOZ_COPY_PDBS",
     help="For builds that do not support symbols in the normal fashion,"
-    " generate and copy them into the resulting build archive.",
+    " generate and copy them into the resulting build archive",
 )
 
 set_config("MOZ_COPY_PDBS", depends_if("MOZ_COPY_PDBS")(lambda _: True))
@@ -87,7 +87,6 @@ def compile_environment(compile_env):
 
 
 set_config("COMPILE_ENVIRONMENT", compile_environment)
-add_old_configure_assignment("COMPILE_ENVIRONMENT", compile_environment)
 
 option("--disable-tests", help="Do not build test libraries & programs")
 
@@ -121,11 +120,17 @@ set_define("GTEST_OS_LINUX_ANDROID", linux_gtest_defines.os_linux_android)
 set_define("GTEST_USE_OWN_TR1_TUPLE", linux_gtest_defines.use_own_tr1_tuple)
 set_define("GTEST_HAS_CLONE", linux_gtest_defines.has_clone)
 
+set_define("FMT_API", "MFBT_API")
+set_define("FMT_ENFORCE_COMPILE_STRING", 1)
+set_define("FMT_USE_EXCEPTIONS", 0)
+set_define("FMT_USE_WRITE_CONSOLE", 1)
+set_define("FMT_USE_LOCALE", 0)
+
 option(
     "--enable-debug",
     nargs="?",
     help="Enable building with developer debug info "
-    "(using the given compiler flags).",
+    "(using the given compiler flags)",
 )
 
 
@@ -140,6 +145,7 @@ set_define("MOZ_DEBUG", moz_debug)
 # Override any value MOZ_DEBUG may have from the environment when passing it
 # down to old-configure.
 add_old_configure_assignment("MOZ_DEBUG", depends("--enable-debug")(lambda x: bool(x)))
+
 
 set_config(
     "MOZ_DIAGNOSTIC_ASSERT_ENABLED",
@@ -191,7 +197,6 @@ def developer_options(value):
         return True
 
 
-add_old_configure_assignment("DEVELOPER_OPTIONS", developer_options)
 set_config("DEVELOPER_OPTIONS", developer_options)
 
 
@@ -232,6 +237,7 @@ include("build/moz.configure/headers.configure", when="--enable-compile-environm
 include("build/moz.configure/libraries.configure", when="--enable-compile-environment")
 include("build/moz.configure/warnings.configure", when="--enable-compile-environment")
 include("build/moz.configure/flags.configure", when="--enable-compile-environment")
+include("build/moz.configure/default-flags.configure", when=~compile_environment)
 include("build/moz.configure/lto-pgo.configure", when="--enable-compile-environment")
 # rust.configure is included by js/moz.configure.
 
@@ -332,8 +338,6 @@ set_config("HOST_DLL_SUFFIX", host_library_name_info.dll.suffix)
 set_config("LIB_PREFIX", library_name_info.lib.prefix)
 set_config("LIB_SUFFIX", library_name_info.lib.suffix)
 set_config("OBJ_SUFFIX", library_name_info.obj.suffix)
-# Lots of compilation tests depend on this variable being present.
-add_old_configure_assignment("OBJ_SUFFIX", library_name_info.obj.suffix)
 set_config("IMPORT_LIB_SUFFIX", library_name_info.import_lib.suffix)
 set_define(
     "MOZ_DLL_PREFIX", depends(library_name_info.dll.prefix)(lambda s: '"%s"' % s)
@@ -347,30 +351,14 @@ set_config("WASM_OBJ_SUFFIX", "wasm")
 
 
 @template
-def llvm_tool(name):
-    @depends(host_c_compiler, c_compiler, bindgen_config_paths)
-    def llvm_tool(host_c_compiler, c_compiler, bindgen_config_paths):
-        clang = None
-        for compiler in (host_c_compiler, c_compiler):
-            if compiler and compiler.type == "clang":
-                clang = compiler.compiler
-                break
-            elif compiler and compiler.type == "clang-cl":
-                clang = os.path.join(os.path.dirname(compiler.compiler), "clang")
-                break
+def bin_suffix(host_or_target):
+    return depends(host_or_target)(
+        lambda host_or_target: ".exe" if host_or_target.os == "WINNT" else ""
+    )
 
-        if not clang and bindgen_config_paths:
-            clang = bindgen_config_paths.clang_path
-        tool = name
-        if clang:
-            out = check_cmd_output(
-                clang, "--print-prog-name=%s" % tool, onerror=lambda: None
-            )
-            if out:
-                tool = out.rstrip()
-        return (tool,)
 
-    return llvm_tool
+set_config("BIN_SUFFIX", bin_suffix(target))
+set_config("HOST_BIN_SUFFIX", bin_suffix(host))
 
 
 @template
@@ -388,17 +376,6 @@ def plain_llvm_or_prefixed(name, llvm_name=None):
         return tuple(commands)
 
     return plain_llvm_or_prefixed
-
-
-llvm_objdump = check_prog(
-    "LLVM_OBJDUMP",
-    llvm_tool("llvm-objdump"),
-    what="llvm-objdump",
-    when="--enable-compile-environment",
-    paths=clang_search_path,
-)
-
-add_old_configure_assignment("LLVM_OBJDUMP", llvm_objdump)
 
 
 def validate_readelf(path):
@@ -452,14 +429,58 @@ check_prog(
 profiling = dependable(False)
 # Same for js_standalone
 js_standalone = dependable(False)
-js_shared = dependable(False)
-moz_linker = dependable(False)
 # Same for fold_libs
 fold_libs = dependable(False)
 # And dmd
 dmd = dependable(False)
 
+# Only available when toolkit/moz.configure is included
+pack_relative_relocs_flags = dependable(False)
+real_branding_directory = dependable(None)
+
 include(include_project_configure)
+
+
+@template
+def load_keyvalue_file(location, filename):
+
+    @depends(build_environment, location, "--help", when=location)
+    @checking(f"if configuration file {filename} exists")
+    # This gives access to the sandbox. Don't copy this blindly.
+    @imports("__sandbox__")
+    @imports(_from="mozbuild.configure", _import="confvars")
+    @imports("os.path")
+    def load_keyvalue_file_impl(build_env, location, help):
+        file_path = os.path.join(build_env.topsrcdir, location, filename)
+        if os.path.exists(file_path):
+            helper = __sandbox__._helper
+            # parse confvars
+            try:
+                keyvals = confvars.parse(file_path)
+            except confvars.ConfVarsSyntaxError as e:
+                die(str(e))
+            for key, value in keyvals.items():
+                # FIXME: remove test once we no longer load confvars from old-configure.
+                if key in __sandbox__._options:
+                    # ~= imply_option, but with an accurate origin
+                    helper.add(f"{key}={value}", origin="confvars", args=helper._args)
+            return file_path
+
+    return load_keyvalue_file_impl
+
+
+load_confvars = load_keyvalue_file(build_project, "confvars.sh")
+load_brandvars = load_keyvalue_file(real_branding_directory, "configure.sh")
+
+
+# Final flags validation and gathering
+# -------------------------------------------------
+
+include(
+    "build/moz.configure/finalize-flags.configure", when="--enable-compile-environment"
+)
+
+# -------------------------------------------------
 
 
 @depends("--help")
@@ -557,7 +578,7 @@ def build_gtest(build_project, target, automation, enable_tests):
 option(
     "--enable-gtest-in-build",
     default=build_gtest,
-    help="{Enable|Force disable} building the gtest libxul during the build.",
+    help="{Enable|Force disable} building the gtest libxul during the build",
     when="--enable-compile-environment",
 )
 
@@ -573,36 +594,11 @@ option(
 
 set_config("MOZ_UI_LOCALE", depends("--enable-ui-locale")(lambda x: x))
 
-option(
-    "--disable-icu4x",
-    help="Disable using ICU4X",
-)
-
-set_config("MOZ_ICU4X", True, when="--enable-icu4x")
-set_define("MOZ_ICU4X", True, when="--enable-icu4x")
-
 # clang-plugin location
 # ==============================================================
-
-
-@depends(host_library_name_info, build_environment, when="--enable-clang-plugin")
-def clang_plugin_path(library_name_info, build_env):
-    topobjdir = build_env.topobjdir
-    if topobjdir.endswith("/js/src"):
-        topobjdir = topobjdir[:-7]
-    return os.path.abspath(
-        os.path.join(
-            topobjdir,
-            "build",
-            "clang-plugin",
-            "%sclang-plugin%s"
-            % (library_name_info.dll.prefix, library_name_info.dll.suffix),
-        )
-    )
-
-
-set_config("CLANG_PLUGIN", clang_plugin_path)
-add_old_configure_assignment("CLANG_PLUGIN", clang_plugin_path)
+include(
+    "build/moz.configure/clang_plugin.configure", when="--enable-compile-environment"
+)
 
 
 # Awk detection
@@ -615,9 +611,6 @@ awk = check_prog("AWK", ("gawk", "mawk", "nawk", "awk"), paths=prefer_mozillabui
 @depends(awk)
 def awk_for_old_configure(value):
     return value
-
-
-add_old_configure_assignment("AWK", awk_for_old_configure)
 
 
 # GNU make detection
@@ -809,13 +802,6 @@ check_prog(
     paths=clang_search_path,
 )
 
-option("--disable-icf", help="Disable Identical Code Folding")
-
-add_old_configure_assignment(
-    "MOZ_DISABLE_ICF", "1", when=depends("--enable-icf")(lambda x: not x)
-)
-
-
 option(
     "--enable-strip",
     when=compile_environment,
@@ -905,12 +891,59 @@ check_prog(
     validate=validate_strip,
 )
 
-pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_pkg_config)
 
-set_config("MOZ_SYSTEM_ZLIB", True)
-# This is not in upstream anymore
-set_config("ZLIB_IN_MOZGLUE", False)
+@depends(js_standalone, target)
+def system_zlib_default(js_standalone, target):
+    return (
+        js_standalone
+        and target.kernel not in ("WINNT", "Darwin")
+        and target.os != "Android"
+    )
 
+
+option(
+    "--with-system-zlib",
+    nargs="?",
+    default=system_zlib_default,
+    help="{Use|Do not use} system libz",
+    when=use_pkg_config,
+)
+
+
+@depends("--with-system-zlib", when=use_pkg_config)
+def with_system_zlib_option(with_system_zlib):
+    return with_system_zlib
+
+
+@depends(with_system_zlib_option)
+def deprecated_system_zlib_path(value):
+    if value and len(value) == 1:
+        die(
+            "--with-system-zlib=PATH is not supported anymore. Please use "
+            "--with-system-zlib and set any necessary pkg-config environment variable."
+        )
+
+
+pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when="--with-system-zlib")
+
+set_config("MOZ_SYSTEM_ZLIB", True, when="--with-system-zlib")
+
+option(
+    env="USE_LIBZ_RS",
+    default=milestone.is_nightly,
+    help="Use libz-rs-sys instead of zlib",
+    when=toolkit & ~with_system_zlib_option,
+)
+
+set_config("USE_LIBZ_RS", True, when="USE_LIBZ_RS")
+
+with only_when(cross_compiling):
+    option(
+        env="JS_BINARY",
+        nargs=1,
+        help="Host JavaScript runtime, if any, to use during cross compiles",
+    )
+    set_config("JS_BINARY", depends_if("JS_BINARY")(lambda value: value[0]))
 
 # Please do not add configure checks from here on.
 

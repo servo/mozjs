@@ -27,6 +27,7 @@ from mozbuild.frontend.data import (
     LocalInclude,
     LocalizedFiles,
     LocalizedPreprocessedFiles,
+    MozSrcFiles,
     Program,
     RustLibrary,
     RustProgram,
@@ -1382,17 +1383,16 @@ class TestEmitterBasic(unittest.TestCase):
         # ...and ldflags.
         ldflags = objs.pop()
         self.assertIsInstance(ldflags, ComputedFlags)
-        self.assertEqual(len(objs), 3)
+        self.assertEqual(len(objs), 2)
         for o in objs:
             self.assertIsInstance(o, HostSources)
 
         suffix_map = {obj.canonical_suffix: obj for obj in objs}
-        self.assertEqual(len(suffix_map), 3)
+        self.assertEqual(len(suffix_map), 2)
 
         expected = {
             ".cpp": ["a.cpp", "b.cc", "c.cxx"],
             ".c": ["d.c"],
-            ".mm": ["e.mm", "f.mm"],
         }
         for suffix, files in expected.items():
             sources = suffix_map[suffix]
@@ -1630,6 +1630,23 @@ class TestEmitterBasic(unittest.TestCase):
             expected = {"en-US/bar.ini", "en-US/foo.js"}
             for f in files:
                 self.assertTrue(six.text_type(f) in expected)
+
+    def test_mozsrc_files(self):
+        """Test that MOZ_SRC_FILES automatically match objdir folders with the
+        provided SourcePath."""
+        reader = self.reader("moz-src-files")
+        objs = self.read_topsrcdir(reader)
+        self.assertIsInstance(objs[0], MozSrcFiles)
+
+        map = {path: [str(f) for f in files] for path, files in objs[0].files.walk()}
+        self.assertDictEqual(
+            map,
+            {
+                "": ["file.txt"],
+                "dir": ["dir/file1.txt", "dir/file2.txt"],
+                "dir/subdir": ["dir/subdir/otherfile.txt"],
+            },
+        )
 
     def test_rust_library_no_cargo_toml(self):
         """Test that defining a RustLibrary without a Cargo.toml fails."""

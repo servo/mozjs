@@ -70,7 +70,7 @@
 #include "ProfilerBacktrace.h"
 #include "ProfileBuffer.h"
 #include "RegisteredThread.h"
-#include "BaseProfilerSharedLibraries.h"
+#include "SharedLibraries.h"
 #include "ThreadInfo.h"
 #include "VTuneProfiler.h"
 
@@ -278,7 +278,8 @@ class MOZ_RAII PSAutoLock {
   detail::BaseProfilerAutoLock mLock;
 };
 
-detail::BaseProfilerMutex PSAutoLock::gPSMutex{"Base Profiler mutex"};
+MOZ_RUNINIT detail::BaseProfilerMutex PSAutoLock::gPSMutex{
+    "Base Profiler mutex"};
 
 // Only functions that take a PSLockRef arg can access CorePS's and ActivePS's
 // fields.
@@ -1049,7 +1050,8 @@ ExtractBaseProfilerChunkManager() {
 
 }  // namespace detail
 
-Atomic<uint32_t, MemoryOrdering::Relaxed> RacyFeatures::sActiveAndFeatures(0);
+MFBT_DATA Atomic<uint32_t, MemoryOrdering::Relaxed>
+    RacyFeatures::sActiveAndFeatures(0);
 
 /* static */
 void RacyFeatures::SetActive(uint32_t aFeatures) {
@@ -1805,25 +1807,17 @@ static void StreamCategories(SpliceableJSONWriter& aWriter) {
   //   },
   //   ...
   // ]
-
-#define CATEGORY_JSON_BEGIN_CATEGORY(name, labelAsString, color) \
-  aWriter.Start();                                               \
-  aWriter.StringProperty("name", labelAsString);                 \
-  aWriter.StringProperty("color", color);                        \
-  aWriter.StartArrayProperty("subcategories");
-#define CATEGORY_JSON_SUBCATEGORY(supercategory, name, labelAsString) \
-  aWriter.StringElement(labelAsString);
-#define CATEGORY_JSON_END_CATEGORY \
-  aWriter.EndArray();              \
-  aWriter.EndObject();
-
-  MOZ_PROFILING_CATEGORY_LIST(CATEGORY_JSON_BEGIN_CATEGORY,
-                              CATEGORY_JSON_SUBCATEGORY,
-                              CATEGORY_JSON_END_CATEGORY)
-
-#undef CATEGORY_JSON_BEGIN_CATEGORY
-#undef CATEGORY_JSON_SUBCATEGORY
-#undef CATEGORY_JSON_END_CATEGORY
+  for (const auto& categoryInfo : GetProfilingCategoryList()) {
+    aWriter.Start();
+    aWriter.StringProperty("name", MakeStringSpan(categoryInfo.mName));
+    aWriter.StringProperty("color", MakeStringSpan(categoryInfo.mColor));
+    aWriter.StartArrayProperty("subcategories");
+    for (const auto& subcategoryName : categoryInfo.mSubcategoryNames) {
+      aWriter.StringElement(MakeStringSpan(subcategoryName));
+    }
+    aWriter.EndArray();
+    aWriter.EndObject();
+  }
 }
 
 static void StreamMarkerSchema(SpliceableJSONWriter& aWriter) {
@@ -1959,12 +1953,16 @@ static void locked_profiler_stream_json_for_this_process(
 
     // Put meta data
     aWriter.StartObjectProperty("meta");
-    { StreamMetaJSCustomObject(aLock, aWriter, aIsShuttingDown); }
+    {
+      StreamMetaJSCustomObject(aLock, aWriter, aIsShuttingDown);
+    }
     aWriter.EndObject();
 
     // Put page data
     aWriter.StartArrayProperty("pages");
-    { StreamPages(aLock, aWriter); }
+    {
+      StreamPages(aLock, aWriter);
+    }
     aWriter.EndArray();
 
     buffer.StreamProfilerOverheadToJSON(aWriter, CorePS::ProcessStartTime(),
@@ -1993,7 +1991,9 @@ static void locked_profiler_stream_json_for_this_process(
     aWriter.EndArray();
 
     aWriter.StartArrayProperty("pausedRanges");
-    { buffer.StreamPausedRangesToJSON(aWriter, aSinceTime); }
+    {
+      buffer.StreamPausedRangesToJSON(aWriter, aSinceTime);
+    }
     aWriter.EndArray();
   }
 
@@ -2628,6 +2628,8 @@ void profiler_init(void* aStackTop) {
   LOG("profiler_init");
 
   profiler_init_main_thread_id();
+
+  Flow::Init();
 
   VTUNE_INIT();
 
