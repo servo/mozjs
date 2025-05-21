@@ -996,7 +996,12 @@ impl<'a> CapturedJSStack<'a> {
         };
         let ref mut stack_capture = stack_capture.assume_init();
 
-        if !CaptureCurrentStack(cx, guard.handle_mut().raw(), stack_capture, HandleObject::null().into()) {
+        if !CaptureCurrentStack(
+            cx,
+            guard.handle_mut().raw(),
+            stack_capture,
+            HandleObject::null().into(),
+        ) {
             None
         } else {
             Some(CapturedJSStack { cx, stack: guard })
@@ -1182,8 +1187,8 @@ pub mod wrappers {
     use crate::jsapi::JSScript;
     use crate::jsapi::JSStructuredCloneData;
     use crate::jsapi::JSType;
-    use crate::jsapi::ModuleType;
     use crate::jsapi::ModuleErrorBehaviour;
+    use crate::jsapi::ModuleType;
     use crate::jsapi::MutableHandleIdVector;
     use crate::jsapi::PromiseState;
     use crate::jsapi::PromiseUserInputEventHandlingState;
