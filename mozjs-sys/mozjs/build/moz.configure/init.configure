@@ -915,6 +915,15 @@ set_define("ANDROID", target_is_android)
 
 
 @depends(target)
+def target_is_ohos(target):
+    return target.raw_os.endswith("-ohos")
+
+
+set_define("XP_OHOS", target_is_ohos)
+set_config("OHOS", target_is_ohos)
+
+
+@depends(target)
 def target_is_openbsd(target):
     if target.kernel == "OpenBSD":
         return True

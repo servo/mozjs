@@ -39,8 +39,6 @@ def moz_app_name(value, js_standalone, moz_app_basename):
 set_config("MOZ_APP_NAME", moz_app_name)
 
 include("../build/moz.configure/nspr.configure", when="--enable-compile-environment")
-include("../build/moz.configure/rust.configure", when="--enable-compile-environment")
-include("../build/moz.configure/bindgen.configure", when="--enable-compile-environment")
 
 set_config("JS_STANDALONE", js_standalone)
 set_define("JS_STANDALONE", js_standalone)
