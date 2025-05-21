@@ -35,7 +35,7 @@ with Files("docs/**"):
 with Files("mach*"):
     BUG_COMPONENT = ("Firefox Build System", "Mach Core")
 
-with Files("pyproject.toml"):
+with Files("pyproject.toml", "srcdir-resolver.js"):
     BUG_COMPONENT = ("Developer Infrastructure", "Lint and Formatting")
 
 with Files("*moz*"):
@@ -183,6 +183,10 @@ if CONFIG["MOZ_BUILD_APP"]:
 else:
     include("/toolkit/toolkit.mozbuild")
 
+OBJDIR_PP_FILES[".cargo"] += [
+    CONFIG["MOZ_OVERRIDE_CARGO_CONFIG"] or ".cargo/config.toml.in"
+]
+
 DEFINES["top_srcdir"] = TOPSRCDIR
 
 SPHINX_TREES["contributing"] = "docs/contributing"
@@ -192,6 +196,8 @@ SPHINX_TREES["code-quality"] = "docs/code-quality"
 SPHINX_TREES["testing-rust-code"] = "docs/testing-rust-code"
 
 SPHINX_TREES["writing-rust-code"] = "docs/writing-rust-code"
+
+SPHINX_TREES["rust-components"] = "docs/rust-components"
 
 SPHINX_TREES["bug-mgmt"] = "docs/bug-mgmt"
 
@@ -214,5 +220,9 @@ SPHINX_TREES["nspr"] = "docs/nspr"
 SPHINX_TREES["mots"] = "docs/mots"
 
 SPHINX_TREES["update-infrastructure"] = "docs/update-infrastructure"
+
+SPHINX_TREES["content-security"] = "docs/content-security"
+
+SPHINX_TREES["jsloader"] = "docs/jsloader"
 
 include("build/templates.mozbuild")

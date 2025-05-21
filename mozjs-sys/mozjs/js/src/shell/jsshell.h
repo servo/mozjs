@@ -24,7 +24,7 @@
 
 // Some platform hooks must be implemented for single-step profiling.
 #if defined(JS_SIMULATOR_ARM) || defined(JS_SIMULATOR_MIPS64) || \
-    defined(JS_SIMULATOR_MIPS32)
+    defined(JS_SIMULATOR_ARM64)
 #  define SINGLESTEP_PROFILING
 #endif
 
@@ -105,7 +105,8 @@ extern const char* selfHostedXDRPath;
 extern bool encodeSelfHostedCode;
 extern bool enableCodeCoverage;
 extern bool enableDisassemblyDumps;
-extern bool offthreadCompilation;
+extern bool offthreadBaselineCompilation;
+extern bool offthreadIonCompilation;
 extern JS::DelazificationOption defaultDelazificationMode;
 extern bool enableAsmJS;
 extern bool enableWasm;
@@ -129,7 +130,6 @@ extern bool enableArrayBufferResizable;
 extern bool enableSymbolsAsWeakMapKeys;
 extern bool enableNewSetMethods;
 extern bool enableImportAttributes;
-extern bool enableImportAttributesAssertSyntax;
 extern bool enableDestructuringFuse;
 #ifdef JS_GC_ZEAL
 extern uint32_t gZealBits;

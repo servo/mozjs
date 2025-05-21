@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import hashlib
 import os
 import shutil
 import subprocess
@@ -27,7 +28,11 @@ EXCLUDED_PACKAGES = {
     "vsdownload",
     # The moz.build file isn't a vendored module, so don't delete it.
     "moz.build",
-    "requirements.in",
+    # Support files needed for vendoring
+    "uv.lock",
+    "uv.lock.hash",
+    "pyproject.toml",
+    "requirements.txt",
     # The ansicon package contains DLLs and we don't want to arbitrarily vendor
     # them since they could be unsafe. This module should rarely be used in practice
     # (it's a fallback for old versions of windows). We've intentionally vendored a
@@ -41,75 +46,118 @@ class VendorPython(MozbuildObject):
     def __init__(self, *args, **kwargs):
         MozbuildObject.__init__(self, *args, virtualenv_name="vendor", **kwargs)
 
-    def vendor(self, keep_extra_files=False):
-        from mach.python_lockfile import PoetryHandle
-
+    def vendor(
+        self,
+        keep_extra_files=False,
+        add=None,
+        remove=None,
+        upgrade=False,
+        upgrade_package=None,
+        force=False,
+    ):
         self.populate_logger()
         self.log_manager.enable_unstructured()
 
         vendor_dir = Path(self.topsrcdir) / "third_party" / "python"
-        requirements_in = vendor_dir / "requirements.in"
-        poetry_lockfile = vendor_dir / "poetry.lock"
-        _sort_requirements_in(requirements_in)
+        requirements_file_name = "requirements.txt"
+        requirements_path = vendor_dir / requirements_file_name
+        uv_lock_file = vendor_dir / "uv.lock"
+        vendored_lock_file_hash_file = vendor_dir / "uv.lock.hash"
 
-        with TemporaryDirectory() as work_dir:
-            work_dir = Path(work_dir)
-            poetry = PoetryHandle(work_dir)
-            poetry.add_requirements_in_file(requirements_in)
-            poetry.reuse_existing_lockfile(poetry_lockfile)
-            lockfiles = poetry.generate_lockfiles(do_update=False)
+        # Make the venv used by UV match the one set my Mach for the 'vendor' site
+        os.environ["UV_PROJECT_ENVIRONMENT"] = os.environ.get("VIRTUAL_ENV", None)
 
-            # Vendoring packages is only viable if it's possible to have a single
-            # set of packages that work regardless of which environment they're used in.
-            # So, we scrub environment markers, so that we essentially ask pip to
-            # download "all dependencies for all environments". Pip will then either
-            # fetch them as requested, or intelligently raise an error if that's not
-            # possible (e.g.: if different versions of Python would result in different
-            # packages/package versions).
-            pip_lockfile_without_markers = work_dir / "requirements.no-markers.txt"
-            shutil.copy(str(lockfiles.pip_lockfile), str(pip_lockfile_without_markers))
-            remove_environment_markers_from_requirements_txt(
-                pip_lockfile_without_markers
-            )
+        if add:
+            for package in add:
+                subprocess.check_call(["uv", "add", package], cwd=vendor_dir)
 
-            with TemporaryDirectory() as tmp:
-                # use requirements.txt to download archived source distributions of all
-                # packages
-                subprocess.check_call(
-                    [
-                        sys.executable,
-                        "-m",
-                        "pip",
-                        "download",
-                        "-r",
-                        str(pip_lockfile_without_markers),
-                        "--no-deps",
-                        "--dest",
-                        tmp,
-                        "--abi",
-                        "none",
-                        "--platform",
-                        "any",
-                    ]
+        if remove:
+            for package in remove:
+                subprocess.check_call(["uv", "remove", package], cwd=vendor_dir)
+
+        lock_command = ["uv", "lock"]
+
+        if upgrade:
+            lock_command.extend(["-U"])
+
+        if upgrade_package:
+            for package in upgrade_package:
+                lock_command.extend(["-P", package])
+
+        subprocess.check_call(lock_command, cwd=vendor_dir)
+
+        if not force:
+            vendored_lock_file_hash_value = vendored_lock_file_hash_file.read_text(
+                encoding="utf-8"
+            ).strip()
+            new_lock_file_hash_value = hash_file_text(uv_lock_file)
+
+            if vendored_lock_file_hash_value == new_lock_file_hash_value:
+                print(
+                    "No changes detected in `uv.lock` since last vendor. Nothing to do. (You can re-run this command with '--force' to force vendoring)"
                 )
-                _purge_vendor_dir(vendor_dir)
-                self._extract(tmp, vendor_dir, keep_extra_files)
+                return
 
-            requirements_out = vendor_dir / "requirements.txt"
+            print("Changes detected in `uv.lock`.")
 
-            # since requirements.out and poetry.lockfile are both outputs from
-            # third party code, they may contain carriage returns on Windows. We
-            # should strip the carriage returns to maintain consistency in our output
-            # regardless of which platform is doing the vendoring. We can do this and
-            # the copying at the same time to minimize reads and writes.
-            _copy_file_strip_carriage_return(lockfiles.pip_lockfile, requirements_out)
-            _copy_file_strip_carriage_return(lockfiles.poetry_lockfile, poetry_lockfile)
-            self.repository.add_remove_files(vendor_dir)
-            # explicitly add the content of the egg-info directory as it is
-            # covered by the hgignore pattern.
-            egg_info_files = list(vendor_dir.glob("**/*.egg-info/*"))
-            if egg_info_files:
-                self.repository.add_remove_files(*egg_info_files)
+        print("Re-vendoring all dependencies.")
+
+        # Add "-q" so that the contents of the "requirements.txt" aren't printed
+        subprocess.check_call(
+            [
+                "uv",
+                "export",
+                "--format",
+                "requirements-txt",
+                "-o",
+                requirements_file_name,
+                "-q",
+            ],
+            cwd=vendor_dir,
+        )
+
+        # Vendoring packages is only viable if it's possible to have a single
+        # set of packages that work regardless of which environment they're used in.
+        # So, we scrub environment markers, so that we essentially ask pip to
+        # download "all dependencies for all environments". Pip will then either
+        # fetch them as requested, or intelligently raise an error if that's not
+        # possible (e.g.: if different versions of Python would result in different
+        # packages/package versions).
+        remove_environment_markers_from_requirements_txt(requirements_path)
+
+        with TemporaryDirectory() as tmp:
+            # use requirements.txt to download archived source distributions of all
+            # packages
+            subprocess.check_call(
+                [
+                    sys.executable,
+                    "-m",
+                    "pip",
+                    "download",
+                    "-r",
+                    str(requirements_path),
+                    "--no-deps",
+                    "--dest",
+                    tmp,
+                    "--abi",
+                    "none",
+                    "--platform",
+                    "any",
+                ]
+            )
+            _purge_vendor_dir(vendor_dir)
+            self._extract(tmp, vendor_dir, keep_extra_files)
+
+        vendored_lock_file_hash_file.write_text(
+            encoding="utf-8", data=hash_file_text(uv_lock_file)
+        )
+
+        self.repository.add_remove_files(vendor_dir)
+        # explicitly add the content of the egg-info directory as it is
+        # covered by the hgignore pattern.
+        egg_info_files = list(vendor_dir.glob("**/*.egg-info/*"))
+        if egg_info_files:
+            self.repository.add_remove_files(*egg_info_files, force=True)
 
     def _extract(self, src, dest, keep_extra_files=False):
         """extract source distribution into vendor directory"""
@@ -168,26 +216,6 @@ class VendorPython(MozbuildObject):
                 _denormalize_symlinks(package_dir)
 
 
-def _sort_requirements_in(requirements_in: Path):
-    requirements = {}
-    with requirements_in.open(mode="r", newline="\n") as f:
-        comments = []
-        for line in f.readlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                comments.append(line)
-                continue
-            name, version = line.split("==")
-            requirements[name] = version, comments
-            comments = []
-
-    with requirements_in.open(mode="w", newline="\n") as f:
-        for name, (version, comments) in sorted(requirements.items()):
-            if comments:
-                f.write("{}\n".format("\n".join(comments)))
-            f.write("{}=={}\n".format(name, version))
-
-
 def remove_environment_markers_from_requirements_txt(requirements_txt: Path):
     with requirements_txt.open(mode="r", newline="\n") as f:
         lines = f.readlines()
@@ -229,5 +257,8 @@ def _denormalize_symlinks(target):
             shutil.copyfile(link_target, f.path)
 
 
-def _copy_file_strip_carriage_return(file_src: Path, file_dst):
-    shutil.copyfileobj(file_src.open(mode="r"), file_dst.open(mode="w", newline="\n"))
+def hash_file_text(file_path):
+    hash_func = hashlib.new("sha256")
+    file_content = file_path.read_text(encoding="utf-8")
+    hash_func.update(file_content.encode("utf-8"))
+    return hash_func.hexdigest()

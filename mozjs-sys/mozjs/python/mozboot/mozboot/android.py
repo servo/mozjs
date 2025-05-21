@@ -20,11 +20,11 @@ from tqdm import tqdm
 # variable.
 from mozboot.bootstrap import MOZCONFIG_SUGGESTION_TEMPLATE
 
-NDK_VERSION = "r26c"
-CMDLINE_TOOLS_VERSION_STRING = "12.0"
-CMDLINE_TOOLS_VERSION = "11076708"
+NDK_VERSION = "r28"
+CMDLINE_TOOLS_VERSION_STRING = "19.0"
+CMDLINE_TOOLS_VERSION = "13114758"
 
-BUNDLETOOL_VERSION = "1.16.0"
+BUNDLETOOL_VERSION = "1.18.1"
 
 # We expect the emulator AVD definitions to be platform agnostic
 LINUX_X86_64_ANDROID_AVD = "linux64-android-avd-x86_64-repack"
@@ -42,8 +42,8 @@ AVD_MANIFEST_ARM = Path(__file__).resolve().parent / "android-avds/arm.json"
 AVD_MANIFEST_ARM64 = Path(__file__).resolve().parent / "android-avds/arm64.json"
 
 JAVA_VERSION_MAJOR = "17"
-JAVA_VERSION_MINOR = "0.11"
-JAVA_VERSION_PATCH = "9"
+JAVA_VERSION_MINOR = "0.14"
+JAVA_VERSION_PATCH = "7"
 
 ANDROID_NDK_EXISTS = """
 Looks like you have the correct version of the Android NDK installed at:
@@ -75,14 +75,10 @@ MOBILE_ANDROID_MOZCONFIG_TEMPLATE = """
 # Build GeckoView/Firefox for Android:
 ac_add_options --enable-project=mobile/android
 
-# Targeting the following architecture.
-# For regular phones, no --target is needed.
-# For x86 emulators (and x86 devices, which are uncommon):
-# ac_add_options --target=i686
-# For newer phones or Apple silicon
+# If --target is not specified it will default to host architecture for fast
+# emulation (x86_64 or aarch64). For testing on physical phones you most likely
+# want to use an aarch64 (ARM64) target.
 # ac_add_options --target=aarch64
-# For x86_64 emulators (and x86_64 devices, which are even less common):
-# ac_add_options --target=x86_64
 
 {extra_lines}
 """
@@ -824,7 +820,7 @@ def ensure_java(os_name, os_arch):
 
     if not java_path.exists():
         # e.g. https://github.com/adoptium/temurin17-binaries/releases/
-        #      download/jdk-17.0.11%2B9/OpenJDK17U-jre_x64_linux_hotspot_17.0.11_9.tar.gz
+        #      download/jdk-17.0.14%2B7/OpenJDK17U-jdk_x64_linux_hotspot_17.0.14_7.tar.gz
         java_url = (
             "https://github.com/adoptium/temurin{major}-binaries/releases/"
             "download/jdk-{major}.{minor}%2B{patch}/"
@@ -842,7 +838,7 @@ def ensure_java(os_name, os_arch):
 
 
 def java_bin_path(os_name, toolchain_path: Path):
-    # Like jdk-17.0.11+9
+    # Like jdk-17.0.14+7
     jdk_folder = "jdk-{major}.{minor}+{patch}".format(
         major=JAVA_VERSION_MAJOR, minor=JAVA_VERSION_MINOR, patch=JAVA_VERSION_PATCH
     )

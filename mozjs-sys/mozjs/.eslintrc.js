@@ -4,38 +4,22 @@
 
 "use strict";
 
-const xpcshellTestConfig = require("eslint-plugin-mozilla/lib/configs/xpcshell-test.js");
-const browserTestConfig = require("eslint-plugin-mozilla/lib/configs/browser-test.js");
-const mochitestTestConfig = require("eslint-plugin-mozilla/lib/configs/mochitest-test.js");
-const chromeTestConfig = require("eslint-plugin-mozilla/lib/configs/chrome-test.js");
+const mozilla = require("eslint-plugin-mozilla");
+const globalIgnores = require("./.eslintrc-ignores.js");
 const { testPaths } = require("./.eslintrc-test-paths.js");
 const { rollouts } = require("./.eslintrc-rollouts.js");
 const fs = require("fs");
 const path = require("path");
 
-/**
- * Some configurations have overrides, which can't be specified within overrides,
- * so we need to remove them.
- *
- * @param {object} config
- *   The configuration to remove overrides from.
- * @returns {object}
- *   The new configuration.
- */
-function removeOverrides(config) {
-  config = { ...config };
-  delete config.overrides;
-  return config;
-}
-
-function readFile(path) {
+function readFile(filePath) {
   return fs
-    .readFileSync(path, { encoding: "utf-8" })
+    .readFileSync(filePath, { encoding: "utf-8" })
     .split("\n")
     .filter(p => p && !p.startsWith("#"));
 }
 
 const ignorePatterns = [
+  ...globalIgnores,
   ...readFile(
     path.join(__dirname, "tools", "rewriting", "ThirdPartyPaths.txt")
   ),
@@ -63,16 +47,59 @@ const httpTestingPaths = [
 module.exports = {
   settings: {
     "import/extensions": [".mjs"],
+    "import/resolver": {
+      [path.resolve(__dirname, "srcdir-resolver.js")]: {},
+      node: {},
+    },
   },
   ignorePatterns,
   // Ignore eslint configurations in parent directories.
   root: true,
+  env: {
+    es2024: true,
+  },
   // New rules and configurations should generally be added in
   // tools/lint/eslint/eslint-plugin-mozilla/lib/configs/recommended.js to
   // allow external repositories that use the plugin to pick them up as well.
-  extends: ["plugin:mozilla/recommended"],
-  plugins: ["mozilla", "import", "json"],
+  extends: [
+    "plugin:mozilla/recommended",
+    "plugin:json/recommended-with-comments-legacy",
+    "prettier",
+  ],
+  plugins: ["mozilla", "html", "import", "json", "promise", "lit"],
+  rules: {
+    "lit/quoted-expressions": ["error", "never"],
+  },
   overrides: [
+    {
+      files: ["*.*"],
+      // The browser environment is not available for system modules, sjs, workers
+      // or any of the xpcshell-test files.
+      excludedFiles: [
+        "*.sys.mjs",
+        "*.sjs",
+        "**/?(*.)worker.?(m)js",
+        ...testPaths.xpcshell.map(filePath => `${filePath}**`),
+      ],
+      env: {
+        browser: true,
+      },
+    },
+    {
+      files: ["*.*"],
+      env: {
+        "mozilla/privileged": true,
+        "mozilla/specific": true,
+      },
+      rules: {
+        // Require braces around blocks that start a new line. This must be
+        // configured after eslint-config-prettier is included (via `extends`
+        // above), as otherwise that configuration disables it. Hence, we do
+        // not include it in
+        // `tools/lint/eslint/eslint-plugin-mozilla/lib/configs/recommended.js`.
+        curly: ["error", "all"],
+      },
+    },
     {
       files: [
         // All .eslintrc.js files are in the node environment, so turn that
@@ -82,6 +109,8 @@ module.exports = {
         // *.config.js files are generally assumed to be configuration files
         // based for node.
         "*.config.?(m)js",
+        // The resolver for moz-src for eslint, vscode etc.
+        "srcdir-resolver.js",
       ],
       env: {
         node: true,
@@ -151,16 +180,16 @@ module.exports = {
       extends: ["plugin:mozilla/general-test"],
     },
     {
-      ...removeOverrides(xpcshellTestConfig),
-      files: testPaths.xpcshell.map(path => `${path}**`),
-      excludedFiles: ["**/*.jsm", "**/*.mjs", "**/*.sjs"],
+      ...mozilla.configs["xpcshell-test"],
+      files: testPaths.xpcshell.map(filePath => `${filePath}**`),
+      excludedFiles: ["**/*.mjs", "**/*.sjs"],
     },
     {
       // If it is an xpcshell head file, we turn off global unused variable checks, as it
       // would require searching the other test files to know if they are used or not.
       // This would be expensive and slow, and it isn't worth it for head files.
       // We could get developers to declare as exported, but that doesn't seem worth it.
-      files: testPaths.xpcshell.map(path => `${path}head*.js`),
+      files: testPaths.xpcshell.map(filePath => `${filePath}head*.js`),
       rules: {
         "no-unused-vars": [
           "error",
@@ -177,7 +206,7 @@ module.exports = {
       // This is not done in the xpcshell-test configuration as we cannot pull
       // in overrides from there. We should at some stage, aim to enable this
       // for all files in xpcshell-tests.
-      files: testPaths.xpcshell.map(path => `${path}test*.js`),
+      files: testPaths.xpcshell.map(filePath => `${filePath}test*.js`),
       rules: {
         // No declaring variables that are never used
         "no-unused-vars": [
@@ -190,23 +219,22 @@ module.exports = {
       },
     },
     {
-      ...removeOverrides(browserTestConfig),
-      files: testPaths.browser.map(path => `${path}**`),
-      excludedFiles: ["**/*.jsm", "**/*.mjs", "**/*.sjs"],
+      ...mozilla.configs["browser-test"],
+      files: testPaths.browser.map(filePath => `${filePath}**`),
+      excludedFiles: ["**/*.mjs", "**/*.sjs"],
     },
     {
-      ...removeOverrides(mochitestTestConfig),
-      files: testPaths.mochitest.map(path => `${path}**`),
+      ...mozilla.configs["mochitest-test"],
+      files: testPaths.mochitest.map(filePath => `${filePath}**`),
       excludedFiles: [
-        "**/*.jsm",
         "**/*.mjs",
         "security/manager/ssl/tests/mochitest/browser/**",
       ],
     },
     {
-      ...removeOverrides(chromeTestConfig),
-      files: testPaths.chrome.map(path => `${path}**`),
-      excludedFiles: ["**/*.jsm", "**/*.mjs", "**/*.sjs"],
+      ...mozilla.configs["chrome-test"],
+      files: testPaths.chrome.map(filePath => `${filePath}**`),
+      excludedFiles: ["**/*.mjs", "**/*.sjs"],
     },
     {
       env: {
@@ -216,17 +244,17 @@ module.exports = {
         "mozilla/simpletest": true,
       },
       files: [
-        ...testPaths.mochitest.map(path => `${path}/**/*.js`),
-        ...testPaths.chrome.map(path => `${path}/**/*.js`),
+        ...testPaths.mochitest.map(filePath => `${filePath}/**/*.js`),
+        ...testPaths.chrome.map(filePath => `${filePath}/**/*.js`),
       ],
-      excludedFiles: ["**/*.jsm", "**/*.mjs", "**/*.sjs"],
+      excludedFiles: ["**/*.mjs", "**/*.sjs"],
     },
     {
       // Some directories have multiple kinds of tests, and some rules
       // don't work well for HTML-based mochitests, so disable those.
       files: testPaths.xpcshell
         .concat(testPaths.browser)
-        .map(path => [`${path}/**/*.html`, `${path}/**/*.xhtml`])
+        .map(filePath => [`${filePath}/**/*.html`, `${filePath}/**/*.xhtml`])
         .flat(),
       rules: {
         // plain/chrome mochitests don't automatically include Assert, so
@@ -255,8 +283,8 @@ module.exports = {
       files: [
         "browser/components/aboutwelcome/**",
         "browser/components/asrouter/**",
-        "browser/components/newtab/**",
         "browser/components/pocket/**",
+        "browser/extensions/newtab/**",
         "devtools/**",
       ],
       rules: {
@@ -267,7 +295,7 @@ module.exports = {
     },
     {
       // Exempt files with these paths since they have to use http for full coverage
-      files: httpTestingPaths.map(path => `${path}**`),
+      files: httpTestingPaths.map(filePath => `${filePath}**`),
       rules: {
         "@microsoft/sdl/no-insecure-url": "off",
       },

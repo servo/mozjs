@@ -108,6 +108,8 @@ class Pbzx(object):
         # check.
         chunk_size = fileobj.read(8)
         chunk_size = struct.unpack(">Q", chunk_size)[0]
+        # Not using mozbuild.util.cpu_count() because this file is used standalone
+        # to generate system symbols.
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count())
         self.chunk_getter = executor.map(self._uncompress_chunk, self._chunker(fileobj))
         self._init_one_chunk()

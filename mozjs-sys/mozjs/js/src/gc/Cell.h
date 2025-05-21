@@ -31,9 +31,11 @@ extern bool RuntimeFromMainThreadIsHeapMajorCollecting(
     JS::shadow::Zone* shadowZone);
 
 #ifdef DEBUG
-// Barriers can't be triggered during backend Ion compilation, which may run on
-// a helper thread.
+// Barriers can't be triggered during offthread baseline or Ion
+// compilation, which may run on a helper thread.
+extern bool CurrentThreadIsBaselineCompiling();
 extern bool CurrentThreadIsIonCompiling();
+extern bool CurrentThreadIsOffThreadCompiling();
 #endif
 
 extern void TraceManuallyBarrieredGenericPointerEdge(JSTracer* trc,
@@ -239,9 +241,7 @@ class TenuredCell : public Cell {
     return true;
   }
 
-  TenuredChunk* chunk() const {
-    return static_cast<TenuredChunk*>(Cell::chunk());
-  }
+  ArenaChunk* chunk() const { return static_cast<ArenaChunk*>(Cell::chunk()); }
 
   // Mark bit management.
   MOZ_ALWAYS_INLINE bool isMarkedAny() const;
@@ -297,7 +297,8 @@ class TenuredCell : public Cell {
   // Default implementation for kinds that don't require fixup.
   void fixupAfterMovingGC() {}
 
-  static inline CellColor getColor(MarkBitmap* bitmap, const TenuredCell* cell);
+  static inline CellColor getColor(ChunkMarkBitmap* bitmap,
+                                   const TenuredCell* cell);
 
 #ifdef DEBUG
   inline bool isAligned() const;
@@ -351,7 +352,7 @@ inline JSRuntime* Cell::runtimeFromAnyThread() const {
 inline uintptr_t Cell::address() const {
   uintptr_t addr = uintptr_t(this);
   MOZ_ASSERT(addr % CellAlignBytes == 0);
-  MOZ_ASSERT(TenuredChunk::withinValidRange(addr));
+  MOZ_ASSERT(ArenaChunk::withinValidRange(addr));
   return addr;
 }
 
@@ -428,7 +429,7 @@ MOZ_ALWAYS_INLINE CellColor TenuredCell::color() const {
 }
 
 /* static */
-inline CellColor TenuredCell::getColor(MarkBitmap* bitmap,
+inline CellColor TenuredCell::getColor(ChunkMarkBitmap* bitmap,
                                        const TenuredCell* cell) {
   // Note that this method isn't synchronised so may give surprising results if
   // the mark bitmap is being modified concurrently.
@@ -444,27 +445,6 @@ inline CellColor TenuredCell::getColor(MarkBitmap* bitmap,
   return CellColor::White;
 }
 
-bool TenuredCell::markIfUnmarked(MarkColor color /* = Black */) const {
-  return chunk()->markBits.markIfUnmarked(this, color);
-}
-
-bool TenuredCell::markIfUnmarkedAtomic(MarkColor color) const {
-  return chunk()->markBits.markIfUnmarkedAtomic(this, color);
-}
-
-void TenuredCell::markBlack() const { chunk()->markBits.markBlack(this); }
-void TenuredCell::markBlackAtomic() const {
-  chunk()->markBits.markBlackAtomic(this);
-}
-
-void TenuredCell::copyMarkBitsFrom(const TenuredCell* src) {
-  MarkBitmap& markBits = chunk()->markBits;
-  markBits.copyMarkBit(this, src, ColorBit::BlackBit);
-  markBits.copyMarkBit(this, src, ColorBit::GrayOrBlackBit);
-}
-
-void TenuredCell::unmark() { chunk()->markBits.unmark(this); }
-
 inline Arena* TenuredCell::arena() const {
   MOZ_ASSERT(isTenured());
   uintptr_t addr = address();
@@ -479,15 +459,15 @@ JS::TraceKind TenuredCell::getTraceKind() const {
 }
 
 JS::Zone* TenuredCell::zone() const {
-  JS::Zone* zone = arena()->zone;
+  JS::Zone* zone = zoneFromAnyThread();
   MOZ_ASSERT(CurrentThreadIsGCMarking() || CurrentThreadCanAccessZone(zone));
   return zone;
 }
 
-JS::Zone* TenuredCell::zoneFromAnyThread() const { return arena()->zone; }
+JS::Zone* TenuredCell::zoneFromAnyThread() const { return arena()->zone(); }
 
 bool TenuredCell::isInsideZone(JS::Zone* zone) const {
-  return zone == arena()->zone;
+  return zone == zoneFromAnyThread();
 }
 
 // Read barrier and pre-write barrier implementation for GC cells.
@@ -567,7 +547,7 @@ template <typename T, typename F>
 MOZ_ALWAYS_INLINE void PreWriteBarrier(JS::Zone* zone, T* data,
                                        const F& traceFn) {
   MOZ_ASSERT(data);
-  MOZ_ASSERT(!CurrentThreadIsIonCompiling());
+  MOZ_ASSERT(!CurrentThreadIsOffThreadCompiling());
   MOZ_ASSERT(!CurrentThreadIsGCMarking());
 
   auto* shadowZone = JS::shadow::Zone::from(zone);
@@ -894,6 +874,33 @@ template <>
 inline bool TenuredThingIsMarkedAny<Cell>(Cell* thing) {
   return thing->asTenured().isMarkedAny();
 }
+
+class alignas(gc::CellAlignBytes) SmallBuffer : public TenuredCell {
+ public:
+  static constexpr uintptr_t NURSERY_OWNED_BIT = Bit(3);
+
+  void check() const {}  // No check value.
+
+  bool isNurseryOwned() const;
+  void setNurseryOwned(bool value);
+
+  static const JS::TraceKind TraceKind = JS::TraceKind::SmallBuffer;
+  void finalize(JS::GCContext* gcx) {
+    // Sized allocations don't have finalizers.
+  }
+  void traceChildren(JSTracer* trc) {
+    // TODO: Generic tracing not supported for sized allocations.
+    // GCRuntime::checkForCompartmentMismatches ends up calling this because it
+    // iterates all GC cells.
+  }
+  void* data() { return this + 1; }
+};
+template <size_t bytes>
+struct SmallBufferN : public SmallBuffer {
+  uint8_t data[bytes - sizeof(SmallBuffer)];
+};
+static_assert(sizeof(SmallBufferN<16>) == 16);
+static_assert(sizeof(SmallBufferN<128>) == 128);
 
 } /* namespace gc */
 } /* namespace js */

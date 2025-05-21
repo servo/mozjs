@@ -4,7 +4,6 @@
 import concurrent.futures
 import json
 import logging
-import multiprocessing
 import ntpath
 import os
 import pathlib
@@ -27,8 +26,7 @@ from six.moves import input
 
 from mozbuild import build_commands
 from mozbuild.controller.clobber import Clobberer
-from mozbuild.nodeutil import find_node_executable
-from mozbuild.util import memoize
+from mozbuild.util import cpu_count, memoize
 
 
 # Function used to run clang-format on a batch of files. It is a helper function
@@ -386,7 +384,7 @@ def check(
     ) as output_manager:
         import math
 
-        batch_size = int(math.ceil(float(len(source)) / multiprocessing.cpu_count()))
+        batch_size = int(math.ceil(float(len(source)) / cpu_count()))
         for i in range(0, len(source), batch_size):
             args = _get_clang_tidy_command(
                 command_context,
@@ -582,7 +580,9 @@ def _get_clang_tidy_command(
             compilation_commands_path,
         ]
         + common_args
-        + sources
+        # run-clang-tidy expects regexps, not paths, so we need to escape
+        # backslashes.
+        + [os.path.normpath(s).replace("\\", "\\\\") for s in sources]
     )
 
 
@@ -711,7 +711,7 @@ def autotest(
         )
         return TOOLS_UNSUPORTED_PLATFORM
 
-    max_workers = multiprocessing.cpu_count()
+    max_workers = cpu_count()
 
     command_context.log(
         logging.INFO,
@@ -1070,57 +1070,6 @@ def print_checks(command_context, verbose=False):
     ]
 
     return command_context.run_process(args=args, pass_thru=True)
-
-
-@Command(
-    "prettier-format",
-    category="misc",
-    description="Run prettier on current changes",
-)
-@CommandArgument(
-    "--path",
-    "-p",
-    nargs=1,
-    required=True,
-    help="Specify the path to reformat to stdout.",
-)
-@CommandArgument(
-    "--assume-filename",
-    "-a",
-    nargs=1,
-    required=True,
-    help="This option is usually used in the context of hg-formatsource."
-    "When reading from stdin, Prettier assumes this "
-    "filename to decide which style and parser to use.",
-)
-def prettier_format(command_context, path, assume_filename):
-    # With assume_filename we want to have stdout clean since the result of the
-    # format will be redirected to stdout.
-
-    binary, _ = find_node_executable()
-    prettier = os.path.join(
-        command_context.topsrcdir, "node_modules", "prettier", "bin-prettier.js"
-    )
-    path = os.path.join(command_context.topsrcdir, path[0])
-
-    # Bug 1564824. Prettier fails on patches with moved files where the
-    # original directory also does not exist.
-    assume_dir = os.path.dirname(
-        os.path.join(command_context.topsrcdir, assume_filename[0])
-    )
-    assume_filename = assume_filename[0] if os.path.isdir(assume_dir) else path
-
-    # We use --stdin-filepath in order to better determine the path for
-    # the prettier formatter when it is ran outside of the repo, for example
-    # by the extension hg-formatsource.
-    args = [binary, prettier, "--stdin-filepath", assume_filename]
-
-    process = subprocess.Popen(args, stdin=subprocess.PIPE)
-    with open(path, "rb") as fin:
-        process.stdin.write(fin.read())
-        process.stdin.close()
-        process.wait()
-        return process.returncode
 
 
 @Command(
@@ -1593,7 +1542,9 @@ def get_clang_tools(
 
     from mozbuild.bootstrap import bootstrap_toolchain
 
-    bootstrap_toolchain("clang-tools/clang-tidy")
+    clang_tidy = bootstrap_toolchain("clang-tools/clang-tidy")
+    if not clang_tidy:
+        raise Exception("clang-tidy not found")
 
     return 0 if _is_version_eligible(command_context, clang_paths) else 1, clang_paths
 
@@ -1904,7 +1855,7 @@ def _run_clang_format_path(
     # Run clang-format in parallel trying to saturate all of the available cores.
     import math
 
-    max_workers = multiprocessing.cpu_count()
+    max_workers = cpu_count()
 
     # To maximize CPU usage when there are few items to handle,
     # underestimate the number of items per batch, then dispatch

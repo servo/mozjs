@@ -5,8 +5,9 @@
 # This script generates jit/MIROpsGenerated.h (list of MIR instructions)
 # from MIROps.yaml, as well as MIR op definitions.
 
+import io
+
 import buildconfig
-import six
 import yaml
 from mozbuild.preprocessor import Preprocessor
 
@@ -41,7 +42,7 @@ def load_yaml(yaml_path):
     # the YAML file.
     pp = Preprocessor()
     pp.context.update(buildconfig.defines["ALLDEFINES"])
-    pp.out = six.StringIO()
+    pp.out = io.StringIO()
     pp.do_filter("substitution")
     pp.do_include(yaml_path)
     contents = pp.out.getvalue()
@@ -53,6 +54,7 @@ type_policies = {
     "Value": "BoxPolicy",
     "Int32": "UnboxedInt32Policy",
     "BigInt": "BigIntPolicy",
+    "IntPtr": "IntPtrPolicy",
     "Boolean": "BooleanPolicy",
     "Double": "DoublePolicy",
     "String": "StringPolicy",
