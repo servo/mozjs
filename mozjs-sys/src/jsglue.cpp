@@ -60,7 +60,7 @@ class RustJobQueue : public JS::JobQueue {
       : mTraps(aTraps), mQueue(aQueue) {}
 
   virtual bool getHostDefinedData(JSContext* cx,
-                                  JS::MutableHandle<JSObject*> data) const {
+                                  JS::MutableHandle<JSObject*> data) const override {
     return mTraps.getHostDefinedData(mQueue, cx, data);
   }
   virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
