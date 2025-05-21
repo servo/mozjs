@@ -3,15 +3,32 @@
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
+import shutil
 import subprocess
 import tempfile
 import urllib
 
+import mozfile
+import requests
+import urllib3
+
+
+class HttpError(Exception):
+    pass
+
 
 class BaseHost:
-    def __init__(self, manifest):
+    MAX_RETRIES_DEFAULT = urllib3.util.Retry(
+        total=5, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504]
+    )
+
+    def __init__(self, manifest, max_retries=MAX_RETRIES_DEFAULT):
         self.manifest = manifest
         self.repo_url = urllib.parse.urlparse(self.manifest["vendoring"]["url"])
+        adapter = requests.adapters.HTTPAdapter(max_retries=max_retries)
+        self.session = requests.Session()
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
     def upstream_tag(self, revision):
         """Temporarily clone the repo to get the latest tag and timestamp"""
@@ -77,3 +94,18 @@ class BaseHost:
 
     def upstream_release_artifact(self, revision, release_artifact):
         raise Exception("Unimplemented for this subclass...")
+
+    def _transform_single_file_to_destination(self, from_file, destination):
+        shutil.copy2(from_file.name, destination)
+
+    def download_single_file(self, url, destination):
+        response = self.session.get(url, stream=True)
+        if response.status_code != 200:
+            raise HttpError(response.status_code, url)
+        with mozfile.NamedTemporaryFile() as tmpfile:
+            for data in response.iter_content(4096):
+                tmpfile.write(data)
+
+            tmpfile.seek(0)
+            os.makedirs(os.path.dirname(destination), exist_ok=True)
+            self._transform_single_file_to_destination(tmpfile, destination)

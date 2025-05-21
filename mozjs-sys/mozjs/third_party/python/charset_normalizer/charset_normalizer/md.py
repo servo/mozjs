@@ -9,7 +9,8 @@ from .constant import (
 )
 from .utils import (
     is_accentuated,
-    is_ascii,
+    is_arabic,
+    is_arabic_isolated_form,
     is_case_variable,
     is_cjk,
     is_emoticon,
@@ -128,8 +129,9 @@ class TooManyAccentuatedPlugin(MessDetectorPlugin):
 
     @property
     def ratio(self) -> float:
-        if self._character_count == 0 or self._character_count < 8:
+        if self._character_count < 8:
             return 0.0
+
         ratio_of_accentuation: float = self._accentuated_count / self._character_count
         return ratio_of_accentuation if ratio_of_accentuation >= 0.35 else 0.0
 
@@ -234,15 +236,12 @@ class SuspiciousRange(MessDetectorPlugin):
 
     @property
     def ratio(self) -> float:
-        if self._character_count == 0:
+        if self._character_count <= 13:
             return 0.0
 
         ratio_of_suspicious_range_usage: float = (
             self._suspicious_successive_range_count * 2
         ) / self._character_count
-
-        if ratio_of_suspicious_range_usage < 0.1:
-            return 0.0
 
         return ratio_of_suspicious_range_usage
 
@@ -261,6 +260,7 @@ class SuperWeirdWordPlugin(MessDetectorPlugin):
 
         self._buffer: str = ""
         self._buffer_accent_count: int = 0
+        self._buffer_glyph_count: int = 0
 
     def eligible(self, character: str) -> bool:
         return True
@@ -280,6 +280,14 @@ class SuperWeirdWordPlugin(MessDetectorPlugin):
                 and is_thai(character) is False
             ):
                 self._foreign_long_watch = True
+            if (
+                is_cjk(character)
+                or is_hangul(character)
+                or is_katakana(character)
+                or is_hiragana(character)
+                or is_thai(character)
+            ):
+                self._buffer_glyph_count += 1
             return
         if not self._buffer:
             return
@@ -292,13 +300,20 @@ class SuperWeirdWordPlugin(MessDetectorPlugin):
             self._character_count += buffer_length
 
             if buffer_length >= 4:
-                if self._buffer_accent_count / buffer_length > 0.34:
+                if self._buffer_accent_count / buffer_length >= 0.5:
                     self._is_current_word_bad = True
                 # Word/Buffer ending with an upper case accentuated letter are so rare,
                 # that we will consider them all as suspicious. Same weight as foreign_long suspicious.
-                if is_accentuated(self._buffer[-1]) and self._buffer[-1].isupper():
+                elif (
+                    is_accentuated(self._buffer[-1])
+                    and self._buffer[-1].isupper()
+                    and all(_.isupper() for _ in self._buffer) is False
+                ):
                     self._foreign_long_count += 1
                     self._is_current_word_bad = True
+                elif self._buffer_glyph_count == 1:
+                    self._is_current_word_bad = True
+                    self._foreign_long_count += 1
             if buffer_length >= 24 and self._foreign_long_watch:
                 camel_case_dst = [
                     i
@@ -322,6 +337,7 @@ class SuperWeirdWordPlugin(MessDetectorPlugin):
             self._foreign_long_watch = False
             self._buffer = ""
             self._buffer_accent_count = 0
+            self._buffer_glyph_count = 0
         elif (
             character not in {"<", ">", "-", "=", "~", "|", "_"}
             and character.isdigit() is False
@@ -419,7 +435,7 @@ class ArchaicUpperLowerPlugin(MessDetectorPlugin):
 
             return
 
-        if self._current_ascii_only is True and is_ascii(character) is False:
+        if self._current_ascii_only is True and character.isascii() is False:
             self._current_ascii_only = False
 
         if self._last_alpha_seen is not None:
@@ -453,6 +469,34 @@ class ArchaicUpperLowerPlugin(MessDetectorPlugin):
             return 0.0
 
         return self._successive_upper_lower_count_final / self._character_count
+
+
+class ArabicIsolatedFormPlugin(MessDetectorPlugin):
+    def __init__(self) -> None:
+        self._character_count: int = 0
+        self._isolated_form_count: int = 0
+
+    def reset(self) -> None:  # pragma: no cover
+        self._character_count = 0
+        self._isolated_form_count = 0
+
+    def eligible(self, character: str) -> bool:
+        return is_arabic(character)
+
+    def feed(self, character: str) -> None:
+        self._character_count += 1
+
+        if is_arabic_isolated_form(character):
+            self._isolated_form_count += 1
+
+    @property
+    def ratio(self) -> float:
+        if self._character_count < 8:
+            return 0.0
+
+        isolated_form_usage: float = self._isolated_form_count / self._character_count
+
+        return isolated_form_usage
 
 
 @lru_cache(maxsize=1024)
@@ -521,6 +565,8 @@ def is_suspiciously_successive_range(
         if "Punctuation" in unicode_range_a or "Punctuation" in unicode_range_b:
             return False
         if "Forms" in unicode_range_a or "Forms" in unicode_range_b:
+            return False
+        if unicode_range_a == "Basic Latin" or unicode_range_b == "Basic Latin":
             return False
 
     return True

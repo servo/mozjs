@@ -17,7 +17,7 @@ import mozpack.path as mozpath
 import mozunit
 import pytest
 
-from mozbuild.repackaging import deb
+from mozbuild.repackaging import deb, desktop_file
 
 _APPLICATION_INI_CONTENT = """[App]
 Vendor=Mozilla
@@ -90,9 +90,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
                 "DEB_PKG_NAME": "firefox-nightly-try",
                 "DEB_PKG_VERSION": "112.0a1~20230222000000",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-nightly-try",
             },
             does_not_raise(),
         ),
@@ -111,9 +115,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox - Language pack for Firefox Nightly for fr",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
                 "DEB_PKG_NAME": "firefox-nightly-try-l10n-fr",
                 "DEB_PKG_VERSION": "112.0a1~20230222000000",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-nightly-try-l10n-fr",
             },
             does_not_raise(),
         ),
@@ -132,9 +140,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
                 "DEB_PKG_NAME": "firefox-nightly-try",
                 "DEB_PKG_VERSION": "112.0b1~build1",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-nightly-try",
             },
             does_not_raise(),
         ),
@@ -153,9 +165,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-nightly-try",
                 "DEB_PKG_NAME": "firefox-nightly-try",
                 "DEB_PKG_VERSION": "112.0~build2",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-nightly-try",
             },
             does_not_raise(),
         ),
@@ -174,9 +190,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox Developer Edition",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox Developer Edition",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-devedition",
                 "DEB_PKG_NAME": "firefox-devedition",
                 "DEB_PKG_VERSION": "120.0b9~build1",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-devedition",
             },
             does_not_raise(),
         ),
@@ -195,9 +215,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox Developer Edition - Firefox Developer Edition Language Pack for Acholi (ach) – Acoli",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox Developer Edition",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-devedition",
                 "DEB_PKG_NAME": "firefox-devedition-l10n-ach",
                 "DEB_PKG_VERSION": "120.0b9~build1",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-devedition-l10n-ach",
             },
             does_not_raise(),
         ),
@@ -216,9 +240,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox Developer Edition - Firefox Developer Edition Language Pack for Acholi (ach) – Acoli",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox Developer Edition",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-devedition",
                 "DEB_PKG_NAME": "firefox-devedition-l10n-ach",
                 "DEB_PKG_VERSION": "120.0b9~build1",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-devedition-l10n-ach",
             },
             does_not_raise(),
         ),
@@ -237,9 +265,13 @@ def test_extract_application_ini_data_from_directory():
             },
             {
                 "DEB_DESCRIPTION": "Mozilla Firefox Developer Edition - Firefox Developer Edition Language Pack for Acholi (ach) – Acoli",
+                "DEB_PRODUCT_NAME": "Firefox",
+                "DEB_DISPLAY_NAME": "Firefox Developer Edition",
                 "DEB_PKG_INSTALL_PATH": "usr/lib/firefox-aurora",
                 "DEB_PKG_NAME": "firefox-aurora-l10n-ach",
                 "DEB_PKG_VERSION": "120.0b9~build1",
+                "DEB_MANPAGE_DATE": "February 22, 2023",
+                "Icon": "firefox-aurora-l10n-ach",
             },
             pytest.raises(AssertionError),
         ),
@@ -471,6 +503,62 @@ Name[zh_TW]=zh-TW-desktop-action-open-profile-manager
 """
 
 
+def test_inject_deb_desktop_entry_file(monkeypatch):
+    source_dir = "/source_dir"
+    build_variables = {
+        "DEB_PRODUCT_NAME": "Firefox",
+        "DEB_PKG_NAME": "firefox-nightly",
+    }
+    release_product = "firefox"
+    release_type = "nightly"
+
+    desktop_entry_template_path = mozpath.join(
+        source_dir, "debian", f"{build_variables['DEB_PRODUCT_NAME'].lower()}.desktop"
+    )
+    desktop_entry_file_filename = f"{build_variables['DEB_PKG_NAME']}.desktop"
+
+    # Check if pre-supplied .desktop file is being copied to the correct location
+    def mock_move(source_path, destination_path):
+        assert source_path == desktop_entry_template_path
+        assert destination_path == f"/source_dir/debian/{desktop_entry_file_filename}"
+
+    monkeypatch.setattr(deb.shutil, "move", mock_move)
+
+    # Bypass generating the .desktop file's contents,
+    # since that is tested in test_generate_deb_desktop_entry_file_text()
+    def mock_generate_browser_desktop_entry_file_text(
+        log,
+        build_variables,
+        release_product,
+        release_type,
+        fluent_localization,
+        fluent_resource_loader,
+    ):
+        return DEVEDITION_DESKTOP_ENTRY_FILE_TEXT
+
+    monkeypatch.setattr(
+        deb,
+        "generate_browser_desktop_entry_file_text",
+        mock_generate_browser_desktop_entry_file_text,
+    )
+
+    # Check if the .desktop file exists in its final location
+    with tempfile.TemporaryDirectory() as source_dir:
+        deb._inject_deb_desktop_entry_file(
+            None,
+            source_dir,
+            build_variables,
+            release_product,
+            release_type,
+            None,
+            None,
+        )
+
+        assert os.path.exists(
+            os.path.join(source_dir, "debian", desktop_entry_file_filename)
+        )
+
+
 def test_generate_deb_desktop_entry_file_text(monkeypatch):
     def responsive(url):
         assert "zh-TW" in url
@@ -481,7 +569,7 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
             }
         )
 
-    monkeypatch.setattr(deb.requests, "get", responsive)
+    monkeypatch.setattr(desktop_file.requests, "get", responsive)
 
     output_stream = StringIO()
     logger = logging.getLogger("mozbuild:test:repackaging")
@@ -505,18 +593,19 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
     fluent_resource_loader = Mock()
 
     monkeypatch.setattr(
-        deb.json,
+        desktop_file.json,
         "load",
         lambda f: {"zh-TW": {"platforms": ["linux"], "revision": "default"}},
     )
 
     build_variables = {
         "DEB_PKG_NAME": "firefox-nightly",
+        "Icon": "firefox-nightly",
     }
     release_product = "firefox"
     release_type = "nightly"
 
-    desktop_entry_file_text = deb._generate_browser_desktop_entry_file_text(
+    desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
         log,
         build_variables,
         release_product,
@@ -529,11 +618,12 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
 
     build_variables = {
         "DEB_PKG_NAME": "firefox-devedition",
+        "Icon": "firefox-devedition",
     }
     release_product = "devedition"
     release_type = "beta"
 
-    desktop_entry_file_text = deb._generate_browser_desktop_entry_file_text(
+    desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
         log,
         build_variables,
         release_product,
@@ -547,10 +637,10 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
     def outage(url):
         return Mock(**{"status_code": 500})
 
-    monkeypatch.setattr(deb.requests, "get", outage)
+    monkeypatch.setattr(desktop_file.requests, "get", outage)
 
-    with pytest.raises(deb.HgServerError):
-        desktop_entry_file_text = deb._generate_browser_desktop_entry_file_text(
+    with pytest.raises(desktop_file.RemoteVCSError):
+        desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
             log,
             build_variables,
             release_product,
@@ -707,8 +797,6 @@ _MANIFEST_JSON_DATA = {
                 "browser-region": "browser/chrome/fr/locale/browser-region/",
                 "devtools": "browser/chrome/fr/locale/fr/devtools/client/",
                 "devtools-shared": "browser/chrome/fr/locale/fr/devtools/shared/",
-                "formautofill": "browser/features/formautofill@mozilla.org/fr/locale/fr/",
-                "report-site-issue": "browser/features/webcompat-reporter@mozilla.org/fr/locale/fr/",
                 "alerts": "chrome/fr/locale/fr/alerts/",
                 "autoconfig": "chrome/fr/locale/fr/autoconfig/",
                 "global": "chrome/fr/locale/fr/global/",

@@ -193,11 +193,7 @@ class BaseFile(object):
             if getattr(self, "path", None) and getattr(dest, "path", None):
                 # The destination directory must exist, or CopyFile will fail.
                 destdir = os.path.dirname(dest.path)
-                try:
-                    os.makedirs(destdir)
-                except OSError as e:
-                    if e.errno != errno.EEXIST:
-                        raise
+                os.makedirs(destdir, exist_ok=True)
                 _copyfile(self.path, dest.path)
                 shutil.copystat(self.path, dest.path)
             else:
@@ -555,10 +551,8 @@ class PreprocessedFile(BaseFile):
         # destination is not a symlink, we leave it alone, since we're going to
         # overwrite its contents anyway.
         # If symlinks aren't supported at all, we can skip this step.
-        # See comment in AbsoluteSymlinkFile about Windows.
-        if hasattr(os, "symlink") and platform.system() != "Windows":
-            if os.path.islink(dest.path):
-                os.remove(dest.path)
+        if hasattr(os, "symlink") and os.path.islink(dest.path):
+            os.remove(dest.path)
 
         pp_deps = set(self.extra_depends)
 
