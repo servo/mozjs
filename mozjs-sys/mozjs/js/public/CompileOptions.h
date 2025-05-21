@@ -238,7 +238,7 @@ class JS_PUBLIC_API PrefableCompileOptions {
  * Use this in code that needs to propagate compile options from one
  * compilation unit to another.
  */
-class JS_PUBLIC_API TransitiveCompileOptions {
+class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
   friend class JS_PUBLIC_API ReadOnlyDecodeOptions;
 
  protected:
@@ -463,7 +463,8 @@ class JS_PUBLIC_API TransitiveCompileOptions {
  * is protected anyway); instead, create instances only of the derived classes:
  * CompileOptions and OwningCompileOptions.
  */
-class JS_PUBLIC_API ReadOnlyCompileOptions : public TransitiveCompileOptions {
+class JS_PUBLIC_API __attribute__((__packed__)) ReadOnlyCompileOptions
+    : public TransitiveCompileOptions {
  public:
   // POD options.
 

@@ -1374,6 +1374,11 @@ if CONFIG["OS_TARGET"] == "FreeBSD":
         "sys/capsicum.h",
     ]
 
+if CONFIG["OHOS"]:
+    system_headers += [
+       "hilog/log.h",
+    ]
+
 if CONFIG["MOZ_APP_SYSTEM_HEADERS"]:
     include("../" + CONFIG["MOZ_BUILD_APP"] + "/app-system-headers.mozbuild")
 
