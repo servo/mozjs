@@ -34,7 +34,7 @@ use crate::glue::{
 };
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
-use crate::jsapi::js::frontend::CompilationStencil;
+use crate::jsapi::js::frontend::InitialStencilAndDelazifications;
 use crate::jsapi::mozilla::Utf8Unit;
 use crate::jsapi::shadow::BaseShape;
 use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
@@ -563,7 +563,7 @@ impl Drop for JSAutoStructuredCloneBufferWrapper {
 }
 
 pub struct Stencil {
-    inner: already_AddRefed<CompilationStencil>,
+    inner: already_AddRefed<InitialStencilAndDelazifications>,
 }
 
 /*unsafe impl Send for Stencil {}
@@ -581,7 +581,7 @@ impl Drop for Stencil {
 }
 
 impl Deref for Stencil {
-    type Target = *mut CompilationStencil;
+    type Target = *mut InitialStencilAndDelazifications;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.mRawPtr
@@ -1026,7 +1026,7 @@ impl<'a> CapturedJSStack<'a> {
         };
         let ref mut stack_capture = stack_capture.assume_init();
 
-        if !CaptureCurrentStack(cx, guard.handle_mut().raw(), stack_capture) {
+        if !CaptureCurrentStack(cx, guard.handle_mut().raw(), stack_capture, HandleObject::null().into()) {
             None
         } else {
             Some(CapturedJSStack { cx, stack: guard })
@@ -1187,6 +1187,7 @@ pub mod wrappers {
     use crate::jsapi::CloneDataPolicy;
     use crate::jsapi::ColumnNumberOneOrigin;
     use crate::jsapi::CompartmentTransplantCallback;
+    use crate::jsapi::EnvironmentChain;
     use crate::jsapi::JSONParseHandler;
     use crate::jsapi::Latin1Char;
     use crate::jsapi::PropertyKey;
@@ -1211,6 +1212,7 @@ pub mod wrappers {
     use crate::jsapi::JSScript;
     use crate::jsapi::JSStructuredCloneData;
     use crate::jsapi::JSType;
+    use crate::jsapi::ModuleType;
     use crate::jsapi::ModuleErrorBehaviour;
     use crate::jsapi::MutableHandleIdVector;
     use crate::jsapi::PromiseState;
@@ -1222,9 +1224,11 @@ pub mod wrappers {
     use crate::jsapi::ScriptEnvironmentPreparer_Closure;
     use crate::jsapi::SourceText;
     use crate::jsapi::StackCapture;
+    use crate::jsapi::Stencil;
     use crate::jsapi::StructuredCloneScope;
     use crate::jsapi::Symbol;
     use crate::jsapi::SymbolCode;
+    use crate::jsapi::TranscodeBuffer;
     use crate::jsapi::TwoByteChars;
     use crate::jsapi::UniqueChars;
     use crate::jsapi::Value;
