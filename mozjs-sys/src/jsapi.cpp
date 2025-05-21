@@ -84,12 +84,14 @@ void JS_StackCapture_AllFrames(JS::StackCapture* capture) {
   // pointer, it is uninitialized memory. This means we must
   // overwrite its value, rather than perform an assignment
   // which could invoke a destructor on uninitialized memory.
-  mozilla::PodAssign(capture, &all);
+  //mozilla::PodCopy(capture, &all, 1);
+  memcpy(capture, &all, sizeof(JS::StackCapture));
 }
 
 void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture* capture) {
   JS::StackCapture maxFrames = JS::StackCapture(JS::MaxFrames(max));
-  mozilla::PodAssign(capture, &maxFrames);
+  memcpy(capture, &maxFrames, sizeof(JS::StackCapture));
+  //mozilla::PodCopy(capture, &maxFrames, 1);
 }
 
 void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
@@ -97,7 +99,8 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
                                         JS::StackCapture* capture) {
   JS::StackCapture subsumed =
       JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
-  mozilla::PodAssign(capture, &subsumed);
+  memcpy(capture, &subsumed, sizeof(JS::StackCapture));
+  //mozilla::PodCopy(capture, &subsumed, 1);
 }
 
 size_t GetLinearStringLength(JSLinearString* s) {
