@@ -70,7 +70,7 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
 }
 #elif defined(OHOS)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
-   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
+   (void) OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, "Gecko", aFmt, aArgs);
 }
 #elif defined(FUZZING_SNAPSHOT)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {

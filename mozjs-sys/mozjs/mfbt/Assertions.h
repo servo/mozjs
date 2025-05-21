@@ -123,7 +123,7 @@ MOZ_ReportAssertionFailure(const char* aStr, const char* aFilename,
                             /* aMaxFrames */ 0);
 #  endif
 #elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_Assert",
+    (void) OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, "MOZ_Assert",
      "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
      aStr, aFilename, aLine);
 #else
@@ -151,7 +151,7 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void MOZ_ReportCrash(
                       "[%d] Hit MOZ_CRASH(%s) at %s:%d\n", MOZ_GET_PID(), aStr,
                       aFilename, aLine);
 #elif defined(OHOS)
-  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_CRASH",
+  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, "MOZ_CRASH",
    "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
    aStr, aFilename, aLine);
 #else

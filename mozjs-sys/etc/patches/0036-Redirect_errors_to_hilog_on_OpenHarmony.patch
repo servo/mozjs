@@ -2,14 +2,16 @@ diff --git a/build/moz.configure/init.configure b/build/moz.configure/init.confi
 index e0e14bf60..179de2592 100644
 --- a/build/moz.configure/init.configure
 +++ b/build/moz.configure/init.configure
-@@ -956,6 +956,7 @@ def target_is_ohos(target):
+@@ -956,7 +956,9 @@ def target_is_ohos(target):
 
 
  set_define("XP_OHOS", target_is_ohos)
 +set_config("OHOS", target_is_ohos)
++set_define("OHOS_LOG_DOMAIN", "0xE0C4", when=target_is_ohos)
 
 
  @depends(target)
+ def target_is_openbsd(target):
 diff --git a/config/system-headers.mozbuild b/config/system-headers.mozbuild
 index 471599f17..a89f0ca7a 100644
 --- a/config/system-headers.mozbuild
@@ -47,7 +49,7 @@ index 3cfc92533..9c487ac45 100644
 +#ifdef ANDROID
 +  __android_log_print(ANDROID_LOG_ERROR, "Gecko", "mozalloc_abort: %s", msg);
 +#elif defined(OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "Gecko",
++    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, "Gecko",
 +         "mozalloc_abort: %{public}s\n", msg);
 +#else
    fputs(msg, stderr);
@@ -75,7 +77,7 @@ index 0b7395177..e84d76aba 100644
                              /* aMaxFrames */ 0);
  #  endif
 +#elif defined(OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_Assert",
++    (void) OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, "MOZ_Assert",
 +     "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
 +     aStr, aFilename, aLine);
  #else
@@ -86,7 +88,7 @@ index 0b7395177..e84d76aba 100644
                        "[%d] Hit MOZ_CRASH(%s) at %s:%d\n", MOZ_GET_PID(), aStr,
                        aFilename, aLine);
 +#elif defined(OHOS)
-+  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_CRASH",
++  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, "MOZ_CRASH",
 +   "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
 +   aStr, aFilename, aLine);
  #else
@@ -116,7 +118,7 @@ index 3247b993c..c7039d5f8 100644
 +#if defined(ANDROID)
    __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", s.str().c_str());
 +#elif defined(OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s\n", s.str().c_str());
++    (void) OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, "Gecko", "%{public}s\n", s.str().c_str());
  #else
    fputs(s.str().c_str(), stderr);
  #endif
@@ -143,7 +145,7 @@ index c3a2ca89e..3fea33f4b 100644
  }
 +#elif defined(OHOS)
 +MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
-+   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
++   (void) OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, "Gecko", aFmt, aArgs);
 +}
  #elif defined(FUZZING_SNAPSHOT)
  MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
@@ -194,7 +196,7 @@ index 52bd6abc5..781402d56 100644
 +    if (fd == _pr_stderr) {                                  \
 +        char savebyte = buf[nb];                             \
 +        buf[nb] = '\0';                                      \
-+        (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "PRLog",   \
++        (void) OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, "PRLog",   \
 +               "%{public}s\n", buf);             \
 +        buf[nb] = savebyte;                                  \
 +    } else {                                                 \
@@ -209,7 +211,7 @@ index 52bd6abc5..781402d56 100644
  #ifdef ANDROID
      __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
 +#elif defined(OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog", "Aborting\n");
++    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, "PRLog", "Aborting\n");
  #endif
      abort();
  }
@@ -218,11 +220,10 @@ index 52bd6abc5..781402d56 100644
      __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n",
                           s, file, ln);
 +#elif defined(OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog",
++    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, "PRLog",
 +                        "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
  #endif
      abort();
  }
 --
 2.45.2
-

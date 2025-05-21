@@ -116,7 +116,7 @@ static void OutputDebugStringA(const char* msg) {
     if (fd == _pr_stderr) {                                  \
         char savebyte = buf[nb];                             \
         buf[nb] = '\0';                                      \
-        (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "PRLog",   \
+        (void) OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, "PRLog",   \
                "%{public}s\n", buf);             \
         buf[nb] = savebyte;                                  \
     } else {                                                 \
@@ -567,7 +567,7 @@ PR_IMPLEMENT(void) PR_Abort(void)
 #ifdef ANDROID
     __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
 #elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog", "Aborting\n");
+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, "PRLog", "Aborting\n");
 #endif
     abort();
 }
@@ -585,7 +585,7 @@ PR_IMPLEMENT(void) PR_Assert(const char *s, const char *file, PRIntn ln)
     __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n",
                          s, file, ln);
 #elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog",
+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, "PRLog",
                         "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
 #endif
     abort();

@@ -26,7 +26,7 @@ void mozalloc_abort(const char* const msg) {
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_ERROR, "Gecko", "mozalloc_abort: %s", msg);
 #elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "Gecko",
+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, OHOS_LOG_DOMAIN, "Gecko",
          "mozalloc_abort: %{public}s\n", msg);
 #else
   fputs(msg, stderr);

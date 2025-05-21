@@ -101,7 +101,7 @@ auto&& MozDbg(const char* aFile, int aLine, const char* aExpression,
 #if defined(ANDROID)
   __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", s.str().c_str());
 #elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s\n", s.str().c_str());
+    (void) OH_LOG_Print(LOG_APP, LOG_INFO, OHOS_LOG_DOMAIN, "Gecko", "%{public}s\n", s.str().c_str());
 #else
   fputs(s.str().c_str(), stderr);
 #endif
