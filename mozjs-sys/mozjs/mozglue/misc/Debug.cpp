@@ -76,7 +76,7 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
     // OH_LOG_VPrint is available with API-level 18 (19?) or higher.
     char buffer[1024];
     VsprintfBuf(buffer, 1024, aFmt, aArgs);
-   (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, 0, "Gecko", "%{public}s", buffer);
+   (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko", "%{public}s", buffer);
 }
 #elif defined(FUZZING_SNAPSHOT)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
@@ -120,7 +120,7 @@ MFBT_API void print_stderr(std::stringstream& aStr) {
   std::string line;
   while (std::getline(aStr, line)) {
 #  ifdef XP_OHOS
-    (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, 0, "Gecko", "%{public}s", line.c_str());
+    (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko", "%{public}s", line.c_str());
 #  else
     printf_stderr("%s\n", line.c_str());
 #  endif
