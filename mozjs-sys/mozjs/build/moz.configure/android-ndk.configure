@@ -19,21 +19,21 @@ option(
     "--with-android-ndk",
     nargs=1,
     default=default_android_ndk_root,
-    help="location where the Android NDK can be found{|}",
+    help="Location where the Android NDK can be found{|}",
 )
 
 option("--with-android-ndk-version", nargs=1, help="android NDK version")
 
 option("--with-android-platform", nargs=1, help="location of the Android platform")
 
-option("--with-android-toolchain", nargs=1, help="location of the Android toolchain")
+option("--with-android-toolchain", nargs=1, help="Location of the Android toolchain")
 
 option(
-    "--with-android-lldb-server", nargs=1, help="location of the Android LLDB server"
+    "--with-android-lldb-server", nargs=1, help="Location of the Android LLDB server"
 )
 
 option(
-    "--with-android-googlevr-sdk", nargs=1, help="location of the Android GoogleVR SDK"
+    "--with-android-googlevr-sdk", nargs=1, help="Location of the Android GoogleVR SDK"
 )
 
 
@@ -46,7 +46,7 @@ def min_android_version():
 option(
     "--with-android-version",
     nargs=1,
-    help="android platform version{|}",
+    help="Android platform version{|}",
     default=min_android_version,
 )
 
@@ -281,23 +281,6 @@ def android_flags(extra_toolchain_flags):
     )
 
 
-add_old_configure_assignment(
-    "ANDROID_CFLAGS", depends(android_flags)(lambda f: f.cflags)
-)
-
-add_old_configure_assignment(
-    "ANDROID_CXXFLAGS", depends(android_flags)(lambda f: f.cxxflags)
-)
-
-add_old_configure_assignment(
-    "ANDROID_LDFLAGS", depends(android_flags)(lambda f: f.ldflags)
-)
-
-add_old_configure_assignment(
-    "ANDROID_ASFLAGS", depends(android_flags)(lambda f: f.asflags)
-)
-
-
 @depends(extra_toolchain_flags)
 def bindgen_cflags_android(toolchain_flags):
     return toolchain_flags
@@ -343,5 +326,4 @@ def googlevr_sdk(value, target):
 
 set_define("MOZ_ANDROID_GOOGLE_VR", googlevr_sdk.enabled)
 set_config("MOZ_ANDROID_GOOGLE_VR", googlevr_sdk.enabled)
-set_config("MOZ_ANDROID_GOOGLE_VR_INCLUDE", googlevr_sdk.include)
 set_config("MOZ_ANDROID_GOOGLE_VR_LIBS", googlevr_sdk.libs)

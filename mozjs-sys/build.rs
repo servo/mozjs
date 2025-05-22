@@ -622,6 +622,7 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
 /// features that don't have an equivalent in rust, such as partial template
 /// specialization.
 const OPAQUE_TYPES: &'static [&'static str] = &[
+    "JS::EnvironmentChain",
     "JS::StackGCVector.*",
     "JS::PersistentRooted.*",
     "JS::detail::CallArgsBase",
@@ -634,6 +635,9 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "mozilla::detail::Hash.*",
     "RefPtr_Proxy.*",
     "std::.*",
+    "mozilla::baseprofiler::BaseProfilerProcessId",
+    "mozilla::baseprofiler::BaseProfilerThreadId",
+    "mozilla::MarkerThreadId",
 ];
 
 /// Types for which we should NEVER generate bindings, even if it is used within
@@ -660,6 +664,11 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::dbg::Builder_Object",
     "JS::dbg::Builder_Object_Base",
     "JS::dbg::BuilderOrigin",
+    "JS::RootedTuple",
+    "mozilla::external::AtomicRefCounted",
+    "mozilla::ProfilerStringView",
+    "mozilla::ProfilerString8View",
+    "mozilla::ProfilerString16View",
 ];
 
 /// Definitions for types that were blacklisted

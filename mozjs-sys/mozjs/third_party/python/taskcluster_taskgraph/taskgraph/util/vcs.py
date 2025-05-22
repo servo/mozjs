@@ -7,7 +7,7 @@ import logging
 import os
 import re
 import subprocess
-from abc import ABC, abstractmethod, abstractproperty
+from abc import ABC, abstractmethod
 from shutil import which
 
 from taskgraph.util.path import ancestors
@@ -39,46 +39,62 @@ class Repository(ABC):
         cmd = (self.binary,) + args
 
         try:
-            return subprocess.check_output(
-                cmd, cwd=self.path, env=self._env, encoding="utf-8", **kwargs
+            return subprocess.check_output(  # type: ignore
+                cmd,  # type: ignore
+                cwd=self.path,
+                env=self._env,
+                encoding="utf-8",
+                **kwargs,
             )
         except subprocess.CalledProcessError as e:
             if e.returncode in return_codes:
                 return ""
             raise
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def tool(self) -> str:
         """Version control system being used, either 'hg' or 'git'."""
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def head_rev(self) -> str:
         """Hash of HEAD revision."""
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def base_rev(self):
         """Hash of revision the current topic branch is based on."""
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def branch(self):
         """Current branch or bookmark the checkout has active."""
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def all_remote_names(self):
         """Name of all configured remote repositories."""
 
-    @abstractproperty
-    def default_remote_name(self):
+    @property
+    @abstractmethod
+    def default_remote_name(self) -> str:
         """Name the VCS defines for the remote repository when cloning
         it for the first time. This name may not exist anymore if users
         changed the default configuration, for instance."""
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def remote_name(self):
         """Name of the remote repository."""
 
     def _get_most_suitable_remote(self, remote_instructions):
         remotes = self.all_remote_names
+
+        # in case all_remote_names raised a RuntimeError
+        if remotes is None:
+            raise RuntimeError("No valid remotes found")
+
         if len(remotes) == 1:
             return remotes[0]
 
@@ -95,7 +111,8 @@ class Repository(ABC):
 
         return first_remote
 
-    @abstractproperty
+    @property
+    @abstractmethod
     def default_branch(self):
         """Name of the default branch."""
 
@@ -177,8 +194,13 @@ class Repository(ABC):
 
 
 class HgRepository(Repository):
-    tool = "hg"
-    default_remote_name = "default"
+    @property
+    def tool(self) -> str:
+        return "hg"
+
+    @property
+    def default_remote_name(self) -> str:
+        return "default"
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -259,7 +281,7 @@ class HgRepository(Repository):
             return self.run("status", "--no-status", f"-{df}").splitlines()
         else:
             template = self._files_template(diff_filter)
-            revision_argument = rev if base_rev is None else f"{base_rev}~-1::{rev}"
+            revision_argument = rev if base_rev is None else f"{rev} % {base_rev}"
             return self.run("log", "-r", revision_argument, "-T", template).splitlines()
 
     def get_outgoing_files(self, diff_filter="ADM", upstream=None):
@@ -317,8 +339,13 @@ class HgRepository(Repository):
 
 
 class GitRepository(Repository):
-    tool = "git"
-    default_remote_name = "origin"
+    @property
+    def tool(self) -> str:
+        return "git"
+
+    @property
+    def default_remote_name(self) -> str:
+        return "origin"
 
     _LS_REMOTE_PATTERN = re.compile(r"ref:\s+refs/heads/(?P<branch_name>\S+)\s+HEAD")
 
@@ -389,7 +416,7 @@ class GitRepository(Repository):
     def _get_default_branch_from_remote_query(self):
         # This function requires network access to the repo
         remote_name = self.remote_name
-        output = self.run("ls-remote", "--symref", remote_name, "HEAD")
+        output = self.run("ls-remote", "--symref", remote_name, "HEAD")  # type: ignore
         matches = self._LS_REMOTE_PATTERN.search(output)
         if not matches:
             raise RuntimeError(
@@ -445,6 +472,9 @@ class GitRepository(Repository):
             cmd = ["log", "--format=format:", revision_argument]
 
         cmd.append("--name-only")
+        cmd.append(
+            "--no-renames"
+        )  # Consider renames as deletion of old, addition of new.
         cmd.append("--diff-filter=" + diff_filter.upper())
 
         files = self.run(*cmd).splitlines()

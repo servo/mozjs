@@ -9,10 +9,25 @@
 
 #include <stdint.h>  // For uint16_t
 
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+#  define INLINABLE_EXPLICIT_RESOURCE_MANAGEMENENT_LIST(_) \
+    _(IntrinsicGuardToAsyncDisposableStack)                \
+    _(IntrinsicGuardToDisposableStack)
+#else
+#  define INLINABLE_EXPLICIT_RESOURCE_MANAGEMENENT_LIST(_)
+#endif
+
 #ifdef FUZZING_JS_FUZZILLI
 #  define INLINABLE_NATIVE_FUZZILLI_LIST(_) _(FuzzilliHash)
 #else
 #  define INLINABLE_NATIVE_FUZZILLI_LIST(_)
+#endif
+
+#ifdef NIGHTLY_BUILD
+#  define INLINABLE_NATIVE_ITERATOR_RANGE_LIST(_) \
+    _(IntrinsicGuardToIteratorRange)
+#else
+#  define INLINABLE_NATIVE_ITERATOR_RANGE_LIST(_)
 #endif
 
 #define INLINABLE_NATIVE_LIST(_)                   \
@@ -34,7 +49,9 @@
   _(AtomicsOr)                                     \
   _(AtomicsXor)                                    \
   _(AtomicsIsLockFree)                             \
+  _(AtomicsPause)                                  \
                                                    \
+  _(BigInt)                                        \
   _(BigIntAsIntN)                                  \
   _(BigIntAsUintN)                                 \
                                                    \
@@ -46,6 +63,7 @@
   _(DataViewGetUint16)                             \
   _(DataViewGetInt32)                              \
   _(DataViewGetUint32)                             \
+  _(DataViewGetFloat16)                            \
   _(DataViewGetFloat32)                            \
   _(DataViewGetFloat64)                            \
   _(DataViewGetBigInt64)                           \
@@ -56,16 +74,27 @@
   _(DataViewSetUint16)                             \
   _(DataViewSetInt32)                              \
   _(DataViewSetUint32)                             \
+  _(DataViewSetFloat16)                            \
   _(DataViewSetFloat32)                            \
   _(DataViewSetFloat64)                            \
   _(DataViewSetBigInt64)                           \
   _(DataViewSetBigUint64)                          \
+                                                   \
+  _(DateGetTime)                                   \
+  _(DateGetFullYear)                               \
+  _(DateGetMonth)                                  \
+  _(DateGetDate)                                   \
+  _(DateGetDay)                                    \
+  _(DateGetHours)                                  \
+  _(DateGetMinutes)                                \
+  _(DateGetSeconds)                                \
                                                    \
   _(FunctionBind)                                  \
                                                    \
   _(IntlGuardToCollator)                           \
   _(IntlGuardToDateTimeFormat)                     \
   _(IntlGuardToDisplayNames)                       \
+  _(IntlGuardToDurationFormat)                     \
   _(IntlGuardToListFormat)                         \
   _(IntlGuardToNumberFormat)                       \
   _(IntlGuardToPluralRules)                        \
@@ -74,8 +103,11 @@
   _(IntlGuardToSegments)                           \
   _(IntlGuardToSegmentIterator)                    \
                                                    \
+  _(MapConstructor)                                \
+  _(MapDelete)                                     \
   _(MapGet)                                        \
   _(MapHas)                                        \
+  _(MapSet)                                        \
                                                    \
   _(MathAbs)                                       \
   _(MathFloor)                                     \
@@ -91,6 +123,7 @@
   _(MathRandom)                                    \
   _(MathImul)                                      \
   _(MathFRound)                                    \
+  _(MathF16Round)                                  \
   _(MathSin)                                       \
   _(MathTan)                                       \
   _(MathCos)                                       \
@@ -129,7 +162,10 @@
   _(RegExpInstanceOptimizable)                     \
   _(GetFirstDollarIndex)                           \
                                                    \
+  _(SetConstructor)                                \
+  _(SetDelete)                                     \
   _(SetHas)                                        \
+  _(SetAdd)                                        \
   _(SetSize)                                       \
                                                    \
   _(String)                                        \
@@ -177,6 +213,7 @@
   _(IntrinsicToObject)                             \
   _(IntrinsicIsObject)                             \
   _(IntrinsicIsCrossRealmArrayConstructor)         \
+  _(IntrinsicCanOptimizeArraySpecies)              \
   _(IntrinsicToInteger)                            \
   _(IntrinsicToLength)                             \
   _(IntrinsicIsConstructing)                       \
@@ -194,7 +231,6 @@
   _(IntrinsicGuardToWrapForValidIterator)          \
   _(IntrinsicGuardToIteratorHelper)                \
   _(IntrinsicGuardToAsyncIteratorHelper)           \
-                                                   \
   _(IntrinsicGuardToMapObject)                     \
   _(IntrinsicGetNextMapEntryForIterator)           \
                                                    \
@@ -226,7 +262,11 @@
   _(IntrinsicTypedArrayByteOffset)                 \
   _(IntrinsicTypedArrayElementSize)                \
                                                    \
-  INLINABLE_NATIVE_FUZZILLI_LIST(_)
+  _(IntrinsicThisTimeValue)                        \
+                                                   \
+  INLINABLE_EXPLICIT_RESOURCE_MANAGEMENENT_LIST(_) \
+  INLINABLE_NATIVE_FUZZILLI_LIST(_)                \
+  INLINABLE_NATIVE_ITERATOR_RANGE_LIST(_)
 
 struct JSClass;
 class JSJitInfo;

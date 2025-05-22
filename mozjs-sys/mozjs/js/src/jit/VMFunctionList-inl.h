@@ -48,6 +48,8 @@ namespace jit {
 // non-argument Values the VM wrapper should pop from the stack. This is used
 // for tail calls for Baseline ICs. This list must be sorted on the name field.
 #define VMFUNCTION_LIST(_)                                                     \
+  IF_EXPLICIT_RESOURCE_MANAGEMENT(_(AddDisposableResourceToCapability,         \
+                                    js::AddDisposableResourceToCapability))    \
   _(AddOrUpdateSparseElementHelper, js::AddOrUpdateSparseElementHelper)        \
   _(AddSlotAndCallAddPropHook, js::AddSlotAndCallAddPropHook)                  \
   _(ArgumentsObjectCreateForInlinedIon,                                        \
@@ -81,6 +83,7 @@ namespace jit {
   _(BigIntBitNot, JS::BigInt::bitNot)                                          \
   _(BigIntBitOr, JS::BigInt::bitOr)                                            \
   _(BigIntBitXor, JS::BigInt::bitXor)                                          \
+  _(BigIntCreateFromIntPtr, JS::BigInt::createFromIntPtr)                      \
   _(BigIntDec, JS::BigInt::dec)                                                \
   _(BigIntDiv, JS::BigInt::div)                                                \
   _(BigIntInc, JS::BigInt::inc)                                                \
@@ -126,10 +129,13 @@ namespace jit {
   _(CodePointAt, js::jit::CodePointAt)                                         \
   _(ConcatStrings, js::ConcatStrings<CanGC>)                                   \
   _(CreateAsyncFromSyncIterator, js::CreateAsyncFromSyncIterator)              \
+  _(CreateBigIntFromInt32, js::jit::CreateBigIntFromInt32)                     \
   _(CreateBigIntFromInt64, js::jit::CreateBigIntFromInt64)                     \
   _(CreateBigIntFromUint64, js::jit::CreateBigIntFromUint64)                   \
   _(CreateGenerator, js::jit::CreateGenerator)                                 \
   _(CreateGeneratorFromFrame, js::jit::CreateGeneratorFromFrame)               \
+  IF_EXPLICIT_RESOURCE_MANAGEMENT(                                             \
+      _(CreateSuppressedError, js::CreateSuppressedError))                     \
   _(CreateThisFromIC, js::jit::CreateThisFromIC)                               \
   _(CreateThisFromIon, js::jit::CreateThisFromIon)                             \
   _(DebugAfterYield, js::jit::DebugAfterYield)                                 \
@@ -144,6 +150,7 @@ namespace jit {
   _(DelPropOperationNonStrict, js::DelPropOperation<false>)                    \
   _(DelPropOperationStrict, js::DelPropOperation<true>)                        \
   _(DeleteNameOperation, js::DeleteNameOperation)                              \
+  _(DispatchOffThreadBaselineBatch, js::jit::DispatchOffThreadBaselineBatch)   \
   _(DoBinaryArithFallback, js::jit::DoBinaryArithFallback, 2)                  \
   _(DoBindNameFallback, js::jit::DoBindNameFallback)                           \
   _(DoCallFallback, js::jit::DoCallFallback)                                   \
@@ -153,7 +160,7 @@ namespace jit {
   _(DoConcatStringObject, js::jit::DoConcatStringObject)                       \
   _(DoGetElemFallback, js::jit::DoGetElemFallback, 2)                          \
   _(DoGetElemSuperFallback, js::jit::DoGetElemSuperFallback, 3)                \
-  _(DoGetIntrinsicFallback, js::jit::DoGetIntrinsicFallback)                   \
+  _(DoGetImportFallback, js::jit::DoGetImportFallback)                         \
   _(DoGetIteratorFallback, js::jit::DoGetIteratorFallback, 1)                  \
   _(DoGetNameFallback, js::jit::DoGetNameFallback)                             \
   _(DoGetPropFallback, js::jit::DoGetPropFallback, 1)                          \
@@ -161,6 +168,8 @@ namespace jit {
   _(DoHasOwnFallback, js::jit::DoHasOwnFallback, 2)                            \
   _(DoInFallback, js::jit::DoInFallback, 2)                                    \
   _(DoInstanceOfFallback, js::jit::DoInstanceOfFallback, 2)                    \
+  _(DoLambdaFallback, js::jit::DoLambdaFallback)                               \
+  _(DoLazyConstantFallback, js::jit::DoLazyConstantFallback)                   \
   _(DoNewArrayFallback, js::jit::DoNewArrayFallback)                           \
   _(DoNewObjectFallback, js::jit::DoNewObjectFallback)                         \
   _(DoOptimizeGetIteratorFallback, js::jit::DoOptimizeGetIteratorFallback)     \
@@ -188,6 +197,7 @@ namespace jit {
   VMFUNCTION_FUZZILLI_LIST(_)                                                  \
   _(GeneratorThrowOrReturn, js::jit::GeneratorThrowOrReturn)                   \
   _(GetAndClearException, js::GetAndClearException)                            \
+  _(GetElemMaybeCached, js::jit::GetElemMaybeCached)                           \
   _(GetFirstDollarIndexRaw, js::GetFirstDollarIndexRaw)                        \
   _(GetImportOperation, js::GetImportOperation)                                \
   _(GetIntrinsicValue, js::jit::GetIntrinsicValue)                             \
@@ -196,6 +206,7 @@ namespace jit {
   _(GetNonSyntacticGlobalThis, js::GetNonSyntacticGlobalThis)                  \
   _(GetOrCreateModuleMetaObject, js::GetOrCreateModuleMetaObject)              \
   _(GetPendingExceptionStack, js::GetPendingExceptionStack)                    \
+  _(GetPropMaybeCached, js::jit::GetPropMaybeCached)                           \
   _(GetPrototypeOf, js::jit::GetPrototypeOf)                                   \
   _(GetSparseElementHelper, js::GetSparseElementHelper)                        \
   _(GlobalDeclInstantiationFromIon, js::jit::GlobalDeclInstantiationFromIon)   \
@@ -208,7 +219,7 @@ namespace jit {
   _(InitPropGetterSetterOperation, js::InitPropGetterSetterOperation)          \
   _(InitRestParameter, js::jit::InitRestParameter)                             \
   _(Int32ToString, js::Int32ToString<CanGC>)                                   \
-  _(Int32ToStringWithBase, js::Int32ToStringWithBase)                          \
+  _(Int32ToStringWithBase, js::Int32ToStringWithBase<CanGC>)                   \
   _(InterpretResume, js::jit::InterpretResume)                                 \
   _(InterruptCheck, js::jit::InterruptCheck)                                   \
   _(InvokeFunction, js::jit::InvokeFunction)                                   \
@@ -239,8 +250,13 @@ namespace jit {
   _(LeaveWith, js::jit::LeaveWith)                                             \
   _(LinearizeForCharAccess, js::jit::LinearizeForCharAccess)                   \
   _(LoadAliasedDebugVar, js::LoadAliasedDebugVar)                              \
+  _(MapObjectCreate, js::MapObject::create)                                    \
+  _(MapObjectCreateFromIterable, js::MapObject::createFromIterable)            \
+  _(MapObjectDelete, js::jit::MapObjectDelete)                                 \
   _(MapObjectGet, js::jit::MapObjectGet)                                       \
   _(MapObjectHas, js::jit::MapObjectHas)                                       \
+  _(MapObjectSet, js::jit::MapObjectSet)                                       \
+  _(MapObjectSetFromIC, js::jit::MapObjectSetFromIC)                           \
   _(MutatePrototype, js::jit::MutatePrototype)                                 \
   _(NamedLambdaObjectCreateWithoutEnclosing,                                   \
     js::NamedLambdaObject::createWithoutEnclosing)                             \
@@ -295,6 +311,11 @@ namespace jit {
   _(SetElementSuper, js::SetElementSuper)                                      \
   _(SetFunctionName, js::SetFunctionName)                                      \
   _(SetIntrinsicOperation, js::SetIntrinsicOperation)                          \
+  _(SetObjectAdd, js::jit::SetObjectAdd)                                       \
+  _(SetObjectAddFromIC, js::jit::SetObjectAddFromIC)                           \
+  _(SetObjectCreate, js::SetObject::create)                                    \
+  _(SetObjectCreateFromIterable, js::SetObject::createFromIterable)            \
+  _(SetObjectDelete, js::jit::SetObjectDelete)                                 \
   _(SetObjectHas, js::jit::SetObjectHas)                                       \
   _(SetPropertyMegamorphicNoCache, js::jit::SetPropertyMegamorphic<false>)     \
   _(SetPropertyMegamorphicYesCache, js::jit::SetPropertyMegamorphic<true>)     \
