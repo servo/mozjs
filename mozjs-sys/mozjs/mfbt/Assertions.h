@@ -88,7 +88,7 @@ MOZ_END_EXTERN_C
 #endif
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
 #  include <hilog/log.h>
 #endif
 
@@ -122,7 +122,7 @@ MOZ_ReportAssertionFailure(const char* aStr, const char* aFilename,
   MozWalkTheStackWithWriter(MOZ_ReportAssertionFailurePrintFrame, CallerPC(),
                             /* aMaxFrames */ 0);
 #  endif
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
     (void) OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, "MOZ_Assert",
      "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
      aStr, aFilename, aLine);
@@ -150,7 +150,7 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void MOZ_ReportCrash(
   __android_log_print(ANDROID_LOG_FATAL, "MOZ_CRASH",
                       "[%d] Hit MOZ_CRASH(%s) at %s:%d\n", MOZ_GET_PID(), aStr,
                       aFilename, aLine);
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
   (void) OH_LOG_Print(LOG_APP, LOG_FATAL, OHOS_LOG_DOMAIN, "MOZ_CRASH",
    "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
    aStr, aFilename, aLine);
