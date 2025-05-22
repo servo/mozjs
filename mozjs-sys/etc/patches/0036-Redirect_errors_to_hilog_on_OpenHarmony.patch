@@ -34,7 +34,7 @@ index 3cfc92533..9c487ac45 100644
 
  #ifdef ANDROID
  #  include <android/log.h>
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +#  include <hilog/log.h>
  #endif
  #ifdef MOZ_WIDGET_ANDROID
@@ -46,7 +46,7 @@ index 3cfc92533..9c487ac45 100644
 -#ifndef ANDROID
 +#ifdef ANDROID
 +  __android_log_print(ANDROID_LOG_ERROR, "Gecko", "mozalloc_abort: %s", msg);
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "Gecko",
 +         "mozalloc_abort: %{public}s\n", msg);
 +#else
@@ -65,7 +65,7 @@ index 0b7395177..e84d76aba 100644
  #endif
  #ifdef ANDROID
  #  include <android/log.h>
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +#  include <hilog/log.h>
  #endif
 
@@ -74,24 +74,26 @@ index 0b7395177..e84d76aba 100644
    MozWalkTheStackWithWriter(MOZ_ReportAssertionFailurePrintFrame, CallerPC(),
                              /* aMaxFrames */ 0);
  #  endif
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +    (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_Assert",
 +     "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
 +     aStr, aFilename, aLine);
  #else
  #  if defined(MOZ_BUFFER_STDERR)
    char msg[1024] = "";
-@@ -144,6 +150,10 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void MOZ_ReportCrash(
+@@ -144,8 +150,12 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void MOZ_ReportCrash(
    __android_log_print(ANDROID_LOG_FATAL, "MOZ_CRASH",
                        "[%d] Hit MOZ_CRASH(%s) at %s:%d\n", MOZ_GET_PID(), aStr,
                        aFilename, aLine);
-+#elif defined(OHOS)
-+  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_CRASH",
-+   "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
-+   aStr, aFilename, aLine);
  #  if defined(MOZ_DUMP_ASSERTION_STACK)
    MozWalkTheStackWithWriter(MOZ_CrashPrintFrame, CallerPC(),
                              /* aMaxFrames */ 0);
+ #  endif
++#elif defined(XP_OHOS)
++  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_CRASH",
++   "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
++   aStr, aFilename, aLine);
+ #else
 diff --git a/mfbt/DbgMacro.h b/mfbt/DbgMacro.h
 index 3247b993c..c7039d5f8 100644
 --- a/mfbt/DbgMacro.h
@@ -103,7 +105,7 @@ index 3247b993c..c7039d5f8 100644
 -#ifdef ANDROID
 +#if defined(ANDROID)
  #  include <android/log.h>
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +#  include <hilog/log.h>
  #endif
 
@@ -115,7 +117,7 @@ index 3247b993c..c7039d5f8 100644
 -#ifdef ANDROID
 +#if defined(ANDROID)
    __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", s.str().c_str());
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s\n", s.str().c_str());
  #else
    fputs(s.str().c_str(), stderr);
@@ -128,12 +130,12 @@ index c3a2ca89e..3fea33f4b 100644
 
  #ifdef ANDROID
  #  include <android/log.h>
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +#  include <hilog/log.h>
  #endif
 
 -#ifndef ANDROID
-+#if ! (defined(ANDROID) || defined(OHOS))
++#if ! (defined(ANDROID) || defined(XP_OHOS))
  static void vprintf_stderr_buffered(const char* aFmt, va_list aArgs) {
    // Avoid interleaving by writing to an on-stack buffer and then writing in one
    // go with fputs, as long as the output fits into the buffer.
@@ -141,7 +143,7 @@ index c3a2ca89e..3fea33f4b 100644
  MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
    __android_log_vprint(ANDROID_LOG_INFO, "Gecko", aFmt, aArgs);
  }
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
 +   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
 +}
@@ -153,14 +155,14 @@ index c3a2ca89e..3fea33f4b 100644
 
  MFBT_API void print_stderr(std::stringstream& aStr) {
 -#if defined(ANDROID)
-+#if defined(ANDROID) || defined(OHOS)
++#if defined(ANDROID) || defined(XP_OHOS)
    // On Android logcat output is truncated to 1024 chars per line, and
    // we usually use std::stringstream to build up giant multi-line gobs
    // of output. So to avoid the truncation we find the newlines and
    // print the lines individually.
    std::string line;
    while (std::getline(aStr, line)) {
-+#  ifdef OHOS
++#  ifdef XP_OHOS
 +    printf_stderr("%{public}s\n", line.c_str());
 +#  else
      printf_stderr("%s\n", line.c_str());
@@ -179,7 +181,7 @@ index 52bd6abc5..781402d56 100644
 -#ifdef ANDROID
 +#if defined(ANDROID)
  #  include <android/log.h>
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +#  include <hilog/log.h>
  #endif
  
@@ -188,7 +190,7 @@ index 52bd6abc5..781402d56 100644
        PR_Write(fd, buf, nb);                               \
      }                                                      \
      PR_END_MACRO
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +#define _PUT_LOG(fd, buf, nb)                                \
 +    PR_BEGIN_MACRO                                           \
 +    if (fd == _pr_stderr) {                                  \
@@ -208,7 +210,7 @@ index 52bd6abc5..781402d56 100644
    PR_LogPrint("Aborting");
  #ifdef ANDROID
    __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +  (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog", "Aborting\n");
  #endif
    abort();
@@ -217,7 +219,7 @@ index 52bd6abc5..781402d56 100644
  #elif defined(ANDROID)
    __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n", s,
                         file, ln);
-+#elif defined(OHOS)
++#elif defined(XP_OHOS)
 +  (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog",
 +                      "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
  #endif

@@ -10,7 +10,7 @@
 #include <string.h>
 #if defined(ANDROID)
 #  include <android/log.h>
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
 #  include <hilog/log.h>
 #endif
 
@@ -116,7 +116,7 @@ static void OutputDebugStringA(const char* msg) {
       PR_Write(fd, buf, nb);                               \
     }                                                      \
     PR_END_MACRO
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
 #define _PUT_LOG(fd, buf, nb)                                \
     PR_BEGIN_MACRO                                           \
     if (fd == _pr_stderr) {                                  \
@@ -554,7 +554,7 @@ PR_IMPLEMENT(void) PR_Abort(void) {
   PR_LogPrint("Aborting");
 #ifdef ANDROID
   __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
   (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog", "Aborting\n");
 #endif
   abort();
@@ -569,7 +569,7 @@ PR_IMPLEMENT(void) PR_Assert(const char* s, const char* file, PRIntn ln) {
 #elif defined(ANDROID)
   __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n", s,
                        file, ln);
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
   (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog",
                       "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
 #endif
