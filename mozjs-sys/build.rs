@@ -622,6 +622,7 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
 /// features that don't have an equivalent in rust, such as partial template
 /// specialization.
 const OPAQUE_TYPES: &'static [&'static str] = &[
+    "JS::EnvironmentChain",
     "JS::StackGCVector.*",
     "JS::PersistentRooted.*",
     "JS::detail::CallArgsBase",
