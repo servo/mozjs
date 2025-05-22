@@ -790,6 +790,7 @@ impl BuildTarget {
     fn opaque_types(self) -> &'static [&'static str] {
         match self {
             BuildTarget::JSApi => &[
+                "JS::EnvironmentChain",
                 "JS::StackGCVector.*",
                 "JS::PersistentRooted.*",
                 "JS::detail::CallArgsBase",

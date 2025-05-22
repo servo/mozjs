@@ -1118,6 +1118,43 @@ macro_rules! capture_stack {
     }
 }
 
+pub struct EnvironmentChain {
+    chain: *mut crate::jsapi::JS::EnvironmentChain,
+}
+
+impl EnvironmentChain {
+    pub fn new(
+        cx: *mut JSContext,
+        support_unscopeables: crate::jsapi::JS::SupportUnscopables,
+    ) -> Self {
+        unsafe {
+            Self {
+                chain: crate::jsapi::glue::NewEnvironmentChain(cx, support_unscopeables),
+            }
+        }
+    }
+
+    pub fn append(&self, obj: *mut JSObject) {
+        unsafe {
+            assert!(crate::jsapi::glue::AppendToEnvironmentChain(
+                self.chain, obj
+            ));
+        }
+    }
+
+    pub fn get(&self) -> *mut crate::jsapi::JS::EnvironmentChain {
+        self.chain
+    }
+}
+
+impl Drop for EnvironmentChain {
+    fn drop(&mut self) {
+        unsafe {
+            crate::jsapi::glue::DeleteEnvironmentChain(self.chain);
+        }
+    }
+}
+
 /// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments
 pub mod wrappers {
     macro_rules! wrap {
