@@ -47,7 +47,7 @@ struct JobQueueTraps {
   bool (*enqueuePromiseJob)(const void* queue, JSContext* cx,
                             JS::HandleObject promise, JS::HandleObject job,
                             JS::HandleObject allocationSite,
-                            JS::HandleObject incumbentGlobal) = 0;
+                            JS::HandleObject hostDefinedData) = 0;
   bool (*empty)(const void* queue);
 };
 
@@ -66,9 +66,9 @@ class RustJobQueue : public JS::JobQueue {
   virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
                                  JS::HandleObject job,
                                  JS::HandleObject allocationSite,
-                                 JS::HandleObject incumbentGlobal) override {
+                                 JS::HandleObject hostDefinedData) override {
     return mTraps.enqueuePromiseJob(mQueue, cx, promise, job, allocationSite,
-                                    incumbentGlobal);
+                                    hostDefinedData);
   }
 
   virtual bool empty() const override { return mTraps.empty(mQueue); }

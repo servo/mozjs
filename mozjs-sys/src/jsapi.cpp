@@ -15,6 +15,7 @@
 #include "js/ContextOptions.h"
 #include "js/Conversions.h"
 #include "js/Date.h"
+#include "js/EnvironmentChain.h"
 #include "js/Equality.h"
 #include "js/ForOfIterator.h"
 #include "js/Id.h"
@@ -337,6 +338,20 @@ void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest) {
     dest.set(*cause);
   }
 }
+
+
+JS::EnvironmentChain* NewEnvironmentChain(JSContext* cx, JS::SupportUnscopables supportUnscopables) {
+    return new JS::EnvironmentChain(cx, supportUnscopables);
+}
+
+void DeleteEnvironmentChain(JS::EnvironmentChain* chain) {
+    delete chain;
+}
+
+bool AppendToEnvironmentChain(JS::EnvironmentChain* chain, JSObject* obj) {
+    return chain->append(obj);
+}
+
 }  // namespace glue
 
 // There's a couple of classes from pre-57 releases of SM that bindgen can't
