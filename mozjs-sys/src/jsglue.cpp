@@ -43,7 +43,8 @@ typedef size_t (*GetSize)(JSObject* obj);
 WantToMeasure gWantToMeasure = nullptr;
 
 struct JobQueueTraps {
-  bool (*getHostDefinedData)(const void* queue, JSContext* cx, JS::MutableHandle<JSObject*> data);
+  bool (*getHostDefinedData)(const void* queue, JSContext* cx,
+                             JS::MutableHandle<JSObject*> data);
   bool (*enqueuePromiseJob)(const void* queue, JSContext* cx,
                             JS::HandleObject promise, JS::HandleObject job,
                             JS::HandleObject allocationSite,
@@ -59,8 +60,8 @@ class RustJobQueue : public JS::JobQueue {
   RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
       : mTraps(aTraps), mQueue(aQueue) {}
 
-  virtual bool getHostDefinedData(JSContext* cx,
-                                  JS::MutableHandle<JSObject*> data) const override {
+  virtual bool getHostDefinedData(
+      JSContext* cx, JS::MutableHandle<JSObject*> data) const override {
     return mTraps.getHostDefinedData(mQueue, cx, data);
   }
   virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
