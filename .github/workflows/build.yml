@@ -72,13 +72,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install deps
-        run: |
-          sudo apt install llvm -y
+      #- name: Install deps
+      #  run: |
+      #    sudo apt install llvm -y
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "14.0"
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.8
-      - name: Set LIBCLANG_PATH env
-        run: echo "LIBCLANG_PATH=/usr/lib/llvm-16/lib" >> $GITHUB_ENV
+      #- name: Set LIBCLANG_PATH env
+      #  run: echo "LIBCLANG_PATH=/usr/lib/llvm-16/lib" >> $GITHUB_ENV
       - name: Build
         run: |
           cargo build --verbose --features ${{ matrix.features }}
