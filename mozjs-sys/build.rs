@@ -209,6 +209,10 @@ fn build_spidermonkey(build_dir: &Path) {
     assert!(result.success());
 
     if target.contains("windows") {
+        println!(
+            "configure status:\n{}",
+            std::fs::read_to_string(build_dir.join("config.status")).unwrap()
+        );
         let mut make_static = cc::Build::new();
         make_static.out_dir(join_path(build_dir, "js/src/build"));
         fs::read_to_string(join_path(build_dir, "js/src/build/js_static_lib.list"))
