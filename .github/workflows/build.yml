@@ -29,6 +29,9 @@ jobs:
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
     steps:
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - uses: actions/checkout@v4
       - name: Install deps
         run: |
