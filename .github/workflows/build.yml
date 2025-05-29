@@ -78,7 +78,7 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.8
       - name: Set LIBCLANG_PATH env
-        run: echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> $GITHUB_ENV
+        run: echo "LIBCLANG_PATH=/usr/lib/llvm-16/lib" >> $GITHUB_ENV
       - name: Build
         run: |
           cargo build --verbose --features ${{ matrix.features }}
