@@ -3670,6 +3670,7 @@ set_config("AR_FLAGS", target_ar_config.flags)
 @depends(c_compiler, extra_toolchain_flags, target_ar, target_ar_config)
 @checking("whether ar supports response files")
 @imports("os")
+@imports("platform")
 @imports(_from="__builtin__", _import="FileNotFoundError")
 @imports(_from="__builtin__", _import="open")
 @imports(_from="__builtin__", _import="print")
@@ -3708,6 +3709,8 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
                 )
                 result = check_cmd_output(*ar_command, onerror=lambda: None)
                 print("result is", result)
+                if platform.system() == "Windows": # XXXjdm
+                    return True
                 return result is not None
         else:
             print("XXXjdm try invoke compiler returned none")
