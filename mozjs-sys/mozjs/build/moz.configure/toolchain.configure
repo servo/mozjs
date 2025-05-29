@@ -3690,12 +3690,13 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
             )
             is not None
         ):
+            print("XXXjdm invoked compiler")
             with create_temporary_file(suffix=".list") as list_path:
                 with open(list_path, "w") as fd:
                     fd.write(obj_path)
 
-            log.debug("Creating `%s` with content:", list_path)
-            log.debug("| %s", obj_path)
+            print("Creating `%s` with content:", list_path)
+            print("| %s", obj_path)
 
             with create_temporary_file(suffix=".a") as lib_path:
                 os.remove(lib_path)
@@ -3705,7 +3706,10 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
                     + ["@" + list_path]
                 )
                 result = check_cmd_output(*ar_command, onerror=lambda: None)
+                print(result)
                 return result is not None
+        else:
+            print("XXXjdm try invoke compiler returned none")
 
 
 set_config("AR_SUPPORTS_RESPONSE_FILE", True, when=ar_supports_response_files)
