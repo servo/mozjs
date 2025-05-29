@@ -3672,6 +3672,7 @@ set_config("AR_FLAGS", target_ar_config.flags)
 @imports("os")
 @imports(_from="__builtin__", _import="FileNotFoundError")
 @imports(_from="__builtin__", _import="open")
+@imports(_from="__builtin__", _import="print")
 @imports(_from="mozbuild.configure.util", _import="LineIO")
 def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config):
     lib_path = list_path = None
@@ -3695,8 +3696,8 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
                 with open(list_path, "w") as fd:
                     fd.write(obj_path)
 
-            print("Creating `%s` with content:", list_path)
-            print("| %s", obj_path)
+            print("Creating `%s` with content:" % list_path)
+            print("| %s" % obj_path)
 
             with create_temporary_file(suffix=".a") as lib_path:
                 os.remove(lib_path)
@@ -3706,7 +3707,7 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
                     + ["@" + list_path]
                 )
                 result = check_cmd_output(*ar_command, onerror=lambda: None)
-                print(result)
+                print("result is", result)
                 return result is not None
         else:
             print("XXXjdm try invoke compiler returned none")
