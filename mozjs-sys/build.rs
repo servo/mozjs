@@ -204,11 +204,15 @@ fn build_spidermonkey(build_dir: &Path) {
         .current_dir(&build_dir)
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
         .env("NO_RUST_PANIC_HOOK", "1")
-        .status()
+        .output()
         .expect(&format!("Failed to run `{:?}`", make));
-    assert!(result.success());
+    assert!(result.status.success());
 
     if target.contains("windows") {
+        println!(
+            "build output:\n{}",
+            String::from_utf8(result.stdout).unwrap()
+        );
         println!(
             "configure status:\n{}",
             std::fs::read_to_string(build_dir.join("config.status")).unwrap()
