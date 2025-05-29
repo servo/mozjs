@@ -366,6 +366,10 @@ fn build_spidermonkey(build_dir: &Path) {
         .expect(&format!("Failed to run `{:?}`", make));
     assert!(result.success());
     if target.contains("windows") {
+        println!(
+            "configure status:\n{}",
+            std::fs::read_to_string(build_dir.join("config.status")).unwrap()
+        );
         let mut make_static = cc::Build::new();
         make_static.out_dir(build_dir.join("js/src/build"));
         std::fs::read_to_string(build_dir.join("js/src/build/js_static_lib.list"))
