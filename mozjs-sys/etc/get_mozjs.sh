@@ -4,7 +4,7 @@ set -o errexit
 set -o nounset
 set -o pipefail
 
-REPO=mozilla-esr128
+REPO=mozilla-release
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 # get commit and appropriet mozjs tar
