@@ -1075,7 +1075,10 @@ pub struct EnvironmentChain {
 }
 
 impl EnvironmentChain {
-    pub fn new(cx: *mut JSContext, support_unscopeables: crate::jsapi::JS::SupportUnscopables) -> Self {
+    pub fn new(
+        cx: *mut JSContext,
+        support_unscopeables: crate::jsapi::JS::SupportUnscopables,
+    ) -> Self {
         unsafe {
             Self {
                 chain: crate::jsapi::glue::NewEnvironmentChain(cx, support_unscopeables),
@@ -1085,7 +1088,9 @@ impl EnvironmentChain {
 
     pub fn append(&self, obj: *mut JSObject) {
         unsafe {
-            assert!(crate::jsapi::glue::AppendToEnvironmentChain(self.chain, obj));
+            assert!(crate::jsapi::glue::AppendToEnvironmentChain(
+                self.chain, obj
+            ));
         }
     }
 
