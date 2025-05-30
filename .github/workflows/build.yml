@@ -78,7 +78,7 @@ jobs:
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
-          version: "15.0"
+          version: "16.0"
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.8
       #- name: Set LIBCLANG_PATH env
