@@ -21,14 +21,17 @@ jobs:
       matrix:
         features: ["debugmozjs", '""']
         platform:
-          - { target: aarch64-apple-darwin, os: macos-14 }
-          - { target: x86_64-apple-darwin, os: macos-13 }
+          - { target: aarch64-apple-darwin, os: macos-15 }
+          - { target: x86_64-apple-darwin, os: macos-15 }
     runs-on: ${{ matrix.platform.os }}
     env:
       RUSTC_WRAPPER: sccache
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
     steps:
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
       - uses: actions/checkout@v4
       - name: Install deps
         run: |
@@ -69,11 +72,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install deps
-        run: |
-          sudo apt install llvm -y
+      #- name: Install deps
+      #  run: |
+      #    sudo apt install llvm -y
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "16.0"
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.8
+      #- name: Set LIBCLANG_PATH env
+      #  run: echo "LIBCLANG_PATH=/usr/lib/llvm-16/lib" >> $GITHUB_ENV
       - name: Build
         run: |
           cargo build --verbose --features ${{ matrix.features }}
@@ -154,7 +163,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r26c
+          ndk-version: r28b
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:

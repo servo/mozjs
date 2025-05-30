@@ -1,0 +1,13 @@
+diff --git a/python/mozboot/mozboot/android.py b/python/mozboot/mozboot/android.py
+index c9f978796..0e20faeec 100644
+--- a/python/mozboot/mozboot/android.py
++++ b/python/mozboot/mozboot/android.py
+@@ -20,8 +20,8 @@ from tqdm import tqdm
+ # variable.
+ from mozboot.bootstrap import MOZCONFIG_SUGGESTION_TEMPLATE
+
+-NDK_VERSION = "r28"
++NDK_VERSION = "r26c"
+ CMDLINE_TOOLS_VERSION_STRING = "19.0"
+ CMDLINE_TOOLS_VERSION = "13114758"
+

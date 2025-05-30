@@ -349,22 +349,22 @@ class HostCompileFlags(BaseCompileFlags):
             (
                 "HOST_CXXFLAGS",
                 context.config.substs.get("HOST_CXXFLAGS"),
-                ("HOST_CXXFLAGS", "HOST_CXX_LDFLAGS"),
+                ("HOST_CXXFLAGS",),
             ),
             (
                 "HOST_CFLAGS",
                 context.config.substs.get("HOST_CFLAGS"),
-                ("HOST_CFLAGS", "HOST_C_LDFLAGS"),
+                ("HOST_CFLAGS",),
             ),
             (
                 "HOST_OPTIMIZE",
                 self._optimize_flags(),
-                ("HOST_CFLAGS", "HOST_CXXFLAGS", "HOST_C_LDFLAGS", "HOST_CXX_LDFLAGS"),
+                ("HOST_CFLAGS", "HOST_CXXFLAGS"),
             ),
-            ("RTL", None, ("HOST_CFLAGS", "HOST_C_LDFLAGS")),
+            ("RTL", None, ("HOST_CFLAGS",)),
             ("HOST_DEFINES", None, ("HOST_CFLAGS", "HOST_CXXFLAGS")),
-            ("MOZBUILD_HOST_CFLAGS", [], ("HOST_CFLAGS", "HOST_C_LDFLAGS")),
-            ("MOZBUILD_HOST_CXXFLAGS", [], ("HOST_CXXFLAGS", "HOST_CXX_LDFLAGS")),
+            ("MOZBUILD_HOST_CFLAGS", [], ("HOST_CFLAGS",)),
+            ("MOZBUILD_HOST_CXXFLAGS", [], ("HOST_CXXFLAGS",)),
             (
                 "BASE_INCLUDES",
                 ["-I%s" % main_src_dir, "-I%s" % context.objdir],
@@ -514,14 +514,14 @@ class TargetCompileFlags(BaseCompileFlags):
     def _optimize_flags(self):
         if not self._context.config.substs.get("MOZ_OPTIMIZE"):
             return []
-        optimize_flags = None
-        if self._context.config.substs.get("MOZ_PGO"):
-            optimize_flags = self._context.config.substs.get("MOZ_PGO_OPTIMIZE_FLAGS")
-        if not optimize_flags:
-            # If MOZ_PGO_OPTIMIZE_FLAGS is empty we fall back to
-            # MOZ_OPTIMIZE_FLAGS. Presently this occurs on Windows.
-            optimize_flags = self._context.config.substs.get("MOZ_OPTIMIZE_FLAGS")
-        return optimize_flags
+        # js/src/* have their own optimization flag when not in js standalone
+        # mode.
+        if not self._context.config.substs.get("JS_STANDALONE"):
+            relsrcdir = self._context.relsrcdir
+            if relsrcdir == "js/src" or relsrcdir.startswith("js/src/"):
+                return self._context.config.substs.get("MOZ_JS_OPTIMIZE_FLAGS")
+
+        return self._context.config.substs.get("MOZ_OPTIMIZE_FLAGS")
 
     def __setitem__(self, key, value):
         if key not in self._known_keys:
@@ -710,25 +710,6 @@ class WasmFlags(TargetCompileFlags):
             (
                 "EXTRA_INCLUDES",
                 ["-I%s/dist/include" % context.config.topobjdir],
-                ("WASM_CXXFLAGS", "WASM_CFLAGS"),
-            ),
-            (
-                "OS_INCLUDES",
-                list(
-                    itertools.chain(
-                        *(
-                            context.config.substs.get(v, [])
-                            for v in (
-                                "NSPR_CFLAGS",
-                                "NSS_CFLAGS",
-                                "MOZ_JPEG_CFLAGS",
-                                "MOZ_PNG_CFLAGS",
-                                "MOZ_ZLIB_CFLAGS",
-                                "MOZ_PIXMAN_CFLAGS",
-                            )
-                        )
-                    )
-                ),
                 ("WASM_CXXFLAGS", "WASM_CFLAGS"),
             ),
             ("DEBUG", self._debug_flags(), ("WASM_CFLAGS", "WASM_CXXFLAGS")),
@@ -1705,6 +1686,14 @@ VARIABLES = {
         current locale is ``en-US``.
         """,
     ),
+    "MOZ_SRC_FILES": (
+        ContextDerivedTypedList(SourcePath),
+        list,
+        """This variable contains a list of files that need to be accessible
+        under the "moz-src" protocol. They are copied to the moz-src portion
+        of the omni.ja, maintaining the path that they have in the source dir.
+        """,
+    ),
     "OBJDIR_FILES": (
         ContextDerivedTypedHierarchicalStringList(Path),
         list,
@@ -1757,7 +1746,7 @@ VARIABLES = {
         """Whether the library in this directory is a static library.
         """,
     ),
-    "USE_STATIC_LIBS": (
+    "USE_STATIC_MSVCRT": (
         bool,
         bool,
         """Whether the code in this directory is a built against the static
@@ -2266,12 +2255,6 @@ VARIABLES = {
         """List of manifest files defining MozPerftest performance tests.
         """,
     ),
-    "CRAMTEST_MANIFESTS": (
-        ManifestparserManifestList,
-        list,
-        """List of manifest files defining cram unit tests.
-        """,
-    ),
     "TELEMETRY_TESTS_CLIENT_MANIFESTS": (
         ManifestparserManifestList,
         list,
@@ -2623,7 +2606,7 @@ VARIABLES = {
 
 # Sanity check: we don't want any variable above to have a list as storage type.
 for name, (storage_type, input_types, docs) in VARIABLES.items():
-    if storage_type == list:
+    if storage_type is list:
         raise RuntimeError('%s has a "list" storage type. Use "List" instead.' % name)
 
 # Set of variables that are only allowed in templates:
@@ -2953,9 +2936,11 @@ SPECIAL_VARIABLES = {
         """,
     ),
     "TEST_DIRS": (
-        lambda context: context["DIRS"]
-        if context.config.substs.get("ENABLE_TESTS")
-        else TestDirsPlaceHolder,
+        lambda context: (
+            context["DIRS"]
+            if context.config.substs.get("ENABLE_TESTS")
+            else TestDirsPlaceHolder
+        ),
         list,
         """Like DIRS but only for directories that contain test-only code.
 
@@ -3135,6 +3120,7 @@ DEPRECATION_HINTS = {
 
             DIST_FILES += [ 'foo' ]
     """,
+    "USE_STATIC_LIBS": "Please use the USE_STATIC_MSVCRT variable instead.",
 }
 
 # Make sure that all template variables have a deprecation hint.

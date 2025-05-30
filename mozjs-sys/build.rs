@@ -362,10 +362,23 @@ fn build_spidermonkey(build_dir: &Path) {
         .current_dir(&build_dir)
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
         .env("NO_RUST_PANIC_HOOK", "1")
-        .status()
+        .output()
         .expect(&format!("Failed to run `{:?}`", make));
-    assert!(result.success());
+    if !result.status.success() {
+        println!(
+            "stderr output:\n{}",
+            String::from_utf8(result.stderr).unwrap()
+        );
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        println!("build output:\n{}", stdout,);
+    }
+    assert!(result.status.success());
     if target.contains("windows") {
+        /*println!("build output:\n{}", stdout,);
+        println!(
+            "configure status:\n{}",
+            std::fs::read_to_string(build_dir.join("config.status")).unwrap()
+        );*/
         let mut make_static = cc::Build::new();
         make_static.out_dir(build_dir.join("js/src/build"));
         std::fs::read_to_string(build_dir.join("js/src/build/js_static_lib.list"))
@@ -622,6 +635,7 @@ const BLACKLIST_FUNCTIONS: &'static [&'static str] = &[
 /// features that don't have an equivalent in rust, such as partial template
 /// specialization.
 const OPAQUE_TYPES: &'static [&'static str] = &[
+    "JS::EnvironmentChain",
     "JS::StackGCVector.*",
     "JS::PersistentRooted.*",
     "JS::detail::CallArgsBase",
@@ -634,6 +648,9 @@ const OPAQUE_TYPES: &'static [&'static str] = &[
     "mozilla::detail::Hash.*",
     "RefPtr_Proxy.*",
     "std::.*",
+    "mozilla::baseprofiler::BaseProfilerProcessId",
+    "mozilla::baseprofiler::BaseProfilerThreadId",
+    "mozilla::MarkerThreadId",
 ];
 
 /// Types for which we should NEVER generate bindings, even if it is used within
@@ -660,6 +677,11 @@ const BLACKLIST_TYPES: &'static [&'static str] = &[
     "JS::dbg::Builder_Object",
     "JS::dbg::Builder_Object_Base",
     "JS::dbg::BuilderOrigin",
+    "JS::RootedTuple",
+    "mozilla::external::AtomicRefCounted",
+    "mozilla::ProfilerStringView",
+    "mozilla::ProfilerString8View",
+    "mozilla::ProfilerString16View",
 ];
 
 /// Definitions for types that were blacklisted

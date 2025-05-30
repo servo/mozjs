@@ -35,7 +35,7 @@ from mozbuild.base import (
     MozbuildObject,
 )
 from mozbuild.base import MachCommandConditions as conditions
-from mozbuild.util import MOZBUILD_METRICS_PATH
+from mozbuild.util import MOZBUILD_METRICS_PATH, ForwardingArgumentParser
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -159,7 +159,7 @@ def _cargo_config_yaml_schema():
 @CommandArgument(
     "cargo_command",
     default=None,
-    help="Target to cargo, must be one of the commands in config/cargo/",
+    help="Target to cargo, must be one of the commands in build/cargo/",
 )
 @CommandArgument(
     "--all-crates",
@@ -266,10 +266,18 @@ def cargo(
     if ret != 0:
         return ret
 
+    if command_context.substs.get("commtopsrcdir"):
+        # Thunderbird uses its own gkrust, located in its own workspace.
+        gkrust_path = "comm/rust/gkrust"
+        gtest_path = "comm/rust/gtest"
+    else:
+        gkrust_path = "toolkit/library/rust"
+        gtest_path = "toolkit/library/gtest/rust"
+
     # XXX duplication with `mach vendor rust`
     crates_and_roots = {
-        "gkrust": {"directory": "toolkit/library/rust", "library": True},
-        "gkrust-gtest": {"directory": "toolkit/library/gtest/rust", "library": True},
+        "gkrust": {"directory": gkrust_path, "library": True},
+        "gkrust-gtest": {"directory": gtest_path, "library": True},
         "geckodriver": {"directory": "testing/geckodriver", "library": False},
     }
 
@@ -330,10 +338,10 @@ def cargo(
         if cargo_build_flags:
             append_env["CARGO_NO_AUTO_ARG"] = "1"
         else:
-            append_env[
-                "ADD_RUST_LTOABLE"
-            ] = "force-cargo-library-{s:s} force-cargo-program-{s:s}".format(
-                s=cargo_command
+            append_env["ADD_RUST_LTOABLE"] = (
+                "force-cargo-library-{s:s} force-cargo-program-{s:s}".format(
+                    s=cargo_command
+                )
             )
 
         ret = command_context._run_make(
@@ -872,6 +880,29 @@ def join_ensure_dir(dir1, dir2):
     dest="enable_webrender",
     help="Enable the WebRender compositor in Gecko.",
 )
+@CommandArgument(
+    "--enable-inc-origin-init",
+    action="store_true",
+    default=False,
+    dest="enable_inc_origin_init",
+    help="Enable the incremental origin initialization in Gecko.",
+)
+@CommandArgumentGroup("filter sets")
+@CommandArgument(
+    "--filter-set",
+    default=None,
+    dest="filter_set",
+    type=str,
+    group="filter sets",
+    help="Use a predefined gtest filter (this overrides the gtest_filter).",
+)
+@CommandArgument(
+    "--list-filter-sets",
+    action="store_true",
+    dest="list_filter_sets",
+    group="filter sets",
+    help="List available predefined gtest filters.",
+)
 @CommandArgumentGroup("Android")
 @CommandArgument(
     "--package",
@@ -938,6 +969,9 @@ def gtest(
     list_tests,
     tbpl_parser,
     enable_webrender,
+    enable_inc_origin_init,
+    filter_set,
+    list_filter_sets,
     package,
     adb_path,
     device_serial,
@@ -975,6 +1009,15 @@ def gtest(
     if conditions.is_android(command_context):
         if jobs != 1:
             print("--jobs is not supported on Android and will be ignored")
+        if enable_inc_origin_init:
+            print(
+                "--enable-inc-origin-init is not supported on Android and will"
+                "be ignored"
+            )
+        if filter_set:
+            print("--filter-set is not supported on Android and will be ignored")
+        if list_filter_sets:
+            print("--list-filter-sets is not supported on Android and will be ignored")
         if debug or debugger or debugger_args:
             print("--debug options are not supported on Android and will be ignored")
         from mozrunner.devices.android_device import InstallIntent
@@ -1046,6 +1089,28 @@ def gtest(
         gtest_env["MOZ_ACCELERATED"] = "1"
     else:
         gtest_env["MOZ_WEBRENDER"] = "0"
+
+    if enable_inc_origin_init:
+        gtest_env["MOZ_ENABLE_INC_ORIGIN_INIT"] = "1"
+    else:
+        gtest_env["MOZ_ENABLE_INC_ORIGIN_INIT"] = "0"
+
+    if filter_set or list_filter_sets:
+        filter_sets_mod_path = os.path.join("testing", "gtest", "gtest_filter_sets.py")
+        load_source("gtest_filter_sets", filter_sets_mod_path)
+
+        import gtest_filter_sets
+
+        if filter_set:
+            gtest_filter_for_filter_set = gtest_filter_sets.get(filter_set)
+            if gtest_filter_for_filter_set:
+                gtest_env["GTEST_FILTER"] = gtest_filter_for_filter_set
+            else:
+                print("Unknown filter set.")
+                return 1
+        else:
+            gtest_filter_sets.list()
+            return 1
 
     if jobs == 1:
         return command_context.run_process(
@@ -1235,7 +1300,11 @@ def install(command_context, **kwargs):
         )
 
         ret = (
-            verify_android_device(command_context, install=InstallIntent.YES, **kwargs)
+            verify_android_device(
+                command_context,
+                install=InstallIntent.YES,
+                **kwargs,
+            )
             == 0
         )
     else:
@@ -1250,7 +1319,7 @@ def install(command_context, **kwargs):
 
 def _get_android_run_parser():
     parser = argparse.ArgumentParser()
-    group = parser.add_argument_group("The compiled program")
+    group = parser.add_argument_group("Compiled Program Environment Options")
     group.add_argument(
         "--app",
         default="org.mozilla.geckoview_example",
@@ -1276,7 +1345,6 @@ def _get_android_run_parser():
         help="Path to Gecko profile, like /path/to/host/profile "
         "or /path/to/target/profile",
     )
-    group.add_argument("--url", default=None, help="URL to open")
     group.add_argument(
         "--aab",
         action="store_true",
@@ -1288,6 +1356,13 @@ def _get_android_run_parser():
         action="store_true",
         default=False,
         help="Do not try to install application on device before running "
+        "(default: False)",
+    )
+    group.add_argument(
+        "--no-uninstall",
+        action="store_true",
+        default=False,
+        help="Do not try to uninstall application on device before reinstalling"
         "(default: False)",
     )
     group.add_argument(
@@ -1344,20 +1419,16 @@ def _get_android_run_parser():
         default=False,
         help="Select an existing process to debug.",
     )
+
+    group = parser.add_argument_group("Compiled Program Options")
+    group.add_argument("url", nargs="?", default=None, help="URL to open")
+
     return parser
 
 
 def _get_jsshell_run_parser():
-    parser = argparse.ArgumentParser()
-    group = parser.add_argument_group("the compiled program")
-    group.add_argument(
-        "params",
-        nargs="...",
-        default=[],
-        help="Command-line arguments to be passed through to the program. Not "
-        "specifying a --profile or -P option will result in a temporary profile "
-        "being used.",
-    )
+    parser = ForwardingArgumentParser()
+    group = parser.add_argument_group("Compiled Program Environment Options")
 
     group = parser.add_argument_group("debugging")
     group.add_argument(
@@ -1386,29 +1457,24 @@ def _get_jsshell_run_parser():
         help=argparse.SUPPRESS,
     )
 
+    parser.add_forwarding_group(
+        title="Compiled Program Options",
+        dest="params",
+        help="Command-line arguments to be passed through to the program. "
+        "Omitting --profile or -P results in a temporary profile being used.",
+        forwarding_help="Display the program help.",
+    )
+
     return parser
 
 
 def _get_desktop_run_parser():
-    parser = argparse.ArgumentParser()
-    group = parser.add_argument_group("the compiled program")
-    group.add_argument(
-        "params",
-        nargs="...",
-        default=[],
-        help="Command-line arguments to be passed through to the program. Not "
-        "specifying a --profile or -P option will result in a temporary profile "
-        "being used.",
-    )
+
+    parser = ForwardingArgumentParser()
+    group = parser.add_argument_group("Compiled Program Environment Options")
     group.add_argument("--packaged", action="store_true", help="Run a packaged build.")
     group.add_argument(
         "--app", help="Path to executable to run (default: output of ./mach build)"
-    )
-    group.add_argument(
-        "--remote",
-        "-r",
-        action="store_true",
-        help="Do not pass the --no-remote argument by default.",
     )
     group.add_argument(
         "--background",
@@ -1460,7 +1526,7 @@ def _get_desktop_run_parser():
         "option.",
     )
 
-    group = parser.add_argument_group("debugging")
+    group = parser.add_argument_group("Debugging")
     group.add_argument(
         "--debug",
         action="store_true",
@@ -1507,6 +1573,13 @@ def _get_desktop_run_parser():
         "--show-dump-stats", action="store_true", help="Show stats when doing dumps."
     )
 
+    parser.add_forwarding_group(
+        title="Compiled Program Options",
+        dest="params",
+        help="Command-line arguments to be passed through to the program. "
+        "Omitting --profile or -P results in a temporary profile being used.",
+        forwarding_help="Display the program help.",
+    )
     return parser
 
 
@@ -1544,6 +1617,7 @@ def _run_android(
     url=None,
     aab=False,
     no_install=None,
+    no_uninstall=None,
     no_wait=None,
     fail_if_running=None,
     restart=None,
@@ -1556,18 +1630,16 @@ def _run_android(
 ):
     from mozrunner.devices.android_device import (
         InstallIntent,
+        UninstallIntent,
         _get_device,
+        metadata_for_app,
         verify_android_device,
     )
     from six.moves import shlex_quote
 
-    if app == "org.mozilla.geckoview_example":
-        activity_name = "org.mozilla.geckoview_example.GeckoViewActivity"
-    elif app == "org.mozilla.geckoview.test_runner":
-        activity_name = "org.mozilla.geckoview.test_runner.TestRunnerActivity"
-    elif "fennec" in app or "firefox" in app:
-        activity_name = "org.mozilla.gecko.BrowserApp"
-    else:
+    metadata = metadata_for_app(app)
+
+    if not metadata.activity_name:
         raise RuntimeError("Application not recognized: {}".format(app))
 
     # If we want to debug an existing process, we implicitly do not want
@@ -1578,14 +1650,15 @@ def _run_android(
     # `verify_android_device` respects `DEVICE_SERIAL` if it is set and sets it otherwise.
     verify_android_device(
         command_context,
-        app=app,
+        app=metadata.package_name,
         aab=aab,
         debugger=debug,
         install=InstallIntent.NO if no_install else InstallIntent.YES,
+        uninstall=UninstallIntent.NO if no_uninstall else UninstallIntent.YES,
     )
     device_serial = os.environ.get("DEVICE_SERIAL")
     if not device_serial:
-        print("No ADB devices connected.")
+        print("Unable to find ready Android device")
         return 1
 
     device = _get_device(command_context.substs, device_serial=device_serial)
@@ -1597,10 +1670,10 @@ def _run_android(
             command_context.log(
                 logging.INFO,
                 "run",
-                {"app": app},
+                {"app": metadata.package_name},
                 "Setting {app} as the device debug app",
             )
-            device.shell("am set-debug-app -w --persistent %s" % app)
+            device.shell("am set-debug-app -w --persistent %s" % metadata.package_name)
     else:
         # Make sure that the app doesn't block waiting for jdb
         device.shell("am clear-debug-app")
@@ -1613,7 +1686,9 @@ def _run_android(
                 # Always /data/local/tmp, rather than `device.test_root`, because
                 # GeckoView only takes its configuration file from /data/local/tmp,
                 # and we want to follow suit.
-                target_profile = "/data/local/tmp/{}-profile".format(app)
+                target_profile = "/data/local/tmp/{}-profile".format(
+                    metadata.package_name
+                )
                 device.rm(target_profile, recursive=True, force=True)
                 device.push(host_profile, target_profile)
                 command_context.log(
@@ -1656,23 +1731,26 @@ def _run_android(
             command_context.log(
                 logging.INFO,
                 "run",
-                {"app": app},
+                {"app": metadata.package_name},
                 "Stopping {app} to ensure clean restart.",
             )
-            device.stop_application(app)
+            device.stop_application(metadata.package_name)
 
         # We'd prefer to log the actual `am start ...` command, but it's not trivial
         # to wire the device's logger to mach's logger.
         command_context.log(
             logging.INFO,
             "run",
-            {"app": app, "activity_name": activity_name},
+            {
+                "app": metadata.package_name,
+                "activity_name": metadata.activity_name,
+            },
             "Starting {app}/{activity_name}.",
         )
 
         device.launch_application(
-            app_name=app,
-            activity_name=activity_name,
+            app_name=metadata.package_name,
+            activity_name=metadata.activity_name,
             intent=intent,
             extras=extras,
             url=url,
@@ -1685,7 +1763,9 @@ def _run_android(
 
     from mozrunner.devices.android_device import run_lldb_server
 
-    socket_file = run_lldb_server(app, command_context.substs, device_serial)
+    socket_file = run_lldb_server(
+        metadata.package_name, command_context.substs, device_serial
+    )
     if not socket_file:
         command_context.log(
             logging.ERROR,
@@ -1725,14 +1805,14 @@ def _run_android(
         proc_list = [
             proc[:-1]
             for proc in device.get_process_list()
-            if _is_geckoview_process(proc[1], app)
+            if _is_geckoview_process(proc[1], metadata.package_name)
         ]
 
         if not proc_list:
             command_context.log(
                 logging.ERROR,
                 "run",
-                {"app": app},
+                {"app": metadata.package_name},
                 "No existing {app} processes found",
             )
             return 1
@@ -1758,7 +1838,7 @@ def _run_android(
     else:
         # We're not using an existing process, so there should only be our
         # parent process at this time.
-        pids = device.pidof(app_name=app)
+        pids = device.pidof(app_name=metadata.package_name)
         if len(pids) != 1:
             command_context.log(
                 logging.ERROR,
@@ -1802,8 +1882,10 @@ def _run_android(
             # The app is waiting for jdb to attach and will not continue running
             # until we do so.
             def _jdb_ping(local_jdb_port):
+                java_bin_path = os.path.dirname(command_context.substs["JAVA"])
+                jdb_path = os.path.join(java_bin_path, "jdb")
                 jdb_process = subprocess.Popen(
-                    ["jdb", "-attach", "localhost:%d" % local_jdb_port],
+                    [jdb_path, "-attach", "localhost:%d" % local_jdb_port],
                     stdin=subprocess.PIPE,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1934,7 +2016,6 @@ def _run_desktop(
     params,
     packaged,
     app,
-    remote,
     background,
     noprofile,
     disable_e10s,
@@ -1959,20 +2040,40 @@ def _run_desktop(
         else:
             binpath = app or command_context.get_binary_path("app")
     except BinaryNotFoundException as e:
-        command_context.log(logging.ERROR, "run", {"error": str(e)}, "ERROR: {error}")
         if packaged:
-            command_context.log(
-                logging.INFO,
-                "run",
-                {
-                    "help": "It looks like your build isn't packaged. "
-                    "You can run |./mach package| to package it."
-                },
-                "{help}",
+            ret = command_context._run_make(
+                directory=".",
+                target="stage-package",
+                silent=True,
+                ensure_exit_code=False,
             )
+
+            if ret == 0:
+                try:
+                    binpath = command_context.get_binary_path(where="staged-package")
+                except BinaryNotFoundException:
+                    command_context.log(
+                        logging.ERROR, "run", {"error": str(e)}, "ERROR: {error}"
+                    )
+                    ret = 1
+
+            if ret != 0:
+                command_context.log(
+                    logging.INFO,
+                    "run",
+                    {
+                        "help": "It looks like your build failed to package properly? "
+                        "You can run |./mach package| to package it manually."
+                    },
+                    "{help}",
+                )
+                return 1
         else:
+            command_context.log(
+                logging.ERROR, "run", {"error": str(e)}, "ERROR: {error}"
+            )
             command_context.log(logging.INFO, "run", {"help": e.help()}, "{help}")
-        return 1
+            return 1
 
     args = []
     if macos_open:
@@ -1998,9 +2099,6 @@ def _run_desktop(
 
     if params:
         args.extend(params)
-
-    if not remote:
-        args.append("-no-remote")
 
     if not background and sys.platform == "darwin":
         args.append("-foreground")
@@ -2432,14 +2530,20 @@ def repackage_deb_l10n(
 @CommandArgument(
     "--attribution_sentinel", type=str, required=False, help="DMGs with attribution."
 )
-def repackage_dmg(command_context, input, output, attribution_sentinel):
+@CommandArgument(
+    "--compression",
+    type=str,
+    required=False,
+    help="Use alternative compression algorithm",
+)
+def repackage_dmg(command_context, input, output, attribution_sentinel, compression):
     if not os.path.exists(input):
         print("Input file does not exist: %s" % input)
         return 1
 
     from mozbuild.repackaging.dmg import repackage_dmg
 
-    repackage_dmg(input, output, attribution_sentinel)
+    repackage_dmg(input, output, attribution_sentinel, compression)
 
 
 @SubCommand("repackage", "pkg", description="Repackage a tar file into a .pkg for OSX")
@@ -2833,6 +2937,7 @@ def repackage_mar(command_context, input, mar, output, arch, mar_channel_id):
     "repackage",
     "snap",
     description="Repackage into Snap format for developer testing",
+    virtualenv_name="repackage-snap",
 )
 @CommandArgument(
     "--snapcraft",
@@ -2846,7 +2951,13 @@ def repackage_mar(command_context, input, mar, output, arch, mar_channel_id):
     help="Name of the snap to generate (default: firefox-devel)",
 )
 @CommandArgument(
-    "--branch",
+    "--upstream-repo",
+    default="canonical/firefox-snap",
+    required=False,
+    help="Name of the firefox-snap github repo to use (default: canonical/firefox-snap)",
+)
+@CommandArgument(
+    "--upstream-branch",
     default="nightly",
     required=False,
     help="Name of the firefox-snap github branch to use (default: nightly)",
@@ -2885,17 +2996,25 @@ def repackage_mar(command_context, input, mar, output, arch, mar_channel_id):
     action="store_true",
     help="Prepare everything but stop before actually calling snapcraft. Useful for debugging generated YAML definition.",
 )
+@CommandArgument(
+    "--wmclass",
+    type=str,
+    required=False,
+    help="The StartupWMClass entry key for the desktop file.",
+)
 def repackage_snap(
     command_context,
     snapcraft=None,
     snap_name=None,
-    branch=None,
+    upstream_repo=None,
+    upstream_branch=None,
     output=None,
     input_pkg=None,
     tmp_dir=None,
     clean=False,
     install=False,
     dry_run=False,
+    wmclass=None,
 ):
     from mozfile import which
 
@@ -2997,12 +3116,14 @@ def repackage_snap(
 
     # Create the package
     snappath = repackage_snap(
+        log=command_context.log,
         srcdir=command_context.topsrcdir,
         objdir=command_context.topobjdir,
         snapdir=snapdir,
         snapcraft=snapcraft,
         appname=snap_name,
-        branchname=branch,
+        reponame=upstream_repo,
+        branchname=upstream_branch,
         arch=arch,
         dry_run=dry_run,
     )
@@ -3123,10 +3244,98 @@ def repackage_snap_install(command_context, snap_file, snap_name, sudo=None):
         logging.INFO,
         "repackage-snap-install-howto-run",
         {},
-        "Example usage: snap run {} --no-remote".format(snap_name),
+        "Example usage: snap run {}".format(snap_name),
     )
 
     return 0
+
+
+@SubCommand(
+    "repackage",
+    "desktop-file",
+    description="Prepare a firefox.desktop file",
+    virtualenv_name="repackage-desktop-file",
+)
+@CommandArgument("--output", type=str, required=True, help="Output desktop file")
+@CommandArgument(
+    "--flavor",
+    type=str,
+    required=True,
+    choices=["snap", "flatpak"],
+    help="Desktop file flavor to generate.",
+)
+@CommandArgument(
+    "--release-product",
+    type=str,
+    required=True,
+    help="The product being shipped. Used to disambiguate beta/devedition etc.",
+)
+@CommandArgument(
+    "--release-type",
+    type=str,
+    required=True,
+    help="The release being shipped. Used to disambiguate nightly/try etc.",
+)
+@CommandArgument(
+    "--wmclass",
+    type=str,
+    required=False,
+    help="The StartupWMClass entry key for the desktop file.",
+)
+def repackage_desktop_file(
+    command_context,
+    output,
+    flavor,
+    release_product,
+    release_type,
+    wmclass,
+):
+    desktop = None
+    if flavor == "flatpak":
+        from fluent.runtime.fallback import FluentLocalization, FluentResourceLoader
+
+        from mozbuild.repackaging.desktop_file import generate_browser_desktop_entry
+
+        # This relies in existing build variables usage inherited from the
+        # debian repackage code that serves the same purpose on Flatpak, so
+        # it is just directly re-used here.
+        build_variables = {
+            "DEB_PKG_NAME": release_product,
+            "DBusActivatable": "false",
+            "Icon": "org.mozilla.firefox",
+            "StartupWMClass": release_product,
+        }
+
+        desktop = "\n".join(
+            generate_browser_desktop_entry(
+                command_context.log,
+                build_variables,
+                release_product,
+                release_type,
+                FluentLocalization,
+                FluentResourceLoader,
+            )
+        )
+
+    if flavor == "snap":
+        from mozbuild.repackaging.snapcraft_transform import (
+            SnapDesktopFile,
+        )
+
+        desktop = SnapDesktopFile(
+            command_context.log,
+            appname=release_product,
+            branchname=release_type,
+            wmclass=wmclass,
+        ).repack()
+
+    if desktop is None:
+        raise NotImplementedError(
+            f"Couldn't generate a desktop file. Unknown flavor: {flavor}"
+        )
+
+    with open(output, "w") as desktop_file:
+        desktop_file.write(desktop)
 
 
 @Command(
@@ -3180,25 +3389,6 @@ def package_l10n(command_context, verbose=False, locales=[]):
         ensure_exit_code=True,
     )
 
-    if command_context.substs["MOZ_BUILD_APP"] == "mobile/android":
-        command_context.log(
-            logging.INFO,
-            "package-multi-locale",
-            {},
-            "Invoking `mach android assemble-app`",
-        )
-        command_context.run_process(
-            [
-                mozpath.join(command_context.topsrcdir, "mach"),
-                "android",
-                "assemble-app",
-            ],
-            append_env=append_env,
-            pass_thru=True,
-            ensure_exit_code=True,
-            cwd=mozpath.join(command_context.topsrcdir),
-        )
-
     if command_context.substs["MOZ_BUILD_APP"] == "browser":
         command_context.log(
             logging.INFO, "package-multi-locale", {}, "Repackaging browser"
@@ -3238,6 +3428,7 @@ def package_l10n(command_context, verbose=False, locales=[]):
         )
         command_context.run_process(
             [
+                sys.executable,
                 mozpath.join(command_context.topsrcdir, "mach"),
                 "android",
                 "archive-geckoview",
@@ -3304,3 +3495,69 @@ def _prepend_debugger_args(args, debugger, debugger_args):
     # Prepend the debugger args.
     args = [debuggerInfo.path] + debuggerInfo.args + args
     return args
+
+
+@SubCommand(
+    "repackage",
+    "flatpak",
+    description="Repackage a tar file into a flatpak",
+    virtualenv_name="repackage-desktop-file",
+)
+@CommandArgument("--input", "-i", type=str, required=True, help="Input filename")
+@CommandArgument("--output", "-o", type=str, required=True, help="Output filename")
+@CommandArgument("--name", type=str, required=True, help="flatpak package name")
+@CommandArgument("--arch", type=str, required=True, help="flatpak architecture")
+@CommandArgument("--version", type=str, required=True, help="package version")
+@CommandArgument("--product", type=str, required=True, help="release product")
+@CommandArgument(
+    "--release-type",
+    type=str,
+    required=True,
+    help="The release being shipped. Used to disambiguate nightly/try etc.",
+)
+@CommandArgument(
+    "--flatpak-branch",
+    type=str,
+    required=True,
+    help="flatpak branch",
+)
+@CommandArgument(
+    "--template-dir", type=str, required=True, help="path to template directory"
+)
+@CommandArgument(
+    "--langpack-pattern",
+    type=str,
+    help="shell pattern matching language packs to include in the flatpak",
+)
+def repackage_flatpak(
+    command_context,
+    input,
+    output,
+    name,
+    arch,
+    version,
+    product,
+    release_type,
+    flatpak_branch,
+    template_dir,
+    langpack_pattern,
+):
+    if not os.path.exists(input):
+        print("Input file does not exist: %s" % input)
+        return 1
+
+    from mozbuild.repackaging.flatpak import repackage_flatpak
+
+    repackage_flatpak(
+        command_context.log,
+        input,
+        output,
+        arch,
+        version,
+        product,
+        release_type,
+        name,
+        flatpak_branch,
+        template_dir,
+        langpack_pattern,
+    )

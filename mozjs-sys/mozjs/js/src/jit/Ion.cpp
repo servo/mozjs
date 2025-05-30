@@ -23,6 +23,7 @@
 #include "jit/BranchHinting.h"
 #include "jit/CodeGenerator.h"
 #include "jit/CompileInfo.h"
+#include "jit/DominatorTree.h"
 #include "jit/EdgeCaseAnalysis.h"
 #include "jit/EffectiveAddressAnalysis.h"
 #include "jit/ExecutableAllocator.h"
@@ -30,6 +31,7 @@
 #include "jit/InlineScriptTree.h"
 #include "jit/InstructionReordering.h"
 #include "jit/Invalidation.h"
+#include "jit/InvalidationScriptSet.h"
 #include "jit/IonAnalysis.h"
 #include "jit/IonCompileTask.h"
 #include "jit/IonIC.h"
@@ -216,10 +218,6 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
       generatePreBarrier(cx, masm, MIRType::WasmAnyRef);
   rangeRecorder.recordOffset("Trampoline: PreBarrier WasmAnyRef");
 
-  JitSpew(JitSpew_Codegen, "# Emitting free stub");
-  generateFreeStub(masm);
-  rangeRecorder.recordOffset("Trampoline: FreeStub");
-
   JitSpew(JitSpew_Codegen, "# Emitting lazy link stub");
   generateLazyLinkStub(masm);
   rangeRecorder.recordOffset("Trampoline: LazyLinkStub");
@@ -280,17 +278,19 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
   return true;
 }
 
-JitCode* JitRuntime::debugTrapHandler(JSContext* cx,
-                                      DebugTrapHandlerKind kind) {
-  if (!debugTrapHandlers_[kind]) {
-    // JitRuntime code stubs are shared across compartments and have to
-    // be allocated in the atoms zone.
-    mozilla::Maybe<AutoAllocInAtomsZone> az;
-    if (!cx->zone()->isAtomsZone()) {
-      az.emplace(cx);
-    }
-    debugTrapHandlers_[kind] = generateDebugTrapHandler(cx, kind);
+bool JitRuntime::ensureDebugTrapHandler(JSContext* cx,
+                                        DebugTrapHandlerKind kind) {
+  if (debugTrapHandlers_[kind]) {
+    return true;
   }
+
+  // JitRuntime code stubs are shared across compartments and have to
+  // be allocated in the atoms zone.
+  mozilla::Maybe<AutoAllocInAtomsZone> az;
+  if (!cx->zone()->isAtomsZone()) {
+    az.emplace(cx);
+  }
+  debugTrapHandlers_[kind] = generateDebugTrapHandler(cx, kind);
   return debugTrapHandlers_[kind];
 }
 
@@ -351,29 +351,15 @@ void JitRuntime::freeIonOsrTempData() {
   ionOsrTempDataSize_ = 0;
 }
 
-template <typename T>
-static T PopNextBitmaskValue(uint32_t* bitmask) {
-  MOZ_ASSERT(*bitmask);
-  uint32_t index = mozilla::CountTrailingZeroes32(*bitmask);
-  *bitmask ^= 1 << index;
-
-  MOZ_ASSERT(index < uint32_t(T::Count));
-  return T(index);
-}
-
-void JitZone::performStubReadBarriers(uint32_t stubsToBarrier) const {
-  while (stubsToBarrier) {
-    auto stub = PopNextBitmaskValue<StubIndex>(&stubsToBarrier);
-    const WeakHeapPtr<JitCode*>& jitCode = stubs_[stub];
-    MOZ_ASSERT(jitCode);
-    jitCode.get();
-  }
-}
-
 static bool LinkCodeGen(JSContext* cx, CodeGenerator* codegen,
-                        HandleScript script, const WarpSnapshot* snapshot) {
-  if (!codegen->link(cx, snapshot)) {
+                        HandleScript script) {
+  if (!codegen->link(cx)) {
     return false;
+  }
+
+  // Record Ion compile time in glean.
+  if (mozilla::TimeDuration compileTime = codegen->getCompilationTime()) {
+    cx->metrics().ION_COMPILE_TIME(compileTime);
   }
 
   return true;
@@ -387,7 +373,7 @@ static bool LinkBackgroundCodeGen(JSContext* cx, IonCompileTask* task) {
 
   JitContext jctx(cx);
   RootedScript script(cx, task->script());
-  return LinkCodeGen(cx, codegen, script, task->snapshot());
+  return LinkCodeGen(cx, codegen, script);
 }
 
 void jit::LinkIonScript(JSContext* cx, HandleScript calleeScript) {
@@ -555,9 +541,6 @@ bool RecompileInfo::traceWeak(JSTracer* trc) {
 void JitZone::traceWeak(JSTracer* trc, Zone* zone) {
   MOZ_ASSERT(this == zone->jitZone());
 
-  // Any outstanding compilations should have been cancelled by the GC.
-  MOZ_ASSERT(!HasOffThreadIonCompile(zone));
-
   for (WeakHeapPtr<JitCode*>& stub : stubs_) {
     TraceWeakEdge(trc, &stub, "JitZone::stubs_");
   }
@@ -678,18 +661,7 @@ void JitCode::finalize(JS::GCContext* gcx) {
   }
   setHeaderPtr(nullptr);
 
-#ifdef JS_ION_PERF
-  // Code buffers are stored inside ExecutablePools. Pools are refcounted.
-  // Releasing the pool may free it. Horrible hack: if we are using perf
-  // integration, we don't want to reuse code addresses, so we just leak the
-  // memory instead.
-  if (!PerfEnabled()) {
-    pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
-  }
-#else
   pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
-#endif
-
   zone()->decJitMemory(headerSize_ + bufferSize_);
 
   pool_ = nullptr;
@@ -1602,13 +1574,14 @@ LIRGraph* GenerateLIR(MIRGenerator* mir) {
   return lir;
 }
 
-CodeGenerator* GenerateCode(MIRGenerator* mir, LIRGraph* lir) {
+static CodeGenerator* GenerateCode(MIRGenerator* mir, LIRGraph* lir,
+                                   const WarpSnapshot* snapshot) {
   auto codegen = MakeUnique<CodeGenerator>(mir, lir);
   if (!codegen) {
     return nullptr;
   }
 
-  if (!codegen->generate()) {
+  if (!codegen->generate(snapshot)) {
     return nullptr;
   }
 
@@ -1619,6 +1592,7 @@ CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot) {
   // Everything in CompileBackEnd can potentially run on a helper thread.
   AutoEnterIonBackend enter;
   AutoSpewEndFunction spewEndFunction(mir);
+  mozilla::TimeStamp compileStartTime = mozilla::TimeStamp::Now();
 
   {
     WarpCompilation comp(mir->alloc());
@@ -1637,7 +1611,11 @@ CodeGenerator* CompileBackEnd(MIRGenerator* mir, WarpSnapshot* snapshot) {
     return nullptr;
   }
 
-  return GenerateCode(mir, lir);
+  CodeGenerator* codegen = GenerateCode(mir, lir, snapshot);
+  if (codegen) {
+    codegen->setCompilationTime(mozilla::TimeStamp::Now() - compileStartTime);
+  }
+  return codegen;
 }
 
 static AbortReasonOr<WarpSnapshot*> CreateWarpSnapshot(JSContext* cx,
@@ -1660,22 +1638,56 @@ static AbortReasonOr<WarpSnapshot*> CreateWarpSnapshot(JSContext* cx,
   return result;
 }
 
+UniquePtr<LifoAlloc> JitRuntime::tryReuseIonLifoAlloc() {
+  // Try to reuse the LifoAlloc of a finished Ion compilation task for a new
+  // Ion compilation. If there are multiple tasks, we pick the one with the
+  // largest LifoAlloc.
+
+  auto& batch = ionFreeTaskBatch_.ref();
+  IonCompileTask* bestTask = nullptr;
+  size_t bestTaskIndex = 0;
+  size_t bestTaskSize = 0;
+
+  for (size_t i = 0, len = batch.length(); i < len; i++) {
+    IonCompileTask* task = batch[i];
+    if (task->alloc().lifoAlloc()->isHuge()) {
+      // Ignore 'huge' LifoAllocs. This avoids keeping a lot of memory alive and
+      // also avoids freeing all LifoAlloc memory (instead of reusing it) in
+      // freeAllIfHugeAndUnused.
+      continue;
+    }
+    size_t taskSize = task->alloc().lifoAlloc()->computedSizeOfExcludingThis();
+    if (!bestTask || taskSize >= bestTaskSize) {
+      bestTask = task;
+      bestTaskIndex = i;
+      bestTaskSize = taskSize;
+    }
+  }
+
+  if (bestTask) {
+    batch.erase(&batch[bestTaskIndex]);
+    return FreeIonCompileTaskAndReuseLifoAlloc(bestTask);
+  }
+
+  return nullptr;
+}
+
 static AbortReason IonCompile(JSContext* cx, HandleScript script,
                               jsbytecode* osrPc) {
   cx->check(script);
-
-  auto alloc =
-      cx->make_unique<LifoAlloc>(TempAllocator::PreferredLifoChunkSize);
-  if (!alloc) {
-    return AbortReason::Error;
-  }
 
   if (!cx->zone()->ensureJitZoneExists(cx)) {
     return AbortReason::Error;
   }
 
-  if (!cx->zone()->jitZone()->ensureIonStubsExist(cx)) {
-    return AbortReason::Error;
+  UniquePtr<LifoAlloc> alloc =
+      cx->runtime()->jitRuntime()->tryReuseIonLifoAlloc();
+  if (!alloc) {
+    alloc = cx->make_unique<LifoAlloc>(TempAllocator::PreferredLifoChunkSize,
+                                       js::MallocArena);
+    if (!alloc) {
+      return AbortReason::Error;
+    }
   }
 
   TempAllocator* temp = alloc->new_<TempAllocator>(alloc.get());
@@ -1711,6 +1723,9 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
   if (!mirGen) {
     return AbortReason::Alloc;
   }
+
+  auto clearDependencies =
+      mozilla::MakeScopeExit([mirGen]() { mirGen->tracker.reset(); });
 
   MOZ_ASSERT(!script->baselineScript()->hasPendingIonCompileTask());
   MOZ_ASSERT(!script->hasIonScript());
@@ -1751,6 +1766,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
     // The allocator and associated data will be destroyed after being
     // processed in the finishedOffThreadCompilations list.
     (void)alloc.release();
+    clearDependencies.release();
 
     return AbortReason::NoAbort;
   }
@@ -1768,7 +1784,7 @@ static AbortReason IonCompile(JSContext* cx, HandleScript script,
       return AbortReason::Disable;
     }
 
-    succeeded = LinkCodeGen(cx, codegen.get(), script, snapshot);
+    succeeded = LinkCodeGen(cx, codegen.get(), script);
   }
 
   if (succeeded) {
@@ -2325,18 +2341,13 @@ static void InvalidateActivation(JS::GCContext* gcx,
 
   for (OnlyJSJitFrameIter iter(activations); !iter.done(); ++iter, ++frameno) {
     const JSJitFrameIter& frame = iter.frame();
-    MOZ_ASSERT_IF(frameno == 1, frame.isExitFrame() ||
-                                    frame.type() == FrameType::Bailout ||
-                                    frame.type() == FrameType::JSJitToWasm);
+    MOZ_ASSERT_IF(frameno == 1,
+                  frame.isExitFrame() || frame.type() == FrameType::Bailout);
 
 #ifdef JS_JITSPEW
     switch (frame.type()) {
       case FrameType::Exit:
         JitSpew(JitSpew_IonInvalidate, "#%zu exit frame @ %p", frameno,
-                frame.fp());
-        break;
-      case FrameType::JSJitToWasm:
-        JitSpew(JitSpew_IonInvalidate, "#%zu wasm exit frame @ %p", frameno,
                 frame.fp());
         break;
       case FrameType::BaselineJS:
@@ -2515,6 +2526,18 @@ static void ClearIonScriptAfterInvalidation(JSContext* cx, JSScript* script,
   }
 }
 
+// Remove this script from pending invalidation script caches.
+//
+// This is done to avoid an invalidation leaving behind dependencies which
+// may not actually be real on a recompilation, causing superflous invalidation
+// of recompiled code.
+//
+// Note: This must be kept in sync with the various WeakScriptCaches.
+static void ClearPendingInvalidationDependencies(JSScript* script) {
+  script->realm()->zone()->fuseDependencies.removeScript(script);
+  script->realm()->realmFuses.fuseDependencies.removeScript(script);
+}
+
 void jit::Invalidate(JSContext* cx, const RecompileInfoVector& invalid,
                      bool resetUses, bool cancelOffThread) {
   JitSpew(JitSpew_IonInvalidate, "Start invalidation.");
@@ -2535,6 +2558,8 @@ void jit::Invalidate(JSContext* cx, const RecompileInfoVector& invalid,
     JitSpew(JitSpew_IonInvalidate, " Invalidate %s:%u:%u, IonScript %p",
             info.script()->filename(), info.script()->lineno(),
             info.script()->column().oneOriginValue(), ionScript);
+
+    ClearPendingInvalidationDependencies(info.script());
 
     // Keep the ion script alive during the invalidation and flag this
     // ionScript as being invalidated.  This increment is removed by the
