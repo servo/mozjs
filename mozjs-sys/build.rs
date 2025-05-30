@@ -364,11 +364,9 @@ fn build_spidermonkey(build_dir: &Path) {
         .env("NO_RUST_PANIC_HOOK", "1")
         .output()
         .expect(&format!("Failed to run `{:?}`", make));
+    let stdout = String::from_utf8(result.stdout).unwrap();
     if !result.status.success() {
-        println!(
-            "build output:\n{}",
-            String::from_utf8(result.stdout).unwrap()
-        );
+        println!("build output:\n{}", stdout,);
         println!(
             "stderr output:\n{}",
             String::from_utf8(result.stderr).unwrap()
@@ -376,10 +374,7 @@ fn build_spidermonkey(build_dir: &Path) {
     }
     assert!(result.status.success());
     if target.contains("windows") {
-        println!(
-            "build output:\n{}",
-            String::from_utf8(result.stdout).unwrap()
-        );
+        println!("build output:\n{}", stdout,);
         println!(
             "configure status:\n{}",
             std::fs::read_to_string(build_dir.join("config.status")).unwrap()
