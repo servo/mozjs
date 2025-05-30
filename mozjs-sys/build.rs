@@ -364,6 +364,16 @@ fn build_spidermonkey(build_dir: &Path) {
         .env("NO_RUST_PANIC_HOOK", "1")
         .output()
         .expect(&format!("Failed to run `{:?}`", make));
+    if !result.status.success() {
+        println!(
+            "build output:\n{}",
+            String::from_utf8(result.stdout).unwrap()
+        );
+        println!(
+            "stderr output:\n{}",
+            String::from_utf8(result.stderr).unwrap()
+        );
+    }
     assert!(result.status.success());
     if target.contains("windows") {
         println!(
