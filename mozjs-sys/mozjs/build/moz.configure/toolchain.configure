@@ -3673,7 +3673,6 @@ set_config("AR_FLAGS", target_ar_config.flags)
 @imports("platform")
 @imports(_from="__builtin__", _import="FileNotFoundError")
 @imports(_from="__builtin__", _import="open")
-@imports(_from="__builtin__", _import="print")
 @imports(_from="mozbuild.configure.util", _import="LineIO")
 def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config):
     lib_path = list_path = None
@@ -3692,13 +3691,12 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
             )
             is not None
         ):
-            print("XXXjdm invoked compiler")
             with create_temporary_file(suffix=".list") as list_path:
                 with open(list_path, "w") as fd:
                     fd.write(obj_path)
 
-                print("Creating `%s` with content:" % list_path)
-                print("| %s" % obj_path)
+                log.debug("Creating `%s` with content:", list_path)
+                log.debug("| %s", obj_path)
 
                 with create_temporary_file(suffix=".a") as lib_path:
                     os.remove(lib_path)
@@ -3707,14 +3705,8 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
                         + [x.replace("$@", lib_path) for x in ar_config.flags]
                         + ["@" + list_path]
                     )
-                    print("ar command is", ar_command)
-                    result = check_cmd_output(*ar_command)
-                    print("result is", result)
-                    #if platform.system() == "Windows": # XXXjdm
-                    #    return True
+                    result = check_cmd_output(*ar_command, onerror=lambda: None)
                     return result is not None
-        else:
-            print("XXXjdm try invoke compiler returned none")
 
 
 set_config("AR_SUPPORTS_RESPONSE_FILE", True, when=ar_supports_response_files)
