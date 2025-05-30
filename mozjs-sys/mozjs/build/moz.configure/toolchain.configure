@@ -3708,7 +3708,7 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
                     + ["@" + list_path]
                 )
                 print("ar command is", ar_command)
-                result = check_cmd_output(*ar_command, onerror=lambda: None)
+                result = check_cmd_output(*ar_command)
                 print("result is", result)
                 #if platform.system() == "Windows": # XXXjdm
                 #    return True
