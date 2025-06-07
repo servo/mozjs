@@ -121,6 +121,16 @@ jobs:
         run: |
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
           cd target/dependencies && unzip -qo moztools.zip -d .
+      - name: Install LLVM 19 on aarch64
+        if: contains(matrix.target, 'aarch64')
+        run: |
+          # install due to build errors caused by a bug in llvm 18
+          # https://github.com/llvm/llvm-project/pull/93235
+          # remove when windows runner updates to llvm 19
+          iwr -useb get.scoop.sh -outfile 'install.ps1'
+          .\install.ps1 -RunAsAdmin
+          scoop install llvm@19.1.7 --global
+          echo "C:\ProgramData\scoop\scoop\apps\llvm\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.8
       - name: Build Windows

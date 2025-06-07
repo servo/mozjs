@@ -2,10 +2,9 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
-version = "0.128.9-2"
+version = "0.128.9-3"
 authors = ["Mozilla"]
 links = "mozjs"
-build = "build.rs"
 license.workspace = true
 exclude = [
   "mozjs/js/src/tests/**",
