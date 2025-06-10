@@ -41,7 +41,7 @@ def get_target_from_args() -> Optional[str]:
     return None 
 
 
-def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
+def set_toolchain_binaries_in_env(toolchain_name: str, toolchain_dir: str, env: Dict[str, str]):
     cc = os.path.join(toolchain_dir, "bin", "clang")
     cxx = os.path.join(toolchain_dir, "bin", "clang++")
     ar = check_output([cc, "--print-prog-name=llvm-ar"])
@@ -65,6 +65,9 @@ def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
     env["RANLIB"] = ranlib
     env["STRIP"] = strip
     env["YASM"] = yasm
+    env["CLANG_PATH"] = cc
+    env["LIBCLANG_PATH"] = os.path.join(toolchain_dir, "lib")
+    env["BINDGEN_EXTRA_CLANG_ARGS"] = f"--target={toolchain_name} --sysroot={os.path.join(toolchain_dir, 'sysroot')}"
 
 
 def create_environment_for_build() -> Dict[str, str]:
@@ -94,7 +97,13 @@ def create_environment_for_build() -> Dict[str, str]:
     toolchain_dir = os.path.join(ndk_home_dir, "toolchains", "llvm", "prebuilt", host_string)
     env['PATH'] = os.pathsep.join([os.path.join(toolchain_dir, "bin"), env["PATH"]])
 
-    set_toolchain_binaries_in_env(toolchain_dir, env)
+    toolchains_for_targets = {
+        "armv7-linux-androideabi": "armv7a-linux-androideabi",
+        "aarch64-linux-android": "aarch64-linux-android",
+        "x86_64-linux-android": "x86_64-linux-android",
+    }
+    toolchain_name = toolchains_for_targets[get_target_from_args()] + API_LEVEL
+    set_toolchain_binaries_in_env(toolchain_name, toolchain_dir, env)
 
     # This environment variable is only used by the mozjs build.
     env["ANDROID_API_LEVEL"] = API_LEVEL
