@@ -163,6 +163,21 @@
 #   - attribute not specified (default): no code generated
 #   - true: canConsumeFloat32 returns true
 #
+# generate_lir
+# ===================
+# Controls whether to generate direct 1-1 mapping LIR instruction for the MIR op
+# Possible values:
+#   - attribute not specified (default): no code generated
+#   - true: generates corresponding LIR classes in LIROpsGenerated.h
+#
+# lir_temps
+# ===================
+# Specifies the number of temporary virtual registers, LDefinitions, used by
+# the corresponding LIR op in case generate_lir is true.
+# Possible values:
+#   - attribute not specified (default): number of temps is set to 0
+#   - number: sets number of temps max 15
+#
 
 # TODO(no-TI): try to remove this instruction.
 - name: Start
@@ -178,6 +193,12 @@
   clone: true
 
 - name: LimitedTruncate
+  gen_boilerplate: false
+
+- name: IntPtrLimitedTruncate
+  gen_boilerplate: false
+
+- name: Int64LimitedTruncate
   gen_boilerplate: false
 
 - name: Constant
@@ -280,6 +301,34 @@
     initialHeap: gc::Heap
   result_type: Object
   guard: true
+  possibly_calls: true
+
+- name: NewMapObject
+  arguments:
+    templateObject: JSObject*
+  result_type: Object
+  possibly_calls: true
+
+- name: NewSetObject
+  arguments:
+    templateObject: JSObject*
+  result_type: Object
+  possibly_calls: true
+
+- name: NewMapObjectFromIterable
+  operands:
+    iterable: Value
+  arguments:
+    templateObject: JSObject*
+  result_type: Object
+  possibly_calls: true
+
+- name: NewSetObjectFromIterable
+  operands:
+    iterable: Value
+  arguments:
+    templateObject: JSObject*
+  result_type: Object
   possibly_calls: true
 
 - name: NewObject
@@ -400,6 +449,7 @@
   movable: true
   congruent_to: if_operands_equal
   alias_set: none
+  folds_to: custom
   clone: true
 
 - name: SameValue
@@ -410,6 +460,7 @@
   movable: true
   congruent_to: if_operands_equal
   alias_set: none
+  folds_to: custom
   clone: true
 
 - name: Box
@@ -536,6 +587,18 @@
   # The flags are packed with the length in a fixed private slot.
   alias_set: custom
 
+# Guard cx->realm() == obj->realm().
+- name: GuardObjectHasSameRealm
+  operands:
+    object: Object
+  result_type: Object
+  guard: true
+  movable: true
+  congruent_to: if_operands_equal
+  # The object's realm is immutable. The context's realm must always be the same
+  # realm for this compilation.
+  alias_set: none
+
 - name: LoadScriptedProxyHandler
   operands:
     object: Object
@@ -579,6 +642,9 @@
   gen_boilerplate: false
 
 - name: ToFloat32
+  gen_boilerplate: false
+
+- name: ToFloat16
   gen_boilerplate: false
 
 # Converts a uint32 to a double (coming from wasm).
@@ -632,6 +698,41 @@
   result_type: WasmAnyRef
   congruent_to: if_operands_equal
   alias_set: none
+
+- name: WasmAnyRefIsJSString
+  operands:
+    input: WasmAnyRef
+  type_policy: none
+  result_type: Int32
+  congruent_to: if_operands_equal
+  alias_set: none
+  movable: true
+  clone: true
+
+- name: WasmTrapIfAnyRefIsNotJSString
+  operands:
+    input: WasmAnyRef
+  arguments:
+    trap: wasm::Trap
+    trapSiteDesc: wasm::TrapSiteDesc
+  type_policy: none
+  congruent_to: if_operands_equal
+  alias_set: none
+  guard: true
+  clone: true
+
+- name: WasmAnyRefJSStringLength
+  operands:
+    input: WasmAnyRef
+  arguments:
+    trap: wasm::Trap
+    trapSiteDesc: wasm::TrapSiteDesc
+  type_policy: none
+  result_type: Int32
+  congruent_to: if_operands_equal
+  alias_set: none
+  guard: true
+  clone: true
 
 - name: WasmNewI31Ref
   operands:
@@ -701,6 +802,12 @@
 - name: Int64ToBigInt
   gen_boilerplate: false
 
+- name: Int64ToIntPtr
+  gen_boilerplate: false
+
+- name: IntPtrToInt64
+  gen_boilerplate: false
+
 - name: ToString
   gen_boilerplate: false
 
@@ -756,6 +863,9 @@
   gen_boilerplate: false
 
 - name: SignExtendInt64
+  gen_boilerplate: false
+
+- name: SignExtendIntPtr
   gen_boilerplate: false
 
 - name: MinMax
@@ -885,6 +995,64 @@
   gen_boilerplate: false
 
 - name: BigIntBitNot
+  gen_boilerplate: false
+
+- name: BigIntToIntPtr
+  operands:
+    input: BigInt
+  result_type: IntPtr
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+  folds_to: custom
+  can_recover: true
+  clone: true
+
+- name: IntPtrToBigInt
+  operands:
+    input: IntPtr
+  result_type: BigInt
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+  folds_to: custom
+  can_recover: true
+  clone: true
+
+- name: BigIntPtrAdd
+  gen_boilerplate: false
+
+- name: BigIntPtrSub
+  gen_boilerplate: false
+
+- name: BigIntPtrMul
+  gen_boilerplate: false
+
+- name: BigIntPtrDiv
+  gen_boilerplate: false
+
+- name: BigIntPtrMod
+  gen_boilerplate: false
+
+- name: BigIntPtrPow
+  gen_boilerplate: false
+
+- name: BigIntPtrBitAnd
+  gen_boilerplate: false
+
+- name: BigIntPtrBitOr
+  gen_boilerplate: false
+
+- name: BigIntPtrBitXor
+  gen_boilerplate: false
+
+- name: BigIntPtrLsh
+  gen_boilerplate: false
+
+- name: BigIntPtrRsh
+  gen_boilerplate: false
+
+- name: BigIntPtrBitNot
   gen_boilerplate: false
 
 - name: Int32ToStringWithBase
@@ -1163,11 +1331,8 @@
 
 - name: ImplicitThis
   operands:
-    envChain: Object
-  arguments:
-    name: PropertyName*
+    env: Object
   result_type: Value
-  possibly_calls: true
 
 - name: Phi
   gen_boilerplate: false
@@ -1221,7 +1386,7 @@
     ref: WasmAnyRef
   arguments:
     trap: wasm::Trap
-    bytecodeOffset: wasm::BytecodeOffset
+    trapSiteDesc: wasm::TrapSiteDesc
   guard: true
   type_policy: none
   result_type: None
@@ -1803,6 +1968,17 @@
   alias_set: custom
   might_alias: custom
 
+- name: HasShape
+  operands:
+    object: Object
+  arguments:
+    shape: Shape*
+  result_type: Boolean
+  movable: true
+  congruent_to: custom
+  alias_set: custom
+  generate_lir: true
+
 - name: GuardFuse
   arguments:
     fuseIndex: RealmFuses::FuseIndex
@@ -1939,6 +2115,15 @@
   congruent_to: custom
   alias_set: custom
 
+- name: MegamorphicLoadSlotPermissive
+  operands:
+    object: Object
+  arguments:
+    name: PropertyKey
+  result_type: Value
+  guard: true
+  possibly_calls: true
+
 - name: MegamorphicLoadSlotByValue
   operands:
     object: Object
@@ -1950,6 +2135,15 @@
   folds_to: custom
   congruent_to: if_operands_equal
   alias_set: custom
+  possibly_calls: true
+
+- name: MegamorphicLoadSlotByValuePermissive
+  operands:
+    object: Object
+    idVal: Value
+  result_type: Value
+  guard: true
+  folds_to: custom
   possibly_calls: true
 
 - name: MegamorphicStoreSlot
@@ -2677,6 +2871,12 @@
 - name: AtomicIsLockFree
   gen_boilerplate: false
 
+- name: AtomicPause
+  guard: true
+  movable: false
+  alias_set: none
+  generate_lir: true
+
 - name: CompareExchangeTypedArrayElement
   gen_boilerplate: false
 
@@ -2943,6 +3143,7 @@
   movable: true
   congruent_to: if_operands_equal
   possibly_calls: true
+  folds_to: custom
   alias_set: none
   can_recover: true
   clone: true
@@ -2955,6 +3156,7 @@
   movable: true
   congruent_to: if_operands_equal
   possibly_calls: true
+  folds_to: custom
   alias_set: none
   can_recover: true
   clone: true
@@ -3086,6 +3288,21 @@
   alias_set: custom
   possibly_calls: true
 
+- name: SetObjectDelete
+  operands:
+    setObject: Object
+    key: Value
+  result_type: Boolean
+  possibly_calls: true
+  generate_lir: true
+
+- name: SetObjectAdd
+  operands:
+    setObject: Object
+    key: Value
+  possibly_calls: true
+  generate_lir: true
+
 - name: SetObjectSize
   operands:
     set: Object
@@ -3163,6 +3380,8 @@
   movable: true
   congruent_to: if_operands_equal
   alias_set: custom
+  generate_lir: true
+  lir_temps: 4
 
 - name: MapObjectGetValueVMCall
   operands:
@@ -3174,6 +3393,22 @@
   alias_set: custom
   possibly_calls: true
 
+- name: MapObjectDelete
+  operands:
+    mapObject: Object
+    key: Value
+  result_type: Boolean
+  possibly_calls: true
+  generate_lir: true
+
+- name: MapObjectSet
+  operands:
+    mapObject: Object
+    key: Value
+    value: Value
+  possibly_calls: true
+  generate_lir: true
+
 - name: MapObjectSize
   operands:
     map: Object
@@ -3182,7 +3417,48 @@
   congruent_to: if_operands_equal
   alias_set: custom
 
+- name: DateFillLocalTimeSlots
+  operands:
+    date: Object
+  congruent_to: if_operands_equal
+  alias_set: custom
+  generate_lir: true
+  lir_temps: 1
+
+- name: DateHoursFromSecondsIntoYear
+  operands:
+    secondsIntoYear: Value
+  result_type: Value
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+  generate_lir: true
+  lir_temps: 2
+
+- name: DateMinutesFromSecondsIntoYear
+  operands:
+    secondsIntoYear: Value
+  result_type: Value
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+  generate_lir: true
+  lir_temps: 2
+
+- name: DateSecondsFromSecondsIntoYear
+  operands:
+    secondsIntoYear: Value
+  result_type: Value
+  movable: true
+  congruent_to: if_operands_equal
+  alias_set: none
+  generate_lir: true
+  lir_temps: 2
+
 - name: PostIntPtrConversion
+  gen_boilerplate: false
+
+- name: CanonicalizeNaN
   gen_boilerplate: false
 
 - name: WasmNeg
@@ -3209,7 +3485,7 @@
     length: Int32
     limit: Int32
   arguments:
-    bytecodeOffset: wasm::BytecodeOffset
+    trapSiteDesc: wasm::TrapSiteDesc
   result_type: Int32
   congruent_to: if_operands_equal
   type_policy: none
@@ -3231,6 +3507,15 @@
   movable: true
   congruent_to: if_operands_equal
   folds_to: custom
+  type_policy: none
+  alias_set: none
+
+- name: WasmClampTable64Address
+  operands:
+    input: Int64
+  result_type: Int32
+  movable: true
+  congruent_to: if_operands_equal
   type_policy: none
   alias_set: none
 
@@ -3341,7 +3626,7 @@
 - name: WasmSelect
   gen_boilerplate: false
 
-- name: WasmReinterpret
+- name: ReinterpretCast
   gen_boilerplate: false
 
 - name: Rotate
@@ -3352,6 +3637,7 @@
     suspender: Object
     fn: Object
     data: WasmAnyRef
+  result_type: WasmAnyRef
   type_policy: none
 
 - name: WasmStackSwitchToSuspendable
@@ -3364,6 +3650,7 @@
 - name: WasmStackContinueOnSuspendable
   operands:
     suspender: Object
+    result: WasmAnyRef
   type_policy: none
 
 - name: WasmBinarySimd128
@@ -3439,22 +3726,19 @@
 - name: WasmLoadField
   gen_boilerplate: false
 
-- name: WasmLoadFieldKA
+- name: WasmLoadElement
   gen_boilerplate: false
 
-- name: WasmLoadElementKA
+- name: WasmStoreField
   gen_boilerplate: false
 
-- name: WasmStoreFieldKA
+- name: WasmStoreFieldRef
   gen_boilerplate: false
 
-- name: WasmStoreFieldRefKA
+- name: WasmStoreElement
   gen_boilerplate: false
 
-- name: WasmStoreElementKA
-  gen_boilerplate: false
-
-- name: WasmStoreElementRefKA
+- name: WasmStoreElementRef
   gen_boilerplate: false
 
 - name: WasmRefIsSubtypeOfConcrete
@@ -3475,4 +3759,27 @@
 
 - name: FuzzilliHashStore
   gen_boilerplate: false
+#endif
+
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+- name: AddDisposableResource
+  operands:
+    environment: Object
+    resource: Value
+    method: Value
+    needsClosure: Boolean
+  arguments:
+    hint: uint8_t
+
+- name: TakeDisposeCapability
+  operands:
+    environment: Object
+  result_type: Value
+
+- name: CreateSuppressedError
+  operands:
+    error: Value
+    suppressed: Value
+  result_type: Object
+  alias_set: none
 #endif

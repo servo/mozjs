@@ -8,7 +8,7 @@
 
 #include <string_view>
 
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 #include "vm/Interpreter.h"
 #include "vm/Shape.h"
 #include "vm/Stack.h"
@@ -214,7 +214,7 @@ static MOZ_ALWAYS_INLINE JSAtom* AppendBoundFunctionPrefix(JSContext* cx,
     }
   }
 
-  StringBuffer sb(cx);
+  StringBuilder sb(cx);
   if (!sb.append("bound ") || !sb.append(str)) {
     return nullptr;
   }

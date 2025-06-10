@@ -15,12 +15,19 @@ import io
 import itertools
 import os
 import re
+import subprocess
 import sys
 from io import BytesIO, StringIO
+from pathlib import Path
 
 import six
 
 from mozbuild.dirutils import ensureParentDir
+
+try:
+    import psutil
+except Exception:
+    psutil = None
 
 MOZBUILD_METRICS_PATH = os.path.abspath(
     os.path.join(__file__, "..", "..", "metrics.yaml")
@@ -185,8 +192,8 @@ class FileAvoidWrite(BytesIO):
     def __init__(self, filename, capture_diff=False, dry_run=False, readmode="r"):
         BytesIO.__init__(self)
         self.name = filename
-        assert type(capture_diff) == bool
-        assert type(dry_run) == bool
+        assert type(capture_diff) is bool
+        assert type(dry_run) is bool
         assert "r" in readmode
         self._capture_diff = capture_diff
         self._write_to_file = not dry_run
@@ -244,7 +251,11 @@ class FileAvoidWrite(BytesIO):
                 buf = six.ensure_binary(buf)
             else:
                 buf = six.ensure_text(buf)
-            with _open(self.name, writemode) as file:
+            path = Path(self.name)
+            if path.is_symlink():
+                # Migration to code autogeneration can encounter with existing symlinks, e.g. bug 1953858.
+                path.unlink()
+            with _open(path, writemode) as file:
                 file.write(buf)
 
         self._generate_diff(buf, old_content)
@@ -1121,6 +1132,33 @@ def expand_variables(s, variables):
     return result
 
 
+class ForwardingArgumentParser(argparse.ArgumentParser):
+    """
+    An argument parser with customized help generation when forwarding
+    arguments.
+    """
+
+    def add_forwarding_group(
+        self, title, dest, help, forwarding_help, default_type=list, **kwargs
+    ):
+        """
+        Add a group that captures all remaining arguments in order to pass them
+        down to another program.
+        """
+        group = self.add_argument_group(
+            title, description=f"-- --help {forwarding_help}", **kwargs
+        )
+
+        group.add_argument(
+            dest,
+            nargs=argparse.REMAINDER,
+            default=default_type(),
+            metavar=f"[--] {dest}...",
+            help=help,
+        )
+        return group
+
+
 class DefinesAction(argparse.Action):
     """An ArgumentParser action to handle -Dvar[=value] type of arguments."""
 
@@ -1227,3 +1265,39 @@ def hexdump(buf):
         line += "|\n"
         lines.append(line)
     return lines
+
+
+def cpu_count():
+    """
+    Returns the number of CPUs available to us. This may be different than
+    `os.cpu_count()` because of affinity.
+
+    See the Python documentation for `os.cpu_count()`.
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        pass
+    if psutil:
+        try:
+            return len(psutil.Process().cpu_affinity())
+        except (AttributeError, OSError):
+            pass
+    return os.cpu_count()
+
+
+def macos_performance_cores():
+    """
+    Returns the number of performance cores on Mac OS
+
+    See the Python documentation for `os.cpu_count()`.
+    """
+    proc = subprocess.run(
+        ["sysctl", "-n", "hw.perflevel0.logicalcpu_max"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return -1
+    return int(proc.stdout.decode("ascii", "replace").strip())

@@ -43,11 +43,12 @@ typedef size_t (*GetSize)(JSObject* obj);
 WantToMeasure gWantToMeasure = nullptr;
 
 struct JobQueueTraps {
-  JSObject* (*getIncumbentGlobal)(const void* queue, JSContext* cx);
+  bool (*getHostDefinedData)(const void* queue, JSContext* cx,
+                             JS::MutableHandle<JSObject*> data);
   bool (*enqueuePromiseJob)(const void* queue, JSContext* cx,
                             JS::HandleObject promise, JS::HandleObject job,
                             JS::HandleObject allocationSite,
-                            JS::HandleObject incumbentGlobal) = 0;
+                            JS::HandleObject hostDefinedData) = 0;
   bool (*empty)(const void* queue);
 };
 
@@ -59,16 +60,16 @@ class RustJobQueue : public JS::JobQueue {
   RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
       : mTraps(aTraps), mQueue(aQueue) {}
 
-  virtual JSObject* getIncumbentGlobal(JSContext* cx) override {
-    return mTraps.getIncumbentGlobal(mQueue, cx);
+  virtual bool getHostDefinedData(
+      JSContext* cx, JS::MutableHandle<JSObject*> data) const override {
+    return mTraps.getHostDefinedData(mQueue, cx, data);
   }
-
   virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
                                  JS::HandleObject job,
                                  JS::HandleObject allocationSite,
-                                 JS::HandleObject incumbentGlobal) override {
+                                 JS::HandleObject hostDefinedData) override {
     return mTraps.enqueuePromiseJob(mQueue, cx, promise, job, allocationSite,
-                                    incumbentGlobal);
+                                    hostDefinedData);
   }
 
   virtual bool empty() const override { return mTraps.empty(mQueue); }
@@ -1053,7 +1054,7 @@ bool DescribeScriptedCaller(JSContext* cx, char* buffer, size_t buflen,
                             uint32_t* line, uint32_t* col) {
   JS::AutoFilename filename;
   JS::ColumnNumberOneOrigin column;
-  if (!JS::DescribeScriptedCaller(cx, &filename, line, &column)) {
+  if (!JS::DescribeScriptedCaller(&filename, cx, line, &column)) {
     return false;
   }
   *col = column.oneOriginValue() - 1;

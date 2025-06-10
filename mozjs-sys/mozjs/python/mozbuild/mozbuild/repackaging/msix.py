@@ -33,6 +33,7 @@ from mozpack.mozjar import JarReader
 from mozpack.packager.unpack import UnpackFinder
 from six.moves import shlex_quote
 
+from mozbuild.configure import confvars
 from mozbuild.dirutils import ensureParentDir
 from mozbuild.repackaging.application_ini import get_application_ini_values
 
@@ -169,6 +170,16 @@ def get_embedded_version(version, buildid):
     return version
 
 
+def remove_single_line_comments(text):
+    """Remove C++ style single-line comments from the text."""
+    lines = []
+    for line in text.splitlines():
+        line = re.sub("//.*", "", line)
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
 def get_appconstants_sys_mjs_values(finder, *args):
     r"""Extract values, such as the display version like `MOZ_APP_VERSION_DISPLAY:
     "...";`, from the omnijar.  This allows to determine the beta number, like
@@ -178,9 +189,12 @@ def get_appconstants_sys_mjs_values(finder, *args):
     """
     lines = defaultdict(list)
     for _, f in finder.find("**/modules/AppConstants.sys.mjs"):
-        # MOZ_OFFICIAL_BRANDING is split across two lines, so remove line breaks
-        # immediately following ":"s so those values can be read.
-        data = f.open().read().decode("utf-8").replace(":\n", ":")
+        # MOZ_OFFICIAL_BRANDING is split across multiple lines and there is a
+        # comment in between property key and value. Remove the comment, line
+        # breaks and spaces immediately following ":"s so those values can be
+        # read.
+        data = remove_single_line_comments(f.open().read().decode("utf-8"))
+        data = re.sub(":[\n\\s]+", ":", data)
         for line in data.splitlines():
             for arg in args:
                 if arg in line:
@@ -195,29 +209,23 @@ def get_appconstants_sys_mjs_values(finder, *args):
 
 def get_branding(use_official, topsrcdir, build_app, finder, log=None):
     """Figure out which branding directory to use."""
-    conf_vars = mozpath.join(topsrcdir, build_app, "confvars.sh")
+    confvars_path = mozpath.join(topsrcdir, build_app, "confvars.sh")
+    confvars_content = confvars.parse(confvars_path)
+    for key, value in confvars_content.items():
+        log(
+            logging.INFO,
+            "msix",
+            {"key": key, "conf_vars": confvars_path, "value": value},
+            "Read '{key}' from {conf_vars}: {value}",
+        )
 
     def conf_vars_value(key):
-        lines = [line.strip() for line in open(conf_vars).readlines()]
-        for line in lines:
-            if line and line[0] == "#":
-                continue
-            if key not in line:
-                continue
-            _, _, value = line.partition("=")
-            if not value:
-                continue
-            log(
-                logging.INFO,
-                "msix",
-                {"key": key, "conf_vars": conf_vars, "value": value},
-                "Read '{key}' from {conf_vars}: {value}",
-            )
-            return value
+        if key in confvars_content:
+            return confvars_content[key]
         log(
             logging.ERROR,
             "msix",
-            {"key": key, "conf_vars": conf_vars},
+            {"key": key, "conf_vars": confvars_content},
             "Unable to find '{key}' in {conf_vars}!",
         )
 

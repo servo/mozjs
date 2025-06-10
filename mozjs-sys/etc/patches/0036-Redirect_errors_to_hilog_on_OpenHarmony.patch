@@ -89,9 +89,9 @@ index 0b7395177..e84d76aba 100644
 +  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_CRASH",
 +   "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
 +   aStr, aFilename, aLine);
- #else
- #  if defined(MOZ_BUFFER_STDERR)
-   char msg[1024] = "";
+ #  if defined(MOZ_DUMP_ASSERTION_STACK)
+   MozWalkTheStackWithWriter(MOZ_CrashPrintFrame, CallerPC(),
+                             /* aMaxFrames */ 0);
 diff --git a/mfbt/DbgMacro.h b/mfbt/DbgMacro.h
 index 3247b993c..c7039d5f8 100644
 --- a/mfbt/DbgMacro.h
@@ -178,15 +178,15 @@ index 52bd6abc5..781402d56 100644
  #include <string.h>
 -#ifdef ANDROID
 +#if defined(ANDROID)
- #include <android/log.h>
+ #  include <android/log.h>
 +#elif defined(OHOS)
 +#  include <hilog/log.h>
  #endif
-
+ 
  /*
 @@ -108,6 +110,19 @@ static void OutputDebugStringA(const char* msg) {
-         PR_Write(fd, buf, nb);                               \
-     }                                                        \
+       PR_Write(fd, buf, nb);                               \
+     }                                                      \
      PR_END_MACRO
 +#elif defined(OHOS)
 +#define _PUT_LOG(fd, buf, nb)                                \
@@ -202,27 +202,25 @@ index 52bd6abc5..781402d56 100644
 +    }                                                        \
 +    PR_END_MACRO
  #elif defined(_PR_PTHREADS)
- #define _PUT_LOG(fd, buf, nb) PR_Write(fd, buf, nb)
+ #  define _PUT_LOG(fd, buf, nb) PR_Write(fd, buf, nb)
  #else
 @@ -551,6 +566,8 @@ PR_IMPLEMENT(void) PR_Abort(void)
-     PR_LogPrint("Aborting");
+   PR_LogPrint("Aborting");
  #ifdef ANDROID
-     __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
+   __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
 +#elif defined(OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog", "Aborting\n");
++  (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog", "Aborting\n");
  #endif
-     abort();
+   abort();
  }
 @@ -567,6 +584,9 @@ PR_IMPLEMENT(void) PR_Assert(const char *s, const char *file, PRIntn ln)
  #elif defined(ANDROID)
-     __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n",
-                          s, file, ln);
+   __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n", s,
+                        file, ln);
 +#elif defined(OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog",
-+                        "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
++  (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "PRLog",
++                      "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
  #endif
-     abort();
+   abort();
  }
---
-2.45.2
 

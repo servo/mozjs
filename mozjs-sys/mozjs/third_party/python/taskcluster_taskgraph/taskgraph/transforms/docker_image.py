@@ -24,9 +24,9 @@ CONTEXTS_DIR = "docker-contexts"
 DIGEST_RE = re.compile("^[0-9a-f]{64}$")
 
 IMAGE_BUILDER_IMAGE = (
-    "mozillareleases/image_builder:5.0.0"
+    "mozillareleases/image_builder:5.1.0"
     "@sha256:"
-    "e510a9a9b80385f71c112d61b2f2053da625aff2b6d430411ac42e424c58953f"
+    "7fe70dcedefffffa03237ba5d456d42e0d7461de066db3f7a7c280a104869cd5"
 )
 
 transforms = TransformSequence()
@@ -74,8 +74,6 @@ def fill_template(config, tasks):
         available_packages.add(name)
 
     context_hashes = {}
-
-    tasks = list(tasks)
 
     if not taskgraph.fast and config.write_artifacts:
         if not os.path.isdir(CONTEXTS_DIR):
@@ -133,7 +131,7 @@ def fill_template(config, tasks):
         # include some information that is useful in reconstructing this task
         # from JSON
         taskdesc = {
-            "label": "build-docker-image-" + image_name,
+            "label": "docker-image-" + image_name,
             "description": description,
             "attributes": {
                 "image_name": image_name,
@@ -195,7 +193,7 @@ def fill_template(config, tasks):
 
         if parent:
             deps = taskdesc.setdefault("dependencies", {})
-            deps["parent"] = f"build-docker-image-{parent}"
+            deps["parent"] = f"docker-image-{parent}"
             worker["env"]["PARENT_TASK_ID"] = {
                 "task-reference": "<parent>",
             }
