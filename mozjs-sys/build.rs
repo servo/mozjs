@@ -263,7 +263,7 @@ fn build(build_dir: &Path, target: BuildTarget) {
     }
 
     if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
-        build.define("__ANDROID_API__", android_api);
+        build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
     }
 
     build.flag(include_file_flag(build.get_compiler().is_like_msvc()));
