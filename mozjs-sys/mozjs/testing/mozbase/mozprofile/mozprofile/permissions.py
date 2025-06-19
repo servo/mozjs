@@ -9,9 +9,9 @@ add permissions to the profile
 
 import codecs
 import os
+from urllib import parse
 
 from six import string_types
-from six.moves.urllib import parse
 
 __all__ = [
     "MissingPrimaryLocationError",
@@ -26,7 +26,7 @@ __all__ = [
 ]
 
 # http://hg.mozilla.org/mozilla-central/file/b871dfb2186f/build/automation.py.in#l28
-DEFAULT_PORTS = {"http": "8888", "https": "4443", "ws": "4443", "wss": "4443"}
+DEFAULT_PORTS = {"http": "8888", "https": "4443", "ws": "9988", "wss": "4443"}
 
 
 class LocationError(Exception):
@@ -244,6 +244,9 @@ class Permissions(object):
                 user_prefs.append(("network.trr.uri", trrUri))
                 user_prefs.append(("network.trr.bootstrapAddr", "127.0.0.1"))
                 user_prefs.append(("network.dns.force_use_https_rr", True))
+                user_prefs.append(
+                    ("network.dns.https_rr.check_record_with_cname", False)
+                )
             else:
                 user_prefs = self.pac_prefs(proxy)
         else:

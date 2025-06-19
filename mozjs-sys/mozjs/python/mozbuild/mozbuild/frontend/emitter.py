@@ -17,7 +17,7 @@ from mach.mixin.logging import LoggingMixin
 from mozpack.chrome.manifest import Manifest
 
 from mozbuild.base import ExecutionSummary
-from mozbuild.util import memoize
+from mozbuild.util import HierarchicalStringList, memoize
 
 from ..testing import REFTEST_FLAVORS, TEST_MANIFESTS, SupportFilesConverter
 from .context import Context, ObjDirPath, Path, SourcePath, SubContext
@@ -50,6 +50,7 @@ from .data import (
     LocalInclude,
     LocalizedFiles,
     LocalizedPreprocessedFiles,
+    MozSrcFiles,
     ObjdirFiles,
     ObjdirPreprocessedFiles,
     PerSourceFlag,
@@ -740,9 +741,11 @@ class TreeMetadataEmitter(LoggingMixin):
                     (
                         context,
                         self._binaries[program],
-                        "HOST_USE_LIBS"
-                        if kind == "HOST_SIMPLE_PROGRAMS"
-                        else "USE_LIBS",
+                        (
+                            "HOST_USE_LIBS"
+                            if kind == "HOST_SIMPLE_PROGRAMS"
+                            else "USE_LIBS"
+                        ),
                     )
                 )
                 add_program(self._binaries[program], kind)
@@ -1121,7 +1124,7 @@ class TreeMetadataEmitter(LoggingMixin):
         all_suffixes = list(suffix_map.keys())
         varmap = dict(
             SOURCES=(Sources, all_suffixes),
-            HOST_SOURCES=(HostSources, [".c", ".mm", ".cpp"]),
+            HOST_SOURCES=(HostSources, [".c", ".cpp"]),
             UNIFIED_SOURCES=(UnifiedSources, [".c", ".mm", ".m", ".cpp"]),
         )
         # Only include a WasmSources context if there are any WASM_SOURCES.
@@ -1309,17 +1312,17 @@ class TreeMetadataEmitter(LoggingMixin):
             passthru.variables["NO_DIST_INSTALL"] = True
 
         # Ideally, this should be done in templates, but this is difficult at
-        # the moment because USE_STATIC_LIBS can be set after a template
+        # the moment because USE_STATIC_MSVCRT can be set after a template
         # returns. Eventually, with context-based templates, it will be
         # possible.
         if (
             context.config.substs.get("OS_ARCH") == "WINNT"
             and context.config.substs.get("CC_TYPE") == "clang-cl"
         ):
-            use_static_lib = context.get(
-                "USE_STATIC_LIBS"
+            use_static_msvcrt = context.get(
+                "USE_STATIC_MSVCRT"
             ) and not context.config.substs.get("MOZ_ASAN")
-            rtl_flag = "-MT" if use_static_lib else "-MD"
+            rtl_flag = "-MT" if use_static_msvcrt else "-MD"
             if context.config.substs.get("MOZ_DEBUG") and not context.config.substs.get(
                 "MOZ_NO_DEBUG_RTL"
             ):
@@ -1436,6 +1439,18 @@ class TreeMetadataEmitter(LoggingMixin):
             ]
         )
 
+        processed_moz_src_files = None
+        if "MOZ_SRC_FILES" in context:
+            # We process MOZ_SRC_FILES separately such that any items in the
+            # list that are in subdirectories automatically get installed to
+            # the same subdirectories in the objdir.
+            processed_moz_src_files = HierarchicalStringList()
+            for file in context.get("MOZ_SRC_FILES"):
+                if "/" in file:
+                    processed_moz_src_files[mozpath.dirname(file)] += [file]
+                else:
+                    processed_moz_src_files += [file]
+
         components = []
         for var, cls in (
             ("EXPORTS", Exports),
@@ -1443,11 +1458,15 @@ class TreeMetadataEmitter(LoggingMixin):
             ("FINAL_TARGET_PP_FILES", FinalTargetPreprocessedFiles),
             ("LOCALIZED_FILES", LocalizedFiles),
             ("LOCALIZED_PP_FILES", LocalizedPreprocessedFiles),
+            ("MOZ_SRC_FILES", MozSrcFiles),
             ("OBJDIR_FILES", ObjdirFiles),
             ("OBJDIR_PP_FILES", ObjdirPreprocessedFiles),
             ("TEST_HARNESS_FILES", TestHarnessFiles),
         ):
-            all_files = context.get(var)
+            if var == "MOZ_SRC_FILES":
+                all_files = processed_moz_src_files
+            else:
+                all_files = context.get(var)
             if not all_files:
                 continue
             if dist_install is False and var != "TEST_HARNESS_FILES":

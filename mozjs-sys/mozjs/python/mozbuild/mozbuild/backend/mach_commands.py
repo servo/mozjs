@@ -13,6 +13,7 @@ from mach.decorators import Command, CommandArgument
 from mozfile import which
 
 from mozbuild import build_commands
+from mozbuild.util import cpu_count
 
 
 @Command(
@@ -32,12 +33,14 @@ from mozbuild import build_commands
 def run(command_context, ide, no_interactive, args):
     interactive = not no_interactive
 
+    backend = None
     if ide == "eclipse":
         backend = "CppEclipse"
     elif ide == "visualstudio":
         backend = "VisualStudio"
     elif ide == "vscode":
-        backend = "Clangd"
+        if not command_context.config_environment.is_artifact_build:
+            backend = "Clangd"
 
     if ide == "eclipse" and not which("eclipse"):
         command_context.log(
@@ -89,15 +92,16 @@ def run(command_context, ide, no_interactive, args):
         if res != 0:
             return 1
 
-    # Generate or refresh the IDE backend.
-    python = command_context.virtualenv_manager.python_path
-    config_status = os.path.join(command_context.topobjdir, "config.status")
-    args = [python, config_status, "--backend=%s" % backend]
-    res = command_context._run_command_in_objdir(
-        args=args, pass_thru=True, ensure_exit_code=False
-    )
-    if res != 0:
-        return 1
+    if backend:
+        # Generate or refresh the IDE backend.
+        python = command_context.virtualenv_manager.python_path
+        config_status = os.path.join(command_context.topobjdir, "config.status")
+        args = [python, config_status, "--backend=%s" % backend]
+        res = command_context._run_command_in_objdir(
+            args=args, pass_thru=True, ensure_exit_code=False
+        )
+        if res != 0:
+            return 1
 
     if ide == "eclipse":
         eclipse_workspace_dir = get_eclipse_workspace_path(command_context)
@@ -300,23 +304,34 @@ def setup_clangd_rust_in_vscode(command_context):
         if rc != 0:
             return rc
 
-    import multiprocessing
-
     from mozbuild.code_analysis.utils import ClangTidyConfig
 
     clang_tidy_cfg = ClangTidyConfig(command_context.topsrcdir)
 
-    if sys.platform == "win32":
-        cargo_check_command = [sys.executable, "mach"]
+    # The location of the comm/ directory if we're building Thunderbird. `None`
+    # if we're building Firefox.
+    commtopsrcdir = command_context.substs.get("commtopsrcdir")
+
+    if commtopsrcdir:
+        # Thunderbird uses its own Rust workspace, located in comm/rust/ - we
+        # set it as the main workspace to build a little further below. The
+        # working directory for cargo check commands is the workspace's root.
+        if sys.platform == "win32":
+            cargo_check_command = [sys.executable, "../../mach"]
+        else:
+            cargo_check_command = ["../../mach"]
     else:
-        cargo_check_command = ["./mach"]
+        if sys.platform == "win32":
+            cargo_check_command = [sys.executable, "mach"]
+        else:
+            cargo_check_command = ["./mach"]
 
     cargo_check_command += [
         "--log-no-times",
         "cargo",
         "check",
         "-j",
-        str(multiprocessing.cpu_count() // 2),
+        str(cpu_count() // 2),
         "--all-crates",
         "--message-format-json",
     ]
@@ -340,11 +355,18 @@ def setup_clangd_rust_in_vscode(command_context):
     with open(".clangd", "w") as file:
         yaml.dump(clangd_cfg, file)
 
-    return {
+    rust_analyzer_extra_includes = [command_context.topobjdir]
+
+    if windows_rs_dir := command_context.config_environment.substs.get(
+        "MOZ_WINDOWS_RS_DIR"
+    ):
+        rust_analyzer_extra_includes.append(windows_rs_dir)
+
+    config = {
         "clangd.path": clangd_path,
         "clangd.arguments": [
             "-j",
-            str(multiprocessing.cpu_count() // 2),
+            str(cpu_count() // 2),
             "--limit-results",
             "0",
             "--completion-style",
@@ -364,9 +386,21 @@ def setup_clangd_rust_in_vscode(command_context):
             # cargo check`.
             "CARGO_TARGET_DIR": command_context.topobjdir,
         },
+        "rust-analyzer.vfs.extraIncludes": rust_analyzer_extra_includes,
         "rust-analyzer.cargo.buildScripts.overrideCommand": cargo_check_command,
         "rust-analyzer.check.overrideCommand": cargo_check_command,
     }
+
+    # If we're building Thunderbird, configure rust-analyzer to use its Cargo
+    # workspace rather than Firefox's. `linkedProjects` disables rust-analyzer's
+    # project auto-discovery, therefore setting it ensures we use the correct
+    # workspace.
+    if commtopsrcdir:
+        config["rust-analyzer.linkedProjects"] = [
+            os.path.join(commtopsrcdir, "rust", "Cargo.toml")
+        ]
+
+    return config
 
 
 def get_clang_tools(command_context, clang_tools_path):

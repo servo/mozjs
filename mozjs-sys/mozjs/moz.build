@@ -35,7 +35,7 @@ with Files("docs/**"):
 with Files("mach*"):
     BUG_COMPONENT = ("Firefox Build System", "Mach Core")
 
-with Files("pyproject.toml"):
+with Files("pyproject.toml", "srcdir-resolver.js"):
     BUG_COMPONENT = ("Developer Infrastructure", "Lint and Formatting")
 
 with Files("*moz*"):
@@ -193,6 +193,8 @@ SPHINX_TREES["testing-rust-code"] = "docs/testing-rust-code"
 
 SPHINX_TREES["writing-rust-code"] = "docs/writing-rust-code"
 
+SPHINX_TREES["rust-components"] = "docs/rust-components"
+
 SPHINX_TREES["bug-mgmt"] = "docs/bug-mgmt"
 
 SPHINX_TREES["glossary"] = "docs/glossary"
@@ -214,5 +216,9 @@ SPHINX_TREES["nspr"] = "docs/nspr"
 SPHINX_TREES["mots"] = "docs/mots"
 
 SPHINX_TREES["update-infrastructure"] = "docs/update-infrastructure"
+
+SPHINX_TREES["content-security"] = "docs/content-security"
+
+SPHINX_TREES["jsloader"] = "docs/jsloader"
 
 include("build/templates.mozbuild")

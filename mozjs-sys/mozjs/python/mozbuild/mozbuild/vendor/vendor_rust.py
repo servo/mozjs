@@ -159,12 +159,12 @@ class VendorRust(MozbuildObject):
         if not out.startswith("cargo"):
             return False
         version = LooseVersion(out.split()[1])
-        # Cargo 1.71.0 changed vendoring in a way that creates a lot of noise
+        # Cargo 1.85.0 changed vendoring in a way that creates a lot of noise
         # if we go back and forth between vendoring with an older version and
         # a newer version. Only allow the newer versions.
         minimum_rust_version = MINIMUM_RUST_VERSION
-        if LooseVersion("1.71.0") >= MINIMUM_RUST_VERSION:
-            minimum_rust_version = "1.71.0"
+        if LooseVersion("1.85.0") >= MINIMUM_RUST_VERSION:
+            minimum_rust_version = "1.85.0"
         if version < minimum_rust_version:
             self.log(
                 logging.ERROR,
@@ -329,6 +329,8 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
         # product but has a license-file that needs ignoring
         "fuchsia-cprng": "03b114f53e6587a398931762ee11e2395bfdba252a329940e2c8c9e81813845b",
         # ICU4X uses Unicode v3 license
+        "icu_calendar": ICU4X_LICENSE_SHA256,
+        "icu_calendar_data": ICU4X_LICENSE_SHA256,
         "icu_collections": ICU4X_LICENSE_SHA256,
         "icu_locid": ICU4X_LICENSE_SHA256,
         "icu_locid_transform": ICU4X_LICENSE_SHA256,
@@ -764,7 +766,13 @@ license file's hash.
             env=env,
         )
         if res.returncode:
-            vet = json.loads(res.stdout)
+            try:
+                vet = json.loads(res.stdout)
+            except Exception:
+                # Most likely, if we're in a situation where stdout is not JSON,
+                # stderr will have had some error message printed out, so falling
+                # back to a failure case with no additional error message is fine.
+                vet = {}
             logged_error = False
             for failure in vet.get("failures", []):
                 failure["crate"] = failure.pop("name")

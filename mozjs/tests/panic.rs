@@ -4,11 +4,13 @@
 
 use std::ptr;
 
-use mozjs::jsapi::{JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
+use mozjs::gc::HandleValue;
+use mozjs::jsapi::{ExceptionStackBehavior, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
 use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject};
 use mozjs::jsval::UndefinedValue;
 use mozjs::panic::wrap_panic;
 use mozjs::rooted;
+use mozjs::rust::wrappers::JS_SetPendingException;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
@@ -50,7 +52,7 @@ fn test_panic() {
     }
 }
 
-unsafe extern "C" fn test(_cx: *mut JSContext, _argc: u32, _vp: *mut Value) -> bool {
+unsafe extern "C" fn test(cx: *mut JSContext, _argc: u32, _vp: *mut Value) -> bool {
     let mut result = false;
     wrap_panic(&mut || {
         panic!();
@@ -59,5 +61,8 @@ unsafe extern "C" fn test(_cx: *mut JSContext, _argc: u32, _vp: *mut Value) -> b
             result = true
         }
     });
+    if !result {
+        JS_SetPendingException(cx, HandleValue::null(), ExceptionStackBehavior::Capture);
+    }
     result
 }

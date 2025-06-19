@@ -12,7 +12,7 @@ import sys
 from typing import Dict, Optional
 
 
-SUPPORTED_NDK_VERSION = '26'
+SUPPORTED_NDK_VERSION = '28'
 API_LEVEL = '30'
 
 
@@ -65,6 +65,9 @@ def set_toolchain_binaries_in_env(toolchain_dir: str, env: Dict[str, str]):
     env["RANLIB"] = ranlib
     env["STRIP"] = strip
     env["YASM"] = yasm
+    env["CLANG_PATH"] = cc
+    env["LIBCLANG_PATH"] = os.path.join(toolchain_dir, "lib")
+    env["BINDGEN_EXTRA_CLANG_ARGS"] = f"--target=armv7a-linux-androideabi30 --sysroot={os.path.join(toolchain_dir, 'sysroot')}"
 
 
 def create_environment_for_build() -> Dict[str, str]:
