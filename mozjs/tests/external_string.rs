@@ -36,21 +36,13 @@ fn external_string() {
         ));
         let _ac = JSAutoRealm::new(context, global.get());
 
-        let latin1_base = "test latin-1";
-        let latin1_boxed = latin1_base.as_bytes().to_vec().into_boxed_slice();
-        let latin1_chars = Box::into_raw(latin1_boxed).cast::<u8>();
-
-        let callbacks = CreateJSExternalStringCallbacks(
-            &EXTERNAL_STRING_CALLBACKS_TRAPS,
-            latin1_base.len() as *mut c_void,
-        );
-        rooted!(in(context) let latin1_jsstr = JS_NewExternalStringLatin1(
-            context,
-            latin1_chars,
-            latin1_base.len(),
-            callbacks
-        ));
-        assert_eq!(jsstr_to_string(context, latin1_jsstr.get()), latin1_base);
+        test_latin1_string(context, "test latin1");
+        test_latin1_string(context, "abcdefghijklmnop"); // exactly 16 bytes
+        test_latin1_string(context, "abcdefghijklmnopq"); // 17 bytes
+        test_latin1_string(context, "abcdefghijklmno"); // 15 bytes
+        test_latin1_string(context, "abcdefghijklmnopqrstuvwxyzabcdef"); //32 bytes
+        test_latin1_string(context, "abcdefghijklmnopqrstuvwxyzabcde"); //31 bytes
+        test_latin1_string(context, "abcdefghijklmnopqrstuvwxyzabcdefg"); //33 bytes
 
         let utf16_base = "test utf-16 $€ \u{10437}\u{24B62}";
         let utf16_boxed = utf16_base
@@ -72,6 +64,24 @@ fn external_string() {
         ));
         assert_eq!(jsstr_to_string(context, utf16_jsstr.get()), utf16_base);
     }
+}
+
+#[cfg(test)]
+unsafe fn test_latin1_string(context: *mut mozjs::jsapi::JSContext, latin1_base: &str) {
+    let latin1_boxed = latin1_base.as_bytes().to_vec().into_boxed_slice();
+    let latin1_chars = Box::into_raw(latin1_boxed).cast::<u8>();
+
+    let callbacks = CreateJSExternalStringCallbacks(
+        &EXTERNAL_STRING_CALLBACKS_TRAPS,
+        latin1_base.len() as *mut c_void,
+    );
+    rooted!(in(context) let latin1_jsstr = JS_NewExternalStringLatin1(
+        context,
+        latin1_chars,
+        latin1_base.len(),
+        callbacks
+    ));
+    assert_eq!(jsstr_to_string(context, latin1_jsstr.get()), latin1_base);
 }
 
 static EXTERNAL_STRING_CALLBACKS_TRAPS: JSExternalStringCallbacksTraps =
