@@ -532,13 +532,23 @@ pub unsafe fn latin1_to_string(cx: *mut JSContext, s: NonNull<JSString>) -> Stri
     assert!(JS_DeprecatedStringHasLatin1Chars(s.as_ptr()));
 
     let mut length = 0;
-    let chars = JS_GetLatin1StringCharsAndLength(cx, ptr::null(), s.as_ptr(), &mut length);
-    assert!(!chars.is_null());
+    let chars = unsafe {
+        let chars = JS_GetLatin1StringCharsAndLength(cx, ptr::null(), s.as_ptr(), &mut length);
+        assert!(!chars.is_null());
 
-    let chars = slice::from_raw_parts(chars, length as usize);
-    let mut s = String::with_capacity(length as usize);
-    s.extend(chars.iter().map(|&c| c as char));
-    s
+        slice::from_raw_parts(chars, length as usize)
+    };
+    // The `encoding.rs` documentation for `convert_latin1_to_utf8` states that:
+    // > The length of the destination buffer must be at least the length of the source
+    // > buffer times two.
+    let mut v = vec![0; chars.len() * 2];
+    let real_size = encoding_rs::mem::convert_latin1_to_utf8(chars, v.as_mut_slice());
+
+    v.truncate(real_size);
+
+    // Safety: convert_latin1_to_utf8 converts the raw bytes to utf8 and the
+    // buffer is the size specified in the documentation, so this should be safe.
+    unsafe { String::from_utf8_unchecked(v) }
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
