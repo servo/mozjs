@@ -525,6 +525,12 @@ impl FromJSValConvertible for f64 {
     }
 }
 
+/// A simple wrapper for ascii compatible chars. This and the mem::transmute call
+/// in latin1_to_string should be replaced when the `ascii_char` feature is stable.
+/// See: <https://github.com/rust-lang/rust/issues/110998>.
+#[repr(transparent)]
+struct AsciiChar(u8);
+
 /// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
 /// `String`.
 pub unsafe fn latin1_to_string(cx: *mut JSContext, s: *mut JSString) -> String {
@@ -536,7 +542,14 @@ pub unsafe fn latin1_to_string(cx: *mut JSContext, s: *mut JSString) -> String {
 
     let chars = slice::from_raw_parts(chars, length as usize);
     let mut s = String::with_capacity(length as usize);
-    s.extend(chars.iter().map(|&c| c as char));
+
+    let v = s.as_mut_vec();
+    for c in chars {
+        // This is safe as we are ensured that we only have "Latin1" strings which have the upper
+        // code word 00.
+        v.push(*c);
+    }
+
     s
 }
 
