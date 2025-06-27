@@ -17,6 +17,7 @@ profilemozjs = ['mozjs_sys/profilemozjs']
 crown = ['mozjs_sys/crown']
 
 [dependencies]
+encoding_rs = "0.8.35"
 libc.workspace = true
 log = "0.4"
 mozjs_sys = { path = "../mozjs-sys" }
