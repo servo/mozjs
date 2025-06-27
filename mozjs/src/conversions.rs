@@ -48,6 +48,7 @@ use log::debug;
 use mozjs_sys::jsgc::Rooted;
 use std::borrow::Cow;
 use std::mem;
+use std::mem::MaybeUninit;
 use std::rc::Rc;
 use std::{ptr, slice};
 
@@ -535,9 +536,12 @@ pub unsafe fn latin1_to_string(cx: *mut JSContext, s: *mut JSString) -> String {
     assert!(!chars.is_null());
 
     let chars = slice::from_raw_parts(chars, length as usize);
-    let mut s = String::with_capacity(length as usize);
-    s.extend(chars.iter().map(|&c| c as char));
-    s
+    let mut v = Vec::with_capacity(length * 2);
+    v.set_len(length * 2);
+
+    let real_size = encoding_rs::mem::convert_latin1_to_utf8(chars, v.as_mut_slice());
+    v.truncate(real_size);
+    String::from_utf8_unchecked(v)
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
