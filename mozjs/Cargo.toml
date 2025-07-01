@@ -17,10 +17,19 @@ profilemozjs = ['mozjs_sys/profilemozjs']
 crown = ['mozjs_sys/crown']
 
 [dependencies]
+encoding_rs = "0.8.35"
 libc.workspace = true
 log = "0.4"
 mozjs_sys = { path = "../mozjs-sys" }
 
+[dev-dependencies]
+criterion = "0.6"
+
 [build-dependencies]
 cc.workspace = true
 bindgen.workspace = true
+
+
+[[bench]]
+name = "latin1_string_conversion"
+harness = false
