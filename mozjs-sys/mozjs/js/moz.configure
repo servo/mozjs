@@ -59,6 +59,8 @@ set_config("JS_ENABLE_SMOOSH", enable_smoosh)
 set_define("JS_ENABLE_SMOOSH", enable_smoosh)
 
 include("../build/moz.configure/nspr.configure", when="--enable-compile-environment")
+include("../build/moz.configure/rust.configure", when="--enable-compile-environment")
+include("../build/moz.configure/bindgen.configure", when="--enable-compile-environment")
 
 set_config("JS_STANDALONE", js_standalone)
 set_define("JS_STANDALONE", js_standalone)
