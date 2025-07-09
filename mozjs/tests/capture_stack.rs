@@ -36,23 +36,23 @@ fn capture_stack() {
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(*context, 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
-            context,
+        rooted!(in(*context) let global = JS_NewGlobalObject(
+            *context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(*context, global.get());
 
         let function = JS_DefineFunction(
-            context,
+            *context,
             global.handle().into(),
             c"print_stack".as_ptr(),
             Some(print_stack),
@@ -71,7 +71,7 @@ fn capture_stack() {
 
             foo(\"arg1-value\");
         ";
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(in(*context) let mut rval = UndefinedValue());
         assert!(runtime
             .evaluate_script(global.handle(), javascript, "test.js", 0, rval.handle_mut())
             .is_ok());
