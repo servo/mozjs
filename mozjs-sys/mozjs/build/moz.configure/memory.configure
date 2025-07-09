@@ -7,8 +7,8 @@
 
 @depends(target, js_package)
 def jemalloc_default(target, js_package):
-    if js_package:
-        return False
+    # if js_package:
+    #    return False
     return target.kernel in ("Darwin", "Linux", "WINNT")
 
 
