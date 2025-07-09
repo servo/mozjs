@@ -4,7 +4,6 @@ SHELL := bash
 
 # Default flags
 CONFIGURE_FLAGS := \
-	--disable-jemalloc \
 	--disable-js-shell \
 	--disable-tests \
 	--disable-export-js \
