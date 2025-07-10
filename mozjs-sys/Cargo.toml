@@ -22,7 +22,6 @@ name = "mozjs_sys"
 doctest = false
 
 [features]
-default = ["jit"]
 debugmozjs = []
 profilemozjs = []
 jit = []

@@ -12,6 +12,7 @@ doctest = false
 
 [features]
 debugmozjs = ['mozjs_sys/debugmozjs']
+default = ["jit"]
 jit = ['mozjs_sys/jit']
 jitspew = ['mozjs_sys/jitspew']
 profilemozjs = ['mozjs_sys/profilemozjs']
