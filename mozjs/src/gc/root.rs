@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::ptr;
 
 use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
+use mozjs_sys::jsapi::JS::Heap;
 use mozjs_sys::jsgc::{RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
@@ -194,6 +195,23 @@ impl<'a, T> Deref for Handle<'a, T> {
 
     fn deref(&self) -> &T {
         self.ptr
+    }
+}
+
+/// Allows safe and ergonomic conversion of a rooted `Heap<Value>` into a `HandleValue`.
+///
+/// This avoids repeating unsafe `from_raw` conversions at call sites,
+/// and ensures the lifetime is tied to the borrow of the `Heap<Value>`.
+pub trait AsHandleValue<'a> {
+    fn as_handle_value(&'a self) -> HandleValue<'a>;
+}
+
+impl<'a> AsHandleValue<'a> for Heap<Value> {
+    #[allow(unsafe_code)]
+    fn as_handle_value(&'a self) -> HandleValue<'a> {
+        // SAFETY: The value is rooted and kept alive by the `Heap<Value>`,
+        // making it safe to convert to a `HandleValue` and pass to SpiderMonkey.
+        unsafe { HandleValue::from_raw(self.handle()) }
     }
 }
 
