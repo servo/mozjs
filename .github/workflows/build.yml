@@ -182,6 +182,16 @@ jobs:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           ./android-build cargo build --target="${{ matrix.target }}"
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        if: ${{ inputs.release }}
+        with:
+          subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: ./target/libmozjs-${{ matrix.target }}.tar.gz
+          name: libmozjs-${{ matrix.target }}.tar.gz
 
   ohos:
     name: "OpenHarmony"
