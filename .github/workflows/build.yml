@@ -157,6 +157,15 @@ jobs:
 
   android:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          [
+            "armv7-linux-androideabi",
+            "aarch64-linux-android",
+            "x86_64-linux-android",
+          ]
     steps:
       - uses: actions/checkout@v4
       - name: Install NDK
@@ -167,12 +176,22 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: armv7-linux-androideabi
+          targets: ${{ matrix.target }}
       - name: Build
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
-          ./android-build cargo build --target="armv7-linux-androideabi"
+          ./android-build cargo build --target="${{ matrix.target }}"
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        if: ${{ inputs.release }}
+        with:
+          subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: ./target/libmozjs-${{ matrix.target }}.tar.gz
+          name: libmozjs-${{ matrix.target }}.tar.gz
 
   ohos:
     name: "OpenHarmony"

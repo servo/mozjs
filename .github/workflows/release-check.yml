@@ -49,6 +49,50 @@ jobs:
           cargo build --verbose
           cargo test --tests --examples --verbose
 
+  verify-archive-android:
+    name: "Verify archive Android"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          [
+            "armv7-linux-androideabi",
+            "aarch64-linux-android",
+            "x86_64-linux-android",
+          ]
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r26c
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Download prebuilt mozjs from artifact
+        if: ${{ env.RELEASE_TAG == '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: libmozjs-${{ matrix.target }}.tar.gz
+      - name: Build from archive
+        if: ${{ env.RELEASE_TAG == '' }}
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
+        run: |
+          ./android-build cargo build --target="${{ matrix.target }}" --verbose
+      - name: Build from auto-download (arch ${{ matrix.target }})
+        if: ${{ env.RELEASE_TAG != '' }}
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+          MOZJS_ATTESTATION: strict
+        run: |
+          ./android-build cargo build --target="${{ matrix.target }}" --verbose
+
   verify-archive-ohos:
     name: "Verify archive OpenHarmony"
     runs-on: ubuntu-latest
