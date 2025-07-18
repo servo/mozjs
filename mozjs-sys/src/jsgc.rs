@@ -324,6 +324,7 @@ pub type RootedValueArray<const N: usize> = Rooted<ValueArray<N>>;
 /// SpiderMonkey.
 ///
 /// For safe `Heap` construction with value see `Heap::boxed` function.
+#[cfg_attr(feature = "crown", crown::unrooted_must_root_lint::must_root)]
 #[repr(C)]
 #[derive(Debug)]
 pub struct Heap<T: GCMethods + Copy> {
