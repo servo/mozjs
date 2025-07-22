@@ -49,15 +49,18 @@ struct JobQueueTraps {
                             JS::HandleObject allocationSite,
                             JS::HandleObject incumbentGlobal) = 0;
   bool (*empty)(const void* queue);
+  void* (*pushNewInterruptQueue)(void* aInterruptQueues);
+  void* (*popInterruptQueue)(void* aInterruptQueues);
 };
 
 class RustJobQueue : public JS::JobQueue {
   JobQueueTraps mTraps;
   const void* mQueue;
+  void* mInterruptQueues;
 
  public:
-  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
-      : mTraps(aTraps), mQueue(aQueue) {}
+  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue, void* aInterruptQueues)
+      : mTraps(aTraps), mQueue(aQueue), mInterruptQueues(aInterruptQueues) {}
 
   virtual JSObject* getIncumbentGlobal(JSContext* cx) override {
     return mTraps.getIncumbentGlobal(mQueue, cx);
@@ -80,10 +83,37 @@ class RustJobQueue : public JS::JobQueue {
   bool isDrainingStopped() const override { return false; }
 
  private:
+  class SavedQueue : public JS::JobQueue::SavedJobQueue {
+    public:
+    SavedQueue(JSContext* cx, const JobQueueTraps& aTraps, const void** aCurrentQueue, void* aInterruptQueues)
+        : cx(cx), mTraps(aTraps), mQueue(*aCurrentQueue), mCurrentQueue(aCurrentQueue), mInterruptQueues(aInterruptQueues) {
+      // TODO: don’t know how to do this with only opaque JSContext decl
+      // MOZ_ASSERT(cx->queue.ref());
+    }
+  
+    ~SavedQueue() {
+      // TODO: don’t know how to do this with only opaque JSContext decl
+      // MOZ_ASSERT(cx->queue.ref());
+      MOZ_ASSERT(mTraps.empty(*mCurrentQueue));
+      MOZ_ASSERT(mTraps.popInterruptQueue(mInterruptQueues) == *mCurrentQueue);
+      *mCurrentQueue = mQueue;
+      // TODO: On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
+      // and return a null UniquePtr.
+    }
+  
+    private:
+    JSContext* cx;
+    JobQueueTraps mTraps;
+    const void* mQueue;
+    const void** mCurrentQueue;
+    void* mInterruptQueues;
+  };
+
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
-    // FIXME deal with this for DebuggerGlobalScope in Servo
-    // MOZ_ASSERT(false, "saveJobQueue should not be invoked");
-    return nullptr;
+    auto result =
+      js::MakeUnique<SavedQueue>(cx, mTraps, &mQueue, mInterruptQueues);
+    mQueue = mTraps.pushNewInterruptQueue(mInterruptQueues);
+    return result;
   }
 };
 
@@ -1013,8 +1043,8 @@ JSString* JS_ForgetStringLinearness(JSLinearString* str) {
   return JS_FORGET_STRING_LINEARNESS(str);
 }
 
-JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue) {
-  return new RustJobQueue(*aTraps, aQueue);
+JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue, void* aInterruptQueues) {
+  return new RustJobQueue(*aTraps, aQueue, aInterruptQueues);
 }
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
