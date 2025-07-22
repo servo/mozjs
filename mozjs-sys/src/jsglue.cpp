@@ -81,7 +81,8 @@ class RustJobQueue : public JS::JobQueue {
 
  private:
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
-    MOZ_ASSERT(false, "saveJobQueue should not be invoked");
+    // FIXME deal with this for DebuggerGlobalScope in Servo
+    // MOZ_ASSERT(false, "saveJobQueue should not be invoked");
     return nullptr;
   }
 };
