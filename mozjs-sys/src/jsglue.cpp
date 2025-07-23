@@ -50,10 +50,12 @@ struct JobQueueTraps {
                             JS::HandleObject incumbentGlobal) = 0;
   bool (*empty)(const void* queue);
 
-  // Create a new queue, push it onto an embedder-side stack, and return the new queue.
+  // Create a new queue, push it onto an embedder-side stack, and return the new
+  // queue.
   void* (*pushNewInterruptQueue)(void* aInterruptQueues);
-  // Destroy the queue most recently created by pushNewInterruptQueue(), returning its address
-  // so we can check if we are restoring the correct queue.
+  // Destroy the queue most recently created by pushNewInterruptQueue(),
+  // returning its address so we can check if we are restoring the correct
+  // queue.
   void* (*popInterruptQueue)(void* aInterruptQueues);
 };
 
@@ -63,7 +65,8 @@ class RustJobQueue : public JS::JobQueue {
   void* mInterruptQueues;
 
  public:
-  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue, void* aInterruptQueues)
+  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue,
+               void* aInterruptQueues)
       : mTraps(aTraps), mQueue(aQueue), mInterruptQueues(aInterruptQueues) {}
 
   virtual JSObject* getIncumbentGlobal(JSContext* cx) override {
@@ -88,30 +91,47 @@ class RustJobQueue : public JS::JobQueue {
 
  private:
   class SavedQueue : public JS::JobQueue::SavedJobQueue {
-    public:
-    SavedQueue(JSContext* cx, const JobQueueTraps& aTraps, void* aInterruptQueues, const void** aCurrentQueue, const void* aNewQueue)
-        : cx(cx), mTraps(aTraps), mInterruptQueues(aInterruptQueues), mCurrentQueue(aCurrentQueue), mNewQueue(aNewQueue), mSavedQueue(*aCurrentQueue) {
-      // TODO: assert that the context’s jobQueue hasn’t been cleared with SetJobQueue(nullptr) or DestroyContext().
-      // Don’t know how to do this with only an opaque JSContext decl. Are we allowed to #include "vm/JSContext.h"?
+   public:
+    SavedQueue(JSContext* cx, const JobQueueTraps& aTraps,
+               void* aInterruptQueues, const void** aCurrentQueue,
+               const void* aNewQueue)
+        : cx(cx),
+          mTraps(aTraps),
+          mInterruptQueues(aInterruptQueues),
+          mCurrentQueue(aCurrentQueue),
+          mNewQueue(aNewQueue),
+          mSavedQueue(*aCurrentQueue) {
+      // TODO: assert that the context’s jobQueue hasn’t been cleared with
+      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
+      // with only an opaque JSContext decl. Are we allowed to #include
+      // "vm/JSContext.h"?
+      //
       // MOZ_ASSERT(cx->jobQueue.ref());
 
       // Set the current queue to mNewQueue.
-      // We need to take care of this, so that we can save the old queue in the member initializers above.
+      // We need to take care of this, so that we can save the old queue in the
+      // member initializers above.
       *mCurrentQueue = mNewQueue;
     }
-  
+
     ~SavedQueue() {
-      // TODO: assert that the context’s jobQueue hasn’t been cleared with SetJobQueue(nullptr) or DestroyContext().
-      // Don’t know how to do this with only an opaque JSContext decl. Are we allowed to #include "vm/JSContext.h"?
+      // TODO: assert that the context’s jobQueue hasn’t been cleared with
+      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
+      // with only an opaque JSContext decl. Are we allowed to #include
+      // "vm/JSContext.h"?
+      //
       // MOZ_ASSERT(cx->jobQueue.ref());
 
-      // Check that the current queue is empty, as required by the SavedJobQueue contract.
+      // Check that the current queue is empty, as required by the SavedJobQueue
+      // contract.
       MOZ_ASSERT(mTraps.empty(*mCurrentQueue));
 
-      // Destroy the topmost queue, checking that it was the queue this SavedQueue expects to restore from.
-      // Imagine we have normal queue A, then we switch to B (SavedQueue from B to A), then we switch to C
-      // (SavedQueue from C to B). If the SavedQueue from B to A is restored before the SavedQueue from C to B,
-      // the embedder will destroy both C and B, but in the end, the queue will be set to B, a freed queue.
+      // Destroy the topmost queue, checking that it was the queue this
+      // SavedQueue expects to restore from. Imagine we have normal queue A,
+      // then we switch to B (SavedQueue from B to A), then we switch to C
+      // (SavedQueue from C to B). If the SavedQueue from B to A is restored
+      // before the SavedQueue from C to B, the embedder will destroy both C and
+      // B, but in the end, the queue will be set to B, a freed queue.
       MOZ_ASSERT(mTraps.popInterruptQueue(mInterruptQueues) == mNewQueue);
 
       *mCurrentQueue = mSavedQueue;
@@ -136,13 +156,15 @@ class RustJobQueue : public JS::JobQueue {
 
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
     auto newQueue = mTraps.pushNewInterruptQueue(mInterruptQueues);
-    auto result =
-      js::MakeUnique<SavedQueue>(cx, mTraps, mInterruptQueues, &mQueue, newQueue);
+    auto result = js::MakeUnique<SavedQueue>(cx, mTraps, mInterruptQueues,
+                                             &mQueue, newQueue);
     if (!result) {
-      // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext, and return a null UniquePtr.”
-      // When the allocation in MakeUnique() fails, the SavedQueue constructor is never called, so this->mQueue is
+      // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
+      // and return a null UniquePtr.” When the allocation in MakeUnique()
+      // fails, the SavedQueue constructor is never called, so this->mQueue is
       // still set to the old queue.
-      // TODO: should we propagate any OOM condition from Servo by returning nullptr in pushNewInterruptQueue()?
+      // TODO: should we propagate any OOM condition from Servo by returning
+      // nullptr in pushNewInterruptQueue()?
       js::ReportOutOfMemory(cx);
       return nullptr;
     }
@@ -1076,7 +1098,8 @@ JSString* JS_ForgetStringLinearness(JSLinearString* str) {
   return JS_FORGET_STRING_LINEARNESS(str);
 }
 
-JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue, void* aInterruptQueues) {
+JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue,
+                             void* aInterruptQueues) {
   return new RustJobQueue(*aTraps, aQueue, aInterruptQueues);
 }
 
