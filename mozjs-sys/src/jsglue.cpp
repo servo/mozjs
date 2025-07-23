@@ -54,8 +54,8 @@ struct JobQueueTraps {
   // queue.
   void* (*pushNewInterruptQueue)(void* aInterruptQueues);
   // Destroy the queue most recently created by pushNewInterruptQueue(),
-  // returning its address so we can check if we are restoring the correct
-  // queue.
+  // returning its address so we can check if we are restoring the saved queue
+  // over the correct queue.
   void* (*popInterruptQueue)(void* aInterruptQueues);
 };
 
