@@ -1,0 +1,57 @@
+diff --git a/mozjs/intl/components/src/calendar/moz.build b/mozjs/intl/components/src/calendar/moz.build
+--- a/mozjs/intl/components/src/calendar/moz.build	(revision 518ee8df6f7dcc85bbe184d562cea69c505fc7cc)
++++ b/mozjs/intl/components/src/calendar/moz.build	(revision 127481d772791381e4a11122d5866adabe305dfb)
+@@ -16,10 +16,6 @@
+     "MonthCode.h",
+ ]
+ 
+-LOCAL_INCLUDES += [
+-    "/intl/icu_capi/bindings/c",
+-]
+-
+ UNIFIED_SOURCES += [
+     "ICU4XCalendar.cpp",
+     "ICU4XChineseBasedCalendar.cpp",
+diff --git a/mozjs/intl/components/moz.build b/mozjs/intl/components/moz.build
+--- a/mozjs/intl/components/moz.build	(revision 518ee8df6f7dcc85bbe184d562cea69c505fc7cc)
++++ b/mozjs/intl/components/moz.build	(revision 127481d772791381e4a11122d5866adabe305dfb)
+@@ -73,10 +73,6 @@
+ if not CONFIG["JS_STANDALONE"]:
+     TEST_DIRS += ["gtest"]
+ 
+-LOCAL_INCLUDES += [
+-    "/intl/icu_capi/bindings/c",
+-]
+-
+ if not CONFIG["MOZ_SYSTEM_ICU"]:
+     DIRS += ["src/calendar"]
+ 
+diff --git a/mozjs/js/src/builtin/temporal/moz.build b/mozjs/js/src/builtin/temporal/moz.build
+--- a/mozjs/js/src/builtin/temporal/moz.build	(revision 518ee8df6f7dcc85bbe184d562cea69c505fc7cc)
++++ b/mozjs/js/src/builtin/temporal/moz.build	(revision 127481d772791381e4a11122d5866adabe305dfb)
+@@ -12,10 +12,6 @@
+ include("../../js-config.mozbuild")
+ include("../../js-cxxflags.mozbuild")
+ 
+-LOCAL_INCLUDES += [
+-    "/intl/icu_capi/bindings/c",
+-]
+-
+ UNIFIED_SOURCES += [
+     "Calendar.cpp",
+     "CalendarFields.cpp",
+diff --git a/mozjs/js/src/moz.build b/mozjs/js/src/moz.build
+--- a/mozjs/js/src/moz.build	(revision 518ee8df6f7dcc85bbe184d562cea69c505fc7cc)
++++ b/mozjs/js/src/moz.build	(revision 127481d772791381e4a11122d5866adabe305dfb)
+@@ -512,11 +512,6 @@
+         "threading/posix/PosixThread.cpp",
+     ]
+ 
+-if CONFIG["JS_HAS_INTL_API"]:
+-    LOCAL_INCLUDES += [
+-        "/intl/icu_capi/bindings/c",
+-    ]
+-
+ if CONFIG["JS_HAS_CTYPES"]:
+     SOURCES += [
+         "ctypes/CTypes.cpp",

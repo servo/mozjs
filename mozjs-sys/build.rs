@@ -123,6 +123,29 @@ fn main() {
     }
 }
 
+fn get_icu_capi_include_path() -> String {
+    // Using cargo metadata is the official recommendation from the icu4x documentation.
+    // See <https://icu4x.unicode.org/2_0/cppdoc/>. In the future we should try to upstream a
+    // patch that allows us to use DEP_ syntax, like we do with libz.
+    let metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
+    let packages = metadata.packages;
+    let icu_capi_info = packages
+        .iter()
+        .find(|pkg| pkg.name.contains("icu_capi"))
+        .expect("icu_capi not found");
+    let icu_cpath = &icu_capi_info.manifest_path;
+    // Include path for icu_capi 1.5:
+    let c_include_path = icu_cpath
+        .parent()
+        .expect("manifest dir?")
+        .join("bindings/c");
+    assert!(
+        c_include_path.exists(),
+        "ICU_C C include path {c_include_path} does not exist"
+    );
+    c_include_path.to_string()
+}
+
 fn build_spidermonkey(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let make;
@@ -188,14 +211,18 @@ fn build_spidermonkey(build_dir: &Path) {
         cmd.env("MAKEFLAGS", makeflags);
     }
 
+    let icu_c_include_path = get_icu_capi_include_path();
+    let mut cxxflags = vec![];
+    cxxflags.push(format!("-I{}", &icu_c_include_path));
+
     if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
-        let mut cxxflags = OsString::from("-stdlib=libc++");
-        if let Some(flags) = env::var_os("CXXFLAGS") {
-            cxxflags.push(" ");
-            cxxflags.push(flags);
-        }
-        cmd.env("CXXFLAGS", cxxflags);
+        cxxflags.push(String::from("-stdlib=libc++"));
     }
+
+    let base_cxxflags = env::var("CXXFLAGS").unwrap_or_default();
+    let mut cxxflags = cxxflags.join(" ");
+    cxxflags.push_str(&base_cxxflags);
+    cmd.env("CXXFLAGS", cxxflags);
 
     let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let result = cmd
