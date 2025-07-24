@@ -19,6 +19,9 @@
 - /build/moz.configure/rust.configure
 - /build/workspace-hack
 - /build/rust
+- /intl/bidi
+- /intl/icu_capi
+- /intl/icu_segmenter_data
 - /js/rust
 - /js/src/build.rs
 - /js/src/Cargo.toml
