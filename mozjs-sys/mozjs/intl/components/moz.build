@@ -78,9 +78,11 @@ if CONFIG["MOZ_ICU4X"]:
     UNIFIED_SOURCES += [
         "src/ICU4XGeckoDataProvider.cpp",
     ]
-    LOCAL_INCLUDES += [
-        "/intl/icu_capi/bindings/c",
-    ]
+    # Todo: Can we patch the include directory from our local crates.io cache
+    # into our local includes, or do we really need to fudge with the CXXFLAGS.
+    # LOCAL_INCLUDES += [
+    #    "/intl/icu_capi/bindings/c",
+    #]
 
 # At the time of this writing the MOZ_HAS_MOZGLUE define must be true in order to
 # correctly include ConvertUtf8toUtf16 in certain include paths, otherwise it results
