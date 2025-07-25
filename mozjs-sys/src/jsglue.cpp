@@ -173,6 +173,21 @@ class RustJobQueue : public JS::JobQueue {
   }
 };
 
+struct RustEnvironmentPreparer : public js::ScriptEnvironmentPreparer {
+  JSContext* cx;
+  explicit RustEnvironmentPreparer(JSContext* cx) : cx(cx) {}
+  void invoke(JS::HandleObject global, Closure& closure) override {
+    MOZ_ASSERT(JS_IsGlobalObject(global));
+    MOZ_ASSERT(!JS_IsExceptionPending(cx));
+
+    JSAutoRealm ar(cx, global);
+    // TODO: AutoReportException are(cx);
+    if (!closure(cx)) {
+      return;
+    }
+  }
+};
+
 struct JSExternalStringCallbacksTraps {
   void (*latin1Finalize)(const void* privateData, JS::Latin1Char* chars);
   void (*utf16Finalize)(const void* privateData, char16_t* chars);
@@ -1105,6 +1120,10 @@ JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue,
 }
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
+
+void InitScriptEnvironmentPreparer(JSContext* cx) {
+  js::SetScriptEnvironmentPreparer(cx, new RustEnvironmentPreparer(cx));
+}
 
 JSExternalStringCallbacks* CreateJSExternalStringCallbacks(
     const JSExternalStringCallbacksTraps* aTraps, void* privateData) {
