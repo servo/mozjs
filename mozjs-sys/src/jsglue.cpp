@@ -152,15 +152,17 @@ class RustJobQueue : public JS::JobQueue {
 
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
     auto newQueue = mTraps.pushNewInterruptQueue(mInterruptQueues);
+    // Servo uses infallible allocation here, so it should never return nullptr.
+    MOZ_ASSERT(!!newQueue);
+
     auto result =
         js::MakeUnique<SavedQueue>(mTraps, mInterruptQueues, &mQueue, newQueue);
     if (!result) {
       // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
-      // and return a null UniquePtr.” When the allocation in MakeUnique()
-      // fails, the SavedQueue constructor is never called, so this->mQueue is
-      // still set to the old queue.
-      // TODO: should we propagate any OOM condition from Servo by returning
-      // nullptr in pushNewInterruptQueue()?
+      // and return a null UniquePtr.”
+      //
+      // When the allocation in MakeUnique() fails, the SavedQueue constructor
+      // is never called, so this->mQueue is still set to the old queue.
       js::ReportOutOfMemory(cx);
       return nullptr;
     }
