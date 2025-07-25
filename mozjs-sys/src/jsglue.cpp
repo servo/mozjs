@@ -48,6 +48,7 @@ struct JobQueueTraps {
                             JS::HandleObject promise, JS::HandleObject job,
                             JS::HandleObject allocationSite,
                             JS::HandleObject incumbentGlobal) = 0;
+  void (*runJobs)(const void* queue, JSContext* cx);
   bool (*empty)(const void* queue);
 
   // Create a new queue, push it onto an embedder-side stack, and return the new
@@ -87,9 +88,7 @@ class RustJobQueue : public JS::JobQueue {
 
   virtual bool empty() const override { return mTraps.empty(mQueue); }
 
-  virtual void runJobs(JSContext* cx) override {
-    MOZ_ASSERT(false, "runJobs should not be invoked");
-  }
+  virtual void runJobs(JSContext* cx) override { mTraps.runJobs(mQueue, cx); }
 
   bool isDrainingStopped() const override { return false; }
 
