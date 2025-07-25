@@ -57,6 +57,8 @@ struct JobQueueTraps {
   // returning its address so we can check if we are restoring the saved queue
   // over the correct queue.
   const void* (*popInterruptQueue)(void* aInterruptQueues);
+  // Destroy the embedder-side stack of interrupt queues.
+  void (*dropInterruptQueues)(void* aInterruptQueues);
 };
 
 class RustJobQueue : public JS::JobQueue {
@@ -68,6 +70,8 @@ class RustJobQueue : public JS::JobQueue {
   RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue,
                void* aInterruptQueues)
       : mTraps(aTraps), mQueue(aQueue), mInterruptQueues(aInterruptQueues) {}
+
+  ~RustJobQueue() { mTraps.dropInterruptQueues(mInterruptQueues); }
 
   virtual JSObject* getIncumbentGlobal(JSContext* cx) override {
     return mTraps.getIncumbentGlobal(mQueue, cx);
