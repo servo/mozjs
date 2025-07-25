@@ -52,11 +52,11 @@ struct JobQueueTraps {
 
   // Create a new queue, push it onto an embedder-side stack, and return the new
   // queue.
-  void* (*pushNewInterruptQueue)(void* aInterruptQueues);
+  const void* (*pushNewInterruptQueue)(void* aInterruptQueues);
   // Destroy the queue most recently created by pushNewInterruptQueue(),
   // returning its address so we can check if we are restoring the saved queue
   // over the correct queue.
-  void* (*popInterruptQueue)(void* aInterruptQueues);
+  const void* (*popInterruptQueue)(void* aInterruptQueues);
 };
 
 class RustJobQueue : public JS::JobQueue {
