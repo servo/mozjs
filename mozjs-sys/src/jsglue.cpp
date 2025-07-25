@@ -92,11 +92,9 @@ class RustJobQueue : public JS::JobQueue {
  private:
   class SavedQueue : public JS::JobQueue::SavedJobQueue {
    public:
-    SavedQueue(JSContext* cx, const JobQueueTraps& aTraps,
-               void* aInterruptQueues, const void** aCurrentQueue,
-               const void* aNewQueue)
-        : cx(cx),
-          mTraps(aTraps),
+    SavedQueue(const JobQueueTraps& aTraps, void* aInterruptQueues,
+               const void** aCurrentQueue, const void* aNewQueue)
+        : mTraps(aTraps),
           mInterruptQueues(aInterruptQueues),
           mCurrentQueue(aCurrentQueue),
           mNewQueue(aNewQueue),
@@ -138,8 +136,6 @@ class RustJobQueue : public JS::JobQueue {
     }
 
    private:
-    JSContext* cx;
-
     // Required for embedder FFI.
     JobQueueTraps mTraps;
     void* mInterruptQueues;
@@ -156,8 +152,8 @@ class RustJobQueue : public JS::JobQueue {
 
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
     auto newQueue = mTraps.pushNewInterruptQueue(mInterruptQueues);
-    auto result = js::MakeUnique<SavedQueue>(cx, mTraps, mInterruptQueues,
-                                             &mQueue, newQueue);
+    auto result =
+        js::MakeUnique<SavedQueue>(mTraps, mInterruptQueues, &mQueue, newQueue);
     if (!result) {
       // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
       // and return a null UniquePtr.” When the allocation in MakeUnique()
