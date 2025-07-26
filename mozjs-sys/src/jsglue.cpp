@@ -49,15 +49,29 @@ struct JobQueueTraps {
                             JS::HandleObject allocationSite,
                             JS::HandleObject incumbentGlobal) = 0;
   bool (*empty)(const void* queue);
+
+  // Create a new queue, push it onto an embedder-side stack, and return the new
+  // queue.
+  const void* (*pushNewInterruptQueue)(void* aInterruptQueues);
+  // Destroy the queue most recently created by pushNewInterruptQueue(),
+  // returning its address so we can check if we are restoring the saved queue
+  // over the correct queue.
+  const void* (*popInterruptQueue)(void* aInterruptQueues);
+  // Destroy the embedder-side stack of interrupt queues.
+  void (*dropInterruptQueues)(void* aInterruptQueues);
 };
 
 class RustJobQueue : public JS::JobQueue {
   JobQueueTraps mTraps;
   const void* mQueue;
+  void* mInterruptQueues;
 
  public:
-  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
-      : mTraps(aTraps), mQueue(aQueue) {}
+  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue,
+               void* aInterruptQueues)
+      : mTraps(aTraps), mQueue(aQueue), mInterruptQueues(aInterruptQueues) {}
+
+  ~RustJobQueue() { mTraps.dropInterruptQueues(mInterruptQueues); }
 
   virtual JSObject* getIncumbentGlobal(JSContext* cx) override {
     return mTraps.getIncumbentGlobal(mQueue, cx);
@@ -80,9 +94,83 @@ class RustJobQueue : public JS::JobQueue {
   bool isDrainingStopped() const override { return false; }
 
  private:
+  class SavedQueue : public JS::JobQueue::SavedJobQueue {
+   public:
+    SavedQueue(const JobQueueTraps& aTraps, void* aInterruptQueues,
+               const void** aCurrentQueue, const void* aNewQueue)
+        : mTraps(aTraps),
+          mInterruptQueues(aInterruptQueues),
+          mCurrentQueue(aCurrentQueue),
+          mNewQueue(aNewQueue),
+          mSavedQueue(*aCurrentQueue) {
+      // TODO: assert that the context’s jobQueue hasn’t been cleared with
+      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
+      // with only an opaque JSContext decl. Are we allowed to #include
+      // "vm/JSContext.h"?
+      //
+      // MOZ_ASSERT(cx->jobQueue.ref());
+
+      // Set the current queue to mNewQueue.
+      // We need to take care of this, so that we can save the old queue in the
+      // member initializers above.
+      *mCurrentQueue = mNewQueue;
+    }
+
+    ~SavedQueue() {
+      // TODO: assert that the context’s jobQueue hasn’t been cleared with
+      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
+      // with only an opaque JSContext decl. Are we allowed to #include
+      // "vm/JSContext.h"?
+      //
+      // MOZ_ASSERT(cx->jobQueue.ref());
+
+      // Check that the current queue is empty, as required by the SavedJobQueue
+      // contract.
+      MOZ_ASSERT(mTraps.empty(*mCurrentQueue));
+
+      // Destroy the topmost queue, checking that it was the queue this
+      // SavedQueue expects to restore from. Imagine we have normal queue A,
+      // then we switch to B (SavedQueue from B to A), then we switch to C
+      // (SavedQueue from C to B). If the SavedQueue from B to A is restored
+      // before the SavedQueue from C to B, the embedder will destroy both C and
+      // B, but in the end, the queue will be set to B, a freed queue.
+      MOZ_ASSERT(mTraps.popInterruptQueue(mInterruptQueues) == mNewQueue);
+
+      *mCurrentQueue = mSavedQueue;
+    }
+
+   private:
+    // Required for embedder FFI.
+    JobQueueTraps mTraps;
+    void* mInterruptQueues;
+
+    // Pointer to the RustJobQueue::mQueue field to write to when switching.
+    const void** mCurrentQueue;
+
+    // The queue to switch to when saving.
+    const void* mNewQueue;
+
+    // The queue to switch to when restoring.
+    const void* mSavedQueue;
+  };
+
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
-    MOZ_ASSERT(false, "saveJobQueue should not be invoked");
-    return nullptr;
+    auto newQueue = mTraps.pushNewInterruptQueue(mInterruptQueues);
+    // Servo uses infallible allocation here, so it should never return nullptr.
+    MOZ_ASSERT(!!newQueue);
+
+    auto result =
+        js::MakeUnique<SavedQueue>(mTraps, mInterruptQueues, &mQueue, newQueue);
+    if (!result) {
+      // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
+      // and return a null UniquePtr.”
+      //
+      // When the allocation in MakeUnique() fails, the SavedQueue constructor
+      // is never called, so this->mQueue is still set to the old queue.
+      js::ReportOutOfMemory(cx);
+      return nullptr;
+    }
+    return result;
   }
 };
 
@@ -1012,8 +1100,9 @@ JSString* JS_ForgetStringLinearness(JSLinearString* str) {
   return JS_FORGET_STRING_LINEARNESS(str);
 }
 
-JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue) {
-  return new RustJobQueue(*aTraps, aQueue);
+JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue,
+                             void* aInterruptQueues) {
+  return new RustJobQueue(*aTraps, aQueue, aInterruptQueues);
 }
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
