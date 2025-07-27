@@ -543,9 +543,9 @@ impl JSAutoStructuredCloneBufferWrapper {
         scope: StructuredCloneScope,
         callbacks: *const JSStructuredCloneCallbacks,
     ) -> Self {
-        Self {
-            ptr: NewJSAutoStructuredCloneBuffer(scope, callbacks),
-        }
+        let ptr = NewJSAutoStructuredCloneBuffer(scope, callbacks);
+        assert!(!ptr.is_null());
+        Self { ptr }
     }
 }
 
