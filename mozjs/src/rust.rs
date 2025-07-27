@@ -535,7 +535,7 @@ impl Drop for CompileOptionsWrapper {
 }
 
 pub struct JSAutoStructuredCloneBufferWrapper {
-    pub ptr: *mut JSAutoStructuredCloneBuffer,
+    ptr: NonNull<JSAutoStructuredCloneBuffer>,
 }
 
 impl JSAutoStructuredCloneBufferWrapper {
@@ -543,16 +543,21 @@ impl JSAutoStructuredCloneBufferWrapper {
         scope: StructuredCloneScope,
         callbacks: *const JSStructuredCloneCallbacks,
     ) -> Self {
-        let ptr = NewJSAutoStructuredCloneBuffer(scope, callbacks);
-        assert!(!ptr.is_null());
-        Self { ptr }
+        let raw_ptr = NewJSAutoStructuredCloneBuffer(scope, callbacks);
+        Self {
+            ptr: NonNull::new(raw_ptr).unwrap(),
+        }
+    }
+
+    pub fn as_raw_ptr(&self) -> *mut JSAutoStructuredCloneBuffer {
+        self.ptr.as_ptr()
     }
 }
 
 impl Drop for JSAutoStructuredCloneBufferWrapper {
     fn drop(&mut self) {
         unsafe {
-            DeleteJSAutoStructuredCloneBuffer(self.ptr);
+            DeleteJSAutoStructuredCloneBuffer(self.ptr.as_ptr());
         }
     }
 }
