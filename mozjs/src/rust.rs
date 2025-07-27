@@ -28,6 +28,7 @@ use crate::glue::{CreateRootedIdVector, CreateRootedObjectVector};
 use crate::glue::{
     DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
 };
+use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuffer};
 use crate::glue::{
     GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector,
 };
@@ -47,6 +48,7 @@ use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
 use crate::jsapi::{
     JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue,
 };
+use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
 use crate::jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use crate::jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use crate::jsapi::{JSObject, JSPropertySpec, JSRuntime};
@@ -529,6 +531,34 @@ impl CompileOptionsWrapper {
 impl Drop for CompileOptionsWrapper {
     fn drop(&mut self) {
         unsafe { DeleteCompileOptions(self.ptr) }
+    }
+}
+
+pub struct JSAutoStructuredCloneBufferWrapper {
+    ptr: NonNull<JSAutoStructuredCloneBuffer>,
+}
+
+impl JSAutoStructuredCloneBufferWrapper {
+    pub unsafe fn new(
+        scope: StructuredCloneScope,
+        callbacks: *const JSStructuredCloneCallbacks,
+    ) -> Self {
+        let raw_ptr = NewJSAutoStructuredCloneBuffer(scope, callbacks);
+        Self {
+            ptr: NonNull::new(raw_ptr).unwrap(),
+        }
+    }
+
+    pub fn as_raw_ptr(&self) -> *mut JSAutoStructuredCloneBuffer {
+        self.ptr.as_ptr()
+    }
+}
+
+impl Drop for JSAutoStructuredCloneBufferWrapper {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteJSAutoStructuredCloneBuffer(self.ptr.as_ptr());
+        }
     }
 }
 
