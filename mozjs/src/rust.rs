@@ -48,10 +48,7 @@ use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
 use crate::jsapi::{
     JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue,
 };
-use crate::jsapi::{
-    JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, JSStructuredCloneData,
-    StructuredCloneScope,
-};
+use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
 use crate::jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use crate::jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use crate::jsapi::{JSObject, JSPropertySpec, JSRuntime};
