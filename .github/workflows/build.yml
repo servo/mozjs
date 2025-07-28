@@ -248,6 +248,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
       - uses: dtolnay/rust-toolchain@stable
       - name: Check Rust formatting
         run: cargo fmt --check
@@ -271,6 +273,30 @@ jobs:
         # check diff with `--staged`.
         run: |
           git diff --staged --no-ext-diff --quiet --exit-code
+      - name: Detect need for mozjs-sys version bump
+        if: ${{ github.event_name == 'pull_request' }}
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            needs_mozjs_sys_bump:
+              - 'mozjs-sys/src/*.cpp'
+              - 'mozjs-sys/mozjs/**'
+              - 'mozjs-sys/*'
+
+      - name: Ensure mozjs-sys version is bumped
+        if: ${{ github.event_name == 'pull_request' && steps.changes.outputs.needs_mozjs_sys_bump == 'true' }}
+        run: |
+          git fetch origin main
+          CHANGED=$(git diff origin/main -- mozjs-sys/Cargo.toml | grep '^+\s*version\s*=' || true)
+          if [ -n "$CHANGED" ]; then
+            echo "✅ mozjs-sys version bumped: $CHANGED"
+            exit 0
+          else
+            echo "❌ No mozjs-sys version bump found."
+            echo "Please bump mozjs-sys version to trigger publishing new artifacts on landing."
+            exit 1
+          fi
 
   publish-release:
     name: Check version and publish release
