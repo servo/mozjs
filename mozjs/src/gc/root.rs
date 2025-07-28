@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::ptr;
 
 use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
+use mozjs_sys::jsapi::JS::Heap;
 use mozjs_sys::jsgc::{RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
@@ -194,6 +195,24 @@ impl<'a, T> Deref for Handle<'a, T> {
 
     fn deref(&self) -> &T {
         self.ptr
+    }
+}
+
+/// Converts a rooted `Heap<Value>` into a `HandleValue`.
+///
+/// This is only safe if the `Heap` is rooted (e.g., held inside a `Dom`-managed struct),
+/// and the `#[must_root]` crown lint is active to enforce rooting at compile time.
+/// Avoids repeating unsafe `from_raw` calls at each usage site.
+pub trait AsHandleValue<'a> {
+    fn as_handle_value(&'a self) -> HandleValue<'a>;
+}
+
+impl<'a> AsHandleValue<'a> for Heap<Value> {
+    #[cfg_attr(feature = "crown", crown::unrooted_must_root_lint::must_root)]
+    fn as_handle_value(&'a self) -> HandleValue<'a> {
+        // SAFETY: `self` is assumed to be rooted, and `handle()` ties
+        // the lifetime to `&self`, which the compiler can enforce.
+        unsafe { HandleValue::from_marked_location(self.ptr.get() as *const _) }
     }
 }
 
