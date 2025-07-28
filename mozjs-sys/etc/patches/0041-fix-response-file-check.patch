@@ -1,0 +1,35 @@
+diff --git a/build/moz.configure/toolchain.configure b/build/moz.configure/toolchain.configure
+index f1115c925..3143d1314 100755
+--- a/build/moz.configure/toolchain.configure
++++ b/build/moz.configure/toolchain.configure
+@@ -3694,18 +3694,18 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
+                 with open(list_path, "w") as fd:
+                     fd.write(obj_path)
+
+-            log.debug("Creating `%s` with content:", list_path)
+-            log.debug("| %s", obj_path)
+-
+-            with create_temporary_file(suffix=".a") as lib_path:
+-                os.remove(lib_path)
+-                ar_command = (
+-                    [ar]
+-                    + [x.replace("$@", lib_path) for x in ar_config.flags]
+-                    + ["@" + list_path]
+-                )
+-                result = check_cmd_output(*ar_command, onerror=lambda: None)
+-                return result is not None
++                log.debug("Creating `%s` with content:", list_path)
++                log.debug("| %s", obj_path)
++
++                with create_temporary_file(suffix=".a") as lib_path:
++                    os.remove(lib_path)
++                    ar_command = (
++                        [ar]
++                        + [x.replace("$@", lib_path) for x in ar_config.flags]
++                        + ["@" + list_path]
++                    )
++                    result = check_cmd_output(*ar_command, onerror=lambda: None)
++                    return result is not None
+
+
+ set_config("AR_SUPPORTS_RESPONSE_FILE", True, when=ar_supports_response_files)
