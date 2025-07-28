@@ -24,6 +24,7 @@ doctest = false
 [features]
 debugmozjs = []
 profilemozjs = []
+jit = []
 jitspew = []
 crown = []
 oom_with_hook = []
