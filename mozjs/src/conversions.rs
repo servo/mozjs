@@ -48,7 +48,6 @@ use log::debug;
 use mozjs_sys::jsgc::Rooted;
 use std::borrow::Cow;
 use std::mem;
-use std::mem::MaybeUninit;
 use std::rc::Rc;
 use std::{ptr, slice};
 
@@ -528,8 +527,7 @@ impl FromJSValConvertible for f64 {
 
 /// Copies chars to the string
 unsafe fn fast_copy(chars: &[u8]) -> String {
-    let mut v = Vec::with_capacity(chars.len() * 2);
-    v.set_len(chars.len() * 2);
+    let mut v = vec![0; chars.len() * 2];
     let real_size = encoding_rs::mem::convert_latin1_to_utf8(chars, v.as_mut_slice());
 
     v.truncate(real_size);
