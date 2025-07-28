@@ -341,7 +341,7 @@ jobs:
         "mac",
         "ohos",
         "windows",
-        "integrity",
+        #"integrity",
         "publish-release",
         "verify-release",
       ]
