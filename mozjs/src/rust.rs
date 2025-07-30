@@ -32,6 +32,7 @@ use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuf
 use crate::glue::{
     GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector,
 };
+use crate::glue::IntroductionType;
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
 use crate::jsapi::js::frontend::CompilationStencil;
@@ -402,6 +403,7 @@ impl Runtime {
         filename: &str,
         line_num: u32,
         rval: MutableHandleValue,
+        introduction_type: IntroductionType,
     ) -> Result<(), ()> {
         debug!(
             "Evaluating script from {} with content {}",
@@ -409,7 +411,7 @@ impl Runtime {
         );
 
         let _ac = JSAutoRealm::new(self.cx(), glob.get());
-        let options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num) };
+        let options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num, introduction_type) };
 
         unsafe {
             let mut source = transform_str_to_source_text(&script);
@@ -520,9 +522,9 @@ pub struct CompileOptionsWrapper {
 }
 
 impl CompileOptionsWrapper {
-    pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32) -> Self {
+    pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32, introduction_type: IntroductionType) -> Self {
         let filename_cstr = ffi::CString::new(filename.as_bytes()).unwrap();
-        let ptr = NewCompileOptions(cx, filename_cstr.as_ptr(), line);
+        let ptr = NewCompileOptions(cx, filename_cstr.as_ptr(), line, introduction_type);
         assert!(!ptr.is_null());
         Self { ptr }
     }
