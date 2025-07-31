@@ -83,7 +83,8 @@ jobs:
         if: ${{ matrix.features != 'debugmozjs' }}
         run: |
           bash ./mozjs/src/generate_wrappers.sh
-          git diff --quiet --exit-code
+          git add --all .
+          git diff --staged --no-ext-diff --quiet --exit-code
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
