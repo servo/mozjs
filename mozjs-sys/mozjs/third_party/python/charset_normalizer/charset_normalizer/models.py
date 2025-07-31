@@ -1,9 +1,10 @@
 from encodings.aliases import aliases
 from hashlib import sha256
 from json import dumps
+from re import sub
 from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 
-from .constant import TOO_BIG_SEQUENCE
+from .constant import RE_POSSIBLE_ENCODING_INDICATION, TOO_BIG_SEQUENCE
 from .utils import iana_name, is_multi_byte_encoding, unicode_range
 
 
@@ -16,6 +17,7 @@ class CharsetMatch:
         has_sig_or_bom: bool,
         languages: "CoherenceMatches",
         decoded_payload: Optional[str] = None,
+        preemptive_declaration: Optional[str] = None,
     ):
         self._payload: bytes = payload
 
@@ -33,13 +35,13 @@ class CharsetMatch:
 
         self._string: Optional[str] = decoded_payload
 
+        self._preemptive_declaration: Optional[str] = preemptive_declaration
+
     def __eq__(self, other: object) -> bool:
         if not isinstance(other, CharsetMatch):
-            raise TypeError(
-                "__eq__ cannot be invoked on {} and {}.".format(
-                    str(other.__class__), str(self.__class__)
-                )
-            )
+            if isinstance(other, str):
+                return iana_name(other) == self.encoding
+            return False
         return self.encoding == other.encoding and self.fingerprint == other.fingerprint
 
     def __lt__(self, other: object) -> bool:
@@ -54,16 +56,19 @@ class CharsetMatch:
 
         # Below 1% difference --> Use Coherence
         if chaos_difference < 0.01 and coherence_difference > 0.02:
-            # When having a tough decision, use the result that decoded as many multi-byte as possible.
-            if chaos_difference == 0.0 and self.coherence == other.coherence:
-                return self.multi_byte_usage > other.multi_byte_usage
             return self.coherence > other.coherence
+        elif chaos_difference < 0.01 and coherence_difference <= 0.02:
+            # When having a difficult decision, use the result that decoded as many multi-byte as possible.
+            # preserve RAM usage!
+            if len(self._payload) >= TOO_BIG_SEQUENCE:
+                return self.chaos < other.chaos
+            return self.multi_byte_usage > other.multi_byte_usage
 
         return self.chaos < other.chaos
 
     @property
     def multi_byte_usage(self) -> float:
-        return 1.0 - len(str(self)) / len(self.raw)
+        return 1.0 - (len(str(self)) / len(self.raw))
 
     def __str__(self) -> str:
         # Lazy Str Loading
@@ -207,7 +212,24 @@ class CharsetMatch:
         """
         if self._output_encoding is None or self._output_encoding != encoding:
             self._output_encoding = encoding
-            self._output_payload = str(self).encode(encoding, "replace")
+            decoded_string = str(self)
+            if (
+                self._preemptive_declaration is not None
+                and self._preemptive_declaration.lower()
+                not in ["utf-8", "utf8", "utf_8"]
+            ):
+                patched_header = sub(
+                    RE_POSSIBLE_ENCODING_INDICATION,
+                    lambda m: m.string[m.span()[0] : m.span()[1]].replace(
+                        m.groups()[0], iana_name(self._output_encoding)  # type: ignore[arg-type]
+                    ),
+                    decoded_string[:8192],
+                    1,
+                )
+
+                decoded_string = patched_header + decoded_string[8192:]
+
+            self._output_payload = decoded_string.encode(encoding, "replace")
 
         return self._output_payload  # type: ignore
 
@@ -263,7 +285,7 @@ class CharsetMatches:
                 )
             )
         # We should disable the submatch factoring when the input file is too heavy (conserve RAM usage)
-        if len(item.raw) <= TOO_BIG_SEQUENCE:
+        if len(item.raw) < TOO_BIG_SEQUENCE:
             for match in self._results:
                 if match.fingerprint == item.fingerprint and match.chaos == item.chaos:
                     match.add_submatch(item)

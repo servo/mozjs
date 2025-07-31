@@ -23,7 +23,7 @@
 #include "js/Printer.h"               // js::GenericPrinter
 #include "js/RegExp.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlags
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 #include "util/Unicode.h"
 #include "vm/JSONPrinter.h"  // js::JSONPrinter
 #include "vm/MatchPairs.h"
@@ -38,7 +38,6 @@
 
 using namespace js;
 
-using JS::AutoStableStringChars;
 using JS::CompileOptions;
 using JS::RegExpFlag;
 using JS::RegExpFlags;
@@ -173,21 +172,27 @@ static bool FinishRegExpClassInit(JSContext* cx, JS::HandleObject ctor,
 static const ClassSpec RegExpObjectClassSpec = {
     GenericCreateConstructor<js::regexp_construct, 2, gc::AllocKind::FUNCTION>,
     GenericCreatePrototype<RegExpObject>,
-    nullptr,
+    js::regexp_static_methods,
     js::regexp_static_props,
     js::regexp_methods,
     js::regexp_properties,
-    FinishRegExpClassInit};
+    FinishRegExpClassInit,
+};
 
 const JSClass RegExpObject::class_ = {
     "RegExp",
     JSCLASS_HAS_RESERVED_SLOTS(RegExpObject::RESERVED_SLOTS) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_RegExp),
-    JS_NULL_CLASS_OPS, &RegExpObjectClassSpec};
+    JS_NULL_CLASS_OPS,
+    &RegExpObjectClassSpec,
+};
 
 const JSClass RegExpObject::protoClass_ = {
-    "RegExp.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_RegExp),
-    JS_NULL_CLASS_OPS, &RegExpObjectClassSpec};
+    "RegExp.prototype",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_RegExp),
+    JS_NULL_CLASS_OPS,
+    &RegExpObjectClassSpec,
+};
 
 template <typename CharT>
 RegExpObject* RegExpObject::create(JSContext* cx, const CharT* chars,
@@ -325,6 +330,9 @@ void ForEachRegExpFlag(JS::RegExpFlags flags, KnownF known, UnknownF unknown) {
       case RegExpFlag::Unicode:
         known("Unicode", "u");
         break;
+      case RegExpFlag::UnicodeSets:
+        known("UnicodeSets", "v");
+        break;
       case RegExpFlag::Sticky:
         known("Sticky", "y");
         break;
@@ -386,7 +394,7 @@ static MOZ_ALWAYS_INLINE bool IsRegExpLineTerminator(const char16_t c) {
 }
 
 static MOZ_ALWAYS_INLINE bool AppendEscapedLineTerminator(
-    StringBuffer& sb, const JS::Latin1Char c) {
+    StringBuilder& sb, const JS::Latin1Char c) {
   switch (c) {
     case '\n':
       if (!sb.append('n')) {
@@ -404,7 +412,7 @@ static MOZ_ALWAYS_INLINE bool AppendEscapedLineTerminator(
   return true;
 }
 
-static MOZ_ALWAYS_INLINE bool AppendEscapedLineTerminator(StringBuffer& sb,
+static MOZ_ALWAYS_INLINE bool AppendEscapedLineTerminator(StringBuilder& sb,
                                                           const char16_t c) {
   switch (c) {
     case '\n':
@@ -434,9 +442,9 @@ static MOZ_ALWAYS_INLINE bool AppendEscapedLineTerminator(StringBuffer& sb,
 }
 
 template <typename CharT>
-static MOZ_ALWAYS_INLINE bool SetupBuffer(StringBuffer& sb,
-                                          const CharT* oldChars, size_t oldLen,
-                                          const CharT* it) {
+static MOZ_ALWAYS_INLINE bool SetupBuilder(StringBuilder& sb,
+                                           const CharT* oldChars, size_t oldLen,
+                                           const CharT* it) {
   if constexpr (std::is_same_v<CharT, char16_t>) {
     if (!sb.ensureTwoByteChars()) {
       return false;
@@ -451,9 +459,9 @@ static MOZ_ALWAYS_INLINE bool SetupBuffer(StringBuffer& sb,
   return true;
 }
 
-// Note: leaves the string buffer empty if no escaping need be performed.
+// Note: leaves the string builder empty if no escaping need be performed.
 template <typename CharT>
-static bool EscapeRegExpPattern(StringBuffer& sb, const CharT* oldChars,
+static bool EscapeRegExpPattern(StringBuilder& sb, const CharT* oldChars,
                                 size_t oldLen) {
   bool inBrackets = false;
   bool previousCharacterWasBackslash = false;
@@ -470,7 +478,7 @@ static bool EscapeRegExpPattern(StringBuffer& sb, const CharT* oldChars,
         if (sb.empty()) {
           // This is the first char we've seen that needs escaping,
           // copy everything up to this point.
-          if (!SetupBuffer(sb, oldChars, oldLen, it)) {
+          if (!SetupBuilder(sb, oldChars, oldLen, it)) {
             return false;
           }
         }
@@ -487,7 +495,7 @@ static bool EscapeRegExpPattern(StringBuffer& sb, const CharT* oldChars,
       if (sb.empty()) {
         // This is the first char we've seen that needs escaping,
         // copy everything up to this point.
-        if (!SetupBuffer(sb, oldChars, oldLen, it)) {
+        if (!SetupBuilder(sb, oldChars, oldLen, it)) {
           return false;
         }
       }
@@ -636,7 +644,7 @@ template bool js::HasRegExpMetaChars<Latin1Char>(const Latin1Char* chars,
 template bool js::HasRegExpMetaChars<char16_t>(const char16_t* chars,
                                                size_t length);
 
-bool js::StringHasRegExpMetaChars(JSLinearString* str) {
+bool js::StringHasRegExpMetaChars(const JSLinearString* str) {
   AutoCheckCannotGC nogc;
   if (str->hasLatin1Chars()) {
     return HasRegExpMetaChars(str->latin1Chars(nogc), str->length());
@@ -921,7 +929,8 @@ static size_t StepBackToLeadSurrogate(const JSLinearString* input,
   return index;
 }
 
-static RegExpRunStatus ExecuteAtomImpl(RegExpShared* re, JSLinearString* input,
+static RegExpRunStatus ExecuteAtomImpl(RegExpShared* re,
+                                       const JSLinearString* input,
                                        size_t start, MatchPairs* matches) {
   MOZ_ASSERT(re->pairCount() == 1);
   size_t length = input->length();
@@ -958,8 +967,8 @@ static RegExpRunStatus ExecuteAtomImpl(RegExpShared* re, JSLinearString* input,
 }
 
 RegExpRunStatus js::ExecuteRegExpAtomRaw(RegExpShared* re,
-                                         JSLinearString* input, size_t start,
-                                         MatchPairs* matchPairs) {
+                                         const JSLinearString* input,
+                                         size_t start, MatchPairs* matchPairs) {
   AutoUnsafeCallWithABI unsafe;
   return ExecuteAtomImpl(re, input, start, matchPairs);
 }

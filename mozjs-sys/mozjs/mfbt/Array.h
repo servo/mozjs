@@ -39,14 +39,14 @@ class Array {
                   "parameter Length");
   }
 
-  T& operator[](size_t aIndex) {
+  constexpr T& operator[](size_t aIndex) {
     if (MOZ_UNLIKELY(aIndex >= Length)) {
       detail::InvalidArrayIndex_CRASH(aIndex, Length);
     }
     return mArr[aIndex];
   }
 
-  const T& operator[](size_t aIndex) const {
+  constexpr const T& operator[](size_t aIndex) const {
     if (MOZ_UNLIKELY(aIndex >= Length)) {
       detail::InvalidArrayIndex_CRASH(aIndex, Length);
     }
@@ -74,6 +74,9 @@ class Array {
   iterator end() { return mArr + Length; }
   constexpr const_iterator end() const { return mArr + Length; }
   constexpr const_iterator cend() const { return end(); }
+
+  // Method for std::size.
+  constexpr size_t size() const { return Length; }
 
   // Methods for reverse iterating.
   reverse_iterator rbegin() { return reverse_iterator(end()); }

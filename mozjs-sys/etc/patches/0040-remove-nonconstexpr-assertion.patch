@@ -1,0 +1,13 @@
+diff --git a/js/src/vm/SavedFrame.h b/js/src/vm/SavedFrame.h
+index b07090514..313dfad2c 100644
+--- a/js/src/vm/SavedFrame.h
++++ b/js/src/vm/SavedFrame.h
+@@ -201,7 +201,7 @@ inline void AssertObjectIsSavedFrameOrWrapper(JSContext* cx,
+ struct ReconstructedSavedFramePrincipals : public JSPrincipals {
+   explicit constexpr ReconstructedSavedFramePrincipals()
+       : JSPrincipals(JSPrincipals::RefCount(1)) {
+-    MOZ_ASSERT(is(this));
++    //MOZ_ASSERT(is(this));
+   }
+
+   [[nodiscard]] bool write(JSContext* cx,

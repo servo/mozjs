@@ -204,9 +204,17 @@ fn build_spidermonkey(build_dir: &Path) {
         .current_dir(&build_dir)
         .env("SRC_DIR", &cargo_manifest_dir.join("mozjs"))
         .env("NO_RUST_PANIC_HOOK", "1")
-        .status()
+        .output()
         .expect(&format!("Failed to run `{:?}`", make));
-    assert!(result.success());
+    if !result.status.success() {
+        println!(
+            "stderr output:\n{}",
+            String::from_utf8(result.stderr).unwrap()
+        );
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        println!("build output:\n{}", stdout,);
+    }
+    assert!(result.status.success());
 
     if target.contains("windows") {
         let mut make_static = cc::Build::new();
@@ -247,6 +255,10 @@ fn build(build_dir: &Path, target: BuildTarget) {
 
     for flag in cc_flags(false) {
         build.flag_if_supported(flag);
+    }
+
+    if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
+        build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
     }
 
     build.flag(include_file_flag(build.get_compiler().is_like_msvc()));
@@ -719,6 +731,11 @@ impl BuildTarget {
                 "JS::dbg::Builder_Object",
                 "JS::dbg::Builder_Object_Base",
                 "JS::dbg::BuilderOrigin",
+                "JS::RootedTuple",
+                "mozilla::external::AtomicRefCounted",
+                "mozilla::ProfilerStringView",
+                "mozilla::ProfilerString8View",
+                "mozilla::ProfilerString16View",
             ],
             BuildTarget::JSGlue => &[
                 "JS::.*",
@@ -785,6 +802,7 @@ impl BuildTarget {
     fn opaque_types(self) -> &'static [&'static str] {
         match self {
             BuildTarget::JSApi => &[
+                "JS::EnvironmentChain",
                 "JS::StackGCVector.*",
                 "JS::PersistentRooted.*",
                 "JS::detail::CallArgsBase",
@@ -797,6 +815,9 @@ impl BuildTarget {
                 "mozilla::detail::Hash.*",
                 "RefPtr_Proxy.*",
                 "std::.*",
+                "mozilla::baseprofiler::BaseProfilerProcessId",
+                "mozilla::baseprofiler::BaseProfilerThreadId",
+                "mozilla::MarkerThreadId",
             ],
             BuildTarget::JSGlue => &[
                 "JS::Auto.*Impl",

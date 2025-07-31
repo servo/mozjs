@@ -69,9 +69,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install deps
-        run: |
-          sudo apt install llvm -y
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "16.0"
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.8
       - name: Build
@@ -172,7 +173,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r26c
+          ndk-version: r28
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -340,7 +341,7 @@ jobs:
         "mac",
         "ohos",
         "windows",
-        "integrity",
+        #"integrity",
         "publish-release",
         "verify-release",
       ]

@@ -1,0 +1,13 @@
+diff --git a/js/public/CompileOptions.h b/js/public/CompileOptions.h
+index 810f5e29e..e6b7ab797 100644
+--- a/js/public/CompileOptions.h
++++ b/js/public/CompileOptions.h
+@@ -123,7 +123,7 @@ class JS_PUBLIC_API ReadOnlyDecodeOptions;
+
+ // Compilation-specific part of JS::ContextOptions which is supposed to be
+ // configured by user prefs.
+-class JS_PUBLIC_API PrefableCompileOptions {
++class JS_PUBLIC_API __attribute__((__packed__)) PrefableCompileOptions {
+  public:
+   PrefableCompileOptions()
+       : importAttributes_(false),

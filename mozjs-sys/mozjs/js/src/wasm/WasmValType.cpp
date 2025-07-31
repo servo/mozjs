@@ -82,7 +82,7 @@ TypeDefKind RefType::typeDefKind() const {
   MOZ_CRASH("switch is exhaustive");
 }
 
-static bool ToRefType(JSContext* cx, JSLinearString* typeLinearStr,
+static bool ToRefType(JSContext* cx, const JSLinearString* typeLinearStr,
                       RefType* out) {
   if (StringEqualsLiteral(typeLinearStr, "anyfunc") ||
       StringEqualsLiteral(typeLinearStr, "funcref")) {
@@ -101,46 +101,42 @@ static bool ToRefType(JSContext* cx, JSLinearString* typeLinearStr,
       return true;
     }
   }
-#ifdef ENABLE_WASM_GC
-  if (GcAvailable(cx)) {
-    if (StringEqualsLiteral(typeLinearStr, "anyref")) {
-      *out = RefType::any();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "eqref")) {
-      *out = RefType::eq();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "i31ref")) {
-      *out = RefType::i31();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "structref")) {
-      *out = RefType::struct_();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "arrayref")) {
-      *out = RefType::array();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullfuncref")) {
-      *out = RefType::nofunc();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullexternref")) {
-      *out = RefType::noextern();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullexnref")) {
-      *out = RefType::noexn();
-      return true;
-    }
-    if (StringEqualsLiteral(typeLinearStr, "nullref")) {
-      *out = RefType::none();
-      return true;
-    }
+  if (StringEqualsLiteral(typeLinearStr, "anyref")) {
+    *out = RefType::any();
+    return true;
   }
-#endif
+  if (StringEqualsLiteral(typeLinearStr, "eqref")) {
+    *out = RefType::eq();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "i31ref")) {
+    *out = RefType::i31();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "structref")) {
+    *out = RefType::struct_();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "arrayref")) {
+    *out = RefType::array();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullfuncref")) {
+    *out = RefType::nofunc();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullexternref")) {
+    *out = RefType::noextern();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullexnref")) {
+    *out = RefType::noexn();
+    return true;
+  }
+  if (StringEqualsLiteral(typeLinearStr, "nullref")) {
+    *out = RefType::none();
+    return true;
+  }
 
   JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                            JSMSG_WASM_BAD_STRING_VAL_TYPE);
@@ -336,7 +332,7 @@ UniqueChars wasm::ToString(StorageType type, const TypeContext* types) {
   return DuplicateString(literal);
 }
 
-UniqueChars wasm::ToString(const Maybe<ValType>& type,
+UniqueChars wasm::ToString(const mozilla::Maybe<ValType>& type,
                            const TypeContext* types) {
   return type ? ToString(type.ref(), types) : JS_smprintf("%s", "void");
 }
