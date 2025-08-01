@@ -525,6 +525,15 @@ impl FromJSValConvertible for f64 {
     }
 }
 
+/// Copies chars to the string
+unsafe fn fast_copy(chars: &[u8]) -> String {
+    let mut v = vec![0; chars.len() * 2];
+    let real_size = encoding_rs::mem::convert_latin1_to_utf8(chars, v.as_mut_slice());
+
+    v.truncate(real_size);
+    String::from_utf8_unchecked(v)
+}
+
 /// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
 /// `String`.
 pub unsafe fn latin1_to_string(cx: *mut JSContext, s: *mut JSString) -> String {
@@ -535,9 +544,7 @@ pub unsafe fn latin1_to_string(cx: *mut JSContext, s: *mut JSString) -> String {
     assert!(!chars.is_null());
 
     let chars = slice::from_raw_parts(chars, length as usize);
-    let mut s = String::with_capacity(length as usize);
-    s.extend(chars.iter().map(|&c| c as char));
-    s
+    fast_copy(chars)
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
