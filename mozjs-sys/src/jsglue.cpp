@@ -692,26 +692,10 @@ void DeleteCompileOptions(JS::ReadOnlyCompileOptions* aOpts) {
   delete static_cast<JS::OwningCompileOptions*>(aOpts);
 }
 
-enum class IntroductionType : unsigned {
-  Undefined,
-  InlineScript,
-};
-
-JS::ReadOnlyCompileOptions* NewCompileOptions(
-    JSContext* aCx, const char* aFile, unsigned aLine,
-    IntroductionType introductionType) {
+JS::ReadOnlyCompileOptions* NewCompileOptions(JSContext* aCx, const char* aFile,
+                                              unsigned aLine) {
   JS::CompileOptions opts(aCx);
   opts.setFileAndLine(aFile, aLine);
-  switch (introductionType) {
-    case IntroductionType::Undefined:
-      opts.setIntroductionType(nullptr);
-      break;
-    case IntroductionType::InlineScript:
-      opts.setIntroductionType("inlineScript");
-      break;
-    default:
-      return nullptr;
-  }
 
   JS::OwningCompileOptions* owned = new JS::OwningCompileOptions(aCx);
   if (!owned) {

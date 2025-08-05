@@ -403,7 +403,7 @@ impl Runtime {
         filename: &str,
         line_num: u32,
         rval: MutableHandleValue,
-        introduction_type: IntroductionType,
+        introduction_type: &'static CStr,
     ) -> Result<(), ()> {
         debug!(
             "Evaluating script from {} with content {}",
@@ -411,7 +411,8 @@ impl Runtime {
         );
 
         let _ac = JSAutoRealm::new(self.cx(), glob.get());
-        let options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num, introduction_type) };
+        let mut options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num) };
+        options.set_introduction_type(introduction_type);
 
         unsafe {
             let mut source = transform_str_to_source_text(&script);
@@ -522,11 +523,17 @@ pub struct CompileOptionsWrapper {
 }
 
 impl CompileOptionsWrapper {
-    pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32, introduction_type: IntroductionType) -> Self {
+    pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32) -> Self {
         let filename_cstr = ffi::CString::new(filename.as_bytes()).unwrap();
-        let ptr = NewCompileOptions(cx, filename_cstr.as_ptr(), line, introduction_type);
+        let ptr = NewCompileOptions(cx, filename_cstr.as_ptr(), line);
         assert!(!ptr.is_null());
         Self { ptr }
+    }
+
+    pub fn set_introduction_type(&mut self, introduction_type: &'static CStr) {
+        unsafe {
+            (*self.ptr)._base.introductionType = introduction_type.as_ptr();
+        }
     }
 }
 
