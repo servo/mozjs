@@ -424,6 +424,11 @@ impl Runtime {
             }
         }
     }
+
+    pub fn new_compile_options(&self, filename: &str, line: u32) -> CompileOptionsWrapper {
+        // SAFETY: `cx` argument points to a non-null, valid JSContext
+        unsafe { CompileOptionsWrapper::new(self.cx(), filename, line) }
+    }
 }
 
 impl Drop for Runtime {
@@ -519,6 +524,9 @@ pub struct CompileOptionsWrapper {
 }
 
 impl CompileOptionsWrapper {
+    /// # Safety
+    /// `cx` must point to a non-null, valid [`JSContext`].
+    /// To create an instance from safe code, use [`Runtime::new_compile_options`].
     pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32) -> Self {
         let filename_cstr = ffi::CString::new(filename.as_bytes()).unwrap();
         let ptr = NewCompileOptions(cx, filename_cstr.as_ptr(), line);
