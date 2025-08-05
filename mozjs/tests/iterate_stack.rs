@@ -92,8 +92,15 @@ fn iterate_stack_frames() {
             foo();
         ";
         rooted!(in(context) let mut rval = UndefinedValue());
+        let options = runtime.new_compile_options("test.js", 0);
         assert!(runtime
-            .evaluate_script(global.handle(), javascript, "test.js", 0, rval.handle_mut())
+            .evaluate_script(
+                global.handle(),
+                javascript,
+                "test.js",
+                rval.handle_mut(),
+                options
+            )
             .is_ok());
     }
 }

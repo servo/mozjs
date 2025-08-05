@@ -44,7 +44,14 @@ fn run(rt: Runtime) {
      */
     let source: &'static str = "40 + 2";
 
-    let res = rt.evaluate_script(global.handle(), source, filename, lineno, rval.handle_mut());
+    let options = rt.new_compile_options(filename, lineno);
+    let res = rt.evaluate_script(
+        global.handle(),
+        source,
+        filename,
+        rval.handle_mut(),
+        options,
+    );
 
     if res.is_ok() {
         /* Should get a number back from the example source. */
