@@ -32,7 +32,6 @@ use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuf
 use crate::glue::{
     GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector,
 };
-use crate::glue::IntroductionType;
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
 use crate::jsapi::js::frontend::CompilationStencil;
@@ -401,9 +400,8 @@ impl Runtime {
         glob: HandleObject,
         script: &str,
         filename: &str,
-        line_num: u32,
         rval: MutableHandleValue,
-        introduction_type: &'static CStr,
+        options: CompileOptionsWrapper,
     ) -> Result<(), ()> {
         debug!(
             "Evaluating script from {} with content {}",
@@ -411,8 +409,6 @@ impl Runtime {
         );
 
         let _ac = JSAutoRealm::new(self.cx(), glob.get());
-        let mut options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num) };
-        options.set_introduction_type(introduction_type);
 
         unsafe {
             let mut source = transform_str_to_source_text(&script);
