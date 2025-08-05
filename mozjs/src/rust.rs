@@ -7,8 +7,8 @@
 use std::cell::Cell;
 use std::char;
 use std::default::Default;
-use std::ffi;
 use std::ffi::CStr;
+use std::ffi::{self, CString};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
@@ -399,17 +399,16 @@ impl Runtime {
         &self,
         glob: HandleObject,
         script: &str,
-        filename: &str,
-        line_num: u32,
         rval: MutableHandleValue,
+        options: CompileOptionsWrapper,
     ) -> Result<(), ()> {
         debug!(
             "Evaluating script from {} with content {}",
-            filename, script
+            options.filename(),
+            script
         );
 
         let _ac = JSAutoRealm::new(self.cx(), glob.get());
-        let options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num) };
 
         unsafe {
             let mut source = transform_str_to_source_text(&script);
@@ -424,6 +423,11 @@ impl Runtime {
                 Ok(())
             }
         }
+    }
+
+    pub fn new_compile_options(&self, filename: &str, line: u32) -> CompileOptionsWrapper {
+        // SAFETY: `cx` argument points to a non-null, valid JSContext
+        unsafe { CompileOptionsWrapper::new(self.cx(), filename, line) }
     }
 }
 
@@ -517,14 +521,28 @@ impl Drop for RootedObjectVectorWrapper {
 
 pub struct CompileOptionsWrapper {
     pub ptr: *mut ReadOnlyCompileOptions,
+    filename: CString,
 }
 
 impl CompileOptionsWrapper {
+    /// # Safety
+    /// `cx` must point to a non-null, valid [`JSContext`].
+    /// To create an instance from safe code, use [`Runtime::new_compile_options`].
     pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32) -> Self {
-        let filename_cstr = ffi::CString::new(filename.as_bytes()).unwrap();
-        let ptr = NewCompileOptions(cx, filename_cstr.as_ptr(), line);
+        let filename = CString::new(filename.as_bytes()).unwrap();
+        let ptr = NewCompileOptions(cx, filename.as_ptr(), line);
         assert!(!ptr.is_null());
-        Self { ptr }
+        Self { ptr, filename }
+    }
+
+    pub fn filename(&self) -> &str {
+        self.filename.to_str().expect("Guaranteed by new")
+    }
+
+    pub fn set_introduction_type(&mut self, introduction_type: &'static CStr) {
+        unsafe {
+            (*self.ptr)._base.introductionType = introduction_type.as_ptr();
+        }
     }
 }
 

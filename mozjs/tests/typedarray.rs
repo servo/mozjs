@@ -34,13 +34,13 @@ fn typedarray() {
         let _ac = JSAutoRealm::new(context, global.get());
 
         rooted!(in(context) let mut rval = UndefinedValue());
+        let options = runtime.new_compile_options("test", 1);
         assert!(runtime
             .evaluate_script(
                 global.handle(),
                 "new Uint8Array([0, 2, 4])",
-                "test",
-                1,
-                rval.handle_mut()
+                rval.handle_mut(),
+                options,
             )
             .is_ok());
         assert!(rval.is_object());

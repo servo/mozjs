@@ -54,13 +54,13 @@ impl SM {
         let cx = self.rt.cx();
         rooted!(in(cx) let mut rval = UndefinedValue());
         unsafe {
+            let options = self.rt.new_compile_options("test", 1);
             self.rt
                 .evaluate_script(
                     HandleObject::from_raw(self.global.handle()),
                     js,
-                    "test",
-                    1,
                     rval.handle_mut(),
+                    options,
                 )
                 .unwrap();
             assert!(!JS_IsExceptionPending(cx));
