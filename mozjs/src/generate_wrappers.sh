@@ -35,7 +35,7 @@ find_latest_version_of_file_and_parse() {
   rustfmt "target/wrap_$1" --config max_width=1000
   
   # parse reformated file
-  grep_heur "target/wrap_$1" | $gsed 's/\(.*\)/wrap!('"$2"': \1);/g'  > "mozjs/src/$2_wrappers.in"
+  grep_heur "target/wrap_$1" | $gsed 's/\(.*\)/wrap!('"$2"': \1);/g'  > "mozjs/src/$2_wrappers.in.rs"
 }
 
 find_latest_version_of_file_and_parse jsapi.rs jsapi
