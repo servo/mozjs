@@ -46,13 +46,7 @@ fn test_panic() {
 
         rooted!(in(context) let mut rval = UndefinedValue());
         let options = runtime.new_compile_options("test.js", 0);
-        let _ = runtime.evaluate_script(
-            global.handle(),
-            "test();",
-            "test.js",
-            rval.handle_mut(),
-            options,
-        );
+        let _ = runtime.evaluate_script(global.handle(), "test();", rval.handle_mut(), options);
     }
 }
 

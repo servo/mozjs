@@ -35,7 +35,6 @@ fn stack_limit() {
             .evaluate_script(
                 global.handle(),
                 "function f() { f.apply() } f()",
-                "test",
                 rval.handle_mut(),
                 options,
             )

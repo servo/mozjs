@@ -59,7 +59,6 @@ impl SM {
                 .evaluate_script(
                     HandleObject::from_raw(self.global.handle()),
                     js,
-                    "test",
                     rval.handle_mut(),
                     options,
                 )

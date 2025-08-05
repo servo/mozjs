@@ -39,7 +39,6 @@ fn typedarray() {
             .evaluate_script(
                 global.handle(),
                 "new Uint8Array([0, 2, 4])",
-                "test",
                 rval.handle_mut(),
                 options,
             )

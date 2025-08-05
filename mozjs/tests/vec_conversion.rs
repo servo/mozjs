@@ -59,7 +59,6 @@ fn vec_conversion() {
             .evaluate_script(
                 global.handle(),
                 "new Set([1, 2, 3])",
-                "test",
                 rval.handle_mut(),
                 options,
             )
@@ -71,7 +70,7 @@ fn vec_conversion() {
 
         let options = runtime.new_compile_options("test", 1);
         assert!(runtime
-            .evaluate_script(global.handle(), "({})", "test", rval.handle_mut(), options)
+            .evaluate_script(global.handle(), "({})", rval.handle_mut(), options)
             .is_ok());
         let converted = Vec::<i32>::from_jsval(context, rval.handle(), ConversionBehavior::Default);
         assert!(match converted {

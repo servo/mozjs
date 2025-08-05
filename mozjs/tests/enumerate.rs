@@ -36,13 +36,7 @@ fn enumerate() {
         rooted!(in(context) let mut rval = UndefinedValue());
         let options = runtime.new_compile_options("test", 1);
         assert!(runtime
-            .evaluate_script(
-                global.handle(),
-                "({ 'a': 7 })",
-                "test",
-                rval.handle_mut(),
-                options,
-            )
+            .evaluate_script(global.handle(), "({ 'a': 7 })", rval.handle_mut(), options,)
             .is_ok());
         assert!(rval.is_object());
 
