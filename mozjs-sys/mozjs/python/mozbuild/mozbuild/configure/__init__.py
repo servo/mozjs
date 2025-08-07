@@ -320,6 +320,7 @@ class ConfigureSandbox(dict):
                 "max",
                 "min",
                 "range",
+                "reversed",
                 "set",
                 "sorted",
                 "tuple",
@@ -431,9 +432,11 @@ class ConfigureSandbox(dict):
 
             def wrapped(*args, **kwargs):
                 out_args = [
-                    six.ensure_text(arg, encoding=encoding or "utf-8")
-                    if isinstance(arg, six.binary_type)
-                    else arg
+                    (
+                        six.ensure_text(arg, encoding=encoding or "utf-8")
+                        if isinstance(arg, six.binary_type)
+                        else arg
+                    )
                     for arg in args
                 ]
                 return method(*out_args, **kwargs)
@@ -449,7 +452,7 @@ class ConfigureSandbox(dict):
 
         self._help = None
         self._help_option = self.option_impl(
-            "--help", help="print this message", category=HELP_OPTIONS_CATEGORY
+            "--help", help="Print this message", category=HELP_OPTIONS_CATEGORY
         )
         self._seen.add(self._help_option)
 

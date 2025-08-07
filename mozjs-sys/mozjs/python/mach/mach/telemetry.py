@@ -91,9 +91,6 @@ def is_applicable_telemetry_environment():
         # we don't want to collect telemetry again down here.
         return False
 
-    if any(e in os.environ for e in ("MOZ_AUTOMATION", "TASK_ID")):
-        return False
-
     return True
 
 
@@ -127,7 +124,7 @@ def resolve_setting_from_arcconfig(topsrcdir: Path, setting):
         topsrcdir / ".arcconfig",
     ]:
         try:
-            with open(arcconfig_path, "r") as arcconfig_file:
+            with open(arcconfig_path) as arcconfig_file:
                 arcconfig = json.load(arcconfig_file)
         except (json.JSONDecodeError, FileNotFoundError):
             continue
@@ -144,7 +141,7 @@ def resolve_is_employee_by_credentials(topsrcdir: Path):
         return None
 
     try:
-        with open(arcrc_path(), "r") as arcrc_file:
+        with open(arcrc_path()) as arcrc_file:
             arcrc = json.load(arcrc_file)
     except (json.JSONDecodeError, FileNotFoundError):
         return None

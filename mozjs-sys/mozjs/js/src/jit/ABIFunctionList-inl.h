@@ -42,7 +42,6 @@
 #include "js/Conversions.h"  // JS::ToInt32
 // JSJitGetterOp, JSJitSetterOp, JSJitMethodOp
 #include "js/experimental/JitInfo.h"
-#include "js/Utility.h"  // js_free
 
 #include "proxy/Proxy.h"  // js::ProxyGetProperty
 
@@ -114,7 +113,6 @@ namespace jit {
   _(js::EmulatesUndefined)                                            \
   _(js::EmulatesUndefinedCheckFuse)                                   \
   _(js::ExecuteRegExpAtomRaw)                                         \
-  _(js_free)                                                          \
   _(js::hypot3)                                                       \
   _(js::hypot4)                                                       \
   _(js::Interpret)                                                    \
@@ -139,14 +137,18 @@ namespace jit {
   _(js::jit::AtomicsStore64)                                          \
   _(js::jit::AtomizeStringNoGC)                                       \
   _(js::jit::Bailout)                                                 \
+  _(js::jit::BaselineScript::OSREntryForFrame)                        \
   _(js::jit::BigIntNumberEqual<EqualityKind::Equal>)                  \
   _(js::jit::BigIntNumberEqual<EqualityKind::NotEqual>)               \
   _(js::jit::BigIntNumberCompare<ComparisonKind::LessThan>)           \
   _(js::jit::NumberBigIntCompare<ComparisonKind::LessThan>)           \
   _(js::jit::NumberBigIntCompare<ComparisonKind::GreaterThanOrEqual>) \
   _(js::jit::BigIntNumberCompare<ComparisonKind::GreaterThanOrEqual>) \
+  _(js::jit::DateFillLocalTimeSlots)                                  \
   _(js::jit::EqualStringsHelperPure)                                  \
   _(js::jit::FinishBailoutToBaseline)                                 \
+  _(js::jit::Float16ToFloat32)                                        \
+  _(js::jit::Float32ToFloat16)                                        \
   _(js::jit::FrameIsDebuggeeCheck)                                    \
   _(js::jit::GetContextSensitiveInterpreterStub)                      \
   _(js::jit::GetIndexFromString)                                      \
@@ -191,6 +193,7 @@ namespace jit {
   _(js::ProxyGetProperty)                                             \
   _(js::RegExpInstanceOptimizableRaw)                                 \
   _(js::RegExpPrototypeOptimizableRaw)                                \
+  _(js::RoundFloat16)                                                 \
   _(js::SetIteratorObject::next)                                      \
   _(js::StringToNumberPure)                                           \
   _(js::TypedArraySortFromJit)                                        \
@@ -206,7 +209,11 @@ namespace jit {
 // is not overloaded, you should prefer adding the function to
 // ABIFUNCTION_LIST instead. This list must be sorted with the name of the C++
 // function.
-#define ABIFUNCTION_AND_TYPE_LIST(_) _(JS::ToInt32, int32_t (*)(double))
+#define ABIFUNCTION_AND_TYPE_LIST(_)                    \
+  _(JS::ToInt32, int32_t (*)(double))                   \
+  _(js::jit::RoundFloat16ToFloat32, float (*)(int32_t)) \
+  _(js::jit::RoundFloat16ToFloat32, float (*)(float))   \
+  _(js::jit::RoundFloat16ToFloat32, float (*)(double))
 
 // List of all ABI function signature which are using a computed function
 // pointer instead of a statically known function pointer.

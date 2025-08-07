@@ -47,6 +47,7 @@ TEST_HARNESS_BINS = [
     "screenshot",
     "screentopng",
     "ssltunnel",
+    "test_stub_installer",
     "xpcshell",
     "plugin-container",
 ]
@@ -471,7 +472,7 @@ ARCHIVE_FILES = {
                 "*.toml",
                 "localization/**",
                 "modules/**",
-                "update.locale",
+                "default.locale",
                 "greprefs.js",
             ],
             "dest": "bin",

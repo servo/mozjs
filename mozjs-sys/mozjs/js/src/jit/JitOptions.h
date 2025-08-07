@@ -75,6 +75,7 @@ struct DefaultJitOptions {
 #endif
   bool baselineInterpreter;
   bool baselineJit;
+  bool baselineBatching;
   bool ion;
   bool jitForTrustedPrincipals;
   bool nativeRegExp;
@@ -98,6 +99,7 @@ struct DefaultJitOptions {
   bool emitInterpreterEntryTrampoline;
   uint32_t baselineInterpreterWarmUpThreshold;
   uint32_t baselineJitWarmUpThreshold;
+  uint32_t baselineQueueCapacity;
   uint32_t trialInliningWarmUpThreshold;
   uint32_t trialInliningInitialWarmUpCount;
   UseMonomorphicInlining monomorphicInlining = UseMonomorphicInlining::Default;
@@ -125,6 +127,10 @@ struct DefaultJitOptions {
   uint32_t wasmBatchBaselineThreshold;
   uint32_t wasmBatchIonThreshold;
   mozilla::Maybe<IonRegisterAllocator> forcedRegisterAllocator;
+#ifdef ENABLE_JS_AOT_ICS
+  bool enableAOTICs;
+  bool enableAOTICEnforce;
+#endif
 
   // Spectre mitigation flags. Each mitigation has its own flag in order to
   // measure the effectiveness of each mitigation with various proof of

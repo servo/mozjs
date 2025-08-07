@@ -109,8 +109,8 @@ struct AllocationIntegrityState {
   Vector<IntegrityItem, 10, SystemAllocPolicy> worklist;
 
   // Set of all items that have already been processed.
-  typedef HashSet<IntegrityItem, IntegrityItem, SystemAllocPolicy>
-      IntegrityItemSet;
+  using IntegrityItemSet =
+      HashSet<IntegrityItem, IntegrityItem, SystemAllocPolicy>;
   IntegrityItemSet seen;
 
   [[nodiscard]] bool checkIntegrity(LBlock* block, LInstruction* ins,
@@ -291,10 +291,9 @@ class RegisterAllocator {
  public:
   template <typename TakeableSet>
   static void takeWasmRegisters(TakeableSet& regs) {
-#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) ||        \
-    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS32) ||   \
-    defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
-    defined(JS_CODEGEN_RISCV64)
+#if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM) ||      \
+    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_MIPS64) || \
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
     regs.take(HeapReg);
 #endif
     MOZ_ASSERT(!regs.has(FramePointer));

@@ -132,6 +132,7 @@ FEDORA_DISTROS = (
     "nobara",
     "oracle",
     "fedora-asahi-remix",
+    "ultramarine",
 )
 
 ADD_GIT_CINNABAR_PATH = """
@@ -522,54 +523,48 @@ class Bootstrapper(object):
 
         print("Checking for Dev Drive...")
 
+        if not shutil.which("powershell"):
+            print(
+                "PowerShell is not available on the system path. Unable to check for Dev Drive."
+            )
+            return
+
         try:
-            ver_output = subprocess.run(
-                ["cmd.exe", "/c", "ver"], capture_output=True, text=True, check=True
-            ).stdout
+            ver_output = subprocess.check_output(["cmd.exe", "/c", "ver"], text=True)
             current_windows_version = extract_windows_version_number(ver_output)
 
             if current_windows_version < DEV_DRIVE_MINIMUM_VERSION:
                 return
 
-            topsrcdir_drive_letter = Path(topsrcdir).drive[0]
-
-            volume_info = subprocess.run(
+            file_system_info = subprocess.check_output(
                 [
                     "powershell",
-                    "-command",
+                    "Get-Item",
+                    "-Path",
+                    topsrcdir,
+                    "|",
                     "Get-Volume",
-                    "-DriveLetter",
-                    topsrcdir_drive_letter,
+                    "|",
+                    "Select-Object",
+                    "FileSystem",
                 ],
-                capture_output=True,
                 text=True,
-                check=True,
-            ).stdout
-            volume_info = volume_info.lstrip().rstrip().split("\n")
-            type_index = volume_info[0].find("FileSystemType")
-            file_system_type = volume_info[2][type_index : type_index + 4]
-            drive_letter_index = volume_info[0].find("DriveLetter")
-            drive_letter = volume_info[2][drive_letter_index]
+            )
 
-            if topsrcdir_drive_letter == drive_letter:
-                if file_system_type == "ReFS":
-                    print(" The Firefox source repository is on a Dev Drive.")
-                else:
-                    print(
-                        DEV_DRIVE_SUGGESTION.format(
-                            topsrcdir, file_system_type, current_windows_version
-                        )
-                    )
-                    if self.instance.no_interactive:
-                        pass
-                    else:
-                        input("\nPress enter to continue.")
+            file_system_type = file_system_info.strip().split("\n")[2]
+
+            if file_system_type == "ReFS":
+                print(" The Firefox source repository is on a Dev Drive.")
             else:
                 print(
-                    DEV_DRIVE_DETECTION_ERROR.format(
-                        "Drive letter mismatch. Did 'Get-Volume' output change?"
+                    DEV_DRIVE_SUGGESTION.format(
+                        topsrcdir, file_system_type, current_windows_version
                     )
                 )
+                if self.instance.no_interactive:
+                    pass
+                else:
+                    input("\nPress enter to continue.")
 
         except subprocess.CalledProcessError as error:
             print(
@@ -692,7 +687,9 @@ def update_vct(hg: Path, root_state_dir: Path):
     return vct_dir
 
 
-def configure_mercurial(hg: Optional[Path], root_state_dir: Path):
+def configure_mercurial(
+    hg: Optional[Path], root_state_dir: Path, update_only: bool = False
+):
     """Run the Mercurial configuration wizard."""
     vct_dir = update_vct(hg, root_state_dir)
 
@@ -705,6 +702,8 @@ def configure_mercurial(hg: Optional[Path], root_state_dir: Path):
         f"extensions.configwizard={vct_dir}/hgext/configwizard",
         "configwizard",
     ]
+    if update_only:
+        args += ["--config", "configwizard.steps="]
     subprocess.call(args)
 
 
@@ -826,7 +825,7 @@ def update_git_tools(git: Optional[Path], root_state_dir: Path):
                 os.chmod(path, stat.S_IRWXU)
                 func(path)
             else:
-                raise
+                raise exc
 
         shutil.rmtree(str(cinnabar_dir), onerror=onerror)
 
@@ -841,6 +840,7 @@ def update_git_tools(git: Optional[Path], root_state_dir: Path):
     # git-cinnabar 0.6.0rc1 self-update had a bug that could leave an empty
     # file. If that happens, install from scratch.
     if not exists or cinnabar_exe.stat().st_size == 0:
+        import ssl
         from urllib.request import urlopen
 
         import certifi
@@ -851,10 +851,9 @@ def update_git_tools(git: Optional[Path], root_state_dir: Path):
         cinnabar_url = "https://github.com/glandium/git-cinnabar/"
         download_py = cinnabar_dir / "download.py"
         with open(download_py, "wb") as fh:
+            context = ssl.create_default_context(cafile=certifi.where())
             shutil.copyfileobj(
-                urlopen(
-                    f"{cinnabar_url}/raw/master/download.py", cafile=certifi.where()
-                ),
+                urlopen(f"{cinnabar_url}/raw/master/download.py", context=context),
                 fh,
             )
 

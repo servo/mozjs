@@ -279,7 +279,7 @@ static_assert(PAYLOAD_INFO_SHIFT == 0);
 
 #ifdef JS_NUNBOX32
 static inline NunboxPartKind AllocationToPartKind(const LAllocation& a) {
-  if (a.isRegister()) {
+  if (a.isGeneralReg()) {
     return Part_Reg;
   }
   if (a.isStackSlot()) {
@@ -541,7 +541,7 @@ static inline LAllocation PartFromStream(CompactBufferReader& stream,
   }
 
   if (kind == Part_Stack) {
-    return LStackSlot(info);
+    return LStackSlot(info, LStackSlot::Word);
   }
 
   MOZ_ASSERT(kind == Part_Arg);

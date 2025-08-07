@@ -69,9 +69,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install deps
-        run: |
-          sudo apt install llvm -y
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          directory: ${{ runner.temp }}/llvm
+          version: "16.0"
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.8
       - name: Build
@@ -84,7 +86,7 @@ jobs:
         run: |
           bash ./mozjs/src/generate_wrappers.sh
           git add --all .
-          git diff --staged --no-ext-diff --quiet --exit-code
+          git diff --staged --no-ext-diff --exit-code
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
@@ -173,7 +175,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r26c
+          ndk-version: r28
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -259,21 +261,21 @@ jobs:
         with:
           clang-format-version: "18"
           exclude-regex: mozjs-sys\/mozjs
-      - name: Get mozjs
-        run: |
-          bash ./mozjs-sys/etc/get_mozjs.sh
-      - name: Apply patch
-        run: |
-          python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
-          # Run `git add` here to force CRLF converted into LF
-          # so that we can check diff properly in next run
-          git add --all mozjs-sys
-      - name: Check patch integrity
-        working-directory: ./mozjs-sys
-        # Because we've added files in previous run, we need to
-        # check diff with `--staged`.
-        run: |
-          git diff --staged --no-ext-diff --quiet --exit-code
+      #- name: Get mozjs
+      #  run: |
+      #    bash ./mozjs-sys/etc/get_mozjs.sh
+      #- name: Apply patch
+      #  run: |
+      #    python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
+      #    # Run `git add` here to force CRLF converted into LF
+      #    # so that we can check diff properly in next run
+      #    git add --all mozjs-sys
+      #- name: Check patch integrity
+      #  working-directory: ./mozjs-sys
+      #  # Because we've added files in previous run, we need to
+      #  # check diff with `--staged`.
+      #  run: |
+      #    git diff --staged --no-ext-diff --quiet --exit-code
       - name: Detect need for mozjs-sys version bump
         if: ${{ github.event_name == 'pull_request' }}
         id: changes

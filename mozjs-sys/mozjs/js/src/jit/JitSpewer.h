@@ -71,6 +71,8 @@ namespace jit {
   _(MarkLoadsUsedAsPropertyKeys)           \
   /* Output a list of MIR expressions */   \
   _(MIRExpressions)                        \
+  /* Information about stub folding */     \
+  _(StubFolding)                           \
                                            \
   /* BASELINE COMPILER SPEW */             \
                                            \
@@ -132,6 +134,8 @@ class MIRGenerator;
 class MIRGraph;
 class TempAllocator;
 
+const char* ValTypeToString(JSValueType type);
+
 // The JitSpewer is only available on debug builds.
 // None of the global functions have effect on non-debug builds.
 #ifdef JS_JITSPEW
@@ -188,7 +192,23 @@ void JitSpewCont(JitSpewChannel channel, const char* fmt, ...)
     MOZ_FORMAT_PRINTF(2, 3);
 void JitSpewFin(JitSpewChannel channel);
 void JitSpewHeader(JitSpewChannel channel);
-bool JitSpewEnabled(JitSpewChannel channel);
+
+}  // namespace jit
+
+namespace jitspew::detail {
+extern bool LoggingChecked;
+extern uint64_t LoggingBits;
+extern mozilla::Atomic<uint32_t, mozilla::Relaxed> filteredOutCompilations;
+}  // namespace jitspew::detail
+
+namespace jit {
+
+static inline bool JitSpewEnabled(JitSpewChannel channel) {
+  MOZ_ASSERT(jitspew::detail::LoggingChecked);
+  return (jitspew::detail::LoggingBits & (uint64_t(1) << uint32_t(channel))) &&
+         !jitspew::detail::filteredOutCompilations;
+}
+
 void JitSpewVA(JitSpewChannel channel, const char* fmt, va_list ap)
     MOZ_FORMAT_PRINTF(2, 0);
 void JitSpewStartVA(JitSpewChannel channel, const char* fmt, va_list ap)
@@ -201,8 +221,6 @@ void EnableChannel(JitSpewChannel channel);
 void DisableChannel(JitSpewChannel channel);
 void EnableIonDebugSyncLogging();
 void EnableIonDebugAsyncLogging();
-
-const char* ValTypeToString(JSValueType type);
 
 #  define JitSpewIfEnabled(channel, fmt, ...) \
     do {                                      \

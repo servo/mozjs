@@ -1,7 +1,6 @@
 # Exclude everything by default, then include all the formats we support.
 *.*
 !*.js
-!*.jsm
 !*.json
 !*.jsx
 !*.mjs
@@ -12,6 +11,10 @@
 # Exclude xhtml/html test files.
 **/test*/**/*.xhtml
 **/test*/**/*.html
+
+# Include Widget test files in formatting
+!toolkit/content/tests/widgets/*.xhtml
+!toolkit/content/tests/widgets/*.html
 
 # This should be re-enabled in bug 1827456.
 js/src/builtin
@@ -57,6 +60,7 @@ browser/base/content/macWindow.inc.xhtml
 browser/base/content/main-popupset.inc.xhtml
 browser/base/content/pageinfo/pageInfo.xhtml
 browser/base/content/webext-panels.xhtml
+browser/components/backup/content/archive.template.html
 browser/components/downloads/content/contentAreaDownloadsView.xhtml
 browser/components/places/content/bookmarkProperties.xhtml
 browser/components/places/content/bookmarksSidebar.xhtml
@@ -198,6 +202,7 @@ browser/components/textrecognition/textrecognition.html
 browser/components/urlbar/content/quicksuggestOnboarding.html
 browser/components/urlbar/tests/browser/dummy_page.html
 browser/components/urlbar/tests/browser/file_urlbar_edit_dos.html
+browser/extensions/webcompat/run.js
 browser/tools/mozscreenshots/mozscreenshots/extension/lib/controlCenter/mixed.html
 browser/tools/mozscreenshots/mozscreenshots/extension/lib/controlCenter/mixed_passive.html
 devtools/client/aboutdebugging/test/browser/test-tab-favicons.html
@@ -494,19 +499,6 @@ dom/performance/tests/test_timeOrigin.html
 dom/plugins/test/mochitest/block_all_plugins.html
 dom/plugins/test/mochitest/test_mixed_case_mime.html
 dom/plugins/test/mochitest/test_plugin_fallback_focus.html
-dom/push/test/test_data.html
-dom/push/test/test_error_reporting.html
-dom/push/test/test_has_permissions.html
-dom/push/test/test_multiple_register.html
-dom/push/test/test_multiple_register_different_scope.html
-dom/push/test/test_multiple_register_during_service_activation.html
-dom/push/test/test_permissions.html
-dom/push/test/test_register.html
-dom/push/test/test_register_key.html
-dom/push/test/test_serviceworker_lifetime.html
-dom/push/test/test_subscription_change.html
-dom/push/test/test_try_registering_offline_disabled.html
-dom/push/test/test_unregister.html
 dom/security/test/csp/file_bug1505412_frame.html
 dom/security/test/csp/file_bug1738418_parent.html
 dom/security/test/csp/file_bug836922_npolicies.html
@@ -988,7 +980,7 @@ tools/jprof/README.html
 uriloader/exthandler/tests/mochitest/save_filenames.html
 
 ##############################################################################
-# The list below is copied from .eslintignore. Prettier doesn't currently
+# The list below is copied from .eslintrc-ignores.js. Prettier doesn't currently
 # support multiple ignore files or dynamic ignore configurations.
 # When this is implemented, we'll update the configuration below (bug 1825508)
 ##############################################################################
@@ -1030,8 +1022,7 @@ browser/components/pocket/content/panels/js/main.bundle.js
 !browser/components/storybook/.storybook/*.js
 
 # Ignore newtab files
-browser/components/newtab/data/
-browser/components/newtab/logs/
+browser/extensions/newtab/logs/
 
 # Ignore about:welcome files
 browser/components/aboutwelcome/logs/
@@ -1039,11 +1030,9 @@ browser/components/aboutwelcome/logs/
 # The only file in browser/locales/ is pre-processed.
 browser/locales/
 # Generated data files
-browser/extensions/formautofill/phonenumberutils/PhoneNumberMetaData.jsm
+browser/extensions/formautofill/phonenumberutils/PhoneNumberMetaData.sys.mjs
 
-# Ignore devtools debugger files which aren't intended for linting, and also
-# aren't included in any .eslintignore or .prettierignore file.
-# See https://github.com/firefox-devtools/debugger/blob/master/package.json#L24
+# Ignore devtools debugger files which aren't intended for linting.
 devtools/client/debugger/bin/
 devtools/client/debugger/configs/
 devtools/client/debugger/dist/
@@ -1189,11 +1178,11 @@ services/fxaccounts/FxAccountsPairingChannel.sys.mjs
 servo/
 
 # Rust/Cargo output from running `cargo` directly
-target/
-servo/ports/geckolib/target/
-dom/base/rust/target/
-servo/components/style/target/
-dom/webgpu/tests/cts/vendor/target/
+/target/
+/servo/ports/geckolib/target/
+/dom/base/rust/target/
+/servo/components/style/target/
+/dom/webgpu/tests/cts/vendor/target/
 
 # Test files that we don't want to lint (preprocessed, minified etc)
 testing/condprofile/condprof/tests/profile
@@ -1228,7 +1217,7 @@ toolkit/components/pdfjs/content/web
 toolkit/components/reader/Readerable.sys.mjs
 
 # Generated & special files in cld2
-toolkit/components/translation/cld2/
+toolkit/components/translations/cld2/
 
 # Uses preprocessing
 toolkit/mozapps/update/tests/data/xpcshellConstantsPP.js
@@ -1256,10 +1245,11 @@ toolkit/components/uniffi-bindgen-gecko-js/components/generated/*
 # When this is implemented, we'll update the configuration below (bug 1825508)
 ##############################################################################
 
-browser/components/newtab/vendor/
 browser/components/pocket/content/panels/css/normalize.scss
 browser/components/pocket/content/panels/js/vendor/
 browser/components/storybook/node_modules/
+browser/components/topsites/content/tippytop/favicons/
+browser/components/topsites/content/tippytop/images/
 browser/extensions/formautofill/content/third-party/
 browser/extensions/formautofill/test/fixtures/third_party/
 devtools/client/inspector/markup/test/lib_*
@@ -1289,7 +1279,6 @@ dom/media/gmp/rlz/
 dom/media/gmp/widevine-adapter/content_decryption_module_export.h
 dom/media/gmp/widevine-adapter/content_decryption_module_ext.h
 dom/media/gmp/widevine-adapter/content_decryption_module.h
-dom/media/gmp/widevine-adapter/content_decryption_module_proxy.h
 dom/media/platforms/ffmpeg/ffmpeg57/
 dom/media/platforms/ffmpeg/ffmpeg58/
 dom/media/platforms/ffmpeg/ffmpeg59/
@@ -1308,6 +1297,7 @@ dom/media/webspeech/recognition/energy_endpointer.h
 dom/media/webspeech/recognition/energy_endpointer_params.cc
 dom/media/webspeech/recognition/energy_endpointer_params.h
 dom/media/webvtt/vtt.sys.mjs
+dom/security/sanitizer/safe-default-configuration.json
 dom/tests/mochitest/ajax/
 dom/tests/mochitest/dom-level1-core/
 dom/tests/mochitest/dom-level2-core/
@@ -1319,6 +1309,7 @@ editor/libeditor/tests/browserscope/lib/richtext/
 editor/libeditor/tests/browserscope/lib/richtext2/
 extensions/spellcheck/hunspell/src/
 function2/
+fmt/
 gfx/angle/checkout/
 gfx/cairo/
 gfx/graphite2/
@@ -1366,6 +1357,7 @@ js/src/vtune/ittnotify_types.h
 js/src/vtune/jitprofiling.c
 js/src/vtune/jitprofiling.h
 js/src/vtune/legacy/
+js/src/xsum/
 js/src/zydis/
 layout/docs/css-gap-decorations/
 media/ffvpx/
@@ -1381,7 +1373,6 @@ media/libopus/
 media/libpng/
 media/libsoundtouch/
 media/libspeex_resampler/
-media/libtheora/
 media/libvorbis/
 media/libvpx/
 media/libwebp/
@@ -1392,7 +1383,6 @@ media/openmax_dl/
 media/openmax_il/
 media/webrtc/signaling/gtest/MockCall.h
 mfbt/double-conversion/double-conversion/
-mfbt/lz4/.*
 mobile/android/android-components/components/feature/readerview/src/main/assets/extensions/readerview/readability/JSDOMParser-0.4.2.js
 mobile/android/android-components/components/feature/readerview/src/main/assets/extensions/readerview/readability/readability-0.4.2.js
 mobile/android/android-components/components/feature/readerview/src/main/assets/extensions/readerview/readability/readability-readerable-0.4.2.js
@@ -1404,6 +1394,7 @@ modules/woff2/
 modules/xz-embedded/
 modules/zlib/
 mozglue/misc/decimal/
+mozglue/static/lz4/.*
 mozglue/tests/glibc_printf_tests/
 netwerk/dns/nsIDNKitInterface.h
 netwerk/sctp/src/
@@ -1417,15 +1408,15 @@ security/manager/tools/log_list.json
 security/nss/
 security/sandbox/chromium/
 security/sandbox/chromium-shim/
+security/sandbox/linux/launch/glibc_hack/sandbox/linux/services/namespace_sandbox.cc
 services/common/kinto-http-client.sys.mjs
 services/common/kinto-offline-client.sys.mjs
 testing/gtest/gmock/
 testing/gtest/gtest/
-testing/mochitest/MochiKit/
 testing/mochitest/pywebsocket3/
-testing/mochitest/tests/MochiKit-1.4.2/
 testing/modules/sinon-7.2.7.js
 testing/mozbase/mozproxy/mozproxy/backends/mitm/scripts/catapult/
+testing/performance/mobile-startup/newssite-nuxt/
 testing/talos/talos/tests/devtools/addon/content/pages/
 testing/talos/talos/tests/dromaeo/
 testing/talos/talos/tests/kraken/
@@ -1444,17 +1435,18 @@ toolkit/components/certviewer/content/vendor/
 toolkit/components/jsoncpp/
 toolkit/components/ml/vendor/
 toolkit/components/normandy/vendor/
-toolkit/components/passwordmgr/PasswordRulesParser.sys.mjs
+toolkit/components/passwordmgr/shared/PasswordRulesParser.sys.mjs
 toolkit/components/protobuf/
 toolkit/components/reader/readability/
 toolkit/components/resistfingerprinting/content/gl-matrix.js
-toolkit/components/translation/cld2/
+toolkit/components/translations/cld2/
 toolkit/components/translations/bergamot-translator/thirdparty
 toolkit/components/translations/bergamot-translator/bergamot-translator.js
 toolkit/components/url-classifier/chromium/
 toolkit/components/utils/mozjexl.sys.mjs
 toolkit/components/viaduct/fetch_msg_types.pb.cc
 toolkit/components/viaduct/fetch_msg_types.pb.h
+toolkit/content/vendor/react/
 toolkit/content/widgets/vendor/lit.all.mjs
 toolkit/crashreporter/breakpad-client/
 toolkit/crashreporter/google-breakpad/
@@ -1463,6 +1455,7 @@ tools/profiler/core/vtune/
 xpcom/build/mach_override.c
 xpcom/build/mach_override.h
 xpcom/io/crc32c.c
+rlbox/rlbox_sandbox.hpp
 
 
 ##############################################################################
@@ -1483,14 +1476,17 @@ browser/components/asrouter/content-src/schemas/BackgroundTaskMessagingExperimen
 browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json
 browser/components/asrouter/tests/InflightAssetsMessageProvider.sys.mjs
 browser/components/asrouter/tests/NimbusRolloutMessageProvider.sys.mjs
-browser/components/newtab/logs/
-browser/components/newtab/node_modules/
 browser/components/storybook/storybook-static/
+browser/extensions/newtab/data/content/activity-stream.bundle.js
+browser/extensions/newtab/logs/
+browser/extensions/newtab/node_modules/
 browser/locales/l10n-changesets.json
 browser/locales/l10n-onchange-changesets.json
 devtools/client/aboutdebugging/test/jest/node_modules/
 devtools/client/application/test/components/node_modules/
 devtools/client/debugger/node_modules/
+dom/base/use_counter_metrics.yaml
+dom/security/sanitizer/SanitizerDefaultConfig.h
 dom/tests/ajax/jquery/
 dom/tests/ajax/mochikit/
 gradle/wrapper/
@@ -1505,12 +1501,55 @@ mobile/android/**/generated
 mobile/android/**\/local.properties
 mobile/android/**\/manifest.json
 mobile/android/android-components/components/feature/search/src/main/assets/search/search_telemetry_v2.json
+mobile/android/android-components/components/browser/engine-system/src/main/res/
+mobile/android/android-components/components/browser/errorpages/src/main/res/
+mobile/android/android-components/components/browser/menu/src/main/res/
+mobile/android/android-components/components/browser/menu2/src/main/res/
+mobile/android/android-components/components/browser/toolbar/src/main/res/
+mobile/android/android-components/components/browser/toolbar2/src/main/res/
+mobile/android/android-components/components/compose/awesomebar/src/main/res/
+mobile/android/android-components/components/compose/browser-toolbar/src/main/res/
+mobile/android/android-components/components/compose/cfr/src/main/res/
+mobile/android/android-components/components/compose/tabstray/src/main/res/
+mobile/android/android-components/components/feature/addons/src/main/res/
+mobile/android/android-components/components/feature/app-links/src/main/res/
+mobile/android/android-components/components/feature/autofill/src/main/res/
+mobile/android/android-components/components/feature/awesomebar/src/main/res/
+mobile/android/android-components/components/feature/contextmenu/src/main/res/
+mobile/android/android-components/components/feature/customtabs/src/main/res/
+mobile/android/android-components/components/feature/downloads/src/main/res/
+mobile/android/android-components/components/feature/findinpage/src/main/res/
+mobile/android/android-components/components/feature/fxsuggest/src/main/res/
+mobile/android/android-components/components/feature/media/src/main/res/
+mobile/android/android-components/components/feature/privatemode/src/main/res/
+mobile/android/android-components/components/feature/prompts/src/main/res/
+mobile/android/android-components/components/feature/pwa/src/main/res/
+mobile/android/android-components/components/feature/qr/src/main/res/
+mobile/android/android-components/components/feature/readerview/src/main/res/
+mobile/android/android-components/components/feature/search/src/main/res/
+mobile/android/android-components/components/feature/sitepermissions/
+mobile/android/android-components/components/feature/tabs/src/main/res/
+mobile/android/android-components/components/feature/webnotifications/src/main/res/
+mobile/android/android-components/components/lib/crash/src/main/res/
+mobile/android/android-components/components/service/nimbus/src/main/res/
+mobile/android/android-components/components/support/base/src/main/res/
+mobile/android/android-components/components/support/ktx/src/main/res/
+mobile/android/android-components/components/support/utils/src/main/res/
+mobile/android/android-components/components/ui/tabcounter/src/main/res/
+mobile/android/android-components/components/ui/widgets/src/main/res/
+mobile/android/android-components/config/detekt-baseline.xml
 mobile/android/android-components/gradle/wrapper/
 mobile/android/android-components/samples/glean/src/main/res/raw/initial_experiments.json
+mobile/android/fenix/app/lint-baseline.xml
 mobile/android/fenix/app/src/debug/res/raw/initial_experiments.json
+mobile/android/fenix/app/src/main/res/
 mobile/android/fenix/app/src/main/res/raw/initial_experiments.json
+mobile/android/fenix/config/detekt-baseline.xml
 mobile/android/fenix/gradle/wrapper/
+mobile/android/focus-android/app/lint-baseline.xml
+mobile/android/focus-android/app/src/main/res/
 mobile/android/focus-android/gradle/wrapper/
+mobile/android/focus-android/quality/detekt-baseline.xml
 mobile/locales/l10n-changesets.json
 mobile/locales/l10n-onchange-changesets.json
 node_modules/
@@ -1518,11 +1557,15 @@ python/mozperftest/mozperftest/tests/data/
 security/manager/tools/KnownRootHashes.json
 security/manager/tools/PreloadedHPKPins.json
 services/settings/dumps/
+toolkit/components/nimbus/schemas/ExperimentFeature.schema.json
+toolkit/components/nimbus/schemas/ExperimentFeatureManifest.schema.json
 toolkit/components/nimbus/schemas/NimbusExperiment.schema.json
-toolkit/components/pdfjs/content/PdfJsDefaultPreferences.sys.mjs
+toolkit/components/pdfjs/PdfJsDefaultPrefs.js
+toolkit/components/pdfjs/PdfJsOverridePrefs.js
 toolkit/components/uniffi-js/UniFFIGeneratedScaffolding.cpp
 toolkit/components/uniffi-js/UniFFIFixtureScaffolding.cpp
 toolkit/components/uniffi-bindgen-gecko-js/fixtures/generated
+tools/@types/tspaths.json
 tools/browsertime/package.json
 tools/browsertime/package-lock.json
 tools/ts/error_list.json

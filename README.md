@@ -6,8 +6,8 @@ that are battle-tested in [Servo](https://servo.org/), split in two crates:
 - `mozjs-sys`:  SpiderMonkey and low-level Rust bindings to its C++ API.
 - `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
-Mozjs is currently tracking SpiderMonkey on [ESR-128](https://searchfox.org/mozilla-esr128/source/) branch
-(currently version 128.0).
+Mozjs is currently tracking SpiderMonkey on [mozilla-release](https://searchfox.org/mozilla-release/source/) branch
+(currently version 137.0).
 
 ## Building from Pre-built Archive
 
@@ -141,8 +141,8 @@ mozjs = { path = "../mozjs/mozjs" }
 
 In order to upgrade to a new version of SpiderMonkey:
 
-1. Find the mozilla-esr128 commit for the desired version of SpiderMonkey, at
-   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-esr128&filter-searchStr=spidermonkey%20pkg>.
+1. Find the mozilla-release commit for the desired version of SpiderMonkey, at
+   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg>.
    You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
    Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
 

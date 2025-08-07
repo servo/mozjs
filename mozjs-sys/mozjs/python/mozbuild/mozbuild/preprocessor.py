@@ -22,7 +22,6 @@ value :
   | \w+  # string identifier or value;
 """
 
-import errno
 import io
 import os
 import re
@@ -504,11 +503,8 @@ class Preprocessor:
                 encoding = "utf-8"
             dir = os.path.dirname(path)
             if dir:
-                try:
-                    os.makedirs(dir)
-                except OSError as error:
-                    if error.errno != errno.EEXIST:
-                        raise
+                os.makedirs(dir, exist_ok=True)
+
             return io.open(path, "w", encoding=encoding, newline="\n")
 
         p = self.getCommandLineParser()
@@ -878,7 +874,7 @@ class Preprocessor:
             except Exception:
                 raise Preprocessor.Error(self, "FILE_NOT_FOUND", _to_text(args))
         self.checkLineNumbers = bool(
-            re.search(r"\.(js|jsm|java|webidl)(?:\.in)?$", args.name)
+            re.search(r"\.(js|jsm|mjs|java|webidl)(?:\.in)?$", args.name)
         )
         oldFile = self.context["FILE"]
         oldLine = self.context["LINE"]

@@ -15,6 +15,7 @@
 #include "js/ContextOptions.h"
 #include "js/Conversions.h"
 #include "js/Date.h"
+#include "js/EnvironmentChain.h"
 #include "js/Equality.h"
 #include "js/ForOfIterator.h"
 #include "js/Id.h"
@@ -84,12 +85,12 @@ void JS_StackCapture_AllFrames(JS::StackCapture* capture) {
   // pointer, it is uninitialized memory. This means we must
   // overwrite its value, rather than perform an assignment
   // which could invoke a destructor on uninitialized memory.
-  mozilla::PodAssign(capture, &all);
+  memcpy(capture, &all, sizeof(JS::StackCapture));
 }
 
 void JS_StackCapture_MaxFrames(uint32_t max, JS::StackCapture* capture) {
   JS::StackCapture maxFrames = JS::StackCapture(JS::MaxFrames(max));
-  mozilla::PodAssign(capture, &maxFrames);
+  memcpy(capture, &maxFrames, sizeof(JS::StackCapture));
 }
 
 void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
@@ -97,7 +98,7 @@ void JS_StackCapture_FirstSubsumedFrame(JSContext* cx,
                                         JS::StackCapture* capture) {
   JS::StackCapture subsumed =
       JS::StackCapture(JS::FirstSubsumedFrame(cx, ignoreSelfHostedFrames));
-  mozilla::PodAssign(capture, &subsumed);
+  memcpy(capture, &subsumed, sizeof(JS::StackCapture));
 }
 
 size_t GetLinearStringLength(JSLinearString* s) {
@@ -334,6 +335,18 @@ void GetExceptionCause(JSObject* exc, JS::MutableHandleValue dest) {
     dest.set(*cause);
   }
 }
+
+JS::EnvironmentChain* NewEnvironmentChain(
+    JSContext* cx, JS::SupportUnscopables supportUnscopables) {
+  return new JS::EnvironmentChain(cx, supportUnscopables);
+}
+
+void DeleteEnvironmentChain(JS::EnvironmentChain* chain) { delete chain; }
+
+bool AppendToEnvironmentChain(JS::EnvironmentChain* chain, JSObject* obj) {
+  return chain->append(obj);
+}
+
 }  // namespace glue
 
 // There's a couple of classes from pre-57 releases of SM that bindgen can't

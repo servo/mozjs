@@ -12,6 +12,7 @@ from typing import Dict
 from voluptuous import All, Any, Extra, Length, Optional, Required
 
 from .util import path
+from .util.caches import CACHES
 from .util.python_path import find_object
 from .util.schema import Schema, optionally_keyed_by, validate_schema
 from .util.yaml import load_yaml
@@ -74,6 +75,16 @@ graph_config_schema = Schema(
                 "index-path-regexes",
                 description="Regular expressions matching index paths to be summarized.",
             ): [str],
+            Optional(
+                "run",
+                description="Configuration related to the 'run' transforms.",
+            ): {
+                Optional(
+                    "use-caches",
+                    description="List of caches to enable, or a boolean to "
+                    "enable/disable all of them.",
+                ): Any(bool, list(CACHES.keys())),
+            },
             Required("repositories"): All(
                 {
                     str: {
@@ -106,6 +117,9 @@ class GraphConfig:
     def __contains__(self, name):
         return name in self._config
 
+    def get(self, name, default=None):
+        return self._config.get(name, default)
+
     def register(self):
         """
         Add the project's taskgraph directory to the python path, and register
@@ -128,8 +142,7 @@ class GraphConfig:
     def vcs_root(self):
         if path.split(self.root_dir)[-1:] != ["taskcluster"]:
             raise Exception(
-                "Not guessing path to vcs root. "
-                "Graph config in non-standard location."
+                "Not guessing path to vcs root. Graph config in non-standard location."
             )
         return os.path.dirname(self.root_dir)
 

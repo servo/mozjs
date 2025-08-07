@@ -41,25 +41,21 @@ class FasterMakeBackend(MakeBackend, PartialBackend):
         self._generated_files_map = {}
         self._generated_files = []
 
-    def _add_preprocess(self, obj, path, dest, target=None, **kwargs):
-        if target is None:
-            target = mozpath.basename(path)
-        # This matches what PP_TARGETS do in config/rules.
-        if target.endswith(".in"):
-            target = target[:-3]
-        if target.endswith(".css"):
+    def _add_preprocess(self, obj, src, dest, f, **kwargs):
+        basename = FinalTargetPreprocessedFiles.get_obj_basename(f)
+        if basename.endswith(".css"):
             kwargs["marker"] = "%"
         depfile = mozpath.join(
             self.environment.topobjdir,
             "faster",
             ".deps",
-            mozpath.join(obj.install_target, dest, target).replace("/", "_"),
+            mozpath.join(obj.install_target, dest, basename).replace("/", "_"),
         )
         self._install_manifests[obj.install_target].add_preprocess(
-            mozpath.join(obj.srcdir, path),
-            mozpath.join(dest, target),
+            mozpath.join(obj.srcdir, src),
+            mozpath.join(dest, basename),
             depfile,
-            **kwargs
+            **kwargs,
         )
 
     def consume_object(self, obj):
@@ -99,9 +95,7 @@ class FasterMakeBackend(MakeBackend, PartialBackend):
                         src = f.full_path
 
                     if isinstance(obj, FinalTargetPreprocessedFiles):
-                        self._add_preprocess(
-                            obj, src, path, target=f.target_basename, defines=defines
-                        )
+                        self._add_preprocess(obj, src, path, f, defines=defines)
                     elif "*" in f:
 
                         def _prefix(s):
@@ -214,11 +208,9 @@ class FasterMakeBackend(MakeBackend, PartialBackend):
                 "$(TOPOBJDIR)/%s" % d for d in sorted(deps)
             )
 
-        # This is not great, but it's better to have some dependencies on these Python files.
+        # This is not great, but it's better to have some dependencies on this Python file.
         python_deps = [
-            "$(TOPSRCDIR)/python/mozbuild/mozbuild/action/l10n_merge.py",
-            "$(TOPSRCDIR)/third_party/python/compare-locales/compare_locales/compare.py",
-            "$(TOPSRCDIR)/third_party/python/compare-locales/compare_locales/paths.py",
+            "$(TOPSRCDIR)/third_party/python/moz.l10n/moz/l10n/bin/build_file.py",
         ]
         # Add l10n dependencies we inferred:
         for target, deps in sorted(six.iteritems(self._l10n_dependencies)):
@@ -231,10 +223,8 @@ class FasterMakeBackend(MakeBackend, PartialBackend):
                 )
                 rule.add_commands(
                     [
-                        "$(PYTHON3) -m mozbuild.action.l10n_merge "
-                        "--output {} --ref-file {} --l10n-file {}".format(
-                            merge, ref_file, l10n_file
-                        )
+                        "$(PYTHON3) -m moz.l10n.bin.build_file "
+                        f"--source {ref_file} --l10n {l10n_file} --target {merge}"
                     ]
                 )
                 # Add a dummy rule for the l10n file since it might not exist.
