@@ -85,7 +85,7 @@ jobs:
         run: |
           bash ./mozjs/src/generate_wrappers.sh
           git add --all .
-          git diff --staged --no-ext-diff --quiet --exit-code
+          git diff --staged --no-ext-diff --exit-code
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
