@@ -4,6 +4,7 @@
 
 use std::ffi::c_void;
 use std::ptr;
+use std::ptr::NonNull;
 
 use mozjs::conversions::jsstr_to_string;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
@@ -50,7 +51,10 @@ fn external_string() {
             latin1_base.len(),
             callbacks
         ));
-        assert_eq!(jsstr_to_string(context, latin1_jsstr.get()), latin1_base);
+        assert_eq!(
+            jsstr_to_string(context, NonNull::new(latin1_jsstr.get()).unwrap()),
+            latin1_base
+        );
 
         let utf16_base = "test utf-16 $€ \u{10437}\u{24B62}";
         let utf16_boxed = utf16_base
@@ -70,7 +74,10 @@ fn external_string() {
             utf16_len,
             callbacks
         ));
-        assert_eq!(jsstr_to_string(context, utf16_jsstr.get()), utf16_base);
+        assert_eq!(
+            jsstr_to_string(context, NonNull::new(utf16_jsstr.get()).unwrap()),
+            utf16_base
+        );
     }
 }
 
