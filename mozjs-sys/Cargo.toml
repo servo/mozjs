@@ -35,7 +35,7 @@ libz-sys = "1.1.19"
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 # unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }
-icu_capi = "1.4.0" # keep in sync with intl/icu_capi/Cargo.toml
+icu_capi = "=1.5.0" # keep in sync with intl/icu_capi/Cargo.toml
 
 [build-dependencies]
 bindgen.workspace = true
