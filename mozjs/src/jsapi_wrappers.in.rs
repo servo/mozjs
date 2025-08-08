@@ -32,6 +32,7 @@ wrap!(jsapi: pub fn ExecuteInFrameScriptEnvironment(cx: *mut JSContext, obj: Han
 wrap!(jsapi: pub fn ReportIsNotFunction(cx: *mut JSContext, v: HandleValue) -> bool);
 wrap!(jsapi: pub fn RemapRemoteWindowProxies(cx: *mut JSContext, callback: *mut CompartmentTransplantCallback, newTarget: MutableHandleObject));
 wrap!(jsapi: pub fn ComputeThis(cx: *mut JSContext, vp: *mut Value, thisObject: MutableHandleObject) -> bool);
+wrap!(jsapi: pub fn AssertArgumentsAreSane(cx: *mut JSContext, v: HandleValue));
 wrap!(jsapi: pub fn MaybeFreezeCtorAndPrototype(cx: *mut JSContext, ctor: HandleObject, maybeProto: HandleObject) -> bool);
 wrap!(jsapi: pub fn GetFunctionRealm(cx: *mut JSContext, objArg: HandleObject) -> *mut Realm);
 wrap!(jsapi: pub fn Call(cx: *mut JSContext, thisv: Handle<Value>, fun: Handle<Value>, args: *const HandleValueArray, rval: MutableHandle<Value>) -> bool);
@@ -126,6 +127,8 @@ wrap!(jsapi: pub fn SetSettledPromiseIsHandled(cx: *mut JSContext, promise: Hand
 wrap!(jsapi: pub fn SetAnyPromiseIsHandled(cx: *mut JSContext, promise: HandleObject) -> bool);
 wrap!(jsapi: pub fn GetPromiseAllocationSite(promise: HandleObject) -> *mut JSObject);
 wrap!(jsapi: pub fn GetPromiseResolutionSite(promise: HandleObject) -> *mut JSObject);
+wrap!(jsapi: pub fn DumpPromiseAllocationSite(cx: *mut JSContext, promise: HandleObject));
+wrap!(jsapi: pub fn DumpPromiseResolutionSite(cx: *mut JSContext, promise: HandleObject));
 wrap!(jsapi: pub fn CallOriginalPromiseResolve(cx: *mut JSContext, resolutionValue: HandleValue) -> *mut JSObject);
 wrap!(jsapi: pub fn CallOriginalPromiseReject(cx: *mut JSContext, rejectionValue: HandleValue) -> *mut JSObject);
 wrap!(jsapi: pub fn ResolvePromise(cx: *mut JSContext, promiseObj: HandleObject, resolutionValue: HandleValue) -> bool);
@@ -305,6 +308,7 @@ wrap!(jsapi: pub fn JS_ExecuteScript1(cx: *mut JSContext, script: Handle<*mut JS
 wrap!(jsapi: pub fn JS_ExecuteScript2(cx: *mut JSContext, envChain: *const EnvironmentChain, script: Handle<*mut JSScript>, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ExecuteScript3(cx: *mut JSContext, envChain: *const EnvironmentChain, script: Handle<*mut JSScript>) -> bool);
 wrap!(jsapi: pub fn JS_Stringify(cx: *mut JSContext, value: MutableHandle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
+wrap!(jsapi: pub fn JS_StringifyWithLengthHint(cx: *mut JSContext, value: MutableHandle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void, lengthHint: usize) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON(cx: *mut JSContext, chars: *const u16, len: u32, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON1(cx: *mut JSContext, str_: Handle<*mut JSString>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON2(cx: *mut JSContext, chars: *const Latin1Char, len: u32, vp: MutableHandle<Value>) -> bool);
