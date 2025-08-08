@@ -1116,9 +1116,9 @@ void DeleteJSExternalStringCallbacks(JSExternalStringCallbacks* callbacks) {
   delete static_cast<RustJSExternalStringCallbacks*>(callbacks);
 }
 
-void DispatchableRun(JSContext* cx, JS::Dispatchable* ptr,
+void DispatchableRun(JSContext* cx, js::UniquePtr<JS::Dispatchable> ptr,
                      JS::Dispatchable::MaybeShuttingDown mb) {
-  ptr->run(cx, mb);
+  JS::Dispatchable::Run(cx, std::move(ptr), mb);
 }
 
 bool StreamConsumerConsumeChunk(JS::StreamConsumer* sc, const uint8_t* begin,
