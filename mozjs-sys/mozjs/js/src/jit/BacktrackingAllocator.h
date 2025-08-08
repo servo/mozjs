@@ -667,8 +667,10 @@ using SplitPositionVector =
 class BacktrackingAllocator : protected RegisterAllocator {
   friend class JSONSpewer;
 
-  // This flag is set when testing new allocator modifications.
-  bool testbed;
+  // Computed data
+  InstructionDataMap insData;
+  Vector<CodePosition, 12, SystemAllocPolicy> entryPositions;
+  Vector<CodePosition, 12, SystemAllocPolicy> exitPositions;
 
   using VirtualRegBitSet = SparseBitSet<BackgroundSystemAllocPolicy>;
   Vector<VirtualRegBitSet, 0, JitAllocPolicy> liveIn;
@@ -677,6 +679,14 @@ class BacktrackingAllocator : protected RegisterAllocator {
   // Allocation state.
   StackSlotAllocator stackSlotAllocator;
 
+  // List of all instructions with a safepoint. The order is the same as the
+  // order of the instructions in the LIR graph.
+  Vector<LInstruction*, 0, JitAllocPolicy> safepoints_;
+
+  // List of all non-call instructions with a safepoint. The order is the same
+  // as the order of the instructions in the LIR graph.
+  Vector<LInstruction*, 0, JitAllocPolicy> nonCallSafepoints_;
+
   // Priority queue element: a bundle and the associated priority.
   struct QueueItem {
     LiveBundle* bundle;
@@ -684,7 +694,9 @@ class BacktrackingAllocator : protected RegisterAllocator {
     QueueItem(LiveBundle* bundle, size_t priority)
         : bundle(bundle), priority_(priority) {}
 
-    static size_t priority(const QueueItem& v) { return v.priority_; }
+    static bool higherPriority(const QueueItem& a, const QueueItem& b) {
+      return a.priority_ > b.priority_;
+    }
 
    private:
     size_t priority_;
@@ -752,6 +764,16 @@ class BacktrackingAllocator : protected RegisterAllocator {
   }
 
   uint32_t getNextBundleId() { return nextBundleId_++; }
+
+  CodePosition entryOf(const LBlock* block) {
+    return entryPositions[block->mir()->id()];
+  }
+  CodePosition exitOf(const LBlock* block) {
+    return exitPositions[block->mir()->id()];
+  }
+
+  // Atomic group helper.  See comments in BacktrackingAllocator.cpp.
+  CodePosition minimalDefEnd(LNode* ins) const;
 
   // Helpers for creating and adding MoveGroups
   [[nodiscard]] bool addMove(LMoveGroup* moves, LiveRange* from, LiveRange* to,
@@ -916,12 +938,12 @@ class BacktrackingAllocator : protected RegisterAllocator {
   // Top level of the register allocation machinery, and the only externally
   // visible bit.
  public:
-  BacktrackingAllocator(MIRGenerator* mir, LIRGenerator* lir, LIRGraph& graph,
-                        bool testbed)
+  BacktrackingAllocator(MIRGenerator* mir, LIRGenerator* lir, LIRGraph& graph)
       : RegisterAllocator(mir, lir, graph),
-        testbed(testbed),
         liveIn(mir->alloc()),
-        vregs(mir->alloc()) {}
+        vregs(mir->alloc()),
+        safepoints_(mir->alloc()),
+        nonCallSafepoints_(mir->alloc()) {}
 
   [[nodiscard]] bool go();
 };

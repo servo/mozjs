@@ -230,8 +230,7 @@ class alignas(ArenaSize) Arena {
   uint8_t data[ArenaSize - ArenaHeaderSize];
 
   // Create a free arena in uninitialized committed memory.
-  void init(GCRuntime* gc, JS::Zone* zoneArg, AllocKind kind,
-            const AutoLockGC& lock);
+  void init(GCRuntime* gc, JS::Zone* zone, AllocKind kind);
 
   JS::Zone* zone() const { return zone_; }
 
@@ -245,9 +244,14 @@ class alignas(ArenaSize) Arena {
     last->initAsEmpty();
   }
 
+  // Unregister the associated atom marking bitmap index for an arena in the
+  // atoms zone.
+  inline void freeAtomMarkingBitmapIndex(GCRuntime* gc, const AutoLockGC& lock);
+
   // Return an allocated arena to its unallocated (free) state.
-  // The lock is required for arenas in an atoms zone.
-  inline void release(GCRuntime* gc, const AutoLockGC* maybeLock);
+  // For arenas in the atoms zone, freeAtomMarkingBitmapIndex() must be called
+  // first.
+  inline void release();
 
   uintptr_t address() const {
     checkAddress();
@@ -402,7 +406,7 @@ class alignas(ArenaSize) Arena {
   inline ArenaCellSet*& bufferedCells();
   inline size_t& atomBitmapStart();
 
-  template <typename T>
+  template <typename T, FinalizeKind finalizeKind>
   size_t finalize(JS::GCContext* gcx, AllocKind thingKind, size_t thingSize);
 
   static void staticAsserts();
@@ -516,20 +520,20 @@ class ArenaChunk : public ArenaChunkBase {
     return addr;
   }
 
-  bool unused() const { return info.numArenasFree == ArenasPerChunk; }
+  bool isEmpty() const { return info.numArenasFree == ArenasPerChunk; }
 
-  bool hasAvailableArenas() const { return info.numArenasFree != 0; }
+  bool hasAvailableArenas() const { return !isFull(); }
+  bool isFull() const { return info.numArenasFree == 0; }
 
   bool isNurseryChunk() const { return storeBuffer; }
 
-  Arena* allocateArena(GCRuntime* gc, JS::Zone* zone, AllocKind kind,
-                       const AutoLockGC& lock);
+  Arena* allocateArena(GCRuntime* gc, JS::Zone* zone, AllocKind kind);
 
   void releaseArena(GCRuntime* gc, Arena* arena, const AutoLockGC& lock);
 
   void decommitFreeArenas(GCRuntime* gc, const bool& cancel, AutoLockGC& lock);
   [[nodiscard]] bool decommitOneFreePage(GCRuntime* gc, size_t pageIndex,
-                                         AutoLockGC& lock);
+                                         const AutoLockGC& lock);
   void decommitAllArenas();
 
   // This will decommit each unused not-already decommitted arena. It performs a
@@ -542,6 +546,9 @@ class ArenaChunk : public ArenaChunkBase {
   /* Unlink and return the freeArenasHead. */
   Arena* fetchNextFreeArena(GCRuntime* gc);
 
+  // Merge arenas freed by background sweeping into the main free arenas bitmap.
+  void mergePendingFreeArenas(GCRuntime* gc, const AutoLockGC& lock);
+
 #ifdef DEBUG
   void verify() const;
 #else
@@ -551,9 +558,15 @@ class ArenaChunk : public ArenaChunkBase {
  private:
   void commitOnePage(GCRuntime* gc);
 
-  void updateChunkListAfterAlloc(GCRuntime* gc, const AutoLockGC& lock);
-  void updateChunkListAfterFree(GCRuntime* gc, size_t numArenasFree,
-                                const AutoLockGC& lock);
+  void updateFreeCountsAfterAlloc(GCRuntime* gc, size_t numArenasAlloced,
+                                  const AutoLockGC& lock);
+  void updateFreeCountsAfterFree(GCRuntime* gc, size_t numArenasFreed,
+                                 bool wasCommitted, const AutoLockGC& lock);
+
+  // Like updateFreeCountsAfterFree, but operates on the GCRuntime's current
+  // chunk. Does not take the lock unless the chunk is full or if we need to
+  // move the chunk between pools.
+  void updateCurrentChunkAfterAlloc(GCRuntime* gc);
 
   // Check if all arenas in a page are free.
   bool canDecommitPage(size_t pageIndex) const;

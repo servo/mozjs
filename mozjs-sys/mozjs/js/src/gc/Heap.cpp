@@ -23,6 +23,7 @@
 #include "gc/GCLock.h"
 #include "gc/Memory.h"
 #include "jit/Assembler.h"
+#include "threading/Thread.h"
 #include "vm/BigIntType.h"
 #include "vm/RegExpShared.h"
 #include "vm/Scope.h"
@@ -93,6 +94,15 @@ const uint8_t Arena::ThingsPerArena[] = {
 };
 
 bool Arena::allocated() const {
+#if defined(DEBUG) && defined(MOZ_VALGRIND)
+  // In debug builds, valgrind complains about the access to `allocKind` even
+  // though it is legitimate, so temporarily disable reporting of addressing
+  // errors in that range.  Note this doesn't change the state of the address
+  // range, as tracked by valgrind, so subsequent checking against its state is
+  // unaffected.  See bug 1932412.
+  VALGRIND_DISABLE_ADDR_ERROR_REPORTING_IN_RANGE(&allocKind, sizeof(void*));
+#endif
+
   size_t arenaIndex = ArenaChunk::arenaIndex(this);
   size_t pageIndex = ArenaChunk::arenaToPageIndex(arenaIndex);
   bool result = !chunk()->decommittedPages[pageIndex] &&
@@ -100,6 +110,11 @@ bool Arena::allocated() const {
                 IsValidAllocKind(allocKind);
   MOZ_ASSERT_IF(result, zone_);
   MOZ_ASSERT_IF(result, (uintptr_t(zone_) & 7) == 0);
+
+#if defined(DEBUG) && defined(MOZ_VALGRIND)
+  // Reenable error reporting for the range we just said to ignore.
+  VALGRIND_ENABLE_ADDR_ERROR_REPORTING_IN_RANGE(&allocKind, sizeof(void*));
+#endif
   return result;
 }
 
@@ -319,13 +334,30 @@ inline bool ArenaChunk::canDecommitPage(size_t pageIndex) const {
 void ArenaChunk::decommitFreeArenas(GCRuntime* gc, const bool& cancel,
                                     AutoLockGC& lock) {
   MOZ_ASSERT(DecommitEnabled());
+  MOZ_ASSERT(!info.isCurrentChunk);
 
   for (size_t i = 0; i < PagesPerChunk; i++) {
     if (cancel) {
       break;
     }
 
-    if (canDecommitPage(i) && !decommitOneFreePage(gc, i, lock)) {
+    if (!canDecommitPage(i)) {
+      continue;
+    }
+
+    if (!decommitOneFreePage(gc, i, lock)) {
+      break;
+    }
+
+    {
+      // Give main thread a chance to take the lock.
+      AutoUnlockGC unlock(lock);
+      ThisThread::SleepMilliseconds(0);
+    }
+
+    // Re-check whether the chunk is being used for allocation after releasing
+    // the lock.
+    if (info.isCurrentChunk) {
       break;
     }
   }
@@ -333,62 +365,52 @@ void ArenaChunk::decommitFreeArenas(GCRuntime* gc, const bool& cancel,
 
 void ArenaChunk::releaseArena(GCRuntime* gc, Arena* arena,
                               const AutoLockGC& lock) {
+  if (info.isCurrentChunk) {
+    // The main thread is allocating out of this chunk without holding the
+    // lock. Don't touch any data structures it is using but add the arena to a
+    // pending set. This will be merged back by mergePendingFreeArenas.
+    auto& bitmap = gc->pendingFreeCommittedArenas.ref();
+    MOZ_ASSERT(!bitmap[arenaIndex(arena)]);
+    bitmap[arenaIndex(arena)] = true;
+    return;
+  }
+
   MOZ_ASSERT(!arena->allocated());
   MOZ_ASSERT(!freeCommittedArenas[arenaIndex(arena)]);
 
   freeCommittedArenas[arenaIndex(arena)] = true;
-  ++info.numArenasFreeCommitted;
-  ++info.numArenasFree;
+  updateFreeCountsAfterFree(gc, 1, true, lock);
 
   verify();
-
-  updateChunkListAfterFree(gc, 1, lock);
 }
 
 bool ArenaChunk::decommitOneFreePage(GCRuntime* gc, size_t pageIndex,
-                                     AutoLockGC& lock) {
+                                     const AutoLockGC& lock) {
   MOZ_ASSERT(DecommitEnabled());
   MOZ_ASSERT(canDecommitPage(pageIndex));
+  MOZ_ASSERT(info.numArenasFree >= info.numArenasFreeCommitted);
   MOZ_ASSERT(info.numArenasFreeCommitted >= ArenasPerPage);
 
-  // Temporarily mark the page as allocated while we decommit.
+  if (oom::ShouldFailWithOOM()) {
+    return false;
+  }
+
+  if (!MarkPagesUnusedSoft(pageAddress(pageIndex), PageSize)) {
+    return false;
+  }
+
+  // Mark the page as decommited.
+  decommittedPages[pageIndex] = true;
   for (size_t i = 0; i < ArenasPerPage; i++) {
     size_t arenaIndex = pageToArenaIndex(pageIndex) + i;
     MOZ_ASSERT(freeCommittedArenas[arenaIndex]);
     freeCommittedArenas[arenaIndex] = false;
   }
   info.numArenasFreeCommitted -= ArenasPerPage;
-  info.numArenasFree -= ArenasPerPage;
-  updateChunkListAfterAlloc(gc, lock);
 
   verify();
 
-  bool ok;
-  {
-    AutoUnlockGC unlock(lock);
-    ok = !oom::ShouldFailWithOOM() &&
-         MarkPagesUnusedSoft(pageAddress(pageIndex), PageSize);
-  }
-
-  // Mark the page as decommited if successful or restore the original free
-  // state.
-  if (ok) {
-    decommittedPages[pageIndex] = true;
-  } else {
-    for (size_t i = 0; i < ArenasPerPage; i++) {
-      size_t arenaIndex = pageToArenaIndex(pageIndex) + i;
-      MOZ_ASSERT(!freeCommittedArenas[arenaIndex]);
-      freeCommittedArenas[arenaIndex] = true;
-    }
-    info.numArenasFreeCommitted += ArenasPerPage;
-  }
-
-  info.numArenasFree += ArenasPerPage;
-  updateChunkListAfterFree(gc, ArenasPerPage, lock);
-
-  verify();
-
-  return ok;
+  return true;
 }
 
 void ArenaChunk::decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock) {
@@ -419,32 +441,135 @@ void ArenaChunk::decommitFreeArenasWithoutUnlocking(const AutoLockGC& lock) {
   verify();
 }
 
-void ArenaChunk::updateChunkListAfterAlloc(GCRuntime* gc,
-                                           const AutoLockGC& lock) {
-  if (MOZ_UNLIKELY(info.numArenasFree == ArenasPerChunk - 1)) {
+void ArenaChunk::updateFreeCountsAfterAlloc(GCRuntime* gc,
+                                            size_t numArenasAlloced,
+                                            const AutoLockGC& lock) {
+  MOZ_ASSERT(!info.isCurrentChunk);
+  MOZ_ASSERT(numArenasAlloced > 0);
+
+  bool wasEmpty = isEmpty();
+
+  MOZ_ASSERT(info.numArenasFree >= numArenasAlloced);
+  MOZ_ASSERT(info.numArenasFreeCommitted >= numArenasAlloced);
+  info.numArenasFreeCommitted -= numArenasAlloced;
+  info.numArenasFree -= numArenasAlloced;
+
+  if (MOZ_UNLIKELY(wasEmpty)) {
     gc->emptyChunks(lock).remove(this);
     gc->availableChunks(lock).push(this);
     return;
   }
 
-  if (MOZ_UNLIKELY(!hasAvailableArenas())) {
+  if (MOZ_UNLIKELY(isFull())) {
     gc->availableChunks(lock).remove(this);
     gc->fullChunks(lock).push(this);
+    return;
+  }
+
+  MOZ_ASSERT(gc->availableChunks(lock).contains(this));
+}
+
+void ArenaChunk::updateCurrentChunkAfterAlloc(GCRuntime* gc) {
+  MOZ_ASSERT(info.isCurrentChunk);  // Can access without holding lock.
+  MOZ_ASSERT(gc->isCurrentChunk(this));
+
+  MOZ_ASSERT(info.numArenasFree >= 1);
+  MOZ_ASSERT(info.numArenasFreeCommitted >= 1);
+  info.numArenasFreeCommitted--;
+  info.numArenasFree--;
+
+  if (MOZ_UNLIKELY(isFull())) {
+    AutoLockGC lock(gc);
+    mergePendingFreeArenas(gc, lock);
+    if (isFull()) {
+      gc->clearCurrentChunk(lock);
+    }
   }
 }
 
-void ArenaChunk::updateChunkListAfterFree(GCRuntime* gc, size_t numArenasFree,
-                                          const AutoLockGC& lock) {
-  if (info.numArenasFree == numArenasFree) {
+void ArenaChunk::updateFreeCountsAfterFree(GCRuntime* gc, size_t numArenasFreed,
+                                           bool wasCommitted,
+                                           const AutoLockGC& lock) {
+  MOZ_ASSERT(!info.isCurrentChunk);
+  MOZ_ASSERT(numArenasFreed > 0);
+  MOZ_ASSERT(info.numArenasFree + numArenasFreed <= ArenasPerChunk);
+  MOZ_ASSERT(info.numArenasFreeCommitted + numArenasFreed <= ArenasPerChunk);
+
+  bool wasFull = isFull();
+
+  info.numArenasFree += numArenasFreed;
+  if (wasCommitted) {
+    info.numArenasFreeCommitted += numArenasFreed;
+  }
+
+  if (MOZ_UNLIKELY(wasFull)) {
     gc->fullChunks(lock).remove(this);
     gc->availableChunks(lock).push(this);
-  } else if (!unused()) {
-    MOZ_ASSERT(gc->availableChunks(lock).contains(this));
-  } else {
-    MOZ_ASSERT(unused());
+    return;
+  }
+
+  if (MOZ_UNLIKELY(isEmpty())) {
     gc->availableChunks(lock).remove(this);
     gc->recycleChunk(this, lock);
+    return;
   }
+
+  MOZ_ASSERT(gc->availableChunks(lock).contains(this));
+}
+
+void GCRuntime::setCurrentChunk(ArenaChunk* chunk, const AutoLockGC& lock) {
+  MOZ_ASSERT(!currentChunk_);
+  MOZ_ASSERT(pendingFreeCommittedArenas.ref().IsEmpty());
+  MOZ_ASSERT(chunk);
+  MOZ_ASSERT(!chunk->info.isCurrentChunk);
+
+  currentChunk_ = chunk;
+  chunk->info.isCurrentChunk = true;  // Lock needed here.
+}
+
+void GCRuntime::clearCurrentChunk(const AutoLockGC& lock) {
+  MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt));
+
+  ArenaChunk* chunk = currentChunk_;
+  if (!chunk) {
+    return;
+  }
+
+  chunk->mergePendingFreeArenas(this, lock);
+
+  MOZ_ASSERT(chunk->info.isCurrentChunk);
+  chunk->info.isCurrentChunk = false;  // Lock needed here.
+  currentChunk_ = nullptr;
+
+  if (chunk->isFull()) {
+    fullChunks(lock).push(chunk);
+    return;
+  }
+
+  if (chunk->isEmpty()) {
+    emptyChunks(lock).push(chunk);
+    return;
+  }
+
+  MOZ_ASSERT(chunk->hasAvailableArenas());
+  availableChunks(lock).push(chunk);
+}
+
+void ArenaChunk::mergePendingFreeArenas(GCRuntime* gc, const AutoLockGC& lock) {
+  MOZ_ASSERT(info.isCurrentChunk);
+
+  auto& bitmap = gc->pendingFreeCommittedArenas.ref();
+  if (bitmap.IsEmpty()) {
+    return;
+  }
+
+  MOZ_ASSERT((freeCommittedArenas & bitmap).IsEmpty());
+  size_t count = bitmap.Count();
+  freeCommittedArenas |= bitmap;
+  bitmap.ResetAll();
+
+  info.numArenasFree += count;
+  info.numArenasFreeCommitted += count;
 }
 
 ArenaChunk* ChunkPool::pop() {
@@ -598,6 +723,7 @@ bool ChunkPool::verify() const {
 void ChunkPool::verifyChunks() const {
   for (ArenaChunk* chunk = head_; chunk; chunk = chunk->info.next) {
     chunk->verify();
+    MOZ_ASSERT(!chunk->info.isCurrentChunk);
   }
 }
 

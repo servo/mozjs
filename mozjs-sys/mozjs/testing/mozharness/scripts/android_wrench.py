@@ -207,7 +207,7 @@ class AndroidWrench(TestingMixin, BaseScript, MozbaseMixin, AndroidMixin):
         """
         logfile = tempfile.NamedTemporaryFile()
         self.device.pull(self.wrench_dir + "/stdout", logfile.name)
-        with open(logfile.name, "r", encoding="utf-8") as f:
+        with open(logfile.name, encoding="utf-8") as f:
             self.info("=== scraped log output ===")
             for line in f:
                 if "UNEXPECTED-FAIL" in line or "panicked" in line:
@@ -236,6 +236,8 @@ class AndroidWrench(TestingMixin, BaseScript, MozbaseMixin, AndroidMixin):
         self.verify_device()
         self.info("Logging device properties...")
         self.info(self.shell_output("getprop", attempts=3))
+        self.info("Uninstalling APK...")
+        self.device.uninstall_app("org.mozilla.wrench")
         self.info("Installing APK...")
         self.install_android_app(self.query_abs_dirs()["abs_apk_path"], replace=True)
 

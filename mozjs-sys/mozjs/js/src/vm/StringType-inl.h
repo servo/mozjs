@@ -404,34 +404,74 @@ inline JSDependentString::JSDependentString(JSLinearString* base, size_t start,
   }
 }
 
-MOZ_ALWAYS_INLINE JSLinearString* JSDependentString::new_(
+template <JS::ContractBaseChain contract>
+MOZ_ALWAYS_INLINE JSLinearString* JSDependentString::newImpl_(
     JSContext* cx, JSLinearString* baseArg, size_t start, size_t length,
     js::gc::Heap heap) {
+  // Not passed in as a Handle because `base` is reassigned.
+  JS::Rooted<JSLinearString*> base(cx, baseArg);
+
   // Do not try to make a dependent string that could fit inline.
-  MOZ_ASSERT_IF(baseArg->hasTwoByteChars(),
+  MOZ_ASSERT_IF(base->hasTwoByteChars(),
                 !JSInlineString::lengthFits<char16_t>(length));
-  MOZ_ASSERT_IF(!baseArg->hasTwoByteChars(),
+  MOZ_ASSERT_IF(!base->hasTwoByteChars(),
                 !JSInlineString::lengthFits<JS::Latin1Char>(length));
 
-  /*
-   * Try to avoid long chains of dependent strings. We can't avoid these
-   * entirely, however, due to how ropes are flattened.
-   */
-  if (baseArg->isDependent()) {
-    start += baseArg->asDependent().baseOffset();
-    baseArg = baseArg->asDependent().base();
+  // Invariant: if a tenured dependent string points to chars in the nursery,
+  // then the string must be in the store buffer.
+  //
+  // Refuse to create a chain tenured -> tenured -> nursery (with nursery
+  // chars). The same holds for anything else that might create length > 1
+  // chains of dependent strings.
+  bool mustContract;
+  if constexpr (contract == JS::ContractBaseChain::Contract) {
+    mustContract = true;
+  } else {
+    auto& nursery = cx->runtime()->gc.nursery();
+    mustContract = nursery.isInside(base->nonInlineCharsRaw());
   }
 
-  MOZ_ASSERT(start + length <= baseArg->length());
-
-  JSDependentString* str =
-      cx->newCell<JSDependentString, js::NoGC>(heap, baseArg, start, length);
-  if (str) {
-    return str;
+  if (mustContract) {
+    // Try to avoid long chains of dependent strings. We can't avoid these
+    // entirely, however, due to how ropes are flattened.
+    if (base->isDependent()) {
+      start += base->asDependent().baseOffset();
+      base = base->asDependent().base();
+    }
   }
 
-  JS::Rooted<JSLinearString*> base(cx, baseArg);
-  return cx->newCell<JSDependentString>(heap, base, start, length);
+  MOZ_ASSERT(start + length <= base->length());
+
+  JSDependentString* str;
+  if constexpr (contract == JS::ContractBaseChain::Contract) {
+    return cx->newCell<JSDependentString>(heap, base, start, length);
+  }
+
+  str = cx->newCell<JSDependentString>(heap, base, start, length);
+  if (str && base->isDependent() && base->isTenured()) {
+    // Tenured dependent -> nursery base string edges are problematic for
+    // deduplication if the tenured dependent string can itself have strings
+    // dependent on it. Whenever such a thing can be created, the nursery base
+    // must be marked as non-deduplicatable.
+    JSString* rootBase = base;
+    while (rootBase->isDependent()) {
+      rootBase = rootBase->base();
+    }
+    if (!rootBase->isTenured()) {
+      rootBase->setNonDeduplicatable();
+    }
+  }
+
+  return str;
+}
+
+/* static */
+inline JSLinearString* JSDependentString::new_(JSContext* cx,
+                                               JSLinearString* base,
+                                               size_t start, size_t length,
+                                               js::gc::Heap heap) {
+  return newImpl_<JS::ContractBaseChain::Contract>(cx, base, start, length,
+                                                   heap);
 }
 
 inline JSLinearString::JSLinearString(const char16_t* chars, size_t length,
@@ -480,20 +520,6 @@ inline JSLinearString::JSLinearString(
 void JSLinearString::disownCharsBecauseError() {
   setLengthAndFlags(0, INIT_LINEAR_FLAGS | LATIN1_CHARS_BIT);
   d.s.u2.nonInlineCharsLatin1 = nullptr;
-}
-
-inline JSLinearString* JSDependentString::rootBaseDuringMinorGC() {
-  JSLinearString* root = this;
-  while (MaybeForwarded(root)->hasBase()) {
-    if (root->isForwarded()) {
-      root = js::gc::StringRelocationOverlay::fromCell(root)
-                 ->savedNurseryBaseOrRelocOverlay();
-    } else {
-      // Possibly nursery or tenured string (not an overlay).
-      root = root->nurseryBaseOrRelocOverlay();
-    }
-  }
-  return root;
 }
 
 template <js::AllowGC allowGC, typename CharT>

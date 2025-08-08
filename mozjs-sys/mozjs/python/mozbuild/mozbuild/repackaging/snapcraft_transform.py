@@ -62,6 +62,7 @@ class SnapcraftTransform:
     def repack(self):
         removed = self.keep_non_build_parts()
         self.add_firefox_repack(removed)
+        self.fix_distribution()
         self.change_version(self._version, self._buildno)
         self.change_name(self._appname)
         return yaml.safe_dump(self.snap, sort_keys=False)
@@ -94,6 +95,11 @@ class SnapcraftTransform:
                 ]
 
         return removed
+
+    def fix_distribution(self):
+        self.snap["parts"]["distribution"].setdefault("build-packages", []).append(
+            "git"
+        )
 
     def add_firefox_repack(self, removed):
         repack_yaml = """
@@ -131,7 +137,7 @@ class SnapcraftTransform:
             del self.snap["apps"]["firefox"]
 
     def change_version(self, version, build):
-        self.snap["version"] = "{version}-{build}".format(version=version, build=build)
+        self.snap["version"] = f"{version}-{build}"
 
     def change_name(self, name):
         self.snap["name"] = str(name)
@@ -146,10 +152,10 @@ class SnapcraftTransform:
 class SnapDesktopFile:
     def __init__(self, log, appname, branchname, wmclass=None):
         if wmclass is None:
-            wmclass = "{}-{}".format(appname, branchname)
+            wmclass = f"{appname}-{branchname}"
 
         build_variables = {
-            "DEB_PKG_NAME": appname,
+            "PKG_NAME": appname,
             "DBusActivatable": "false",
             "Icon": "/default256.png",
             "StartupWMClass": wmclass,

@@ -9,6 +9,7 @@
 #include "jit/Ion.h"
 #include "jit/JitHints.h"
 #include "jit/JitRuntime.h"
+#include "js/Prefs.h"
 #include "vm/JSScript.h"
 
 #include "vm/JSScript-inl.h"
@@ -89,6 +90,20 @@ OptimizationLevel OptimizationLevelInfo::levelForScript(JSContext* cx,
   }
 
   return OptimizationLevel::Normal;
+}
+
+IonRegisterAllocator OptimizationInfo::registerAllocator() const {
+  switch (JS::Prefs::ion_regalloc()) {
+    case 0:
+    default:
+      // Use the default register allocator.
+      return registerAllocator_;
+    case 1:
+      return RegisterAllocator_Backtracking;
+    case 2:
+      return RegisterAllocator_Simple;
+  }
+  MOZ_CRASH("Unreachable");
 }
 
 }  // namespace jit

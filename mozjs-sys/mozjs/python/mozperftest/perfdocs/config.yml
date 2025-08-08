@@ -58,6 +58,7 @@ suites:
         tests:
             "browser_ml_engine_perf.js": ""
             "browser_ml_engine_multi_perf.js": ""
+            "ML Semantic History Search": ""
             "browser_ml_suggest_feature_perf.js": ""
             "browser_ml_suggest_inference.js": ""
             "browser_ml_autofill_perf.js": ""
@@ -65,6 +66,7 @@ suites:
             "ML Smart Tab Clustering": ""
             "browser_ml_smart_tab_perf.js": ""
             "browser_ml_llama_summarizer_perf.js": ""
+            "ML Speech T5 TTS": ""
 
     intl/benchmarks/test/xpcshell:
         description: "Performance tests running through XPCShell for Intl code"
@@ -73,3 +75,13 @@ suites:
             "IntlLocale": ""
             "IntlNumberFormat": ""
             "IntlPluralRules": ""
+
+    dom/webgpu/tests/mochitest:
+        description: "Performance tests from the 'dom/webgpu/tests/mochitest' folder."
+        tests:
+            "Queue Write": ""
+
+    toolkit/components/url-classifier/tests/performance:
+        description: "Performance tests for the URL Classifier"
+        tests:
+            "UrlClassifierExceptionListLookup": ""

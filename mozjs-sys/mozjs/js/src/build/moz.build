@@ -26,7 +26,7 @@ LIBRARY_DEFINES["MOZ_SUPPORT_LEAKCHECKING"] = True
 # JS shell would like to link to the static library.
 
 if CONFIG["JS_SHARED_LIBRARY"]:
-    GeckoSharedLibrary("js", linkage=None)
+    GeckoSharedLibrary("js")
     SHARED_LIBRARY_NAME = CONFIG["JS_LIBRARY_NAME"]
 
     # Ensure symbol versions of shared library on Linux do not conflict
@@ -41,7 +41,6 @@ if CONFIG["JS_SHARED_LIBRARY"]:
         SYMBOLS_FILE = "!symverscript"
 else:
     Library("js")
-    USE_LIBS += ["mozglue"]
 
 FORCE_STATIC_LIB = True
 STATIC_LIBRARY_NAME = "js_static"
@@ -115,6 +114,7 @@ GeneratedFile(
     script="/config/run_spidermonkey_checks.py",
     inputs=[
         "!%sjs_static.%s" % (CONFIG["LIB_PREFIX"], CONFIG["LIB_SUFFIX"]),
+        "/config/check_spidermonkey_style.py",
         "/config/check_macroassembler_style.py",
         "/config/check_js_opcode.py",
     ],

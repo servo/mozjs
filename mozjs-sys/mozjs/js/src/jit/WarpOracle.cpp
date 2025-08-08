@@ -286,8 +286,14 @@ WarpEnvironment WarpScriptOracle::createEnvironment() {
   auto [callObjectTemplate, namedLambdaTemplate] =
       script_->jitScript()->functionEnvironmentTemplates(fun);
 
-  return WarpEnvironment(
-      FunctionEnvironment(callObjectTemplate, namedLambdaTemplate));
+  gc::Heap initialHeap = gc::Heap::Default;
+  JitScript* jitScript = script_->jitScript();
+  if (jitScript->hasEnvAllocSite()) {
+    initialHeap = jitScript->icScript()->maybeEnvAllocSite()->initialHeap();
+  }
+
+  return WarpEnvironment(FunctionEnvironment(callObjectTemplate,
+                                             namedLambdaTemplate, initialHeap));
 }
 
 AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
@@ -405,6 +411,7 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
         if (IsAsmJSModule(fun)) {
           return abort(AbortReason::Disable, "asm.js module function lambda");
         }
+        MOZ_TRY(maybeInlineIC(opSnapshots, loc));
         break;
       }
 
@@ -710,6 +717,8 @@ AbortReasonOr<WarpScriptSnapshot*> WarpScriptOracle::createScriptSnapshot() {
       case JSOp::Try:
       case JSOp::Finally:
       case JSOp::NewPrivateName:
+      case JSOp::StrictConstantEq:
+      case JSOp::StrictConstantNe:
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
       case JSOp::AddDisposable:
       case JSOp::TakeDisposeCapability:

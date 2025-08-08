@@ -835,6 +835,7 @@ static bool TieringBeneficial(bool lazyTiering, uint32_t codeSize) {
 
 // Ensure that we have the non-compiler requirements to tier safely.
 static bool PlatformCanTier(bool lazyTiering) {
+  // Note: ensure this function stays in sync with `WasmLazyTieringEnabled()`.
   // Tiering needs background threads if we're using eager tiering or we're
   // using lazy tiering without the synchronous flag.
   bool synchronousTiering =
@@ -884,9 +885,12 @@ void CompilerEnvironment::computeParameters(const ModuleMetadata& moduleMeta) {
   uint32_t codeSectionSize = moduleMeta.codeMeta->codeSectionSize();
 
   // We use lazy tiering if the 'for-all' pref is enabled, or the 'gc-only'
-  // pref is enabled and we're compiling a GC module.
-  bool lazyTiering = JS::Prefs::wasm_lazy_tiering() ||
-                     (JS::Prefs::wasm_lazy_tiering_for_gc() && isGcModule);
+  // pref is enabled and we're compiling a GC module.  However, forcing
+  // serialization-testing disables lazy tiering.
+  bool testSerialization = args_->features.testSerialization;
+  bool lazyTiering = (JS::Prefs::wasm_lazy_tiering() ||
+                      (JS::Prefs::wasm_lazy_tiering_for_gc() && isGcModule)) &&
+                     !testSerialization;
 
   if (baselineEnabled && hasSecondTier &&
       (TieringBeneficial(lazyTiering, codeSectionSize) || forceTiering) &&
@@ -1037,7 +1041,7 @@ SharedModule wasm::CompileBuffer(const CompileArgs& args,
     MOZ_RELEASE_ASSERT(envDecoder.done());
   }
 
-  return mg.finishModule(bytecode, moduleMeta, listener);
+  return mg.finishModule(bytecode, *moduleMeta, listener);
 }
 
 bool wasm::CompileCompleteTier2(const ShareableBytes* codeSection,
@@ -1088,8 +1092,8 @@ bool wasm::CompilePartialTier2(const Code& code, uint32_t funcIndex,
     return false;
   }
 
-  const BytecodeRange& funcRange = codeMeta.funcDefRange(funcIndex);
-  BytecodeSpan funcBytecode = codeMeta.funcDefBody(funcIndex);
+  const BytecodeRange& funcRange = code.codeTailMeta().funcDefRange(funcIndex);
+  BytecodeSpan funcBytecode = code.codeTailMeta().funcDefBody(funcIndex);
 
   // The following sequence will compile/finish this function, on this thread.
   // `error` (as stashed in `mg`) may get set to, for example, "stack frame too
@@ -1221,7 +1225,7 @@ SharedModule wasm::CompileStreaming(
   }
 
   BytecodeBuffer bytecodeBuffer(&envBytes, &codeBytes, &tailBytes);
-  return mg.finishModule(BytecodeBufferOrSource(bytecodeBuffer), moduleMeta,
+  return mg.finishModule(BytecodeBufferOrSource(bytecodeBuffer), *moduleMeta,
                          streamEnd.completeTier2Listener);
 }
 

@@ -917,14 +917,12 @@ void* js::Nursery::reallocateBuffer(Zone* zone, Cell* cell, void* oldBuffer,
                                     size_t oldBytes, size_t newBytes) {
   if (!IsInsideNursery(cell)) {
     MOZ_ASSERT(IsBufferAlloc(oldBuffer));
-    MOZ_ASSERT(!ChunkPtrIsInsideNursery(oldBuffer));
-    MOZ_ASSERT(!IsNurseryOwned(oldBuffer));
+    MOZ_ASSERT(!IsNurseryOwned(zone, oldBuffer));
     return ReallocBuffer(zone, oldBuffer, newBytes, false);
   }
 
-  if (!ChunkPtrIsInsideNursery(oldBuffer)) {
-    MOZ_ASSERT(IsBufferAlloc(oldBuffer));
-    MOZ_ASSERT(IsNurseryOwned(oldBuffer));
+  if (IsBufferAlloc(oldBuffer)) {
+    MOZ_ASSERT(IsNurseryOwned(zone, oldBuffer));
     MOZ_ASSERT(toSpace.mallocedBufferBytes >= oldBytes);
 
     void* newBuffer = ReallocBuffer(zone, oldBuffer, newBytes, true);
@@ -1064,6 +1062,10 @@ void js::Nursery::renderProfileJSON(JSONPrinter& json) const {
     return;
   }
 
+  // The profiler data uses the term 'tenured' for compatibility with the
+  // existing data format, although 'promoted' would be more accurate given
+  // support for semispace nursery.
+
   json.beginObject();
 
   json.property("status", "complete");
@@ -1072,11 +1074,11 @@ void js::Nursery::renderProfileJSON(JSONPrinter& json) const {
   json.property("bytes_tenured", previousGC.tenuredBytes);
   json.property("cells_tenured", previousGC.tenuredCells);
   json.property("strings_tenured",
-                stats().getStat(gcstats::STAT_STRINGS_TENURED));
+                stats().getStat(gcstats::STAT_STRINGS_PROMOTED));
   json.property("strings_deduplicated",
                 stats().getStat(gcstats::STAT_STRINGS_DEDUPLICATED));
   json.property("bigints_tenured",
-                stats().getStat(gcstats::STAT_BIGINTS_TENURED));
+                stats().getStat(gcstats::STAT_BIGINTS_PROMOTED));
   json.property("bytes_used", previousGC.nurseryUsedBytes);
   json.property("cur_capacity", previousGC.nurseryCapacity);
   const size_t newCapacity = capacity();
@@ -1088,6 +1090,14 @@ void js::Nursery::renderProfileJSON(JSONPrinter& json) const {
   }
   if (!timeInChunkAlloc_.IsZero()) {
     json.property("chunk_alloc_us", timeInChunkAlloc_, json.MICROSECONDS);
+  }
+
+  // This calculation includes the whole collection time, not just the time
+  // spent promoting.
+  double totalTime = profileDurations_[ProfileKey::Total].ToSeconds();
+  if (totalTime > 0.0) {
+    double tenuredAllocRate = double(previousGC.tenuredBytes) / totalTime;
+    json.property("tenured_allocation_rate", size_t(tenuredAllocRate));
   }
 
   // These counters only contain consistent data if the profiler is enabled,
@@ -1629,6 +1639,12 @@ js::Nursery::CollectionResult js::Nursery::doCollection(AutoGCSession& session,
   AutoDisableProxyCheck disableStrictProxyChecking;
   mozilla::DebugOnly<AutoEnterOOMUnsafeRegion> oomUnsafeRegion;
 
+#ifdef JS_GC_ZEAL
+  if (gc->hasZealMode(ZealMode::CheckHeapBeforeMinorGC)) {
+    gc->checkHeapBeforeMinorGC(session);
+  }
+#endif
+
   // Swap nursery spaces.
   swapSpaces();
   MOZ_ASSERT(toSpace.isEmpty());
@@ -1702,8 +1718,7 @@ js::Nursery::CollectionResult js::Nursery::doCollection(AutoGCSession& session,
   // Sweep malloced buffers.
   startProfile(ProfileKey::FreeMallocedBuffers);
   gc->queueBuffersForFreeAfterMinorGC(fromSpace.mallocedBuffers,
-                                      stringBuffersToReleaseAfterMinorGC_,
-                                      largeAllocsToFreeAfterMinorGC_);
+                                      stringBuffersToReleaseAfterMinorGC_);
   fromSpace.mallocedBufferBytes = 0;
   endProfile(ProfileKey::FreeMallocedBuffers);
 
@@ -1723,15 +1738,20 @@ js::Nursery::CollectionResult js::Nursery::doCollection(AutoGCSession& session,
   runtime()->caches().stringToAtomCache.purge();
   endProfile(ProfileKey::PurgeStringToAtomCache);
 
+#ifdef JS_GC_ZEAL
   // Make sure hashtables have been updated after the collection.
   startProfile(ProfileKey::CheckHashTables);
-#ifdef JS_GC_ZEAL
   if (gc->hasZealMode(ZealMode::CheckHashTablesOnMinorGC)) {
     runtime()->caches().checkEvalCacheAfterMinorGC();
     gc->checkHashTablesAfterMovingGC();
   }
-#endif
   endProfile(ProfileKey::CheckHashTables);
+
+  // Check for missing post barriers.
+  if (gc->hasZealMode(ZealMode::VerifierPost)) {
+    gc->verifyPostBarriers(session);
+  }
+#endif
 
   if (semispaceEnabled_) {
     // On the next collection, tenure everything before |tenureThreshold_|.
@@ -1781,8 +1801,6 @@ void js::Nursery::traceRoots(AutoGCSession& session, TenuringTracer& mover) {
     startProfile(ProfileKey::TraceWholeCells);
     sb.traceWholeCells(mover);
     endProfile(ProfileKey::TraceWholeCells);
-
-    cellsToSweep = sb.releaseCellSweepSet();
 
     startProfile(ProfileKey::TraceValues);
     sb.traceValues(mover);
@@ -1835,8 +1853,8 @@ size_t js::Nursery::doPretenuring(JSRuntime* rt, JS::GCReason reason,
   size_t zonesWhereStringsDisabled = 0;
   size_t zonesWhereBigIntsDisabled = 0;
 
-  uint32_t numStringsTenured = 0;
-  uint32_t numBigIntsTenured = 0;
+  uint32_t numStringsPromoted = 0;
+  uint32_t numBigIntsPromoted = 0;
   for (ZonesIter zone(gc, SkipAtoms); !zone.done(); zone.next()) {
     bool disableNurseryStrings =
         zone->allocNurseryStrings() &&
@@ -1859,10 +1877,13 @@ size_t js::Nursery::doPretenuring(JSRuntime* rt, JS::GCReason reason,
       }
       updateAllocFlagsForZone(zone);
     }
+
+    numStringsPromoted += zone->nurseryPromotedCount(JS::TraceKind::String);
+    numBigIntsPromoted += zone->nurseryPromotedCount(JS::TraceKind::BigInt);
   }
 
-  stats().setStat(gcstats::STAT_STRINGS_TENURED, numStringsTenured);
-  stats().setStat(gcstats::STAT_BIGINTS_TENURED, numBigIntsTenured);
+  stats().setStat(gcstats::STAT_STRINGS_PROMOTED, numStringsPromoted);
+  stats().setStat(gcstats::STAT_BIGINTS_PROMOTED, numBigIntsPromoted);
 
   if (reportPretenuring() && zonesWhereStringsDisabled) {
     fprintf(stderr,
@@ -1979,12 +2000,12 @@ Nursery::WasBufferMoved js::Nursery::maybeMoveRawBufferOnPromotion(
   bool nurseryOwned = IsInsideNursery(owner);
 
   void* buffer = *bufferp;
-  if (!ChunkPtrIsInsideNursery(buffer)) {
+  if (IsBufferAlloc(buffer)) {
     // This is an external buffer allocation owned by a nursery GC thing.
-    MOZ_ASSERT(IsNurseryOwned(buffer));
+    Zone* zone = owner->zone();
+    MOZ_ASSERT(IsNurseryOwned(zone, buffer));
     bool ownerWasTenured = !nurseryOwned;
-    owner->zone()->bufferAllocator.markNurseryOwnedAlloc(buffer,
-                                                         ownerWasTenured);
+    zone->bufferAllocator.markNurseryOwnedAlloc(buffer, ownerWasTenured);
     if (nurseryOwned) {
       registerBuffer(buffer, nbytes);
     }
@@ -2014,11 +2035,8 @@ Nursery::WasBufferMoved js::Nursery::maybeMoveRawBufferOnPromotion(
 }
 
 void js::Nursery::sweepBuffers() {
-  MOZ_ASSERT(largeAllocsToFreeAfterMinorGC_.isEmpty());
-
   for (ZonesIter zone(runtime(), WithAtoms); !zone.done(); zone.next()) {
-    if (zone->bufferAllocator.startMinorSweeping(
-            largeAllocsToFreeAfterMinorGC_)) {
+    if (zone->bufferAllocator.startMinorSweeping()) {
       sweepTask->queueAllocatorToSweep(zone->bufferAllocator);
     }
   }
@@ -2201,21 +2219,8 @@ void js::Nursery::sweep() {
   }
 
   sweepMapAndSetObjects();
-  cellsToSweep.sweep();
-  CellSweepSet empty;
-  std::swap(cellsToSweep, empty);
 
   runtime()->caches().sweepAfterMinorGC(&trc);
-}
-
-void gc::CellSweepSet::sweep() {
-  if (head_) {
-    ArenaCellSet::sweepDependentStrings(head_);
-    head_ = nullptr;
-  }
-  if (storage_) {
-    storage_->freeAll();
-  }
 }
 
 void js::Nursery::clear() {
@@ -2453,9 +2458,10 @@ size_t js::Nursery::targetSize(JS::GCOptions options, JS::GCReason reason) {
   // Debug builds are so much slower and more unpredictable that doing this
   // would cause very different nursery behaviour to an equivalent release
   // build.
-  static const double MaxTimeGoalMs = 4.0;
-  if (!gc->isInPageLoad() && !js::SupportDifferentialTesting()) {
-    double timeGrowth = MaxTimeGoalMs / collectorTime.ToMilliseconds();
+  double maxTimeGoalMS = tunables().nurseryMaxTimeGoalMS().ToMilliseconds();
+  if (!gc->isInPageLoad() && maxTimeGoalMS != 0.0 &&
+      !js::SupportDifferentialTesting()) {
+    double timeGrowth = maxTimeGoalMS / collectorTime.ToMilliseconds();
     growthFactor = std::min(growthFactor, timeGrowth);
   }
 #endif

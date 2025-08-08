@@ -212,6 +212,10 @@ using namespace mozilla;
 #  define MALLOC_RUNTIME_CONFIG
 #endif
 
+// Uncomment this to enable extra-vigilant assertions.  These assertions may run
+// more expensive checks that are sometimes too slow for regular debug mode.
+// #define MALLOC_DEBUG_VIGILANT
+
 // When MALLOC_STATIC_PAGESIZE is defined, the page size is fixed at
 // compile-time for better performance, as opposed to determined at
 // runtime. Some platforms can have different page sizes at runtime
@@ -1655,10 +1659,11 @@ class ArenaCollection {
       MutexAutoLock lock(mLock);
       mDefaultMaxDirtyPageModifier = aModifier;
       for (auto* arena : iter()) {
-        // We can only update max-dirty for main-thread-only arenas from the main thread.
+        // We can only update max-dirty for main-thread-only arenas from the
+        // main thread.
         if (!arena->IsMainThreadOnly() || IsOnMainThreadWeak()) {
           arena->UpdateMaxDirty();
-	}
+        }
       }
     }
   }
@@ -2813,12 +2818,15 @@ static void* chunk_alloc(size_t aSize, size_t aAlignment, bool aBase) {
 
 #ifdef MOZ_DEBUG
 static void chunk_assert_zero(void* aPtr, size_t aSize) {
+// Only run this expensive check in a vigilant mode.
+#  ifdef MALLOC_DEBUG_VIGILANT
   size_t i;
   size_t* p = (size_t*)(uintptr_t)aPtr;
 
   for (i = 0; i < aSize / sizeof(size_t); i++) {
     MOZ_ASSERT(p[i] == 0);
   }
+#  endif
 }
 #endif
 
@@ -5833,6 +5841,7 @@ inline void MozJemalloc::jemalloc_stats_internal(
           aBinStats[j].bytes_total +=
               bin->mNumRuns * (bytes_per_run - bin->mRunFirstRegionOffset);
           aBinStats[j].bytes_per_run = bytes_per_run;
+          aBinStats[j].regions_per_run = bin->mRunNumRegions;
         }
       }
     }
@@ -6011,6 +6020,7 @@ inline arena_t* ArenaCollection::GetById(arena_id_t aArenaId, bool aIsPrivate) {
   MOZ_RELEASE_ASSERT(aIsPrivate);
   // This function is not expected to be called before at least one private
   // arena was created.
+  // coverity[missing_lock]
   MOZ_RELEASE_ASSERT(mArenaIdKey);
   arena_id_t id = (aArenaId << mArenaIdRotation) |
                   (aArenaId >> (sizeof(void*) * 8 - mArenaIdRotation));
@@ -6097,7 +6107,8 @@ inline void MozJemalloc::jemalloc_reset_small_alloc_randomization(
 
   MutexAutoLock lock(gArenas.mLock);
   for (auto* arena : gArenas.iter()) {
-    // We can only initialize the PRNG for main-thread-only arenas from the main thread.
+    // We can only initialize the PRNG for main-thread-only arenas from the main
+    // thread.
     if (!arena->IsMainThreadOnly() || gArenas.IsOnMainThreadWeak()) {
       arena->ResetSmallAllocRandomization();
     }

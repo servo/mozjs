@@ -173,19 +173,6 @@ bool CodeMetadata::prepareForCompile(CompileMode mode) {
   return true;
 }
 
-uint32_t CodeMetadata::findFuncIndex(uint32_t bytecodeOffset) const {
-  size_t funcDefIndex;
-  if (!mozilla::BinarySearchIf(
-          funcDefRanges, 0, funcDefRanges.length(),
-          [bytecodeOffset](const BytecodeRange& range) {
-            return range.compareOffset(bytecodeOffset);
-          },
-          &funcDefIndex)) {
-    MOZ_CRASH("missing function definition");
-  }
-  return numFuncImports + funcDefIndex;
-}
-
 uint32_t CodeMetadata::findFuncExportIndex(uint32_t funcIndex) const {
   MOZ_ASSERT(funcs[funcIndex].isExported());
 
@@ -195,6 +182,19 @@ uint32_t CodeMetadata::findFuncExportIndex(uint32_t funcIndex) const {
     MOZ_CRASH("missing function export");
   }
   return (uint32_t)match;
+}
+
+uint32_t CodeTailMetadata::findFuncIndex(uint32_t bytecodeOffset) const {
+  size_t funcDefIndex;
+  if (!mozilla::BinarySearchIf(
+          funcDefRanges, 0, funcDefRanges.length(),
+          [bytecodeOffset](const BytecodeRange& range) {
+            return range.compareOffset(bytecodeOffset);
+          },
+          &funcDefIndex)) {
+    MOZ_CRASH("missing function definition");
+  }
+  return codeMeta->numFuncImports + funcDefIndex;
 }
 
 // CodeMetadata helpers -- getting function names.
@@ -224,9 +224,10 @@ static bool AppendFunctionIndexName(uint32_t funcIndex, UTF8Bytes* bytes) {
 }
 
 bool CodeMetadata::getFuncNameForWasm(NameContext ctx, uint32_t funcIndex,
+                                      const ShareableBytes* nameSectionPayload,
                                       UTF8Bytes* name) const {
   if (nameSection && nameSection->moduleName.length != 0) {
-    if (!AppendName(nameSection->payload->vector, nameSection->moduleName,
+    if (!AppendName(nameSectionPayload->vector, nameSection->moduleName,
                     name)) {
       return false;
     }
@@ -237,7 +238,7 @@ bool CodeMetadata::getFuncNameForWasm(NameContext ctx, uint32_t funcIndex,
 
   if (nameSection && funcIndex < nameSection->funcNames.length() &&
       nameSection->funcNames[funcIndex].length != 0) {
-    return AppendName(nameSection->payload->vector,
+    return AppendName(nameSectionPayload->vector,
                       nameSection->funcNames[funcIndex], name);
   }
 
@@ -264,82 +265,20 @@ size_t CodeMetadata::sizeOfExcludingThis(
          customSectionRanges.sizeOfExcludingThis(mallocSizeOf);
 }
 
-// CodeMetadata helpers -- statistics collection.
+CodeTailMetadata::CodeTailMetadata()
+    : codeMeta(nullptr),
+      debugEnabled(false),
+      debugHash(),
+      inliningBudget(mutexid::WasmInliningBudget, 0),
+      callRefHints(nullptr),
+      numCallRefMetrics(UINT32_MAX),
+      numAllocSites(UINT32_MAX) {}
 
-void CodeMetadata::dumpStats() const {
-  // To see the statistics printed here:
-  // * configure with --enable-jitspew or --enable-debug
-  // * run with MOZ_LOG=wasmPerf:3
-  // * this works for both JS builds and full browser builds
-#ifdef JS_JITSPEW
-  // Get the stats lock, pull a copy of the stats and drop the lock, so as to
-  // avoid possible lock-ordering problems relative to JS_LOG.
-  CodeMetadata::ProtectedOptimizationStats statsCopy;
-  {
-    auto guard = stats.readLock();
-    statsCopy = guard.get();
-  }
-  JS_LOG(wasmPerf, Info, "CM=..%06lx  CodeMetadata::~CodeMetadata() <<<<",
-         0xFFFFFF & (unsigned long)uintptr_t(this));
-  JS_LOG(wasmPerf, Info, "  ------ Heuristic Settings ------");
-  JS_LOG(wasmPerf, Info, "     w_lazy_tiering_level  (1..9) = %u",
-         LazyTieringHeuristics::rawLevel());
-  JS_LOG(wasmPerf, Info, "     w_inlining_level      (1..9) = %u",
-         InliningHeuristics::rawLevel());
-  JS_LOG(wasmPerf, Info, "     w_direct_inlining   = %s",
-         InliningHeuristics::rawDirectAllowed() ? "true" : "false");
-  JS_LOG(wasmPerf, Info, "     w_call_ref_inlining = %s",
-         InliningHeuristics::rawCallRefAllowed() ? "true" : "false");
-  JS_LOG(wasmPerf, Info, "     w_call_ref_inlining_percent (10..100) = %u",
-         InliningHeuristics::rawCallRefPercent());
-  JS_LOG(wasmPerf, Info, "  ------ Complete Tier ------");
-  JS_LOG(wasmPerf, Info, "    %7zu functions in module",
-         statsCopy.completeNumFuncs);
-  JS_LOG(wasmPerf, Info, "    %7zu bytecode bytes in module",
-         statsCopy.completeBCSize);
-  uint32_t nMetrics = numCallRefMetrics == UINT32_MAX ? 0 : numCallRefMetrics;
-  JS_LOG(wasmPerf, Info, "    %7u CallRefMetrics in module (%zu bytes)",
-         nMetrics, size_t(nMetrics) * sizeof(CallRefMetrics));
-  JS_LOG(wasmPerf, Info, "  ------ Partial Tier ------");
-  JS_LOG(wasmPerf, Info, "    %7zu functions tiered up",
-         statsCopy.partialNumFuncs);
-  JS_LOG(wasmPerf, Info, "    %7zu bytecode bytes tiered up",
-         statsCopy.partialBCSize);
-  JS_LOG(wasmPerf, Info, "    %7zu direct-calls inlined",
-         statsCopy.partialNumFuncsInlinedDirect);
-  JS_LOG(wasmPerf, Info, "    %7zu call_ref-calls inlined",
-         statsCopy.partialNumFuncsInlinedCallRef);
-  JS_LOG(wasmPerf, Info, "    %7zu direct-call bytecodes inlined",
-         statsCopy.partialBCInlinedSizeDirect);
-  JS_LOG(wasmPerf, Info, "    %7zu call_ref-call bytecodes inlined",
-         statsCopy.partialBCInlinedSizeCallRef);
-  JS_LOG(wasmPerf, Info, "    %7zu functions overran inlining budget",
-         statsCopy.partialInlineBudgetOverruns);
-  JS_LOG(wasmPerf, Info, "    %7zu bytes mmap'd for p-t code storage",
-         statsCopy.partialCodeBytesMapped);
-  JS_LOG(wasmPerf, Info, "    %7zu bytes actually used for p-t code storage",
-         statsCopy.partialCodeBytesUsed);
-
-  // This value will be 0.0 if inlining did not cause any code expansion.  A
-  // value of 1.0 means inlining doubled the total amount of bytecode, 2.0
-  // means tripled it, etc.
-  float inliningExpansion = float(statsCopy.partialBCInlinedSizeDirect +
-                                  statsCopy.partialBCInlinedSizeCallRef) /
-                            float(statsCopy.partialBCSize);
-
-  // This is always between 0.0 and 1.0.
-  float codeSpaceUseRatio = float(statsCopy.partialCodeBytesUsed) /
-                            float(statsCopy.partialCodeBytesMapped);
-
-  JS_LOG(wasmPerf, Info, "  ------ Derived Values ------");
-  JS_LOG(wasmPerf, Info,
-         "     %5.1f%% p-t bytecode expansion caused by inlining",
-         inliningExpansion * 100.0);
-  JS_LOG(wasmPerf, Info, "      %4.1f%% of partial tier mapped code space used",
-         codeSpaceUseRatio * 100.0);
-  JS_LOG(wasmPerf, Info, "  ------");
-  JS_LOG(wasmPerf, Info, ">>>>");
-#endif
+CodeTailMetadata::CodeTailMetadata(const CodeMetadata& codeMeta)
+    : js::wasm::CodeTailMetadata() {
+  this->codeMeta = &codeMeta;
+  inliningBudget.lock().get() =
+      InliningHeuristics::moduleInliningBudget(codeMeta.codeSectionSize());
 }
 
 // ModuleMetadata helpers -- memory accounting.

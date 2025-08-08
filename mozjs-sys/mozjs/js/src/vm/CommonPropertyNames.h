@@ -156,6 +156,7 @@
   MACRO_(dollar_ArrayValues_, "$ArrayValues")                                  \
   MACRO_(dollar_RegExpFlagsGetter_, "$RegExpFlagsGetter")                      \
   MACRO_(dollar_RegExpToString_, "$RegExpToString")                            \
+  MACRO_(dollar_SharedArrayBufferSpecies_, "$SharedArrayBufferSpecies")        \
   MACRO_(domNode, "domNode")                                                   \
   MACRO_(done, "done")                                                         \
   MACRO_(dotAll, "dotAll")                                                     \
@@ -502,6 +503,11 @@
   MACRO_(rawJSON, "rawJSON")                                                   \
   MACRO_(read, "read")                                                         \
   MACRO_(reason, "reason")                                                     \
+  MACRO_(RegExpMatch, "RegExpMatch")                                           \
+  MACRO_(RegExpMatchAll, "RegExpMatchAll")                                     \
+  MACRO_(RegExpReplace, "RegExpReplace")                                       \
+  MACRO_(RegExpSearch, "RegExpSearch")                                         \
+  MACRO_(RegExpSplit, "RegExpSplit")                                           \
   MACRO_(RegExp_String_Iterator_, "RegExp String Iterator")                    \
   MACRO_(RegExp_prototype_Exec, "RegExp_prototype_Exec")                       \
   MACRO_(region, "region")                                                     \
@@ -644,6 +650,7 @@
   MACRO_(variable, "variable")                                                 \
   MACRO_(void_, "void")                                                        \
   MACRO_(void_0_, "(void 0)")                                                  \
+  MACRO_(waitAsync, "waitAsync")                                               \
   MACRO_(wasm, "wasm")                                                         \
   MACRO_(WasmAnyRef, "WasmAnyRef")                                             \
   MACRO_(wasmcall, "wasmcall")                                                 \

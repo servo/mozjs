@@ -92,8 +92,6 @@ MOZ_END_EXTERN_C
 #endif
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(OHOS)
-#  include <hilog/log.h>
 #endif
 
 MOZ_BEGIN_EXTERN_C
@@ -129,10 +127,6 @@ MOZ_ReportAssertionFailure(const char* aStr, const char* aFilename,
   MozWalkTheStackWithWriter(MOZ_ReportAssertionFailurePrintFrame, CallerPC(),
                             /* aMaxFrames */ 0);
 #  endif
-#elif defined(OHOS)
-    (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_Assert",
-     "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
-     aStr, aFilename, aLine);
 #else
 #  if defined(MOZ_BUFFER_STDERR)
   char msg[1024] = "";
@@ -157,10 +151,6 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void MOZ_ReportCrash(
   __android_log_print(ANDROID_LOG_FATAL, "MOZ_CRASH",
                       "[%d] Hit MOZ_CRASH(%s) at %s:%d\n", MOZ_GET_PID(), aStr,
                       aFilename, aLine);
-#elif defined(OHOS)
-  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_CRASH",
-   "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
-   aStr, aFilename, aLine);
 #  if defined(MOZ_DUMP_ASSERTION_STACK)
   MozWalkTheStackWithWriter(MOZ_CrashPrintFrame, CallerPC(),
                             /* aMaxFrames */ 0);
@@ -248,6 +238,46 @@ MOZ_NoReturn(int aLine) {
 #else
 
 /*
+ * MOZ_CrashSequence() executes a sequence that causes the process to crash by
+ * writing the line number specified in the `aLine` parameter to the address
+ * provide by `aAddress`. The store is implemented as volatile assembly code to
+ * ensure it's always included in the output and always executed.
+ */
+static inline void MOZ_CrashSequence(void* aAddress, intptr_t aLine) {
+#  if defined(__i386__) || defined(__x86_64__)
+  asm volatile(
+      "mov %1, (%0);\n"  // Write the line number to the crashing address
+      :                  // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__arm__) || defined(__aarch64__)
+  asm volatile(
+      "str %1,[%0];\n"  // Write the line number to the crashing address
+      :                 // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__riscv) && (__riscv_xlen == 64)
+  asm volatile(
+      "sd %1,0(%0);\n"  // Write the line number to the crashing address
+      :                 // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__sparc__) && defined(__arch64__)
+  asm volatile(
+      "stx %1,[%0];\n"  // Write the line number to the crashing address
+      :                 // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  elif defined(__loongarch64)
+  asm volatile(
+      "st.d %1,%0,0;\n"  // Write the line number to the crashing address
+      :                  // no output registers
+      : "r"(aAddress), "r"(aLine));
+#  else
+#    warning \
+        "Unsupported architecture, replace the code below with assembly suitable to crash the process"
+  asm volatile("" ::: "memory");
+  *((volatile int*)aAddress) = aLine; /* NOLINT */
+#  endif
+}
+
+/*
  * MOZ_CRASH_WRITE_ADDR is the address to be used when performing a forced
  * crash. NULL is preferred however if for some reason NULL cannot be used
  * this makes choosing another value possible.
@@ -258,55 +288,9 @@ MOZ_NoReturn(int aLine) {
  * SEGV at 0x0.
  */
 #  ifdef MOZ_UBSAN
-#    define MOZ_CRASH_WRITE_ADDR 0x1
+#    define MOZ_CRASH_WRITE_ADDR ((void*)0x1)
 #  else
 #    define MOZ_CRASH_WRITE_ADDR NULL
-#  endif
-
-/*
- * MOZ_CrashSequence() executes a sequence that causes the process to crash by
- * writing the line number specified in the `aLine` parameter to the address
- * provide by `aAddress`. The store is implemented as volatile assembly code to
- * ensure it's always included in the output and always executed. This does not
- * apply to ASAN builds where we use `__builtin_trap()` instead, as an illegal
- * access would trip ASAN's checks.
- */
-#  if !defined(MOZ_ASAN)
-static inline void MOZ_CrashSequence(void* aAddress, intptr_t aLine) {
-#    if defined(__i386__) || defined(__x86_64__)
-  asm volatile(
-      "mov %1, (%0);\n"  // Write the line number to the crashing address
-      :                  // no output registers
-      : "r"(aAddress), "r"(aLine));
-#    elif defined(__arm__) || defined(__aarch64__)
-  asm volatile(
-      "str %1,[%0];\n"  // Write the line number to the crashing address
-      :                 // no output registers
-      : "r"(aAddress), "r"(aLine));
-#    elif defined(__riscv) && (__riscv_xlen == 64)
-  asm volatile(
-      "sd %1,0(%0);\n"  // Write the line number to the crashing address
-      :                 // no output registers
-      : "r"(aAddress), "r"(aLine));
-#    elif defined(__sparc__) && defined(__arch64__)
-  asm volatile(
-      "stx %1,[%0];\n"  // Write the line number to the crashing address
-      :                 // no output registers
-      : "r"(aAddress), "r"(aLine));
-#    elif defined(__loongarch64)
-  asm volatile(
-      "st.d %1,%0,0;\n"  // Write the line number to the crashing address
-      :                  // no output registers
-      : "r"(aAddress), "r"(aLine));
-#    else
-#      warning \
-          "Unsupported architecture, replace the code below with assembly suitable to crash the process"
-  asm volatile("" ::: "memory");
-  *((volatile int*)MOZ_CRASH_WRITE_ADDR) = aLine; /* NOLINT */
-#    endif
-}
-#  else
-#    define MOZ_CrashSequence(x, y) __builtin_trap()
 #  endif
 
 #  ifdef __cplusplus

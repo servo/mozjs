@@ -157,9 +157,9 @@
   _(RegExpSearcherLastLimit)                       \
   _(RegExpHasCaptureGroups)                        \
   _(IsRegExpObject)                                \
+  _(IsOptimizableRegExpObject)                     \
   _(IsPossiblyWrappedRegExpObject)                 \
-  _(RegExpPrototypeOptimizable)                    \
-  _(RegExpInstanceOptimizable)                     \
+  _(IsRegExpPrototypeOptimizable)                  \
   _(GetFirstDollarIndex)                           \
                                                    \
   _(SetConstructor)                                \
@@ -214,11 +214,11 @@
   _(IntrinsicIsObject)                             \
   _(IntrinsicIsCrossRealmArrayConstructor)         \
   _(IntrinsicCanOptimizeArraySpecies)              \
+  _(IntrinsicCanOptimizeStringProtoSymbolLookup)   \
   _(IntrinsicToInteger)                            \
   _(IntrinsicToLength)                             \
   _(IntrinsicIsConstructing)                       \
   _(IntrinsicSubstringKernel)                      \
-  _(IntrinsicObjectHasPrototype)                   \
   _(IntrinsicIsPackedArray)                        \
                                                    \
   _(IntrinsicIsSuspendedGenerator)                 \
@@ -243,8 +243,6 @@
   _(IntrinsicArrayIteratorPrototypeOptimizable)    \
                                                    \
   _(IntrinsicGuardToArrayBuffer)                   \
-  _(IntrinsicArrayBufferByteLength)                \
-  _(IntrinsicPossiblyWrappedArrayBufferByteLength) \
                                                    \
   _(IntrinsicGuardToSharedArrayBuffer)             \
                                                    \

@@ -50,7 +50,9 @@
 #include "jit/RangeAnalysis.h"
 #include "jit/ScalarReplacement.h"
 #include "jit/ScriptFromCalleeToken.h"
+#include "jit/SimpleAllocator.h"
 #include "jit/Sink.h"
+#include "jit/UnrollLoops.h"
 #include "jit/ValueNumbering.h"
 #include "jit/WarpBuilder.h"
 #include "jit/WarpOracle.h"
@@ -416,8 +418,6 @@ uint8_t* jit::LazyLinkTopActivation(JSContext* cx,
 
 /* static */
 void JitRuntime::TraceAtomZoneRoots(JSTracer* trc) {
-  MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
-
   // Shared stubs are allocated in the atoms zone, so do not iterate
   // them after the atoms heap after it has been "finished."
   if (trc->runtime()->atomsAreFinished()) {
@@ -993,7 +993,8 @@ bool OptimizeMIR(MIRGenerator* mir) {
   }
 
   {
-    if (!FoldEmptyBlocks(graph)) {
+    bool dummy;
+    if (!FoldEmptyBlocks(graph, &dummy)) {
       return false;
     }
     gs.spewPass("Fold Empty Blocks");
@@ -1053,7 +1054,7 @@ bool OptimizeMIR(MIRGenerator* mir) {
   }
 
   {
-    if (!BuildDominatorTree(graph)) {
+    if (!BuildDominatorTree(mir, graph)) {
       return false;
     }
     // No spew: graph not changed.
@@ -1126,6 +1127,18 @@ bool OptimizeMIR(MIRGenerator* mir) {
     AssertExtendedGraphCoherency(graph);
 
     if (mir->shouldCancel("Apply types")) {
+      return false;
+    }
+  }
+
+  if (mir->compilingWasm()) {
+    if (!TrackWasmRefTypes(graph)) {
+      return false;
+    }
+    gs.spewPass("Track Wasm ref types");
+    AssertExtendedGraphCoherency(graph);
+
+    if (mir->shouldCancel("Track Wasm ref types")) {
       return false;
     }
   }
@@ -1388,7 +1401,7 @@ bool OptimizeMIR(MIRGenerator* mir) {
 
   if (mir->optimizationInfo().instructionReorderingEnabled() &&
       !mir->outerInfo().hadReorderingBailout()) {
-    if (!ReorderInstructions(graph)) {
+    if (!ReorderInstructions(mir, graph)) {
       return false;
     }
     gs.spewPass("Reordering");
@@ -1415,6 +1428,48 @@ bool OptimizeMIR(MIRGenerator* mir) {
   }
   AssertExtendedGraphCoherency(graph, /* underValueNumberer = */ false,
                                /* force = */ true);
+
+  // Unroll and/or peel loops
+  if (mir->compilingWasm() && JS::Prefs::wasm_unroll_loops()) {
+    bool loopsChanged;
+    if (!UnrollLoops(mir, graph, &loopsChanged)) {
+      return false;
+    }
+
+    gs.spewPass("Unroll loops");
+
+    AssertExtendedGraphCoherency(graph);
+
+    if (mir->shouldCancel("Unroll loops")) {
+      return false;
+    }
+
+    if (loopsChanged) {
+      // Rerun GVN in the hope that unrolling exposed more optimization
+      // opportunities.
+      if (!gvn.run(ValueNumberer::DontUpdateAliasAnalysis)) {
+        return false;
+      }
+      // And tidy up any empty blocks.
+      bool blocksFolded;
+      if (!FoldEmptyBlocks(graph, &blocksFolded)) {
+        return false;
+      }
+      if (blocksFolded) {
+        // Redo the dominator tree.
+        ClearDominatorTree(graph);
+        if (!BuildDominatorTree(mir, graph)) {
+          return false;
+        }
+      }
+
+      AssertExtendedGraphCoherency(graph);
+
+      if (mir->shouldCancel("Rerun GVN after loop unrolling")) {
+        return false;
+      }
+    }
+  }
 
   // Remove unreachable blocks created by MBasicBlock::NewFakeLoopPredecessor
   // to ensure every loop header has two predecessors. (This only happens due
@@ -1456,6 +1511,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("Bounds Check Elimination");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Bounds Check Elimination")) {
+      return false;
+    }
   }
 
   if (mir->optimizationInfo().eliminateRedundantShapeGuardsEnabled()) {
@@ -1464,6 +1523,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("Shape Guard Elimination");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Shape Guard Elimination")) {
+      return false;
+    }
   }
 
   // Run the GC Barrier Elimination pass after instruction reordering, to
@@ -1475,6 +1538,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("GC Barrier Elimination");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("GC Barrier Elimination")) {
+      return false;
+    }
   }
 
   if (!mir->compilingWasm() && !mir->outerInfo().hadUnboxFoldingBailout()) {
@@ -1483,6 +1550,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("FoldLoadsWithUnbox");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("FoldLoadsWithUnbox")) {
+      return false;
+    }
   }
 
   if (!mir->compilingWasm()) {
@@ -1491,6 +1562,10 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
     gs.spewPass("Add KeepAlive Instructions");
     AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Add KeepAlive Instructions")) {
+      return false;
+    }
   }
 
   AssertGraphCoherency(graph, /* force = */ true);
@@ -1527,48 +1602,45 @@ LIRGraph* GenerateLIR(MIRGenerator* mir) {
 
 #ifdef DEBUG
   AllocationIntegrityState integrity(*lir);
-#endif
-
-  {
-    IonRegisterAllocator allocator =
-        mir->optimizationInfo().registerAllocator();
-
-    switch (allocator) {
-      case RegisterAllocator_Backtracking:
-      case RegisterAllocator_Testbed: {
-#ifdef DEBUG
-        if (JitOptions.fullDebugChecks) {
-          if (!integrity.record()) {
-            return nullptr;
-          }
-        }
-#endif
-
-        BacktrackingAllocator regalloc(mir, &lirgen, *lir,
-                                       allocator == RegisterAllocator_Testbed);
-        if (!regalloc.go()) {
-          return nullptr;
-        }
-
-#ifdef DEBUG
-        if (JitOptions.fullDebugChecks) {
-          if (!integrity.check()) {
-            return nullptr;
-          }
-        }
-#endif
-
-        gs.spewPass("Allocate Registers [Backtracking]");
-        break;
-      }
-
-      default:
-        MOZ_CRASH("Bad regalloc");
-    }
-
-    if (mir->shouldCancel("Allocate Registers")) {
+  if (JitOptions.fullDebugChecks) {
+    if (!integrity.record()) {
       return nullptr;
     }
+  }
+#endif
+
+  IonRegisterAllocator allocator = mir->optimizationInfo().registerAllocator();
+  switch (allocator) {
+    case RegisterAllocator_Backtracking: {
+      BacktrackingAllocator regalloc(mir, &lirgen, *lir);
+      if (!regalloc.go()) {
+        return nullptr;
+      }
+      gs.spewPass("Allocate Registers [Backtracking]");
+      break;
+    }
+    case RegisterAllocator_Simple: {
+      SimpleAllocator regalloc(mir, &lirgen, *lir);
+      if (!regalloc.go()) {
+        return nullptr;
+      }
+      gs.spewPass("Allocate Registers [Simple]");
+      break;
+    }
+    default:
+      MOZ_CRASH("Bad regalloc");
+  }
+
+#ifdef DEBUG
+  if (JitOptions.fullDebugChecks) {
+    if (!integrity.check()) {
+      return nullptr;
+    }
+  }
+#endif
+
+  if (mir->shouldCancel("Allocate Registers")) {
+    return nullptr;
   }
 
   return lir;

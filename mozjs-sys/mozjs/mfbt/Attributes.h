@@ -452,6 +452,39 @@
 #endif
 
 /**
+ * MOZ_GSL_OWNER indicates that objects of the type this annotation is attached
+ * to own some kind of resources, generally memory.
+ *
+ * See: https://clang.llvm.org/docs/AttributeReference.html#owner
+ */
+#if defined(__clang__) && defined(__has_cpp_attribute)
+#  if __has_cpp_attribute(gsl::Owner)
+#    define MOZ_GSL_OWNER [[gsl::Owner]]
+#  else
+#    define MOZ_GSL_OWNER /* nothing */
+#  endif
+#else
+#  define MOZ_GSL_OWNER /* nothing */
+#endif
+
+/**
+ * MOZ_GSL_POINTER indicates that objects of the type this annotation is
+ * attached to provide a non-owning view on some kind of resources, generally
+ * memory.
+ *
+ * See: https://clang.llvm.org/docs/AttributeReference.html#pointer
+ */
+#if defined(__clang__) && defined(__has_cpp_attribute)
+#  if __has_cpp_attribute(gsl::Pointer)
+#    define MOZ_GSL_POINTER [[gsl::Pointer]]
+#  else
+#    define MOZ_GSL_POINTER /* nothing */
+#  endif
+#else
+#  define MOZ_GSL_POINTER /* nothing */
+#endif
+
+/**
  * MOZ_LIFETIME_BOUND indicates that objects that are referred to by that
  * parameter may also be referred to by the return value of the annotated
  * function (or, for a parameter of a constructor, by the value of the
@@ -466,6 +499,21 @@
 #  endif
 #else
 #  define MOZ_LIFETIME_BOUND /* nothing */
+#endif
+
+/**
+ * MOZ_LIFETIME_CAPTURE_BY(x) indicates that objects that are referred to
+ * by that parameter may also be referred to by x.
+ * See: https://clang.llvm.org/docs/AttributeReference.html#lifetime-capture-by
+ */
+#if defined(__clang__) && defined(__has_cpp_attribute)
+#  if __has_cpp_attribute(clang::lifetime_capture_by)
+#    define MOZ_LIFETIME_CAPTURE_BY(x) [[clang::lifetime_capture_by(x)]]
+#  else
+#    define MOZ_LIFETIME_CAPTURE_BY(x) /* nothing */
+#  endif
+#else
+#  define MOZ_LIFETIME_CAPTURE_BY(x) /* nothing */
 #endif
 
 #ifdef __cplusplus

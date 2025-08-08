@@ -18,7 +18,15 @@ namespace js::jit {
 class MIRGenerator;
 
 struct CompilationDependency {
-  enum class Type { GetIterator, ArraySpecies, EmulatesUndefined, Limit };
+  enum class Type {
+    GetIterator,
+    ArraySpecies,
+    RegExpPrototype,
+    StringPrototypeSymbols,
+    EmulatesUndefined,
+    ArrayExceedsInt32Length,
+    Limit
+  };
 
   Type type;
 

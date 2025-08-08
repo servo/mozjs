@@ -12,6 +12,7 @@
 #include "js/Prefs.h"
 #include "threading/ExclusiveData.h"
 #include "vm/MutexIDs.h"
+#include "wasm/WasmConstants.h"
 
 namespace js {
 namespace wasm {
@@ -38,6 +39,7 @@ namespace wasm {
 class LazyTieringHeuristics {
   static constexpr uint32_t MIN_LEVEL = 1;
   static constexpr uint32_t MAX_LEVEL = 9;
+  static constexpr uint32_t SMALL_MODULE_THRESH = 150000;
 
   // A scaling table for levels 2 .. 8.  Levels 1 and 9 are special-cased.  In
   // this table, each value differs from its neighbour by a factor of 3, giving
@@ -64,8 +66,20 @@ class LazyTieringHeuristics {
   // goes negative it requests tier-up.  See "[SMDOC] WebAssembly baseline
   // compiler -- Lazy Tier-Up mechanism" in WasmBaselineCompile.cpp.
 
-  static int32_t estimateIonCompilationCost(uint32_t bodyLength) {
+  static int32_t estimateIonCompilationCost(uint32_t bodyLength,
+                                            size_t codeSectionSize) {
     uint32_t level = rawLevel();
+
+    // Increase the aggressiveness of tiering for small modules, since they
+    // don't generate much optimised-tier compilation work, so we might as well
+    // try to get them into optimized code sooner.  But don't overdo it, since
+    // we don't want to lose indirect-target resolution as a result.  See bug
+    // 1965195.
+    MOZ_ASSERT(codeSectionSize > 0);
+    if (codeSectionSize <= SMALL_MODULE_THRESH && level < MAX_LEVEL) {
+      level += 1;
+    }
+
     if (MOZ_LIKELY(MIN_LEVEL < level && level < MAX_LEVEL)) {
       // The estimated cost, in X86_64 insns, for Ion compilation:
       // 30k up-front cost + 4k per bytecode byte.
@@ -99,71 +113,6 @@ class LazyTieringHeuristics {
       return 0;
     }
     MOZ_CRASH();
-  }
-};
-
-class InliningHeuristics {
-  static constexpr uint32_t MIN_LEVEL = 1;
-  static constexpr uint32_t MAX_LEVEL = 9;
-
- public:
-  // 1 = no inlining allowed
-  // 2 = min (minimal inlining)
-  // 5 = default
-  // 9 = max (very aggressive inlining)
-  //
-  // Don't use these directly, except for logging etc.
-  static uint32_t rawLevel() {
-    uint32_t level = JS::Prefs::wasm_inlining_level();
-    return std::clamp(level, MIN_LEVEL, MAX_LEVEL);
-  }
-  static bool rawDirectAllowed() { return JS::Prefs::wasm_direct_inlining(); }
-  static bool rawCallRefAllowed() {
-    return JS::Prefs::wasm_call_ref_inlining();
-  }
-  // For a call_ref site, returns the percentage of total calls made by that
-  // site, that any single target has to make in order to be considered as a
-  // candidate for speculative inlining.
-  static uint32_t rawCallRefPercent() {
-    uint32_t percent = JS::Prefs::wasm_call_ref_inlining_percent();
-    // Clamp to range 10 .. 100 (%).
-    return std::clamp(percent, 10u, 100u);
-  }
-
-  // Given a call of kind `callKind` to a function of bytecode size
-  // `bodyLength` at `inliningDepth`, decide whether the it is allowable to
-  // inline the call.  Note that `inliningDepth` starts at zero, not one.  In
-  // other words, a value of zero means the query relates to a function which
-  // (if approved) would be inlined into the top-level function currently being
-  // compiled.
-  enum class CallKind { Direct, CallRef };
-  static bool isSmallEnoughToInline(CallKind callKind, uint32_t inliningDepth,
-                                    uint32_t bodyLength) {
-    // If this fails, something's seriously wrong; bail out.
-    MOZ_RELEASE_ASSERT(inliningDepth <= 10);  // because 10 > (320 / 40)
-    // Check whether calls of this kind are currently allowed
-    if ((callKind == CallKind::Direct && !rawDirectAllowed()) ||
-        (callKind == CallKind::CallRef && !rawCallRefAllowed())) {
-      return false;
-    }
-    // Check the size is allowable.  This depends on how deep we are in the
-    // stack and on the setting of level_.  We allow inlining of functions of
-    // size up to the `baseSize[]` value at depth zero, but reduce the
-    // allowable size by 40 for each further level of inlining, so that only
-    // smaller and smaller functions are allowed as we inline deeper.
-    //
-    // At some point `allowedSize` goes negative and thereby disallows all
-    // further inlining.  Note that the `baseSize` entry for
-    // `level_ == MIN_LEVEL (== 1)` is set so as to disallow inlining even at
-    // depth zero.  Hence `level_ == MIN_LEVEL` disallows all inlining.
-    static constexpr int32_t baseSize[9] = {0,   40,  80,  120,
-                                            160,  // default
-                                            200, 240, 280, 320};
-    uint32_t level = rawLevel();
-    MOZ_RELEASE_ASSERT(level >= MIN_LEVEL && level <= MAX_LEVEL);
-    int32_t allowedSize = baseSize[level - MIN_LEVEL];
-    allowedSize -= int32_t(40 * inliningDepth);
-    return allowedSize > 0 && bodyLength <= uint32_t(allowedSize);
   }
 };
 
@@ -260,6 +209,114 @@ static constexpr int64_t PerModuleMaxInliningRatio = 1;
 
 // Same meaning as above, except at a per-function level.
 static constexpr int64_t PerFunctionMaxInliningRatio = 99;
+
+class InliningHeuristics {
+  static constexpr uint32_t MIN_LEVEL = 1;
+  static constexpr uint32_t MAX_LEVEL = 9;
+
+  static constexpr uint32_t LARGE_FUNCTION_THRESH_1 = 400000;
+  static constexpr uint32_t LARGE_FUNCTION_THRESH_2 = 800000;
+  static constexpr uint32_t LARGE_FUNCTION_THRESH_3 = 1200000;
+
+ public:
+  // 1 = no inlining allowed
+  // 2 = min (minimal inlining)
+  // 5 = default
+  // 9 = max (very aggressive inlining)
+  //
+  // Don't use these directly, except for logging etc.
+  static uint32_t rawLevel() {
+    uint32_t level = JS::Prefs::wasm_inlining_level();
+    return std::clamp(level, MIN_LEVEL, MAX_LEVEL);
+  }
+  static bool rawDirectAllowed() { return JS::Prefs::wasm_direct_inlining(); }
+  static bool rawCallRefAllowed() {
+    return JS::Prefs::wasm_call_ref_inlining();
+  }
+  // For a call_ref site, returns the percentage of total calls made by that
+  // site, that any single target has to make in order to be considered as a
+  // candidate for speculative inlining.
+  static uint32_t rawCallRefPercent() {
+    uint32_t percent = JS::Prefs::wasm_call_ref_inlining_percent();
+    // Clamp to range 10 .. 100 (%).
+    return std::clamp(percent, 10u, 100u);
+  }
+
+  // Calculate the total inlining budget for a module, based on the size of the
+  // code section.
+  static int64_t moduleInliningBudget(size_t codeSectionSize) {
+    int64_t budget = int64_t(codeSectionSize) * PerModuleMaxInliningRatio;
+
+    // Don't be overly stingy for tiny modules.  Function-level inlining
+    // limits will still protect us from excessive inlining.
+    return std::max<int64_t>(budget, 1000);
+  }
+
+  // Given a call of kind `callKind` to a function of bytecode size
+  // `bodyLength` at `inliningDepth`, decide whether the it is allowable to
+  // inline the call.  Note that `inliningDepth` starts at zero, not one.  In
+  // other words, a value of zero means the query relates to a function which
+  // (if approved) would be inlined into the top-level function currently being
+  // compiled.
+  //
+  // `rootFunctionBodyLength` is the bytecode size of the function at the root
+  // of this inlining stack.  If that is (very) large, we back off somewhat on
+  // inlining.  `*largeFunctionBackoff` indicates whether or not that happened.
+  enum class CallKind { Direct, CallRef };
+  static bool isSmallEnoughToInline(CallKind callKind, uint32_t inliningDepth,
+                                    uint32_t bodyLength,
+                                    uint32_t rootFunctionBodyLength,
+                                    bool* largeFunctionBackoff) {
+    *largeFunctionBackoff = false;
+
+    // If this fails, something's seriously wrong; bail out.
+    MOZ_RELEASE_ASSERT(inliningDepth <= 10);  // because 10 > (320 / 40)
+    MOZ_ASSERT(rootFunctionBodyLength > 0 &&
+               rootFunctionBodyLength <= wasm::MaxFunctionBytes);
+
+    // Check whether calls of this kind are currently allowed
+    if ((callKind == CallKind::Direct && !rawDirectAllowed()) ||
+        (callKind == CallKind::CallRef && !rawCallRefAllowed())) {
+      return false;
+    }
+    // Check the size is allowable.  This depends on how deep we are in the
+    // stack and on the setting of level_.  We allow inlining of functions of
+    // size up to the `baseSize[]` value at depth zero, but reduce the
+    // allowable size by 40 for each further level of inlining, so that only
+    // smaller and smaller functions are allowed as we inline deeper.
+    //
+    // At some point `allowedSize` goes negative and thereby disallows all
+    // further inlining.  Note that the `baseSize` entry for
+    // `level_ == MIN_LEVEL (== 1)` is set so as to disallow inlining even at
+    // depth zero.  Hence `level_ == MIN_LEVEL` disallows all inlining.
+    static constexpr int32_t baseSize[9] = {0,   40,  80,  120,
+                                            160,  // default
+                                            200, 240, 280, 320};
+    uint32_t level = rawLevel();
+
+    // If the root function is large, back off somewhat on inlining, so as to
+    // limit its further growth.  The limits are set so high that almost all
+    // functions will be unaffected by this.  See bug 1967644.
+    if (rootFunctionBodyLength > LARGE_FUNCTION_THRESH_1 && level > MIN_LEVEL) {
+      level--;
+      *largeFunctionBackoff = true;
+    }
+    if (rootFunctionBodyLength > LARGE_FUNCTION_THRESH_2 && level > MIN_LEVEL) {
+      level--;
+      *largeFunctionBackoff = true;
+    }
+    if (rootFunctionBodyLength > LARGE_FUNCTION_THRESH_3 && level > MIN_LEVEL) {
+      level--;
+      *largeFunctionBackoff = true;
+    }
+
+    // Having established `level`, check whether the callee is small enough.
+    MOZ_RELEASE_ASSERT(level >= MIN_LEVEL && level <= MAX_LEVEL);
+    int32_t allowedSize = baseSize[level - MIN_LEVEL];
+    allowedSize -= int32_t(40 * inliningDepth);
+    return allowedSize > 0 && bodyLength <= uint32_t(allowedSize);
+  }
+};
 
 }  // namespace wasm
 }  // namespace js

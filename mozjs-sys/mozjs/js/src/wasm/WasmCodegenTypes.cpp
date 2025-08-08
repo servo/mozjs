@@ -37,19 +37,24 @@ ArgTypeVector::ArgTypeVector(const FuncType& funcType)
           ResultType::Vector(funcType.results()))) {}
 
 bool TrapSitesForKind::lookup(uint32_t trapInstructionOffset,
-                              TrapSiteDesc* trapOut) const {
+                              const InliningContext& inliningContext,
+                              TrapSite* trapOut) const {
   size_t lowerBound = 0;
   size_t upperBound = pcOffsets_.length();
 
   size_t match;
   if (BinarySearch(pcOffsets_, lowerBound, upperBound, trapInstructionOffset,
                    &match)) {
-    TrapSiteDesc desc;
-    desc.bytecodeOffset = bytecodeOffsets_[match];
-    if (auto lookup = inlinedCallerOffsets_.readonlyThreadsafeLookup(match)) {
-      desc.inlinedCallerOffsets = lookup->value();
+    TrapSite site;
+    site.bytecodeOffset = bytecodeOffsets_[match];
+    if (auto inlinedCallerOffsetsIndex =
+            inlinedCallerOffsetsMap_.lookup(match)) {
+      site.inlinedCallerOffsets =
+          inliningContext[inlinedCallerOffsetsIndex->value()];
+    } else {
+      site.inlinedCallerOffsets = nullptr;
     }
-    *trapOut = desc;
+    *trapOut = site;
     return true;
   }
   return false;
@@ -168,9 +173,9 @@ void TrapSitesForKind::checkInvariants(const uint8_t* codeBase) const {
     MOZ_ASSERT(valid, "wasm trapsite does not reference a valid insn");
   }
 
-  for (auto iter = inlinedCallerOffsets_.iter(); !iter.done(); iter.next()) {
+  for (auto iter = inlinedCallerOffsetsMap_.iter(); !iter.done(); iter.next()) {
     MOZ_ASSERT(iter.get().key() < length());
-    MOZ_ASSERT(!iter.get().value()->empty());
+    MOZ_ASSERT(!iter.get().value().isNone());
   }
 #  endif
 #endif
@@ -271,14 +276,16 @@ const CodeRange* wasm::LookupInSorted(const CodeRangeVector& codeRanges,
   return &codeRanges[match];
 }
 
-bool CallSites::lookup(uint32_t returnAddressOffset, CallSite* callSite) const {
+bool CallSites::lookup(uint32_t returnAddressOffset,
+                       const InliningContext& inliningContext,
+                       CallSite* callSite) const {
   size_t lowerBound = 0;
   size_t upperBound = returnAddressOffsets_.length();
 
   size_t match;
   if (BinarySearch(returnAddressOffsets_, lowerBound, upperBound,
                    returnAddressOffset, &match)) {
-    *callSite = (*this)[match];
+    *callSite = get(match, inliningContext);
     return true;
   }
   return false;
@@ -373,4 +380,71 @@ CalleeDesc CalleeDesc::wasmFuncRef() {
   CalleeDesc c;
   c.which_ = FuncRef;
   return c;
+}
+
+void CompileStats::merge(const CompileStats& other) {
+  MOZ_ASSERT(&other != this);
+  numFuncs += other.numFuncs;
+  bytecodeSize += other.bytecodeSize;
+  inlinedDirectCallCount += other.inlinedDirectCallCount;
+  inlinedCallRefCount += other.inlinedCallRefCount;
+  inlinedDirectCallBytecodeSize += other.inlinedDirectCallBytecodeSize;
+  inlinedCallRefBytecodeSize += other.inlinedCallRefBytecodeSize;
+  numInliningBudgetOverruns += other.numInliningBudgetOverruns;
+  numLargeFunctionBackoffs += other.numLargeFunctionBackoffs;
+}
+
+void CompileAndLinkStats::merge(const CompileAndLinkStats& other) {
+  MOZ_ASSERT(&other != this);
+  CompileStats::merge(other);
+  codeBytesMapped += other.codeBytesMapped;
+  codeBytesUsed += other.codeBytesUsed;
+}
+
+void CompileAndLinkStats::print() const {
+#ifdef JS_JITSPEW
+  // To see the statistics printed here:
+  // * configure with --enable-jitspew or --enable-debug
+  // * run with MOZ_LOG=wasmPerf:3
+  // * this works for both JS builds and full browser builds
+  JS_LOG(wasmPerf, Info, "    %7zu functions compiled", numFuncs);
+  JS_LOG(wasmPerf, Info, "    %7zu bytecode bytes compiled", bytecodeSize);
+  JS_LOG(wasmPerf, Info, "    %7zu direct-calls inlined",
+         inlinedDirectCallCount);
+  JS_LOG(wasmPerf, Info, "    %7zu call_ref-calls inlined",
+         inlinedCallRefCount);
+  JS_LOG(wasmPerf, Info, "    %7zu direct-call bytecodes inlined",
+         inlinedDirectCallBytecodeSize);
+  JS_LOG(wasmPerf, Info, "    %7zu call_ref-call bytecodes inlined",
+         inlinedCallRefBytecodeSize);
+  JS_LOG(wasmPerf, Info, "    %7zu functions overran inlining budget",
+         numInliningBudgetOverruns);
+  JS_LOG(wasmPerf, Info, "    %7zu functions needed large-function backoff",
+         numLargeFunctionBackoffs);
+  JS_LOG(wasmPerf, Info, "    %7zu bytes mmap'd for code storage",
+         codeBytesMapped);
+  JS_LOG(wasmPerf, Info, "    %7zu bytes actually used for code storage",
+         codeBytesUsed);
+
+  size_t inlinedTotalBytecodeSize =
+      inlinedDirectCallBytecodeSize + inlinedCallRefBytecodeSize;
+
+  // This value will be 0.0 if inlining did not cause any code expansion.  A
+  // value of 1.0 means inlining doubled the total amount of bytecode, 2.0
+  // means tripled it, etc.  Take care not to compute 0.0 / 0.0 as that is,
+  // confusingly, -nan.
+  float inliningExpansion =
+      inlinedTotalBytecodeSize == 0
+          ? 0.0
+          : float(inlinedTotalBytecodeSize) / float(bytecodeSize);
+
+  // This is always between 0.0 and 1.0.
+  float codeSpaceUseRatio =
+      codeBytesUsed == 0 ? 0.0 : float(codeBytesUsed) / float(codeBytesMapped);
+
+  JS_LOG(wasmPerf, Info, "     %5.1f%% bytecode expansion caused by inlining",
+         inliningExpansion * 100.0);
+  JS_LOG(wasmPerf, Info, "      %4.1f%% of mapped code space used",
+         codeSpaceUseRatio * 100.0);
+#endif
 }

@@ -1075,6 +1075,7 @@ if CONFIG["OS_TARGET"] == "Android":
         "android/api-level.h",
         "android/ashmem.h",
         "android_audio/AudioSystem.h",
+        "android/hardware_buffer.h",
         "android/log.h",
         "android/looper.h",
         "android/native_window.h",
@@ -1256,6 +1257,22 @@ if CONFIG["OS_TARGET"] == "Android":
         "vr/gvr/capi/include/gvr.h",
     ]
 
+if CONFIG["MOZ_SYSTEM_GBM"]:
+    system_headers += [
+        "gbm.h",
+    ]
+
+if CONFIG["MOZ_SYSTEM_LIBDRM"]:
+    system_headers += [
+        "drm.h",
+        "xf86drm.h",
+    ]
+
+if CONFIG["MOZ_SYSTEM_PIPEWIRE"]:
+    system_headers += [
+        "pipewire/pipewire.h",
+    ]
+
 if CONFIG["MOZ_JACK"]:
     system_headers += [
         "jack/jack.h",
@@ -1372,11 +1389,6 @@ if CONFIG["OS_TARGET"] == "Linux" and CONFIG["TARGET_CPU"].startswith("mips"):
 if CONFIG["OS_TARGET"] == "FreeBSD":
     system_headers += [
         "sys/capsicum.h",
-    ]
-
-if CONFIG["OHOS"]:
-    system_headers += [
-       "hilog/log.h",
     ]
 
 if CONFIG["MOZ_APP_SYSTEM_HEADERS"]:

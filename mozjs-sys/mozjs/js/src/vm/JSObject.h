@@ -311,6 +311,8 @@ class JSObject
     js::gc::PostWriteBarrierImpl<JSObject>(cellp, prev, next);
   }
 
+  js::gc::AllocKind allocKind() const;
+
   /* Return the allocKind we would use if we were to tenure this object. */
   js::gc::AllocKind allocKindForTenure(const js::Nursery& nursery) const;
 
@@ -915,14 +917,6 @@ bool GetOwnPropertyPure(JSContext* cx, JSObject* obj, jsid id, Value* vp,
                         bool* found);
 
 bool GetGetterPure(JSContext* cx, JSObject* obj, jsid id, JSFunction** fp);
-
-bool GetOwnGetterPure(JSContext* cx, JSObject* obj, jsid id, JSFunction** fp);
-
-bool GetOwnNativeGetterPure(JSContext* cx, JSObject* obj, jsid id,
-                            JSNative* native);
-
-bool HasOwnDataPropertyPure(JSContext* cx, JSObject* obj, jsid id,
-                            bool* result);
 
 /*
  * Like JS::FromPropertyDescriptor, but ignore desc.object() and always set vp

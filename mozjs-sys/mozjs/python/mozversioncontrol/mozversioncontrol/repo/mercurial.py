@@ -50,12 +50,18 @@ class HgRepository(Repository):
     def head_ref(self):
         return self._run("log", "-r", ".", "-T", "{node}")
 
+    def is_cinnabar_repo(self) -> bool:
+        return False
+
     @property
     def base_ref(self):
         return self._run("log", "-r", "last(ancestors(.) and public())", "-T", "{node}")
 
     def base_ref_as_hg(self):
         return self.base_ref
+
+    def base_ref_as_commit(self):
+        raise Exception("unimplemented: convert hg rev to git rev")
 
     @property
     def branch(self):
@@ -165,7 +171,7 @@ class HgRepository(Repository):
         if rev is None:
             # Use --no-status to print just the filename.
             df = self._format_diff_filter(diff_filter, for_status=True)
-            return self._run("status", "--no-status", "-{}".format(df)).splitlines()
+            return self._run("status", "--no-status", f"-{df}").splitlines()
         else:
             template = self._files_template(diff_filter)
             return self._run("log", "-r", rev, "-T", template).splitlines()
@@ -225,6 +231,17 @@ class HgRepository(Repository):
             if p
         )
         return FileListFinder(files)
+
+    def diff_stream(self, rev=None, extensions=(), exclude_file=None, context=8):
+        args = ["diff", f"-U{context}"]
+        if rev:
+            args += ["-c", rev]
+        else:
+            args += ["-r", ".^"]
+        for dot_extension in extensions:
+            args += ["--include", f"glob:**{dot_extension}"]
+        args += ["--exclude", f"listfile:{exclude_file}"]
+        return self._pipefrom(*args)
 
     def working_directory_clean(self, untracked=False, ignored=False):
         args = ["status", "--modified", "--added", "--removed", "--deleted"]
@@ -293,8 +310,12 @@ class HgRepository(Repository):
         finally:
             self._run("revert", "-a")
 
-    def get_branch_nodes(
-        self, head: Optional[str] = None, base_ref: Optional[str] = None
+    def get_commits(
+        self,
+        head: Optional[str] = None,
+        base_ref: Optional[str] = None,
+        limit: Optional[int] = None,
+        follow: Optional[List[str]] = None,
     ) -> List[str]:
         """Return a list of commit SHAs for nodes on the current branch."""
         if not base_ref:
@@ -302,13 +323,19 @@ class HgRepository(Repository):
 
         head_ref = head or self.head_ref
 
-        return self._run(
+        cmd = [
             "log",
             "-r",
             f"{base_ref}::{head_ref} and not {base_ref}",
             "-T",
             "{node}\n",
-        ).splitlines()
+        ]
+        if limit is not None:
+            cmd.append(f"-l{limit}")
+        if follow is not None:
+            cmd += ["-f", "--", *follow]
+
+        return self._run(*cmd).splitlines()
 
     def get_commit_patches(self, nodes: List[str]) -> List[bytes]:
         """Return the contents of the patch `node` in the VCS' standard format."""

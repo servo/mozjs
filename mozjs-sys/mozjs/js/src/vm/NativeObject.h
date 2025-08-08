@@ -855,12 +855,12 @@ class NativeObject : public JSObject {
    * ArrayObjects don't use this limit and can have a lower slot capacity,
    * since they normally don't have a lot of slots.
    */
-  static const uint32_t SLOT_CAPACITY_MIN = 5;
+  static const uint32_t SLOT_CAPACITY_MIN = 6;
 
   /*
    * Minimum size for dynamically allocated elements in normal Objects.
    */
-  static const uint32_t ELEMENT_CAPACITY_MIN = 5;
+  static const uint32_t ELEMENT_CAPACITY_MIN = 6;
 
   HeapSlot* fixedSlots() const {
     return reinterpret_cast<HeapSlot*>(uintptr_t(this) + sizeof(NativeObject));
@@ -1388,8 +1388,7 @@ class NativeObject : public JSObject {
 
   // The maximum number of usable dense elements in an object.
   static const uint32_t MAX_DENSE_ELEMENTS_COUNT =
-      MAX_DENSE_ELEMENTS_ALLOCATION - ObjectElements::VALUES_PER_HEADER -
-      gc::LargeBufferHeaderSize / sizeof(Value);
+      MAX_DENSE_ELEMENTS_ALLOCATION - ObjectElements::VALUES_PER_HEADER;
 
   static void elementsSizeMustNotOverflow() {
     static_assert(

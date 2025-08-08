@@ -210,10 +210,11 @@ IonSpewer::~IonSpewer() {
   release();
 }
 
-GraphSpewer::GraphSpewer(TempAllocator* alloc)
+GraphSpewer::GraphSpewer(TempAllocator* alloc,
+                         const wasm::CodeMetadata* wasmCodeMeta)
     : graph_(nullptr),
       jsonPrinter_(alloc->lifoAlloc()),
-      jsonSpewer_(jsonPrinter_) {}
+      jsonSpewer_(jsonPrinter_, wasmCodeMeta) {}
 
 void GraphSpewer::init(MIRGraph* graph, JSScript* function) {
   MOZ_ASSERT(!isSpewing());
@@ -373,6 +374,8 @@ static void PrintHelpAndExit(int status = 0) {
       "compiled functions only).\n"
       "  profiling     Profiling-related information\n"
       "  dump-mir-expr Dump the MIR expressions\n"
+      "  unroll        Wasm loop unrolling and peeling -- summary info\n"
+      "  unroll-details  Wasm loop unrolling and peeling -- details\n"
       "  warp-snapshots WarpSnapshots created by WarpOracle\n"
       "  warp-transpiler Warp CacheIR transpiler\n"
       "  warp-trial-inlining Trial inlining for Warp\n"
@@ -482,6 +485,11 @@ void jit::CheckLogging() {
       EnableChannel(JitSpew_Profiling);
     } else if (IsFlag(found, "dump-mir-expr")) {
       EnableChannel(JitSpew_MIRExpressions);
+    } else if (IsFlag(found, "unroll")) {
+      EnableChannel(JitSpew_Unroll);
+    } else if (IsFlag(found, "unroll-details")) {
+      EnableChannel(JitSpew_Unroll);
+      EnableChannel(JitSpew_UnrollDetails);
     } else if (IsFlag(found, "warp-snapshots")) {
       EnableChannel(JitSpew_WarpSnapshots);
     } else if (IsFlag(found, "warp-transpiler")) {

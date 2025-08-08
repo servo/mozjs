@@ -48,7 +48,8 @@ using CompleteTier2Listener = RefPtr<JS::OptimizedEncodingListener>;
 // `Some`, this report is for a partial tier-2 compilation of the specified
 // function.  Otherwise it's for a complete tier-2 compilation.
 
-void ReportTier2ResultsOffThread(bool success, Maybe<uint32_t> maybeFuncIndex,
+void ReportTier2ResultsOffThread(bool cancelled, bool success,
+                                 Maybe<uint32_t> maybeFuncIndex,
                                  const ScriptedCaller& scriptedCaller,
                                  const UniqueChars& error,
                                  const UniqueCharsVector& warnings);
@@ -155,11 +156,12 @@ class Module : public JS::WasmModule {
   const Code& code() const { return *code_; }
   const ModuleMetadata& moduleMeta() const { return *moduleMeta_; }
   const CodeMetadata& codeMeta() const { return code_->codeMeta(); }
+  const CodeTailMetadata& codeTailMeta() const { return code_->codeTailMeta(); }
   const CodeMetadataForAsmJS* codeMetaForAsmJS() const {
     return code_->codeMetaForAsmJS();
   }
   const BytecodeSource& debugBytecode() const {
-    return codeMeta().debugBytecode.source();
+    return codeTailMeta().debugBytecode.source();
   }
   uint32_t tier1CodeMemoryUsed() const { return code_->tier1CodeMemoryUsed(); }
 
@@ -176,8 +178,8 @@ class Module : public JS::WasmModule {
 
   void startTier2(const ShareableBytes* codeSection,
                   JS::OptimizedEncodingListener* listener);
-  bool finishTier2(UniqueCodeBlock tier2CodeBlock,
-                   UniqueLinkData tier2LinkData) const;
+  bool finishTier2(UniqueCodeBlock tier2CodeBlock, UniqueLinkData tier2LinkData,
+                   const CompileAndLinkStats& tier2Stats) const;
 
   void testingBlockOnTier2Complete() const;
   bool testingTier2Active() const { return testingTier2Active_; }

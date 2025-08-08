@@ -22,10 +22,6 @@ option(
     help="Location where the Android NDK can be found{|}",
 )
 
-option("--with-android-ndk-version", nargs=1, help="android NDK version")
-
-option("--with-android-platform", nargs=1, help="location of the Android platform")
-
 option("--with-android-toolchain", nargs=1, help="Location of the Android toolchain")
 
 option(
@@ -71,39 +67,46 @@ def android_version(value, min_version):
     return version
 
 
-@depends("--with-android-ndk")
+@depends("--with-android-ndk", want_bootstrap)
 @imports(_from="os.path", _import="isdir")
-def ndk(value):
+@imports(_from="mozboot.android", _import="get_os_name_for_android")
+@imports(_from="mozboot.android", _import="ensure_android_ndk")
+@imports(_from="mozboot.android", _import="NDK_PATH")
+def ndk(value, want_bootstrap):
     if value:
-        if not isdir(value[0]):
+        ndk_path = value[0]
+        if not isdir(ndk_path):
             die(
                 "The path you specified with --with-android-ndk (%s) is not "
-                "a directory" % value[0]
+                "a directory" % ndk_path
             )
-        return value[0]
+        return ndk_path
+    if not want_bootstrap("android-ndk"):
+        die(
+            "You must specify --with-android-ndk=/path/to/ndk when targeting Android, "
+            "or try |mach bootstrap|."
+        )
 
-    die(
-        "You must specify --with-android-ndk=/path/to/ndk when targeting Android, "
-        "or try |mach bootstrap|."
-    )
+    os_name = get_os_name_for_android()
+
+    ensure_android_ndk(os_name)
+
+    return str(NDK_PATH)
 
 
 set_config("ANDROID_NDK", ndk)
 
 
-@depends("--with-android-ndk-version", ndk)
+@depends(ndk)
 @checking("for android ndk version")
 @imports(_from="__builtin__", _import="open")
 @imports(_from="mozboot.android", _import="NDK_VERSION")
 @imports(_from="mozboot.android", _import="get_ndk_version")
 @imports(_from="mozboot.android", _import="GetNdkVersionError")
-def ndk_version(value, ndk):
+def ndk_version(ndk):
     if not ndk:
         # Building 'js/src' for non-Android.
         return
-
-    if value:
-        return value[0]
 
     try:
         major, minor, human = get_ndk_version(ndk)
@@ -157,15 +160,13 @@ def android_toolchain(host, ndk, toolchain):
         return toolchain
     die("You have to specify --with-android-toolchain=" "/path/to/ndk/toolchain.")
 
-@depends("--with-android-platform", target, android_toolchain)
+
+@depends(target, android_toolchain)
 @checking("for android sysroot directory")
 @imports(_from="os.path", _import="isdir")
-def android_sysroot(value, target, android_toolchain):
+def android_sysroot(target, android_toolchain):
     if target.os != "Android":
         return
-
-    if value:
-        return value[0]
 
     search_dirs = [
         os.path.join(android_toolchain, "sysroot"),
@@ -212,14 +213,16 @@ def android_lldb_server(target, host, ndk, lldb):
             )
         sorted_versions = sorted(clang_subdirs, key=Version)
         highest_version = sorted_versions[-1]
-        log.warning("Using highest version available: %s" % quote(highest_version))
-        log.warning(
-            " Available versions: "
-            + ", ".join(str(version) for version in sorted_versions)
-        )
-        log.warning(
-            "(To use an older version, please specify --with-android-lldb-server=/path/to/desired/android/lldb-server)"
-        )
+
+        if len(sorted_versions) > 1:
+            log.warning("Using highest version available: %s" % quote(highest_version))
+            log.warning(
+                " Available versions: "
+                + ", ".join(str(version) for version in sorted_versions)
+            )
+            log.warning(
+                "(To use an older version, please specify --with-android-lldb-server=/path/to/desired/android/lldb-server)"
+            )
 
         if target.cpu == "x86":
             target_cpu = "i386"
@@ -250,7 +253,7 @@ option(
 @imports(_from="os.path", _import="isfile")
 def stlport_libs(value, ndk):
     if value and len(value):
-        return value[0].split()
+        return value.split()
     if not ndk:
         return
 
@@ -273,11 +276,29 @@ def extra_toolchain_flags(android_sysroot, toolchain_dir):
 
 @depends(extra_toolchain_flags)
 def android_flags(extra_toolchain_flags):
+    wead_symbols_defines = [
+        "-D__ANDROID_UNAVAILABLE_SYMBOLS_ARE_WEAK__",
+    ]
+    weak_symbols_flags = wead_symbols_defines + [
+        "-Werror=unguarded-availability",
+    ]
     return namespace(
-        cflags=extra_toolchain_flags + ["-fno-short-enums"],
-        cxxflags=extra_toolchain_flags + ["-fno-short-enums"],
+        cflags=extra_toolchain_flags
+        + [
+            "-fno-short-enums",
+        ]
+        + weak_symbols_flags,
+        cxxflags=extra_toolchain_flags
+        + [
+            "-fno-short-enums",
+        ]
+        + weak_symbols_flags,
         ldflags=extra_toolchain_flags,
-        asflags=extra_toolchain_flags + ["-DANDROID"],
+        asflags=extra_toolchain_flags
+        + [
+            "-DANDROID",
+        ]
+        + wead_symbols_defines,
     )
 
 

@@ -7457,6 +7457,30 @@ AttachDecision InlinableNativeIRGenerator::tryAttachCanOptimizeArraySpecies() {
   return AttachDecision::Attach;
 }
 
+AttachDecision
+InlinableNativeIRGenerator::tryAttachCanOptimizeStringProtoSymbolLookup() {
+  // Self-hosted code calls this with no arguments.
+  MOZ_ASSERT(args_.length() == 0);
+
+  // Initialize the input operand.
+  initializeInputOperand();
+
+  // Note: we don't need to call emitNativeCalleeGuard for intrinsics.
+
+  if (cx_->realm()->realmFuses.optimizeStringPrototypeSymbolsFuse.intact()) {
+    writer.guardFuse(RealmFuses::FuseIndex::OptimizeStringPrototypeSymbolsFuse);
+    writer.loadBooleanResult(true);
+    writer.returnFromIC();
+    trackAttached("CanOptimizeStringProtoSymbolLookup.Optimized");
+  } else {
+    writer.loadBooleanResult(false);
+    writer.returnFromIC();
+    trackAttached("CanOptimizeStringProtoSymbolLookup.Deoptimized");
+  }
+
+  return AttachDecision::Attach;
+}
+
 AttachDecision InlinableNativeIRGenerator::tryAttachGuardToClass(
     InlinableNative native) {
   // Self-hosted code calls this with an object argument.
@@ -7715,7 +7739,9 @@ AttachDecision InlinableNativeIRGenerator::tryAttachIntrinsicRegExpExec(
   MOZ_ASSERT(args_[0].isObject());
   MOZ_ASSERT(args_[1].isString());
 
-  if (!args_[0].toObject().is<RegExpObject>()) {
+  // Ensure the object is a RegExpObject with the builtin RegExp.prototype.exec
+  // function.
+  if (!IsOptimizableRegExpObject(&args_[0].toObject(), cx_)) {
     return AttachDecision::NoAction;
   }
 
@@ -7729,33 +7755,6 @@ AttachDecision InlinableNativeIRGenerator::tryAttachIntrinsicRegExpExec(
     return AttachDecision::NoAction;
   }
 
-  // Ensure regexp.exec is the original RegExp.prototype.exec function on the
-  // prototype.
-  if (re->containsPure(cx_->names().exec)) {
-    return AttachDecision::NoAction;
-  }
-  MOZ_ASSERT(cx_->global()->maybeGetRegExpPrototype());
-  auto* regExpProto =
-      &cx_->global()->maybeGetRegExpPrototype()->as<NativeObject>();
-  if (re->staticPrototype() != regExpProto) {
-    return AttachDecision::NoAction;
-  }
-  auto execProp = regExpProto->as<NativeObject>().lookupPure(cx_->names().exec);
-  if (!execProp || !execProp->isDataProperty()) {
-    return AttachDecision::NoAction;
-  }
-  // It should be stored in a dynamic slot. We assert this in
-  // FinishRegExpClassInit.
-  if (regExpProto->isFixedSlot(execProp->slot())) {
-    return AttachDecision::NoAction;
-  }
-  Value execVal = regExpProto->getSlot(execProp->slot());
-  PropertyName* execName = cx_->names().RegExp_prototype_Exec;
-  if (!IsSelfHostedFunctionWithName(execVal, execName)) {
-    return AttachDecision::NoAction;
-  }
-  JSFunction* execFunction = &execVal.toObject().as<JSFunction>();
-
   // Initialize the input operand.
   initializeInputOperand();
 
@@ -7764,15 +7763,8 @@ AttachDecision InlinableNativeIRGenerator::tryAttachIntrinsicRegExpExec(
   ValOperandId arg0Id = loadArgumentIntrinsic(ArgumentKind::Arg0);
   ObjOperandId regExpId = writer.guardToObject(arg0Id);
   writer.guardShape(regExpId, re->shape());
+  writer.guardFuse(RealmFuses::FuseIndex::OptimizeRegExpPrototypeFuse);
   EmitGuardLastIndexIsNonNegativeInt32(writer, regExpId);
-
-  // Emit guards for the RegExp.prototype.exec property.
-  ObjOperandId regExpProtoId = writer.loadObject(regExpProto);
-  writer.guardShape(regExpProtoId, regExpProto->shape());
-  size_t offset =
-      regExpProto->dynamicSlotIndex(execProp->slot()) * sizeof(Value);
-  writer.guardDynamicSlotValue(regExpProtoId, offset,
-                               ObjectValue(*execFunction));
 
   ValOperandId arg1Id = loadArgumentIntrinsic(ArgumentKind::Arg1);
   StringOperandId inputId = writer.guardToString(arg1Id);
@@ -7884,48 +7876,58 @@ AttachDecision InlinableNativeIRGenerator::tryAttachRegExpHasCaptureGroups() {
 }
 
 AttachDecision
-InlinableNativeIRGenerator::tryAttachRegExpPrototypeOptimizable() {
-  // Self-hosted code calls this with a single object argument.
-  MOZ_ASSERT(args_.length() == 1);
-  MOZ_ASSERT(args_[0].isObject());
+InlinableNativeIRGenerator::tryAttachIsRegExpPrototypeOptimizable() {
+  // Self-hosted code calls this with no arguments.
+  MOZ_ASSERT(args_.length() == 0);
 
   // Initialize the input operand.
   initializeInputOperand();
 
   // Note: we don't need to call emitNativeCalleeGuard for intrinsics.
 
-  ValOperandId arg0Id = loadArgumentIntrinsic(ArgumentKind::Arg0);
-  ObjOperandId protoId = writer.guardToObject(arg0Id);
+  if (cx_->realm()->realmFuses.optimizeRegExpPrototypeFuse.intact()) {
+    writer.guardFuse(RealmFuses::FuseIndex::OptimizeRegExpPrototypeFuse);
+    writer.loadBooleanResult(true);
+    writer.returnFromIC();
+    trackAttached("IsRegExpPrototypeOptimizable.Optimized");
+  } else {
+    writer.loadBooleanResult(false);
+    writer.returnFromIC();
+    trackAttached("IsRegExpPrototypeOptimizable.Deoptimized");
+  }
 
-  writer.regExpPrototypeOptimizableResult(protoId);
-  writer.returnFromIC();
-
-  trackAttached("RegExpPrototypeOptimizable");
   return AttachDecision::Attach;
 }
 
 AttachDecision
-InlinableNativeIRGenerator::tryAttachRegExpInstanceOptimizable() {
-  // Self-hosted code calls this with two object arguments.
-  MOZ_ASSERT(args_.length() == 2);
+InlinableNativeIRGenerator::tryAttachIsOptimizableRegExpObject() {
+  // Self-hosted code calls this with a single object argument.
+  MOZ_ASSERT(args_.length() == 1);
   MOZ_ASSERT(args_[0].isObject());
-  MOZ_ASSERT(args_[1].isObject());
+
+  Shape* optimizableShape = cx_->global()->maybeRegExpShapeWithDefaultProto();
+  if (!optimizableShape) {
+    return AttachDecision::NoAction;
+  }
 
   // Initialize the input operand.
   initializeInputOperand();
 
   // Note: we don't need to call emitNativeCalleeGuard for intrinsics.
 
-  ValOperandId arg0Id = loadArgumentIntrinsic(ArgumentKind::Arg0);
-  ObjOperandId regexpId = writer.guardToObject(arg0Id);
+  if (cx_->realm()->realmFuses.optimizeRegExpPrototypeFuse.intact()) {
+    ValOperandId argId = loadArgumentIntrinsic(ArgumentKind::Arg0);
+    ObjOperandId objId = writer.guardToObject(argId);
+    writer.guardFuse(RealmFuses::FuseIndex::OptimizeRegExpPrototypeFuse);
+    writer.hasShapeResult(objId, optimizableShape);
+    writer.returnFromIC();
+    trackAttached("IsOptimizableRegExpObject.Optimized");
+  } else {
+    writer.loadBooleanResult(false);
+    writer.returnFromIC();
+    trackAttached("IsOptimizableRegExpObject.Deoptimized");
+  }
 
-  ValOperandId arg1Id = loadArgumentIntrinsic(ArgumentKind::Arg1);
-  ObjOperandId protoId = writer.guardToObject(arg1Id);
-
-  writer.regExpInstanceOptimizableResult(regexpId, protoId);
-  writer.returnFromIC();
-
-  trackAttached("RegExpInstanceOptimizable");
   return AttachDecision::Attach;
 }
 
@@ -7974,36 +7976,6 @@ AttachDecision InlinableNativeIRGenerator::tryAttachSubstringKernel() {
   writer.returnFromIC();
 
   trackAttached("SubstringKernel");
-  return AttachDecision::Attach;
-}
-
-AttachDecision InlinableNativeIRGenerator::tryAttachObjectHasPrototype() {
-  // Self-hosted code calls this with (object, object) arguments.
-  MOZ_ASSERT(args_.length() == 2);
-  MOZ_ASSERT(args_[0].isObject());
-  MOZ_ASSERT(args_[1].isObject());
-
-  auto* obj = &args_[0].toObject().as<NativeObject>();
-  auto* proto = &args_[1].toObject().as<NativeObject>();
-
-  // Only attach when obj.__proto__ is proto.
-  if (obj->staticPrototype() != proto) {
-    return AttachDecision::NoAction;
-  }
-
-  // Initialize the input operand.
-  initializeInputOperand();
-
-  // Note: we don't need to call emitNativeCalleeGuard for intrinsics.
-
-  ValOperandId arg0Id = loadArgumentIntrinsic(ArgumentKind::Arg0);
-  ObjOperandId objId = writer.guardToObject(arg0Id);
-
-  writer.guardProto(objId, proto);
-  writer.loadBooleanResult(true);
-  writer.returnFromIC();
-
-  trackAttached("ObjectHasPrototype");
   return AttachDecision::Attach;
 }
 
@@ -11150,45 +11122,6 @@ AttachDecision InlinableNativeIRGenerator::tryAttachTypedArrayLength(
   return AttachDecision::Attach;
 }
 
-AttachDecision InlinableNativeIRGenerator::tryAttachArrayBufferByteLength(
-    bool isPossiblyWrapped) {
-  // Self-hosted code calls this with a single, possibly wrapped,
-  // ArrayBufferObject argument.
-  MOZ_ASSERT(args_.length() == 1);
-  MOZ_ASSERT(args_[0].isObject());
-
-  // Only optimize when the object isn't a wrapper.
-  if (isPossiblyWrapped && IsWrapper(&args_[0].toObject())) {
-    return AttachDecision::NoAction;
-  }
-
-  MOZ_ASSERT(args_[0].toObject().is<ArrayBufferObject>());
-
-  auto* buffer = &args_[0].toObject().as<ArrayBufferObject>();
-
-  // Initialize the input operand.
-  initializeInputOperand();
-
-  // Note: we don't need to call emitNativeCalleeGuard for intrinsics.
-
-  ValOperandId argId = loadArgumentIntrinsic(ArgumentKind::Arg0);
-  ObjOperandId objArgId = writer.guardToObject(argId);
-
-  if (isPossiblyWrapped) {
-    writer.guardIsNotProxy(objArgId);
-  }
-
-  if (buffer->byteLength() <= INT32_MAX) {
-    writer.loadArrayBufferByteLengthInt32Result(objArgId);
-  } else {
-    writer.loadArrayBufferByteLengthDoubleResult(objArgId);
-  }
-  writer.returnFromIC();
-
-  trackAttached("ArrayBufferByteLength");
-  return AttachDecision::Attach;
-}
-
 AttachDecision InlinableNativeIRGenerator::tryAttachIsConstructing() {
   // Self-hosted code calls this with no arguments in function scripts.
   MOZ_ASSERT(args_.length() == 0);
@@ -12322,6 +12255,8 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStub() {
       return tryAttachIsCrossRealmArrayConstructor();
     case InlinableNative::IntrinsicCanOptimizeArraySpecies:
       return tryAttachCanOptimizeArraySpecies();
+    case InlinableNative::IntrinsicCanOptimizeStringProtoSymbolLookup:
+      return tryAttachCanOptimizeStringProtoSymbolLookup();
     case InlinableNative::IntrinsicGuardToArrayIterator:
     case InlinableNative::IntrinsicGuardToMapIterator:
     case InlinableNative::IntrinsicGuardToSetIterator:
@@ -12350,8 +12285,6 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStub() {
       return tryAttachNewRegExpStringIterator();
     case InlinableNative::IntrinsicArrayIteratorPrototypeOptimizable:
       return tryAttachArrayIteratorPrototypeOptimizable();
-    case InlinableNative::IntrinsicObjectHasPrototype:
-      return tryAttachObjectHasPrototype();
 
     // RegExp natives.
     case InlinableNative::IsRegExpObject:
@@ -12367,10 +12300,10 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStub() {
       return tryAttachRegExpSearcherLastLimit();
     case InlinableNative::RegExpHasCaptureGroups:
       return tryAttachRegExpHasCaptureGroups();
-    case InlinableNative::RegExpPrototypeOptimizable:
-      return tryAttachRegExpPrototypeOptimizable();
-    case InlinableNative::RegExpInstanceOptimizable:
-      return tryAttachRegExpInstanceOptimizable();
+    case InlinableNative::IsRegExpPrototypeOptimizable:
+      return tryAttachIsRegExpPrototypeOptimizable();
+    case InlinableNative::IsOptimizableRegExpObject:
+      return tryAttachIsOptimizableRegExpObject();
     case InlinableNative::GetFirstDollarIndex:
       return tryAttachGetFirstDollarIndex();
     case InlinableNative::IntrinsicRegExpBuiltinExec:
@@ -12534,10 +12467,6 @@ AttachDecision InlinableNativeIRGenerator::tryAttachStub() {
     // ArrayBuffer intrinsics.
     case InlinableNative::IntrinsicGuardToArrayBuffer:
       return tryAttachGuardToArrayBuffer();
-    case InlinableNative::IntrinsicArrayBufferByteLength:
-      return tryAttachArrayBufferByteLength(/* isPossiblyWrapped = */ false);
-    case InlinableNative::IntrinsicPossiblyWrappedArrayBufferByteLength:
-      return tryAttachArrayBufferByteLength(/* isPossiblyWrapped = */ true);
 
     // SharedArrayBuffer intrinsics.
     case InlinableNative::IntrinsicGuardToSharedArrayBuffer:
@@ -15865,13 +15794,18 @@ AttachDecision LambdaIRGenerator::tryAttachFunctionClone() {
     return AttachDecision::NoAction;
   }
 
+  gc::AllocSite* site = maybeCreateAllocSite();
+  if (!site) {
+    return AttachDecision::NoAction;
+  }
+
   writer.guardNoAllocationMetadataBuilder(
       cx_->realm()->addressOfMetadataBuilder());
 
   gc::AllocKind allocKind = canonicalFunction_->getAllocKind();
   MOZ_ASSERT(allocKind == gc::AllocKind::FUNCTION ||
              allocKind == gc::AllocKind::FUNCTION_EXTENDED);
-  writer.newFunctionCloneResult(canonicalFunction_, allocKind);
+  writer.newFunctionCloneResult(canonicalFunction_, allocKind, site);
   writer.returnFromIC();
 
   trackAttached("Lambda.FunctionClone");
