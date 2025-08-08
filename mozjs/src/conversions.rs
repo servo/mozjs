@@ -48,6 +48,7 @@ use log::debug;
 use mozjs_sys::jsgc::Rooted;
 use std::borrow::Cow;
 use std::mem;
+use std::ptr::NonNull;
 use std::rc::Rc;
 use std::{ptr, slice};
 
@@ -527,11 +528,11 @@ impl FromJSValConvertible for f64 {
 
 /// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
 /// `String`.
-pub unsafe fn latin1_to_string(cx: *mut JSContext, s: *mut JSString) -> String {
-    assert!(JS_DeprecatedStringHasLatin1Chars(s));
+pub unsafe fn latin1_to_string(cx: *mut JSContext, s: NonNull<JSString>) -> String {
+    assert!(JS_DeprecatedStringHasLatin1Chars(s.as_ptr()));
 
     let mut length = 0;
-    let chars = JS_GetLatin1StringCharsAndLength(cx, ptr::null(), s, &mut length);
+    let chars = JS_GetLatin1StringCharsAndLength(cx, ptr::null(), s.as_ptr(), &mut length);
     assert!(!chars.is_null());
 
     let chars = slice::from_raw_parts(chars, length as usize);
@@ -541,13 +542,13 @@ pub unsafe fn latin1_to_string(cx: *mut JSContext, s: *mut JSString) -> String {
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
-pub unsafe fn jsstr_to_string(cx: *mut JSContext, jsstr: *mut JSString) -> String {
-    if JS_DeprecatedStringHasLatin1Chars(jsstr) {
+pub unsafe fn jsstr_to_string(cx: *mut JSContext, jsstr: NonNull<JSString>) -> String {
+    if JS_DeprecatedStringHasLatin1Chars(jsstr.as_ptr()) {
         return latin1_to_string(cx, jsstr);
     }
 
     let mut length = 0;
-    let chars = JS_GetTwoByteStringCharsAndLength(cx, ptr::null(), jsstr, &mut length);
+    let chars = JS_GetTwoByteStringCharsAndLength(cx, ptr::null(), jsstr.as_ptr(), &mut length);
     assert!(!chars.is_null());
     let char_vec = slice::from_raw_parts(chars, length as usize);
     String::from_utf16_lossy(char_vec)
@@ -588,10 +589,10 @@ impl FromJSValConvertible for String {
         _: (),
     ) -> Result<ConversionResult<String>, ()> {
         let jsstr = ToString(cx, value);
-        if jsstr.is_null() {
+        let Some(jsstr) = NonNull::new(jsstr) else {
             debug!("ToString failed");
             return Err(());
-        }
+        };
         Ok(jsstr_to_string(cx, jsstr)).map(ConversionResult::Success)
     }
 }
