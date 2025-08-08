@@ -304,7 +304,7 @@ struct LimitedColumnNumberOneOrigin : public detail::MaybeLimitedColumnNumber<
 };
 
 // Column number in 1-origin.
-struct ColumnNumberOneOrigin : public detail::MaybeLimitedColumnNumber<0> {
+struct __attribute__((__packed__)) ColumnNumberOneOrigin : public detail::MaybeLimitedColumnNumber<0> {
  private:
   using Base = detail::MaybeLimitedColumnNumber<0>;
 
