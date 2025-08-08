@@ -48,10 +48,12 @@ MacroAssembler& CodeGeneratorShared::ensureMasm(MacroAssembler* masmArg,
 }
 
 CodeGeneratorShared::CodeGeneratorShared(MIRGenerator* gen, LIRGraph* graph,
-                                         MacroAssembler* masmArg)
+                                         MacroAssembler* masmArg,
+                                         const wasm::CodeMetadata* wasmCodeMeta)
     : masm(ensureMasm(masmArg, gen->alloc(), gen->realm)),
       gen(gen),
       graph(*graph),
+      wasmCodeMeta_(wasmCodeMeta),
       current(nullptr),
       recovers_(),
 #ifdef DEBUG
@@ -196,6 +198,10 @@ bool CodeGeneratorShared::generateOutOfLineCode() {
   current = nullptr;
 
   for (OutOfLineCode* ool : outOfLineCode_) {
+    if (gen->shouldCancel("Generate Code (OOL code loop)")) {
+      return false;
+    }
+
     // Add native => bytecode mapping entries for OOL->sites.
     // Not enabled on wasm yet since it doesn't contain bytecode mappings.
     if (!gen->compilingWasm()) {

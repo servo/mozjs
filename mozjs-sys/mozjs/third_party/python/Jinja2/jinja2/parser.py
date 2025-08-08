@@ -1,4 +1,5 @@
 """Parse tokens from the lexer into nodes for the compiler."""
+
 import typing
 import typing as t
 
@@ -10,6 +11,7 @@ from .lexer import describe_token_expr
 
 if t.TYPE_CHECKING:
     import typing_extensions as te
+
     from .environment import Environment
 
 _ImportInclude = t.TypeVar("_ImportInclude", nodes.Import, nodes.Include)
@@ -62,7 +64,7 @@ class Parser:
         self.filename = filename
         self.closed = False
         self.extensions: t.Dict[
-            str, t.Callable[["Parser"], t.Union[nodes.Node, t.List[nodes.Node]]]
+            str, t.Callable[[Parser], t.Union[nodes.Node, t.List[nodes.Node]]]
         ] = {}
         for extension in environment.iter_extensions():
             for tag in extension.tags:
@@ -311,12 +313,14 @@ class Parser:
         # enforce that required blocks only contain whitespace or comments
         # by asserting that the body, if not empty, is just TemplateData nodes
         # with whitespace data
-        if node.required and not all(
-            isinstance(child, nodes.TemplateData) and child.data.isspace()
-            for body in node.body
-            for child in body.nodes  # type: ignore
-        ):
-            self.fail("Required blocks can only contain comments or whitespace")
+        if node.required:
+            for body_node in node.body:
+                if not isinstance(body_node, nodes.Output) or any(
+                    not isinstance(output_node, nodes.TemplateData)
+                    or not output_node.data.isspace()
+                    for output_node in body_node.nodes
+                ):
+                    self.fail("Required blocks can only contain comments or whitespace")
 
         self.stream.skip_if("name:" + node.name)
         return node
@@ -455,8 +459,7 @@ class Parser:
     @typing.overload
     def parse_assign_target(
         self, with_tuple: bool = ..., name_only: "te.Literal[True]" = ...
-    ) -> nodes.Name:
-        ...
+    ) -> nodes.Name: ...
 
     @typing.overload
     def parse_assign_target(
@@ -465,8 +468,7 @@ class Parser:
         name_only: bool = False,
         extra_end_rules: t.Optional[t.Tuple[str, ...]] = None,
         with_namespace: bool = False,
-    ) -> t.Union[nodes.NSRef, nodes.Name, nodes.Tuple]:
-        ...
+    ) -> t.Union[nodes.NSRef, nodes.Name, nodes.Tuple]: ...
 
     def parse_assign_target(
         self,
@@ -485,21 +487,18 @@ class Parser:
         """
         target: nodes.Expr
 
-        if with_namespace and self.stream.look().type == "dot":
-            token = self.stream.expect("name")
-            next(self.stream)  # dot
-            attr = self.stream.expect("name")
-            target = nodes.NSRef(token.value, attr.value, lineno=token.lineno)
-        elif name_only:
+        if name_only:
             token = self.stream.expect("name")
             target = nodes.Name(token.value, "store", lineno=token.lineno)
         else:
             if with_tuple:
                 target = self.parse_tuple(
-                    simplified=True, extra_end_rules=extra_end_rules
+                    simplified=True,
+                    extra_end_rules=extra_end_rules,
+                    with_namespace=with_namespace,
                 )
             else:
-                target = self.parse_primary()
+                target = self.parse_primary(with_namespace=with_namespace)
 
             target.set_ctx("store")
 
@@ -641,17 +640,25 @@ class Parser:
             node = self.parse_filter_expr(node)
         return node
 
-    def parse_primary(self) -> nodes.Expr:
+    def parse_primary(self, with_namespace: bool = False) -> nodes.Expr:
+        """Parse a name or literal value. If ``with_namespace`` is enabled, also
+        parse namespace attr refs, for use in assignments."""
         token = self.stream.current
         node: nodes.Expr
         if token.type == "name":
+            next(self.stream)
             if token.value in ("true", "false", "True", "False"):
                 node = nodes.Const(token.value in ("true", "True"), lineno=token.lineno)
             elif token.value in ("none", "None"):
                 node = nodes.Const(None, lineno=token.lineno)
+            elif with_namespace and self.stream.current.type == "dot":
+                # If namespace attributes are allowed at this point, and the next
+                # token is a dot, produce a namespace reference.
+                next(self.stream)
+                attr = self.stream.expect("name")
+                node = nodes.NSRef(token.value, attr.value, lineno=token.lineno)
             else:
                 node = nodes.Name(token.value, "load", lineno=token.lineno)
-            next(self.stream)
         elif token.type == "string":
             next(self.stream)
             buf = [token.value]
@@ -681,6 +688,7 @@ class Parser:
         with_condexpr: bool = True,
         extra_end_rules: t.Optional[t.Tuple[str, ...]] = None,
         explicit_parentheses: bool = False,
+        with_namespace: bool = False,
     ) -> t.Union[nodes.Tuple, nodes.Expr]:
         """Works like `parse_expression` but if multiple expressions are
         delimited by a comma a :class:`~jinja2.nodes.Tuple` node is created.
@@ -688,8 +696,9 @@ class Parser:
         if no commas where found.
 
         The default parsing mode is a full tuple.  If `simplified` is `True`
-        only names and literals are parsed.  The `no_condexpr` parameter is
-        forwarded to :meth:`parse_expression`.
+        only names and literals are parsed; ``with_namespace`` allows namespace
+        attr refs as well. The `no_condexpr` parameter is forwarded to
+        :meth:`parse_expression`.
 
         Because tuples do not require delimiters and may end in a bogus comma
         an extra hint is needed that marks the end of a tuple.  For example
@@ -702,13 +711,14 @@ class Parser:
         """
         lineno = self.stream.current.lineno
         if simplified:
-            parse = self.parse_primary
-        elif with_condexpr:
-            parse = self.parse_expression
+
+            def parse() -> nodes.Expr:
+                return self.parse_primary(with_namespace=with_namespace)
+
         else:
 
             def parse() -> nodes.Expr:
-                return self.parse_expression(with_condexpr=False)
+                return self.parse_expression(with_condexpr=with_condexpr)
 
         args: t.List[nodes.Expr] = []
         is_tuple = False
@@ -857,9 +867,16 @@ class Parser:
         else:
             args.append(None)
 
-        return nodes.Slice(lineno=lineno, *args)
+        return nodes.Slice(lineno=lineno, *args)  # noqa: B026
 
-    def parse_call_args(self) -> t.Tuple:
+    def parse_call_args(
+        self,
+    ) -> t.Tuple[
+        t.List[nodes.Expr],
+        t.List[nodes.Keyword],
+        t.Optional[nodes.Expr],
+        t.Optional[nodes.Expr],
+    ]:
         token = self.stream.expect("lparen")
         args = []
         kwargs = []
@@ -950,7 +967,7 @@ class Parser:
             next(self.stream)
             name += "." + self.stream.expect("name").value
         dyn_args = dyn_kwargs = None
-        kwargs = []
+        kwargs: t.List[nodes.Keyword] = []
         if self.stream.current.type == "lparen":
             args, kwargs, dyn_args, dyn_kwargs = self.parse_call_args()
         elif self.stream.current.type in {

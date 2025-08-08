@@ -1389,7 +1389,7 @@ bool BacktrackingAllocator::isRegisterDefinition(LiveRange* range) {
 // [Further group definitions and supporting code to come, pending rework
 //  of the wasm atomic-group situation.]
 
-CodePosition RegisterAllocator::minimalDefEnd(LNode* ins) const {
+CodePosition BacktrackingAllocator::minimalDefEnd(LNode* ins) const {
   // Compute the shortest interval that captures vregs defined by ins.
   // Watch for instructions that are followed by an OSI point.
   // If moves are introduced between the instruction and the OSI point then
@@ -1558,12 +1558,6 @@ size_t BacktrackingAllocator::computeSpillWeight(LiveBundle* bundle) {
     }
   }
 
-  // Bundles with fixed uses are given a higher spill weight, since they must
-  // be allocated to a specific register.
-  if (testbed && fixed) {
-    usesTotal *= 2;
-  }
-
   // Compute spill weight as a use density, lowering the weight for long
   // lived bundles with relatively few uses.
   size_t lifetimeTotal = computePriority(bundle);
@@ -1588,8 +1582,35 @@ size_t BacktrackingAllocator::maximumSpillWeight(
 // This function pre-allocates and initializes as much global state as possible
 // to avoid littering the algorithms with memory management cruft.
 bool BacktrackingAllocator::init() {
-  if (!RegisterAllocator::init()) {
+  if (!insData.init(mir, graph.numInstructions())) {
     return false;
+  }
+
+  if (!entryPositions.reserve(graph.numBlocks()) ||
+      !exitPositions.reserve(graph.numBlocks())) {
+    return false;
+  }
+
+  for (size_t i = 0; i < graph.numBlocks(); i++) {
+    LBlock* block = graph.getBlock(i);
+    for (LInstructionIterator ins = block->begin(); ins != block->end();
+         ins++) {
+      insData[ins->id()] = *ins;
+    }
+    for (size_t j = 0; j < block->numPhis(); j++) {
+      LPhi* phi = block->getPhi(j);
+      insData[phi->id()] = phi;
+    }
+
+    CodePosition entry =
+        block->numPhis() != 0
+            ? CodePosition(block->getPhi(0)->id(), CodePosition::INPUT)
+            : inputOf(block->firstInstructionWithId());
+    CodePosition exit = outputOf(block->lastInstructionWithId());
+
+    MOZ_ASSERT(block->mir()->id() == i);
+    entryPositions.infallibleAppend(entry);
+    exitPositions.infallibleAppend(exit);
   }
 
   uint32_t numBlocks = graph.numBlockIds();
@@ -1619,20 +1640,11 @@ bool BacktrackingAllocator::init() {
         return false;
       }
 
-      for (size_t j = 0; j < ins->numDefs(); j++) {
-        LDefinition* def = ins->getDef(j);
-        if (def->isBogusTemp()) {
-          continue;
-        }
-        vreg(def).init(*ins, def, /* isTemp = */ false);
+      for (LInstruction::OutputIter output(*ins); !output.done(); output++) {
+        vreg(*output).init(*ins, *output, /* isTemp = */ false);
       }
-
-      for (size_t j = 0; j < ins->numTemps(); j++) {
-        LDefinition* def = ins->getTemp(j);
-        if (def->isBogusTemp()) {
-          continue;
-        }
-        vreg(def).init(*ins, def, /* isTemp = */ true);
+      for (LInstruction::TempIter temp(*ins); !temp.done(); temp++) {
+        vreg(*temp).init(*ins, *temp, /* isTemp = */ true);
       }
     }
     for (size_t j = 0; j < block->numPhis(); j++) {
@@ -1751,12 +1763,16 @@ static bool IsInputReused(LInstruction* ins, LUse* use) {
 bool BacktrackingAllocator::buildLivenessInfo() {
   JitSpew(JitSpew_RegAlloc, "Beginning liveness analysis");
 
-  // The callPositions vector is initialized from index |length - 1| to 0, to
-  // ensure the call positions are sorted.
-  if (!callPositions.growByUninitialized(graph.numCallInstructions())) {
+  // The callPositions vector and the safepoint vectors are initialized from
+  // index |length - 1| to 0, to ensure they are sorted.
+  if (!callPositions.growByUninitialized(graph.numCallInstructions()) ||
+      !safepoints_.growByUninitialized(graph.numSafepoints()) ||
+      !nonCallSafepoints_.growByUninitialized(graph.numNonCallSafepoints())) {
     return false;
   }
   size_t prevCallPositionIndex = callPositions.length();
+  size_t prevSafepointIndex = safepoints_.length();
+  size_t prevNonCallSafepointIndex = nonCallSafepoints_.length();
 
   for (size_t i = graph.numBlocks(); i > 0; i--) {
     if (mir->shouldCancel("Build Liveness Info (main loop)")) {
@@ -1839,25 +1855,12 @@ bool BacktrackingAllocator::buildLivenessInfo() {
         callPositions[prevCallPositionIndex] = outputOf(*ins);
       }
 
-      for (size_t i = 0; i < ins->numDefs(); i++) {
-        LDefinition* def = ins->getDef(i);
-        if (def->isBogusTemp()) {
-          continue;
-        }
-
+      for (LInstruction::OutputIter output(*ins); !output.done(); output++) {
+        LDefinition* def = *output;
         CodePosition from = outputOf(*ins);
 
         if (def->policy() == LDefinition::MUST_REUSE_INPUT) {
-          // MUST_REUSE_INPUT is implemented by allocating an output
-          // register and moving the input to it. Register hints are
-          // used to avoid unnecessary moves. We give the input an
-          // LUse::ANY policy to avoid allocating a register for the
-          // input.
-          LUse* inputUse = ins->getOperand(def->getReusedInput())->toUse();
-          MOZ_ASSERT(inputUse->policy() == LUse::REGISTER);
-          MOZ_ASSERT(inputUse->usedAtStart());
-          *inputUse = LUse(inputUse->virtualRegister(), LUse::ANY,
-                           /* usedAtStart = */ true);
+          ins->changePolicyOfReusedInputToAny(def);
         }
 
         if (!vreg(def).addInitialRange(alloc(), from, from.next())) {
@@ -1867,11 +1870,9 @@ bool BacktrackingAllocator::buildLivenessInfo() {
         live.remove(def->virtualRegister());
       }
 
-      for (size_t i = 0; i < ins->numTemps(); i++) {
-        LDefinition* temp = ins->getTemp(i);
-        if (temp->isBogusTemp()) {
-          continue;
-        }
+      for (LInstruction::TempIter tempIter(*ins); !tempIter.done();
+           tempIter++) {
+        LDefinition* temp = *tempIter;
 
         // Normally temps are considered to cover both the input
         // and output of the associated instruction. In some cases
@@ -1881,7 +1882,7 @@ bool BacktrackingAllocator::buildLivenessInfo() {
         CodePosition from = inputOf(*ins);
         if (temp->policy() == LDefinition::FIXED) {
           AnyRegister reg = temp->output()->toAnyRegister();
-          for (LInstruction::InputIterator alloc(**ins); alloc.more();
+          for (LInstruction::NonSnapshotInputIter alloc(**ins); alloc.more();
                alloc.next()) {
             if (alloc->isUse()) {
               LUse* use = alloc->toUse();
@@ -1914,7 +1915,7 @@ bool BacktrackingAllocator::buildLivenessInfo() {
       DebugOnly<bool> hasUseRegister = false;
       DebugOnly<bool> hasUseRegisterAtStart = false;
 
-      for (LInstruction::InputIterator inputAlloc(**ins); inputAlloc.more();
+      for (LInstruction::InputIter inputAlloc(**ins); inputAlloc.more();
            inputAlloc.next()) {
         if (inputAlloc->isUse()) {
           LUse* use = inputAlloc->toUse();
@@ -1969,6 +1970,17 @@ bool BacktrackingAllocator::buildLivenessInfo() {
           if (!live.insert(use->virtualRegister())) {
             return false;
           }
+        }
+      }
+
+      if (ins->safepoint()) {
+        MOZ_ASSERT(prevSafepointIndex > 0);
+        prevSafepointIndex--;
+        safepoints_[prevSafepointIndex] = *ins;
+        if (!ins->isCall()) {
+          MOZ_ASSERT(prevNonCallSafepointIndex > 0);
+          prevNonCallSafepointIndex--;
+          nonCallSafepoints_[prevNonCallSafepointIndex] = *ins;
         }
       }
     }
@@ -2033,6 +2045,10 @@ bool BacktrackingAllocator::buildLivenessInfo() {
 
   MOZ_RELEASE_ASSERT(prevCallPositionIndex == 0,
                      "Must have initialized all call positions");
+  MOZ_RELEASE_ASSERT(prevSafepointIndex == 0,
+                     "Must have initialized all safepoints");
+  MOZ_RELEASE_ASSERT(prevNonCallSafepointIndex == 0,
+                     "Must have initialized all safepoints");
 
   JitSpew(JitSpew_RegAlloc, "Completed liveness analysis");
   return true;
@@ -3074,15 +3090,6 @@ bool BacktrackingAllocator::trySplitAcrossHotcode(LiveBundle* bundle,
   }
   LiveBundle* preBundle = nullptr;
   LiveBundle* postBundle = nullptr;
-  LiveBundle* coldBundle = nullptr;
-
-  if (testbed) {
-    coldBundle = LiveBundle::FallibleNew(
-        alloc(), bundle->spillSet(), bundle->spillParent(), getNextBundleId());
-    if (!coldBundle) {
-      return false;
-    }
-  }
 
   // Accumulate the ranges of hot and cold code in the bundle. Note that
   // we are only comparing with the single hot range found, so the cold code
@@ -3100,46 +3107,32 @@ bool BacktrackingAllocator::trySplitAcrossHotcode(LiveBundle* bundle,
     }
 
     if (!coldPre.empty()) {
-      if (testbed) {
-        if (!coldBundle->addRangeAndDistributeUses(alloc(), range, coldPre.from,
-                                                   coldPre.to)) {
-          return false;
-        }
-      } else {
+      if (!preBundle) {
+        preBundle =
+            LiveBundle::FallibleNew(alloc(), bundle->spillSet(),
+                                    bundle->spillParent(), getNextBundleId());
         if (!preBundle) {
-          preBundle =
-              LiveBundle::FallibleNew(alloc(), bundle->spillSet(),
-                                      bundle->spillParent(), getNextBundleId());
-          if (!preBundle) {
-            return false;
-          }
-        }
-        if (!preBundle->addRangeAndDistributeUses(alloc(), range, coldPre.from,
-                                                  coldPre.to)) {
           return false;
         }
+      }
+      if (!preBundle->addRangeAndDistributeUses(alloc(), range, coldPre.from,
+                                                coldPre.to)) {
+        return false;
       }
     }
 
     if (!coldPost.empty()) {
-      if (testbed) {
-        if (!coldBundle->addRangeAndDistributeUses(
-                alloc(), range, coldPost.from, coldPost.to)) {
-          return false;
-        }
-      } else {
+      if (!postBundle) {
+        postBundle =
+            LiveBundle::FallibleNew(alloc(), bundle->spillSet(),
+                                    bundle->spillParent(), getNextBundleId());
         if (!postBundle) {
-          postBundle =
-              LiveBundle::FallibleNew(alloc(), bundle->spillSet(),
-                                      bundle->spillParent(), getNextBundleId());
-          if (!postBundle) {
-            return false;
-          }
-        }
-        if (!postBundle->addRangeAndDistributeUses(
-                alloc(), range, coldPost.from, coldPost.to)) {
           return false;
         }
+      }
+      if (!postBundle->addRangeAndDistributeUses(alloc(), range, coldPost.from,
+                                                 coldPost.to)) {
+        return false;
       }
     }
   }
@@ -3151,19 +3144,12 @@ bool BacktrackingAllocator::trySplitAcrossHotcode(LiveBundle* bundle,
     return false;
   }
 
-  if (testbed) {
-    MOZ_ASSERT(coldBundle->numRanges() != 0);
-    if (!newBundles.append(coldBundle)) {
-      return false;
-    }
-  } else {
-    MOZ_ASSERT(preBundle || postBundle);
-    if (preBundle && !newBundles.append(preBundle)) {
-      return false;
-    }
-    if (postBundle && !newBundles.append(postBundle)) {
-      return false;
-    }
+  MOZ_ASSERT(preBundle || postBundle);
+  if (preBundle && !newBundles.append(preBundle)) {
+    return false;
+  }
+  if (postBundle && !newBundles.append(postBundle)) {
+    return false;
   }
 
   *success = true;
@@ -4392,11 +4378,11 @@ size_t BacktrackingAllocator::findFirstNonCallSafepoint(CodePosition pos,
                                                         size_t startFrom) {
   // Assert startFrom is valid.
   MOZ_ASSERT_IF(startFrom > 0,
-                inputOf(graph.getSafepoint(startFrom - 1)) < pos);
+                inputOf(nonCallSafepoints_[startFrom - 1]) < pos);
 
   size_t i = startFrom;
-  for (; i < graph.numNonCallSafepoints(); i++) {
-    const LInstruction* ins = graph.getNonCallSafepoint(i);
+  for (; i < nonCallSafepoints_.length(); i++) {
+    const LInstruction* ins = nonCallSafepoints_[i];
     if (pos <= inputOf(ins)) {
       break;
     }
@@ -4415,26 +4401,29 @@ void BacktrackingAllocator::addLiveRegistersForRange(
 
   // Don't add output registers to the safepoint.
   CodePosition start = range->from();
-  if (range->hasDefinition() && !reg.isTemp()) {
+  if (range->hasDefinition()) {
 #ifdef CHECK_OSIPOINT_REGISTERS
-    // We don't add the output register to the safepoint,
-    // but it still might get added as one of the inputs.
-    // So eagerly add this reg to the safepoint clobbered registers.
-    if (reg.ins()->isInstruction()) {
+    // Add output and temp registers to the safepoint's clobberedRegs.
+    // Note: the outputs aren't added to the safepoint's liveRegs here, but the
+    // same register might still be added to liveRegs for one of the inputs, so
+    // we have to add outputs to clobberedRegs here.
+    if (reg.ins()->isInstruction() && !reg.ins()->isCall()) {
       if (LSafepoint* safepoint = reg.ins()->toInstruction()->safepoint()) {
         safepoint->addClobberedRegister(a.toAnyRegister());
       }
     }
 #endif
-    start = start.next();
+    if (!reg.isTemp()) {
+      start = start.next();
+    }
   }
 
   *firstNonCallSafepoint =
-      findFirstNonCallSafepoint(range->from(), *firstNonCallSafepoint);
+      findFirstNonCallSafepoint(start, *firstNonCallSafepoint);
 
-  for (size_t i = *firstNonCallSafepoint; i < graph.numNonCallSafepoints();
+  for (size_t i = *firstNonCallSafepoint; i < nonCallSafepoints_.length();
        i++) {
-    LInstruction* ins = graph.getNonCallSafepoint(i);
+    LInstruction* ins = nonCallSafepoints_[i];
     CodePosition pos = inputOf(ins);
 
     // Safepoints are sorted, so we can shortcut out of this loop
@@ -4447,12 +4436,6 @@ void BacktrackingAllocator::addLiveRegistersForRange(
 
     LSafepoint* safepoint = ins->safepoint();
     safepoint->addLiveRegister(a.toAnyRegister());
-
-#ifdef CHECK_OSIPOINT_REGISTERS
-    if (reg.isTemp()) {
-      safepoint->addClobberedRegister(a.toAnyRegister());
-    }
-#endif
   }
 }
 
@@ -4554,54 +4537,16 @@ bool BacktrackingAllocator::installAllocationsInLIR() {
 size_t BacktrackingAllocator::findFirstSafepoint(CodePosition pos,
                                                  size_t startFrom) {
   // Assert startFrom is valid.
-  MOZ_ASSERT_IF(startFrom > 0,
-                inputOf(graph.getSafepoint(startFrom - 1)) < pos);
+  MOZ_ASSERT_IF(startFrom > 0, inputOf(safepoints_[startFrom - 1]) < pos);
 
   size_t i = startFrom;
-  for (; i < graph.numSafepoints(); i++) {
-    LInstruction* ins = graph.getSafepoint(i);
+  for (; i < safepoints_.length(); i++) {
+    LInstruction* ins = safepoints_[i];
     if (pos <= inputOf(ins)) {
       break;
     }
   }
   return i;
-}
-
-// Helper for ::populateSafepoints
-static inline bool IsNunbox(VirtualRegister& reg) {
-#ifdef JS_NUNBOX32
-  return reg.type() == LDefinition::TYPE || reg.type() == LDefinition::PAYLOAD;
-#else
-  return false;
-#endif
-}
-
-// Helper for ::populateSafepoints
-static inline bool IsSlotsOrElements(VirtualRegister& reg) {
-  return reg.type() == LDefinition::SLOTS;
-}
-
-// Helper for ::populateSafepoints
-static inline bool IsTraceable(VirtualRegister& reg) {
-  if (reg.type() == LDefinition::OBJECT ||
-      reg.type() == LDefinition::WASM_ANYREF) {
-    return true;
-  }
-#ifdef JS_PUNBOX64
-  if (reg.type() == LDefinition::BOX) {
-    return true;
-  }
-#endif
-  if (reg.type() == LDefinition::STACKRESULTS) {
-    MOZ_ASSERT(reg.def());
-    const LStackArea* alloc = reg.def()->output()->toStackArea();
-    for (auto iter = alloc->results(); iter; iter.next()) {
-      if (iter.isWasmAnyRef()) {
-        return true;
-      }
-    }
-  }
-  return false;
 }
 
 bool BacktrackingAllocator::populateSafepoints() {
@@ -4616,8 +4561,7 @@ bool BacktrackingAllocator::populateSafepoints() {
   for (uint32_t i = 1; i < graph.numVirtualRegisters(); i++) {
     VirtualRegister& reg = vregs[i];
 
-    if (!reg.def() ||
-        (!IsTraceable(reg) && !IsSlotsOrElements(reg) && !IsNunbox(reg))) {
+    if (!reg.def() || !reg.def()->isSafepointGCType(reg.ins())) {
       continue;
     }
 
@@ -4637,7 +4581,7 @@ bool BacktrackingAllocator::populateSafepoints() {
           findFirstSafepoint(range->from(), firstSafepointForRange);
 
       for (size_t j = firstSafepointForRange; j < graph.numSafepoints(); j++) {
-        LInstruction* ins = graph.getSafepoint(j);
+        LInstruction* ins = safepoints_[j];
 
         if (inputOf(ins) >= range->to()) {
           break;
@@ -4666,53 +4610,8 @@ bool BacktrackingAllocator::populateSafepoints() {
           continue;
         }
 
-        switch (reg.type()) {
-          case LDefinition::OBJECT:
-            if (!safepoint->addGcPointer(a)) {
-              return false;
-            }
-            break;
-          case LDefinition::SLOTS:
-            if (!safepoint->addSlotsOrElementsPointer(a)) {
-              return false;
-            }
-            break;
-          case LDefinition::WASM_ANYREF:
-            if (!safepoint->addWasmAnyRef(a)) {
-              return false;
-            }
-            break;
-          case LDefinition::STACKRESULTS: {
-            MOZ_ASSERT(a.isStackArea());
-            for (auto iter = a.toStackArea()->results(); iter; iter.next()) {
-              if (iter.isWasmAnyRef()) {
-                if (!safepoint->addWasmAnyRef(iter.alloc())) {
-                  return false;
-                }
-              }
-            }
-            break;
-          }
-#ifdef JS_NUNBOX32
-          case LDefinition::TYPE:
-            if (!safepoint->addNunboxType(i, a)) {
-              return false;
-            }
-            break;
-          case LDefinition::PAYLOAD:
-            if (!safepoint->addNunboxPayload(i, a)) {
-              return false;
-            }
-            break;
-#else
-          case LDefinition::BOX:
-            if (!safepoint->addBoxedValue(a)) {
-              return false;
-            }
-            break;
-#endif
-          default:
-            MOZ_CRASH("Bad register type");
+        if (!safepoint->addGCAllocation(i, reg.def(), a)) {
+          return false;
         }
       }
     }

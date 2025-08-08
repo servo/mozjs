@@ -6,4 +6,9 @@
 
 Library("zlib")
 
-OS_LIBS += CONFIG["MOZ_ZLIB_LIBS"]
+if CONFIG["MOZ_SYSTEM_ZLIB"]:
+    OS_LIBS += CONFIG["MOZ_ZLIB_LIBS"]
+else:
+    DIRS += [
+        "../../../modules/zlib",
+    ]

@@ -3,9 +3,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
+import pickle
 
 import mozpack.path as mozpath
-import six.moves.cPickle as pickle
 from mozunit import main
 
 from mozbuild.backend.test_manifest import TestManifestBackend
@@ -115,7 +115,7 @@ class TestTestManifestBackend(BackendTester):
 
         status_path = mozpath.join(env.topobjdir, "config.status")
 
-        with open(backend_path, "r") as fh:
+        with open(backend_path) as fh:
             sources = set(source.strip() for source in fh)
 
         self.assertEqual(

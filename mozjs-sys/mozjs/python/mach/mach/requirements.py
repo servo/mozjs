@@ -180,7 +180,7 @@ def _parse_mach_env_requirements(
                 raise Exception(
                     "Expected pypi-optional package to have a repercussion "
                     'description in the format "package:fallback explanation", '
-                    'found "{}"'.format(params)
+                    f'found "{params}"'
                 )
             raw_requirement, repercussion = params.split(":")
             requirements_output.pypi_optional_requirements.append(
@@ -208,6 +208,14 @@ def _parse_mach_env_requirements(
 
         with open(requirements_path) as requirements_file:
             lines = [line for line in requirements_file]
+
+        first_line = lines[0].strip()
+        if not first_line.startswith("requires-python:"):
+            raise ValueError(
+                f"{requirements_path}:1: Please ensure the first line specifies a Python requirement in the form "
+                f"'requires-python:<specifier>' (for example: 'requires-python:>=3.8').\n"
+                f"See https://packaging.python.org/en/latest/specifications/version-specifiers/#id5 for details."
+            )
 
         for number, line in enumerate(lines, start=1):
             _parse_requirements_line(

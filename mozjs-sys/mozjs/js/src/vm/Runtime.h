@@ -311,6 +311,17 @@ class HasSeenObjectEmulateUndefinedFuse : public js::InvalidatingRuntimeFuse {
   virtual void popFuse(JSContext* cx) override;
 };
 
+class HasSeenArrayExceedsInt32LengthFuse : public js::InvalidatingRuntimeFuse {
+  virtual const char* name() override {
+    return "HasSeenArrayExceedsInt32LengthFuse";
+  }
+
+  virtual bool checkInvariant(JSContext* cx) override { return true; }
+
+ public:
+  virtual void popFuse(JSContext* cx) override;
+};
+
 }  // namespace js
 
 struct JSRuntime {
@@ -523,6 +534,14 @@ struct JSRuntime {
       JS::GCHashMap<js::PreBarriered<JSAtom*>, js::frontend::ScriptIndexRange,
                     js::DefaultHasher<JSAtom*>, js::SystemAllocPolicy>>
       selfHostScriptMap;
+  // A cache for a self-hosted function's JitCode (managed through a
+  // BaselineScript) keyed by script index.
+  js::MainThreadData<
+      js::GCHashMap<js::PreBarriered<JSAtom*>, js::jit::BaselineScript*,
+                    js::DefaultHasher<JSAtom*>, js::SystemAllocPolicy>>
+      selfHostJitCache;
+
+  void clearSelfHostedJitCache();
 
  private:
   /* Gecko profiling metadata */
@@ -962,8 +981,6 @@ struct JSRuntime {
       offthreadBaselineCompilationEnabled_;
   mozilla::Atomic<bool, mozilla::SequentiallyConsistent>
       offthreadIonCompilationEnabled_;
-  mozilla::Atomic<bool, mozilla::SequentiallyConsistent>
-      parallelParsingEnabled_;
 
   js::MainThreadData<bool> autoWritableJitCodeActive_;
 
@@ -986,11 +1003,6 @@ struct JSRuntime {
   bool canUseOffthreadIonCompilation() const {
     return offthreadIonCompilationEnabled_;
   }
-  void setParallelParsingEnabled(bool value) {
-    parallelParsingEnabled_ = value;
-  }
-  bool canUseParallelParsing() const { return parallelParsingEnabled_; }
-
   void toggleAutoWritableJitCodeActive(bool b) {
     MOZ_ASSERT(autoWritableJitCodeActive_ != b,
                "AutoWritableJitCode should not be nested.");
@@ -1121,6 +1133,9 @@ struct JSRuntime {
 
   js::MainThreadData<js::HasSeenObjectEmulateUndefinedFuse>
       hasSeenObjectEmulateUndefinedFuse;
+
+  js::MainThreadData<js::HasSeenArrayExceedsInt32LengthFuse>
+      hasSeenArrayExceedsInt32LengthFuse;
 };
 
 namespace js {

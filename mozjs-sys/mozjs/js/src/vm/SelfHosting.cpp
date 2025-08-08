@@ -46,7 +46,7 @@
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/String.h"
-#ifdef JS_HAS_TEMPORAL_API
+#ifdef JS_HAS_INTL_API
 #  include "builtin/temporal/Duration.h"
 #endif
 #include "builtin/WeakMapObject.h"
@@ -55,6 +55,7 @@
 #include "frontend/FrontendContext.h"     // AutoReportFrontendContext
 #include "frontend/StencilXdr.h"  // js::EncodeStencil, js::DecodeStencil
 #include "jit/AtomicOperations.h"
+#include "jit/BaselineJIT.h"
 #include "jit/InlinableNatives.h"
 #include "jit/TrampolineNatives.h"
 #include "js/CompilationAndEvaluation.h"
@@ -305,6 +306,18 @@ static bool intrinsic_SubstringKernel(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   args.rval().setString(substr);
+  return true;
+}
+
+static bool intrinsic_CanOptimizeStringProtoSymbolLookup(JSContext* cx,
+                                                         unsigned argc,
+                                                         Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 0);
+
+  bool optimizable =
+      cx->realm()->realmFuses.optimizeStringPrototypeSymbolsFuse.intact();
+  args.rval().setBoolean(optimizable);
   return true;
 }
 
@@ -595,21 +608,6 @@ static bool intrinsic_DefineProperty(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool intrinsic_ObjectHasPrototype(JSContext* cx, unsigned argc,
-                                         Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 2);
-
-  // Self-hosted code calls this intrinsic with builtin prototypes. These are
-  // always native objects.
-  auto* obj = &args[0].toObject().as<NativeObject>();
-  auto* proto = &args[1].toObject().as<NativeObject>();
-
-  JSObject* actualProto = obj->staticPrototype();
-  args.rval().setBoolean(actualProto == proto);
-  return true;
-}
-
 static bool intrinsic_UnsafeSetReservedSlot(JSContext* cx, unsigned argc,
                                             Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -879,96 +877,11 @@ static bool intrinsic_GeneratorSetClosed(JSContext* cx, unsigned argc,
   return true;
 }
 
-template <typename T>
-static bool intrinsic_ArrayBufferByteLength(JSContext* cx, unsigned argc,
-                                            Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 1);
-  MOZ_ASSERT(args[0].isObject());
-  MOZ_ASSERT(args[0].toObject().is<T>());
-
-  size_t byteLength = args[0].toObject().as<T>().byteLength();
-  args.rval().setNumber(byteLength);
-  return true;
-}
-
-template <typename T>
-static bool intrinsic_PossiblyWrappedArrayBufferByteLength(JSContext* cx,
-                                                           unsigned argc,
-                                                           Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 1);
-
-  T* obj = args[0].toObject().maybeUnwrapAs<T>();
-  if (!obj) {
-    ReportAccessDenied(cx);
-    return false;
-  }
-
-  size_t byteLength = obj->byteLength();
-  args.rval().setNumber(byteLength);
-  return true;
-}
-
 static void AssertNonNegativeInteger(const Value& v) {
   MOZ_ASSERT(v.isNumber());
   MOZ_ASSERT(v.toNumber() >= 0);
   MOZ_ASSERT(v.toNumber() < DOUBLE_INTEGRAL_PRECISION_LIMIT);
   MOZ_ASSERT(JS::ToInteger(v.toNumber()) == v.toNumber());
-}
-
-template <typename T>
-static bool intrinsic_ArrayBufferCopyData(JSContext* cx, unsigned argc,
-                                          Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 6);
-  AssertNonNegativeInteger(args[1]);
-  AssertNonNegativeInteger(args[3]);
-  AssertNonNegativeInteger(args[4]);
-
-  bool isWrapped = args[5].toBoolean();
-  Rooted<T*> toBuffer(cx);
-  if (!isWrapped) {
-    toBuffer = &args[0].toObject().as<T>();
-  } else {
-    JSObject* wrapped = &args[0].toObject();
-    MOZ_ASSERT(wrapped->is<WrapperObject>());
-    toBuffer = wrapped->maybeUnwrapAs<T>();
-    if (!toBuffer) {
-      ReportAccessDenied(cx);
-      return false;
-    }
-  }
-  size_t toIndex = size_t(args[1].toNumber());
-  Rooted<T*> fromBuffer(cx, &args[2].toObject().as<T>());
-  size_t fromIndex = size_t(args[3].toNumber());
-  size_t count = size_t(args[4].toNumber());
-
-  T::copyData(toBuffer, toIndex, fromBuffer, fromIndex, count);
-
-  args.rval().setUndefined();
-  return true;
-}
-
-// Arguments must both be SharedArrayBuffer or wrapped SharedArrayBuffer.
-static bool intrinsic_SharedArrayBuffersMemorySame(JSContext* cx, unsigned argc,
-                                                   Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 2);
-
-  auto* lhs = args[0].toObject().maybeUnwrapAs<SharedArrayBufferObject>();
-  if (!lhs) {
-    ReportAccessDenied(cx);
-    return false;
-  }
-  auto* rhs = args[1].toObject().maybeUnwrapAs<SharedArrayBufferObject>();
-  if (!rhs) {
-    ReportAccessDenied(cx);
-    return false;
-  }
-
-  args.rval().setBoolean(lhs->rawBufferObject() == rhs->rawBufferObject());
-  return true;
 }
 
 static bool intrinsic_IsTypedArrayConstructor(JSContext* cx, unsigned argc,
@@ -1382,6 +1295,16 @@ static bool intrinsic_StringReplaceString(JSContext* cx, unsigned argc,
   }
 
   args.rval().setString(result);
+  return true;
+}
+
+static bool intrinsic_RegExpSymbolProtocolOnPrimitiveCounter(JSContext* cx,
+                                                             unsigned argc,
+                                                             Value* vp) {
+  // This telemetry is to assess compatibility for tc39/ecma262#3009 and
+  // can later be removed (Bug 1953619).
+  cx->runtime()->setUseCounter(
+      cx->global(), JSUseCounter::REGEXP_SYMBOL_PROTOCOL_ON_PRIMITIVE);
   return true;
 }
 
@@ -1893,7 +1816,7 @@ static bool intrinsic_newList(JSContext* cx, unsigned argc, js::Value* vp) {
   return true;
 }
 
-#ifdef JS_HAS_TEMPORAL_API
+#ifdef JS_HAS_INTL_API
 static bool intrinsic_ToTemporalDuration(JSContext* cx, unsigned argc,
                                          js::Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -1981,18 +1904,11 @@ static bool intrinsic_ToTemporalDuration(JSContext* cx, unsigned argc,
 
 static const JSFunctionSpec intrinsic_functions[] = {
     // Intrinsic helper functions
-    JS_INLINABLE_FN("ArrayBufferByteLength",
-                    intrinsic_ArrayBufferByteLength<ArrayBufferObject>, 1, 0,
-                    IntrinsicArrayBufferByteLength),
-    JS_FN("ArrayBufferCopyData",
-          intrinsic_ArrayBufferCopyData<ArrayBufferObject>, 6, 0),
     JS_INLINABLE_FN("ArrayIteratorPrototypeOptimizable",
                     intrinsic_ArrayIteratorPrototypeOptimizable, 0, 0,
                     IntrinsicArrayIteratorPrototypeOptimizable),
     JS_FN("AssertionFailed", intrinsic_AssertionFailed, 1, 0),
     JS_FN("BigIntToNumber", intrinsic_BigIntToNumber, 1, 0),
-    JS_FN("CallArrayBufferMethodIfWrapped",
-          CallNonGenericSelfhostedMethod<Is<ArrayBufferObject>>, 2, 0),
     JS_FN("CallArrayIteratorMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<ArrayIteratorObject>>, 2, 0),
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
@@ -2025,8 +1941,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
           CallNonGenericSelfhostedMethod<Is<SetIteratorObject>>, 2, 0),
     JS_FN("CallSetMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<SetObject>>, 2, 0),
-    JS_FN("CallSharedArrayBufferMethodIfWrapped",
-          CallNonGenericSelfhostedMethod<Is<SharedArrayBufferObject>>, 2, 0),
     JS_FN("CallStringIteratorMethodIfWrapped",
           CallNonGenericSelfhostedMethod<Is<StringIteratorObject>>, 2, 0),
     JS_FN("CallTypedArrayMethodIfWrapped",
@@ -2038,6 +1952,9 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("CanOptimizeArraySpecies",
                     intrinsic_CanOptimizeArraySpecies, 1, 0,
                     IntrinsicCanOptimizeArraySpecies),
+    JS_INLINABLE_FN("CanOptimizeStringProtoSymbolLookup",
+                    intrinsic_CanOptimizeStringProtoSymbolLookup, 0, 0,
+                    IntrinsicCanOptimizeStringProtoSymbolLookup),
     JS_FN("ConstructFunction", intrinsic_ConstructFunction, 2, 0),
     JS_FN("ConstructorForTypedArray", intrinsic_ConstructorForTypedArray, 1, 0),
     JS_FN("CopyDataPropertiesOrGetOwnKeys",
@@ -2142,6 +2059,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("IsGeneratorObject", intrinsic_IsInstanceOfBuiltin<GeneratorObject>,
           1, 0),
     JS_INLINABLE_FN("IsObject", intrinsic_IsObject, 1, 0, IntrinsicIsObject),
+    JS_INLINABLE_FN("IsOptimizableRegExpObject", IsOptimizableRegExpObject, 1,
+                    0, IsOptimizableRegExpObject),
     JS_INLINABLE_FN("IsPackedArray", intrinsic_IsPackedArray, 1, 0,
                     IntrinsicIsPackedArray),
     JS_INLINABLE_FN("IsPossiblyWrappedRegExpObject",
@@ -2154,6 +2073,9 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("IsRegExpObject",
                     intrinsic_IsInstanceOfBuiltin<RegExpObject>, 1, 0,
                     IsRegExpObject),
+    JS_INLINABLE_FN("IsRegExpPrototypeOptimizable",
+                    IsRegExpPrototypeOptimizable, 0, 0,
+                    IsRegExpPrototypeOptimizable),
     JS_INLINABLE_FN("IsSuspendedGenerator", intrinsic_IsSuspendedGenerator, 1,
                     0, IntrinsicIsSuspendedGenerator),
     JS_INLINABLE_FN("IsTypedArray",
@@ -2162,10 +2084,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("IsTypedArrayConstructor",
                     intrinsic_IsTypedArrayConstructor, 1, 0,
                     IntrinsicIsTypedArrayConstructor),
-    JS_FN("IsWrappedArrayBuffer",
-          intrinsic_IsWrappedInstanceOfBuiltin<ArrayBufferObject>, 1, 0),
-    JS_FN("IsWrappedSharedArrayBuffer",
-          intrinsic_IsWrappedInstanceOfBuiltin<SharedArrayBufferObject>, 1, 0),
     JS_INLINABLE_FN("NewArrayIterator", intrinsic_NewArrayIterator, 0, 0,
                     IntrinsicNewArrayIterator),
     JS_FN("NewAsyncIteratorHelper", intrinsic_NewAsyncIteratorHelper, 0, 0),
@@ -2181,16 +2099,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("NewWrapForValidIterator", intrinsic_NewWrapForValidIterator, 0, 0),
     JS_FN("NoPrivateGetter", intrinsic_NoPrivateGetter, 1, 0),
     JS_FN("NumberToBigInt", intrinsic_NumberToBigInt, 1, 0),
-    JS_INLINABLE_FN("ObjectHasPrototype", intrinsic_ObjectHasPrototype, 2, 0,
-                    IntrinsicObjectHasPrototype),
-    JS_INLINABLE_FN(
-        "PossiblyWrappedArrayBufferByteLength",
-        intrinsic_PossiblyWrappedArrayBufferByteLength<ArrayBufferObject>, 1, 0,
-        IntrinsicPossiblyWrappedArrayBufferByteLength),
-    JS_FN(
-        "PossiblyWrappedSharedArrayBufferByteLength",
-        intrinsic_PossiblyWrappedArrayBufferByteLength<SharedArrayBufferObject>,
-        1, 0),
     JS_FN("PossiblyWrappedTypedArrayHasDetachedBuffer",
           intrinsic_PossiblyWrappedTypedArrayHasDetachedBuffer, 1, 0),
     JS_INLINABLE_FN("PossiblyWrappedTypedArrayLength",
@@ -2211,22 +2119,14 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("RegExpGetSubstitution", intrinsic_RegExpGetSubstitution, 5, 0),
     JS_INLINABLE_FN("RegExpHasCaptureGroups", intrinsic_RegExpHasCaptureGroups,
                     2, 0, RegExpHasCaptureGroups),
-    JS_INLINABLE_FN("RegExpInstanceOptimizable", RegExpInstanceOptimizable, 1,
-                    0, RegExpInstanceOptimizable),
     JS_INLINABLE_FN("RegExpMatcher", RegExpMatcher, 3, 0, RegExpMatcher),
-    JS_INLINABLE_FN("RegExpPrototypeOptimizable", RegExpPrototypeOptimizable, 1,
-                    0, RegExpPrototypeOptimizable),
     JS_INLINABLE_FN("RegExpSearcher", RegExpSearcher, 3, 0, RegExpSearcher),
     JS_INLINABLE_FN("RegExpSearcherLastLimit", RegExpSearcherLastLimit, 0, 0,
                     RegExpSearcherLastLimit),
+    JS_FN("RegExpSymbolProtocolOnPrimitiveCounter",
+          intrinsic_RegExpSymbolProtocolOnPrimitiveCounter, 0, 0),
     JS_INLINABLE_FN("SameValue", js::obj_is, 2, 0, ObjectIs),
     JS_FN("SetCopy", SetObject::copy, 1, 0),
-    JS_FN("SharedArrayBufferByteLength",
-          intrinsic_ArrayBufferByteLength<SharedArrayBufferObject>, 1, 0),
-    JS_FN("SharedArrayBufferCopyData",
-          intrinsic_ArrayBufferCopyData<SharedArrayBufferObject>, 6, 0),
-    JS_FN("SharedArrayBuffersMemorySame",
-          intrinsic_SharedArrayBuffersMemorySame, 2, 0),
     JS_FN("StringReplaceAllString", intrinsic_StringReplaceAllString, 3, 0),
     JS_INLINABLE_FN("StringReplaceString", intrinsic_StringReplaceString, 3, 0,
                     IntrinsicStringReplaceString),
@@ -2249,7 +2149,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("ToObject", intrinsic_ToObject, 1, 0, IntrinsicToObject),
     JS_FN("ToPropertyKey", intrinsic_ToPropertyKey, 1, 0),
     JS_FN("ToSource", intrinsic_ToSource, 1, 0),
-#ifdef JS_HAS_TEMPORAL_API
+#ifdef JS_HAS_INTL_API
     JS_FN("ToTemporalDuration", intrinsic_ToTemporalDuration, 1, 0),
 #endif
     JS_FN("TypedArrayBitwiseSlice", intrinsic_TypedArrayBitwiseSlice, 4, 0),
@@ -2826,6 +2726,15 @@ void JSRuntime::finishSelfHosting() {
   selfHostStencil_ = nullptr;
 
   selfHostScriptMap.ref().clear();
+  clearSelfHostedJitCache();
+}
+
+void JSRuntime::clearSelfHostedJitCache() {
+  for (auto iter = selfHostJitCache.ref().iter(); !iter.done(); iter.next()) {
+    jit::BaselineScript* baselineScript = iter.get().value();
+    jit::BaselineScript::Destroy(gcContext(), baselineScript);
+  }
+  selfHostJitCache.ref().clear();
 }
 
 void JSRuntime::traceSelfHostingStencil(JSTracer* trc) {
@@ -2833,6 +2742,7 @@ void JSRuntime::traceSelfHostingStencil(JSTracer* trc) {
     selfHostStencilInput_->trace(trc);
   }
   selfHostScriptMap.ref().trace(trc);
+  selfHostJitCache.ref().trace(trc);
 }
 
 GeneratorKind JSRuntime::getSelfHostedFunctionGeneratorKind(
@@ -2902,7 +2812,7 @@ bool JSRuntime::delazifySelfHostedFunction(JSContext* cx,
   auto& stencil = cx->runtime()->selfHostStencil();
 
   if (!stencil.delazifySelfHostedFunction(
-          cx, cx->runtime()->selfHostStencilInput().atomCache, indexRange,
+          cx, cx->runtime()->selfHostStencilInput().atomCache, indexRange, name,
           targetFun)) {
     return false;
   }

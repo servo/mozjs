@@ -1210,30 +1210,28 @@ void LIRGenerator::visitTest(MTest* test) {
     return;
   }
 
-  if (opd->isWasmRefIsSubtypeOfAbstract() && opd->isEmittedAtUses()) {
-    MWasmRefIsSubtypeOfAbstract* isSubTypeOf =
-        opd->toWasmRefIsSubtypeOfAbstract();
+  if (opd->isWasmRefTestAbstract() && opd->isEmittedAtUses()) {
+    MWasmRefTestAbstract* refTest = opd->toWasmRefTestAbstract();
 
-    LAllocation ref = useRegister(isSubTypeOf->ref());
+    LAllocation ref = useRegister(refTest->ref());
     WasmRefIsSubtypeDefs regs =
-        useWasmRefIsSubtype(isSubTypeOf->destType(), /*superSTV=*/nullptr);
-    add(new (alloc()) LWasmRefIsSubtypeOfAbstractAndBranch(
-            ifTrue, ifFalse, ref, regs.scratch1, isSubTypeOf->sourceType(),
-            isSubTypeOf->destType()),
+        useWasmRefIsSubtype(refTest->destType(), /*superSTV=*/nullptr);
+    add(new (alloc()) LWasmRefTestAbstractAndBranch(
+            ifTrue, ifFalse, ref, regs.scratch1, refTest->ref()->wasmRefType(),
+            refTest->destType()),
         test);
     return;
   }
 
-  if (opd->isWasmRefIsSubtypeOfConcrete() && opd->isEmittedAtUses()) {
-    MWasmRefIsSubtypeOfConcrete* isSubTypeOf =
-        opd->toWasmRefIsSubtypeOfConcrete();
+  if (opd->isWasmRefTestConcrete() && opd->isEmittedAtUses()) {
+    MWasmRefTestConcrete* refTest = opd->toWasmRefTestConcrete();
 
-    LAllocation ref = useRegister(isSubTypeOf->ref());
+    LAllocation ref = useRegister(refTest->ref());
     WasmRefIsSubtypeDefs regs =
-        useWasmRefIsSubtype(isSubTypeOf->destType(), isSubTypeOf->superSTV());
-    add(new (alloc()) LWasmRefIsSubtypeOfConcreteAndBranch(
+        useWasmRefIsSubtype(refTest->destType(), refTest->superSTV());
+    add(new (alloc()) LWasmRefTestConcreteAndBranch(
             ifTrue, ifFalse, ref, regs.superSTV, regs.scratch1, regs.scratch2,
-            isSubTypeOf->sourceType(), isSubTypeOf->destType()),
+            refTest->ref()->wasmRefType(), refTest->destType()),
         test);
     return;
   }
@@ -1511,6 +1509,24 @@ void LIRGenerator::visitCompare(MCompare* comp) {
   }
 
   MOZ_CRASH("Unrecognized compare type.");
+}
+
+void LIRGenerator::visitStrictConstantCompareInt32(
+    MStrictConstantCompareInt32* ins) {
+  MDefinition* value = ins->value();
+
+  auto* lir = new (alloc())
+      LStrictConstantCompareInt32(useBox(value), tempDouble(), tempDouble());
+  define(lir, ins);
+}
+
+void LIRGenerator::visitStrictConstantCompareBoolean(
+    MStrictConstantCompareBoolean* ins) {
+  MDefinition* value = ins->value();
+
+  auto* lir =
+      new (alloc()) LStrictConstantCompareBoolean(useBox(value), temp());
+  define(lir, ins);
 }
 
 void LIRGenerator::visitSameValueDouble(MSameValueDouble* ins) {
@@ -3561,7 +3577,7 @@ void LIRGenerator::visitWasmWrapU32Index(MWasmWrapU32Index* ins) {
 }
 
 void LIRGenerator::visitWasmClampTable64Address(MWasmClampTable64Address* ins) {
-  MDefinition* input = ins->input();
+  MDefinition* input = ins->address();
   MOZ_ASSERT(input->type() == MIRType::Int64);
   MOZ_ASSERT(ins->type() == MIRType::Int32);
 
@@ -3912,25 +3928,6 @@ void LIRGenerator::visitRegExpHasCaptureGroups(MRegExpHasCaptureGroups* ins) {
   assignSafepoint(lir, ins);
 }
 
-void LIRGenerator::visitRegExpPrototypeOptimizable(
-    MRegExpPrototypeOptimizable* ins) {
-  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-  MOZ_ASSERT(ins->type() == MIRType::Boolean);
-  LRegExpPrototypeOptimizable* lir = new (alloc())
-      LRegExpPrototypeOptimizable(useRegister(ins->object()), temp());
-  define(lir, ins);
-}
-
-void LIRGenerator::visitRegExpInstanceOptimizable(
-    MRegExpInstanceOptimizable* ins) {
-  MOZ_ASSERT(ins->object()->type() == MIRType::Object);
-  MOZ_ASSERT(ins->proto()->type() == MIRType::Object);
-  MOZ_ASSERT(ins->type() == MIRType::Boolean);
-  LRegExpInstanceOptimizable* lir = new (alloc()) LRegExpInstanceOptimizable(
-      useRegister(ins->object()), useRegister(ins->proto()), temp());
-  define(lir, ins);
-}
-
 void LIRGenerator::visitGetFirstDollarIndex(MGetFirstDollarIndex* ins) {
   MOZ_ASSERT(ins->str()->type() == MIRType::String);
   MOZ_ASSERT(ins->type() == MIRType::Int32);
@@ -4123,9 +4120,9 @@ void LIRGenerator::visitWasmTrap(MWasmTrap* ins) {
   add(new (alloc()) LWasmTrap, ins);
 }
 
-void LIRGenerator::visitWasmTrapIfNull(MWasmTrapIfNull* ins) {
-  auto* lir = new (alloc()) LWasmTrapIfNull(useRegister(ins->ref()));
-  add(lir, ins);
+void LIRGenerator::visitWasmRefAsNonNull(MWasmRefAsNonNull* ins) {
+  defineReuseInput(
+      new (alloc()) LWasmRefAsNonNull(useRegisterAtStart(ins->ref())), ins, 0);
 }
 
 void LIRGenerator::visitReinterpretCast(MReinterpretCast* ins) {
@@ -4861,11 +4858,11 @@ void LIRGenerator::visitNormalizeSliceTerm(MNormalizeSliceTerm* ins) {
 void LIRGenerator::visitArrayJoin(MArrayJoin* ins) {
   MOZ_ASSERT(ins->type() == MIRType::String);
   MOZ_ASSERT(ins->array()->type() == MIRType::Object);
-  MOZ_ASSERT(ins->sep()->type() == MIRType::String);
+  MOZ_ASSERT(ins->separator()->type() == MIRType::String);
 
   auto* lir = new (alloc())
       LArrayJoin(useRegisterAtStart(ins->array()),
-                 useRegisterAtStart(ins->sep()), tempFixed(CallTempReg0));
+                 useRegisterAtStart(ins->separator()), tempFixed(CallTempReg0));
   defineReturn(lir, ins);
   assignSafepoint(lir, ins);
 }
@@ -5483,11 +5480,11 @@ void LIRGenerator::visitGetPropertyCache(MGetPropertyCache* ins) {
 }
 
 void LIRGenerator::visitBindNameCache(MBindNameCache* ins) {
-  MOZ_ASSERT(ins->envChain()->type() == MIRType::Object);
+  MOZ_ASSERT(ins->environmentChain()->type() == MIRType::Object);
   MOZ_ASSERT(ins->type() == MIRType::Object);
 
-  LBindNameCache* lir =
-      new (alloc()) LBindNameCache(useRegister(ins->envChain()), temp());
+  LBindNameCache* lir = new (alloc())
+      LBindNameCache(useRegister(ins->environmentChain()), temp());
   define(lir, ins);
   assignSafepoint(lir, ins);
 }
@@ -6724,23 +6721,23 @@ void LIRGenerator::visitWasmStoreRef(MWasmStoreRef* ins) {
       ins);
 }
 
-void LIRGenerator::visitWasmPostWriteBarrierImmediate(
-    MWasmPostWriteBarrierImmediate* ins) {
-  LWasmPostWriteBarrierImmediate* lir =
-      new (alloc()) LWasmPostWriteBarrierImmediate(
-          useFixed(ins->instance(), InstanceReg), useRegister(ins->object()),
-          useRegister(ins->valueBase()), useRegister(ins->value()), temp(),
-          ins->valueOffset());
+void LIRGenerator::visitWasmPostWriteBarrierWholeCell(
+    MWasmPostWriteBarrierWholeCell* ins) {
+  LWasmPostWriteBarrierWholeCell* lir = new (alloc())
+      LWasmPostWriteBarrierWholeCell(useFixed(ins->instance(), InstanceReg),
+                                     useRegister(ins->object()),
+                                     useRegister(ins->value()), temp());
   add(lir, ins);
   assignWasmSafepoint(lir);
 }
 
-void LIRGenerator::visitWasmPostWriteBarrierIndex(
-    MWasmPostWriteBarrierIndex* ins) {
-  LWasmPostWriteBarrierIndex* lir = new (alloc()) LWasmPostWriteBarrierIndex(
-      useFixed(ins->instance(), InstanceReg), useRegister(ins->object()),
-      useRegister(ins->valueBase()), useRegister(ins->index()),
-      useRegister(ins->value()), temp(), ins->elemSize());
+void LIRGenerator::visitWasmPostWriteBarrierEdgeAtIndex(
+    MWasmPostWriteBarrierEdgeAtIndex* ins) {
+  LWasmPostWriteBarrierEdgeAtIndex* lir =
+      new (alloc()) LWasmPostWriteBarrierEdgeAtIndex(
+          useFixed(ins->instance(), InstanceReg), useRegister(ins->object()),
+          useRegister(ins->valueBase()), useRegister(ins->index()),
+          useRegister(ins->value()), temp(), ins->elemSize());
   add(lir, ins);
   assignWasmSafepoint(lir);
 }
@@ -7673,43 +7670,43 @@ void LIRGenerator::visitHashBigInt(MHashBigInt* ins) {
 }
 
 void LIRGenerator::visitHashObject(MHashObject* ins) {
-  auto* lir =
-      new (alloc()) LHashObject(useRegister(ins->set()), useBox(ins->input()),
-                                temp(), temp(), temp(), temp());
+  auto* lir = new (alloc())
+      LHashObject(useRegister(ins->setObject()), useBox(ins->input()), temp(),
+                  temp(), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitHashValue(MHashValue* ins) {
-  auto* lir =
-      new (alloc()) LHashValue(useRegister(ins->set()), useBox(ins->input()),
-                               temp(), temp(), temp(), temp());
+  auto* lir = new (alloc())
+      LHashValue(useRegister(ins->setObject()), useBox(ins->input()), temp(),
+                 temp(), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitSetObjectHasNonBigInt(MSetObjectHasNonBigInt* ins) {
-  auto* lir = new (alloc())
-      LSetObjectHasNonBigInt(useRegister(ins->set()), useBox(ins->value()),
-                             useRegister(ins->hash()), temp(), temp());
+  auto* lir = new (alloc()) LSetObjectHasNonBigInt(
+      useRegister(ins->setObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitSetObjectHasBigInt(MSetObjectHasBigInt* ins) {
   auto* lir = new (alloc()) LSetObjectHasBigInt(
-      useRegister(ins->set()), useBox(ins->value()), useRegister(ins->hash()),
-      temp(), temp(), temp(), temp());
+      useRegister(ins->setObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp(), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitSetObjectHasValue(MSetObjectHasValue* ins) {
   auto* lir = new (alloc()) LSetObjectHasValue(
-      useRegister(ins->set()), useBox(ins->value()), useRegister(ins->hash()),
-      temp(), temp(), temp(), temp());
+      useRegister(ins->setObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp(), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitSetObjectHasValueVMCall(MSetObjectHasValueVMCall* ins) {
   auto* lir = new (alloc()) LSetObjectHasValueVMCall(
-      useRegisterAtStart(ins->set()), useBoxAtStart(ins->value()));
+      useRegisterAtStart(ins->setObject()), useBoxAtStart(ins->value()));
   defineReturn(lir, ins);
   assignSafepoint(lir, ins);
 }
@@ -7729,62 +7726,63 @@ void LIRGenerator::visitSetObjectAdd(MSetObjectAdd* ins) {
 }
 
 void LIRGenerator::visitSetObjectSize(MSetObjectSize* ins) {
-  auto* lir = new (alloc()) LSetObjectSize(useRegisterAtStart(ins->set()));
+  auto* lir =
+      new (alloc()) LSetObjectSize(useRegisterAtStart(ins->setObject()));
   define(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectHasNonBigInt(MMapObjectHasNonBigInt* ins) {
-  auto* lir = new (alloc())
-      LMapObjectHasNonBigInt(useRegister(ins->map()), useBox(ins->value()),
-                             useRegister(ins->hash()), temp(), temp());
+  auto* lir = new (alloc()) LMapObjectHasNonBigInt(
+      useRegister(ins->mapObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectHasBigInt(MMapObjectHasBigInt* ins) {
   auto* lir = new (alloc()) LMapObjectHasBigInt(
-      useRegister(ins->map()), useBox(ins->value()), useRegister(ins->hash()),
-      temp(), temp(), temp(), temp());
+      useRegister(ins->mapObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp(), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectHasValue(MMapObjectHasValue* ins) {
   auto* lir = new (alloc()) LMapObjectHasValue(
-      useRegister(ins->map()), useBox(ins->value()), useRegister(ins->hash()),
-      temp(), temp(), temp(), temp());
+      useRegister(ins->mapObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp(), temp(), temp());
   define(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectHasValueVMCall(MMapObjectHasValueVMCall* ins) {
   auto* lir = new (alloc()) LMapObjectHasValueVMCall(
-      useRegisterAtStart(ins->map()), useBoxAtStart(ins->value()));
+      useRegisterAtStart(ins->mapObject()), useBoxAtStart(ins->value()));
   defineReturn(lir, ins);
   assignSafepoint(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectGetNonBigInt(MMapObjectGetNonBigInt* ins) {
-  auto* lir = new (alloc())
-      LMapObjectGetNonBigInt(useRegister(ins->map()), useBox(ins->value()),
-                             useRegister(ins->hash()), temp(), temp());
+  auto* lir = new (alloc()) LMapObjectGetNonBigInt(
+      useRegister(ins->mapObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp());
   defineBox(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectGetBigInt(MMapObjectGetBigInt* ins) {
   auto* lir = new (alloc()) LMapObjectGetBigInt(
-      useRegister(ins->map()), useBox(ins->value()), useRegister(ins->hash()),
-      temp(), temp(), temp(), temp());
+      useRegister(ins->mapObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp(), temp(), temp());
   defineBox(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectGetValue(MMapObjectGetValue* ins) {
   auto* lir = new (alloc()) LMapObjectGetValue(
-      useRegister(ins->map()), useBox(ins->value()), useRegister(ins->hash()),
-      temp(), temp(), temp(), temp());
+      useRegister(ins->mapObject()), useBox(ins->value()),
+      useRegister(ins->hash()), temp(), temp(), temp(), temp());
   defineBox(lir, ins);
 }
 
 void LIRGenerator::visitMapObjectGetValueVMCall(MMapObjectGetValueVMCall* ins) {
   auto* lir = new (alloc()) LMapObjectGetValueVMCall(
-      useRegisterAtStart(ins->map()), useBoxAtStart(ins->value()));
+      useRegisterAtStart(ins->mapObject()), useBoxAtStart(ins->value()));
   defineReturn(lir, ins);
   assignSafepoint(lir, ins);
 }
@@ -7805,7 +7803,8 @@ void LIRGenerator::visitMapObjectSet(MMapObjectSet* ins) {
 }
 
 void LIRGenerator::visitMapObjectSize(MMapObjectSize* ins) {
-  auto* lir = new (alloc()) LMapObjectSize(useRegisterAtStart(ins->map()));
+  auto* lir =
+      new (alloc()) LMapObjectSize(useRegisterAtStart(ins->mapObject()));
   define(lir, ins);
 }
 
@@ -8069,6 +8068,9 @@ bool LIRGenerator::visitBlock(MBasicBlock* block) {
   MOZ_ASSERT_IF(block->unreachable(), !mir()->optimizationInfo().gvnEnabled());
   for (MInstructionIterator iter = block->begin(); *iter != block->lastIns();
        iter++) {
+    if (gen->shouldCancel("Lowering (instruction loop)")) {
+      return false;
+    }
     if (!visitInstruction(*iter)) {
       return false;
     }
@@ -8383,8 +8385,7 @@ WasmRefIsSubtypeDefs LIRGenerator::useWasmRefIsSubtype(wasm::RefType destType,
   };
 }
 
-void LIRGenerator::visitWasmRefIsSubtypeOfAbstract(
-    MWasmRefIsSubtypeOfAbstract* ins) {
+void LIRGenerator::visitWasmRefTestAbstract(MWasmRefTestAbstract* ins) {
   if (CanEmitAtUseForSingleTest(ins)) {
     emitAtUses(ins);
     return;
@@ -8393,11 +8394,10 @@ void LIRGenerator::visitWasmRefIsSubtypeOfAbstract(
   LAllocation ref = useRegister(ins->ref());
   WasmRefIsSubtypeDefs regs =
       useWasmRefIsSubtype(ins->destType(), /*superSTV=*/nullptr);
-  define(new (alloc()) LWasmRefIsSubtypeOfAbstract(ref, regs.scratch1), ins);
+  define(new (alloc()) LWasmRefTestAbstract(ref, regs.scratch1), ins);
 }
 
-void LIRGenerator::visitWasmRefIsSubtypeOfConcrete(
-    MWasmRefIsSubtypeOfConcrete* ins) {
+void LIRGenerator::visitWasmRefTestConcrete(MWasmRefTestConcrete* ins) {
   if (CanEmitAtUseForSingleTest(ins)) {
     emitAtUses(ins);
     return;
@@ -8406,24 +8406,46 @@ void LIRGenerator::visitWasmRefIsSubtypeOfConcrete(
   LAllocation ref = useRegister(ins->ref());
   WasmRefIsSubtypeDefs regs =
       useWasmRefIsSubtype(ins->destType(), ins->superSTV());
-  define(new (alloc()) LWasmRefIsSubtypeOfConcrete(
-             ref, regs.superSTV, regs.scratch1, regs.scratch2),
+  define(new (alloc()) LWasmRefTestConcrete(ref, regs.superSTV, regs.scratch1,
+                                            regs.scratch2),
          ins);
 }
 
+void LIRGenerator::visitWasmRefCastAbstract(MWasmRefCastAbstract* ins) {
+  LAllocation ref = useRegisterAtStart(ins->ref());
+  WasmRefIsSubtypeDefs regs =
+      useWasmRefIsSubtype(ins->destType(), /*superSTV=*/nullptr);
+  defineReuseInput(new (alloc()) LWasmRefCastAbstract(ref, regs.scratch1), ins,
+                   0);
+}
+
+void LIRGenerator::visitWasmRefCastConcrete(MWasmRefCastConcrete* ins) {
+  LAllocation ref = useRegisterAtStart(ins->ref());
+  WasmRefIsSubtypeDefs regs =
+      useWasmRefIsSubtype(ins->destType(), ins->superSTV());
+  defineReuseInput(new (alloc()) LWasmRefCastConcrete(
+                       ref, regs.superSTV, regs.scratch1, regs.scratch2),
+                   ins, 0);
+}
+
+void LIRGenerator::visitWasmRefConvertAnyExtern(MWasmRefConvertAnyExtern* ins) {
+  // Because any and extern have the same representation, this is a no-op.
+  return redefine(ins, ins->ref());
+}
+
 void LIRGenerator::visitWasmNewStructObject(MWasmNewStructObject* ins) {
-  LWasmNewStructObject* lir = new (alloc()) LWasmNewStructObject(
-      useFixed(ins->instance(), InstanceReg), useRegister(ins->allocSite()),
-      temp(), ins->typeDefIndex());
+  LWasmNewStructObject* lir =
+      new (alloc()) LWasmNewStructObject(useFixed(ins->instance(), InstanceReg),
+                                         useRegister(ins->allocSite()), temp());
   define(lir, ins);
   assignWasmSafepoint(lir);
 }
 
 void LIRGenerator::visitWasmNewArrayObject(MWasmNewArrayObject* ins) {
-  LWasmNewArrayObject* lir = new (alloc()) LWasmNewArrayObject(
-      useFixed(ins->instance(), InstanceReg),
-      useRegisterOrConstant(ins->numElements()), useRegister(ins->allocSite()),
-      temp(), temp(), ins->typeDefIndex());
+  LWasmNewArrayObject* lir = new (alloc())
+      LWasmNewArrayObject(useFixed(ins->instance(), InstanceReg),
+                          useRegisterOrConstant(ins->numElements()),
+                          useRegister(ins->allocSite()), temp(), temp());
   define(lir, ins);
   assignWasmSafepoint(lir);
 }

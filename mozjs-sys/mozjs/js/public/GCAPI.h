@@ -494,6 +494,20 @@ typedef enum JSGCParamKey {
    * collections is less than that specified by JSGC_HIGH_FREQUENCY_TIME_LIMIT.
    */
   JSGC_HIGH_FREQUENCY_MODE = 56,
+
+  /**
+   * The engine attempts to keep nursery collection time less than this limit by
+   * restricting the size of the nursery.
+   *
+   * This only happens in optimized builds. It does not happen during pageload
+   * (as indicated by js::gc::SetPerformanceHint).
+   *
+   * Setting this to zero disables this feature.
+   *
+   * Default: 4
+   * Pref: javascript.options.mem.nursery_max_time_goal_ms
+   */
+  JSGC_NURSERY_MAX_TIME_GOAL_MS = 57,
 } JSGCParamKey;
 
 /*
@@ -704,6 +718,12 @@ extern JS_PUBLIC_API bool InternalGCReason(JS::GCReason reason);
  * Input is the integral value of the enum.
  */
 extern JS_PUBLIC_API const char* ExplainGCAbortReason(uint32_t reason);
+
+/**
+ * Get a statically allocated C string describing the Phase.
+ * Input is the integral value of the enum.
+ */
+extern JS_PUBLIC_API const char* GetGCPhaseName(uint32_t phase);
 
 /*
  * Zone GC:

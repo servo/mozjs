@@ -17,12 +17,10 @@ import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 
 import mozpack.path as mozpath
-import six
 import yaml
 from mach.decorators import Command, CommandArgument, SubCommand
 from mach.main import Mach
 from mozversioncontrol import get_repository_object
-from six.moves import input
 
 from mozbuild import build_commands
 from mozbuild.controller.clobber import Clobberer
@@ -75,7 +73,7 @@ class StaticAnalysisSubCommand(SubCommand):
         return after
 
 
-class StaticAnalysisMonitor(object):
+class StaticAnalysisMonitor:
     def __init__(self, srcdir, objdir, checks, total):
         self._total = total
         self._processed = 0
@@ -338,7 +336,7 @@ def check(
         source = get_abspath_files(command_context, files)
 
     # Split in several chunks to avoid hitting Python's limit of 100 groups in re
-    compile_db = json.loads(open(_compile_db, "r").read())
+    compile_db = json.loads(open(_compile_db).read())
     total = 0
     import re
 
@@ -426,7 +424,7 @@ def get_files_with_commands(command_context, compile_db, source):
     Returns an array of dictionaries having file_path with build command
     """
 
-    compile_db = json.load(open(compile_db, "r"))
+    compile_db = json.load(open(compile_db))
 
     commands_list = []
 
@@ -435,9 +433,7 @@ def get_files_with_commands(command_context, compile_db, source):
         _, ext = os.path.splitext(f)
 
         if ext.lower() not in _format_include_extensions:
-            command_context.log(
-                logging.INFO, "static-analysis", {}, "Skipping {}".format(f)
-            )
+            command_context.log(logging.INFO, "static-analysis", {}, f"Skipping {f}")
             continue
         file_with_abspath = os.path.join(command_context.topsrcdir, f)
         for f in compile_db:
@@ -487,7 +483,7 @@ def _get_current_version(command_context, clang_paths):
                 logging.INFO,
                 "static-analysis",
                 {},
-                "{} Version = {} ".format(clang_paths._clang_format_path, version_info),
+                f"{clang_paths._clang_format_path} Version = {version_info} ",
             )
 
     except subprocess.CalledProcessError as e:
@@ -496,7 +492,7 @@ def _get_current_version(command_context, clang_paths):
             "static-analysis",
             {},
             "Error determining the version clang-tidy/format binary, please see the "
-            "attached exception: \n{}".format(e.output),
+            f"attached exception: \n{e.output}",
         )
     return version_info
 
@@ -518,12 +514,9 @@ def _is_version_eligible(command_context, clang_paths, log_error=True):
             logging.ERROR,
             "static-analysis",
             {},
-            "ERROR: You're using an old or incorrect version ({}) of clang-format binary. "
-            "Please update to a more recent one (at least > {}) "
-            "by running: './mach bootstrap' ".format(
-                _get_current_version(command_context, clang_paths),
-                _get_required_version(command_context),
-            ),
+            f"ERROR: You're using an old or incorrect version ({_get_current_version(command_context, clang_paths)}) of clang-format binary. "
+            f"Please update to a more recent one (at least > {_get_required_version(command_context)}) "
+            "by running: './mach bootstrap' ",
         )
 
     return False
@@ -705,9 +698,7 @@ def autotest(
             logging.ERROR,
             "static-analysis",
             {},
-            "ERROR: RUNNING: clang-tidy autotest for platform {} not supported.".format(
-                platform
-            ),
+            f"ERROR: RUNNING: clang-tidy autotest for platform {platform} not supported.",
         )
         return TOOLS_UNSUPORTED_PLATFORM
 
@@ -717,9 +708,7 @@ def autotest(
         logging.INFO,
         "static-analysis",
         {},
-        "RUNNING: clang-tidy autotest for platform {0} with {1} workers.".format(
-            platform, max_workers
-        ),
+        f"RUNNING: clang-tidy autotest for platform {platform} with {max_workers} workers.",
     )
 
     # List all available checkers
@@ -801,31 +790,27 @@ def autotest(
                 if checker_error == TOOLS_CHECKER_NOT_FOUND:
                     message_to_log = (
                         "\tChecker "
-                        "{} not present in this clang-tidy version.".format(
-                            checker_name
-                        )
+                        f"{checker_name} not present in this clang-tidy version."
                     )
                 elif checker_error == TOOLS_CHECKER_NO_TEST_FILE:
                     message_to_log = (
                         "\tChecker "
-                        "{0} does not have a test file - {0}.cpp".format(checker_name)
+                        f"{checker_name} does not have a test file - {checker_name}.cpp"
                     )
                 elif checker_error == TOOLS_CHECKER_RETURNED_NO_ISSUES:
                     message_to_log = (
-                        "\tChecker {0} did not find any issues in its test file, "
-                        "clang-tidy output for the run is:\n{1}"
-                    ).format(checker_name, info1)
+                        f"\tChecker {checker_name} did not find any issues in its test file, "
+                        f"clang-tidy output for the run is:\n{info1}"
+                    )
                 elif checker_error == TOOLS_CHECKER_RESULT_FILE_NOT_FOUND:
-                    message_to_log = (
-                        "\tChecker {0} does not have a result file - {0}.json"
-                    ).format(checker_name)
+                    message_to_log = f"\tChecker {checker_name} does not have a result file - {checker_name}.json"
                 elif checker_error == TOOLS_CHECKER_DIFF_FAILED:
                     message_to_log = (
-                        "\tChecker {0}\nExpected: {1}\n"
-                        "Got: {2}\n"
+                        f"\tChecker {checker_name}\nExpected: {info1}\n"
+                        f"Got: {info2}\n"
                         "clang-tidy output for the run is:\n"
-                        "{3}"
-                    ).format(checker_name, info1, info2, info3)
+                        f"{info3}"
+                    )
 
                 print("\n" + message_to_log)
 
@@ -947,15 +932,11 @@ def _run_analysis_batch(command_context, clang_paths, compilation_commands_path,
 
         for failed_check, baseline_issue in zip(failed_checks, failed_checks_baseline):
             print(
-                "\tChecker {0} expect following results: \n\t\t{1}".format(
-                    failed_check, baseline_issue
-                )
+                f"\tChecker {failed_check} expect following results: \n\t\t{baseline_issue}"
             )
 
         print(
-            "This is the output generated by clang-tidy for the bulk build:\n{}".format(
-                clang_output
-            )
+            f"This is the output generated by clang-tidy for the bulk build:\n{clang_output}"
         )
         return TOOLS_CHECKER_DIFF_FAILED
 
@@ -1225,7 +1206,7 @@ def _verify_checker(
         logging.INFO,
         "static-analysis",
         {},
-        "RUNNING: clang-tidy checker {}.".format(check),
+        f"RUNNING: clang-tidy checker {check}.",
     )
 
     # Structured information in case a checker fails
@@ -1576,58 +1557,25 @@ def _get_clang_tools_from_source(command_context, clang_paths, filename):
     return 0, clang_paths
 
 
-def _get_clang_format_diff_command(command_context, commit):
-    if command_context.repository.name == "hg":
-        args = ["hg", "diff", "-U0"]
-        if commit:
-            args += ["-c", commit]
-        else:
-            args += ["-r", ".^"]
-        for dot_extension in _format_include_extensions:
-            args += ["--include", "glob:**{0}".format(dot_extension)]
-        args += ["--exclude", "listfile:{0}".format(_format_ignore_file)]
-    else:
-        commit_range = "HEAD"  # All uncommitted changes.
-        if commit:
-            commit_range = (
-                commit if ".." in commit else "{}~..{}".format(commit, commit)
-            )
-        args = ["git", "diff", "--no-color", "-U0", commit_range, "--"]
-        for dot_extension in _format_include_extensions:
-            args += ["*{0}".format(dot_extension)]
-        # git-diff doesn't support an 'exclude-from-files' param, but
-        # allow to add individual exclude pattern since v1.9, see
-        # https://git-scm.com/docs/gitglossary#gitglossary-aiddefpathspecapathspec
-        with open(_format_ignore_file, "rb") as exclude_pattern_file:
-            for pattern in exclude_pattern_file.readlines():
-                pattern = six.ensure_str(pattern.rstrip())
-                pattern = pattern.replace(".*", "**")
-                if not pattern or pattern.startswith("#"):
-                    continue  # empty or comment
-                magics = ["exclude"]
-                if pattern.startswith("^"):
-                    magics += ["top"]
-                    pattern = pattern[1:]
-                args += [":({0}){1}".format(",".join(magics), pattern)]
-    return args
-
-
 def _run_clang_format_diff(
     command_context, clang_format_diff, clang_format, commit, output_file
 ):
     # Run clang-format on the diff
     # Note that this will potentially miss a lot things
-    from subprocess import PIPE, CalledProcessError, Popen, check_output
+    from subprocess import CalledProcessError, check_output
 
-    diff_process = Popen(
-        _get_clang_format_diff_command(command_context, commit), stdout=PIPE
+    diff_stream = command_context.repository.diff_stream(
+        rev=commit,
+        extensions=_format_include_extensions,
+        exclude_file=_format_ignore_file,
+        context=0,
     )
     args = [sys.executable, clang_format_diff, "-p1", "-binary=%s" % clang_format]
 
     if not output_file:
         args.append("-i")
     try:
-        output = check_output(args, stdin=diff_process.stdout)
+        output = check_output(args, stdin=diff_stream)
         if output_file:
             # We want to print the diffs
             print(output, file=output_file)
@@ -1651,7 +1599,7 @@ def _is_ignored_path(command_context, ignored_dir_re, f):
 def _generate_path_list(command_context, paths, verbose=True):
     path_to_third_party = os.path.join(command_context.topsrcdir, _format_ignore_file)
     ignored_dir = []
-    with open(path_to_third_party, "r") as fh:
+    with open(path_to_third_party) as fh:
         for line in fh:
             # Remove comments and empty lines
             if line.startswith("#") or len(line.strip()) == 0:
@@ -1668,7 +1616,7 @@ def _generate_path_list(command_context, paths, verbose=True):
         if _is_ignored_path(command_context, ignored_dir_re, f):
             # Early exit if we have provided an ignored directory
             if verbose:
-                print("static-analysis: Ignored third party code '{0}'".format(f))
+                print(f"static-analysis: Ignored third party code '{f}'")
             continue
 
         if os.path.isdir(f):
@@ -1699,10 +1647,10 @@ def _run_clang_format_in_console(command_context, clang_format, paths, assume_fi
     # We use -assume-filename in order to better determine the path for
     # the .clang-format when it is ran outside of the repo, for example
     # by the extension hg-formatsource
-    args = [clang_format, "-assume-filename={}".format(assume_filename[0])]
+    args = [clang_format, f"-assume-filename={assume_filename[0]}"]
 
     process = subprocess.Popen(args, stdin=subprocess.PIPE)
-    with open(paths[0], "r") as fin:
+    with open(paths[0]) as fin:
         process.stdin.write(fin.read())
         process.stdin.close()
         process.wait()
@@ -1832,11 +1780,11 @@ def _run_clang_format_path(
                         target_path_diff = os.path.join("b", relative_path)
                         e.output = e.output.decode("utf-8")
                         patch = e.output.replace(
-                            "+++ {}".format(target_file),
-                            "+++ {}".format(target_path_diff),
+                            f"+++ {target_file}",
+                            f"+++ {target_path_diff}",
                         ).replace(
-                            "-- {}".format(original_path),
-                            "-- {}".format(original_path_diff),
+                            f"-- {original_path}",
+                            f"-- {original_path_diff}",
                         )
                         patches[original_path] = patch
 
@@ -1898,7 +1846,7 @@ def _parse_xml_output(path, clang_output):
     list of patches, and calculates line level informations from the
     character level provided changes.
     """
-    content = six.ensure_str(open(path, "r").read())
+    content = open(path).read()
 
     def _nb_of_lines(start, end):
         return len(content[start:end].splitlines())

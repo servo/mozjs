@@ -252,6 +252,7 @@ export CARGO_TARGET_DIR
 export RUSTFLAGS
 export RUSTC
 export RUSTDOC
+export RUSTDOCFLAGS
 export RUSTFMT
 export LIBCLANG_PATH=$(MOZ_LIBCLANG_PATH)
 export CLANG_PATH=$(MOZ_CLANG_PATH)
@@ -322,6 +323,10 @@ ifneq (,$(filter i686-pc-windows-%,$(RUST_TARGET)))
 RUSTFLAGS += -Zmir-enable-passes=-CheckAlignment
 RUSTC_BOOTSTRAP := 1
 endif
+endif
+
+ifeq (WINNT_clang,$(OS_ARCH)_$(CC_TYPE))
+RUSTFLAGS += -C dlltool=$(LLVM_DLLTOOL)
 endif
 
 $(target_rust_ltoable): RUSTFLAGS:=$(rustflags_override) $(rustflags_sancov) $(RUSTFLAGS) $(rust_pgo_flags) \

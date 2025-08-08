@@ -51,7 +51,6 @@ class AutoGCSession;
 class AutoHeapSession;
 class AutoTraceSession;
 class BufferAllocator;
-struct FinalizePhase;
 class MarkingValidator;
 struct MovingTracer;
 class ParallelMarkTask;
@@ -352,7 +351,7 @@ class GCRuntime {
   void notifyRootsRemoved();
 
   enum TraceOrMarkRuntime { TraceRuntime, MarkRuntime };
-  void traceRuntime(JSTracer* trc, AutoTraceSession& session);
+  void traceRuntime(JSTracer* trc, AutoHeapSession& session);
   void traceRuntimeForMinorGC(JSTracer* trc, AutoGCSession& session);
 
   void purgeRuntimeForMinorGC();
@@ -375,6 +374,10 @@ class GCRuntime {
     return nursery_.refNoCheck().addressOfPosition();
   }
 
+  void* addressOfNurseryAllocatedSites() {
+    return nursery_.refNoCheck().addressOfNurseryAllocatedSites();
+  }
+
   const void* addressOfLastBufferedWholeCell() {
     return storeBuffer_.refNoCheck().addressOfLastBufferedWholeCell();
   }
@@ -385,10 +388,19 @@ class GCRuntime {
                    uint32_t* nextScheduled);
   void setZeal(uint8_t zeal, uint32_t frequency);
   void unsetZeal(uint8_t zeal);
+  // Note that currently, different modes cannot have different frequencies.
+  struct ZealSetting {
+    uint8_t mode;
+    uint32_t frequency;
+  };
+  using ZealSettings = js::Vector<ZealSetting, 0, SystemAllocPolicy>;
+  bool parseZeal(const char* str, size_t len, ZealSettings* zeal,
+                 bool* invalid);
   bool parseAndSetZeal(const char* str);
   void setNextScheduled(uint32_t count);
   void verifyPreBarriers();
   void maybeVerifyPreBarriers(bool always);
+  void verifyPostBarriers();
   bool selectForMarking(JSObject* object);
   void clearSelectedForMarking();
   void setDeterministic(bool enable);
@@ -566,12 +578,18 @@ class GCRuntime {
   }
   using NonEmptyChunksIter = ChainedIterator<ChunkPool::Iter, 2>;
   NonEmptyChunksIter allNonEmptyChunks(const AutoLockGC& lock) {
+    clearCurrentChunk(lock);
     return NonEmptyChunksIter(availableChunks(lock), fullChunks(lock));
   }
   uint32_t minEmptyChunkCount(const AutoLockGC& lock) const {
     return minEmptyChunkCount_;
   }
+  void setCurrentChunk(ArenaChunk* chunk, const AutoLockGC& lock);
+  void clearCurrentChunk(const AutoLockGC& lock);
 #ifdef DEBUG
+  bool isCurrentChunk(ArenaChunk* chunk) const {
+    return chunk == currentChunk_;
+  }
   void verifyAllChunks();
 #endif
 
@@ -592,6 +610,8 @@ class GCRuntime {
   void finishVerifier();
   bool isVerifyPreBarriersEnabled() const { return verifyPreData.refNoCheck(); }
   bool shouldYieldForZeal(ZealMode mode);
+  void verifyPostBarriers(AutoHeapSession& session);
+  void checkHeapBeforeMinorGC(AutoHeapSession& session);
 #else
   bool isVerifyPreBarriersEnabled() const { return false; }
 #endif
@@ -615,13 +635,14 @@ class GCRuntime {
   void queueUnusedLifoBlocksForFree(LifoAlloc* lifo);
   void queueAllLifoBlocksForFreeAfterMinorGC(LifoAlloc* lifo);
   void queueBuffersForFreeAfterMinorGC(
-      Nursery::BufferSet& buffers, Nursery::StringBufferVector& stringBuffers,
-      Nursery::LargeAllocList& largeAllocs);
+      Nursery::BufferSet& buffers, Nursery::StringBufferVector& stringBuffers);
 
   // Public here for ReleaseArenaLists and FinalizeTypedArenas.
   void releaseArena(Arena* arena, const AutoLockGC& lock);
   void releaseArenas(Arena* arena, const AutoLockGC& lock);
   void releaseArenaList(ArenaList& arenaList, const AutoLockGC& lock);
+
+  Arena* releaseSomeEmptyArenas(Zone* zone, Arena* emptyArenas);
 
   // Allocator internals.
   static void* refillFreeListInGC(Zone* zone, AllocKind thingKind);
@@ -680,6 +701,7 @@ class GCRuntime {
   [[nodiscard]] bool appendTestMarkQueue(const JS::Value& value);
   void clearTestMarkQueue();
   size_t testMarkQueuePos() const;
+  size_t testMarkQueueRemaining() const;
 #endif
 
  private:
@@ -688,8 +710,7 @@ class GCRuntime {
   bool hasBuffersForBackgroundFree() const {
     return !lifoBlocksToFree.ref().isEmpty() ||
            !buffersToFreeAfterMinorGC.ref().empty() ||
-           !stringBuffersToReleaseAfterMinorGC.ref().empty() ||
-           !largeBuffersToFreeAfterMinorGC.ref().isEmpty();
+           !stringBuffersToReleaseAfterMinorGC.ref().empty();
   }
 
   // Returns false on failure without raising an exception.
@@ -715,8 +736,7 @@ class GCRuntime {
   friend class ArenaLists;
   ArenaChunk* pickChunk(StallAndRetry stallAndRetry, AutoLockGCBgAlloc& lock);
   Arena* allocateArena(ArenaChunk* chunk, Zone* zone, AllocKind kind,
-                       ShouldCheckThresholds checkThresholds,
-                       const AutoLockGC& lock);
+                       ShouldCheckThresholds checkThresholds);
 
   /*
    * Return the list of chunks that can be released outside the GC lock.
@@ -889,7 +909,7 @@ class GCRuntime {
   IncrementalProgress beginSweepingSweepGroup(JS::GCContext* gcx,
                                               JS::SliceBudget& budget);
   void initBackgroundSweep(Zone* zone, JS::GCContext* gcx,
-                           const FinalizePhase& phase);
+                           const AllocKinds& kinds);
   IncrementalProgress markDuringSweeping(JS::GCContext* gcx,
                                          JS::SliceBudget& budget);
   void updateAtomsBitmap();
@@ -916,9 +936,6 @@ class GCRuntime {
                                       JS::SliceBudget& budget);
   IncrementalProgress finalizeAllocKind(JS::GCContext* gcx,
                                         JS::SliceBudget& budget);
-  bool foregroundFinalize(JS::GCContext* gcx, Zone* zone, AllocKind thingKind,
-                          JS::SliceBudget& sliceBudget,
-                          SortedArenaList& sweepList);
   IncrementalProgress sweepPropMapTree(JS::GCContext* gcx,
                                        JS::SliceBudget& budget);
   void endSweepPhase(bool destroyingRuntime);
@@ -927,8 +944,6 @@ class GCRuntime {
   void startBackgroundFree();
   void freeFromBackgroundThread(AutoLockHelperThreadState& lock);
   void sweepBackgroundThings(ZoneList& zones);
-  void backgroundFinalize(JS::GCContext* gcx, Zone* zone, AllocKind kind,
-                          Arena** empty);
   void prepareForSweepSlice(JS::GCReason reason);
   void assertBackgroundSweepingFinished();
 #ifdef DEBUG
@@ -1093,6 +1108,16 @@ class GCRuntime {
   // so as to reduce the cost of operations on the available lists.
   GCLockData<ChunkPool> fullChunks_;
 
+  // The chunk currently being allocated from. If non-null this is at the head
+  // of the available chunks list and has isCurrentChunk set to true. Can be
+  // accessed without taking the GC lock.
+  MainThreadData<ArenaChunk*> currentChunk_;
+
+  // Bitmap for arenas in the current chunk that have been freed by background
+  // sweeping but not yet merged into the chunk's freeCommittedArenas.
+  GCLockData<ChunkArenaBitmap> pendingFreeCommittedArenas;
+  friend class ArenaChunk;
+
   /*
    * JSGC_MIN_EMPTY_CHUNK_COUNT
    *
@@ -1221,8 +1246,6 @@ class GCRuntime {
   HelperThreadLockData<Nursery::BufferSet> buffersToFreeAfterMinorGC;
   HelperThreadLockData<Nursery::StringBufferVector>
       stringBuffersToReleaseAfterMinorGC;
-  HelperThreadLockData<SlimLinkedList<LargeBuffer>>
-      largeBuffersToFreeAfterMinorGC;
 
   /* The number of the minor GC peformed at the start of major GC. */
   MainThreadData<uint64_t> initialMinorGCNumber;
