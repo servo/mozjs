@@ -53,6 +53,12 @@ class ScratchTagScopeRelease {
   ~ScratchTagScopeRelease() { ts_->reacquire(); }
 };
 
+struct ImmShiftedTag : public ImmWord {
+  explicit ImmShiftedTag(JSValueType type)
+      : ImmWord(uintptr_t(JSValueShiftedTag(JSVAL_TYPE_TO_SHIFTED_TAG(type)))) {
+  }
+};
+
 struct ImmTag : public Imm32 {
   ImmTag(JSValueTag mask) : Imm32(int32_t(mask)) {}
 };
@@ -295,6 +301,8 @@ class MacroAssemblerRiscv64 : public Assembler {
   Condition ma_cmp(Register rd, Register lhs, Imm32 imm, Condition c);
   void ma_cmp_set(Register dst, Register lhs, ImmWord imm, Condition c);
   void ma_cmp_set(Register dst, Register lhs, ImmPtr imm, Condition c);
+  void ma_cmp_set(Register dst, Register lhs, ImmGCPtr imm, Condition c);
+  void ma_cmp_set(Register dst, Address address, Register rhs, Condition c);
   void ma_cmp_set(Register dst, Address address, Imm32 imm, Condition c);
   void ma_cmp_set(Register dst, Address address, ImmWord imm, Condition c);
 

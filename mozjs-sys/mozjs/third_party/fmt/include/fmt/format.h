@@ -3148,6 +3148,13 @@ template <typename Float>
 FMT_CONSTEXPR20 auto format_float(Float value, int precision,
                                   const format_specs& specs, bool binary32,
                                   buffer<char>& buf) -> int {
+  // GCC and old clang seem to hit this even though this function isn't called.
+  #ifdef __clang__
+  #if __clang_major__ >= 17
+    static_assert(false,
+      "This method is not to be used in Gecko, use format_float_gecko");
+  #endif
+  #endif
   // float is passed as double to reduce the number of instantiations.
   static_assert(!std::is_same<Float, float>::value, "");
   auto converted_value = convert_float(value);

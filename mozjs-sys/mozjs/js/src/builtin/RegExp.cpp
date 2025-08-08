@@ -2159,6 +2159,19 @@ bool js::RegExpBuiltinExec(JSContext* cx, Handle<RegExpObject*> regexp,
                                           int32_t(lastIndex), nullptr, rval);
 }
 
+bool js::IsOptimizableRegExpObject(JSObject* obj, JSContext* cx) {
+  // Check the shape to ensure this is a plain RegExpObject with this realm's
+  // RegExp.prototype as prototype and without any extra own properties.
+  // The fuse check ensures RegExp.prototype is optimizable.
+  bool optimizable =
+      obj->shape() == cx->global()->maybeRegExpShapeWithDefaultProto() &&
+      cx->realm()->realmFuses.optimizeRegExpPrototypeFuse.intact();
+  MOZ_ASSERT_IF(optimizable,
+                obj->is<RegExpObject>() &&
+                    obj->as<RegExpObject>().realm() == cx->realm());
+  return optimizable;
+}
+
 // ES2024 draft rev d4927f9bc3706484c75dfef4bbcf5ba826d2632e
 //
 // 22.2.7.1 RegExpExec ( R, S )
@@ -2169,6 +2182,13 @@ bool js::RegExpBuiltinExec(JSContext* cx, Handle<RegExpObject*> regexp,
 bool js::RegExpExec(JSContext* cx, Handle<JSObject*> regexp,
                     Handle<JSString*> string, bool forTest,
                     MutableHandle<Value> rval) {
+  // Fast path for the case where `regexp` is a regular expression object with
+  // the builtin `RegExp.prototype.exec` function.
+  if (MOZ_LIKELY(IsOptimizableRegExpObject(regexp, cx))) {
+    return RegExpBuiltinExec(cx, regexp.as<RegExpObject>(), string, forTest,
+                             rval);
+  }
+
   // Step 1.
   Rooted<Value> exec(cx);
   Rooted<PropertyKey> execKey(cx, NameToId(cx->names().exec));
@@ -2180,8 +2200,7 @@ bool js::RegExpExec(JSContext* cx, Handle<JSObject*> regexp,
   // If exec is the original RegExp.prototype.exec, use the same, faster,
   // path as for the case where exec isn't callable.
   PropertyName* execName = cx->names().RegExp_prototype_Exec;
-  if (MOZ_LIKELY(IsSelfHostedFunctionWithName(exec, execName)) ||
-      !IsCallable(exec)) {
+  if (IsSelfHostedFunctionWithName(exec, execName) || !IsCallable(exec)) {
     // Steps 3-4.
     if (MOZ_LIKELY(regexp->is<RegExpObject>())) {
       return RegExpBuiltinExec(cx, regexp.as<RegExpObject>(), string, forTest,
@@ -2420,192 +2439,27 @@ bool js::GetFirstDollarIndexRaw(JSContext* cx, JSString* str, int32_t* index) {
   return true;
 }
 
-bool js::RegExpPrototypeOptimizable(JSContext* cx, unsigned argc, Value* vp) {
+bool js::IsRegExpPrototypeOptimizable(JSContext* cx, unsigned argc, Value* vp) {
+  // This can only be called from self-hosted code.
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 0);
+
+  bool optimizable =
+      cx->realm()->realmFuses.optimizeRegExpPrototypeFuse.intact();
+  args.rval().setBoolean(optimizable);
+  return true;
+}
+
+bool js::IsOptimizableRegExpObject(JSContext* cx, unsigned argc, Value* vp) {
   // This can only be called from self-hosted code.
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 1);
+  MOZ_ASSERT(args[0].isObject());
 
-  args.rval().setBoolean(
-      RegExpPrototypeOptimizableRaw(cx, &args[0].toObject()));
-  return true;
-}
+  JSObject* obj = &args[0].toObject();
 
-bool js::RegExpPrototypeOptimizableRaw(JSContext* cx, JSObject* proto) {
-  AutoUnsafeCallWithABI unsafe;
-  AutoAssertNoPendingException aanpe(cx);
-  if (!proto->is<NativeObject>()) {
-    return false;
-  }
-
-  NativeObject* nproto = static_cast<NativeObject*>(proto);
-
-  RegExpRealm& realm = cx->global()->regExpRealm();
-  Shape* shape = realm.getOptimizableRegExpPrototypeShape();
-  if (shape == nproto->shape()) {
-    return true;
-  }
-
-  JSFunction* flagsGetter;
-  if (!GetOwnGetterPure(cx, proto, NameToId(cx->names().flags), &flagsGetter)) {
-    return false;
-  }
-
-  if (!flagsGetter) {
-    return false;
-  }
-
-  if (!IsSelfHostedFunctionWithName(flagsGetter,
-                                    cx->names().dollar_RegExpFlagsGetter_)) {
-    return false;
-  }
-
-  JSNative globalGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().global),
-                              &globalGetter)) {
-    return false;
-  }
-
-  if (globalGetter != regexp_global) {
-    return false;
-  }
-
-  JSNative hasIndicesGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().hasIndices),
-                              &hasIndicesGetter)) {
-    return false;
-  }
-
-  if (hasIndicesGetter != regexp_hasIndices) {
-    return false;
-  }
-
-  JSNative ignoreCaseGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().ignoreCase),
-                              &ignoreCaseGetter)) {
-    return false;
-  }
-
-  if (ignoreCaseGetter != regexp_ignoreCase) {
-    return false;
-  }
-
-  JSNative multilineGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().multiline),
-                              &multilineGetter)) {
-    return false;
-  }
-
-  if (multilineGetter != regexp_multiline) {
-    return false;
-  }
-
-  JSNative stickyGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().sticky),
-                              &stickyGetter)) {
-    return false;
-  }
-
-  if (stickyGetter != regexp_sticky) {
-    return false;
-  }
-
-  JSNative unicodeGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().unicode),
-                              &unicodeGetter)) {
-    return false;
-  }
-
-  if (unicodeGetter != regexp_unicode) {
-    return false;
-  }
-
-  JSNative unicodeSetsGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().unicodeSets),
-                              &unicodeSetsGetter)) {
-    return false;
-  }
-
-  if (unicodeSetsGetter != regexp_unicodeSets) {
-    return false;
-  }
-
-  JSNative dotAllGetter;
-  if (!GetOwnNativeGetterPure(cx, proto, NameToId(cx->names().dotAll),
-                              &dotAllGetter)) {
-    return false;
-  }
-
-  if (dotAllGetter != regexp_dotAll) {
-    return false;
-  }
-
-  // Check if @@match, @@search, and exec are own data properties,
-  // those values should be tested in selfhosted JS.
-  bool has = false;
-  if (!HasOwnDataPropertyPure(
-          cx, proto, PropertyKey::Symbol(cx->wellKnownSymbols().match), &has)) {
-    return false;
-  }
-  if (!has) {
-    return false;
-  }
-
-  if (!HasOwnDataPropertyPure(
-          cx, proto, PropertyKey::Symbol(cx->wellKnownSymbols().search),
-          &has)) {
-    return false;
-  }
-  if (!has) {
-    return false;
-  }
-
-  if (!HasOwnDataPropertyPure(cx, proto, NameToId(cx->names().exec), &has)) {
-    return false;
-  }
-  if (!has) {
-    return false;
-  }
-
-  realm.setOptimizableRegExpPrototypeShape(nproto->shape());
-  return true;
-}
-
-bool js::RegExpInstanceOptimizable(JSContext* cx, unsigned argc, Value* vp) {
-  // This can only be called from self-hosted code.
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 2);
-
-  args.rval().setBoolean(RegExpInstanceOptimizableRaw(cx, &args[0].toObject(),
-                                                      &args[1].toObject()));
-  return true;
-}
-
-bool js::RegExpInstanceOptimizableRaw(JSContext* cx, JSObject* obj,
-                                      JSObject* proto) {
-  AutoUnsafeCallWithABI unsafe;
-  AutoAssertNoPendingException aanpe(cx);
-
-  RegExpObject* rx = &obj->as<RegExpObject>();
-
-  RegExpRealm& realm = cx->global()->regExpRealm();
-  Shape* shape = realm.getOptimizableRegExpInstanceShape();
-  if (shape == rx->shape()) {
-    return true;
-  }
-
-  if (!rx->hasStaticPrototype()) {
-    return false;
-  }
-
-  if (rx->staticPrototype() != proto) {
-    return false;
-  }
-
-  if (!RegExpObject::isInitialShape(rx)) {
-    return false;
-  }
-
-  realm.setOptimizableRegExpInstanceShape(rx->shape());
+  bool optimizable = IsOptimizableRegExpObject(obj, cx);
+  args.rval().setBoolean(optimizable);
   return true;
 }
 

@@ -13,6 +13,7 @@
 #  include "jit/MIR.h"
 #  include "jit/MIRGraph.h"
 #  include "jit/RangeAnalysis.h"
+#  include "wasm/WasmMetadata.h"
 
 using namespace js;
 using namespace js::jit;
@@ -110,6 +111,10 @@ void JSONSpewer::spewMDef(MDefinition* def) {
   if (def->type() != MIRType::None && def->range()) {
     def->range()->dump(out_);
     out_.printf(": ");
+  }
+  if (def->wasmRefType().isSome()) {
+    out_.printf("%s: ",
+                wasm::ToString(def->wasmRefType(), wasmCodeMeta_->types).get());
   }
   out_.printf("%s", StringFromMIRType(def->type()));
   if (isTruncated) {

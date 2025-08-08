@@ -521,6 +521,18 @@ bool WarpCacheIRTranspiler::emitGuardFuse(RealmFuses::FuseIndex fuseIndex) {
                               CompilationDependency::Type::ArraySpecies>;
       return mirGen().tracker.addDependency(Dependency());
     }
+    case RealmFuses::FuseIndex::OptimizeRegExpPrototypeFuse: {
+      using Dependency =
+          RealmFuseDependency<&RealmFuses::optimizeRegExpPrototypeFuse,
+                              CompilationDependency::Type::RegExpPrototype>;
+      return mirGen().tracker.addDependency(Dependency());
+    }
+    case RealmFuses::FuseIndex::OptimizeStringPrototypeSymbolsFuse: {
+      using Dependency = RealmFuseDependency<
+          &RealmFuses::optimizeStringPrototypeSymbolsFuse,
+          CompilationDependency::Type::StringPrototypeSymbols>;
+      return mirGen().tracker.addDependency(Dependency());
+    }
     default:
       MOZ_ASSERT(!RealmFuses::isInvalidatingFuse(fuseIndex));
       auto* ins = MGuardFuse::New(alloc(), fuseIndex);
@@ -4366,29 +4378,6 @@ bool WarpCacheIRTranspiler::emitStringSplitStringResult(
   return true;
 }
 
-bool WarpCacheIRTranspiler::emitRegExpPrototypeOptimizableResult(
-    ObjOperandId protoId) {
-  MDefinition* proto = getOperand(protoId);
-
-  auto* optimizable = MRegExpPrototypeOptimizable::New(alloc(), proto);
-  add(optimizable);
-
-  pushResult(optimizable);
-  return true;
-}
-
-bool WarpCacheIRTranspiler::emitRegExpInstanceOptimizableResult(
-    ObjOperandId regexpId, ObjOperandId protoId) {
-  MDefinition* regexp = getOperand(regexpId);
-  MDefinition* proto = getOperand(protoId);
-
-  auto* optimizable = MRegExpInstanceOptimizable::New(alloc(), regexp, proto);
-  add(optimizable);
-
-  pushResult(optimizable);
-  return true;
-}
-
 bool WarpCacheIRTranspiler::emitGetFirstDollarIndexResult(
     StringOperandId strId) {
   MDefinition* str = getOperand(strId);
@@ -6600,7 +6589,7 @@ MDefinition* WarpCacheIRTranspiler::convertWasmArg(MDefinition* arg,
           break;
         case MIRType::Null:
           arg->setImplicitlyUsedUnchecked();
-          conversion = MWasmNullConstant::New(alloc());
+          conversion = MWasmNullConstant::New(alloc(), wasm::MaybeRefType());
           break;
         default:
           conversion = MWasmAnyRefFromJSValue::New(alloc(), arg);
@@ -6773,8 +6762,9 @@ bool WarpCacheIRTranspiler::emitMetaScriptedThisShape(
   uint32_t numFixedSlots = shape->numFixedSlots();
   uint32_t numDynamicSlots = NativeObject::calculateDynamicSlots(shape);
   gc::AllocKind kind = gc::GetGCObjectKind(numFixedSlots);
-  MOZ_ASSERT(gc::CanChangeToBackgroundAllocKind(kind, &PlainObject::class_));
-  kind = gc::ForegroundToBackgroundAllocKind(kind);
+  MOZ_ASSERT(gc::GetObjectFinalizeKind(&PlainObject::class_) ==
+             gc::FinalizeKind::None);
+  MOZ_ASSERT(!IsFinalizedKind(kind));
 
   auto* createThis = MNewPlainObject::New(alloc(), shapeConst, numFixedSlots,
                                           numDynamicSlots, kind, heap);
@@ -6896,6 +6886,34 @@ bool WarpCacheIRTranspiler::emitNewArrayObjectResult(uint32_t length,
 
   pushResult(obj);
   return true;
+}
+
+bool WarpCacheIRTranspiler::emitNewFunctionCloneResult(uint32_t canonicalOffset,
+                                                       gc::AllocKind allocKind,
+                                                       uint32_t siteOffset) {
+  JSObject* fun = tenuredObjectStubField(canonicalOffset);
+  MOZ_ASSERT(fun->is<JSFunction>());
+
+  gc::Heap heap = allocSiteInitialHeapField(siteOffset);
+
+  MDefinition* env = currentBlock()->environmentChain();
+
+  // The environment chain must be an object, but the MIR type can be Value when
+  // phis are involved.
+  if (env->type() != MIRType::Object) {
+    MOZ_ASSERT(env->type() == MIRType::Value);
+    auto* unbox =
+        MUnbox::New(alloc(), env, MIRType::Object, MUnbox::Infallible);
+    current->add(unbox);
+    env = unbox;
+  }
+
+  MConstant* funConst = constant(ObjectValue(*fun));
+
+  auto* ins = MLambda::New(alloc(), env, funConst, heap);
+  addEffectful(ins);
+  pushResult(ins);
+  return resumeAfter(ins);
 }
 
 bool WarpCacheIRTranspiler::emitCloseIterScriptedResult(ObjOperandId iterId,

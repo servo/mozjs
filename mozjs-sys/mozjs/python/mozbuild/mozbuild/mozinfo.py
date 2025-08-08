@@ -9,8 +9,6 @@ import json
 import os
 import re
 
-import six
-
 
 def build_dict(config, env=os.environ):
     """
@@ -111,12 +109,12 @@ def build_dict(config, env=os.environ):
             if p == "mac":
                 p = "macosx64"
             elif d["bits"] == 64:
-                p = "{}64".format(p)
+                p = f"{p}64"
             elif p in ("win",):
-                p = "{}32".format(p)
+                p = f"{p}32"
 
             if d["asan"]:
-                p = "{}-asan".format(p)
+                p = f"{p}-asan"
 
             return p
 
@@ -166,7 +164,7 @@ def write_mozinfo(file, config, env=os.environ):
     and what keys are produced.
     """
     build_conf = build_dict(config, env)
-    if isinstance(file, six.text_type):
-        file = open(file, "wt")
+    if isinstance(file, str):
+        file = open(file, "w")
 
     json.dump(build_conf, file, sort_keys=True, indent=4)

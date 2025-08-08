@@ -279,15 +279,11 @@ class MozlintParser(ArgumentParser):
                     fmt_dir = os.path.dirname(path)
                     if not os.access(fmt_dir, os.W_OK | os.X_OK):
                         self.error(
-                            "the following directory is not writable: {}".format(
-                                fmt_dir
-                            )
+                            f"the following directory is not writable: {fmt_dir}"
                         )
 
                 if fmt not in all_formatters.keys():
-                    self.error(
-                        "the following formatter is not available: {}".format(fmt)
-                    )
+                    self.error(f"the following formatter is not available: {fmt}")
 
                 formats.append((fmt, path))
             args.formats = formats
@@ -411,12 +407,15 @@ def run(
         # some linters (e.g eslint) walk backwards from the file being linted
         # in order to discover configuration.
         stdin_tempfile = tempfile.NamedTemporaryFile(
-            mode="w",
+            mode="wb",
             delete=False,
             dir=os.path.dirname(fpath),
             suffix=os.path.splitext(fpath)[1],
         )
-        stdin_tempfile.write("".join(sys.stdin))
+
+        # Read directly from stdins byte buffer so that we treat the bytes
+        # as-is. Otherwise Python will convert LF to CRLF on Windows.
+        stdin_tempfile.write(b"".join(sys.stdin.buffer))
         stdin_tempfile.close()
         paths = [stdin_tempfile.name]
         atexit.register(_remove_file, stdin_tempfile.name)
@@ -443,6 +442,7 @@ def run(
             not paths
             and Path.cwd() == Path(lint.root)
             and not (outgoing or workdir or rev)
+            and not setup
         ):
             print(
                 "warning: linting the entire repo takes a long time, using --outgoing and "
@@ -476,13 +476,13 @@ def run(
 
         if dump_stdin_file is True:
             sys.stdout = old_stdout
-            dump_stdin_file = sys.stdout
+            dump_stdin_file = sys.stdout.buffer
         else:
-            dump_stdin_file = open(dump_stdin_file, "w")
+            dump_stdin_file = open(dump_stdin_file, "wb")
 
         try:
-            with open(stdin_tempfile.name) as fp:
-                print(fp.read().strip(), file=dump_stdin_file)
+            with open(stdin_tempfile.name, "rb") as fp:
+                dump_stdin_file.write(fp.read())
         finally:
             _remove_file(stdin_tempfile.name)
         return 0
@@ -512,7 +512,7 @@ def run(
         if out:
             fh = open(path, "w") if path else sys.stdout
 
-            if not path and fh.encoding == "ascii":
+            if not path and fh.encoding in ("ascii", "iso8859-1"):
                 # If sys.stdout.encoding is ascii, printing output will fail
                 # due to the stylish formatter's use of unicode characters.
                 # Ideally the user should fix their environment by setting

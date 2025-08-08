@@ -61,14 +61,14 @@ enum Count {
 
 // Stats can be set with Statistics::setStat(). They're not reset automatically.
 enum Stat {
-  // Number of strings tenured.
-  STAT_STRINGS_TENURED,
+  // Number of strings promoted.
+  STAT_STRINGS_PROMOTED,
 
   // Number of strings deduplicated.
   STAT_STRINGS_DEDUPLICATED,
 
-  // Number of BigInts tenured.
-  STAT_BIGINTS_TENURED,
+  // Number of BigInts promoted.
+  STAT_BIGINTS_PROMOTED,
 
   STAT_LIMIT
 };
@@ -478,8 +478,9 @@ struct Statistics {
   void sccDurations(TimeDuration* total, TimeDuration* maxPause) const;
   void printStats();
 
-  template <typename Fn>
-  void reportLongestPhaseInMajorGC(PhaseKind longest, Fn reportFn);
+  template <typename LegacyFn, typename GleanFn>
+  void reportLongestPhaseInMajorGC(PhaseKind longest, LegacyFn legacyReportFn,
+                                   GleanFn gleanReportFn);
 
   UniqueChars formatCompactSlicePhaseTimes(const PhaseTimes& phaseTimes) const;
 

@@ -52,6 +52,22 @@ void MacroAssemblerRiscv64::ma_cmp_set(Register rd, Register rj, ImmPtr imm,
   ma_cmp_set(rd, rj, ImmWord(uintptr_t(imm.value)), c);
 }
 
+void MacroAssemblerRiscv64::ma_cmp_set(Register rd, Register rj, ImmGCPtr imm,
+                                       Condition c) {
+  UseScratchRegisterScope temps(this);
+  Register scratch = temps.Acquire();
+  ma_li(scratch, imm);
+  ma_cmp_set(rd, rj, scratch, c);
+}
+
+void MacroAssemblerRiscv64::ma_cmp_set(Register rd, Address address,
+                                       Register rhs, Condition c) {
+  UseScratchRegisterScope temps(this);
+  Register scratch2 = temps.Acquire();
+  ma_load(scratch2, address, SizeDouble);
+  ma_cmp_set(rd, Register(scratch2), rhs, c);
+}
+
 void MacroAssemblerRiscv64::ma_cmp_set(Register rd, Address address, Imm32 imm,
                                        Condition c) {
   // TODO(riscv): 32-bit ma_cmp_set?
@@ -2847,7 +2863,7 @@ void MacroAssembler::branchTestNaNValue(Condition cond, const ValueOperand& val,
   // When testing for NaN, we want to ignore the sign bit.
   // Clear the top bit by shifting left and then right.
   slli(temp, val.valueReg(), 1);
-  slri(temp, temp, 1);
+  srli(temp, temp, 1);
 
   // Compare against a NaN with sign bit 0.
   static_assert(JS::detail::CanonicalizedNaNSignBit == 0);
@@ -3414,6 +3430,12 @@ void MacroAssembler::patchFarJump(CodeOffset farJump, uint32_t targetOffset) {
   *u32 = targetOffset - farJump.offset();
 }
 
+void MacroAssembler::patchFarJump(uint8_t* farJump, uint8_t* target) {
+  uint32_t* u32 = reinterpret_cast<uint32_t*>(farJump + 4 * kInstrSize);
+  MOZ_ASSERT(*u32 == UINT32_MAX);
+  *u32 = (int64_t)target - (int64_t)farJump;
+}
+
 void MacroAssembler::patchNearAddressMove(CodeLocationLabel loc,
                                           CodeLocationLabel target) {
   PatchDataWithValueCheck(loc, ImmPtr(target.raw()), ImmPtr(nullptr));
@@ -3423,7 +3445,7 @@ void MacroAssembler::patchNopToCall(uint8_t* call, uint8_t* target) {
   uint32_t* p = reinterpret_cast<uint32_t*>(call) - 7;
   Assembler::WriteLoad64Instructions((Instruction*)p, ScratchRegister,
                                      (uint64_t)target);
-  DEBUG_PRINTF("\tpatchNopToCall %lu %lu\n", (uint64_t)target,
+  DEBUG_PRINTF("\tpatchNopToCall %" PRIu64 " %" PRIu64 "\n", (uint64_t)target,
                ExtractLoad64Value((Instruction*)p));
   MOZ_ASSERT(ExtractLoad64Value((Instruction*)p) == (uint64_t)target);
   Instr jalr_ = JALR | (ra.code() << kRdShift) | (0x0 << kFunct3Shift) |
@@ -3471,6 +3493,16 @@ void MacroAssembler::PopRegsInMaskIgnore(LiveRegisterSet set,
   }
   MOZ_ASSERT(diff == 0);
   freeStack(reserved);
+}
+
+CodeOffset MacroAssembler::move32WithPatch(Register dest) {
+  CodeOffset offs = CodeOffset(currentOffset());
+  ma_liPatchable(dest, Imm32(0));
+  return offs;
+}
+
+void MacroAssembler::patchMove32(CodeOffset offset, Imm32 n) {
+  patchSub32FromStackPtr(offset, n);
 }
 
 void MacroAssembler::pushReturnAddress() { push(ra); }

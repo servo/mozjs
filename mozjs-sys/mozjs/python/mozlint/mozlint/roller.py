@@ -89,7 +89,7 @@ def _run_worker(config, paths, **lintargs):
         return result
     finally:
         end_time = time.monotonic()
-        log.debug("Finished in {:.2f} seconds".format(end_time - start_time))
+        log.debug(f"Finished in {end_time - start_time:.2f} seconds")
         sys.stdout.flush()
 
     if not isinstance(res, (list, tuple)):
@@ -116,7 +116,7 @@ class InterruptableQueue(Queue):
 
     def __init__(self, *args, **kwargs):
         kwargs["ctx"] = get_context()
-        super(InterruptableQueue, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def get(self, *args, **kwargs):
         try:
@@ -131,7 +131,7 @@ def _worker_sigint_handler(signum, frame):
     Tells workers not to process the extra jobs on the call queue that couldn't
     be canceled by the parent process.
     """
-    global SHUTDOWN
+    global SHUTDOWN  # noqa PLW0603
     SHUTDOWN = True
     orig_sigint(signum, frame)
 
@@ -154,7 +154,7 @@ atexit.unregister(futures_atexit)
 atexit.register(wrap_futures_atexit)
 
 
-class LintRoller(object):
+class LintRoller:
     """Registers and runs linters.
 
     :param root: Path to which relative paths will be joined. If

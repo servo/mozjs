@@ -16,7 +16,6 @@
 #include "vm/BoundFunctionObject.h"
 #include "vm/EnvironmentObject.h"
 #include "vm/JSFunction.h"
-#include "vm/Probes.h"
 #include "vm/PropertyResult.h"
 #include "vm/TypedArrayObject.h"
 #include "gc/BufferAllocator-inl.h"
@@ -78,22 +77,17 @@ js::NativeObject::calculateDynamicSlots(SharedShape* shape) {
 }
 
 inline void JSObject::finalize(JS::GCContext* gcx) {
-  js::probes::FinalizeObject(this);
-
 #ifdef DEBUG
   MOZ_ASSERT(isTenured());
-  if (!IsBackgroundFinalized(asTenured().getAllocKind())) {
-    /* Assert we're on the main thread. */
-    MOZ_ASSERT(js::CurrentThreadCanAccessZone(zone()));
-  }
+  js::gc::AllocKind kind = asTenured().getAllocKind();
+  MOZ_ASSERT(IsFinalizedKind(kind));
+  MOZ_ASSERT_IF(IsForegroundFinalized(kind),
+                js::CurrentThreadCanAccessZone(zoneFromAnyThread()));
 #endif
 
-  js::Shape* objShape = shape();
-
-  const JSClass* clasp = objShape->getObjectClass();
-  if (clasp->hasFinalize()) {
-    clasp->doFinalize(gcx, this);
-  }
+  const JSClass* clasp = shape()->getObjectClass();
+  MOZ_ASSERT(clasp->hasFinalize());
+  clasp->doFinalize(gcx, this);
 }
 
 inline bool JSObject::isQualifiedVarObj() const {
@@ -510,7 +504,7 @@ inline T* NewBuiltinClassInstance(JSContext* cx, gc::AllocKind allocKind,
   return obj ? &obj->as<T>() : nullptr;
 }
 
-static inline gc::AllocKind GuessArrayGCKind(size_t numElements) {
+static constexpr gc::AllocKind GuessArrayGCKind(size_t numElements) {
   if (numElements) {
     return gc::GetGCArrayKind(numElements);
   }

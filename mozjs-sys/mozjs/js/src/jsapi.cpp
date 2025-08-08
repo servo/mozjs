@@ -3099,6 +3099,28 @@ JS_PUBLIC_API bool JS::SetPromiseUserInputEventHandlingState(
   return true;
 }
 
+/* static */
+void JS::Dispatchable::Run(JSContext* cx,
+                           js::UniquePtr<JS::Dispatchable>&& task,
+                           MaybeShuttingDown maybeShuttingDown) {
+  // Release the uniquePtr so that we don't have a double delete.
+  JS::Dispatchable* rawTaskPtr = task.release();
+  // Execute run. This will result in the task being deleted.
+  rawTaskPtr->run(cx, maybeShuttingDown);
+}
+
+/* static */
+void JS::Dispatchable::ReleaseFailedTask(
+    js::UniquePtr<JS::Dispatchable>&& task) {
+  // release the task from the uniquePtr so that it does not delete.
+  JS::Dispatchable* rawTaskPtr = task.release();
+  // We've attempted to transfer to the embedding, but this has failed.
+  // Transfer the task back to the runtime, as defined by the subclass of
+  // JS::Dispatchable. The Runtime will delete the task once we are sure
+  // we are once more executing on the main thread.
+  rawTaskPtr->transferToRuntime();
+}
+
 /**
  * Unforgeable version of Promise.all for internal use.
  *
@@ -3117,9 +3139,11 @@ JS_PUBLIC_API JSObject* JS::GetWaitForAllPromise(
   return js::GetWaitForAllPromise(cx, promises);
 }
 
-JS_PUBLIC_API void JS::InitDispatchToEventLoop(
-    JSContext* cx, JS::DispatchToEventLoopCallback callback, void* closure) {
-  cx->runtime()->offThreadPromiseState.ref().init(callback, closure);
+JS_PUBLIC_API void JS::InitDispatchsToEventLoop(
+    JSContext* cx, JS::DispatchToEventLoopCallback callback,
+    JS::DelayedDispatchToEventLoopCallback delayCallback, void* closure) {
+  cx->runtime()->offThreadPromiseState.ref().init(callback, delayCallback,
+                                                  closure);
 }
 
 JS_PUBLIC_API void JS::ShutdownAsyncTasks(JSContext* cx) {
@@ -3665,11 +3689,23 @@ JS_PUBLIC_API bool JS::PropertySpecNameEqualsId(JSPropertySpec::Name name,
 JS_PUBLIC_API bool JS_Stringify(JSContext* cx, MutableHandleValue vp,
                                 HandleObject replacer, HandleValue space,
                                 JSONWriteCallback callback, void* data) {
+  return JS_StringifyWithLengthHint(cx, vp, replacer, space, callback, data, 0);
+}
+
+JS_PUBLIC_API bool JS_StringifyWithLengthHint(JSContext* cx,
+                                              MutableHandleValue vp,
+                                              HandleObject replacer,
+                                              HandleValue space,
+                                              JSONWriteCallback callback,
+                                              void* data, size_t lengthHint) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   cx->check(replacer, space);
   StringBuilder sb(cx);
   if (!sb.ensureTwoByteChars()) {
+    return false;
+  }
+  if (lengthHint && !sb.reserve(lengthHint)) {
     return false;
   }
   if (!Stringify(cx, vp, replacer, space, sb, StringifyBehavior::Normal)) {
@@ -4252,10 +4288,6 @@ extern MOZ_NEVER_INLINE JS_PUBLIC_API void JS_AbortIfWrongThread(
   if (TlsContext.get() != cx) {
     MOZ_CRASH();
   }
-}
-
-JS_PUBLIC_API void JS_SetParallelParsingEnabled(JSContext* cx, bool enabled) {
-  cx->runtime()->setParallelParsingEnabled(enabled);
 }
 
 JS_PUBLIC_API void JS_SetOffthreadBaselineCompilationEnabled(JSContext* cx,
