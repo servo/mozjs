@@ -1116,9 +1116,38 @@ void DeleteJSExternalStringCallbacks(JSExternalStringCallbacks* callbacks) {
   delete static_cast<RustJSExternalStringCallbacks*>(callbacks);
 }
 
-void DispatchableRun(JSContext* cx, js::UniquePtr<JS::Dispatchable> ptr,
+struct DispatchablePointer {
+  js::UniquePtr<JS::Dispatchable> ptr;
+};
+
+typedef bool (*RustDispatchToEventLoopCallback)(void* closure, DispatchablePointer* ptr);
+
+struct EventLoopCallbackData {
+  RustDispatchToEventLoopCallback dispatchCallback;
+  void* closure;
+};
+
+bool DispatchToEventLoop(void* closure, js::UniquePtr<JS::Dispatchable>&& dispatchable) {
+  DispatchablePointer* wrapper = new DispatchablePointer {
+    std::move(dispatchable)
+  };
+  auto data = static_cast<EventLoopCallbackData*>(closure);
+  return data->dispatchCallback(data->closure, wrapper);
+}
+
+void SetUpEventLoopDispatch(JSContext* cx, RustDispatchToEventLoopCallback callback, void* closure) {
+  // Intentionally leaked; this data needs to live as long as the JS runtime.
+  EventLoopCallbackData* data = new EventLoopCallbackData {
+    callback,
+    closure,
+  };
+  JS::InitDispatchsToEventLoop(cx, DispatchToEventLoop, nullptr, data);
+}
+
+void DispatchableRun(JSContext* cx, DispatchablePointer* ptr,
                      JS::Dispatchable::MaybeShuttingDown mb) {
-  JS::Dispatchable::Run(cx, std::move(ptr), mb);
+  JS::Dispatchable::Run(cx, std::move(ptr->ptr), mb);
+  delete ptr;
 }
 
 bool StreamConsumerConsumeChunk(JS::StreamConsumer* sc, const uint8_t* begin,
