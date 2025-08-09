@@ -1120,26 +1120,29 @@ struct DispatchablePointer {
   js::UniquePtr<JS::Dispatchable> ptr;
 };
 
-typedef bool (*RustDispatchToEventLoopCallback)(void* closure, DispatchablePointer* ptr);
+typedef bool (*RustDispatchToEventLoopCallback)(void* closure,
+                                                DispatchablePointer* ptr);
 
 struct EventLoopCallbackData {
   RustDispatchToEventLoopCallback dispatchCallback;
   void* closure;
 };
 
-bool DispatchToEventLoop(void* closure, js::UniquePtr<JS::Dispatchable>&& dispatchable) {
-  DispatchablePointer* wrapper = new DispatchablePointer {
-    std::move(dispatchable)
-  };
+bool DispatchToEventLoop(void* closure,
+                         js::UniquePtr<JS::Dispatchable>&& dispatchable) {
+  DispatchablePointer* wrapper =
+      new DispatchablePointer{std::move(dispatchable)};
   auto data = static_cast<EventLoopCallbackData*>(closure);
   return data->dispatchCallback(data->closure, wrapper);
 }
 
-void SetUpEventLoopDispatch(JSContext* cx, RustDispatchToEventLoopCallback callback, void* closure) {
+void SetUpEventLoopDispatch(JSContext* cx,
+                            RustDispatchToEventLoopCallback callback,
+                            void* closure) {
   // Intentionally leaked; this data needs to live as long as the JS runtime.
-  EventLoopCallbackData* data = new EventLoopCallbackData {
-    callback,
-    closure,
+  EventLoopCallbackData* data = new EventLoopCallbackData{
+      callback,
+      closure,
   };
   JS::InitDispatchsToEventLoop(cx, DispatchToEventLoop, nullptr, data);
 }
