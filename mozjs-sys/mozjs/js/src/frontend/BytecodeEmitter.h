@@ -799,7 +799,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   // emitDestructuringObjRestExclusionSet emits the property exclusion set
   // for the rest-property in an object pattern.
-  [[nodiscard]] bool emitDestructuringObjRestExclusionSet(ListNode* pattern);
+  [[nodiscard]] bool emitDestructuringObjRestExclusionSet(ListNode* pattern,
+                                                          uint8_t setSize);
 
   // emitDestructuringOps assumes the to-be-destructured value has been
   // pushed on the stack and emits code to destructure each part of a [] or
@@ -925,6 +926,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   [[nodiscard]] bool emitUnary(UnaryNode* unaryNode);
   [[nodiscard]] bool emitRightAssociative(ListNode* node);
+  [[nodiscard]] bool tryEmitConstantEq(ListNode* node, JSOp op, bool* emitted);
   [[nodiscard]] bool emitLeftAssociative(ListNode* node);
   [[nodiscard]] bool emitPrivateInExpr(ListNode* node);
   [[nodiscard]] bool emitShortCircuit(ListNode* node, ValueUsage valueUsage);

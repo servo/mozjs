@@ -305,6 +305,7 @@ wrap!(jsapi: pub fn JS_ExecuteScript1(cx: *mut JSContext, script: Handle<*mut JS
 wrap!(jsapi: pub fn JS_ExecuteScript2(cx: *mut JSContext, envChain: *const EnvironmentChain, script: Handle<*mut JSScript>, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ExecuteScript3(cx: *mut JSContext, envChain: *const EnvironmentChain, script: Handle<*mut JSScript>) -> bool);
 wrap!(jsapi: pub fn JS_Stringify(cx: *mut JSContext, value: MutableHandle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void) -> bool);
+wrap!(jsapi: pub fn JS_StringifyWithLengthHint(cx: *mut JSContext, value: MutableHandle<Value>, replacer: HandleObject, space: Handle<Value>, callback: JSONWriteCallback, data: *mut ::std::os::raw::c_void, lengthHint: usize) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON(cx: *mut JSContext, chars: *const u16, len: u32, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON1(cx: *mut JSContext, str_: Handle<*mut JSString>, vp: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_ParseJSON2(cx: *mut JSContext, chars: *const Latin1Char, len: u32, vp: MutableHandle<Value>) -> bool);

@@ -15,7 +15,7 @@ from . import result
 from .pathutils import expand_exclusions, filterpaths, findobject
 
 
-class BaseType(object):
+class BaseType:
     """Abstract base class for all types of linters."""
 
     __metaclass__ = ABCMeta
@@ -86,7 +86,7 @@ class BaseType(object):
         if not config.get("extensions"):
             patterns = ["**"]
         else:
-            patterns = ["**/*.{}".format(e) for e in config["extensions"]]
+            patterns = [f"**/*.{e}" for e in config["extensions"]]
 
         exclude = [os.path.relpath(e, path) for e in config.get("exclude", [])]
         finder = FileFinder(path, ignore=exclude)
@@ -120,13 +120,11 @@ class LineType(BaseType):
             return self._lint_dir(path, config, **lintargs)
 
         payload = config["payload"]
-        with open(path, "r", errors="replace") as fh:
-            lines = fh.readlines()
-
         errors = []
-        for i, line in enumerate(lines):
-            if self.condition(payload, line, config):
-                errors.append(result.from_config(config, path=path, lineno=i + 1))
+        with open(path, errors="replace") as fh:
+            for i, line in enumerate(fh):
+                if self.condition(payload, line, config):
+                    errors.append(result.from_config(config, path=path, lineno=i + 1))
 
         return errors
 
@@ -179,13 +177,11 @@ class GlobalType(ExternalType):
     def _lint(self, files, config, **lintargs):
         # Global lints are expensive to invoke.  Try to avoid running
         # them based on extensions and exclusions.
-        try:
-            next(expand_exclusions(files, config, lintargs["root"]))
-        except StopIteration:
-            return []
-
+        files = list(expand_exclusions(files, config, lintargs["root"]))
+        if not files:
+            return
         func = findobject(config["payload"])
-        return func(config, **lintargs)
+        return func(files, config, **lintargs)
 
 
 class LintHandler(LogHandler):

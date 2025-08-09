@@ -1075,6 +1075,7 @@ if CONFIG["OS_TARGET"] == "Android":
         "android/api-level.h",
         "android/ashmem.h",
         "android_audio/AudioSystem.h",
+        "android/hardware_buffer.h",
         "android/log.h",
         "android/looper.h",
         "android/native_window.h",
@@ -1254,6 +1255,22 @@ if CONFIG["OS_TARGET"] == "Android":
         "utils/VectorImpl.h",
         "vr/gvr/capi/include/gvr_controller.h",
         "vr/gvr/capi/include/gvr.h",
+    ]
+
+if CONFIG["MOZ_SYSTEM_GBM"]:
+    system_headers += [
+        "gbm.h",
+    ]
+
+if CONFIG["MOZ_SYSTEM_LIBDRM"]:
+    system_headers += [
+        "drm.h",
+        "xf86drm.h",
+    ]
+
+if CONFIG["MOZ_SYSTEM_PIPEWIRE"]:
+    system_headers += [
+        "pipewire/pipewire.h",
     ]
 
 if CONFIG["MOZ_JACK"]:

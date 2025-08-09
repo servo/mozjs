@@ -20,7 +20,7 @@ from .string_version import StringVersion
 _os = os
 
 
-class unknown(object):
+class unknown:
     """marker class for unknown information"""
 
     # pylint: disable=W1629
@@ -46,6 +46,7 @@ info = {
     "bits": unknown,
     "has_sandbox": unknown,
     "display": None,
+    "android_version": "",
     "automation": bool(os.environ.get("MOZ_AUTOMATION", False)),
 }
 (system, node, release, version, machine, processor) = platform.uname()
@@ -284,7 +285,7 @@ def find_and_update_from_json(*dirs, **kwargs):
     # by default, exceptions are suppressed. Set this to True if otherwise
     # desired.
     if kwargs.get("raise_exception", False):
-        raise IOError("mozinfo.json could not be found.")
+        raise OSError("mozinfo.json could not be found.")
     return None
 
 

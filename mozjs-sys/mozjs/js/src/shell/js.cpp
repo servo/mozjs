@@ -839,7 +839,6 @@ bool shell::enableWasm = false;
 bool shell::enableSharedMemory = SHARED_MEMORY_DEFAULT;
 bool shell::enableWasmBaseline = false;
 bool shell::enableWasmOptimizing = false;
-bool shell::enableWasmVerbose = false;
 bool shell::enableTestWasmAwaitTier2 = false;
 bool shell::enableSourcePragmas = true;
 bool shell::enableAsyncStacks = false;
@@ -4100,11 +4099,11 @@ static bool Fuzzilli(JSContext* cx, unsigned argc, Value* vp) {
         MOZ_ASSERT(false);
         break;
       case 3:
-      #if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
+#  if defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_X86)
         __asm__("int3");
-      #elif defined(JS_CODEGEN_ARM64)
+#  elif defined(JS_CODEGEN_ARM64)
         __asm__("brk #0");
-      #endif
+#  endif
         break;
       default:
         exit(1);
@@ -4657,19 +4656,23 @@ static void WorkerMain(UniquePtr<WorkerInput> input) {
         .setIsRunOnce(true)
         .setEagerDelazificationStrategy(defaultDelazificationMode);
 
-    AutoReportException are(cx);
-    JS::SourceText<char16_t> srcBuf;
-    if (!srcBuf.init(cx, input->chars.get(), input->length,
-                     JS::SourceOwnership::Borrowed)) {
-      break;
+    {
+      AutoReportException are(cx);
+      JS::SourceText<char16_t> srcBuf;
+      if (!srcBuf.init(cx, input->chars.get(), input->length,
+                       JS::SourceOwnership::Borrowed)) {
+        break;
+      }
+
+      RootedScript script(cx, JS::Compile(cx, options, srcBuf));
+      if (!script) {
+        break;
+      }
+      RootedValue result(cx);
+      JS_ExecuteScript(cx, script, &result);
     }
 
-    RootedScript script(cx, JS::Compile(cx, options, srcBuf));
-    if (!script) {
-      break;
-    }
-    RootedValue result(cx);
-    JS_ExecuteScript(cx, script, &result);
+    RunShellJobs(cx);
   } while (0);
 
   KillWatchdog(cx);
@@ -6488,7 +6491,7 @@ static bool OffThreadCompileToStencil(JSContext* cx, unsigned argc, Value* vp) {
     mozilla::PodCopy(ownedChars.get(), chars, length);
   }
 
-  if (!cx->runtime()->canUseParallelParsing() || !js::CanUseExtraThreads()) {
+  if (!js::CanUseExtraThreads()) {
     JS_ReportErrorASCII(cx, "cannot compile code on helper thread");
     return false;
   }
@@ -6602,7 +6605,7 @@ static bool OffThreadCompileModuleToStencil(JSContext* cx, unsigned argc,
     mozilla::PodCopy(ownedChars.get(), chars, length);
   }
 
-  if (!cx->runtime()->canUseParallelParsing() || !js::CanUseExtraThreads()) {
+  if (!js::CanUseExtraThreads()) {
     JS_ReportErrorASCII(cx, "cannot compile code on worker thread");
     return false;
   }
@@ -6681,7 +6684,7 @@ static bool OffThreadDecodeStencil(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  if (!cx->runtime()->canUseParallelParsing() || !js::CanUseExtraThreads()) {
+  if (!js::CanUseExtraThreads()) {
     JS_ReportErrorASCII(cx, "cannot compile code on worker thread");
     return false;
   }
@@ -8845,10 +8848,29 @@ static const JSClass* GetDomClass();
 
 static JSObject* GetDOMPrototype(JSContext* cx, JSObject* global);
 
+static void TransplantableDOMObject_finalize(JS::GCContext* gcx,
+                                             JSObject* obj) {
+  // Dummy finalize method so we can swap with background finalized object.
+}
+
+static const JSClassOps TransplantableDOMObjectClassOps = {
+    nullptr,  // addProperty
+    nullptr,  // delProperty
+    nullptr,  // enumerate
+    nullptr,  // newEnumerate
+    nullptr,  // resolve
+    nullptr,  // mayResolve
+    TransplantableDOMObject_finalize,
+    nullptr,  // call
+    nullptr,  // construct
+    nullptr,
+};
+
 static const JSClass TransplantableDOMObjectClass = {
     "TransplantableDOMObject",
-    JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(1),
-};
+    JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(1) |
+        JSCLASS_BACKGROUND_FINALIZE,
+    &TransplantableDOMObjectClassOps};
 
 static const JSClass TransplantableDOMProxyObjectClass =
     PROXY_CLASS_DEF("TransplantableDOMProxyObject",
@@ -11275,10 +11297,28 @@ static const JSFunctionSpec dom_methods[] = {
     JS_FS_END,
 };
 
-static const JSClass dom_class = {
-    "FakeDOMObject",
-    JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(2),
+static void FakeDOMObject_finalize(JS::GCContext* gcx, JSObject* obj) {
+  // Dummy finalize method so we can swap with background finalized object.
+}
+
+static const JSClassOps FakeDOMObjectClassOps = {
+    nullptr,  // addProperty
+    nullptr,  // delProperty
+    nullptr,  // enumerate
+    nullptr,  // newEnumerate
+    nullptr,  // resolve
+    nullptr,  // mayResolve
+    FakeDOMObject_finalize,
+    nullptr,  // call
+    nullptr,  // construct
+    nullptr,
 };
+
+static const JSClass dom_class = {"FakeDOMObject",
+                                  JSCLASS_IS_DOMJSCLASS |
+                                      JSCLASS_HAS_RESERVED_SLOTS(2) |
+                                      JSCLASS_BACKGROUND_FINALIZE,
+                                  &FakeDOMObjectClassOps};
 
 static const JSClass* GetDomClass() { return &dom_class; }
 
@@ -11793,7 +11833,6 @@ static void SetWorkerContextOptions(JSContext* cx) {
       .setWasmBaseline(enableWasmBaseline)
       .setWasmIon(enableWasmOptimizing)
 
-      .setWasmVerbose(enableWasmVerbose)
       .setTestWasmAwaitTier2(enableTestWasmAwaitTier2)
       .setSourcePragmas(enableSourcePragmas);
 
@@ -12653,8 +12692,7 @@ bool InitOptionParser(OptionParser& op) {
           "Specify Ion register allocation:\n"
           "  backtracking: Priority based backtracking register allocation "
           "(default)\n"
-          "  testbed: Backtracking allocator with experimental features\n"
-          "  stupid: Simple block local register allocation") ||
+          "  simple: Simple register allocator optimized for compile time") ||
       !op.addBoolOption(
           '\0', "ion-eager",
           "Always ion-compile methods (implies --baseline-eager)") ||
@@ -12681,7 +12719,7 @@ bool InitOptionParser(OptionParser& op) {
                         "Always baseline-compile methods") ||
 #ifdef ENABLE_PORTABLE_BASELINE_INTERP
       !op.addBoolOption('\0', "portable-baseline-eager",
-                        "Always use the porbale baseline interpreter") ||
+                        "Always use the portable baseline interpreter") ||
       !op.addBoolOption('\0', "portable-baseline",
                         "Enable Portable Baseline Interpreter (default)") ||
       !op.addBoolOption('\0', "no-portable-baseline",
@@ -13003,7 +13041,7 @@ bool SetGlobalOptionsPreJSInit(const OptionParser& op) {
     JS::Prefs::set_experimental_explicit_resource_management(false);
   }
 #endif
-#ifdef JS_HAS_TEMPORAL_API
+#ifdef JS_HAS_INTL_API
   if (op.getBoolOption("enable-temporal")) {
     JS::Prefs::setAtStartup_experimental_temporal(true);
   }
@@ -13020,6 +13058,21 @@ bool SetGlobalOptionsPreJSInit(const OptionParser& op) {
 
   JS::Prefs::set_use_fdlibm_for_sin_cos_tan(
       op.getBoolOption("use-fdlibm-for-sin-cos-tan"));
+
+  if (const char* str = op.getStringOption("ion-regalloc")) {
+    auto allocator = jit::LookupRegisterAllocator(str);
+    if (allocator.isNothing()) {
+      return OptionFailure("ion-regalloc", str);
+    }
+    switch (*allocator) {
+      case jit::RegisterAllocator_Backtracking:
+        JS::Prefs::setAtStartup_ion_regalloc(1);
+        break;
+      case jit::RegisterAllocator_Simple:
+        JS::Prefs::setAtStartup_ion_regalloc(2);
+        break;
+    }
+  }
 
   if (op.getBoolOption("wasm-gc") || op.getBoolOption("wasm-relaxed-simd") ||
       op.getBoolOption("wasm-multi-memory") ||
@@ -13305,7 +13358,6 @@ bool SetContextWasmOptions(JSContext* cx, const OptionParser& op) {
     }
   }
 
-  enableWasmVerbose = op.getBoolOption("wasm-verbose");
   enableTestWasmAwaitTier2 = op.getBoolOption("test-wasm-await-tier2");
 
   JS::ContextOptionsRef(cx)
@@ -13703,13 +13755,6 @@ bool SetContextJITOptions(JSContext* cx, const OptionParser& op) {
   int32_t smallFunctionLength = op.getIntOption("small-function-length");
   if (smallFunctionLength > 0) {
     jit::JitOptions.smallFunctionMaxBytecodeLength = smallFunctionLength;
-  }
-
-  if (const char* str = op.getStringOption("ion-regalloc")) {
-    jit::JitOptions.forcedRegisterAllocator = jit::LookupRegisterAllocator(str);
-    if (!jit::JitOptions.forcedRegisterAllocator.isSome()) {
-      return OptionFailure("ion-regalloc", str);
-    }
   }
 
   if (op.getBoolOption("ion-eager")) {
