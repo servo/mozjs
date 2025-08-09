@@ -189,7 +189,7 @@ jobs:
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r28
+          ndk-version: r28b
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
