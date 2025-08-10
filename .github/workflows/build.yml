@@ -299,7 +299,7 @@ jobs:
         # Because we've added files in previous run, we need to
         # check diff with `--staged`.
         run: |
-          git diff --staged --no-ext-diff --quiet --exit-code
+          git diff --staged --no-ext-diff --exit-code
       - name: Detect need for mozjs-sys version bump
         if: ${{ github.event_name == 'pull_request' }}
         id: changes
