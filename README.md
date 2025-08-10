@@ -159,7 +159,11 @@ In order to upgrade to a new version of SpiderMonkey:
 
 6. Run `./mozjs/src/generate_wrappers.sh` to regenerate wrappers.
 
-7. Build and test the bindings as above, then submit a PR!
+7. Build and test the bindings as above.
+
+8. Create a new release on github with the .tar.xz that you saved earlier. Name the new tag `mozjs-source-${COMMIT}` where `${COMMIT}` is the value stored in `mozjs/etc/COMMIT`.
+
+9. Submit a PR!
 
 8. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
 until it's tested against servo.
