@@ -1,7 +1,7 @@
-diff --git a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/METADATA b/third_party/python/Jinja2/jinja2-3.1.6.dist-info/METADATA
+diff --git a/third_party/python/jinja2/jinja2-3.1.6.dist-info/METADATA b/third_party/python/jinja2/jinja2-3.1.6.dist-info/METADATA
 deleted file mode 100644
 index ffef2ff3b..000000000
---- a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/METADATA
+--- a/third_party/python/jinja2/jinja2-3.1.6.dist-info/METADATA
 +++ /dev/null
 @@ -1,84 +0,0 @@
 -Metadata-Version: 2.4
@@ -88,10 +88,10 @@ index ffef2ff3b..000000000
 -
 -[contrib]: https://palletsprojects.com/contributing/
 -
-diff --git a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/RECORD b/third_party/python/Jinja2/jinja2-3.1.6.dist-info/RECORD
+diff --git a/third_party/python/jinja2/jinja2-3.1.6.dist-info/RECORD b/third_party/python/jinja2/jinja2-3.1.6.dist-info/RECORD
 deleted file mode 100644
 index 229b9aa69..000000000
---- a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/RECORD
+--- a/third_party/python/jinja2/jinja2-3.1.6.dist-info/RECORD
 +++ /dev/null
 @@ -1,31 +0,0 @@
 -jinja2/__init__.py,sha256=xxepO9i7DHsqkQrgBEduLtfoz2QCuT6_gbL4XSN1hbU,1928
@@ -125,29 +125,29 @@ index 229b9aa69..000000000
 -jinja2-3.1.6.dist-info/WHEEL,sha256=_2ozNFCLWc93bK4WKHCO-eDUENDlo-dgc9cU3qokYO4,82
 -jinja2-3.1.6.dist-info/METADATA,sha256=aMVUj7Z8QTKhOJjZsx7FDGvqKr3ZFdkh8hQ1XDpkmcg,2871
 -jinja2-3.1.6.dist-info/RECORD,,
-diff --git a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/WHEEL b/third_party/python/Jinja2/jinja2-3.1.6.dist-info/WHEEL
+diff --git a/third_party/python/jinja2/jinja2-3.1.6.dist-info/WHEEL b/third_party/python/jinja2/jinja2-3.1.6.dist-info/WHEEL
 deleted file mode 100644
 index 23d2d7e9a..000000000
---- a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/WHEEL
+--- a/third_party/python/jinja2/jinja2-3.1.6.dist-info/WHEEL
 +++ /dev/null
 @@ -1,4 +0,0 @@
 -Wheel-Version: 1.0
 -Generator: flit 3.11.0
 -Root-Is-Purelib: true
 -Tag: py3-none-any
-diff --git a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/entry_points.txt b/third_party/python/Jinja2/jinja2-3.1.6.dist-info/entry_points.txt
+diff --git a/third_party/python/jinja2/jinja2-3.1.6.dist-info/entry_points.txt b/third_party/python/jinja2/jinja2-3.1.6.dist-info/entry_points.txt
 deleted file mode 100644
 index abc3eae3b..000000000
---- a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/entry_points.txt
+--- a/third_party/python/jinja2/jinja2-3.1.6.dist-info/entry_points.txt
 +++ /dev/null
 @@ -1,3 +0,0 @@
 -[babel.extractors]
 -jinja2=jinja2.ext:babel_extract[i18n]
 -
-diff --git a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/licenses/LICENSE.txt b/third_party/python/Jinja2/jinja2-3.1.6.dist-info/licenses/LICENSE.txt
+diff --git a/third_party/python/jinja2/jinja2-3.1.6.dist-info/licenses/LICENSE.txt b/third_party/python/jinja2/jinja2-3.1.6.dist-info/licenses/LICENSE.txt
 deleted file mode 100644
 index c37cae49e..000000000
---- a/third_party/python/Jinja2/jinja2-3.1.6.dist-info/licenses/LICENSE.txt
+--- a/third_party/python/jinja2/jinja2-3.1.6.dist-info/licenses/LICENSE.txt
 +++ /dev/null
 @@ -1,28 +0,0 @@
 -Copyright 2007 Pallets
@@ -178,10 +178,10 @@ index c37cae49e..000000000
 -LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
 -NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 -SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-diff --git a/third_party/python/Jinja2/jinja2/__init__.py b/third_party/python/Jinja2/jinja2/__init__.py
+diff --git a/third_party/python/jinja2/jinja2/__init__.py b/third_party/python/jinja2/jinja2/__init__.py
 deleted file mode 100644
 index 1a423a3ea..000000000
---- a/third_party/python/Jinja2/jinja2/__init__.py
+--- a/third_party/python/jinja2/jinja2/__init__.py
 +++ /dev/null
 @@ -1,38 +0,0 @@
 -"""Jinja is a template engine written in pure Python. It provides a
@@ -222,10 +222,10 @@ index 1a423a3ea..000000000
 -from .utils import select_autoescape as select_autoescape
 -
 -__version__ = "3.1.6"
-diff --git a/third_party/python/Jinja2/jinja2/_identifier.py b/third_party/python/Jinja2/jinja2/_identifier.py
+diff --git a/third_party/python/jinja2/jinja2/_identifier.py b/third_party/python/jinja2/jinja2/_identifier.py
 deleted file mode 100644
 index 928c1503c..000000000
---- a/third_party/python/Jinja2/jinja2/_identifier.py
+--- a/third_party/python/jinja2/jinja2/_identifier.py
 +++ /dev/null
 @@ -1,6 +0,0 @@
 -import re
@@ -234,10 +234,10 @@ index 928c1503c..000000000
 -pattern = re.compile(
 -    r"[\w·̀-ͯ·҃-֑҇-ׇֽֿׁׂׅׄؐ-ًؚ-ٰٟۖ-ۜ۟-۪ۤۧۨ-ܑۭܰ-݊ަ-ް߫-߽߳ࠖ-࠙ࠛ-ࠣࠥ-ࠧࠩ-࡙࠭-࡛࣓-ࣣ࣡-ःऺ-़ा-ॏ॑-ॗॢॣঁ-ঃ়া-ৄেৈো-্ৗৢৣ৾ਁ-ਃ਼ਾ-ੂੇੈੋ-੍ੑੰੱੵઁ-ઃ઼ા-ૅે-ૉો-્ૢૣૺ-૿ଁ-ଃ଼ା-ୄେୈୋ-୍ୖୗୢୣஂா-ூெ-ைொ-்ௗఀ-ఄా-ౄె-ైొ-్ౕౖౢౣಁ-ಃ಼ಾ-ೄೆ-ೈೊ-್ೕೖೢೣഀ-ഃ഻഼ാ-ൄെ-ൈൊ-്ൗൢൣංඃ්ා-ුූෘ-ෟෲෳัิ-ฺ็-๎ັິ-ູົຼ່-ໍ༹༘༙༵༷༾༿ཱ-྄྆྇ྍ-ྗྙ-ྼ࿆ါ-ှၖ-ၙၞ-ၠၢ-ၤၧ-ၭၱ-ၴႂ-ႍႏႚ-ႝ፝-፟ᜒ-᜔ᜲ-᜴ᝒᝓᝲᝳ឴-៓៝᠋-᠍ᢅᢆᢩᤠ-ᤫᤰ-᤻ᨗ-ᨛᩕ-ᩞ᩠-᩿᩼᪰-᪽ᬀ-ᬄ᬴-᭄᭫-᭳ᮀ-ᮂᮡ-ᮭ᯦-᯳ᰤ-᰷᳐-᳔᳒-᳨᳭ᳲ-᳴᳷-᳹᷀-᷹᷻-᷿‿⁀⁔⃐-⃥⃜⃡-⃰℘℮⳯-⵿⳱ⷠ-〪ⷿ-゙゚〯꙯ꙴ-꙽ꚞꚟ꛰꛱ꠂ꠆ꠋꠣ-ꠧꢀꢁꢴ-ꣅ꣠-꣱ꣿꤦ-꤭ꥇ-꥓ꦀ-ꦃ꦳-꧀ꧥꨩ-ꨶꩃꩌꩍꩻ-ꩽꪰꪲ-ꪴꪷꪸꪾ꪿꫁ꫫ-ꫯꫵ꫶ꯣ-ꯪ꯬꯭ﬞ︀-️︠-︯︳︴﹍-﹏＿𐇽𐋠𐍶-𐍺𐨁-𐨃𐨅𐨆𐨌-𐨏𐨸-𐨿𐨺𐫦𐫥𐴤-𐽆𐴧-𐽐𑀀-𑀂𑀸-𑁆𑁿-𑂂𑂰-𑂺𑄀-𑄂𑄧-𑄴𑅅𑅆𑅳𑆀-𑆂𑆳-𑇀𑇉-𑇌𑈬-𑈷𑈾𑋟-𑋪𑌀-𑌃𑌻𑌼𑌾-𑍄𑍇𑍈𑍋-𑍍𑍗𑍢𑍣𑍦-𑍬𑍰-𑍴𑐵-𑑆𑑞𑒰-𑓃𑖯-𑖵𑖸-𑗀𑗜𑗝𑘰-𑙀𑚫-𑚷𑜝-𑜫𑠬-𑠺𑨁-𑨊𑨳-𑨹𑨻-𑨾𑩇𑩑-𑩛𑪊-𑪙𑰯-𑰶𑰸-𑰿𑲒-𑲧𑲩-𑲶𑴱-𑴶𑴺𑴼𑴽𑴿-𑵅𑵇𑶊-𑶎𑶐𑶑𑶓-𑶗𑻳-𑻶𖫰-𖫴𖬰-𖬶𖽑-𖽾𖾏-𖾒𛲝𛲞𝅥-𝅩𝅭-𝅲𝅻-𝆂𝆅-𝆋𝆪-𝆭𝉂-𝉄𝨀-𝨶𝨻-𝩬𝩵𝪄𝪛-𝪟𝪡-𝪯𞀀-𞀆𞀈-𞀘𞀛-𞀡𞀣𞀤𞀦-𞣐𞀪-𞣖𞥄-𞥊󠄀-󠇯]+"  # noqa: B950
 -)
-diff --git a/third_party/python/Jinja2/jinja2/async_utils.py b/third_party/python/Jinja2/jinja2/async_utils.py
+diff --git a/third_party/python/jinja2/jinja2/async_utils.py b/third_party/python/jinja2/jinja2/async_utils.py
 deleted file mode 100644
 index f0c140205..000000000
---- a/third_party/python/Jinja2/jinja2/async_utils.py
+--- a/third_party/python/jinja2/jinja2/async_utils.py
 +++ /dev/null
 @@ -1,99 +0,0 @@
 -import inspect
@@ -339,10 +339,10 @@ index f0c140205..000000000
 -    value: "t.Union[t.AsyncIterable[V], t.Iterable[V]]",
 -) -> t.List["V"]:
 -    return [x async for x in auto_aiter(value)]
-diff --git a/third_party/python/Jinja2/jinja2/bccache.py b/third_party/python/Jinja2/jinja2/bccache.py
+diff --git a/third_party/python/jinja2/jinja2/bccache.py b/third_party/python/jinja2/jinja2/bccache.py
 deleted file mode 100644
 index ada8b099f..000000000
---- a/third_party/python/Jinja2/jinja2/bccache.py
+--- a/third_party/python/jinja2/jinja2/bccache.py
 +++ /dev/null
 @@ -1,408 +0,0 @@
 -"""The optional bytecode cache system. This is useful if you have very
@@ -753,10 +753,10 @@ index ada8b099f..000000000
 -        except Exception:
 -            if not self.ignore_memcache_errors:
 -                raise
-diff --git a/third_party/python/Jinja2/jinja2/compiler.py b/third_party/python/Jinja2/jinja2/compiler.py
+diff --git a/third_party/python/jinja2/jinja2/compiler.py b/third_party/python/jinja2/jinja2/compiler.py
 deleted file mode 100644
 index a4ff6a1b1..000000000
---- a/third_party/python/Jinja2/jinja2/compiler.py
+--- a/third_party/python/jinja2/jinja2/compiler.py
 +++ /dev/null
 @@ -1,1998 +0,0 @@
 -"""Compiles nodes from the parser into Python code."""
@@ -2757,10 +2757,10 @@ index a4ff6a1b1..000000000
 -            self.visit(child, frame)
 -        frame.eval_ctx.revert(saved_ctx)
 -        self.writeline(f"context.eval_ctx.revert({old_ctx_name})")
-diff --git a/third_party/python/Jinja2/jinja2/constants.py b/third_party/python/Jinja2/jinja2/constants.py
+diff --git a/third_party/python/jinja2/jinja2/constants.py b/third_party/python/jinja2/jinja2/constants.py
 deleted file mode 100644
 index 41a1c23b0..000000000
---- a/third_party/python/Jinja2/jinja2/constants.py
+--- a/third_party/python/jinja2/jinja2/constants.py
 +++ /dev/null
 @@ -1,20 +0,0 @@
 -#: list of lorem ipsum words used by the lipsum() helper function
@@ -2783,10 +2783,10 @@ index 41a1c23b0..000000000
 -tempus tincidunt torquent tortor tristique turpis ullamcorper ultrices
 -ultricies urna ut varius vehicula vel velit venenatis vestibulum vitae vivamus
 -viverra volutpat vulputate"""
-diff --git a/third_party/python/Jinja2/jinja2/debug.py b/third_party/python/Jinja2/jinja2/debug.py
+diff --git a/third_party/python/jinja2/jinja2/debug.py b/third_party/python/jinja2/jinja2/debug.py
 deleted file mode 100644
 index eeeeee78b..000000000
---- a/third_party/python/Jinja2/jinja2/debug.py
+--- a/third_party/python/jinja2/jinja2/debug.py
 +++ /dev/null
 @@ -1,191 +0,0 @@
 -import sys
@@ -2980,10 +2980,10 @@ index eeeeee78b..000000000
 -            data[name] = value
 -
 -    return data
-diff --git a/third_party/python/Jinja2/jinja2/defaults.py b/third_party/python/Jinja2/jinja2/defaults.py
+diff --git a/third_party/python/jinja2/jinja2/defaults.py b/third_party/python/jinja2/jinja2/defaults.py
 deleted file mode 100644
 index 638cad3d2..000000000
---- a/third_party/python/Jinja2/jinja2/defaults.py
+--- a/third_party/python/jinja2/jinja2/defaults.py
 +++ /dev/null
 @@ -1,48 +0,0 @@
 -import typing as t
@@ -3034,10 +3034,10 @@ index 638cad3d2..000000000
 -    "json.dumps_kwargs": {"sort_keys": True},
 -    "ext.i18n.trimmed": False,
 -}
-diff --git a/third_party/python/Jinja2/jinja2/environment.py b/third_party/python/Jinja2/jinja2/environment.py
+diff --git a/third_party/python/jinja2/jinja2/environment.py b/third_party/python/jinja2/jinja2/environment.py
 deleted file mode 100644
 index 0fc6e5be8..000000000
---- a/third_party/python/Jinja2/jinja2/environment.py
+--- a/third_party/python/jinja2/jinja2/environment.py
 +++ /dev/null
 @@ -1,1672 +0,0 @@
 -"""Classes for managing templates and their runtime and compile time
@@ -4712,10 +4712,10 @@ index 0fc6e5be8..000000000
 -# hook in default template class.  if anyone reads this comment: ignore that
 -# it's possible to use custom templates ;-)
 -Environment.template_class = Template
-diff --git a/third_party/python/Jinja2/jinja2/exceptions.py b/third_party/python/Jinja2/jinja2/exceptions.py
+diff --git a/third_party/python/jinja2/jinja2/exceptions.py b/third_party/python/jinja2/jinja2/exceptions.py
 deleted file mode 100644
 index 082ebe8f2..000000000
---- a/third_party/python/Jinja2/jinja2/exceptions.py
+--- a/third_party/python/jinja2/jinja2/exceptions.py
 +++ /dev/null
 @@ -1,166 +0,0 @@
 -import typing as t
@@ -4884,10 +4884,10 @@ index 082ebe8f2..000000000
 -    """This error is raised if a filter was called with inappropriate
 -    arguments
 -    """
-diff --git a/third_party/python/Jinja2/jinja2/ext.py b/third_party/python/Jinja2/jinja2/ext.py
+diff --git a/third_party/python/jinja2/jinja2/ext.py b/third_party/python/jinja2/jinja2/ext.py
 deleted file mode 100644
 index c7af8d45f..000000000
---- a/third_party/python/Jinja2/jinja2/ext.py
+--- a/third_party/python/jinja2/jinja2/ext.py
 +++ /dev/null
 @@ -1,870 +0,0 @@
 -"""Extension API for adding custom tags and behavior."""
@@ -5760,10 +5760,10 @@ index c7af8d45f..000000000
 -do = ExprStmtExtension
 -loopcontrols = LoopControlExtension
 -debug = DebugExtension
-diff --git a/third_party/python/Jinja2/jinja2/filters.py b/third_party/python/Jinja2/jinja2/filters.py
+diff --git a/third_party/python/jinja2/jinja2/filters.py b/third_party/python/jinja2/jinja2/filters.py
 deleted file mode 100644
 index 2bcba4fbd..000000000
---- a/third_party/python/Jinja2/jinja2/filters.py
+--- a/third_party/python/jinja2/jinja2/filters.py
 +++ /dev/null
 @@ -1,1873 +0,0 @@
 -"""Built-in template filters used with the ``|`` operator."""
@@ -7639,10 +7639,10 @@ index 2bcba4fbd..000000000
 -    "xmlattr": do_xmlattr,
 -    "tojson": do_tojson,
 -}
-diff --git a/third_party/python/Jinja2/jinja2/idtracking.py b/third_party/python/Jinja2/jinja2/idtracking.py
+diff --git a/third_party/python/jinja2/jinja2/idtracking.py b/third_party/python/jinja2/jinja2/idtracking.py
 deleted file mode 100644
 index e6dd8cd11..000000000
---- a/third_party/python/Jinja2/jinja2/idtracking.py
+--- a/third_party/python/jinja2/jinja2/idtracking.py
 +++ /dev/null
 @@ -1,318 +0,0 @@
 -import typing as t
@@ -7963,10 +7963,10 @@ index e6dd8cd11..000000000
 -
 -    def visit_OverlayScope(self, node: nodes.OverlayScope, **kwargs: t.Any) -> None:
 -        """Do not visit into overlay scopes."""
-diff --git a/third_party/python/Jinja2/jinja2/lexer.py b/third_party/python/Jinja2/jinja2/lexer.py
+diff --git a/third_party/python/jinja2/jinja2/lexer.py b/third_party/python/jinja2/jinja2/lexer.py
 deleted file mode 100644
 index 9b1c96979..000000000
---- a/third_party/python/Jinja2/jinja2/lexer.py
+--- a/third_party/python/jinja2/jinja2/lexer.py
 +++ /dev/null
 @@ -1,868 +0,0 @@
 -"""Implements a Jinja / Python combination lexer. The ``Lexer`` class
@@ -8837,10 +8837,10 @@ index 9b1c96979..000000000
 -                raise TemplateSyntaxError(
 -                    f"unexpected char {source[pos]!r} at {pos}", lineno, name, filename
 -                )
-diff --git a/third_party/python/Jinja2/jinja2/loaders.py b/third_party/python/Jinja2/jinja2/loaders.py
+diff --git a/third_party/python/jinja2/jinja2/loaders.py b/third_party/python/jinja2/jinja2/loaders.py
 deleted file mode 100644
 index 3913ee51e..000000000
---- a/third_party/python/Jinja2/jinja2/loaders.py
+--- a/third_party/python/jinja2/jinja2/loaders.py
 +++ /dev/null
 @@ -1,693 +0,0 @@
 -"""API and implementations for loading templates from different data
@@ -9536,10 +9536,10 @@ index 3913ee51e..000000000
 -        return environment.template_class.from_module_dict(
 -            environment, mod.__dict__, globals
 -        )
-diff --git a/third_party/python/Jinja2/jinja2/meta.py b/third_party/python/Jinja2/jinja2/meta.py
+diff --git a/third_party/python/jinja2/jinja2/meta.py b/third_party/python/jinja2/jinja2/meta.py
 deleted file mode 100644
 index 298499e26..000000000
---- a/third_party/python/Jinja2/jinja2/meta.py
+--- a/third_party/python/jinja2/jinja2/meta.py
 +++ /dev/null
 @@ -1,112 +0,0 @@
 -"""Functions that expose information about templates that might be
@@ -9654,10 +9654,10 @@ index 298499e26..000000000
 -        # something else we don't care about, we could warn here
 -        else:
 -            yield None
-diff --git a/third_party/python/Jinja2/jinja2/nativetypes.py b/third_party/python/Jinja2/jinja2/nativetypes.py
+diff --git a/third_party/python/jinja2/jinja2/nativetypes.py b/third_party/python/jinja2/jinja2/nativetypes.py
 deleted file mode 100644
 index 71db8cc31..000000000
---- a/third_party/python/Jinja2/jinja2/nativetypes.py
+--- a/third_party/python/jinja2/jinja2/nativetypes.py
 +++ /dev/null
 @@ -1,130 +0,0 @@
 -import typing as t
@@ -9790,10 +9790,10 @@ index 71db8cc31..000000000
 -
 -
 -NativeEnvironment.template_class = NativeTemplate
-diff --git a/third_party/python/Jinja2/jinja2/nodes.py b/third_party/python/Jinja2/jinja2/nodes.py
+diff --git a/third_party/python/jinja2/jinja2/nodes.py b/third_party/python/jinja2/jinja2/nodes.py
 deleted file mode 100644
 index 2f93b90ec..000000000
---- a/third_party/python/Jinja2/jinja2/nodes.py
+--- a/third_party/python/jinja2/jinja2/nodes.py
 +++ /dev/null
 @@ -1,1206 +0,0 @@
 -"""AST nodes generated by the parser for the compiler. Also provides
@@ -11002,10 +11002,10 @@ index 2f93b90ec..000000000
 -
 -NodeType.__new__ = staticmethod(_failing_new)  # type: ignore
 -del _failing_new
-diff --git a/third_party/python/Jinja2/jinja2/optimizer.py b/third_party/python/Jinja2/jinja2/optimizer.py
+diff --git a/third_party/python/jinja2/jinja2/optimizer.py b/third_party/python/jinja2/jinja2/optimizer.py
 deleted file mode 100644
 index 32d1c717b..000000000
---- a/third_party/python/Jinja2/jinja2/optimizer.py
+--- a/third_party/python/jinja2/jinja2/optimizer.py
 +++ /dev/null
 @@ -1,48 +0,0 @@
 -"""The optimizer tries to constant fold expressions and modify the AST
@@ -11056,10 +11056,10 @@ index 32d1c717b..000000000
 -                pass
 -
 -        return node
-diff --git a/third_party/python/Jinja2/jinja2/parser.py b/third_party/python/Jinja2/jinja2/parser.py
+diff --git a/third_party/python/jinja2/jinja2/parser.py b/third_party/python/jinja2/jinja2/parser.py
 deleted file mode 100644
 index f4117754a..000000000
---- a/third_party/python/Jinja2/jinja2/parser.py
+--- a/third_party/python/jinja2/jinja2/parser.py
 +++ /dev/null
 @@ -1,1049 +0,0 @@
 -"""Parse tokens from the lexer into nodes for the compiler."""
@@ -12111,13 +12111,13 @@ index f4117754a..000000000
 -        result = nodes.Template(self.subparse(), lineno=1)
 -        result.set_environment(self.environment)
 -        return result
-diff --git a/third_party/python/Jinja2/jinja2/py.typed b/third_party/python/Jinja2/jinja2/py.typed
+diff --git a/third_party/python/jinja2/jinja2/py.typed b/third_party/python/jinja2/jinja2/py.typed
 deleted file mode 100644
 index e69de29bb..000000000
-diff --git a/third_party/python/Jinja2/jinja2/runtime.py b/third_party/python/Jinja2/jinja2/runtime.py
+diff --git a/third_party/python/jinja2/jinja2/runtime.py b/third_party/python/jinja2/jinja2/runtime.py
 deleted file mode 100644
 index 09119e2ae..000000000
---- a/third_party/python/Jinja2/jinja2/runtime.py
+--- a/third_party/python/jinja2/jinja2/runtime.py
 +++ /dev/null
 @@ -1,1062 +0,0 @@
 -"""The runtime functions and state used by compiled templates."""
@@ -13182,10 +13182,10 @@ index 09119e2ae..000000000
 -    __iter__ = __str__ = __len__ = Undefined._fail_with_undefined_error
 -    __eq__ = __ne__ = __bool__ = __hash__ = Undefined._fail_with_undefined_error
 -    __contains__ = Undefined._fail_with_undefined_error
-diff --git a/third_party/python/Jinja2/jinja2/sandbox.py b/third_party/python/Jinja2/jinja2/sandbox.py
+diff --git a/third_party/python/jinja2/jinja2/sandbox.py b/third_party/python/jinja2/jinja2/sandbox.py
 deleted file mode 100644
 index 9c9dae22f..000000000
---- a/third_party/python/Jinja2/jinja2/sandbox.py
+--- a/third_party/python/jinja2/jinja2/sandbox.py
 +++ /dev/null
 @@ -1,436 +0,0 @@
 -"""A sandbox layer that ensures unsafe operations cannot be performed.
@@ -13624,10 +13624,10 @@ index 9c9dae22f..000000000
 -
 -class SandboxedEscapeFormatter(SandboxedFormatter, EscapeFormatter):
 -    pass
-diff --git a/third_party/python/Jinja2/jinja2/tests.py b/third_party/python/Jinja2/jinja2/tests.py
+diff --git a/third_party/python/jinja2/jinja2/tests.py b/third_party/python/jinja2/jinja2/tests.py
 deleted file mode 100644
 index 1a59e3703..000000000
---- a/third_party/python/Jinja2/jinja2/tests.py
+--- a/third_party/python/jinja2/jinja2/tests.py
 +++ /dev/null
 @@ -1,256 +0,0 @@
 -"""Built-in template tests used with the ``is`` operator."""
@@ -13886,10 +13886,10 @@ index 1a59e3703..000000000
 -    "<=": operator.le,
 -    "le": operator.le,
 -}
-diff --git a/third_party/python/Jinja2/jinja2/utils.py b/third_party/python/Jinja2/jinja2/utils.py
+diff --git a/third_party/python/jinja2/jinja2/utils.py b/third_party/python/jinja2/jinja2/utils.py
 deleted file mode 100644
 index 7c922629a..000000000
---- a/third_party/python/Jinja2/jinja2/utils.py
+--- a/third_party/python/jinja2/jinja2/utils.py
 +++ /dev/null
 @@ -1,766 +0,0 @@
 -import enum
@@ -14658,10 +14658,10 @@ index 7c922629a..000000000
 -
 -    def __repr__(self) -> str:
 -        return f"<Namespace {self.__attrs!r}>"
-diff --git a/third_party/python/Jinja2/jinja2/visitor.py b/third_party/python/Jinja2/jinja2/visitor.py
+diff --git a/third_party/python/jinja2/jinja2/visitor.py b/third_party/python/jinja2/jinja2/visitor.py
 deleted file mode 100644
 index 7b8e18060..000000000
---- a/third_party/python/Jinja2/jinja2/visitor.py
+--- a/third_party/python/jinja2/jinja2/visitor.py
 +++ /dev/null
 @@ -1,92 +0,0 @@
 -"""API for traversing the AST nodes. Implemented by the compiler and
