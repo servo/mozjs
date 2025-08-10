@@ -285,21 +285,21 @@ jobs:
         with:
           clang-format-version: "18"
           exclude-regex: mozjs-sys\/mozjs
-      #- name: Get mozjs
-      #  run: |
-      #    bash ./mozjs-sys/etc/get_mozjs.sh
-      #- name: Apply patch
-      #  run: |
-      #    python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
-      #    # Run `git add` here to force CRLF converted into LF
-      #    # so that we can check diff properly in next run
-      #    git add --all mozjs-sys
-      #- name: Check patch integrity
-      #  working-directory: ./mozjs-sys
-      #  # Because we've added files in previous run, we need to
-      #  # check diff with `--staged`.
-      #  run: |
-      #    git diff --staged --no-ext-diff --quiet --exit-code
+      - name: Get mozjs
+        run: |
+          bash ./mozjs-sys/etc/get_mozjs.sh
+      - name: Apply patch
+        run: |
+          python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
+          # Run `git add` here to force CRLF converted into LF
+          # so that we can check diff properly in next run
+          git add --all mozjs-sys
+      - name: Check patch integrity
+        working-directory: ./mozjs-sys
+        # Because we've added files in previous run, we need to
+        # check diff with `--staged`.
+        run: |
+          git diff --staged --no-ext-diff --quiet --exit-code
       - name: Detect need for mozjs-sys version bump
         if: ${{ github.event_name == 'pull_request' }}
         id: changes
