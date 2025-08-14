@@ -29,6 +29,12 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
     steps:
       - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: ${{ inputs.rust_version }}
+          targets: ${{ matrix.target }}
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
@@ -39,15 +45,15 @@ jobs:
         env:
           MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
         run: |
-          cargo build --verbose
-          cargo test --tests --examples --verbose
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose
       - name: Build from auto-download
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           MOZJS_ATTESTATION: strict
         run: |
-          cargo build --verbose
-          cargo test --tests --examples --verbose
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose
 
   verify-archive-android:
     name: "Verify archive Android"
@@ -71,6 +77,7 @@ jobs:
           ndk-version: r28
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
+        id: toolchain
         with:
           toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
@@ -85,14 +92,14 @@ jobs:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
           MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
         run: |
-          ./android-build cargo build --target="${{ matrix.target }}" --verbose
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
       - name: Build from auto-download (arch ${{ matrix.target }})
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
           MOZJS_ATTESTATION: strict
         run: |
-          ./android-build cargo build --target="${{ matrix.target }}" --verbose
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
 
   verify-archive-ohos:
     name: "Verify archive OpenHarmony"
@@ -111,6 +118,7 @@ jobs:
           version: "4.1"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
+        id: toolchain
         with:
           toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
@@ -125,11 +133,11 @@ jobs:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
           MOZJS_ARCHIVE: libmozjs-${{ matrix.target }}.tar.gz
         run: |
-          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose
+          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
       - name: Build from auto-download (arch ${{ matrix.target }})
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
           MOZJS_ATTESTATION: strict
         run: |
-          ./ohos-build cargo build --target="${{ matrix.target }}" --verbose
+          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --verbose
