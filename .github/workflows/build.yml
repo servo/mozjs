@@ -37,7 +37,7 @@ jobs:
           brew list -1 | grep python | while read formula; do brew unlink $formula; brew link --overwrite $formula; done
           brew install llvm yasm
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build
         run: |
           cargo build --verbose --features ${{ matrix.features }}
@@ -75,7 +75,7 @@ jobs:
           directory: ${{ runner.temp }}/llvm
           version: "16.0"
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build
         run: |
           cargo build --verbose --features ${{ matrix.features }}
@@ -134,7 +134,7 @@ jobs:
           # Prepend to path so we override the default LLVM installation in priority
           echo "C:\ProgramData\scoop\apps\llvm\current\bin;" + (Get-Content $env:GITHUB_PATH -Raw) | Set-Content $env:GITHUB_PATH
       - name: Run sccache-cache
-        uses: mozilla-actions/sccache-action@v0.0.8
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build Windows
         shell: cmd
         run: |
