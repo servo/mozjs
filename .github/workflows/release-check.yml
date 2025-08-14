@@ -70,7 +70,7 @@ jobs:
         with:
           ndk-version: r28
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85.0
         with:
           targets: ${{ matrix.target }}
       - name: Download prebuilt mozjs from artifact
@@ -109,7 +109,7 @@ jobs:
         with:
           version: "4.1"
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.85.0
         with:
           targets: ${{ matrix.target }}
       - name: Download prebuilt mozjs from artifact
