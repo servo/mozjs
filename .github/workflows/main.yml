@@ -2,7 +2,7 @@ name: Rust
 
 on:
   push:
-    branches: [main]
+    branches: [main, icu_min]
   pull_request:
   workflow_dispatch:
   merge_group:
