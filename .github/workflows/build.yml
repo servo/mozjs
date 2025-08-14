@@ -8,6 +8,7 @@ on:
         type: boolean
       rust_version:
         required: false
+        # Keep the default in sync with `rust-toolchain.toml` and servo's MSRV!
         default: "1.85.0"
         type: string
 
@@ -354,6 +355,7 @@ jobs:
     uses: ./.github/workflows/release-check.yml
     with:
       release-tag: ${{ needs.publish-release.outputs.release-tag }}
+      rust_version: ${{ inputs.rust_version }}
 
   build_result:
     name: Result

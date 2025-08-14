@@ -8,11 +8,15 @@ on:
       release-tag:
         required: true
         type: string
+      rust_version:
+        required: true
+        type: string
 
 env:
   RUST_BACKTRACE: 1
   SHELL: /bin/bash
   CARGO_INCREMENTAL: 0
+  RUST_TOOLCHAIN_INPUT: ${{ github.event_name == 'release' && '1.85.0' ||  inputs.rust_version }}
 
 jobs:
   verify-archive:
@@ -33,7 +37,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
-          toolchain: ${{ inputs.rust_version }}
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
           targets: ${{ matrix.target }}
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
@@ -79,7 +83,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
-          toolchain: ${{ inputs.rust_version }}
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
           targets: ${{ matrix.target }}
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
@@ -120,7 +124,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
-          toolchain: ${{ inputs.rust_version }}
+          toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
           targets: ${{ matrix.target }}
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
