@@ -2,7 +2,7 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
-version = "0.137.0-1"
+version = "0.137.0-2"
 authors = ["Mozilla"]
 links = "mozjs"
 license.workspace = true
@@ -35,7 +35,8 @@ libz-sys = "1.1.19"
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 # unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }
-icu_capi = "=1.5.0" # keep in sync with intl/icu_capi/Cargo.toml
+# keep in sync with intl/icu_capi/Cargo.toml
+icu_capi = { version = "=1.5.0", default-features = false, features = ["compiled_data", "icu_calendar", "icu_properties", "icu_segmenter"] }
 
 [build-dependencies]
 bindgen.workspace = true
