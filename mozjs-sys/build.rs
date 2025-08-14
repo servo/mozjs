@@ -385,6 +385,7 @@ fn link_static_lib_binaries(build_dir: &Path) {
         println!("cargo:rustc-link-lib=psapi");
         println!("cargo:rustc-link-lib=user32");
         println!("cargo:rustc-link-lib=Dbghelp");
+        println!("cargo:rustc-link-lib=advapi32");
         if target.contains("gnu") {
             println!("cargo:rustc-link-lib=stdc++");
         }
