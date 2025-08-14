@@ -6,6 +6,10 @@ on:
       release:
         required: true
         type: boolean
+      rust_version:
+        required: false
+        default: "1.85.0"
+        type: string
 
 env:
   RUST_BACKTRACE: 1
@@ -68,7 +72,9 @@ jobs:
         features: ["debugmozjs", '""']
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust_version }}
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
@@ -117,8 +123,9 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
       - name: Install deps
         run: |
@@ -177,8 +184,9 @@ jobs:
         with:
           ndk-version: r28
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.85.0
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
       - name: Build
         env:
@@ -210,8 +218,9 @@ jobs:
         with:
           version: "4.1"
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.85.0
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
       - name: Build (arch ${{ matrix.target }} )
         env:
@@ -242,8 +251,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.85.0
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
       - run: cargo test --tests --examples --target ${{ matrix.target }}
 
@@ -253,7 +263,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
-      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust_version }}
       - name: Check Rust formatting
         run: cargo fmt --check
       - name: Check C++ formatting

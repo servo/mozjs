@@ -29,6 +29,21 @@ jobs:
     with:
       release: false
     secrets: inherit
+  latest_stable_rust:
+    if: ${{ github.event_name == 'schedule' }}
+    uses: ./.github/workflows/build.yml
+    with:
+      release: false
+      rust_version: 'stable'
+    secrets: inherit
+  latest_beta_rust:
+    if: ${{ github.event_name == 'schedule' }}
+    uses: ./.github/workflows/build.yml
+    with:
+      release: false
+      rust_version: 'beta'
+    secrets: inherit
+
 
   build_result:
     name: Result
