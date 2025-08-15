@@ -19,15 +19,13 @@
 //!
 //! These bindings are designed to be a fairly straightforward translation to the C++ API, while
 //! taking advantage of Rust's memory safety. For more about the Spidermonkey API, see the
-//! [API Reference][2] and the [User Guide][3] on MDN, and the [embedding examples][4] on GitHub.
+//! [embedding examples][2] on GitHub.
 //!
 //! The code from User Guide sections [A minimal example](https://github.com/servo/mozjs/blob/main/mozjs/examples/minimal.rs) and
 //! [Running scripts](https://github.com/servo/mozjs/blob/main/mozjs/examples/eval.rs) are also included.
 //!
-//! [1]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey
-//! [2]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/JSAPI_reference
-//! [3]: https://developer.mozilla.org/en-US/docs/Mozilla/Projects/SpiderMonkey/JSAPI_User_Guide
-//! [4]: https://github.com/mozilla-spidermonkey/spidermonkey-embedding-examples/
+//! [1]: https://firefox-source-docs.mozilla.org/js/index.html
+//! [2]: https://github.com/mozilla-spidermonkey/spidermonkey-embedding-examples/
 //!
 
 pub mod jsapi {
