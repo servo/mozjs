@@ -187,23 +187,41 @@ fn build_spidermonkey(build_dir: &Path) {
         encoding_c_mem_include_dir.replace("\\", "/")
     ));
 
+    let c_include_path = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
+        .join("mozjs")
+        .join("modules")
+        .join("zlib")
+        .join("src");
+    assert!(
+        c_include_path.exists(),
+        "libz-rs-sys include path {} does not exist",
+        c_include_path.display()
+    );
+
+    write!(
+        cppflags,
+        "-I{} ",
+        c_include_path.display().to_string().replace("\\", "/")
+    )
+    .unwrap();
+
     // add zlib.pc into pkg-config's search path
     // this is only needed when libz-sys builds zlib from source
-    if let Ok(zlib_root_dir) = env::var("DEP_Z_ROOT") {
-        let mut pkg_config_path = OsString::from(format!(
-            "{}/lib/pkgconfig",
-            zlib_root_dir.replace("\\", "/")
-        ));
-        if let Some(env_pkg_config_path) = get_cc_rs_env_os("PKG_CONFIG_PATH") {
-            pkg_config_path.push(":");
-            pkg_config_path.push(env_pkg_config_path);
-        }
-        cmd.env("PKG_CONFIG_PATH", pkg_config_path);
-    }
-
-    if let Ok(include) = env::var("DEP_Z_INCLUDE") {
-        write!(cppflags, "-I{} ", include.replace("\\", "/")).unwrap();
-    }
+    // if let Ok(zlib_root_dir) = env::var("DEP_Z_ROOT") {
+    //     let mut pkg_config_path = OsString::from(format!(
+    //         "{}/lib/pkgconfig",
+    //         zlib_root_dir.replace("\\", "/")
+    //     ));
+    //     if let Some(env_pkg_config_path) = get_cc_rs_env_os("PKG_CONFIG_PATH") {
+    //         pkg_config_path.push(":");
+    //         pkg_config_path.push(env_pkg_config_path);
+    //     }
+    //     cmd.env("PKG_CONFIG_PATH", pkg_config_path);
+    // }
+    //
+    // if let Ok(include) = env::var("DEP_Z_INCLUDE") {
+    //     write!(cppflags, "-I{} ", include.replace("\\", "/")).unwrap();
+    // }
     cppflags.push(get_cc_rs_env_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
 

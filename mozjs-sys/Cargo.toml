@@ -30,8 +30,7 @@ oom_with_hook = []
 
 [dependencies]
 libc.workspace = true
-# SM depends on them and we provide them using cargo
-libz-sys = "1.1.19"
+libz-rs-sys = { version = "0.5.1", features = ["export-symbols"] }
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 # unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }

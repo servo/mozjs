@@ -890,9 +890,7 @@ check_prog(
     validate=validate_strip,
 )
 
-pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_pkg_config)
-
-set_config("MOZ_SYSTEM_ZLIB", True)
+set_config("USE_ZLIB_RS", True)
 
 with only_when(cross_compiling):
     option(
