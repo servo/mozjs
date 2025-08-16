@@ -198,38 +198,8 @@ bool wasm::CheckIsSubtypeOf(Decoder& d, const CodeMetadata& codeMeta,
 
 // Function body validation.
 
-struct NopOpDumper {
-  void dumpOpBegin(OpBytes op) {}
-  void dumpOpEnd() {}
-  void dumpTypeIndex(uint32_t typeIndex) {}
-  void dumpFuncIndex(uint32_t funcIndex) {}
-  void dumpTableIndex(uint32_t tableIndex) {}
-  void dumpGlobalIndex(uint32_t globalIndex) {}
-  void dumpMemoryIndex(uint32_t memoryIndex) {}
-  void dumpElemIndex(uint32_t elemIndex) {}
-  void dumpDataIndex(uint32_t dataIndex) {}
-  void dumpTagIndex(uint32_t tagIndex) {}
-  void dumpLocalIndex(uint32_t localIndex) {}
-  void dumpResultType(ResultType type) {}
-  void dumpI32Const(int32_t constant) {}
-  void dumpI64Const(int64_t constant) {}
-  void dumpF32Const(float constant) {}
-  void dumpF64Const(double constant) {}
-  void dumpV128Const(V128 constant) {}
-  void dumpVectorMask(V128 mask) {}
-  void dumpRefType(RefType type) {}
-  void dumpHeapType(RefType type) {}
-  void dumpValType(ValType type) {}
-  void dumpTryTableCatches(const TryTableCatchVector& catches) {}
-  void dumpLinearMemoryAddress(LinearMemoryAddress<Nothing> addr) {}
-  void dumpBlockDepth(uint32_t relativeDepth) {}
-  void dumpBlockDepths(const Uint32Vector& relativeDepths) {}
-  void dumpFieldIndex(uint32_t fieldIndex) {}
-  void dumpNumElements(uint32_t numElements) {}
-  void dumpLaneIndex(uint32_t laneIndex) {}
-};
-
-bool wasm::ValidateOps(ValidatingOpIter& iter, BaseOpDumper& dumper,
+template <class T>
+bool wasm::ValidateOps(ValidatingOpIter& iter, T& dumper,
                        const CodeMetadata& codeMeta) {
   while (true) {
     OpBytes op;
@@ -2436,6 +2406,13 @@ bool wasm::ValidateOps(ValidatingOpIter& iter, BaseOpDumper& dumper,
   MOZ_CRASH("unreachable");
 }
 
+template bool wasm::ValidateOps<NopOpDumper>(ValidatingOpIter& iter,
+                                             NopOpDumper& dumper,
+                                             const CodeMetadata& codeMeta);
+template bool wasm::ValidateOps<OpDumper>(ValidatingOpIter& iter,
+                                          OpDumper& dumper,
+                                          const CodeMetadata& codeMeta);
+
 bool wasm::ValidateFunctionBody(const CodeMetadata& codeMeta,
                                 uint32_t funcIndex, uint32_t bodySize,
                                 Decoder& d) {
@@ -2448,7 +2425,7 @@ bool wasm::ValidateFunctionBody(const CodeMetadata& codeMeta,
   }
 
   ValidatingOpIter iter(codeMeta, d, locals);
-  BaseOpDumper visitor;
+  NopOpDumper visitor;
 
   if (!iter.startFunction(funcIndex)) {
     return false;
@@ -2898,13 +2875,24 @@ static bool DecodeLimits(Decoder& d, LimitsKind kind, Limits* limits) {
   return true;
 }
 
-static bool DecodeTableTypeAndLimits(Decoder& d, CodeMetadata* codeMeta) {
+// Combined decoding for both table types and the augmented form of table types
+// that can include init expressions:
+//
+// https://wasm-dsl.github.io/spectec/core/binary/types.html#table-types
+// https://wasm-dsl.github.io/spectec/core/binary/modules.html#table-section
+//
+// Only defined tables are therefore allowed to have init expressions, not
+// imported tables.
+static bool DecodeTableType(Decoder& d, CodeMetadata* codeMeta, bool isImport) {
   bool initExprPresent = false;
   uint8_t typeCode;
   if (!d.peekByte(&typeCode)) {
     return d.fail("expected type code");
   }
   if (typeCode == (uint8_t)TypeCode::TableHasInitExpr) {
+    if (isImport) {
+      return d.fail("imported tables cannot have initializer expressions");
+    }
     d.uncheckedReadFixedU8();
     uint8_t flags;
     if (!d.readFixedU8(&flags) || flags != 0) {
@@ -2950,14 +2938,14 @@ static bool DecodeTableTypeAndLimits(Decoder& d, CodeMetadata* codeMeta) {
     }
     initExpr = Some(std::move(initializer));
   } else {
-    if (!tableElemType.isNullable()) {
+    if (!tableElemType.isNullable() && !isImport) {
       return d.fail("table with non-nullable references requires initializer");
     }
   }
 
   return codeMeta->tables.emplaceBack(limits, tableElemType,
                                       std::move(initExpr),
-                                      /* isAsmJS */ false);
+                                      /* isAsmJS */ false, isImport);
 }
 
 static bool DecodeGlobalType(Decoder& d, const SharedTypeContext& types,
@@ -3078,10 +3066,9 @@ static bool DecodeImport(Decoder& d, CodeMetadata* codeMeta,
       break;
     }
     case DefinitionKind::Table: {
-      if (!DecodeTableTypeAndLimits(d, codeMeta)) {
+      if (!DecodeTableType(d, codeMeta, /*isImport=*/true)) {
         return false;
       }
-      codeMeta->tables.back().isImported = true;
       break;
     }
     case DefinitionKind::Memory: {
@@ -3302,7 +3289,7 @@ static bool DecodeTableSection(Decoder& d, CodeMetadata* codeMeta) {
   }
 
   for (uint32_t i = 0; i < numTables; ++i) {
-    if (!DecodeTableTypeAndLimits(d, codeMeta)) {
+    if (!DecodeTableType(d, codeMeta, /*isImport=*/false)) {
       return false;
     }
   }

@@ -86,7 +86,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
  public:
   CodeGenerator(MIRGenerator* gen, LIRGraph* graph,
-                MacroAssembler* masm = nullptr);
+                MacroAssembler* masm = nullptr,
+                const wasm::CodeMetadata* wasmCodeMeta = nullptr);
   ~CodeGenerator();
 
   [[nodiscard]] bool generate(const WarpSnapshot* snapshot);
@@ -381,6 +382,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   void emitDebugResultChecks(LInstruction* ins);
   void emitGCThingResultChecks(LInstruction* lir, MDefinition* mir);
   void emitValueResultChecks(LInstruction* lir, MDefinition* mir);
+  void emitWasmAnyrefResultChecks(LInstruction* lir, MDefinition* mir);
 #endif
 
   // Script counts created during code generation.
@@ -409,6 +411,9 @@ class CodeGenerator final : public CodeGeneratorSpecific {
   // Register a dependency on the HasSeenObjectEmulateUndefined fuse.
   bool addHasSeenObjectEmulateUndefinedFuseDependency();
 
+  // Register a dependency on the HasSeenArrayExceedsInt32Length fuse.
+  bool addHasSeenArrayExceedsInt32LengthFuseDependency();
+
   // Return true if the fuse is intact, and if the fuse is intact note the
   // dependency
   bool hasSeenObjectEmulateUndefinedFuseIntactAndDependencyNoted() {
@@ -417,6 +422,14 @@ class CodeGenerator final : public CodeGeneratorSpecific {
       bool tryToAdd = addHasSeenObjectEmulateUndefinedFuseDependency();
       // If we oom, just pretend that the fuse is popped.
       return tryToAdd;
+    }
+    return false;
+  }
+
+  bool hasSeenArrayExceedsInt32LengthFuseIntactAndDependencyNoted() {
+    bool intact = gen->outerInfo().hasSeenArrayExceedsInt32LengthFuseIntact();
+    if (intact) {
+      return addHasSeenArrayExceedsInt32LengthFuseDependency();
     }
     return false;
   }

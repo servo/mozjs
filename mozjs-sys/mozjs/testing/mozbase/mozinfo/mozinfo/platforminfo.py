@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-"
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -92,7 +91,10 @@ class PlatformInfo:
 
         build = self.build
         if build is not None and cleaned_name == "win":
-            version += "." + build
+            if build == "24h2":
+                version += ".26100"
+            else:
+                version += "." + build
         return version
 
     def _clean_arch(self) -> str:
@@ -141,7 +143,7 @@ class PlatformInfo:
         filename = (
             os.environ.get("GECKO_PATH", ".") + "/taskcluster/kinds/test/variants.yml"
         )
-        with open(filename, "r") as f:
+        with open(filename) as f:
             PlatformInfo.variant_data = yaml.safe_load(f.read())
 
         return PlatformInfo.variant_data
@@ -156,7 +158,7 @@ class PlatformInfo:
         # This is a hack as we have no-fission and fission variants
         # sharing a common mozinfo variable.
         # TODO: what other hacks like this exist?
-        if test_variant in ["no-fission"]:
+        if test_variant in ["no-fission", "1proc"]:
             mozinfo = "!" + mozinfo
         return mozinfo
 

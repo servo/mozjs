@@ -749,9 +749,7 @@ static MOZ_ALWAYS_INLINE NativeObject* NewObject(
   MOZ_ASSERT(!ClassCanHaveFixedData(clasp));
   size_t nfixed = GetGCKindSlots(kind);
 
-  if (CanChangeToBackgroundAllocKind(kind, clasp)) {
-    kind = ForegroundToBackgroundAllocKind(kind);
-  }
+  kind = gc::GetFinalizedAllocKindForClass(kind, clasp);
 
   Rooted<SharedShape*> shape(
       cx, SharedShape::getInitialShape(cx, clasp, cx->realm(), proto, nfixed,
@@ -1087,14 +1085,18 @@ bool NativeObject::fixupAfterSwap(JSContext* cx, Handle<NativeObject*> obj,
     obj->initSlotUnchecked(i, slotValues[i]);
   }
 
-  MOZ_ASSERT_IF(
-      obj->hasDynamicSlots() && gc::IsBufferAlloc(obj->getSlotsHeader()),
-      gc::IsNurseryOwned(obj->getSlotsHeader()) == IsInsideNursery(obj));
-
-  MOZ_ASSERT_IF(obj->hasDynamicElements() &&
-                    gc::IsBufferAlloc(obj->getUnshiftedElementsHeader()),
-                gc::IsNurseryOwned(obj->getUnshiftedElementsHeader()) ==
-                    IsInsideNursery(obj));
+#ifdef DEBUG
+  Zone* zone = obj->zone();
+  if (obj->hasDynamicSlots() && gc::IsBufferAlloc(obj->getSlotsHeader())) {
+    MOZ_ASSERT(gc::IsNurseryOwned(zone, obj->getSlotsHeader()) ==
+               IsInsideNursery(obj));
+  }
+  if (obj->hasDynamicElements() &&
+      gc::IsBufferAlloc(obj->getUnshiftedElementsHeader())) {
+    MOZ_ASSERT(gc::IsNurseryOwned(zone, obj->getUnshiftedElementsHeader()) ==
+               IsInsideNursery(obj));
+  }
+#endif
 
   return true;
 }
@@ -1191,7 +1193,8 @@ static gc::AllocKind SwappableObjectAllocKind(JSObject* obj) {
 void JSObject::swap(JSContext* cx, HandleObject a, HandleObject b,
                     AutoEnterOOMUnsafeRegion& oomUnsafe) {
   // Ensure swap doesn't cause a finalizer to be run at the wrong time.
-  MOZ_ASSERT(a->isBackgroundFinalized() == b->isBackgroundFinalized());
+  MOZ_ASSERT(gc::GetFinalizeKind(a->allocKind()) ==
+             gc::GetFinalizeKind(b->allocKind()));
 
   MOZ_ASSERT(a->compartment() == b->compartment());
 
@@ -1843,68 +1846,6 @@ bool js::GetGetterPure(JSContext* cx, JSObject* obj, jsid id, JSFunction** fp) {
   return prop.isNativeProperty() && NativeGetGetterPureInline(pobj, prop, fp);
 }
 
-bool js::GetOwnGetterPure(JSContext* cx, JSObject* obj, jsid id,
-                          JSFunction** fp) {
-  JS::AutoCheckCannotGC nogc;
-  PropertyResult prop;
-  if (!LookupOwnPropertyPure(cx, obj, id, &prop)) {
-    return false;
-  }
-
-  if (prop.isNotFound()) {
-    *fp = nullptr;
-    return true;
-  }
-
-  return prop.isNativeProperty() &&
-         NativeGetGetterPureInline(&obj->as<NativeObject>(), prop, fp);
-}
-
-bool js::GetOwnNativeGetterPure(JSContext* cx, JSObject* obj, jsid id,
-                                JSNative* native) {
-  JS::AutoCheckCannotGC nogc;
-  *native = nullptr;
-  PropertyResult prop;
-  if (!LookupOwnPropertyPure(cx, obj, id, &prop)) {
-    return false;
-  }
-
-  if (!prop.isNativeProperty()) {
-    return true;
-  }
-
-  PropertyInfo propInfo = prop.propertyInfo();
-
-  NativeObject* nobj = &obj->as<NativeObject>();
-  if (!nobj->hasGetter(propInfo)) {
-    return true;
-  }
-
-  JSObject* getterObj = nobj->getGetter(propInfo);
-  if (!getterObj->is<JSFunction>()) {
-    return true;
-  }
-
-  JSFunction* getter = &getterObj->as<JSFunction>();
-  if (!getter->isNativeFun()) {
-    return true;
-  }
-
-  *native = getter->native();
-  return true;
-}
-
-bool js::HasOwnDataPropertyPure(JSContext* cx, JSObject* obj, jsid id,
-                                bool* result) {
-  PropertyResult prop;
-  if (!LookupOwnPropertyPure(cx, obj, id, &prop)) {
-    return false;
-  }
-
-  *result = prop.isNativeProperty() && prop.propertyInfo().isDataProperty();
-  return true;
-}
-
 bool js::GetPrototypeIfOrdinary(JSContext* cx, HandleObject obj,
                                 bool* isOrdinary, MutableHandleObject protop) {
   if (obj->is<js::ProxyObject>()) {
@@ -2265,7 +2206,7 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
     }
   }
 
-#ifdef JS_HAS_TEMPORAL_API
+#ifdef JS_HAS_INTL_API
   if (key == JSProto_Date && !JS::Prefs::experimental_temporal() &&
       id == NameToId(cx->names().toTemporalInstant)) {
     return true;
@@ -2320,6 +2261,10 @@ JS_PUBLIC_API bool js::ShouldIgnorePropertyDefinition(JSContext* cx,
 
   if (key == JSProto_Atomics && !JS::Prefs::experimental_atomics_pause() &&
       id == NameToId(cx->names().pause)) {
+    return true;
+  }
+  if (key == JSProto_Atomics && !JS::Prefs::atomics_wait_async() &&
+      id == NameToId(cx->names().waitAsync)) {
     return true;
   }
 
@@ -3184,6 +3129,15 @@ bool JSObject::isBackgroundFinalized() const {
   return js::gc::IsBackgroundFinalized(allocKindForTenure(nursery));
 }
 
+js::gc::AllocKind JSObject::allocKind() const {
+  if (isTenured()) {
+    return asTenured().getAllocKind();
+  }
+
+  Nursery& nursery = runtimeFromMainThread()->gc.nursery();
+  return allocKindForTenure(nursery);
+}
+
 js::gc::AllocKind JSObject::allocKindForTenure(
     const js::Nursery& nursery) const {
   using namespace js::gc;
@@ -3197,11 +3151,14 @@ js::gc::AllocKind JSObject::allocKindForTenure(
 
       /* Use minimal size object if we are just going to copy the pointer. */
       if (!nursery.isInside(nobj.getUnshiftedElementsHeader())) {
-        return gc::AllocKind::OBJECT0_BACKGROUND;
+        return gc::AllocKind::OBJECT0;
       }
 
       size_t nelements = nobj.getDenseCapacity();
-      return ForegroundToBackgroundAllocKind(GetGCArrayKind(nelements));
+      AllocKind kind = GetGCArrayKind(nelements);
+      MOZ_ASSERT(GetObjectFinalizeKind(getClass()) == gc::FinalizeKind::None);
+      MOZ_ASSERT(!IsFinalizedKind(kind));
+      return kind;
     }
 
     if (is<JSFunction>()) {
@@ -3227,7 +3184,8 @@ js::gc::AllocKind JSObject::allocKindForTenure(
   if (is<WasmStructObject>()) {
     // Figure out the size of this object, from the object's TypeDef.
     const wasm::TypeDef* typeDef = &as<WasmStructObject>().typeDef();
-    return WasmStructObject::allocKindForTypeDef(typeDef);
+    AllocKind kind = WasmStructObject::allocKindForTypeDef(typeDef);
+    return GetFinalizedAllocKindForClass(kind, getClass());
   }
 
   // WasmArrayObjects sometimes have a variable-length tail which contains the
@@ -3243,13 +3201,13 @@ void JSObject::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
   // TODO: These will eventually count as GC heap memory.
   if (is<NativeObject>() && as<NativeObject>().hasDynamicSlots()) {
     info->objectsMallocHeapSlots +=
-        gc::GetAllocSize(as<NativeObject>().getSlotsHeader());
+        gc::GetAllocSize(zone(), as<NativeObject>().getSlotsHeader());
   }
 
   if (is<NativeObject>() && as<NativeObject>().hasDynamicElements()) {
     void* allocatedElements = as<NativeObject>().getUnshiftedElementsHeader();
     info->objectsMallocHeapElementsNormal +=
-        gc::GetAllocSize(allocatedElements);
+        gc::GetAllocSize(zone(), allocatedElements);
   }
 
   // Other things may be measured in the future if DMD indicates it is
@@ -3540,8 +3498,17 @@ void JSObject::debugCheckNewObject(Shape* shape, js::gc::AllocKind allocKind,
     }
   }
 
-  // Assert background finalization is used when possible.
-  MOZ_ASSERT(!CanChangeToBackgroundAllocKind(allocKind, clasp));
+  using namespace gc;
+  if (!clasp->isProxyObject()) {
+    // Check |allocKind| has the correct finalization kind for the class.
+    gc::FinalizeKind finalizeKind = GetObjectFinalizeKind(clasp);
+    MOZ_ASSERT_IF(finalizeKind == gc::FinalizeKind::None,
+                  !IsFinalizedKind(allocKind));
+    MOZ_ASSERT_IF(finalizeKind == gc::FinalizeKind::Background,
+                  IsBackgroundFinalized(allocKind));
+    MOZ_ASSERT_IF(finalizeKind == gc::FinalizeKind::Foreground,
+                  IsForegroundFinalized(allocKind));
+  }
 
   // Classes with a finalizer must specify whether instances will be finalized
   // on the main thread or in the background, except proxies whose behaviour
@@ -3553,8 +3520,6 @@ void JSObject::debugCheckNewObject(Shape* shape, js::gc::AllocKind allocKind,
   if (clasp->hasFinalize() && !clasp->isProxyObject()) {
     MOZ_ASSERT(finalizeFlags == JSCLASS_FOREGROUND_FINALIZE ||
                finalizeFlags == JSCLASS_BACKGROUND_FINALIZE);
-    MOZ_ASSERT((finalizeFlags == JSCLASS_BACKGROUND_FINALIZE) ==
-               IsBackgroundFinalized(allocKind));
   } else {
     MOZ_ASSERT(finalizeFlags == 0);
   }
@@ -3565,6 +3530,12 @@ void JSObject::debugCheckNewObject(Shape* shape, js::gc::AllocKind allocKind,
                     clasp->isProxyObject());
 
   MOZ_ASSERT(!shape->isDictionary());
+
+  // If the class has the JSCLASS_DELAY_METADATA_BUILDER flag, the caller must
+  // use AutoSetNewObjectMetadata. Ignore Wasm GC objects for now (bug 1963323).
+  MOZ_ASSERT_IF(
+      clasp->shouldDelayMetadataBuilder() && !IsWasmGcObjectClass(clasp),
+      shape->realm()->hasActiveAutoSetNewObjectMetadata());
   MOZ_ASSERT(!shape->realm()->hasObjectPendingMetadata());
 
   // Non-native classes manage their own data and slots, so numFixedSlots is

@@ -87,6 +87,8 @@ class BaselineCodeGen {
   // stored in the script) as argument for a VM function.
   void loadScriptGCThing(ScriptGCThingType type, Register dest,
                          Register scratch);
+  void loadScriptGCThingInternal(ScriptGCThingType type, Register dest,
+                                 Register scratch);
   void pushScriptGCThingArg(ScriptGCThingType type, Register scratch1,
                             Register scratch2);
   void pushScriptNameArg(Register scratch1, Register scratch2);
@@ -100,12 +102,17 @@ class BaselineCodeGen {
 
   // Loads the current JSScript* in dest.
   void loadScript(Register dest);
+  // Loads the current JitScript* in dest
+  void loadJitScript(Register dest);
 
   void saveInterpreterPCReg();
   void restoreInterpreterPCReg();
 
   // Subtracts |script->nslots() * sizeof(Value)| from reg.
   void subtractScriptSlotsSize(Register reg, Register scratch);
+
+  // Loads the resume entries of the current BaselineScript* in dest
+  void loadBaselineScriptResumeEntries(Register dest, Register scratch);
 
   // Jump to the script's resume entry indicated by resumeIndex.
   void jumpToResumeEntry(Register resumeIndex, Register scratch1,
@@ -200,6 +207,8 @@ class BaselineCodeGen {
 
   // Handles JSOp::Lt, JSOp::Gt, and friends
   [[nodiscard]] bool emitCompare();
+
+  [[nodiscard]] bool emitConstantStrictEq(JSOp op);
 
   // Handles JSOp::NewObject and JSOp::NewInit.
   [[nodiscard]] bool emitNewObject();
@@ -308,6 +317,8 @@ class BaselineCompilerHandler {
 
   bool compilingOffThread_ = false;
 
+  bool needsEnvAllocSite_ = false;
+
  public:
   using FrameInfoT = CompilerFrameInfo;
 
@@ -368,7 +379,7 @@ class BaselineCompilerHandler {
 
   bool canHaveFixedSlots() const { return script()->nfixed() != 0; }
 
-  JSObject* globalLexicalEnvironment() const {
+  JSObject* maybeGlobalLexicalEnvironment() const {
     return globalLexicalEnvironment_;
   }
   JSObject* globalThis() const { return globalThis_; }
@@ -384,6 +395,16 @@ class BaselineCompilerHandler {
 
   bool compilingOffThread() const { return compilingOffThread_; }
   void setCompilingOffThread() { compilingOffThread_ = true; }
+
+  bool addEnvAllocSite() {
+    needsEnvAllocSite_ = true;
+    return true;
+  }
+
+  bool realmIndependentJitcode() const {
+    return JS::Prefs::experimental_self_hosted_cache() &&
+           script()->selfHosted();
+  }
 };
 
 using BaselineCompilerCodeGen = BaselineCodeGen<BaselineCompilerHandler>;
@@ -512,6 +533,11 @@ class BaselineInterpreterHandler {
   bool mustIncludeSlotsInStackCheck() const { return true; }
 
   bool canHaveFixedSlots() const { return true; }
+  JSObject* maybeGlobalLexicalEnvironment() const { return nullptr; }
+
+  bool addEnvAllocSite() { return false; }  // Not supported.
+
+  bool realmIndependentJitcode() const { return true; }
 };
 
 using BaselineInterpreterCodeGen = BaselineCodeGen<BaselineInterpreterHandler>;

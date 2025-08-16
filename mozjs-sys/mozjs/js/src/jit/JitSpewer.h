@@ -17,6 +17,7 @@
 #include "jit/JSONSpewer.h"
 #include "js/Printer.h"
 #include "js/TypeDecls.h"
+#include "wasm/WasmTypeDecls.h"
 
 enum JSValueType : uint8_t;
 
@@ -71,6 +72,10 @@ namespace jit {
   _(MarkLoadsUsedAsPropertyKeys)           \
   /* Output a list of MIR expressions */   \
   _(MIRExpressions)                        \
+  /* Summary info about loop unrolling */  \
+  _(Unroll)                                \
+  /* Detailed info about loop unrolling */ \
+  _(UnrollDetails)                         \
   /* Information about stub folding */     \
   _(StubFolding)                           \
                                            \
@@ -148,7 +153,8 @@ class GraphSpewer {
   JSONSpewer jsonSpewer_;
 
  public:
-  explicit GraphSpewer(TempAllocator* alloc);
+  explicit GraphSpewer(TempAllocator* alloc,
+                       const wasm::CodeMetadata* wasmCodeMeta = nullptr);
 
   bool isSpewing() const { return graph_; }
   void init(MIRGraph* graph, JSScript* function);
@@ -233,7 +239,8 @@ void EnableIonDebugAsyncLogging();
 
 class GraphSpewer {
  public:
-  explicit GraphSpewer(TempAllocator* alloc) {}
+  explicit GraphSpewer(TempAllocator* alloc,
+                       const wasm::CodeMetadata* wasmCodeMeta = nullptr) {}
 
   bool isSpewing() { return false; }
   void init(MIRGraph* graph, JSScript* function) {}

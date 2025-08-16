@@ -155,20 +155,6 @@ bool RegExpObject::isOriginalFlagGetter(JSNative native, RegExpFlags* mask) {
   return false;
 }
 
-static bool FinishRegExpClassInit(JSContext* cx, JS::HandleObject ctor,
-                                  JS::HandleObject proto) {
-#ifdef DEBUG
-  // Assert RegExp.prototype.exec is usually stored in a dynamic slot. The
-  // optimization in InlinableNativeIRGenerator::tryAttachIntrinsicRegExpExec
-  // depends on this.
-  Handle<NativeObject*> nproto = proto.as<NativeObject>();
-  auto prop = nproto->lookupPure(cx->names().exec);
-  MOZ_ASSERT(prop->isDataProperty());
-  MOZ_ASSERT(!nproto->isFixedSlot(prop->slot()));
-#endif
-  return true;
-}
-
 static const ClassSpec RegExpObjectClassSpec = {
     GenericCreateConstructor<js::regexp_construct, 2, gc::AllocKind::FUNCTION>,
     GenericCreatePrototype<RegExpObject>,
@@ -176,7 +162,7 @@ static const ClassSpec RegExpObjectClassSpec = {
     js::regexp_static_props,
     js::regexp_methods,
     js::regexp_properties,
-    FinishRegExpClassInit,
+    GenericFinishInit<WhichHasFuseProperty::Proto>,
 };
 
 const JSClass RegExpObject::class_ = {
@@ -285,7 +271,14 @@ SharedShape* RegExpObject::assignInitialShape(JSContext* cx,
     return nullptr;
   }
 
-  return self->sharedShape();
+  // Cache the initial RegExpObject shape that has RegExp.prototype as proto in
+  // the global object.
+  SharedShape* shape = self->sharedShape();
+  JSObject* proto = cx->global()->maybeGetPrototype(JSProto_RegExp);
+  if (proto && shape->proto() == TaggedProto(proto)) {
+    cx->global()->setRegExpShapeWithDefaultProto(shape);
+  }
+  return shape;
 }
 
 void RegExpObject::initIgnoringLastIndex(JSAtom* source, RegExpFlags flags) {
@@ -1000,9 +993,7 @@ size_t RegExpShared::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
 
 /* RegExpRealm */
 
-RegExpRealm::RegExpRealm()
-    : optimizableRegExpPrototypeShape_(nullptr),
-      optimizableRegExpInstanceShape_(nullptr) {
+RegExpRealm::RegExpRealm() {
   for (auto& shape : matchResultShapes_) {
     shape = nullptr;
   }
@@ -1086,12 +1077,6 @@ void RegExpRealm::trace(JSTracer* trc) {
   for (auto& shape : matchResultShapes_) {
     TraceNullableEdge(trc, &shape, "RegExpRealm::matchResultShapes_");
   }
-
-  TraceNullableEdge(trc, &optimizableRegExpPrototypeShape_,
-                    "RegExpRealm::optimizableRegExpPrototypeShape_");
-
-  TraceNullableEdge(trc, &optimizableRegExpInstanceShape_,
-                    "RegExpRealm::optimizableRegExpInstanceShape_");
 }
 
 RegExpShared* RegExpZone::get(JSContext* cx, Handle<JSAtom*> source,

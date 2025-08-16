@@ -142,7 +142,6 @@ JSRuntime::JSRuntime(JSRuntime* parentRuntime)
       afterWaitCallback(nullptr),
       offthreadBaselineCompilationEnabled_(false),
       offthreadIonCompilationEnabled_(true),
-      parallelParsingEnabled_(true),
       autoWritableJitCodeActive_(false),
       oomCallback(nullptr),
       debuggerMallocSizeOf(ReturnZeroSize),
@@ -857,4 +856,10 @@ void js::HasSeenObjectEmulateUndefinedFuse::popFuse(JSContext* cx) {
   js::InvalidatingRuntimeFuse::popFuse(cx);
   MOZ_ASSERT(cx->global());
   cx->runtime()->setUseCounter(cx->global(), JSUseCounter::ISHTMLDDA_FUSE);
+}
+
+void js::HasSeenArrayExceedsInt32LengthFuse::popFuse(JSContext* cx) {
+  if (intact()) {
+    js::InvalidatingRuntimeFuse::popFuse(cx);
+  }
 }

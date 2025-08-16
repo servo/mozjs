@@ -683,8 +683,6 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
     return numRealmsWithAllocMetadataBuilder_ > 0;
   }
 
-  void prepareForCompacting();
-
   void traceRootsInMajorGC(JSTracer* trc);
 
   void sweepAfterMinorGC(JSTracer* trc);
@@ -731,7 +729,9 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   void traceWeakCCWEdges(JSTracer* trc);
   static void fixupAllCrossCompartmentWrappersAfterMovingGC(JSTracer* trc);
 
+  void prepareForMovingGC();
   void fixupAfterMovingGC();
+
   void fixupScriptMapsAfterMovingGC(JSTracer* trc);
 
   void setNurseryAllocFlags(bool allocObjects, bool allocStrings,
@@ -873,8 +873,8 @@ class Zone : public js::ZoneAllocator, public js::gc::GraphNodeBase<JS::Zone> {
   js::gc::AllocSite* tenuringAllocSite() {
     return &pretenuring.tenuringAllocSite;
   }
-  uint32_t nurseryAllocCount(JS::TraceKind kind) const {
-    return pretenuring.nurseryAllocCount(kind);
+  uint32_t nurseryPromotedCount(JS::TraceKind kind) const {
+    return pretenuring.nurseryPromotedCount(kind);
   }
 
 #ifdef JSGC_HASH_TABLE_CHECKS

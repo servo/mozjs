@@ -61,7 +61,7 @@ index 804b9a375..87ccc508d 100755
 -
 -option(
 -    env="USE_LIBZ_RS",
--    default=milestone.is_nightly,
+-    default=milestone.is_early_beta_or_earlier,
 -    help="Use libz-rs-sys instead of zlib",
 -    when=toolkit & ~with_system_zlib_option,
 -)

@@ -252,7 +252,7 @@ class TenuredCell : public Cell {
   // The return value indicates if the cell went from unmarked to marked.
   MOZ_ALWAYS_INLINE bool markIfUnmarked(
       MarkColor color = MarkColor::Black) const;
-  MOZ_ALWAYS_INLINE bool markIfUnmarkedAtomic(MarkColor color) const;
+  MOZ_ALWAYS_INLINE bool markIfUnmarkedThreadSafe(MarkColor color) const;
   MOZ_ALWAYS_INLINE void markBlack() const;
   MOZ_ALWAYS_INLINE void markBlackAtomic() const;
   MOZ_ALWAYS_INLINE void copyMarkBitsFrom(const TenuredCell* src);
@@ -507,9 +507,20 @@ MOZ_ALWAYS_INLINE void ReadBarrierImpl(Cell* thing) {
   }
 }
 
+#ifdef DEBUG
+static bool PreWriteBarrierAllowed() {
+  JS::GCContext* gcx = MaybeGetGCContext();
+  if (!gcx || !gcx->isPreWriteBarrierAllowed()) {
+    return false;
+  }
+
+  return gcx->onMainThread() || gcx->gcUse() == gc::GCUse::Sweeping ||
+         gcx->gcUse() == gc::GCUse::Finalizing;
+}
+#endif
+
 MOZ_ALWAYS_INLINE void PreWriteBarrierImpl(TenuredCell* thing) {
-  MOZ_ASSERT(CurrentThreadIsMainThread() || CurrentThreadIsGCSweeping() ||
-             CurrentThreadIsGCFinalizing());
+  MOZ_ASSERT(PreWriteBarrierAllowed());
   MOZ_ASSERT(thing);
 
   // Barriers can be triggered on the main thread while collecting, but are
@@ -885,22 +896,21 @@ class alignas(gc::CellAlignBytes) SmallBuffer : public TenuredCell {
   void setNurseryOwned(bool value);
 
   static const JS::TraceKind TraceKind = JS::TraceKind::SmallBuffer;
-  void finalize(JS::GCContext* gcx) {
-    // Sized allocations don't have finalizers.
-  }
   void traceChildren(JSTracer* trc) {
     // TODO: Generic tracing not supported for sized allocations.
     // GCRuntime::checkForCompartmentMismatches ends up calling this because it
     // iterates all GC cells.
   }
+
+  size_t allocBytes() const;
   void* data() { return this + 1; }
 };
 template <size_t bytes>
 struct SmallBufferN : public SmallBuffer {
-  uint8_t data[bytes - sizeof(SmallBuffer)];
+  uint8_t data[bytes];
 };
-static_assert(sizeof(SmallBufferN<16>) == 16);
-static_assert(sizeof(SmallBufferN<128>) == 128);
+static_assert(sizeof(SmallBufferN<16>) == 16 + sizeof(SmallBuffer));
+static_assert(sizeof(SmallBufferN<128>) == 128 + sizeof(SmallBuffer));
 
 } /* namespace gc */
 } /* namespace js */

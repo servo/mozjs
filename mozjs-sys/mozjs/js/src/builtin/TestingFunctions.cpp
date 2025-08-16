@@ -65,6 +65,7 @@
 #include "jit/BaselineJIT.h"
 #include "jit/CacheIRSpewer.h"
 #include "jit/Disassemble.h"
+#include "jit/FlushICache.h"
 #include "jit/InlinableNatives.h"
 #include "jit/Invalidation.h"
 #include "jit/Ion.h"
@@ -1080,6 +1081,21 @@ static bool WasmCompileMode(JSContext* cx, unsigned argc, Value* vp) {
     return true;
   }
   return false;
+}
+
+static bool WasmLazyTieringEnabled(JSContext* cx, unsigned argc, Value* vp) {
+  // Note: ensure this function stays in sync with `PlatformCanTier()`.
+  CallArgs args = CallArgsFromVp(argc, vp);
+  bool baseline = wasm::BaselineAvailable(cx);
+  bool ion = wasm::IonAvailable(cx);
+
+  bool enabled =
+      baseline && ion && JS::Prefs::wasm_lazy_tiering() &&
+      (JS::Prefs::wasm_lazy_tiering_synchronous() ||
+       (CanUseExtraThreads() && jit::CanFlushExecutionContextForAllThreads()));
+
+  args.rval().setBoolean(enabled);
+  return true;
 }
 
 static bool WasmBaselineDisabledByFeatures(JSContext* cx, unsigned argc,
@@ -2681,18 +2697,27 @@ static bool GCPreserveCode(JSContext* cx, unsigned argc, Value* vp) {
 #ifdef JS_GC_ZEAL
 
 static bool ParseGCZealMode(JSContext* cx, const CallArgs& args,
-                            uint8_t* zeal) {
-  uint32_t value;
-  if (!ToUint32(cx, args.get(0), &value)) {
+                            js::gc::GCRuntime::ZealSettings* zeal) {
+  JSString* modestr = ToString(cx, args.get(0));
+  if (!modestr) {
     return false;
   }
 
-  if (value > uint32_t(gc::ZealMode::Limit)) {
-    JS_ReportErrorASCII(cx, "gczeal argument out of range");
+  UniqueChars mode = EncodeLatin1(cx, modestr);
+  if (!mode) {
+    return false;
+  }
+  bool invalid;
+  if (!cx->runtime()->gc.parseZeal(mode.get(), strlen(mode.get()), zeal,
+                                   &invalid)) {
+    js::ReportOutOfMemory(cx);
+    return false;
+  }
+  if (invalid) {
+    JS_ReportErrorASCII(cx, "invalid gczeal argument");
     return false;
   }
 
-  *zeal = static_cast<uint8_t>(value);
   return true;
 }
 
@@ -2712,19 +2737,24 @@ static bool GCZeal(JSContext* cx, unsigned argc, Value* vp) {
     return true;
   }
 
-  uint8_t zeal;
+  js::gc::GCRuntime::ZealSettings zeal;
   if (!ParseGCZealMode(cx, args, &zeal)) {
     return false;
   }
 
-  uint32_t frequency = JS::ShellDefaultGCZealFrequency;
+  Maybe<uint32_t> forceFrequency;
   if (args.length() >= 2) {
+    uint32_t frequency;
     if (!ToUint32(cx, args.get(1), &frequency)) {
       return false;
     }
+    forceFrequency.emplace(frequency);
   }
 
-  JS::SetGCZeal(cx, zeal, frequency);
+  for (auto [mode, frequency] : zeal) {
+    JS::SetGCZeal(cx, mode, forceFrequency.valueOr(frequency));
+  }
+
   args.rval().setUndefined();
   return true;
 }
@@ -2738,12 +2768,15 @@ static bool UnsetGCZeal(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  uint8_t zeal;
+  js::gc::GCRuntime::ZealSettings zeal;
   if (!ParseGCZealMode(cx, args, &zeal)) {
     return false;
   }
 
-  JS::UnsetGCZeal(cx, zeal);
+  for (auto [mode, _frequency] : zeal) {
+    JS::UnsetGCZeal(cx, mode);
+  }
+
   args.rval().setUndefined();
   return true;
 }
@@ -2814,13 +2847,15 @@ static bool VerifyPreBarriers(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 static bool VerifyPostBarriers(JSContext* cx, unsigned argc, Value* vp) {
-  // This is a no-op since the post barrier verifier was removed.
   CallArgs args = CallArgsFromVp(argc, vp);
+
   if (args.length()) {
     RootedObject callee(cx, &args.callee());
     ReportUsageErrorASCII(cx, callee, "Too many arguments");
     return false;
   }
+
+  gc::VerifyBarriers(cx->runtime(), gc::PostBarrierVerifier);
   args.rval().setUndefined();
   return true;
 }
@@ -3945,6 +3980,7 @@ static bool NewDependentString(JSContext* cx, unsigned argc, Value* vp) {
   mozilla::Maybe<uint64_t> indexEnd;
   gc::Heap heap = gc::Heap::Default;
   mozilla::Maybe<gc::Heap> requiredHeap;
+  bool suppressContraction = false;
 
   if (!ToIndex(cx, args.get(1), &indexStart)) {
     return false;
@@ -3975,6 +4011,10 @@ static bool NewDependentString(JSContext* cx, unsigned argc, Value* vp) {
                                          : gc::Heap::Default);
       heap = *requiredHeap;
     }
+    if (!JS_GetProperty(cx, optObj, "suppress-contraction", &v)) {
+      return false;
+    }
+    suppressContraction = ToBoolean(v);
   }
 
   if (indexEnd.isNothing()) {
@@ -3990,8 +4030,11 @@ static bool NewDependentString(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
   Rooted<JSString*> result(
-      cx, js::NewDependentString(cx, src, indexStart, *indexEnd - indexStart,
-                                 heap));
+      cx, js::NewDependentStringForTesting(
+              cx, src, indexStart, *indexEnd - indexStart,
+              suppressContraction ? JS::ContractBaseChain::AllowLong
+                                  : JS::ContractBaseChain::Contract,
+              heap));
   if (!result) {
     return false;
   }
@@ -8835,6 +8878,21 @@ static bool GetFuseState(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  fuseObj = JS_NewPlainObject(cx);
+  if (!fuseObj) {
+    return false;
+  }
+  intactValue.setBoolean(
+      cx->runtime()->hasSeenArrayExceedsInt32LengthFuse.ref().intact());
+  if (!JS_DefineProperty(cx, fuseObj, "intact", intactValue,
+                         JSPROP_ENUMERATE)) {
+    return false;
+  }
+  if (!JS_DefineProperty(cx, returnObj, "hasSeenArrayExceedsInt32LengthFuse",
+                         fuseObj, JSPROP_ENUMERATE)) {
+    return false;
+  }
+
   args.rval().setObject(*returnObj);
   return true;
 }
@@ -9627,6 +9685,35 @@ static bool HadOutOfMemory(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool WaitForDone(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  if (args.length() != 1) {
+    JS_ReportErrorASCII(cx, "The function takes exactly one argument.");
+    return false;
+  }
+
+  if (!args[0].isObject()) {
+    JS_ReportErrorASCII(cx, "The first argument should be an object.");
+    return false;
+  }
+
+  RootedObject obj(cx, &args[0].toObject());
+  RootedValue val(cx);
+  if (!JS_GetProperty(cx, obj, "done", &val)) {
+    return false;
+  }
+
+  args.rval().setUndefined();
+
+  while (!val.isBoolean() || !val.toBoolean()) {
+    js::RunJobs(cx);
+    if (!JS_GetProperty(cx, obj, "done", &val)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // clang-format off
 static const JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("gc", ::GC, 0, 0,
@@ -9803,7 +9890,9 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "     tenured.\n"
 "  \n"
 "   - maybeExternal: create an external string, unless the data fits within an\n"
-"     inline string. Inline strings may be nursery-allocated."),
+"     inline string. Inline strings may be nursery-allocated.\n"
+"  \n"
+"   - capacity: create an extensible string with the given capacity"),
 
     JS_FN_HELP("newDependentString", NewDependentString, 2, 0,
 "newDependentString(str, indexStart[, indexEnd] [, options])",
@@ -9812,7 +9901,9 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "  control the heap the string object is allocated into:\n"
 "  \n"
 "   - tenured: if true, allocate in the tenured heap or throw. If false,\n"
-"     allocate in the nursery or throw."),
+"     allocate in the nursery or throw.\n"
+"   - suppress-contraction: prevent the optimization of using a base's base rather\n"
+"     than creating a chain of dependent string bases."),
 
     JS_FN_HELP("ensureLinearString", EnsureLinearString, 1, 0,
 "ensureLinearString(str)",
@@ -9939,8 +10030,8 @@ gc::ZealModeHelpText),
 
     JS_FN_HELP("unsetgczeal", UnsetGCZeal, 2, 0,
 "unsetgczeal(mode)",
-"  Turn off a single zeal mode set with gczeal() and don't finish any ongoing\n"
-"  collection that may be happening."),
+"  Turn off the mode or modes given that were set with gczeal() or JS_GC_ZEAL\n"
+"  and don't finish any ongoing collection that may be happening."),
 
     JS_FN_HELP("schedulegc", ScheduleGC, 1, 0,
 "schedulegc([num])",
@@ -9957,7 +10048,7 @@ gc::ZealModeHelpText),
 
     JS_FN_HELP("verifypostbarriers", VerifyPostBarriers, 0, 0,
 "verifypostbarriers()",
-"  Does nothing (the post-write barrier verifier has been remove)."),
+"  Enable or disable the post-write barrier verifier."),
 
     JS_FN_HELP("currentgc", CurrentGC, 0, 0,
 "currentgc()",
@@ -10188,6 +10279,11 @@ JS_FOR_WASM_FEATURES(WASM_FEATURE)
 "  'baseline+ion', or 'none'.  A compiler is available if it is present in the\n"
 "  executable and not disabled by switches or runtime conditions.  At most one\n"
 "  baseline and one optimizing compiler can be available."),
+
+    JS_FN_HELP("wasmLazyTieringEnabled", WasmLazyTieringEnabled, 0, 0,
+"wasmLazyTieringEnabled()",
+"  Returns a boolean indicating whether compilation will be performed\n"
+"  using lazy tiering."),
 
     JS_FN_HELP("wasmBaselineDisabledByFeatures", WasmBaselineDisabledByFeatures, 0, 0,
 "wasmBaselineDisabledByFeatures()",
@@ -10735,6 +10831,10 @@ JS_FN_HELP("waitForDelazificationOf", WaitForDelazificationOf, 1, 0,
 "waitForDelazificationOf(fun)",
 "  Block main thread execution until the function is made available in the\n"
 "  shared stencils. If this function isn't sharing stencils, return immediately."),
+
+JS_FN_HELP("waitForDone", WaitForDone, 1, 0,
+"waitForDone(obj)",
+"  Loop calling `RunJobs` until the `done` value of `obj` is true"),
 
 JS_FN_HELP("getInnerMostEnvironmentObject", GetInnerMostEnvironmentObject, 0, 0,
 "getInnerMostEnvironmentObject()",
