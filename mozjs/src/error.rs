@@ -52,7 +52,9 @@ unsafe extern "C" fn get_error_message(
 /// passed back to the get_error_message callback.
 /// c_uint is u32, so this cast is safe, as is casting to/from i32 from there.
 unsafe fn throw_js_error(cx: *mut JSContext, error: &str, error_number: u32) {
-    let error = CString::new(error).unwrap();
+    let error = CString::new(error)
+        .or_else(|_| CString::new(error.replace("\0", "\\u0000")))
+        .unwrap();
     JS_ReportErrorNumberUTF8(
         cx,
         Some(get_error_message),
