@@ -11,10 +11,14 @@ edition.workspace = true
 doctest = false
 
 [features]
-debugmozjs = ['mozjs_sys/debugmozjs']
-jitspew = ['mozjs_sys/jitspew']
-profilemozjs = ['mozjs_sys/profilemozjs']
-crown = ['mozjs_sys/crown']
+default = ["libz-sys"]
+debugmozjs = ["mozjs_sys/debugmozjs"]
+profilemozjs = ["mozjs_sys/profilemozjs"]
+jitspew = ["mozjs_sys/jitspew"]
+libz-sys = ["mozjs_sys/libz-sys"]
+libz-rs = ["mozjs_sys/libz-rs"]
+crown = ["mozjs_sys/crown"]
+
 
 [dependencies]
 encoding_rs = "0.8.35"

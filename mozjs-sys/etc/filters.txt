@@ -34,7 +34,12 @@
 - /testing/mozbase/rust
 - /third_party/rust
 - /Cargo.toml
-- /modules/zlib
+
+# Keep zlib headers for libz-rs-sys
++ modules/zlib/
++ modules/zlib/zlib.h
++ modules/zlib/zconf.h
+- modules/zlib/*
 
 # Remove unused python dependency that also causes problems with case-sensitive filesystems.
 - /third_party/python/Jinja2

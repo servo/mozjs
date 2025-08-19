@@ -890,7 +890,23 @@ check_prog(
     validate=validate_strip,
 )
 
-set_config("USE_ZLIB_RS", True)
+option(
+    "--enable-libz-rs",
+    help="Use libz-rs instead of system libz",
+)
+
+@depends("--enable-libz-rs")
+def use_libz_rs(enabled):
+    return enabled
+
+@depends(use_libz_rs)
+def use_system_zlib(libz_rs):
+    return not libz_rs
+
+pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_system_zlib)
+
+set_config("MOZ_SYSTEM_ZLIB", True, when=use_system_zlib)
+set_config("USE_LIBZ_RS", True, when=use_libz_rs)
 
 with only_when(cross_compiling):
     option(
