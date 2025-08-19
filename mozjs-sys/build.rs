@@ -386,13 +386,15 @@ fn link_static_lib_binaries(build_dir: &Path) {
         println!("cargo:rustc-link-lib=user32");
         println!("cargo:rustc-link-lib=Dbghelp");
         println!("cargo:rustc-link-lib=advapi32");
-        if target.contains("gnu") {
-            println!("cargo:rustc-link-lib=stdc++");
-        }
+    }
+    if let Some(cxxstdlib) = env::var("CXXSTDLIB").ok() {
+        println!("cargo:rustc-link-lib={cxxstdlib}");
     } else if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         println!("cargo:rustc-link-lib=c++");
-    } else {
+    } else if target.contains("windows") && target.contains("gnu") {
         println!("cargo:rustc-link-lib=stdc++");
+    } else if !target.contains("windows") {
+        println!("cargo:rustc-link-lib=stdc++")
     }
 }
 
