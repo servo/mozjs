@@ -247,9 +247,10 @@ class MOZ_STACK_CLASS WarpBuilder : public WarpBuilderShared {
 
   [[nodiscard]] bool buildEnvironmentChain();
   MInstruction* buildNamedLambdaEnv(MDefinition* callee, MDefinition* env,
-                                    NamedLambdaObject* templateObj);
+                                    NamedLambdaObject* templateObj,
+                                    gc::Heap initialHeap);
   MInstruction* buildCallObject(MDefinition* callee, MDefinition* env,
-                                CallObject* templateObj);
+                                CallObject* templateObj, gc::Heap initialHeap);
   MInstruction* buildLoadSlot(MDefinition* obj, uint32_t numFixedSlots,
                               uint32_t slot);
 
@@ -259,6 +260,7 @@ class MOZ_STACK_CLASS WarpBuilder : public WarpBuilderShared {
   [[nodiscard]] bool buildUnaryOp(BytecodeLocation loc);
   [[nodiscard]] bool buildBinaryOp(BytecodeLocation loc);
   [[nodiscard]] bool buildCompareOp(BytecodeLocation loc);
+  [[nodiscard]] bool buildStrictConstantEqOp(BytecodeLocation loc, JSOp op);
   [[nodiscard]] bool buildTestOp(BytecodeLocation loc);
   [[nodiscard]] bool buildCallOp(BytecodeLocation loc);
 

@@ -183,9 +183,8 @@ void wasm::EmitWasmPreBarrierGuard(MacroAssembler& masm, Register instance,
 
   // Emit metadata for a potential null access when reading the previous value.
   if (trapSiteDesc) {
-    masm.append(
-        wasm::Trap::NullPointerDereference,
-        wasm::TrapSite(TrapMachineInsnForLoadWord(), fco, *trapSiteDesc));
+    masm.append(wasm::Trap::NullPointerDereference,
+                TrapMachineInsnForLoadWord(), fco.get(), *trapSiteDesc);
   }
 }
 
@@ -270,6 +269,16 @@ void wasm::EmitWasmPostBarrierGuard(MacroAssembler& masm,
   // If the pointer being stored is to a tenured object, no barrier.
   masm.branchWasmAnyRefIsNurseryCell(false, setValue, otherScratch,
                                      skipBarrier);
+}
+
+void wasm::CheckWholeCellLastElementCache(MacroAssembler& masm,
+                                          Register instance, Register object,
+                                          Register temp, Label* skipBarrier) {
+  masm.loadPtr(
+      Address(instance,
+              wasm::Instance::offsetOfAddressOfLastBufferedWholeCell()),
+      temp);
+  masm.branchPtr(Assembler::Equal, Address(temp, 0), object, skipBarrier);
 }
 
 #ifdef DEBUG

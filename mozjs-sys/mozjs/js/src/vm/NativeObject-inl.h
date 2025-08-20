@@ -237,7 +237,7 @@ inline bool NativeObject::initDenseElementsFromRange(JSContext* cx, Iter begin,
   MOZ_ASSERT(slot == count);
 
   getElementsHeader()->initializedLength = count;
-  as<ArrayObject>().setLength(count);
+  as<ArrayObject>().setLengthToInitializedLength();
   return true;
 }
 
@@ -457,7 +457,7 @@ inline DenseElementResult NativeObject::setOrExtendDenseElements(
   }
 
   if (is<ArrayObject>() && start + count >= as<ArrayObject>().length()) {
-    as<ArrayObject>().setLength(start + count);
+    as<ArrayObject>().setLengthToInitializedLength();
   }
 
   copyDenseElements(start, vp, count);
@@ -609,11 +609,8 @@ MOZ_ALWAYS_INLINE bool NativeObject::setShapeAndAddNewSlot(
 inline js::gc::AllocKind NativeObject::allocKindForTenure() const {
   using namespace js::gc;
   AllocKind kind = GetGCObjectFixedSlotsKind(numFixedSlots());
-  MOZ_ASSERT(!IsBackgroundFinalized(kind));
-  if (!CanChangeToBackgroundAllocKind(kind, getClass())) {
-    return kind;
-  }
-  return ForegroundToBackgroundAllocKind(kind);
+  MOZ_ASSERT(!IsFinalizedKind(kind));
+  return GetFinalizedAllocKindForClass(kind, getClass());
 }
 
 inline js::GlobalObject& NativeObject::global() const { return nonCCWGlobal(); }

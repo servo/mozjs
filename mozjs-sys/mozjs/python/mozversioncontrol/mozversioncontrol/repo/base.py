@@ -32,7 +32,7 @@ def get_tool_path(tool: Optional[Union[str, Path]] = None):
     return str(path)
 
 
-class Repository(object):
+class Repository(abc.ABC):
     """A class wrapping utility methods around version control repositories.
 
     This class is abstract and never instantiated. Obtain an instance by
@@ -41,8 +41,6 @@ class Repository(object):
     Clients are recommended to use the object as a context manager. But not
     all methods require this.
     """
-
-    __metaclass__ = abc.ABCMeta
 
     def __init__(self, path: Path, tool: Optional[str] = None):
         self.path = str(path.resolve())
@@ -57,28 +55,57 @@ class Repository(object):
     def __exit__(self, exc_type, exc_value, exc_tb):
         pass
 
-    def _run(self, *args, encoding="utf-8", **runargs):
+    def _repo_root_relative_path(self, path: Union[str, Path]):
+        repo_root = Path(self.path).resolve()
+        absolute_path = Path(path).resolve()
+        try:
+            relative_path = absolute_path.relative_to(repo_root)
+        except ValueError:
+            raise ValueError(
+                f"Path {absolute_path} is outside of repository root {repo_root}."
+            )
+        return relative_path.as_posix()
+
+    def _process_run_args(self, *args, **runargs):
         return_codes = runargs.get("return_codes", [])
+        env = self._env
+        if "env" in runargs:
+            env = env.copy()
+            env.update(runargs["env"])
 
         cmd = (str(self._tool),) + args
-        # Check if we have a tool, either hg or git. If this is a
-        # source release we return src, then we dont have a tool to use.
-        # This caused jstests to fail before fixing, because it uses a
-        # packaged mozjs release source
+        return (cmd, return_codes, env)
+
+    def _run(self, *args, encoding="utf-8", **runargs):
+        # Check if we have a tool, either hg or git. If this is a source release
+        # we return "src", indicating we don't have a tool to use. This caused
+        # jstests to fail before fixing, because it uses a packaged mozjs
+        # release source.
         if not self._tool:
             return "src"
-        else:
-            try:
-                return subprocess.check_output(
-                    cmd,
-                    cwd=self.path,
-                    env=self._env,
-                    encoding=encoding,
-                )
-            except subprocess.CalledProcessError as e:
-                if e.returncode in return_codes:
-                    return ""
-                raise
+
+        (cmd, return_codes, env) = self._process_run_args(*args, **runargs)
+        try:
+            return subprocess.check_output(
+                cmd,
+                cwd=self.path,
+                encoding=encoding,
+                env=env,
+            )
+        except subprocess.CalledProcessError as e:
+            if e.returncode in return_codes:
+                return ""
+            raise
+
+    def _pipefrom(self, *args, encoding="utf-8"):
+        (cmd, _return_codes, env) = self._process_run_args(*args)
+        return subprocess.Popen(
+            cmd,
+            cwd=self.path,
+            encoding=encoding,
+            env=env,
+            stdout=subprocess.PIPE,
+        ).stdout
 
     @property
     def tool_version(self):
@@ -95,18 +122,26 @@ class Repository(object):
 
     @property
     def has_git_cinnabar(self):
-        """True if the repository is using git cinnabar."""
+        """True if git cinnabar is installed."""
         return False
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def name(self):
         """Name of the tool."""
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
     def head_ref(self):
         """Hash of HEAD revision."""
 
-    @abc.abstractproperty
+    @property
+    @abc.abstractmethod
+    def is_cinnabar_repo(self) -> bool:
+        """True if the repo is a git cinnabar repo"""
+
+    @property
+    @abc.abstractmethod
     def base_ref(self):
         """Hash of revision the current topic branch is based on."""
 
@@ -117,7 +152,12 @@ class Repository(object):
         Return None if the hg hash of the base ref could not be calculated.
         """
 
-    @abc.abstractproperty
+    @abc.abstractmethod
+    def base_ref_as_commit(self):
+        """Git hash of revision the current topic branch is based on."""
+
+    @property
+    @abc.abstractmethod
     def branch(self):
         """Current branch or bookmark the checkout has active."""
 
@@ -162,6 +202,10 @@ class Repository(object):
         ``rev`` is a specifier for which changesets to consider for
         changes. The exact meaning depends on the vcs system being used.
         """
+
+    @abc.abstractmethod
+    def diff_stream(self, rev=None, extensions=(), exclude_file=None, context=None):
+        """Return a BufferedReader of a diff."""
 
     @abc.abstractmethod
     def get_outgoing_files(self, diff_filter, upstream):
@@ -295,7 +339,12 @@ class Repository(object):
             )
 
     @abc.abstractmethod
-    def get_branch_nodes(self, head: Optional[str] = None) -> List[str]:
+    def get_commits(
+        self,
+        head: Optional[str] = None,
+        limit: Optional[int] = None,
+        follow: Optional[List[str]] = None,
+    ) -> List[str]:
         """Return a list of commit SHAs for nodes on the current branch."""
 
     @abc.abstractmethod

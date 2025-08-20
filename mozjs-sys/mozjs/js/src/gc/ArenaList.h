@@ -45,6 +45,9 @@ class FreeSpan;
 class TenuredCell;
 class TenuringTracer;
 
+// Whether or not to release empty arenas while sweeping.
+enum class ReleaseEmpty : bool { No = false, Yes = true };
+
 /*
  * Arena lists contain a singly linked lists of arenas.
  *
@@ -146,6 +149,8 @@ class SortedArenaList {
   // Inserts an arena, which has room for |nfree| more things, in its bucket.
   inline void insertAt(Arena* arena, size_t nfree);
 
+  inline bool hasEmptyArenas() const;
+
   // Remove any empty arenas and prepend them to the list pointed to by
   // |destListHeadPtr|.
   inline void extractEmptyTo(Arena** destListHeadPtr);
@@ -236,10 +241,13 @@ class FreeLists {
 };
 
 class ArenaLists {
-  enum class ConcurrentUse : uint32_t { None, BackgroundFinalize };
+  enum class ConcurrentUse : uint32_t {
+    None,
+    BackgroundFinalize,
+    BackgroundFinalizeFinished
+  };
 
-  using ConcurrentUseState =
-      mozilla::Atomic<ConcurrentUse, mozilla::SequentiallyConsistent>;
+  using ConcurrentUseState = mozilla::Atomic<ConcurrentUse, mozilla::Relaxed>;
 
   JS::Zone* zone_;
 
@@ -283,7 +291,6 @@ class ArenaLists {
   inline bool arenaListsAreEmpty() const;
 
   inline bool doneBackgroundFinalize(AllocKind kind) const;
-  inline bool needBackgroundFinalizeWait(AllocKind kind) const;
 
   /* Clear the free lists so we won't try to allocate from swept arenas. */
   inline void clearFreeLists();
@@ -304,10 +311,18 @@ class ArenaLists {
   void queueForegroundObjectsForSweep(JS::GCContext* gcx);
   void queueForegroundThingsForSweep();
 
+  bool foregroundFinalize(JS::GCContext* gcx, AllocKind thingKind,
+                          JS::SliceBudget& sliceBudget,
+                          SortedArenaList& sweepList);
+  template <ReleaseEmpty releaseEmpty>
+  void backgroundFinalize(JS::GCContext* gcx, AllocKind kind,
+                          Arena** empty = nullptr);
+
   Arena* takeSweptEmptyArenas();
 
-  void mergeFinalizedArenas(AllocKind thingKind,
-                            SortedArenaList& finalizedArenas);
+  void mergeBackgroundSweptArenas();
+  void maybeMergeSweptArenas(AllocKind thingKind);
+  void mergeSweptArenas(AllocKind thingKind, ArenaList& sweptArenas);
 
   void moveArenasToCollectingLists();
   void mergeArenasFromCollectingLists();

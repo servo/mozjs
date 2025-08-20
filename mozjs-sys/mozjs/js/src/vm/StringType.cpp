@@ -590,10 +590,17 @@ JSExtensibleString& JSLinearString::makeExtensible(size_t capacity) {
   MOZ_ASSERT(!isAtom());
   MOZ_ASSERT(!isExternal());
   MOZ_ASSERT(capacity >= length());
-  js::RemoveCellMemory(this, allocSize(), js::MemoryUse::StringContents);
+  size_t oldSize = allocSize();
+  js::RemoveCellMemory(this, oldSize, js::MemoryUse::StringContents);
   setLengthAndFlags(length(), flags() | EXTENSIBLE_FLAGS);
   d.s.u3.capacity = capacity;
-  js::AddCellMemory(this, allocSize(), js::MemoryUse::StringContents);
+  size_t newSize = allocSize();
+  js::AddCellMemory(this, newSize, js::MemoryUse::StringContents);
+  MOZ_ASSERT(newSize >= oldSize);
+  if (!isTenured() && newSize > oldSize) {
+    auto& nursery = runtimeFromMainThread()->gc.nursery();
+    nursery.addMallocedBufferBytes(newSize - oldSize);
+  }
   return asExtensible();
 }
 
@@ -1369,6 +1376,21 @@ template JSString* js::ConcatStrings<NoGC>(JSContext* cx, JSString* const& left,
                                            JSString* const& right,
                                            gc::Heap heap);
 
+bool JSLinearString::hasCharsInCollectedNurseryRegion() const {
+  if (isPermanentAtom()) {
+    // Nursery::inCollectedRegion(void*) should only be called on the nursery's
+    // main thread to avoid races. Permanent atoms can be shared with worker
+    // threads but atoms are never allocated in the nursery.
+    MOZ_ASSERT(isTenured());
+    return false;
+  }
+  auto& nursery = runtimeFromMainThread()->gc.nursery();
+  if (isInline()) {
+    return nursery.inCollectedRegion(this);
+  }
+  return nursery.inCollectedRegion(nonInlineCharsRaw());
+}
+
 #if defined(DEBUG) || defined(JS_JITSPEW) || defined(JS_CACHEIR_SPEW)
 void JSDependentString::dumpOwnRepresentationFields(
     js::JSONPrinter& json) const {
@@ -1845,9 +1867,10 @@ void JSExternalString::dumpOwnRepresentationFields(
 }
 #endif /* defined(DEBUG) || defined(JS_JITSPEW) || defined(JS_CACHEIR_SPEW) */
 
-JSLinearString* js::NewDependentString(JSContext* cx, JSString* baseArg,
-                                       size_t start, size_t length,
-                                       gc::Heap heap) {
+template <JS::ContractBaseChain contract>
+static JSLinearString* NewDependentStringHelper(JSContext* cx,
+                                                JSString* baseArg, size_t start,
+                                                size_t length, gc::Heap heap) {
   if (length == 0) {
     return cx->emptyString();
   }
@@ -1891,7 +1914,27 @@ JSLinearString* js::NewDependentString(JSContext* cx, JSString* baseArg,
     return NewInlineString<Latin1Char>(cx, rootedBase, start, length, heap);
   }
 
-  return JSDependentString::new_(cx, base, start, length, heap);
+  return JSDependentString::newImpl_<contract>(cx, base, start, length, heap);
+}
+
+JSLinearString* js::NewDependentString(JSContext* cx, JSString* baseArg,
+                                       size_t start, size_t length,
+                                       gc::Heap heap) {
+  return NewDependentStringHelper<JS::ContractBaseChain::Contract>(
+      cx, baseArg, start, length, heap);
+}
+
+JSLinearString* js::NewDependentStringForTesting(JSContext* cx,
+                                                 JSString* baseArg,
+                                                 size_t start, size_t length,
+                                                 JS::ContractBaseChain contract,
+                                                 gc::Heap heap) {
+  if (contract == JS::ContractBaseChain::Contract) {
+    return NewDependentStringHelper<JS::ContractBaseChain::Contract>(
+        cx, baseArg, start, length, heap);
+  }
+  return NewDependentStringHelper<JS::ContractBaseChain::AllowLong>(
+      cx, baseArg, start, length, heap);
 }
 
 static constexpr bool CanStoreCharsAsLatin1(const JS::Latin1Char* s,
@@ -2518,6 +2561,59 @@ JS_PUBLIC_API JSString* JS::NewStringFromKnownLiveUTF8Buffer(
     JSContext* cx, mozilla::StringBuffer* buffer, size_t length) {
   return ::NewStringFromUTF8Buffer(cx, buffer, length);
 }
+
+template <typename CharT>
+static bool PtrIsWithinRange(const CharT* ptr,
+                             const mozilla::Range<const CharT>& valid) {
+  return size_t(ptr - valid.begin().get()) <= valid.length();
+}
+
+/* static */
+template <typename CharT>
+void JSLinearString::maybeCloneCharsOnPromotionTyped(JSLinearString* str) {
+  MOZ_ASSERT(!InCollectedNurseryRegion(str), "str should have been promoted");
+  MOZ_ASSERT(str->isDependent());
+  JSLinearString* root = str->asDependent().rootBaseDuringMinorGC();
+  if (InCollectedNurseryRegion(root)) {
+    // Can still fixup the original chars pointer.
+    return;
+  }
+
+  // If the base has not moved its chars, continue using them.
+  JS::AutoCheckCannotGC nogc;
+  const CharT* chars = str->chars<CharT>(nogc);
+  if (PtrIsWithinRange(chars, root->range<CharT>(nogc))) {
+    return;
+  }
+
+  // Clone the chars.
+  js::AutoEnterOOMUnsafeRegion oomUnsafe;
+  size_t len = str->length();
+  size_t nbytes = len * sizeof(CharT);
+  CharT* data =
+      str->zone()->pod_arena_malloc<CharT>(js::StringBufferArena, len);
+  if (!data) {
+    oomUnsafe.crash("cloning at-risk dependent string");
+  }
+  js_memcpy(data, chars, nbytes);
+
+  // Overwrite the dest string with a new linear string.
+  new (str) JSLinearString(data, len, false /* hasBuffer */);
+  if (str->isTenured()) {
+    str->zone()->addCellMemory(str, nbytes, js::MemoryUse::StringContents);
+  } else {
+    AutoEnterOOMUnsafeRegion oomUnsafe;
+    JSRuntime* rt = str->runtimeFromAnyThread();
+    if (!rt->gc.nursery().registerMallocedBuffer(data, nbytes)) {
+      oomUnsafe.crash("maybeCloneCharsOnPromotionTyped");
+    }
+  }
+}
+
+template void JSLinearString::maybeCloneCharsOnPromotionTyped<JS::Latin1Char>(
+    JSLinearString* str);
+template void JSLinearString::maybeCloneCharsOnPromotionTyped<char16_t>(
+    JSLinearString* str);
 
 #if defined(DEBUG) || defined(JS_JITSPEW) || defined(JS_CACHEIR_SPEW)
 void JSExtensibleString::dumpOwnRepresentationFields(

@@ -358,11 +358,11 @@ class UpdateVerifyConfigCreator(BaseScript):
         version = GeckoVersion.parse(version)
         branch = None
         if version.version_type == VersionType.BETA:
-            branch = "releases/{}-beta".format(branch_prefix)
+            branch = f"releases/{branch_prefix}-beta"
         elif version.version_type == VersionType.ESR:
-            branch = "releases/{}-esr{}".format(branch_prefix, version.major_number)
+            branch = f"releases/{branch_prefix}-esr{version.major_number}"
         elif version.version_type == VersionType.RELEASE:
-            branch = "releases/{}-release".format(branch_prefix)
+            branch = f"releases/{branch_prefix}-release"
         if not branch:
             raise Exception("Cannot determine branch, cannot continue!")
 
@@ -534,7 +534,7 @@ class UpdateVerifyConfigCreator(BaseScript):
                 f"{self.config['app_name']}/locales/shipped-locales",
                 f"{self.config['app_name']}/config/version.txt",
             )
-            self.log("Adding {} to update paths".format(build.version), level=INFO)
+            self.log(f"Adding {build.version} to update paths", level=INFO)
             self.update_paths[build.version] = {
                 "appVersion": app_version,
                 "locales": getPlatformLocales(shipped_locales, self.config["platform"]),
@@ -605,8 +605,24 @@ class UpdateVerifyConfigCreator(BaseScript):
     def _get_files_from_remote_repo(self, rev, branch, *paths):
         files = []
         for path in paths:
-            url = urljoin(self.config["hg_server"], f"{branch}/raw-file/{rev}/{path}")
-            ret = self._retry_download(url, "WARNING")
+            hg_url = urljoin(
+                self.config["hg_server"], f"{branch}/raw-file/{rev}/{path}"
+            )
+            # we're going to waste time retrying on 404s here...meh
+            # at least we can lower sleep time to minimize that
+            ret = self._retry_download(
+                hg_url, "WARNING", retry_config={"sleeptime": 5, "max_sleeptime": 5}
+            )
+            # yep...errors are not raised! they're indicated by a `None`
+            if ret is None:
+                self.log("couldn't fetch file from hg; trying github")
+                # this won't work for try most likely; that's okay, it's a short term hack!
+                # possible problems:
+                # - we get a non tag rev
+                # - we get rate limited
+                git_url = f"https://raw.githubusercontent.com/mozilla-firefox/firefox/refs/tags/{rev}/{path}"
+                ret = self._retry_download(git_url, "WARNING")
+
             files.append(ret.read().strip().decode("utf-8"))
         return files
 
@@ -655,7 +671,7 @@ class UpdateVerifyConfigCreator(BaseScript):
             locale="%locale%",
             last_linux_bz2_version=self.config.get("last_linux_bz2_version"),
         )
-        to_path = "{}/{}".format(candidates_dir, to_)
+        to_path = f"{candidates_dir}/{to_}"
 
         to_display_version = self.config.get("to_display_version")
         if not to_display_version:
@@ -707,7 +723,7 @@ class UpdateVerifyConfigCreator(BaseScript):
                 locale="%locale%",
                 last_linux_bz2_version=self.config.get("last_linux_bz2_version"),
             )
-            from_path = "{}/{}".format(release_dir, path_)
+            from_path = f"{release_dir}/{path_}"
 
             updater_package = "{}/{}".format(
                 release_dir,

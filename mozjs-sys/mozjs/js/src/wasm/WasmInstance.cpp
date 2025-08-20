@@ -487,8 +487,11 @@ static int32_t PerformWake(Instance* instance, PtrT byteOffset, int32_t count,
   }
 
   MOZ_ASSERT(byteOffset <= SIZE_MAX, "Bounds check is broken");
-  int64_t woken = atomics_notify_impl(instance->sharedMemoryBuffer(memoryIndex),
-                                      size_t(byteOffset), int64_t(count));
+  int64_t woken;
+  if (!atomics_notify_impl(cx, instance->sharedMemoryBuffer(memoryIndex),
+                           size_t(byteOffset), int64_t(count), &woken)) {
+    return -1;
+  }
 
   if (woken > INT32_MAX) {
     ReportTrapError(cx, JSMSG_WASM_WAKE_OVERFLOW);
@@ -1400,30 +1403,29 @@ static int32_t MemDiscardShared(Instance* instance, I byteOffset, I byteLen,
 //
 // AnyRef support.
 
-/* static */ void Instance::postBarrier(Instance* instance, void** location) {
-  MOZ_ASSERT(SASigPostBarrier.failureMode == FailureMode::Infallible);
+/* static */ void Instance::postBarrierEdge(Instance* instance,
+                                            AnyRef* location) {
+  MOZ_ASSERT(SASigPostBarrierEdge.failureMode == FailureMode::Infallible);
   MOZ_ASSERT(location);
-  instance->storeBuffer_->putWasmAnyRef(
-      reinterpret_cast<wasm::AnyRef*>(location));
+  instance->storeBuffer_->putWasmAnyRef(location);
 }
 
-/* static */ void Instance::postBarrierPrecise(Instance* instance,
-                                               void** location, void* prev) {
-  MOZ_ASSERT(SASigPostBarrierPrecise.failureMode == FailureMode::Infallible);
-  postBarrierPreciseWithOffset(instance, location, /*offset=*/0, prev);
-}
-
-/* static */ void Instance::postBarrierPreciseWithOffset(Instance* instance,
-                                                         void** base,
-                                                         uint32_t offset,
-                                                         void* prev) {
-  MOZ_ASSERT(SASigPostBarrierPreciseWithOffset.failureMode ==
+/* static */ void Instance::postBarrierEdgePrecise(Instance* instance,
+                                                   AnyRef* location,
+                                                   void* prev) {
+  MOZ_ASSERT(SASigPostBarrierEdgePrecise.failureMode ==
              FailureMode::Infallible);
-  MOZ_ASSERT(base);
-  wasm::AnyRef* location = (wasm::AnyRef*)(uintptr_t(base) + size_t(offset));
-  wasm::AnyRef next = *location;
+  MOZ_ASSERT(location);
+  AnyRef next = *location;
   InternalBarrierMethods<AnyRef>::postBarrier(
       location, wasm::AnyRef::fromCompiledCode(prev), next);
+}
+
+/* static */ void Instance::postBarrierWholeCell(Instance* instance,
+                                                 gc::Cell* object) {
+  MOZ_ASSERT(SASigPostBarrierWholeCell.failureMode == FailureMode::Infallible);
+  MOZ_ASSERT(object);
+  instance->storeBuffer_->putWholeCell(object);
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -1996,7 +1998,16 @@ void* Instance::stringFromCharCodeArray(Instance* instance, void* arrayArg,
   JSLinearString* string = NewStringCopyN<NoGC, char16_t>(
       cx, (char16_t*)array->data_ + arrayStart, arrayCount);
   if (!string) {
-    return nullptr;
+    // If the first attempt failed, we need to try again with a potential GC.
+    // Acquire a stable version of the array that we can use. This may copy
+    // inline data to the stack, so we avoid doing it unless we must.
+    StableWasmArrayObjectElements<uint16_t> stableElements(cx, array);
+    string = NewStringCopyN<CanGC, char16_t>(
+        cx, (char16_t*)stableElements.elements() + arrayStart, arrayCount);
+    if (!string) {
+      MOZ_ASSERT(cx->isThrowingOutOfMemory());
+      return nullptr;
+    }
   }
   return AnyRef::fromJSString(string).forCompiledCode();
 }
@@ -2266,7 +2277,9 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
       maybeDebug_(std::move(maybeDebug)),
       debugFilter_(nullptr),
       callRefMetrics_(nullptr),
-      maxInitializedGlobalsIndexPlus1_(0) {
+      maxInitializedGlobalsIndexPlus1_(0),
+      addressOfLastBufferedWholeCell_(
+          cx->runtime()->gc.addressOfLastBufferedWholeCell()) {
   for (size_t i = 0; i < N_BASELINE_SCRATCH_WORDS; i++) {
     baselineScratchWords_[i] = 0;
   }
@@ -2302,7 +2315,7 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
                     const WasmTagObjectVector& tagObjs,
                     const DataSegmentVector& dataSegments,
                     const ModuleElemSegmentVector& elemSegments) {
-  MOZ_ASSERT(!!maybeDebug_ == codeMeta().debugEnabled);
+  MOZ_ASSERT(!!maybeDebug_ == code().debugEnabled());
 
   MOZ_ASSERT(funcImports.length() == code().funcImports().length());
   MOZ_ASSERT(tables_.length() == codeMeta().tables.length());
@@ -2333,10 +2346,12 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
 
   // Initialize the hotness counters, if relevant.
   if (code().mode() == CompileMode::LazyTiering) {
+    // Computing the initial hotness counters requires the code section size.
+    const size_t codeSectionSize = codeMeta().codeSectionSize();
     for (uint32_t funcIndex = codeMeta().numFuncImports;
          funcIndex < codeMeta().numFuncs(); funcIndex++) {
       funcDefInstanceData(funcIndex)->hotnessCounter =
-          computeInitialHotnessCounter(funcIndex);
+          computeInitialHotnessCounter(funcIndex, codeSectionSize);
     }
   }
 
@@ -2364,11 +2379,7 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
       if (typeDef.kind() == TypeDefKind::Struct) {
         clasp = WasmStructObject::classForTypeDef(&typeDef);
         allocKind = WasmStructObject::allocKindForTypeDef(&typeDef);
-
-        // Move the alloc kind to background if possible
-        if (CanChangeToBackgroundAllocKind(allocKind, clasp)) {
-          allocKind = ForegroundToBackgroundAllocKind(allocKind);
-        }
+        allocKind = gc::GetFinalizedAllocKindForClass(allocKind, clasp);
       } else {
         clasp = &WasmArrayObject::class_;
         allocKind = gc::AllocKind::INVALID;
@@ -2411,7 +2422,7 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
   }
 
   // Create and initialize alloc sites, they are all the same for Wasm.
-  uint32_t allocSitesCount = code().codeMeta().numAllocSites;
+  uint32_t allocSitesCount = codeTailMeta().numAllocSites;
   if (allocSitesCount > 0) {
     allocSites_ =
         (gc::AllocSite*)js_malloc(sizeof(gc::AllocSite) * allocSitesCount);
@@ -2607,7 +2618,7 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
   pendingExceptionTag_ = nullptr;
 
   // Add debug filtering table.
-  if (codeMeta().debugEnabled) {
+  if (code().debugEnabled()) {
     size_t numFuncs = codeMeta().numFuncs();
     size_t numWords = std::max<size_t>((numFuncs + 31) / 32, 1);
     debugFilter_ = (uint32_t*)js_calloc(numWords, sizeof(uint32_t));
@@ -2618,18 +2629,18 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
   }
 
   if (code().mode() == CompileMode::LazyTiering) {
-    callRefMetrics_ = (CallRefMetrics*)js_calloc(codeMeta().numCallRefMetrics,
-                                                 sizeof(CallRefMetrics));
+    callRefMetrics_ = (CallRefMetrics*)js_calloc(
+        codeTailMeta().numCallRefMetrics, sizeof(CallRefMetrics));
     if (!callRefMetrics_) {
       ReportOutOfMemory(cx);
       return false;
     }
     // A zeroed-out CallRefMetrics should satisfy
     // CallRefMetrics::checkInvariants.
-    MOZ_ASSERT_IF(codeMeta().numCallRefMetrics > 0,
+    MOZ_ASSERT_IF(codeTailMeta().numCallRefMetrics > 0,
                   callRefMetrics_[0].checkInvariants());
   } else {
-    MOZ_ASSERT(codeMeta().numCallRefMetrics == 0);
+    MOZ_ASSERT(codeTailMeta().numCallRefMetrics == 0);
   }
 
   // Add observers if our tables may grow
@@ -2730,10 +2741,13 @@ void Instance::resetTemporaryStackLimit(JSContext* cx) {
   onSuspendableStack_ = false;
 }
 
-int32_t Instance::computeInitialHotnessCounter(uint32_t funcIndex) {
+int32_t Instance::computeInitialHotnessCounter(uint32_t funcIndex,
+                                               size_t codeSectionSize) {
   MOZ_ASSERT(code().mode() == CompileMode::LazyTiering);
-  uint32_t bodyLength = codeMeta().funcDefRange(funcIndex).size;
-  return LazyTieringHeuristics::estimateIonCompilationCost(bodyLength);
+  MOZ_ASSERT(codeSectionSize > 0);
+  uint32_t bodyLength = codeTailMeta().funcDefRange(funcIndex).size;
+  return LazyTieringHeuristics::estimateIonCompilationCost(bodyLength,
+                                                           codeSectionSize);
 }
 
 void Instance::resetHotnessCounter(uint32_t funcIndex) {
@@ -2757,10 +2771,10 @@ void Instance::submitCallRefHints(uint32_t funcIndex) {
   MOZ_ASSERT(requiredHotnessFraction >= 0.1 - epsilon);
   MOZ_ASSERT(requiredHotnessFraction <= 1.0 + epsilon);
 
-  CallRefMetricsRange range = codeMeta().getFuncDefCallRefs(funcIndex);
+  CallRefMetricsRange range = codeTailMeta().getFuncDefCallRefs(funcIndex);
   for (uint32_t callRefIndex = range.begin;
        callRefIndex < range.begin + range.length; callRefIndex++) {
-    MOZ_RELEASE_ASSERT(callRefIndex < codeMeta().numCallRefMetrics);
+    MOZ_RELEASE_ASSERT(callRefIndex < codeTailMeta().numCallRefMetrics);
 
     // In this loop, for each CallRefMetrics, we create a corresponding
     // CallRefHint.  The CallRefHint is a recommendation of which function(s)
@@ -2863,7 +2877,7 @@ void Instance::submitCallRefHints(uint32_t funcIndex) {
       uint32_t totalTargetBodySize = 0;
       for (size_t i = 0; i < numCandidates; i++) {
         totalTargetBodySize +=
-            codeMeta().funcDefRange(candidates[i].funcIndex).size;
+            codeTailMeta().funcDefRange(candidates[i].funcIndex).size;
       }
       if (totalCount < 2 * totalTargetBodySize) {
         skipReason = "(callsite too cold)";
@@ -2906,10 +2920,10 @@ void Instance::submitCallRefHints(uint32_t funcIndex) {
     if (!skipReason) {
       // Success!
       MOZ_ASSERT(hints.length() > 0);
-      codeMeta().setCallRefHint(callRefIndex, hints);
+      codeTailMeta().setCallRefHint(callRefIndex, hints);
     } else {
       CallRefHint empty;
-      codeMeta().setCallRefHint(callRefIndex, empty);
+      codeTailMeta().setCallRefHint(callRefIndex, empty);
     }
 
 #ifdef JS_JITSPEW
@@ -3029,7 +3043,7 @@ void Instance::tracePrivate(JSTracer* trc) {
   }
 
   if (callRefMetrics_) {
-    for (uint32_t i = 0; i < codeMeta().numCallRefMetrics; i++) {
+    for (uint32_t i = 0; i < codeTailMeta().numCallRefMetrics; i++) {
       CallRefMetrics* metrics = &callRefMetrics_[i];
       MOZ_ASSERT(metrics->checkInvariants());
       for (size_t j = 0; j < CallRefMetrics::NUM_SLOTS; j++) {
@@ -3908,6 +3922,7 @@ JSAtom* Instance::getFuncDisplayAtom(JSContext* cx, uint32_t funcIndex) const {
     ok = codeMetaForAsmJS()->getFuncNameForAsmJS(funcIndex, &name);
   } else {
     ok = codeMeta().getFuncNameForWasm(NameContext::BeforeLocation, funcIndex,
+                                       codeTailMeta().nameSectionPayload.get(),
                                        &name);
   }
   if (!ok) {
@@ -4011,12 +4026,12 @@ JSString* Instance::createDisplayURL(JSContext* cx) {
     }
   }
 
-  if (codeMeta().debugEnabled) {
+  if (code().debugEnabled()) {
     if (!result.append(":")) {
       return nullptr;
     }
 
-    const ModuleHash& hash = codeMeta().debugHash;
+    const ModuleHash& hash = codeTailMeta().debugHash;
     for (unsigned char byte : hash) {
       unsigned char digit1 = byte / 16, digit2 = byte % 16;
       if (!result.append(

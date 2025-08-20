@@ -300,7 +300,7 @@ def retrieveFile(url, file_path: Path):
             StrictFancyURLopener().retrieve,
             kwargs=dict(url=url, filename=str(file_path)),
         )
-    except IOError:
+    except OSError:
         log.error("Error downloading %s" % url, exc_info=True)
         success = False
         try:
@@ -326,7 +326,7 @@ def getBouncerProduct(partner, partner_distro):
     )
 
 
-class RepackBase(object):
+class RepackBase:
     def __init__(
         self,
         build: str,

@@ -138,6 +138,25 @@ void MaybePopReturnFuses(JSContext* cx, Handle<NativeObject*> nobj) {
   }
 }
 
+static void MaybePopStringPrototypeSymbolsFuse(JSContext* cx, NativeObject* obj,
+                                               PropertyKey key) {
+  if (!key.isSymbol()) {
+    return;
+  }
+  GlobalObject* global = &obj->global();
+  if (obj != global->maybeGetPrototype(JSProto_String) &&
+      obj != global->maybeGetPrototype(JSProto_Object)) {
+    return;
+  }
+  if (key.toSymbol() == cx->wellKnownSymbols().match ||
+      key.toSymbol() == cx->wellKnownSymbols().replace ||
+      key.toSymbol() == cx->wellKnownSymbols().search ||
+      key.toSymbol() == cx->wellKnownSymbols().split) {
+    obj->realm()->realmFuses.optimizeStringPrototypeSymbolsFuse.popFuse(
+        cx, obj->realm()->realmFuses);
+  }
+}
+
 // static
 bool Watchtower::watchPropertyAddSlow(JSContext* cx, Handle<NativeObject*> obj,
                                       HandleId id) {
@@ -154,6 +173,8 @@ bool Watchtower::watchPropertyAddSlow(JSContext* cx, Handle<NativeObject*> obj,
     if (id == NameToId(cx->names().return_)) {
       MaybePopReturnFuses(cx, obj);
     }
+
+    MaybePopStringPrototypeSymbolsFuse(cx, obj, id);
   }
 
   if (MOZ_UNLIKELY(obj->useWatchtowerTestingLog())) {
@@ -245,6 +266,11 @@ static bool WatchProtoChangeImpl(JSContext* cx, HandleObject obj) {
 
     if (nobj == nobj->global().maybeGetIteratorPrototype()) {
       nobj->realm()->realmFuses.iteratorPrototypeHasObjectProto.popFuse(
+          cx, nobj->realm()->realmFuses);
+    }
+
+    if (nobj == nobj->global().maybeGetPrototype(JSProto_String)) {
+      nobj->realm()->realmFuses.optimizeStringPrototypeSymbolsFuse.popFuse(
           cx, nobj->realm()->realmFuses);
     }
   }
@@ -406,6 +432,72 @@ static void MaybePopPromisePrototypeFuses(JSContext* cx, NativeObject* obj,
   }
 }
 
+static void MaybePopRegExpPrototypeFuses(JSContext* cx, NativeObject* obj,
+                                         jsid id) {
+  if (obj != obj->global().maybeGetPrototype(JSProto_RegExp)) {
+    return;
+  }
+  if (id.isAtom(cx->names().flags) || id.isAtom(cx->names().global) ||
+      id.isAtom(cx->names().hasIndices) || id.isAtom(cx->names().ignoreCase) ||
+      id.isAtom(cx->names().multiline) || id.isAtom(cx->names().sticky) ||
+      id.isAtom(cx->names().unicode) || id.isAtom(cx->names().unicodeSets) ||
+      id.isAtom(cx->names().dotAll) || id.isAtom(cx->names().exec) ||
+      id.isWellKnownSymbol(JS::SymbolCode::match) ||
+      id.isWellKnownSymbol(JS::SymbolCode::matchAll) ||
+      id.isWellKnownSymbol(JS::SymbolCode::replace) ||
+      id.isWellKnownSymbol(JS::SymbolCode::search) ||
+      id.isWellKnownSymbol(JS::SymbolCode::split)) {
+    obj->realm()->realmFuses.optimizeRegExpPrototypeFuse.popFuse(
+        cx, obj->realm()->realmFuses);
+  }
+}
+
+static void MaybePopArrayBufferConstructorFuses(JSContext* cx,
+                                                NativeObject* obj, jsid id) {
+  if (obj != obj->global().maybeGetConstructor(JSProto_ArrayBuffer)) {
+    return;
+  }
+  if (id.isWellKnownSymbol(JS::SymbolCode::species)) {
+    obj->realm()->realmFuses.optimizeArrayBufferSpeciesFuse.popFuse(
+        cx, obj->realm()->realmFuses);
+  }
+}
+
+static void MaybePopArrayBufferPrototypeFuses(JSContext* cx, NativeObject* obj,
+                                              jsid id) {
+  if (obj != obj->global().maybeGetPrototype(JSProto_ArrayBuffer)) {
+    return;
+  }
+  if (id.isAtom(cx->names().constructor)) {
+    obj->realm()->realmFuses.optimizeArrayBufferSpeciesFuse.popFuse(
+        cx, obj->realm()->realmFuses);
+  }
+}
+
+static void MaybePopSharedArrayBufferConstructorFuses(JSContext* cx,
+                                                      NativeObject* obj,
+                                                      jsid id) {
+  if (obj != obj->global().maybeGetConstructor(JSProto_SharedArrayBuffer)) {
+    return;
+  }
+  if (id.isWellKnownSymbol(JS::SymbolCode::species)) {
+    obj->realm()->realmFuses.optimizeSharedArrayBufferSpeciesFuse.popFuse(
+        cx, obj->realm()->realmFuses);
+  }
+}
+
+static void MaybePopSharedArrayBufferPrototypeFuses(JSContext* cx,
+                                                    NativeObject* obj,
+                                                    jsid id) {
+  if (obj != obj->global().maybeGetPrototype(JSProto_SharedArrayBuffer)) {
+    return;
+  }
+  if (id.isAtom(cx->names().constructor)) {
+    obj->realm()->realmFuses.optimizeSharedArrayBufferSpeciesFuse.popFuse(
+        cx, obj->realm()->realmFuses);
+  }
+}
+
 static void MaybePopFuses(JSContext* cx, NativeObject* obj, jsid id) {
   // Handle writes to Array constructor fuse properties.
   MaybePopArrayConstructorFuses(cx, obj, id);
@@ -439,6 +531,21 @@ static void MaybePopFuses(JSContext* cx, NativeObject* obj, jsid id) {
 
   // Handle writes to Promise.prototype fuse properties.
   MaybePopPromisePrototypeFuses(cx, obj, id);
+
+  // Handle writes to RegExp.prototype fuse properties.
+  MaybePopRegExpPrototypeFuses(cx, obj, id);
+
+  // Handle writes to ArrayBuffer constructor fuse properties.
+  MaybePopArrayBufferConstructorFuses(cx, obj, id);
+
+  // Handle writes to ArrayBuffer.prototype fuse properties.
+  MaybePopArrayBufferPrototypeFuses(cx, obj, id);
+
+  // Handle writes to SharedArrayBuffer constructor fuse properties.
+  MaybePopSharedArrayBufferConstructorFuses(cx, obj, id);
+
+  // Handle writes to SharedArrayBuffer.prototype fuse properties.
+  MaybePopSharedArrayBufferPrototypeFuses(cx, obj, id);
 }
 
 // static

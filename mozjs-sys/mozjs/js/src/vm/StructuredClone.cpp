@@ -2915,7 +2915,7 @@ bool JSStructuredCloneReader::readSharedArrayBuffer(StructuredDataType type,
   bool isGrowable = type == SCTAG_GROWABLE_SHARED_ARRAY_BUFFER_OBJECT;
 
   SharedArrayRawBuffer* rawbuf = reinterpret_cast<SharedArrayRawBuffer*>(p);
-  MOZ_RELEASE_ASSERT(isGrowable == rawbuf->isGrowable());
+  MOZ_RELEASE_ASSERT(rawbuf->isWasm() || isGrowable == rawbuf->isGrowableJS());
 
   // There's no guarantee that the receiving agent has enabled shared memory
   // even if the transmitting agent has done so.  Ideally we'd check at the
@@ -3955,8 +3955,6 @@ bool JSStructuredCloneReader::readObjectField(HandleObject obj,
 
 // Perform the whole recursive reading procedure.
 bool JSStructuredCloneReader::read(MutableHandleValue vp, size_t nbytes) {
-  auto startTime = mozilla::TimeStamp::Now();
-
   if (!readHeader()) {
     return false;
   }
@@ -4101,13 +4099,6 @@ bool JSStructuredCloneReader::read(MutableHandleValue vp, size_t nbytes) {
     return false;
   }
 #endif
-
-  JSRuntime* rt = context()->runtime();
-  rt->metrics().DESERIALIZE_BYTES(nbytes);
-  rt->metrics().DESERIALIZE_ITEMS(numItemsRead);
-  mozilla::TimeDuration elapsed = mozilla::TimeStamp::Now() - startTime;
-  rt->metrics().DESERIALIZE_US(elapsed);
-
   return true;
 }
 

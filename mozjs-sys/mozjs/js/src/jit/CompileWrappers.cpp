@@ -120,6 +120,10 @@ bool CompileRuntime::hasSeenObjectEmulateUndefinedFuseIntact() {
   return runtime()->hasSeenObjectEmulateUndefinedFuse.ref().intact();
 }
 
+bool CompileRuntime::hasSeenArrayExceedsInt32LengthFuseIntact() {
+  return runtime()->hasSeenArrayExceedsInt32LengthFuse.ref().intact();
+}
+
 const DOMCallbacks* CompileRuntime::DOMcallbacks() {
   return runtime()->DOMcallbacks;
 }
@@ -178,7 +182,7 @@ void* CompileZone::addressOfNurseryPosition() {
 
 void* CompileZone::addressOfNurseryAllocatedSites() {
   JSRuntime* rt = zone()->runtimeFromAnyThread();
-  return rt->gc.nursery().addressOfNurseryAllocatedSites();
+  return rt->gc.addressOfNurseryAllocatedSites();
 }
 
 bool CompileZone::canNurseryAllocateStrings() {

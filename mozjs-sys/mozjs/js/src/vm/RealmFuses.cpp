@@ -7,6 +7,7 @@
 
 #include "builtin/MapObject.h"
 #include "builtin/Promise.h"
+#include "builtin/RegExp.h"
 #include "builtin/WeakMapObject.h"
 #include "builtin/WeakSetObject.h"
 #include "vm/GlobalObject.h"
@@ -335,32 +336,48 @@ void js::OptimizeArraySpeciesFuse::popFuse(JSContext* cx,
                                JSUseCounter::OPTIMIZE_ARRAY_SPECIES_FUSE);
 }
 
-bool js::OptimizeArraySpeciesFuse::checkInvariant(JSContext* cx) {
-  // Prototype must be Array.prototype.
-  auto* proto = cx->global()->maybeGetArrayPrototype();
+static bool SpeciesFuseCheckInvariant(JSContext* cx, JSProtoKey protoKey,
+                                      PropertyName* selfHostedSpeciesAccessor) {
+  // Prototype must be initialized.
+  auto* proto = cx->global()->maybeGetPrototype<NativeObject>(protoKey);
   if (!proto) {
     // No proto, invariant still holds
     return true;
   }
 
-  auto* ctor = cx->global()->maybeGetConstructor<NativeObject>(JSProto_Array);
+  auto* ctor = cx->global()->maybeGetConstructor<NativeObject>(protoKey);
   MOZ_ASSERT(ctor);
 
-  // Ensure Array.prototype's `constructor` slot is the `Array` constructor.
+  // Ensure the prototype's `constructor` slot is the original constructor.
   if (!ObjectHasDataPropertyValue(proto, NameToId(cx->names().constructor),
                                   ObjectValue(*ctor))) {
     return false;
   }
 
-  // Ensure Array's `@@species` slot is the $ArraySpecies getter.
+  // Ensure constructor's `@@species` slot is the original species getter.
   PropertyKey speciesKey = PropertyKey::Symbol(cx->wellKnownSymbols().species);
-  return ObjectHasGetterFunction(ctor, speciesKey,
-                                 cx->names().dollar_ArraySpecies_);
+  return ObjectHasGetterFunction(ctor, speciesKey, selfHostedSpeciesAccessor);
+}
+
+bool js::OptimizeArraySpeciesFuse::checkInvariant(JSContext* cx) {
+  return SpeciesFuseCheckInvariant(cx, JSProto_Array,
+                                   cx->names().dollar_ArraySpecies_);
+}
+
+bool js::OptimizeArrayBufferSpeciesFuse::checkInvariant(JSContext* cx) {
+  return SpeciesFuseCheckInvariant(cx, JSProto_ArrayBuffer,
+                                   cx->names().dollar_ArrayBufferSpecies_);
+}
+
+bool js::OptimizeSharedArrayBufferSpeciesFuse::checkInvariant(JSContext* cx) {
+  return SpeciesFuseCheckInvariant(
+      cx, JSProto_SharedArrayBuffer,
+      cx->names().dollar_SharedArrayBufferSpecies_);
 }
 
 void js::OptimizePromiseLookupFuse::popFuse(JSContext* cx,
                                             RealmFuses& realmFuses) {
-  InvalidatingRealmFuse::popFuse(cx, realmFuses);
+  RealmFuse::popFuse(cx, realmFuses);
   MOZ_ASSERT(cx->global());
   cx->runtime()->setUseCounter(cx->global(),
                                JSUseCounter::OPTIMIZE_PROMISE_LOOKUP_FUSE);
@@ -398,6 +415,114 @@ bool js::OptimizePromiseLookupFuse::checkInvariant(JSContext* cx) {
   // Ensure Promise's `resolve` slot is the original function.
   if (!ObjectHasDataPropertyFunction(ctor, NameToId(cx->names().resolve),
                                      js::Promise_static_resolve)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool js::OptimizeRegExpPrototypeFuse::checkInvariant(JSContext* cx) {
+  auto* proto = cx->global()->maybeGetPrototype<NativeObject>(JSProto_RegExp);
+  if (!proto) {
+    // No proto, invariant still holds.
+    return true;
+  }
+
+  // Check getters are unchanged.
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().flags),
+                               cx->names().dollar_RegExpFlagsGetter_)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().global),
+                               regexp_global)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().hasIndices),
+                               regexp_hasIndices)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().ignoreCase),
+                               regexp_ignoreCase)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().multiline),
+                               regexp_multiline)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().sticky),
+                               regexp_sticky)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().unicode),
+                               regexp_unicode)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().unicodeSets),
+                               regexp_unicodeSets)) {
+    return false;
+  }
+  if (!ObjectHasGetterFunction(proto, NameToId(cx->names().dotAll),
+                               regexp_dotAll)) {
+    return false;
+  }
+
+  // Check data properties are unchanged.
+  if (!ObjectHasDataPropertyFunction(proto, NameToId(cx->names().exec),
+                                     cx->names().RegExp_prototype_Exec)) {
+    return false;
+  }
+  if (!ObjectHasDataPropertyFunction(
+          proto, PropertyKey::Symbol(cx->wellKnownSymbols().match),
+          cx->names().RegExpMatch)) {
+    return false;
+  }
+  if (!ObjectHasDataPropertyFunction(
+          proto, PropertyKey::Symbol(cx->wellKnownSymbols().matchAll),
+          cx->names().RegExpMatchAll)) {
+    return false;
+  }
+  if (!ObjectHasDataPropertyFunction(
+          proto, PropertyKey::Symbol(cx->wellKnownSymbols().replace),
+          cx->names().RegExpReplace)) {
+    return false;
+  }
+  if (!ObjectHasDataPropertyFunction(
+          proto, PropertyKey::Symbol(cx->wellKnownSymbols().search),
+          cx->names().RegExpSearch)) {
+    return false;
+  }
+  if (!ObjectHasDataPropertyFunction(
+          proto, PropertyKey::Symbol(cx->wellKnownSymbols().split),
+          cx->names().RegExpSplit)) {
+    return false;
+  }
+
+  return true;
+}
+
+bool js::OptimizeStringPrototypeSymbolsFuse::checkInvariant(JSContext* cx) {
+  auto* stringProto =
+      cx->global()->maybeGetPrototype<NativeObject>(JSProto_String);
+  if (!stringProto) {
+    // No proto, invariant still holds.
+    return true;
+  }
+
+  // String.prototype must have Object.prototype as proto.
+  auto* objectProto = &cx->global()->getObjectPrototype().as<NativeObject>();
+  if (stringProto->staticPrototype() != objectProto) {
+    return false;
+  }
+
+  // The objects must not have a @@match, @@replace, @@search, @@split property.
+  auto hasSymbolProp = [&](JS::Symbol* symbol) {
+    PropertyKey key = PropertyKey::Symbol(symbol);
+    return stringProto->containsPure(key) || objectProto->containsPure(key);
+  };
+  if (hasSymbolProp(cx->wellKnownSymbols().match) ||
+      hasSymbolProp(cx->wellKnownSymbols().replace) ||
+      hasSymbolProp(cx->wellKnownSymbols().search) ||
+      hasSymbolProp(cx->wellKnownSymbols().split)) {
     return false;
   }
 

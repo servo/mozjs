@@ -155,7 +155,7 @@ def initialize(topsrcdir, args=()):
     # Status messages from site.py break usages of `./mach environment`.
     # We pass `quiet` only for it to work around this, so that all other
     # commands can still write status messages.
-    if args and args[0] == "environment":
+    if args and (args[0] == "environment" or "--quiet" in args):
         quiet = True
     else:
         quiet = False
@@ -476,9 +476,7 @@ def _create_state_dir():
     if state_dir:
         if not os.path.exists(state_dir):
             print(
-                "Creating global state directory from environment variable: {}".format(
-                    state_dir
-                )
+                f"Creating global state directory from environment variable: {state_dir}"
             )
     else:
         state_dir = os.path.expanduser("~/.mozbuild")
@@ -486,7 +484,7 @@ def _create_state_dir():
             if not os.environ.get("MOZ_AUTOMATION"):
                 print(STATE_DIR_FIRST_RUN.format(state_dir))
 
-            print("Creating default state directory: {}".format(state_dir))
+            print(f"Creating default state directory: {state_dir}")
 
     os.makedirs(state_dir, mode=0o770, exist_ok=True)
     return state_dir

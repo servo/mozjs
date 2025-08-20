@@ -95,13 +95,21 @@ static MOZ_ALWAYS_INLINE void PodCopy(T* aDst, const T* aSrc, size_t aNElem) {
                 "PodCopy requires trivially copyable types");
   MOZ_ASSERT(aDst + aNElem <= aSrc || aSrc + aNElem <= aDst,
              "destination and source must not overlap");
+
+// Linux memcpy for small sizes seems slower than on other
+// platforms. So we use a loop for small sizes there only.
+//
+// See Bug 1967062 for details.
+#if defined(XP_LINUX)
   if (aNElem < 128) {
     for (const T* srcend = aSrc + aNElem; aSrc < srcend; aSrc++, aDst++) {
       *aDst = *aSrc;
     }
-  } else {
-    memcpy(aDst, aSrc, aNElem * sizeof(T));
+    return;
   }
+#endif
+
+  memcpy(aDst, aSrc, aNElem * sizeof(T));
 }
 
 template <typename T>

@@ -89,6 +89,10 @@ void js::gc::SortedArenaList::insertAt(Arena* arena, size_t nfree) {
   }
 }
 
+bool js::gc::SortedArenaList::hasEmptyArenas() const {
+  return !buckets[emptyIndex()].isEmpty();
+}
+
 void js::gc::SortedArenaList::extractEmptyTo(Arena** destListHeadPtr) {
   MOZ_ASSERT(!isConvertedToArenaList);
   MOZ_ASSERT(destListHeadPtr);
@@ -266,11 +270,7 @@ bool js::gc::ArenaLists::arenaListsAreEmpty() const {
 }
 
 bool js::gc::ArenaLists::doneBackgroundFinalize(AllocKind kind) const {
-  return concurrentUse(kind) != ConcurrentUse::BackgroundFinalize;
-}
-
-bool js::gc::ArenaLists::needBackgroundFinalizeWait(AllocKind kind) const {
-  return concurrentUse(kind) == ConcurrentUse::BackgroundFinalize;
+  return concurrentUse(kind) == ConcurrentUse::None;
 }
 
 void js::gc::ArenaLists::clearFreeLists() { freeLists().clear(); }

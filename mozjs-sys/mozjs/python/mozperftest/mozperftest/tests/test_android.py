@@ -6,43 +6,15 @@ import mozunit
 import pytest
 
 from mozperftest.environment import SYSTEM
-from mozperftest.system.android import DeviceError
+from mozperftest.system.android import AndroidSetupError, DeviceError
 from mozperftest.system.android_perf_tuner import PerformanceTuner
-from mozperftest.tests.support import get_running_env, requests_content, temp_file
+from mozperftest.tests.support import (
+    FakeDevice,
+    get_running_env,
+    requests_content,
+    temp_file,
+)
 from mozperftest.utils import silence
-
-
-class FakeDevice:
-    def __init__(self, **args):
-        self.apps = []
-        self._logger = mock.MagicMock()
-        self._have_su = True
-        self._have_android_su = True
-        self._have_root_shell = True
-        self.is_rooted = True
-
-    def clear_logcat(self, *args, **kwargs):
-        return True
-
-    def shell_output(self, *args, **kwargs):
-        return "A Fake Device"
-
-    def shell_bool(self, *args, **kwargs):
-        return True
-
-    def uninstall_app(self, apk_name):
-        return True
-
-    def install_app(self, apk, replace=True):
-        if apk not in self.apps:
-            self.apps.append(apk)
-
-    def install_app_baseline_profile(self, apk, replace=True):
-        if apk not in self.apps:
-            self.apps.append(apk)
-
-    def is_app_installed(self, app_name):
-        return True
 
 
 def get_android_device_layer(layers):
@@ -52,9 +24,11 @@ def get_android_device_layer(layers):
     return None
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.system.android.ADBLoggedDevice", new=FakeDevice)
 def test_android():
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android-install-apk": ["this.apk"],
         "android": True,
@@ -89,6 +63,22 @@ def test_android_with_binary():
 
     android_layer = get_android_device_layer(system.layers)
     assert android_layer.app_name == "org.mozilla.fenix-fake"
+
+
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
+@mock.patch("mozperftest.system.android.ADBLoggedDevice", new=FakeDevice)
+def test_android_with_bad_app():
+    args = {
+        "flavor": "mobile-browser",
+        "android": True,
+        "app": "firefox",
+    }
+
+    mach_cmd, metadata, env = get_running_env(**args)
+    system = env.layers[SYSTEM]
+    with system as android, silence(system):
+        with pytest.raises(AndroidSetupError):
+            android(metadata)
 
 
 @mock.patch("mozperftest.system.android.ADBLoggedDevice")
@@ -156,10 +146,12 @@ def test_android_perf_tuning_all_calls():
         assert device.call_counts > 1
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.system.android_perf_tuner.PerformanceTuner")
 @mock.patch("mozperftest.system.android.ADBLoggedDevice")
 def test_android_with_perftuning(device, tuner):
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android-install-apk": ["this.apk"],
         "android": True,
@@ -182,6 +174,7 @@ def test_android_with_perftuning(device, tuner):
 def test_android_failure():
     # no patching so it'll try for real and fail
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android-install-apk": ["this"],
         "android": True,
@@ -196,6 +189,7 @@ def test_android_failure():
         android(metadata)
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch(
     "mozperftest.system.android.AndroidDevice.custom_apk_exists", new=lambda x: False
 )
@@ -203,6 +197,7 @@ def test_android_failure():
 @mock.patch("mozperftest.system.android.ADBLoggedDevice")
 def test_android_apk_alias(device):
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android-install-apk": ["fenix_nightly_armeabi_v7a"],
         "android": True,
@@ -219,10 +214,12 @@ def test_android_apk_alias(device):
     assert device.mock_calls[2][1][0].endswith("target.apk")
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.utils.requests.get", new=requests_content())
 @mock.patch("mozperftest.system.android.ADBLoggedDevice")
 def test_android_timeout(device):
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android-install-apk": ["gve_nightly_api16"],
         "android": True,
@@ -239,10 +236,12 @@ def test_android_timeout(device):
     assert options["timeout"] == 60
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.utils.requests.get", new=requests_content())
 def test_android_log_adb():
     with temp_file() as log_adb:
         args = {
+            "app": "fenix",
             "flavor": "mobile-browser",
             "android-install-apk": ["gve_nightly_api16"],
             "android": True,
@@ -259,11 +258,13 @@ def test_android_log_adb():
             assert "DEBUG ADBLoggedDevice" in f.read()
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.utils.requests.get", new=requests_content())
 @mock.patch("mozperftest.system.android.ADBLoggedDevice")
 def test_android_log_cat(device):
     with temp_file() as log_cat:
         args = {
+            "app": "fenix",
             "flavor": "mobile-browser",
             "android-install-apk": ["gve_nightly_api16"],
             "android": True,
@@ -287,11 +288,13 @@ def test_android_log_cat(device):
         andro.device.clear_logcat.assert_called()
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.system.android.AndroidDevice.setup", new=mock.MagicMock)
 @mock.patch("mozperftest.system.android.Path")
 @mock.patch("mozperftest.system.android.ADBLoggedDevice", new=FakeDevice)
 def test_android_custom_apk(mozperftest_android_path):
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android": True,
     }
@@ -312,11 +315,13 @@ def test_android_custom_apk(mozperftest_android_path):
     mozperftest_android_path.assert_called_once()
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.system.android.AndroidDevice.setup", new=mock.MagicMock)
 @mock.patch("mozperftest.system.android.Path.exists")
 @mock.patch("mozperftest.system.android.ADBLoggedDevice", new=FakeDevice)
 def test_android_custom_apk_nonexistent(path_exists):
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android": True,
     }
@@ -335,10 +340,12 @@ def test_android_custom_apk_nonexistent(path_exists):
     path_exists.assert_called()
 
 
+@mock.patch("mozperftest.system.VersionProducer", new=mock.MagicMock())
 @mock.patch("mozperftest.system.android.Path")
 @mock.patch("mozperftest.system.android.ADBLoggedDevice", new=FakeDevice)
 def test_android_setup_custom_apk(mozperftest_android_path):
     args = {
+        "app": "fenix",
         "flavor": "mobile-browser",
         "android": True,
     }

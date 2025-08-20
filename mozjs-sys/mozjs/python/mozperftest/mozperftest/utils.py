@@ -30,12 +30,20 @@ MULTI_REVISION_ROOT = f"{API_ROOT}/namespaces"
 MULTI_TASK_ROOT = f"{API_ROOT}/tasks"
 ON_TRY = "MOZ_AUTOMATION" in os.environ
 DOWNLOAD_TIMEOUT = 30
-METRICS_MATCHER = re.compile(r"(perfMetrics\s.*)")
+METRICS_MATCHER = re.compile(r"(perfMetrics.*)")
 PRETTY_APP_NAMES = {
     "org.mozilla.fenix": "fenix",
     "org.mozilla.firefox": "fenix",
     "org.mozilla.geckoview_example": "geckoview",
 }
+
+FIREFOX_MOBILE_APPS = ["fenix", "geckoview", "focus", "refbrow", "fennec"]
+CHROME_MOBILE_APPS = ["chrome-m"]
+MOBILE_APPS = FIREFOX_MOBILE_APPS + CHROME_MOBILE_APPS
+
+FIREFOX_DESKTOP_APPS = ["firefox"]
+CHROME_DESKTOP_APPS = ["chrome"]
+DESKTOP_APPS = FIREFOX_DESKTOP_APPS + CHROME_DESKTOP_APPS
 
 
 class NoPerfMetricsError(Exception):
@@ -79,10 +87,8 @@ class LogProcessor:
                 continue
             self.stdout.write(data.strip("\n") + "\n")
 
-            # Check if a temporary commit wa created
-            match = self.matcher.match(data)
+            match = self.matcher.search(data)
             if match:
-                # Last line found is the revision we want
                 self._match.append(match.group(1))
 
     def flush(self):
@@ -582,7 +588,7 @@ _WPT_URL = "{0}/secrets/v1/secret/project/perftest/gecko/level-{1}/perftest-logi
 _DEFAULT_SERVER = "https://firefox-ci-tc.services.mozilla.com"
 
 
-@functools.lru_cache()
+@functools.lru_cache
 def get_tc_secret(wpt=False):
     """Returns the Taskcluster secret.
 

@@ -43,6 +43,7 @@
 #include "vm/AsyncIteration.h"
 #include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"  // JSDVG_SEARCH_STACK
+#include "vm/ConstantCompareOperand.h"
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
 #  include "vm/ErrorObject.h"
 #endif
@@ -2586,6 +2587,26 @@ bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
 
 #undef STRICT_EQUALITY_OP
 
+    CASE(StrictConstantEq) {
+      JS::Handle<JS::Value> value = REGS.stackHandleAt(-1);
+      bool equal;
+      if (!js::ConstantStrictEqual(cx, value, GET_UINT16(REGS.pc), &equal)) {
+        goto error;
+      }
+      REGS.sp[-1].setBoolean(equal);
+    }
+    END_CASE(StrictConstantEq)
+
+    CASE(StrictConstantNe) {
+      JS::Handle<JS::Value> value = REGS.stackHandleAt(-1);
+      bool equal;
+      if (!js::ConstantStrictEqual(cx, value, GET_UINT16(REGS.pc), &equal)) {
+        goto error;
+      }
+      REGS.sp[-1].setBoolean(!equal);
+    }
+    END_CASE(StrictConstantNe)
+
     CASE(Case) {
       bool cond = REGS.sp[-1].toBoolean();
       REGS.sp--;
@@ -4609,14 +4630,36 @@ bool js::GetProperty(JSContext* cx, HandleValue v, Handle<PropertyName*> name,
   return GetProperty(cx, obj, receiver, name, vp);
 }
 
-JSObject* js::Lambda(JSContext* cx, HandleFunction fun, HandleObject parent) {
+JSObject* js::LambdaBaselineFallback(JSContext* cx, HandleFunction fun,
+                                     HandleObject parent, gc::AllocSite* site) {
+  MOZ_ASSERT(site);
+  gc::Heap heap = site->initialHeap();
+  JSObject* obj = Lambda(cx, fun, parent, heap, site);
+  MOZ_ASSERT_IF(obj && heap == gc::Heap::Tenured, obj->isTenured());
+  return obj;
+}
+
+JSObject* js::LambdaOptimizedFallback(JSContext* cx, HandleFunction fun,
+                                      HandleObject parent, gc::Heap heap) {
+  // It's important to use the correct heap here so that tenured allocation
+  // fallback will refill the appropriate free list allowing subsequent JIT
+  // allocation in tenured heap to succeed.
+  gc::AllocSite* site = cx->zone()->optimizedAllocSite();
+  JSObject* obj = Lambda(cx, fun, parent, heap, site);
+  MOZ_ASSERT_IF(obj && heap == gc::Heap::Tenured, obj->isTenured());
+  return obj;
+}
+
+JSObject* js::Lambda(JSContext* cx, HandleFunction fun, HandleObject parent,
+                     gc::Heap heap, gc::AllocSite* site) {
   JSFunction* clone;
   if (fun->isNativeFun()) {
     MOZ_ASSERT(IsAsmJSModule(fun));
+    MOZ_ASSERT(heap == gc::Heap::Default);  // Not supported.
     clone = CloneAsmJSModuleFunction(cx, fun);
   } else {
     RootedObject proto(cx, fun->staticPrototype());
-    clone = CloneFunctionReuseScript(cx, fun, parent, proto);
+    clone = CloneFunctionReuseScript(cx, fun, parent, proto, heap, site);
   }
   if (!clone) {
     return nullptr;

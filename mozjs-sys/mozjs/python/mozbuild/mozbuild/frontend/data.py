@@ -18,7 +18,6 @@ structures.
 from collections import OrderedDict, defaultdict
 
 import mozpack.path as mozpath
-import six
 from mozpack.chrome.manifest import ManifestEntry
 
 from mozbuild.frontend.context import ObjDirPath, SourcePath
@@ -28,7 +27,7 @@ from ..util import group_unified_files
 from .context import FinalTargetValue
 
 
-class TreeMetadata(object):
+class TreeMetadata:
     """Base class for all data being captured."""
 
     __slots__ = ()
@@ -93,7 +92,7 @@ class ContextDerived(TreeMetadata):
         return mozpath.relpath(self.objdir, self.topobjdir)
 
 
-class HostMixin(object):
+class HostMixin:
     @property
     def defines(self):
         defines = self._context["HOST_DEFINES"]
@@ -204,7 +203,7 @@ class BaseDefines(ContextDerived):
         self.defines = defines
 
     def get_defines(self):
-        for define, value in six.iteritems(self.defines):
+        for define, value in self.defines.items():
             if value is True:
                 yield ("-D%s" % define)
             elif value is False:
@@ -691,7 +690,7 @@ class SandboxedWasmLibrary(Library):
         return self.config.substs.get("WASM_OBJ_SUFFIX", "")
 
 
-class BaseRustLibrary(object):
+class BaseRustLibrary:
     slots = (
         "cargo_file",
         "crate_type",
@@ -910,7 +909,7 @@ class HostSharedLibrary(HostMixin, Library):
         )
 
 
-class ExternalLibrary(object):
+class ExternalLibrary:
     """Empty mixin for libraries built by an external build system."""
 
 

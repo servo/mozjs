@@ -134,7 +134,7 @@ def updated_env(env):
 
 def build_tar_package(name, base, directory):
     name = os.path.realpath(name)
-    print("tarring {} from {}/{}".format(name, base, directory), file=sys.stderr)
+    print(f"tarring {name} from {base}/{directory}", file=sys.stderr)
     assert name.endswith(".tar.zst")
 
     cctx = zstandard.ZstdCompressor()
@@ -210,6 +210,7 @@ def build_one_stage(
     targets,
     is_final_stage=False,
     profile=None,
+    bolt=False,
 ):
     if not os.path.exists(stage_dir):
         os.mkdir(stage_dir)
@@ -228,6 +229,10 @@ def build_one_stage(
             machine_targets = "AArch64"
         else:
             machine_targets = "X86"
+
+        # see llvm-project/clang/cmake/caches/BOLT.cmake
+        if bolt:
+            ldflags.append("-Wl,--emit-relocs,-znow")
 
         cmake_args = [
             "-GNinja",
@@ -274,6 +279,11 @@ def build_one_stage(
         else:
             cmake_args.append("-DLLVM_TOOL_LLI_BUILD=OFF")
 
+        if bolt:
+            projects.append("bolt")
+            cmake_args.append("-DCLANG_BOLT=INSTRUMENT")
+            cmake_args.append("-DCLANG_INCLUDE_TESTS=ON")
+
         cmake_args.append("-DLLVM_ENABLE_PROJECTS=%s" % ";".join(projects))
 
         if is_final_stage:
@@ -288,6 +298,13 @@ def build_one_stage(
                 # checks.
                 cmake_args += ["-DCAN_TARGET_i386=1"]
             cmake_args += ["-DLLVM_ENABLE_TERMINFO=OFF"]
+            libxml2 = os.path.join(os.environ.get("MOZ_FETCHES_DIR", ""), "libxml2")
+            if os.path.exists(libxml2):
+                cmake_args += [
+                    "-DLIBXML2_DEFINITIONS=-DLIBXML_STATIC",
+                    f"-DLIBXML2_INCLUDE_DIR={libxml2}/include/libxml2",
+                    f"-DLIBXML2_LIBRARIES={libxml2}/lib/libxml2.a",
+                ]
         if is_windows(target):
             cmake_args.insert(-1, "-DLLVM_EXPORT_SYMBOLS_FOR_PLUGINS=ON")
             cmake_args.insert(-1, "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded")
@@ -559,16 +576,14 @@ def main():
                     del config[key]
             elif type(old_value) is not type(value):
                 raise Exception(
-                    "{} is overriding `{}` with a value of the wrong type".format(
-                        c.name, key
-                    )
+                    f"{c.name} is overriding `{key}` with a value of the wrong type"
                 )
             elif isinstance(old_value, list):
                 for v in value:
                     if v not in old_value:
                         old_value.append(v)
             elif isinstance(old_value, dict):
-                raise Exception("{} is setting `{}` to a dict?".format(c.name, key))
+                raise Exception(f"{c.name} is setting `{key}` to a dict?")
             else:
                 config[key] = value
 
@@ -589,6 +604,9 @@ def main():
         pgo = config["pgo"]
         if pgo not in (True, False):
             raise ValueError("Only boolean values are accepted for pgo.")
+    bolt = config.get("bolt", False)
+    if bolt not in (True, False):
+        raise ValueError("Only boolean values are accepted for bolt.")
     build_type = "Release"
     if "build_type" in config:
         build_type = config["build_type"]
@@ -878,6 +896,7 @@ def main():
             targets,
             is_final_stage=(stages == 4),
             profile=profile,
+            bolt=bolt,
         )
 
     if build_clang_tidy:

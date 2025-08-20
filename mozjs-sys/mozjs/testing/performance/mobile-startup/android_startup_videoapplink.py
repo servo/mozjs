@@ -8,12 +8,15 @@ import subprocess
 import sys
 import time
 
+from mozperftest.utils import ON_TRY
+
 # Add the python packages installed by mozperftest
 sys.path.insert(0, os.environ["PYTHON_PACKAGES"])
 
 import cv2
 import numpy as np
 from mozdevice import ADBDevice
+from mozperftest.profiler import ProfilingMediator
 
 PROD_FENIX = "fenix"
 PROD_CHRM = "chrome-m"
@@ -37,6 +40,7 @@ class ImageAnalzer:
         self.video_name = ""
         self.package_name = os.environ["BROWSER_BINARY"]
         self.device = ADBDevice()
+        self.profiler = ProfilingMediator()
         self.cpu_data = {"total": {"time": []}}
         if self.browser == PROD_FENIX:
             self.intent = "org.mozilla.fenix/org.mozilla.fenix.IntentReceiverActivity"
@@ -60,7 +64,8 @@ class ImageAnalzer:
         self.device.shell("settings put global animator_duration_scale 1")
 
     def app_setup(self):
-        self.device.shell(f"pm clear {self.package_name}")
+        if ON_TRY:
+            self.device.shell(f"pm clear {self.package_name}")
         time.sleep(3)
         self.skip_onboarding()
         self.device.shell(
@@ -110,10 +115,17 @@ class ImageAnalzer:
             ]
         )
 
+        # Start Profilers if enabled.
+        self.profiler.start()
+
         if self.test == "cold_view_nav_end":
             self.load_page_to_test_startup()
         elif self.test in ["mobile_restore", "homeview_startup"]:
             self.open_browser_with_view_intent()
+
+        # Stop Profilers if enabled.
+        self.profiler.stop(os.environ["TESTING_DIR"], run)
+
         self.process_cpu_info(run)
         recording.kill()
         time.sleep(5)
@@ -225,7 +237,7 @@ class ImageAnalzer:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
+    if len(sys.argv) != 4:
         raise Exception("Didn't pass the args properly :(")
     start_video_timestamp = []
     browser = sys.argv[1]
