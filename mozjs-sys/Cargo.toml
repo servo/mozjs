@@ -7,11 +7,19 @@ authors = ["Mozilla"]
 links = "mozjs"
 license.workspace = true
 exclude = [
-  "mozjs/js/src/tests/**",
-  "mozjs/js/src/octane/**",
-  "mozjs/js/src/jit-test/**",
-  "mozjs/js/src/jsapi-tests/**",
-  "mozjs/js/src/doc/**",
+  "__pycache__",
+  "/etc/",
+  "/mozjs/.cargo/",
+  "/mozjs/python/mozperftest/mozperftest/system/example.zip",
+  "/mozjs/python/mozperftest/mozperftest/tests/data",
+  "/mozjs/third_party/python/aiohttp",
+  # pip is 8MiB and we can assume its installed.
+  "/mozjs/third_party/python/pip",
+  "/mozjs/testing/mozharness",
+  "/mozjs/testing/mozbase/mozproxy",
+  "/mozjs/testing/mozbase/**/tests",
+  "/mozjs/testing/performance/",
+  "/mozjs/testing/test/",
 ]
 edition.workspace = true
 
