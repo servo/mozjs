@@ -213,7 +213,7 @@ fn build_spidermonkey(build_dir: &Path) {
 
     let icu_c_include_path = get_icu_capi_include_path();
     let mut cxxflags = vec![];
-    cxxflags.push(format!("-I{}", &icu_c_include_path));
+    cxxflags.push(format!("-I{}", &icu_c_include_path.replace("\\", "/")));
 
     if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         cxxflags.push(String::from("-stdlib=libc++"));
