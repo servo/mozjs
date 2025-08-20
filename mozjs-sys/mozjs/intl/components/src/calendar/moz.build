@@ -16,10 +16,6 @@ EXPORTS.mozilla.intl.calendar = [
     "MonthCode.h",
 ]
 
-LOCAL_INCLUDES += [
-    "/intl/icu_capi/bindings/c",
-]
-
 UNIFIED_SOURCES += [
     "ICU4XCalendar.cpp",
     "ICU4XChineseBasedCalendar.cpp",
