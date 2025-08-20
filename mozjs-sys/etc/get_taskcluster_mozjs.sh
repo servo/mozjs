@@ -7,7 +7,7 @@ set -o pipefail
 REPO=mozilla-release
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
-# get commit and appropriet mozjs tar
+# get commit and appropriate mozjs tar
 COMMIT=$( cat $SCRIPT_DIR/COMMIT )
 echo "Commit $COMMIT"
 job_id=$(curl "https://treeherder.mozilla.org/api/project/$REPO/push/?revision=$COMMIT" | jq '.results[0].id')

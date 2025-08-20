@@ -6,7 +6,7 @@ that are battle-tested in [Servo](https://servo.org/), split in two crates:
 - `mozjs-sys`:  SpiderMonkey and low-level Rust bindings to its C++ API.
 - `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
-Mozjs is currently tracking SpiderMonkey on [mozilla-esr](https://searchfox.org/mozilla-esr/source/) branch
+Mozjs is currently tracking SpiderMonkey on [mozilla-esr140](https://searchfox.org/mozilla-esr140/source/) branch
 (currently version 140.0).
 
 ## Building from Pre-built Archive
