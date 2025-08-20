@@ -7,11 +7,15 @@ authors = ["Mozilla"]
 links = "mozjs"
 license.workspace = true
 exclude = [
-  "mozjs/js/src/tests/**",
-  "mozjs/js/src/octane/**",
-  "mozjs/js/src/jit-test/**",
-  "mozjs/js/src/jsapi-tests/**",
-  "mozjs/js/src/doc/**",
+  "/etc/",
+  "/mozjs/.cargo/",
+  # "/mozjs/testing/mozharness",
+  "/mozjs/testing/performance/",
+  "!/mozjs/testing/performance/perftest.toml",
+  "!/mozjs/testing/performance/*.js",
+  "!/mozjs/testing/test/",
+  "!/mozjs/testing/test/python.toml",
+  "!/mozjs/testing/test/test_skipfails.txt",
 ]
 edition.workspace = true
 
