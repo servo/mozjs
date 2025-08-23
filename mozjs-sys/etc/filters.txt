@@ -36,10 +36,10 @@
 - /Cargo.toml
 
 # Keep zlib headers for libz-rs-sys
-+ modules/zlib/
-+ modules/zlib/zlib.h
-+ modules/zlib/zconf.h
-- modules/zlib/*
++ modules/zlib/src/
++ modules/zlib/src/zlib.h
++ modules/zlib/src/zconf.h
+- modules/zlib/**
 
 # Remove unused python dependency that also causes problems with case-sensitive filesystems.
 - /third_party/python/Jinja2

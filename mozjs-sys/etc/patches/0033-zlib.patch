@@ -1,28 +1,28 @@
 diff --git a/config/external/zlib/moz.build b/config/external/zlib/moz.build
-index 755400fa7..d1311b9a7 100644
+index c2b9847e6..99bd2b121 100644
 --- a/config/external/zlib/moz.build
 +++ b/config/external/zlib/moz.build
-@@ -6,9 +6,4 @@
+@@ -8,7 +8,8 @@ Library("zlib")
  
- Library("zlib")
- 
--if CONFIG["MOZ_SYSTEM_ZLIB"]:
--    OS_LIBS += CONFIG["MOZ_ZLIB_LIBS"]
--else:
+ if CONFIG["MOZ_SYSTEM_ZLIB"]:
+     OS_LIBS += CONFIG["MOZ_ZLIB_LIBS"]
+ else:
 -    DIRS += [
 -        "../../../modules/zlib",
 -    ]
-+OS_LIBS += CONFIG["MOZ_ZLIB_LIBS"]
++    EXPORTS += [
++        "../../../modules/zlib/src/zconf.h",
++        "../../../modules/zlib/src/zlib.h",
++    ]
 diff --git a/moz.configure b/moz.configure
-index 804b9a375..87ccc508d 100755
+index dd419e1cc..8d618342c 100755
 --- a/moz.configure
 +++ b/moz.configure
-@@ -891,50 +891,8 @@ check_prog(
+@@ -890,51 +890,23 @@ check_prog(
      validate=validate_strip,
  )
  
-+pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_pkg_config)
- 
+-
 -@depends(js_standalone, target)
 -def system_zlib_default(js_standalone, target):
 -    return (
@@ -32,20 +32,29 @@ index 804b9a375..87ccc508d 100755
 -    )
 -
 -
--option(
+ option(
 -    "--with-system-zlib",
 -    nargs="?",
 -    default=system_zlib_default,
 -    help="{Use|Do not use} system libz",
 -    when=use_pkg_config,
--)
--
--
++    "--enable-libz-rs",
++    help="Use libz-rs instead of system libz",
+ )
+ 
++@depends("--enable-libz-rs")
++def use_libz_rs(enabled):
++    return enabled
+ 
 -@depends("--with-system-zlib", when=use_pkg_config)
 -def with_system_zlib_option(with_system_zlib):
 -    return with_system_zlib
--
--
++@depends(use_libz_rs)
++def use_system_zlib(libz_rs):
++    return not libz_rs
+ 
++pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_system_zlib)
+ 
 -@depends(with_system_zlib_option)
 -def deprecated_system_zlib_path(value):
 -    if value and len(value) == 1:
@@ -67,7 +76,22 @@ index 804b9a375..87ccc508d 100755
 -)
 -
 -set_config("USE_LIBZ_RS", True, when="USE_LIBZ_RS")
-+set_config("MOZ_SYSTEM_ZLIB", True)
++set_config("MOZ_SYSTEM_ZLIB", True, when=use_system_zlib)
++set_config("USE_LIBZ_RS", True, when=use_libz_rs)
  
  with only_when(cross_compiling):
      option(
+diff --git a/modules/zlib/src/zconf.h b/modules/zlib/src/zconf.h
+index c6305ec3d..62adc8d84 100644
+--- a/modules/zlib/src/zconf.h
++++ b/modules/zlib/src/zconf.h
+@@ -8,9 +8,6 @@
+ #ifndef ZCONF_H
+ #define ZCONF_H
+ 
+-/* This header does prefixing as below, but with an updated set of names. */
+-#include "mozzconf.h"
+-
+ /*
+  * If you *really* need a unique prefix for all types and library functions,
+  * compile with -DZ_PREFIX. The "standard" zlib should be compiled without it.

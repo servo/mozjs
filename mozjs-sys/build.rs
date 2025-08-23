@@ -187,24 +187,13 @@ fn build_spidermonkey(build_dir: &Path) {
         encoding_c_mem_include_dir.replace("\\", "/")
     ));
 
-    let libz_rs = env::var_os("CARGO_FEATURE_LIBZ_RS").is_some();
-    let libz_sys = env::var_os("CARGO_FEATURE_LIBZ_SYS").is_some();
-
-    if libz_rs && libz_sys {
-        panic!("Cannot have both libz-rs and libz-sys cargo features at the same time.");
+    if cfg!(all(feature = "libz-rs", feature = "libz-sys")) {
+        panic!("Cannot enable both 'libz-rs' and 'libz-sys' features at the same time. Choose only one.");
+    } else if cfg!(not(any(feature = "libz-rs", feature = "libz-sys"))) {
+        panic!("Must enable one of the 'libz-rs' or 'libz-sys' features.");
     }
 
-    if libz_rs {
-        let include = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap())
-            .join("mozjs")
-            .join("modules")
-            .join("zlib")
-            .join("src");
-
-        write!(cppflags, "-I{} ", include.display()).unwrap();
-    }
-
-    if libz_sys {
+    if cfg!(feature = "libz-sys") {
         // add zlib.pc into pkg-config's search path
         // this is only needed when libz-sys builds zlib from source
         if let Ok(zlib_root_dir) = env::var("DEP_Z_ROOT") {
