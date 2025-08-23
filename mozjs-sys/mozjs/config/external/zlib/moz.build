@@ -6,4 +6,10 @@
 
 Library("zlib")
 
-OS_LIBS += CONFIG["MOZ_ZLIB_LIBS"]
+if CONFIG["MOZ_SYSTEM_ZLIB"]:
+    OS_LIBS += CONFIG["MOZ_ZLIB_LIBS"]
+else:
+    EXPORTS += [
+        "../../../modules/zlib/src/zconf.h",
+        "../../../modules/zlib/src/zlib.h",
+    ]

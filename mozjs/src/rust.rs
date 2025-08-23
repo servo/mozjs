@@ -7,8 +7,7 @@
 use std::cell::Cell;
 use std::char;
 use std::default::Default;
-use std::ffi::CStr;
-use std::ffi::{self, CString};
+use std::ffi::{CStr, CString};
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};

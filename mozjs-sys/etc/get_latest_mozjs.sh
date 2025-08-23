@@ -2,7 +2,7 @@
 
 REPO=mozilla-release
 
-# get commit and appropriet mozjs tar
+# get commit and appropriate mozjs tar
 jobs=( $(curl "https://treeherder.mozilla.org/api/project/$REPO/push/?full=true&count=20" | jq '.results[].id') )
 for i in "${jobs[@]}"
 do
