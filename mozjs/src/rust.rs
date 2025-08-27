@@ -31,8 +31,13 @@ use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuf
 use crate::glue::{
     GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector,
 };
+use crate::glue::{
+    HandleStringFromStackGCVector, HandleValueFromStackGCVector, StackGCVectorStringLength,
+    StackGCVectorValueLength,
+};
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
+use crate::jsapi::js;
 use crate::jsapi::js::frontend::InitialStencilAndDelazifications;
 use crate::jsapi::mozilla::Utf8Unit;
 use crate::jsapi::shadow::BaseShape;
@@ -61,7 +66,7 @@ use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, Rooting
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
 use crate::jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
-use crate::jsval::ObjectValue;
+use crate::jsval::{JSVal, ObjectValue};
 use crate::panic::maybe_resume_unwind;
 use log::{debug, warn};
 use mozjs_sys::jsapi::JS::SavedFrameResult;
@@ -1151,6 +1156,26 @@ impl Drop for EnvironmentChain {
         unsafe {
             crate::jsapi::glue::DeleteEnvironmentChain(self.chain);
         }
+    }
+}
+
+impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
+    pub fn at(&self, index: u32) -> Handle<'a, JSVal> {
+        unsafe { Handle::from_raw(HandleValueFromStackGCVector((*self).into(), index)) }
+    }
+
+    pub fn len(&self) -> u32 {
+        unsafe { StackGCVectorValueLength((*self).into()) }
+    }
+}
+
+impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
+    pub fn at(&self, index: u32) -> Handle<'a, *mut JSString> {
+        unsafe { Handle::from_raw(HandleStringFromStackGCVector((*self).into(), index)) }
+    }
+
+    pub fn len(&self) -> u32 {
+        unsafe { StackGCVectorStringLength((*self).into()) }
     }
 }
 

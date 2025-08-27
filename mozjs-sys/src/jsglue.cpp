@@ -1205,4 +1205,24 @@ void DumpJSStack(JSContext* cx, bool showArgs, bool showLocals,
   printf("%s\n", buf.get());
 }
 
+uint32_t StackGCVectorValueLength(
+    JS::Handle<JS::StackGCVector<JS::Value>> vec) {
+  return vec.length();
+}
+
+uint32_t StackGCVectorStringLength(
+    JS::Handle<JS::StackGCVector<JSString*>> vec) {
+  return vec.length();
+}
+
+JS::HandleValue HandleValueFromStackGCVector(
+    JS::Handle<JS::StackGCVector<JS::Value>> vec, uint32_t index) {
+  return vec[index];
+}
+
+JS::Handle<JSString*> HandleStringFromStackGCVector(
+    JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
+  return vec[index];
+}
+
 }  // extern "C"
