@@ -466,4 +466,4 @@ impl CustomAutoRooterVFTable {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct StackGCVector<T, AllocPolicy = js::TempAllocPolicy>(PhantomData<(T, AllocPolicy)>, u8);
+pub struct StackGCVector<T, AllocPolicy = js::TempAllocPolicy>(PhantomData<(T, AllocPolicy)>, u64);
