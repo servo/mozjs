@@ -4,6 +4,7 @@
 
 #define __STDC_LIMIT_MACROS
 #include <stdint.h>
+#include <stdio.h>
 
 #include <type_traits>
 
@@ -1222,6 +1223,7 @@ JS::HandleValue HandleValueFromStackGCVector(
 
 JS::HandleString HandleStringFromStackGCVector(
     JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
+  printf("%lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
   return vec[index];
 }
 

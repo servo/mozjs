@@ -32,6 +32,7 @@ unsafe extern "C" fn content_security_policy_allows(
     _body_arg: HandleValue,
     can_compile_strings: *mut bool,
 ) -> bool {
+    println!("{} {:p}", std::mem::size_of::<Handle<StackGCVector<*mut JSString>>>(), parameter_strings.ptr);
     let parameter_strings = SafeHandle::from_raw(parameter_strings);
     assert_eq!(parameter_strings.len(), 1);
     let string0 = parameter_strings.at(0).expect("should have a value");
