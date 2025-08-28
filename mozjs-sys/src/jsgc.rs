@@ -2,10 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::glue::{
-    HandleStringFromStackGCVector, HandleValueFromStackGCVector, StackGCVectorStringLength,
-    StackGCVectorValueLength,
-};
 use crate::jsapi::{js, JS};
 use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
 use crate::jsid::VoidId;
@@ -471,4 +467,4 @@ impl CustomAutoRooterVFTable {
 
 #[repr(C)]
 #[derive(Copy, Clone)]
-pub struct StackGCVector<T, AllocPolicy>(PhantomData<(T, AllocPolicy)>, u8);
+pub struct StackGCVector<T, AllocPolicy = js::TempAllocPolicy>(PhantomData<(T, AllocPolicy)>, u8);

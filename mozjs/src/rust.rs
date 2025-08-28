@@ -1160,8 +1160,16 @@ impl Drop for EnvironmentChain {
 }
 
 impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
-    pub fn at(&self, index: u32) -> Handle<'a, JSVal> {
-        unsafe { Handle::from_raw(HandleValueFromStackGCVector((*self).into(), index)) }
+    pub fn at(&'a self, index: u32) -> Option<Handle<'a, JSVal>> {
+        if index >= self.len() {
+            return None;
+        }
+        unsafe {
+            Some(Handle::from_raw(HandleValueFromStackGCVector(
+                (*self).into(),
+                index,
+            )))
+        }
     }
 
     pub fn len(&self) -> u32 {
@@ -1170,8 +1178,16 @@ impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
 }
 
 impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
-    pub fn at(&self, index: u32) -> Handle<'a, *mut JSString> {
-        unsafe { Handle::from_raw(HandleStringFromStackGCVector((*self).into(), index)) }
+    pub fn at(&'a self, index: u32) -> Option<Handle<'a, *mut JSString>> {
+        if index >= self.len() {
+            return None;
+        }
+        unsafe {
+            Some(Handle::from_raw(HandleStringFromStackGCVector(
+                (*self).into(),
+                index,
+            )))
+        }
     }
 
     pub fn len(&self) -> u32 {
@@ -1264,6 +1280,7 @@ pub mod wrappers {
     use crate::glue;
     use crate::glue::EncodedStringCallback;
     use crate::jsapi;
+    use crate::jsapi::js::TempAllocPolicy;
     use crate::jsapi::jsid;
     use crate::jsapi::mozilla::Utf8Unit;
     use crate::jsapi::BigInt;
