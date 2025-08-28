@@ -157,7 +157,7 @@ jobs:
         if: ${{ !contains(matrix.target, 'aarch64') }}
         shell: cmd
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }} -- --nocapture
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1

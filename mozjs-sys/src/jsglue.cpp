@@ -1223,7 +1223,8 @@ JS::HandleValue HandleValueFromStackGCVector(
 
 JS::HandleString HandleStringFromStackGCVector(
     JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
-  printf("%lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+  fprintf(stderr, "%lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+  fflush(stderr);
   return vec[index];
 }
 
