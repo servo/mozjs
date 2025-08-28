@@ -1220,7 +1220,7 @@ JS::HandleValue HandleValueFromStackGCVector(
   return vec[index];
 }
 
-JS::Handle<JSString*> HandleStringFromStackGCVector(
+JS::HandleString HandleStringFromStackGCVector(
     JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
   return vec[index];
 }

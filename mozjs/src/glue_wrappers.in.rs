@@ -26,5 +26,3 @@ wrap!(glue: pub fn SetDataPropertyDescriptor(desc: MutableHandle<PropertyDescrip
 wrap!(glue: pub fn SetAccessorPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, getter: HandleObject, setter: HandleObject, attrs: u32));
 wrap!(glue: pub fn StackGCVectorValueLength(vec: Handle<StackGCVector<Value, TempAllocPolicy>>) -> u32);
 wrap!(glue: pub fn StackGCVectorStringLength(vec: Handle<StackGCVector<*mut JSString, TempAllocPolicy>>) -> u32);
-wrap!(glue: pub fn HandleValueFromStackGCVector(vec: Handle<StackGCVector<Value, TempAllocPolicy>>, index: u32) -> HandleValue);
-wrap!(glue: pub fn HandleStringFromStackGCVector(vec: Handle<StackGCVector<*mut JSString, TempAllocPolicy>>, index: u32) -> Handle<*mut JSString>);
