@@ -1282,6 +1282,7 @@ pub mod wrappers {
     use crate::jsapi;
     use crate::jsapi::js::TempAllocPolicy;
     use crate::jsapi::jsid;
+    use crate::jsapi::js::TempAllocPolicy;
     use crate::jsapi::mozilla::Utf8Unit;
     use crate::jsapi::BigInt;
     use crate::jsapi::CallArgs;
