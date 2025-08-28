@@ -35,7 +35,7 @@ unsafe extern "C" fn content_security_policy_allows(
     eprintln!("{} {:p}", std::mem::size_of::<Handle<StackGCVector<*mut JSString>>>(), parameter_strings.ptr);
     let parameter_strings = SafeHandle::from_raw(parameter_strings);
     assert_eq!(parameter_strings.len(), 1);
-    let string0 = parameter_strings.at(0).expect("should have a value");
+    let string0 = parameter_strings.at(16).expect("should have a value");
     let string0 = NonNull::new(*string0).expect("should be non-null");
     assert_eq!(jsstr_to_string(cx, string0), "a".to_string());
 
