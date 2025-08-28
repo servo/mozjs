@@ -5,7 +5,6 @@
 use crate::jsapi::{js, JS};
 use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
 use crate::jsid::VoidId;
-use crate::jsval::JSVal;
 use std::cell::UnsafeCell;
 use std::ffi::{c_char, c_void};
 use std::marker::PhantomData;
