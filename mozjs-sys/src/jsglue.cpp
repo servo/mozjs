@@ -1213,6 +1213,8 @@ uint32_t StackGCVectorValueLength(
 
 uint32_t StackGCVectorStringLength(
     JS::Handle<JS::StackGCVector<JSString*>> vec) {
+  fprintf(stderr, "c++ len: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+  fflush(stderr);
   return vec.length();
 }
 
@@ -1221,9 +1223,9 @@ JS::HandleValue HandleValueFromStackGCVector(
   return vec[index];
 }
 
-JS::HandleString HandleStringFromStackGCVector(
+  JS::HandleString HandleStringFromStackGCVector(
     JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
-  fprintf(stderr, "%lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+  fprintf(stderr, "c++ get: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
   fflush(stderr);
   return vec[index];
 }
