@@ -1207,27 +1207,27 @@ void DumpJSStack(JSContext* cx, bool showArgs, bool showLocals,
 }
 
 uint32_t StackGCVectorValueLength(
-    JS::Handle<JS::StackGCVector<JS::Value>> vec) {
-  return vec.length();
+    const JS::Handle<JS::StackGCVector<JS::Value>>* vec) {
+  return vec->length();
 }
 
 uint32_t StackGCVectorStringLength(
-    JS::Handle<JS::StackGCVector<JSString*>> vec) {
-  fprintf(stderr, "c++ len: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+    const JS::Handle<JS::StackGCVector<JSString*>>* vec) {
+  fprintf(stderr, "c++ len: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec->address());
   fflush(stderr);
-  return vec.length();
+  return vec->length();
 }
 
 JS::HandleValue HandleValueFromStackGCVector(
-    JS::Handle<JS::StackGCVector<JS::Value>> vec, uint32_t index) {
-  return vec[index];
+    const JS::Handle<JS::StackGCVector<JS::Value>>* vec, uint32_t index) {
+  return (*vec)[index];
 }
 
-  JS::HandleString HandleStringFromStackGCVector(
-    JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
-  fprintf(stderr, "c++ get: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+JS::HandleString HandleStringFromStackGCVector(
+    const JS::Handle<JS::StackGCVector<JSString*>>* vec, uint32_t index) {
+  fprintf(stderr, "c++ get: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec->address());
   fflush(stderr);
-  return vec[index];
+  return (*vec)[index];
 }
 
 }  // extern "C"

@@ -1166,27 +1166,27 @@ impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
         }
         unsafe {
             Some(Handle::from_raw(HandleValueFromStackGCVector(
-                (*self).into(),
+                &(*self).into(),
                 index,
             )))
         }
     }
 
     pub fn len(&self) -> u32 {
-        unsafe { StackGCVectorValueLength((*self).into()) }
+        unsafe { StackGCVectorValueLength(&(*self).into()) }
     }
 }
 
 impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
     pub fn at(&'a self, index: u32) -> Option<Handle<'a, *mut JSString>> {
-        /*if index >= self.len() {
+        if index >= self.len() {
             return None;
-        }*/
+        }
         unsafe {
             let raw_handle: crate::jsapi::Handle<_> = (*self).into();
             eprintln!("rust get: {} {:p}", std::mem::size_of::<Self>(), raw_handle.ptr);
             Some(Handle::from_raw(HandleStringFromStackGCVector(
-                raw_handle,
+                &raw_handle,
                 index,
             )))
         }
@@ -1194,7 +1194,7 @@ impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
 
     pub fn len(&self) -> u32 {
         eprintln!("rust len: {} {:p}", std::mem::size_of::<Self>(), self.ptr);
-        unsafe { StackGCVectorStringLength((*self).into()) }
+        unsafe { StackGCVectorStringLength(&(*self).into()) }
     }
 }
 
