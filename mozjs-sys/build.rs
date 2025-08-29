@@ -758,6 +758,9 @@ impl BuildTarget {
                 // is more than bindgen can cope with.
                 "JS::Rooted",
                 // We don't need them and bindgen doesn't like them.
+                "JS::StackGCVector.*",
+                "JS::RootedVector_Vec",
+                "JS::RootedVector_Base",
                 "JS::HandleVector",
                 "JS::MutableHandleVector",
                 "JS::Rooted.*Vector",
@@ -842,7 +845,6 @@ impl BuildTarget {
         match self {
             BuildTarget::JSApi => &[
                 "JS::EnvironmentChain",
-                "JS::StackGCVector.*",
                 "JS::PersistentRooted.*",
                 "JS::detail::CallArgsBase",
                 "js::detail::UniqueSelector.*",
@@ -860,7 +862,6 @@ impl BuildTarget {
             ],
             BuildTarget::JSGlue => &[
                 "JS::Auto.*Impl",
-                "JS::StackGCVector.*",
                 "JS::PersistentRooted.*",
                 "JS::detail::CallArgsBase.*",
                 "js::detail::UniqueSelector.*",
@@ -882,6 +883,7 @@ impl BuildTarget {
                 ("root", "pub type FILE = ::libc::FILE;"),
                 ("root::JS", "pub type Heap<T> = crate::jsgc::Heap<T>;"),
                 ("root::JS", "pub type Rooted<T> = crate::jsgc::Rooted<T>;"),
+                ("root::JS", "pub type StackGCVector<T, AllocPolicy> = crate::jsgc::StackGCVector<T, AllocPolicy>;"),
             ],
             BuildTarget::JSGlue => &[
                 ("root", "pub(crate) use crate::jsapi::*;"),

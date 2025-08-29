@@ -4,6 +4,7 @@
 
 #define __STDC_LIMIT_MACROS
 #include <stdint.h>
+#include <stdio.h>
 
 #include <type_traits>
 
@@ -1203,6 +1204,30 @@ void DumpJSStack(JSContext* cx, bool showArgs, bool showLocals,
   state.restore();
 
   printf("%s\n", buf.get());
+}
+
+uint32_t StackGCVectorValueLength(
+    JS::Handle<JS::StackGCVector<JS::Value>> vec) {
+  return vec.length();
+}
+
+uint32_t StackGCVectorStringLength(
+    JS::Handle<JS::StackGCVector<JSString*>> vec) {
+  fprintf(stderr, "c++ len: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+  fflush(stderr);
+  return vec.length();
+}
+
+JS::HandleValue HandleValueFromStackGCVector(
+    uint32_t index, JS::Handle<JS::StackGCVector<JS::Value>> vec) {
+  return vec[index];
+}
+
+JS::HandleString HandleStringFromStackGCVector(
+    uint32_t index, JS::Handle<JS::StackGCVector<JSString*>> vec) {
+  fprintf(stderr, "c++ get: %lu %p\n", sizeof(JS::Handle<JS::StackGCVector<JSString*>>), vec.address());
+  fflush(stderr);
+  return vec[index];
 }
 
 }  // extern "C"
