@@ -181,6 +181,10 @@ fn build_spidermonkey(build_dir: &Path) {
         }
     }
 
+    // Tell python to not write bytecode cache files, since this will pollute
+    // the source directory.
+    cmd.env("PYTHONDONTWRITEBYTECODE", "1");
+
     let encoding_c_mem_include_dir = env::var("DEP_ENCODING_C_MEM_INCLUDE_DIR").unwrap();
     let mut cppflags = OsString::from(format!(
         "-I{} ",
