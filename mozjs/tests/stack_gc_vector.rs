@@ -33,17 +33,28 @@ unsafe extern "C" fn content_security_policy_allows(
     can_compile_strings: *mut bool,
 ) -> bool {
     let parameter_strings = SafeHandle::from_raw(parameter_strings);
-    assert_eq!(parameter_strings.len(), 1);
+    assert_eq!(parameter_strings.len(), 2);
+
     let string0 = parameter_strings.at(0).expect("should have a value");
     let string0 = NonNull::new(*string0).expect("should be non-null");
     assert_eq!(jsstr_to_string(cx, string0), "a".to_string());
 
+    let string1 = parameter_strings.at(1).expect("should have a value");
+    let string1 = NonNull::new(*string1).expect("should be non-null");
+    assert_eq!(jsstr_to_string(cx, string1), "b".to_string());
+
     let parameter_args = SafeHandle::from_raw(parameter_args);
-    assert_eq!(parameter_args.len(), 1);
+    assert_eq!(parameter_args.len(), 2);
+
     let arg0 = parameter_args.at(0).expect("should have a value");
     let string0 = arg0.to_string();
     let string0 = NonNull::new(string0).expect("should be non-null");
     assert_eq!(jsstr_to_string(cx, string0), "a".to_string());
+
+    let arg1 = parameter_args.at(1).expect("should have a value");
+    let string1 = arg1.to_string();
+    let string1 = NonNull::new(string1).expect("should be non-null");
+    assert_eq!(jsstr_to_string(cx, string1), "b".to_string());
 
     *RAN_CSP_CALLBACK.lock().unwrap() = true;
     *can_compile_strings = true;
@@ -80,7 +91,7 @@ fn csp_allow_arguments() {
         assert!(runtime
             .evaluate_script(
                 global.handle(),
-                "Function(\"a\", \"return a\")",
+                "Function(\"a\", \"b\", \"return a + b\")",
                 rval.handle_mut(),
                 options
             )

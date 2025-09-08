@@ -1215,14 +1215,14 @@ uint32_t StackGCVectorStringLength(
   return vec.length();
 }
 
-JS::HandleValue HandleValueFromStackGCVector(
+const JS::Value* StackGCVectorValueAtIndex(
     JS::Handle<JS::StackGCVector<JS::Value>> vec, uint32_t index) {
-  return vec[index];
+  return vec.begin() + index;
 }
 
-JS::HandleString HandleStringFromStackGCVector(
+JSString* const* StackGCVectorStringAtIndex(
     JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
-  return vec[index];
+  return vec.begin() + index;
 }
 
 }  // extern "C"
