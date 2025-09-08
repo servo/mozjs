@@ -17,6 +17,10 @@ use std::str;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use self::wrappers::{
+    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
+    StackGCVectorValueLength,
+};
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use crate::conversions::jsstr_to_string;
@@ -30,10 +34,6 @@ use crate::glue::{
 use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuffer};
 use crate::glue::{
     GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector,
-};
-use crate::glue::{
-    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
-    StackGCVectorValueLength,
 };
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
@@ -1165,15 +1165,14 @@ impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
         if index >= self.len() {
             return None;
         }
-        unsafe {
-            let handle =
-                RawHandle::from_marked_location(StackGCVectorValueAtIndex((*self).into(), index));
-            Some(Handle::from_raw(handle))
-        }
+        let handle = unsafe {
+            Handle::from_marked_location(StackGCVectorValueAtIndex(*self, index));
+        };
+        Some(handle)
     }
 
     pub fn len(&self) -> u32 {
-        unsafe { StackGCVectorValueLength((*self).into()) }
+        unsafe { StackGCVectorValueLength(*self) }
     }
 }
 
@@ -1182,15 +1181,14 @@ impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
         if index >= self.len() {
             return None;
         }
-        unsafe {
-            let handle =
-                RawHandle::from_marked_location(StackGCVectorStringAtIndex((*self).into(), index));
-            Some(Handle::from_raw(handle))
-        }
+        let handle = unsafe {
+            Handle::from_marked_location(StackGCVectorStringAtIndex(*self, index));
+        };
+        Some(handle)
     }
 
     pub fn len(&self) -> u32 {
-        unsafe { StackGCVectorStringLength((*self).into()) }
+        unsafe { StackGCVectorStringLength(*self) }
     }
 }
 
