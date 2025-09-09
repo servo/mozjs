@@ -24,3 +24,7 @@ wrap!(glue: pub fn JS_GetRegExpFlags(cx: *mut JSContext, obj: HandleObject, flag
 wrap!(glue: pub fn EncodeStringToUTF8(cx: *mut JSContext, str_: HandleString, cb: EncodedStringCallback));
 wrap!(glue: pub fn SetDataPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, value: HandleValue, attrs: u32));
 wrap!(glue: pub fn SetAccessorPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, getter: HandleObject, setter: HandleObject, attrs: u32));
+wrap!(glue: pub fn StackGCVectorValueLength(vec: Handle<StackGCVector<Value, TempAllocPolicy>>) -> u32);
+wrap!(glue: pub fn StackGCVectorStringLength(vec: Handle<StackGCVector<*mut JSString, TempAllocPolicy>>) -> u32);
+wrap!(glue: pub fn StackGCVectorValueAtIndex(vec: Handle<StackGCVector<Value, TempAllocPolicy>>, index: u32) -> *const Value);
+wrap!(glue: pub fn StackGCVectorStringAtIndex(vec: Handle<StackGCVector<*mut JSString, TempAllocPolicy>>, index: u32) -> *const *mut JSString);

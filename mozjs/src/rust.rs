@@ -17,6 +17,10 @@ use std::str;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use self::wrappers::{
+    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
+    StackGCVectorValueLength,
+};
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use crate::conversions::jsstr_to_string;
@@ -33,6 +37,7 @@ use crate::glue::{
 };
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
+use crate::jsapi::js;
 use crate::jsapi::js::frontend::InitialStencilAndDelazifications;
 use crate::jsapi::mozilla::Utf8Unit;
 use crate::jsapi::shadow::BaseShape;
@@ -61,7 +66,7 @@ use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, Rooting
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
 use crate::jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
-use crate::jsval::ObjectValue;
+use crate::jsval::{JSVal, ObjectValue};
 use crate::panic::maybe_resume_unwind;
 use log::{debug, warn};
 use mozjs_sys::jsapi::JS::SavedFrameResult;
@@ -1154,6 +1159,36 @@ impl Drop for EnvironmentChain {
     }
 }
 
+impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
+    pub fn at(&'a self, index: u32) -> Option<Handle<'a, JSVal>> {
+        if index >= self.len() {
+            return None;
+        }
+        let handle =
+            unsafe { Handle::from_marked_location(StackGCVectorValueAtIndex(*self, index)) };
+        Some(handle)
+    }
+
+    pub fn len(&self) -> u32 {
+        unsafe { StackGCVectorValueLength(*self) }
+    }
+}
+
+impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
+    pub fn at(&'a self, index: u32) -> Option<Handle<'a, *mut JSString>> {
+        if index >= self.len() {
+            return None;
+        }
+        let handle =
+            unsafe { Handle::from_marked_location(StackGCVectorStringAtIndex(*self, index)) };
+        Some(handle)
+    }
+
+    pub fn len(&self) -> u32 {
+        unsafe { StackGCVectorStringLength(*self) }
+    }
+}
+
 /// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments
 pub mod wrappers {
     macro_rules! wrap {
@@ -1239,6 +1274,7 @@ pub mod wrappers {
     use crate::glue;
     use crate::glue::EncodedStringCallback;
     use crate::jsapi;
+    use crate::jsapi::js::TempAllocPolicy;
     use crate::jsapi::jsid;
     use crate::jsapi::mozilla::Utf8Unit;
     use crate::jsapi::BigInt;
