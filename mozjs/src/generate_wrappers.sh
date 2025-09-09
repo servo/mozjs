@@ -1,6 +1,8 @@
 #!/bin/sh
 # Detect gsed or sed
 gsed=$(type gsed >/dev/null 2>&1 && echo gsed || echo sed)
+# Detect gfind or find
+gfind=$(type gfind >/dev/null 2>&1 && echo gfind || echo find)
 # This is one big heuristic but seems to work well enough
 grep_heur() {
   grep -v "link_name" "$1" | \
@@ -33,7 +35,7 @@ grep_heur() {
 find_latest_version_of_file_and_parse() {
   # clone file and reformat (this is needed for grep_heur to work properly)
   # this $(find) only gets last modified file
-  cp $(gfind target -name "$1" -printf "%T@ %p\n" | sort -n | tail -n 1 | tr ' ' '\n' | tail -n 1) "target/wrap_$1"
+  cp $($gfind target -name "$1" -printf "%T@ %p\n" | sort -n | tail -n 1 | tr ' ' '\n' | tail -n 1) "target/wrap_$1"
   rustfmt "target/wrap_$1" --config max_width=1000
   
   # parse reformated file
