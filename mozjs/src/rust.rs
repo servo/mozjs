@@ -41,7 +41,6 @@ use crate::jsapi::js;
 use crate::jsapi::js::frontend::InitialStencilAndDelazifications;
 use crate::jsapi::mozilla::Utf8Unit;
 use crate::jsapi::shadow::BaseShape;
-use crate::jsapi::Handle as RawHandle;
 use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
 use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
@@ -1166,7 +1165,7 @@ impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
             return None;
         }
         let handle = unsafe {
-            Handle::from_marked_location(StackGCVectorValueAtIndex(*self, index));
+            Handle::from_marked_location(StackGCVectorValueAtIndex(*self, index))
         };
         Some(handle)
     }
@@ -1182,7 +1181,7 @@ impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
             return None;
         }
         let handle = unsafe {
-            Handle::from_marked_location(StackGCVectorStringAtIndex(*self, index));
+            Handle::from_marked_location(StackGCVectorStringAtIndex(*self, index))
         };
         Some(handle)
     }
