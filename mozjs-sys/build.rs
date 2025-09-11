@@ -883,7 +883,10 @@ impl BuildTarget {
                 ("root", "pub type FILE = ::libc::FILE;"),
                 ("root::JS", "pub type Heap<T> = crate::jsgc::Heap<T>;"),
                 ("root::JS", "pub type Rooted<T> = crate::jsgc::Rooted<T>;"),
-                ("root::JS", "pub type StackGCVector<T> = crate::jsgc::StackGCVector<T>;"),
+                (
+                    "root::JS",
+                    "pub type StackGCVector<T> = crate::jsgc::StackGCVector<T>;",
+                ),
             ],
             BuildTarget::JSGlue => &[
                 ("root", "pub(crate) use crate::jsapi::*;"),
