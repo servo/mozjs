@@ -34,6 +34,7 @@
 - /testing/mozbase/rust
 - /third_party/rust
 - /Cargo.toml
+- /.cargo
 
 # Keep zlib headers for libz-rs-sys
 + modules/zlib/src/
@@ -44,6 +45,22 @@
 # Remove unused python dependency that also causes problems with case-sensitive filesystems.
 - /third_party/python/Jinja2
 - /third_party/python/jinja2
+
+# Remove unused python dependencies to reduce the size
+- third_party/python/aiohttp
+
+# pip is 8 MiB and we can assume it is installed
+- third_party/python/pip
+
+# Best effort approach to prune unneeded testing code, while
+# minimising required changes to the build system.
+- python/mozperftest/mozperftest/system/example.zip
+- python/mozperftest/mozperftest/tests/data
+- testing/mozharness
+- testing/mozbase/mozproxy
+- testing/mozbase/**/tests
+- testing/performance/
+- testing/test/
 
 # Include the rest.
 + /*
