@@ -10,6 +10,7 @@
 // These extern crates are needed for linking
 extern crate encoding_c;
 extern crate encoding_c_mem;
+#[cfg(feature = "intl")]
 extern crate icu_capi;
 #[cfg(feature = "libz-rs")]
 extern crate libz_rs_sys;
