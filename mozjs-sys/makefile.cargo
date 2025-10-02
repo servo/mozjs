@@ -101,9 +101,14 @@ ifneq ($(HOST),$(TARGET))
             --disable-clang-plugin \
             --disable-jit \
             --disable-shared-memory \
-            --lto=thin \
             --with-sysroot=$(WASI_SDK_PATH)/share/wasi-sysroot \
             $(NULL)
+        # LTO makes `cargo test --wasm32-wasi` take a very very long time. Since build scripts
+        # don't have a way to detect if the build is for `cargo test`, enable LTO for release
+        # builds only.
+        ifneq (debug,$(PROFILE))
+            CONFIGURE_FLAGS += --lto=thin
+        endif
     endif
 
 	ifeq (android,$(findstring android,$(TARGET)))

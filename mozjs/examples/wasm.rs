@@ -6,6 +6,9 @@
 //! and do some setup on both of these. You also need to enter a "realm"
 //! (environment within one global object) before you can execute code.
 
+// The wasm example does not work on wasm32 targets.
+#![cfg(not(target_arch = "wasm32"))]
+
 use ::std::ptr;
 use ::std::ptr::null_mut;
 
