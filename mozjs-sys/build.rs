@@ -62,9 +62,15 @@ fn main() {
     env::set_var("MOZ_NO_DEBUG_RTL", "1");
 
     if let Some(path) = wasi_sdk() {
-        env::set_var("WASI_SYSROOT", PathBuf::from(&path).join("share").join("wasi-sysroot"));
+        env::set_var(
+            "WASI_SYSROOT",
+            PathBuf::from(&path).join("share").join("wasi-sysroot"),
+        );
         env::set_var("TARGET_CC", PathBuf::from(&path).join("bin").join("clang"));
-        env::set_var("TARGET_CXX", PathBuf::from(&path).join("bin").join("clang++"));
+        env::set_var(
+            "TARGET_CXX",
+            PathBuf::from(&path).join("bin").join("clang++"),
+        );
     }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
