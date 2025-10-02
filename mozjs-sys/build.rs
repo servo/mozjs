@@ -224,9 +224,13 @@ fn build_spidermonkey(build_dir: &Path) {
         cmd.env("MAKEFLAGS", makeflags);
     }
 
-    let icu_c_include_path = get_icu_capi_include_path();
     let mut cxxflags = vec![];
-    cxxflags.push(format!("-I{}", &icu_c_include_path.replace("\\", "/")));
+
+    #[cfg(feature = "intl")]
+    {
+        let icu_c_include_path = get_icu_capi_include_path();
+        cxxflags.push(format!("-I{}", &icu_c_include_path.replace("\\", "/")));
+    }
 
     if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         cxxflags.push(String::from("-stdlib=libc++"));
@@ -459,6 +463,9 @@ fn should_build_from_source() -> bool {
         false
     } else if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
         println!("debug-mozjs feature is enabled. Building from source directly.");
+        true
+    } else if env::var_os("CARGO_FEATURE_INTL").is_none() {
+        println!("intl feature is disabled. Building from source directly.");
         true
     } else {
         false

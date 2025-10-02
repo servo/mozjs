@@ -15,6 +15,10 @@ ifneq (,$(CARGO_FEATURE_JITSPEW))
     CONFIGURE_FLAGS += --enable-jitspew
 endif
 
+ifeq (,$(CARGO_FEATURE_INTL))
+    CONFIGURE_FLAGS += --without-intl-api
+endif
+
 ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
 	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
 endif

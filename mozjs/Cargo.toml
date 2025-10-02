@@ -11,12 +11,13 @@ edition.workspace = true
 doctest = false
 
 [features]
-default = ["libz-sys"]
+default = ["libz-sys", "intl"]
 debugmozjs = ["mozjs_sys/debugmozjs"]
 profilemozjs = ["mozjs_sys/profilemozjs"]
 jitspew = ["mozjs_sys/jitspew"]
 libz-sys = ["mozjs_sys/libz-sys"]
 libz-rs = ["mozjs_sys/libz-rs"]
+intl = ["mozjs_sys/intl"]
 crown = ["mozjs_sys/crown"]
 
 

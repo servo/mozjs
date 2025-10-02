@@ -2,7 +2,7 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
-version = "0.140.0-4"
+version = "0.140.0-5"
 authors = ["Mozilla", "The Servo Project Developers"]
 links = "mozjs"
 license.workspace = true
@@ -26,6 +26,7 @@ profilemozjs = []
 jitspew = []
 libz-sys = ["dep:libz-sys"]
 libz-rs = ["dep:libz-rs-sys"]
+intl = ["dep:icu_capi"]
 crown = []
 oom_with_hook = []
 
@@ -35,7 +36,7 @@ encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 # unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }
 # keep in sync with intl/icu_capi/Cargo.toml
-icu_capi = { version = "=1.5.0", default-features = false, features = ["compiled_data", "icu_calendar", "icu_properties", "icu_segmenter"] }
+icu_capi = { version = "=1.5.0", default-features = false, features = ["compiled_data", "icu_calendar", "icu_properties", "icu_segmenter"], optional = true }
 
 libz-rs-sys = { version = "0.5.1", features = ["export-symbols"], optional = true }
 # SM depends on them and we provide them using cargo
