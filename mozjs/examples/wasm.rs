@@ -185,6 +185,7 @@ fn main() {
 }
 
 /// For `cargo test` to actually run example
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn wasm_example() {
     main()
