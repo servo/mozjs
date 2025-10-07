@@ -273,12 +273,12 @@ jobs:
           mv wasi-sdk-25.0-x86_64-linux wasi-sdk
       - name: Build
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }}
+          cargo +${{ steps.toolchain.outputs.name }} build --no-default-features --features libz-rs,intl --target=wasm32-${{ matrix.target }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
       - name: Test
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} test --target=wasm32-${{ matrix.target }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --no-default-features --features libz-rs,intl --target=wasm32-${{ matrix.target }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
           CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime run --dir=$PWD::/cwd
