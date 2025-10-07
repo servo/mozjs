@@ -281,8 +281,8 @@ jobs:
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --no-default-features --features libz-rs,intl --target=wasm32-${{ matrix.target }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
-          CARGO_TARGET_WASM32_WASIP1_RUNNER: wasmtime run --dir=$PWD::/cwd
-          CARGO_TARGET_WASM32_WASIP2_RUNNER: wasmtime run --dir=$PWD::/cwd
+          CARGO_TARGET_WASM32_WASIP1_RUNNER: "wasmtime run --dir=$PWD::/cwd"
+          CARGO_TARGET_WASM32_WASIP2_RUNNER: "wasmtime run --dir=$PWD::/cwd"
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
         if: ${{ inputs.release }}
