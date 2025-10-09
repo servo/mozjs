@@ -222,7 +222,9 @@ fn build_spidermonkey(build_dir: &Path) {
                 pkg_config_path.push(":");
                 pkg_config_path.push(env_pkg_config_path);
             }
-            cmd.env("PKG_CONFIG_PATH", pkg_config_path);
+            cmd.env("PKG_CONFIG_PATH", &pkg_config_path);
+            // If we are cross compiling, we have patched SM to use this env var instead of empty string
+            cmd.env("TARGET_PKG_CONFIG_PATH", pkg_config_path);
         }
 
         if let Ok(include) = env::var("DEP_Z_INCLUDE") {

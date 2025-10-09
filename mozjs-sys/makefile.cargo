@@ -35,9 +35,6 @@ endif
 
 ifneq (,$(CARGO_FEATURE_LIBZ_RS))
 	CONFIGURE_FLAGS += --enable-libz-rs
-else ifneq (,$(findstring wasi,$(TARGET)))
-	# system libz is not available on wasi
-	CONFIGURE_FLAGS += --enable-libz-rs
 endif
 
 ifneq (,$(CCACHE))
