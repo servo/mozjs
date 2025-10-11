@@ -247,6 +247,53 @@ jobs:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
 
+  wasi:
+    name: wasm32-${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - wasip1
+          - wasip2
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        id: toolchain
+        with:
+          toolchain: "1.85.0"
+          targets: "wasm32-${{ matrix.target }}"
+      - uses: bytecodealliance/actions/wasmtime/setup@v1
+      - name: Install WASI-SDK
+        run: |
+          cd /tmp
+          curl --retry 5 --retry-all-errors -OL https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-25/wasi-sdk-25.0-x86_64-linux.tar.gz
+          tar -xzf wasi-sdk-25.0-x86_64-linux.tar.gz
+          mv wasi-sdk-25.0-x86_64-linux wasi-sdk
+      - name: Build
+        run: |
+          cargo +${{ steps.toolchain.outputs.name }} build --target=wasm32-${{ matrix.target }}
+        env:
+          WASI_SDK_PATH: "/tmp/wasi-sdk"
+      - name: Test
+        run: |
+          export CARGO_TARGET_WASM32_WASIP1_RUNNER="wasmtime run --dir=$PWD::/cwd"
+          export CARGO_TARGET_WASM32_WASIP2_RUNNER="wasmtime run --dir=$PWD::/cwd"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }}
+        env:
+          WASI_SDK_PATH: "/tmp/wasi-sdk"
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v1
+        if: ${{ inputs.release }}
+        with:
+          subject-path: "./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz"
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          path: ./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz
+          name: libmozjs-wasm32-${{ matrix.target }}.tar.gz
+
   linux-cross-compile:
     name: linux (${{ matrix.target }})
     runs-on: ubuntu-latest

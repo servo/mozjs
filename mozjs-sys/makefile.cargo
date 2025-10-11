@@ -20,7 +20,13 @@ ifeq (,$(CARGO_FEATURE_INTL))
 endif
 
 ifneq (,$(CARGO_FEATURE_DEBUGMOZJS))
-	CONFIGURE_FLAGS += --enable-debug --disable-optimize --enable-gczeal
+	CONFIGURE_FLAGS += --enable-debug --enable-gczeal
+	ifneq (,$(findstring -wasi,$(TARGET)))
+		# wasm-opt chokes on -O0 builds.
+		CONFIGURE_FLAGS += --enable-optimize=-O1
+	else
+		CONFIGURE_FLAGS += --disable-optimize
+	endif
 endif
 
 ifneq (,$(CARGO_FEATURE_PROFILEMOZJS))
@@ -75,6 +81,32 @@ ifneq ($(HOST),$(TARGET))
 		# the same as the target name needed for the CXX toolchain.
 		TARGET = aarch64-linux-gnu
 	endif
+
+    ifneq (,$(findstring -wasi,$(TARGET)))
+        ifeq (,$(WASI_SDK_PATH))
+            $(error WASI_SDK_PATH environment variable must be set when building for wasm32)
+        endif
+        WASI_SYSROOT = $(WASI_SDK_PATH)/share/wasi-sysroot
+        CC = $(WASI_SDK_PATH)/bin/clang
+        CPP = $(WASI_SDK_PATH)/bin/clang -E
+        CXX = $(WASI_SDK_PATH)/bin/clang++
+        AR = $(WASI_SDK_PATH)/bin/ar
+        HOST_CC = clang
+        HOST_CXX = clang++
+        CONFIGURE_FLAGS += \
+            --enable-portable-baseline-interp \
+            --disable-clang-plugin \
+            --disable-jit \
+            --disable-shared-memory \
+            --with-sysroot=$(WASI_SDK_PATH)/share/wasi-sysroot \
+            $(NULL)
+        # LTO makes `cargo test --wasm32-wasi` take a very very long time. Since build scripts
+        # don't have a way to detect if the build is for `cargo test`, enable LTO for release
+        # builds only.
+        ifneq (debug,$(PROFILE))
+            CONFIGURE_FLAGS += --lto=thin
+        endif
+    endif
 
 	ifeq (android,$(findstring android,$(TARGET)))
 		# Force use of lld on android. Mozilla build system tries to use
@@ -154,7 +186,7 @@ all: maybe-configure
 JSSRC := '$(SRC_DIR)'/js/src
 # Keep track of all input variables to configure, so we don't skip reconfigure
 # when we do need to reconfigure
-CONFIGURE_INPUTS := "$(CC)$(CFLAGS)$(CPP)$(CPPFLAGS)$(CXX)$(CXXFLAGS)$(AS)$(AR)$(CONFIGURE_FLAGS)"
+CONFIGURE_INPUTS := "$(CC)$(CFLAGS)$(CPP)$(CPPFLAGS)$(CXX)$(CXXFLAGS)$(AS)$(AR)$(HOST_CC)$(HOST_CXX)$(WASI_SYSROOT)$(CONFIGURE_FLAGS)"
 LAST_CONFIGURE_INPUTS := "$(shell cat reconfigure.inputs)"
 maybe-configure:
 	[[ $(JSSRC)/configure -ot $(JSSRC)/configure.in ]] && touch $(JSSRC)/configure || true
@@ -165,6 +197,9 @@ maybe-configure:
 	  CC="$(CC)" CFLAGS="$(CFLAGS)" \
 	  CPP="$(CPP)" CPPFLAGS="$(CPPFLAGS)" \
 	  CXX="$(CXX)" CXXFLAGS="$(CXXFLAGS)" \
+	  HOST_CC="$(HOST_CC)" \
+	  HOST_CXX="$(HOST_CXX)" \
+	  WASI_SYSROOT="$(WASI_SYSROOT)" \
 	  AS="$(AS)" AR="$(AR)" \
 	  $(JSSRC)/configure $(strip $(CONFIGURE_FLAGS)) || (cat config.log && exit 1) ; \
 	fi

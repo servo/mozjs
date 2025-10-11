@@ -45,6 +45,7 @@ const SM_TARGET_ENV_VARS: &'static [&'static str] = &[
     "CXXFLAGS",
     "READELF",
     "OBJCOPY",
+    "WASI_SDK_PATH",
 ];
 
 const EXTRA_FILES: &'static [&'static str] = &["makefile.cargo"];
@@ -59,6 +60,18 @@ fn main() {
 
     // https://github.com/servo/servo/issues/14759
     env::set_var("MOZ_NO_DEBUG_RTL", "1");
+
+    if let Some(path) = wasi_sdk() {
+        env::set_var(
+            "WASI_SYSROOT",
+            PathBuf::from(&path).join("share").join("wasi-sysroot"),
+        );
+        env::set_var("TARGET_CC", PathBuf::from(&path).join("bin").join("clang"));
+        env::set_var(
+            "TARGET_CXX",
+            PathBuf::from(&path).join("bin").join("clang++"),
+        );
+    }
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     let build_dir = out_dir.join("build");
@@ -209,7 +222,9 @@ fn build_spidermonkey(build_dir: &Path) {
                 pkg_config_path.push(":");
                 pkg_config_path.push(env_pkg_config_path);
             }
-            cmd.env("PKG_CONFIG_PATH", pkg_config_path);
+            cmd.env("PKG_CONFIG_PATH", &pkg_config_path);
+            // If we are cross compiling, we have patched SM to use this env var instead of empty string
+            cmd.env("TARGET_PKG_CONFIG_PATH", pkg_config_path);
         }
 
         if let Ok(include) = env::var("DEP_Z_INCLUDE") {
@@ -342,6 +357,12 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .formatter(Formatter::Rustfmt)
         .clang_args(cc_flags(true));
 
+    if env::var("TARGET").unwrap().contains("wasi") {
+        builder = builder
+            .clang_arg("--sysroot")
+            .clang_arg(env::var("WASI_SYSROOT").unwrap().to_string());
+    }
+
     if target == BuildTarget::JSGlue {
         builder = builder
             .parse_callbacks(Box::new(JSGlueCargoCallbacks::default()))
@@ -437,8 +458,14 @@ fn link_static_lib_binaries(build_dir: &Path) {
         println!("cargo:rustc-link-lib=c++");
     } else if target.contains("windows") && target.contains("gnu") {
         println!("cargo:rustc-link-lib=stdc++");
-    } else if !target.contains("windows") {
+    } else if !target.contains("windows") && !target.contains("wasi") {
+        // The build works without this for WASI, and specifying it means
+        // needing to use the WASI-SDK's clang for linking, which is annoying.
         println!("cargo:rustc-link-lib=stdc++")
+    }
+
+    if target.contains("wasi") {
+        println!("cargo:rustc-link-lib=wasi-emulated-getpid");
     }
 }
 
@@ -518,6 +545,13 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         if env::var_os("CARGO_FEATURE_PROFILEMOZJS").is_some() {
             flags.push("-fno-omit-frame-pointer");
         }
+
+        if target.contains("wasi") {
+            // Unconditionally target p1 for now. Even if the application
+            // targets p2, an adapter will take care of it.
+            flags.push("--target=wasm32-wasip1");
+            flags.push("-fvisibility=default");
+        }
     }
 
     flags.extend(&["-DSTATIC_JS_API", "-DRUST_BINDGEN"]);
@@ -541,6 +575,10 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         flags.push("-stdlib=libc++");
     }
 
+    if target.contains("wasi") {
+        flags.push("-D_WASI_EMULATED_GETPID");
+    }
+
     flags
 }
 
@@ -559,6 +597,14 @@ fn js_config_path(build_dir: &Path) -> String {
         .join("js-confdefs.h")
         .display()
         .to_string()
+}
+
+fn wasi_sdk() -> Option<OsString> {
+    if env::var("TARGET").unwrap().contains("wasi") {
+        get_cc_rs_env_os("WASI_SDK_PATH")
+    } else {
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

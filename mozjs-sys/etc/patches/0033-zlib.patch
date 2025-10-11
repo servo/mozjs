@@ -95,3 +95,16 @@ index c6305ec3d..62adc8d84 100644
  /*
   * If you *really* need a unique prefix for all types and library functions,
   * compile with -DZ_PREFIX. The "standard" zlib should be compiled without it.
+diff --git a/build/moz.configure/pkg.configure b/build/moz.configure/pkg.configure
+index 418331b87..9ae5b1eee 100644
+--- a/build/moz.configure/pkg.configure
++++ b/build/moz.configure/pkg.configure
+@@ -69,7 +69,7 @@ def pkg_config_vars(target, sysroot_path, multiarch_dir):
+         if target.bitness == 64:
+             pkgconfig_dirs.insert(0, "usr/lib64/pkgconfig")
+         return namespace(
+-            PKG_CONFIG_PATH="",
++            PKG_CONFIG_PATH=environ.get("TARGET_PKG_CONFIG_PATH", ""),
+             PKG_CONFIG_SYSROOT_DIR=sysroot_path,
+             PKG_CONFIG_LIBDIR=pathsep.join(
+                 os.path.join(sysroot_path, d) for d in pkgconfig_dirs
