@@ -877,10 +877,18 @@ impl<'a> From<&'a str> for Utf8Chars<'a> {
         let start = RangedPtr {
             _phantom_0: PhantomData,
             mPtr: range.start as *mut _,
+            #[cfg(feature = "debugmozjs")]
+            mRangeStart: range.start as *mut _,
+            #[cfg(feature = "debugmozjs")]
+            mRangeEnd: range.end as *mut _,
         };
         let end = RangedPtr {
             _phantom_0: PhantomData,
             mPtr: range.end as *mut _,
+            #[cfg(feature = "debugmozjs")]
+            mRangeStart: range.start as *mut _,
+            #[cfg(feature = "debugmozjs")]
+            mRangeEnd: range.end as *mut _,
         };
         let base = Range {
             _phantom_0: PhantomData,
