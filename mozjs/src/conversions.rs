@@ -874,21 +874,23 @@ impl<'a> From<&'a str> for Utf8Chars<'a> {
         use crate::jsapi::UTF8Chars;
 
         let range = value.as_bytes().as_ptr_range();
+        let range_start = range.start as *mut _;
+        let range_end = range.end as *mut _;
         let start = RangedPtr {
             _phantom_0: PhantomData,
-            mPtr: range.start as *mut _,
+            mPtr: range_start,
             #[cfg(feature = "debugmozjs")]
-            mRangeStart: range.start as *mut _,
+            mRangeStart: range_start,
             #[cfg(feature = "debugmozjs")]
-            mRangeEnd: range.end as *mut _,
+            mRangeEnd: range_end,
         };
         let end = RangedPtr {
             _phantom_0: PhantomData,
-            mPtr: range.end as *mut _,
+            mPtr: range_end,
             #[cfg(feature = "debugmozjs")]
-            mRangeStart: range.start as *mut _,
+            mRangeStart: range_start,
             #[cfg(feature = "debugmozjs")]
-            mRangeEnd: range.end as *mut _,
+            mRangeEnd: range_end,
         };
         let base = Range {
             _phantom_0: PhantomData,
