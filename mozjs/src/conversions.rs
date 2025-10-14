@@ -870,8 +870,8 @@ impl<'a> From<&'a str> for Utf8Chars<'a> {
     fn from(value: &'a str) -> Self {
         use std::marker::PhantomData;
 
-        use crate::jsapi::UTF8Chars;
         use crate::jsapi::mozilla::{Range, RangedPtr};
+        use crate::jsapi::UTF8Chars;
 
         let range = value.as_bytes().as_ptr_range();
         let start = RangedPtr {
