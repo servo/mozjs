@@ -848,3 +848,59 @@ impl FromJSValConvertible for *mut JS::Symbol {
         Ok(ConversionResult::Success(value.to_symbol()))
     }
 }
+
+/// A wrapper type over [`crate::jsapi::UTF8Chars`]. This is created to help transferring
+/// a rust string to mozjs. The inner [`crate::jsapi::UTF8Chars`] can be accessed via the
+/// [`std::ops::Deref`] trait.
+pub struct Utf8Chars<'a> {
+    lt_marker: std::marker::PhantomData<&'a ()>,
+    inner: crate::jsapi::UTF8Chars,
+}
+
+impl<'a> std::ops::Deref for Utf8Chars<'a> {
+    type Target = crate::jsapi::UTF8Chars;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<'a> From<&'a str> for Utf8Chars<'a> {
+    #[allow(unsafe_code)]
+    fn from(value: &'a str) -> Self {
+        use std::marker::PhantomData;
+
+        use crate::jsapi::mozilla::{Range, RangedPtr};
+        use crate::jsapi::UTF8Chars;
+
+        let range = value.as_bytes().as_ptr_range();
+        let range_start = range.start as *mut _;
+        let range_end = range.end as *mut _;
+        let start = RangedPtr {
+            _phantom_0: PhantomData,
+            mPtr: range_start,
+            #[cfg(feature = "debugmozjs")]
+            mRangeStart: range_start,
+            #[cfg(feature = "debugmozjs")]
+            mRangeEnd: range_end,
+        };
+        let end = RangedPtr {
+            _phantom_0: PhantomData,
+            mPtr: range_end,
+            #[cfg(feature = "debugmozjs")]
+            mRangeStart: range_start,
+            #[cfg(feature = "debugmozjs")]
+            mRangeEnd: range_end,
+        };
+        let base = Range {
+            _phantom_0: PhantomData,
+            mStart: start,
+            mEnd: end,
+        };
+        let inner = UTF8Chars { _base: base };
+        Self {
+            lt_marker: PhantomData,
+            inner,
+        }
+    }
+}
