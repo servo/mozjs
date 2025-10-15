@@ -852,7 +852,7 @@ impl FromJSValConvertible for *mut JS::Symbol {
 /// A wrapper type over [`crate::jsapi::UTF8Chars`]. This is created to help transferring
 /// a rust string to mozjs. The inner [`crate::jsapi::UTF8Chars`] can be accessed via the
 /// [`std::ops::Deref`] trait.
-pub(crate) struct Utf8Chars<'a> {
+pub struct Utf8Chars<'a> {
     lt_marker: std::marker::PhantomData<&'a ()>,
     inner: crate::jsapi::UTF8Chars,
 }
