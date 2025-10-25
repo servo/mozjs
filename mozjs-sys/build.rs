@@ -352,6 +352,7 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .rustified_enum(".*")
         .derive_partialeq(true)
         .size_t_is_usize(true)
+        .vtable_generation(true)
         .enable_cxx_namespaces()
         .with_codegen_config(config)
         .formatter(Formatter::Rustfmt)
