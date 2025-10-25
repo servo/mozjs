@@ -18,6 +18,7 @@ env:
   CARGO_INCREMENTAL: 0
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   MOZJS_CREATE_ARCHIVE: 1
+  NEW_RUST_CHECK: ${{ inputs.rust_version == 'stable' || inputs.rust_version == 'beta' }}
 
 jobs:
   mac:
@@ -59,7 +60,7 @@ jobs:
           subject-path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
 
       - name: Upload artifact
-        if: ${{ matrix.features != 'debugmozjs' }}
+        if: ${{ matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
@@ -107,7 +108,7 @@ jobs:
           subject-path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
 
       - name: Upload artifact
-        if: ${{ matrix.features != 'debugmozjs' }}
+        if: ${{ matrix.features != 'debugmozjs'  && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
@@ -166,7 +167,7 @@ jobs:
           subject-path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
 
       - name: Upload artifact
-        if: ${{ !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' }}
+        if: ${{ !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
           path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
@@ -208,6 +209,7 @@ jobs:
           subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
@@ -243,6 +245,7 @@ jobs:
           subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
@@ -290,6 +293,7 @@ jobs:
           subject-path: "./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
           path: ./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz
           name: libmozjs-wasm32-${{ matrix.target }}.tar.gz
