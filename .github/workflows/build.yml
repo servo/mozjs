@@ -209,7 +209,7 @@ jobs:
           subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: {{ !env.NEW_RUST_CHECK }}
+        if: ${{ !env.NEW_RUST_CHECK }}
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
@@ -245,7 +245,7 @@ jobs:
           subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: {{ !env.NEW_RUST_CHECK }}
+        if: ${{ !env.NEW_RUST_CHECK }}
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
@@ -293,7 +293,7 @@ jobs:
           subject-path: "./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: {{ !env.NEW_RUST_CHECK }}
+        if: ${{ !env.NEW_RUST_CHECK }}
         with:
           path: ./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz
           name: libmozjs-wasm32-${{ matrix.target }}.tar.gz
