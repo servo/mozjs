@@ -4,6 +4,7 @@
 
 use bindgen::callbacks::ParseCallbacks;
 use bindgen::{CodegenConfig, Formatter, RustTarget};
+use cargo_metadata::CargoOpt;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -138,9 +139,14 @@ fn main() {
 
 fn get_icu_capi_include_path() -> String {
     // Using cargo metadata is the official recommendation from the icu4x documentation.
-    // See <https://icu4x.unicode.org/2_0/cppdoc/>. In the future we should try to upstream a
-    // patch that allows us to use DEP_ syntax, like we do with libz.
-    let metadata = cargo_metadata::MetadataCommand::new().exec().unwrap();
+    // See <https://icu4x.unicode.org/2_0/cppdoc/>.
+    // Once we update to a new release containing https://github.com/unicode-org/icu4x/pull/6887
+    // we can remove the dependency on cargo metadata.
+    let metadata = cargo_metadata::MetadataCommand::new()
+        // icu_capi is feature guarded behind the `intl` feature.
+        .features(CargoOpt::SomeFeatures(vec!["intl".into()]))
+        .exec()
+        .unwrap();
     let packages = metadata.packages;
     let icu_capi_info = packages
         .iter()
