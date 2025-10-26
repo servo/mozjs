@@ -71,7 +71,6 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
    - Windows 10 SDK
    - ATL
-   - MFC
   
    To install these dependencies from the command line, you can download 
    [vs_buildtools.exe](https://aka.ms/vs/17/release/vs_buildtools.exe)
@@ -79,18 +78,10 @@ export LIBCLANG_PATH=/usr/lib/clang/4.0/lib
 
    ```
    vs_BuildTools.exe^
-      --add Microsoft.Component.MSBuild^
-      --add Microsoft.VisualStudio.Component.CoreBuildTools^
       --add Microsoft.VisualStudio.Workload.MSBuildTools^
       --add Microsoft.VisualStudio.Component.Windows11SDK^
-      --add Microsoft.VisualStudio.Component.VC.CoreBuildTools^
       --add Microsoft.VisualStudio.Component.VC.Tools.x86.x64^
-      --add Microsoft.VisualStudio.Component.VC.Redist.14.Latest^
       --add Microsoft.VisualStudio.Component.VC.ATL^
-      --add Microsoft.VisualStudio.Component.VC.ATLMFC^
-      --add Microsoft.VisualStudio.Component.VC.CoreIde^
-      --add Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Core^
-      --add Microsoft.VisualStudio.Workload.VCTools
    ```
 
 4. Install [Python 3.11](https://www.python.org/downloads/windows/).
