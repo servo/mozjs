@@ -138,11 +138,15 @@ fn main() {
 }
 
 fn get_icu_capi_include_path() -> String {
+    let manifest_path = env::var("CARGO_MANIFEST_PATH").unwrap();
+    let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     // Using cargo metadata is the official recommendation from the icu4x documentation.
     // See <https://icu4x.unicode.org/2_0/cppdoc/>.
     // Once we update to a new release containing https://github.com/unicode-org/icu4x/pull/6887
     // we can remove the dependency on cargo metadata.
     let metadata = cargo_metadata::MetadataCommand::new()
+        .current_dir(manifest_dir)
+        .manifest_path(manifest_path)
         // icu_capi is feature guarded behind the `intl` feature.
         .features(CargoOpt::SomeFeatures(vec!["intl".into()]))
         .exec()
