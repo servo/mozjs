@@ -24,7 +24,7 @@ fn main() {
     let engine = JSEngine::init().expect("failed to initalize JS engine");
 
     // Create a Runtime -- wraps a JSContext in the C++ API.
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     assert!(!runtime.cx().is_null(), "failed to create JSContext");
 
     run(runtime);
@@ -33,8 +33,8 @@ fn main() {
     // reference counts will clean up everything.
 }
 
-fn run(rt: Runtime) {
-    let cx = rt.cx();
+fn run(mut rt: Runtime) {
+    let cx = *rt.cx();
     // In addition to what the C++ interface requires, define a global scope for the code.
     //
     // This demonstrates the way Rust uses the C++ garbage collector: using the rooted! macro to

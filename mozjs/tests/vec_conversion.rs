@@ -17,8 +17,8 @@ use mozjs::rust::{CompileOptionsWrapper, JSEngine, RealmOptions, Runtime, SIMPLE
 #[test]
 fn vec_conversion() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let mut runtime = Runtime::new(engine.handle());
+    let context = *runtime.cx();
 
     #[cfg(feature = "debugmozjs")]
     unsafe {

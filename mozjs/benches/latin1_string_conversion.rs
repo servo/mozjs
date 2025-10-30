@@ -11,6 +11,7 @@ use mozjs::rooted;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs_sys::jsapi::JSContext;
 use std::ffi::c_void;
+use std::ptr::NonNull;
 use std::{iter, ptr};
 
 // TODO: Create a trait for creating a latin1 string of a required length, so that we can
@@ -51,7 +52,7 @@ fn bench_str_repetition(
             &latin1_jsstr,
             |b, js_str| {
                 b.iter(|| {
-                    unsafe { jsstr_to_string(context, js_str.get()) };
+                    unsafe { jsstr_to_string(context, NonNull::new(js_str.get()).unwrap()) };
                 })
             },
         );
@@ -59,8 +60,8 @@ fn bench_str_repetition(
 }
 fn external_string(c: &mut Criterion) {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let mut runtime = Runtime::new(engine.handle());
+    let context = *runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
     rooted!(in(context) let global = unsafe { JS_NewGlobalObject(

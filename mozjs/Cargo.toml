@@ -28,7 +28,9 @@ log = "0.4"
 mozjs_sys = { path = "../mozjs-sys" }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-criterion = { version = "0.6", default-features = false, features = ["html_reports"] }
+criterion = { version = "0.6", default-features = false, features = [
+    "html_reports",
+] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = "0.6"
@@ -36,6 +38,10 @@ criterion = "0.6"
 [build-dependencies]
 cc.workspace = true
 bindgen.workspace = true
+
+
+[dev-dependencies]
+trybuild = "1"
 
 
 [[bench]]

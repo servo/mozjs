@@ -8,7 +8,7 @@ use mozjs::rust::{JSEngine, Runtime};
 #[should_panic]
 fn runtime() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let _parent = runtime.prepare_for_new_child();
     drop(runtime);
 }

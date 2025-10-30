@@ -29,8 +29,8 @@ unsafe impl CustomTrace for TraceCheck {
 #[test]
 fn custom_auto_rooter_macro() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let mut runtime = Runtime::new(engine.handle());
+    let context = *runtime.cx();
 
     auto_root!(in(context) let vec = vec![TraceCheck::new(), TraceCheck::new()]);
 

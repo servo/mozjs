@@ -13,7 +13,7 @@ use mozjs::rust::{
 use mozjs_sys::jsval::JSVal;
 
 unsafe fn tester<F: Fn(RootedGuard<JSVal>)>(
-    rt: &Runtime,
+    rt: &mut Runtime,
     global: HandleObject,
     // js to be executed that needs to return jsval
     js: &str,
@@ -21,7 +21,7 @@ unsafe fn tester<F: Fn(RootedGuard<JSVal>)>(
     rust: JSVal,
     test: F,
 ) {
-    let cx = rt.cx();
+    let cx = *rt.cx();
     rooted!(in(cx) let mut rval = UndefinedValue());
     let options = rt.new_compile_options("test", 1);
     assert!(rt
@@ -36,8 +36,8 @@ unsafe fn tester<F: Fn(RootedGuard<JSVal>)>(
 #[test]
 fn jsvalues() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let mut runtime = Runtime::new(engine.handle());
+    let context = *runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
         mozjs::jsapi::SetGCZeal(context, 2, 1);
@@ -55,7 +55,7 @@ fn jsvalues() {
         ));
 
         tester(
-            &runtime,
+            &mut runtime,
             global.handle(),
             "undefined",
             UndefinedValue(),
@@ -65,7 +65,7 @@ fn jsvalues() {
             },
         );
 
-        tester(&runtime, global.handle(), "null", NullValue(), |val| {
+        tester(&mut runtime, global.handle(), "null", NullValue(), |val| {
             assert!(val.is_null());
             assert!(val.is_null_or_undefined());
             assert!(val.is_object_or_null());
@@ -74,7 +74,7 @@ fn jsvalues() {
         });
 
         tester(
-            &runtime,
+            &mut runtime,
             global.handle(),
             "true",
             BooleanValue(true),
@@ -87,7 +87,7 @@ fn jsvalues() {
         );
 
         tester(
-            &runtime,
+            &mut runtime,
             global.handle(),
             "false",
             BooleanValue(false),
@@ -99,7 +99,7 @@ fn jsvalues() {
             },
         );
 
-        tester(&runtime, global.handle(), "42", Int32Value(42), |val| {
+        tester(&mut runtime, global.handle(), "42", Int32Value(42), |val| {
             assert!(val.is_int32());
             assert!(val.is_primitive());
             assert!(val.is_number());
@@ -108,17 +108,23 @@ fn jsvalues() {
             assert_eq!(val.to_number(), 42.0);
         });
 
-        tester(&runtime, global.handle(), "-42", Int32Value(-42), |val| {
-            assert!(val.is_int32());
-            assert!(val.is_primitive());
-            assert!(val.is_number());
+        tester(
+            &mut runtime,
+            global.handle(),
+            "-42",
+            Int32Value(-42),
+            |val| {
+                assert!(val.is_int32());
+                assert!(val.is_primitive());
+                assert!(val.is_number());
 
-            assert_eq!(val.to_int32(), -42);
-            assert_eq!(val.to_number(), -42.0);
-        });
+                assert_eq!(val.to_int32(), -42);
+                assert_eq!(val.to_number(), -42.0);
+            },
+        );
 
         tester(
-            &runtime,
+            &mut runtime,
             global.handle(),
             "42.5",
             DoubleValue(42.5),
@@ -133,7 +139,7 @@ fn jsvalues() {
         );
 
         tester(
-            &runtime,
+            &mut runtime,
             global.handle(),
             "-42.5",
             DoubleValue(-42.5),
