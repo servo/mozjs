@@ -149,6 +149,7 @@ fn get_icu_capi_include_path() -> String {
         .manifest_path(manifest_path)
         // icu_capi is feature guarded behind the `intl` feature.
         .features(CargoOpt::SomeFeatures(vec!["intl".into()]))
+        .other_options(vec!["--offline".into()])
         .exec()
         .unwrap();
     let packages = metadata.packages;
