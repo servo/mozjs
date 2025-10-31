@@ -220,7 +220,7 @@ fn build_spidermonkey(build_dir: &Path) {
 
     #[cfg(feature = "intl")]
     {
-        let icu_c_include_path = env::var("DEP_ICU_CAPI_C_INCLUDE_DIR").unwrap();
+        let icu_c_include_path = env::var("DEP_ICU_CAPI1_C_INCLUDE_DIR").unwrap();
         cxxflags.push(format!("-I{}", &icu_c_include_path.replace("\\", "/")));
     }
 
