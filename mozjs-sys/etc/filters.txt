@@ -20,7 +20,6 @@
 - /build/workspace-hack
 - /build/rust
 - /intl/bidi
-- /intl/icu_capi
 - /intl/icu_segmenter_data
 - /js/rust
 - /js/src/build.rs
@@ -35,6 +34,12 @@
 - /third_party/rust
 - /Cargo.toml
 - /.cargo
+
+# Keep icu_capi headers
++ /intl/icu_capi/bindings/
++ /intl/icu_capi/bindings/c/
++ /intl/icu_capi/bindings/c/*
+- /intl/icu_capi/**
 
 # Keep zlib headers for libz-rs-sys
 + modules/zlib/src/
