@@ -36,7 +36,12 @@ encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
 # unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }
 # keep in sync with intl/icu_capi/Cargo.toml
-icu_capi = { version = "=1.5.0", default-features = false, features = ["compiled_data", "icu_calendar", "icu_properties", "icu_segmenter"], optional = true }
+icu_capi = { git = "https://github.com/sagudev/icu4x", branch = "release/1.5", default-features = false, features = [
+  "compiled_data",
+  "icu_calendar",
+  "icu_properties",
+  "icu_segmenter",
+], optional = true }
 
 libz-rs-sys = { version = "0.5.1", features = ["export-symbols"], optional = true }
 # SM depends on them and we provide them using cargo
@@ -48,4 +53,3 @@ cc.workspace = true
 walkdir = "2"
 flate2 = "1"
 tar = "0.4"
-cargo_metadata = "0.20.0"
