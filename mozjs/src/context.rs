@@ -6,28 +6,102 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::ptr::NonNull;
 
-/// A wrapper for raw JSContext pointers that are strongly associated with
-/// the [Runtime] type.
+pub use crate::jsapi::JSContext as RawJSContext;
+
+/// A wrapper for raw JSContext pointers that are strongly associated with the [Runtime] type.
 ///
-/// Each function that can trigger GC accepts `&mut JSContext`
-/// and each value that should not be held across GC is created using [NoGC]
-/// which borrows [JSContext] and thus prevents calling any function that triggers GC
-/// (because &mut requires exclusive access).
+/// This type is fundamental for safe SpiderMonkey usage.
+/// Each (SpiderMonkey) function which takes `&mut JSContext` as argument can trigger GC.
+/// SpiderMonkey functions require take `&JSContext` are guaranteed to not trigger GC.
+/// We must not hold any unrooted or borrowed data while calling any functions that can trigger GC.
+/// That can causes panics or UB.
+/// Such types are derived from [NoGC] token which can be though of `&JSContext`,
+/// so they are bounded to [JSContext].
+///
+/// ```rust
+/// use std::marker::PhantomData;
+/// use mozjs::context::*;
+/// use mozjs::jsapi::JSContext as RawJSContext;
+///
+/// struct ShouldNotBeHoldAcrossGC<'a>(PhantomData<&'a ()>);
+///
+/// impl<'a> Drop for ShouldNotBeHoldAcrossGC<'a> {
+///     fn drop(&mut self) {}
+/// }
+///
+/// fn something_that_should_not_hold_across_gc<'a>(_no_gc: &NoGC<'a>) -> ShouldNotBeHoldAcrossGC<'a> {
+///     ShouldNotBeHoldAcrossGC(PhantomData)
+/// }
+///
+/// fn SM_function_that_can_trigger_gc(_cx: *mut RawJSContext) {}
+///
+/// // this lives in mozjs
+/// fn safe_wrapper_to_SM_function_that_can_trigger_gc(cx: &mut JSContext) {
+///     unsafe { SM_function_that_can_trigger_gc(cx.raw()) }
+/// }
+///
+/// fn can_cause_gc(cx: &mut JSContext) {
+///     safe_wrapper_to_SM_function_that_can_trigger_gc(cx);
+///     {
+///         let t = something_that_should_not_hold_across_gc(&cx.no_gc());
+///         // do something with it
+///     } // t get dropped
+///     safe_wrapper_to_SM_function_that_can_trigger_gc(cx); // we can call GC again
+/// }
+/// ```
+///
+/// One cannot call any GC function, while any [NoGC] token is alive,
+/// because [NoGC] token borrows [JSContext] (`&JSContext`)
+/// and thus prevents calling any function that triggers GC,
+/// because they require exclusive access to [JSContext] (`&mut JSContext`).
+///
+/// ```compile_fail
+/// use std::marker::PhantomData;
+/// use mozjs::context::*;
+/// use mozjs::jsapi::JSContext as RawJSContext;
+///
+/// struct ShouldNotBeHoldAcrossGC<'a>(PhantomData<&'a ()>);
+///
+/// impl<'a> Drop for ShouldNotBeHoldAcrossGC<'a> {
+///     fn drop(&mut self) {} // make type not trivial, or else compiler can shorten it's lifetime
+/// }
+///
+/// fn something_that_should_not_hold_across_gc<'a>(_no_gc: &'a NoGC<'a>) -> ShouldNotBeHoldAcrossGC<'a> {
+///     ShouldNotBeHoldAcrossGC(PhantomData)
+/// }
+///
+/// fn safe_wrapper_to_SM_function_that_can_trigger_gc(_cx: &mut JSContext) {
+/// }
+///
+/// fn can_cause_gc(cx: &mut JSContext) {
+///     safe_wrapper_to_SM_function_that_can_trigger_gc(cx);
+///     let t = something_that_should_not_hold_across_gc(&cx.no_gc());
+///     // this will create compile error, because we cannot hold NoGc across C triggering function.
+///     // more specifically we cannot borrow `JSContext` as mutable because it is also borrowed as immutable (NoGC).
+///     safe_wrapper_to_SM_function_that_can_trigger_gc(cx);
+/// }
+/// ```
+///
+/// ### WIP
+///
+/// This model is still being incrementally introduced, so there are currently some escape hatches.
 #[derive(Copy, Clone)]
 pub struct JSContext<'rt> {
-    pub(crate) ptr: NonNull<crate::jsapi::JSContext>,
+    pub(crate) ptr: NonNull<RawJSContext>,
     pub(crate) runtime_anchor: PhantomData<&'rt ()>,
 }
 
 impl<'rt> JSContext<'rt> {
-    /// Wrap an existing raw JSContext pointer.
+    /// Wrap an existing [RawJSContext] pointer.
     ///
     /// SAFETY:
-    /// - cx must be valid JSContext object.
-    /// - the resulting lifetime must not exceed the actual lifetime of the
-    ///   associated JS runtime.
-    /// - only one JSContext can be alive (it's safe to construct only one from ptr provided from callbacks, but you are not allowed to make more from thin air)
-    pub unsafe fn from_ptr(cx: NonNull<mozjs_sys::jsapi::JSContext>) -> JSContext<'rt> {
+    /// - `cx` must be valid [RawJSContext] object.
+    /// - the resulting lifetime `'rt` must not exceed the actual lifetime of the
+    ///   associated [Runtime].
+    /// - only one [JSContext] can be alive.
+    /// This in turn means that [JSContext] always needs to be passed down as an argument,
+    /// but for the SpiderMonkey callbacks which provide [RawJSContext] it's safe to construct **one** from provided [RawJSContext].
+    pub unsafe fn from_ptr(cx: NonNull<RawJSContext>) -> JSContext<'rt> {
         JSContext {
             ptr: cx,
             runtime_anchor: PhantomData,
@@ -39,35 +113,50 @@ impl<'rt> JSContext<'rt> {
     /// can be called while this is alive.
     #[inline]
     #[must_use]
-    pub fn no_gc<'cx: 'rt>(&'cx self) -> &'cx NoGC<'cx> {
+    pub fn no_gc<'cx>(&'cx self) -> &'cx NoGC<'cx> {
         &NoGC(PhantomData)
     }
-}
 
-// This will be eventually removed, because it currently breaks safety invariants
-impl<'rt> Deref for JSContext<'rt> {
-    type Target = *mut crate::jsapi::JSContext;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe {
-            std::mem::transmute::<&NonNull<crate::jsapi::JSContext>, &*mut crate::jsapi::JSContext>(
-                &self.ptr,
-            )
-        }
+    /// Obtain [RawJSContext] mutable pointer.
+    ///
+    /// # Safety
+    ///
+    /// No [NoGC] tokens should be constructed while returned pointer is available to user.
+    /// In practices this means that one should use the result
+    /// as direct argument to SpiderMonkey function and not store it in variable.
+    ///
+    /// ```rust
+    /// use mozjs::context::*;
+    /// use mozjs::jsapi::JSContext as RawJSContext;
+    ///
+    /// fn SM_function_that_can_trigger_gc(_cx: *mut RawJSContext) {}
+    ///
+    /// fn can_trigger_gc(cx: &mut JSContext) {
+    ///     unsafe { SM_function_that_can_trigger_gc(cx.raw()) } // returned pointer is immediately used
+    ///     cx.no_gc(); // this is ok because no outstanding raw pointer is alive
+    /// }
+    /// ```
+    pub unsafe fn raw(&mut self) -> *mut RawJSContext {
+        self.ptr.as_ptr()
     }
 }
 
-/// Token that ensures that no GC can happen while this is alive.
+/// Token that ensures that no GC can happen while it is alive.
 ///
-/// Each GC triggering function require mutable access to [JSContext],
-/// which cannot be while this exists, because it's lifetime is bounded with [JSContext].
+/// Each function that trigger GC require mutable access to [JSContext],
+/// so one cannot call them because [NoGC] lifetime is bounded to [JSContext].
+///
+/// For more info and examples see [JSContext].
 pub struct NoGC<'cx>(PhantomData<&'cx ()>);
 
-/// Special case of [JSContext], which can be passed to functions which will not trigger GC, but still take `*mut JSContext`
-/// (they usually take `cx: *mut root::JSContext, nogc: *const root::JS::AutoRequireNoGC` like `JS_GetTwoByteStringCharsAndLength`).
-///
-/// Because they do not trigger GC, this can be alive while holding [NoGC].
-pub struct NoGcJSContext<'cx> {
-    ptr: NonNull<crate::jsapi::JSContext>,
-    no_gc: PhantomData<&'cx ()>,
+impl<'rt> Deref for JSContext<'rt> {
+    type Target = *mut RawJSContext;
+
+    /// This exists to make migration to [JSContext] easier,
+    /// but it will be eventually removed as it is **unsafe**.
+    ///
+    /// Use [JSContext::raw] instead.
+    fn deref(&'_ self) -> &'_ Self::Target {
+        unsafe { std::mem::transmute::<&NonNull<RawJSContext>, &*mut RawJSContext>(&self.ptr) }
+    }
 }

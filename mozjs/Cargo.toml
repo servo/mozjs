@@ -40,10 +40,6 @@ cc.workspace = true
 bindgen.workspace = true
 
 
-[dev-dependencies]
-trybuild = "1"
-
-
 [[bench]]
 name = "latin1_string_conversion"
 harness = false
