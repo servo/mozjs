@@ -4,7 +4,4 @@
 # and update all occurences.
 channel = "1.85.0"
 
-components = [
-    "clippy",
-    "rustfmt"
-]
+components = ["clippy", "rustfmt", "rust-src"]

@@ -19,8 +19,8 @@ use mozjs_sys::jsapi::JS_GetProperty;
 #[test]
 fn property_descriptor() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let mut runtime = Runtime::new(engine.handle());
+    let context = *runtime.cx();
 
     #[cfg(feature = "debugmozjs")]
     unsafe {

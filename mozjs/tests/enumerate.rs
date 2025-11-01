@@ -15,8 +15,8 @@ use mozjs::rust::{IdVector, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS
 #[test]
 fn enumerate() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let mut runtime = Runtime::new(engine.handle());
+    let context = *runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
         mozjs::jsapi::SetGCZeal(context, 2, 1);

@@ -154,7 +154,7 @@ impl Drop for RealmOptions {
     }
 }
 
-thread_local!(static CONTEXT: Cell<*mut JSContext> = Cell::new(ptr::null_mut()));
+thread_local!(static CONTEXT: Cell<Option<NonNull<JSContext>>> = Cell::new(None));
 
 #[derive(PartialEq)]
 enum EngineState {
@@ -284,7 +284,7 @@ unsafe impl Send for ParentRuntime {}
 /// A wrapper for the `JSContext` structure in SpiderMonkey.
 pub struct Runtime {
     /// Raw pointer to the underlying SpiderMonkey context.
-    cx: *mut JSContext,
+    cx: NonNull<JSContext>,
     /// The engine that this runtime is associated with.
     engine: JSEngineHandle,
     /// If this Runtime was created with a parent, this member exists to ensure
@@ -301,18 +301,21 @@ pub struct Runtime {
     /// An `Option` that holds the same pointer as `cx`.
     /// This is shared with all [`ThreadSafeJSContext`]s, so
     /// they can detect when it's destroyed on the main thread.
-    thread_safe_handle: Arc<RwLock<Option<*mut JSContext>>>,
+    thread_safe_handle: Arc<RwLock<Option<NonNull<JSContext>>>>,
 }
 
 impl Runtime {
     /// Get the `JSContext` for this thread.
+    ///
+    /// This will eventually be removed for in favour of [JSContext]
     pub fn get() -> Option<NonNull<JSContext>> {
-        let cx = CONTEXT.with(|context| context.get());
-        NonNull::new(cx)
+        CONTEXT.with(|context| context.get())
     }
 
     /// Create a [`ThreadSafeJSContext`] that can detect when this `Runtime` is destroyed.
     pub fn thread_safe_js_context(&self) -> ThreadSafeJSContext {
+        // Existence of `ThreadSafeJSContext` does not actually break invariant of
+        // JSContext, because it can be used for limited subset of methods and they do not trigger GC
         ThreadSafeJSContext(self.thread_safe_handle.clone())
     }
 
@@ -347,28 +350,31 @@ impl Runtime {
 
     unsafe fn create(engine: JSEngineHandle, parent: Option<ParentRuntime>) -> Runtime {
         let parent_runtime = parent.as_ref().map_or(ptr::null_mut(), |r| r.parent);
-        let js_context = JS_NewContext(default_heapsize + (ChunkSize as u32), parent_runtime);
-        assert!(!js_context.is_null());
+        let js_context = NonNull::new(JS_NewContext(
+            default_heapsize + (ChunkSize as u32),
+            parent_runtime,
+        ))
+        .unwrap();
 
         // Unconstrain the runtime's threshold on nominal heap size, to avoid
         // triggering GC too often if operating continuously near an arbitrary
         // finite threshold. This leaves the maximum-JS_malloc-bytes threshold
         // still in effect to cause periodical, and we hope hygienic,
         // last-ditch GCs from within the GC's allocator.
-        JS_SetGCParameter(js_context, JSGCParamKey::JSGC_MAX_BYTES, u32::MAX);
+        JS_SetGCParameter(js_context.as_ptr(), JSGCParamKey::JSGC_MAX_BYTES, u32::MAX);
 
-        JS_AddExtraGCRootsTracer(js_context, Some(trace_traceables), ptr::null_mut());
+        JS_AddExtraGCRootsTracer(js_context.as_ptr(), Some(trace_traceables), ptr::null_mut());
 
         JS_SetNativeStackQuota(
-            js_context,
+            js_context.as_ptr(),
             STACK_QUOTA,
             STACK_QUOTA - SYSTEM_CODE_BUFFER,
             STACK_QUOTA - SYSTEM_CODE_BUFFER - TRUSTED_SCRIPT_BUFFER,
         );
 
         CONTEXT.with(|context| {
-            assert!(context.get().is_null());
-            context.set(js_context);
+            assert!(context.get().is_none());
+            context.set(Some(js_context));
         });
 
         #[cfg(target_pointer_width = "64")]
@@ -376,9 +382,9 @@ impl Runtime {
         #[cfg(target_pointer_width = "32")]
         let cache = crate::jsapi::__BindgenOpaqueArray::<u32, 2>::default();
 
-        InitSelfHostedCode(js_context, cache, None);
+        InitSelfHostedCode(js_context.as_ptr(), cache, None);
 
-        SetWarningReporter(js_context, Some(report_warning));
+        SetWarningReporter(js_context.as_ptr(), Some(report_warning));
 
         Runtime {
             engine,
@@ -391,12 +397,12 @@ impl Runtime {
 
     /// Returns the `JSRuntime` object.
     pub fn rt(&self) -> *mut JSRuntime {
-        unsafe { JS_GetRuntime(self.cx) }
+        unsafe { JS_GetRuntime(self.cx.as_ptr()) }
     }
 
     /// Returns the `JSContext` object.
-    pub fn cx(&self) -> *mut JSContext {
-        self.cx
+    pub fn cx<'rt>(&'rt mut self) -> crate::context::JSContext<'rt> {
+        unsafe { crate::context::JSContext::from_ptr(self.cx) }
     }
 
     pub fn evaluate_script(
@@ -412,11 +418,11 @@ impl Runtime {
             script
         );
 
-        let _ac = JSAutoRealm::new(self.cx(), glob.get());
+        let _ac = JSAutoRealm::new(self.cx.as_ptr(), glob.get());
 
         unsafe {
             let mut source = transform_str_to_source_text(&script);
-            if !Evaluate2(self.cx(), options.ptr, &mut source, rval.into()) {
+            if !Evaluate2(self.cx.as_ptr(), options.ptr, &mut source, rval.into()) {
                 debug!("...err!");
                 maybe_resume_unwind();
                 Err(())
@@ -431,7 +437,7 @@ impl Runtime {
 
     pub fn new_compile_options(&self, filename: &str, line: u32) -> CompileOptionsWrapper {
         // SAFETY: `cx` argument points to a non-null, valid JSContext
-        unsafe { CompileOptionsWrapper::new(self.cx(), filename, line) }
+        unsafe { CompileOptionsWrapper::new(self.cx.as_ptr(), filename, line) }
     }
 }
 
@@ -443,11 +449,10 @@ impl Drop for Runtime {
             "This runtime still has live children."
         );
         unsafe {
-            JS_DestroyContext(self.cx);
+            JS_DestroyContext(self.cx.as_ptr());
 
             CONTEXT.with(|context| {
-                assert_eq!(context.get(), self.cx);
-                context.set(ptr::null_mut());
+                assert!(context.take().is_some());
             });
         }
     }
@@ -457,7 +462,7 @@ impl Drop for Runtime {
 /// `Send` and `Sync`. This should only ever expose operations that are marked as
 /// thread-safe by the SpiderMonkey API, ie ones that only atomic fields in JSContext.
 #[derive(Clone)]
-pub struct ThreadSafeJSContext(Arc<RwLock<Option<*mut JSContext>>>);
+pub struct ThreadSafeJSContext(Arc<RwLock<Option<NonNull<JSContext>>>>);
 
 unsafe impl Send for ThreadSafeJSContext {}
 unsafe impl Sync for ThreadSafeJSContext {}
@@ -467,9 +472,9 @@ impl ThreadSafeJSContext {
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback(&self) {
-        if let Some(&cx) = self.0.read().unwrap().as_ref() {
+        if let Some(cx) = self.0.read().unwrap().as_ref() {
             unsafe {
-                JS_RequestInterruptCallback(cx);
+                JS_RequestInterruptCallback(cx.as_ptr());
             }
         }
     }
@@ -478,9 +483,9 @@ impl ThreadSafeJSContext {
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback_can_wait(&self) {
-        if let Some(&cx) = self.0.read().unwrap().as_ref() {
+        if let Some(cx) = self.0.read().unwrap().as_ref() {
             unsafe {
-                JS_RequestInterruptCallbackCanWait(cx);
+                JS_RequestInterruptCallbackCanWait(cx.as_ptr());
             }
         }
     }

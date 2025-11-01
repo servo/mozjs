@@ -32,8 +32,8 @@ struct ContainsGCValue {
 #[test]
 fn rooting() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
-    let context = runtime.cx();
+    let mut runtime = Runtime::new(engine.handle());
+    let context = *runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
