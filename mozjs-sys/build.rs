@@ -4,7 +4,6 @@
 
 use bindgen::callbacks::ParseCallbacks;
 use bindgen::{CodegenConfig, Formatter, RustTarget};
-use cargo_metadata::CargoOpt;
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -137,34 +136,6 @@ fn main() {
     }
 }
 
-fn get_icu_capi_include_path() -> String {
-    // Using cargo metadata is the official recommendation from the icu4x documentation.
-    // See <https://icu4x.unicode.org/2_0/cppdoc/>.
-    // Once we update to a new release containing https://github.com/unicode-org/icu4x/pull/6887
-    // we can remove the dependency on cargo metadata.
-    let metadata = cargo_metadata::MetadataCommand::new()
-        // icu_capi is feature guarded behind the `intl` feature.
-        .features(CargoOpt::SomeFeatures(vec!["intl".into()]))
-        .exec()
-        .unwrap();
-    let packages = metadata.packages;
-    let icu_capi_info = packages
-        .iter()
-        .find(|pkg| pkg.name.contains("icu_capi"))
-        .expect("icu_capi not found");
-    let icu_cpath = &icu_capi_info.manifest_path;
-    // Include path for icu_capi 1.5:
-    let c_include_path = icu_cpath
-        .parent()
-        .expect("manifest dir?")
-        .join("bindings/c");
-    assert!(
-        c_include_path.exists(),
-        "ICU_C C include path {c_include_path} does not exist"
-    );
-    c_include_path.to_string()
-}
-
 fn build_spidermonkey(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
     let make;
@@ -246,12 +217,6 @@ fn build_spidermonkey(build_dir: &Path) {
     }
 
     let mut cxxflags = vec![];
-
-    #[cfg(feature = "intl")]
-    {
-        let icu_c_include_path = get_icu_capi_include_path();
-        cxxflags.push(format!("-I{}", &icu_c_include_path.replace("\\", "/")));
-    }
 
     if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         cxxflags.push(String::from("-stdlib=libc++"));

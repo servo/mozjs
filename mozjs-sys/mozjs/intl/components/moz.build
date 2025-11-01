@@ -73,6 +73,10 @@ UNIFIED_SOURCES += [
 if not CONFIG["JS_STANDALONE"]:
     TEST_DIRS += ["gtest"]
 
+LOCAL_INCLUDES += [
+    "/intl/icu_capi/bindings/c",
+]
+
 if not CONFIG["MOZ_SYSTEM_ICU"]:
     DIRS += ["src/calendar"]
 
