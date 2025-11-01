@@ -47,3 +47,23 @@ macro_rules! auto_root {
         let $($var)+: $crate::rust::CustomAutoRootedGuard<$type> = __root.root($cx);
     };
 }
+
+#[macro_export]
+macro_rules! rooted_fixed_array {
+    (let mut $name:ident : $cap:expr) => {
+        let mut $name = $crate::gc::RootedFixedValueArray::<'_, { $cap }>::new();
+    };
+    (let $name:ident : $cap:expr) => {
+        let $name = $crate::gc::RootedFixedValueArray::<'_, { $cap }>::new();
+    };
+}
+
+#[macro_export]
+macro_rules! rooted_dynamic_array {
+    (let mut $name:ident) => {
+        let mut $name = $crate::gc::RootedDynamicValueArray::new();
+    };
+    (let mut $name:ident : $cap:expr) => {
+        let mut $name = $crate::gc::RootedDynamicValueArray::with_capacity($cap);
+    };
+}
