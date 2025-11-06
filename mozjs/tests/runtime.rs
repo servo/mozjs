@@ -8,34 +8,35 @@ use std::ptr;
 use std::sync::mpsc::channel;
 use std::thread;
 
+use mozjs::jsapi::GCContext;
 use mozjs::jsapi::JSCLASS_FOREGROUND_FINALIZE;
-use mozjs::jsapi::{GCContext, JS_NewGlobalObject, JS_NewObject};
 use mozjs::jsapi::{JSAutoRealm, JSClass, JSClassOps, JSObject, OnNewGlobalHookOption};
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{JS_NewGlobalObject, JS_NewObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
 fn runtime() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(context.raw_cx(), 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
-        rooted!(in(context) let _object = JS_NewObject(context, &CLASS as *const _));
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        rooted!(&in(context) let _object = JS_NewObject(context, &CLASS as *const _));
     }
 
     let parent = runtime.prepare_for_new_child();

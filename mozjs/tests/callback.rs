@@ -4,36 +4,37 @@
 
 use std::ffi::CStr;
 use std::ptr;
+use std::ptr::NonNull;
 use std::str;
 
-use mozjs::glue::EncodeStringToUTF8;
-use mozjs::jsapi::{CallArgs, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
-use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject, JS_ReportErrorASCII};
+use mozjs::context::{JSContext, RawJSContext};
+use mozjs::jsapi::{CallArgs, JSAutoRealm, JS_ReportErrorASCII, OnNewGlobalHookOption, Value};
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{EncodeStringToUTF8, JS_DefineFunction, JS_NewGlobalObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
 fn callback() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(context.raw_cx(), 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
 
         let function = JS_DefineFunction(
             context,
@@ -46,7 +47,8 @@ fn callback() {
         assert!(!function.is_null());
 
         let javascript = "puts('Test Iñtërnâtiônàlizætiøn ┬─┬ノ( º _ ºノ) ');";
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(&in(context) let mut rval = UndefinedValue());
+        // Rust automagically drops context here, so we can continue to use runtime here
         let options = runtime.new_compile_options("test.js", 0);
         assert!(runtime
             .evaluate_script(global.handle(), javascript, rval.handle_mut(), options)
@@ -54,24 +56,30 @@ fn callback() {
     }
 }
 
-unsafe extern "C" fn puts(context: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+unsafe extern "C" fn puts(context: *mut RawJSContext, argc: u32, vp: *mut Value) -> bool {
+    // SAFETY: This is safe because we are in callback (so this is only access to context)
+    // and we shadow the ptr, so it cannot be used anymore
+    let mut context = JSContext::from_ptr(NonNull::new(context).unwrap());
     let args = CallArgs::from_vp(vp, argc);
 
     if args.argc_ != 1 {
-        JS_ReportErrorASCII(context, c"puts() requires exactly 1 argument".as_ptr());
+        JS_ReportErrorASCII(
+            context.raw_cx(),
+            c"puts() requires exactly 1 argument".as_ptr(),
+        );
         return false;
     }
 
     let arg = mozjs::rust::Handle::from_raw(args.get(0));
-    let js = mozjs::rust::ToString(context, arg);
-    rooted!(in(context) let message_root = js);
+    let js = mozjs::rust::ToString(context.raw_cx(), arg);
+    rooted!(&in(context) let message_root = js);
     unsafe extern "C" fn cb(message: *const core::ffi::c_char) {
         let message = CStr::from_ptr(message);
         let message = str::from_utf8(message.to_bytes()).unwrap();
         assert_eq!(message, "Test Iñtërnâtiônàlizætiøn ┬─┬ノ( º _ ºノ) ");
         println!("{}", message);
     }
-    EncodeStringToUTF8(context, message_root.handle().into(), cb);
+    EncodeStringToUTF8(&mut context, message_root.handle().into(), cb);
 
     args.rval().set(UndefinedValue());
     true

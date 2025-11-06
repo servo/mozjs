@@ -4,8 +4,9 @@
 
 use std::ptr;
 
-use mozjs::jsapi::{JSAutoRealm, JSObject, JS_NewGlobalObject, OnNewGlobalHookOption};
+use mozjs::jsapi::{JSAutoRealm, JSObject, OnNewGlobalHookOption};
 use mozjs::rooted;
+use mozjs::rust::wrappers2::JS_NewGlobalObject;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::typedarray;
 use mozjs::typedarray::{CreateWith, Uint32Array};
@@ -14,28 +15,28 @@ use mozjs::typedarray::{CreateWith, Uint32Array};
 #[should_panic]
 fn typedarray_update_panic() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
 
-        rooted!(in(context) let mut rval = ptr::null_mut::<JSObject>());
+        rooted!(&in(context) let mut rval = ptr::null_mut::<JSObject>());
         let _ = Uint32Array::create(
-            context,
+            context.raw_cx(),
             CreateWith::Slice(&[1, 2, 3, 4, 5]),
             rval.handle_mut(),
         );
-        typedarray!(in(context) let mut array: Uint32Array = rval.get());
+        typedarray!(&in(context) let mut array: Uint32Array = rval.get());
         array.as_mut().unwrap().update(&[0, 2, 4, 6, 8, 10]);
     }
 }

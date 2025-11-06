@@ -448,6 +448,9 @@ impl<S: JSObjectStorage> TypedArray<ArrayBufferViewU8, S> {
 
 #[macro_export]
 macro_rules! typedarray {
+    (&in($cx:expr) $($t:tt)*) => {
+        typedarray!(in(unsafe {$cx.raw_cx_no_gc()}) $($t)*);
+    };
     (in($cx:expr) let $name:ident : $ty:ident = $init:expr) => {
         let mut __array =
             $crate::typedarray::$ty::from($init).map($crate::rust::CustomAutoRooter::new);

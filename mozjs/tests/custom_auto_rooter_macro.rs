@@ -5,7 +5,8 @@
 use std::cell::Cell;
 
 use mozjs::auto_root;
-use mozjs::jsapi::{GCReason, JSTracer, JS_GC};
+use mozjs::jsapi::{GCReason, JSTracer};
+use mozjs::rust::wrappers2::JS_GC;
 use mozjs::rust::{CustomTrace, JSEngine, Runtime};
 
 struct TraceCheck {
@@ -29,10 +30,10 @@ unsafe impl CustomTrace for TraceCheck {
 #[test]
 fn custom_auto_rooter_macro() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
 
-    auto_root!(in(context) let vec = vec![TraceCheck::new(), TraceCheck::new()]);
+    auto_root!(&in(context) let vec = vec![TraceCheck::new(), TraceCheck::new()]);
 
     unsafe {
         JS_GC(context, GCReason::API);

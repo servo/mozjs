@@ -2,22 +2,22 @@ use criterion::measurement::WallTime;
 use criterion::{
     criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
 };
+use mozjs::context::JSContext;
 use mozjs::conversions::jsstr_to_string;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
-use mozjs::jsapi::{
-    JSAutoRealm, JS_NewExternalStringLatin1, JS_NewGlobalObject, OnNewGlobalHookOption,
-};
+use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption};
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{JS_NewExternalStringLatin1, JS_NewGlobalObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
-use mozjs_sys::jsapi::JSContext;
 use std::ffi::c_void;
+use std::ptr::NonNull;
 use std::{iter, ptr};
 
 // TODO: Create a trait for creating a latin1 string of a required length, so that we can
 // try different kinds of content.
 fn bench_str_repetition(
     group: &mut BenchmarkGroup<WallTime>,
-    context: *mut JSContext,
+    context: &mut JSContext,
     variant_name: &str,
     latin1str_16_bytes: &[u8],
 ) {
@@ -39,7 +39,7 @@ fn bench_str_repetition(
                 str_len as *mut c_void,
             )
         };
-        rooted!(in(context) let latin1_jsstr = unsafe { JS_NewExternalStringLatin1(
+        rooted!(&in(context) let latin1_jsstr = unsafe { JS_NewExternalStringLatin1(
             context,
             latin1_chars,
             str_len,
@@ -51,7 +51,9 @@ fn bench_str_repetition(
             &latin1_jsstr,
             |b, js_str| {
                 b.iter(|| {
-                    unsafe { jsstr_to_string(context, js_str.get()) };
+                    unsafe {
+                        jsstr_to_string(context.raw_cx(), NonNull::new(js_str.get()).unwrap())
+                    };
                 })
             },
         );
@@ -59,18 +61,18 @@ fn bench_str_repetition(
 }
 fn external_string(c: &mut Criterion) {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
-    rooted!(in(context) let global = unsafe { JS_NewGlobalObject(
+    rooted!(&in(context) let global = unsafe { JS_NewGlobalObject(
         context,
         &SIMPLE_GLOBAL_CLASS,
         ptr::null_mut(),
         h_option,
         &*c_option,
     )});
-    let _ac = JSAutoRealm::new(context, global.get());
+    let _ac = JSAutoRealm::new(unsafe { context.raw_cx() }, global.get());
 
     let mut group = c.benchmark_group("Latin1 conversion");
 
