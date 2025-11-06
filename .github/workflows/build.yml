@@ -38,7 +38,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
         with:
-          python-version: '3.13' 
+          python-version: "3.13"
       - name: Install deps
         run: |
           brew install llvm yasm
@@ -90,9 +90,11 @@ jobs:
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build
+        # doc tests on mozjs_sys fail because they include stuff from SpiderMonkey
         run: |
           cargo +${{ steps.toolchain.outputs.name }} build --verbose --features ${{ matrix.features }}
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features ${{ matrix.features }}
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
