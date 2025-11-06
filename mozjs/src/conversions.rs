@@ -34,10 +34,7 @@ use crate::jsapi::JS;
 use crate::jsapi::{ForOfIterator, ForOfIterator_NonIterableBehavior};
 use crate::jsapi::{Heap, JS_DefineElement, JS_GetLatin1StringCharsAndLength};
 use crate::jsapi::{JSContext, JSObject, JSString, RootedObject, RootedValue};
-use crate::jsapi::{
-    JS_DeprecatedStringHasLatin1Chars, JS_NewStringCopyN, JS_NewStringCopyUTF8N,
-    JS_NewUCStringCopyN, JSPROP_ENUMERATE,
-};
+use crate::jsapi::{JS_DeprecatedStringHasLatin1Chars, JS_NewStringCopyUTF8N, JSPROP_ENUMERATE};
 use crate::jsapi::{JS_GetTwoByteStringCharsAndLength, NewArrayObject1};
 use crate::jsval::{BooleanValue, DoubleValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
 use crate::jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolValue};
@@ -570,16 +567,19 @@ pub unsafe fn jsstr_to_string(cx: *mut JSContext, jsstr: NonNull<JSString>) -> S
 // https://heycam.github.io/webidl/#es-USVString
 impl ToJSValConvertible for str {
     #[inline]
+    #[deny(unsafe_op_in_unsafe_fn)]
     unsafe fn to_jsval(&self, cx: *mut JSContext, mut rval: MutableHandleValue) {
         // Spidermonkey will automatically only copy latin1
         // or similar if the given encoding can be small enough.
         // So there is no need to distinguish between ascii only or similar.
         let s = Utf8Chars::from(self);
-        let jsstr = JS_NewStringCopyUTF8N(cx, &*s as *const _);
+        let jsstr = unsafe { JS_NewStringCopyUTF8N(cx, &*s as *const _) };
         if jsstr.is_null() {
             panic!("JS String copy routine failed");
         }
-        rval.set(StringValue(&*jsstr));
+        unsafe {
+            rval.set(StringValue(&*jsstr));
+        }
     }
 }
 
