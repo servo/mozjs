@@ -2643,7 +2643,7 @@ class FunctionCompiler {
 
       // Ask the heuristics system if we're allowed to inline a function of
       // this size and kind at the current inlining depth.
-      uint32_t inlineeBodySize = codeTailMeta()->funcDefRange(funcIndex).size;
+      uint32_t inlineeBodySize = codeTailMeta()->funcDefRange(funcIndex).size();
       uint32_t rootFunctionBodySize = rootCompiler_.func().bytecodeSize();
       bool largeFunctionBackoff;
       bool smallEnough = InliningHeuristics::isSmallEnoughToInline(
@@ -3439,17 +3439,9 @@ class FunctionCompiler {
         const ABIResult& result = iter.cur();
         if (result.onStack()) {
           MOZ_ASSERT(iter.remaining() > 1);
-          if (result.type().isRefRepr()) {
-            auto* store = MWasmStoreRef::New(
-                alloc(), instancePointer_, stackResultPointer_,
-                result.stackOffset(), values[i], AliasSet::WasmStackResult,
-                WasmPreBarrierKind::None);
-            curBlock_->add(store);
-          } else {
-            auto* store = MWasmStoreStackResult::New(
-                alloc(), stackResultPointer_, result.stackOffset(), values[i]);
-            curBlock_->add(store);
-          }
+          auto* store = MWasmStoreStackResult::New(
+              alloc(), stackResultPointer_, result.stackOffset(), values[i]);
+          curBlock_->add(store);
         } else {
           MOZ_ASSERT(iter.remaining() == 1);
           MOZ_ASSERT(i + 1 == values.length());
@@ -6474,7 +6466,7 @@ bool FunctionCompiler::emitInlineCall(const FuncType& funcType,
 
   CompileInfo* compileInfo = rootCompiler().startInlineCall(
       this->funcIndex(), bytecodeOffset(), funcIndex, locals.length(),
-      funcRange.size, callKind);
+      funcRange.size(), callKind);
   if (!compileInfo) {
     return false;
   }

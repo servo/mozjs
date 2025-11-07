@@ -233,7 +233,7 @@ with only_when(host_is_osx | target_is_osx):
     )
 
     def mac_sdk_min_version():
-        return "14.2"
+        return "15.5"
 
     @depends(
         "--with-macos-sdk",
@@ -1999,9 +1999,10 @@ def select_linker_tmpl(host_or_target):
             die("Unsupported linker " + linker)
 
         # Check the kind of linker
+        version_check = ["-Wl,--version"]
         cmd_base = c_compiler.wrapper + [c_compiler.compiler] + c_compiler.flags
 
-        def try_linker(linker, version_check="-Wl,--version"):
+        def try_linker(linker):
             # Generate the compiler flag
             if linker == "ld64":
                 linker_flag = ["-fuse-ld=ld"]
@@ -2009,7 +2010,7 @@ def select_linker_tmpl(host_or_target):
                 linker_flag = ["-fuse-ld=" + linker]
             else:
                 linker_flag = []
-            cmd = cmd_base + linker_flag + [version_check]
+            cmd = cmd_base + linker_flag + version_check
             if toolchain_flags:
                 cmd += toolchain_flags
 
@@ -2025,14 +2026,11 @@ def select_linker_tmpl(host_or_target):
             # ensure consistent output.
             env["LC_ALL"] = "C"
             retcode, stdout, stderr = get_cmd_output(*cmd, env=env)
-            if retcode == 1 and ("Logging ld64 options" in stderr or "PROGRAM:ld  PROJECT:dyld" in stderr):
+            if retcode == 1 and "Logging ld64 options" in stderr:
                 kind = "ld64"
 
             elif retcode != 0:
-                if version_check == "-Wl,--version":
-                    return try_linker(linker, "-Wl,-v")
-                else:
-                    return None
+                return None
 
             elif "mold" in stdout:
                 kind = "mold"
@@ -2445,7 +2443,7 @@ set_define("_LIBCPP_HIDE_FROM_ABI", libcxx_override_visibility.hide_from_abi)
 @depends(target, build_environment)
 def visibility_flags(target, env):
     if target.os != "WINNT":
-        if target.kernel == "Darwin":
+        if target.kernel in ("Darwin", "FreeBSD", "OpenBSD"):
             return ("-fvisibility=hidden", "-fvisibility-inlines-hidden")
         return (
             "-I%s/system_wrappers" % os.path.join(env.dist),
@@ -3702,18 +3700,18 @@ def ar_supports_response_files(c_compiler, extra_toolchain_flags, ar, ar_config)
                 with open(list_path, "w") as fd:
                     fd.write(obj_path)
 
-                log.debug("Creating `%s` with content:", list_path)
-                log.debug("| %s", obj_path)
+            log.debug("Creating `%s` with content:", list_path)
+            log.debug("| %s", obj_path)
 
-                with create_temporary_file(suffix=".a") as lib_path:
-                    os.remove(lib_path)
-                    ar_command = (
-                        [ar]
-                        + [x.replace("$@", lib_path) for x in ar_config.flags]
-                        + ["@" + list_path]
-                    )
-                    result = check_cmd_output(*ar_command, onerror=lambda: None)
-                    return result is not None
+            with create_temporary_file(suffix=".a") as lib_path:
+                os.remove(lib_path)
+                ar_command = (
+                    [ar]
+                    + [x.replace("$@", lib_path) for x in ar_config.flags]
+                    + ["@" + list_path]
+                )
+                result = check_cmd_output(*ar_command, onerror=lambda: None)
+                return result is not None
 
 
 set_config("AR_SUPPORTS_RESPONSE_FILE", True, when=ar_supports_response_files)

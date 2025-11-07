@@ -845,6 +845,7 @@ system_headers = [
     "sys/msg.h",
     "sys/param.h",
     "sys/pda.h",
+    "sys/platform/ppc.h",
     "sys/poll.h",
     "sys/ppc.h",
     "sys/prctl.h",
@@ -1389,11 +1390,6 @@ if CONFIG["OS_TARGET"] == "Linux" and CONFIG["TARGET_CPU"].startswith("mips"):
 if CONFIG["OS_TARGET"] == "FreeBSD":
     system_headers += [
         "sys/capsicum.h",
-    ]
-
-if CONFIG["OHOS"]:
-    system_headers += [
-       "hilog/log.h",
     ]
 
 if CONFIG["MOZ_APP_SYSTEM_HEADERS"]:

@@ -1232,6 +1232,13 @@
   value: false
   mirror: always
 
+# On Windows, whether to bring the foreground window to the front when printing
+# to avoid a DLP agent stealing focus and cancelling the print (bug 1980225)
+- name: browser.contentanalysis.print_set_foreground_window
+  type: bool
+  value: true
+  mirror: always
+
 # What content analysis should return if there is a problem communicating
 # with the agent. (see DefaultResponse enum in ContentAnalysis.h)
 # Make sure these stay in sync with the out-of-range check in Policies.sys.mjs.
@@ -1335,6 +1342,16 @@
 - name: browser.contentanalysis.interception_point.clipboard.plain_text_only
   type: bool
   value: true
+  mirror: always
+
+# Should Firefox use content analysis for download operations?
+# Note that this has no effect unless browser.contentanalysis.enabled
+# is true.
+# This defaults to false so as to not break existing content analysis
+# configurations.
+- name: browser.contentanalysis.interception_point.download.enabled
+  type: bool
+  value: false
   mirror: always
 
 # Should Firefox use content analysis for drag and drop operations?
@@ -2167,6 +2184,18 @@
 #---------------------------------------------------------------------------
 
 - name: content.cors.disable
+  type: bool
+  value: false
+  mirror: always
+
+# If true, we'll use the triggering principal rather than the loading principal
+# when doing CORS checks.  Doing so is generally not correct, but we shipped
+# with this behavior for a long time, so we're leaving it preffable in case
+# it's needed for testing or if we discover some edge case that requires it.
+#
+# TODO(dholbert): Remove this pref after the 'false' default-value has
+# successfully shipped for a release or two.
+- name: content.cors.use_triggering_principal
   type: bool
   value: false
   mirror: always
@@ -3615,6 +3644,19 @@
 - name: dom.noopener.newprocess.enabled
   type: bool
   value: true
+  mirror: always
+
+# Whether the codebase attribute in an <object> is used as the base URI.
+- name: dom.object_embed.codebase.enabled
+  type: bool
+  value: false
+  mirror: always
+
+# Whether the type attribute in an <object> is used as a hint for the Content-Type
+# of the loading document.
+- name: dom.object_embed.type_hint.enabled
+  type: bool
+  value: false
   mirror: always
 
 # Whether origin trials are enabled.
@@ -5399,6 +5441,17 @@
   value: @IS_EARLY_BETA_OR_EARLIER@
   mirror: always
 
+# Is WebGPU allowed to run in the parent process? This should be false if
+# on a platform that supports the GPU process, else true.
+- name: dom.webgpu.allow-in-parent
+  type: bool
+#if defined(XP_WIN) || defined(ANDROID)
+  value: false
+#else
+  value: true
+#endif
+  mirror: once
+
 # Comma-separated list of wgpu backend names to permit in WebGPU adapters.
 #
 # If non-empty, this is parsed by `wgpu_core::instance::parse_backends_from_comma_list` to
@@ -5463,6 +5516,11 @@
 - name: dom.webnotifications.allowcrossoriginiframe
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+- name: dom.webnotifications.forbid_nested_first_party.enabled
+  type: RelaxedAtomicBool
+  value: true
   mirror: always
 
 - name: dom.webnotifications.enabled
@@ -6462,6 +6520,15 @@
   value: false
 #endif
   mirror: always
+
+- name: gfx.canvas.accelerated.allow-in-parent
+  type: bool
+#if defined(XP_WIN) || defined(ANDROID)
+  value: false
+#else
+  value: true
+#endif
+  mirror: once
 
 # Whether to attempt to enable Accelerated Canvas2D regardless of blocklisting.
 - name: gfx.canvas.accelerated.force-enabled
@@ -8143,7 +8210,7 @@
 # a natural width and/or height.
 - name: image.natural-size-fallback.enabled
   type: RelaxedAtomicBool
-  value: @IS_NIGHTLY_BUILD@
+  value: true
   mirror: always
 
 # Whether we record SVG images as blobs or not.
@@ -9045,7 +9112,11 @@
 # both unrolling and peeling.
 - name: javascript.options.wasm_unroll_loops
   type: bool
+#ifdef NIGHTLY_BUILD
   value: true
+#else
+  value: false
+#endif
   mirror: always
   set_spidermonkey_pref: always
 
@@ -12978,6 +13049,13 @@
   value: false
   mirror: always
 
+# When true, the hashing of the certificate will be done with the hashing
+# algorithm specified in the cert instead of SHA256.
+- name: network.auth.sspi_detect_hash
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # See the full list of values in nsICookieService.idl.
 - name: network.cookie.cookieBehavior
   type: RelaxedAtomicInt32
@@ -13133,6 +13211,12 @@
 
 # Use sever time (Date header) to adjust the expire cookie attribute
 - name: network.cookie.useServerTime
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
+# When true, Firefox will reject nameless cookies that contain `=` in value.
+- name: network.cookie.block_nameless_with_equal_char
   type: RelaxedAtomicBool
   value: true
   mirror: always
@@ -15585,6 +15669,14 @@
   value: false
   mirror: always
 
+# Whether we directly use the system print dialog to collect the user's print
+# settings rather than using the tab-modal print preview dialog.
+# Note: `print.always_print_silent` overrides this.
+- name: print.prefer_system_dialog
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Whether we attempt to generate links in Save As PDF output.
 - name: print.save_as_pdf.links.enabled
   type: RelaxedAtomicBool
@@ -16316,7 +16408,7 @@
 
 - name: security.csp.truncate_blocked_uri_for_frame_navigations
   type: bool
-  value: true
+  value: false
   mirror: always
 
 # Limit the number of CSP reports that are send in a specific timespan.
@@ -16649,8 +16741,8 @@
   mirror: always
   rust: true
 
-# Skip direct attestation consent prompts (for tests).
-- name: security.webauth.webauthn_testing_allow_direct_attestation
+# Skip direct attestation consent prompts
+- name: security.webauthn.always_allow_direct_attestation
   type: RelaxedAtomicBool
   value: false
   mirror: always
