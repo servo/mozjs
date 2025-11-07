@@ -6,7 +6,7 @@ index 8a97d952d..5b538f0a1 100755
      )
  
      def mac_sdk_min_version():
--        return "15.4"
+-        return "15.5"
 +        return "14.2"
  
      @depends(
