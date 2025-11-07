@@ -7,7 +7,7 @@ that are battle-tested in [Servo](https://servo.org/), split in two crates:
 - `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
 Mozjs is currently tracking SpiderMonkey on [mozilla-esr140](https://searchfox.org/mozilla-esr140/source/) branch
-(currently version 140.0).
+(currently version 140.5).
 
 ## Building from Pre-built Archive
 
@@ -132,8 +132,8 @@ mozjs = { path = "../mozjs/mozjs" }
 
 In order to upgrade to a new version of SpiderMonkey:
 
-1. Find the mozilla-release commit for the desired version of SpiderMonkey, at
-   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-release&filter-searchStr=spidermonkey%20pkg>.
+1. Find the mozilla-esr140 commit for the desired version of SpiderMonkey, at
+   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-esr140&filter-searchStr=spidermonkey%20pkg>.
    You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
    Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
 
@@ -156,7 +156,7 @@ In order to upgrade to a new version of SpiderMonkey:
 
 9. Submit a PR!
 
-8. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
+10. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
 until it's tested against servo.
 
 ## NixOS users
