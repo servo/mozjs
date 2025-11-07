@@ -48,6 +48,7 @@ pub mod jsapi {
 pub mod rust;
 
 mod consts;
+pub mod context;
 pub mod conversions;
 pub mod error;
 pub mod gc;

@@ -6,9 +6,9 @@ use std::ptr;
 
 use mozjs::capture_stack;
 use mozjs::jsapi::{CallArgs, JSAutoRealm, JSContext, OnNewGlobalHookOption, StackFormat, Value};
-use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject};
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{JS_DefineFunction, JS_NewGlobalObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
@@ -32,24 +32,24 @@ fn capture_stack() {
     }
 
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(context.raw_cx(), 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
 
         let function = JS_DefineFunction(
             context,
@@ -71,7 +71,7 @@ fn capture_stack() {
 
             foo(\"arg1-value\");
         ";
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(&in(context) let mut rval = UndefinedValue());
         let options = runtime.new_compile_options("test.js", 0);
         assert!(runtime
             .evaluate_script(global.handle(), javascript, rval.handle_mut(), options)

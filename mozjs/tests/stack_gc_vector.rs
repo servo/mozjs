@@ -9,10 +9,11 @@ use mozjs::conversions::jsstr_to_string;
 use mozjs::gc::StackGCVector;
 use mozjs::jsapi::{
     CompilationType, Handle, HandleString, HandleValue, JSContext, JSSecurityCallbacks, JSString,
-    JS_NewGlobalObject, JS_SetSecurityCallbacks, OnNewGlobalHookOption, RuntimeCode,
+    OnNewGlobalHookOption, RuntimeCode,
 };
 use mozjs::jsval::{JSVal, UndefinedValue};
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{JS_NewGlobalObject, JS_SetSecurityCallbacks};
 use mozjs::rust::{Handle as SafeHandle, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 static SECURITY_CALLBACKS: JSSecurityCallbacks = JSSecurityCallbacks {
@@ -66,11 +67,11 @@ static RAN_CSP_CALLBACK: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(fal
 #[test]
 fn csp_allow_arguments() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(context.raw_cx(), 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
@@ -78,7 +79,7 @@ fn csp_allow_arguments() {
     unsafe {
         JS_SetSecurityCallbacks(context, &SECURITY_CALLBACKS);
 
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
@@ -86,7 +87,7 @@ fn csp_allow_arguments() {
             &*c_option,
         ));
 
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(&in(context) let mut rval = UndefinedValue());
         let options = runtime.new_compile_options("test", 1);
         assert!(runtime
             .evaluate_script(

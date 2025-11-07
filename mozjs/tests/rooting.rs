@@ -6,51 +6,52 @@
 
 use std::ptr;
 
+use mozjs::jsapi::SetGCZeal;
 use mozjs::jsapi::JSPROP_ENUMERATE;
-use mozjs::jsapi::{
-    GetRealmObjectPrototype, JS_NewGlobalObject, JS_NewObjectWithGivenProto, SetGCZeal,
-};
 use mozjs::jsapi::{
     JSAutoRealm, JSClass, JSContext, JSFunction, JSFunctionSpec, JSNativeWrapper, JSObject,
     JSPropertySpec_Name, JSString, OnNewGlobalHookOption, Value,
 };
 use mozjs::jsval::JSVal;
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{
+    GetRealmObjectPrototype, JS_NewGlobalObject, JS_NewObjectWithGivenProto,
+};
 use mozjs::rust::{define_methods, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
 fn rooting() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        SetGCZeal(context, 2, 1);
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        SetGCZeal(context.raw_cx(), 2, 1);
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
 
-        rooted!(in(context) let prototype_proto = GetRealmObjectPrototype(context));
-        rooted!(in(context) let proto = JS_NewObjectWithGivenProto(context, &CLASS as *const _, prototype_proto.handle().into()));
-        define_methods(context, proto.handle(), METHODS).unwrap();
+        rooted!(&in(context) let prototype_proto = GetRealmObjectPrototype(context));
+        rooted!(&in(context) let proto = JS_NewObjectWithGivenProto(context, &CLASS as *const _, prototype_proto.handle().into()));
+        define_methods(context.raw_cx(), proto.handle(), METHODS).unwrap();
 
-        rooted!(in(context) let root: JSVal);
+        rooted!(&in(context) let root: JSVal);
         assert_eq!(root.get().is_undefined(), true);
 
-        rooted!(in(context) let root: *mut JSObject);
+        rooted!(&in(context) let root: *mut JSObject);
         assert_eq!(root.get().is_null(), true);
 
-        rooted!(in(context) let root: *mut JSString);
+        rooted!(&in(context) let root: *mut JSString);
         assert_eq!(root.get().is_null(), true);
 
-        rooted!(in(context) let root: *mut JSFunction);
+        rooted!(&in(context) let root: *mut JSFunction);
         assert_eq!(root.get().is_null(), true);
     }
 }

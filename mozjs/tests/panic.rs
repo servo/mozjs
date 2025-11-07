@@ -2,39 +2,39 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::ptr;
+use std::ptr::{self, NonNull};
 
+use mozjs::context::{JSContext, RawJSContext};
 use mozjs::gc::HandleValue;
-use mozjs::jsapi::{ExceptionStackBehavior, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value};
-use mozjs::jsapi::{JS_DefineFunction, JS_NewGlobalObject};
+use mozjs::jsapi::{ExceptionStackBehavior, JSAutoRealm, OnNewGlobalHookOption, Value};
 use mozjs::jsval::UndefinedValue;
 use mozjs::panic::wrap_panic;
 use mozjs::rooted;
-use mozjs::rust::wrappers::JS_SetPendingException;
+use mozjs::rust::wrappers2::{JS_DefineFunction, JS_NewGlobalObject, JS_SetPendingException};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
 #[should_panic]
 fn test_panic() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(context.raw_cx(), 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
 
         let function = JS_DefineFunction(
             context,
@@ -46,13 +46,14 @@ fn test_panic() {
         );
         assert!(!function.is_null());
 
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(&in(context) let mut rval = UndefinedValue());
         let options = runtime.new_compile_options("test.js", 0);
         let _ = runtime.evaluate_script(global.handle(), "test();", rval.handle_mut(), options);
     }
 }
 
-unsafe extern "C" fn test(cx: *mut JSContext, _argc: u32, _vp: *mut Value) -> bool {
+unsafe extern "C" fn test(cx: *mut RawJSContext, _argc: u32, _vp: *mut Value) -> bool {
+    let mut cx = JSContext::from_ptr(NonNull::new(cx).unwrap());
     let mut result = false;
     wrap_panic(&mut || {
         panic!();
@@ -62,7 +63,11 @@ unsafe extern "C" fn test(cx: *mut JSContext, _argc: u32, _vp: *mut Value) -> bo
         }
     });
     if !result {
-        JS_SetPendingException(cx, HandleValue::null(), ExceptionStackBehavior::Capture);
+        JS_SetPendingException(
+            &mut cx,
+            HandleValue::null(),
+            ExceptionStackBehavior::Capture,
+        );
     }
     result
 }

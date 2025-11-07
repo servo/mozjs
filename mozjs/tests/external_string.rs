@@ -6,36 +6,38 @@ use std::ffi::c_void;
 use std::ptr;
 use std::ptr::NonNull;
 
+#[cfg(test)]
+use mozjs::context::JSContext;
 use mozjs::conversions::jsstr_to_string;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
-use mozjs::jsapi::{
-    JSAutoRealm, JS_NewExternalStringLatin1, JS_NewExternalUCString, JS_NewGlobalObject,
-    OnNewGlobalHookOption,
-};
+use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption};
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{
+    JS_NewExternalStringLatin1, JS_NewExternalUCString, JS_NewGlobalObject,
+};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
 fn external_string() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(context.raw_cx(), 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = JS_NewGlobalObject(
+        rooted!(&in(context) let global = JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
 
         test_latin1_string(context, "test latin1");
         test_latin1_string(context, "abcdefghijklmnop"); // exactly 16 bytes
@@ -89,21 +91,21 @@ fn external_string() {
             &EXTERNAL_STRING_CALLBACKS_TRAPS,
             utf16_len as *mut c_void,
         );
-        rooted!(in(context) let utf16_jsstr = JS_NewExternalUCString(
+        rooted!(&in(context) let utf16_jsstr = JS_NewExternalUCString(
             context,
             utf16_chars,
             utf16_len,
             callbacks
         ));
         assert_eq!(
-            jsstr_to_string(context, NonNull::new(utf16_jsstr.get()).unwrap()),
+            jsstr_to_string(context.raw_cx(), NonNull::new(utf16_jsstr.get()).unwrap()),
             utf16_base
         );
     }
 }
 
 #[cfg(test)]
-unsafe fn test_latin1_string(context: *mut mozjs::jsapi::JSContext, latin1_base: &str) {
+unsafe fn test_latin1_string(context: &mut JSContext, latin1_base: &str) {
     let latin1_boxed = latin1_base.as_bytes().to_vec().into_boxed_slice();
     let latin1_chars = Box::into_raw(latin1_boxed).cast::<u8>();
 
@@ -111,20 +113,20 @@ unsafe fn test_latin1_string(context: *mut mozjs::jsapi::JSContext, latin1_base:
         &EXTERNAL_STRING_CALLBACKS_TRAPS,
         latin1_base.len() as *mut c_void,
     );
-    rooted!(in(context) let latin1_jsstr = JS_NewExternalStringLatin1(
+    rooted!(&in(context) let latin1_jsstr = JS_NewExternalStringLatin1(
         context,
         latin1_chars,
         latin1_base.len(),
         callbacks
     ));
     assert_eq!(
-        jsstr_to_string(context, NonNull::new(latin1_jsstr.get()).unwrap()),
+        jsstr_to_string(context.raw_cx(), NonNull::new(latin1_jsstr.get()).unwrap()),
         latin1_base
     );
 }
 
 #[cfg(test)]
-unsafe fn test_latin1_string_bytes(context: *mut mozjs::jsapi::JSContext, latin1_base: &[u8]) {
+unsafe fn test_latin1_string_bytes(context: &mut JSContext, latin1_base: &[u8]) {
     let latin1_boxed = latin1_base.to_vec().into_boxed_slice();
     let latin1_chars = Box::into_raw(latin1_boxed).cast::<u8>();
 
@@ -132,14 +134,14 @@ unsafe fn test_latin1_string_bytes(context: *mut mozjs::jsapi::JSContext, latin1
         &EXTERNAL_STRING_CALLBACKS_TRAPS,
         latin1_base.len() as *mut c_void,
     );
-    rooted!(in(context) let latin1_jsstr = JS_NewExternalStringLatin1(
+    rooted!(&in(context) let latin1_jsstr = JS_NewExternalStringLatin1(
         context,
         latin1_chars,
         latin1_base.len(),
         callbacks
     ));
     assert_eq!(
-        jsstr_to_string(context, NonNull::new(latin1_jsstr.get()).unwrap()),
+        jsstr_to_string(context.raw_cx(), NonNull::new(latin1_jsstr.get()).unwrap()),
         encoding_rs::mem::decode_latin1(latin1_base)
     );
 }

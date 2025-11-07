@@ -154,7 +154,7 @@ impl Drop for RealmOptions {
     }
 }
 
-thread_local!(static CONTEXT: Cell<*mut JSContext> = Cell::new(ptr::null_mut()));
+thread_local!(static CONTEXT: Cell<Option<NonNull<JSContext>>> = Cell::new(None));
 
 #[derive(PartialEq)]
 enum EngineState {
@@ -283,8 +283,8 @@ unsafe impl Send for ParentRuntime {}
 
 /// A wrapper for the `JSContext` structure in SpiderMonkey.
 pub struct Runtime {
-    /// Raw pointer to the underlying SpiderMonkey context.
-    cx: *mut JSContext,
+    /// Safe SpiderMonkey context.
+    cx: crate::context::JSContext,
     /// The engine that this runtime is associated with.
     engine: JSEngineHandle,
     /// If this Runtime was created with a parent, this member exists to ensure
@@ -301,18 +301,21 @@ pub struct Runtime {
     /// An `Option` that holds the same pointer as `cx`.
     /// This is shared with all [`ThreadSafeJSContext`]s, so
     /// they can detect when it's destroyed on the main thread.
-    thread_safe_handle: Arc<RwLock<Option<*mut JSContext>>>,
+    thread_safe_handle: Arc<RwLock<Option<NonNull<JSContext>>>>,
 }
 
 impl Runtime {
     /// Get the `JSContext` for this thread.
+    ///
+    /// This will eventually be removed for in favour of [crate::context::JSContext]
     pub fn get() -> Option<NonNull<JSContext>> {
-        let cx = CONTEXT.with(|context| context.get());
-        NonNull::new(cx)
+        CONTEXT.with(|context| context.get())
     }
 
     /// Create a [`ThreadSafeJSContext`] that can detect when this `Runtime` is destroyed.
     pub fn thread_safe_js_context(&self) -> ThreadSafeJSContext {
+        // Existence of `ThreadSafeJSContext` does not actually break invariant of
+        // JSContext, because it can be used for limited subset of methods and they do not trigger GC
         ThreadSafeJSContext(self.thread_safe_handle.clone())
     }
 
@@ -347,28 +350,31 @@ impl Runtime {
 
     unsafe fn create(engine: JSEngineHandle, parent: Option<ParentRuntime>) -> Runtime {
         let parent_runtime = parent.as_ref().map_or(ptr::null_mut(), |r| r.parent);
-        let js_context = JS_NewContext(default_heapsize + (ChunkSize as u32), parent_runtime);
-        assert!(!js_context.is_null());
+        let js_context = NonNull::new(JS_NewContext(
+            default_heapsize + (ChunkSize as u32),
+            parent_runtime,
+        ))
+        .unwrap();
 
         // Unconstrain the runtime's threshold on nominal heap size, to avoid
         // triggering GC too often if operating continuously near an arbitrary
         // finite threshold. This leaves the maximum-JS_malloc-bytes threshold
         // still in effect to cause periodical, and we hope hygienic,
         // last-ditch GCs from within the GC's allocator.
-        JS_SetGCParameter(js_context, JSGCParamKey::JSGC_MAX_BYTES, u32::MAX);
+        JS_SetGCParameter(js_context.as_ptr(), JSGCParamKey::JSGC_MAX_BYTES, u32::MAX);
 
-        JS_AddExtraGCRootsTracer(js_context, Some(trace_traceables), ptr::null_mut());
+        JS_AddExtraGCRootsTracer(js_context.as_ptr(), Some(trace_traceables), ptr::null_mut());
 
         JS_SetNativeStackQuota(
-            js_context,
+            js_context.as_ptr(),
             STACK_QUOTA,
             STACK_QUOTA - SYSTEM_CODE_BUFFER,
             STACK_QUOTA - SYSTEM_CODE_BUFFER - TRUSTED_SCRIPT_BUFFER,
         );
 
         CONTEXT.with(|context| {
-            assert!(context.get().is_null());
-            context.set(js_context);
+            assert!(context.get().is_none());
+            context.set(Some(js_context));
         });
 
         #[cfg(target_pointer_width = "64")]
@@ -376,14 +382,14 @@ impl Runtime {
         #[cfg(target_pointer_width = "32")]
         let cache = crate::jsapi::__BindgenOpaqueArray::<u32, 2>::default();
 
-        InitSelfHostedCode(js_context, cache, None);
+        InitSelfHostedCode(js_context.as_ptr(), cache, None);
 
-        SetWarningReporter(js_context, Some(report_warning));
+        SetWarningReporter(js_context.as_ptr(), Some(report_warning));
 
         Runtime {
             engine,
             _parent_child_count: parent.map(|p| p.children_of_parent),
-            cx: js_context,
+            cx: crate::context::JSContext::from_ptr(js_context),
             outstanding_children: Arc::new(()),
             thread_safe_handle: Arc::new(RwLock::new(Some(js_context))),
         }
@@ -391,16 +397,22 @@ impl Runtime {
 
     /// Returns the `JSRuntime` object.
     pub fn rt(&self) -> *mut JSRuntime {
-        unsafe { JS_GetRuntime(self.cx) }
+        // SAFETY: JS_GetRuntime does not trigger GC
+        unsafe { JS_GetRuntime(self.cx.raw_cx_no_gc()) }
     }
 
     /// Returns the `JSContext` object.
-    pub fn cx(&self) -> *mut JSContext {
-        self.cx
+    pub fn cx<'rt>(&'rt mut self) -> &'rt mut crate::context::JSContext {
+        &mut self.cx
+    }
+
+    /// Returns the `JSContext` object.
+    pub fn cx_no_gc<'rt>(&'rt self) -> &'rt crate::context::JSContext {
+        &self.cx
     }
 
     pub fn evaluate_script(
-        &self,
+        &mut self,
         glob: HandleObject,
         script: &str,
         rval: MutableHandleValue,
@@ -412,11 +424,11 @@ impl Runtime {
             script
         );
 
-        let _ac = JSAutoRealm::new(self.cx(), glob.get());
+        let _ac = JSAutoRealm::new(unsafe { self.cx().raw_cx() }, glob.get());
 
         unsafe {
             let mut source = transform_str_to_source_text(&script);
-            if !Evaluate2(self.cx(), options.ptr, &mut source, rval.into()) {
+            if !Evaluate2(self.cx().raw_cx(), options.ptr, &mut source, rval.into()) {
                 debug!("...err!");
                 maybe_resume_unwind();
                 Err(())
@@ -429,9 +441,9 @@ impl Runtime {
         }
     }
 
-    pub fn new_compile_options(&self, filename: &str, line: u32) -> CompileOptionsWrapper {
+    pub fn new_compile_options(&mut self, filename: &str, line: u32) -> CompileOptionsWrapper {
         // SAFETY: `cx` argument points to a non-null, valid JSContext
-        unsafe { CompileOptionsWrapper::new(self.cx(), filename, line) }
+        unsafe { CompileOptionsWrapper::new(self.cx().raw_cx(), filename, line) }
     }
 }
 
@@ -443,11 +455,10 @@ impl Drop for Runtime {
             "This runtime still has live children."
         );
         unsafe {
-            JS_DestroyContext(self.cx);
+            JS_DestroyContext(self.cx.raw_cx());
 
             CONTEXT.with(|context| {
-                assert_eq!(context.get(), self.cx);
-                context.set(ptr::null_mut());
+                assert!(context.take().is_some());
             });
         }
     }
@@ -457,7 +468,7 @@ impl Drop for Runtime {
 /// `Send` and `Sync`. This should only ever expose operations that are marked as
 /// thread-safe by the SpiderMonkey API, ie ones that only atomic fields in JSContext.
 #[derive(Clone)]
-pub struct ThreadSafeJSContext(Arc<RwLock<Option<*mut JSContext>>>);
+pub struct ThreadSafeJSContext(Arc<RwLock<Option<NonNull<JSContext>>>>);
 
 unsafe impl Send for ThreadSafeJSContext {}
 unsafe impl Sync for ThreadSafeJSContext {}
@@ -467,9 +478,9 @@ impl ThreadSafeJSContext {
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback(&self) {
-        if let Some(&cx) = self.0.read().unwrap().as_ref() {
+        if let Some(cx) = self.0.read().unwrap().as_ref() {
             unsafe {
-                JS_RequestInterruptCallback(cx);
+                JS_RequestInterruptCallback(cx.as_ptr());
             }
         }
     }
@@ -478,9 +489,9 @@ impl ThreadSafeJSContext {
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback_can_wait(&self) {
-        if let Some(&cx) = self.0.read().unwrap().as_ref() {
+        if let Some(cx) = self.0.read().unwrap().as_ref() {
             unsafe {
-                JS_RequestInterruptCallbackCanWait(cx);
+                JS_RequestInterruptCallbackCanWait(cx.as_ptr());
             }
         }
     }
@@ -1112,6 +1123,9 @@ impl<'a> CapturedJSStack<'a> {
 
 #[macro_export]
 macro_rules! capture_stack {
+    (&in($cx:expr) $($t:tt)*) => {
+        capture_stack!(in(unsafe {$cx.raw_cx_no_gc()}) $($t)*);
+    };
     (in($cx:expr) let $name:ident = with max depth($max_frame_count:expr)) => {
         rooted!(in($cx) let mut __obj = ::std::ptr::null_mut());
         let $name = $crate::rust::CapturedJSStack::new($cx, __obj, Some($max_frame_count));
@@ -1337,4 +1351,171 @@ pub mod wrappers {
     use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
     include!("jsapi_wrappers.in.rs");
     include!("glue_wrappers.in.rs");
+}
+
+/// Wrappers for JSAPI/glue methods that accept lifetimed [crate::rust::Handle] and [crate::rust::MutableHandle] arguments and [crate::context::JSContext]
+pub mod wrappers2 {
+    macro_rules! wrap {
+        // The invocation of @inner has the following form:
+        // @inner (input args) <> (arg signture accumulator) <> (arg expr accumulator) <> unparsed tokens
+        // when `unparsed tokens == \eps`, accumulator contains the final result
+
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: *const Handle<$gentype:ty>, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: *const Handle<$gentype>) <> ($($arg_expr_acc,)* if $arg.is_null() { ::std::ptr::null() } else { &(*$arg).into() },) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: Handle<$gentype>) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandle<$gentype:ty>, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandle<$gentype>) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: Handle, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: Handle) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandle, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandle) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleFunction , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleFunction) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleId , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleId) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleObject , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleObject) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleScript , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleScript) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleString , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleString) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleSymbol , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleSymbol) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleValue , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleValue) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleFunction , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleFunction) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleId , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleId) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleObject , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleObject) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleScript , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleScript) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleString , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleString) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleSymbol , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleSymbol) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleValue) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: &mut JSContext , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: &mut JSContext) <> ($($arg_expr_acc,)* $arg.raw_cx(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: &JSContext , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: &JSContext) <> ($($arg_expr_acc,)* $arg.raw_cx_no_gc(),) <> $($rest)*);
+        };
+        // functions that take *const AutoRequireNoGC already have &JSContext, so we can remove this mareker argument
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: *const AutoRequireNoGC , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)*) <> ($($arg_expr_acc,)* ::std::ptr::null(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: $type:ty, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: $type) <> ($($arg_expr_acc,)* $arg,) <> $($rest)*);
+        };
+        (@inner ($module:tt: $func_name:ident -> $outtype:ty) <> (, $($args:tt)*) <> ($($argexprs:expr,)*) <> ) => {
+            #[inline]
+            pub unsafe fn $func_name($($args)*) -> $outtype {
+                $module::$func_name($($argexprs),*)
+            }
+        };
+        ($module:tt: pub fn $func_name:ident($($args:tt)*) -> $outtype:ty) => {
+            wrap!(@inner ($module: $func_name -> $outtype) <> () <> () <> $($args)* ,);
+        };
+        ($module:tt: pub fn $func_name:ident($($args:tt)*)) => {
+            wrap!($module: pub fn $func_name($($args)*) -> ());
+        }
+    }
+
+    use super::*;
+    use super::{
+        Handle, HandleFunction, HandleId, HandleObject, HandleScript, HandleString, HandleValue,
+        HandleValueArray, MutableHandle, MutableHandleId, MutableHandleObject, MutableHandleString,
+        MutableHandleValue, StackGCVector,
+    };
+    use crate::context::JSContext;
+    use crate::glue;
+    use crate::glue::*;
+    use crate::jsapi;
+    use crate::jsapi::js::TempAllocPolicy;
+    use crate::jsapi::mozilla::Utf8Unit;
+    use crate::jsapi::mozilla::*;
+    use crate::jsapi::BigInt;
+    use crate::jsapi::CallArgs;
+    use crate::jsapi::CloneDataPolicy;
+    use crate::jsapi::ColumnNumberOneOrigin;
+    use crate::jsapi::CompartmentTransplantCallback;
+    use crate::jsapi::ESClass;
+    use crate::jsapi::EnvironmentChain;
+    use crate::jsapi::ExceptionStackBehavior;
+    use crate::jsapi::ForOfIterator;
+    use crate::jsapi::ForOfIterator_NonIterableBehavior;
+    use crate::jsapi::HandleObjectVector;
+    use crate::jsapi::InstantiateOptions;
+    use crate::jsapi::JSClass;
+    use crate::jsapi::JSErrorReport;
+    use crate::jsapi::JSExnType;
+    use crate::jsapi::JSFunctionSpecWithHelp;
+    use crate::jsapi::JSJitInfo;
+    use crate::jsapi::JSONParseHandler;
+    use crate::jsapi::JSONWriteCallback;
+    use crate::jsapi::JSPrincipals;
+    use crate::jsapi::JSPropertySpec;
+    use crate::jsapi::JSPropertySpec_Name;
+    use crate::jsapi::JSProtoKey;
+    use crate::jsapi::JSScript;
+    use crate::jsapi::JSStructuredCloneData;
+    use crate::jsapi::JSType;
+    use crate::jsapi::Latin1Char;
+    use crate::jsapi::ModuleErrorBehaviour;
+    use crate::jsapi::ModuleType;
+    use crate::jsapi::MutableHandleIdVector;
+    use crate::jsapi::PromiseState;
+    use crate::jsapi::PromiseUserInputEventHandlingState;
+    use crate::jsapi::PropertyKey;
+    use crate::jsapi::ReadOnlyCompileOptions;
+    use crate::jsapi::Realm;
+    use crate::jsapi::RealmOptions;
+    use crate::jsapi::RefPtr;
+    use crate::jsapi::RegExpFlags;
+    use crate::jsapi::ScriptEnvironmentPreparer_Closure;
+    use crate::jsapi::SourceText;
+    use crate::jsapi::StackCapture;
+    use crate::jsapi::Stencil;
+    use crate::jsapi::StructuredCloneScope;
+    use crate::jsapi::Symbol;
+    use crate::jsapi::SymbolCode;
+    use crate::jsapi::TaggedColumnNumberOneOrigin;
+    use crate::jsapi::TranscodeBuffer;
+    use crate::jsapi::TwoByteChars;
+    use crate::jsapi::UniqueChars;
+    use crate::jsapi::Value;
+    use crate::jsapi::WasmModule;
+    use crate::jsapi::*;
+    use crate::jsapi::{ElementAdder, IsArrayAnswer, PropertyDescriptor};
+    use crate::jsapi::{JSFunction, JSNative, JSObject, JSString};
+    use crate::jsapi::{
+        JSStructuredCloneCallbacks, JSStructuredCloneReader, JSStructuredCloneWriter,
+    };
+    use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
+    use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
+    include!("jsapi2_wrappers.in.rs");
+    include!("glue2_wrappers.in.rs");
 }

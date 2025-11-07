@@ -1,11 +1,11 @@
-use std::ptr;
+use std::ptr::{self, NonNull};
 
 use mozjs::{
     capture_stack,
     jsapi::{self, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value},
     jsval::UndefinedValue,
     rooted,
-    rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS},
+    rust::{wrappers2, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS},
 };
 
 #[test]
@@ -15,15 +15,16 @@ fn iterate_stack_frames() {
         _argc: u32,
         _vp: *mut Value,
     ) -> bool {
+        let mut context = mozjs::context::JSContext::from_ptr(NonNull::new(context).unwrap());
         let mut function_names = vec![];
-        capture_stack!(in(context) let stack);
+        capture_stack!(&in(context) let stack);
         stack.unwrap().for_each_stack_frame(|frame| {
-            rooted!(in(context) let mut result: *mut jsapi::JSString = ptr::null_mut());
+            rooted!(&in(context) let mut result: *mut jsapi::JSString = ptr::null_mut());
 
             // Get function name
             unsafe {
-                jsapi::GetSavedFrameFunctionDisplayName(
-                    context,
+                wrappers2::GetSavedFrameFunctionDisplayName(
+                    &mut context,
                     ptr::null_mut(),
                     frame.into(),
                     result.handle_mut().into(),
@@ -32,7 +33,7 @@ fn iterate_stack_frames() {
             }
             let buffer = if !result.is_null() {
                 let mut buffer = vec![0; 3];
-                jsapi::JS_EncodeStringToBuffer(context, *result, buffer.as_mut_ptr(), 3);
+                wrappers2::JS_EncodeStringToBuffer(&mut context, *result, buffer.as_mut_ptr(), 3);
                 Some(buffer.into_iter().map(|c| c as u8).collect())
             } else {
                 None
@@ -50,26 +51,26 @@ fn iterate_stack_frames() {
     }
 
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
     #[cfg(feature = "debugmozjs")]
     unsafe {
-        mozjs::jsapi::SetGCZeal(context, 2, 1);
+        mozjs::jsapi::SetGCZeal(context.raw_cx(), 2, 1);
     }
     let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
     let c_option = RealmOptions::default();
 
     unsafe {
-        rooted!(in(context) let global = jsapi::JS_NewGlobalObject(
+        rooted!(&in(context) let global = wrappers2::JS_NewGlobalObject(
             context,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context, global.get());
+        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
 
-        let function = jsapi::JS_DefineFunction(
+        let function = wrappers2::JS_DefineFunction(
             context,
             global.handle().into(),
             c"assert_stack_state".as_ptr(),
@@ -91,7 +92,7 @@ fn iterate_stack_frames() {
             }
             foo();
         ";
-        rooted!(in(context) let mut rval = UndefinedValue());
+        rooted!(&in(context) let mut rval = UndefinedValue());
         let options = runtime.new_compile_options("test.js", 0);
         assert!(runtime
             .evaluate_script(global.handle(), javascript, rval.handle_mut(), options)
