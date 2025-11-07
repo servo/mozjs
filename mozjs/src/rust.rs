@@ -418,32 +418,42 @@ impl Runtime {
         rval: MutableHandleValue,
         options: CompileOptionsWrapper,
     ) -> Result<(), ()> {
-        debug!(
-            "Evaluating script from {} with content {}",
-            options.filename(),
-            script
-        );
-
-        let _ac = JSAutoRealm::new(unsafe { self.cx().raw_cx() }, glob.get());
-
-        unsafe {
-            let mut source = transform_str_to_source_text(&script);
-            if !Evaluate2(self.cx().raw_cx(), options.ptr, &mut source, rval.into()) {
-                debug!("...err!");
-                maybe_resume_unwind();
-                Err(())
-            } else {
-                // we could return the script result but then we'd have
-                // to root it and so forth and, really, who cares?
-                debug!("...ok!");
-                Ok(())
-            }
-        }
+        evaluate_script(self.cx(), glob, script, rval, options)
     }
 
-    pub fn new_compile_options(&mut self, filename: &str, line: u32) -> CompileOptionsWrapper {
+    pub fn new_compile_options(&self, filename: &str, line: u32) -> CompileOptionsWrapper {
         // SAFETY: `cx` argument points to a non-null, valid JSContext
-        unsafe { CompileOptionsWrapper::new(self.cx().raw_cx(), filename, line) }
+        unsafe { CompileOptionsWrapper::new(self.cx_no_gc().raw_cx_no_gc(), filename, line) }
+    }
+}
+
+pub fn evaluate_script(
+    cx: &mut crate::context::JSContext,
+    glob: HandleObject,
+    script: &str,
+    rval: MutableHandleValue,
+    options: CompileOptionsWrapper,
+) -> Result<(), ()> {
+    debug!(
+        "Evaluating script from {} with content {}",
+        options.filename(),
+        script
+    );
+
+    let _ac = JSAutoRealm::new(unsafe { cx.raw_cx() }, glob.get());
+
+    unsafe {
+        let mut source = transform_str_to_source_text(&script);
+        if !Evaluate2(cx.raw_cx(), options.ptr, &mut source, rval.into()) {
+            debug!("...err!");
+            maybe_resume_unwind();
+            Err(())
+        } else {
+            // we could return the script result but then we'd have
+            // to root it and so forth and, really, who cares?
+            debug!("...ok!");
+            Ok(())
+        }
     }
 }
 
