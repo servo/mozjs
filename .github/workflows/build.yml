@@ -46,6 +46,7 @@ jobs:
         id: toolchain
         with:
           toolchain: ${{ inputs.rust_version }}
+          components: "rustfmt"
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build
@@ -82,6 +83,7 @@ jobs:
         id: toolchain
         with:
           toolchain: ${{ inputs.rust_version }}
+          components: "rustfmt"
       - name: Install LLVM and Clang
         uses: KyleMayes/install-llvm-action@v2
         with:
@@ -137,6 +139,7 @@ jobs:
         with:
           toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
+          components: "rustfmt"
       - name: Install deps
         run: |
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
@@ -199,6 +202,7 @@ jobs:
         with:
           toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
+          components: "rustfmt"
       - name: Build
         env:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
@@ -235,6 +239,7 @@ jobs:
         with:
           toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
+          components: "rustfmt"
       - name: Build (arch ${{ matrix.target }} )
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
@@ -269,6 +274,7 @@ jobs:
         with:
           toolchain: "1.85.0"
           targets: "wasm32-${{ matrix.target }}"
+          components: "rustfmt"
       - uses: bytecodealliance/actions/wasmtime/setup@v1
       - name: Install WASI-SDK
         run: |
@@ -318,6 +324,7 @@ jobs:
         with:
           toolchain: ${{ inputs.rust_version }}
           targets: ${{ matrix.target }}
+          components: "rustfmt"
       - run: cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target ${{ matrix.target }}
 
   integrity:
