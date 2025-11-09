@@ -655,11 +655,24 @@ bool CallJitGetterOp(const JSJitInfo* info, JSContext* cx,
   return info->getter(cx, thisObj, specializedThis, JSJitGetterCallArgs(args));
 }
 
+// https://searchfox.org/firefox-main/rev/45e3c8634099e0f57fa0e7660dba85580a5dd8e7/dom/bindings/BindingUtils.cpp#3242
 bool CallJitSetterOp(const JSJitInfo* info, JSContext* cx,
                      JS::HandleObject thisObj, void* specializedThis,
                      unsigned argc, JS::Value* vp) {
   JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
-  return info->setter(cx, thisObj, specializedThis, JSJitSetterCallArgs(args));
+  // https://webidl.spec.whatwg.org/#dfn-attribute-setter
+  //
+  // Step 4.1.  Let |V| be <emu-val>undefined</emu-val>.
+  // Step 4.2.  If any arguments were passed, then set |V| to the value of the
+  //            first argument passed.
+  if (args.length() == 0) {
+    JS::Rooted<JS::Value> undef(cx);
+    return info->setter(cx, thisObj, specializedThis,
+                        JSJitSetterCallArgs(&undef));
+  } else {
+    return info->setter(cx, thisObj, specializedThis,
+                        JSJitSetterCallArgs(args));
+  }
 }
 
 bool CallJitMethodOp(const JSJitInfo* info, JSContext* cx,

@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use bindgen::callbacks::ParseCallbacks;
-use bindgen::{CodegenConfig, Formatter, RustTarget};
+use bindgen::{CodegenConfig, RustTarget};
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -325,7 +325,6 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .size_t_is_usize(true)
         .enable_cxx_namespaces()
         .with_codegen_config(config)
-        .formatter(Formatter::Rustfmt)
         .clang_args(cc_flags(true));
 
     if env::var("TARGET").unwrap().contains("wasi") {
