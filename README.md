@@ -141,22 +141,24 @@ In order to upgrade to a new version of SpiderMonkey:
    commit, including an artefact uploaded link, with a name of the form
    mozjs-*version*.tar.xz. Download it and save it locally.
 
-3. Look at the patches in `mozjs-sys/etc/patches/*.patch`, and remove any that no longer apply
+3. Go to <https://treeherder.mozilla.org/jobs?repo=mozilla-esr140&revision=${COMMIT}> and download artifacts `allFUnctions.txt.gz` and `gcFunctions.txt.gz` from job Linux debug > H
+
+4. Create a new release on github with all files you downloaded. Name the new tag `mozjs-source-${COMMIT}`.
+
+5. Look at the patches in `mozjs-sys/etc/patches/*.patch`, and remove any that no longer apply
    (with a bit of luck this will be all of them).
 
-4. Run `python3 ./mozjs-sys/etc/update.py path/to/tarball`.
+6. Run `python3 ./mozjs-sys/etc/update.py path/to/tarball`.
 
-5. Update `mozjs-sys/etc/COMMIT` with the commit number and mozjs-sys version with SpiderMonkey version.
+7. Update `mozjs-sys/etc/COMMIT` with the commit number and mozjs-sys version with SpiderMonkey version.
 
-6. Run `./mozjs/src/generate_wrappers.sh` to regenerate wrappers.
+8. Run `./mozjs/src/dl_and_gen_noGC.py` and `./mozjs/src/generate_wrappers.py` to regenerate wrappers.
 
-7. Build and test the bindings as above.
+9. Build and test the bindings as above.
 
-8. Create a new release on github with the .tar.xz that you saved earlier. Name the new tag `mozjs-source-${COMMIT}` where `${COMMIT}` is the value stored in `mozjs/etc/COMMIT`.
+10. Submit a PR!
 
-9. Submit a PR!
-
-10. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
+11. Send companion PR to servo, as SpiderMonkey bump PR will not be merged
 until it's tested against servo.
 
 ## NixOS users
