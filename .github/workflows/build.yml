@@ -101,7 +101,8 @@ jobs:
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
         run: |
-          bash ./mozjs/src/generate_wrappers.sh
+          python3 ./mozjs/src/dl_and_gen_noGC.py
+          python3 ./mozjs/src/generate_wrappers.py
           git add --all .
           git diff --staged --no-ext-diff --exit-code
 

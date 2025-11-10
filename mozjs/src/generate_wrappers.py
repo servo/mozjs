@@ -3,6 +3,14 @@ import re
 import shutil
 from pathlib import Path
 import subprocess
+import gzip
+
+
+no_gc = set()
+
+with gzip.open("target/noGC.txt.gz", "rt") as f:
+    for line in f:
+        no_gc.add(line.split(maxsplit=1)[0].split("$", maxsplit=1)[0])
 
 
 def read_file(file_path: Path):
@@ -14,28 +22,32 @@ def write_file(file_path: Path, lines):
     file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def grep_functions(file_path: Path):
+def grep_functions(file_path: Path) -> list[tuple[str, str | None]]:
     content = read_file(file_path)
 
-    lines = [
-        line
-        for line in content.splitlines()
-        if "link_name" not in line and '"]' not in line and "/**" not in line
+    # Match:
+    #   - optional #[link_name = "..."]
+    #   - followed by pub fn ...;
+    pattern = re.compile(
+        r'(?:#\s*\[\s*link_name\s*=\s*"(?P<link>[^"]+)"\s*\]\s*)?'
+        r"(?P<sig>pub\s+fn[^;{]+)\s*;",
+        re.MULTILINE,
+    )
+
+    return [
+        (
+            re.sub(r"\s+", " ", m.group("sig").strip()),
+            (m.group("link") or "").removeprefix("\\u{1}") or None,
+        )
+        for m in pattern.finditer(content)
     ]
 
-    content = "\n".join(lines)
 
-    content = re.sub(r",\n *", ", ", content)
-    content = re.sub(r":\n *", ": ", content)
-    content = re.sub(r"\n *->", " ->", content)
-    content = re.sub(r"^\}$", "", content, flags=re.MULTILINE)
-    content = re.sub(r"^ *pub", "pub", content, flags=re.MULTILINE)
-    content = re.sub(r";\n", "\n", content)
+def grep_heur(file_path: Path) -> list[str]:
+    def no_link_name(fn: tuple[str, str | None]) -> str:
+        sig, _ = fn
+        return sig
 
-    return [line for line in content.splitlines() if line.strip().startswith("pub fn")]
-
-
-def grep_heur(file_path: Path):
     def filter_pre(line: str) -> bool:
         return (
             "Handle" in line
@@ -64,53 +76,57 @@ def grep_heur(file_path: Path):
     return list(
         filter(
             filter_post,
-            map(replace_in_line, filter(filter_pre, grep_functions(file_path))),
+            map(
+                replace_in_line,
+                filter(filter_pre, map(no_link_name, grep_functions(file_path))),
+            ),
         )
     )
 
 
-def grep_heur2(file_path: Path):
-    def filter_pre(line: str) -> bool:
+# print(grep_functions(Path("./target/wrap_jsapi.rs")))
+# exit(0)
+
+
+def grep_heur2(file_path: Path) -> list[str]:
+    def filter_pre(fn: tuple[str, str | None]) -> bool:
+        sig, _ = fn
         return (
-            ("Handle" in line or "JSContext" in line)
-            and "roxyHandler" not in line
-            and "JS::IdVector" not in line
-            and "pub fn Unbox" not in line
-            and "CopyAsyncStack" not in line
-            and "MutableHandleObjectVector" not in line
-            and "Opaque" not in line
-            and "pub fn JS_WrapPropertyDescriptor1" not in line
-            and "pub fn EncodeWideToUtf8" not in line
-            and "pub fn JS_NewContext" not in line  # returns jscontext
+            ("Handle" in sig or "JSContext" in sig)
+            and "roxyHandler" not in sig
+            and "JS::IdVector" not in sig
+            and "pub fn Unbox" not in sig
+            and "CopyAsyncStack" not in sig
+            and "MutableHandleObjectVector" not in sig
+            and "Opaque" not in sig
+            and "pub fn JS_WrapPropertyDescriptor1" not in sig
+            and "pub fn EncodeWideToUtf8" not in sig
+            and "pub fn JS_NewContext" not in sig  # returns jscontext
             # gc module causes problems in macro
-            and "pub fn NewMemoryInfo" not in line
-            and "pub fn GetGCContext" not in line
-            and "pub fn SetDebuggerMalloc" not in line
-            and "pub fn GetDebuggerMallocSizeOf" not in line
-            and "pub fn FireOnGarbageCollectionHookRequired" not in line
-            and "pub fn ShouldAvoidSideEffects" not in line
+            and "pub fn NewMemoryInfo" not in sig
+            and "pub fn GetGCContext" not in sig
+            and "pub fn SetDebuggerMalloc" not in sig
+            and "pub fn GetDebuggerMallocSizeOf" not in sig
+            and "pub fn FireOnGarbageCollectionHookRequired" not in sig
+            and "pub fn ShouldAvoidSideEffects" not in sig
             # vargs
-            and "..." not in line
-            and "VA(" not in line
+            and "..." not in sig
+            and "VA(" not in sig
         )
 
-    def replace_in_line(line: str) -> str:
-        line = (
-            line.replace("root::", "")
+    def replace_in_line(fn: tuple[str, str | None]) -> str:
+        sig, link_name = fn
+        sig = (
+            sig.replace("root::", "")
             .replace("JS::", "")
             .replace("js::", "")
             .replace("mozilla::", "")
             .replace("*mut JSContext", "&mut JSContext")
             .replace("*const JSContext", "&JSContext")
         )
-        if (
-            "JS_GetRuntime" in line
-            or "JS_GetParentRuntime" in line
-            or "JS_GetGCParameter" in line
-            or "*const AutoRequireNoGC" in line
-        ):
-            line = line.replace("&mut JSContext", "&JSContext")
-        return line
+        if link_name in no_gc:
+            sig = sig.replace("&mut JSContext", "&JSContext")
+        return sig
 
     def filter_post(line: str) -> bool:
         return (
