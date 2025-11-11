@@ -8,8 +8,8 @@ use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::JS_NewGlobalObject;
-use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
+use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
 fn evaluate() {
