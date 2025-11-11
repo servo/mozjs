@@ -9,10 +9,11 @@ use std::ptr;
 use mozjs::jsapi::SetGCZeal;
 use mozjs::jsapi::JSPROP_ENUMERATE;
 use mozjs::jsapi::{
-    JSAutoRealm, JSClass, JSContext, JSFunction, JSFunctionSpec, JSNativeWrapper, JSObject,
-    JSPropertySpec_Name, JSString, OnNewGlobalHookOption, Value,
+    JSClass, JSContext, JSFunction, JSFunctionSpec, JSNativeWrapper, JSObject, JSPropertySpec_Name,
+    JSString, OnNewGlobalHookOption, Value,
 };
 use mozjs::jsval::JSVal;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{
     GetRealmObjectPrototype, JS_NewGlobalObject, JS_NewObjectWithGivenProto,
@@ -36,7 +37,8 @@ fn rooting() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = realm.cx();
 
         rooted!(&in(context) let prototype_proto = GetRealmObjectPrototype(context));
         rooted!(&in(context) let proto = JS_NewObjectWithGivenProto(context, &CLASS as *const _, prototype_proto.handle().into()));

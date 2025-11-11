@@ -18,7 +18,9 @@ use ::std::ptr;
 use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
+use mozjs::rust::evaluate_script;
 use mozjs::rust::wrappers2::*;
+use mozjs::rust::CompileOptionsWrapper;
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime};
 
@@ -45,8 +47,8 @@ fn run(mut rt: Runtime) {
      */
     let source: &'static str = "40 + 2";
 
-    let options = rt.new_compile_options(filename, lineno);
-    let res = rt.evaluate_script(global.handle(), source, rval.handle_mut(), options);
+    let options = CompileOptionsWrapper::new(rt.cx_no_gc(), filename, lineno);
+    let res = evaluate_script(rt.cx(), global.handle(), source, rval.handle_mut(), options);
 
     if res.is_ok() {
         /* Should get a number back from the example source. */

@@ -53,6 +53,7 @@ pub mod conversions;
 pub mod error;
 pub mod gc;
 pub mod panic;
+pub mod realm;
 pub mod typedarray;
 
 pub use crate::consts::*;

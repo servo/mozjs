@@ -6,11 +6,13 @@ use std::ptr::{self, NonNull};
 
 use mozjs::context::{JSContext, RawJSContext};
 use mozjs::gc::HandleValue;
-use mozjs::jsapi::{ExceptionStackBehavior, JSAutoRealm, OnNewGlobalHookOption, Value};
+use mozjs::jsapi::{ExceptionStackBehavior, OnNewGlobalHookOption, Value};
 use mozjs::jsval::UndefinedValue;
 use mozjs::panic::wrap_panic;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{JS_DefineFunction, JS_NewGlobalObject, JS_SetPendingException};
+use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
@@ -34,7 +36,8 @@ fn test_panic() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = realm.cx();
 
         let function = JS_DefineFunction(
             context,
@@ -47,8 +50,14 @@ fn test_panic() {
         assert!(!function.is_null());
 
         rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = runtime.new_compile_options("test.js", 0);
-        let _ = runtime.evaluate_script(global.handle(), "test();", rval.handle_mut(), options);
+        let options = CompileOptionsWrapper::new(&context, "test.js", 0);
+        let _ = evaluate_script(
+            context,
+            global.handle(),
+            "test();",
+            rval.handle_mut(),
+            options,
+        );
     }
 }
 

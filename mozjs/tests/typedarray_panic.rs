@@ -4,7 +4,8 @@
 
 use std::ptr;
 
-use mozjs::jsapi::{JSAutoRealm, JSObject, OnNewGlobalHookOption};
+use mozjs::jsapi::{JSObject, OnNewGlobalHookOption};
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::JS_NewGlobalObject;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
@@ -28,7 +29,8 @@ fn typedarray_update_panic() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = realm.cx();
 
         rooted!(&in(context) let mut rval = ptr::null_mut::<JSObject>());
         let _ = Uint32Array::create(

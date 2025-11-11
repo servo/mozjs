@@ -2,10 +2,11 @@ use std::ptr::{self, NonNull};
 
 use mozjs::{
     capture_stack,
-    jsapi::{self, JSAutoRealm, JSContext, OnNewGlobalHookOption, Value},
+    jsapi::{self, JSContext, OnNewGlobalHookOption, Value},
     jsval::UndefinedValue,
     rooted,
-    rust::{wrappers2, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS},
+    realm::AutoRealm,
+    rust::{wrappers2, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS, evaluate_script, CompileOptionsWrapper},
 };
 
 #[test]
@@ -68,7 +69,8 @@ fn iterate_stack_frames() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+    let mut realm = AutoRealm::new_from_handle(context, global.handle());
+    let context = realm.cx();
 
         let function = wrappers2::JS_DefineFunction(
             context,
@@ -93,9 +95,7 @@ fn iterate_stack_frames() {
             foo();
         ";
         rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = runtime.new_compile_options("test.js", 0);
-        assert!(runtime
-            .evaluate_script(global.handle(), javascript, rval.handle_mut(), options)
-            .is_ok());
+        let options = CompileOptionsWrapper::new(&context, "test.js", 0);
+        assert!(evaluate_script(context, global.handle(), javascript, rval.handle_mut(), options).is_ok());
     }
 }

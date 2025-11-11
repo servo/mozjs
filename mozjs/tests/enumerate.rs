@@ -8,6 +8,7 @@ use mozjs::jsapi::{OnNewGlobalHookOption, JSITER_OWNONLY};
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{GetPropertyKeys, JS_NewGlobalObject, JS_StringEqualsAscii};
+use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{IdVector, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
@@ -32,11 +33,15 @@ fn enumerate() {
         ));
 
         rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = runtime.new_compile_options("test", 1);
-        assert!(runtime
-            .evaluate_script(global.handle(), "({ 'a': 7 })", rval.handle_mut(), options,)
-            .is_ok());
-        let context = runtime.cx();
+        let options = CompileOptionsWrapper::new(&context, "test", 1);
+        assert!(evaluate_script(
+            context,
+            global.handle(),
+            "({ 'a': 7 })",
+            rval.handle_mut(),
+            options
+        )
+        .is_ok());
         assert!(rval.is_object());
 
         rooted!(&in(context) let object = rval.to_object());

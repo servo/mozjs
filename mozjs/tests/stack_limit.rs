@@ -8,6 +8,7 @@ use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::JS_NewGlobalObject;
+use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 #[test]
@@ -31,14 +32,14 @@ fn stack_limit() {
             &*c_option,
         ));
         rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = runtime.new_compile_options("test", 1);
-        assert!(runtime
-            .evaluate_script(
-                global.handle(),
-                "function f() { f.apply() } f()",
-                rval.handle_mut(),
-                options,
-            )
-            .is_err());
+        let options = CompileOptionsWrapper::new(&context, "test", 1);
+        assert!(evaluate_script(
+            context,
+            global.handle(),
+            "function f() { f.apply() } f()",
+            rval.handle_mut(),
+            options,
+        )
+        .is_err());
     }
 }

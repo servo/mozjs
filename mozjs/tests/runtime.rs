@@ -10,7 +10,8 @@ use std::thread;
 
 use mozjs::jsapi::GCContext;
 use mozjs::jsapi::JSCLASS_FOREGROUND_FINALIZE;
-use mozjs::jsapi::{JSAutoRealm, JSClass, JSClassOps, JSObject, OnNewGlobalHookOption};
+use mozjs::jsapi::{JSClass, JSClassOps, JSObject, OnNewGlobalHookOption};
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{JS_NewGlobalObject, JS_NewObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
@@ -35,7 +36,8 @@ fn runtime() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = realm.cx();
         rooted!(&in(context) let _object = JS_NewObject(context, &CLASS as *const _));
     }
 

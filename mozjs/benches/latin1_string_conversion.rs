@@ -5,7 +5,8 @@ use criterion::{
 use mozjs::context::JSContext;
 use mozjs::conversions::jsstr_to_string;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
-use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption};
+use mozjs::jsapi::OnNewGlobalHookOption;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{JS_NewExternalStringLatin1, JS_NewGlobalObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
@@ -72,7 +73,8 @@ fn external_string(c: &mut Criterion) {
         h_option,
         &*c_option,
     )});
-    let _ac = JSAutoRealm::new(unsafe { context.raw_cx() }, global.get());
+    let mut realm = AutoRealm::new_from_handle(context, global.handle());
+    let context = realm.cx();
 
     let mut group = c.benchmark_group("Latin1 conversion");
 
