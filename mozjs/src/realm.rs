@@ -127,12 +127,27 @@ impl<'cx> AutoRealm<'cx> {
 }
 
 impl<'cx> Drop for AutoRealm<'cx> {
-    // this is not trivially dropped type
-    // not sure why we need to do this manually
+    // if we do not implement this rust  can shorten lifetime of cx,
+    // without effecting JSAutoRealm (realm drops after we lose lifetime of cx)
     fn drop(&mut self) {}
 }
 
 /// Represents the current realm of [JSContext] (top realm on realm stack).
+///
+/// Similarly to [AutoRealm], while you can access this type via `&mut`/`&mut`
+/// we know that this realm is current (on top of realm stack).
+///
+/// ```compile_fail
+/// use mozjs::context::JSContext;
+/// use mozjs::jsapi::JSObject;
+/// use mozjs::realm::{AutoRealm, CurrentRealm};
+/// use std::ptr::NonNull;
+///
+/// fn f(current_realm: CurrentRealm, target: NonNull<JSObject>) {
+///     let mut realm = AutoRealm::new(current_realm.cx(), target);
+///     let cx = current_realm.cx(); // we cannot use current realm while it's not current
+/// }
+/// ```
 pub struct CurrentRealm<'cx> {
     cx: &'cx mut JSContext,
     realm: NonNull<Realm>,
