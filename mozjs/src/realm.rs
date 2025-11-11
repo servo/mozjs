@@ -1,13 +1,63 @@
 use std::marker::PhantomData;
 use std::ptr::NonNull;
 
-use mozjs_sys::jsapi::JS::Realm;
-use mozjs_sys::jsapi::{JSAutoRealm, JSObject};
+use crate::jsapi::JS::Realm;
+use crate::jsapi::{JSAutoRealm, JSObject};
 
 use crate::context::JSContext;
 use crate::gc::Handle;
 use crate::rust::wrappers2::{CurrentGlobalOrNull, GetCurrentRealmOrNull};
 
+/// Safe wrapper around [JSAutoRealm].
+///
+/// On creation it enters the realm of the target object,
+/// realm becomes current (it's on top of the realm stack).
+/// Drop exits realm.
+///
+/// While creating [AutoRealm] will not trigger GC,
+/// it still takes `&mut JSContext`, because it can act as [JSContext] (using [AutoRealm::cx] and [AutoRealm::cx_no_gc])
+/// with additional information of entered/current realm:
+/// ```compile_fail
+/// use mozjs::context::JSContext;
+/// use mozjs::jsapi::JSObject;
+/// use mozjs::realm::AutoRealm;
+/// use std::ptr::NonNull;
+///
+/// fn f(cx: &mut JSContext, target: NonNull<JSObject>) {
+///     let realm = AutoRealm::new(cx, target);
+///     f(cx, target); // one cannot use JSContext here,
+///                   // because that could allow out of order realm drops.
+/// }
+/// ```
+/// instead do this:
+/// ```
+/// use mozjs::context::JSContext;
+/// use mozjs::jsapi::JSObject;
+/// use mozjs::realm::AutoRealm;
+/// use std::ptr::NonNull;
+///
+/// fn f(cx: &mut JSContext, target: NonNull<JSObject>) {
+///     let mut realm = AutoRealm::new(cx, target);
+///     let mut cx = realm.cx(); // this JSContext is bounded to AutoRealm
+///                              // which in turn is bounded to original JSContext
+///     f(cx, target);
+/// }
+/// ```
+///
+/// This also enforces LIFO entering/exiting realms, which is not enforced by [JSAutoRealm]:
+/// ```compile_fail
+/// use mozjs::context::JSContext;
+/// use mozjs::jsapi::JSObject;
+/// use mozjs::realm::AutoRealm;
+/// use std::ptr::NonNull;
+///
+/// fn f(cx: &mut JSContext, t1: NonNull<JSObject>, t2: NonNull<JSObject>) {
+///     let mut realm1 = AutoRealm::new(cx, t1);
+///     let mut cx = realm1.cx();
+///     let realm2 = AutoRealm::new(cx, t2);
+///     drop(realm1); // it's not possible to drop realm1 before realm2
+/// }
+/// ```
 pub struct AutoRealm<'cx> {
     cx: JSContext,
     realm: JSAutoRealm,
