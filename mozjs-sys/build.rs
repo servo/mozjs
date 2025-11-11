@@ -256,7 +256,6 @@ fn build_spidermonkey(build_dir: &Path) {
             .for_each(|obj| {
                 make_static.object(obj);
             });
-        make_static.static_flag(true);
         make_static.compile("js_static");
     }
 
