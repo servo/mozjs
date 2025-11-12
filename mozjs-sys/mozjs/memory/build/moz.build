@@ -39,8 +39,9 @@ if CONFIG["MOZ_MEMORY"]:
         "Mutex.cpp",
     ]
 else:
+    # FIXME: add proper flag for custom malloc
     UNIFIED_SOURCES += [
-        "fallback.cpp",
+        "embedder_fallback.cpp",
     ]
 
 if CONFIG["OS_TARGET"] == "Darwin" and (

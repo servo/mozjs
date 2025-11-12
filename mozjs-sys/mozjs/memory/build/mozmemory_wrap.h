@@ -131,6 +131,10 @@
 #  define MOZ_JEMALLOC_API_NODISCARD MOZ_EXTERN_C [[nodiscard]]
 #endif
 
+// Provide embedder versions of mozmem_malloc_impl
+// Todo: if feature?
+#include <servo_mimalloc_wrap.h>
+
 #ifndef mozmem_malloc_impl
 #  define mozmem_malloc_impl(a) a
 #endif
