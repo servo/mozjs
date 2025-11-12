@@ -38,6 +38,10 @@ if CONFIG["MOZ_MEMORY"]:
         "mozmemory_wrap.cpp",
         "Mutex.cpp",
     ]
+elif CONFIG["SERVO_EMBEDDER_MEMORY"]:
+    UNIFIED_SOURCES += [
+        "embedder_fallback.cpp",
+    ]
 else:
     UNIFIED_SOURCES += [
         "fallback.cpp",
