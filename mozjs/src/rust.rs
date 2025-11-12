@@ -424,11 +424,10 @@ pub fn evaluate_script(
     );
 
     let mut realm = AutoRealm::new_from_handle(cx, glob);
-    let cx = realm.cx();
 
     unsafe {
         let mut source = transform_str_to_source_text(&script);
-        if !wrappers2::Evaluate2(cx, options.ptr, &mut source, rval.into()) {
+        if !wrappers2::Evaluate2(&mut realm, options.ptr, &mut source, rval.into()) {
             debug!("...err!");
             maybe_resume_unwind();
             Err(())

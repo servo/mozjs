@@ -37,10 +37,9 @@ fn test_panic() {
             &*c_option,
         ));
         let mut realm = AutoRealm::new_from_handle(context, global.handle());
-        let context = realm.cx();
 
         let function = JS_DefineFunction(
-            context,
+            &mut realm,
             global.handle().into(),
             c"test".as_ptr(),
             Some(test),
@@ -49,10 +48,10 @@ fn test_panic() {
         );
         assert!(!function.is_null());
 
-        rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = CompileOptionsWrapper::new(&context, "test.js", 0);
+        rooted!(&in(&mut realm) let mut rval = UndefinedValue());
+        let options = CompileOptionsWrapper::new(&mut realm, "test.js", 0);
         let _ = evaluate_script(
-            context,
+            &mut realm,
             global.handle(),
             "test();",
             rval.handle_mut(),

@@ -60,7 +60,7 @@ fn run(mut rt: Runtime) {
                            &*options)
     });
     let mut realm = AutoRealm::new_from_handle(cx, global.handle());
-    let cx = realm.cx();
+    let cx = &mut realm;
 
     // Get WebAssembly.Module and WebAssembly.Instance constructors.
     rooted!(&in(cx) let mut wasm = UndefinedValue());

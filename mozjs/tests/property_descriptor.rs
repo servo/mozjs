@@ -39,7 +39,7 @@ fn property_descriptor() {
             &*c_option,
         ));
         let mut realm = AutoRealm::new_from_handle(context, global.handle());
-        let context = realm.cx();
+        let context = &mut realm;
 
         rooted!(&in(context) let object = JS_NewPlainObject(context));
         rooted!(&in(context) let property = Int32Value(32));

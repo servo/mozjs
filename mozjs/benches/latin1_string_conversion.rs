@@ -74,17 +74,16 @@ fn external_string(c: &mut Criterion) {
         &*c_option,
     )});
     let mut realm = AutoRealm::new_from_handle(context, global.handle());
-    let context = realm.cx();
 
     let mut group = c.benchmark_group("Latin1 conversion");
 
     let ascii_example = b"test latin-1 tes";
-    bench_str_repetition(&mut group, context, "ascii a-z", ascii_example);
+    bench_str_repetition(&mut group, &mut realm, "ascii a-z", ascii_example);
     // fastpath for the first few characters, then slowpath for the remaining (long part)
     // TODO: make generator functions, so we can define at which percentage of the size
     // the first high byte shows up (which forces the slow path).
     let ascii_with_high = b"test latin-1 \xD6\xC0\xFF";
-    bench_str_repetition(&mut group, context, "ascii with high", ascii_with_high);
+    bench_str_repetition(&mut group, &mut realm, "ascii with high", ascii_with_high);
 }
 
 static EXTERNAL_STRING_CALLBACKS_TRAPS: JSExternalStringCallbacksTraps =

@@ -39,7 +39,7 @@ fn external_string() {
             &*c_option,
         ));
         let mut realm = AutoRealm::new_from_handle(context, global.handle());
-        let context = realm.cx();
+        let context = &mut *realm;
 
         test_latin1_string(context, "test latin1");
         test_latin1_string(context, "abcdefghijklmnop"); // exactly 16 bytes

@@ -1,4 +1,5 @@
 use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 use crate::jsapi::JS::Realm;
@@ -15,7 +16,7 @@ use crate::rust::wrappers2::{CurrentGlobalOrNull, GetCurrentRealmOrNull};
 /// Drop exits realm.
 ///
 /// While creating [AutoRealm] will not trigger GC,
-/// it still takes `&mut JSContext`, because it can act as [JSContext] (using [AutoRealm::cx] and [AutoRealm::cx_no_gc])
+/// it still takes `&mut JSContext`, because it can be used in place of [JSContext] (by [Deref]/[DerefMut]).
 /// with additional information of entered/current realm:
 /// ```compile_fail
 /// use mozjs::context::JSContext;
@@ -38,7 +39,7 @@ use crate::rust::wrappers2::{CurrentGlobalOrNull, GetCurrentRealmOrNull};
 ///
 /// fn f(cx: &mut JSContext, target: NonNull<JSObject>) {
 ///     let mut realm = AutoRealm::new(cx, target);
-///     let mut cx = realm.cx(); // this JSContext is bounded to AutoRealm
+///     let cx = &mut realm; // this JSContext is bounded to AutoRealm
 ///                              // which in turn is bounded to original JSContext
 ///     f(cx, target);
 /// }
@@ -53,7 +54,7 @@ use crate::rust::wrappers2::{CurrentGlobalOrNull, GetCurrentRealmOrNull};
 ///
 /// fn f(cx: &mut JSContext, t1: NonNull<JSObject>, t2: NonNull<JSObject>) {
 ///     let mut realm1 = AutoRealm::new(cx, t1);
-///     let mut cx = realm1.cx();
+///     let cx = &mut realm1;
 ///     let realm2 = AutoRealm::new(cx, t2);
 ///     drop(realm1); // it's not possible to drop realm1 before realm2
 /// }
@@ -96,13 +97,13 @@ impl<'cx> AutoRealm<'cx> {
     /// If we can get &mut AutoRealm then we are current realm,
     /// because if there existed other current realm, we couldn't get &mut AutoRealm.
     pub fn current_realm(&'cx mut self) -> CurrentRealm<'cx> {
-        CurrentRealm::assert(self.cx())
+        CurrentRealm::assert(self)
     }
 
     /// Obtain the handle to the global object of the current realm.
     pub fn global(&'_ self) -> Handle<'_, *mut JSObject> {
         // SAFETY: object is rooted by realm
-        unsafe { Handle::from_marked_location(CurrentGlobalOrNull(self.cx_no_gc()) as _) }
+        unsafe { Handle::from_marked_location(CurrentGlobalOrNull(&*self) as _) }
     }
 
     /// Erase the lifetime of this [AutoRealm].
@@ -113,16 +114,22 @@ impl<'cx> AutoRealm<'cx> {
         std::mem::transmute(self)
     }
 
-    pub fn cx(&mut self) -> &mut JSContext {
-        &mut self.cx
-    }
-
-    pub fn cx_no_gc(&self) -> &JSContext {
-        &self.cx
-    }
-
     pub fn realm(&self) -> &JSAutoRealm {
         &self.realm
+    }
+}
+
+impl<'cx> Deref for AutoRealm<'cx> {
+    type Target = JSContext;
+
+    fn deref(&'_ self) -> &'_ Self::Target {
+        &self.cx
+    }
+}
+
+impl<'cx> DerefMut for AutoRealm<'cx> {
+    fn deref_mut(&'_ mut self) -> &'_ mut Self::Target {
+        &mut self.cx
     }
 }
 
@@ -143,9 +150,9 @@ impl<'cx> Drop for AutoRealm<'cx> {
 /// use mozjs::realm::{AutoRealm, CurrentRealm};
 /// use std::ptr::NonNull;
 ///
-/// fn f(current_realm: CurrentRealm, target: NonNull<JSObject>) {
-///     let mut realm = AutoRealm::new(current_realm.cx(), target);
-///     let cx = current_realm.cx(); // we cannot use current realm while it's not current
+/// fn f(current_realm: &mut CurrentRealm, target: NonNull<JSObject>) {
+///     let mut realm = AutoRealm::new(current_realm, target);
+///     let cx: &mut JSContext = &mut *current_realm; // we cannot use current realm while it's not current
 /// }
 /// ```
 pub struct CurrentRealm<'cx> {
@@ -166,18 +173,24 @@ impl<'cx> CurrentRealm<'cx> {
     /// Obtain the handle to the global object of the current realm.
     pub fn global(&'_ self) -> Handle<'_, *mut JSObject> {
         // SAFETY: object is rooted by realm
-        unsafe { Handle::from_marked_location(CurrentGlobalOrNull(self.cx_no_gc()) as _) }
-    }
-
-    pub fn cx(&mut self) -> &mut JSContext {
-        self.cx
-    }
-
-    pub fn cx_no_gc(&self) -> &JSContext {
-        &self.cx
+        unsafe { Handle::from_marked_location(CurrentGlobalOrNull(&*self) as _) }
     }
 
     pub fn realm(&self) -> &NonNull<Realm> {
         &self.realm
+    }
+}
+
+impl<'cx> Deref for CurrentRealm<'cx> {
+    type Target = JSContext;
+
+    fn deref(&'_ self) -> &'_ Self::Target {
+        &self.cx
+    }
+}
+
+impl<'cx> DerefMut for CurrentRealm<'cx> {
+    fn deref_mut(&'_ mut self) -> &'_ mut Self::Target {
+        &mut self.cx
     }
 }

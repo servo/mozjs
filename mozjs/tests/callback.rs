@@ -38,7 +38,7 @@ fn callback() {
             &*c_option,
         ));
         let mut realm = AutoRealm::new_from_handle(context, global.handle());
-        let context = realm.cx();
+        let context = &mut realm;
 
         let function = JS_DefineFunction(
             context,

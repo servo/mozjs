@@ -73,7 +73,7 @@ fn iterate_stack_frames() {
             &*c_option,
         ));
         let mut realm = AutoRealm::new_from_handle(context, global.handle());
-        let context = realm.cx();
+        let context = &mut *realm;
 
         let function = wrappers2::JS_DefineFunction(
             context,
