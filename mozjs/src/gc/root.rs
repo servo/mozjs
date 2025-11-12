@@ -42,7 +42,7 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
         Handle::new(&self)
     }
 
-    pub fn handle_mut(&mut self) -> MutableHandle<T> {
+    pub fn handle_mut(&mut self) -> MutableHandle<'_, T> {
         unsafe { MutableHandle::from_marked_location(self.as_ptr()) }
     }
 
@@ -206,7 +206,7 @@ impl<'a, T> MutableHandle<'a, T> {
         MutableHandle::from_marked_location(handle.ptr)
     }
 
-    pub fn handle(&self) -> Handle<T> {
+    pub fn handle(&self) -> Handle<'_, T> {
         unsafe { Handle::new(&*self.ptr) }
     }
 
