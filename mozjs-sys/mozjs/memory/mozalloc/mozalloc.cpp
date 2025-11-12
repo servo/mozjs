@@ -11,7 +11,18 @@
 #  include MALLOC_H  // for memalign, malloc_size, malloc_us
 #endif               // if defined(MALLOC_H)
 
-#if !defined(MOZ_MEMORY)
+// FIXME
+#if 1
+#include <mimalloc.h>
+#  define malloc_impl mi_malloc
+#  define calloc_impl mi_calloc
+#  define realloc_impl mi_realloc
+#  define free_impl mi_free
+#  define memalign_impl mi_memalign
+#  define malloc_usable_size_impl mi_malloc_usable_size
+#  define strdup_impl mi_strdup
+#  define strndup_impl mi_strndup
+#else if !defined(MOZ_MEMORY)
 // When jemalloc is disabled, or when building the static runtime variant,
 // we need not to use the suffixes.
 
