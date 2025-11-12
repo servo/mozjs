@@ -47,20 +47,18 @@ use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
-use crate::jsapi::{Evaluate2, HandleValueArray, StencilRelease};
+use crate::jsapi::{HandleValueArray, StencilRelease};
 use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
-use crate::jsapi::{
-    JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue,
-};
 use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
 use crate::jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use crate::jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use crate::jsapi::{JSObject, JSPropertySpec, JSRuntime};
 use crate::jsapi::{JSString, Object, PersistentRootedIdVector};
 use crate::jsapi::{JS_DefineFunctions, JS_DefineProperties, JS_DestroyContext, JS_ShutDown};
-use crate::jsapi::{JS_EnumerateStandardClasses, JS_GetRuntime, JS_GlobalObjectTraceHook};
+use crate::jsapi::{JS_EnumerateStandardClasses, JS_GlobalObjectTraceHook};
 use crate::jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
 use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWait};
+use crate::jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
 use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
@@ -68,6 +66,7 @@ use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint1
 use crate::jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
 use crate::jsval::{JSVal, ObjectValue};
 use crate::panic::maybe_resume_unwind;
+use crate::realm::AutoRealm;
 use log::{debug, warn};
 use mozjs_sys::jsapi::JS::SavedFrameResult;
 pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
@@ -397,8 +396,7 @@ impl Runtime {
 
     /// Returns the `JSRuntime` object.
     pub fn rt(&self) -> *mut JSRuntime {
-        // SAFETY: JS_GetRuntime does not trigger GC
-        unsafe { JS_GetRuntime(self.cx.raw_cx_no_gc()) }
+        unsafe { wrappers2::JS_GetRuntime(self.cx_no_gc()) }
     }
 
     /// Returns the `JSContext` object.
@@ -409,21 +407,6 @@ impl Runtime {
     /// Returns the `JSContext` object.
     pub fn cx_no_gc<'rt>(&'rt self) -> &'rt crate::context::JSContext {
         &self.cx
-    }
-
-    pub fn evaluate_script(
-        &mut self,
-        glob: HandleObject,
-        script: &str,
-        rval: MutableHandleValue,
-        options: CompileOptionsWrapper,
-    ) -> Result<(), ()> {
-        evaluate_script(self.cx(), glob, script, rval, options)
-    }
-
-    pub fn new_compile_options(&self, filename: &str, line: u32) -> CompileOptionsWrapper {
-        // SAFETY: `cx` argument points to a non-null, valid JSContext
-        unsafe { CompileOptionsWrapper::new(self.cx_no_gc().raw_cx_no_gc(), filename, line) }
     }
 }
 
@@ -440,11 +423,11 @@ pub fn evaluate_script(
         script
     );
 
-    let _ac = JSAutoRealm::new(unsafe { cx.raw_cx() }, glob.get());
+    let mut realm = AutoRealm::new_from_handle(cx, glob);
 
     unsafe {
         let mut source = transform_str_to_source_text(&script);
-        if !Evaluate2(cx.raw_cx(), options.ptr, &mut source, rval.into()) {
+        if !wrappers2::Evaluate2(&mut realm, options.ptr, &mut source, rval.into()) {
             debug!("...err!");
             maybe_resume_unwind();
             Err(())
@@ -550,10 +533,16 @@ pub struct CompileOptionsWrapper {
 }
 
 impl CompileOptionsWrapper {
+    pub fn new(cx: &crate::context::JSContext, filename: &str, line: u32) -> Self {
+        let filename = CString::new(filename.as_bytes()).unwrap();
+        let ptr = unsafe { wrappers2::NewCompileOptions(cx, filename.as_ptr(), line) };
+        assert!(!ptr.is_null());
+        Self { ptr, filename }
+    }
     /// # Safety
     /// `cx` must point to a non-null, valid [`JSContext`].
     /// To create an instance from safe code, use [`Runtime::new_compile_options`].
-    pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32) -> Self {
+    pub unsafe fn new_raw(cx: *mut JSContext, filename: &str, line: u32) -> Self {
         let filename = CString::new(filename.as_bytes()).unwrap();
         let ptr = NewCompileOptions(cx, filename.as_ptr(), line);
         assert!(!ptr.is_null());

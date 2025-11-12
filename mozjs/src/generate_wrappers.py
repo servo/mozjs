@@ -124,7 +124,7 @@ def grep_heur2(file_path: Path) -> list[str]:
             .replace("*mut JSContext", "&mut JSContext")
             .replace("*const JSContext", "&JSContext")
         )
-        if link_name in no_gc:
+        if link_name in no_gc or "NewCompileOptions" in sig:
             sig = sig.replace("&mut JSContext", "&JSContext")
         return sig
 

@@ -8,6 +8,7 @@ use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::jsval::{BooleanValue, DoubleValue, Int32Value, NullValue, UndefinedValue};
 use mozjs::rooted;
 use mozjs::rust::wrappers2::JS_NewGlobalObject;
+use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{
     HandleObject, JSEngine, RealmOptions, RootedGuard, Runtime, SIMPLE_GLOBAL_CLASS,
 };
@@ -22,14 +23,14 @@ unsafe fn tester<F: Fn(RootedGuard<JSVal>)>(
     rust: JSVal,
     test: F,
 ) {
-    rooted!(&in(rt.cx()) let mut rval = UndefinedValue());
-    let options = rt.new_compile_options("test", 1);
-    assert!(rt
-        .evaluate_script(global, js, rval.handle_mut(), options)
-        .is_ok());
+    let cx = rt.cx();
+    rooted!(&in(cx) let mut rval = UndefinedValue());
+
+    let options = CompileOptionsWrapper::new(&cx, "test", 1);
+    assert!(evaluate_script(cx, global, js, rval.handle_mut(), options).is_ok());
     test(rval);
 
-    rooted!(&in(rt.cx()) let mut val = rust);
+    rooted!(&in(cx) let mut val = rust);
     test(val);
 }
 

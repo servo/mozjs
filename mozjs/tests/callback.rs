@@ -8,11 +8,14 @@ use std::ptr::NonNull;
 use std::str;
 
 use mozjs::context::{JSContext, RawJSContext};
-use mozjs::jsapi::{CallArgs, JSAutoRealm, JS_ReportErrorASCII, OnNewGlobalHookOption, Value};
+use mozjs::jsapi::{CallArgs, JS_ReportErrorASCII, OnNewGlobalHookOption, Value};
 use mozjs::jsval::UndefinedValue;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{EncodeStringToUTF8, JS_DefineFunction, JS_NewGlobalObject};
-use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
+use mozjs::rust::{
+    evaluate_script, CompileOptionsWrapper, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS,
+};
 
 #[test]
 fn callback() {
@@ -34,7 +37,8 @@ fn callback() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = &mut realm;
 
         let function = JS_DefineFunction(
             context,
@@ -48,11 +52,15 @@ fn callback() {
 
         let javascript = "puts('Test Iñtërnâtiônàlizætiøn ┬─┬ノ( º _ ºノ) ');";
         rooted!(&in(context) let mut rval = UndefinedValue());
-        // Rust automagically drops context here, so we can continue to use runtime here
-        let options = runtime.new_compile_options("test.js", 0);
-        assert!(runtime
-            .evaluate_script(global.handle(), javascript, rval.handle_mut(), options)
-            .is_ok());
+        let options = CompileOptionsWrapper::new(&context, "test.js", 0);
+        assert!(evaluate_script(
+            context,
+            global.handle(),
+            javascript,
+            rval.handle_mut(),
+            options
+        )
+        .is_ok());
     }
 }
 

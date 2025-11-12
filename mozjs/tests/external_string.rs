@@ -10,7 +10,8 @@ use std::ptr::NonNull;
 use mozjs::context::JSContext;
 use mozjs::conversions::jsstr_to_string;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
-use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption};
+use mozjs::jsapi::OnNewGlobalHookOption;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{
     JS_NewExternalStringLatin1, JS_NewExternalUCString, JS_NewGlobalObject,
@@ -37,7 +38,8 @@ fn external_string() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = &mut *realm;
 
         test_latin1_string(context, "test latin1");
         test_latin1_string(context, "abcdefghijklmnop"); // exactly 16 bytes

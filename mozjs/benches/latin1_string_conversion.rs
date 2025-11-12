@@ -5,7 +5,8 @@ use criterion::{
 use mozjs::context::JSContext;
 use mozjs::conversions::jsstr_to_string;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
-use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption};
+use mozjs::jsapi::OnNewGlobalHookOption;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{JS_NewExternalStringLatin1, JS_NewGlobalObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
@@ -72,17 +73,17 @@ fn external_string(c: &mut Criterion) {
         h_option,
         &*c_option,
     )});
-    let _ac = JSAutoRealm::new(unsafe { context.raw_cx() }, global.get());
+    let mut realm = AutoRealm::new_from_handle(context, global.handle());
 
     let mut group = c.benchmark_group("Latin1 conversion");
 
     let ascii_example = b"test latin-1 tes";
-    bench_str_repetition(&mut group, context, "ascii a-z", ascii_example);
+    bench_str_repetition(&mut group, &mut realm, "ascii a-z", ascii_example);
     // fastpath for the first few characters, then slowpath for the remaining (long part)
     // TODO: make generator functions, so we can define at which percentage of the size
     // the first high byte shows up (which forces the slow path).
     let ascii_with_high = b"test latin-1 \xD6\xC0\xFF";
-    bench_str_repetition(&mut group, context, "ascii with high", ascii_with_high);
+    bench_str_repetition(&mut group, &mut realm, "ascii with high", ascii_with_high);
 }
 
 static EXTERNAL_STRING_CALLBACKS_TRAPS: JSExternalStringCallbacksTraps =

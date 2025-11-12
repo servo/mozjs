@@ -5,15 +5,16 @@
 use std::ptr;
 
 use mozjs::conversions::{ConversionBehavior, ConversionResult, FromJSValConvertible};
-use mozjs::jsapi::JSAutoRealm;
 use mozjs::jsapi::{Heap, JSObject, OnNewGlobalHookOption};
 use mozjs::jsval::UndefinedValue;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{JS_ClearPendingException, JS_IsExceptionPending, JS_NewGlobalObject};
+use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{HandleObject, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 struct SM {
-    _ac: JSAutoRealm,
+    _realm: AutoRealm<'static>,
     global: Box<Heap<*mut JSObject>>,
     rt: Runtime,
     _engine: JSEngine,
@@ -37,12 +38,13 @@ impl SM {
             h_option,
             &*c_option,
         )});
-        let _ac = JSAutoRealm::new(unsafe { cx.raw_cx() }, global.get());
+        let realm = AutoRealm::new_from_handle(cx, global.handle());
         Self {
             _engine: engine,
+            // SAFETY: This is safe because the lifetime of the realm is tied to the Runtime.
+            _realm: unsafe { realm.erase_lifetime() },
             rt,
             global: Heap::boxed(global.get()),
-            _ac,
         }
     }
 
@@ -54,16 +56,15 @@ impl SM {
         let cx = self.rt.cx();
         rooted!(&in(cx) let mut rval = UndefinedValue());
         unsafe {
-            let options = self.rt.new_compile_options("test", 1);
-            self.rt
-                .evaluate_script(
-                    HandleObject::from_raw(self.global.handle()),
-                    js,
-                    rval.handle_mut(),
-                    options,
-                )
-                .unwrap();
-            let cx = self.rt.cx();
+            let options = CompileOptionsWrapper::new(&cx, "test", 1);
+            evaluate_script(
+                cx,
+                HandleObject::from_raw(self.global.handle()),
+                js,
+                rval.handle_mut(),
+                options,
+            )
+            .unwrap();
             assert!(!JS_IsExceptionPending(cx));
             match <T as FromJSValConvertible>::from_jsval(
                 cx.raw_cx(),

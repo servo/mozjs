@@ -4,10 +4,12 @@
 
 use std::ptr;
 
-use mozjs::jsapi::{JSAutoRealm, JSObject, OnNewGlobalHookOption, Type};
+use mozjs::jsapi::{JSObject, OnNewGlobalHookOption, Type};
 use mozjs::jsval::UndefinedValue;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::JS_NewGlobalObject;
+use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::typedarray;
 use mozjs::typedarray::{CreateWith, Uint32Array};
@@ -32,21 +34,20 @@ fn typedarray() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = &mut realm;
 
         rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = runtime.new_compile_options("test", 1);
-        assert!(runtime
-            .evaluate_script(
-                global.handle(),
-                "new Uint8Array([0, 2, 4])",
-                rval.handle_mut(),
-                options,
-            )
-            .is_ok());
+        let options = CompileOptionsWrapper::new(&context, "test", 1);
+        assert!(evaluate_script(
+            context,
+            global.handle(),
+            "new Uint8Array([0, 2, 4])",
+            rval.handle_mut(),
+            options,
+        )
+        .is_ok());
         assert!(rval.is_object());
-
-        let context = runtime.cx();
 
         typedarray!(&in(context) let array: Uint8Array = rval.to_object());
         assert_eq!(array.unwrap().as_slice(), &[0, 2, 4][..]);

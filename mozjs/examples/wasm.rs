@@ -15,6 +15,7 @@ use ::std::ptr::null_mut;
 use mozjs::jsapi::*;
 use mozjs::jsval::ObjectValue;
 use mozjs::jsval::UndefinedValue;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{
     Call, Construct1, JS_DefineFunction, JS_GetProperty, JS_NewGlobalObject, JS_NewPlainObject,
@@ -58,7 +59,8 @@ fn run(mut rt: Runtime) {
                            OnNewGlobalHookOption::FireOnNewGlobalHook,
                            &*options)
     });
-    let _ac = JSAutoRealm::new(unsafe { cx.raw_cx() }, global.get());
+    let mut realm = AutoRealm::new_from_handle(cx, global.handle());
+    let cx = &mut realm;
 
     // Get WebAssembly.Module and WebAssembly.Instance constructors.
     rooted!(&in(cx) let mut wasm = UndefinedValue());

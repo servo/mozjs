@@ -7,8 +7,9 @@
 use std::ptr;
 
 use mozjs::jsapi::SetGCZeal;
-use mozjs::jsapi::{JSAutoRealm, JSTracer, OnNewGlobalHookOption, Value};
+use mozjs::jsapi::{JSTracer, OnNewGlobalHookOption, Value};
 use mozjs::jsval::ObjectValue;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{GetRealmObjectPrototype, JS_NewGlobalObject};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
@@ -47,7 +48,8 @@ fn rooting() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = &mut realm;
 
         rooted!(&in(context) let prototype_proto = GetRealmObjectPrototype(context));
         rooted!(&in(context) let some_container = ContainsGCValue {

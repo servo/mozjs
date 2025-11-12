@@ -5,9 +5,10 @@
 use std::ptr;
 
 use mozjs::jsapi::JSObject;
-use mozjs::jsapi::{JSAutoRealm, OnNewGlobalHookOption, PropertyDescriptor};
+use mozjs::jsapi::{OnNewGlobalHookOption, PropertyDescriptor};
 use mozjs::jsapi::{JSPROP_ENUMERATE, JSPROP_PERMANENT, JSPROP_READONLY};
 use mozjs::jsval::{Int32Value, NullValue};
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{
     FromPropertyDescriptor, JS_DefineProperty, JS_GetProperty, JS_GetPropertyDescriptor,
@@ -37,7 +38,8 @@ fn property_descriptor() {
             h_option,
             &*c_option,
         ));
-        let _ac = JSAutoRealm::new(context.raw_cx(), global.get());
+        let mut realm = AutoRealm::new_from_handle(context, global.handle());
+        let context = &mut realm;
 
         rooted!(&in(context) let object = JS_NewPlainObject(context));
         rooted!(&in(context) let property = Int32Value(32));
