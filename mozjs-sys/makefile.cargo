@@ -37,6 +37,10 @@ ifneq (,$(CARGO_FEATURE_PROFILEMOZJS))
 	CONFIGURE_FLAGS += --enable-profiling
 endif
 
+ifneq (,$(CARGO_FEATURE_CUSTOM_ALLOC))
+	CONFIGURE_FLAGS += --enable-servo-embedder-memory
+endif
+
 ifneq (,$(CARGO_FEATURE_LIBZ_RS))
 	CONFIGURE_FLAGS += --enable-libz-rs
 endif

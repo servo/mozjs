@@ -1,5 +1,5 @@
 [workspace]
-members = ["mozjs-sys", "mozjs"]
+members = ["mozjs-sys", "mozjs", "examples/embedder_allocator"]
 resolver = "2"
 
 [workspace.package]
