@@ -7,7 +7,8 @@ use crate::jsapi::{JSAutoRealm, JSObject};
 
 use crate::context::JSContext;
 use crate::gc::Handle;
-use crate::rust::wrappers2::{CurrentGlobalOrNull, GetCurrentRealmOrNull};
+use crate::jsapi::CurrentGlobal;
+use crate::rust::wrappers2::GetCurrentRealmOrNull;
 
 /// Safe wrapper around [JSAutoRealm].
 ///
@@ -100,10 +101,51 @@ impl<'cx> AutoRealm<'cx> {
         CurrentRealm::assert(self)
     }
 
-    /// Obtain the handle to the global object of the current realm.
+    /// Obtain the handle to the global object of the this realm.
+    /// Because the handle is bounded with lifetime to realm, you cannot do this:
+    ///
+    /// ```compile_fail
+    /// use mozjs::context::JSContext;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::realm::AutoRealm;
+    /// use std::ptr::NonNull;
+    /// use mozjs::rust::Handle;
+    ///
+    /// fn g(realm: &'_ mut AutoRealm, global: Handle<'_, *mut JSObject>) {
+    /// }
+    ///
+    /// fn f(realm: &mut AutoRealm) {
+    ///     let global = realm.global();
+    ///     g(realm, global);
+    /// }
+    /// ```
+    ///
+    /// instead use [AutoRealm::global_and_reborrow].
     pub fn global(&'_ self) -> Handle<'_, *mut JSObject> {
         // SAFETY: object is rooted by realm
-        unsafe { Handle::from_marked_location(CurrentGlobalOrNull(&*self) as _) }
+        unsafe { Handle::from_marked_location(CurrentGlobal(self.raw_cx_no_gc())) }
+    }
+
+    /// Obtain the handle to the global object of the this realm and reborrow the realm.
+    ///
+    /// ```
+    /// use mozjs::context::JSContext;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::realm::AutoRealm;
+    /// use std::ptr::NonNull;
+    /// use mozjs::rust::Handle;
+    ///
+    /// fn g(realm: &'_ mut AutoRealm, global: Handle<'_, *mut JSObject>) {
+    /// }
+    ///
+    /// fn f(realm: &mut AutoRealm) {
+    ///     let (global, realm) = realm.global_and_reborrow();
+    ///     g(realm, global);
+    /// }
+    /// ```
+    pub fn global_and_reborrow(&'_ mut self) -> (Handle<'_, *mut JSObject>, &'_ mut Self) {
+        // SAFETY: This is ok because we bound handle will still be bounded to original lifetime
+        (unsafe { std::mem::transmute(self.global()) }, self)
     }
 
     /// Erase the lifetime of this [AutoRealm].
@@ -170,10 +212,51 @@ impl<'cx> CurrentRealm<'cx> {
         }
     }
 
-    /// Obtain the handle to the global object of the current realm.
+    /// Obtain the handle to the global object of the this realm.
+    /// Because the handle is bounded with lifetime to realm, you cannot do this:
+    ///
+    /// ```compile_fail
+    /// use mozjs::context::JSContext;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::realm::CurrentRealm;
+    /// use std::ptr::NonNull;
+    /// use mozjs::rust::Handle;
+    ///
+    /// fn g(realm: &'_ mut CurrentRealm, global: Handle<'_, *mut JSObject>) {
+    /// }
+    ///
+    /// fn f(realm: &mut CurrentRealm) {
+    ///     let global = realm.global();
+    ///     g(realm, global);
+    /// }
+    /// ```
+    ///
+    /// instead use [CurrentRealm::global_and_reborrow].
     pub fn global(&'_ self) -> Handle<'_, *mut JSObject> {
         // SAFETY: object is rooted by realm
-        unsafe { Handle::from_marked_location(CurrentGlobalOrNull(&*self) as _) }
+        unsafe { Handle::from_marked_location(CurrentGlobal(self.raw_cx_no_gc())) }
+    }
+
+    /// Obtain the handle to the global object of the this realm and reborrow the realm.
+    ///
+    /// ```
+    /// use mozjs::context::JSContext;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::realm::CurrentRealm;
+    /// use std::ptr::NonNull;
+    /// use mozjs::rust::Handle;
+    ///
+    /// fn g(realm: &'_ mut CurrentRealm, global: Handle<'_, *mut JSObject>) {
+    /// }
+    ///
+    /// fn f(realm: &mut CurrentRealm) {
+    ///     let (global, realm) = realm.global_and_reborrow();
+    ///     g(realm, global);
+    /// }
+    /// ```
+    pub fn global_and_reborrow(&'_ mut self) -> (Handle<'_, *mut JSObject>, &'_ mut Self) {
+        // SAFETY: This is ok because we bound handle will still be bounded to original lifetime
+        (unsafe { std::mem::transmute(self.global()) }, self)
     }
 
     pub fn realm(&self) -> &NonNull<Realm> {
