@@ -7,8 +7,7 @@ use crate::jsapi::{JSAutoRealm, JSObject};
 
 use crate::context::JSContext;
 use crate::gc::Handle;
-use crate::jsapi::CurrentGlobal;
-use crate::rust::wrappers2::GetCurrentRealmOrNull;
+use crate::rust::wrappers2::{GetCurrentRealmOrNull, CurrentGlobal};
 
 /// Safe wrapper around [JSAutoRealm].
 ///
@@ -123,7 +122,7 @@ impl<'cx> AutoRealm<'cx> {
     /// instead use [AutoRealm::global_and_reborrow].
     pub fn global(&'_ self) -> Handle<'_, *mut JSObject> {
         // SAFETY: object is rooted by realm
-        unsafe { Handle::from_marked_location(CurrentGlobal(self.raw_cx_no_gc())) }
+        unsafe { Handle::from_marked_location(CurrentGlobal(self)) }
     }
 
     /// Obtain the handle to the global object of the this realm and reborrow the realm.
@@ -234,7 +233,7 @@ impl<'cx> CurrentRealm<'cx> {
     /// instead use [CurrentRealm::global_and_reborrow].
     pub fn global(&'_ self) -> Handle<'_, *mut JSObject> {
         // SAFETY: object is rooted by realm
-        unsafe { Handle::from_marked_location(CurrentGlobal(self.raw_cx_no_gc())) }
+        unsafe { Handle::from_marked_location(CurrentGlobal(self)) }
     }
 
     /// Obtain the handle to the global object of the this realm and reborrow the realm.
