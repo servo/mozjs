@@ -7,7 +7,7 @@ use crate::jsapi::{JSAutoRealm, JSObject};
 
 use crate::context::JSContext;
 use crate::gc::Handle;
-use crate::rust::wrappers2::{GetCurrentRealmOrNull, CurrentGlobal};
+use crate::rust::wrappers2::{CurrentGlobal, GetCurrentRealmOrNull};
 
 /// Safe wrapper around [JSAutoRealm].
 ///
