@@ -38,16 +38,11 @@ fn callback() {
             &*c_option,
         ));
         let mut realm = AutoRealm::new_from_handle(context, global.handle());
-        let context = &mut realm;
+        let (global_handle, realm) = realm.global_and_reborrow();
+        let context = realm;
 
-        let function = JS_DefineFunction(
-            context,
-            global.handle().into(),
-            c"puts".as_ptr(),
-            Some(puts),
-            1,
-            0,
-        );
+        let function =
+            JS_DefineFunction(context, global_handle, c"puts".as_ptr(), Some(puts), 1, 0);
         assert!(!function.is_null());
 
         let javascript = "puts('Test Iñtërnâtiônàlizætiøn ┬─┬ノ( º _ ºノ) ');";
@@ -55,7 +50,7 @@ fn callback() {
         let options = CompileOptionsWrapper::new(&context, "test.js", 0);
         assert!(evaluate_script(
             context,
-            global.handle(),
+            global_handle,
             javascript,
             rval.handle_mut(),
             options
