@@ -136,6 +136,7 @@ wrap!(jsapi: pub fn StealPendingExceptionStack(cx: &mut JSContext, exceptionStac
 wrap!(jsapi: pub fn SetPendingExceptionStack(cx: &JSContext, exceptionStack: *const ExceptionStack));
 wrap!(jsapi: pub fn ExceptionStackOrNull(obj: HandleObject) -> *mut JSObject);
 wrap!(jsapi: pub fn CurrentGlobalOrNull(cx: &JSContext) -> *mut JSObject);
+wrap!(jsapi: pub fn CurrentGlobal(cx: &JSContext) -> *const *mut JSObject);
 wrap!(jsapi: pub fn NewMapObject(cx: &mut JSContext) -> *mut JSObject);
 wrap!(jsapi: pub fn MapSize(cx: &JSContext, obj: HandleObject) -> u32);
 wrap!(jsapi: pub fn MapGet(cx: &mut JSContext, obj: HandleObject, key: HandleValue, rval: MutableHandleValue) -> bool);
