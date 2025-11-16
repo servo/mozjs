@@ -143,7 +143,7 @@ impl<'cx> AutoRealm<'cx> {
     /// }
     /// ```
     pub fn global_and_reborrow(&'_ mut self) -> (Handle<'_, *mut JSObject>, &'_ mut Self) {
-        // SAFETY: This is ok because we bound handle will still be bounded to original lifetime
+        // SAFETY: This is ok because the handle will still be bound to original lifetime.
         (unsafe { std::mem::transmute(self.global()) }, self)
     }
 
@@ -236,7 +236,7 @@ impl<'cx> CurrentRealm<'cx> {
         unsafe { Handle::from_marked_location(CurrentGlobal(self)) }
     }
 
-    /// Obtain the handle to the global object of the this realm and reborrow the realm.
+    /// Obtain the handle to the global object of this realm and reborrow the realm.
     ///
     /// ```
     /// use mozjs::context::JSContext;
@@ -254,7 +254,7 @@ impl<'cx> CurrentRealm<'cx> {
     /// }
     /// ```
     pub fn global_and_reborrow(&'_ mut self) -> (Handle<'_, *mut JSObject>, &'_ mut Self) {
-        // SAFETY: This is ok because we bound handle will still be bounded to original lifetime
+        // SAFETY: This is ok because the handle will still be bound to original lifetime.
         (unsafe { std::mem::transmute(self.global()) }, self)
     }
 
