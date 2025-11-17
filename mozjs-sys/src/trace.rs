@@ -27,7 +27,7 @@ use std::num::{
 };
 use std::ops::Range;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::sync::atomic::{
     AtomicBool, AtomicI16, AtomicI32, AtomicI64, AtomicI8, AtomicIsize, AtomicU16, AtomicU32,
     AtomicU64, AtomicU8, AtomicUsize,
@@ -134,6 +134,17 @@ unsafe impl<T: Traceable> Traceable for Rc<T> {
     #[inline]
     unsafe fn trace(&self, trc: *mut JSTracer) {
         (**self).trace(trc);
+    }
+}
+
+unsafe impl<T: Traceable> Traceable for Weak<T> {
+    #[inline]
+    unsafe fn trace(&self, trc: *mut JSTracer) {
+        // A rc::Weak needs to be reachable by the JS.
+        // It could happen that we upgrade a `Weak<Foo>` on the stack while the original `Rc<Foo>`
+        // is getting dropped. Then this could lead to the Gc cleaning up the upgraded `Rc<Foo>`
+        // while it is still in use via the upgraded `Weak<Foo>`.
+        self.upgrade().trace(trc);
     }
 }
 
