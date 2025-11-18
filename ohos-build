@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python3
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -12,9 +12,17 @@ from typing import Dict, Optional
 
 
 def get_target_from_args() -> Optional[str]:
+    is_target_arg = False
     for arg in sys.argv:
-        if arg.startswith("--target="):
+        if is_target_arg:
+            return arg
+        elif arg.startswith("--target="):
             return arg.replace("--target=", "")
+        elif arg == "--target":
+            is_target_arg = True
+            continue
+    if is_target_arg:
+        print("Warn: Missing argument after `--target`.")
     return None 
 
 

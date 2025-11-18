@@ -231,9 +231,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Setup OpenHarmony SDK
         id: setup_sdk
-        uses: openharmony-rs/setup-ohos-sdk@v0.1
+        uses: openharmony-rs/setup-ohos-sdk@v0.2
         with:
-          version: "4.1"
+          version: "5.0.2"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
