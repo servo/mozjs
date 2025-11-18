@@ -117,7 +117,7 @@ static void OutputDebugStringA(const char* msg) {
     }                                                      \
     PR_END_MACRO
 #elif defined(XP_OHOS)
-#define _PUT_LOG(fd, buf, nb)                                \
+#  define _PUT_LOG(fd, buf, nb)                              \
     PR_BEGIN_MACRO                                           \
     if (fd == _pr_stderr) {                                  \
         char savebyte = buf[nb];                             \
