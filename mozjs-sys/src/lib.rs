@@ -34,6 +34,7 @@ pub use crate::generated::root as jsapi;
 #[doc(hidden)]
 #[allow(dead_code)]
 mod generated {
+    #![allow(unnecessary_transmutes)]
     include!(concat!(env!("OUT_DIR"), "/build/jsapi.rs"));
 }
 
