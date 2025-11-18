@@ -16,6 +16,8 @@ name = "mozjs_sys"
 doctest = false
 
 [features]
+default = ["mimalloc"] # Testingl only - remove me
+mimalloc = [ "dep:mimalloc"]
 debugmozjs = []
 profilemozjs = []
 jitspew = []
@@ -26,6 +28,7 @@ crown = []
 oom_with_hook = []
 
 [dependencies]
+mimalloc = { version = "0.1.48", optional = true}
 libc.workspace = true
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
