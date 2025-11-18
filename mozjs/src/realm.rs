@@ -96,7 +96,18 @@ impl<'cx> AutoRealm<'cx> {
 
     /// If we can get &mut AutoRealm then we are current realm,
     /// because if there existed other current realm, we couldn't get &mut AutoRealm.
-    pub fn current_realm(&'cx mut self) -> CurrentRealm<'cx> {
+    /// ```
+    /// use mozjs::context::JSContext;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::realm::AutoRealm;
+    /// use std::ptr::NonNull;
+    ///
+    /// fn f(cx: &mut JSContext, t: NonNull<JSObject>) {
+    ///     let mut realm = AutoRealm::new(cx, t);
+    ///     let mut current_realm = realm.current_realm();
+    /// }
+    /// ```
+    pub fn current_realm(&'_ mut self) -> CurrentRealm<'_> {
         CurrentRealm::assert(self)
     }
 
