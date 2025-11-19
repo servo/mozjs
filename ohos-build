@@ -75,7 +75,7 @@ def create_environment_for_build() -> Dict[str, str]:
 
     llvm_toolchain = os.path.join(ndk_root, "llvm")
 
-    env['PATH'] = os.pathsep.join([os.path.join(llvm_toolchain, "bin"), env["PATH"]])
+    env['PATH'] = os.pathsep.join([env["PATH"], os.path.join(llvm_toolchain, "bin")])
 
     set_toolchain_binaries_in_env(llvm_toolchain, target_triple, env)
 
