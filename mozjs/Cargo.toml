@@ -2,7 +2,7 @@
 name = "mozjs"
 description = "Rust bindings to the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
-version = "0.14.1"
+version = "0.14.2"
 authors = ["The Servo Project Developers"]
 license.workspace = true
 edition.workspace = true
@@ -11,9 +11,10 @@ edition.workspace = true
 doctest = false
 
 [features]
-default = ["libz-sys", "intl"]
+default = ["jit", "libz-sys", "intl"]
 debugmozjs = ["mozjs_sys/debugmozjs"]
 profilemozjs = ["mozjs_sys/profilemozjs"]
+jit = ['mozjs_sys/jit']
 jitspew = ["mozjs_sys/jitspew"]
 libz-sys = ["mozjs_sys/libz-sys"]
 libz-rs = ["mozjs_sys/libz-rs"]
