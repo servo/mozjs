@@ -70,6 +70,7 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
 }
 #elif defined(XP_OHOS)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
+        // FIXME: format to local buffer first to avoid var_args?
    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
 }
 #elif defined(FUZZING_SNAPSHOT)
