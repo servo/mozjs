@@ -9,7 +9,7 @@
 
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
 #  include <hilog/log.h>
 #endif
 #ifdef MOZ_WIDGET_ANDROID
@@ -25,7 +25,7 @@
 void mozalloc_abort(const char* const msg) {
 #ifdef ANDROID
   __android_log_print(ANDROID_LOG_ERROR, "Gecko", "mozalloc_abort: %s", msg);
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
     (void) OH_LOG_Print(LOG_APP, LOG_ERROR, 0, "Gecko",
          "mozalloc_abort: %{public}s\n", msg);
 #else

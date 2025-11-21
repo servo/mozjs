@@ -18,11 +18,11 @@
 
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
 #  include <hilog/log.h>
 #endif
 
-#if ! (defined(ANDROID) || defined(OHOS))
+#if ! (defined(ANDROID) || defined(XP_OHOS))
 static void vprintf_stderr_buffered(const char* aFmt, va_list aArgs) {
   // Avoid interleaving by writing to an on-stack buffer and then writing in one
   // go with fputs, as long as the output fits into the buffer.
@@ -68,9 +68,12 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
   __android_log_vprint(ANDROID_LOG_INFO, "Gecko", aFmt, aArgs);
 }
-#elif defined(OHOS)
+#elif defined(XP_OHOS)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
-   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
+    // OH_LOG_VPrint is available with API-level 18 (19?) or higher.
+    char buffer[1024];
+    VsprintfBuf(buffer, 1024, aFmt, aArgs);
+   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", buffer);
 }
 #elif defined(FUZZING_SNAPSHOT)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
@@ -106,15 +109,15 @@ MFBT_API void fprintf_stderr(FILE* aFile, const char* aFmt, ...) {
 }
 
 MFBT_API void print_stderr(std::stringstream& aStr) {
-#if defined(ANDROID) || defined(OHOS)
+#if defined(ANDROID) || defined(XP_OHOS)
   // On Android logcat output is truncated to 1024 chars per line, and
   // we usually use std::stringstream to build up giant multi-line gobs
   // of output. So to avoid the truncation we find the newlines and
   // print the lines individually.
   std::string line;
   while (std::getline(aStr, line)) {
-#  ifdef OHOS
-    printf_stderr("%{public}s\n", line.c_str());
+#  ifdef XP_OHOS
+    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", line.c_str());
 #  else
     printf_stderr("%s\n", line.c_str());
 #  endif
