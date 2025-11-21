@@ -7,9 +7,8 @@
 #include "mozmemory.h"
 #include "mozjemalloc.h"
 
-#ifndef SERVO_EMBEDDER_MALLOC_PREFIX
-#error "Embedder must define SERVO_EMBEDDER_MALLOC_PREFIX for custom allocator builds (e.g. mi_ for mimalloc)"
-#endif /* SERVO_EMBEDDER_MALLOC_PREFIX */
+// Expected to provide SERVO_EMBEDDER_MALLOC_PREFIX
+#include "servo_embedder_malloc_prefix.h"
 
 #define MOZ_EMBED_CONCAT(a, b) a##b
 #define MOZ_EMBED_CONCAT1(a, b) MOZ_EMBED_CONCAT(a, b)

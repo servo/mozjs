@@ -7,22 +7,23 @@
 
 #include <stddef.h>  // for size_t
 
-#if defined(MALLOC_H)
+// We want the embedder to define all allocation functions.
+#if defined(MALLOC_H) && ! defined(SERVO_EMBEDDER_MEMORY)
 #  include MALLOC_H  // for memalign, malloc_size, malloc_us
 #endif               // if defined(MALLOC_H)
 
-// FIXME
-#if 1
-#include <mimalloc.h>
-#  define malloc_impl mi_malloc
-#  define calloc_impl mi_calloc
-#  define realloc_impl mi_realloc
-#  define free_impl mi_free
-#  define memalign_impl mi_memalign
-#  define malloc_usable_size_impl mi_malloc_usable_size
-#  define strdup_impl mi_strdup
-#  define strndup_impl mi_strndup
-#else if !defined(MOZ_MEMORY)
+
+#if defined(SERVO_EMBEDDER_MEMORY)
+#include <servo_embedder_memory_wrap.h>
+#  define malloc_impl             mozmem_malloc_impl(malloc)
+#  define calloc_impl             mozmem_malloc_impl(calloc)
+#  define realloc_impl            mozmem_malloc_impl(realloc)
+#  define free_impl               mozmem_malloc_impl(free)
+#  define memalign_impl           mozmem_malloc_impl(memalign)
+#  define malloc_usable_size_impl mozmem_malloc_impl(malloc_usable_size)
+#  define strdup_impl             mozmem_dup_impl(strdup)
+#  define strndup_impl            mozmem_dup_impl(strndup)
+#elif !defined(MOZ_MEMORY)
 // When jemalloc is disabled, or when building the static runtime variant,
 // we need not to use the suffixes.
 
@@ -135,7 +136,9 @@ void* moz_xmemalign(size_t boundary, size_t size) {
 size_t moz_malloc_usable_size(void* ptr) {
   if (!ptr) return 0;
 
-#if defined(XP_DARWIN)
+#if defined(SERVO_EMBEDDER_MEMORY)
+  return malloc_usable_size_impl(ptr);
+#elif defined(XP_DARWIN)
   return malloc_size(ptr);
 #elif defined(HAVE_MALLOC_USABLE_SIZE) || defined(MOZ_MEMORY)
   return malloc_usable_size_impl(ptr);
