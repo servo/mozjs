@@ -70,8 +70,10 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
 }
 #elif defined(XP_OHOS)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
-        // FIXME: format to local buffer first to avoid var_args?
-   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
+    // OH_LOG_VPrint is available with API-level 18 (19?) or higher.
+    char buffer[1024];
+    VsprintfBuf(buffer, 1024, aFmt, aArgs);
+   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", buffer);
 }
 #elif defined(FUZZING_SNAPSHOT)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
@@ -115,7 +117,7 @@ MFBT_API void print_stderr(std::stringstream& aStr) {
   std::string line;
   while (std::getline(aStr, line)) {
 #  ifdef XP_OHOS
-    printf_stderr("%{public}s\n", line.c_str());
+    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", line.c_str());
 #  else
     printf_stderr("%s\n", line.c_str());
 #  endif
