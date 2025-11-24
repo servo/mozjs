@@ -61,12 +61,13 @@ diff --git a/mfbt/Assertions.h b/mfbt/Assertions.h
 index 0b7395177..e84d76aba 100644
 --- a/mfbt/Assertions.h
 +++ b/mfbt/Assertions.h
-@@ -88,6 +88,8 @@ MOZ_END_EXTERN_C
+@@ -88,6 +88,9 @@ MOZ_END_EXTERN_C
  #endif
  #ifdef ANDROID
  #  include <android/log.h>
 +#elif defined(XP_OHOS)
-+#  include <hilog/log.h>
++int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
++    __attribute__((__format__(os_log, 5, 6)));
  #endif
 
  MOZ_BEGIN_EXTERN_C
@@ -75,7 +76,7 @@ index 0b7395177..e84d76aba 100644
                              /* aMaxFrames */ 0);
  #  endif
 +#elif defined(XP_OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_Assert",
++    (void) OH_LOG_Print(0 /* LOG_APP */, 7 /* LOG_FATAL */, 0, "MOZ_Assert",
 +     "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
 +     aStr, aFilename, aLine);
  #else
@@ -90,7 +91,7 @@ index 0b7395177..e84d76aba 100644
                              /* aMaxFrames */ 0);
  #  endif
 +#elif defined(XP_OHOS)
-+  (void) OH_LOG_Print(LOG_APP, LOG_FATAL, 0, "MOZ_CRASH",
++  (void) OH_LOG_Print(0 /* LOG_APP */, 7 /* LOG_FATAL */, 0, "MOZ_CRASH",
 +   "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
 +   aStr, aFilename, aLine);
  #else
@@ -98,7 +99,7 @@ diff --git a/mfbt/DbgMacro.h b/mfbt/DbgMacro.h
 index 3247b993c..c7039d5f8 100644
 --- a/mfbt/DbgMacro.h
 +++ b/mfbt/DbgMacro.h
-@@ -18,8 +18,10 @@
+@@ -18,8 +18,11 @@
  template <typename T>
  class nsTSubstring;
 
@@ -106,7 +107,8 @@ index 3247b993c..c7039d5f8 100644
 +#if defined(ANDROID)
  #  include <android/log.h>
 +#elif defined(XP_OHOS)
-+#  include <hilog/log.h>
++  int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
++      __attribute__((__format__(os_log, 5, 6)));
  #endif
 
  namespace mozilla {
@@ -118,7 +120,7 @@ index 3247b993c..c7039d5f8 100644
 +#if defined(ANDROID)
    __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", s.str().c_str());
 +#elif defined(XP_OHOS)
-+    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s\n", s.str().c_str());
++    (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, 0, "Gecko", "%{public}s\n", s.str().c_str());
  #else
    fputs(s.str().c_str(), stderr);
  #endif
@@ -139,13 +141,16 @@ index c3a2ca89e..3fea33f4b 100644
  static void vprintf_stderr_buffered(const char* aFmt, va_list aArgs) {
    // Avoid interleaving by writing to an on-stack buffer and then writing in one
    // go with fputs, as long as the output fits into the buffer.
-@@ -66,6 +68,10 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
+@@ -66,6 +68,13 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
  MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
    __android_log_vprint(ANDROID_LOG_INFO, "Gecko", aFmt, aArgs);
  }
 +#elif defined(XP_OHOS)
 +MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
-+   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", aFmt, aArgs);
++    // OH_LOG_VPrint is available with API-level 18 (19?) or higher.
++    char buffer[1024];
++    VsprintfBuf(buffer, 1024, aFmt, aArgs);
++   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", buffer);
 +}
  #elif defined(FUZZING_SNAPSHOT)
  MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
@@ -163,7 +168,7 @@ index c3a2ca89e..3fea33f4b 100644
    std::string line;
    while (std::getline(aStr, line)) {
 +#  ifdef XP_OHOS
-+    printf_stderr("%{public}s\n", line.c_str());
++    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", line.c_str());
 +#  else
      printf_stderr("%s\n", line.c_str());
 +#  endif

@@ -131,7 +131,7 @@ MOZ_ReportAssertionFailure(const char* aStr, const char* aFilename,
                             /* aMaxFrames */ 0);
 #  endif
 #elif defined(XP_OHOS)
-    (void) OH_LOG_Print(0, 7 /* LOG_FATAL */, 0, "MOZ_Assert",
+    (void) OH_LOG_Print(0 /* LOG_APP */, 7 /* LOG_FATAL */, 0, "MOZ_Assert",
      "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
      aStr, aFilename, aLine);
 #else
