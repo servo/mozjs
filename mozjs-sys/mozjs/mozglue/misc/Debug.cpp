@@ -19,7 +19,10 @@
 #ifdef ANDROID
 #  include <android/log.h>
 #elif defined(XP_OHOS)
-#  include <hilog/log.h>
+  extern "C" {
+    int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
+        __attribute__((__format__(os_log, 5, 6)));
+  }
 #endif
 
 #if ! (defined(ANDROID) || defined(XP_OHOS))
@@ -73,7 +76,7 @@ MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
     // OH_LOG_VPrint is available with API-level 18 (19?) or higher.
     char buffer[1024];
     VsprintfBuf(buffer, 1024, aFmt, aArgs);
-   (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", buffer);
+   (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, 0, "Gecko", "%{public}s", buffer);
 }
 #elif defined(FUZZING_SNAPSHOT)
 MFBT_API void vprintf_stderr(const char* aFmt, va_list aArgs) {
@@ -117,7 +120,7 @@ MFBT_API void print_stderr(std::stringstream& aStr) {
   std::string line;
   while (std::getline(aStr, line)) {
 #  ifdef XP_OHOS
-    (void) OH_LOG_Print(LOG_APP, LOG_INFO, 0, "Gecko", "%{public}s", line.c_str());
+    (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, 0, "Gecko", "%{public}s", line.c_str());
 #  else
     printf_stderr("%s\n", line.c_str());
 #  endif

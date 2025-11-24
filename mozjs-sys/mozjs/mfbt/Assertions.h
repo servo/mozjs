@@ -93,8 +93,10 @@ MOZ_END_EXTERN_C
 #ifdef ANDROID
 #  include <android/log.h>
 #elif defined(XP_OHOS)
+MOZ_BEGIN_EXTERN_C
 int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
     __attribute__((__format__(os_log, 5, 6)));
+MOZ_END_EXTERN_C
 #endif
 
 MOZ_BEGIN_EXTERN_C
