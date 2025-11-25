@@ -258,6 +258,8 @@ jobs:
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
+      - name: Test linking (build unit-tests)
+        run: ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }} --tests
 
   wasi:
     name: wasm32-${{ matrix.target }}
