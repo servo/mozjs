@@ -910,7 +910,9 @@ set_define("ANDROID", target_is_android)
 
 @depends(target)
 def target_is_ohos(target):
-    return target.raw_os.endswith("-ohos")
+    if target.raw_os.endswith("-ohos"):
+        return True
+    return None
 
 
 set_define("XP_OHOS", target_is_ohos)
