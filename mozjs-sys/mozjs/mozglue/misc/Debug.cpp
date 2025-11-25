@@ -21,7 +21,7 @@
 #elif defined(XP_OHOS)
   extern "C" {
     int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
-        __attribute__((__format__(os_log, 5, 6)));
+        __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
   }
 #endif
 

@@ -37,7 +37,7 @@ index 3cfc92533..9c487ac45 100644
 +#elif defined(XP_OHOS)
 +  extern "C" {
 +    int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
-+        __attribute__((__format__(os_log, 5, 6)));
++        __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
 +  }
  #endif
  #ifdef MOZ_WIDGET_ANDROID
@@ -71,7 +71,7 @@ index 0b7395177..e84d76aba 100644
 +#elif defined(XP_OHOS)
 +MOZ_BEGIN_EXTERN_C
 +int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
-+    __attribute__((__format__(os_log, 5, 6)));
++    __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
 +MOZ_END_EXTERN_C
  #endif
 
@@ -114,7 +114,7 @@ index 3247b993c..c7039d5f8 100644
 +#elif defined(XP_OHOS)
 +  MOZ_BEGIN_EXTERN_C
 +  int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
-+      __attribute__((__format__(os_log, 5, 6)));
++      __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
 +  MOZ_END_EXTERN_C
  #endif
 
@@ -142,7 +142,7 @@ index c3a2ca89e..3fea33f4b 100644
 +#elif defined(XP_OHOS)
 +  extern "C" {
 +    int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
-+        __attribute__((__format__(os_log, 5, 6)));
++        __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
 +  }
  #endif
 
@@ -198,7 +198,7 @@ index 52bd6abc5..781402d56 100644
  #  include <android/log.h>
 +#elif defined(XP_OHOS)
 +  int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
-+      __attribute__((__format__(os_log, 5, 6)));
++      __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
  #endif
  
  /*

@@ -420,6 +420,8 @@ fn link_static_lib_binaries(build_dir: &Path) {
         println!("cargo:rustc-link-lib=user32");
         println!("cargo:rustc-link-lib=Dbghelp");
         println!("cargo:rustc-link-lib=advapi32");
+    } else if target.contains("ohos") {
+        println!("cargo:rustc-link-lib=hilog_ndk.z");
     }
     if let Some(cxxstdlib) = env::var("CXXSTDLIB").ok() {
         println!("cargo:rustc-link-lib={cxxstdlib}");
