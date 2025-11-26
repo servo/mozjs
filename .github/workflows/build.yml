@@ -227,6 +227,7 @@ jobs:
     strategy:
       matrix:
         target: ["aarch64-unknown-linux-ohos", "x86_64-unknown-linux-ohos"]
+        features: [ "", "--features debugmozjs"]
     steps:
       - uses: actions/checkout@v4
       - name: Setup OpenHarmony SDK
@@ -245,18 +246,20 @@ jobs:
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
         run: |
-          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}"
+          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }}
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release }}
+        if: ${{ inputs.release && matrix.features == '' }}
         with:
           subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
-        if: ${{ env.NEW_RUST_CHECK == 'false' }}
+        if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
+      - name: Test linking (build unit-tests)
+        run: ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }} --tests
 
   wasi:
     name: wasm32-${{ matrix.target }}
