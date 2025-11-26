@@ -10,22 +10,6 @@ index e0e14bf60..179de2592 100644
 
 
  @depends(target)
-diff --git a/config/system-headers.mozbuild b/config/system-headers.mozbuild
-index 471599f17..a89f0ca7a 100644
---- a/config/system-headers.mozbuild
-+++ b/config/system-headers.mozbuild
-@@ -1367,6 +1367,11 @@ if CONFIG["OS_TARGET"] == "FreeBSD":
-         "sys/capsicum.h",
-     ]
-
-+if CONFIG["OHOS"]:
-+    system_headers += [
-+       "hilog/log.h",
-+    ]
-+
- if CONFIG["MOZ_APP_SYSTEM_HEADERS"]:
-     include("../" + CONFIG["MOZ_BUILD_APP"] + "/app-system-headers.mozbuild")
-
 diff --git a/memory/mozalloc/mozalloc_abort.cpp b/memory/mozalloc/mozalloc_abort.cpp
 index 3cfc92533..9c487ac45 100644
 --- a/memory/mozalloc/mozalloc_abort.cpp
