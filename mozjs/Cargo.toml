@@ -26,7 +26,7 @@ crown = ["mozjs_sys/crown"]
 encoding_rs = "0.8.35"
 libc.workspace = true
 log = "0.4"
-mozjs_sys = { path = "../mozjs-sys" }
+mozjs_sys = { version = "0.140.5-6", path = "../mozjs-sys" }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 criterion = { version = "0.6", default-features = false, features = ["html_reports"] }
