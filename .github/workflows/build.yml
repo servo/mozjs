@@ -53,13 +53,6 @@ jobs:
         run: |
           cargo +${{ steps.toolchain.outputs.name }} build --verbose --features ${{ matrix.features }}
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features ${{ matrix.features }}
-
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
-        with:
-          subject-path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
-
       - name: Upload artifact
         if: ${{ matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
@@ -105,12 +98,6 @@ jobs:
           python3 ./mozjs/src/generate_wrappers.py
           git add --all .
           git diff --staged --no-ext-diff --exit-code
-
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
-        with:
-          subject-path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
 
       - name: Upload artifact
         if: ${{ matrix.features != 'debugmozjs'  && env.NEW_RUST_CHECK == 'false' }}
@@ -166,12 +153,6 @@ jobs:
         run: |
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
 
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' }}
-        with:
-          subject-path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
-
       - name: Upload artifact
         if: ${{ !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
@@ -209,11 +190,6 @@ jobs:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}"
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release }}
-        with:
-          subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
@@ -247,11 +223,6 @@ jobs:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
         run: |
           ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }}
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features == '' }}
-        with:
-          subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
@@ -298,11 +269,6 @@ jobs:
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release }}
-        with:
-          subject-path: "./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
@@ -389,37 +355,18 @@ jobs:
             exit 1
           fi
 
-  publish-release:
-    name: Check version and publish release
-    runs-on: ubuntu-latest
-    needs: ["linux", "mac", "windows", "ohos"]
-    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-      - name: Publish release if tag doesn't exist
-        id: check-tag
-        if: ${{ inputs.release }}
+      - name: Ensure mozjs version is bumped if mozjs-sys version bumped
+        if: ${{ github.event_name == 'pull_request' && steps.changes.outputs.needs_mozjs_sys_bump == 'true' }}
         run: |
-          RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
-          git fetch --tags --quiet
-          if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
-            gh release create ${RELEASE_TAG} ./*.tar.gz
+          CHANGED=$(git diff origin/main -- mozjs/Cargo.toml | grep '^+\s*version\s*=' || true)
+          if [ -n "$CHANGED" ]; then
+          echo "✅ mozjs version bumped: $CHANGED"
+          exit 0
+          else
+          echo "❌ No mozjs version bump found."
+          echo "Please bump mozjs version to trigger publishing a new crates.io release on landing."
+          exit 1
           fi
-          echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
-    outputs:
-      release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
-
-  verify-release:
-    name: Verify release
-    needs: publish-release
-    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-    uses: ./.github/workflows/release-check.yml
-    with:
-      release-tag: ${{ needs.publish-release.outputs.release-tag }}
-      rust_version: ${{ inputs.rust_version }}
 
   build_result:
     name: Result
@@ -433,8 +380,6 @@ jobs:
         "ohos",
         "windows",
         "integrity",
-        "publish-release",
-        "verify-release",
       ]
     if: ${{ always() }}
     steps:
