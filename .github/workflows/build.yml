@@ -403,36 +403,13 @@ jobs:
           exit 1
           fi
 
-  publish-release:
-    name: Check version and publish release
-    runs-on: ubuntu-latest
-    needs: ["linux", "mac", "windows", "ohos"]
-    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          merge-multiple: true
-      - name: Publish release if tag doesn't exist
-        id: check-tag
-        if: ${{ inputs.release }}
-        run: |
-          RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
-          git fetch --tags --quiet
-          if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
-            gh release create ${RELEASE_TAG} ./*.tar.gz
-          fi
-          echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
-    outputs:
-      release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
-
-  verify-release:
-    name: Verify release
-    needs: publish-release
+  verify-release-artifacts:
+    name: Verify release artifacts
+    needs: ["android", "linux", "mac", "ohos", "windows"]
     if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     uses: ./.github/workflows/release-check.yml
     with:
-      release-tag: ${{ needs.publish-release.outputs.release-tag }}
+      release-tag: ''
       rust_version: ${{ inputs.rust_version }}
 
   build_result:
@@ -447,8 +424,7 @@ jobs:
         "ohos",
         "windows",
         "integrity",
-        "publish-release",
-        "verify-release",
+        "verify-release-artifacts",
       ]
     if: ${{ always() }}
     steps:
