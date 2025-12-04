@@ -30,18 +30,18 @@ jobs:
         with:
           subject-path: libmozjs-*.tar.gz
       - run: ls -l ./*.tar.gz
-#      - name: Publish release if tag doesn't exist
-#        id: check-tag
-#        if: ${{ inputs.release }}
-#        run: |
-#          RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
-#          git fetch --tags --quiet
-#          if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
-#            gh release create ${RELEASE_TAG} ./*.tar.gz
-#          fi
-#          echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
-#    outputs:
-#      release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
+      - name: Publish release if tag doesn't exist
+        id: check-tag
+        if: ${{ inputs.release }}
+        run: |
+          RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
+          git fetch --tags --quiet
+          if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
+            gh release create ${RELEASE_TAG} ./*.tar.gz
+          fi
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
+    outputs:
+      release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
 
   verify-release:
     name: Verify release
