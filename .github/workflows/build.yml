@@ -389,6 +389,19 @@ jobs:
             exit 1
           fi
 
+      - name: Ensure mozjs version is bumped if mozjs-sys version bumped
+        if: ${{ github.event_name == 'pull_request' && steps.changes.outputs.needs_mozjs_sys_bump == 'true' }}
+        run: |
+          CHANGED=$(git diff origin/main -- mozjs/Cargo.toml | grep '^+\s*version\s*=' || true)
+          if [ -n "$CHANGED" ]; then
+          echo "✅ mozjs version bumped: $CHANGED"
+          exit 0
+          else
+          echo "❌ No mozjs version bump found."
+          echo "Please bump mozjs version to trigger publishing a new crates.io release on landing."
+          exit 1
+          fi
+
   publish-release:
     name: Check version and publish release
     runs-on: ubuntu-latest
