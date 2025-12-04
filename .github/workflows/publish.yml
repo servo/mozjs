@@ -1,5 +1,10 @@
+# Workflow to publish crates.io and GitHub releases
+# Changes to this workflow must be reviewed carefully!
 name: Publish
 
+# Workflow triggers should be strictly controlled,
+# as this will trigger publishing to crates.io.
+# We only want to publish on the main branch.
 on:
   push:
     branches: [main]
@@ -37,10 +42,14 @@ jobs:
           git fetch --tags --quiet
           if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
             gh release create ${RELEASE_TAG} ./*.tar.gz
+            echo "CREATE_RELEASE=true" >> ${GITHUB_OUTPUT}
+          else
+            echo "CREATE_RELEASE=false" >> ${GITHUB_OUTPUT}
           fi
           echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
     outputs:
       release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
+      create-release: ${{ steps.check-tag.outputs.CREATE_RELEASE }}
 
   verify-release:
     name: Verify release
@@ -50,3 +59,29 @@ jobs:
     with:
       release-tag: ${{ needs.publish-github-release.outputs.release-tag }}
       rust_version: stable
+
+  # Our CI testing ensures that mozjs-sys and mozjs are always bumped together.
+  # We always publish both versions, since mozjs depends on a speciifc version
+  # of mozjs-sys
+  publish-crates-io:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    needs:
+      - publish-github-release
+      - verify-release
+    permissions:
+      id-token: write
+    if: ${{ needs.publish-github-release.outputs.create-release }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+      # publish mozjs-sys
+      - run: cargo publish -p mozjs-sys
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+      # Wait a bit to ensure the release is published
+      - run: sleep 5
+      - run: cargo publish -p mozjs
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
