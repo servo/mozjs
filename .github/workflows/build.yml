@@ -55,13 +55,6 @@ jobs:
         run: |
           cargo +${{ steps.toolchain.outputs.name }} build --verbose --features ${{ matrix.features }}
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features ${{ matrix.features }}
-
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
-        with:
-          subject-path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
-
       - name: Upload artifact
         if: ${{ matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
@@ -106,12 +99,6 @@ jobs:
           python3 ./mozjs/src/generate_wrappers.py
           git add --all .
           git diff --staged --no-ext-diff --exit-code
-
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features != 'debugmozjs' }}
-        with:
-          subject-path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
 
       - name: Upload artifact
         if: ${{ matrix.features != 'debugmozjs'  && env.NEW_RUST_CHECK == 'false' }}
@@ -167,12 +154,6 @@ jobs:
         run: |
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
 
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' }}
-        with:
-          subject-path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
-
       - name: Upload artifact
         if: ${{ !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
@@ -210,11 +191,6 @@ jobs:
           ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}"
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release }}
-        with:
-          subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
@@ -248,11 +224,6 @@ jobs:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
         run: |
           ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }}
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release && matrix.features == '' }}
-        with:
-          subject-path: "./target/libmozjs-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
@@ -299,11 +270,6 @@ jobs:
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target=wasm32-${{ matrix.target }}
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
-      - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@v1
-        if: ${{ inputs.release }}
-        with:
-          subject-path: "./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
