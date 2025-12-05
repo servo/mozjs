@@ -3,9 +3,6 @@ name: Rust
 on:
   workflow_call:
     inputs:
-      release:
-        required: true
-        type: boolean
       rust_version:
         required: false
         # Keep the default in sync with `rust-toolchain.toml` and servo's MSRV!
