@@ -19,6 +19,8 @@ env:
   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
   MOZJS_CREATE_ARCHIVE: 1
   NEW_RUST_CHECK: ${{ inputs.rust_version == 'stable' || inputs.rust_version == 'beta' }}
+  # Increase this version to purge sccache cache on GitHub Actions
+  SCCACHE_GHA_VERSION: 2
 
 jobs:
   mac:
