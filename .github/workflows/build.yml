@@ -70,10 +70,10 @@ jobs:
           name: libmozjs-${{ matrix.platform.target }}.tar.gz
 
   linux:
-#    env:
-#      RUSTC_WRAPPER: "sccache"
-#      CCACHE: sccache
-#      SCCACHE_GHA_ENABLED: "true"
+    env:
+      RUSTC_WRAPPER: "sccache"
+      CCACHE: sccache
+      SCCACHE_GHA_ENABLED: "true"
     runs-on: ubuntu-22.04 # Needed for artifacts to work on older systems (due to glibc)
     strategy:
       fail-fast: false
@@ -90,8 +90,8 @@ jobs:
         # needed to work around bindgen bug. The version here should match the default clang version on ubuntu-22.04
       - name: Set LIBCLANG_PATH env
         run: echo "LIBCLANG_PATH=/usr/lib/llvm-14/lib" >> $GITHUB_ENV
-#      - name: Run sccache-cache
-#        uses: mozilla-actions/sccache-action@v0.0.9
+      - name: Run sccache-cache
+        uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build
         # doc tests on mozjs_sys fail because they include stuff from SpiderMonkey
         run: |
