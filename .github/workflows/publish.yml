@@ -1,0 +1,52 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+
+# dispatches build workflow with different permissions
+jobs:
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      # We verify in this workflow after creating the github release.
+      verify_artifacts: false
+
+  publish-github-release:
+    name: Check version and publish release
+    runs-on: ubuntu-latest
+    needs: [ "build" ]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - name: Generate artifact attestation
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: libmozjs-*.tar.gz
+      - run: ls -l ./*.tar.gz
+      - name: Publish release if tag doesn't exist
+        id: check-tag
+        run: |
+          RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
+          git fetch --tags --quiet
+          if ! git show-ref --tags --verify --quiet "refs/tags/${RELEASE_TAG}" ; then
+            gh release create ${RELEASE_TAG} ./*.tar.gz
+          fi
+          echo "RELEASE_TAG=${RELEASE_TAG}" >> ${GITHUB_OUTPUT}
+    outputs:
+      release-tag: ${{ steps.check-tag.outputs.RELEASE_TAG }}
+
+  verify-release:
+    name: Verify release
+    needs: publish-github-release
+    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    uses: ./.github/workflows/release-check.yml
+    with:
+      release-tag: ${{ needs.publish-github-release.outputs.release-tag }}
+      rust_version: stable
