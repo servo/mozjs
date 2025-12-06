@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     uses: ./.github/workflows/build.yml
+    with:
+      # We verify in this workflow after creating the github release.
+      verify_artifacts: false
 
   publish-github-release:
     name: Check version and publish release

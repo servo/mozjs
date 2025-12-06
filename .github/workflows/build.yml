@@ -8,6 +8,10 @@ on:
         # Keep the default in sync with `rust-toolchain.toml` and servo's MSRV!
         default: "1.85.0"
         type: string
+      verify_artifacts:
+        required: false
+        default: true
+        type: boolean
 
 env:
   RUST_BACKTRACE: 1
@@ -369,7 +373,7 @@ jobs:
   verify-release-artifacts:
     name: Verify release artifacts
     needs: ["android", "linux", "mac", "ohos", "windows"]
-    if: ${{ !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
+    if: ${{  inputs.verify_artifacts && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     uses: ./.github/workflows/release-check.yml
     with:
       release-tag: ''
