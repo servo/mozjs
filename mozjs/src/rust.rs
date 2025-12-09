@@ -1209,9 +1209,6 @@ pub mod wrappers {
         // @inner (input args) <> (accumulator) <> unparsed tokens
         // when `unparsed tokens == \eps`, accumulator contains the final result
 
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: *const Handle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* if $arg.is_null() { std::ptr::null() } else { &(*$arg).into() },) <> $($rest)*);
-        };
         (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
         };
@@ -1358,10 +1355,6 @@ pub mod wrappers2 {
         // The invocation of @inner has the following form:
         // @inner (input args) <> (arg signture accumulator) <> (arg expr accumulator) <> unparsed tokens
         // when `unparsed tokens == \eps`, accumulator contains the final result
-
-        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: *const Handle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: *const Handle<$gentype>) <> ($($arg_expr_acc,)* if $arg.is_null() { ::std::ptr::null() } else { &(*$arg).into() },) <> $($rest)*);
-        };
         (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
             wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: Handle<$gentype>) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
@@ -1517,4 +1510,38 @@ pub mod wrappers2 {
     use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
     include!("jsapi2_wrappers.in.rs");
     include!("glue2_wrappers.in.rs");
+
+    #[inline]
+    pub unsafe fn SetPropertyIgnoringNamedGetter(
+        cx: &mut JSContext,
+        obj: HandleObject,
+        id: HandleId,
+        v: HandleValue,
+        receiver: HandleValue,
+        ownDesc: Option<Handle<PropertyDescriptor>>,
+        result: *mut ObjectOpResult,
+    ) -> bool {
+        if let Some(ownDesc) = ownDesc {
+            let ownDesc = ownDesc.into();
+            jsapi::SetPropertyIgnoringNamedGetter(
+                cx.raw_cx(),
+                obj.into(),
+                id.into(),
+                v.into(),
+                receiver.into(),
+                &ownDesc,
+                result,
+            )
+        } else {
+            jsapi::SetPropertyIgnoringNamedGetter(
+                cx.raw_cx(),
+                obj.into(),
+                id.into(),
+                v.into(),
+                receiver.into(),
+                ptr::null(),
+                result,
+            )
+        }
+    }
 }

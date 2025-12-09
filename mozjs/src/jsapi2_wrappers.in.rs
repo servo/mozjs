@@ -661,7 +661,6 @@ wrap!(jsapi: pub fn JS_GetOwnPropertyDescriptor(cx: &mut JSContext, obj: HandleO
 wrap!(jsapi: pub fn JS_GetOwnUCPropertyDescriptor(cx: &mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: MutableHandle<PropertyDescriptor>, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_GetPropertyDescriptorById(cx: &mut JSContext, obj: HandleObject, id: HandleId, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_GetUCPropertyDescriptor(cx: &mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
-wrap!(jsapi: pub fn SetPropertyIgnoringNamedGetter(cx: &mut JSContext, obj: HandleObject, id: HandleId, v: HandleValue, receiver: HandleValue, ownDesc: *const Handle<PropertyDescriptor>, result: *mut ObjectOpResult) -> bool);
 wrap!(jsapi: pub fn CreateError(cx: &mut JSContext, type_: JSExnType, stack: HandleObject, fileName: HandleString, lineNumber: u32, columnNumber: u32, report: *mut JSErrorReport, message: HandleString, cause: HandleValue, rval: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn GetExceptionCause(exc: *mut JSObject, dest: MutableHandleValue));
 wrap!(jsapi: pub fn NewEnvironmentChain(cx: &mut JSContext, supportUnscopables: SupportUnscopables) -> *mut EnvironmentChain);
