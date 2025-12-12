@@ -1529,7 +1529,7 @@ pub mod wrappers2 {
                 id.into(),
                 v.into(),
                 receiver.into(),
-                &ownDesc,
+                &raw const ownDesc,
                 result,
             )
         } else {
