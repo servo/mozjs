@@ -56,6 +56,8 @@ def grep_heur(file_path: Path) -> list[str]:
             and "pub fn Unbox" not in line
             and "CopyAsyncStack" not in line
             and "MutableHandleObjectVector" not in line
+            # macro cannot handle *const Handle
+            and "fn SetPropertyIgnoringNamedGetter" not in line
         )
 
     def replace_in_line(line: str) -> str:
@@ -109,6 +111,8 @@ def grep_heur2(file_path: Path) -> list[str]:
             and "pub fn GetDebuggerMallocSizeOf" not in sig
             and "pub fn FireOnGarbageCollectionHookRequired" not in sig
             and "pub fn ShouldAvoidSideEffects" not in sig
+            # macro cannot handle *const Handle
+            and "fn SetPropertyIgnoringNamedGetter" not in sig
             # vargs
             and "..." not in sig
             and "VA(" not in sig
