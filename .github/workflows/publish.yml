@@ -37,6 +37,8 @@ jobs:
       - run: ls -l ./*.tar.gz
       - name: Publish release if tag doesn't exist
         id: check-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           RELEASE_TAG=mozjs-sys-v$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
           git fetch --tags --quiet
