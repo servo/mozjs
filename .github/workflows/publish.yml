@@ -76,13 +76,13 @@ jobs:
       # publish mozjs-sys. We ignore the error if the version is already published, but abort the workflow
       # on other errors.
       - run: |
-          cargo publish -p mozjs_sys 2> err.log || grep "already exists on crates.io" err.log || ( cat err.log ; exit 1)
+          cargo publish -p mozjs_sys --no-verify 2> err.log || grep "already exists on crates.io" err.log || ( cat err.log ; exit 1)
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
       # Wait a bit to ensure the release is published
       - run: sleep 5
       - run: |
           rm -f err.log
-          cargo publish -p mozjs 2> err.log || grep "already exists on crates.io" err.log || ( cat err.log ; exit 1)
+          cargo publish -p mozjs --no-verify 2> err.log || grep "already exists on crates.io" err.log || ( cat err.log ; exit 1)
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
