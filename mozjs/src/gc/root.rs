@@ -112,7 +112,8 @@ impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleVal
 }
 
 pub struct Handle<'a, T: 'a> {
-    pub(crate) ptr: &'a T,
+    pub(crate) _phantom: PhantomData<&'a T>,
+    pub(crate) ptr: *const T,
 }
 
 impl<T> Clone for Handle<'_, T> {
@@ -153,11 +154,14 @@ impl<'a, T> Handle<'a, T> {
     where
         T: Copy,
     {
-        *self.ptr
+        unsafe { *self.ptr }
     }
 
     pub(crate) fn new(ptr: &'a T) -> Self {
-        Handle { ptr }
+        Handle {
+            ptr,
+            _phantom: PhantomData,
+        }
     }
 
     pub unsafe fn from_marked_location(ptr: *const T) -> Self {
@@ -193,7 +197,7 @@ impl<'a, T> Deref for Handle<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        self.ptr
+        unsafe { &*self.ptr }
     }
 }
 
