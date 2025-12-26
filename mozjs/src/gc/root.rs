@@ -199,7 +199,10 @@ impl<'a, T> Deref for Handle<'a, T> {
 
 impl<'a, T> MutableHandle<'a, T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> Self {
-        MutableHandle::new(&mut *ptr)
+        Self {
+            ptr,
+            anchor: PhantomData,
+        }
     }
 
     pub unsafe fn from_raw(handle: RawMutableHandle<T>) -> Self {
@@ -208,13 +211,6 @@ impl<'a, T> MutableHandle<'a, T> {
 
     pub fn handle(&self) -> Handle<T> {
         unsafe { Handle::new(&*self.ptr) }
-    }
-
-    pub(crate) fn new(ptr: &'a mut T) -> Self {
-        Self {
-            ptr,
-            anchor: PhantomData,
-        }
     }
 
     pub fn get(&self) -> T
