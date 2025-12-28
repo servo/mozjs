@@ -39,7 +39,8 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     }
 
     pub fn handle(&'a self) -> Handle<'a, T> {
-        Handle::new(&self)
+        // SAFETY: A root is a marked location.
+        unsafe { Handle::from_marked_location(self.as_ptr()) }
     }
 
     pub fn handle_mut(&mut self) -> MutableHandle<T> {
@@ -157,15 +158,11 @@ impl<'a, T> Handle<'a, T> {
         unsafe { *self.ptr }
     }
 
-    pub(crate) fn new(ptr: &'a T) -> Self {
+    pub unsafe fn from_marked_location(ptr: *const T) -> Self {
         Handle {
             ptr,
             _phantom: PhantomData,
         }
-    }
-
-    pub unsafe fn from_marked_location(ptr: *const T) -> Self {
-        Handle::new(&*ptr)
     }
 
     pub unsafe fn from_raw(handle: RawHandle<T>) -> Self {
@@ -210,8 +207,9 @@ impl<'a, T> MutableHandle<'a, T> {
         MutableHandle::from_marked_location(handle.ptr)
     }
 
-    pub fn handle(&self) -> Handle<T> {
-        unsafe { Handle::new(&*self.ptr) }
+    pub fn handle(&self) -> Handle<'a, T> {
+        // SAFETY: This mutable handle was already derived from a marked location.
+        unsafe { Handle::from_marked_location(self.ptr) }
     }
 
     pub(crate) fn new(ptr: &'a mut T) -> Self {

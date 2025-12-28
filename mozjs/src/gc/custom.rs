@@ -137,13 +137,15 @@ impl<'a, T: 'a + CustomTrace> CustomAutoRooterGuard<'a, T> {
     where
         T: RootKind,
     {
-        Handle::new(&self.rooter.data)
+        // SAFETY: This root is a marked location.
+        unsafe { Handle::from_marked_location(&raw const (self.rooter.data)) }
     }
 
     pub fn handle_mut(&mut self) -> MutableHandle<T>
     where
         T: RootKind,
     {
+        // SAFETY: This root is a marked location.
         unsafe { MutableHandle::from_marked_location(&mut self.rooter.data) }
     }
 }
