@@ -39,7 +39,8 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     }
 
     pub fn handle(&'a self) -> Handle<'a, T> {
-        Handle::new(&self)
+        // SAFETY: A root is a marked location.
+        unsafe { Handle::from_marked_location(self.as_ptr()) }
     }
 
     pub fn handle_mut(&mut self) -> MutableHandle<T> {
@@ -112,7 +113,8 @@ impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleVal
 }
 
 pub struct Handle<'a, T: 'a> {
-    pub(crate) ptr: &'a T,
+    pub(crate) _phantom: PhantomData<&'a T>,
+    pub(crate) ptr: *const T,
 }
 
 impl<T> Clone for Handle<'_, T> {
@@ -153,15 +155,14 @@ impl<'a, T> Handle<'a, T> {
     where
         T: Copy,
     {
-        *self.ptr
-    }
-
-    pub(crate) fn new(ptr: &'a T) -> Self {
-        Handle { ptr }
+        unsafe { *self.ptr }
     }
 
     pub unsafe fn from_marked_location(ptr: *const T) -> Self {
-        Handle::new(&*ptr)
+        Handle {
+            ptr,
+            _phantom: PhantomData,
+        }
     }
 
     pub unsafe fn from_raw(handle: RawHandle<T>) -> Self {
@@ -193,7 +194,7 @@ impl<'a, T> Deref for Handle<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        self.ptr
+        unsafe { &*self.ptr }
     }
 }
 
@@ -209,8 +210,9 @@ impl<'a, T> MutableHandle<'a, T> {
         MutableHandle::from_marked_location(handle.ptr)
     }
 
-    pub fn handle(&self) -> Handle<T> {
-        unsafe { Handle::new(&*self.ptr) }
+    pub fn handle(&self) -> Handle<'a, T> {
+        // SAFETY: This mutable handle was already derived from a marked location.
+        unsafe { Handle::from_marked_location(self.ptr) }
     }
 
     pub fn get(&self) -> T
