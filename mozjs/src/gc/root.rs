@@ -2,11 +2,13 @@ use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::ptr;
+use std::ptr::NonNull;
 
 use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
 use mozjs_sys::jsgc::{RootKind, Rooted};
 
 use crate::jsapi::Handle as RawHandle;
+use crate::jsapi::HandleObject as RawHandleObject;
 use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::MutableHandle as RawMutableHandle;
 use mozjs_sys::jsgc::IntoHandle as IntoRawHandle;
@@ -113,8 +115,8 @@ impl<'a, const N: usize> From<&RootedGuard<'a, ValueArray<N>>> for JS::HandleVal
 }
 
 pub struct Handle<'a, T: 'a> {
+    pub(crate) ptr: NonNull<T>,
     pub(crate) _phantom: PhantomData<&'a T>,
-    pub(crate) ptr: *const T,
 }
 
 impl<T> Clone for Handle<'_, T> {
@@ -130,7 +132,7 @@ impl<T> Copy for Handle<'_, T> {}
     crown::unrooted_must_root_lint::allow_unrooted_interior
 )]
 pub struct MutableHandle<'a, T: 'a> {
-    pub(crate) ptr: *mut T,
+    pub(crate) ptr: NonNull<T>,
     anchor: PhantomData<&'a mut T>,
 }
 
@@ -155,12 +157,12 @@ impl<'a, T> Handle<'a, T> {
     where
         T: Copy,
     {
-        unsafe { *self.ptr }
+        unsafe { *self.ptr.as_ptr() }
     }
 
     pub unsafe fn from_marked_location(ptr: *const T) -> Self {
         Handle {
-            ptr,
+            ptr: NonNull::new(ptr as *mut T).unwrap(),
             _phantom: PhantomData,
         }
     }
@@ -173,20 +175,20 @@ impl<'a, T> Handle<'a, T> {
 impl<'a, T> IntoRawHandle for Handle<'a, T> {
     type Target = T;
     fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr) }
+        unsafe { RawHandle::from_marked_location(self.ptr.as_ptr()) }
     }
 }
 
 impl<'a, T> IntoRawHandle for MutableHandle<'a, T> {
     type Target = T;
     fn into_handle(self) -> RawHandle<T> {
-        unsafe { RawHandle::from_marked_location(self.ptr) }
+        unsafe { RawHandle::from_marked_location(self.ptr.as_ptr()) }
     }
 }
 
 impl<'a, T> IntoRawMutableHandle for MutableHandle<'a, T> {
     fn into_handle_mut(self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
+        unsafe { RawMutableHandle::from_marked_location(self.ptr.as_ptr()) }
     }
 }
 
@@ -194,14 +196,14 @@ impl<'a, T> Deref for Handle<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
 impl<'a, T> MutableHandle<'a, T> {
     pub unsafe fn from_marked_location(ptr: *mut T) -> Self {
         Self {
-            ptr,
+            ptr: NonNull::new(ptr).unwrap(),
             anchor: PhantomData,
         }
     }
@@ -212,21 +214,21 @@ impl<'a, T> MutableHandle<'a, T> {
 
     pub fn handle(&self) -> Handle<'a, T> {
         // SAFETY: This mutable handle was already derived from a marked location.
-        unsafe { Handle::from_marked_location(self.ptr) }
+        unsafe { Handle::from_marked_location(self.ptr.as_ptr()) }
     }
 
     pub fn get(&self) -> T
     where
         T: Copy,
     {
-        unsafe { *self.ptr }
+        unsafe { *self.ptr.as_ptr() }
     }
 
     pub fn set(&mut self, v: T)
     where
         T: Copy,
     {
-        unsafe { *self.ptr = v }
+        unsafe { *self.ptr.as_mut() = v }
     }
 
     /// Safety: GC must not run during the lifetime of the returned reference.
@@ -234,7 +236,7 @@ impl<'a, T> MutableHandle<'a, T> {
     where
         'a: 'b,
     {
-        &mut *(self.ptr)
+        self.ptr.as_mut()
     }
 
     /// Creates a copy of this object, with a shorter lifetime, that holds a
@@ -258,7 +260,7 @@ impl<'a, T> MutableHandle<'a, T> {
     }
 
     pub(crate) fn raw(&mut self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr) }
+        unsafe { RawMutableHandle::from_marked_location(self.ptr.as_ptr()) }
     }
 }
 
@@ -273,7 +275,7 @@ impl<'a, T> Deref for MutableHandle<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &T {
-        unsafe { &*self.ptr }
+        unsafe { self.ptr.as_ref() }
     }
 }
 
@@ -287,10 +289,8 @@ impl HandleValue<'static> {
     }
 }
 
-const ConstNullValue: *mut JSObject = ptr::null_mut();
-
 impl<'a> HandleObject<'a> {
     pub fn null() -> Self {
-        unsafe { HandleObject::from_marked_location(&ConstNullValue) }
+        unsafe { Self::from_raw(RawHandleObject::null()) }
     }
 }
