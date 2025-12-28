@@ -631,7 +631,7 @@ impl Stencil {
 
 #[inline]
 pub unsafe fn ToBoolean(v: HandleValue) -> bool {
-    let val = *v.ptr;
+    let val = *v.ptr.as_ptr();
 
     if val.is_boolean() {
         return val.to_boolean();
@@ -659,7 +659,7 @@ pub unsafe fn ToBoolean(v: HandleValue) -> bool {
 
 #[inline]
 pub unsafe fn ToNumber(cx: *mut JSContext, v: HandleValue) -> Result<f64, ()> {
-    let val = *v.ptr;
+    let val = *v.ptr.as_ptr();
     if val.is_number() {
         return Ok(val.to_number());
     }
@@ -678,7 +678,7 @@ unsafe fn convert_from_int32<T: Default + Copy>(
     v: HandleValue,
     conv_fn: unsafe extern "C" fn(*mut JSContext, RawHandleValue, *mut T) -> bool,
 ) -> Result<T, ()> {
-    let val = *v.ptr;
+    let val = *v.ptr.as_ptr();
     if val.is_int32() {
         let intval: i64 = val.to_int32() as i64;
         // TODO: do something better here that works on big endian
@@ -721,7 +721,7 @@ pub unsafe fn ToUint64(cx: *mut JSContext, v: HandleValue) -> Result<u64, ()> {
 
 #[inline]
 pub unsafe fn ToString(cx: *mut JSContext, v: HandleValue) -> *mut JSString {
-    let val = *v.ptr;
+    let val = *v.ptr.as_ptr();
     if val.is_string() {
         return val.to_string();
     }
