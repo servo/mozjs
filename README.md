@@ -113,7 +113,7 @@ cargo test --features debugmozjs
 
 ### Usage for downstream consumers
 
-`mozjs` crate is published on [crates.io](https://crates.io/crates/mozjs).
+Both [`mozjs`](https://crates.io/crates/mozjs) and [`mozjs_sys`](https://crates.io/crates/mozjs_sys) crates are published on crates.io.
 
 
 ## Building servo against your local mozjs
