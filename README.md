@@ -113,11 +113,8 @@ cargo test --features debugmozjs
 
 ### Usage for downstream consumers
 
-Mozjs is currently not published to crates.io, but it can be used from git (binaries should use lockfile instead of `rev`):
+`mozjs` crate is published on [crates.io](https://crates.io/crates/mozjs).
 
-```toml
-mozjs = { git = "https://github.com/servo/mozjs", rev = "latest-commit-hash" }
-```
 
 ## Building servo against your local mozjs
 
