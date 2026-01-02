@@ -232,15 +232,39 @@ where
     D: Number + As<f64>,
     f64: As<D>,
 {
+    // NaN -> 0
     if d.is_nan() {
-        D::ZERO
-    } else if d > D::MAX.cast() {
-        D::MAX
-    } else if d < D::MIN.cast() {
-        D::MIN
-    } else {
-        d.cast()
+        return D::ZERO;
     }
+
+    let max = D::MAX.cast();
+    let min = D::MIN.cast();
+
+    // clamp
+    if d >= max {
+        return D::MAX;
+    }
+    if d <= min {
+        return D::MIN;
+    }
+
+    debug_assert!(d.is_finite());
+
+    // Banker rounding, round half to even
+    let to_truncate = if d < 0.0 { d - 0.5 } else { d + 0.5 };
+
+    // Truncate toward zero
+    let mut truncated: D = to_truncate.cast();
+
+    // Tie case: exact 0.5
+    if truncated.cast() == to_truncate {
+        // go through f64 -> i64 -> even -> f64 -> D
+        let i = to_truncate as i64;
+        let even = i & !1;
+        truncated = (even as f64).cast();
+    }
+
+    truncated
 }
 
 // https://heycam.github.io/webidl/#es-void
