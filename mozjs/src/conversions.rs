@@ -224,23 +224,51 @@ where
     }
 }
 
-/// Try to cast the number to a smaller type, but if it doesn't fit,
-/// round it to the MAX or MIN of the source type before casting it to
-/// the destination type.
+/// WebIDL ConvertToInt (Clamp) conversion.
+/// Spec: https://webidl.spec.whatwg.org/#abstract-opdef-converttoint
+///
+/// This function is ported from Gecko’s `PrimitiveConversionTraits_Clamp`.
+/// [Gecko source]: https://searchfox.org/firefox-main/rev/aee7c0f24f488cd7f5a835803b48dd0c0cb2fd5f/dom/bindings/PrimitiveConversions.h#226
 fn clamp_to<D>(d: f64) -> D
 where
     D: Number + As<f64>,
     f64: As<D>,
 {
+    // NaN maps to zero.
     if d.is_nan() {
-        D::ZERO
-    } else if d > D::MAX.cast() {
-        D::MAX
-    } else if d < D::MIN.cast() {
-        D::MIN
-    } else {
-        d.cast()
+        return D::ZERO;
     }
+
+    if d >= D::MAX.cast() {
+        return D::MAX;
+    }
+    if d <= D::MIN.cast() {
+        return D::MIN;
+    }
+
+    debug_assert!(d.is_finite());
+
+    // Banker's rounding (round ties towards even).
+    // We move away from 0 by 0.5 and then truncate. That gets us the right
+    // answer for any starting value except plus or minus N.5. With a starting
+    // value of that form, we now have plus or minus N+1. If N is odd, this is
+    // the correct result. If N is even, plus or minus N is the correct result.
+    let to_truncate = if d < 0.0 { d - 0.5 } else { d + 0.5 };
+
+    let mut truncated: D = to_truncate.cast();
+
+    if truncated.cast() == to_truncate {
+        /*
+         * It was a tie (since moving away from 0 by 0.5 gave us the exact integer
+         * we want). Since we rounded away from 0, we either already have an even
+         * number or we have an odd number but the number we want is one closer to
+         * 0. So just unconditionally masking out the ones bit should do the trick
+         * to get us the value we want.
+         */
+        truncated = (((to_truncate as i64) & !1) as f64).cast();
+    }
+
+    truncated
 }
 
 // https://heycam.github.io/webidl/#es-void
