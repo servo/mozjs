@@ -227,8 +227,9 @@ where
 /// WebIDL ConvertToInt (Clamp) conversion.
 /// Spec: https://webidl.spec.whatwg.org/#abstract-opdef-converttoint
 ///
-/// This function is ported from Gecko’s `PrimitiveConversionTraits_Clamp`.
-/// [Gecko source]: https://searchfox.org/firefox-main/rev/aee7c0f24f488cd7f5a835803b48dd0c0cb2fd5f/dom/bindings/PrimitiveConversions.h#226
+/// This function is ported from Gecko’s [`PrimitiveConversionTraits_Clamp`].
+///
+/// [`PrimitiveConversionTraits_Clamp`]: https://searchfox.org/firefox-main/rev/aee7c0f24f488cd7f5a835803b48dd0c0cb2fd5f/dom/bindings/PrimitiveConversions.h#226
 fn clamp_to<D>(d: f64) -> D
 where
     D: Number + As<f64>,
@@ -258,13 +259,11 @@ where
     let mut truncated: D = to_truncate.cast();
 
     if truncated.cast() == to_truncate {
-        /*
-         * It was a tie (since moving away from 0 by 0.5 gave us the exact integer
-         * we want). Since we rounded away from 0, we either already have an even
-         * number or we have an odd number but the number we want is one closer to
-         * 0. So just unconditionally masking out the ones bit should do the trick
-         * to get us the value we want.
-         */
+        // It was a tie (since moving away from 0 by 0.5 gave us the exact integer
+        // we want). Since we rounded away from 0, we either already have an even
+        // number or we have an odd number but the number we want is one closer to
+        // 0. So just unconditionally masking out the ones bit should do the trick
+        // to get us the value we want.
         truncated = (((to_truncate as i64) & !1) as f64).cast();
     }
 
