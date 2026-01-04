@@ -225,11 +225,14 @@ where
 }
 
 /// WebIDL ConvertToInt (Clamp) conversion.
-/// Spec: https://webidl.spec.whatwg.org/#abstract-opdef-converttoint
+/// Spec: <https://webidl.spec.whatwg.org/#abstract-opdef-converttoint>
 ///
-/// This function is ported from Gecko’s [`PrimitiveConversionTraits_Clamp`].
+/// This function is ported from Gecko’s
+/// [`PrimitiveConversionTraits_Clamp`](https://searchfox.org/firefox-main/rev/aee7c0f24f488cd7f5a835803b48dd0c0cb2fd5f/dom/bindings/PrimitiveConversions.h#226).
 ///
-/// [`PrimitiveConversionTraits_Clamp`]: https://searchfox.org/firefox-main/rev/aee7c0f24f488cd7f5a835803b48dd0c0cb2fd5f/dom/bindings/PrimitiveConversions.h#226
+/// # Warning
+/// This function must only be used when the target type `D` represents an
+/// integer WebIDL type. Using it with non-integer types would be incorrect.
 fn clamp_to<D>(d: f64) -> D
 where
     D: Number + As<f64>,
@@ -264,7 +267,7 @@ where
         // number or we have an odd number but the number we want is one closer to
         // 0. So just unconditionally masking out the ones bit should do the trick
         // to get us the value we want.
-        truncated = (((to_truncate as i64) & !1) as f64).cast();
+        truncated = (((truncated.cast() as i64) & !1) as f64).cast();
     }
 
     truncated
