@@ -46,6 +46,7 @@ use crate::rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToU
 use libc;
 use log::debug;
 use mozjs_sys::jsgc::Rooted;
+use num_traits::PrimInt;
 use std::borrow::Cow;
 use std::mem;
 use std::ptr::NonNull;
@@ -235,7 +236,7 @@ where
 /// integer WebIDL type. Using it with non-integer types would be incorrect.
 fn clamp_to<D>(d: f64) -> D
 where
-    D: Number + As<f64>,
+    D: Number + PrimInt + As<f64>,
     f64: As<D>,
 {
     // NaN maps to zero.
@@ -267,7 +268,7 @@ where
         // number or we have an odd number but the number we want is one closer to
         // 0. So just unconditionally masking out the ones bit should do the trick
         // to get us the value we want.
-        truncated = (((truncated.cast() as i64) & !1) as f64).cast();
+        truncated = truncated & !D::one();
     }
 
     truncated
@@ -324,7 +325,7 @@ unsafe fn convert_int_from_jsval<T, M>(
     convert_fn: unsafe fn(*mut JSContext, HandleValue) -> Result<M, ()>,
 ) -> Result<ConversionResult<T>, ()>
 where
-    T: Number + As<f64>,
+    T: Number + As<f64> + PrimInt,
     M: Number + As<T>,
     f64: As<T>,
 {
