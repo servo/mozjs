@@ -38,7 +38,7 @@ jobs:
         id: toolchain
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.platform.target }}
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4

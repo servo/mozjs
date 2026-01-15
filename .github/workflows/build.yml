@@ -113,12 +113,14 @@ jobs:
           name: libmozjs-x86_64-unknown-linux-gnu.tar.gz
 
   windows:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
         features: ["debugmozjs", '""']
-        target: ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"]
+        platform:
+          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     env:
       LINKER: "lld-link.exe"
       CC: "clang-cl"
@@ -152,19 +154,19 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
       - name: Test Windows
-        if: ${{ !contains(matrix.target, 'aarch64') }}
+        if: ${{ !contains(matrix.platform.target, 'aarch64') }}
         shell: cmd
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.target }} --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
 
       - name: Upload artifact
-        if: ${{ !contains(matrix.target, 'aarch64') && matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
+        if: ${{ matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/${{ matrix.target }}/libmozjs-x86_64-pc-windows-msvc.tar.gz
-          name: libmozjs-x86_64-pc-windows-msvc.tar.gz
+          path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}.tar.gz
 
   android:
     runs-on: ubuntu-latest
