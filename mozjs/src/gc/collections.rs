@@ -49,6 +49,15 @@ impl From<&RootedVec<'_, JSVal>> for JS::HandleValueArray {
     }
 }
 
+impl From<&super::RootedGuard<'_, Vec<JSVal>>> for JS::HandleValueArray {
+    fn from(vec: &super::RootedGuard<'_, Vec<JSVal>>) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: vec.len(),
+            elements_: vec.deref().as_ptr(),
+        }
+    }
+}
+
 impl<'a, T: Traceable + 'static> RootedVec<'a, T> {
     pub fn new(root: &'a mut RootableVec<T>) -> RootedVec<'a, T> {
         unsafe {
