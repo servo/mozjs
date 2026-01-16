@@ -160,6 +160,29 @@ impl<'a, T> Handle<'a, T> {
         unsafe { *self.ptr.as_ptr() }
     }
 
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use std::marker::PhantomData;
+    /// use mozjs::context::*;
+    /// use mozjs::rust::Handle;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, handle: Handle<i32>) {
+    ///     let r = handle.as_ref(&cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx crate::context::JSContext) -> &'r T
+    where
+        's: 'a,
+    {
+        unsafe { self.ptr.as_ref() }
+    }
+
     pub unsafe fn from_marked_location(ptr: *const T) -> Self {
         Handle {
             ptr: NonNull::new(ptr as *mut T).unwrap(),
@@ -229,6 +252,55 @@ impl<'a, T> MutableHandle<'a, T> {
         T: Copy,
     {
         unsafe { *self.ptr.as_mut() = v }
+    }
+
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use std::marker::PhantomData;
+    /// use mozjs::context::*;
+    /// use mozjs::rust::MutableHandle;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, handle: MutableHandle<i32>) {
+    ///     let r = handle.as_ref(&cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx crate::context::JSContext) -> &'r T
+    where
+        's: 'a,
+    {
+        unsafe { self.ptr.as_ref() }
+    }
+
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use std::marker::PhantomData;
+    /// use mozjs::context::*;
+    /// use mozjs::rust::MutableHandle;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, mut handle: MutableHandle<i32>) {
+    ///     let r = handle.as_mut_ref(&cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(
+        &'s mut self,
+        _no_gc: &'cx crate::context::JSContext,
+    ) -> &'r mut T
+    where
+        's: 'a,
+    {
+        unsafe { self.ptr.as_mut() }
     }
 
     /// Safety: GC must not run during the lifetime of the returned reference.
