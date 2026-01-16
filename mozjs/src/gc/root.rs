@@ -4,6 +4,7 @@ use std::ops::Deref;
 use std::ptr;
 use std::ptr::NonNull;
 
+use crate::context::NoGC;
 use crate::jsapi::{jsid, JSContext, JSFunction, JSObject, JSScript, JSString, Symbol, Value, JS};
 use mozjs_sys::jsgc::{RootKind, Rooted};
 
@@ -70,7 +71,7 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
-    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx crate::context::JSContext) -> &'r T
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
     where
         's: 'a,
     {
@@ -93,10 +94,7 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
-    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(
-        &'s mut self,
-        _no_gc: &'cx crate::context::JSContext,
-    ) -> &'r mut T
+    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(&'s mut self, _no_gc: &'cx NoGC) -> &'r mut T
     where
         's: 'a,
     {
@@ -104,6 +102,7 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     }
 
     /// Safety: GC must not run during the lifetime of the returned reference.
+    /// Prefer using [`RootedGuard::as_mut_ref`] instead.
     pub unsafe fn as_mut<'b>(&'b mut self) -> &'b mut T
     where
         'a: 'b,
@@ -136,6 +135,9 @@ where
 
 impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
     type Target = T;
+
+    /// This is unsound and will be removed eventually.
+    /// Use [`RootedGuard::as_ref`] instead.
     fn deref(&self) -> &T {
         unsafe { &(*self.root).data }
     }
@@ -267,6 +269,8 @@ impl<'a, T> IntoRawMutableHandle for MutableHandle<'a, T> {
 impl<'a, T> Deref for Handle<'a, T> {
     type Target = T;
 
+    /// This is unsound and will be removed eventually.
+    /// Use [`Handle::as_ref`] instead.
     fn deref(&self) -> &T {
         unsafe { self.ptr.as_ref() }
     }
@@ -353,6 +357,7 @@ impl<'a, T> MutableHandle<'a, T> {
     }
 
     /// Safety: GC must not run during the lifetime of the returned reference.
+    /// Use [`MutableHandle::as_mut_ref`] instead.
     pub unsafe fn as_mut<'b>(&'b mut self) -> &'b mut T
     where
         'a: 'b,
@@ -395,6 +400,8 @@ impl<'a, T> MutableHandle<'a, Option<T>> {
 impl<'a, T> Deref for MutableHandle<'a, T> {
     type Target = T;
 
+    /// This is unsound and will be removed eventually.
+    /// Use [`MutableHandle::as_ref`] instead.
     fn deref(&self) -> &T {
         unsafe { self.ptr.as_ref() }
     }
