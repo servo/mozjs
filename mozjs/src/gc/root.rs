@@ -59,13 +59,13 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
     ///
     /// ```compile_fail
-    /// use std::marker::PhantomData;
     /// use mozjs::context::*;
     /// use mozjs::rust::RootedGuard;
+    /// use mozjs::jsapi::JS::Value;
     ///
     /// fn gc(cx: &mut JSContext) {}
     ///
-    /// fn f(cx: &mut JSContext, root: RootedGuard<i32>) {
+    /// fn f(cx: &mut JSContext, root: RootedGuard<Value>) {
     ///     let r = root.as_ref(&cx);
     ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
     ///     drop(r); // otherwise rust automatically drops r before gc call
@@ -82,14 +82,14 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
     ///
     /// ```compile_fail
-    /// use std::marker::PhantomData;
+    /// use mozjs::jsapi::JS::Value;
     /// use mozjs::context::*;
     /// use mozjs::rust::RootedGuard;
     ///
     /// fn gc(cx: &mut JSContext) {}
     ///
-    /// fn f(cx: &mut JSContext, mut root: RootedGuard<i32>) {
-    ///     let r = root.as_mut_ref(&cx);
+    /// fn f(cx: &mut JSContext, mut root: RootedGuard<Value>) {
+    ///     let r = root.as_mut_ref(cx);
     ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
@@ -227,7 +227,7 @@ impl<'a, T> Handle<'a, T> {
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
-    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx crate::context::JSContext) -> &'r T
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
     where
         's: 'a,
     {
@@ -323,7 +323,7 @@ impl<'a, T> MutableHandle<'a, T> {
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
-    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx crate::context::JSContext) -> &'r T
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
     where
         's: 'a,
     {
@@ -346,10 +346,7 @@ impl<'a, T> MutableHandle<'a, T> {
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
-    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(
-        &'s mut self,
-        _no_gc: &'cx crate::context::JSContext,
-    ) -> &'r mut T
+    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(&'s mut self, _no_gc: &'cx NoGC) -> &'r mut T
     where
         's: 'a,
     {
