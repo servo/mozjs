@@ -54,6 +54,55 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
         unsafe { (&raw mut (*self.root).data) }
     }
 
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use std::marker::PhantomData;
+    /// use mozjs::context::*;
+    /// use mozjs::rust::RootedGuard;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, root: RootedGuard<i32>) {
+    ///     let r = root.as_ref(&cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx crate::context::JSContext) -> &'r T
+    where
+        's: 'a,
+    {
+        unsafe { &*(self.as_ptr()) }
+    }
+
+    /// Obtains a reference to the value pointed to by this handle.
+    /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
+    ///
+    /// ```compile_fail
+    /// use std::marker::PhantomData;
+    /// use mozjs::context::*;
+    /// use mozjs::rust::RootedGuard;
+    ///
+    /// fn gc(cx: &mut JSContext) {}
+    ///
+    /// fn f(cx: &mut JSContext, mut root: RootedGuard<i32>) {
+    ///     let r = root.as_mut_ref(&cx);
+    ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
+    ///     drop(r); // otherwise rust automatically drops r before gc call
+    /// }
+    /// ```
+    pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(
+        &'s mut self,
+        _no_gc: &'cx crate::context::JSContext,
+    ) -> &'r mut T
+    where
+        's: 'a,
+    {
+        unsafe { &mut *(self.as_ptr()) }
+    }
+
     /// Safety: GC must not run during the lifetime of the returned reference.
     pub unsafe fn as_mut<'b>(&'b mut self) -> &'b mut T
     where
