@@ -60,20 +60,21 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     ///
     /// ```compile_fail
     /// use mozjs::context::*;
-    /// use mozjs::rust::RootedGuard;
-    /// use mozjs::jsapi::JS::Value;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
     ///
     /// fn gc(cx: &mut JSContext) {}
     ///
-    /// fn f(cx: &mut JSContext, root: RootedGuard<Value>) {
-    ///     let r = root.as_ref(&cx);
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let r = root.as_ref(cx);
     ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
     pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
     where
-        's: 'a,
+        'a: 's,
     {
         unsafe { &*(self.as_ptr()) }
     }
@@ -82,13 +83,14 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
     ///
     /// ```compile_fail
-    /// use mozjs::jsapi::JS::Value;
     /// use mozjs::context::*;
-    /// use mozjs::rust::RootedGuard;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
     ///
     /// fn gc(cx: &mut JSContext) {}
     ///
-    /// fn f(cx: &mut JSContext, mut root: RootedGuard<Value>) {
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
     ///     let r = root.as_mut_ref(cx);
     ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
     ///     drop(r); // otherwise rust automatically drops r before gc call
@@ -96,7 +98,7 @@ impl<'a, T: 'a + RootKind> RootedGuard<'a, T> {
     /// ```
     pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(&'s mut self, _no_gc: &'cx NoGC) -> &'r mut T
     where
-        's: 'a,
+        'a: 's,
     {
         unsafe { &mut *(self.as_ptr()) }
     }
@@ -215,21 +217,24 @@ impl<'a, T> Handle<'a, T> {
     /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
     ///
     /// ```compile_fail
-    /// use std::marker::PhantomData;
     /// use mozjs::context::*;
-    /// use mozjs::rust::Handle;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
+    ///
     ///
     /// fn gc(cx: &mut JSContext) {}
     ///
-    /// fn f(cx: &mut JSContext, handle: Handle<i32>) {
-    ///     let r = handle.as_ref(&cx);
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let handle = root.handle();
+    ///     let r = handle.as_ref(cx);
     ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
     pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
     where
-        's: 'a,
+        'a: 's,
     {
         unsafe { self.ptr.as_ref() }
     }
@@ -311,21 +316,23 @@ impl<'a, T> MutableHandle<'a, T> {
     /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
     ///
     /// ```compile_fail
-    /// use std::marker::PhantomData;
     /// use mozjs::context::*;
-    /// use mozjs::rust::MutableHandle;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
     ///
     /// fn gc(cx: &mut JSContext) {}
     ///
-    /// fn f(cx: &mut JSContext, handle: MutableHandle<i32>) {
-    ///     let r = handle.as_ref(&cx);
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let handle = root.handle_mut();
+    ///     let r = handle.as_ref(cx);
     ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
     pub fn as_ref<'s: 'r, 'cx: 'r, 'r>(&'s self, _no_gc: &'cx NoGC) -> &'r T
     where
-        's: 'a,
+        'a: 's,
     {
         unsafe { self.ptr.as_ref() }
     }
@@ -334,21 +341,23 @@ impl<'a, T> MutableHandle<'a, T> {
     /// While this reference is alive, no GC can occur, because of the `_no_gc` argument:
     ///
     /// ```compile_fail
-    /// use std::marker::PhantomData;
     /// use mozjs::context::*;
-    /// use mozjs::rust::MutableHandle;
+    /// use mozjs::jsapi::JSObject;
+    /// use mozjs::rooted;
     ///
     /// fn gc(cx: &mut JSContext) {}
     ///
-    /// fn f(cx: &mut JSContext, mut handle: MutableHandle<i32>) {
-    ///     let r = handle.as_mut_ref(&cx);
+    /// fn f(cx: &mut JSContext, obj: *mut JSObject) {
+    ///     rooted!(&in(cx) let mut root = obj);
+    ///     let mut handle = root.handle_mut();
+    ///     let r = handle.as_mut_ref(cx);
     ///     gc(cx); // cannot call gc while r (thus cx borrow) is alive
     ///     drop(r); // otherwise rust automatically drops r before gc call
     /// }
     /// ```
     pub fn as_mut_ref<'s: 'r, 'cx: 'r, 'r>(&'s mut self, _no_gc: &'cx NoGC) -> &'r mut T
     where
-        's: 'a,
+        'a: 's,
     {
         unsafe { self.ptr.as_mut() }
     }
