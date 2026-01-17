@@ -79,6 +79,12 @@ jobs:
         features: ["debugmozjs", '""']
     steps:
       - uses: actions/checkout@v4
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          large-packages: false
+          swap-storage: false
       - uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
