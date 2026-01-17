@@ -28,6 +28,7 @@ jobs:
           - { target: x86_64-apple-darwin, os: macos-15-intel }
           - { target: x86_64-unknown-linux-gnu, os: ubuntu-latest }
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     runs-on: ${{ matrix.platform.os }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
@@ -38,7 +39,7 @@ jobs:
         id: toolchain
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN_INPUT }}
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.platform.target }}
       - name: Download prebuilt mozjs from artifact
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
