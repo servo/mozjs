@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
@@ -58,8 +58,8 @@ jobs:
           version: "v0.12.0"
       - name: Build
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features ${{ matrix.features }}
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}"
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
@@ -76,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
     steps:
       - uses: actions/checkout@v4
       - name: Free Disk Space (Ubuntu)
@@ -99,9 +99,9 @@ jobs:
       - name: Build
         # doc tests on mozjs_sys fail because they include stuff from SpiderMonkey
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features ${{ matrix.features }}
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features ${{ matrix.features }}
-          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features "${{ matrix.features }}"
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
@@ -123,7 +123,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
         platform:
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
           - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
@@ -140,7 +140,7 @@ jobs:
         id: toolchain
         with:
           toolchain: ${{ inputs.rust_version }}
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.platform.target }}
           components: "rustfmt"
       - name: Install deps
         run: |
@@ -151,11 +151,11 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}"
       - name: Test Windows
         shell: cmd
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}"
 
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
