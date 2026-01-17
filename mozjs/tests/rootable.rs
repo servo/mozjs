@@ -61,7 +61,11 @@ fn rooting() {
         assert_eq!(some_container.val.to_object(), prototype_proto.get());
         assert_eq!(
             some_container.val,
-            some_optional_container.as_ref(cx).as_ref().unwrap().val
+            some_optional_container
+                .as_ref(context)
+                .as_ref()
+                .unwrap()
+                .val
         );
     }
 }
