@@ -164,7 +164,7 @@ jobs:
         if: ${{ matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
+          path: ./target/${{ matrix.platform.target }}/libmozjs-${{ matrix.platform.target }}.tar.gz
           name: libmozjs-${{ matrix.platform.target }}.tar.gz
 
   android:
