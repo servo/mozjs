@@ -140,15 +140,6 @@ jobs:
         run: |
           curl -SL "https://github.com/servo/servo-build-deps/releases/download/msvc-deps/moztools-4.0.zip" --create-dirs -o target/dependencies/moztools.zip
           cd target/dependencies && unzip -qo moztools.zip -d .
-      # - name: Install LLVM 19
-      #   run: |
-      #     # MSVC has headers that require clang-19.
-      #     # remove when windows runner updates to llvm 19
-      #     iwr -useb get.scoop.sh -outfile 'install.ps1'
-      #     .\install.ps1 -RunAsAdmin
-      #     scoop install llvm@19.1.7 --global
-      #     # Prepend to path so we override the default LLVM installation in priority
-      #     echo "C:\ProgramData\scoop\apps\llvm\current\bin;" + (Get-Content $env:GITHUB_PATH -Raw) | Set-Content $env:GITHUB_PATH
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build Windows
