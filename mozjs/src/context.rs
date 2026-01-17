@@ -2,25 +2,23 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::marker::PhantomData;
+use std::ops::Deref;
 use std::ptr::NonNull;
 
 pub use crate::jsapi::JSContext as RawJSContext;
 
-/// A wrapper for raw JSContext pointers that are strongly associated with the [Runtime] type.
+/// A wrapper for [raw JSContext pointers](RawJSContext) that are strongly associated with the [Runtime](crate::rust::Runtime) type.
 ///
 /// This type is fundamental for safe SpiderMonkey usage.
-/// Each (SpiderMonkey) function which takes `&mut JSContext` as argument can trigger GC.
-/// SpiderMonkey functions require take `&JSContext` are guaranteed to not trigger GC.
+/// Each (SpiderMonkey) function which takes [`&mut JSContext`](JSContext) as argument can trigger GC.
+/// SpiderMonkey functions that takes [`&JSContext`](JSContext) are guaranteed to not trigger GC.
 /// We must not hold any unrooted or borrowed data while calling any functions that can trigger GC.
 /// That can causes panics or UB.
-/// Such types are derived from [NoGC] token which can be though of `&JSContext`,
-/// so they are bounded to [JSContext].
+/// For cases where notion of no GC but no actual context is needed, we have [`&NoGC`](NoGC) token.
 ///
 /// ```rust
 /// use std::marker::PhantomData;
 /// use mozjs::context::*;
-/// use mozjs::jsapi::JSContext as RawJSContext;
 ///
 /// struct ShouldNotBeHoldAcrossGC<'a>(PhantomData<&'a ()>);
 ///
@@ -28,7 +26,7 @@ pub use crate::jsapi::JSContext as RawJSContext;
 ///     fn drop(&mut self) {}
 /// }
 ///
-/// fn something_that_should_not_hold_across_gc<'a>(_no_gc: &NoGC<'a>) -> ShouldNotBeHoldAcrossGC<'a> {
+/// fn something_that_should_not_hold_across_gc<'a>(_no_gc: &'a NoGC) -> ShouldNotBeHoldAcrossGC<'a> {
 ///     ShouldNotBeHoldAcrossGC(PhantomData)
 /// }
 ///
@@ -49,10 +47,8 @@ pub use crate::jsapi::JSContext as RawJSContext;
 /// }
 /// ```
 ///
-/// One cannot call any GC function, while any [NoGC] token is alive,
-/// because [NoGC] token borrows [JSContext] (`&JSContext`)
-/// and thus prevents calling any function that triggers GC,
-/// because they require exclusive access to [JSContext] (`&mut JSContext`).
+/// One cannot call any GC function, while any [`&JSContext`](JSContext) or [`&NoGC`](NoGC) is alive,
+/// because they require such functions accept [`&mut JSContext`](JSContext):
 ///
 /// ```compile_fail
 /// use std::marker::PhantomData;
@@ -65,7 +61,7 @@ pub use crate::jsapi::JSContext as RawJSContext;
 ///     fn drop(&mut self) {} // make type not trivial, or else compiler can shorten it's lifetime
 /// }
 ///
-/// fn something_that_should_not_hold_across_gc<'a>(_no_gc: &'a NoGC<'a>) -> ShouldNotBeHoldAcrossGC<'a> {
+/// fn something_that_should_not_hold_across_gc<'a>(_no_gc: &'a NoGC) -> ShouldNotBeHoldAcrossGC<'a> {
 ///     ShouldNotBeHoldAcrossGC(PhantomData)
 /// }
 ///
@@ -105,8 +101,8 @@ impl JSContext {
     /// can be called while this is alive.
     #[inline]
     #[must_use]
-    pub fn no_gc<'cx>(&'cx self) -> &'cx NoGC<'cx> {
-        &NoGC(PhantomData)
+    pub fn no_gc<'cx>(&'cx self) -> &'cx NoGC {
+        &NoGC(())
     }
 
     /// Obtain [RawJSContext] mutable pointer.
@@ -155,10 +151,20 @@ impl JSContext {
     }
 }
 
+impl Deref for JSContext {
+    type Target = NoGC;
+
+    /// Deref [`&JSContext`](JSContext) into [`&NoGC`](NoGC) so that
+    /// one can pass [`&JSContext`](JSContext) to functions that require [`&NoGC`](NoGC).
+    fn deref<'cx>(&'cx self) -> &'cx Self::Target {
+        self.no_gc()
+    }
+}
+
 /// Token that ensures that no GC can happen while it is alive.
 ///
-/// Each function that trigger GC require mutable access to [JSContext],
-/// so one cannot call them because [NoGC] lifetime is bounded to [JSContext].
+/// This type is similar to `&JSContext`,
+/// but it is used in cases where no actual context is needed.
 ///
 /// For more info and examples see [JSContext].
-pub struct NoGC<'cx>(PhantomData<&'cx ()>);
+pub struct NoGC(()); // zero-sized type that cannot be constructed from outside
