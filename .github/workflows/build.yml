@@ -156,7 +156,6 @@ jobs:
         run: |
           cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
       - name: Test Windows
-        if: ${{ !contains(matrix.platform.target, 'aarch64') }}
         shell: cmd
         run: |
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
