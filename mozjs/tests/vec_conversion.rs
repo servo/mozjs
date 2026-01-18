@@ -44,15 +44,15 @@ fn vec_conversion() {
         rooted!(&in(context) let mut rval = UndefinedValue());
 
         let orig_vec: Vec<f32> = vec![1.0, 2.9, 3.0];
-        orig_vec.to_jsval(context.raw_cx(), rval.handle_mut());
-        let converted = Vec::<f32>::from_jsval(context.raw_cx(), rval.handle(), ()).unwrap();
+        orig_vec.safe_to_jsval(context, rval.handle_mut());
+        let converted = Vec::<f32>::safe_from_jsval(context, rval.handle(), ()).unwrap();
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
 
         let orig_vec: Vec<i32> = vec![1, 2, 3];
-        orig_vec.to_jsval(context.raw_cx(), rval.handle_mut());
+        orig_vec.safe_to_jsval(context, rval.handle_mut());
         let converted =
-            Vec::<i32>::from_jsval(context.raw_cx(), rval.handle(), ConversionBehavior::Default)
+            Vec::<i32>::safe_from_jsval(context, rval.handle(), ConversionBehavior::Default)
                 .unwrap();
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
@@ -68,7 +68,7 @@ fn vec_conversion() {
         .is_ok());
 
         let converted =
-            Vec::<i32>::from_jsval(context.raw_cx(), rval.handle(), ConversionBehavior::Default)
+            Vec::<i32>::safe_from_jsval(context, rval.handle(), ConversionBehavior::Default)
                 .unwrap();
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
@@ -79,7 +79,7 @@ fn vec_conversion() {
         );
 
         let converted =
-            Vec::<i32>::from_jsval(context.raw_cx(), rval.handle(), ConversionBehavior::Default);
+            Vec::<i32>::safe_from_jsval(context, rval.handle(), ConversionBehavior::Default);
         assert!(match converted {
             Ok(ConversionResult::Failure(_)) => true,
             _ => false,

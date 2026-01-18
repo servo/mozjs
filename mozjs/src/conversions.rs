@@ -132,6 +132,11 @@ impl_num!(f64, 0.0, f64::MIN, f64::MAX);
 pub trait ToJSValConvertible {
     /// Convert `self` to a `JSVal`. JSAPI failure causes a panic.
     unsafe fn to_jsval(&self, cx: *mut JSContext, rval: MutableHandleValue);
+
+    /// Convert `self` to a `JSVal`. JSAPI failure causes a panic.
+    fn safe_to_jsval(&self, cx: &mut crate::context::JSContext, rval: MutableHandleValue) {
+        unsafe { self.to_jsval(cx.raw_cx(), rval) }
+    }
 }
 
 /// An enum to better support enums through FromJSValConvertible::from_jsval.
@@ -167,6 +172,19 @@ pub trait FromJSValConvertible: Sized {
         val: HandleValue,
         option: Self::Config,
     ) -> Result<ConversionResult<Self>, ()>;
+
+    /// Convert `val` to type `Self`.
+    /// Optional configuration of type `T` can be passed as the `option`
+    /// argument.
+    /// If it returns `Err(())`, a JSAPI exception is pending.
+    /// If it returns `Ok(Failure(reason))`, there is no pending JSAPI exception.
+    fn safe_from_jsval(
+        cx: &mut crate::context::JSContext,
+        val: HandleValue,
+        option: Self::Config,
+    ) -> Result<ConversionResult<Self>, ()> {
+        unsafe { Self::from_jsval(cx.raw_cx(), val, option) }
+    }
 }
 
 /// A trait to convert `JSVal`s to Rust types inside of Rc wrappers.
@@ -178,6 +196,16 @@ pub trait FromJSValConvertibleRc: Sized {
         cx: *mut JSContext,
         val: HandleValue,
     ) -> Result<ConversionResult<Rc<Self>>, ()>;
+
+    /// Convert `val` to type `Self`.
+    /// If it returns `Err(())`, a JSAPI exception is pending.
+    /// If it returns `Ok(Failure(reason))`, there is no pending JSAPI exception.
+    fn safe_from_jsval(
+        cx: &mut crate::context::JSContext,
+        val: HandleValue,
+    ) -> Result<ConversionResult<Rc<Self>>, ()> {
+        unsafe { Self::from_jsval(cx.raw_cx(), val) }
+    }
 }
 
 impl<T: FromJSValConvertibleRc> FromJSValConvertible for Rc<T> {
@@ -189,6 +217,14 @@ impl<T: FromJSValConvertibleRc> FromJSValConvertible for Rc<T> {
         _option: (),
     ) -> Result<ConversionResult<Rc<T>>, ()> {
         <T as FromJSValConvertibleRc>::from_jsval(cx, val)
+    }
+
+    fn safe_from_jsval(
+        cx: &mut crate::context::JSContext,
+        val: HandleValue,
+        _option: (),
+    ) -> Result<ConversionResult<Rc<T>>, ()> {
+        <T as FromJSValConvertibleRc>::safe_from_jsval(cx, val)
     }
 }
 
