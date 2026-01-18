@@ -32,7 +32,7 @@ jobs:
           - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     runs-on: ${{ matrix.platform.os }}
     env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release-tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
