@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 use std::mem::MaybeUninit;
-use std::ops::Deref;
+use std::ops::{Deref, IndexMut};
 use std::ptr;
 use std::ptr::NonNull;
 
@@ -132,6 +132,40 @@ where
     pub fn take(&mut self) -> Option<T> {
         // Safety: No GC occurs during take call
         unsafe { self.as_mut().take() }
+    }
+}
+
+impl<'a, T> RootedGuard<'a, Vec<T>>
+where
+    Vec<T>: RootKind,
+{
+    pub fn push(&mut self, value: T) {
+        // Safety: No GC occurs during this call
+        unsafe { self.as_mut().push(value) }
+    }
+
+    pub fn extend(&mut self, iterator: impl Iterator<Item = T>) {
+        // Safety: No GC occurs during this call
+        unsafe { self.as_mut().extend(iterator) }
+    }
+
+    pub fn set_index(&mut self, index: usize, value: T) {
+        // Safety: No GC occurs during this call
+        unsafe {
+            *self.as_mut().index_mut(index) = value;
+        }
+    }
+
+    pub fn handle_at(&'_ self, index: usize) -> Handle<'_, T> {
+        assert!(index < self.len());
+        // Safety: Values within this rooted vector are traced.
+        unsafe { Handle::from_marked_location(self.deref().as_ptr().add(index)) }
+    }
+
+    pub fn handle_mut_at(&'_ mut self, index: usize) -> MutableHandle<'_, T> {
+        assert!(index < self.len());
+        // Safety: Values within this rooted vector are traced.
+        unsafe { MutableHandle::from_marked_location(self.as_mut().as_mut_ptr().add(index)) }
     }
 }
 
