@@ -2,7 +2,7 @@
 name = "mozjs"
 description = "Rust bindings to the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
-version = "0.14.7"
+version = "0.14.8"
 authors = ["The Servo Project Developers"]
 license.workspace = true
 edition.workspace = true
@@ -26,7 +26,7 @@ crown = ["mozjs_sys/crown"]
 encoding_rs = "0.8.35"
 libc.workspace = true
 log = "0.4"
-mozjs_sys = { version = "=0.140.5-9", path = "../mozjs-sys" }
+mozjs_sys = { version = "=0.140.5-10", path = "../mozjs-sys" }
 num-traits = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
