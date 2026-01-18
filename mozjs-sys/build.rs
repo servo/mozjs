@@ -459,9 +459,6 @@ fn should_build_from_source() -> bool {
         true
     } else if env::var_os("MOZJS_ARCHIVE").is_some() {
         false
-    } else if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-        println!("debug-mozjs feature is enabled. Building from source directly.");
-        true
     } else if env::var_os("CARGO_FEATURE_INTL").is_none() {
         println!("intl feature is disabled. Building from source directly.");
         true
@@ -959,7 +956,7 @@ mod archive {
     pub(crate) fn compress_static_lib(build_dir: &Path) -> Result<(), std::io::Error> {
         let target = env::var("TARGET").unwrap();
         let target_dir = get_cargo_target_dir(build_dir).unwrap().display();
-        let tar_gz = File::create(format!("{}/libmozjs-{}.tar.gz", target_dir, target))?;
+        let tar_gz = File::create(format!("{}/{}", target_dir, archive()))?;
         let enc = GzEncoder::new(tar_gz, Compression::default());
         let mut tar = tar::Builder::new(enc);
 
@@ -989,18 +986,20 @@ mod archive {
                 &mut File::open(join_path(build_dir, "gluebindings.rs"))?,
             )?;
         } else {
-            let strip_bin = get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into());
-            // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
-            // TODO: Maybe we could separate symbols for those who still want the debug ability.
-            // https://github.com/GabrielMajeri/separate-symbols
-            let mut strip = Command::new(strip_bin);
-            if !target.contains("apple") {
-                strip.arg("--strip-debug");
-            };
-            let status = strip
-                .arg(join_path(build_dir, "js/src/build/libjs_static.a"))
-                .status()?;
-            assert!(status.success());
+            if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_none() {
+                let strip_bin = get_cc_rs_env_os("STRIP").unwrap_or_else(|| "strip".into());
+                // Strip symbols from the static binary since it could bump up to 1.6GB on Linux.
+                // TODO: Maybe we could separate symbols for those who still want the debug ability.
+                // https://github.com/GabrielMajeri/separate-symbols
+                let mut strip = Command::new(strip_bin);
+                if !target.contains("apple") {
+                    strip.arg("--strip-debug");
+                };
+                let status = strip
+                    .arg(join_path(build_dir, "js/src/build/libjs_static.a"))
+                    .status()?;
+                assert!(status.success());
+            }
 
             // This is the static library of spidermonkey.
             tar.append_file(
@@ -1029,6 +1028,17 @@ mod archive {
         }
 
         Ok(())
+    }
+
+    /// Returns name of libmozjs archive
+    pub(crate) fn archive() -> String {
+        let target = env::var("TARGET").unwrap();
+        let features = if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
+            "-debugmozjs"
+        } else {
+            ""
+        };
+        format!("libmozjs-{target}{features}.tar.gz")
     }
 
     /// Decompress the archive of spidermonkey build to build directory.
@@ -1154,8 +1164,7 @@ mod archive {
     pub(crate) fn download_archive(base: Option<&str>) -> Result<PathBuf, std::io::Error> {
         let base = base.unwrap_or("https://github.com/servo/mozjs/releases");
         let version = env::var("CARGO_PKG_VERSION").unwrap();
-        let target = env::var("TARGET").unwrap();
-        let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join("libmozjs.tar.gz");
+        let archive_path = PathBuf::from(env::var_os("OUT_DIR").unwrap()).join(&archive());
 
         if !archive_path.exists() {
             eprintln!("Trying to download prebuilt mozjs static library from Github Releases");
@@ -1167,7 +1176,8 @@ mod archive {
                 .arg("-o")
                 .arg(&archive_path)
                 .arg(format!(
-                    "{base}/download/mozjs-sys-v{version}/libmozjs-{target}.tar.gz"
+                    "{base}/download/mozjs-sys-v{version}/{}",
+                    archive()
                 ))
                 .status()?
                 .success()

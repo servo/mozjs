@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
@@ -58,14 +58,14 @@ jobs:
           version: "v0.12.0"
       - name: Build
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features ${{ matrix.features }}
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}"
       - name: Upload artifact
-        if: ${{ matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/libmozjs-${{ matrix.platform.target }}.tar.gz
-          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+          path: ./target/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   linux:
     env:
@@ -76,9 +76,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
     steps:
       - uses: actions/checkout@v4
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          large-packages: false
+          swap-storage: false
       - uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
@@ -93,9 +99,9 @@ jobs:
       - name: Build
         # doc tests on mozjs_sys fail because they include stuff from SpiderMonkey
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features ${{ matrix.features }}
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features ${{ matrix.features }}
-          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features "${{ matrix.features }}"
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
@@ -106,18 +112,18 @@ jobs:
           git diff --staged --no-ext-diff --exit-code
 
       - name: Upload artifact
-        if: ${{ matrix.features != 'debugmozjs'  && env.NEW_RUST_CHECK == 'false' }}
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/libmozjs-x86_64-unknown-linux-gnu.tar.gz
-          name: libmozjs-x86_64-unknown-linux-gnu.tar.gz
+          path: ./target/libmozjs-x86_64-unknown-linux-gnu${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-x86_64-unknown-linux-gnu${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   windows:
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
       matrix:
-        features: ["debugmozjs", '""']
+        features: ["debugmozjs", ""]
         platform:
           - { target: x86_64-pc-windows-msvc, os: windows-latest }
           - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
@@ -134,7 +140,7 @@ jobs:
         id: toolchain
         with:
           toolchain: ${{ inputs.rust_version }}
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.platform.target }}
           components: "rustfmt"
       - name: Install deps
         run: |
@@ -145,18 +151,18 @@ jobs:
       - name: Build Windows
         shell: cmd
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}"
       - name: Test Windows
         shell: cmd
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}"
 
       - name: Upload artifact
-        if: ${{ matrix.features != 'debugmozjs' && env.NEW_RUST_CHECK == 'false' }}
+        if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v4
         with:
-          path: ./target/${{ matrix.platform.target }}/libmozjs-${{ matrix.platform.target }}.tar.gz
-          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+          path: ./target/${{ matrix.platform.target }}/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
 
   android:
     runs-on: ubuntu-latest
@@ -201,7 +207,7 @@ jobs:
     strategy:
       matrix:
         target: ["aarch64-unknown-linux-ohos", "x86_64-unknown-linux-ohos"]
-        features: [ "", "--features debugmozjs"]
+        features: ["", "--features debugmozjs"]
     steps:
       - uses: actions/checkout@v4
       - name: Setup OpenHarmony SDK
@@ -372,7 +378,7 @@ jobs:
     if: ${{  inputs.verify_artifacts && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled') }}
     uses: ./.github/workflows/release-check.yml
     with:
-      release-tag: ''
+      release-tag: ""
       rust_version: ${{ inputs.rust_version }}
 
   build_result:

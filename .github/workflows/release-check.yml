@@ -23,6 +23,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        features: ["debugmozjs", ""]
         platform:
           - { target: aarch64-apple-darwin, os: macos-14 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
@@ -31,7 +32,7 @@ jobs:
           - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     runs-on: ${{ matrix.platform.os }}
     env:
-      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
+      RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release-tag }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
@@ -44,21 +45,21 @@ jobs:
         if: ${{ env.RELEASE_TAG == '' }}
         uses: actions/download-artifact@v4
         with:
-          name: libmozjs-${{ matrix.platform.target }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
       - name: Build from archive
         if: ${{ env.RELEASE_TAG == '' }}
         env:
-          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}.tar.gz
+          MOZJS_ARCHIVE: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose  --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose  --features "${{ matrix.features }}"
       - name: Build from auto-download
         if: ${{ env.RELEASE_TAG != '' }}
         env:
           MOZJS_ATTESTATION: strict
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose  --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose  --features "${{ matrix.features }}"
 
   verify-archive-android:
     name: "Verify archive Android"
