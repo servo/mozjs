@@ -48,6 +48,7 @@ use log::debug;
 use mozjs_sys::jsgc::Rooted;
 use num_traits::PrimInt;
 use std::borrow::Cow;
+use std::ffi::CString;
 use std::mem;
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -248,7 +249,7 @@ where
     f64: As<D>,
 {
     if d.is_infinite() {
-        throw_type_error(cx, "value out of range in an EnforceRange argument");
+        throw_type_error(cx, c"value out of range in an EnforceRange argument");
         return Err(());
     }
 
@@ -256,7 +257,7 @@ where
     if D::MIN.cast() <= rounded && rounded <= D::MAX.cast() {
         Ok(ConversionResult::Success(rounded.cast()))
     } else {
-        throw_type_error(cx, "value out of range in an EnforceRange argument");
+        throw_type_error(cx, c"value out of range in an EnforceRange argument");
         Err(())
     }
 }
@@ -836,7 +837,11 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
             ret.push(match T::from_jsval(cx, val.handle(), option.clone())? {
                 ConversionResult::Success(v) => v,
                 ConversionResult::Failure(e) => {
-                    throw_type_error(cx, &e);
+                    let e = CString::new(e.as_bytes()).unwrap_or_else(|_| {
+                        CString::new(e.replace('\0', "\\u0000").as_bytes())
+                            .expect("no nulbyte should be present after replacement")
+                    });
+                    throw_type_error(cx, e.as_c_str());
                     return Err(());
                 }
             });
@@ -883,7 +888,7 @@ impl FromJSValConvertible for *mut JSObject {
         _option: (),
     ) -> Result<ConversionResult<*mut JSObject>, ()> {
         if !value.is_object() {
-            throw_type_error(cx, "value is not an object");
+            throw_type_error(cx, c"value is not an object");
             return Err(());
         }
 
@@ -909,7 +914,7 @@ impl FromJSValConvertible for *mut JS::Symbol {
         _option: (),
     ) -> Result<ConversionResult<*mut JS::Symbol>, ()> {
         if !value.is_symbol() {
-            throw_type_error(cx, "value is not a symbol");
+            throw_type_error(cx, c"value is not a symbol");
             return Err(());
         }
 

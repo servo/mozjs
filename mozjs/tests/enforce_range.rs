@@ -56,7 +56,7 @@ impl SM {
         let cx = self.rt.cx();
         rooted!(&in(cx) let mut rval = UndefinedValue());
         unsafe {
-            let options = CompileOptionsWrapper::new(&cx, "test", 1);
+            let options = CompileOptionsWrapper::new(&cx, c"test".to_owned(), 1);
             evaluate_script(
                 cx,
                 HandleObject::from_raw(self.global.handle()),
