@@ -72,7 +72,7 @@ impl SM {
                 ConversionBehavior::EnforceRange,
             ) {
                 Ok(ConversionResult::Success(t)) => Ok(t),
-                Ok(ConversionResult::Failure(e)) => panic!("{e}"),
+                Ok(ConversionResult::Failure(e)) => panic!("{}", e.to_string_lossy()),
                 Err(()) => {
                     assert!(JS_IsExceptionPending(cx));
                     JS_ClearPendingException(cx);

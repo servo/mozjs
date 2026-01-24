@@ -48,7 +48,7 @@ use log::debug;
 use mozjs_sys::jsgc::Rooted;
 use num_traits::PrimInt;
 use std::borrow::Cow;
-use std::ffi::CString;
+use std::ffi::CStr;
 use std::mem;
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -146,7 +146,7 @@ pub enum ConversionResult<T> {
     /// Everything went fine.
     Success(T),
     /// Conversion failed, without a pending exception.
-    Failure(Cow<'static, str>),
+    Failure(Cow<'static, CStr>),
 }
 
 impl<T> ConversionResult<T> {
@@ -791,7 +791,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         option: C,
     ) -> Result<ConversionResult<Vec<T>>, ()> {
         if !value.is_object() {
-            return Ok(ConversionResult::Failure("Value is not an object".into()));
+            return Ok(ConversionResult::Failure(c"Value is not an object".into()));
         }
 
         // Depending on the version of LLVM in use, bindgen can end up including
@@ -818,7 +818,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         }
 
         if iterator.iterator.data.is_null() {
-            return Ok(ConversionResult::Failure("Value is not iterable".into()));
+            return Ok(ConversionResult::Failure(c"Value is not iterable".into()));
         }
 
         let mut ret = vec![];
@@ -837,11 +837,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
             ret.push(match T::from_jsval(cx, val.handle(), option.clone())? {
                 ConversionResult::Success(v) => v,
                 ConversionResult::Failure(e) => {
-                    let e = CString::new(e.as_bytes()).unwrap_or_else(|_| {
-                        CString::new(e.replace('\0', "\\u0000").as_bytes())
-                            .expect("no nulbyte should be present after replacement")
-                    });
-                    throw_type_error(cx, e.as_c_str());
+                    throw_type_error(cx, e.as_ref());
                     return Err(());
                 }
             });
