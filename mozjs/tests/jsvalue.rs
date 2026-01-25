@@ -26,7 +26,7 @@ unsafe fn tester<F: Fn(RootedGuard<JSVal>)>(
     let cx = rt.cx();
     rooted!(&in(cx) let mut rval = UndefinedValue());
 
-    let options = CompileOptionsWrapper::new(&cx, "test", 1);
+    let options = CompileOptionsWrapper::new(&cx, c"test".to_owned(), 1);
     assert!(evaluate_script(cx, global, js, rval.handle_mut(), options).is_ok());
     test(rval);
 

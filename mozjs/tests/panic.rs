@@ -49,7 +49,7 @@ fn test_panic() {
         assert!(!function.is_null());
 
         rooted!(&in(&mut realm) let mut rval = UndefinedValue());
-        let options = CompileOptionsWrapper::new(&mut realm, "test.js", 0);
+        let options = CompileOptionsWrapper::new(&mut realm, c"test.js".to_owned(), 0);
         let _ = evaluate_script(
             &mut realm,
             global.handle(),

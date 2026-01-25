@@ -533,8 +533,7 @@ pub struct CompileOptionsWrapper {
 }
 
 impl CompileOptionsWrapper {
-    pub fn new(cx: &crate::context::JSContext, filename: &str, line: u32) -> Self {
-        let filename = CString::new(filename.as_bytes()).unwrap();
+    pub fn new(cx: &crate::context::JSContext, filename: CString, line: u32) -> Self {
         let ptr = unsafe { wrappers2::NewCompileOptions(cx, filename.as_ptr(), line) };
         assert!(!ptr.is_null());
         Self { ptr, filename }
@@ -542,8 +541,7 @@ impl CompileOptionsWrapper {
     /// # Safety
     /// `cx` must point to a non-null, valid [`JSContext`].
     /// To create an instance from safe code, use [`Runtime::new_compile_options`].
-    pub unsafe fn new_raw(cx: *mut JSContext, filename: &str, line: u32) -> Self {
-        let filename = CString::new(filename.as_bytes()).unwrap();
+    pub unsafe fn new_raw(cx: *mut JSContext, filename: CString, line: u32) -> Self {
         let ptr = NewCompileOptions(cx, filename.as_ptr(), line);
         assert!(!ptr.is_null());
         Self { ptr, filename }

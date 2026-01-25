@@ -57,7 +57,7 @@ fn vec_conversion() {
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
 
-        let options = CompileOptionsWrapper::new(&context, "test", 1);
+        let options = CompileOptionsWrapper::new(&context, c"test".to_owned(), 1);
         assert!(evaluate_script(
             context,
             global.handle(),
@@ -73,7 +73,7 @@ fn vec_conversion() {
 
         assert_eq!(&orig_vec, converted.get_success_value().unwrap());
 
-        let options = CompileOptionsWrapper::new(&context, "test", 1);
+        let options = CompileOptionsWrapper::new(&context, c"test".to_owned(), 1);
         assert!(
             evaluate_script(context, global.handle(), "({})", rval.handle_mut(), options).is_ok()
         );

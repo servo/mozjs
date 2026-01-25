@@ -33,7 +33,7 @@ fn run(mut rt: Runtime) {
     });
 
     /* These should indicate source location for diagnostics. */
-    let filename: &'static str = "inline.js";
+    let filename = c"inline.js".to_owned();
     let lineno: u32 = 1;
 
     /*

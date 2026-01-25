@@ -98,7 +98,7 @@ fn iterate_stack_frames() {
             foo();
         ";
         rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = CompileOptionsWrapper::new(&context, "test.js", 0);
+        let options = CompileOptionsWrapper::new(&context, c"test.js".to_owned(), 0);
         assert!(evaluate_script(
             context,
             global.handle(),
