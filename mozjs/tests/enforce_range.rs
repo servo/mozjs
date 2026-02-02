@@ -56,7 +56,7 @@ impl SM {
         let cx = self.rt.cx();
         rooted!(&in(cx) let mut rval = UndefinedValue());
         unsafe {
-            let options = CompileOptionsWrapper::new(&cx, "test", 1);
+            let options = CompileOptionsWrapper::new(&cx, c"test".to_owned(), 1);
             evaluate_script(
                 cx,
                 HandleObject::from_raw(self.global.handle()),
@@ -72,7 +72,7 @@ impl SM {
                 ConversionBehavior::EnforceRange,
             ) {
                 Ok(ConversionResult::Success(t)) => Ok(t),
-                Ok(ConversionResult::Failure(e)) => panic!("{e}"),
+                Ok(ConversionResult::Failure(e)) => panic!("{}", e.to_string_lossy()),
                 Err(()) => {
                     assert!(JS_IsExceptionPending(cx));
                     JS_ClearPendingException(cx);

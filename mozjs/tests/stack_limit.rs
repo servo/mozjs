@@ -32,7 +32,7 @@ fn stack_limit() {
             &*c_option,
         ));
         rooted!(&in(context) let mut rval = UndefinedValue());
-        let options = CompileOptionsWrapper::new(&context, "test", 1);
+        let options = CompileOptionsWrapper::new(&context, c"test".to_owned(), 1);
         assert!(evaluate_script(
             context,
             global.handle(),
