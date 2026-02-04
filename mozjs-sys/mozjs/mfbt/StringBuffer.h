@@ -61,7 +61,7 @@ class StringBuffer {
                "mStorageSize will truncate");
 
     size_t bytes = sizeof(StringBuffer) + aSize;
-    void* hdr = aArena ? moz_arena_malloc(*aArena, bytes) : malloc(bytes);
+    void* hdr = aArena ? moz_arena_malloc(*aArena, bytes) : malloc_impl(bytes);
     if (!hdr) {
       return nullptr;
     }
@@ -152,7 +152,7 @@ class StringBuffer {
 
     size_t bytes = sizeof(StringBuffer) + aSize;
     aHdr = aArena ? (StringBuffer*)moz_arena_realloc(*aArena, aHdr, bytes)
-                  : (StringBuffer*)realloc(aHdr, bytes);
+                  : (StringBuffer*)realloc_impl(aHdr, bytes);
     if (aHdr) {
       detail::RefCountLogger::logAddRef(aHdr, 1);
       aHdr->mStorageSize = aSize;
@@ -187,7 +187,7 @@ class StringBuffer {
       // on other threads, that is, to ensure that writes prior to that release
       // are now visible on this thread.
       count = mRefCount.load(std::memory_order_acquire);
-      free(this);  // We were allocated with malloc.
+      free_impl(this);  // We were allocated with malloc.
     }
   }
 

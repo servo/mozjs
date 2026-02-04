@@ -131,6 +131,14 @@
 #  define MOZ_JEMALLOC_API_NODISCARD MOZ_EXTERN_C [[nodiscard]]
 #endif
 
+#ifdef SERVO_EMBEDDER_MEMORY
+// Provide embedder versions of mozmem_malloc_impl
+#  include <servo_embedder_memory_wrap.h>
+#  if ! (defined(mozmem_malloc_impl) && defined(mozmem_dup_impl))
+#  error "servo_embedder_memory_wrap.h must contain mozmem_malloc_impl and mozmem_dup_impl definition"
+#  endif
+#endif // SERVO_EMBEDDER_MEMORY
+
 #ifndef mozmem_malloc_impl
 #  define mozmem_malloc_impl(a) a
 #endif

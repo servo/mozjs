@@ -1,0 +1,12 @@
+[package]
+name = "embedder_allocator"
+version = "0.1.0"
+repository.workspace = true
+license.workspace = true
+edition.workspace = true
+description = "Example usage of mozjs, with the embedder (this crate) providing a custom allocator for mozjs"
+publish = false
+
+[dependencies]
+mozjs = { path =  "../../mozjs", features = ["custom-alloc"] }
+mimalloc = "0.1.48"
