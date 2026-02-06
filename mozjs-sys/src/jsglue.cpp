@@ -286,10 +286,12 @@ struct ProxyTraps {
   // isScripted
 };
 
-typedef void (*InvokeScriptPreparerHook)(JS::HandleObject global, Closure& closure);
+typedef void (*InvokeScriptPreparerHook)(JS::HandleObject global,
+                                         Closure& closure);
 
 struct RustEnvironmentPreparer : public js::ScriptEnvironmentPreparer {
-  explicit RustEnvironmentPreparer(InvokeScriptPreparerHook hook) : invokeScriptPreparerHook(hook) {}
+  explicit RustEnvironmentPreparer(InvokeScriptPreparerHook hook)
+      : invokeScriptPreparerHook(hook) {}
   void invoke(JS::HandleObject global, Closure& closure) override {
     MOZ_ASSERT(JS_IsGlobalObject(global));
 
@@ -298,11 +300,12 @@ struct RustEnvironmentPreparer : public js::ScriptEnvironmentPreparer {
     }
   }
 
-  private:
-    InvokeScriptPreparerHook invokeScriptPreparerHook;
+ private:
+  InvokeScriptPreparerHook invokeScriptPreparerHook;
 };
 
-void RegisterScriptEnvironmentPreparer(JSContext* cx, InvokeScriptPreparerHook hook) {
+void RegisterScriptEnvironmentPreparer(JSContext* cx,
+                                       InvokeScriptPreparerHook hook) {
   js::SetScriptEnvironmentPreparer(cx, new RustEnvironmentPreparer(hook));
 }
 
