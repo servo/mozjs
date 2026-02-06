@@ -286,8 +286,8 @@ struct ProxyTraps {
   // isScripted
 };
 
-typedef void (*InvokeScriptPreparerHook)(JS::HandleObject global,
-                                         Closure& closure);
+typedef void (*InvokeScriptPreparerHook)(
+    JS::HandleObject global, js::ScriptEnvironmentPreparer::Closure& closure);
 
 struct RustEnvironmentPreparer : public js::ScriptEnvironmentPreparer {
   explicit RustEnvironmentPreparer(InvokeScriptPreparerHook hook)
