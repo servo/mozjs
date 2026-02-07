@@ -1,4 +1,5 @@
 wrap!(glue: pub fn RegisterScriptEnvironmentPreparer(cx: &mut JSContext, hook: InvokeScriptPreparerHook));
+wrap!(glue: pub fn RunScriptEnvironmentPreparerClosure(cx: &mut JSContext, closure: *mut ScriptEnvironmentPreparer_Closure));
 wrap!(glue: pub fn InvokeGetOwnPropertyDescriptor(handler: *const ::std::os::raw::c_void, cx: &mut JSContext, proxy: HandleObject, id: HandleId, desc: MutableHandle<PropertyDescriptor>, isNone: *mut bool) -> bool);
 wrap!(glue: pub fn InvokeHasOwn(handler: *const ::std::os::raw::c_void, cx: &mut JSContext, proxy: HandleObject, id: HandleId, bp: *mut bool) -> bool);
 wrap!(glue: pub fn CallJitGetterOp(info: *const JSJitInfo, cx: &mut JSContext, thisObj: HandleObject, specializedThis: *mut ::std::os::raw::c_void, argc: ::std::os::raw::c_uint, vp: *mut Value) -> bool);
