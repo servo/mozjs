@@ -309,6 +309,19 @@ void RegisterScriptEnvironmentPreparer(JSContext* cx,
   js::SetScriptEnvironmentPreparer(cx, new RustEnvironmentPreparer(hook));
 }
 
+bool RunScriptEnvironmentPreparerClosure(
+    JSContext* cx, js::ScriptEnvironmentPreparer::Closure& closure) {
+  MOZ_ASSERT(!JS_IsExceptionPending(cx));
+
+  bool result = closure(cx);
+
+  if (result) {
+    MOZ_ASSERT(!JS_IsExceptionPending(cx));
+  }
+
+  return result;
+}
+
 static int HandlerFamily;
 
 #define DEFER_TO_TRAP_OR_BASE_CLASS(_base)                                    \
