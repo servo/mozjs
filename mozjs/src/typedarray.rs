@@ -63,7 +63,6 @@ use crate::rust::{HandleValue, MutableHandleObject, MutableHandleValue};
 
 use std::cell::Cell;
 use std::ptr;
-use std::slice;
 
 /// Trait that specifies how pointers to wrapped objects are stored. It supports
 /// two variants, one with bare pointer (to be rooted on stack using
@@ -125,7 +124,7 @@ pub enum CreateWith<'a, T: 'a> {
 /// A typed array wrapper.
 pub struct TypedArray<T: TypedArrayElement, S: JSObjectStorage> {
     object: S,
-    computed: Cell<Option<(*mut T::Element, usize)>>,
+    computed: Cell<Option<*mut [T::Element]>>,
 }
 
 unsafe impl<T> CustomTrace for TypedArray<T, *mut JSObject>
@@ -158,7 +157,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         }
     }
 
-    fn data(&self) -> (*mut T::Element, usize) {
+    fn data(&self) -> *mut [T::Element] {
         if let Some(data) = self.computed.get() {
             return data;
         }
@@ -170,7 +169,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
 
     /// Returns the number of elements in the underlying typed array.
     pub fn len(&self) -> usize {
-        self.data().1 as usize
+        self.data().len()
     }
 
     /// # Unsafety
@@ -203,8 +202,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// The returned slice can be invalidated if the underlying typed array
     /// is neutered.
     pub unsafe fn as_slice(&self) -> &[T::Element] {
-        let (pointer, length) = self.data();
-        slice::from_raw_parts(pointer as *const T::Element, length as usize)
+        &*self.data()
     }
 
     /// # Unsafety
@@ -215,8 +213,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// The underlying `JSObject` can be aliased, which can lead to
     /// Undefined Behavior due to mutable aliasing.
     pub unsafe fn as_mut_slice(&mut self) -> &mut [T::Element] {
-        let (pointer, length) = self.data();
-        slice::from_raw_parts_mut(pointer, length as usize)
+        &mut *self.data()
     }
 
     /// Return a boolean flag which denotes whether the underlying buffer
@@ -259,9 +256,9 @@ impl<T: TypedArrayElementCreator + TypedArrayElement, S: JSObjectStorage> TypedA
     }
 
     unsafe fn update_raw(data: &[T::Element], result: *mut JSObject) {
-        let (buf, length) = T::length_and_data(result);
-        assert!(data.len() <= length as usize);
-        ptr::copy_nonoverlapping(data.as_ptr(), buf, data.len());
+        let buffer = T::length_and_data(result);
+        assert!(data.len() <= buffer.len());
+        ptr::copy_nonoverlapping(data.as_ptr(), buffer as *mut T::Element, data.len());
     }
 }
 
@@ -273,7 +270,7 @@ pub trait TypedArrayElement {
     /// Unwrap a typed array JS reflector for this element type.
     unsafe fn unwrap_array(obj: *mut JSObject) -> *mut JSObject;
     /// Retrieve the length and data of a typed array's buffer for this element type.
-    unsafe fn length_and_data(obj: *mut JSObject) -> (*mut Self::Element, usize);
+    unsafe fn length_and_data(obj: *mut JSObject) -> *mut [Self::Element];
 }
 
 /// Internal trait for creating new typed arrays.
@@ -298,13 +295,13 @@ macro_rules! typed_array_element {
                 $unwrap(obj)
             }
 
-            unsafe fn length_and_data(obj: *mut JSObject) -> (*mut Self::Element, usize) {
+            unsafe fn length_and_data(obj: *mut JSObject) -> *mut [Self::Element] {
                 let mut len = 0;
                 let mut shared = false;
                 let mut data = ptr::null_mut();
                 $length_and_data(obj, &mut len, &mut shared, &mut data);
                 assert!(!shared);
-                (data, len)
+                std::ptr::slice_from_raw_parts_mut(data, len)
             }
         }
     };
