@@ -683,7 +683,7 @@ fn find_make() -> OsString {
         return make;
     }
 
-    match Command::new("gmake").status() {
+    match Command::new("gmake").args(&["--version"]).status() {
         Ok(gmake) if gmake.success() => OsStr::new("gmake").to_os_string(),
         _ => OsStr::new("make").to_os_string(),
     }
