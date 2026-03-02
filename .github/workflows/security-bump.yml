@@ -20,6 +20,9 @@ jobs:
               with:
                   python-version: "3.13"
             - run: pip install requests
+            - run: |
+                  git config user.name 'github-actions[bot]'
+                  git config user.email 'github-actions[bot]@users.noreply.github.com'
             - run: python3 ./mozjs-sys/etc/sm-security-bump.py
             - name: Create Pull Request
               uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0

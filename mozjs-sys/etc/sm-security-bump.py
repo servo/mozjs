@@ -39,6 +39,7 @@ subprocess.check_call(
         "servo/mozjs",
         "--title",
         f"SpiderMonkey {tag}",
+        "--latest=false",
         "--notes",
         f"Source code for SpiderMonkey {tag} (changeset: [{changeset}](https://hg.mozilla.org/releases/{REPO}/rev/{changeset}))",
     ]
