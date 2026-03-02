@@ -1032,3 +1032,27 @@ BEGIN_TEST(testRootedTuple) {
   return true;
 }
 END_TEST(testRootedTuple)
+
+BEGIN_TEST(testRootedRealm) {
+  // Create a new global and use Rooted<Realm*> to keep it alive.
+  Rooted<Realm*> realm(cx);
+  {
+    JS::RealmOptions globalOptions;
+    JSObject* otherGlobal = JS_NewGlobalObject(
+        cx, getGlobalClass(), nullptr, JS::FireOnNewGlobalHook, globalOptions);
+    CHECK(otherGlobal);
+    realm = JS::GetObjectRealmOrNull(otherGlobal);
+    CHECK(realm);
+  }
+
+  JS_GC(cx);
+
+  // Use the realm.
+  JSAutoRealm ar(cx, JS::GetRealmGlobalOrNull(realm));
+  JS::RootedValue v(cx);
+  EVAL("let x = -1234; Math.abs(x)", &v);
+  CHECK(v.toNumber() == 1234);
+
+  return true;
+}
+END_TEST(testRootedRealm)

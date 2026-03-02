@@ -201,7 +201,7 @@ inline void AssertObjectIsSavedFrameOrWrapper(JSContext* cx,
 struct ReconstructedSavedFramePrincipals : public JSPrincipals {
   explicit constexpr ReconstructedSavedFramePrincipals()
       : JSPrincipals(JSPrincipals::RefCount(1)) {
-    //MOZ_ASSERT(is(this));
+    MOZ_ASSERT(is(this));
   }
 
   [[nodiscard]] bool write(JSContext* cx,
