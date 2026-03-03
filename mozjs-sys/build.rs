@@ -138,6 +138,7 @@ fn main() {
 
 fn build_spidermonkey(build_dir: &Path) {
     let target = env::var("TARGET").unwrap();
+    let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let make;
 
     #[cfg(windows)]
@@ -210,7 +211,6 @@ fn build_spidermonkey(build_dir: &Path) {
     }
 
     cppflags.push(get_cc_rs_env_os("CPPFLAGS").unwrap_or_default());
-    cmd.env("CPPFLAGS", cppflags);
 
     if let Some(makeflags) = env::var_os("CARGO_MAKEFLAGS") {
         cmd.env("MAKEFLAGS", makeflags);
@@ -218,16 +218,31 @@ fn build_spidermonkey(build_dir: &Path) {
 
     let mut cxxflags = vec![];
 
+    if env::var_os("CARGO_FEATURE_CUSTOM_ALLOC").is_some() {
+        let mut flags = vec![];
+        let include_dir_str = env::var("SERVO_CUSTOM_ALLOC_INCLUDE_DIR").expect("Required variable not set with feature custom-alloc");
+        let include_dir = Path::new(&include_dir_str);
+        assert!(include_dir.is_dir(), "SERVO_CUSTOM_ALLOC_INCLUDE_DIR must be set to a valid directory");
+        assert!(include_dir.join("servo_embedder_memory_wrap.h").is_file(), "SERVO_CUSTOM_ALLOC_INCLUDE_DIR must contain header `servo_embedder_memory_wrap.h`");
+        flags.push(format!("-I{}", &include_dir_str.replace("\\", "/")));
+        flags.push("-DSERVO_EMBEDDER_MEMORY".to_string());
+        println!("cargo:rerun-if-changed={}", include_dir_str);
+
+        cppflags.extend(flags.iter().map(|s| OsString::from(s)));
+        cxxflags.extend(flags);
+    }
+
     if target.contains("apple") || target.contains("freebsd") || target.contains("ohos") {
         cxxflags.push(String::from("-stdlib=libc++"));
     }
+
+    cmd.env("CPPFLAGS", cppflags);
 
     let base_cxxflags = env::var("CXXFLAGS").unwrap_or_default();
     let mut cxxflags = cxxflags.join(" ");
     cxxflags.push_str(&base_cxxflags);
     cmd.env("CXXFLAGS", cxxflags);
 
-    let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     let result = cmd
         .args(&["-R", "-f"])
         .arg(cargo_manifest_dir.join("makefile.cargo"))
@@ -292,6 +307,16 @@ fn build(build_dir: &Path, target: BuildTarget) {
 
     build.flag(include_file_flag(build.get_compiler().is_like_msvc()));
     build.flag(&js_config_path(build_dir));
+    let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+
+    if env::var_os("CARGO_FEATURE_CUSTOM_ALLOC").is_some() {
+        let include_dir_str = env::var("SERVO_CUSTOM_ALLOC_INCLUDE_DIR").expect("Required variable not set with feature custom-alloc");
+        let include_dir = Path::new(&include_dir_str);
+        assert!(include_dir.is_dir(), "SERVO_CUSTOM_ALLOC_INCLUDE_DIR must be set to a valid directory");
+        assert!(include_dir.join("servo_embedder_memory_wrap.h").is_file(), "SERVO_CUSTOM_ALLOC_INCLUDE_DIR must contain header `servo_embedder_memory_wrap.h`");
+        build.include(include_dir);
+        build.define("SERVO_EMBEDDER_MEMORY", "");
+    }
 
     for path in target.include_paths(build_dir) {
         build.include(path);
@@ -313,6 +338,8 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
     config &= !CodegenConfig::DESTRUCTORS;
     config &= !CodegenConfig::METHODS;
 
+    let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+
     let mut builder = bindgen::builder()
         .rust_target(minimum_rust_target())
         .header(target.path())
@@ -331,6 +358,21 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
             .clang_arg("--sysroot")
             .clang_arg(env::var("WASI_SYSROOT").unwrap().to_string());
     }
+
+    let custom_alloc_flags = if env::var_os("CARGO_FEATURE_CUSTOM_ALLOC").is_some() {
+        let mut flags = vec![];
+        let include_dir_str = env::var("SERVO_CUSTOM_ALLOC_INCLUDE_DIR").expect("Required variable not set with feature custom-alloc");
+        let include_dir = Path::new(&include_dir_str);
+        assert!(include_dir.is_dir(), "SERVO_CUSTOM_ALLOC_INCLUDE_DIR must be set to a valid directory");
+        assert!(include_dir.join("servo_embedder_memory_wrap.h").is_file(), "SERVO_CUSTOM_ALLOC_INCLUDE_DIR must contain header `servo_embedder_memory_wrap.h`");
+        flags.push(format!("-I{}", &include_dir_str.replace("\\", "/")));
+        flags.push("-DSERVO_EMBEDDER_MEMORY".to_string());
+        flags
+    } else {
+      vec![]
+    };
+    builder = builder.clang_args(custom_alloc_flags);
+
 
     if target == BuildTarget::JSGlue {
         builder = builder
@@ -434,6 +476,8 @@ fn link_static_lib_binaries(build_dir: &Path) {
         // needing to use the WASI-SDK's clang for linking, which is annoying.
         println!("cargo:rustc-link-lib=stdc++")
     }
+    // TODO: link against lib from env
+    // println!("cargo:rustc-link-lib=mimalloc");
 
     if target.contains("wasi") {
         println!("cargo:rustc-link-lib=wasi-emulated-getpid");
@@ -461,6 +505,9 @@ fn should_build_from_source() -> bool {
         false
     } else if env::var_os("CARGO_FEATURE_INTL").is_none() {
         println!("intl feature is disabled. Building from source directly.");
+        true
+    } else if env::var_os("CARGO_FEATURE_CUSTOM_ALLOC").is_some() {
+        println!("custom-alloc feature is enabled. Building from source directly.");
         true
     } else if !env::var_os("CARGO_FEATURE_JIT").is_some() {
         println!("jit feature is NOT enabled. Building from source directly.");
