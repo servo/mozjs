@@ -286,10 +286,6 @@ fn build(build_dir: &Path, target: BuildTarget) {
         build.flag_if_supported(flag);
     }
 
-    if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
-        build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
-    }
-
     build.flag(include_file_flag(build.get_compiler().is_like_msvc()));
     build.flag(&js_config_path(build_dir));
 
@@ -478,7 +474,7 @@ fn minimum_rust_target() -> RustTarget {
     }
 }
 
-fn cc_flags(bindgen: bool) -> Vec<&'static str> {
+fn cc_flags(bindgen: bool) -> Vec<String> {
     let mut flags = Vec::new();
 
     let target = env::var("TARGET").unwrap();
@@ -538,18 +534,33 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         }
     }
 
-    let is_apple = target.contains("apple");
-    let is_freebsd = target.contains("freebsd");
-    let is_ohos = target.contains("ohos");
-
-    if is_apple || is_freebsd || is_ohos {
-        flags.push("-stdlib=libc++");
-    }
-
     if target.contains("wasi") {
         flags.push("-D_WASI_EMULATED_GETPID");
     }
+    let mut flags = flags.iter().map(|f| f.to_string()).collect::<Vec<_>>();
 
+    let is_apple = target.contains("apple");
+    let is_freebsd = target.contains("freebsd");
+    let is_ohos = target.contains("ohos");
+    let is_android = target.contains("android");
+    let is_msvc = target.contains("msvc");
+
+    // This matches the documented behavior of cc-rs: https://docs.rs/cc/latest/cc/struct.Build.html#method.cpp
+    if let Some(cxxstdlib) = get_cc_rs_env("CXXSTDLIB") {
+        flags.push(format!("-stdlib={cxxstdlib}"));
+    } else if is_apple || is_freebsd {
+        flags.push("-stdlib=libc++".to_string())
+    } else if  is_android || is_ohos {
+        flags.push("-stdlib=libc++_shared".to_string())
+    } else if is_msvc {
+        // Nothing
+    } else {
+        flags.push("-stdlib=libstdc++".to_string())
+    }
+
+    if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
+        flags.push(format!("-D__ANDROID_MIN_SDK_VERSION__={android_api}"));
+    }
     flags
 }
 
