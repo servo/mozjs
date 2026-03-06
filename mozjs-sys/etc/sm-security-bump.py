@@ -24,6 +24,14 @@ try:
 except subprocess.CalledProcessError:
     pass
 
+if GITHUB_OUTPUT := os.getenv("GITHUB_OUTPUT"):
+    github_output_file = open(GITHUB_OUTPUT, "a")
+    print(f"tag={tag}", file=github_output_file)
+    print(f"changeset={changeset}", file=github_output_file)
+    print(f"version={ESR}.{int(minor_patch)}", file=github_output_file)
+    print(f"esr={ESR}", file=github_output_file)
+
+
 download_from_taskcluster(changeset)
 
 subprocess.check_call(
@@ -39,6 +47,7 @@ subprocess.check_call(
         "servo/mozjs",
         "--title",
         f"SpiderMonkey {tag}",
+        "--latest=false",
         "--notes",
         f"Source code for SpiderMonkey {tag} (changeset: [{changeset}](https://hg.mozilla.org/releases/{REPO}/rev/{changeset}))",
     ]
