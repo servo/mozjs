@@ -20,6 +20,19 @@ jobs:
               with:
                   python-version: "3.13"
             - run: pip install requests
+            - run: |
+                  git config user.name 'servo-bot'
+                  git config user.email 'ghbot+mozjs-sm-bump@servo.org'
             - run: python3 ./mozjs-sys/etc/sm-security-bump.py
+              id: bump
             - name: Create Pull Request
               uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0
+              with:
+                  title: Security bump SpiderMonkey to ${{ steps.bump.outputs.version }}
+                  body: |
+                      Bump SpiderMonkey to ${{ steps.bump.outputs.version }} (changeset: [${{ steps.bump.outputs.changeset }}](https://github.com/servo/mozjs/releases/download/mozjs-source-${{ steps.bump.outputs.changeset }}))
+                  branch-token: ${{ secrets.SERVO_BOT }}
+                  token: ${{ secrets.PR_TOKEN }}
+                  push-to-fork: servo-bot/mozjs
+                  author: servo-bot <ghbot+mozjs-sm-bump@servo.org>
+                  branch: security-bump-esr${{ steps.bump.outputs.esr }}
