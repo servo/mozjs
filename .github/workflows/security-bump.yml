@@ -21,8 +21,8 @@ jobs:
                   python-version: "3.13"
             - run: pip install requests
             - run: |
-                  git config user.name 'github-actions[bot]'
-                  git config user.email 'github-actions[bot]@users.noreply.github.com'
+                  git config user.name 'servo-bot'
+                  git config user.email 'ghbot@servo.org'
             - run: python3 ./mozjs-sys/etc/sm-security-bump.py
               id: bump
             - name: Create Pull Request
@@ -34,5 +34,5 @@ jobs:
                   branch-token: ${{ secrets.SERVO_BOT }}
                   token: ${{ secrets.PR_TOKEN }}
                   push-to-fork: servo-bot/mozjs
-                  author: github-actions[bot] <github-actions[bot]@users.noreply.github.com>
+                  author: servo-bot <ghbot@servo.org>
                   branch: security-bump-esr${{ steps.bump.outputs.esr }}

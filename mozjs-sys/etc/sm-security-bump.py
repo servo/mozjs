@@ -25,11 +25,11 @@ except subprocess.CalledProcessError:
     pass
 
 if GITHUB_OUTPUT := os.getenv("GITHUB_OUTPUT"):
-    github_output_file = open(GITHUB_OUTPUT, "a")
-    print(f"tag={tag}", file=github_output_file)
-    print(f"changeset={changeset}", file=github_output_file)
-    print(f"version={ESR}.{int(minor_patch)}", file=github_output_file)
-    print(f"esr={ESR}", file=github_output_file)
+    with open(GITHUB_OUTPUT, "a") as github_output_file:
+        print(f"tag={tag}", file=github_output_file)
+        print(f"changeset={changeset}", file=github_output_file)
+        print(f"version={ESR}.{int(minor_patch)}", file=github_output_file)
+        print(f"esr={ESR}", file=github_output_file)
 
 
 download_from_taskcluster(changeset)
