@@ -37,6 +37,10 @@ ID
 # third-party packages is dealt with by the script vendoring them.
 *.egg-info/
 
+# Ignore pywebsocket3 intermediate files.
+testing/web-platform/tests/tools/third_party/pywebsocket3/pywebsocket3.egg-info
+testing/web-platform/tests/tools/third_party/pywebsocket3/build
+
 # Vim swap files.
 .*.sw[a-z]
 .sw[a-z]

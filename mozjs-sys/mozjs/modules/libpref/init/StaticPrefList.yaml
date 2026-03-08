@@ -1050,7 +1050,7 @@
 # nsXPLookAndFeel::GenericDarkColor for Linktext.
 - name: browser.anchor_color.dark
   type: String
-  value: "#8C8CFF"
+  value: "#00CADB"
   mirror: never
 
 # See http://dev.w3.org/html5/spec/forms.html#attr-fe-autofocus
@@ -3606,7 +3606,7 @@
 # BrowsingContext. This includes calls to History and Location APIs.
 - name: dom.navigation.navigationRateLimit.count
   type: uint32_t
-  value: 200
+  value: 1000
   mirror: always
 
 # Time span in seconds for location change rate limit.
