@@ -8,8 +8,11 @@
 #include "prenv.h"
 #include "prprf.h"
 #include <string.h>
-#ifdef ANDROID
+#if defined(ANDROID)
 #  include <android/log.h>
+#elif defined(XP_OHOS)
+  int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
+      __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
 #endif
 
 /*
@@ -113,6 +116,19 @@ static void OutputDebugStringA(const char* msg) {
     } else {                                               \
       PR_Write(fd, buf, nb);                               \
     }                                                      \
+    PR_END_MACRO
+#elif defined(XP_OHOS)
+#  define _PUT_LOG(fd, buf, nb)                              \
+    PR_BEGIN_MACRO                                           \
+    if (fd == _pr_stderr) {                                  \
+        char savebyte = buf[nb];                             \
+        buf[nb] = '\0';                                      \
+        (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */,   \
+               0, "PRLog", "%{public}s\n", buf);             \
+        buf[nb] = savebyte;                                  \
+    } else {                                                 \
+        PR_Write(fd, buf, nb);                               \
+    }                                                        \
     PR_END_MACRO
 #elif defined(_PR_PTHREADS)
 #  define _PUT_LOG(fd, buf, nb) PR_Write(fd, buf, nb)
@@ -539,6 +555,8 @@ PR_IMPLEMENT(void) PR_Abort(void) {
   PR_LogPrint("Aborting");
 #ifdef ANDROID
   __android_log_write(ANDROID_LOG_ERROR, "PRLog", "Aborting");
+#elif defined(XP_OHOS)
+  (void) OH_LOG_Print(0 /* LOG_APP */, 7 /* LOG_FATAL */, 0, "PRLog", "Aborting\n");
 #endif
   abort();
 }
@@ -552,6 +570,9 @@ PR_IMPLEMENT(void) PR_Assert(const char* s, const char* file, PRIntn ln) {
 #elif defined(ANDROID)
   __android_log_assert(NULL, "PRLog", "Assertion failure: %s, at %s:%d\n", s,
                        file, ln);
+#elif defined(XP_OHOS)
+  (void) OH_LOG_Print(0 /* LOG_APP */, 7 /* LOG_FATAL */, 0, "PRLog",
+                      "Assertion failure: %{public}s, at %{public}s:%{public}d\n",s, file, ln);
 #endif
   abort();
 }
