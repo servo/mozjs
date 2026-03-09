@@ -556,6 +556,24 @@ impl CompileOptionsWrapper {
             (*self.ptr)._base.introductionType = introduction_type.as_ptr();
         }
     }
+
+    pub fn set_muted_errors(&mut self, muted_errors: bool) {
+        unsafe {
+            (*self.ptr)._base.mutedErrors_ = muted_errors;
+        }
+    }
+
+    pub fn set_is_run_once(&mut self, is_run_once: bool) {
+        unsafe {
+            (*self.ptr).isRunOnce = is_run_once;
+        }
+    }
+
+    pub fn set_no_script_rval(&mut self, no_script_rval: bool) {
+        unsafe {
+            (*self.ptr).noScriptRval = no_script_rval;
+        }
+    }
 }
 
 impl Drop for CompileOptionsWrapper {
