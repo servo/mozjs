@@ -549,7 +549,6 @@ class ForwardingProxyHandler : public js::BaseProxyHandler {
       desc.set(mozilla::Some(pd.get()));
     }
     return result;
-    return result;
   }
 
   virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
