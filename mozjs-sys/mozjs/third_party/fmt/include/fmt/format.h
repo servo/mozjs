@@ -41,6 +41,7 @@
 #endif
 
 #include "base.h"
+#include "mozmemory.h"
 
 #ifndef FMT_MODULE
 #  include <cmath>             // std::signbit
@@ -807,12 +808,12 @@ template <typename T> struct allocator {
 
   T* allocate(size_t n) {
     FMT_ASSERT(n <= max_value<size_t>() / sizeof(T), "");
-    T* p = static_cast<T*>(malloc(n * sizeof(T)));
+    T* p = static_cast<T*>(malloc_impl(n * sizeof(T)));
     if (!p) FMT_THROW(std::bad_alloc());
     return p;
   }
 
-  void deallocate(T* p, size_t) { free(p); }
+  void deallocate(T* p, size_t) { free_impl(p); }
 };
 
 }  // namespace detail
