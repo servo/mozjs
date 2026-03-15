@@ -30,16 +30,17 @@
 
 use crate::error::throw_type_error;
 use crate::jsapi::AssertSameCompartment;
+use crate::jsapi::NewArrayObject1;
 use crate::jsapi::JS;
 use crate::jsapi::{ForOfIterator, ForOfIterator_NonIterableBehavior};
-use crate::jsapi::{Heap, JS_DefineElement, JS_GetLatin1StringCharsAndLength};
+use crate::jsapi::{Heap, JS_DefineElement};
 use crate::jsapi::{JSContext, JSObject, JSString, RootedObject, RootedValue};
 use crate::jsapi::{JS_DeprecatedStringHasLatin1Chars, JS_NewStringCopyUTF8N, JSPROP_ENUMERATE};
-use crate::jsapi::{JS_GetTwoByteStringCharsAndLength, NewArrayObject1};
 use crate::jsval::{BooleanValue, DoubleValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
 use crate::jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolValue};
 use crate::rooted;
 use crate::rust::maybe_wrap_value;
+use crate::rust::wrappers2::{JS_GetLatin1StringCharsAndLength, JS_GetTwoByteStringCharsAndLength};
 use crate::rust::{maybe_wrap_object_or_null_value, maybe_wrap_object_value, ToString};
 use crate::rust::{HandleValue, MutableHandleValue};
 use crate::rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToUint64};
@@ -596,12 +597,12 @@ impl FromJSValConvertible for f64 {
 
 /// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
 /// `String`.
-pub unsafe fn latin1_to_string(cx: *mut JSContext, s: NonNull<JSString>) -> String {
-    assert!(JS_DeprecatedStringHasLatin1Chars(s.as_ptr()));
+pub fn latin1_to_string_safe(cx: &crate::context::JSContext, s: NonNull<JSString>) -> String {
+    assert!(unsafe { JS_DeprecatedStringHasLatin1Chars(s.as_ptr()) });
 
     let mut length = 0;
     let chars = unsafe {
-        let chars = JS_GetLatin1StringCharsAndLength(cx, ptr::null(), s.as_ptr(), &mut length);
+        let chars = JS_GetLatin1StringCharsAndLength(cx, s.as_ptr(), &mut length);
         assert!(!chars.is_null());
 
         slice::from_raw_parts(chars, length as usize)
@@ -620,16 +621,35 @@ pub unsafe fn latin1_to_string(cx: *mut JSContext, s: NonNull<JSString>) -> Stri
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
-pub unsafe fn jsstr_to_string(cx: *mut JSContext, jsstr: NonNull<JSString>) -> String {
-    if JS_DeprecatedStringHasLatin1Chars(jsstr.as_ptr()) {
-        return latin1_to_string(cx, jsstr);
+pub fn jsstr_to_string_safe(cx: &crate::context::JSContext, jsstr: NonNull<JSString>) -> String {
+    if unsafe { JS_DeprecatedStringHasLatin1Chars(jsstr.as_ptr()) } {
+        return latin1_to_string_safe(cx, jsstr);
     }
 
     let mut length = 0;
-    let chars = JS_GetTwoByteStringCharsAndLength(cx, ptr::null(), jsstr.as_ptr(), &mut length);
+    let chars = unsafe { JS_GetTwoByteStringCharsAndLength(cx, jsstr.as_ptr(), &mut length) };
     assert!(!chars.is_null());
-    let char_vec = slice::from_raw_parts(chars, length as usize);
+    let char_vec = unsafe { slice::from_raw_parts(chars, length as usize) };
     String::from_utf16_lossy(char_vec)
+}
+
+/// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
+/// `String`.
+///
+/// Use [`latin1_to_string_safe`] if possible as this function will be eventually removed.
+pub unsafe fn latin1_to_string(cx: *mut JSContext, s: NonNull<JSString>) -> String {
+    // while this can break direct invariants of JSContext
+    // it is ok in the current usage of this function and it avoids duplicating the code
+    let cx = crate::context::JSContext::from_ptr(NonNull::new(cx).unwrap());
+    latin1_to_string_safe(&cx, s)
+}
+
+/// Converts a `JSString` into a `String`, regardless of used encoding.
+///
+/// Use [`jsstr_to_string_safe`] if possible as this function will be eventually removed.
+pub unsafe fn jsstr_to_string(cx: *mut JSContext, jsstr: NonNull<JSString>) -> String {
+    let cx = crate::context::JSContext::from_ptr(NonNull::new(cx).unwrap());
+    jsstr_to_string_safe(&cx, jsstr)
 }
 
 // https://heycam.github.io/webidl/#es-USVString
