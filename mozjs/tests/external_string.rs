@@ -8,7 +8,7 @@ use std::ptr::NonNull;
 
 #[cfg(test)]
 use mozjs::context::JSContext;
-use mozjs::conversions::jsstr_to_string;
+use mozjs::conversions::jsstr_to_string_safe;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
 use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::realm::AutoRealm;
@@ -100,7 +100,7 @@ fn external_string() {
             callbacks
         ));
         assert_eq!(
-            jsstr_to_string(context.raw_cx(), NonNull::new(utf16_jsstr.get()).unwrap()),
+            jsstr_to_string_safe(context, NonNull::new(utf16_jsstr.get()).unwrap()),
             utf16_base
         );
     }
@@ -122,7 +122,7 @@ unsafe fn test_latin1_string(context: &mut JSContext, latin1_base: &str) {
         callbacks
     ));
     assert_eq!(
-        jsstr_to_string(context.raw_cx(), NonNull::new(latin1_jsstr.get()).unwrap()),
+        jsstr_to_string_safe(context, NonNull::new(latin1_jsstr.get()).unwrap()),
         latin1_base
     );
 }
@@ -143,7 +143,7 @@ unsafe fn test_latin1_string_bytes(context: &mut JSContext, latin1_base: &[u8]) 
         callbacks
     ));
     assert_eq!(
-        jsstr_to_string(context.raw_cx(), NonNull::new(latin1_jsstr.get()).unwrap()),
+        jsstr_to_string_safe(context, NonNull::new(latin1_jsstr.get()).unwrap()),
         encoding_rs::mem::decode_latin1(latin1_base)
     );
 }
