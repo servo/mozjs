@@ -186,8 +186,10 @@ impl<'cx> DerefMut for AutoRealm<'cx> {
 }
 
 impl<'cx> Drop for AutoRealm<'cx> {
-    // if we do not implement this rust  can shorten lifetime of cx,
-    // without effecting JSAutoRealm (realm drops after we lose lifetime of cx)
+    // If we do not implement this, Rust can end the borrow of cx early,
+    // while the JSAutoRealm is still active.
+    // That would allow a second mutable borrow of cx before the first realm is exited,
+    // breaking the LIFO entering/exiting realms.
     fn drop(&mut self) {}
 }
 
