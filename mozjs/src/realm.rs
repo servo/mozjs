@@ -186,8 +186,12 @@ impl<'cx> DerefMut for AutoRealm<'cx> {
 }
 
 impl<'cx> Drop for AutoRealm<'cx> {
-    // if we do not implement this rust  can shorten lifetime of cx,
-    // without effecting JSAutoRealm (realm drops after we lose lifetime of cx)
+    // If we do not implement this, Rust can end the borrow of [JSContext]
+    // early while [JSAutoRealm] is still active. Since [JSAutoRealm]
+    // internally holds a raw pointer to the context, we must ensure the
+    // cx borrow remains bounded until the guard is dropped to not
+    // use after free and ensure strict LIFO realm entry/exit.
+    // See <https://play.rust-lang.org/?version=stable&mode=debug&edition=2024&gist=af3fe88460cd3bd0a9db71f1e6ac376b>
     fn drop(&mut self) {}
 }
 
