@@ -62,7 +62,7 @@ jobs:
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}"
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           path: ./target/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
           name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
@@ -113,7 +113,7 @@ jobs:
 
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           path: ./target/libmozjs-x86_64-unknown-linux-gnu${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
           name: libmozjs-x86_64-unknown-linux-gnu${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
@@ -159,7 +159,7 @@ jobs:
 
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           path: ./target/${{ matrix.platform.target }}/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
           name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
@@ -195,7 +195,7 @@ jobs:
         run: |
           ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}"
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
@@ -228,7 +228,7 @@ jobs:
         run: |
           ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }}
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
@@ -274,7 +274,7 @@ jobs:
         env:
           WASI_SDK_PATH: "/tmp/wasi-sdk"
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         with:
           path: ./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz
