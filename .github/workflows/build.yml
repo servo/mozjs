@@ -38,7 +38,7 @@ jobs:
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
@@ -78,7 +78,7 @@ jobs:
       matrix:
         features: ["debugmozjs", ""]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Free Disk Space (Ubuntu)
         uses: jlumbroso/free-disk-space@main
         with:
@@ -135,7 +135,7 @@ jobs:
       CCACHE: sccache
       SCCACHE_GHA_ENABLED: "true"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
@@ -176,7 +176,7 @@ jobs:
             "x86_64-linux-android",
           ]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -209,7 +209,7 @@ jobs:
         target: ["aarch64-unknown-linux-ohos", "x86_64-unknown-linux-ohos"]
         features: ["", "--features debugmozjs"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup OpenHarmony SDK
         id: setup_sdk
         uses: openharmony-rs/setup-ohos-sdk@v0.2
@@ -246,7 +246,7 @@ jobs:
           - wasip1
           - wasip2
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
@@ -291,7 +291,7 @@ jobs:
           - armv7-unknown-linux-gnueabihf
     container: ghcr.io/servo/cross-${{ matrix.target }}:main
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
@@ -304,7 +304,7 @@ jobs:
   integrity:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 1
       - uses: dtolnay/rust-toolchain@master
