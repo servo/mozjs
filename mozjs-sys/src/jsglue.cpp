@@ -643,6 +643,36 @@ bool ShouldMeasureObject(JSObject* obj, nsISupports** iface) {
   return false;
 }
 
+bool PendingExceptionStackInfo(JSContext* cx, char* message_buffer,
+                               char* filename_buffer, size_t buflen,
+                               uint32_t* line, uint32_t* col) {
+  JS::ExceptionStack stack(cx);
+  JS::ErrorReportBuilder builder(cx);
+  if (JS::GetPendingExceptionStack(cx, &stack) &&
+      builder.init(cx, stack, JS::ErrorReportBuilder::WithSideEffects)) {
+    JSErrorReport* aReport = builder.report();
+
+    if (!aReport || aReport->isWarning()) {
+      return false;
+    }
+
+    const char* message = aReport->message().c_str();
+
+    if (!message) {
+      message = builder.toStringResult().c_str();
+    }
+
+    strncpy(message_buffer, message, buflen);
+    strncpy(filename_buffer, aReport->filename.c_str(), buflen);
+    *line = aReport->lineno;
+    *col = aReport->column.oneOriginValue();
+
+    return true;
+  }
+
+  return false;
+}
+
 extern "C" {
 
 JSPrincipals* CreateRustJSPrincipals(const JSPrincipalsCallbacks& callbacks,
