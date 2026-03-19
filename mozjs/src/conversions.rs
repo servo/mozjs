@@ -799,6 +799,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         // LLVM that may not have the same fields as a result, we create an empty
         // iterator instance and initialize a non-empty instance using the empty
         // instance as a base value.
+        #[allow(unused_variables)]
         let zero = mem::zeroed();
         let mut iterator = ForOfIterator {
             cx_: cx,

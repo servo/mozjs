@@ -134,7 +134,7 @@ where
     Heap<T>: Traceable + 'static,
     T: GCMethods + Copy,
 {
-    pub fn handle(&self) -> Handle<T> {
+    pub fn handle(&'_ self) -> Handle<'_, T> {
         unsafe { Handle::from_raw((*self.ptr).handle()) }
     }
 }

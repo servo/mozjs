@@ -106,7 +106,7 @@ impl<T: CustomTrace> CustomAutoRooter<T> {
         }
     }
 
-    pub fn root(&mut self, cx: *mut JSContext) -> CustomAutoRooterGuard<T> {
+    pub fn root(&'_ mut self, cx: *mut JSContext) -> CustomAutoRooterGuard<'_, T> {
         CustomAutoRooterGuard::new(cx, self)
     }
 }
@@ -141,7 +141,7 @@ impl<'a, T: 'a + CustomTrace> CustomAutoRooterGuard<'a, T> {
         unsafe { Handle::from_marked_location(&raw const (self.rooter.data)) }
     }
 
-    pub fn handle_mut(&mut self) -> MutableHandle<T>
+    pub fn handle_mut(&'_ mut self) -> MutableHandle<'_, T>
     where
         T: RootKind,
     {
