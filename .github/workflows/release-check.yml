@@ -34,7 +34,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name || inputs.release-tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
@@ -75,7 +75,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Install NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
@@ -116,7 +116,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event_name == 'release' && github.ref_name ||  inputs.release-tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Setup OpenHarmony SDK
         id: setup_sdk
         uses: openharmony-rs/setup-ohos-sdk@v0.1
