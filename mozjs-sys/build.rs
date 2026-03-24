@@ -22,6 +22,7 @@ const ENV_VARS: &'static [&'static str] = &[
     "CXX",
     "CXXFLAGS",
     "MAKE",
+    "MOZBUILD_STATE_PATH",
     "MOZTOOLS_PATH",
     "MOZJS_ARCHIVE",
     "MOZJS_CREATE_ARCHIVE",
@@ -162,6 +163,15 @@ fn build_spidermonkey(build_dir: &Path) {
     }
 
     let mut cmd = Command::new(&make);
+
+    // SM defaults to `~/.mozbuild` for storing state (mainly virtualenv related).
+    // We default to a directory inside the build directory instead, since cargo
+    // crates shouldn't write outside target, and it's better if `cargo clean` can
+    // cleanup these artifacts.
+    let mozbuild_state_path = env::var_os("MOZBUILD_STATE_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| build_dir.join("mozbuild-state"));
+    cmd.env("MOZBUILD_STATE_PATH", &mozbuild_state_path);
 
     // Set key environment variables, such as AR, CC, CXX based on what `cc-rs`
     // would choose.
