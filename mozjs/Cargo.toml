@@ -12,6 +12,7 @@ doctest = false
 
 [features]
 default = ["jit", "libz-sys", "intl"]
+custom-alloc = ["mozjs_sys/custom-alloc"]
 debugmozjs = ["mozjs_sys/debugmozjs"]
 profilemozjs = ["mozjs_sys/profilemozjs"]
 jit = ['mozjs_sys/jit']
