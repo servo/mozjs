@@ -645,10 +645,11 @@ bool ShouldMeasureObject(JSObject* obj, nsISupports** iface) {
 
 bool PendingExceptionStackInfo(JSContext* cx, char* message_buffer,
                                char* filename_buffer, size_t buflen,
-                               uint32_t* line, uint32_t* col) {
+                               uint32_t* line, uint32_t* col,
+                               JS::MutableHandleValue dest) {
   JS::ExceptionStack stack(cx);
   JS::ErrorReportBuilder builder(cx);
-  if (JS::GetPendingExceptionStack(cx, &stack) &&
+  if (JS::StealPendingExceptionStack(cx, &stack) &&
       builder.init(cx, stack, JS::ErrorReportBuilder::WithSideEffects)) {
     JSErrorReport* aReport = builder.report();
 
@@ -666,6 +667,7 @@ bool PendingExceptionStackInfo(JSContext* cx, char* message_buffer,
     strncpy(filename_buffer, aReport->filename.c_str(), buflen);
     *line = aReport->lineno;
     *col = aReport->column.oneOriginValue();
+    dest.set(stack.exception());
 
     return true;
   }

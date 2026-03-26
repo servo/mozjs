@@ -46,6 +46,7 @@ use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
 use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
+use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use crate::jsapi::{HandleValueArray, StencilRelease};
@@ -1066,7 +1067,10 @@ pub struct ErrorInfo {
 
 /// Retrieve error info from the pending exception stack, return None if there isn't a pending
 /// exception or if it is a warning.
-pub unsafe fn error_info_from_exception_stack(cx: *mut JSContext) -> Option<ErrorInfo> {
+pub unsafe fn error_info_from_exception_stack(
+    cx: *mut JSContext,
+    rval: RawMutableHandleValue,
+) -> Option<ErrorInfo> {
     let mut message_buf = [0; 1024];
     let mut filename_buf = [0; 1024];
     let mut line = 0;
@@ -1078,6 +1082,7 @@ pub unsafe fn error_info_from_exception_stack(cx: *mut JSContext) -> Option<Erro
         1024,
         &mut line,
         &mut col,
+        rval,
     ) {
         return None;
     }
