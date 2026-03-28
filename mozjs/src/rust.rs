@@ -30,6 +30,7 @@ use crate::glue::AppendToRootedObjectVector;
 use crate::glue::{CreateRootedIdVector, CreateRootedObjectVector};
 use crate::glue::{
     DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
+    PendingExceptionStackInfo,
 };
 use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuffer};
 use crate::glue::{
@@ -45,6 +46,7 @@ use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
 use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
+use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use crate::jsapi::{HandleValueArray, StencilRelease};
@@ -1050,6 +1052,44 @@ pub unsafe fn describe_scripted_caller(cx: *mut JSContext) -> Result<ScriptedCal
     }
     let filename = CStr::from_ptr((&buf) as *const _ as *const _);
     Ok(ScriptedCaller {
+        filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
+        line,
+        col,
+    })
+}
+
+pub struct ErrorInfo {
+    pub message: String,
+    pub filename: String,
+    pub line: u32,
+    pub col: u32,
+}
+
+/// Retrieve error info from the pending exception stack, return None if there isn't a pending
+/// exception or if it is a warning.
+pub unsafe fn error_info_from_exception_stack(
+    cx: *mut JSContext,
+    rval: RawMutableHandleValue,
+) -> Option<ErrorInfo> {
+    let mut message_buf = [0; 1024];
+    let mut filename_buf = [0; 1024];
+    let mut line = 0;
+    let mut col = 0;
+    if !PendingExceptionStackInfo(
+        cx,
+        message_buf.as_mut_ptr(),
+        filename_buf.as_mut_ptr(),
+        1024,
+        &mut line,
+        &mut col,
+        rval,
+    ) {
+        return None;
+    }
+    let message = CStr::from_ptr((&message_buf) as *const _ as *const _);
+    let filename = CStr::from_ptr((&filename_buf) as *const _ as *const _);
+    Some(ErrorInfo {
+        message: String::from_utf8_lossy(message.to_bytes()).into_owned(),
         filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
         line,
         col,
