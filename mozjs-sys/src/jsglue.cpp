@@ -658,13 +658,17 @@ bool PendingExceptionStackInfo(JSContext* cx, char* message_buffer,
     }
 
     const char* message = aReport->message().c_str();
+    const char* filename = aReport->filename.c_str();
 
     if (!message) {
       message = builder.toStringResult().c_str();
     }
-
     strncpy(message_buffer, message, buflen);
-    strncpy(filename_buffer, aReport->filename.c_str(), buflen);
+
+    if (filename) {
+      strncpy(filename_buffer, filename, buflen);
+    }
+
     *line = aReport->lineno;
     *col = aReport->column.oneOriginValue();
     dest.set(stack.exception());
