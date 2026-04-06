@@ -100,6 +100,10 @@ impl<'a, T: Traceable> DerefMut for RootedVec<'a, T> {
     }
 }
 
+#[cfg_attr(
+    feature = "crown",
+    crown::unrooted_must_root_lint::allow_unrooted_interior
+)]
 /// Roots any JSTraceable thing
 ///
 /// If you have GC things like *mut JSObject or JSVal, use rooted!.
