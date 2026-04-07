@@ -39,17 +39,9 @@ def download_artifact(task_id: str, artifact_name: str, dl_name: str, i=0):
     urlretrieve(url, dl_name)
 
 
-def download_from_taskcluster(commit: str):
+def find_sm_pkg_and_hazard_task_in_push(push_id: int) -> tuple[str | None, str | None]:
     response = requests.get(
-        f"https://treeherder.mozilla.org/api/project/{REPO}/push/?revision={commit}",
-        headers=HEADERS,
-    )
-    response.raise_for_status()
-    job_id = response.json()["results"][0]["id"]
-    print(f"Job id {job_id}")
-
-    response = requests.get(
-        f"https://treeherder.mozilla.org/api/jobs/?push_id={job_id}",
+        f"https://treeherder.mozilla.org/api/jobs/?push_id={push_id}",
         headers=HEADERS,
     )
     response.raise_for_status()
@@ -60,9 +52,56 @@ def download_from_taskcluster(commit: str):
             sm_pkg_task_id = result[14]
         elif "hazard-linux64-haz/debug" in result:
             hazard_task_id = result[14]
+    return sm_pkg_task_id, hazard_task_id
+
+
+def get_previous_pushes(commit: str, count: int):
+    response = requests.get(
+        f"https://treeherder.mozilla.org/api/project/{REPO}/push/?revision={commit}",
+        headers=HEADERS,
+    )
+    response.raise_for_status()
+    initial_push = response.json()["results"][0]
+    push_timestamp = initial_push["push_timestamp"]
+
+    # this is how treeherders get n more pushes works
+    response = requests.get(
+        f"https://treeherder.mozilla.org/api/project/{REPO}/push/?push_timestamp__lte={push_timestamp}&count={count}",
+        headers=HEADERS,
+    )
+    response.raise_for_status()
+    return response.json()["results"]
+
+
+def download_from_taskcluster(commit: str, look_back_for_artifacts: int = 50):
+    pushes = get_previous_pushes(commit, look_back_for_artifacts + 1)
+
+    sm_pkg_task_id = None
+    hazard_task_id = None
+
+    # SM tasks are only run for pushes that modify SM related files:
+    # https://searchfox.org/firefox-main/rev/98bf4b92d3f5d7a9855281df4bf333210bcfbbc4/taskcluster/kinds/spidermonkey/kind.yml#30-60
+    # so we need to find last commit that had such task
+    for i, push in enumerate(pushes):
+        push_id = push["id"]
+        push_revision = push["revision"][:12]
+        if i == 0:
+            print(f"Checking initial push {push_id} ({push_revision})...")
+        else:
+            print(
+                f"No SpiderMonkey tasks found, checking previous push {push_id} ({push_revision})..."
+            )
+
+        sm_pkg_task_id, hazard_task_id = find_sm_pkg_and_hazard_task_in_push(push_id)
+
+        if sm_pkg_task_id is not None and hazard_task_id is not None:
+            print(f"Found tasks in push {push_id} ({push_revision})")
+            break
 
     if sm_pkg_task_id is None:
-        print("Error: Could not find spidermonkey-sm-package-linux64/opt task")
+        print(
+            f"Error: Could not find spidermonkey-sm-package-linux64/opt task after checking {len(pushes)} pushes"
+        )
         sys.exit(1)
     else:
         print(f"Spidermonkey package task id {sm_pkg_task_id}")
