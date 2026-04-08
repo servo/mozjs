@@ -113,6 +113,23 @@ def static_js(value):
 
 set_define("MOZ_STATIC_JS", static_js)
 
+# Servo custom embedder-provided allocator support
+# ==============================================================
+option(
+    "--enable-servo-embedder-memory",
+    default=False,
+    help="{Enable|Disable} Servo embedder-provided SpiderMonkey allocater usage",
+)
+
+set_config(
+    "SERVO_EMBEDDER_MEMORY",
+    depends_if("--enable-servo-embedder-memory")(lambda _: True),
+)
+set_define(
+    "SERVO_EMBEDDER_MEMORY",
+    depends_if("--enable-servo-embedder-memory")(lambda _: True),
+)
+
 # Enable decorators
 # ===================================================
 option(

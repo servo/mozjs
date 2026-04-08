@@ -15,6 +15,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/TemplateLib.h"
+#include "mozmemory.h"
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -80,12 +81,12 @@ class MallocAllocPolicy {
     if (aNumElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
       return nullptr;
     }
-    return static_cast<T*>(malloc(aNumElems * sizeof(T)));
+    return static_cast<T*>(malloc_impl(aNumElems * sizeof(T)));
   }
 
   template <typename T>
   T* maybe_pod_calloc(size_t aNumElems) {
-    return static_cast<T*>(calloc(aNumElems, sizeof(T)));
+    return static_cast<T*>(calloc_impl(aNumElems, sizeof(T)));
   }
 
   template <typename T>
@@ -93,7 +94,7 @@ class MallocAllocPolicy {
     if (aNewSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
       return nullptr;
     }
-    return static_cast<T*>(realloc(aPtr, aNewSize * sizeof(T)));
+    return static_cast<T*>(realloc_impl(aPtr, aNewSize * sizeof(T)));
   }
 
   template <typename T>
@@ -113,7 +114,7 @@ class MallocAllocPolicy {
 
   template <typename T>
   void free_(T* aPtr, size_t aNumElems = 0) {
-    free(aPtr);
+    free_impl(aPtr);
   }
 
   void reportAllocOverflow() const {}
