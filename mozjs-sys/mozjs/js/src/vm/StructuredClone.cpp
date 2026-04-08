@@ -1582,6 +1582,7 @@ bool JSStructuredCloneWriter::writeSharedWasmMemory(HandleObject obj) {
 
   Rooted<WasmMemoryObject*> memoryObj(context(),
                                       &obj->unwrapAs<WasmMemoryObject>());
+  JSAutoRealm ar(context(), memoryObj);
   Rooted<SharedArrayBufferObject*> sab(
       context(), &memoryObj->buffer().as<SharedArrayBufferObject>());
 

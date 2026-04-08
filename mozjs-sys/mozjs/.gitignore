@@ -373,3 +373,6 @@ toolkit/crashreporter/minidump-analyzer/analyzer-test/target/
 
 # Ignore mozperftest artifacts folder
 /artifacts/
+
+# Ignore personal preferences files
+CLAUDE.local.md

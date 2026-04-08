@@ -4999,9 +4999,15 @@
   value: 30000
   mirror: always
 
+# TCPSocket API
+- name: dom.tcpsocket_in_child.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # UDPSocket API
 - name: dom.udpsocket.enabled
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -13474,6 +13480,12 @@
     login.microsoftonline.us,
     login-us.microsoftonline.com
   mirror: never
+
+# Whether to fallback to old mime-type parser when CMimeType::Parse fails
+- name: network.http.fallback_to_net_parse_ct
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
 
 # The factor by which to increase the keepalive timeout when the
 # NS_HTTP_LARGE_KEEPALIVE flag is used for a connection
