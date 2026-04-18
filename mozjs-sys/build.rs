@@ -16,7 +16,6 @@ const ENV_VARS: &'static [&'static str] = &[
     "AS",
     "CC",
     "CFLAGS",
-    "CLANGFLAGS",
     "CPP",
     "CPPFLAGS",
     "CXX",
@@ -39,7 +38,6 @@ const SM_TARGET_ENV_VARS: &'static [&'static str] = &[
     "AS",
     "CC",
     "CFLAGS",
-    "CLANGFLAGS",
     "CPP",
     "CPPFLAGS",
     "CXX",
@@ -354,12 +352,6 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
     }
 
     if let Some(flags) = get_cc_rs_env("CXXFLAGS") {
-        for flag in flags.split_whitespace() {
-            builder = builder.clang_arg(flag);
-        }
-    }
-
-    if let Some(flags) = get_cc_rs_env("CLANGFLAGS") {
         for flag in flags.split_whitespace() {
             builder = builder.clang_arg(flag);
         }
