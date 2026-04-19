@@ -330,9 +330,15 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .with_codegen_config(config);
 
     let mut cc_rs_builder = get_common_cc();
-    cc_rs_builder.define("RUST_BINDGEN", None);
+    cc_rs_builder
+        .define("RUST_BINDGEN", None)
+        .include(&js_config_path(build_dir));
     if cc_rs_builder.get_compiler().is_like_msvc() {
         cc_rs_builder.flag("--driver-mode=cl");
+    }
+
+    for path in target.include_paths(build_dir) {
+        cc_rs_builder.include(path);
     }
 
     for arg in cc_rs_builder.get_compiler().args() {
@@ -354,22 +360,6 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
             .allowlist_file(target.path())
             .allowlist_recursively(false);
     }
-
-    for path in target.include_paths(build_dir) {
-        builder = builder.clang_args(&["-I", &path]);
-    }
-
-    if let Some(flags) = get_cc_rs_env("CXXFLAGS") {
-        for flag in flags.split_whitespace() {
-            builder = builder.clang_arg(flag);
-        }
-    }
-
-    let target_env = env::var("TARGET").unwrap();
-    builder = builder.clang_args(&[
-        include_file_flag(target_env.contains("windows")),
-        &js_config_path(build_dir),
-    ]);
 
     println!(
         "Generating bindings {:?} {}.",
