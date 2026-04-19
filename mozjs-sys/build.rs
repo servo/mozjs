@@ -287,12 +287,8 @@ fn cbindgen_bidi(build_dir: &Path) {
 */
 
 fn build(build_dir: &Path, target: BuildTarget) {
-    let mut build = cc::Build::new();
+    let mut build = get_common_cc();
     build.cpp(true).file(target.path());
-
-    for flag in cc_flags(false) {
-        build.flag_if_supported(flag);
-    }
 
     if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
         build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
@@ -331,8 +327,20 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .derive_partialeq(true)
         .size_t_is_usize(true)
         .enable_cxx_namespaces()
-        .with_codegen_config(config)
-        .clang_args(cc_flags(true));
+        .with_codegen_config(config);
+
+    let mut cc_rs_builder = get_common_cc();
+    cc_rs_builder.define("RUST_BINDGEN", None);
+    if cc_rs_builder.get_compiler().is_like_msvc() {
+        cc_rs_builder.flag("--driver-mode=cl");
+    }
+
+    for arg in cc_rs_builder.get_compiler().args() {
+        builder = builder.clang_arg(
+            arg.to_str()
+                .expect("Non UTF-8 compiler flag in cc::Build args"),
+        );
+    }
 
     if env::var("TARGET").unwrap().contains("wasi") {
         builder = builder
@@ -483,79 +491,68 @@ fn minimum_rust_target() -> RustTarget {
     }
 }
 
-fn cc_flags(bindgen: bool) -> Vec<&'static str> {
-    let mut flags = Vec::new();
+fn get_common_cc() -> cc::Build {
+    let mut builder = cc::Build::new();
 
     let target = env::var("TARGET").unwrap();
 
     if target.contains("windows") {
-        if bindgen {
-            flags.push("--driver-mode=cl");
-        }
-
-        flags.extend(&[
-            "-std:c++17",
-            "-Zi",
-            "-GR-",
-            "-DWIN32",
+        builder
+            .std("c++17")
+            .flag_if_supported("-Zi")
+            .flag_if_supported("-GR-")
+            .define("WIN32", None)
             // Don't use reinterpret_cast() in offsetof(),
             // since it's not a constant expression, so can't
             // be used in static_assert().
-            "-D_CRT_USE_BUILTIN_OFFSETOF",
-        ]);
+            .define("_CRT_USE_BUILTIN_OFFSETOF", None);
     } else {
-        flags.extend(&[
-            "-std=gnu++17",
-            "-std=c++17",
-            "-xc++",
-            "-fPIC",
-            "-fno-rtti",
-            "-fno-sized-deallocation",
-            "-Wno-c++0x-extensions",
-            "-Wno-return-type-c-linkage",
-            "-Wno-unused-parameter",
-            "-Wno-invalid-offsetof",
-            "-Wno-unused-private-field",
-        ]);
+        builder
+            .std("gnu++17")
+            .cpp(true)
+            .pic(true)
+            .flag_if_supported("-fno-rtti")
+            .flag_if_supported("-fno-sized-deallocation")
+            .flag_if_supported("-Wno-c++0x-extensions")
+            .flag_if_supported("-Wno-return-type-c-linkage")
+            .flag_if_supported("-Wno-unused-parameter")
+            .flag_if_supported("-Wno-invalid-offsetof")
+            .flag_if_supported("-Wno-unused-private-field");
 
         if env::var_os("CARGO_FEATURE_PROFILEMOZJS").is_some() {
-            flags.push("-fno-omit-frame-pointer");
+            builder.force_frame_pointer(true);
         }
 
         if target.contains("wasi") {
             // Unconditionally target p1 for now. Even if the application
             // targets p2, an adapter will take care of it.
-            flags.push("--target=wasm32-wasip1");
-            flags.push("-fvisibility=default");
+            builder
+                .target("wasm32-wasip1")
+                .flag_if_supported("-fvisibility=default");
         }
     }
-
-    flags.extend(&["-DSTATIC_JS_API", "-DRUST_BINDGEN"]);
+    builder.define("JS_STATIC_API", None);
     if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-        flags.extend(&["-DJS_GC_ZEAL", "-DDEBUG", "-DJS_DEBUG"]);
-
-        if !bindgen {
-            if target.contains("windows") {
-                flags.push("-Od");
-            } else {
-                flags.extend(&["-g", "-O0"]);
-            }
-        }
+        builder
+            .define("JS_GC_ZEAL", None)
+            .define("DEBUG", None)
+            .define("JS_DEBUG", None);
     }
 
-    let is_apple = target.contains("apple");
-    let is_freebsd = target.contains("freebsd");
-    let is_ohos = target.contains("ohos");
-
-    if is_apple || is_freebsd || is_ohos {
-        flags.push("-stdlib=libc++");
+    if env::var_os("CXXSTDLIB").is_none() {
+        let is_apple = target.contains("apple");
+        let is_freebsd = target.contains("freebsd");
+        let is_ohos = target.contains("ohos");
+        if is_apple || is_freebsd || is_ohos {
+            builder.cpp_set_stdlib("c++");
+        }
     }
 
     if target.contains("wasi") {
-        flags.push("-D_WASI_EMULATED_GETPID");
+        builder.define("_WASI_EMULATED_GETPID", None);
     }
 
-    flags
+    builder
 }
 
 fn include_file_flag(msvc_like: bool) -> &'static str {
