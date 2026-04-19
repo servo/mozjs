@@ -317,7 +317,7 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
     config &= !CodegenConfig::DESTRUCTORS;
     config &= !CodegenConfig::METHODS;
 
-    let mut builder = bindgen::builder()
+    let builder = bindgen::builder()
         .rust_target(minimum_rust_target())
         .header(target.path())
         // Translate every enum with the "rustified enum" strategy. We should
@@ -335,18 +335,29 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .include(&js_config_path(build_dir));
     if cc_rs_builder.get_compiler().is_like_msvc() {
         cc_rs_builder.flag("--driver-mode=cl");
+    }
+
+    let compiler = cc_rs_builder.get_compiler();
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+
+    let mut builder = if compiler.is_like_msvc() {
+        builder
     } else {
         // `.cpp(true)` from cc_rs_builder will not propagate to bindgen clang-args,
         // so we need to set it explicitly here. Doesn't work with msvc.
-        builder
-            .clang_args(["-x", "c++"]);
+        builder.clang_args(["-x", "c++"])
+    };
+
+    // Setting CLANG_PATH to the absolute path (when using the default c++ compiler on macos),
+    // allows bindgen to find the c++ headers (not just the system headers).
+    if target_os == "macos" && compiler.path().to_str() == Some("c++") {
+        env::set_var("CLANG_PATH", "/usr/bin/c++");
     }
 
     for path in target.include_paths(build_dir) {
         cc_rs_builder.include(path);
     }
 
-    let compiler = cc_rs_builder.get_compiler();
     // `bindgen` invokes clang via CLANG_PATH to find the system and c++ headers,
     // so if it's not defined, we should set it to the actual path of the compiler.
     if env::var_os("CLANG_PATH").is_none() {
