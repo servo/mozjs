@@ -335,13 +335,25 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .include(&js_config_path(build_dir));
     if cc_rs_builder.get_compiler().is_like_msvc() {
         cc_rs_builder.flag("--driver-mode=cl");
+    } else {
+        // `.cpp(true)` from cc_rs_builder will not propagate to bindgen clang-args,
+        // so we need to set it explicitly here. Doesn't work with msvc.
+        builder
+            .clang_args(["-x", "c++"]);
     }
 
     for path in target.include_paths(build_dir) {
         cc_rs_builder.include(path);
     }
 
-    for arg in cc_rs_builder.get_compiler().args() {
+    let compiler = cc_rs_builder.get_compiler();
+    // `bindgen` invokes clang via CLANG_PATH to find the system and c++ headers,
+    // so if it's not defined, we should set it to the actual path of the compiler.
+    if env::var_os("CLANG_PATH").is_none() {
+        env::set_var("CLANG_PATH", "/usr/bin/c++");
+    }
+
+    for arg in compiler.args() {
         builder = builder.clang_arg(
             arg.to_str()
                 .expect("Non UTF-8 compiler flag in cc::Build args"),
