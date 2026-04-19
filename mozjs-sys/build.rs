@@ -1210,11 +1210,6 @@ fn join_path(base: &Path, additional: &str) -> PathBuf {
 /// have the values that users of `cc-rs` would expect.
 ///
 /// Adapted from https://github.com/rust-lang/cc-rs/blob/3ba23569a623074748a3030f382afd22483555df/src/lib.rs#L3617
-fn get_cc_rs_env(var_base: &str) -> Option<String> {
-    get_cc_rs_env_os(var_base).map(|val| val.to_str().expect("Not a valid string.").to_string())
-}
-
-/// Like `get_cc_rs_env()` but returns the OsString value.
 fn get_cc_rs_env_os(var_base: &str) -> Option<OsString> {
     fn get_env(var: &str) -> Option<OsString> {
         println!("cargo:rerun-if-env-changed={}", var);
