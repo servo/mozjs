@@ -287,18 +287,11 @@ fn cbindgen_bidi(build_dir: &Path) {
 */
 
 fn build(build_dir: &Path, target: BuildTarget) {
-    let mut build = get_common_cc();
+    let mut build = get_common_cc(build_dir, target);
     build.cpp(true).file(target.path());
 
     if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
         build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
-    }
-
-    build.flag(include_file_flag(build.get_compiler().is_like_msvc()));
-    build.flag(&js_config_path(build_dir));
-
-    for path in target.include_paths(build_dir) {
-        build.include(path);
     }
 
     build.out_dir(build_dir).compile(target.output());
@@ -329,11 +322,8 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .enable_cxx_namespaces()
         .with_codegen_config(config);
 
-    let mut cc_rs_builder = get_common_cc();
-    cc_rs_builder
-        .define("RUST_BINDGEN", None)
-        // todo: include via common cc-args?
-        .include(&js_config_path(build_dir));
+    let mut cc_rs_builder = get_common_cc(build_dir, target);
+    cc_rs_builder.define("RUST_BINDGEN", None);
     if cc_rs_builder.get_compiler().is_like_msvc() {
         cc_rs_builder.flag("--driver-mode=cl");
     }
@@ -362,11 +352,6 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
             arg.to_str()
                 .expect("Non UTF-8 compiler flag in cc::Build args"),
         );
-    }
-
-    // todo: add target.include_paths via common cc-args?
-    for path in target.include_paths(build_dir) {
-        builder = builder.clang_arg("-I").clang_arg(path);
     }
 
     if env::var("TARGET").unwrap().contains("wasi") {
@@ -502,12 +487,12 @@ fn minimum_rust_target() -> RustTarget {
     }
 }
 
-fn get_common_cc() -> cc::Build {
+fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
     let mut builder = cc::Build::new();
 
-    let target = env::var("TARGET").unwrap();
+    let target_triple = env::var("TARGET").unwrap();
 
-    if target.contains("windows") {
+    if target_triple.contains("windows") {
         builder
             .std("c++17")
             .flag_if_supported("-Zi")
@@ -534,7 +519,7 @@ fn get_common_cc() -> cc::Build {
             builder.force_frame_pointer(true);
         }
 
-        if target.contains("wasi") {
+        if target_triple.contains("wasi") {
             // Unconditionally target p1 for now. Even if the application
             // targets p2, an adapter will take care of it.
             builder
@@ -542,6 +527,16 @@ fn get_common_cc() -> cc::Build {
                 .flag_if_supported("-fvisibility=default");
         }
     }
+
+    // Force-include the JS header with the configure defines.
+    // This is not the same as `builder.include()`!
+    builder.flag(include_file_flag(builder.get_compiler().is_like_msvc()));
+    builder.flag(&js_config_path(build_dir));
+
+    for path in target.include_paths(build_dir) {
+        builder.include(path);
+    }
+
     builder.define("JS_STATIC_API", None);
     if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
         builder
@@ -551,15 +546,15 @@ fn get_common_cc() -> cc::Build {
     }
 
     if env::var_os("CXXSTDLIB").is_none() {
-        let is_apple = target.contains("apple");
-        let is_freebsd = target.contains("freebsd");
-        let is_ohos = target.contains("ohos");
+        let is_apple = target_triple.contains("apple");
+        let is_freebsd = target_triple.contains("freebsd");
+        let is_ohos = target_triple.contains("ohos");
         if is_apple || is_freebsd || is_ohos {
             builder.cpp_set_stdlib("c++");
         }
     }
 
-    if target.contains("wasi") {
+    if target_triple.contains("wasi") {
         builder.define("_WASI_EMULATED_GETPID", None);
     }
 
