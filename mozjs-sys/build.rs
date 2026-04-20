@@ -332,6 +332,7 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
     let mut cc_rs_builder = get_common_cc();
     cc_rs_builder
         .define("RUST_BINDGEN", None)
+        // todo: include via common cc-args?
         .include(&js_config_path(build_dir));
     if cc_rs_builder.get_compiler().is_like_msvc() {
         cc_rs_builder.flag("--driver-mode=cl");
@@ -350,18 +351,10 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
 
     // Setting CLANG_PATH to the absolute path (when using the default c++ compiler on macos),
     // allows bindgen to find the c++ headers (not just the system headers).
-    if target_os == "macos" && compiler.path().to_str() == Some("c++") {
-        env::set_var("CLANG_PATH", "/usr/bin/c++");
-    }
-
-    for path in target.include_paths(build_dir) {
-        cc_rs_builder.include(path);
-    }
-
-    // `bindgen` invokes clang via CLANG_PATH to find the system and c++ headers,
-    // so if it's not defined, we should set it to the actual path of the compiler.
     if env::var_os("CLANG_PATH").is_none() {
-        env::set_var("CLANG_PATH", "/usr/bin/c++");
+        if target_os == "macos" && compiler.path().to_str() == Some("c++") {
+            env::set_var("CLANG_PATH", "/usr/bin/c++");
+        }
     }
 
     for arg in compiler.args() {
@@ -369,6 +362,11 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
             arg.to_str()
                 .expect("Non UTF-8 compiler flag in cc::Build args"),
         );
+    }
+
+    // todo: add target.include_paths via common cc-args?
+    for path in target.include_paths(build_dir) {
+        builder = builder.clang_arg("-I").clang_arg(path);
     }
 
     if env::var("TARGET").unwrap().contains("wasi") {
