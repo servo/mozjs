@@ -88,6 +88,7 @@ impl JSObjectStorage for Box<Heap<*mut JSObject>> {
     fn as_raw(&self) -> *mut JSObject {
         self.get()
     }
+    #[cfg_attr(feature = "crown", expect(crown::unrooted_must_root))]
     fn from_raw(raw: *mut JSObject) -> Self {
         let boxed = Box::new(Heap::default());
         boxed.set(raw);

@@ -341,6 +341,7 @@ impl<T: GCMethods + Copy> Heap<T> {
     ///
     /// Using boxed Heap value guarantees that the underlying Heap value will
     /// not be moved when constructed.
+    #[cfg_attr(feature = "crown", expect(crown::unrooted_must_root))]
     pub fn boxed(v: T) -> Box<Heap<T>>
     where
         Heap<T>: Default,

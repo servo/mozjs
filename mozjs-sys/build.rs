@@ -846,6 +846,7 @@ impl BuildTarget {
                 "JS::dbg::Builder_Object",
                 "JS::dbg::Builder_Object_Base",
                 "JS::dbg::BuilderOrigin",
+                "JS::ExpandoAndGeneration",
                 "JS::RootedTuple",
                 "mozilla::external::AtomicRefCounted",
                 "mozilla::ProfilerStringView",
