@@ -6,6 +6,7 @@ use mozjs_sys::jsgc::GCMethods;
 use mozjs_sys::jsval::JSVal;
 use mozjs_sys::trace::Traceable;
 use std::ops::{Deref, DerefMut};
+use std::ptr;
 
 /// A vector of items to be rooted with `RootedVec`.
 /// Guaranteed to be empty when not rooted.
@@ -131,6 +132,18 @@ impl<T: Traceable + 'static> RootedTraceableBox<T> {
     pub unsafe fn ptr(&self) -> *mut T {
         self.ptr
     }
+
+    pub fn into_box(mut self) -> Box<T> {
+        self.cleanup()
+    }
+
+    fn cleanup(&mut self) -> Box<T> {
+        unsafe {
+            let ptr = std::mem::replace(&mut self.ptr, ptr::null_mut());
+            RootedTraceableSet::remove(ptr);
+            Box::from_raw(ptr)
+        }
+    }
 }
 
 impl<T> RootedTraceableBox<Heap<T>>
@@ -164,9 +177,8 @@ impl<T: Traceable> DerefMut for RootedTraceableBox<T> {
 
 impl<T: Traceable + 'static> Drop for RootedTraceableBox<T> {
     fn drop(&mut self) {
-        unsafe {
-            RootedTraceableSet::remove(self.ptr);
-            let _ = Box::from_raw(self.ptr);
+        if !self.ptr.is_null() {
+            self.cleanup();
         }
     }
 }
