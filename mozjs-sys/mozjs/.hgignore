@@ -373,3 +373,7 @@ toolkit/themes/shared/design-system/node_modules/
 
 # Ignore mozperftest artifacts folder
 ^artifacts/
+
+# Ignore personal preferences files
+^CLAUDE\.local\.md
+.claude/settings.local.json
