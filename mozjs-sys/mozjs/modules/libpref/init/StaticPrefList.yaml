@@ -4999,9 +4999,15 @@
   value: 30000
   mirror: always
 
+# TCPSocket API
+- name: dom.tcpsocket_in_child.enabled
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # UDPSocket API
 - name: dom.udpsocket.enabled
-  type: bool
+  type: RelaxedAtomicBool
   value: false
   mirror: always
 
@@ -11257,12 +11263,6 @@
   value: @IS_NOT_XP_MACOSX@
   mirror: always
 
-# How long in milliseconds before timing out to destroy en/decoders gracefully
-- name: media.gmp.coder-shutdown-timeout-ms
-  type: RelaxedAtomicUint32
-  value: 1000
-  mirror: always
-
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
   # Whether to allow, on a Linux system that doesn't support the necessary
   # sandboxing features, loading Gecko Media Plugins unsandboxed.  However, EME
@@ -13475,6 +13475,12 @@
     login-us.microsoftonline.com
   mirror: never
 
+# Whether to fallback to old mime-type parser when CMimeType::Parse fails
+- name: network.http.fallback_to_net_parse_ct
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # The factor by which to increase the keepalive timeout when the
 # NS_HTTP_LARGE_KEEPALIVE flag is used for a connection
 - name: network.http.largeKeepaliveFactor
@@ -15397,7 +15403,7 @@
 # Set to * to allow all schemes.
 - name: network.http_index_format.allowed_schemes
   type: String
-  value: "file,moz-gio"
+  value: "file"
   mirror: never
 
 # Enable off-main-thread decompression of network streams

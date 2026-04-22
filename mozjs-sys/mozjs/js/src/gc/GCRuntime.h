@@ -108,13 +108,15 @@ class ChunkPool {
 
   void sort();
 
+  // Linear time, use with caution.
+  bool contains(ArenaChunk* chunk) const;
+
  private:
   ArenaChunk* mergeSort(ArenaChunk* list, size_t count);
   bool isSorted() const;
 
 #ifdef DEBUG
  public:
-  bool contains(ArenaChunk* chunk) const;
   bool verify() const;
   void verifyChunks() const;
 #endif
