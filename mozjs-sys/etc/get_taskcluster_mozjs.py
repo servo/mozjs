@@ -2,12 +2,15 @@
 
 import sys
 import os
+import tarfile
+
 import requests
+from urllib.parse import quote
 from urllib.request import urlretrieve
 
 ESR = 140
 REPO = f"mozilla-esr{ESR}"
-HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) mozjs-sys/1.0"}
+HEADERS = {"User-Agent": "mozjs-sys/1.0 (https://github.com/servo/mozjs)"}
 
 
 def download_artifact(task_id: str, artifact_name: str, dl_name: str, i=0):
@@ -55,7 +58,21 @@ def find_sm_pkg_and_hazard_task_in_push(push_id: int) -> tuple[str | None, str |
     return sm_pkg_task_id, hazard_task_id
 
 
+def get_ancestor_revisions(commit: str, limit: int) -> set[str]:
+    revset = quote(f"ancestors({commit})")
+    response = requests.get(
+        f"https://hg.mozilla.org/releases/{REPO}/json-log"
+        f"?rev={revset}&limit={limit}",
+        headers=HEADERS,
+    )
+    response.raise_for_status()
+    return {entry["node"] for entry in response.json().get("entries", [])}
+
+
 def get_previous_pushes(commit: str, count: int):
+    # Multiple changesets can map to the same push, so we fetch more.
+    ancestors = get_ancestor_revisions(commit, limit=count * 20)
+
     response = requests.get(
         f"https://treeherder.mozilla.org/api/project/{REPO}/push/?revision={commit}",
         headers=HEADERS,
@@ -64,13 +81,56 @@ def get_previous_pushes(commit: str, count: int):
     initial_push = response.json()["results"][0]
     push_timestamp = initial_push["push_timestamp"]
 
-    # this is how treeherders get n more pushes works
     response = requests.get(
-        f"https://treeherder.mozilla.org/api/project/{REPO}/push/?push_timestamp__lte={push_timestamp}&count={count}",
+        f"https://treeherder.mozilla.org/api/project/{REPO}/push/"
+        f"?push_timestamp__lte={push_timestamp}&count={count * 4}",
         headers=HEADERS,
     )
     response.raise_for_status()
-    return response.json()["results"]
+    all_pushes = response.json()["results"]
+
+    # Keep only pushes whose tip changeset is an ancestor of `commit`.
+    on_branch = [p for p in all_pushes if p["revision"] in ancestors]
+    return on_branch[:count]
+
+def read_milestone_from_tarball(tarball_path: str) -> str:
+    """Extract `config/milestone.txt` from the SM source tarball and return
+    the milestone version string (e.g. '140.9.0')."""
+    with tarfile.open(tarball_path, "r:*") as tar:
+        milestone_member = None
+        for member in tar:
+            if member.isfile() and member.name.endswith("/config/milestone.txt"):
+                milestone_member = member
+                break
+        if milestone_member is None:
+            raise RuntimeError(
+                f"config/milestone.txt not found in {tarball_path}"
+            )
+        f = tar.extractfile(milestone_member)
+        if f is None:
+            raise RuntimeError(
+                f"Could not read {milestone_member.name} from {tarball_path}"
+            )
+        content = f.read().decode("utf-8")
+
+    for line in content.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return line
+    raise RuntimeError(
+        f"Could not parse milestone version from {milestone_member.name}"
+    )
+
+
+def verify_tarball_version(tarball_path: str, expected_version: str) -> None:
+    """Verify the tarball's milestone matches the expected tag version."""
+    milestone = read_milestone_from_tarball(tarball_path)
+    if milestone != expected_version:
+        raise RuntimeError(
+            f"SpiderMonkey version mismatch: tarball milestone is {milestone} "
+            f"but the resolved tag implies {expected_version}."
+        )
+    print(f"Milestone verified: tarball is SpiderMonkey {milestone}")
 
 
 def download_from_taskcluster(commit: str, look_back_for_artifacts: int = 50):

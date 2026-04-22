@@ -6,7 +6,7 @@ import subprocess
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from get_latest_mozjs import get_latest_mozjs_tag_changeset
-from get_taskcluster_mozjs import download_from_taskcluster, ESR, REPO
+from get_taskcluster_mozjs import download_from_taskcluster, ESR, REPO, verify_tarball_version
 from get_mozjs import download_gh_artifact
 from update import main
 
@@ -33,6 +33,8 @@ if GITHUB_OUTPUT := os.getenv("GITHUB_OUTPUT"):
 
 
 download_from_taskcluster(changeset)
+
+verify_tarball_version("mozjs.tar.xz", f"{ESR}.{minor_patch}")
 
 subprocess.check_call(
     [
