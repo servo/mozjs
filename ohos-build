@@ -57,6 +57,7 @@ def set_toolchain_binaries_in_env(toolchain_dir: str, target_triple: str, env: D
     env["LIBCLANG_PATH"] = os.path.join(toolchain_dir, "lib")
     env["CLANG_PATH"] = cxx
     env[f'CXXSTDLIB_{target_triple_underscore}'] = "c++"
+    env["BINDGEN_EXTRA_CLANG_ARGS"] = f"--sysroot={os.path.join(toolchain_dir, '..', 'sysroot')}"
 
 
 def create_environment_for_build() -> Dict[str, str]:
