@@ -9,6 +9,7 @@ use std::char;
 use std::default::Default;
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
+use std::mem;
 use std::mem::MaybeUninit;
 use std::ops::{Deref, DerefMut};
 use std::ptr::{self, NonNull};
@@ -63,10 +64,12 @@ use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWa
 use crate::jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
 use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
+use crate::jsapi::{
+    RootedObject, RootedValue, ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow,
+};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
 use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
-use crate::jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
-use crate::jsval::{JSVal, ObjectValue};
+use crate::jsval::{JSVal, ObjectValue, UndefinedValue};
 use crate::panic::maybe_resume_unwind;
 use crate::realm::AutoRealm;
 use log::{debug, warn};
@@ -1265,6 +1268,102 @@ impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
     pub fn len(&self) -> u32 {
         unsafe { StackGCVectorStringLength(*self) }
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ForOfIterationFailure<OtherError> {
+    ValueIsNotIterable,
+    /// There is a pending exception
+    JSFailed,
+    Other(OtherError),
+}
+
+/// Helper for running `for .. of` iteration from rust.
+///
+/// If `Ok()` is returned then the iteration completed without unexpected failures.
+///
+/// The callback returns `Err()` to indicate a pending exception or `Ok()` containing a boolean
+/// value that is `true` if the iterator should continue iterating.
+pub fn for_of<Callback, OtherError>(
+    cx: *mut JSContext,
+    iterable: HandleValue<'_>,
+    mut callback: Callback,
+) -> Result<(), ForOfIterationFailure<OtherError>>
+where
+    Callback: FnMut(HandleValue<'_>) -> Result<bool, ForOfIterationFailure<OtherError>>,
+{
+    // Depending on the version of LLVM in use, bindgen can end up including
+    // a padding field in the ForOfIterator. To support multiple versions of
+    // LLVM that may not have the same fields as a result, we create an empty
+    // iterator instance and initialize a non-empty instance using the empty
+    // instance as a base value.
+    #[allow(unused_variables)]
+    let zero = unsafe { mem::zeroed() };
+    let mut iterator = jsapi::ForOfIterator {
+        cx_: cx,
+        iterator: RootedObject::new_unrooted(ptr::null_mut()),
+        nextMethod: RootedValue::new_unrooted(JSVal { asBits_: 0 }),
+        index: ::std::u32::MAX, // NOT_ARRAY
+        ..zero
+    };
+
+    // This code would benefit from https://github.com/rust-lang/rust/issues/144426
+    struct IteratorRootGuard<'a> {
+        inner: &'a mut jsapi::ForOfIterator,
+    }
+
+    impl<'a> Drop for IteratorRootGuard<'a> {
+        fn drop(&mut self) {
+            // SAFETY: These values won't be used anymore
+            unsafe {
+                self.inner.iterator.remove_from_root_stack();
+                self.inner.nextMethod.remove_from_root_stack();
+            }
+        }
+    }
+    let guard = IteratorRootGuard {
+        inner: &mut iterator,
+    };
+    let iterator = &mut *guard.inner;
+
+    unsafe {
+        RootedObject::add_to_root_stack(&raw mut iterator.iterator, cx);
+        RootedValue::add_to_root_stack(&raw mut iterator.nextMethod, cx);
+    }
+
+    let success = unsafe {
+        iterator.init(
+            iterable.into_handle(),
+            jsapi::ForOfIterator_NonIterableBehavior::AllowNonIterable,
+        )
+    };
+    if !success {
+        return Err(ForOfIterationFailure::JSFailed);
+    }
+    if !iterator.is_iterable() {
+        return Err(ForOfIterationFailure::ValueIsNotIterable);
+    }
+
+    let mut done = false;
+    rooted!(in(cx) let mut value = UndefinedValue());
+    loop {
+        // SAFETY: self.inner is known to be initialized.
+        if !unsafe { iterator.next(value.handle_mut().into(), &mut done) } {
+            return Err(ForOfIterationFailure::JSFailed);
+        }
+
+        if done {
+            break;
+        }
+
+        match callback(value.handle()) {
+            Ok(true) => continue,
+            Ok(false) => break,
+            Err(_) => return Err(ForOfIterationFailure::JSFailed),
+        }
+    }
+
+    Ok(())
 }
 
 /// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments

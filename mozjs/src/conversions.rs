@@ -31,25 +31,24 @@
 use crate::error::throw_type_error;
 use crate::jsapi::AssertSameCompartment;
 use crate::jsapi::JS;
-use crate::jsapi::{ForOfIterator, ForOfIterator_NonIterableBehavior};
 use crate::jsapi::{Heap, JS_DefineElement, JS_GetLatin1StringCharsAndLength};
-use crate::jsapi::{JSContext, JSObject, JSString, RootedObject, RootedValue};
+use crate::jsapi::{JSContext, JSObject, JSString};
 use crate::jsapi::{JS_DeprecatedStringHasLatin1Chars, JS_NewStringCopyUTF8N, JSPROP_ENUMERATE};
 use crate::jsapi::{JS_GetTwoByteStringCharsAndLength, NewArrayObject1};
 use crate::jsval::{BooleanValue, DoubleValue, Int32Value, NullValue, UInt32Value, UndefinedValue};
 use crate::jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolValue};
 use crate::rooted;
+use crate::rust::for_of;
 use crate::rust::maybe_wrap_value;
+use crate::rust::ForOfIterationFailure;
 use crate::rust::{maybe_wrap_object_or_null_value, maybe_wrap_object_value, ToString};
 use crate::rust::{HandleValue, MutableHandleValue};
 use crate::rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToUint64};
 use libc;
 use log::debug;
-use mozjs_sys::jsgc::Rooted;
 use num_traits::PrimInt;
 use std::borrow::Cow;
 use std::ffi::CStr;
-use std::mem;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::{ptr, slice};
@@ -757,31 +756,6 @@ impl<T: ToJSValConvertible> ToJSValConvertible for Vec<T> {
     }
 }
 
-/// Rooting guard for the iterator field of ForOfIterator.
-/// Behaves like RootedGuard (roots on creation, unroots on drop),
-/// but borrows and allows access to the whole ForOfIterator, so
-/// that methods on ForOfIterator can still be used through it.
-struct ForOfIteratorGuard<'a> {
-    root: &'a mut ForOfIterator,
-}
-
-impl<'a> ForOfIteratorGuard<'a> {
-    fn new(cx: *mut JSContext, root: &'a mut ForOfIterator) -> Self {
-        unsafe {
-            Rooted::add_to_root_stack(&raw mut root.iterator, cx);
-        }
-        ForOfIteratorGuard { root }
-    }
-}
-
-impl<'a> Drop for ForOfIteratorGuard<'a> {
-    fn drop(&mut self) {
-        unsafe {
-            self.root.iterator.remove_from_root_stack();
-        }
-    }
-}
-
 impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec<T> {
     type Config = C;
 
@@ -790,61 +764,41 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         value: HandleValue,
         option: C,
     ) -> Result<ConversionResult<Vec<T>>, ()> {
+        struct ConversionFailed(Cow<'static, CStr>);
+
         if !value.is_object() {
             return Ok(ConversionResult::Failure(c"Value is not an object".into()));
         }
 
-        // Depending on the version of LLVM in use, bindgen can end up including
-        // a padding field in the ForOfIterator. To support multiple versions of
-        // LLVM that may not have the same fields as a result, we create an empty
-        // iterator instance and initialize a non-empty instance using the empty
-        // instance as a base value.
-        #[allow(unused_variables)]
-        let zero = mem::zeroed();
-        let mut iterator = ForOfIterator {
-            cx_: cx,
-            iterator: RootedObject::new_unrooted(ptr::null_mut()),
-            nextMethod: RootedValue::new_unrooted(JSVal { asBits_: 0 }),
-            index: ::std::u32::MAX, // NOT_ARRAY
-            ..zero
-        };
-        let iterator = ForOfIteratorGuard::new(cx, &mut iterator);
-        let iterator: &mut ForOfIterator = &mut *iterator.root;
-
-        if !iterator.init(
-            value.into(),
-            ForOfIterator_NonIterableBehavior::AllowNonIterable,
-        ) {
-            return Err(());
-        }
-
-        if iterator.iterator.data.is_null() {
-            return Ok(ConversionResult::Failure(c"Value is not iterable".into()));
-        }
-
-        let mut ret = vec![];
-
-        loop {
-            let mut done = false;
-            rooted!(in(cx) let mut val = UndefinedValue());
-            if !iterator.next(val.handle_mut().into(), &mut done) {
-                return Err(());
-            }
-
-            if done {
-                break;
-            }
-
-            ret.push(match T::from_jsval(cx, val.handle(), option.clone())? {
+        let mut return_value = vec![];
+        let result = for_of(cx, value, |iterator_element| {
+            let conversion_result = T::from_jsval(cx, iterator_element, option.clone())
+                .map_err(|_| ForOfIterationFailure::JSFailed)?;
+            return_value.push(match conversion_result {
                 ConversionResult::Success(v) => v,
                 ConversionResult::Failure(e) => {
-                    throw_type_error(cx, e.as_ref());
-                    return Err(());
+                    return Err(ForOfIterationFailure::Other(ConversionFailed(e)));
                 }
             });
-        }
 
-        Ok(ret).map(ConversionResult::Success)
+            Ok(true)
+        });
+
+        match result {
+            Ok(_) => {
+                Ok(ConversionResult::Success(return_value))
+            },
+            Err(ForOfIterationFailure::ValueIsNotIterable) => {
+                Ok(ConversionResult::Failure(c"Value is not iterable".into()))
+            }
+            Err(ForOfIterationFailure::JSFailed) => {
+                Err(())
+            }
+            Err(ForOfIterationFailure::Other(ConversionFailed(e))) => {
+                throw_type_error(cx, e.as_ref());
+                Err(())
+            }
+        }
     }
 }
 

@@ -172,6 +172,10 @@ bool JS_ForOfIteratorNext(JS::ForOfIterator* iterator,
   return iterator->next(val, done);
 }
 
+bool JS_ForOfIteratorValueIsIterable(const JS::ForOfIterator* iterator) {
+  return iterator->valueIsIterable();
+}
+
 // These functions are only intended for use in testing,
 // to make sure that the Rust implementation of JS::Value
 // agrees with the C++ implementation.

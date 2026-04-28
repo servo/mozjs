@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::jsapi::glue::JS_ForOfIteratorInit;
-use crate::jsapi::glue::JS_ForOfIteratorNext;
+use crate::jsapi::glue::{
+    JS_ForOfIteratorInit, JS_ForOfIteratorNext, JS_ForOfIteratorValueIsIterable,
+};
 use crate::jsapi::jsid;
 use crate::jsapi::mozilla;
 use crate::jsapi::JSAutoRealm;
@@ -576,6 +577,10 @@ impl JS::ForOfIterator {
 
     pub unsafe fn next(&mut self, val: JS::MutableHandleValue, done: *mut bool) -> bool {
         JS_ForOfIteratorNext(self, val, done)
+    }
+
+    pub fn is_iterable(&self) -> bool {
+        unsafe { JS_ForOfIteratorValueIsIterable(self) }
     }
 }
 
