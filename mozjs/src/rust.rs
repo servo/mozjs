@@ -1278,6 +1278,12 @@ pub enum ForOfIterationFailure<OtherError> {
     Other(OtherError),
 }
 
+impl<OtherError> From<OtherError> for ForOfIterationFailure<OtherError> {
+    fn from(value: OtherError) -> Self {
+        Self::Other(value)
+    }
+}
+
 /// Helper for running `for .. of` iteration from rust.
 ///
 /// If `Ok()` is returned then the iteration completed without unexpected failures.
@@ -1347,7 +1353,6 @@ where
     let mut done = false;
     rooted!(in(cx) let mut value = UndefinedValue());
     loop {
-        // SAFETY: self.inner is known to be initialized.
         if !unsafe { iterator.next(value.handle_mut().into(), &mut done) } {
             return Err(ForOfIterationFailure::JSFailed);
         }
@@ -1356,10 +1361,8 @@ where
             break;
         }
 
-        match callback(value.handle()) {
-            Ok(true) => continue,
-            Ok(false) => break,
-            Err(_) => return Err(ForOfIterationFailure::JSFailed),
+        if !callback(value.handle())? {
+            break;
         }
     }
 

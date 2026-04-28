@@ -764,8 +764,6 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         value: HandleValue,
         option: C,
     ) -> Result<ConversionResult<Vec<T>>, ()> {
-        struct ConversionFailed(Cow<'static, CStr>);
-
         if !value.is_object() {
             return Ok(ConversionResult::Failure(c"Value is not an object".into()));
         }
@@ -775,9 +773,9 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
             let conversion_result = T::from_jsval(cx, iterator_element, option.clone())
                 .map_err(|_| ForOfIterationFailure::JSFailed)?;
             return_value.push(match conversion_result {
-                ConversionResult::Success(v) => v,
-                ConversionResult::Failure(e) => {
-                    return Err(ForOfIterationFailure::Other(ConversionFailed(e)));
+                ConversionResult::Success(value) => value,
+                ConversionResult::Failure(error) => {
+                    return Err(ForOfIterationFailure::Other(error));
                 }
             });
 
@@ -785,17 +783,13 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         });
 
         match result {
-            Ok(_) => {
-                Ok(ConversionResult::Success(return_value))
-            },
+            Ok(_) => Ok(ConversionResult::Success(return_value)),
             Err(ForOfIterationFailure::ValueIsNotIterable) => {
                 Ok(ConversionResult::Failure(c"Value is not iterable".into()))
             }
-            Err(ForOfIterationFailure::JSFailed) => {
-                Err(())
-            }
-            Err(ForOfIterationFailure::Other(ConversionFailed(e))) => {
-                throw_type_error(cx, e.as_ref());
+            Err(ForOfIterationFailure::JSFailed) => Err(()),
+            Err(ForOfIterationFailure::Other(error)) => {
+                throw_type_error(cx, error.as_ref());
                 Err(())
             }
         }
