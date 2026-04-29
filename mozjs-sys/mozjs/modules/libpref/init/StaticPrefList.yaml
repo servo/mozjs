@@ -18224,6 +18224,11 @@
   value: false
   mirror: always
 
+- name: webgl.max-bytes-per-row
+  type: RelaxedAtomicUint32
+  value: 2147483647 # 0 => no limit, >0 => max valid bytes per row
+  mirror: always
+
 - name: webgl.max-contexts
   type: RelaxedAtomicUint32
   value: 1000
