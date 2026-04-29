@@ -18,8 +18,13 @@
 template <typename T>
 class nsTSubstring;
 
-#ifdef ANDROID
+#if defined(ANDROID)
 #  include <android/log.h>
+#elif defined(XP_OHOS)
+  MOZ_BEGIN_EXTERN_C
+  int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
+      __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
+  MOZ_END_EXTERN_C
 #endif
 
 namespace mozilla {
@@ -96,8 +101,10 @@ auto&& MozDbg(const char* aFile, int aLine, const char* aExpression,
   s << "[MozDbg] [" << aFile << ':' << aLine << "] " << aExpression << " = ";
   mozilla::DebugValue(s, std::forward<T>(aValue));
   s << '\n';
-#ifdef ANDROID
+#if defined(ANDROID)
   __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", s.str().c_str());
+#elif defined(XP_OHOS)
+    (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, 0, "Gecko", "%{public}s\n", s.str().c_str());
 #else
   fputs(s.str().c_str(), stderr);
 #endif
