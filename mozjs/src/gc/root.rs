@@ -167,6 +167,11 @@ where
         // Safety: Values within this rooted vector are traced.
         unsafe { MutableHandle::from_marked_location(self.as_mut().as_mut_ptr().add(index)) }
     }
+
+    pub fn take(&'_ mut self) -> Vec<T> {
+        // Safety: No GC can run during this call.
+        std::mem::take(unsafe { self.as_mut() })
+    }
 }
 
 impl<'a, T: 'a + RootKind> Deref for RootedGuard<'a, T> {
