@@ -11,7 +11,7 @@ use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
 use std::mem;
 use std::mem::MaybeUninit;
-use std::ops::{Deref, DerefMut};
+use std::ops::{ControlFlow, Deref, DerefMut};
 use std::ptr::{self, NonNull};
 use std::slice;
 use std::str;
@@ -1296,7 +1296,7 @@ pub fn for_of<Callback, OtherError>(
     mut callback: Callback,
 ) -> Result<(), ForOfIterationFailure<OtherError>>
 where
-    Callback: FnMut(HandleValue<'_>) -> Result<bool, ForOfIterationFailure<OtherError>>,
+    Callback: FnMut(HandleValue<'_>) -> Result<ControlFlow<()>, ForOfIterationFailure<OtherError>>,
 {
     // Depending on the version of LLVM in use, bindgen can end up including
     // a padding field in the ForOfIterator. To support multiple versions of
@@ -1361,7 +1361,7 @@ where
             break;
         }
 
-        if !callback(value.handle())? {
+        if callback(value.handle())?.is_break() {
             break;
         }
     }

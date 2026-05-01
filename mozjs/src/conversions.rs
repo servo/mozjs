@@ -49,6 +49,7 @@ use log::debug;
 use num_traits::PrimInt;
 use std::borrow::Cow;
 use std::ffi::CStr;
+use std::ops::ControlFlow;
 use std::ptr::NonNull;
 use std::rc::Rc;
 use std::{ptr, slice};
@@ -779,7 +780,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
                 }
             });
 
-            Ok(true)
+            Ok(ControlFlow::Continue(()))
         });
 
         match result {
