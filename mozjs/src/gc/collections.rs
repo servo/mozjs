@@ -133,6 +133,9 @@ impl<T: Traceable + 'static> RootedTraceableBox<T> {
         self.ptr
     }
 
+    /// Destroys this root and returns the boxed value.
+    /// This value is no longer rooted, but is still safe to stored
+    /// in some other rooted or traceable location.
     pub fn into_box(mut self) -> Box<T> {
         self.cleanup()
     }
