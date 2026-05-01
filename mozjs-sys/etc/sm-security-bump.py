@@ -12,7 +12,7 @@ from update import main
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
-minor_patch, tag, changeset = get_latest_mozjs_tag_changeset()
+minor, patch, tag, changeset = get_latest_mozjs_tag_changeset()
 print(f"Latest tag: {tag}, changeset: {changeset}")
 
 try:
@@ -28,13 +28,13 @@ if GITHUB_OUTPUT := os.getenv("GITHUB_OUTPUT"):
     with open(GITHUB_OUTPUT, "a") as github_output_file:
         print(f"tag={tag}", file=github_output_file)
         print(f"changeset={changeset}", file=github_output_file)
-        print(f"version={ESR}.{int(minor_patch)}", file=github_output_file)
+        print(f"version={ESR}.{minor}.{patch}", file=github_output_file)
         print(f"esr={ESR}", file=github_output_file)
 
 
 download_from_taskcluster(changeset)
 
-verify_tarball_version("mozjs.tar.xz", f"{ESR}.{minor_patch}")
+verify_tarball_version("mozjs.tar.xz", f"{ESR}.{minor}.{patch}")
 
 subprocess.check_call(
     [
@@ -75,7 +75,7 @@ os.remove("mozjs.tar.xz")
 subprocess.check_call(["git", "add", "--all"])
 subprocess.check_call(["git", "commit", "-m", "Apply patches", "--signoff"])
 
-version = f"0.{ESR}.{int(minor_patch)}-0"
+version = f"{ESR}.{minor}.{patch}-0"
 print(f"Updating to version {version}")
 
 cargo_toml_file = os.path.join(script_dir, "..", "Cargo.toml")
