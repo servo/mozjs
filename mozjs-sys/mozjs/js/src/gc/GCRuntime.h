@@ -24,6 +24,7 @@
 #include "gc/Scheduling.h"
 #include "gc/Statistics.h"
 #include "gc/StoreBuffer.h"
+#include "js/friend/CycleCollector.h"
 #include "js/friend/PerformanceHint.h"
 #include "js/GCAnnotations.h"
 #include "js/UniquePtr.h"
@@ -687,6 +688,9 @@ class GCRuntime {
   // WeakRefs
   bool registerWeakRef(HandleObject target, HandleObject weakRef);
   void traceKeptObjects(JSTracer* trc);
+
+  void maybeClearWeakRefTargets(JS::ShouldClearWeakRefTargetCallback callback,
+                                void* data);
 
   JS::GCReason lastStartReason() const { return initialReason; }
 

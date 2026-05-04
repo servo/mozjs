@@ -1713,9 +1713,11 @@ static int32_t _cmpFold(
                      * remember that this simulates bulk text replacement:
                      * the decomposition would replace the entire code point
                      */
-                    --s2;
-                    --m2;
-                    c2=*(s2-1);
+                    if (start2<=(s2-2)) {
+                        --s2;
+                        --m2;
+                        c2=*(s2-1);
+                    }
                 }
             }
 
@@ -1759,9 +1761,11 @@ static int32_t _cmpFold(
                      * remember that this simulates bulk text replacement:
                      * the decomposition would replace the entire code point
                      */
-                    --s1;
-                    --m2;
-                    c1=*(s1-1);
+                    if (start1<=(s1-2)) {
+                        --s1;
+                        --m1;
+                        c1=*(s1-1);
+                    }
                 }
             }
 
