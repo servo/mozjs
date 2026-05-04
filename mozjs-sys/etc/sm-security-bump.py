@@ -72,7 +72,7 @@ main(["mozjs.tar.xz"])
 
 os.remove("mozjs.tar.xz")
 
-subprocess.check_call(["git", "add", "--all"])
+subprocess.check_call(["git", "add", "mozjs-sys/mozjs"])
 subprocess.check_call(["git", "commit", "-m", "Apply patches", "--signoff"])
 
 version = f"{ESR}.{minor}.{patch}-0"
@@ -110,5 +110,5 @@ with open(mozjs_cargo_toml_file, "r") as f:
 with open(mozjs_cargo_toml_file, "w") as f:
     f.writelines(mozjs_cargo_toml)
 
-subprocess.check_call(["git", "add", "--all"])
+subprocess.check_call(["git", "add", cargo_toml_file, mozjs_cargo_toml_file])
 subprocess.check_call(["git", "commit", "-m", f"Bump crate versions", "--signoff"])
