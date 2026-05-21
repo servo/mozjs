@@ -101,7 +101,7 @@ impl JSContext {
     /// SAFETY:
     /// - only one [JSContext] can be alive and it should not outlive [Runtime].
     pub unsafe fn get_from_thread() -> Option<JSContext> {
-        unsafe { mozjs::rust::Runtime::get().map(JSContext::from_ptr) }
+        unsafe { crate::rust::Runtime::get().map(JSContext::from_ptr) }
     }
 
     /// Returns [NoGC] token bounded to this [JSContext].
