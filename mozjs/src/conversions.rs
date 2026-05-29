@@ -40,8 +40,8 @@ use crate::jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolVal
 use crate::rooted;
 use crate::rust::for_of;
 use crate::rust::maybe_wrap_value;
-use crate::rust::ForOfIterationFailure;
 use crate::rust::wrappers2::{JS_GetLatin1StringCharsAndLength, JS_GetTwoByteStringCharsAndLength};
+use crate::rust::ForOfIterationFailure;
 use crate::rust::{maybe_wrap_object_or_null_value, maybe_wrap_object_value, ToString};
 use crate::rust::{HandleValue, MutableHandleValue};
 use crate::rust::{ToBoolean, ToInt32, ToInt64, ToNumber, ToUint16, ToUint32, ToUint64};
