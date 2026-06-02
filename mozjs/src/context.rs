@@ -96,6 +96,14 @@ impl JSContext {
         JSContext { ptr: cx }
     }
 
+    /// Get the `JSContext` for this thread (thin air). This should be rarely used.
+    ///
+    /// SAFETY:
+    /// - only one [JSContext] can be alive and it should not outlive [Runtime].
+    pub unsafe fn get_from_thread() -> Option<JSContext> {
+        unsafe { crate::rust::Runtime::get().map(|raw_cx| unsafe { JSContext::from_ptr(raw_cx) }) }
+    }
+
     /// Returns [NoGC] token bounded to this [JSContext].
     /// No function that accepts `&mut JSContext` (read: triggers GC)
     /// can be called while this is alive.
