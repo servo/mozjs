@@ -597,7 +597,7 @@ impl FromJSValConvertible for f64 {
 
 /// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
 /// `String`.
-pub fn latin1_to_string_safe(cx: &crate::context::JSContext, s: NonNull<JSString>) -> String {
+pub fn latin1_to_string(cx: &crate::context::JSContext, s: NonNull<JSString>) -> String {
     assert!(unsafe { JS_DeprecatedStringHasLatin1Chars(s.as_ptr()) });
 
     let mut length = 0;
@@ -621,9 +621,9 @@ pub fn latin1_to_string_safe(cx: &crate::context::JSContext, s: NonNull<JSString
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
-pub fn jsstr_to_string_safe(cx: &crate::context::JSContext, jsstr: NonNull<JSString>) -> String {
+pub fn jsstr_to_string(cx: &crate::context::JSContext, jsstr: NonNull<JSString>) -> String {
     if unsafe { JS_DeprecatedStringHasLatin1Chars(jsstr.as_ptr()) } {
-        return latin1_to_string_safe(cx, jsstr);
+        return latin1_to_string(cx, jsstr);
     }
 
     let mut length = 0;
@@ -636,22 +636,24 @@ pub fn jsstr_to_string_safe(cx: &crate::context::JSContext, jsstr: NonNull<JSStr
 /// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
 /// `String`.
 ///
-/// Use [`latin1_to_string_safe`] if possible as this function will be eventually removed.
-#[deprecated(note = "Use latin1_to_string_safe instead")]
-pub unsafe fn latin1_to_string(cx: *mut JSContext, s: NonNull<JSString>) -> String {
+/// Use [`latin1_to_string`] if possible as this function will be eventually removed.
+#[deprecated(note = "Use latin1_to_string instead")]
+pub unsafe fn unsafe_latin1_to_string(cx: *mut JSContext, s: NonNull<JSString>) -> String {
     // while this can break direct invariants of JSContext
     // it is ok in the current usage of this function and it avoids duplicating the code
     let cx = crate::context::JSContext::from_ptr(NonNull::new(cx).unwrap());
-    latin1_to_string_safe(&cx, s)
+    latin1_to_string(&cx, s)
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
 ///
-/// Use [`jsstr_to_string_safe`] if possible as this function will be eventually removed.
-#[deprecated(note = "Use jsstr_to_string_safe instead")]
-pub unsafe fn jsstr_to_string(cx: *mut JSContext, jsstr: NonNull<JSString>) -> String {
+/// Use [`jsstr_to_string`] if possible as this function will be eventually removed.
+#[deprecated(note = "Use jsstr_to_string instead")]
+pub unsafe fn unsafe_jsstr_to_string(cx: *mut JSContext, jsstr: NonNull<JSString>) -> String {
+    // while this can break direct invariants of JSContext
+    // it is ok in the current usage of this function and it avoids duplicating the code
     let cx = crate::context::JSContext::from_ptr(NonNull::new(cx).unwrap());
-    jsstr_to_string_safe(&cx, jsstr)
+    jsstr_to_string(&cx, jsstr)
 }
 
 // https://heycam.github.io/webidl/#es-USVString

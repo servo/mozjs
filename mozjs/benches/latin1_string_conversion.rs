@@ -3,7 +3,7 @@ use criterion::{
     criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion, Throughput,
 };
 use mozjs::context::JSContext;
-use mozjs::conversions::jsstr_to_string_safe;
+use mozjs::conversions::jsstr_to_string;
 use mozjs::glue::{CreateJSExternalStringCallbacks, JSExternalStringCallbacksTraps};
 use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::realm::AutoRealm;
@@ -52,7 +52,7 @@ fn bench_str_repetition(
             &latin1_jsstr,
             |b, js_str| {
                 b.iter(|| {
-                    jsstr_to_string_safe(context, NonNull::new(js_str.get()).unwrap());
+                    jsstr_to_string(context, NonNull::new(js_str.get()).unwrap());
                 })
             },
         );

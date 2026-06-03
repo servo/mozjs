@@ -5,7 +5,7 @@
 use std::ptr::{self, NonNull};
 use std::sync::{LazyLock, Mutex};
 
-use mozjs::conversions::jsstr_to_string_safe;
+use mozjs::conversions::jsstr_to_string;
 use mozjs::gc::StackGCVector;
 use mozjs::jsapi::{
     CompilationType, Handle, HandleString, HandleValue, JSContext, JSSecurityCallbacks, JSString,
@@ -42,11 +42,11 @@ unsafe extern "C" fn content_security_policy_allows(
 
     let string0 = parameter_strings.at(0).expect("should have a value");
     let string0 = NonNull::new(*string0).expect("should be non-null");
-    assert_eq!(jsstr_to_string_safe(cx, string0), "a".to_string());
+    assert_eq!(jsstr_to_string(cx, string0), "a".to_string());
 
     let string1 = parameter_strings.at(1).expect("should have a value");
     let string1 = NonNull::new(*string1).expect("should be non-null");
-    assert_eq!(jsstr_to_string_safe(cx, string1), "b".to_string());
+    assert_eq!(jsstr_to_string(cx, string1), "b".to_string());
 
     let parameter_args = SafeHandle::from_raw(parameter_args);
     assert_eq!(parameter_args.len(), 2);
@@ -54,12 +54,12 @@ unsafe extern "C" fn content_security_policy_allows(
     let arg0 = parameter_args.at(0).expect("should have a value");
     let string0 = arg0.to_string();
     let string0 = NonNull::new(string0).expect("should be non-null");
-    assert_eq!(jsstr_to_string_safe(cx, string0), "a".to_string());
+    assert_eq!(jsstr_to_string(cx, string0), "a".to_string());
 
     let arg1 = parameter_args.at(1).expect("should have a value");
     let string1 = arg1.to_string();
     let string1 = NonNull::new(string1).expect("should be non-null");
-    assert_eq!(jsstr_to_string_safe(cx, string1), "b".to_string());
+    assert_eq!(jsstr_to_string(cx, string1), "b".to_string());
 
     *RAN_CSP_CALLBACK.lock().unwrap() = true;
     *can_compile_strings = true;
