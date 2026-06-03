@@ -691,7 +691,17 @@ impl FromJSValConvertible for String {
         value: HandleValue,
         _: (),
     ) -> Result<ConversionResult<String>, ()> {
-        let jsstr = ToString(cx, value);
+        // TODO https://github.com/servo/mozjs/issues/749
+        let mut cx = crate::context::JSContext::from_ptr(NonNull::new(cx).unwrap());
+        FromJSValConvertible::safe_from_jsval(&mut cx, value, ())
+    }
+
+    fn safe_from_jsval(
+        cx: &mut crate::context::JSContext,
+        value: HandleValue,
+        _config: Self::Config,
+    ) -> Result<ConversionResult<String>, ()> {
+        let jsstr = unsafe { ToString(cx, value) };
         let Some(jsstr) = NonNull::new(jsstr) else {
             debug!("ToString failed");
             return Err(());

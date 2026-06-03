@@ -74,7 +74,7 @@ unsafe extern "C" fn puts(context: *mut RawJSContext, argc: u32, vp: *mut Value)
     }
 
     let arg = mozjs::rust::Handle::from_raw(args.get(0));
-    let js = mozjs::rust::ToString(context.raw_cx(), arg);
+    let js = mozjs::rust::ToString(&mut context, arg);
     rooted!(&in(context) let message_root = js);
     unsafe extern "C" fn cb(message: *const core::ffi::c_char) {
         let message = CStr::from_ptr(message);
