@@ -597,7 +597,10 @@ impl FromJSValConvertible for f64 {
 
 /// Converts a `JSString`, encoded in "Latin1" (i.e. U+0000-U+00FF encoded as 0x00-0xFF) into a
 /// `String`.
-pub fn latin1_to_string(cx: &crate::context::JSContext, s: NonNull<JSString>) -> String {
+///
+/// ### Safety
+/// `s` must points to a valid `JSString`
+pub unsafe fn latin1_to_string(cx: &crate::context::JSContext, s: NonNull<JSString>) -> String {
     assert!(unsafe { JS_DeprecatedStringHasLatin1Chars(s.as_ptr()) });
 
     let mut length = 0;
@@ -621,7 +624,10 @@ pub fn latin1_to_string(cx: &crate::context::JSContext, s: NonNull<JSString>) ->
 }
 
 /// Converts a `JSString` into a `String`, regardless of used encoding.
-pub fn jsstr_to_string(cx: &crate::context::JSContext, jsstr: NonNull<JSString>) -> String {
+///
+/// ### Safety
+/// `jsstr` must points to a valid `JSString`
+pub unsafe fn jsstr_to_string(cx: &crate::context::JSContext, jsstr: NonNull<JSString>) -> String {
     if unsafe { JS_DeprecatedStringHasLatin1Chars(jsstr.as_ptr()) } {
         return latin1_to_string(cx, jsstr);
     }
@@ -706,7 +712,7 @@ impl FromJSValConvertible for String {
             debug!("ToString failed");
             return Err(());
         };
-        Ok(jsstr_to_string(cx, jsstr)).map(ConversionResult::Success)
+        Ok(unsafe { jsstr_to_string(cx, jsstr) }).map(ConversionResult::Success)
     }
 }
 
