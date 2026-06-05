@@ -52,9 +52,7 @@ fn bench_str_repetition(
             &latin1_jsstr,
             |b, js_str| {
                 b.iter(|| {
-                    unsafe {
-                        jsstr_to_string(context.raw_cx(), NonNull::new(js_str.get()).unwrap())
-                    };
+                    unsafe { jsstr_to_string(context, NonNull::new(js_str.get()).unwrap()) };
                 })
             },
         );

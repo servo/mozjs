@@ -34,6 +34,9 @@ unsafe extern "C" fn content_security_policy_allows(
     _body_arg: HandleValue,
     can_compile_strings: *mut bool,
 ) -> bool {
+    // SAFETY: We are in SM hook
+    let mut cx = unsafe { mozjs::context::JSContext::from_ptr(NonNull::new(cx).unwrap()) };
+    let cx = &mut cx;
     let parameter_strings = SafeHandle::from_raw(parameter_strings);
     assert_eq!(parameter_strings.len(), 2);
 

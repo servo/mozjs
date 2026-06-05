@@ -22,9 +22,9 @@ use self::wrappers::{
     StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
     StackGCVectorValueLength,
 };
+use self::wrappers2::ToStringSlow;
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
-use crate::conversions::jsstr_to_string;
 use crate::default_heapsize;
 pub use crate::gc::*;
 use crate::glue::AppendToRootedObjectVector;
@@ -68,7 +68,7 @@ use crate::jsapi::{
     RootedObject, RootedValue, ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow,
 };
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
-use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
+use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToUint16Slow};
 use crate::jsval::{JSVal, ObjectValue, UndefinedValue};
 use crate::panic::maybe_resume_unwind;
 use crate::realm::AutoRealm;
@@ -741,7 +741,7 @@ pub unsafe fn ToUint64(cx: *mut JSContext, v: HandleValue) -> Result<u64, ()> {
 }
 
 #[inline]
-pub unsafe fn ToString(cx: *mut JSContext, v: HandleValue) -> *mut JSString {
+pub unsafe fn ToString(cx: &mut crate::context::JSContext, v: HandleValue) -> *mut JSString {
     let val = *v.ptr.as_ptr();
     if val.is_string() {
         return val.to_string();
@@ -1155,7 +1155,11 @@ impl<'a> CapturedJSStack<'a> {
                 return None;
             }
 
-            Some(jsstr_to_string(self.cx, NonNull::new(string_handle.get())?))
+            #[expect(deprecated)]
+            Some(crate::conversions::unsafe_jsstr_to_string(
+                self.cx,
+                NonNull::new(string_handle.get())?,
+            ))
         }
     }
 
