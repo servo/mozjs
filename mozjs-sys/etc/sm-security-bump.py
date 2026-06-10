@@ -3,10 +3,17 @@
 import os
 import sys
 import subprocess
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from get_latest_mozjs import get_latest_mozjs_tag_changeset
-from get_taskcluster_mozjs import download_from_taskcluster, ESR, REPO, verify_tarball_version
+from get_taskcluster_mozjs import (
+    ESR,
+    REPO,
+    download_hazard_artifacts_from_taskcluster,
+    verify_tarball_version,
+)
+from get_git_mozjs import build_sm_package_from_git
 from get_mozjs import download_gh_artifact
 from update import main
 
@@ -32,9 +39,13 @@ if GITHUB_OUTPUT := os.getenv("GITHUB_OUTPUT"):
         print(f"esr={ESR}", file=github_output_file)
 
 
-download_from_taskcluster(changeset)
+# Build the SpiderMonkey source tarball locally from the upstream git mirror.
+# The Taskcluster artifact is not reliably available for ESR releases (see #747).
+build_sm_package_from_git(tag, Path("mozjs.tar.xz"))
 
 verify_tarball_version("mozjs.tar.xz", f"{ESR}.{minor}.{patch}")
+
+download_hazard_artifacts_from_taskcluster(changeset)
 
 subprocess.check_call(
     [
