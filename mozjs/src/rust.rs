@@ -656,7 +656,7 @@ impl Stencil {
         self.inner.mRawPtr.is_null()
     }
 
-    pub unsafe fn from_raw(inner: already_AddRefed<CompilationStencil>) -> Self {
+    pub unsafe fn from_raw(inner: already_AddRefed<InitialStencilAndDelazifications>) -> Self {
         Self { inner }
     }
 }
@@ -1519,6 +1519,7 @@ pub mod wrappers2 {
     use crate::jsapi::ExceptionStackBehavior;
     use crate::jsapi::ForOfIterator;
     use crate::jsapi::ForOfIterator_NonIterableBehavior;
+    use crate::jsapi::FrontendContext;
     use crate::jsapi::HandleObjectVector;
     use crate::jsapi::InstantiateOptions;
     use crate::jsapi::JSClass;
