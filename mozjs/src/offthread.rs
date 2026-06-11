@@ -3,11 +3,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::jsapi::JS::{
-    CompileGlobalScriptToStencil2, DestroyFrontendContext, FrontendContext as RawFrontendContext,
-    NewFrontendContext, ReadOnlyCompileOptions,
+    DestroyFrontendContext, FrontendContext as RawFrontendContext,
+    InstantiationStorage as RawInstantiationStorage, NewFrontendContext, PrepareForInstantiate,
+    ReadOnlyCompileOptions,
 };
-use crate::jsapi::{SetNativeStackQuota, ThreadStackQuotaForSize};
+use crate::jsapi::{CompileGlobalScriptToStencil_C, SetNativeStackQuota, ThreadStackQuotaForSize};
 use crate::rust::{transform_str_to_source_text, OwningCompileOptionsWrapper, Stencil};
+
+use std::mem::MaybeUninit;
 use std::ops::Deref;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -51,13 +54,29 @@ impl Drop for FrontendContext {
     }
 }
 
-pub struct OffThreadToken(JoinHandle<Option<Stencil>>);
+pub struct InstantiationStorage(RawInstantiationStorage);
+
+impl InstantiationStorage {
+    pub fn as_mut_ptr(&mut self) -> *mut RawInstantiationStorage {
+        &mut self.0
+    }
+}
+
+unsafe impl Send for InstantiationStorage {}
+
+impl Default for InstantiationStorage {
+    fn default() -> InstantiationStorage {
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+pub struct OffThreadToken(JoinHandle<Option<(Stencil, InstantiationStorage)>>);
 
 impl OffThreadToken {
     /// Obtains result
     ///
     /// Blocks until completion
-    pub fn finish(self) -> Option<Stencil> {
+    pub fn finish(self) -> Option<(Stencil, InstantiationStorage)> {
         self.0.join().ok().flatten()
     }
 }
@@ -71,7 +90,9 @@ pub fn compile_to_stencil_offthread<F>(
     callback: F,
 ) -> OffThreadToken
 where
-    F: FnOnce(Stencil) -> Option<Stencil> + Send + 'static,
+    F: FnOnce(Stencil, InstantiationStorage) -> Option<(Stencil, InstantiationStorage)>
+        + Send
+        + 'static,
 {
     let fc = FrontendContext::new();
     let options = OwningCompileOptionsWrapper::new_for_fc(&fc, options);
@@ -81,13 +102,29 @@ where
             .stack_size(STACK_SIZE)
             .spawn(move || {
                 fc.set_stack_quota(STACK_SIZE);
-                callback(unsafe {
-                    Stencil::from_raw(CompileGlobalScriptToStencil2(
+
+                let mut source = transform_str_to_source_text(&source);
+                let mut uninit_stencil = MaybeUninit::uninit();
+
+                unsafe {
+                    CompileGlobalScriptToStencil_C(
                         *fc,
                         options.read_only(),
-                        &mut transform_str_to_source_text(&source) as *mut _,
-                    ))
-                })
+                        &mut source,
+                        uninit_stencil.as_mut_ptr(),
+                    )
+                }
+
+                let stencil = unsafe { uninit_stencil.assume_init() };
+
+                let mut storage = InstantiationStorage::default();
+                let ok =
+                    unsafe { PrepareForInstantiate(*fc, stencil.mRawPtr, storage.as_mut_ptr()) };
+
+                if !ok {
+                    // Gecko sets stencil to nullptr
+                }
+                callback(unsafe { Stencil::from_raw(stencil) }, storage)
             })
             .unwrap(),
     )

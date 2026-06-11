@@ -83,6 +83,15 @@ JS::OwningCompileOptions* OwningCompileOptions_for_fc(
 
 void DeleteOwningCompileOptions(JS::OwningCompileOptions* opts) { delete opts; }
 
+void CompileGlobalScriptToStencil_C(
+    JS::FrontendContext* fc, const JS::ReadOnlyCompileOptions& options,
+    JS::SourceText<mozilla::Utf8Unit>& srcBuf,
+    already_AddRefed<JS::Stencil>* out_stencil) {
+  already_AddRefed<JS::Stencil> stencil =
+      JS::CompileGlobalScriptToStencil(fc, options, srcBuf);
+  *out_stencil = std::move(stencil);
+}
+
 JS::shadow::Zone* JS_AsShadowZone(JS::Zone* zone) {
   return JS::shadow::Zone::from(zone);
 }
