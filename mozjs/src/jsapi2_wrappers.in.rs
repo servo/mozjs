@@ -341,6 +341,7 @@ wrap!(jsapi: pub fn StartCollectingDelazifications1(cx: &JSContext, module: Hand
 wrap!(jsapi: pub fn FinishCollectingDelazifications(cx: &mut JSContext, script: Handle<*mut JSScript>, stencilOut: *mut *mut Stencil) -> bool);
 wrap!(jsapi: pub fn FinishCollectingDelazifications1(cx: &mut JSContext, module: Handle<*mut JSObject>, stencilOut: *mut *mut Stencil) -> bool);
 wrap!(jsapi: pub fn GetScriptSourceText(cx: &JSContext, stencil: *mut Stencil, result: MutableHandle<Value>) -> bool);
+wrap!(jsapi: pub fn ConvertFrontendErrorsToRuntimeErrors(cx: &JSContext, fc: *mut FrontendContext, options: *const ReadOnlyCompileOptions) -> bool);
 wrap!(jsapi: pub fn EnsureNonInlineArrayBufferOrView(cx: &mut JSContext, obj: *mut JSObject) -> bool);
 wrap!(jsapi: pub fn RunJSMicroTask(cx: &mut JSContext, entry: Handle<*mut JSMicroTask>) -> bool);
 wrap!(jsapi: pub fn EnqueueMicroTask(cx: &JSContext, entry: *const GenericMicroTask) -> bool);
