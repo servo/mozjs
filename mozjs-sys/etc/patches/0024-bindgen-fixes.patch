@@ -69,16 +69,3 @@ index 9d1df4664..86646e13d 100644
    const char* data_;
  
   public:
-diff --git a/js/public/ColumnNumber.h b/js/public/ColumnNumber.h
-index 9fd007f4b..adfce9dd2 100644
---- a/js/public/ColumnNumber.h
-+++ b/js/public/ColumnNumber.h
-@@ -304,7 +304,7 @@ struct LimitedColumnNumberOneOrigin : public detail::MaybeLimitedColumnNumber<
- };
- 
- // Column number in 1-origin.
--struct ColumnNumberOneOrigin : public detail::MaybeLimitedColumnNumber<0> {
-+struct __attribute__((__packed__)) ColumnNumberOneOrigin : public detail::MaybeLimitedColumnNumber<0> {
-  private:
-   using Base = detail::MaybeLimitedColumnNumber<0>;
- 
