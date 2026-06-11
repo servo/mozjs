@@ -13294,6 +13294,15 @@
   value: true
   mirror: always
 
+# Bug 1965430: Use TriggeringPrincipal instead of LoadingPrincipal to
+# determine the request origin when computing redirect-taint. This fixes
+# top-level navigational POST redirects (e.g., form submissions) where
+# LoadingPrincipal is null. Set to false to revert to the old behavior.
+- name: network.http.origin.useTriggeringPrincipal
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # If true, cross origin fetch (or XHR) requests would be keyed
 # with a different cache key.
 - name: network.fetch.cache_partition_cross_origin

@@ -8892,20 +8892,25 @@ class TransplantableDOMProxyHandler final : public ForwardingProxyHandler {
   bool isConstructor(JSObject* obj) const override { return false; }
 
   // Simplified implementation of |DOMProxyHandler::GetAndClearExpandoObject|.
-  static JSObject* GetAndClearExpandoObject(JSObject* obj) {
-    const Value& v = GetProxyPrivate(obj);
+  static JSObject* GetAndClearExpandoObject(
+      JSObject* obj, JS::MutableHandle<JS::Value> restoreToken) {
+    Value v = GetProxyPrivate(obj);
+    restoreToken.set(v);
     if (v.isUndefined()) {
       return nullptr;
     }
 
-    JSObject* expandoObject = &v.toObject();
     SetProxyPrivate(obj, UndefinedValue());
-    return expandoObject;
+    return &v.toObject();
+  }
+
+  static void RestoreExpando(JSObject* obj, const JS::Value& restoreToken) {
+    SetProxyPrivate(obj, restoreToken);
   }
 
   // Simplified implementation of |DOMProxyHandler::EnsureExpandoObject|.
   static JSObject* EnsureExpandoObject(JSContext* cx, JS::HandleObject obj) {
-    const Value& v = GetProxyPrivate(obj);
+    Value v = GetProxyPrivate(obj);
     if (v.isObject()) {
       return &v.toObject();
     }
@@ -8985,11 +8990,21 @@ static bool TransplantObject(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   bool isProxy = IsProxy(source);
-  RootedObject expandoObject(cx);
+  Rooted<JSObject*> expandoObject(cx);
+  Rooted<JS::Value> expandoRollbackToken(cx);
   if (isProxy) {
-    expandoObject =
-        TransplantableDOMProxyHandler::GetAndClearExpandoObject(source);
+    expandoObject = TransplantableDOMProxyHandler::GetAndClearExpandoObject(
+        source, &expandoRollbackToken);
   }
+  auto resetExpando = MakeScopeExit([&]() {
+    // We must clear the expando object from `source`, since otherwise it will
+    // be copied as part of JS_CloneObject. But on an error, it needs to be
+    // restored.
+    if (expandoObject) {
+      TransplantableDOMProxyHandler::RestoreExpando(source,
+                                                    expandoRollbackToken);
+    }
+  });
 
   JSAutoRealm ar(cx, newGlobal);
 
@@ -9025,6 +9040,10 @@ static bool TransplantObject(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
+  // We've made it far enough to be able to mutate the source. Cleared slots
+  // will not be observed even if a failure occurs after this point.
+  resetExpando.release();
+
   JS::SetReservedSlot(target, DOM_OBJECT_SLOT,
                       JS::GetReservedSlot(source, DOM_OBJECT_SLOT));
   JS::SetReservedSlot(source, DOM_OBJECT_SLOT, JS::PrivateValue(nullptr));
@@ -9035,21 +9054,21 @@ static bool TransplantObject(JSContext* cx, unsigned argc, Value* vp) {
   }
 
   source = JS_TransplantObject(cx, source, target);
-  if (!source) {
-    return false;
-  }
+  MOZ_RELEASE_ASSERT(source, "JS_TransplantObject is infallible");
+
+  AutoEnterOOMUnsafeRegion oomUnsafe;
 
   RootedObject copyTo(cx);
   if (isProxy) {
     copyTo = TransplantableDOMProxyHandler::EnsureExpandoObject(cx, source);
     if (!copyTo) {
-      return false;
+      oomUnsafe.crash("source of transplant is corrupted");
     }
   } else {
     copyTo = source;
   }
   if (!JS_CopyOwnPropertiesAndPrivateFields(cx, copyTo, propertyHolder)) {
-    return false;
+    oomUnsafe.crash("source of transplant is corrupted");
   }
 
   args.rval().setUndefined();
