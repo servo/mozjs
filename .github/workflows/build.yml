@@ -128,7 +128,10 @@ jobs:
       matrix:
         features: ["debugmozjs", ""]
         platform:
-          - { target: x86_64-pc-windows-msvc, os: windows-latest }
+          # Note: the image should be kept in sync with the servo image,
+          # otherwise there might be ABI issues with the prebuilt mozjs
+          # if the VS major changes.
+          - { target: x86_64-pc-windows-msvc, os: windows-2022 }
           - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     env:
       LINKER: "lld-link.exe"
