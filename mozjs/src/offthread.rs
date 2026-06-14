@@ -70,13 +70,20 @@ impl Default for InstantiationStorage {
     }
 }
 
-pub struct OffThreadToken(JoinHandle<Option<(Stencil, InstantiationStorage)>>);
+pub struct CompilationResult {
+    pub stencil: Stencil,
+    pub storage: InstantiationStorage,
+    pub fc: FrontendContext,
+    pub compile_options: OwningCompileOptionsWrapper,
+}
+
+pub struct OffThreadToken(JoinHandle<Option<CompilationResult>>);
 
 impl OffThreadToken {
     /// Obtains result
     ///
     /// Blocks until completion
-    pub fn finish(self) -> Option<(Stencil, InstantiationStorage)> {
+    pub fn finish(self) -> Option<CompilationResult> {
         self.0.join().ok().flatten()
     }
 }
@@ -90,9 +97,7 @@ pub fn compile_to_stencil_offthread<F>(
     callback: F,
 ) -> OffThreadToken
 where
-    F: FnOnce(Stencil, InstantiationStorage) -> Option<(Stencil, InstantiationStorage)>
-        + Send
-        + 'static,
+    F: FnOnce(CompilationResult) -> Option<CompilationResult> + Send + 'static,
 {
     let fc = FrontendContext::new();
     let options = OwningCompileOptionsWrapper::new_for_fc(&fc, options);
@@ -116,15 +121,21 @@ where
                 }
 
                 let stencil = unsafe { uninit_stencil.assume_init() };
+                let stencil = unsafe { Stencil::from_raw(stencil) };
 
                 let mut storage = InstantiationStorage::default();
-                let ok =
-                    unsafe { PrepareForInstantiate(*fc, stencil.mRawPtr, storage.as_mut_ptr()) };
 
-                if !ok {
-                    // Gecko sets stencil to nullptr
+                if !stencil.is_null() {
+                    // Gecko sets stencil to nullptr on failure
+                    let _ok = unsafe { PrepareForInstantiate(*fc, *stencil, storage.as_mut_ptr()) };
                 }
-                callback(unsafe { Stencil::from_raw(stencil) }, storage)
+
+                callback(CompilationResult {
+                    stencil,
+                    storage,
+                    fc,
+                    compile_options: options,
+                })
             })
             .unwrap(),
     )

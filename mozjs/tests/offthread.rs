@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use mozjs::jsapi::{InstantiateOptions, OnNewGlobalHookOption};
 use mozjs::jsval::UndefinedValue;
-use mozjs::offthread::compile_to_stencil_offthread;
+use mozjs::offthread::{compile_to_stencil_offthread, CompilationResult};
 use mozjs::realm::AutoRealm;
 use mozjs::rooted;
 use mozjs::rust::wrappers2::{InstantiateGlobalStencil, JS_ExecuteScript, JS_NewGlobalObject};
@@ -39,13 +39,18 @@ fn offthread() {
         let options = CompileOptionsWrapper::new(context, c"test".to_owned(), 1);
         let options_ptr = options.ptr as *const _;
         let (sender, receiver) = channel();
-        let offthread_token =
-            compile_to_stencil_offthread(options_ptr, src, move |stencil, storage| {
-                sender.send((stencil, storage)).unwrap();
-                None
-            });
+        let offthread_token = compile_to_stencil_offthread(options_ptr, src, move |result| {
+            sender.send(result).unwrap();
+            None
+        });
 
-        let (stencil, mut storage) = receiver.recv().unwrap();
+        let compilation_result = receiver.recv().unwrap();
+
+        let CompilationResult {
+            stencil,
+            mut storage,
+            ..
+        } = compilation_result;
 
         assert!(offthread_token.finish().is_none());
 
