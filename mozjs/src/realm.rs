@@ -171,6 +171,12 @@ impl<'cx> AutoRealm<'cx> {
     }
 }
 
+impl<'cx> AsMut<JSContext> for AutoRealm<'cx> {
+    fn as_mut(&mut self) -> &mut JSContext {
+        &mut self.cx
+    }
+}
+
 impl<'cx> Deref for AutoRealm<'cx> {
     type Target = JSContext;
 
@@ -275,6 +281,12 @@ impl<'cx> CurrentRealm<'cx> {
 
     pub fn realm(&self) -> &NonNull<Realm> {
         &self.realm
+    }
+}
+
+impl<'cx> AsMut<JSContext> for CurrentRealm<'cx> {
+    fn as_mut(&mut self) -> &mut JSContext {
+        &mut self.cx
     }
 }
 

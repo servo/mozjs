@@ -101,7 +101,7 @@ impl JSContext {
     /// SAFETY:
     /// - only one [JSContext] can be alive and it should not outlive [Runtime].
     pub unsafe fn get_from_thread() -> Option<JSContext> {
-        unsafe { crate::rust::Runtime::get().map(|raw_cx| unsafe { JSContext::from_ptr(raw_cx) }) }
+        crate::rust::Runtime::get().map(|raw_cx| unsafe { JSContext::from_ptr(raw_cx) })
     }
 
     /// Returns [NoGC] token bounded to this [JSContext].
@@ -156,6 +156,12 @@ impl JSContext {
     /// ```
     pub unsafe fn raw_cx_no_gc(&self) -> *mut RawJSContext {
         self.ptr.as_ptr()
+    }
+}
+
+impl AsMut<JSContext> for JSContext {
+    fn as_mut(&mut self) -> &mut JSContext {
+        self
     }
 }
 
