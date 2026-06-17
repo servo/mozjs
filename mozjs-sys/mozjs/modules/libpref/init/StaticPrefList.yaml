@@ -15210,7 +15210,7 @@
 # Whether to add additional record IPs to the cache
 - name: network.trr.add_additional_records
   type: RelaxedAtomicBool
-  value: true
+  value: false
   mirror: always
 
 # When this pref is true, AddStorageEntry will return an error if the
