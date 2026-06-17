@@ -843,12 +843,13 @@ class alignas(8) Value {
   }
 
   // Like isMagic, but without the release assertion.
+  // Note that in release builds this will return *false* for
+  // non-matching magic values, because it is generally safer to
+  // ignore an unexpected magic value than to misinterpret it. See bug
+  // 2032226.
   bool isMagicNoReleaseCheck(JSWhyMagic why) const {
-    if (!isMagic()) {
-      return false;
-    }
-    MOZ_ASSERT(whyMagic() == why);
-    return true;
+    MOZ_ASSERT_IF(isMagic(), whyMagic() == why);
+    return asBits_ == bitsFromTagAndPayload(JSVAL_TAG_MAGIC, uint32_t(why));
   }
 
   JS::TraceKind traceKind() const {

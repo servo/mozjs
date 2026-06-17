@@ -371,6 +371,8 @@ bool wasm::ImportMatchesBuiltinModuleFunc(mozilla::Span<const char> importName,
 
 bool wasm::CompileBuiltinModule(JSContext* cx, BuiltinModuleId module,
                                 MutableHandle<WasmModuleObject*> result) {
+  // NOTE(bvisness): If you update the memory descriptors here, pay attention to
+  // CheckBuiltinImportsHaveMemory in WasmValidate.cpp.
   switch (module) {
     case BuiltinModuleId::SelfTest:
       return CompileBuiltinModule(cx, SelfTestFuncs, Some(Shareable::False),
@@ -403,7 +405,6 @@ bool wasm::InstantiateBuiltinModule(JSContext* cx, BuiltinModuleId module,
   RootedObject instanceProto(cx);
   if (!moduleObj->module().instantiate(cx, imports, instanceProto,
                                        &instanceObj)) {
-    MOZ_RELEASE_ASSERT(cx->isThrowingOutOfMemory());
     return false;
   }
   result.set(&instanceObj->exportsObj());
