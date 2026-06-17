@@ -4,10 +4,9 @@ name: Publish
 
 # Workflow triggers should be strictly controlled,
 # as this will trigger publishing to crates.io.
-# We only want to publish on the main branch.
 on:
   push:
-    branches: [main]
+    branches: ["main", "servo-lts-v*"]
 
 # dispatches build workflow with different permissions
 jobs:

@@ -28,11 +28,39 @@ jobs:
       rust_version: 'beta'
     secrets: inherit
 
+  # The goal is to have an LTS branch of mozjs, where the rust API (mozjs and mozjs_sys glue code)
+  # is stable, and only spidermonkey is updated.
+  # We still keep the regular versioning, but add an `-lts` suffix, so we can have "duplicate" releases
+  # of the same ESR (to crates.io and github releases).
+  # When targetting `main` (or any other non lts branch) this job does nothing.
+  verify_lts_version:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'servo-lts-v')
+        # Check if we added the `-lts` suffix to the version, so we can create an independent crates.io release for
+        # the LTS.
+      - name: Verify LTS version suffix
+        if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'servo-lts-v')
+        run: |
+          MOZJS_SYS_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
+          # A new LTS servo version is expected to have an updated SM ESR, hence the major version would differ,
+          # and we don't need to version the lts suffix itself to achieve distinct tags for the period of time
+          # when the old LTS branch overlaps with the new one.
+          if [[ "${MOZJS_SYS_VERSION}" == *-lts ]]; then
+            echo "Version ${MOZJS_SYS_VERSION} is okay and has the expected suffix"
+          else
+            echo "You forgot to add the `-lts` suffix to the mozjs_sys version number. This is required on the lts branch"
+            exit 1
+          fi
+
 
   build_result:
     name: Result
     runs-on: ubuntu-latest
-    needs: ["build"]
+    needs: ["build", "verify_lts_version"]
     if: ${{ always() }}
     steps:
       - name: Mark the job as successful
