@@ -18,11 +18,10 @@ use std::str;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
-use self::wrappers::{
+use self::wrappers2::{
     StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
-    StackGCVectorValueLength,
+    StackGCVectorValueLength, ToStringSlow,
 };
-use self::wrappers2::ToStringSlow;
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use crate::default_heapsize;
@@ -1374,6 +1373,7 @@ where
 }
 
 /// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments
+#[deprecated(note = "Use wrappers2 instead")]
 pub mod wrappers {
     macro_rules! wrap {
         // The invocation of @inner has the following form:
