@@ -108,6 +108,11 @@ template <typename CharT, typename SeqCharT>
 /* static */ ParserAtom* ParserAtom::allocate(
     FrontendContext* fc, LifoAlloc& alloc, InflatedChar16Sequence<SeqCharT> seq,
     uint32_t length, HashNumber hash) {
+  if (length > JSString::MAX_LENGTH) {
+    ReportAllocationOverflow(fc);
+    return nullptr;
+  }
+
   constexpr size_t HeaderSize = sizeof(ParserAtom);
   void* raw = alloc.alloc(HeaderSize + (sizeof(CharT) * length));
   if (!raw) {
