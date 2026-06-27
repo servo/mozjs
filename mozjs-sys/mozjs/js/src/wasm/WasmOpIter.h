@@ -4250,11 +4250,6 @@ inline bool OpIter<Policy>::readCallBuiltinModuleFunc(
   }
 
   *builtinModuleFunc = &BuiltinModuleFuncs::getFromId(BuiltinModuleFuncId(id));
-
-  if ((*builtinModuleFunc)->usesMemory() && codeMeta_.numMemories() == 0) {
-    return fail("can't touch memory without memory");
-  }
-
   const FuncType& funcType = *(*builtinModuleFunc)->funcType();
   if (!popCallArgs(funcType.args(), params)) {
     return false;

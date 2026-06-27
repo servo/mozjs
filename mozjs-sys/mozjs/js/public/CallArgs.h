@@ -161,17 +161,12 @@ class MOZ_STACK_CLASS MOZ_NON_PARAM CallArgsBase {
   // CALLING/CONSTRUCTING-DIFFERENTIATIONS
 
   bool isConstructing() const {
-    if (!argv_[-1].isMagic()) {
-      return false;
-    }
-
 #ifdef JS_DEBUG
-    if (!this->usedRval()) {
+    if (constructing_ && !this->usedRval()) {
       CheckIsValidConstructible(calleev());
     }
 #endif
-
-    return true;
+    return constructing_;
   }
 
   bool ignoresReturnValue() const { return ignoresReturnValue_; }

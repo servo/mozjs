@@ -243,6 +243,8 @@ static inline RegPtr RegIntptrToRegPtr(RegI32 r) { return RegPtr(Register(r)); }
 #endif
 
 void BaseCompiler::pushHeapBase(uint32_t memoryIndex) {
+  MOZ_ASSERT(memoryIndex < codeMeta_.memories.length());
+
   RegPtr heapBase = need<RegPtr>();
 
 #ifdef WASM_HAS_HEAPREG

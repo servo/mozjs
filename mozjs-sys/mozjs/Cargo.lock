@@ -1818,11 +1818,11 @@ dependencies = [
 [[package]]
 name = "encoding_rs"
 version = "0.8.35"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+source = "git+https://github.com/hsivonen/encoding_rs?rev=1236d1bc423e6ba35a06485f74a6304db2d703b5#1236d1bc423e6ba35a06485f74a6304db2d703b5"
 dependencies = [
  "any_all_workaround",
  "cfg-if",
+ "rustversion",
 ]
 
 [[package]]

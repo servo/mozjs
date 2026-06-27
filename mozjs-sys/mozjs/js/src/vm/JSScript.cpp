@@ -1090,6 +1090,30 @@ void ScriptSource::performDelayedConvertToCompressedSource(
   g->pendingCompressed.destroy();
 }
 
+ScriptSource::GenericReader::GenericReader(ScriptSource* source)
+    : PinnedUnitsBase(source) {
+  addReader();
+}
+
+ScriptSource::GenericReader::~GenericReader() {
+  if (!source_->hasSourceText()) {
+    // For script sources without text, the reader is added just to access the
+    // other fields.  There shouldn't be any pending compression, and we can
+    // just remove the reader.
+    auto guard = source_->readers_.lock();
+    MOZ_ASSERT(guard->pendingCompressed.empty());
+    MOZ_ASSERT(guard->count > 0);
+    guard->count--;
+    return;
+  }
+
+  if (source_->hasSourceType<Utf8Unit>()) {
+    removeReader<Utf8Unit>();
+  } else {
+    removeReader<char16_t>();
+  }
+}
+
 void ScriptSource::PinnedUnitsBase::addReader() {
   auto guard = source_->readers_.lock();
   guard->count++;
