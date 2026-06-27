@@ -32,18 +32,16 @@ jobs:
   # is stable, and only spidermonkey is updated.
   # We still keep the regular versioning, but add an `-lts` suffix, so we can have "duplicate" releases
   # of the same ESR (to crates.io and github releases).
-  # When targetting `main` (or any other non lts branch) this job does nothing.
   verify_lts_version:
     runs-on: ubuntu-22.04
+    if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'servo-lts-v')
     steps:
       - uses: actions/checkout@v6
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'servo-lts-v')
         # Check if we added the `-lts` suffix to the version, so we can create an independent crates.io release for
         # the LTS.
       - name: Verify LTS version suffix
-        if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'servo-lts-v')
         run: |
           MOZJS_SYS_VERSION=$(cargo metadata --format-version=1 --no-deps | jq -r '.packages[] | select(.name == "mozjs_sys") | .version')
           # A new LTS servo version is expected to have an updated SM ESR, hence the major version would differ,
