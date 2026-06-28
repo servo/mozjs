@@ -181,4 +181,28 @@ impl Deref for JSContext {
 /// but it is used in cases where no actual context is needed.
 ///
 /// For more info and examples see [JSContext].
+///
+/// This type can be obtained from [JSContext] (and will be bounded to it) or constructed from thin air (unsafe).
+///
+/// ```compile_fail
+/// fn f() {
+///     // safe construction is not possible
+///     mozjs::context::NoGC(());
+/// }
+/// ```
 pub struct NoGC(()); // zero-sized type that cannot be constructed from outside
+
+impl NoGC {
+    /// Creates new NoGC token from thin air.
+    ///
+    /// This is more safe than constructing [JSContext] from thin air as the promise here (of no GC) is weaker,
+    /// but one should still prefer passing [NoGC] down as an argument.
+    ///
+    /// # Safety
+    ///
+    /// One must ensure that no `&mut JSContext` is alive while [NoGC] is alive.
+    /// (having `&JSContext` is technically OK, but one should rather derive [NoGC] from it).
+    pub unsafe fn new() -> &'static Self {
+        &NoGC(())
+    }
+}
