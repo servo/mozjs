@@ -131,6 +131,22 @@
 #  define MOZ_JEMALLOC_API_NODISCARD MOZ_EXTERN_C [[nodiscard]]
 #endif
 
+#ifdef SERVO_EMBEDDER_MEMORY
+// An embedder defined allocator header. In the simplest case, just define this header
+// to wrap the custom allocator header you want to use.
+#include "servo_embedder_allocator.h"
+
+#  if ! defined(SERVO_EMBEDDER_MALLOC_PREFIX)
+#  error "SERVO_EMBEDDER_MALLOC_PREFIX should be defined in servo_embedder_allocator.h"
+#  endif
+
+#define SERVO_CONCAT(x, y) x ## y
+#define SERVO_CONCAT2(x, y) SERVO_CONCAT(x, y)
+
+#define mozmem_malloc_impl(fn) SERVO_CONCAT2(SERVO_EMBEDDER_MALLOC_PREFIX, fn)
+#define mozmem_dup_impl(fn) SERVO_CONCAT2(SERVO_EMBEDDER_MALLOC_PREFIX, fn)
+#endif // SERVO_EMBEDDER_MEMORY
+
 #ifndef mozmem_malloc_impl
 #  define mozmem_malloc_impl(a) a
 #endif

@@ -1,5 +1,6 @@
 [workspace]
 members = ["mozjs-sys", "mozjs"]
+exclude = ["examples"]
 resolver = "2"
 
 [workspace.package]

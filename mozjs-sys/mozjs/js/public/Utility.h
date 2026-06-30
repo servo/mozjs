@@ -431,7 +431,7 @@ static inline void js_free(void* p) {
   // currently can't enforce that all memory freed here was allocated by
   // js_malloc(). All other memory should go through a different allocator and
   // deallocator.
-  free(p);
+  free_impl(p);
 }
 #endif /* JS_USE_CUSTOM_ALLOCATOR */
 

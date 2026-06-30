@@ -16,6 +16,8 @@ name = "mozjs_sys"
 doctest = false
 
 [features]
+default = []
+custom-alloc = []
 debugmozjs = []
 profilemozjs = []
 jit = []
