@@ -63,8 +63,8 @@ jobs:
         env:
           DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}" ${DEBUGMOZJS_OPT}
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}" ${DEBUGMOZJS_OPT}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v7
@@ -109,9 +109,9 @@ jobs:
         env:
           DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}" ${DEBUGMOZJS_OPT}
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}" ${DEBUGMOZJS_OPT}
-          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features "${{ matrix.features }}" ${DEBUGMOZJS_OPT}
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
@@ -166,13 +166,13 @@ jobs:
         env:
           DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}" %DEBUGMOZJS_OPT%
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Test Windows
         shell: cmd
         env:
           DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}" %DEBUGMOZJS_OPT%
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
 
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
