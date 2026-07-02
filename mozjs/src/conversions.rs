@@ -29,7 +29,6 @@
 #![deny(missing_docs)]
 
 use crate::error::throw_type_error;
-use crate::jsapi::AssertSameCompartment;
 use crate::jsapi::NewArrayObject1;
 use crate::jsapi::JS;
 use crate::jsapi::{Heap, JS_DefineElement};
@@ -40,7 +39,9 @@ use crate::jsval::{JSVal, ObjectOrNullValue, ObjectValue, StringValue, SymbolVal
 use crate::rooted;
 use crate::rust::for_of;
 use crate::rust::maybe_wrap_value;
-use crate::rust::wrappers2::{JS_GetLatin1StringCharsAndLength, JS_GetTwoByteStringCharsAndLength};
+use crate::rust::wrappers2::{
+    AssertSameCompartment, JS_GetLatin1StringCharsAndLength, JS_GetTwoByteStringCharsAndLength,
+};
 use crate::rust::ForOfIterationFailure;
 use crate::rust::{maybe_wrap_object_or_null_value, maybe_wrap_object_value, ToString};
 use crate::rust::{HandleValue, MutableHandleValue};
@@ -214,13 +215,18 @@ pub enum ConversionBehavior {
 /// Try to cast the number to a smaller type, but
 /// if it doesn't fit, it will return an error.
 // https://searchfox.org/mozilla-esr128/rev/1aa97f9d67f7a7231e62af283eaa02a6b31380e1/dom/bindings/PrimitiveConversions.h#166
-unsafe fn enforce_range<D>(cx: *mut JSContext, d: f64) -> Result<ConversionResult<D>, ()>
+fn enforce_range<D>(cx: &mut crate::context::JSContext, d: f64) -> Result<ConversionResult<D>, ()>
 where
     D: Number + As<f64>,
     f64: As<D>,
 {
     if d.is_infinite() {
-        throw_type_error(cx, c"value out of range in an EnforceRange argument");
+        unsafe {
+            throw_type_error(
+                cx.raw_cx(),
+                c"value out of range in an EnforceRange argument",
+            )
+        };
         return Err(());
     }
 
@@ -228,7 +234,12 @@ where
     if D::MIN.cast() <= rounded && rounded <= D::MAX.cast() {
         Ok(ConversionResult::Success(rounded.cast()))
     } else {
-        throw_type_error(cx, c"value out of range in an EnforceRange argument");
+        unsafe {
+            throw_type_error(
+                cx.raw_cx(),
+                c"value out of range in an EnforceRange argument",
+            )
+        };
         Err(())
     }
 }
@@ -327,8 +338,8 @@ impl ToJSValConvertible for Heap<JSVal> {
 }
 
 #[inline]
-unsafe fn convert_int_from_jsval<T, M>(
-    cx: *mut JSContext,
+fn convert_int_from_jsval<T, M>(
+    cx: &mut crate::context::JSContext,
     value: HandleValue,
     option: ConversionBehavior,
     convert_fn: unsafe fn(*mut JSContext, HandleValue) -> Result<M, ()>,
@@ -339,9 +350,16 @@ where
     f64: As<T>,
 {
     match option {
-        ConversionBehavior::Default => Ok(ConversionResult::Success(convert_fn(cx, value)?.cast())),
-        ConversionBehavior::EnforceRange => enforce_range(cx, ToNumber(cx, value)?),
-        ConversionBehavior::Clamp => Ok(ConversionResult::Success(clamp_to(ToNumber(cx, value)?))),
+        ConversionBehavior::Default => Ok(ConversionResult::Success(unsafe {
+            convert_fn(cx.raw_cx(), value)?.cast()
+        })),
+        ConversionBehavior::EnforceRange => {
+            let number = unsafe { ToNumber(cx.raw_cx(), value) }?;
+            enforce_range(cx, number)
+        }
+        ConversionBehavior::Clamp => Ok(ConversionResult::Success(clamp_to(unsafe {
+            ToNumber(cx.raw_cx(), value)
+        }?))),
     }
 }
 
@@ -383,7 +401,7 @@ impl FromJSValConvertible for i8 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<i8>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToInt32) }
+        convert_int_from_jsval(cx, val, option, ToInt32)
     }
 }
 
@@ -404,7 +422,7 @@ impl FromJSValConvertible for u8 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<u8>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToInt32) }
+        convert_int_from_jsval(cx, val, option, ToInt32)
     }
 }
 
@@ -425,7 +443,7 @@ impl FromJSValConvertible for i16 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<i16>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToInt32) }
+        convert_int_from_jsval(cx, val, option, ToInt32)
     }
 }
 
@@ -446,7 +464,7 @@ impl FromJSValConvertible for u16 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<u16>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToUint16) }
+        convert_int_from_jsval(cx, val, option, ToUint16)
     }
 }
 
@@ -467,7 +485,7 @@ impl FromJSValConvertible for i32 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<i32>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToInt32) }
+        convert_int_from_jsval(cx, val, option, ToInt32)
     }
 }
 
@@ -488,7 +506,7 @@ impl FromJSValConvertible for u32 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<u32>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToUint32) }
+        convert_int_from_jsval(cx, val, option, ToUint32)
     }
 }
 
@@ -509,7 +527,7 @@ impl FromJSValConvertible for i64 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<i64>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToInt64) }
+        convert_int_from_jsval(cx, val, option, ToInt64)
     }
 }
 
@@ -530,7 +548,7 @@ impl FromJSValConvertible for u64 {
         val: HandleValue,
         option: ConversionBehavior,
     ) -> Result<ConversionResult<u64>, ()> {
-        unsafe { convert_int_from_jsval(cx.raw_cx(), val, option, ToUint64) }
+        convert_int_from_jsval(cx, val, option, ToUint64)
     }
 }
 
@@ -857,9 +875,7 @@ impl FromJSValConvertible for *mut JSObject {
             return Err(());
         }
 
-        unsafe {
-            AssertSameCompartment(cx.raw_cx(), value.to_object());
-        }
+        unsafe { AssertSameCompartment(cx, value.to_object()) };
 
         Ok(ConversionResult::Success(value.to_object()))
     }
