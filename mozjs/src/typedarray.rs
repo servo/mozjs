@@ -108,6 +108,18 @@ impl<T: TypedArrayElement, S: JSObjectStorage> FromJSValConvertible for TypedArr
             Err(())
         }
     }
+
+    fn safe_from_jsval(
+        _cx: &mut crate::context::JSContext,
+        value: HandleValue,
+        _option: (),
+    ) -> Result<ConversionResult<Self>, ()> {
+        if value.get().is_object() {
+            Self::from(value.get().to_object()).map(ConversionResult::Success)
+        } else {
+            Err(())
+        }
+    }
 }
 
 impl<T: TypedArrayElement, S: JSObjectStorage> ToJSValConvertible for TypedArray<T, S> {
