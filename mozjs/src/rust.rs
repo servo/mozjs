@@ -1195,7 +1195,7 @@ impl<'a> CapturedJSStack<'a> {
 #[macro_export]
 macro_rules! capture_stack {
     (&in($cx:expr) $($t:tt)*) => {
-        capture_stack!(in(unsafe {$cx.raw_cx_no_gc()}) $($t)*);
+        capture_stack!(in(unsafe {$cx.raw_cx()}) $($t)*);
     };
     (in($cx:expr) let $name:ident = with max depth($max_frame_count:expr)) => {
         rooted!(in($cx) let mut __obj = ::std::ptr::null_mut());
