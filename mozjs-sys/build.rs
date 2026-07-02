@@ -574,12 +574,8 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
     if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
         flags.extend(&["-DJS_GC_ZEAL", "-DDEBUG", "-DJS_DEBUG"]);
 
-        if !bindgen {
-            if target.contains("windows") {
-                flags.push("-Od");
-            } else {
-                flags.extend(&["-g", "-O0"]);
-            }
+        if !bindgen && !target.contains("windows") {
+            flags.push("-g");
         }
     }
 
@@ -1080,9 +1076,10 @@ mod archive {
     pub(crate) fn archive() -> String {
         let target = env::var("TARGET").unwrap();
         let features = if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-            "-debugmozjs"
+            let opt_level = env::var("OPT_LEVEL").expect("OPT_LEVEL not set by cargo?");
+            format!("-debugmozjs-O{opt_level}")
         } else {
-            ""
+            "".to_string()
         };
         format!("libmozjs-{target}{features}.tar.gz")
     }

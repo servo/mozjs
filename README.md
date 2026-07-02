@@ -111,6 +111,25 @@ cargo build --features debugmozjs
 cargo test --features debugmozjs
 ```
 
+### The `debugmozjs` feature and prebuilt archives
+
+The `debugmozjs` feature enables SpiderMonkey assertions and GC zeal (to help find GC issues).
+If `debugmozjs` is enabled, the optimization level is taken from cargo's `OPT_LEVEL` (i.e. the active profile), 
+so a default `dev`-profile build is unoptimized (`-O0`), while `--release` produces an optimized build with assertions 
+still enabled. If `debugmozjs` is disabled, the prebuilt archive is **always optimized**.
+The pre-built `debugmozjs` archive published by CI is built with `-O3` (default for the release profile).
+If you specify any other opt-level (e.g. by building the `dev` profile), this will be honored, and 
+a build from source will be triggered. You can edit the opt-level for spidermonkey specifically by 
+editing you workspace Cargo.toml to contain:
+
+```toml
+# replace `dev` with the profile name you are targeting
+# Note: This will only affect Spidermonkey code if `debugmozjs` is enabled, otherwise
+# optimisations will always be enabled.
+[profile.dev.package.mozjs_sys]
+opt-level = 3 # or any other opt-level
+```
+
 ### Usage for downstream consumers
 
 Both [`mozjs`](https://crates.io/crates/mozjs) and [`mozjs_sys`](https://crates.io/crates/mozjs_sys) crates are published on crates.io.

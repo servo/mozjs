@@ -57,15 +57,20 @@ jobs:
         with:
           version: "v0.12.0"
       - name: Build
+        # Build the debug-mozjs prebuilt artifact with -O3 (matching the
+        # `checked-release` profile in servo) so that we have a fast prebuilt version with
+        # debug assertions for running WPT in servo with debug-mozjs.
+        env:
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}"
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v7
         with:
-          path: ./target/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
-          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          path: ./target/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
 
   linux:
     env:
@@ -101,10 +106,12 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build
         # doc tests on mozjs_sys fail because they include stuff from SpiderMonkey
+        env:
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}"
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}"
-          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
@@ -118,8 +125,8 @@ jobs:
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v7
         with:
-          path: ./target/libmozjs-${{matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
-          name: libmozjs-${{matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          path: ./target/libmozjs-${{matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          name: libmozjs-${{matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
 
   windows:
     runs-on: ${{ matrix.platform.os }}
@@ -156,19 +163,23 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build Windows
         shell: cmd
+        env:
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} build --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Test Windows
         shell: cmd
+        env:
+          DEBUGMOZJS_OPT: ${{ matrix.features == 'debugmozjs' && '--config profile.dev.package.mozjs_sys.opt-level=3' || '' }}
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}"
+          cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --target ${{ matrix.platform.target }} --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
 
       - name: Upload artifact
         if: ${{ env.NEW_RUST_CHECK == 'false' }}
         uses: actions/upload-artifact@v7
         with:
-          path: ./target/${{ matrix.platform.target }}/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
-          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs' || '' }}.tar.gz
+          path: ./target/${{ matrix.platform.target }}/libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
+          name: libmozjs-${{ matrix.platform.target }}${{ matrix.features && '-debugmozjs-O3' || '' }}.tar.gz
 
   android:
     runs-on: ubuntu-latest
