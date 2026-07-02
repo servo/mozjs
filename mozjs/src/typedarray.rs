@@ -97,17 +97,6 @@ impl JSObjectStorage for Box<Heap<*mut JSObject>> {
 
 impl<T: TypedArrayElement, S: JSObjectStorage> FromJSValConvertible for TypedArray<T, S> {
     type Config = ();
-    unsafe fn from_jsval(
-        _cx: *mut JSContext,
-        value: HandleValue,
-        _option: (),
-    ) -> Result<ConversionResult<Self>, ()> {
-        if value.get().is_object() {
-            Self::from(value.get().to_object()).map(ConversionResult::Success)
-        } else {
-            Err(())
-        }
-    }
 
     fn safe_from_jsval(
         _cx: &mut crate::context::JSContext,
