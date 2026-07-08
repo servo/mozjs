@@ -199,7 +199,7 @@ impl DerefMut for JSContext {
 
 /// Token that ensures that no GC can happen while it is alive.
 ///
-/// This type is similar to `&JSContext`,
+/// This type is similar to [`&JSContext`][JSContext],
 /// but it is used in cases where no actual context is needed.
 ///
 /// For more info and examples see [JSContext].
@@ -217,8 +217,8 @@ pub struct NoGC(()); // zero-sized type that cannot be constructed from outside
 impl NoGC {
     /// Creates new NoGC token from thin air.
     ///
-    /// This is more safe than constructing [JSContext] from thin air as the promise here (of no GC) is weaker,
-    /// but one should still prefer passing [NoGC] down as an argument.
+    /// This is more safe than constructing [`JSContext`] from thin air as the promise here (of no GC) is weaker,
+    /// but one should still prefer passing [`NoGC`] down as an argument.
     ///
     /// # Safety
     ///
