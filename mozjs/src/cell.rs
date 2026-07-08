@@ -16,6 +16,7 @@ use crate::jsapi::JSTracer;
 /// from occurring by borrowing due to GC using the [`NoGC`] marker.
 ///
 /// If dynamic borrow checking is not needed, one should use [`JSCell`] instead.
+/// If inner type is [`Copy`] one should use [`std::cell::Cell`] instead.
 #[derive(Clone, Debug, Default)]
 pub struct JSRefCell<T> {
     value: RefCell<T>,
@@ -34,6 +35,8 @@ impl<T> JSRefCell<T> {
     /// The borrow lasts until the returned `Ref` exits scope. Multiple
     /// immutable borrows can be taken out at the same time.
     ///
+    /// This is exactly the same as [`std::cell::RefCell::borrow`].
+    ///
     /// # Panics
     ///
     /// Panics if the value is currently mutably borrowed.
@@ -47,24 +50,25 @@ impl<T> JSRefCell<T> {
     /// The borrow lasts until the returned `RefMut` exits scope. The value
     /// cannot be borrowed while this borrow is active.
     ///
-    /// By passing a `&NoGC` we statically prevent GC from being run while the borrow is active,
-    /// to prevent panic when tracing (which calls `borrow`).
+    /// This is similar to [`std::cell::RefCell::borrow_mut`],
+    /// but it requires a [`&NoGC`][NoGC] token to ensure that no GC can happen while the borrow is active,
+    /// which would otherwise cause a panic when tracing (which calls `borrow`).
     ///
-    /// # Example
+    /// ## Examples
     ///
-    /// In simple cases one can use `NoGC` to statically ensure no GC can happen in the whole DOM method:
+    /// In simple cases one can use [`&NoGC`][NoGC] to statically ensure no GC can happen in the whole function:
     ///
     /// ```
     /// use mozjs::context::{JSContext, NoGC};
     /// use mozjs::cell::JSRefCell;
-    /// fn DomMethod(no_gc: &NoGC, cell: &JSRefCell<usize>) {
+    /// fn f(no_gc: &NoGC, cell: &JSRefCell<String>) {
     ///     let mut mutably_borrowed = cell.borrow_mut(no_gc);
     /// }
     /// ```
     ///
-    /// But in more complex cases, method might trigger a GC, and thus require a `&mut JSContext`.
-    /// In that case `&JSContext` can be used in place of `NoGC`,
-    /// which will make `RefMut` bounded to the lifetime of the `&JSContext`
+    /// But in more complex cases, method might trigger a GC, and thus require a [`&mut JSContext`][crate::context::JSContext].
+    /// In that case [`&JSContext`][crate::context::JSContext] can be used in place of [`&NoGC`][NoGC],
+    /// which will make [`RefMut`] bounded to the lifetime of the [`&JSContext`][crate::context::JSContext]
     /// and thus prevent any GC from happening while it is alive.
     ///
     /// ```
@@ -72,7 +76,7 @@ impl<T> JSRefCell<T> {
     /// use mozjs::cell::JSRefCell;
     /// fn GC(cx: &mut JSContext) {}
     ///
-    /// fn DomMethod(cell: &JSRefCell<usize>, cx: &mut JSContext) {
+    /// fn f(cx: &mut JSContext, cell: &JSRefCell<String>) {
     ///     {
     ///         let mut mutably_borrowed = cell.borrow_mut(cx);
     ///         // do something with mutably_borrowed
@@ -84,12 +88,14 @@ impl<T> JSRefCell<T> {
     /// }
     /// ```
     ///
+    /// ## Non-Example
+    ///
     /// ```compile_fail
     /// use mozjs::context::{JSContext, NoGC};
     /// use mozjs::cell::JSRefCell;
     /// fn GC(cx: &mut JSContext) {}
     ///
-    /// fn DomMethod(cell: &JSRefCell<usize>, cx: &mut JSContext) {
+    /// fn f(cx: &mut JSContext, cell: &JSRefCell<String>) {
     ///     {
     ///         let mut mutably_borrowed = cell.borrow_mut(cx);
     ///         // do something with mutably_borrowed
@@ -128,10 +134,60 @@ unsafe impl<T: Traceable> Traceable for JSRefCell<T> {
     }
 }
 
-/// A cell for interior mutability, that (ab)uses [JSContext]
-/// as affinity token for ensuring safety.
+/// A cell for interior mutability, that (ab)uses [NoGC]
+/// as a borrow token for ensuring safety.
 ///
-/// If inner type is `Copy` one should prefer using normal [`std::cell::Cell`] instead.
+/// If inner type is [`Copy`] one should use [`std::cell::Cell`] instead.
+///
+/// ## Examples
+///
+/// ```rust
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn f(no_gc: &mut NoGC, cell: &JSCell<String>) {
+///     {
+///         let borrow = cell.borrow(no_gc);
+///     } // borrow goes out of scope here
+///     cell.set(no_gc, "Hello".to_string());
+///     {
+///        let borrow_mut = cell.borrow_mut(no_gc);
+///     } // borrow_mut goes out of scope here
+/// }
+/// ```
+///
+/// ## Non-Examples
+///
+/// These fail to compile:
+///
+/// ```compile_fail
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn mut_borrow_after_borrow(no_gc: &mut NoGC, cell: &JSCell<String>) {
+///     let borrow = cell.borrow(no_gc);
+///     cell.set(no_gc, "Hello".to_string());
+///     drop(borrow); // otherwise compiler can shorten borrow's lifetime
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn mut_borrow_after_mut_borrow(no_gc: &mut NoGC, cell: &JSCell<String>) {
+///     let borrow_mut = cell.borrow_mut(no_gc);
+///     cell.set(no_gc, "Hello".to_string());
+///     drop(borrow_mut); // otherwise compiler can shorten borrow_mut's lifetime
+/// }
+/// ```
+///
+/// ```compile_fail
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn borrow_after_mut_borrow(no_gc: &mut NoGC, cell: &JSCell<String>) {
+///     let borrow_mut = cell.borrow_mut(no_gc);
+///     let borrow = cell.borrow(no_gc);
+///     drop(borrow_mut); // otherwise compiler can shorten borrow_mut's lifetime
+/// }
+/// ```
 #[derive(Debug)]
 pub struct JSCell<T> {
     inner: UnsafeCell<T>,
@@ -144,18 +200,33 @@ impl<T> JSCell<T> {
         }
     }
 
+    /// Sets the wrapped value.
+    ///
+    /// By passing a [`&mut NoGC`][NoGC] we statically ensure no other borrows are alive at the same time.
+    ///
+    /// For more information see [JSCell] documentation.
     pub fn set<'a, 'cx>(&'a self, _exclusive: &'cx mut NoGC, val: T) {
-        // SAFETY: `&mut NoGC` is used as an affinity token to ensure that no other borrows are alive at the same time.
+        // SAFETY: `&mut NoGC` is used as a borrow token to ensure that no other borrows are alive at the same time.
         unsafe { *self.inner.get() = val }
     }
 
+    /// Mutably borrows the wrapped value.
+    ///
+    /// By passing a [`&mut NoGC`][NoGC] we statically ensure no other borrows are alive at the same time.
+    ///
+    /// For more information see [JSCell] documentation.
     pub fn borrow_mut<'a: 'r, 'cx: 'r, 'r>(&'a self, _exclusive: &'cx mut NoGC) -> &'r mut T {
-        // SAFETY: `&mut NoGC` is used as an affinity token to ensure that no other borrows are alive at the same time.
+        // SAFETY: `&mut NoGC` is used as a borrow token to ensure that no other borrows are alive at the same time.
         unsafe { &mut *self.inner.get() }
     }
 
+    /// Immutably borrows the wrapped value.
+    ///
+    /// By passing a [`&NoGC`][NoGC] we statically ensure no mutable borrows are alive at the same time.
+    ///
+    /// For more information see [JSCell] documentation.
     pub fn borrow<'a: 'r, 'no_cx: 'r, 'r>(&'a self, _no_gc: &'no_cx NoGC) -> &'r T {
-        // SAFETY: `&NoGC` is used as an affinity token to ensure that no other mutable borrows are alive at the same time.
+        // SAFETY: `&NoGC` is used as a borrow token to ensure that no other mutable borrows are alive at the same time.
         unsafe { &*self.inner.get() }
     }
 }
