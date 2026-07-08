@@ -203,14 +203,11 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     ///
     /// The returned slice can be invalidated if the underlying typed array
     /// is neutered.
-    /// Returns an empty array if the data ptr is null (for example if the buffer was detached).
+    /// Panics if the underlying data points to a nullptr.
     pub unsafe fn as_slice(&self) -> &[T::Element] {
         let data = self.data();
-        if data.is_null() {
-            &[]
-        } else {
-            &*data
-        }
+        assert!(!data.is_null());
+        &*data
     }
 
     /// # Unsafety
@@ -220,11 +217,10 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     ///
     /// The underlying `JSObject` can be aliased, which can lead to
     /// Undefined Behavior due to mutable aliasing.
+    /// Panics if the underlying data points to a nullptr.
     pub unsafe fn as_mut_slice(&mut self) -> &mut [T::Element] {
         let data = self.data();
-        if data.is_null() {
-            panic!("Data PTR is null. Cannot give mutable reference.")
-        }
+        assert!(!data.is_null());
         &mut *self.data()
     }
 
