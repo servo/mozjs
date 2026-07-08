@@ -9,7 +9,7 @@ use std::cell::{RefCell, UnsafeCell};
 
 use mozjs_sys::trace::Traceable;
 
-use crate::context::{JSContext, NoGC};
+use crate::context::NoGC;
 use crate::jsapi::JSTracer;
 
 /// [`std::cell::RefCell`] that statically prevents borrow_mut panics
@@ -144,13 +144,13 @@ impl<T> JSCell<T> {
         }
     }
 
-    pub fn set<'a, 'cx>(&'a self, _exclusive: &'cx mut JSContext, val: T) {
-        // SAFETY: `&mut JSContext` is used as an affinity token to ensure that no other borrows are alive at the same time.
+    pub fn set<'a, 'cx>(&'a self, _exclusive: &'cx mut NoGC, val: T) {
+        // SAFETY: `&mut NoGC` is used as an affinity token to ensure that no other borrows are alive at the same time.
         unsafe { *self.inner.get() = val }
     }
 
-    pub fn borrow_mut<'a: 'r, 'cx: 'r, 'r>(&'a self, _exclusive: &'cx mut JSContext) -> &'r mut T {
-        // SAFETY: `&mut JSContext` is used as an affinity token to ensure that no other borrows are alive at the same time.
+    pub fn borrow_mut<'a: 'r, 'cx: 'r, 'r>(&'a self, _exclusive: &'cx mut NoGC) -> &'r mut T {
+        // SAFETY: `&mut NoGC` is used as an affinity token to ensure that no other borrows are alive at the same time.
         unsafe { &mut *self.inner.get() }
     }
 
