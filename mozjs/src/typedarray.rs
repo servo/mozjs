@@ -9,6 +9,7 @@
 use crate::conversions::ConversionResult;
 use crate::conversions::FromJSValConvertible;
 use crate::conversions::ToJSValConvertible;
+use crate::context::NoGC;
 use crate::glue::GetFloat32ArrayLengthAndData;
 use crate::glue::GetFloat64ArrayLengthAndData;
 use crate::glue::GetInt16ArrayLengthAndData;
@@ -213,6 +214,14 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         &*data
     }
 
+    pub fn as_slice_safe<'a>(&self, _no_gc: &'a NoGC) -> &'a [T::Element] {
+        // SAFETY: The slice can only be invalidated by invoking JS engine
+        //         behaviour that detaches the underlying typed array.
+        //         The slice's lifetime is bounded by the provided NoGC token,
+        //         which prevents any JS engine interaction.
+        unsafe { &*self.data() }
+    }
+
     /// # Unsafety
     ///
     /// The returned slice can be invalidated if the underlying typed array
@@ -228,6 +237,14 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         let data = self.data();
         assert!(!data.is_null());
         &mut *self.data()
+    }
+
+    pub fn as_mut_slice_safe<'a>(&mut self, _no_gc: &'a NoGC) -> &'a mut [T::Element] {
+        // SAFETY: The slice can only be invalidated by invoking JS engine
+        //         behaviour that detaches the underlying typed array.
+        //         The slice's lifetime is bounded by the provided NoGC token,
+        //         which prevents any JS engine interaction.
+        unsafe { &mut *self.data() }
     }
 
     /// Return a boolean flag which denotes whether the underlying buffer
