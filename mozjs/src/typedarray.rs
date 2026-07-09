@@ -6,10 +6,10 @@
 //! typed arrays or wrapping existing JS reflectors, and prevents reinterpreting
 //! existing buffers as different types except in well-defined cases.
 
+use crate::context::NoGC;
 use crate::conversions::ConversionResult;
 use crate::conversions::FromJSValConvertible;
 use crate::conversions::ToJSValConvertible;
-use crate::context::NoGC;
 use crate::glue::GetFloat32ArrayLengthAndData;
 use crate::glue::GetFloat64ArrayLengthAndData;
 use crate::glue::GetInt16ArrayLengthAndData;
