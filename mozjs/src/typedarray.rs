@@ -203,8 +203,14 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     ///
     /// The returned slice can be invalidated if the underlying typed array
     /// is neutered.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying data points to a nullptr.
     pub unsafe fn as_slice(&self) -> &[T::Element] {
-        &*self.data()
+        let data = self.data();
+        assert!(!data.is_null());
+        &*data
     }
 
     /// # Unsafety
@@ -214,7 +220,13 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     ///
     /// The underlying `JSObject` can be aliased, which can lead to
     /// Undefined Behavior due to mutable aliasing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the underlying data points to a nullptr.
     pub unsafe fn as_mut_slice(&mut self) -> &mut [T::Element] {
+        let data = self.data();
+        assert!(!data.is_null());
         &mut *self.data()
     }
 
