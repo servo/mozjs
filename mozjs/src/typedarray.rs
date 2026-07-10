@@ -188,6 +188,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     }
 
     /// Retrieves an owned data that's represented by the typed array.
+    #[allow(deprecated)]
     pub fn to_vec(&self) -> Vec<T::Element>
     where
         T::Element: Clone,
@@ -208,6 +209,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// # Panics
     ///
     /// Panics if the underlying data points to a nullptr.
+    #[deprecated = "use as_slice_safe instead"]
     pub unsafe fn as_slice(&self) -> &[T::Element] {
         let data = self.data();
         assert!(!data.is_null());
@@ -219,7 +221,11 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         //         behaviour that detaches the underlying typed array.
         //         The slice's lifetime is bounded by the provided NoGC token,
         //         which prevents any JS engine interaction.
-        unsafe { &*self.data() }
+        unsafe {
+            let data = self.data();
+            assert!(!data.is_null());
+            &*data
+        }
     }
 
     /// # Unsafety
@@ -233,6 +239,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// # Panics
     ///
     /// Panics if the underlying data points to a nullptr.
+    #[deprecated = "use as_mut_slice_safe instead"]
     pub unsafe fn as_mut_slice(&mut self) -> &mut [T::Element] {
         let data = self.data();
         assert!(!data.is_null());
@@ -244,7 +251,11 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         //         behaviour that detaches the underlying typed array.
         //         The slice's lifetime is bounded by the provided NoGC token,
         //         which prevents any JS engine interaction.
-        unsafe { &mut *self.data() }
+        unsafe {
+            let data = self.data();
+            assert!(!data.is_null());
+            &mut *self.data()
+        }
     }
 
     /// Return a boolean flag which denotes whether the underlying buffer
