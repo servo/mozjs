@@ -237,3 +237,140 @@ unsafe impl<T: Traceable> Traceable for JSCell<T> {
         unsafe { (&*self.inner.get()).trace(trc) };
     }
 }
+
+/// Mutably borrows two different [`JSCell`]s at the same time.
+///
+/// This is impossible to do with normal [`JSCell::borrow_mut`],
+/// because it would require two mutable borrows of the same [`NoGC`] token at the same time:
+///
+/// ```compile_fail
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn f(no_gc: &mut NoGC, cell1: &JSCell<String>, cell2: &JSCell<String>) {
+///     let borrow1 = cell1.borrow_mut(no_gc);
+///     let borrow2 = cell2.borrow_mut(no_gc); // cannot borrow `no_gc` as mutable more than once at a time
+///     std::mem::swap(borrow1, borrow2);
+/// }
+/// ```
+///
+/// instead one should do it like this:
+/// ```
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn f(no_gc: &mut NoGC, cell1: &JSCell<String>, cell2: &JSCell<String>) {
+///     let (borrow1, borrow2) = mozjs::cell::two_cells_borrow_mut(cell1, cell2, no_gc);
+///     std::mem::swap(borrow1, borrow2);
+/// }
+/// ```
+///
+/// # Panics
+///
+/// Panics if `cell1` and `cell2` are the same cell.
+pub fn two_cells_borrow_mut<'c1, 'c2, 'cx, 'r1, 'r2, T1, T2>(
+    cell1: &'c1 JSCell<T1>,
+    cell2: &'c2 JSCell<T2>,
+    _exclusive: &'cx mut NoGC,
+) -> (&'r1 mut T1, &'r2 mut T2)
+where
+    'c1: 'r1,
+    'c2: 'r2,
+    'cx: 'r1,
+    'cx: 'r2,
+{
+    let c1 = cell1.inner.get();
+    let c2 = cell2.inner.get();
+    assert_ne!(
+        c1 as *const _, c2 as *const _,
+        "Cannot mutably borrow the same cell multiple times at the same time"
+    );
+    // SAFETY: `&mut NoGC` is used as a borrow token to ensure that no other borrows are alive at the same time.
+    unsafe { (&mut *cell1.inner.get(), &mut *cell2.inner.get()) }
+}
+
+/// Mutably borrows three different [`JSCell`]s at the same time.
+///
+/// This is impossible to do with normal [`JSCell::borrow_mut`],
+/// because it would require three mutable borrows of the same [`NoGC`] token at the same time:
+/// ```compile_fail
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn f(no_gc: &mut NoGC, cell1: &JSCell<String>, cell2: &JSCell<String>, cell3: &JSCell<String>) {
+///     let borrow1 = cell1.borrow_mut(no_gc);
+///     let borrow2 = cell2.borrow_mut(no_gc);
+///     let borrow3 = cell3.borrow_mut(no_gc); // cannot borrow `no_gc` as mutable more than once at a time
+///     std::mem::swap(borrow1, borrow2);
+///     std::mem::swap(borrow2, borrow3);
+/// }
+/// ```
+///
+/// instead one should do it like this:
+/// ```
+/// use mozjs::context::NoGC;
+/// use mozjs::cell::JSCell;
+/// fn f(no_gc: &mut NoGC, cell1: &JSCell<String>, cell2: &JSCell<String>, cell3: &JSCell<String>) {
+///     let (borrow1, borrow2, borrow3) = mozjs::cell::three_cells_borrow_mut(cell1, cell2, cell3, no_gc);
+///     std::mem::swap(borrow1, borrow2);
+///     std::mem::swap(borrow2, borrow3);
+/// }
+/// ```
+///
+/// # Panics
+/// Panics if any two of `cell1`, `cell2` and `cell3` are the same cell.
+pub fn three_cells_borrow_mut<'c1, 'c2, 'c3, 'cx, 'r1, 'r2, 'r3, T1, T2, T3>(
+    cell1: &'c1 JSCell<T1>,
+    cell2: &'c2 JSCell<T2>,
+    cell3: &'c3 JSCell<T3>,
+    _exclusive: &'cx mut NoGC,
+) -> (&'r1 mut T1, &'r2 mut T2, &'r3 mut T3)
+where
+    'c1: 'r1,
+    'c2: 'r2,
+    'c3: 'r3,
+    'cx: 'r1,
+    'cx: 'r2,
+    'cx: 'r3,
+{
+    let c1 = cell1.inner.get();
+    let c2 = cell2.inner.get();
+    let c3 = cell3.inner.get();
+    assert_ne!(
+        c1 as *const _, c2 as *const _,
+        "Cannot mutably borrow the same cell multiple times at the same time"
+    );
+    assert_ne!(
+        c1 as *const _, c3 as *const _,
+        "Cannot mutably borrow the same cell multiple times at the same time"
+    );
+    assert_ne!(
+        c2 as *const _, c3 as *const _,
+        "Cannot mutably borrow the same cell multiple times at the same time"
+    );
+    // SAFETY: `&mut NoGC` is used as a borrow token to ensure that no other borrows are alive at the same time.
+    unsafe {
+        (
+            &mut *cell1.inner.get(),
+            &mut *cell2.inner.get(),
+            &mut *cell3.inner.get(),
+        )
+    }
+}
+
+#[test]
+fn test_two_cells_borrow_mut() {
+    let cell1 = JSCell::new(1);
+    let cell2 = JSCell::new(2);
+    let mut no_gc = unsafe { NoGC::new() };
+    let (borrow1, borrow2) = two_cells_borrow_mut(&cell1, &cell2, &mut no_gc);
+    *borrow1 += 1;
+    *borrow2 += 1;
+    assert_eq!(*cell1.borrow(&no_gc), 2);
+    assert_eq!(*cell2.borrow(&no_gc), 3);
+}
+
+#[should_panic(expected = "Cannot mutably borrow the same cell multiple times at the same time")]
+#[test]
+fn test_two_same_cells_borrow_mut() {
+    let cell1 = JSCell::new(1);
+    let mut no_gc = unsafe { NoGC::new() };
+    let _ = two_cells_borrow_mut(&cell1, &cell1, &mut no_gc);
+}
