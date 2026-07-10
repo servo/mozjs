@@ -6,6 +6,7 @@ use crate::jsapi::{js, JS};
 use crate::jsapi::{jsid, JSFunction, JSObject, JSScript, JSString, JSTracer};
 use crate::jsid::VoidId;
 use std::cell::UnsafeCell;
+use std::collections::VecDeque;
 use std::ffi::{c_char, c_void};
 use std::marker::PhantomData;
 use std::mem;
@@ -111,6 +112,7 @@ pub trait Rootable: crate::trace::Traceable + Sized {
 
 impl<T: Rootable> Rootable for Option<T> {}
 impl<T: crate::trace::Traceable> Rootable for Vec<T> {}
+impl<T: crate::trace::Traceable> Rootable for VecDeque<T> {}
 
 // The C++ representation of Rooted<T> inherits from StackRootedBase, which
 // contains the actual pointers that get manipulated. The Rust representation
