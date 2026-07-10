@@ -6,6 +6,7 @@
 //! typed arrays or wrapping existing JS reflectors, and prevents reinterpreting
 //! existing buffers as different types except in well-defined cases.
 
+use crate::context::NoGC;
 use crate::conversions::ConversionResult;
 use crate::conversions::FromJSValConvertible;
 use crate::conversions::ToJSValConvertible;
@@ -187,6 +188,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     }
 
     /// Retrieves an owned data that's represented by the typed array.
+    #[allow(deprecated)]
     pub fn to_vec(&self) -> Vec<T::Element>
     where
         T::Element: Clone,
@@ -207,10 +209,23 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// # Panics
     ///
     /// Panics if the underlying data points to a nullptr.
+    #[deprecated = "use as_slice_safe instead"]
     pub unsafe fn as_slice(&self) -> &[T::Element] {
         let data = self.data();
         assert!(!data.is_null());
         &*data
+    }
+
+    pub fn as_slice_safe<'a>(&self, _no_gc: &'a NoGC) -> &'a [T::Element] {
+        // SAFETY: The slice can only be invalidated by invoking JS engine
+        //         behaviour that detaches the underlying typed array.
+        //         The slice's lifetime is bounded by the provided NoGC token,
+        //         which prevents any JS engine interaction.
+        unsafe {
+            let data = self.data();
+            assert!(!data.is_null());
+            &*data
+        }
     }
 
     /// # Unsafety
@@ -224,10 +239,23 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// # Panics
     ///
     /// Panics if the underlying data points to a nullptr.
+    #[deprecated = "use as_mut_slice_safe instead"]
     pub unsafe fn as_mut_slice(&mut self) -> &mut [T::Element] {
         let data = self.data();
         assert!(!data.is_null());
         &mut *self.data()
+    }
+
+    pub fn as_mut_slice_safe<'a>(&mut self, _no_gc: &'a NoGC) -> &'a mut [T::Element] {
+        // SAFETY: The slice can only be invalidated by invoking JS engine
+        //         behaviour that detaches the underlying typed array.
+        //         The slice's lifetime is bounded by the provided NoGC token,
+        //         which prevents any JS engine interaction.
+        unsafe {
+            let data = self.data();
+            assert!(!data.is_null());
+            &mut *self.data()
+        }
     }
 
     /// Return a boolean flag which denotes whether the underlying buffer
