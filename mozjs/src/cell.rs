@@ -30,6 +30,16 @@ impl<T> JSRefCell<T> {
         }
     }
 
+    /// Returns a reference to the underlying [`RefCell`].
+    ///
+    /// This is not strictly unsafe, but it is not recommended to use this method unless you know what you are doing.
+    ///
+    /// Mutable borrows from it can cause panics if a GC happens while the borrow is active,
+    /// which is why [`JSRefCell::borrow_mut`] should be used instead.
+    pub fn as_refcell(&self) -> &RefCell<T> {
+        &self.value
+    }
+
     /// Immutably borrows the wrapped value.
     ///
     /// The borrow lasts until the returned `Ref` exits scope. Multiple
