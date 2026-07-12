@@ -545,6 +545,7 @@ impl CompileOptionsWrapper {
     /// # Safety
     /// `cx` must point to a non-null, valid [`JSContext`].
     /// To create an instance from safe code, use [`Runtime::new_compile_options`].
+    #[deprecated(note = "Use CompileOptionsWrapper::new instead")]
     pub unsafe fn new_raw(cx: *mut JSContext, filename: CString, line: u32) -> Self {
         let ptr = NewCompileOptions(cx, filename.as_ptr(), line);
         assert!(!ptr.is_null());
@@ -1045,6 +1046,7 @@ pub struct ScriptedCaller {
     pub col: u32,
 }
 
+#[deprecated(note = "Use describe_scripted_caller_safe instead")]
 pub unsafe fn describe_scripted_caller(cx: *mut JSContext) -> Result<ScriptedCaller, ()> {
     let mut buf = [0; 1024];
     let mut line = 0;
@@ -1053,6 +1055,31 @@ pub unsafe fn describe_scripted_caller(cx: *mut JSContext) -> Result<ScriptedCal
         return Err(());
     }
     let filename = CStr::from_ptr((&buf) as *const _ as *const _);
+    Ok(ScriptedCaller {
+        filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
+        line,
+        col,
+    })
+}
+
+pub fn describe_scripted_caller_safe(
+    cx: &mut crate::context::JSContext,
+) -> Result<ScriptedCaller, ()> {
+    let mut buf = [0; 1024];
+    let mut line = 0;
+    let mut col = 0;
+    if unsafe {
+        !DescribeScriptedCaller(
+            cx.raw_cx(),
+            buf.as_mut_ptr(),
+            buf.len(),
+            &mut line,
+            &mut col,
+        )
+    } {
+        return Err(());
+    }
+    let filename = unsafe { CStr::from_ptr(buf.as_ptr()) };
     Ok(ScriptedCaller {
         filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
         line,
@@ -1077,6 +1104,39 @@ unsafe extern "C" fn fill_string_callback(ptr: *const c_char, len: usize, target
 
 /// Retrieve error info from the pending exception stack, by clearing it.
 /// Return None if there isn't one or if it is a warning.
+pub fn error_info_from_exception_stack_safe(
+    cx: &mut crate::context::JSContext,
+    rval: MutableHandleValue,
+) -> Option<ErrorInfo> {
+    let mut message = String::new();
+    let mut filename = String::new();
+
+    let mut line = 0;
+    let mut col = 0;
+
+    unsafe {
+        if !PendingExceptionStackInfo(
+            cx.raw_cx(),
+            Some(fill_string_callback),
+            &raw mut message as *mut c_void,
+            &raw mut filename as *mut c_void,
+            &mut line,
+            &mut col,
+            rval.into(),
+        ) {
+            return None;
+        }
+    }
+
+    Some(ErrorInfo {
+        message,
+        filename,
+        line,
+        col,
+    })
+}
+
+#[deprecated(note = "Use error_info_from_exception_stack_safe instead")]
 pub unsafe fn error_info_from_exception_stack(
     cx: *mut JSContext,
     rval: RawMutableHandleValue,
