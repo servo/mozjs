@@ -1062,20 +1062,12 @@ pub unsafe fn describe_scripted_caller(cx: *mut JSContext) -> Result<ScriptedCal
     })
 }
 
-pub fn describe_scripted_caller_safe(
-    cx: &mut crate::context::JSContext,
-) -> Result<ScriptedCaller, ()> {
+pub fn describe_scripted_caller_safe(cx: &crate::context::JSContext) -> Result<ScriptedCaller, ()> {
     let mut buf = [0; 1024];
     let mut line = 0;
     let mut col = 0;
     if unsafe {
-        !DescribeScriptedCaller(
-            cx.raw_cx(),
-            buf.as_mut_ptr(),
-            buf.len(),
-            &mut line,
-            &mut col,
-        )
+        !wrappers2::DescribeScriptedCaller(cx, buf.as_mut_ptr(), buf.len(), &mut line, &mut col)
     } {
         return Err(());
     }
@@ -1115,14 +1107,14 @@ pub fn error_info_from_exception_stack_safe(
     let mut col = 0;
 
     unsafe {
-        if !PendingExceptionStackInfo(
-            cx.raw_cx(),
+        if !wrappers2::PendingExceptionStackInfo(
+            cx,
             Some(fill_string_callback),
             &raw mut message as *mut c_void,
             &raw mut filename as *mut c_void,
             &mut line,
             &mut col,
-            rval.into(),
+            rval,
         ) {
             return None;
         }
