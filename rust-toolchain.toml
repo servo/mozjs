@@ -2,9 +2,6 @@
 # Keep this in sync with the Minimum-supported Rust version (MSRV) of servo!
 # When updating also search the github worflows .yml files for the old version
 # and update all occurences.
-channel = "1.85.0"
+channel = "1.88.0"
 
-components = [
-    "clippy",
-    "rustfmt"
-]
+components = ["clippy", "rustfmt"]
