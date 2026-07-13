@@ -50,7 +50,7 @@ fn typedarray() {
         assert!(rval.is_object());
 
         typedarray!(&in(context) let array: Uint8Array = rval.to_object());
-        assert_eq!(array.unwrap().as_slice(), &[0, 2, 4][..]);
+        assert_eq!(array.unwrap().as_slice_safe(context), &[0, 2, 4][..]);
 
         typedarray!(&in(context) let array: Uint8Array = rval.to_object());
         assert_eq!(array.unwrap().len(), 3);
@@ -73,11 +73,11 @@ fn typedarray() {
         .is_ok());
 
         typedarray!(&in(context) let array: Uint32Array = rval.get());
-        assert_eq!(array.unwrap().as_slice(), &[1, 3, 5][..]);
+        assert_eq!(array.unwrap().as_slice_safe(context), &[1, 3, 5][..]);
 
         typedarray!(&in(context) let mut array: Uint32Array = rval.get());
         array.as_mut().unwrap().update(&[2, 4, 6]);
-        assert_eq!(array.unwrap().as_slice(), &[2, 4, 6][..]);
+        assert_eq!(array.unwrap().as_slice_safe(context), &[2, 4, 6][..]);
 
         rooted!(&in(context) let rval = ptr::null_mut::<JSObject>());
         typedarray!(&in(context) let array: Uint8Array = rval.get());
@@ -89,11 +89,11 @@ fn typedarray() {
         );
 
         typedarray!(&in(context) let array: Uint32Array = rval.get());
-        assert_eq!(array.unwrap().as_slice(), &[0, 0, 0, 0, 0]);
+        assert_eq!(array.unwrap().as_slice_safe(context), &[0, 0, 0, 0, 0]);
 
         typedarray!(&in(context) let mut array: Uint32Array = rval.get());
         array.as_mut().unwrap().update(&[0, 1, 2, 3]);
-        assert_eq!(array.unwrap().as_slice(), &[0, 1, 2, 3, 0]);
+        assert_eq!(array.unwrap().as_slice_safe(context), &[0, 1, 2, 3, 0]);
 
         typedarray!(&in(context) let view: ArrayBufferView = rval.get());
         assert_eq!(view.unwrap().get_array_type(), Type::Uint32);
