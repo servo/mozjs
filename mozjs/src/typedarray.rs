@@ -6,6 +6,8 @@
 //! typed arrays or wrapping existing JS reflectors, and prevents reinterpreting
 //! existing buffers as different types except in well-defined cases.
 
+use std::ptr::NonNull;
+
 use crate::context::NoGC;
 use crate::conversions::ConversionResult;
 use crate::conversions::FromJSValConvertible;
@@ -127,7 +129,11 @@ pub enum CreateWith<'a, T: 'a> {
 /// A typed array wrapper.
 pub struct TypedArray<T: TypedArrayElement, S: JSObjectStorage> {
     object: S,
-    computed: Cell<Option<*mut [T::Element]>>,
+    /// The cached computed data for this typed array. A None value means
+    /// the data has not been computed. A Some(None) means the underlying
+    /// buffer is detached. A Some(Some(..)) is the computed, non-detached
+    /// buffer contents.
+    computed: Cell<Option<Option<NonNull<[T::Element]>>>>,
 }
 
 unsafe impl<T> CustomTrace for TypedArray<T, *mut JSObject>
@@ -160,7 +166,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         }
     }
 
-    fn data(&self) -> *mut [T::Element] {
+    fn data(&self) -> Option<NonNull<[T::Element]>> {
         if let Some(data) = self.computed.get() {
             return data;
         }
@@ -172,7 +178,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
 
     /// Returns the number of elements in the underlying typed array.
     pub fn len(&self) -> usize {
-        self.data().len()
+        self.data().map_or(0, |data| data.len())
     }
 
     /// # Unsafety
@@ -211,9 +217,10 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// Panics if the underlying data points to a nullptr.
     #[deprecated = "use as_slice_safe instead"]
     pub unsafe fn as_slice(&self) -> &[T::Element] {
-        let data = self.data();
-        assert!(!data.is_null());
-        &*data
+        let Some(data) = self.data() else {
+            return &[];
+        };
+        data.as_ref()
     }
 
     pub fn as_slice_safe<'a>(&self, _no_gc: &'a NoGC) -> &'a [T::Element] {
@@ -221,11 +228,10 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         //         behaviour that detaches the underlying typed array.
         //         The slice's lifetime is bounded by the provided NoGC token,
         //         which prevents any JS engine interaction.
-        unsafe {
-            let data = self.data();
-            assert!(!data.is_null());
-            &*data
-        }
+        let Some(data) = self.data() else {
+            return &[];
+        };
+        unsafe { data.as_ref() }
     }
 
     /// # Unsafety
@@ -241,9 +247,10 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     /// Panics if the underlying data points to a nullptr.
     #[deprecated = "use as_mut_slice_safe instead"]
     pub unsafe fn as_mut_slice(&mut self) -> &mut [T::Element] {
-        let data = self.data();
-        assert!(!data.is_null());
-        &mut *self.data()
+        let Some(mut data) = self.data() else {
+            return &mut [];
+        };
+        data.as_mut()
     }
 
     pub fn as_mut_slice_safe<'a>(&mut self, _no_gc: &'a NoGC) -> &'a mut [T::Element] {
@@ -251,11 +258,10 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         //         behaviour that detaches the underlying typed array.
         //         The slice's lifetime is bounded by the provided NoGC token,
         //         which prevents any JS engine interaction.
-        unsafe {
-            let data = self.data();
-            assert!(!data.is_null());
-            &mut *self.data()
-        }
+        let Some(mut data) = self.data() else {
+            return &mut [];
+        };
+        unsafe { data.as_mut() }
     }
 
     /// Return a boolean flag which denotes whether the underlying buffer
@@ -298,9 +304,15 @@ impl<T: TypedArrayElementCreator + TypedArrayElement, S: JSObjectStorage> TypedA
     }
 
     unsafe fn update_raw(data: &[T::Element], result: *mut JSObject) {
-        let buffer = T::length_and_data(result);
+        let Some(mut buffer) = T::length_and_data(result) else {
+            return;
+        };
         assert!(data.len() <= buffer.len());
-        ptr::copy_nonoverlapping(data.as_ptr(), buffer as *mut T::Element, data.len());
+        ptr::copy_nonoverlapping(
+            data.as_ptr(),
+            buffer.as_mut().as_mut_ptr(), /* as *mut T::Element*/
+            data.len(),
+        );
     }
 }
 
@@ -312,7 +324,7 @@ pub trait TypedArrayElement {
     /// Unwrap a typed array JS reflector for this element type.
     unsafe fn unwrap_array(obj: *mut JSObject) -> *mut JSObject;
     /// Retrieve the length and data of a typed array's buffer for this element type.
-    unsafe fn length_and_data(obj: *mut JSObject) -> *mut [Self::Element];
+    unsafe fn length_and_data(obj: *mut JSObject) -> Option<NonNull<[Self::Element]>>;
 }
 
 /// Internal trait for creating new typed arrays.
@@ -337,13 +349,16 @@ macro_rules! typed_array_element {
                 $unwrap(obj)
             }
 
-            unsafe fn length_and_data(obj: *mut JSObject) -> *mut [Self::Element] {
+            unsafe fn length_and_data(obj: *mut JSObject) -> Option<NonNull<[Self::Element]>> {
                 let mut len = 0;
                 let mut shared = false;
                 let mut data = ptr::null_mut();
                 $length_and_data(obj, &mut len, &mut shared, &mut data);
                 assert!(!shared);
-                std::ptr::slice_from_raw_parts_mut(data, len)
+                let Some(data) = NonNull::new(data) else {
+                    return None;
+                };
+                Some(NonNull::slice_from_raw_parts(data, len))
             }
         }
     };

@@ -8,11 +8,11 @@ use mozjs::jsapi::{JSObject, OnNewGlobalHookOption, Type};
 use mozjs::jsval::UndefinedValue;
 use mozjs::realm::AutoRealm;
 use mozjs::rooted;
-use mozjs::rust::wrappers2::JS_NewGlobalObject;
+use mozjs::rust::wrappers2::{DetachArrayBuffer, JS_NewGlobalObject};
 use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 use mozjs::typedarray;
-use mozjs::typedarray::{CreateWith, Uint32Array};
+use mozjs::typedarray::{ArrayBuffer, CreateWith, Uint32Array};
 
 #[test]
 fn typedarray() {
@@ -93,5 +93,29 @@ fn typedarray() {
         let view = view.unwrap();
         assert_eq!(view.get_array_type(), Type::Uint32);
         assert_eq!(view.is_shared(), false);
+
+        rooted!(&in(context) let mut rval = ptr::null_mut::<JSObject>());
+        assert!(ArrayBuffer::create(
+            context.raw_cx(),
+            CreateWith::Slice(&[1, 2, 3]),
+            rval.handle_mut()
+        )
+        .is_ok());
+        typedarray!(&in(context) let arraybuffer: ArrayBuffer = rval.get());
+        assert_eq!(
+            arraybuffer.as_ref().unwrap().as_slice_safe(context),
+            &[1, 2, 3]
+        );
+
+        assert!(DetachArrayBuffer(context, rval.handle()));
+
+        typedarray!(&in(context) let detached_arraybuffer: ArrayBuffer = rval.get());
+        assert_eq!(
+            detached_arraybuffer
+                .as_ref()
+                .unwrap()
+                .as_slice_safe(context),
+            &[]
+        );
     }
 }
