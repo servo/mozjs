@@ -51,9 +51,9 @@ fn typedarray() {
 
         typedarray!(&in(context) let array: Uint8Array = rval.to_object());
         let uint8array = array.unwrap();
-        assert_eq!(uint8array.as_slice_safe(context), &[0, 2, 4][..]);
+        assert_eq!(uint8array.as_slice_safe(context), Some(&[0, 2, 4][..]));
         assert_eq!(uint8array.len(), 3);
-        assert_eq!(uint8array.to_vec(), vec![0, 2, 4]);
+        assert_eq!(uint8array.to_vec(), Some(vec![0, 2, 4]));
 
         typedarray!(&in(context) let array: Uint16Array = rval.to_object());
         assert!(array.is_err());
@@ -71,9 +71,9 @@ fn typedarray() {
 
         typedarray!(&in(context) let array: Uint32Array = rval.get());
         let mut uint32array = array.unwrap();
-        assert_eq!(uint32array.as_slice_safe(context), &[1, 3, 5][..]);
+        assert_eq!(uint32array.as_slice_safe(context), Some(&[1, 3, 5][..]));
         uint32array.update(&[2, 4, 6]);
-        assert_eq!(uint32array.as_slice_safe(context), &[2, 4, 6][..]);
+        assert_eq!(uint32array.as_slice_safe(context), Some(&[2, 4, 6][..]));
 
         typedarray!(&in(context) let array: Uint8Array = ptr::null_mut());
         assert!(array.is_err());
@@ -85,9 +85,9 @@ fn typedarray() {
 
         typedarray!(&in(context) let array: Uint32Array = rval.get());
         let mut uint32array = array.unwrap();
-        assert_eq!(uint32array.as_slice_safe(context), &[0, 0, 0, 0, 0]);
+        assert_eq!(uint32array.as_slice_safe(context), Some(&[0, 0, 0, 0, 0][..]));
         uint32array.update(&[0, 1, 2, 3]);
-        assert_eq!(uint32array.as_slice_safe(context), &[0, 1, 2, 3, 0]);
+        assert_eq!(uint32array.as_slice_safe(context), Some(&[0, 1, 2, 3, 0][..]));
 
         typedarray!(&in(context) let view: ArrayBufferView = rval.get());
         let view = view.unwrap();
@@ -104,7 +104,7 @@ fn typedarray() {
         typedarray!(&in(context) let arraybuffer: ArrayBuffer = rval.get());
         assert_eq!(
             arraybuffer.as_ref().unwrap().as_slice_safe(context),
-            &[1, 2, 3]
+            Some(&[1, 2, 3][..])
         );
 
         assert!(DetachArrayBuffer(context, rval.handle()));
@@ -115,7 +115,7 @@ fn typedarray() {
                 .as_ref()
                 .unwrap()
                 .as_slice_safe(context),
-            &[]
+            None,
         );
     }
 }

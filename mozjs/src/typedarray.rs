@@ -201,8 +201,9 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     }
 
     /// Retrieves an owned data that's represented by the typed array.
+    /// Returns None if the underlying buffer is detached.
     #[allow(deprecated)]
-    pub fn to_vec(&self) -> Vec<T::Element>
+    pub fn to_vec(&self) -> Option<Vec<T::Element>>
     where
         T::Element: Clone,
     {
@@ -211,7 +212,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
         // the underlying buffer can easily invalidated when transferred with
         // postMessage to another thread (To remedy that, we shouldn't
         // execute any JS code between getting the data pointer and using it).
-        unsafe { self.as_slice().to_vec() }
+        unsafe { self.as_slice().map(|slice| slice.to_vec()) }
     }
 
     /// # Unsafety
@@ -223,22 +224,18 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     ///
     /// Panics if the underlying data points to a nullptr.
     #[deprecated = "use as_slice_safe instead"]
-    pub unsafe fn as_slice(&self) -> &[T::Element] {
-        let Some(data) = self.data() else {
-            return &[];
-        };
-        data.as_ref()
+    pub unsafe fn as_slice(&self) -> Option<&[T::Element]> {
+        self.data().map(|data| data.as_ref())
     }
 
-    pub fn as_slice_safe<'a>(&self, _no_gc: &'a NoGC) -> &'a [T::Element] {
+    /// Returns None if the underlying array buffer is detached.
+    /// Otherwise, returns Some with the slice data.
+    pub fn as_slice_safe<'a>(&self, _no_gc: &'a NoGC) -> Option<&'a [T::Element]> {
         // SAFETY: The slice can only be invalidated by invoking JS engine
         //         behaviour that detaches the underlying typed array.
         //         The slice's lifetime is bounded by the provided NoGC token,
         //         which prevents any JS engine interaction.
-        let Some(data) = self.data() else {
-            return &[];
-        };
-        unsafe { data.as_ref() }
+        self.data().map(|data| unsafe { data.as_ref() })
     }
 
     /// # Unsafety
@@ -253,22 +250,16 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
     ///
     /// Panics if the underlying data points to a nullptr.
     #[deprecated = "use as_mut_slice_safe instead"]
-    pub unsafe fn as_mut_slice(&mut self) -> &mut [T::Element] {
-        let Some(mut data) = self.data() else {
-            return &mut [];
-        };
-        data.as_mut()
+    pub unsafe fn as_mut_slice(&mut self) -> Option<&mut [T::Element]> {
+        self.data().map(|mut data| data.as_mut())
     }
 
-    pub fn as_mut_slice_safe<'a>(&mut self, _no_gc: &'a NoGC) -> &'a mut [T::Element] {
+    pub fn as_mut_slice_safe<'a>(&mut self, _no_gc: &'a NoGC) -> Option<&'a mut [T::Element]> {
         // SAFETY: The slice can only be invalidated by invoking JS engine
         //         behaviour that detaches the underlying typed array.
         //         The slice's lifetime is bounded by the provided NoGC token,
         //         which prevents any JS engine interaction.
-        let Some(mut data) = self.data() else {
-            return &mut [];
-        };
-        unsafe { data.as_mut() }
+        self.data().map(|mut data| unsafe { data.as_mut() })
     }
 
     /// Return a boolean flag which denotes whether the underlying buffer
