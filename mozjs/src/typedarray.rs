@@ -353,10 +353,9 @@ macro_rules! typed_array_element {
                 let mut data = ptr::null_mut();
                 $length_and_data(obj, &mut len, &mut shared, &mut data);
                 assert!(!shared);
-                let Some(data) = NonNull::new(data) else {
-                    return None;
-                };
-                Some(NonNull::slice_from_raw_parts(data, len))
+                NonNull::new(data).map(|data| {
+                    NonNull::slice_from_raw_parts(data, len)
+                })
             }
         }
     };
