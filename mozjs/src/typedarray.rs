@@ -126,14 +126,17 @@ pub enum CreateWith<'a, T: 'a> {
     Slice(&'a [T]),
 }
 
+#[derive(Clone, Copy)]
+enum ArrayData<T> {
+    NotYetComputed,
+    Detached,
+    Computed(NonNull<[T]>)
+}
+
 /// A typed array wrapper.
 pub struct TypedArray<T: TypedArrayElement, S: JSObjectStorage> {
     object: S,
-    /// The cached computed data for this typed array. A None value means
-    /// the data has not been computed. A Some(None) means the underlying
-    /// buffer is detached. A Some(Some(..)) is the computed, non-detached
-    /// buffer contents.
-    computed: Cell<Option<Option<NonNull<[T::Element]>>>>,
+    computed: Cell<ArrayData<T::Element>>,
 }
 
 unsafe impl<T> CustomTrace for TypedArray<T, *mut JSObject>
@@ -161,18 +164,22 @@ impl<T: TypedArrayElement, S: JSObjectStorage> TypedArray<T, S> {
 
             Ok(TypedArray {
                 object: S::from_raw(unwrapped),
-                computed: Cell::new(None),
+                computed: Cell::new(ArrayData::NotYetComputed),
             })
         }
     }
 
     fn data(&self) -> Option<NonNull<[T::Element]>> {
-        if let Some(data) = self.computed.get() {
-            return data;
+        if let ArrayData::Computed(data) = self.computed.get() {
+            return Some(data);
         }
 
         let data = unsafe { T::length_and_data(self.object.as_raw()) };
-        self.computed.set(Some(data));
+        self.computed.set(if let Some(data) = data {
+            ArrayData::Computed(data)
+        } else {
+            ArrayData::Detached
+        });
         data
     }
 
@@ -320,7 +327,7 @@ impl<T: TypedArrayElementCreator + TypedArrayElement, S: JSObjectStorage> TypedA
 /// and various functions required to manipulate typed arrays of that element type.
 pub trait TypedArrayElement {
     /// Underlying primitive representation of this element type.
-    type Element;
+    type Element: Copy;
     /// Unwrap a typed array JS reflector for this element type.
     unsafe fn unwrap_array(obj: *mut JSObject) -> *mut JSObject;
     /// Retrieve the length and data of a typed array's buffer for this element type.
