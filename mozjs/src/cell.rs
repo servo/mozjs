@@ -76,7 +76,7 @@ impl<T> JSRefCell<T> {
     /// }
     /// ```
     ///
-    /// But in more complex cases, method might trigger a GC, and thus require a [`&mut JSContext`][crate::context::JSContext].
+    /// But in more complex cases, a method might trigger a GC, and thus require a [`&mut JSContext`][crate::context::JSContext].
     /// In that case [`&JSContext`][crate::context::JSContext] can be used in place of [`&NoGC`][NoGC],
     /// which will make [`RefMut`] bounded to the lifetime of the [`&JSContext`][crate::context::JSContext]
     /// and thus prevent any GC from happening while it is alive.
@@ -133,7 +133,7 @@ impl<T: Default> JSRefCell<T> {
     /// # Panics
     ///
     /// Panics if the value is currently borrowed.
-    pub fn take(&self, _no_gc: &NoGC) -> T {
+    pub fn take(&self) -> T {
         self.value.take()
     }
 }
