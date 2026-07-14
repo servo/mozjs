@@ -36,7 +36,7 @@ wrap!(glue: pub fn JS_GetRegExpFlags(cx: &mut JSContext, obj: HandleObject, flag
 wrap!(glue: pub fn EncodeStringToUTF8(cx: &mut JSContext, str_: HandleString, cb: EncodedStringCallback));
 wrap!(glue: pub fn SetUpEventLoopDispatch(cx: &mut JSContext, callback: RustDispatchToEventLoopCallback, closure: *mut ::std::os::raw::c_void));
 wrap!(glue: pub fn DispatchableRun(cx: &mut JSContext, ptr: *mut DispatchablePointer, mb: Dispatchable_MaybeShuttingDown));
-wrap!(glue: pub fn DescribeScriptedCaller(cx: &mut JSContext, buffer: *mut ::std::os::raw::c_char, buflen: usize, line: *mut u32, col: *mut u32) -> bool);
+wrap!(glue: pub fn DescribeScriptedCaller(cx: &JSContext, buffer: *mut ::std::os::raw::c_char, buflen: usize, line: *mut u32, col: *mut u32) -> bool);
 wrap!(glue: pub fn PendingExceptionStackInfo(cx: &mut JSContext, callback: StringCallback, message_target: *mut ::std::os::raw::c_void, filename_target: *mut ::std::os::raw::c_void, line: *mut u32, col: *mut u32, dest: MutableHandleValue) -> bool);
 wrap!(glue: pub fn SetDataPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, value: HandleValue, attrs: u32));
 wrap!(glue: pub fn SetAccessorPropertyDescriptor(desc: MutableHandle<PropertyDescriptor>, getter: HandleObject, setter: HandleObject, attrs: u32));
