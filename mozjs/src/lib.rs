@@ -47,6 +47,7 @@ pub mod jsapi {
 #[macro_use]
 pub mod rust;
 
+pub mod cell;
 mod consts;
 pub mod context;
 pub mod conversions;

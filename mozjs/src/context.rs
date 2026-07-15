@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 pub use crate::jsapi::JSContext as RawJSContext;
@@ -82,6 +82,8 @@ pub use crate::jsapi::JSContext as RawJSContext;
 /// This model is still being incrementally introduced, so there are currently some escape hatches.
 pub struct JSContext {
     pub(crate) ptr: NonNull<RawJSContext>,
+    // this is ZST, but we need it to get &mut NoGC safely
+    no_gc: NoGC,
 }
 
 impl JSContext {
@@ -93,7 +95,10 @@ impl JSContext {
     /// This in turn means that [JSContext] always needs to be passed down as an argument,
     /// but for the SpiderMonkey callbacks which provide [RawJSContext] it's safe to construct **one** from provided [RawJSContext].
     pub unsafe fn from_ptr(cx: NonNull<RawJSContext>) -> JSContext {
-        JSContext { ptr: cx }
+        JSContext {
+            ptr: cx,
+            no_gc: NoGC(()),
+        }
     }
 
     /// Get the `JSContext` for this thread (thin air). This should be rarely used.
@@ -111,6 +116,15 @@ impl JSContext {
     #[must_use]
     pub fn no_gc<'cx>(&'cx self) -> &'cx NoGC {
         &NoGC(())
+    }
+
+    /// Returns [NoGC] token bounded to this [JSContext].
+    /// No function that accepts `&mut JSContext` (read: triggers GC)
+    /// can be called while this is alive.
+    #[inline]
+    #[must_use]
+    pub fn no_gc_mut<'cx>(&'cx mut self) -> &'cx mut NoGC {
+        &mut self.no_gc
     }
 
     /// Obtain [RawJSContext] mutable pointer.
@@ -175,9 +189,17 @@ impl Deref for JSContext {
     }
 }
 
+impl DerefMut for JSContext {
+    /// Deref [`&mut JSContext`](JSContext) into [`&mut NoGC`](NoGC) so that
+    /// one can pass [`&mut JSContext`](JSContext) to functions that require [`&mut NoGC`](NoGC).
+    fn deref_mut<'cx>(&'cx mut self) -> &'cx mut Self::Target {
+        self.no_gc_mut()
+    }
+}
+
 /// Token that ensures that no GC can happen while it is alive.
 ///
-/// This type is similar to `&JSContext`,
+/// This type is similar to [`&JSContext`][JSContext],
 /// but it is used in cases where no actual context is needed.
 ///
 /// For more info and examples see [JSContext].
@@ -195,14 +217,13 @@ pub struct NoGC(()); // zero-sized type that cannot be constructed from outside
 impl NoGC {
     /// Creates new NoGC token from thin air.
     ///
-    /// This is more safe than constructing [JSContext] from thin air as the promise here (of no GC) is weaker,
-    /// but one should still prefer passing [NoGC] down as an argument.
+    /// This is more safe than constructing [`JSContext`] from thin air as the promise here (of no GC) is weaker,
+    /// but one should still prefer passing [`NoGC`] down as an argument.
     ///
     /// # Safety
     ///
-    /// One must ensure that no `&mut JSContext` is alive while [NoGC] is alive.
-    /// (having `&JSContext` is technically OK, but one should rather derive [NoGC] from it).
-    pub unsafe fn new() -> &'static Self {
-        &NoGC(())
+    /// One must ensure that no [`JSContext`] or existing [`NoGC`] is alive while this [`NoGC`] is alive.
+    pub unsafe fn new() -> Self {
+        NoGC(())
     }
 }
