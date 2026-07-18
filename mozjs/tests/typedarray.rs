@@ -85,9 +85,15 @@ fn typedarray() {
 
         typedarray!(&in(context) let array: Uint32Array = rval.get());
         let mut uint32array = array.unwrap();
-        assert_eq!(uint32array.as_slice_safe(context), Some(&[0, 0, 0, 0, 0][..]));
+        assert_eq!(
+            uint32array.as_slice_safe(context),
+            Some(&[0, 0, 0, 0, 0][..])
+        );
         uint32array.update(&[0, 1, 2, 3]);
-        assert_eq!(uint32array.as_slice_safe(context), Some(&[0, 1, 2, 3, 0][..]));
+        assert_eq!(
+            uint32array.as_slice_safe(context),
+            Some(&[0, 1, 2, 3, 0][..])
+        );
 
         typedarray!(&in(context) let view: ArrayBufferView = rval.get());
         let view = view.unwrap();

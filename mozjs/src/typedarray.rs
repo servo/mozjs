@@ -130,7 +130,7 @@ pub enum CreateWith<'a, T: 'a> {
 enum ArrayData<T> {
     NotYetComputed,
     Detached,
-    Computed(NonNull<[T]>)
+    Computed(NonNull<[T]>),
 }
 
 /// A typed array wrapper.
@@ -353,9 +353,7 @@ macro_rules! typed_array_element {
                 let mut data = ptr::null_mut();
                 $length_and_data(obj, &mut len, &mut shared, &mut data);
                 assert!(!shared);
-                NonNull::new(data).map(|data| {
-                    NonNull::slice_from_raw_parts(data, len)
-                })
+                NonNull::new(data).map(|data| NonNull::slice_from_raw_parts(data, len))
             }
         }
     };
