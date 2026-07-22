@@ -21,12 +21,12 @@
 #include "mozilla/CheckedInt.h"
 
 #include "vm/JSContext.h"
-#include "vm/Realm.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmJS.h"
 #include "wasm/WasmValue.h"
 
 #include "gc/StableCellHasher-inl.h"
+#include "vm/Realm-inl.h"
 #include "wasm/WasmInstance-inl.h"
 
 using namespace js;
@@ -173,6 +173,7 @@ bool Table::getFuncRef(JSContext* cx, uint32_t address,
 
   Instance& instance = *elem.instance;
   const CodeRange& codeRange = *instance.code().lookupFuncRange(elem.code);
+  AutoRealmUnchecked ar(cx, instance.realm());
   return instance.getExportedFunction(cx, codeRange.funcIndex(), fun);
 }
 

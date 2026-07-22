@@ -2864,6 +2864,9 @@ static bool GenerateDebugStub(MacroAssembler& masm, Label* throwLabel,
   masm.moveToStackPtr(scratch);
 #endif
 
+  MOZ_ASSERT(NonVolatileRegs.has(InstanceReg));
+  masm.loadWasmPinnedRegsFromInstance(mozilla::Nothing());
+
   masm.setFramePushed(framePushed);
   masm.PopRegsInMask(AllAllocatableRegs);
 

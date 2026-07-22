@@ -161,9 +161,22 @@ def repackage_deb_l10n(
         )
         langpack_id = langpack_metadata["langpack_id"]
         if release_product == "devedition":
-            depends = f"firefox-devedition (= {application_ini_data['pkg_version']})"
+            depends_package = "firefox-devedition"
         else:
-            depends = f"{application_ini_data['remoting_name']} (= {application_ini_data['pkg_version']})"
+            depends_package = application_ini_data["remoting_name"]
+
+        depends_version = application_ini_data["pkg_version"]
+
+        # Thunderbird prepends epoch 1 to the version number to prevent
+        # accidental downgrading to Thunderbird .debs in non-Mozilla APT
+        # repositories.
+        #
+        # See bug 2005200
+        if depends_package == "thunderbird":
+            depends_version = f"1:{depends_version}"
+
+        depends = f"{depends_package} (= {depends_version})"
+
         build_variables = get_build_variables(
             application_ini_data,
             _DEB_ARCH[arch],

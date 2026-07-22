@@ -172,7 +172,7 @@ class MOZ_STACK_CLASS SprintfState final : private mozilla::PrintfTarget,
     size_t newlen;
 
     off = mCur - mBase;
-    if (off + len >= mMaxlen) {
+    if (len >= mMaxlen - off) {
       /* Grow the buffer */
       newlen = mMaxlen + ((len > 32) ? len : 32);
       newbase = this->template maybe_pod_malloc<char>(newlen);

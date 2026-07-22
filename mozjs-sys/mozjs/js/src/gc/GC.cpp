@@ -3129,6 +3129,7 @@ void GCRuntime::beginMarkPhase(AutoGCSession& session) {
   }
 
   MOZ_ASSERT(!hasDelayedMarking());
+  haveAllImplicitEdges_ = true;
   for (auto& marker : markers) {
     marker->start();
   }

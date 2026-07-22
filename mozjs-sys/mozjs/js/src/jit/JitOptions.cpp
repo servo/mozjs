@@ -97,7 +97,8 @@ DefaultJitOptions::DefaultJitOptions() {
   SET_DEFAULT(disablePruning, false);
 
   // Toggles whether the iterator indices optimization is globally disabled.
-  SET_DEFAULT(disableIteratorIndices, false);
+  // Note: this optimization is disabled on this ESR branch (bug 2052207).
+  SET_DEFAULT(disableIteratorIndices, true);
 
   // Toggles whether instruction reordering is globally disabled.
   SET_DEFAULT(disableInstructionReordering, false);

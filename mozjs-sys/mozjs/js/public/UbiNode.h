@@ -832,7 +832,7 @@ class Node {
   using Id = Base::Id;
   Id identifier() const {
     auto id = base()->identifier();
-    MOZ_ASSERT(JS::Value::isNumberRepresentable(id));
+    MOZ_RELEASE_ASSERT(JS::Value::isNumberRepresentable(id));
     return id;
   }
 
