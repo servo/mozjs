@@ -526,6 +526,9 @@ class GCRuntime {
   // Get the main marking tracer.
   GCMarker& marker() { return *markers[0]; }
 
+  bool haveAllImplicitEdges() const { return haveAllImplicitEdges_; }
+  void clearHaveAllImplicitEdges() { haveAllImplicitEdges_ = false; }
+
   JS::Zone* getCurrentSweepGroup() { return currentSweepGroup; }
   unsigned getCurrentSweepGroupIndex() {
     MOZ_ASSERT_IF(unsigned(state()) < unsigned(State::Sweep),
@@ -1319,6 +1322,9 @@ class GCRuntime {
   MainThreadData<bool> startedCompacting;
   MainThreadData<ZoneList> zonesToMaybeCompact;
   MainThreadData<size_t> zonesCompacted;
+  /* Whether we successfully added all edges to the implicit edges table. */
+  mozilla::Atomic<bool, mozilla::ReleaseAcquire> haveAllImplicitEdges_{false};
+
 #ifdef DEBUG
   GCLockData<Arena*> relocatedArenasToRelease;
 #endif

@@ -2294,8 +2294,14 @@ void js::Nursery::poisonAndInitCurrentChunk() {
 void js::Nursery::setCurrentEnd() { toSpace.setCurrentEnd(this); }
 
 void js::Nursery::Space::setCurrentEnd(Nursery* nursery) {
+  size_t chunkBytesToUse = ChunkSize;
+
+  // To avoid problems with inline object elements abutting the end of a chunk,
+  // reduce the size used slightly. This wastes 8 bytes per chunk.
+  chunkBytesToUse -= gc::CellAlignBytes;
+
   currentEnd_ = uintptr_t(chunks_[currentChunk_]) +
-                std::min(nursery->capacity(), ChunkSize);
+                std::min(nursery->capacity(), chunkBytesToUse);
 }
 
 bool js::Nursery::allocateNextChunk(AutoLockGCBgAlloc& lock) {
