@@ -984,30 +984,36 @@ pub unsafe fn maybe_wrap_object(cx: *mut JSContext, mut obj: MutableHandleObject
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub unsafe fn maybe_wrap_object_value(
+    cx: &mut crate::context::JSContext,
+    rval: MutableHandleValue,
+) {
     assert!(rval.is_object());
     let obj = rval.to_object();
-    if get_object_realm(obj) != get_context_realm(cx) {
-        assert!(JS_WrapValue(cx, rval.into()));
+    if get_object_realm(obj) != get_context_realm(cx.raw_cx()) {
+        assert!(JS_WrapValue(cx.raw_cx(), rval.into()));
     } else if is_dom_object(obj) {
         try_to_outerize(rval);
     }
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object_or_null_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub fn maybe_wrap_object_or_null_value(
+    cx: &mut crate::context::JSContext,
+    rval: MutableHandleValue,
+) {
     assert!(rval.is_object_or_null());
     if !rval.is_null() {
-        maybe_wrap_object_value(cx, rval);
+        unsafe { maybe_wrap_object_value(cx, rval) };
     }
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub fn maybe_wrap_value(cx: &mut crate::context::JSContext, rval: MutableHandleValue) {
     if rval.is_string() {
-        assert!(JS_WrapValue(cx, rval.into()));
+        assert!(unsafe { JS_WrapValue(cx.raw_cx(), rval.into()) });
     } else if rval.is_object() {
-        maybe_wrap_object_value(cx, rval);
+        unsafe { maybe_wrap_object_value(cx, rval) };
     }
 }
 
