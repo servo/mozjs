@@ -426,6 +426,9 @@ class LStackSlot : public LAllocation {
     Width width() const { return Width(data_ & WIDTH_MASK); }
   };
 
+  static constexpr uint32_t MAX_SLOT =
+      (uint64_t(1) << LAllocation::DATA_BITS) - 1;
+
   explicit LStackSlot(SlotAndWidth slotAndWidth)
       : LAllocation(STACK_SLOT, slotAndWidth.data()) {}
 

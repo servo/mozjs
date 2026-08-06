@@ -25,6 +25,7 @@
 #include "jslibmath.h"
 #include "jsmath.h"
 
+#include "gc/GC.h"
 #include "jit/AtomicOperations.h"
 #include "jit/InlinableNatives.h"
 #include "jit/JitRuntime.h"
@@ -631,13 +632,20 @@ static WasmExceptionObject* GetOrWrapWasmException(JitActivation* activation,
   // Traps are generally not catchable as wasm exceptions. The only case in
   // which they are catchable is for Trap::ThrowReported, which the wasm
   // compiler uses to throw exceptions and is the source of exceptions from C++.
-  if (activation->isWasmTrapping() &&
-      activation->wasmTrapData().trap != Trap::ThrowReported) {
+  bool isTrapThrowReported =
+      activation->isWasmTrapping() &&
+      activation->wasmTrapData().trap == Trap::ThrowReported;
+  if (activation->isWasmTrapping() && !isTrapThrowReported) {
     return nullptr;
   }
 
   if (cx->isThrowingOverRecursed() || cx->isThrowingOutOfMemory()) {
     return nullptr;
+  }
+
+  mozilla::Maybe<gc::AutoSuppressGC> suppress;
+  if (isTrapThrowReported) {
+    suppress.emplace(cx);
   }
 
   // Write the exception out here to exn to avoid having to get the pending

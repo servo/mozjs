@@ -386,13 +386,11 @@ bool mozilla::PrintfTarget::cvt_s(const char* s, int width, int prec,
   }
 
   // Limit string length by precision value
-  int slen = int(strlen(s));
-  if (0 < prec && prec < slen) {
-    slen = prec;
+  size_t slen = strnlen(s, size_t(prec));
+  if (slen > INT_MAX) {
+    return false;
   }
-
-  // and away we go
-  return fill2(s, slen, width, flags);
+  return fill2(s, int(slen), width, flags);
 }
 
 /*

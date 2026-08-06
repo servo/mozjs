@@ -92,11 +92,6 @@ MOZ_END_EXTERN_C
 #endif
 #ifdef ANDROID
 #  include <android/log.h>
-#elif defined(XP_OHOS)
-MOZ_BEGIN_EXTERN_C
-int OH_LOG_Print(unsigned int type, unsigned int level, unsigned int domain, const char *tag, const char *fmt, ...)
-    __attribute__((__format__(os_log, 5, 6))) __attribute__((visibility("default")));
-MOZ_END_EXTERN_C
 #endif
 
 MOZ_BEGIN_EXTERN_C
@@ -132,10 +127,6 @@ MOZ_ReportAssertionFailure(const char* aStr, const char* aFilename,
   MozWalkTheStackWithWriter(MOZ_ReportAssertionFailurePrintFrame, CallerPC(),
                             /* aMaxFrames */ 0);
 #  endif
-#elif defined(XP_OHOS)
-    (void) OH_LOG_Print(0 /* LOG_APP */, 7 /* LOG_FATAL */, 0, "MOZ_Assert",
-     "Assertion failure: %{public}s, at %{public}s:%{public}d\n",
-     aStr, aFilename, aLine);
 #else
 #  if defined(MOZ_BUFFER_STDERR)
   char msg[1024] = "";
@@ -164,10 +155,6 @@ MOZ_MAYBE_UNUSED static MOZ_COLD MOZ_NEVER_INLINE void MOZ_ReportCrash(
   MozWalkTheStackWithWriter(MOZ_CrashPrintFrame, CallerPC(),
                             /* aMaxFrames */ 0);
 #  endif
-#elif defined(XP_OHOS)
-  (void) OH_LOG_Print(0 /* LOG_APP */, 7 /* LOG_FATAL */, 0, "MOZ_CRASH",
-   "Hit MOZ_CRASH(%{public}s), at %{public}s:%{public}d\n",
-   aStr, aFilename, aLine);
 #else
 #  if defined(MOZ_BUFFER_STDERR)
   char msg[1024] = "";

@@ -457,6 +457,7 @@ class ModuleObject : public NativeObject {
   static ModuleNamespaceObject* createNamespace(
       JSContext* cx, Handle<ModuleObject*> self,
       MutableHandle<UniquePtr<ExportNameVector>> exports);
+  void clearNamespaceOnFailure();
 
   static bool createEnvironment(JSContext* cx, Handle<ModuleObject*> self);
   static bool createSyntheticEnvironment(JSContext* cx,
