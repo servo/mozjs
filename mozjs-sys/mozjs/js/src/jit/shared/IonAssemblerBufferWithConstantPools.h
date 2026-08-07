@@ -949,9 +949,10 @@ struct AssemblerBufferWithConstantPools
     // with our expected reserved bytes.
     size_t deadline = branchDeadlines_.earliestDeadline().getOffset();
     using CheckedSize = mozilla::CheckedInt<size_t>;
-    CheckedSize current(this->nextOffset().getOffset());
+    CheckedSize nextOffset(sizeExcludingCurrentPool());
+    CheckedSize poolOffset = nextOffset + (guardSize_ + headerSize_) * InstSize;
     CheckedSize poolFreeSpace(reservedBytes);
-    auto future = current + poolFreeSpace;
+    auto future = poolOffset + poolFreeSpace;
     return !future.isValid() || deadline < future.value();
   }
 

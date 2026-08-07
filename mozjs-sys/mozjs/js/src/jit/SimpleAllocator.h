@@ -318,7 +318,7 @@ class SimpleAllocator : protected RegisterAllocator {
 
   [[nodiscard]] bool allocateForBlockEnd(LBlock* block, LInstruction* ins);
 
-  LAllocation ensureStackLocation(uint32_t vregId);
+  bool ensureStackLocation(uint32_t vregId, LAllocation* allocation);
   LAllocation registerOrStackLocation(LInstruction* ins, uint32_t vregId,
                                       bool trackRegUse);
 

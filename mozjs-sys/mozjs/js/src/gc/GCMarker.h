@@ -587,9 +587,6 @@ class GCMarker {
   /* Track the state of marking. */
   MainThreadOrGCTaskData<MarkingState> state;
 
-  /* Whether we successfully added all edges to the implicit edges table. */
-  MainThreadOrGCTaskData<bool> haveAllImplicitEdges;
-
  public:
   /*
    * Whether weakmaps can be marked incrementally.

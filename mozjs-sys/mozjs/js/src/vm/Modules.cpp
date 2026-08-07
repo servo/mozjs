@@ -988,6 +988,49 @@ static void InitNamespaceBinding(JSContext* cx,
   env->setSlot(prop->slot(), ObjectValue(*ns));
 }
 
+static bool ComputeNamespaceBindings(JSContext* cx,
+                                     Handle<ModuleObject*> module,
+                                     Handle<ModuleNamespaceObject*> ns) {
+  Rooted<JSAtom*> name(cx);
+  Rooted<Value> resolution(cx);
+  Rooted<ResolvedBindingObject*> binding(cx);
+  Rooted<ModuleObject*> importedModule(cx);
+  Rooted<ModuleNamespaceObject*> importedNamespace(cx);
+  Rooted<JSAtom*> bindingName(cx);
+  for (JSAtom* atom : ns->exports()) {
+    name = atom;
+
+    if (!ModuleResolveExport(cx, module, name, &resolution)) {
+      return false;
+    }
+
+    MOZ_ASSERT(IsResolvedBinding(cx, resolution));
+    binding = &resolution.toObject().as<ResolvedBindingObject>();
+    importedModule = binding->module();
+    bindingName = binding->bindingName();
+
+    if (bindingName == cx->names().star_namespace_star_) {
+      importedNamespace = GetOrCreateModuleNamespace(cx, importedModule);
+      if (!importedNamespace) {
+        return false;
+      }
+
+      // The spec uses an immutable binding here but we have already generated
+      // bytecode for an indirect binding. Instead, use an indirect binding to
+      // "*namespace*" slot of the target environment.
+      Rooted<ModuleEnvironmentObject*> env(
+          cx, &importedModule->initialEnvironment());
+      InitNamespaceBinding(cx, env, bindingName, importedNamespace);
+    }
+
+    if (!ns->addBinding(cx, name, importedModule, bindingName)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 struct AtomComparator {
   bool operator()(JSAtom* a, JSAtom* b, bool* lessOrEqualp) {
     int32_t result = CompareStrings(a, b);
@@ -1026,41 +1069,9 @@ static ModuleNamespaceObject* ModuleNamespaceCreate(
   // See:
   // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver
   // ES2023 10.4.6.8 Module Namespace Exotic Object [[Get]]
-  Rooted<JSAtom*> name(cx);
-  Rooted<Value> resolution(cx);
-  Rooted<ResolvedBindingObject*> binding(cx);
-  Rooted<ModuleObject*> importedModule(cx);
-  Rooted<ModuleNamespaceObject*> importedNamespace(cx);
-  Rooted<JSAtom*> bindingName(cx);
-  for (JSAtom* atom : ns->exports()) {
-    name = atom;
-
-    if (!ModuleResolveExport(cx, module, name, &resolution)) {
-      return nullptr;
-    }
-
-    MOZ_ASSERT(IsResolvedBinding(cx, resolution));
-    binding = &resolution.toObject().as<ResolvedBindingObject>();
-    importedModule = binding->module();
-    bindingName = binding->bindingName();
-
-    if (bindingName == cx->names().star_namespace_star_) {
-      importedNamespace = GetOrCreateModuleNamespace(cx, importedModule);
-      if (!importedNamespace) {
-        return nullptr;
-      }
-
-      // The spec uses an immutable binding here but we have already generated
-      // bytecode for an indirect binding. Instead, use an indirect binding to
-      // "*namespace*" slot of the target environment.
-      Rooted<ModuleEnvironmentObject*> env(
-          cx, &importedModule->initialEnvironment());
-      InitNamespaceBinding(cx, env, bindingName, importedNamespace);
-    }
-
-    if (!ns->addBinding(cx, name, importedModule, bindingName)) {
-      return nullptr;
-    }
+  if (!ComputeNamespaceBindings(cx, module, ns)) {
+    module->clearNamespaceOnFailure();
+    return nullptr;
   }
 
   // Step 10. Return M.
