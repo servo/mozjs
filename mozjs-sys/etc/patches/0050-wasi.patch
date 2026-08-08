@@ -1,0 +1,14 @@
+diff --git a/js/src/gc/LightLock.cpp b/js/src/gc/LightLock.cpp
+index 68f487993..241aaded7 100644
+--- a/js/src/gc/LightLock.cpp
++++ b/js/src/gc/LightLock.cpp
+@@ -127,7 +127,9 @@ bool js::LightLock::spin(uint32_t& counter) {
+   if (counter <= 3) {
+     mozilla::cpu_pause();
+   } else {
++#ifndef __wasi__
+     std::this_thread::yield();
++#endif
+   }
+ 
+   return true;

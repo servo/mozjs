@@ -1,0 +1,21 @@
+diff --git a/build/moz.configure/toolchain.configure b/build/moz.configure/toolchain.configure
+--- a/build/moz.configure/toolchain.configure
++++ b/build/moz.configure/toolchain.configure
+@@ -2219,7 +2219,7 @@
+ @depends(target, build_environment)
+ def visibility_flags(target, env):
+     if target.os != "WINNT":
+-        if target.kernel in ("Darwin", "FreeBSD", "OpenBSD"):
++        if target.kernel in ("Darwin", "FreeBSD", "OpenBSD") or target.raw_os.endswith("-ohos"):
+             return ("-fvisibility=hidden", "-fvisibility-inlines-hidden")
+         return (
+             "-I%s/system_wrappers" % os.path.join(env.dist),
+@@ -2230,7 +2230,7 @@
+ 
+ @depends(target, visibility_flags)
+ def wrap_system_includes(target, visibility_flags):
+-    if visibility_flags and target.kernel != "Darwin":
++    if visibility_flags and target.kernel != "Darwin" and not target.raw_os.endswith("-ohos"):
+         return True
+
+

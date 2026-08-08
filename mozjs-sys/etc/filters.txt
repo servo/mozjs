@@ -21,6 +21,10 @@
 - /build/rust
 - /intl/bidi
 - /intl/icu_segmenter_data
+- js/src/builtin/normalizer_glue
+- js/src/irregexp/properties_glue
+- js/src/builtin/intl/collator_glue
+- js/src/builtin/intl/locale_glue
 - /js/rust
 - /js/src/build.rs
 - /js/src/Cargo.toml
@@ -39,6 +43,8 @@
 + /intl/icu_capi/bindings/
 + /intl/icu_capi/bindings/c/
 + /intl/icu_capi/bindings/c/*
++ /intl/icu_capi/bindings/cpp/
++ /intl/icu_capi/bindings/cpp/**
 - /intl/icu_capi/**
 
 # Keep zlib headers for libz-rs-sys
@@ -46,10 +52,6 @@
 + modules/zlib/src/zlib.h
 + modules/zlib/src/zconf.h
 - modules/zlib/**
-
-# Remove unused python dependency that also causes problems with case-sensitive filesystems.
-- /third_party/python/Jinja2
-- /third_party/python/jinja2
 
 # Remove unused python dependencies to reduce the size
 - third_party/python/aiohttp

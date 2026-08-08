@@ -1,12 +1,27 @@
 diff --git a/js/src/build/moz.build b/js/src/build/moz.build
-index 3f5dce5f73..9e149581ac 100644
+index 1c09bfb05..13fa5020e 100644
 --- a/js/src/build/moz.build
 +++ b/js/src/build/moz.build
-@@ -91,7 +91,6 @@ GeneratedFile(
-     script="/config/run_spidermonkey_checks.py",
-     inputs=[
-         "!%sjs_static.%s" % (CONFIG["LIB_PREFIX"], CONFIG["LIB_SUFFIX"]),
--        "/config/check_spidermonkey_style.py",
-         "/config/check_macroassembler_style.py",
-         "/config/check_js_opcode.py",
-     ],
+@@ -100,22 +100,6 @@ NO_EXPAND_LIBS = True
+ 
+ DIST_INSTALL = True
+ 
+-# JS developers want this to run even if tests are disabled. It may be worth
+-# considering moving the check to `mach lint` at some point.
+-if CONFIG["ENABLE_TESTS"] or CONFIG["JS_STANDALONE"]:
+-    # Run SpiderMonkey style checker after linking the static library. This avoids
+-    # running the script for no-op builds.
+-    GeneratedFile(
+-        "spidermonkey_checks",
+-        script="/config/run_spidermonkey_checks.py",
+-        inputs=[
+-            "!%sjs_static.%s" % (CONFIG["LIB_PREFIX"], CONFIG["LIB_SUFFIX"]),
+-            "/config/check_spidermonkey_style.py",
+-            "/config/check_macroassembler_style.py",
+-            "/config/check_js_opcode.py",
+-        ],
+-    )
+-
+ if CONFIG["NM"]:
+     # check_vanilla_allocations.py is tailored to Linux, so only run it there.
+     # That should be enough to catch any problems.
