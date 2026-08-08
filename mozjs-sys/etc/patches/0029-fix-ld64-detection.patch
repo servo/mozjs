@@ -1,8 +1,8 @@
 diff --git a/build/moz.configure/toolchain.configure b/build/moz.configure/toolchain.configure
-index 3f91d7153..abe78a50c 100755
+index 6cfc2ad53..9c1c2939c 100755
 --- a/build/moz.configure/toolchain.configure
 +++ b/build/moz.configure/toolchain.configure
-@@ -1752,10 +1752,9 @@ def select_linker_tmpl(host_or_target):
+@@ -1767,10 +1767,9 @@ def select_linker_tmpl(host_or_target):
              die("Unsupported linker " + linker)
  
          # Check the kind of linker
@@ -14,29 +14,26 @@ index 3f91d7153..abe78a50c 100755
              # Generate the compiler flag
              if linker == "ld64":
                  linker_flag = ["-fuse-ld=ld"]
-@@ -1763,7 +1762,7 @@ def select_linker_tmpl(host_or_target):
+@@ -1778,7 +1777,7 @@ def select_linker_tmpl(host_or_target):
                  linker_flag = ["-fuse-ld=" + linker]
              else:
                  linker_flag = []
--            cmd = cmd_base + linker_flag + version_check
-+            cmd = cmd_base + linker_flag + [version_check]
-             if toolchain_flags:
-                 cmd += toolchain_flags
+-            cmd = cmd_base + linker_flag + version_check + toolchain_flags
++            cmd = cmd_base + linker_flag + [version_check] + toolchain_flags
  
-@@ -1779,11 +1778,14 @@ def select_linker_tmpl(host_or_target):
+             # ld64 doesn't have anything to print out a version. It does print out
+             # "ld64: For information on command line options please use 'man ld'."
+@@ -1792,11 +1791,11 @@ def select_linker_tmpl(host_or_target):
              # ensure consistent output.
              env["LC_ALL"] = "C"
              retcode, stdout, stderr = get_cmd_output(*cmd, env=env)
 -            if retcode == 1 and "Logging ld64 options" in stderr:
-+            if retcode == 1 and ("Logging ld64 options" in stderr or "PROGRAM:ld  PROJECT:dyld" in stderr):
++            if retcode == 1 and ("Logging ld64 options" in stderr or "PROGRAM:ld  PROJECT:dyld" in stderr or "PROGRAM:ld PROJECT:ld" in stderr):
                  kind = "ld64"
  
              elif retcode != 0:
 -                return None
-+                if version_check == "-Wl,--version":
-+                    return try_linker(linker, "-Wl,-v")
-+                else:
-+                    return None
++                return try_linker(linker, "-Wl,-v") if version_check == "-Wl,--version" else None
  
              elif "mold" in stdout:
                  kind = "mold"
