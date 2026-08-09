@@ -6,6 +6,7 @@ resolver = "2"
 repository = "https://github.com/servo/mozjs/"
 license = "MPL-2.0"
 edition = "2021"
+rust-version = "1.88"
 
 [workspace.dependencies]
 cc = "1"
