@@ -27,13 +27,14 @@
 #include "jit/arm64/vixl/Disasm-vixl.h"
 
 #include "mozilla/Sprintf.h"
+#include "mozmemory.h"
 #include <cstdlib>
 
 namespace vixl {
 
 Disassembler::Disassembler() {
   buffer_size_ = 256;
-  buffer_ = reinterpret_cast<char*>(malloc(buffer_size_));
+  buffer_ = reinterpret_cast<char*>(malloc_impl(buffer_size_));
   buffer_pos_ = 0;
   own_buffer_ = true;
   code_address_offset_ = 0;
@@ -51,7 +52,7 @@ Disassembler::Disassembler(char* text_buffer, int buffer_size) {
 
 Disassembler::~Disassembler() {
   if (own_buffer_) {
-    free(buffer_);
+    free_impl(buffer_);
   }
 }
 

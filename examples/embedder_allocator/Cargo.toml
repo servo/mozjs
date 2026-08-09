@@ -1,0 +1,14 @@
+[package]
+name = "embedder_allocator"
+version = "0.1.0"
+license = "MPL-2.0"
+edition = "2024"
+description = "Example usage of mozjs, with the embedder (this crate) providing a custom allocator for mozjs"
+publish = false
+# note: This crate requires some additional setup (via external environment variables) when building,
+# so it can't be added to the workspace (also because we enable the `custom-alloc` feature, which is unwanted
+# due to feature-unification.
+
+[dependencies]
+mozjs = { path =  "../../mozjs", features = ["custom-alloc"] }
+mimalloc = "0.1.48"
