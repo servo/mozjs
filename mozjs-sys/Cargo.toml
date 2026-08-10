@@ -2,7 +2,7 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
-version = "140.13.0-2"
+version = "153.0.0-0"
 authors = ["Mozilla", "The Servo Project Developers"]
 links = "mozjs"
 license.workspace = true
@@ -22,27 +22,42 @@ jit = []
 jitspew = []
 libz-sys = ["dep:libz-sys"]
 libz-rs = ["dep:libz-rs-sys"]
-intl = ["dep:icu_capi"]
+intl = [
+  "dep:icu_capi",
+  "dep:mozjs_unicode_bidi_ffi",
+  "dep:mozjs_properties_glue",
+  "dep:mozjs_collator_glue",
+  "dep:mozjs_locale_glue",
+]
 crown = []
 oom_with_hook = []
 
 [dependencies]
 libc.workspace = true
+
+# In SM these dependencies provided via jsrust_shared crate
+# https://github.com/mozilla-firefox/firefox/blob/main/js/src/rust/shared/Cargo.toml
+# which links to SM.
+# Cargo does not allow recursive invocations so we link to them from here.
+
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
-# unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }
 # keep in sync with intl/icu_capi/Cargo.toml
-icu_capi = { version = "=1.5.0", default-features = false, features = [
+icu_capi = { version = "=2.1.2", default-features = false, features = [
+  "any_provider",
   "compiled_data",
-  "icu_calendar",
-  "icu_properties",
-  "icu_segmenter",
+  "segmenter",
+  "calendar",
 ], optional = true }
+mozjs_unicode_bidi_ffi = { path = "../mozjs-extracted-crates/unicode_bidi_ffi", optional = true }
+mozjs_normalizer_glue = { path = "../mozjs-extracted-crates/normalizer_glue" }
+mozjs_properties_glue = { path = "../mozjs-extracted-crates/properties_glue", optional = true }
+mozjs_collator_glue = { path = "../mozjs-extracted-crates/collator_glue", optional = true }
+mozjs_locale_glue = { path = "../mozjs-extracted-crates/locale_glue", optional = true }
 
-libz-rs-sys = { version = "0.5.1", features = [
+libz-rs-sys = { version = "0.6", features = [
   "export-symbols",
 ], optional = true }
-# SM depends on them and we provide them using cargo
 libz-sys = { version = "1.1.19", default-features = false, features = [
   "libc",
   "stock-zlib",

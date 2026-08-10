@@ -45,6 +45,7 @@
 #include "js/experimental/TypedData.h"
 #include "js/friend/DOMProxy.h"
 #include "js/friend/ErrorMessages.h"
+#include "js/friend/MicroTask.h"
 #include "js/friend/WindowProxy.h"
 #include "js/shadow/Object.h"
 #include "js/shadow/Shape.h"

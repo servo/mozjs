@@ -217,6 +217,20 @@ fn build_spidermonkey(build_dir: &Path) {
         }
     }
 
+    let include = env::var("DEP_NORMALIZER_GLUE_INCLUDE").expect("DEP_NORMALIZER_GLUE_INCLUDE should be set by normalizer_glue");
+    write!(cppflags, "-I{} ", include.replace("\\", "/")).unwrap();
+
+    if cfg!(feature = "intl") {
+        let include = env::var("DEP_UNICODE_BIDI_FFI_INCLUDE").expect("DEP_UNICODE_BIDI_FFI_INCLUDE should be set by unicode_bidi_ffi");
+        write!(cppflags, "-I{} ", include.replace("\\", "/")).unwrap();
+        let include = env::var("DEP_PROPERTIES_GLUE_INCLUDE").expect("DEP_PROPERTIES_GLUE_INCLUDE should be set by properties_glue");
+        write!(cppflags, "-I{} ", include.replace("\\", "/")).unwrap();
+        let include = env::var("DEP_COLLATOR_GLUE_INCLUDE").expect("DEP_COLLATOR_GLUE_INCLUDE should be set by collator_glue");
+        write!(cppflags, "-I{} ", include.replace("\\", "/")).unwrap();
+        let include = env::var("DEP_LOCALE_GLUE_INCLUDE").expect("DEP_LOCALE_GLUE_INCLUDE should be set by locale_glue");
+        write!(cppflags, "-I{} ", include.replace("\\", "/")).unwrap();
+    }
+
     cppflags.push(get_cc_rs_env_os("CPPFLAGS").unwrap_or_default());
     cmd.env("CPPFLAGS", cppflags);
 
@@ -526,7 +540,7 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         }
 
         flags.extend(&[
-            "-std:c++17",
+            "-std:c++20",
             "-Zi",
             "-GR-",
             "-DWIN32",
@@ -537,8 +551,8 @@ fn cc_flags(bindgen: bool) -> Vec<&'static str> {
         ]);
     } else {
         flags.extend(&[
-            "-std=gnu++17",
-            "-std=c++17",
+            "-std=gnu++20",
+            "-std=c++20",
             "-xc++",
             "-fPIC",
             "-fno-rtti",
@@ -927,6 +941,7 @@ impl BuildTarget {
                 "JS::PersistentRooted.*",
                 "JS::detail::CallArgsBase.*",
                 "js::detail::UniqueSelector.*",
+                "std::unique_ptr",
                 "mozilla::BufferList",
                 "mozilla::Maybe.*",
                 "mozilla::UniquePtr.*",
