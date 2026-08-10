@@ -80,12 +80,10 @@ class TestPartial(unittest.TestCase):
         self.assertTrue(os.path.exists(path))
 
     def _assert_deps(self, env, deps):
-        deps = sorted(
-            [
-                "$(wildcard %s)" % (mozpath.join(env.topobjdir, "config.statusd", d))
-                for d in deps
-            ]
-        )
+        deps = sorted([
+            "$(wildcard %s)" % (mozpath.join(env.topobjdir, "config.statusd", d))
+            for d in deps
+        ])
         self.assertEqual(sorted(env.get_dependencies()), deps)
 
     def test_dependencies(self):

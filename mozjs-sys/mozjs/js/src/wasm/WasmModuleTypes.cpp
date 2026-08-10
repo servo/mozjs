@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +16,7 @@
 
 #include "wasm/WasmModuleTypes.h"
 
-#include "mozilla/Range.h"
+#include <bit>
 
 #include "vm/JSAtomUtils.h"  // AtomizeUTF8Chars
 #include "vm/MallocProvider.h"
@@ -31,6 +29,69 @@ using namespace js::wasm;
 
 using mozilla::CheckedInt32;
 using mozilla::MallocSizeOf;
+
+//=========================================================================
+// TagLayout
+
+static CheckedInt32 RoundUpToAlignment(CheckedInt32 address, uint32_t align) {
+  MOZ_ASSERT(std::has_single_bit(align));
+
+  // Note: Be careful to order operators such that we first make the
+  // value smaller and then larger, so that we don't get false
+  // overflow errors due to (e.g.) adding `align` and then
+  // subtracting `1` afterwards when merely adding `align-1` would
+  // not have overflowed. Note that due to the nature of two's
+  // complement representation, if `address` is already aligned,
+  // then adding `align-1` cannot itself cause an overflow.
+
+  return ((address + (align - 1)) / align) * align;
+}
+
+class TagLayout {
+  mozilla::CheckedInt32 sizeSoFar = 0;
+  uint32_t tagAlignment = 1;
+
+ public:
+  // The field adders return the offset of the the field.
+  mozilla::CheckedInt32 addField(StorageType type) {
+    uint32_t fieldSize = type.size();
+    uint32_t fieldAlignment = type.alignmentInStruct();
+
+    MOZ_ASSERT(fieldSize >= 1 && fieldSize <= 16);
+    MOZ_ASSERT((fieldSize & (fieldSize - 1)) == 0);  // is a power of 2
+    MOZ_ASSERT(fieldAlignment == fieldSize);         // is naturally aligned
+
+    // Alignment of the tag is the max of the alignment of its fields.
+    tagAlignment = std::max(tagAlignment, fieldAlignment);
+
+    // Align the pointer.
+    CheckedInt32 offset = RoundUpToAlignment(sizeSoFar, fieldAlignment);
+    if (!offset.isValid()) {
+      return offset;
+    }
+
+    // Allocate space.
+    sizeSoFar = offset + fieldSize;
+    if (!sizeSoFar.isValid()) {
+      return sizeSoFar;
+    }
+
+    return offset;
+  }
+
+  // The close method rounds up the structure size to the appropriate
+  // alignment and returns that size.
+  mozilla::CheckedInt32 close() {
+    CheckedInt32 size = RoundUpToAlignment(sizeSoFar, tagAlignment);
+    // Make the overall size be an integral number of machine words.
+    if (tagAlignment < sizeof(uintptr_t)) {
+      size = RoundUpToAlignment(size, sizeof(uintptr_t));
+    }
+    return size;
+  }
+};
+
+//=========================================================================
 
 /* static */
 CacheableName CacheableName::fromUTF8Chars(UniqueChars&& utf8Chars) {
@@ -48,6 +109,17 @@ bool CacheableName::fromUTF8Chars(const char* utf8Chars, CacheableName* name) {
     return false;
   }
   memcpy(bytes.begin(), utf8Chars, utf8CharsLen);
+  *name = CacheableName(std::move(bytes));
+  return true;
+}
+
+/* static */
+bool CacheableName::fromUTF8Bytes(mozilla::Span<const char> utf8Bytes,
+                                  CacheableName* name) {
+  UTF8Bytes bytes;
+  if (!bytes.append(utf8Bytes.data(), utf8Bytes.Length())) {
+    return false;
+  }
   *name = CacheableName(std::move(bytes));
   return true;
 }
@@ -134,17 +206,17 @@ bool TagType::initialize(const SharedTypeDef& funcType) {
 
   const ValTypeVector& args = argTypes();
   // Compute the byte offsets for arguments when we layout an exception.
-  if (!argOffsets_.resize(args.length())) {
+  if (!exceptionArgOffsets_.resize(args.length())) {
     return false;
   }
 
-  StructLayout layout;
+  TagLayout layout;
   for (size_t i = 0; i < args.length(); i++) {
     CheckedInt32 offset = layout.addField(StorageType(args[i].packed()));
     if (!offset.isValid()) {
       return false;
     }
-    argOffsets_[i] = offset.value();
+    exceptionArgOffsets_[i] = offset.value();
   }
 
   // Find the total size of all the arguments.
@@ -158,7 +230,7 @@ bool TagType::initialize(const SharedTypeDef& funcType) {
 }
 
 size_t TagType::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
-  return argOffsets_.sizeOfExcludingThis(mallocSizeOf);
+  return exceptionArgOffsets_.sizeOfExcludingThis(mallocSizeOf);
 }
 
 size_t TagDesc::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {

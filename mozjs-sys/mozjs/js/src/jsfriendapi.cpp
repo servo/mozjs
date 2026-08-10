@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,6 +12,7 @@
 
 #include "builtin/BigInt.h"
 #include "builtin/MapObject.h"
+#include "builtin/ModuleObject.h"
 #include "builtin/TestingFunctions.h"
 #include "frontend/FrontendContext.h"  // FrontendContext
 #include "gc/PublicIterators.h"
@@ -37,6 +36,7 @@
 #include "vm/ArgumentsObject.h"
 #include "vm/BooleanObject.h"
 #include "vm/DateObject.h"
+#include "vm/EnvironmentObject.h"
 #include "vm/ErrorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/JSContext.h"
@@ -178,10 +178,9 @@ JS_PUBLIC_API bool JS_WrapPropertyDescriptor(
   return cx->compartment()->wrap(cx, desc);
 }
 
-JS_PUBLIC_API void JS_TraceShapeCycleCollectorChildren(JS::CallbackTracer* trc,
-                                                       JS::GCCellPtr shape) {
-  MOZ_ASSERT(shape.is<Shape>());
-  TraceCycleCollectorChildren(trc, &shape.as<Shape>());
+JS_PUBLIC_API void JS_TraceShapeCycleCollectorChildren(JSTracer* trc,
+                                                       Shape* shape) {
+  TraceCycleCollectorChildren(trc, shape);
 }
 
 static bool DefineHelpProperty(JSContext* cx, HandleObject obj,
@@ -282,6 +281,10 @@ JS_PUBLIC_API bool JS::GetBuiltinClass(JSContext* cx, HandleObject obj,
   return true;
 }
 
+JS_PUBLIC_API bool JS::IsPlainObject(JSObject* obj) {
+  return obj->is<PlainObject>();
+}
+
 JS_PUBLIC_API bool js::IsArgumentsObject(HandleObject obj) {
   return obj->is<ArgumentsObject>();
 }
@@ -307,6 +310,16 @@ JS_PUBLIC_API bool js::IsSystemZone(Zone* zone) { return zone->isSystemZone(); }
 
 JS_PUBLIC_API bool js::IsFunctionObject(JSObject* obj) {
   return obj->is<JSFunction>();
+}
+
+JS_PUBLIC_API const char* js::MaybeGetModuleFilename(JSObject* obj) {
+  if (obj->is<ModuleObject>()) {
+    return obj->as<ModuleObject>().filename();
+  }
+  if (obj->is<ModuleEnvironmentObject>()) {
+    return obj->as<ModuleEnvironmentObject>().module().filename();
+  }
+  return nullptr;
 }
 
 JS_PUBLIC_API bool js::IsSavedFrame(JSObject* obj) {
@@ -336,7 +349,7 @@ JS_PUBLIC_API void js::NotifyAnimationActivity(JSObject* obj) {
 
   auto timeNow = mozilla::TimeStamp::Now();
   obj->as<GlobalObject>().realm()->lastAnimationTime = timeNow;
-  obj->runtimeFromMainThread()->lastAnimationTime = timeNow;
+  obj->runtimeFromMainThread()->gc.setLastAnimationTime(timeNow);
 }
 
 JS_PUBLIC_API bool js::IsObjectInContextCompartment(JSObject* obj,
@@ -468,15 +481,12 @@ JS_PUBLIC_API bool js::GetRealmOriginalEval(JSContext* cx,
   return true;
 }
 
-void JS::detail::SetReservedSlotWithBarrier(JSObject* obj, size_t slot,
-                                            const Value& value) {
-  if (obj->is<ProxyObject>()) {
-    obj->as<ProxyObject>().setReservedSlot(slot, value);
-  } else {
-    // Note: We do not currently support watching reserved object slots for
-    // property modification.
-    obj->as<NativeObject>().setSlot(slot, value);
-  }
+void JS::detail::SetNativeObjectReservedSlotWithBarrier(JSObject* obj,
+                                                        size_t slot,
+                                                        const Value& value) {
+  // Note: We do not currently support watching reserved object slots for
+  // property modification.
+  obj->as<NativeObject>().setReservedSlot(slot, value);
 }
 
 bool JS::NativeObjectHasOwnProperties(const JSObject* obj) {
@@ -488,6 +498,10 @@ void js::SetPreserveWrapperCallbacks(
     HasReleasedWrapperCallback hasReleasedWrapper) {
   cx->runtime()->preserveWrapperCallback = preserveWrapper;
   cx->runtime()->hasReleasedWrapperCallback = hasReleasedWrapper;
+}
+
+void js::CommitPendingWrapperPreservations(JSContext* cx) {
+  cx->runtime()->commitPendingWrapperPreservations();
 }
 
 JS_PUBLIC_API unsigned JS_PCToLineNumber(
@@ -532,11 +546,11 @@ JS_PUBLIC_API void js::TraceGrayWrapperTargets(JSTracer* trc, Zone* zone) {
   JS::AutoSuppressGCAnalysis nogc;
 
   for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next()) {
-    for (Compartment::ObjectWrapperEnum e(comp); !e.empty(); e.popFront()) {
-      JSObject* target = e.front().key();
+    for (auto iter = comp->objectWrapperMappings(); !iter.done(); iter.next()) {
+      JSObject* target = iter.get().key();
       if (target->isMarkedGray()) {
         TraceManuallyBarrieredEdge(trc, &target, "gray CCW target");
-        MOZ_ASSERT(target == e.front().key());
+        MOZ_ASSERT(target == iter.get().key());
       }
     }
   }
@@ -545,77 +559,6 @@ JS_PUBLIC_API void js::TraceGrayWrapperTargets(JSTracer* trc, Zone* zone) {
 JSLinearString* JS::detail::StringToLinearStringSlow(JSContext* cx,
                                                      JSString* str) {
   return str->ensureLinear(cx);
-}
-
-static bool CopyProxyObject(JSContext* cx, Handle<ProxyObject*> from,
-                            Handle<ProxyObject*> to) {
-  MOZ_ASSERT(from->getClass() == to->getClass());
-
-  if (from->is<WrapperObject>() &&
-      (Wrapper::wrapperHandler(from)->flags() & Wrapper::CROSS_COMPARTMENT)) {
-    to->setCrossCompartmentPrivate(GetProxyPrivate(from));
-  } else {
-    RootedValue v(cx, GetProxyPrivate(from));
-    if (!cx->compartment()->wrap(cx, &v)) {
-      return false;
-    }
-    to->setSameCompartmentPrivate(v);
-  }
-
-  MOZ_ASSERT(from->numReservedSlots() == to->numReservedSlots());
-
-  RootedValue v(cx);
-  for (size_t n = 0; n < from->numReservedSlots(); n++) {
-    v = GetProxyReservedSlot(from, n);
-    if (!cx->compartment()->wrap(cx, &v)) {
-      return false;
-    }
-    SetProxyReservedSlot(to, n, v);
-  }
-
-  return true;
-}
-
-JS_PUBLIC_API JSObject* JS_CloneObject(JSContext* cx, HandleObject obj,
-                                       HandleObject proto) {
-  // |obj| might be in a different compartment.
-  cx->check(proto);
-
-  if (!obj->is<NativeObject>() && !obj->is<ProxyObject>()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_CANT_CLONE_OBJECT);
-    return nullptr;
-  }
-
-  RootedObject clone(cx);
-  if (obj->is<NativeObject>()) {
-    clone = NewObjectWithGivenProto(cx, obj->getClass(), proto);
-    if (!clone) {
-      return nullptr;
-    }
-
-    if (clone->is<JSFunction>() && obj->compartment() != clone->compartment()) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_CANT_CLONE_OBJECT);
-      return nullptr;
-    }
-  } else {
-    auto* handler = GetProxyHandler(obj);
-    clone = ProxyObject::New(cx, handler, JS::NullHandleValue,
-                             AsTaggedProto(proto), obj->getClass());
-    if (!clone) {
-      return nullptr;
-    }
-
-    if (!CopyProxyObject(cx, obj.as<ProxyObject>(), clone.as<ProxyObject>())) {
-      return nullptr;
-    }
-  }
-
-  MOZ_ASSERT(gc::GetFinalizeKind(obj->allocKind()) ==
-             gc::GetFinalizeKind(clone->allocKind()));
-
-  return clone;
 }
 
 extern JS_PUBLIC_API bool JS::ForceLexicalInitialization(JSContext* cx,
@@ -741,7 +684,8 @@ JS_PUBLIC_API void js::SetAllocationMetadataBuilder(
 }
 
 JS_PUBLIC_API JSObject* js::GetAllocationMetadata(JSObject* obj) {
-  ObjectWeakMap* map = ObjectRealm::get(obj).objectMetadataTable.get();
+  ObjectRealm::ObjectMetadataTable* map =
+      ObjectRealm::get(obj).objectMetadataTable.get();
   if (map) {
     auto ptr = map->lookup(obj);
     if (ptr) {
@@ -777,14 +721,6 @@ AutoAssertNoContentJS::~AutoAssertNoContentJS() {
 }
 
 JS_PUBLIC_API void js::EnableCodeCoverage() { js::coverage::EnableLCov(); }
-
-JS_PUBLIC_API JS::Value js::MaybeGetScriptPrivate(JSObject* object) {
-  if (!object->is<ScriptSourceObject>()) {
-    return UndefinedValue();
-  }
-
-  return object->as<ScriptSourceObject>().getPrivate();
-}
 
 JS_PUBLIC_API uint64_t js::GetMemoryUsageForZone(Zone* zone) {
   // We do not include zone->sharedMemoryUseCounts since that's already included

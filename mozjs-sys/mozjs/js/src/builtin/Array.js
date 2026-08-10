@@ -514,16 +514,6 @@ function ArrayFill(value, start = 0, end = undefined) {
   return O;
 }
 
-// ES6 draft specification, section 22.1.5.1, version 2013-09-05.
-function CreateArrayIterator(obj, kind) {
-  var iteratedObject = ToObject(obj);
-  var iterator = NewArrayIterator();
-  UnsafeSetReservedSlot(iterator, ITERATOR_SLOT_TARGET, iteratedObject);
-  UnsafeSetReservedSlot(iterator, ITERATOR_SLOT_NEXT_INDEX, 0);
-  UnsafeSetReservedSlot(iterator, ARRAY_ITERATOR_SLOT_ITEM_KIND, kind);
-  return iterator;
-}
-
 // ES6, 22.1.5.2.1
 // http://www.ecma-international.org/ecma-262/6.0/index.html#sec-%arrayiteratorprototype%.next
 function ArrayIteratorNext() {
@@ -603,16 +593,16 @@ SetIsInlinableLargeFunction(ArrayIteratorNext);
 // Uncloned functions with `$` prefix are allocated as extended function
 // to store the original name in `SetCanonicalName`.
 function $ArrayValues() {
-  return CreateArrayIterator(this, ITEM_KIND_VALUE);
+  RETURN_ARRAY_ITERATOR(this, ITEM_KIND_VALUE);
 }
 SetCanonicalName($ArrayValues, "values");
 
 function ArrayEntries() {
-  return CreateArrayIterator(this, ITEM_KIND_KEY_AND_VALUE);
+  RETURN_ARRAY_ITERATOR(this, ITEM_KIND_KEY_AND_VALUE);
 }
 
 function ArrayKeys() {
-  return CreateArrayIterator(this, ITEM_KIND_KEY);
+  RETURN_ARRAY_ITERATOR(this, ITEM_KIND_KEY);
 }
 
 // https://tc39.es/proposal-array-from-async/

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -13,13 +11,11 @@
 #include "jstypes.h"
 #include "NamespaceImports.h"
 
-#include "builtin/SelfHostingDefines.h"
-#include "js/Class.h"  // JSClass, JSClassOps, js::ClassSpec
+#include "js/Class.h"
 #include "js/TypeDecls.h"
 #include "js/Value.h"
 #include "vm/NativeObject.h"
-
-struct JS_PUBLIC_API JSContext;
+#include "vm/StringType.h"
 
 namespace mozilla::intl {
 class DisplayNames;
@@ -27,22 +23,67 @@ class DisplayNames;
 
 namespace js {
 struct ClassSpec;
+}
+
+namespace js::intl {
+
+struct DisplayNamesOptions;
 
 class DisplayNamesObject : public NativeObject {
  public:
   static const JSClass class_;
   static const JSClass& protoClass_;
 
-  static constexpr uint32_t INTERNALS_SLOT = 0;
-  static constexpr uint32_t LOCALE_DISPLAY_NAMES_SLOT = 1;
-  static constexpr uint32_t SLOT_COUNT = 3;
-
-  static_assert(INTERNALS_SLOT == INTL_INTERNALS_OBJECT_SLOT,
-                "INTERNALS_SLOT must match self-hosting define for internals "
-                "object slot");
+  static constexpr uint32_t LOCALE = 0;
+  static constexpr uint32_t CALENDAR = 1;
+  static constexpr uint32_t OPTIONS = 2;
+  static constexpr uint32_t LOCALE_DISPLAY_NAMES_SLOT = 3;
+  static constexpr uint32_t SLOT_COUNT = 4;
 
   // Estimated memory use for ULocaleDisplayNames (see IcuMemoryUsage).
   static constexpr size_t EstimatedMemoryUse = 1238;
+
+  bool isLocaleResolved() const { return getFixedSlot(LOCALE).isString(); }
+
+  JSObject* getRequestedLocales() const {
+    const auto& slot = getFixedSlot(LOCALE);
+    if (slot.isUndefined()) {
+      return nullptr;
+    }
+    return &slot.toObject();
+  }
+
+  void setRequestedLocales(JSObject* requestedLocales) {
+    setFixedSlot(LOCALE, ObjectValue(*requestedLocales));
+  }
+
+  JSLinearString* getLocale() const {
+    const auto& slot = getFixedSlot(LOCALE);
+    if (slot.isUndefined()) {
+      return nullptr;
+    }
+    return &slot.toString()->asLinear();
+  }
+
+  void setLocale(JSLinearString* locale) {
+    setFixedSlot(LOCALE, StringValue(locale));
+  }
+
+  JSLinearString* getCalendar() const {
+    const auto& slot = getFixedSlot(CALENDAR);
+    if (slot.isUndefined()) {
+      return nullptr;
+    }
+    return &slot.toString()->asLinear();
+  }
+
+  void setCalendar(JSLinearString* calendar) {
+    setFixedSlot(CALENDAR, StringValue(calendar));
+  }
+
+  DisplayNamesOptions getOptions() const;
+
+  void setOptions(const DisplayNamesOptions& options);
 
   mozilla::intl::DisplayNames* getDisplayNames() const {
     const auto& slot = getFixedSlot(LOCALE_DISPLAY_NAMES_SLOT);
@@ -63,17 +104,6 @@ class DisplayNamesObject : public NativeObject {
   static void finalize(JS::GCContext* gcx, JSObject* obj);
 };
 
-/**
- * Return the display name for the requested code or undefined if no applicable
- * display name was found.
- *
- * Usage: result = intl_ComputeDisplayName(displayNames, locale, calendar,
- *                                         style, languageDisplay, fallback,
- *                                         type, code)
- */
-[[nodiscard]] extern bool intl_ComputeDisplayName(JSContext* cx, unsigned argc,
-                                                  Value* vp);
-
-}  // namespace js
+}  // namespace js::intl
 
 #endif /* builtin_intl_DisplayNames_h */

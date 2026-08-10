@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,8 +6,7 @@
 
 #include "mozilla/Casting.h"
 
-#include "jsmath.h"
-
+#include "builtin/Math.h"
 #include "builtin/Object.h"
 #include "builtin/String.h"
 #include "jit/AtomicOperations.h"
@@ -43,18 +40,19 @@ bool MNode::writeRecoverData(CompactBufferWriter& writer) const {
   MOZ_CRASH("This instruction is not serializable");
 }
 
-void RInstruction::readRecoverData(CompactBufferReader& reader,
-                                   RInstructionStorage* raw) {
+uint32_t RInstruction::readRecoverData(CompactBufferReader& reader,
+                                       RInstructionStorage* raw) {
   uint32_t op = reader.readUnsigned();
   switch (Opcode(op)) {
 #define MATCH_OPCODES_(op)                                                  \
-  case Recover_##op:                                                        \
+  case Recover_##op: {                                                      \
     static_assert(sizeof(R##op) <= sizeof(RInstructionStorage),             \
                   "storage space must be big enough to store R" #op);       \
     static_assert(alignof(R##op) <= alignof(RInstructionStorage),           \
                   "storage space must be aligned adequate to store R" #op); \
-    new (raw->addr()) R##op(reader);                                        \
-    break;
+    auto* ins = new (raw->addr()) R##op(reader);                            \
+    return ins->numOperands();                                              \
+  }
 
     RECOVER_OPCODE_LIST(MATCH_OPCODES_)
 #undef MATCH_OPCODES_
@@ -1259,10 +1257,13 @@ RStrictConstantCompareInt32::RStrictConstantCompareInt32(
 
 bool RStrictConstantCompareInt32::recover(JSContext* cx,
                                           SnapshotIterator& iter) const {
-  JS::Rooted<JS::Value> lhs(cx, iter.read());
+  JS::Value lhs = iter.read();
 
-  iter.storeInstructionResult(
-      BooleanValue(lhs.isNumber() && lhs.toNumber() == constant_));
+  bool result = lhs.isNumber() && lhs.toNumber() == constant_;
+  if (jsop_ == JSOp::StrictNe) {
+    result = !result;
+  }
+  iter.storeInstructionResult(BooleanValue(result));
   return true;
 }
 
@@ -1286,10 +1287,13 @@ RStrictConstantCompareBoolean::RStrictConstantCompareBoolean(
 
 bool RStrictConstantCompareBoolean::recover(JSContext* cx,
                                             SnapshotIterator& iter) const {
-  JS::Rooted<JS::Value> lhs(cx, iter.read());
+  JS::Value lhs = iter.read();
 
-  iter.storeInstructionResult(
-      BooleanValue(lhs.isBoolean() && lhs.toBoolean() == constant_));
+  bool result = lhs == BooleanValue(constant_);
+  if (jsop_ == JSOp::StrictNe) {
+    result = !result;
+  }
+  iter.storeInstructionResult(BooleanValue(result));
   return true;
 }
 
@@ -1655,12 +1659,10 @@ bool MNearbyInt::writeRecoverData(CompactBufferWriter& writer) const {
   }
 }
 
-RNearbyInt::RNearbyInt(CompactBufferReader& reader) {
-  roundingMode_ = reader.readByte();
-}
-
-bool RNearbyInt::recover(JSContext* cx, SnapshotIterator& iter) const {
-  MOZ_CRASH("Unsupported rounding mode.");
+bool MRoundToDouble::writeRecoverData(CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_Round));
+  return true;
 }
 
 bool MSign::writeRecoverData(CompactBufferWriter& writer) const {
@@ -2105,7 +2107,7 @@ RNewArray::RNewArray(CompactBufferReader& reader) {
 }
 
 bool RNewArray::recover(JSContext* cx, SnapshotIterator& iter) const {
-  RootedObject templateObject(cx, iter.readObject());
+  JSObject* templateObject = iter.readObject();
   Rooted<Shape*> shape(cx, templateObject->shape());
 
   ArrayObject* resultObject = NewArrayWithShape(cx, count_, shape);
@@ -2129,7 +2131,8 @@ RNewIterator::RNewIterator(CompactBufferReader& reader) {
 }
 
 bool RNewIterator::recover(JSContext* cx, SnapshotIterator& iter) const {
-  RootedObject templateObject(cx, iter.readObject());
+  // Template object is not used when recovering MNewIterator.
+  (void)iter.readObject();
 
   JSObject* resultObject = nullptr;
   switch (MNewIterator::Type(type_)) {
@@ -2144,6 +2147,27 @@ bool RNewIterator::recover(JSContext* cx, SnapshotIterator& iter) const {
       break;
   }
 
+  if (!resultObject) {
+    return false;
+  }
+
+  iter.storeInstructionResult(ObjectValue(*resultObject));
+  return true;
+}
+
+bool MNewDateObject::writeRecoverData(CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_NewDateObject));
+  return true;
+}
+
+RNewDateObject::RNewDateObject(CompactBufferReader& reader) {}
+
+bool RNewDateObject::recover(JSContext* cx, SnapshotIterator& iter) const {
+  auto utcTime = iter.read();
+  MOZ_ASSERT(utcTime.isNumber());
+
+  auto* resultObject = jit::NewDateObject(cx, utcTime.toNumber());
   if (!resultObject) {
     return false;
   }
@@ -2196,6 +2220,36 @@ bool RFunctionWithProto::recover(JSContext* cx, SnapshotIterator& iter) const {
   return true;
 }
 
+bool MCallee::writeRecoverData(CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_Callee));
+  return true;
+}
+
+RCallee::RCallee(CompactBufferReader& reader) {}
+
+bool RCallee::recover(JSContext* cx, SnapshotIterator& iter) const {
+  JSFunction* callee = CalleeTokenToFunction(iter.frame()->calleeToken());
+  iter.storeInstructionResult(ObjectValue(*callee));
+  return true;
+}
+
+bool MFunctionEnvironment::writeRecoverData(CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_FunctionEnvironment));
+  return true;
+}
+
+RFunctionEnvironment::RFunctionEnvironment(CompactBufferReader& reader) {}
+
+bool RFunctionEnvironment::recover(JSContext* cx,
+                                   SnapshotIterator& iter) const {
+  JSObject* obj = iter.readObject();
+  JSObject* env = obj->as<JSFunction>().environment();
+  iter.storeInstructionResult(ObjectValue(*env));
+  return true;
+}
+
 bool MNewCallObject::writeRecoverData(CompactBufferWriter& writer) const {
   MOZ_ASSERT(canRecoverOnBailout());
   writer.writeUnsigned(uint32_t(RInstruction::Recover_NewCallObject));
@@ -2205,7 +2259,7 @@ bool MNewCallObject::writeRecoverData(CompactBufferWriter& writer) const {
 RNewCallObject::RNewCallObject(CompactBufferReader& reader) {}
 
 bool RNewCallObject::recover(JSContext* cx, SnapshotIterator& iter) const {
-  Rooted<CallObject*> templateObj(cx, &iter.readObject()->as<CallObject>());
+  CallObject* templateObj = &iter.readObject()->as<CallObject>();
 
   Rooted<SharedShape*> shape(cx, templateObj->sharedShape());
 
@@ -2218,24 +2272,20 @@ bool RNewCallObject::recover(JSContext* cx, SnapshotIterator& iter) const {
   return true;
 }
 
-bool MObjectKeys::canRecoverOnBailout() const {
-  // Only claim that this operation can be recovered on bailout if some other
-  // optimization already marked it as such.
-  return isRecoveredOnBailout();
-}
-
-bool MObjectKeys::writeRecoverData(CompactBufferWriter& writer) const {
+bool MObjectKeysFromIterator::writeRecoverData(
+    CompactBufferWriter& writer) const {
   MOZ_ASSERT(canRecoverOnBailout());
-  writer.writeUnsigned(uint32_t(RInstruction::Recover_ObjectKeys));
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_ObjectKeysFromIterator));
   return true;
 }
 
-RObjectKeys::RObjectKeys(CompactBufferReader& reader) {}
+RObjectKeysFromIterator::RObjectKeysFromIterator(CompactBufferReader& reader) {}
 
-bool RObjectKeys::recover(JSContext* cx, SnapshotIterator& iter) const {
-  Rooted<JSObject*> obj(cx, iter.readObject());
+bool RObjectKeysFromIterator::recover(JSContext* cx,
+                                      SnapshotIterator& iter) const {
+  Rooted<JSObject*> iterObj(cx, iter.readObject());
 
-  JSObject* resultKeys = ObjectKeys(cx, obj);
+  JSObject* resultKeys = ObjectKeysFromIterator(cx, iterObj);
   if (!resultKeys) {
     return false;
   }
@@ -2256,8 +2306,8 @@ RObjectState::RObjectState(CompactBufferReader& reader) {
 }
 
 bool RObjectState::recover(JSContext* cx, SnapshotIterator& iter) const {
-  RootedObject object(cx, iter.readObject());
-  Handle<NativeObject*> nativeObject = object.as<NativeObject>();
+  JSObject* object = iter.readObject();
+  NativeObject* nativeObject = &object->as<NativeObject>();
   MOZ_ASSERT(!Watchtower::watchesPropertyValueChange(nativeObject));
   MOZ_ASSERT(nativeObject->slotSpan() == numSlots());
 
@@ -2494,8 +2544,8 @@ RCreateArgumentsObject::RCreateArgumentsObject(CompactBufferReader& reader) {}
 bool RCreateArgumentsObject::recover(JSContext* cx,
                                      SnapshotIterator& iter) const {
   RootedObject callObject(cx, iter.readObject());
-  RootedObject result(
-      cx, ArgumentsObject::createForIon(cx, iter.frame(), callObject));
+  ArgumentsObject* result =
+      ArgumentsObject::createForIon(cx, iter.frame(), callObject);
   if (!result) {
     return false;
   }
@@ -2566,5 +2616,27 @@ bool RRest::recover(JSContext* cx, SnapshotIterator& iter) const {
   }
 
   iter.storeInstructionResult(ObjectValue(*rest));
+  return true;
+}
+
+bool MTypedArraySubarray::writeRecoverData(CompactBufferWriter& writer) const {
+  MOZ_ASSERT(canRecoverOnBailout());
+  writer.writeUnsigned(uint32_t(RInstruction::Recover_TypedArraySubarray));
+  return true;
+}
+
+RTypedArraySubarray::RTypedArraySubarray(CompactBufferReader& reader) {}
+
+bool RTypedArraySubarray::recover(JSContext* cx, SnapshotIterator& iter) const {
+  Rooted<TypedArrayObject*> obj(cx, &iter.readObject()->as<TypedArrayObject>());
+  intptr_t start = iter.readIntPtr();
+  intptr_t length = iter.readIntPtr();
+
+  auto* result = TypedArraySubarrayRecover(cx, obj, start, length);
+  if (!result) {
+    return false;
+  }
+
+  iter.storeInstructionResult(ObjectValue(*result));
   return true;
 }

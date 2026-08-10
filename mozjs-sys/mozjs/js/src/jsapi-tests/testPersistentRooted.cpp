@@ -24,16 +24,8 @@ int BarkWhenTracedClass::finalizeCount;
 int BarkWhenTracedClass::traceCount;
 
 static const JSClassOps BarkWhenTracedClassClassOps = {
-    nullptr,                        // addProperty
-    nullptr,                        // delProperty
-    nullptr,                        // enumerate
-    nullptr,                        // newEnumerate
-    nullptr,                        // resolve
-    nullptr,                        // mayResolve
-    BarkWhenTracedClass::finalize,  // finalize
-    nullptr,                        // call
-    nullptr,                        // construct
-    BarkWhenTracedClass::trace,     // trace
+    .finalize = BarkWhenTracedClass::finalize,
+    .trace = BarkWhenTracedClass::trace,
 };
 
 const JSClass BarkWhenTracedClass::class_ = {
@@ -181,7 +173,7 @@ BEGIN_TEST(test_PersistentRootedAssign) {
 }
 END_TEST(test_PersistentRootedAssign)
 
-MOZ_RUNINIT static PersistentRootedObject gGlobalRoot;
+static PersistentRootedObject gGlobalRoot;
 
 // PersistentRooted instances can initialized in a separate step to allow for
 // global PersistentRooteds.

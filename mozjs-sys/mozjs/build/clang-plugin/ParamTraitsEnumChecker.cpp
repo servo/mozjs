@@ -7,7 +7,18 @@
 
 void ParamTraitsEnumChecker::registerMatchers(MatchFinder *AstMatcher) {
   AstMatcher->addMatcher(
-      classTemplateSpecializationDecl(hasName("ParamTraits")).bind("decl"),
+      classTemplateSpecializationDecl(
+          hasName("ParamTraits"), isDefinition(),
+          unless(anyOf(
+              // Exclude ParamTraits that derive from EnumSerializer (e.g.,
+              // ContiguousEnumSerializer) as these are the recommended way to
+              // serialize enums.
+              isDerivedFrom("EnumSerializer"),
+              // Exclude nsresult specifically, which has a legitimate
+              // ParamTraitsMozilla specialization.
+              hasTemplateArgument(
+                  0, refersToType(hasDeclaration(namedDecl(hasName("nsresult"))))))))
+          .bind("decl"),
       this);
 }
 
@@ -15,24 +26,23 @@ void ParamTraitsEnumChecker::check(const MatchFinder::MatchResult &Result) {
   const ClassTemplateSpecializationDecl *Decl =
       Result.Nodes.getNodeAs<ClassTemplateSpecializationDecl>("decl");
 
-  for (auto &Inner : Decl->decls()) {
-    if (auto *Def = dyn_cast<TypedefDecl>(Inner)) {
-      QualType UnderlyingType = Def->getUnderlyingType();
-      QualType CanonicalType = UnderlyingType.getCanonicalType();
+  const TemplateArgumentList &ArgumentList = Decl->getTemplateArgs();
+  if (ArgumentList.size() != 1) {
+    diag(Decl->getBeginLoc(),
+         "ParamTraits specialization should have exactly one template argument",
+         DiagnosticIDs::Error);
+    return;
+  }
 
-      const clang::Type *TypePtr = CanonicalType.getTypePtrOrNull();
-      if (!TypePtr) {
-        return;
-      }
-
-      if (TypePtr->isEnumeralType()) {
-        diag(Decl->getBeginLoc(),
-             "Custom ParamTraits implementation for an enum type",
-             DiagnosticIDs::Error);
-        diag(Decl->getBeginLoc(),
-             "Please use a helper class for example ContiguousEnumSerializer",
-             DiagnosticIDs::Note);
-      }
+  QualType ArgType = ArgumentList[0].getAsType();
+  if (const clang::Type *TypePtr = ArgType.getTypePtrOrNull()) {
+    if (TypePtr->isEnumeralType()) {
+      diag(Decl->getBeginLoc(),
+           "Custom ParamTraits implementation for an enum type",
+           DiagnosticIDs::Error);
+      diag(Decl->getBeginLoc(),
+           "Please use a helper class for example ContiguousEnumSerializer",
+           DiagnosticIDs::Note);
     }
   }
 }

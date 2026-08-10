@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -115,10 +114,9 @@ class MOZ_STACK_CLASS JS_PUBLIC_API AutoStableStringChars final {
 
   template <typename T>
   T* allocOwnChars(JSContext* cx, size_t count);
-  bool copyLatin1Chars(JSContext* cx, Handle<JSLinearString*> linearString);
-  bool copyTwoByteChars(JSContext* cx, Handle<JSLinearString*> linearString);
-  bool copyAndInflateLatin1Chars(JSContext*,
-                                 Handle<JSLinearString*> linearString);
+  bool copyLatin1Chars(JSContext* cx, JSLinearString* linearString);
+  bool copyTwoByteChars(JSContext* cx, JSLinearString* linearString);
+  bool copyAndInflateLatin1Chars(JSContext*, JSLinearString* linearString);
 };
 
 }  // namespace JS

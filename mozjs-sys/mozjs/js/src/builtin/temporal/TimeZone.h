@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -262,6 +260,19 @@ struct ParsedTimeZone;
 enum class TemporalDisambiguation;
 
 /**
+ * Create a new |TimeZoneObject| whose identifier is |identifier| and whose
+ * primary identifier is |primaryIdentifier|.
+ */
+TimeZoneObject* CreateTimeZoneObject(
+    JSContext* cx, JS::Handle<JSLinearString*> identifier,
+    JS::Handle<JSLinearString*> primaryIdentifier);
+
+/**
+ * SystemTimeZoneIdentifier ( )
+ */
+JSLinearString* ComputeSystemTimeZoneIdentifier(JSContext* cx);
+
+/**
  * SystemTimeZoneIdentifier ( )
  */
 JSLinearString* SystemTimeZoneIdentifier(JSContext* cx);
@@ -283,6 +294,14 @@ bool ToTemporalTimeZone(JSContext* cx,
  */
 bool ToTemporalTimeZone(JSContext* cx, JS::Handle<ParsedTimeZone> string,
                         JS::MutableHandle<TimeZoneValue> result);
+
+/**
+ * Verifies that the given string is a valid time zone name. If it is a valid
+ * time zone name, returns the canonicalized time zone name. Canonicalization
+ * resolves link names to their target time zones.
+ */
+JSLinearString* ToValidCanonicalTimeZoneIdentifier(
+    JSContext* cx, JS::Handle<JSString*> timeZone);
 
 /**
  * TimeZoneEquals ( one, two )

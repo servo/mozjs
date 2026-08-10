@@ -22,7 +22,7 @@ def build_dict(config, env=os.environ):
     missing = [r for r in required if r not in substs]
     if missing:
         raise Exception(
-            "Missing required environment variables: %s" % ", ".join(missing)
+            "Missing required environment variables: {}".format(", ".join(missing))
         )
 
     d = {}
@@ -69,6 +69,7 @@ def build_dict(config, env=os.environ):
         d["bits"] = 32
     # other CPUs will wind up with unknown bits
 
+    d["mingw"] = substs.get("CC_TYPE") == "clang" and d["os"] == "win"
     d["debug"] = substs.get("MOZ_DEBUG") == "1"
     d["nightly_build"] = substs.get("NIGHTLY_BUILD") == "1"
     d["early_beta_or_earlier"] = substs.get("EARLY_BETA_OR_EARLIER") == "1"
@@ -98,7 +99,6 @@ def build_dict(config, env=os.environ):
         substs.get("MOZ_ANDROID_CONTENT_SERVICE_ISOLATED_PROCESS") == "1"
     )
     d["automation"] = substs.get("MOZ_AUTOMATION") == "1"
-    d["gecko_profiler"] = bool(substs.get("MOZ_GECKO_PROFILER"))
     d["dbus_enabled"] = bool(substs.get("MOZ_ENABLE_DBUS"))
 
     d["opt"] = not d["debug"] and not d["asan"] and not d["tsan"] and not d["ccov"]
@@ -119,8 +119,6 @@ def build_dict(config, env=os.environ):
             return p
 
         if d["buildapp"] == "mobile/android":
-            if d["processor"] == "x86":
-                return "android-x86"
             if d["processor"] == "x86_64":
                 return "android-x86_64"
             if d["processor"] == "aarch64":

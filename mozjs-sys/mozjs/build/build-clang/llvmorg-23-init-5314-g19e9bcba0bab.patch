@@ -1,0 +1,29 @@
+From 19e9bcba0bab9efe6f6d75ff5bce880b4c644783 Mon Sep 17 00:00:00 2001
+From: Mike Hommey <mh@glandium.org>
+Date: Wed, 25 Feb 2026 17:45:06 +0900
+Subject: [PATCH] [Windows] Don't hide Type::getAs symbols (#182966)
+
+Cc: @michalpaszkowski, @john-brawn-arm
+---
+ llvm/utils/extract_symbols.py | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/llvm/utils/extract_symbols.py b/llvm/utils/extract_symbols.py
+index 5254d16e410d..740d3b5472d1 100755
+--- a/llvm/utils/extract_symbols.py
++++ b/llvm/utils/extract_symbols.py
+@@ -101,6 +101,11 @@ def should_keep_microsoft_symbol(symbol, calling_convention_decoration):
+     # because they will be instantiated in the importing translation unit if
+     # needed.
+     elif symbol.startswith("??$"):
++        # Keep Type::getAs<T>() explicit template specializations. These are
++        # declared in headers but defined in Type.cpp, so they cannot be
++        # instantiated locally. Pattern: ??$getAs@<template_arg>@Type@clang@@...
++        if symbol.startswith("??$getAs@") and "@Type@clang@@" in symbol:
++            return symbol
+         return None
+     # Delete lambda object constructors and operator() functions. These start
+     # with ??R<lambda_ or ??0<lambda_ and can be discarded because lambdas are
+-- 
+2.52.0
+

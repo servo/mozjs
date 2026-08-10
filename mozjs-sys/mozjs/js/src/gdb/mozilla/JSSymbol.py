@@ -20,7 +20,7 @@ UniqueSymbol = 0xFFFFFFFF
 @ptr_pretty_printer("JS::Symbol")
 class JSSymbolPtr(mozilla.prettyprinters.Pointer):
     def __init__(self, value, cache):
-        super(JSSymbolPtr, self).__init__(value, cache)
+        super().__init__(value, cache)
         self.value = value
 
     def to_string(self):

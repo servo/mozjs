@@ -126,3 +126,65 @@ assert "void stack_array()" in haz_functions
 haz_vars = byfunc["void stack_array()"]
 assert "array" in haz_vars
 assert "array2" not in haz_vars
+
+# partial_assignment tests.
+assert "void partial_assignments()" in haz_functions
+haz_vars = byfunc["void partial_assignments()"]
+assert "a1" not in haz_vars
+assert "a2" in haz_vars
+assert "b1" not in haz_vars
+assert "b2" in haz_vars
+assert "c1" in haz_vars
+assert "c2" in haz_vars
+assert "aw1" not in haz_vars
+assert "aw2" in haz_vars
+assert "aw3" not in haz_vars
+assert "bw1" not in haz_vars
+assert "bw2" in haz_vars
+assert "bw3" not in haz_vars
+assert "d" in haz_vars
+assert "cw1" in haz_vars
+assert "twop1" in haz_vars
+assert "twop2" not in haz_vars
+assert "pair1" in haz_vars
+assert "pair2" not in haz_vars
+assert "av1" in haz_vars
+assert "av2" not in haz_vars
+assert "aav1" in haz_vars
+assert "aav2" not in haz_vars
+
+ti = test.load_typeInfo()
+single = ti["SingleGCField"]
+assert "Cell" in single
+scope = "_Z19partial_assignmentsv::"
+assert (scope + "A") in single
+assert (scope + "B") in single
+assert (scope + "C") not in single  # Two Cell*
+assert (scope + "Aw") in single
+assert (scope + "Bw") in single
+assert (scope + "D") not in single  # 3 x struct A
+assert (scope + "Cw") not in single
+# TwoPointers and PairOfPointers indirectly contain multiple GC pointers, but
+# only a single field contains them. (So overwriting the field should be treated
+# as overwriting the whole var.)
+assert (scope + "TwoPointers") in single
+assert (scope + "PairOfPointers") in single
+assert (scope + "Av") in single
+assert (scope + "AAv") in single
+
+# lambda tests.
+
+haz_vars = byfunc["void closure()"]
+assert "lambda_safe1" not in haz_vars
+assert "lambda_unsafe2" in haz_vars
+
+# unsafely taking the address of an unrooted value.
+
+info = test.load_json_file("rootingHazards.json")
+refs = [r for r in info if r["record"] == "address"]
+reffed_vars = {r["variable"]: r for r in refs}
+assert "addr_unsafe1" in reffed_vars
+assert "unsafe_address1()" in reffed_vars["addr_unsafe1"]["functionName"]
+assert "addr_unsafe2" in reffed_vars
+assert "unsafe_address2()" in reffed_vars["addr_unsafe2"]["functionName"]
+assert len(refs) == 2

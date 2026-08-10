@@ -83,6 +83,7 @@
   "tibt", \
   "tirh", \
   "tnsa", \
+  "tols", \
   "vaii", \
   "wara", \
   "wcho"

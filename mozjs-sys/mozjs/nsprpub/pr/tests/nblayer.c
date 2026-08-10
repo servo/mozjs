@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,7 +12,6 @@
 
 #include "plerror.h"
 #include "plgetopt.h"
-#include "prwin.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -577,7 +575,6 @@ int main(int argc, char** argv) {
     }
   }
   PL_DestroyOptState(opt);
-  PR_STDIO_INIT();
 
   logFile = PR_GetSpecialFD(PR_StandardError);
   identity = PR_GetUniqueIdentity("Dummy");

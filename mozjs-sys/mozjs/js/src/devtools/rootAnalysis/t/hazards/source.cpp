@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -435,10 +433,17 @@ class Subcell : public Cell {
   }
 };
 
+// RefPtr<T> GCs in the destructor.
 template <typename T>
 struct RefPtr {
-  ~RefPtr() { GC(); }
-  bool forget() { return true; }
+  bool empty = false;
+  ~RefPtr() {
+    if (!empty) GC();
+  }
+  bool forget() {
+    empty = true;
+    return true;
+  }
   bool use() { return true; }
   void assign_with_AddRef(T* aRawPtr) { asm(""); }
 };
@@ -456,6 +461,7 @@ Cell* refptr_test2() {
   static Cell cell;
   RefPtr<float> v2;
   Cell* ref_safe2 = &cell;
+  // Will no longer GC in dtor. See DominatorVisitor in getCallEdgeProperties().
   v2.forget();
   return ref_safe2;
 }
@@ -574,3 +580,203 @@ void stack_array() {
   usecell(array[1]);
   // Never use array2.
 }
+
+void partial_assignments() {
+  struct A {
+    Cell* cell;
+    int i;
+  } a1, a2;
+  struct B {
+    A a;
+    void* vp;
+  } b1, b2;
+  struct C {
+    Cell* cell;
+    Cell* cell2;
+  } c1, c2;
+  struct Aw {
+    A a;
+  } aw1, aw2, aw3;
+  struct Bw {
+    B b;
+  } bw1, bw2, bw3;
+  struct D {
+    A as[3];
+  } d;
+  struct Cw {
+    B b1;
+    B b2;
+  } cw1;
+  struct TwoPointers {
+    Cw bar;
+  } twop1, twop2;
+  struct PairOfPointers {
+    struct TwoPointers two;
+    int nonPointer;
+  } pair1, pair2;
+  struct As {
+    A array[2];
+  };
+  struct Ases {
+    As as;
+  } ases1, ases2;
+  union Av {
+    A a;
+    void* vp;
+  } av1, av2;
+  union AAv {
+    A a1;
+    A a2;
+    void* vp;
+  } aav1, aav2;
+
+  a1.cell = makecell();
+  a2.cell = makecell();
+  b1.a.cell = makecell();
+  b2.a.cell = makecell();
+  c1.cell = makecell();
+  c1.cell2 = makecell();
+  c2.cell = makecell();
+  c2.cell2 = makecell();
+  aw1.a.cell = makecell();
+  aw2.a.cell = makecell();
+  aw3.a.cell = makecell();
+  bw1.b.a.cell = makecell();
+  bw2.b.a.cell = makecell();
+  bw3.b.a.cell = makecell();
+  d.as[0].cell = makecell();
+  d.as[1].cell = makecell();
+  d.as[2].cell = makecell();
+  cw1.b1.a.cell = makecell();
+  cw1.b2.a.cell = makecell();
+  twop1.bar.b1.a.cell = makecell();
+  twop1.bar.b2.a.cell = makecell();
+  twop2.bar.b1.a.cell = makecell();
+  twop2.bar.b2.a.cell = makecell();
+  pair1.two.bar.b1.a.cell = makecell();
+  pair1.two.bar.b2.a.cell = makecell();
+  pair2.two.bar.b1.a.cell = makecell();
+  pair2.two.bar.b2.a.cell = makecell();
+  ases1.as.array[0].cell = makecell();
+  ases1.as.array[1].cell = makecell();
+  ases2.as.array[0].cell = makecell();
+  ases2.as.array[1].cell = makecell();
+  av1.a.cell = makecell();
+  av2.a.cell = makecell();
+  aav1.a1.cell = makecell();
+  aav2.a2.cell = makecell();
+
+  GC();
+
+  a1.cell = makecell();    // no hazard for a1 - cell field reassigned
+  a2.i = 7;                // hazard for a2 - cell field still live
+  b1.a.cell = makecell();  // no hazard for b1 - nested cell field reassigned
+  b2.a.i = 7;              // hazard for b2 - nested cell field still live
+  c1.cell = makecell();    // hazard for c1 - cell2 field still live
+  c2.cell2 = makecell();   // hazard for c2 - cell field still live
+  aw1.a.cell =
+      makecell();  // no hazard for aw1 - fully reassigns the tracked part
+  aw2.a.i = 7;     // hazard for aw2 - a.cell field still live
+  aw3.a =
+      A{makecell(), 7};  // no hazard for aw3 - whole nested struct reassigned
+  bw1.b.a.cell =
+      makecell();      // no hazard for bw1 - fully reassigns the tracked part
+  bw2.b.vp = nullptr;  // hazard for bw2 - b.a.cell field still live
+  bw3.b = B{A{makecell(), 7},
+            nullptr};  // no hazard for bw3 - whole nested struct reassigned
+  d.as[1].cell = makecell();  // hazard for d - other elements are still live
+  cw1.b1 = B{A{makecell(), 7}, nullptr};  // hazard for cw1, cw1.b2 still live
+  twop1.bar.b1.a.cell = makecell();
+  twop2.bar = cw1;
+  pair1.two.bar.b1.a.cell = makecell();
+  pair2.two.bar = cw1;
+  ases1.as.array[0].cell = makecell();
+  ases2.as = ases1.as;
+  av1.vp = nullptr;
+  av2.a.cell = makecell();
+  aav1.a1.i = 7;
+  aav2.a2.cell = makecell();
+
+  usecell(a1.cell);
+  usecell(a2.cell);
+  usecell(b1.a.cell);
+  usecell(b2.a.cell);
+  usecell(c1.cell);
+  usecell(c1.cell2);
+  usecell(c2.cell);
+  usecell(c2.cell2);
+  usecell(aw1.a.cell);
+  usecell(aw2.a.cell);
+  usecell(aw3.a.cell);
+  usecell(bw1.b.a.cell);
+  usecell(bw2.b.a.cell);
+  usecell(bw3.b.a.cell);
+  usecell(d.as[0].cell);
+  usecell(cw1.b1.a.cell);
+  usecell(cw1.b2.a.cell);
+  usecell(twop1.bar.b1.a.cell);
+  usecell(twop2.bar.b1.a.cell);
+  usecell(pair1.two.bar.b1.a.cell);
+  usecell(pair2.two.bar.b1.a.cell);
+  usecell(ases1.as.array[0].cell);
+  usecell(ases2.as.array[0].cell);
+  usecell(av1.a.cell);
+  usecell(av2.a.cell);
+  usecell(aav1.a1.cell);
+  usecell(aav2.a2.cell);
+}
+
+void closure() {
+  for (int i = 0; i < 10; i++) {
+    GC();
+    Cell* cell = makecell();
+    bool invert = true;
+    auto lambda_safe1 = [cell, invert]() {
+      return invert ^ (cell != makecell());
+    };
+    if (lambda_safe1()) break;
+  }
+
+  // This is cheating in order to force a failure: the analysis currently
+  // doesn't handle lambda captures that close over more than one GC pointer,
+  // and see a hazard from one iteration of the loop (where the closure's GC
+  // pointer field is assigned) to the next (where it GCs at the beginning.)
+  //
+  // A more principled approach would know where the lambda was declared, and
+  // treat that as also declaring the closure, so it could know its live range
+  // starts there and cannot be propagated across loop iterations. But we don't
+  // see declarations at all from the compiler, so this would require
+  // significant changes in the compiler plugin.
+  for (int i = 0; i < 10; i++) {
+    GC();
+    Cell* cell = makecell();
+    Cell* cell2 = makecell();
+    auto lambda_unsafe2 = [cell, cell2]() { return cell == cell2; };
+    if (lambda_unsafe2()) break;
+  }
+}
+void do_bad_stuff(Cell**) { GC(); }
+
+void unsafe_address1() {
+  static Cell cell;
+  Cell* addr_unsafe1 = &cell;
+  do_bad_stuff(&addr_unsafe1);
+  use(addr_unsafe1);
+}
+
+void unsafe_address2() {
+  static Cell cell;
+  Cell* addr_unsafe2 = &cell;
+  Cell** addr_unsafe3 = &addr_unsafe2;
+  do_bad_stuff(addr_unsafe3);
+}
+
+ANNOTATE("Expect Hazards") void expected() {
+  Cell* cell = makecell();
+  GC();
+  usecell(cell);
+}
+
+ANNOTATE("Expect Hazards") void missing() { GC(); }
+
+ANNOTATE("Expect Hazards") void missing2() { GC(); }

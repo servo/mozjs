@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -181,6 +180,9 @@ extern "C" MOZ_EXPORT const char* __lsan_default_suppressions() {
          "leak:libX11.so\n"
          "leak:pthread_setspecific_internal\n"
          "leak:swrast_dri.so\n"
+         "leak:i965_drv_video.so\n"
+         "leak:i965_dri.so\n"
+         "leak:libdrm_intel.so\n"
 
          "leak:js::frontend::BytecodeEmitter:\n"
          "leak:js::frontend::GeneralParser\n"

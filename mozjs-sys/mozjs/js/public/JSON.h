@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -48,7 +47,7 @@ namespace JS {
  * allow a replacer or a custom space and has the following constraints on its
  * input:
  *
- * 1) The input must be a plain object or array, not an abitrary value.
+ * 1) The input must be a plain object or array, not an arbitrary value.
  * 2) Every value in the graph reached by the algorithm starting with this
  *    object must be one of the following: null, undefined, a string (NOT a
  *    string object!), a boolean, a finite number (i.e. no NaN or Infinity or

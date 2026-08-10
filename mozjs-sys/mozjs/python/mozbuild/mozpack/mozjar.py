@@ -34,17 +34,16 @@ class JarStruct:
     structured as described in subclasses STRUCT field.
 
     The STRUCT field contains a list of (name, type) pairs where name is a
-    field name, and the type can be one of 'uint32', 'uint16' or one of the
+    field name, and the type can be one of ``uint32``, ``uint16`` or one of the
     field names. In the latter case, the field is considered to be a string
-    buffer with a length given in that field.
-    For example,
+    buffer with a length given in that field. For example:
 
     .. code-block:: python
 
         STRUCT = [
-            ('version', 'uint32'),
-            ('filename_size', 'uint16'),
-            ('filename', 'filename_size')
+            ("version", "uint32"),
+            ("filename_size", "uint16"),
+            ("filename", "filename_size"),
         ]
 
     describes a structure with a 'version' 32-bits unsigned integer field,
@@ -53,8 +52,9 @@ class JarStruct:
 
     Fields that are used as other fields size are not stored in objects. In the
     above example, an instance of such subclass would only have two attributes:
-      - obj['version']
-      - obj['filename']
+
+    - obj['version']
+    - obj['filename']
 
     filename_size would be obtained with len(obj['filename']).
 
@@ -197,18 +197,16 @@ class JarCdirEnd(JarStruct):
     """
 
     MAGIC = 0x06054B50
-    STRUCT = OrderedDict(
-        [
-            ("disk_num", "uint16"),
-            ("cdir_disk", "uint16"),
-            ("disk_entries", "uint16"),
-            ("cdir_entries", "uint16"),
-            ("cdir_size", "uint32"),
-            ("cdir_offset", "uint32"),
-            ("comment_size", "uint16"),
-            ("comment", "comment_size"),
-        ]
-    )
+    STRUCT = OrderedDict([
+        ("disk_num", "uint16"),
+        ("cdir_disk", "uint16"),
+        ("disk_entries", "uint16"),
+        ("cdir_entries", "uint16"),
+        ("cdir_size", "uint32"),
+        ("cdir_offset", "uint32"),
+        ("comment_size", "uint16"),
+        ("comment", "comment_size"),
+    ])
 
 
 CDIR_END_SIZE = JarCdirEnd().size
@@ -220,29 +218,27 @@ class JarCdirEntry(JarStruct):
     """
 
     MAGIC = 0x02014B50
-    STRUCT = OrderedDict(
-        [
-            ("creator_version", "uint16"),
-            ("min_version", "uint16"),
-            ("general_flag", "uint16"),
-            ("compression", "uint16"),
-            ("lastmod_time", "uint16"),
-            ("lastmod_date", "uint16"),
-            ("crc32", "uint32"),
-            ("compressed_size", "uint32"),
-            ("uncompressed_size", "uint32"),
-            ("filename_size", "uint16"),
-            ("extrafield_size", "uint16"),
-            ("filecomment_size", "uint16"),
-            ("disknum", "uint16"),
-            ("internal_attr", "uint16"),
-            ("external_attr", "uint32"),
-            ("offset", "uint32"),
-            ("filename", "filename_size"),
-            ("extrafield", "extrafield_size"),
-            ("filecomment", "filecomment_size"),
-        ]
-    )
+    STRUCT = OrderedDict([
+        ("creator_version", "uint16"),
+        ("min_version", "uint16"),
+        ("general_flag", "uint16"),
+        ("compression", "uint16"),
+        ("lastmod_time", "uint16"),
+        ("lastmod_date", "uint16"),
+        ("crc32", "uint32"),
+        ("compressed_size", "uint32"),
+        ("uncompressed_size", "uint32"),
+        ("filename_size", "uint16"),
+        ("extrafield_size", "uint16"),
+        ("filecomment_size", "uint16"),
+        ("disknum", "uint16"),
+        ("internal_attr", "uint16"),
+        ("external_attr", "uint32"),
+        ("offset", "uint32"),
+        ("filename", "filename_size"),
+        ("extrafield", "extrafield_size"),
+        ("filecomment", "filecomment_size"),
+    ])
 
 
 class JarLocalFileHeader(JarStruct):
@@ -251,22 +247,20 @@ class JarLocalFileHeader(JarStruct):
     """
 
     MAGIC = 0x04034B50
-    STRUCT = OrderedDict(
-        [
-            ("min_version", "uint16"),
-            ("general_flag", "uint16"),
-            ("compression", "uint16"),
-            ("lastmod_time", "uint16"),
-            ("lastmod_date", "uint16"),
-            ("crc32", "uint32"),
-            ("compressed_size", "uint32"),
-            ("uncompressed_size", "uint32"),
-            ("filename_size", "uint16"),
-            ("extra_field_size", "uint16"),
-            ("filename", "filename_size"),
-            ("extra_field", "extra_field_size"),
-        ]
-    )
+    STRUCT = OrderedDict([
+        ("min_version", "uint16"),
+        ("general_flag", "uint16"),
+        ("compression", "uint16"),
+        ("lastmod_time", "uint16"),
+        ("lastmod_date", "uint16"),
+        ("crc32", "uint32"),
+        ("compressed_size", "uint32"),
+        ("uncompressed_size", "uint32"),
+        ("filename_size", "uint16"),
+        ("extra_field_size", "uint16"),
+        ("filename", "filename_size"),
+        ("extra_field", "extra_field_size"),
+    ])
 
 
 class JarFileReader:
@@ -475,7 +469,8 @@ class JarReader:
     def __iter__(self):
         """
         Iterate over all files in the Jar archive, in the form of
-        JarFileReaders.
+        JarFileReaders::
+
             for file in jarReader:
                 ...
         """

@@ -34,7 +34,7 @@ Most tests are registered using tests manifests and the **PERFTESTS_MANIFESTS**
 variable in `moz.build` files - it's good practice to name this file
 `perftest.toml`. **This doesn't apply to mochitest tests**, they should use the manifest variable of the respective flavour/subsuite that the test is running in.
 
-Example of such a file: https://searchfox.org/mozilla-central/source/testing/performance/perftest.toml
+Example of such a file: :searchfox:`testing/performance/perftest.toml`
 
 
 XPCShell
@@ -54,9 +54,9 @@ Here's an example of such a metrics call::
 XPCShell Tests in CI
 ^^^^^^^^^^^^^^^^^^^^
 
-To run your test in CI, you may need to modify the ``_TRY_MAPPING`` variable `found here <https://searchfox.org/mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0/python/mozperftest/mozperftest/utils.py#299>`_. This will allow us to find your test file in CI, and is needed because the file mappings differ from local runs. The mapping maps the top-level folder of the test to it's location in CI. To find this location/mapping, download the ``target.xpcshell.tests.tar.gz`` archive from the build task and search for your test file in it.
+To run your test in CI, you may need to modify the ``_TRY_MAPPING`` variable :searchfox:`found here <mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0:python/mozperftest/mozperftest/utils.py#299>`. This will allow us to find your test file in CI, and is needed because the file mappings differ from local runs. The mapping maps the top-level folder of the test to it's location in CI. To find this location/mapping, download the ``target.xpcshell.tests.tar.zst`` archive from the build task and search for your test file in it.
 
-The XPCShell test that is written can also be run as a unit test, however, if this is not desired, set the `disabled = reason` flag in the test TOML file to prevent it from running there. `See here for an example <https://searchfox.org/mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0/toolkit/components/ml/tests/browser/perftest.toml#7>`_.
+The XPCShell test that is written can also be run as a unit test, however, if this is not desired, set the `disabled = reason` flag in the test TOML file to prevent it from running there. :searchfox:`See here for an example <mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0:toolkit/components/ml/tests/browser/perftest.toml#7>`.
 
 Mochitest
 ---------
@@ -121,9 +121,9 @@ Only the GeckoView Test Runner, and GeckoView Example are currently supported in
 Mochitest Tests in CI
 ^^^^^^^^^^^^^^^^^^^^^
 
-To run your test in CI, you may need to modify the ``_TRY_MAPPING`` variable `found here <https://searchfox.org/mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0/python/mozperftest/mozperftest/utils.py#299>`_. This will allow us to find your test file in CI, and is needed because the file mappings differ from local runs. The mapping maps the top-level folder of the test to it's location in CI. To find this location/mapping, download the ``target.mochitest.tests.tar.gz`` archive from the build task and search for your test file in it.
+To run your test in CI, you may need to modify the ``_TRY_MAPPING`` variable :searchfox:`found here <mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0:python/mozperftest/mozperftest/utils.py#299>`. This will allow us to find your test file in CI, and is needed because the file mappings differ from local runs. The mapping maps the top-level folder of the test to it's location in CI. To find this location/mapping, download the ``target.mochitest.tests.tar.zst`` archive from the build task and search for your test file in it.
 
-The Mochitest test that is written can also be run as a unit test, however, if this is not desired, set the `disabled = reason` flag in the test TOML file to prevent it from running there. `See here for an example <https://searchfox.org/mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0/toolkit/components/ml/tests/browser/perftest.toml#7>`_.
+The Mochitest test that is written can also be run as a unit test, however, if this is not desired, set the `disabled = reason` flag in the test TOML file to prevent it from running there. :searchfox:`See here for an example <mozilla-central/rev/7d1b5c88343879056168aa710a9ee743392604c0:toolkit/components/ml/tests/browser/perftest.toml#7>`.
 
 Mochitest Android Tests in CI
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -133,10 +133,10 @@ For Mochitest Android tests in CI, everything that applies to desktop tests also
   build:
       - artifact: geckoview_example.apk
         extract: false
-      - artifact: en-US/target.perftests.tests.tar.gz
-      - artifact: en-US/target.condprof.tests.tar.gz
-      - artifact: en-US/target.common.tests.tar.gz
-      - artifact: en-US/target.mochitest.tests.tar.gz
+      - artifact: en-US/target.perftests.tests.tar.zst
+      - artifact: en-US/target.condprof.tests.tar.zst
+      - artifact: en-US/target.common.tests.tar.zst
+      - artifact: en-US/target.mochitest.tests.tar.zst
   toolchain:
       - linux64-hostutils
 
@@ -265,7 +265,7 @@ A Python module can be used to run functions during a run lifecycle. Available h
 
 - **before_iterations(args)** runs before everything is started. Gets the args, which
   can be changed. The **args** argument also contains a **virtualenv** variable that
-  can be used for installing Python packages (e.g. through `install_package <https://searchfox.org/mozilla-central/source/python/mozperftest/mozperftest/utils.py#115-144>`_).
+  can be used for installing Python packages (e.g. through :searchfox:`install_package <python/mozperftest/mozperftest/utils.py#115-144>`).
 - **before_runs(env)** runs before the test is launched. Can be used to
   change the running environment.
 - **after_runs(env)** runs after the test is done.

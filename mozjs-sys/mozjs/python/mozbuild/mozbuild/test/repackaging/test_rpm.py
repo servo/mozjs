@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import datetime
 import pathlib
 import sys
 import tempfile
@@ -12,7 +13,7 @@ import mozpack.path as mozpath
 import mozunit
 import pytest
 
-from mozbuild.repackaging import rpm, utils
+from mozbuild.repackaging import rpm
 
 _APPLICATION_INI_CONTENT = """[App]
 Vendor=Mozilla
@@ -32,7 +33,7 @@ _APPLICATION_INI_CONTENT_DATA = {
 
 
 @pytest.mark.parametrize(
-    "version, build_number, package_name_suffix, description_suffix, release_product, application_ini_data, expected, raises",
+    "version, build_number, package_name_suffix, description_suffix, product, application_ini_data, expected, raises",
     (
         (
             "112.0a1",
@@ -57,6 +58,8 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "PKG_BUILD_NUMBER": 1,
                 "MANPAGE_DATE": "February 22, 2023",
                 "Icon": "firefox-nightly-try",
+                "REMOTING_NAME": "firefox-nightly-try",
+                "TIMESTAMP": datetime.datetime(2023, 2, 22, 0, 0),
             },
             does_not_raise(),
         ),
@@ -83,6 +86,8 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "PKG_BUILD_NUMBER": 1,
                 "MANPAGE_DATE": "February 22, 2023",
                 "Icon": "firefox-nightly-try-l10n-fr",
+                "REMOTING_NAME": "firefox-nightly-try",
+                "TIMESTAMP": datetime.datetime(2023, 2, 22, 0, 0),
             },
             does_not_raise(),
         ),
@@ -109,6 +114,8 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "PKG_BUILD_NUMBER": 1,
                 "MANPAGE_DATE": "February 22, 2023",
                 "Icon": "firefox-nightly-try",
+                "REMOTING_NAME": "firefox-nightly-try",
+                "TIMESTAMP": datetime.datetime(2023, 2, 22, 0, 0),
             },
             does_not_raise(),
         ),
@@ -135,6 +142,8 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "PKG_BUILD_NUMBER": 2,
                 "MANPAGE_DATE": "February 22, 2023",
                 "Icon": "firefox-nightly-try",
+                "REMOTING_NAME": "firefox-nightly-try",
+                "TIMESTAMP": datetime.datetime(2023, 2, 22, 0, 0),
             },
             does_not_raise(),
         ),
@@ -148,7 +157,7 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "name": "Firefox",
                 "display_name": "Firefox Developer Edition",
                 "vendor": "Mozilla",
-                "remoting_name": "firefox-aurora",
+                "remoting_name": "firefox-dev",
                 "build_id": "20230222000000",
             },
             {
@@ -161,6 +170,8 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "PKG_BUILD_NUMBER": 1,
                 "MANPAGE_DATE": "February 22, 2023",
                 "Icon": "firefox-devedition",
+                "REMOTING_NAME": "firefox-dev",
+                "TIMESTAMP": datetime.datetime(2023, 2, 22, 0, 0),
             },
             does_not_raise(),
         ),
@@ -174,7 +185,7 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "name": "Firefox",
                 "display_name": "Firefox Developer Edition",
                 "vendor": "Mozilla",
-                "remoting_name": "firefox-aurora",
+                "remoting_name": "firefox-dev",
                 "build_id": "20230222000000",
             },
             {
@@ -187,6 +198,8 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "PKG_BUILD_NUMBER": 1,
                 "MANPAGE_DATE": "February 22, 2023",
                 "Icon": "firefox-devedition-l10n-ach",
+                "REMOTING_NAME": "firefox-dev",
+                "TIMESTAMP": datetime.datetime(2023, 2, 22, 0, 0),
             },
             does_not_raise(),
         ),
@@ -200,7 +213,7 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "name": "Firefox",
                 "display_name": "Firefox Developer Edition",
                 "vendor": "Mozilla",
-                "remoting_name": "firefox-aurora",
+                "remoting_name": "firefox-dev",
                 "build_id": "20230222000000",
             },
             {
@@ -213,34 +226,10 @@ _APPLICATION_INI_CONTENT_DATA = {
                 "PKG_BUILD_NUMBER": 1,
                 "MANPAGE_DATE": "February 22, 2023",
                 "Icon": "firefox-devedition-l10n-ach",
+                "REMOTING_NAME": "firefox-dev",
+                "TIMESTAMP": datetime.datetime(2023, 2, 22, 0, 0),
             },
             does_not_raise(),
-        ),
-        (
-            "120.0b9",
-            1,
-            "-l10n-ach",
-            " - Firefox Developer Edition Language Pack for Acholi (ach) – Acoli",
-            "devedition",
-            {
-                "name": "Firefox",
-                "display_name": "Firefox Developer Edition",
-                "vendor": "Mozilla",
-                "remoting_name": "firefox-aurora",
-                "build_id": "20230222000000",
-            },
-            {
-                "DESCRIPTION": "Mozilla Firefox Developer Edition - Firefox Developer Edition Language Pack for Acholi (ach) – Acoli",
-                "PRODUCT_NAME": "Firefox",
-                "DISPLAY_NAME": "Firefox Developer Edition",
-                "PKG_INSTALL_PATH": "usr/lib/firefox-aurora",
-                "PKG_NAME": "firefox-aurora-l10n-ach",
-                "PKG_VERSION": "120.0b9",
-                "PKG_BUILD_NUMBER": 1,
-                "MANPAGE_DATE": "February 22, 2023",
-                "Icon": "firefox-aurora-l10n-ach",
-            },
-            pytest.raises(AssertionError),
         ),
     ),
 )
@@ -249,22 +238,17 @@ def test_get_build_variables(
     build_number,
     package_name_suffix,
     description_suffix,
-    release_product,
+    product,
     application_ini_data,
     expected,
     raises,
 ):
-    application_ini_data = utils._parse_application_ini_data(
-        application_ini_data,
-        version,
-        build_number,
-    )
     with raises:
         build_variables = rpm._get_build_variables(
             application_ini_data,
             "x86",
             version,
-            release_product=release_product,
+            product=product,
             package_name_suffix=package_name_suffix,
             description_suffix=description_suffix,
             build_number=build_number,
@@ -274,7 +258,6 @@ def test_get_build_variables(
             **{
                 "CHANGELOG_DATE": "Wed Feb 22 2023",
                 "ARCH_NAME": "x86",
-                "DEPENDS": "",
             },
             **expected,
         }
@@ -360,6 +343,7 @@ def test_generate_rpm_archive(monkeypatch, does_rpm_package_exist, expectation):
                 "PKG_NAME": "firefox",
                 "PKG_VERSION": "111.0",
                 "PKG_BUILD_NUMBER": 1,
+                "LANGUAGES": ["dummy"],
             },
             arch="x86",
         )
@@ -382,14 +366,17 @@ def test_generate_rpm_archive(monkeypatch, does_rpm_package_exist, expectation):
         )
         assert ("copy", expected_rpm_path, "target.rpm") in copy_call_history
 
-        # Finally, it copies any additional RPM files from the noarch directory.
-        # Since our pathlib.Path.glob returns one dummy file from the noarch dir:
+        # Finally, it copies any langpack RPM files from the noarch directory based on the LANGUAGES build variable.
         expected_dummy_path = mozpath.join(
-            temp_testing_dir_name, "target_dir", "noarch", "langpack.dummy.rpm"
+            temp_testing_dir_name,
+            "target_dir",
+            "noarch",
+            "firefox-l10n-dummy-111.0-1.noarch.rpm",
         )
-        # Look for a call that copies the dummy file to the upload dir:
+        expected_dest = mozpath.join(upload_dir, "langpack-dummy.noarch.rpm")
+        # Look for a call that copies the langpack file to the upload dir:
         found = any(
-            src == expected_dummy_path and dst == upload_dir
+            str(src) == expected_dummy_path and dst == expected_dest
             for _, src, dst in copy_call_history
         )
         assert found, "The dummy langpack RPM file was not copied to the upload_dir."

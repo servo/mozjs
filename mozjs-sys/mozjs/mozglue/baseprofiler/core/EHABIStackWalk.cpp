@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -22,18 +20,17 @@
  * standard-layout rules in the former.
  */
 
-#include "BaseProfiler.h"
-
 #include "EHABIStackWalk.h"
 
-#include "SharedLibraries.h"
 #include "platform.h"
 
 #include "mozilla/Atomics.h"
+#include "mozilla/BaseProfiler.h"
 #include "mozilla/DebugOnly.h"
-#include "mozilla/EndianUtils.h"
+#include "mozilla/SharedLibraries.h"
 
 #include <algorithm>
+#include <bit>
 #include <elf.h>
 #include <stdint.h>
 #include <vector>
@@ -478,13 +475,13 @@ const EHEntry* EHTable::lookup(uint32_t aPC) const {
   return begin;
 }
 
-#if MOZ_LITTLE_ENDIAN()
-static const unsigned char hostEndian = ELFDATA2LSB;
-#elif MOZ_BIG_ENDIAN()
-static const unsigned char hostEndian = ELFDATA2MSB;
-#else
-#  error "No endian?"
-#endif
+static consteval auto HostEndian() {
+  if constexpr (std::endian::native == std::endian::little) {
+    return ELFDATA2LSB;
+  } else if constexpr (std::endian::native == std::endian::big) {
+    return ELFDATA2MSB;
+  }
+}
 
 // Async signal unsafe: std::vector::reserve, std::string copy ctor.
 EHTable::EHTable(const void* aELF, size_t aSize, const std::string& aName)
@@ -500,7 +497,7 @@ EHTable::EHTable(const void* aELF, size_t aSize, const std::string& aName)
   const Elf32_Ehdr& file = *(reinterpret_cast<Elf32_Ehdr*>(fileHeaderAddr));
   if (memcmp(&file.e_ident[EI_MAG0], ELFMAG, SELFMAG) != 0 ||
       file.e_ident[EI_CLASS] != ELFCLASS32 ||
-      file.e_ident[EI_DATA] != hostEndian ||
+      file.e_ident[EI_DATA] != HostEndian() ||
       file.e_ident[EI_VERSION] != EV_CURRENT || file.e_machine != EM_ARM ||
       file.e_version != EV_CURRENT)
     // e_flags?

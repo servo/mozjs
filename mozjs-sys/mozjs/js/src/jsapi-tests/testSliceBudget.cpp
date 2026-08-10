@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,6 +8,7 @@
 using namespace js;
 using JS::SliceBudget;
 using JS::TimeBudget;
+using JS::UnlimitedBudget;
 using JS::WorkBudget;
 
 BEGIN_TEST(testSliceBudgetUnlimited) {
@@ -23,6 +21,9 @@ BEGIN_TEST(testSliceBudgetUnlimited) {
 
   budget.step(1000000);
   CHECK(!budget.isOverBudget());
+
+  SliceBudget budget2 = SliceBudget(UnlimitedBudget());
+  CHECK(budget2.isUnlimited());
 
   return true;
 }
@@ -110,14 +111,55 @@ BEGIN_TEST(testSliceBudgetInterruptibleTime) {
   // Interrupt requested!
   CHECK(budget.isOverBudget());
 
-  // The external flag is not reset, but the budget will internally remember
-  // that an interrupt was requested.
+  // The external flag is reset, but the budget will internally remember that an
+  // interrupt was requested until the interrupt is cleared.
   CHECK(wantInterrupt);
   wantInterrupt = false;
   CHECK(budget.isOverBudget());
+  budget.clearInterrupted();
+  CHECK(!budget.isOverBudget());
 
   // This doesn't test the deadline is correct as that would require waiting.
 
   return true;
 }
 END_TEST(testSliceBudgetInterruptibleTime)
+
+BEGIN_TEST(testSliceBudgetInterruptibleUnlimited) {
+  SliceBudget::InterruptRequestFlag wantInterrupt(false);
+
+  SliceBudget budget = SliceBudget(UnlimitedBudget(), &wantInterrupt);
+  CHECK(budget.isUnlimited());
+  CHECK(!budget.isOverBudget());
+
+  // Do enough work for an expensive check.
+  budget.step(1000);
+  CHECK(!budget.isOverBudget());
+
+  // We do a little work but not enough work to check interrupt.
+  budget.step(500);
+  CHECK(!budget.isOverBudget());
+
+  // External signal: interrupt requested.
+  wantInterrupt = true;
+
+  // Interrupt requested, but not enough work has been done to check for it.
+  CHECK(!budget.isOverBudget());
+
+  // Do enough work for an expensive check.
+  budget.step(1000);
+
+  // Interrupt requested!
+  CHECK(budget.isOverBudget());
+
+  // The external flag is reset, but the budget will internally remember
+  // interrupt was requested until the interrupt is cleared.
+  CHECK(wantInterrupt);
+  wantInterrupt = false;
+  CHECK(budget.isOverBudget());
+  budget.clearInterrupted();
+  CHECK(!budget.isOverBudget());
+
+  return true;
+}
+END_TEST(testSliceBudgetInterruptibleUnlimited)

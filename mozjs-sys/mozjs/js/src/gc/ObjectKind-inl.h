@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -21,7 +19,7 @@ namespace gc {
 inline constexpr AllocKind slotsToThingKind[] = {
     // clang-format off
     /*  0 */ AllocKind::OBJECT0,  AllocKind::OBJECT2,  AllocKind::OBJECT2,  AllocKind::OBJECT4,
-    /*  4 */ AllocKind::OBJECT4,  AllocKind::OBJECT8,  AllocKind::OBJECT8,  AllocKind::OBJECT8,
+    /*  4 */ AllocKind::OBJECT4,  AllocKind::OBJECT6,  AllocKind::OBJECT6,  AllocKind::OBJECT8,
     /*  8 */ AllocKind::OBJECT8,  AllocKind::OBJECT12, AllocKind::OBJECT12, AllocKind::OBJECT12,
     /* 12 */ AllocKind::OBJECT12, AllocKind::OBJECT16, AllocKind::OBJECT16, AllocKind::OBJECT16,
     /* 16 */ AllocKind::OBJECT16
@@ -110,6 +108,10 @@ static constexpr size_t GetGCKindSlots(AllocKind thingKind) {
     case AllocKind::OBJECT4_FOREGROUND:
     case AllocKind::OBJECT4_BACKGROUND:
       return 4;
+    case AllocKind::OBJECT6:
+    case AllocKind::OBJECT6_FOREGROUND:
+    case AllocKind::OBJECT6_BACKGROUND:
+      return 6;
     case AllocKind::FUNCTION_EXTENDED:
       return 7;
     case AllocKind::OBJECT8:

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,16 +20,9 @@ static void* zlib_alloc(void* cx, uInt items, uInt size) {
 
 static void zlib_free(void* cx, void* addr) { js_free(addr); }
 
-Compressor::Compressor(const unsigned char* inp, size_t inplen)
-    : inp(inp),
-      inplen(inplen),
-      initialized(false),
-      finished(false),
-      currentChunkSize(0) {
-  MOZ_ASSERT(inplen > 0, "data to compress can't be empty");
-
+Compressor::Compressor() {
   zs.opaque = nullptr;
-  zs.next_in = (Bytef*)inp;
+  zs.next_in = nullptr;
   zs.avail_in = 0;
   zs.next_out = nullptr;
   zs.avail_out = 0;
@@ -44,9 +35,6 @@ Compressor::Compressor(const unsigned char* inp, size_t inplen)
   zs.data_type = 0;
   zs.adler = 0;
   zs.reserved = 0;
-
-  // Reserve space for the CompressedDataHeader.
-  outbytes = sizeof(CompressedDataHeader);
 }
 
 Compressor::~Compressor() {
@@ -66,9 +54,8 @@ Compressor::~Compressor() {
 static const int WindowBits = -15;
 
 bool Compressor::init() {
-  if (inplen >= UINT32_MAX) {
-    return false;
-  }
+  MOZ_ASSERT(!initialized);
+
   // zlib is slow and we'd rather be done compression sooner
   // even if it means decompression is slower which penalizes
   // Function.toString()
@@ -86,6 +73,42 @@ bool Compressor::init() {
     return false;
   }
   initialized = true;
+  return true;
+}
+
+bool Compressor::setInput(const unsigned char* input, size_t inputLength) {
+  MOZ_ASSERT(initialized);
+
+  if (inputLength >= UINT32_MAX) {
+    return false;
+  }
+  MOZ_ASSERT(inputLength > 0, "data to compress can't be empty");
+
+  inp = input;
+  inplen = inputLength;
+
+  // Reserve space for the CompressedDataHeader.
+  outbytes = sizeof(CompressedDataHeader);
+
+  zs.next_in = (Bytef*)inp;
+  zs.avail_in = 0;
+  zs.next_out = nullptr;
+  zs.avail_out = 0;
+
+  // If we've already compressed another string, we need to reset our internal
+  // state. Note: deflateReset is much faster than deflateEnd + deflateInit2.
+  if (isFirstInput) {
+    MOZ_ASSERT(currentChunkSize == 0);
+    MOZ_ASSERT(chunkOffsets.empty());
+    MOZ_ASSERT(!finished);
+    isFirstInput = false;
+  } else {
+    currentChunkSize = 0;
+    chunkOffsets.clear();
+    finished = false;
+    int ret = deflateReset(&zs);
+    MOZ_RELEASE_ASSERT(ret == Z_OK);
+  }
   return true;
 }
 

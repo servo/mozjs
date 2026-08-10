@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -193,6 +192,16 @@ extern PRInt32 _PR_ppc_AtomicSet(PRInt32 *val, PRInt32 newval);
 #endif
 
 #if defined(__mips__) && defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)
+/* Use GCC built-in functions */
+#define _PR_HAVE_ATOMIC_OPS
+#define _MD_INIT_ATOMIC()
+#define _MD_ATOMIC_INCREMENT(ptr) __sync_add_and_fetch(ptr, 1)
+#define _MD_ATOMIC_DECREMENT(ptr) __sync_sub_and_fetch(ptr, 1)
+#define _MD_ATOMIC_ADD(ptr, i) __sync_add_and_fetch(ptr, i)
+#define _MD_ATOMIC_SET(ptr, nv) __sync_lock_test_and_set(ptr, nv)
+#endif
+
+#if defined(__riscv) && defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4)
 /* Use GCC built-in functions */
 #define _PR_HAVE_ATOMIC_OPS
 #define _MD_INIT_ATOMIC()

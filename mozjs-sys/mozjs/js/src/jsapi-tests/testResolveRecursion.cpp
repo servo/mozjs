@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -15,16 +12,7 @@
  */
 BEGIN_TEST(testResolveRecursion) {
   static const JSClassOps my_resolve_classOps = {
-      nullptr,     // addProperty
-      nullptr,     // delProperty
-      nullptr,     // enumerate
-      nullptr,     // newEnumerate
-      my_resolve,  // resolve
-      nullptr,     // mayResolve
-      nullptr,     // finalize
-      nullptr,     // call
-      nullptr,     // construct
-      nullptr,     // trace
+      .resolve = my_resolve,
   };
 
   static const JSClass my_resolve_class = {
@@ -158,16 +146,8 @@ BEGIN_TEST(testResolveRecursion_InitStandardClasses) {
 
 const JSClass* getGlobalClass() override {
   static const JSClassOps myGlobalClassOps = {
-      nullptr,                   // addProperty
-      nullptr,                   // delProperty
-      nullptr,                   // enumerate
-      nullptr,                   // newEnumerate
-      my_resolve,                // resolve
-      nullptr,                   // mayResolve
-      nullptr,                   // finalize
-      nullptr,                   // call
-      nullptr,                   // construct
-      JS_GlobalObjectTraceHook,  // trace
+      .resolve = my_resolve,
+      .trace = JS_GlobalObjectTraceHook,
   };
 
   static const JSClass myGlobalClass = {

@@ -17,7 +17,8 @@ def main(output, *other_libs):
     libs.extend(os.path.join(parent, l) for l in other_libs)
     for lib in libs:
         result = subprocess.run(
-            [substs["AR"]] + [f.replace("$@", lib) for f in substs["AR_FLAGS"]]
+            [substs["AR"]] + [f.replace("$@", lib) for f in substs["AR_FLAGS"]],
+            check=False,
         )
         if result.returncode != 0:
             return result.returncode

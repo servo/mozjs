@@ -108,7 +108,7 @@ pub fn new_glean_event(
     GleanEvent {
         category: category.to_owned(),
         name: name.to_owned(),
-        timestamp: Utc::now().timestamp_millis(),
+        timestamp: 0,
         extra,
     }
 }
@@ -227,7 +227,7 @@ impl {{ ping|ping_events_type_name }} for {{ event|event_type_name }} {
     /// Create a GleanEvent for the above-defined Event struct ({{ event|event_type_name }}).
     /// Any metadata `extra` values are passed into the extra HashMap.
     fn glean_event(&self) -> GleanEvent {
-        // Any `extra_keys` will be output below to be inserted into `extra`. 
+        // Any `extra_keys` will be output below to be inserted into `extra`.
         // If there are none, an empty, immutable HashMap is created.
         {% if event.extra_keys.items()|length == 0 %}
         let extra: HashMap<String, String> = HashMap::new();
@@ -323,7 +323,7 @@ impl GleanEventsLogger {
         if let Some(event) = &params.event {
             events.push(event.glean_event());
         }
-        
+
         {% else %}
         let events: Vec<GleanEvent> = Vec::new();
         {% endif %}

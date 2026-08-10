@@ -11,7 +11,10 @@ def test_context_manager(repo):
     cmd = {
         "git": ["show", "--no-patch"],
         "hg": ["tip"],
-        "jj": ["show", "@-"],
+        # For jj, remove most of the header to avoid relative timestamps (one
+        # output might say "(now)", the next "(1 second ago)" for the same
+        # timestamp.)
+        "jj": ["show", "@-", "--template", "description ++ '\\n'"],
         "src": ["echo", "src"],
     }[repo.vcs]
 

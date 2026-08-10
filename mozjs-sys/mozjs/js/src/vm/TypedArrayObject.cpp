@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,6 +7,7 @@
 
 #include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
+#include "mozilla/EndianUtils.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/IntegerTypeTraits.h"
 #include "mozilla/Likely.h"
@@ -29,11 +28,11 @@
 #endif
 #include <type_traits>
 
-#include "jsnum.h"
 #include "jstypes.h"
 
 #include "builtin/Array.h"
 #include "builtin/DataViewObject.h"
+#include "builtin/Number.h"
 #include "gc/Barrier.h"
 #include "gc/MaybeRooted.h"
 #include "jit/InlinableNatives.h"
@@ -50,6 +49,7 @@
 #include "util/Text.h"
 #include "util/WindowsWrapper.h"
 #include "vm/ArrayBufferObject.h"
+#include "vm/EqualityOperations.h"
 #include "vm/Float16.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/GlobalObject.h"
@@ -67,6 +67,7 @@
 #include "vm/Compartment-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/NativeObject-inl.h"
+#include "vm/StringType-inl.h"
 
 using namespace js;
 
@@ -135,40 +136,55 @@ bool TypedArrayObject::ensureHasBuffer(JSContext* cx,
   }
 
   MOZ_ASSERT(typedArray->is<FixedLengthTypedArrayObject>(),
-             "Resizable TypedArrays always use an ArrayBuffer");
+             "Resizable and immutable TypedArrays always use an ArrayBuffer");
 
-  Rooted<FixedLengthTypedArrayObject*> tarray(
-      cx, &typedArray->as<FixedLengthTypedArrayObject>());
+  auto tarray = HandleObject(typedArray).as<FixedLengthTypedArrayObject>();
 
   size_t byteLength = tarray->byteLength();
 
   AutoRealm ar(cx, tarray);
-  Rooted<ArrayBufferObject*> buffer(
-      cx, ArrayBufferObject::createZeroed(cx, tarray->byteLength()));
-  if (!buffer) {
-    return false;
+
+  ArrayBufferObject* buffer;
+  if (tarray->hasMallocedElements(cx)) {
+    // Allocate a new array buffer and transfer our malloced buffer to it
+    // without copying.
+    buffer =
+        ArrayBufferObject::createFromTypedArrayMallocedElements(cx, tarray);
+    if (!buffer) {
+      return false;
+    }
+  } else {
+    buffer = ArrayBufferObject::createZeroed(cx, byteLength);
+    if (!buffer) {
+      return false;
+    }
+
+    // tarray is not shared, because if it were it would have a buffer.
+    memcpy(buffer->dataPointer(), tarray->dataPointerUnshared(), byteLength);
+
+    // If the object is in the nursery, the buffer will be freed by the next
+    // nursery GC. Free the data slot pointer if the object has no inline data.
+    //
+    // Note: we checked hasMallocedElements above, but allocating the array
+    // buffer object might have triggered a GC and this can malloc typed array
+    // elements if the typed array was in the nursery.
+    if (tarray->isTenured() && tarray->hasMallocedElements(cx)) {
+      size_t nbytes = RoundUp(byteLength, sizeof(Value));
+      js_free(tarray->elements());
+      RemoveCellMemory(tarray, nbytes, MemoryUse::TypedArrayElements);
+    }
+
+    tarray->setFixedSlot(TypedArrayObject::DATA_SLOT,
+                         PrivateValue(buffer->dataPointer()));
   }
+
+  MOZ_ASSERT(tarray->elements() == buffer->dataPointer());
 
   buffer->pinLength(tarray->isLengthPinned());
 
   // Attaching the first view to an array buffer is infallible.
   MOZ_ALWAYS_TRUE(buffer->addView(cx, tarray));
 
-  // tarray is not shared, because if it were it would have a buffer.
-  memcpy(buffer->dataPointer(), tarray->dataPointerUnshared(), byteLength);
-
-  // If the object is in the nursery, the buffer will be freed by the next
-  // nursery GC. Free the data slot pointer if the object has no inline data.
-  size_t nbytes = RoundUp(byteLength, sizeof(Value));
-  Nursery& nursery = cx->nursery();
-  if (tarray->isTenured() && !tarray->hasInlineElements() &&
-      !nursery.isInside(tarray->elements())) {
-    js_free(tarray->elements());
-    RemoveCellMemory(tarray, nbytes, MemoryUse::TypedArrayElements);
-  }
-
-  tarray->setFixedSlot(TypedArrayObject::DATA_SLOT,
-                       PrivateValue(buffer->dataPointer()));
   tarray->setFixedSlot(TypedArrayObject::BUFFER_SLOT, ObjectValue(*buffer));
 
   return true;
@@ -274,9 +290,10 @@ size_t FixedLengthTypedArrayObject::objectMoved(JSObject* obj, JSObject* old) {
   // Non-inline allocations are rounded up.
   nbytes = RoundUp(nbytes, sizeof(Value));
 
-  Nursery::WasBufferMoved result = nursery.maybeMoveBufferOnPromotion(
-      &buf, newObj, nbytes, nbytes, MemoryUse::TypedArrayElements,
-      ArrayBufferContentsArena);
+  Nursery::WasBufferMoved result =
+      nursery.maybeMoveNurseryOrMallocBufferOnPromotion(
+          &buf, newObj, nbytes, nbytes, MemoryUse::TypedArrayElements,
+          ArrayBufferContentsArena);
   if (result == Nursery::BufferMoved) {
     newObj->setReservedSlot(DATA_SLOT, PrivateValue(buf));
 
@@ -301,6 +318,10 @@ void FixedLengthTypedArrayObject::setInlineElements() {
   char* dataSlot = reinterpret_cast<char*>(this) + dataOffset();
   *reinterpret_cast<void**>(dataSlot) =
       this->fixedData(FixedLengthTypedArrayObject::FIXED_DATA_START);
+}
+
+bool FixedLengthTypedArrayObject::hasMallocedElements(JSContext* cx) const {
+  return !hasInlineElements() && !cx->nursery().isInside(elements());
 }
 
 /* Helper clamped uint8_t type */
@@ -352,7 +373,8 @@ static TypedArrayType* NewTypedArrayObject(JSContext* cx, const JSClass* clasp,
   allocKind = gc::GetFinalizedAllocKindForClass(allocKind, clasp);
 
   static_assert(std::is_same_v<TypedArrayType, FixedLengthTypedArrayObject> ||
-                std::is_same_v<TypedArrayType, ResizableTypedArrayObject>);
+                std::is_same_v<TypedArrayType, ResizableTypedArrayObject> ||
+                std::is_same_v<TypedArrayType, ImmutableTypedArrayObject>);
 
   // Fixed length typed arrays can store data inline so we only use fixed slots
   // to cover the reserved slots, ignoring the AllocKind.
@@ -380,11 +402,15 @@ template <typename NativeType>
 class ResizableTypedArrayObjectTemplate;
 
 template <typename NativeType>
+class ImmutableTypedArrayObjectTemplate;
+
+template <typename NativeType>
 class TypedArrayObjectTemplate {
   friend class js::TypedArrayObject;
 
   using FixedLengthTypedArray = FixedLengthTypedArrayObjectTemplate<NativeType>;
   using ResizableTypedArray = ResizableTypedArrayObjectTemplate<NativeType>;
+  using ImmutableTypedArray = ImmutableTypedArrayObjectTemplate<NativeType>;
   using AutoLength = ArrayBufferViewObject::AutoLength;
 
   static constexpr auto ByteLengthLimit = TypedArrayObject::ByteLengthLimit;
@@ -460,7 +486,7 @@ class TypedArrayObjectTemplate {
         nullptr);
   }
 
-  // ES2023 draft rev cf86f1cdc28e809170733d74ea64fd0f3dd79f78
+  // ES2026 draft rev 6d71ca0e2dbf1c0cfb87b5eb7a83cf7c76591561
   // 23.2.5.1 TypedArray ( ...args )
   static bool class_constructor(JSContext* cx, unsigned argc, Value* vp) {
     AutoJSConstructorProfilerEntry pseudoFrame(cx, "[TypedArray]");
@@ -531,20 +557,21 @@ class TypedArrayObjectTemplate {
     return fromBufferWrapped(cx, dataObj, byteOffset, length, proto);
   }
 
-  // ES2023 draft rev cf86f1cdc28e809170733d74ea64fd0f3dd79f78
+  // ES2026 draft rev 6d71ca0e2dbf1c0cfb87b5eb7a83cf7c76591561
   // 23.2.5.1.3 InitializeTypedArrayFromArrayBuffer ( O, buffer, byteOffset,
-  // length ) Steps 2 and 4.
+  // length ) Steps 2-3 and 5.
   static bool byteOffsetAndLength(JSContext* cx, HandleValue byteOffsetValue,
                                   HandleValue lengthValue, uint64_t* byteOffset,
                                   uint64_t* length) {
-    // Step 2.
+    // Steps 2-3.
     *byteOffset = 0;
     if (!byteOffsetValue.isUndefined()) {
+      // Step 2.
       if (!ToIndex(cx, byteOffsetValue, byteOffset)) {
         return false;
       }
 
-      // Step 7.
+      // Step 3.
       if (*byteOffset % BYTES_PER_ELEMENT != 0) {
         JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                   JSMSG_TYPED_ARRAY_CONSTRUCT_OFFSET_BOUNDS,
@@ -554,7 +581,7 @@ class TypedArrayObjectTemplate {
       }
     }
 
-    // Step 4.
+    // Step 5.
     *length = UINT64_MAX;
     if (!lengthValue.isUndefined()) {
       if (!ToIndex(cx, lengthValue, length)) {
@@ -565,9 +592,9 @@ class TypedArrayObjectTemplate {
     return true;
   }
 
-  // ES2023 draft rev cf86f1cdc28e809170733d74ea64fd0f3dd79f78
+  // ES2026 draft rev 6d71ca0e2dbf1c0cfb87b5eb7a83cf7c76591561
   // 23.2.5.1.3 InitializeTypedArrayFromArrayBuffer ( O, buffer, byteOffset,
-  // length ) Steps 5-8.
+  // length ) Steps 6-9.
   static bool computeAndCheckLength(
       JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> bufferMaybeUnwrapped,
       uint64_t byteOffset, uint64_t lengthIndex, size_t* length,
@@ -577,19 +604,22 @@ class TypedArrayObjectTemplate {
     MOZ_ASSERT_IF(lengthIndex != UINT64_MAX,
                   lengthIndex < uint64_t(DOUBLE_INTEGRAL_PRECISION_LIMIT));
 
-    // Step 5.
+    // Step 6.
     if (bufferMaybeUnwrapped->isDetached()) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_TYPED_ARRAY_DETACHED);
       return false;
     }
 
-    // Step 6.
+    // Step 7.
     size_t bufferByteLength = bufferMaybeUnwrapped->byteLength();
     MOZ_ASSERT(bufferByteLength <= ByteLengthLimit);
 
+    // Steps 8-9.
     size_t len;
     if (lengthIndex == UINT64_MAX) {
+      // Steps 8.a and 9.a.iii.
+      //
       // Check if |byteOffset| valid.
       if (byteOffset > bufferByteLength) {
         JS_ReportErrorNumberASCII(
@@ -599,6 +629,8 @@ class TypedArrayObjectTemplate {
         return false;
       }
 
+      // Steps 8.b-c.
+      //
       // Resizable buffers without an explicit length are auto-length.
       if (bufferMaybeUnwrapped->isResizable()) {
         *length = 0;
@@ -606,7 +638,7 @@ class TypedArrayObjectTemplate {
         return true;
       }
 
-      // Steps 7.a and 7.c.
+      // Step 9.a.i.
       if (bufferByteLength % BYTES_PER_ELEMENT != 0) {
         // The given byte array doesn't map exactly to
         // |BYTES_PER_ELEMENT * N|
@@ -617,14 +649,14 @@ class TypedArrayObjectTemplate {
         return false;
       }
 
-      // Step 7.b.
+      // Step 9.a.ii.
       size_t newByteLength = bufferByteLength - size_t(byteOffset);
       len = newByteLength / BYTES_PER_ELEMENT;
     } else {
-      // Step 8.a.
+      // Step 9.b.i.
       uint64_t newByteLength = lengthIndex * BYTES_PER_ELEMENT;
 
-      // Step 8.b.
+      // Step 9.b.ii.
       if (byteOffset + newByteLength > bufferByteLength) {
         // |byteOffset + newByteLength| is too big for the arraybuffer
         JS_ReportErrorNumberASCII(
@@ -637,19 +669,20 @@ class TypedArrayObjectTemplate {
       len = size_t(lengthIndex);
     }
 
+    // Steps 9.c-d.
     MOZ_ASSERT(len <= ByteLengthLimit / BYTES_PER_ELEMENT);
     *length = len;
     *autoLength = AutoLength::No;
     return true;
   }
 
-  // ES2023 draft rev cf86f1cdc28e809170733d74ea64fd0f3dd79f78
+  // ES2026 draft rev 6d71ca0e2dbf1c0cfb87b5eb7a83cf7c76591561
   // 23.2.5.1.3 InitializeTypedArrayFromArrayBuffer ( O, buffer, byteOffset,
-  // length ) Steps 5-13.
+  // length ) Steps 6-12.
   static TypedArrayObject* fromBufferSameCompartment(
       JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
       uint64_t byteOffset, uint64_t lengthIndex, HandleObject proto) {
-    // Steps 5-8.
+    // Steps 6-9.
     size_t length = 0;
     auto autoLength = AutoLength::No;
     if (!computeAndCheckLength(cx, buffer, byteOffset, lengthIndex, &length,
@@ -657,14 +690,17 @@ class TypedArrayObjectTemplate {
       return nullptr;
     }
 
-    if (!buffer->isResizable()) {
-      // Steps 9-13.
-      return FixedLengthTypedArray::makeInstance(cx, buffer, byteOffset, length,
-                                                 proto);
+    // Steps 10-12.
+    if (buffer->isResizable()) {
+      return ResizableTypedArray::makeInstance(cx, buffer, byteOffset, length,
+                                               autoLength, proto);
     }
-
-    return ResizableTypedArray::makeInstance(cx, buffer, byteOffset, length,
-                                             autoLength, proto);
+    if (buffer->isImmutable()) {
+      return ImmutableTypedArray::makeInstance(cx, buffer, byteOffset, length,
+                                               proto);
+    }
+    return FixedLengthTypedArray::makeInstance(cx, buffer, byteOffset, length,
+                                               proto);
   }
 
   // Create a TypedArray object in another compartment.
@@ -725,12 +761,15 @@ class TypedArrayObjectTemplate {
         return nullptr;
       }
 
-      if (!unwrappedBuffer->isResizable()) {
-        typedArray = FixedLengthTypedArray::makeInstance(
-            cx, unwrappedBuffer, byteOffset, length, wrappedProto);
-      } else {
+      if (unwrappedBuffer->isResizable()) {
         typedArray = ResizableTypedArray::makeInstance(
             cx, unwrappedBuffer, byteOffset, length, autoLength, wrappedProto);
+      } else if (unwrappedBuffer->isImmutable()) {
+        typedArray = ImmutableTypedArray::makeInstance(
+            cx, unwrappedBuffer, byteOffset, length, wrappedProto);
+      } else {
+        typedArray = FixedLengthTypedArray::makeInstance(
+            cx, unwrappedBuffer, byteOffset, length, wrappedProto);
       }
       if (!typedArray) {
         return nullptr;
@@ -762,6 +801,21 @@ class TypedArrayObjectTemplate {
                                        nullptr);
     }
     return fromBufferWrapped(cx, bufobj, byteOffset, lengthIndex, nullptr);
+  }
+
+  static TypedArrayObject* fromBuffer(
+      JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
+      size_t byteOffset) {
+    MOZ_ASSERT(byteOffset % BYTES_PER_ELEMENT == 0);
+    return fromBufferSameCompartment(cx, buffer, byteOffset, UINT64_MAX,
+                                     nullptr);
+  }
+
+  static TypedArrayObject* fromBuffer(
+      JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
+      size_t byteOffset, size_t length) {
+    MOZ_ASSERT(byteOffset % BYTES_PER_ELEMENT == 0);
+    return fromBufferSameCompartment(cx, buffer, byteOffset, length, nullptr);
   }
 
   static bool maybeCreateArrayBuffer(JSContext* cx, uint64_t count,
@@ -919,6 +973,31 @@ class FixedLengthTypedArrayObjectTemplate
     MOZ_ASSERT(tarray->getReservedSlot(DATA_SLOT).isUndefined());
 
     return tarray;
+  }
+
+  static FixedLengthTypedArrayObject* fromDetachedBuffer(
+      JSContext* cx, Handle<ArrayBufferObject*> buffer,
+      gc::Heap heap = gc::Heap::Default) {
+    MOZ_ASSERT(buffer->isDetached());
+
+    gc::AllocKind allocKind = gc::GetGCObjectKind(instanceClass());
+
+    AutoSetNewObjectMetadata metadata(cx);
+    auto* obj = newBuiltinClassInstance(cx, allocKind, heap);
+    if (!obj) {
+      return nullptr;
+    }
+
+    // Normal construction doesn't allow creating a new TypedArray with an
+    // already detached ArrayBuffer. Initialize all slots as if a TypedArrray
+    // had been created with a non-detached buffer and the buffer was detached
+    // later.
+    obj->initFixedSlot(BUFFER_SLOT, ObjectValue(*buffer));
+    obj->initFixedSlot(LENGTH_SLOT, PrivateValue(size_t(0)));
+    obj->initFixedSlot(BYTEOFFSET_SLOT, PrivateValue(size_t(0)));
+    obj->initFixedSlot(DATA_SLOT, UndefinedValue());
+
+    return obj;
   }
 
   static void initTypedArraySlots(FixedLengthTypedArrayObject* tarray,
@@ -1097,6 +1176,91 @@ class ResizableTypedArrayObjectTemplate
 };
 
 template <typename NativeType>
+class ImmutableTypedArrayObjectTemplate
+    : public ImmutableTypedArrayObject,
+      public TypedArrayObjectTemplate<NativeType> {
+  friend class js::TypedArrayObject;
+
+  using TypedArrayTemplate = TypedArrayObjectTemplate<NativeType>;
+
+ public:
+  using TypedArrayTemplate::ArrayTypeID;
+  using TypedArrayTemplate::BYTES_PER_ELEMENT;
+  using TypedArrayTemplate::protoKey;
+
+  static inline const JSClass* instanceClass() {
+    static_assert(ArrayTypeID() <
+                  std::size(TypedArrayObject::immutableClasses));
+    return &TypedArrayObject::immutableClasses[ArrayTypeID()];
+  }
+
+  static ImmutableTypedArrayObject* newBuiltinClassInstance(
+      JSContext* cx, gc::AllocKind allocKind, gc::Heap heap) {
+    RootedObject proto(cx, GlobalObject::getOrCreatePrototype(cx, protoKey()));
+    if (!proto) {
+      return nullptr;
+    }
+    return NewTypedArrayObject<ImmutableTypedArrayObject>(
+        cx, instanceClass(), proto, allocKind, heap);
+  }
+
+  static ImmutableTypedArrayObject* makeProtoInstance(JSContext* cx,
+                                                      HandleObject proto,
+                                                      gc::AllocKind allocKind) {
+    MOZ_ASSERT(proto);
+    return NewTypedArrayObject<ImmutableTypedArrayObject>(
+        cx, instanceClass(), proto, allocKind, gc::Heap::Default);
+  }
+
+  static ImmutableTypedArrayObject* makeInstance(
+      JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
+      size_t byteOffset, size_t len, HandleObject proto) {
+    MOZ_ASSERT(buffer);
+    MOZ_ASSERT(buffer->isImmutable());
+    MOZ_ASSERT(!buffer->isDetached());
+    MOZ_ASSERT(len <= ByteLengthLimit / BYTES_PER_ELEMENT);
+
+    gc::AllocKind allocKind = gc::GetGCObjectKind(instanceClass());
+
+    AutoSetNewObjectMetadata metadata(cx);
+    ImmutableTypedArrayObject* obj;
+    if (proto) {
+      obj = makeProtoInstance(cx, proto, allocKind);
+    } else {
+      obj = newBuiltinClassInstance(cx, allocKind, gc::Heap::Default);
+    }
+    if (!obj || !obj->init(cx, buffer, byteOffset, len, BYTES_PER_ELEMENT)) {
+      return nullptr;
+    }
+
+    return obj;
+  }
+
+  static ImmutableTypedArrayObject* makeTemplateObject(JSContext* cx) {
+    gc::AllocKind allocKind = gc::GetGCObjectKind(instanceClass());
+
+    AutoSetNewObjectMetadata metadata(cx);
+
+    auto* tarray = newBuiltinClassInstance(cx, allocKind, gc::Heap::Tenured);
+    if (!tarray) {
+      return nullptr;
+    }
+
+    tarray->initFixedSlot(TypedArrayObject::BUFFER_SLOT, JS::FalseValue());
+    tarray->initFixedSlot(TypedArrayObject::LENGTH_SLOT,
+                          PrivateValue(size_t(0)));
+    tarray->initFixedSlot(TypedArrayObject::BYTEOFFSET_SLOT,
+                          PrivateValue(size_t(0)));
+
+    // Template objects don't need memory for their elements, since there
+    // won't be any elements to store.
+    MOZ_ASSERT(tarray->getReservedSlot(DATA_SLOT).isUndefined());
+
+    return tarray;
+  }
+};
+
+template <typename NativeType>
 bool TypedArrayObjectTemplate<NativeType>::convertValue(JSContext* cx,
                                                         HandleValue v,
                                                         NativeType* result) {
@@ -1105,9 +1269,11 @@ bool TypedArrayObjectTemplate<NativeType>::convertValue(JSContext* cx,
     return false;
   }
 
-  if (js::SupportDifferentialTesting()) {
-    // See the comment in ElementSpecific::doubleToNative.
-    d = JS::CanonicalizeNaN(d);
+  if constexpr (!std::numeric_limits<NativeType>::is_integer) {
+    if (js::SupportDifferentialTesting()) {
+      // See the comment in ElementSpecific::doubleToNative.
+      d = JS::CanonicalizeNaN(d);
+    }
   }
 
   // Assign based on characteristics of the destination type
@@ -1140,6 +1306,8 @@ template <typename NativeType>
 /* static */ bool TypedArrayObjectTemplate<NativeType>::setElement(
     JSContext* cx, Handle<TypedArrayObject*> obj, uint64_t index, HandleValue v,
     ObjectOpResult& result) {
+  MOZ_ASSERT(!obj->is<ImmutableTypedArrayObject>());
+
   // Steps 1-2.
   NativeType nativeValue;
   if (!convertValue(cx, v, &nativeValue)) {
@@ -1461,67 +1629,128 @@ static bool TypedArrayConstructor(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 template <typename T>
-static bool GetTemplateObjectForNative(JSContext* cx,
-                                       const JS::HandleValueArray args,
-                                       MutableHandleObject res) {
-  if (args.length() == 0) {
+static bool GetTemplateObjectForLength(JSContext* cx, int32_t length,
+                                       MutableHandle<TypedArrayObject*> res) {
+  size_t len = size_t(std::max(length, 0));
+
+  size_t nbytes;
+  if (!js::CalculateAllocSize<T>(len, &nbytes) ||
+      nbytes > TypedArrayObject::ByteLengthLimit) {
     return true;
   }
 
-  HandleValue arg = args[0];
-  if (arg.isInt32()) {
-    uint32_t len = 0;
-    if (arg.toInt32() >= 0) {
-      len = arg.toInt32();
-    }
+  res.set(FixedLengthTypedArrayObjectTemplate<T>::makeTemplateObject(cx, len));
+  return !!res;
+}
 
-    size_t nbytes;
-    if (!js::CalculateAllocSize<T>(len, &nbytes) ||
-        nbytes > TypedArrayObject::ByteLengthLimit) {
-      return true;
-    }
-
-    res.set(
-        FixedLengthTypedArrayObjectTemplate<T>::makeTemplateObject(cx, len));
-    return !!res;
+template <typename T>
+static TypedArrayObject* GetTemplateObjectForBuffer(
+    JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer) {
+  if (buffer->isResizable()) {
+    return ResizableTypedArrayObjectTemplate<T>::makeTemplateObject(cx);
   }
 
-  if (!arg.isObject()) {
-    return true;
-  }
-  auto* obj = &arg.toObject();
-
-  // We don't support wrappers, because of the complicated interaction between
-  // wrapped ArrayBuffers and TypedArrays, see |fromBufferWrapped()|.
-  if (IsWrapper(obj)) {
-    return true;
+  if (buffer->isImmutable()) {
+    return ImmutableTypedArrayObjectTemplate<T>::makeTemplateObject(cx);
   }
 
   // We don't use the template's length in the object case, so we can create
   // the template typed array with an initial length of zero.
   uint32_t len = 0;
 
-  if (!obj->is<ArrayBufferObjectMaybeShared>() ||
-      !obj->as<ArrayBufferObjectMaybeShared>().isResizable()) {
-    res.set(
-        FixedLengthTypedArrayObjectTemplate<T>::makeTemplateObject(cx, len));
-  } else {
-    res.set(ResizableTypedArrayObjectTemplate<T>::makeTemplateObject(cx));
-  }
-  return !!res;
+  return FixedLengthTypedArrayObjectTemplate<T>::makeTemplateObject(cx, len);
 }
 
-/* static */ bool TypedArrayObject::GetTemplateObjectForNative(
-    JSContext* cx, Native native, const JS::HandleValueArray args,
-    MutableHandleObject res) {
-  MOZ_ASSERT(!res);
-#define CHECK_TYPED_ARRAY_CONSTRUCTOR(_, T, N)                     \
-  if (native == &TypedArrayObjectTemplate<T>::class_constructor) { \
-    return ::GetTemplateObjectForNative<T>(cx, args, res);         \
+template <typename T>
+static TypedArrayObject* GetTemplateObjectForBufferView(
+    JSContext* cx, Handle<TypedArrayObject*> bufferView) {
+  if (bufferView->is<ResizableTypedArrayObject>()) {
+    return ResizableTypedArrayObjectTemplate<T>::makeTemplateObject(cx);
   }
-  JS_FOR_EACH_TYPED_ARRAY(CHECK_TYPED_ARRAY_CONSTRUCTOR)
-#undef CHECK_TYPED_ARRAY_CONSTRUCTOR
-  return true;
+
+  if (bufferView->is<ImmutableTypedArrayObject>()) {
+    return ImmutableTypedArrayObjectTemplate<T>::makeTemplateObject(cx);
+  }
+
+  // We don't use the template's length in the object case, so we can create
+  // the template typed array with an initial length of zero.
+  uint32_t len = 0;
+
+  return FixedLengthTypedArrayObjectTemplate<T>::makeTemplateObject(cx, len);
+}
+
+template <typename T>
+static TypedArrayObject* GetTemplateObjectForArrayLike(
+    JSContext* cx, Handle<JSObject*> arrayLike) {
+  MOZ_ASSERT(!arrayLike->is<ArrayBufferObjectMaybeShared>(),
+             "Use GetTemplateObjectForBuffer for array buffer objects");
+  MOZ_ASSERT(!IsWrapper(arrayLike), "Wrappers not supported");
+
+  // We don't use the template's length in the object case, so we can create
+  // the template typed array with an initial length of zero.
+  uint32_t len = 0;
+
+  return FixedLengthTypedArrayObjectTemplate<T>::makeTemplateObject(cx, len);
+}
+
+/* static */ bool TypedArrayObject::GetTemplateObjectForLength(
+    JSContext* cx, Scalar::Type type, int32_t length,
+    MutableHandle<TypedArrayObject*> res) {
+  MOZ_ASSERT(!res);
+
+  switch (type) {
+#define CREATE_TYPED_ARRAY_TEMPLATE(_, T, N) \
+  case Scalar::N:                            \
+    return ::GetTemplateObjectForLength<T>(cx, length, res);
+    JS_FOR_EACH_TYPED_ARRAY(CREATE_TYPED_ARRAY_TEMPLATE)
+#undef CREATE_TYPED_ARRAY_TEMPLATE
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+}
+
+/* static */ TypedArrayObject* TypedArrayObject::GetTemplateObjectForBuffer(
+    JSContext* cx, Scalar::Type type,
+    Handle<ArrayBufferObjectMaybeShared*> buffer) {
+  switch (type) {
+#define CREATE_TYPED_ARRAY_TEMPLATE(_, T, N) \
+  case Scalar::N:                            \
+    return ::GetTemplateObjectForBuffer<T>(cx, buffer);
+    JS_FOR_EACH_TYPED_ARRAY(CREATE_TYPED_ARRAY_TEMPLATE)
+#undef CREATE_TYPED_ARRAY_TEMPLATE
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+}
+
+/* static */ TypedArrayObject* TypedArrayObject::GetTemplateObjectForBufferView(
+    JSContext* cx, Handle<TypedArrayObject*> bufferView) {
+  switch (bufferView->type()) {
+#define CREATE_TYPED_ARRAY_TEMPLATE(_, T, N) \
+  case Scalar::N:                            \
+    return ::GetTemplateObjectForBufferView<T>(cx, bufferView);
+    JS_FOR_EACH_TYPED_ARRAY(CREATE_TYPED_ARRAY_TEMPLATE)
+#undef CREATE_TYPED_ARRAY_TEMPLATE
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+}
+
+/* static */ TypedArrayObject* TypedArrayObject::GetTemplateObjectForArrayLike(
+    JSContext* cx, Scalar::Type type, Handle<JSObject*> arrayLike) {
+  // We don't support wrappers, because of the complicated interaction between
+  // wrapped ArrayBuffers and TypedArrays, see |fromBufferWrapped()|.
+  MOZ_ASSERT(!IsWrapper(arrayLike));
+
+  switch (type) {
+#define CREATE_TYPED_ARRAY_TEMPLATE(_, T, N) \
+  case Scalar::N:                            \
+    return ::GetTemplateObjectForArrayLike<T>(cx, arrayLike);
+    JS_FOR_EACH_TYPED_ARRAY(CREATE_TYPED_ARRAY_TEMPLATE)
+#undef CREATE_TYPED_ARRAY_TEMPLATE
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
 }
 
 static bool LengthGetterImpl(JSContext* cx, const CallArgs& args) {
@@ -1610,28 +1839,31 @@ static bool TypedArray_toStringTagGetter(JSContext* cx, unsigned argc,
 }
 
 /* static */ const JSPropertySpec TypedArrayObject::protoAccessors[] = {
-    JS_PSG("length", TypedArray_lengthGetter, 0),
+    JS_INLINABLE_PSG("length", TypedArray_lengthGetter, 0, TypedArrayLength),
     JS_PSG("buffer", TypedArray_bufferGetter, 0),
-    JS_PSG("byteLength", TypedArray_byteLengthGetter, 0),
-    JS_PSG("byteOffset", TypedArray_byteOffsetGetter, 0),
+    JS_INLINABLE_PSG("byteLength", TypedArray_byteLengthGetter, 0,
+                     TypedArrayByteLength),
+    JS_INLINABLE_PSG("byteOffset", TypedArray_byteOffsetGetter, 0,
+                     TypedArrayByteOffset),
     JS_SYM_GET(toStringTag, TypedArray_toStringTagGetter, 0),
     JS_PS_END,
 };
 
 template <typename T>
-static inline bool SetFromTypedArray(Handle<TypedArrayObject*> target,
+static inline bool SetFromTypedArray(TypedArrayObject* target,
                                      size_t targetLength,
-                                     Handle<TypedArrayObject*> source,
-                                     size_t sourceLength, size_t offset) {
+                                     TypedArrayObject* source,
+                                     size_t sourceLength, size_t offset,
+                                     size_t sourceOffset = 0) {
   // WARNING: |source| may be an unwrapped typed array from a different
   // compartment. Proceed with caution!
 
   if (target->isSharedMemory() || source->isSharedMemory()) {
     return ElementSpecific<T, SharedOps>::setFromTypedArray(
-        target, targetLength, source, sourceLength, offset);
+        target, targetLength, source, sourceLength, offset, sourceOffset);
   }
   return ElementSpecific<T, UnsharedOps>::setFromTypedArray(
-      target, targetLength, source, sourceLength, offset);
+      target, targetLength, source, sourceLength, offset, sourceOffset);
 }
 
 template <typename T>
@@ -1778,6 +2010,13 @@ static bool TypedArray_set(JSContext* cx, const CallArgs& args) {
   Rooted<TypedArrayObject*> target(
       cx, &args.thisv().toObject().as<TypedArrayObject>());
 
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (target->is<ImmutableTypedArrayObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
+    return false;
+  }
+
   // Steps 4-5.
   double targetOffset = 0;
   if (args.length() > 1) {
@@ -1844,6 +2083,89 @@ static bool TypedArray_set(JSContext* cx, unsigned argc, Value* vp) {
   return CallNonGenericMethod<IsTypedArrayObject, TypedArray_set>(cx, args);
 }
 
+static bool TypedArraySet(TypedArrayObject* target, TypedArrayObject* source,
+                          intptr_t offset) {
+  MOZ_ASSERT(offset >= 0);
+
+  size_t targetLength = target->length().valueOr(0);
+  size_t sourceLength = source->length().valueOr(0);
+
+  switch (target->type()) {
+#define SET_FROM_TYPED_ARRAY(_, T, N)                                       \
+  case Scalar::N:                                                           \
+    return SetFromTypedArray<T>(target, targetLength, source, sourceLength, \
+                                size_t(offset));
+    JS_FOR_EACH_TYPED_ARRAY(SET_FROM_TYPED_ARRAY)
+#undef SET_FROM_TYPED_ARRAY
+    default:
+      break;
+  }
+  MOZ_CRASH("Unsupported TypedArray type");
+}
+
+bool js::TypedArraySet(JSContext* cx, TypedArrayObject* target,
+                       TypedArrayObject* source, intptr_t offset) {
+  if (!::TypedArraySet(target, source, offset)) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+  return true;
+}
+
+void js::TypedArraySetInfallible(TypedArrayObject* target,
+                                 TypedArrayObject* source, intptr_t offset) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ALWAYS_TRUE(::TypedArraySet(target, source, offset));
+}
+
+static bool TypedArraySetFromSubarray(TypedArrayObject* target,
+                                      TypedArrayObject* source, intptr_t offset,
+                                      intptr_t sourceOffset,
+                                      intptr_t sourceLength) {
+  MOZ_ASSERT(offset >= 0);
+  MOZ_ASSERT(sourceOffset >= 0);
+  MOZ_ASSERT(sourceLength >= 0);
+
+  size_t targetLength = target->length().valueOr(0);
+
+  switch (target->type()) {
+#define SET_FROM_TYPED_ARRAY(_, T, N)                                 \
+  case Scalar::N:                                                     \
+    return SetFromTypedArray<T>(target, targetLength, source,         \
+                                size_t(sourceLength), size_t(offset), \
+                                size_t(sourceOffset));
+    JS_FOR_EACH_TYPED_ARRAY(SET_FROM_TYPED_ARRAY)
+#undef SET_FROM_TYPED_ARRAY
+    default:
+      break;
+  }
+  MOZ_CRASH("Unsupported TypedArray type");
+}
+
+bool js::TypedArraySetFromSubarray(JSContext* cx, TypedArrayObject* target,
+                                   TypedArrayObject* source, intptr_t offset,
+                                   intptr_t sourceOffset,
+                                   intptr_t sourceLength) {
+  if (!::TypedArraySetFromSubarray(target, source, offset, sourceOffset,
+                                   sourceLength)) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+  return true;
+}
+
+void js::TypedArraySetFromSubarrayInfallible(TypedArrayObject* target,
+                                             TypedArrayObject* source,
+                                             intptr_t offset,
+                                             intptr_t sourceOffset,
+                                             intptr_t sourceLength) {
+  AutoUnsafeCallWithABI unsafe;
+
+  MOZ_ALWAYS_TRUE(::TypedArraySetFromSubarray(target, source, offset,
+                                              sourceOffset, sourceLength));
+}
+
 // ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
 // 22.2.3.5 %TypedArray%.prototype.copyWithin ( target, start [ , end ] )
 static bool TypedArray_copyWithin(JSContext* cx, const CallArgs& args) {
@@ -1856,6 +2178,13 @@ static bool TypedArray_copyWithin(JSContext* cx, const CallArgs& args) {
   auto arrayLength = tarray->length();
   if (!arrayLength) {
     ReportOutOfBounds(cx, tarray);
+    return false;
+  }
+
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (tarray->is<ImmutableTypedArrayObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
     return false;
   }
 
@@ -2742,8 +3071,8 @@ static bool TypedArray_includes(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 template <typename Ops, typename NativeType>
-static void TypedArrayFill(TypedArrayObject* tarray, NativeType value,
-                           size_t startIndex, size_t endIndex) {
+static void TypedArrayFillLoop(TypedArrayObject* tarray, NativeType value,
+                               size_t startIndex, size_t endIndex) {
   MOZ_RELEASE_ASSERT(startIndex <= endIndex);
   MOZ_RELEASE_ASSERT(endIndex <= tarray->length().valueOr(0));
 
@@ -2798,10 +3127,8 @@ static NativeType ConvertToNativeType(const Value& value) {
 }
 
 template <typename NativeType>
-static void TypedArrayFill(TypedArrayObject* tarray, const Value& value,
+static void TypedArrayFill(TypedArrayObject* tarray, NativeType val,
                            size_t startIndex, size_t endIndex) {
-  NativeType val = ConvertToNativeType<NativeType>(value);
-
   using UnsignedT =
       typename mozilla::UnsignedStdintTypeForSize<sizeof(NativeType)>::Type;
   UnsignedT bits = mozilla::BitwiseCast<UnsignedT>(val);
@@ -2817,16 +3144,23 @@ static void TypedArrayFill(TypedArrayObject* tarray, const Value& value,
       TypedArrayFillAtomicMemset<NativeType>(tarray, uint8_t(bits), startIndex,
                                              endIndex);
     } else {
-      TypedArrayFill<SharedOps>(tarray, val, startIndex, endIndex);
+      TypedArrayFillLoop<SharedOps>(tarray, val, startIndex, endIndex);
     }
   } else {
     if (bits == pattern) {
       TypedArrayFillStdMemset<NativeType>(tarray, uint8_t(bits), startIndex,
                                           endIndex);
     } else {
-      TypedArrayFill<UnsharedOps>(tarray, val, startIndex, endIndex);
+      TypedArrayFillLoop<UnsharedOps>(tarray, val, startIndex, endIndex);
     }
   }
+}
+
+template <typename NativeType>
+static void TypedArrayFill(TypedArrayObject* tarray, const Value& value,
+                           size_t startIndex, size_t endIndex) {
+  NativeType val = ConvertToNativeType<NativeType>(value);
+  TypedArrayFill(tarray, val, startIndex, endIndex);
 }
 
 /**
@@ -2837,7 +3171,7 @@ static void TypedArrayFill(TypedArrayObject* tarray, const Value& value,
 static bool TypedArray_fill(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(IsTypedArrayObject(args.thisv()));
 
-  // Steps 1-3.
+  // Steps 1-2.
   Rooted<TypedArrayObject*> tarray(
       cx, &args.thisv().toObject().as<TypedArrayObject>());
 
@@ -2846,6 +3180,15 @@ static bool TypedArray_fill(JSContext* cx, const CallArgs& args) {
     ReportOutOfBounds(cx, tarray);
     return false;
   }
+
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (tarray->is<ImmutableTypedArrayObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
+    return false;
+  }
+
+  // Step 3
   size_t len = *arrayLength;
 
   // Steps 4-5.
@@ -2914,6 +3257,96 @@ static bool TypedArray_fill(JSContext* cx, unsigned argc, Value* vp) {
   return CallNonGenericMethod<IsTypedArrayObject, TypedArray_fill>(cx, args);
 }
 
+// Test if `ConvertNumber<To, From>` can be instantiated.
+//
+// For example `ConvertNumber<int64_t, double>` can't be instantiated. This is
+// checked through static assertions in `ConvertNumber`.
+//
+// As a further optimization also avoid generating unreachable code, like for
+// example `ConvertNumber<double, float>`.
+template <typename To, typename From>
+static constexpr bool IsValidForConvertNumber() {
+  if constexpr (!std::numeric_limits<From>::is_integer) {
+    return !std::numeric_limits<To>::is_integer && sizeof(From) >= sizeof(To);
+  } else if constexpr (sizeof(From) == sizeof(int64_t)) {
+    return std::numeric_limits<To>::is_integer && sizeof(From) == sizeof(To);
+  } else {
+    return std::numeric_limits<To>::is_integer && sizeof(From) >= sizeof(To);
+  }
+}
+
+template <typename T>
+static void TypedArrayFillFromJit(TypedArrayObject* obj, T fillValue,
+                                  intptr_t start, intptr_t end) {
+  if constexpr (!std::numeric_limits<T>::is_integer) {
+    MOZ_ASSERT(Scalar::isFloatingType(obj->type()));
+  } else if constexpr (std::is_same_v<T, int64_t>) {
+    MOZ_ASSERT(Scalar::isBigIntType(obj->type()));
+  } else {
+    static_assert(std::is_same_v<T, int32_t>);
+    MOZ_ASSERT(!Scalar::isFloatingType(obj->type()));
+    MOZ_ASSERT(!Scalar::isBigIntType(obj->type()));
+  }
+  MOZ_ASSERT(!obj->hasDetachedBuffer());
+  MOZ_ASSERT(!obj->is<ImmutableTypedArrayObject>());
+  MOZ_ASSERT(!obj->is<ResizableTypedArrayObject>());
+
+  size_t length = obj->length().valueOr(0);
+  size_t startIndex = ToIntegerIndex(start, length);
+  size_t endIndex = ToIntegerIndex(end, length);
+
+  // Return early if the fill range is empty.
+  if (startIndex >= endIndex) {
+    return;
+  }
+
+  switch (obj->type()) {
+#define TYPED_ARRAY_FILL(_, NativeType, Name)                               \
+  case Scalar::Name:                                                        \
+    if constexpr (IsValidForConvertNumber<NativeType, T>()) {               \
+      TypedArrayFill<NativeType>(obj, ConvertNumber<NativeType>(fillValue), \
+                                 startIndex, endIndex);                     \
+      return;                                                               \
+    }                                                                       \
+    break;
+    JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_FILL)
+#undef TYPED_ARRAY_FILL
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+  MOZ_CRASH("Unexpected invalid number conversion");
+}
+
+void js::TypedArrayFillInt32(TypedArrayObject* obj, int32_t fillValue,
+                             intptr_t start, intptr_t end) {
+  AutoUnsafeCallWithABI unsafe;
+  TypedArrayFillFromJit(obj, fillValue, start, end);
+}
+
+void js::TypedArrayFillDouble(TypedArrayObject* obj, double fillValue,
+                              intptr_t start, intptr_t end) {
+  AutoUnsafeCallWithABI unsafe;
+  TypedArrayFillFromJit(obj, fillValue, start, end);
+}
+
+void js::TypedArrayFillFloat32(TypedArrayObject* obj, float fillValue,
+                               intptr_t start, intptr_t end) {
+  AutoUnsafeCallWithABI unsafe;
+  TypedArrayFillFromJit(obj, fillValue, start, end);
+}
+
+void js::TypedArrayFillInt64(TypedArrayObject* obj, int64_t fillValue,
+                             intptr_t start, intptr_t end) {
+  AutoUnsafeCallWithABI unsafe;
+  TypedArrayFillFromJit(obj, fillValue, start, end);
+}
+
+void js::TypedArrayFillBigInt(TypedArrayObject* obj, BigInt* fillValue,
+                              intptr_t start, intptr_t end) {
+  AutoUnsafeCallWithABI unsafe;
+  TypedArrayFillFromJit(obj, BigInt::toInt64(fillValue), start, end);
+}
+
 template <typename Ops, typename NativeType>
 static void TypedArrayReverse(TypedArrayObject* tarray, size_t len) {
   MOZ_RELEASE_ASSERT(len > 0);
@@ -2948,7 +3381,7 @@ static void TypedArrayReverse(TypedArrayObject* tarray, size_t len) {
 static bool TypedArray_reverse(JSContext* cx, const CallArgs& args) {
   MOZ_ASSERT(IsTypedArrayObject(args.thisv()));
 
-  // Steps 1-3.
+  // Steps 1-2.
   Rooted<TypedArrayObject*> tarray(
       cx, &args.thisv().toObject().as<TypedArrayObject>());
 
@@ -2957,6 +3390,15 @@ static bool TypedArray_reverse(JSContext* cx, const CallArgs& args) {
     ReportOutOfBounds(cx, tarray);
     return false;
   }
+
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (tarray->is<ImmutableTypedArrayObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
+    return false;
+  }
+
+  // Step 3.
   size_t len = *arrayLength;
 
   // Steps 4-6.
@@ -3001,6 +3443,47 @@ static TypedArrayObject* TypedArrayCreateSameType(
 #define TYPED_ARRAY_CREATE(_, NativeType, Name) \
   case Scalar::Name:                            \
     return TypedArrayObjectTemplate<NativeType>::fromLength(cx, length);
+    JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_CREATE)
+#undef TYPED_ARRAY_CREATE
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+}
+
+/**
+ * TypedArrayCreateSameType ( exemplar, argumentList )
+ *
+ * ES2025 draft rev c4042979a7cdd96b663ffcc43aeee90af8d7a576
+ */
+static TypedArrayObject* TypedArrayCreateSameType(
+    JSContext* cx, Handle<TypedArrayObject*> exemplar,
+    Handle<ArrayBufferObjectMaybeShared*> buffer, size_t byteOffset) {
+  switch (exemplar->type()) {
+#define TYPED_ARRAY_CREATE(_, NativeType, Name)                         \
+  case Scalar::Name:                                                    \
+    return TypedArrayObjectTemplate<NativeType>::fromBuffer(cx, buffer, \
+                                                            byteOffset);
+    JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_CREATE)
+#undef TYPED_ARRAY_CREATE
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+}
+
+/**
+ * TypedArrayCreateSameType ( exemplar, argumentList )
+ *
+ * ES2025 draft rev c4042979a7cdd96b663ffcc43aeee90af8d7a576
+ */
+static TypedArrayObject* TypedArrayCreateSameType(
+    JSContext* cx, Handle<TypedArrayObject*> exemplar,
+    Handle<ArrayBufferObjectMaybeShared*> buffer, size_t byteOffset,
+    size_t length) {
+  switch (exemplar->type()) {
+#define TYPED_ARRAY_CREATE(_, NativeType, Name)              \
+  case Scalar::Name:                                         \
+    return TypedArrayObjectTemplate<NativeType>::fromBuffer( \
+        cx, buffer, byteOffset, length);
     JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_CREATE)
 #undef TYPED_ARRAY_CREATE
     default:
@@ -3223,60 +3706,615 @@ static bool TypedArray_with(JSContext* cx, unsigned argc, Value* vp) {
   return CallNonGenericMethod<IsTypedArrayObject, TypedArray_with>(cx, args);
 }
 
-// Byte vector with large enough inline storage to allow constructing small
-// typed arrays without extra heap allocations.
-using ByteVector =
-    js::Vector<uint8_t, FixedLengthTypedArrayObject::INLINE_BUFFER_LIMIT>;
+/**
+ * TypedArrayCreateFromConstructor ( constructor, argumentList )
+ */
+template <typename... Args>
+static TypedArrayObject* TypedArrayCreateFromConstructor(
+    JSContext* cx, Handle<JSObject*> constructor, Args... args) {
+  // Step 1.
+  Rooted<JSObject*> resultObj(cx);
+  {
+    auto toNumberOrObjectValue = [](auto v) {
+      if constexpr (std::is_arithmetic_v<decltype(v)>) {
+        return NumberValue(v);
+      } else {
+        return ObjectValue(*v);
+      }
+    };
 
-class ByteSink final {
-  ByteVector& bytes_;
+    FixedConstructArgs<sizeof...(args)> cargs(cx);
 
- public:
-  explicit ByteSink(ByteVector& bytes) : bytes_(bytes) {
-    MOZ_ASSERT(bytes.empty());
+    size_t i = 0;
+    ((cargs[i].set(toNumberOrObjectValue(args)), i++), ...);
+
+    Rooted<Value> ctorVal(cx, ObjectValue(*constructor));
+    if (!Construct(cx, ctorVal, cargs, ctorVal, &resultObj)) {
+      return nullptr;
+    }
   }
 
-  constexpr bool canAppend(size_t n = 1) const { return true; }
+  // Step 2.
+  auto* unwrapped = resultObj->maybeUnwrapIf<TypedArrayObject>();
+  if (!unwrapped) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_NON_TYPED_ARRAY_RETURNED);
+    return nullptr;
+  }
 
-  template <typename... Args>
-  bool append(Args... args) {
-    if (!bytes_.reserve(bytes_.length() + sizeof...(args))) {
+  auto resultLength = unwrapped->length();
+  if (!resultLength) {
+    ReportOutOfBounds(cx, unwrapped);
+    return nullptr;
+  }
+
+  // Step 3. (Assertion not applicable in our implementation.)
+
+  // Step 4.
+  if constexpr (sizeof...(args) == 1) {
+    // Use nested if-statements because GCC miscompiles `decltype((args, ...))`.
+    auto length = (args, ...);
+    if constexpr (std::is_arithmetic_v<decltype(length)>) {
+      // Additional step from <https://tc39.es/proposal-immutable-arraybuffer>.
+      if (unwrapped->is<ImmutableTypedArrayObject>()) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                  JSMSG_ARRAYBUFFER_IMMUTABLE);
+        return nullptr;
+      }
+
+      // Steps 4.a-b. (Performed above)
+
+      // Step 4.c.
+      if (*resultLength < length) {
+        ToCStringBuf lengthBuf;
+        ToCStringBuf resultLengthBuf;
+        JS_ReportErrorNumberASCII(
+            cx, GetErrorMessage, nullptr, JSMSG_SHORT_TYPED_ARRAY_RETURNED,
+            NumberToCString(&lengthBuf, length),
+            NumberToCString(&resultLengthBuf, *resultLength));
+        return nullptr;
+      }
+    }
+  }
+
+  // Step 5.
+  return unwrapped;
+}
+
+static bool HasBuiltinTypedArraySpecies(TypedArrayObject* obj, JSContext* cx) {
+  // Ensure `%TypedArray%.prototype.constructor` and `%TypedArray%[@@species]`
+  // haven't been mutated. Ensure concrete `TypedArray.prototype.constructor`
+  // and the prototype of `TypedArray.prototype` haven't been mutated.
+  if (!cx->realm()->realmFuses.optimizeTypedArraySpeciesFuse.intact()) {
+    return false;
+  }
+
+  auto protoKey = StandardProtoKeyOrNull(obj);
+
+  // Ensure |obj|'s prototype is the actual concrete TypedArray.prototype.
+  auto* proto = cx->global()->maybeGetPrototype(protoKey);
+  if (!proto || obj->staticPrototype() != proto) {
+    return false;
+  }
+
+  // Fail if |obj| has an own `constructor` property.
+  if (obj->containsPure(cx->names().constructor)) {
+    return false;
+  }
+
+  return true;
+}
+
+static bool IsTypedArraySpecies(JSContext* cx, JSFunction* species) {
+  return IsSelfHostedFunctionWithName(species,
+                                      cx->names().dollar_TypedArraySpecies_);
+}
+
+/**
+ * TypedArraySpeciesCreate ( exemplar, argumentList )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+template <typename... Args>
+static TypedArrayObject* TypedArraySpeciesCreateImpl(
+    JSContext* cx, Handle<TypedArrayObject*> exemplar, Args... args) {
+  if (HasBuiltinTypedArraySpecies(exemplar, cx)) {
+    return TypedArrayCreateSameType(cx, exemplar, args...);
+  }
+
+  // Step 1.
+  auto ctorKey = StandardProtoKeyOrNull(exemplar);
+  Rooted<JSObject*> defaultCtor(
+      cx, GlobalObject::getOrCreateConstructor(cx, ctorKey));
+  if (!defaultCtor) {
+    return nullptr;
+  }
+
+  // Steps 1-2.
+  Rooted<JSObject*> constructor(
+      cx, SpeciesConstructor(cx, exemplar, defaultCtor, IsTypedArraySpecies));
+  if (!constructor) {
+    return nullptr;
+  }
+
+  if (constructor == defaultCtor) {
+    return TypedArrayCreateSameType(cx, exemplar, args...);
+  }
+
+  // Step 3.
+  auto* unwrappedResult =
+      TypedArrayCreateFromConstructor(cx, constructor, args...);
+  if (!unwrappedResult) {
+    return nullptr;
+  }
+
+  // Step 4.
+  if (Scalar::isBigIntType(exemplar->type()) !=
+      Scalar::isBigIntType(unwrappedResult->type())) {
+    JS_ReportErrorNumberASCII(
+        cx, GetErrorMessage, nullptr, JSMSG_TYPED_ARRAY_NOT_COMPATIBLE,
+        exemplar->getClass()->name, unwrappedResult->getClass()->name);
+    return nullptr;
+  }
+
+  // Step 5.
+  return unwrappedResult;
+}
+
+/**
+ * TypedArraySpeciesCreate ( exemplar, argumentList )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+static TypedArrayObject* TypedArraySpeciesCreate(
+    JSContext* cx, Handle<TypedArrayObject*> exemplar, size_t length) {
+  return TypedArraySpeciesCreateImpl(cx, exemplar, length);
+}
+
+/**
+ * TypedArraySpeciesCreate ( exemplar, argumentList )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+static TypedArrayObject* TypedArraySpeciesCreate(
+    JSContext* cx, Handle<TypedArrayObject*> exemplar,
+    Handle<ArrayBufferObjectMaybeShared*> buffer, size_t byteOffset) {
+  return TypedArraySpeciesCreateImpl(cx, exemplar, buffer, byteOffset);
+}
+
+/**
+ * TypedArraySpeciesCreate ( exemplar, argumentList )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+static TypedArrayObject* TypedArraySpeciesCreate(
+    JSContext* cx, Handle<TypedArrayObject*> exemplar,
+    Handle<ArrayBufferObjectMaybeShared*> buffer, size_t byteOffset,
+    size_t length) {
+  return TypedArraySpeciesCreateImpl(cx, exemplar, buffer, byteOffset, length);
+}
+
+static void TypedArrayBitwiseSlice(TypedArrayObject* source, size_t startIndex,
+                                   size_t count, TypedArrayObject* target) {
+  MOZ_ASSERT(CanUseBitwiseCopy(target->type(), source->type()));
+  MOZ_ASSERT(!source->hasDetachedBuffer());
+  MOZ_ASSERT(!target->hasDetachedBuffer());
+  MOZ_ASSERT(!target->is<ImmutableTypedArrayObject>());
+  MOZ_ASSERT(count > 0);
+  MOZ_ASSERT(startIndex + count <= source->length().valueOr(0));
+  MOZ_ASSERT(count <= target->length().valueOr(0));
+
+  size_t elementSize = TypedArrayElemSize(source->type());
+  MOZ_ASSERT(elementSize == TypedArrayElemSize(target->type()));
+
+  SharedMem<uint8_t*> sourceData =
+      source->dataPointerEither().cast<uint8_t*>() + startIndex * elementSize;
+
+  SharedMem<uint8_t*> targetData = target->dataPointerEither().cast<uint8_t*>();
+
+  size_t byteLength = count * elementSize;
+
+  // The same-type case requires exact copying preserving the bit-level encoding
+  // of the source data, so use memcpy if possible. If source and target are the
+  // same buffer, we can't use memcpy (or memmove), because the specification
+  // requires sequential copying of the values. This case is only possible if a
+  // @@species constructor created a specifically crafted typed array. It won't
+  // happen in normal code and hence doesn't need to be optimized.
+  if (!TypedArrayObject::sameBuffer(source, target)) {
+    if (source->isSharedMemory() || target->isSharedMemory()) {
+      jit::AtomicOperations::memcpySafeWhenRacy(targetData, sourceData,
+                                                byteLength);
+    } else {
+      std::memcpy(targetData.unwrapUnshared(), sourceData.unwrapUnshared(),
+                  byteLength);
+    }
+  } else {
+    for (; byteLength > 0; byteLength--) {
+      jit::AtomicOperations::storeSafeWhenRacy(
+          targetData++, jit::AtomicOperations::loadSafeWhenRacy(sourceData++));
+    }
+  }
+}
+
+template <typename NativeType>
+static double TypedArraySliceCopySlowGet(TypedArrayObject* tarray,
+                                         size_t index) {
+  return static_cast<double>(
+      TypedArrayObjectTemplate<NativeType>::getIndex(tarray, index));
+}
+
+template <typename NativeType>
+static void TypedArraySliceCopySlowSet(TypedArrayObject* tarray, size_t index,
+                                       double value) {
+  if constexpr (!std::numeric_limits<NativeType>::is_integer) {
+    if (js::SupportDifferentialTesting()) {
+      // See the comment in ElementSpecific::doubleToNative.
+      value = JS::CanonicalizeNaN(value);
+    }
+  }
+  TypedArrayObjectTemplate<NativeType>::setIndex(
+      *tarray, index, ConvertNumber<NativeType>(value));
+}
+
+template <>
+void TypedArraySliceCopySlowSet<int64_t>(TypedArrayObject* tarray, size_t index,
+                                         double value) {
+  // Specialization because ConvertNumber doesn't allow double to int64_t.
+  MOZ_CRASH("unexpected set with int64_t");
+}
+
+template <>
+void TypedArraySliceCopySlowSet<uint64_t>(TypedArrayObject* tarray,
+                                          size_t index, double value) {
+  // Specialization because ConvertNumber doesn't allow double to uint64_t.
+  MOZ_CRASH("unexpected set with uint64_t");
+}
+
+static void TypedArraySliceCopySlow(TypedArrayObject* source, size_t startIndex,
+                                    size_t count, TypedArrayObject* target) {
+  MOZ_ASSERT(!CanUseBitwiseCopy(target->type(), source->type()));
+  MOZ_ASSERT(!source->hasDetachedBuffer());
+  MOZ_ASSERT(!target->hasDetachedBuffer());
+  MOZ_ASSERT(!target->is<ImmutableTypedArrayObject>());
+  MOZ_ASSERT(count > 0);
+  MOZ_ASSERT(startIndex + count <= source->length().valueOr(0));
+  MOZ_ASSERT(count <= target->length().valueOr(0));
+
+  static_assert(
+      CanUseBitwiseCopy(Scalar::BigInt64, Scalar::BigUint64) &&
+          CanUseBitwiseCopy(Scalar::BigUint64, Scalar::BigInt64),
+      "BigInt contents, even if sign is different, can be copied bitwise");
+
+  MOZ_ASSERT(!Scalar::isBigIntType(target->type()) &&
+             !Scalar::isBigIntType(source->type()));
+
+  // Step 14.h.i.
+  size_t n = 0;
+
+  // Step 14.h.ii.
+  size_t k = startIndex;
+
+  // Step 14.h.iii.
+  while (n < count) {
+    // Step 14.h.iii.1. (Not applicable)
+
+    // Step 14.h.iii.2.
+    double value;
+    switch (source->type()) {
+#define GET_ELEMENT(_, T, N)                          \
+  case Scalar::N:                                     \
+    value = TypedArraySliceCopySlowGet<T>(source, k); \
+    break;
+      JS_FOR_EACH_TYPED_ARRAY(GET_ELEMENT)
+#undef GET_ELEMENT
+      case Scalar::MaxTypedArrayViewType:
+      case Scalar::Int64:
+      case Scalar::Simd128:
+        break;
+    }
+
+    // Step 14.h.iii.3.
+    switch (target->type()) {
+#define SET_ELEMENT(_, T, N)                         \
+  case Scalar::N:                                    \
+    TypedArraySliceCopySlowSet<T>(target, n, value); \
+    break;
+      JS_FOR_EACH_TYPED_ARRAY(SET_ELEMENT)
+#undef SET_ELEMENT
+      case Scalar::MaxTypedArrayViewType:
+      case Scalar::Int64:
+      case Scalar::Simd128:
+        break;
+    }
+
+    // Step 14.h.iii.4.
+    k += 1;
+
+    // Step 14.h.iii.5.
+    n += 1;
+  }
+}
+
+/**
+ * %TypedArray%.prototype.slice ( start, end )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+static bool TypedArray_slice(JSContext* cx, const CallArgs& args) {
+  MOZ_ASSERT(IsTypedArrayObject(args.thisv()));
+
+  // Steps 1-3.
+  Rooted<TypedArrayObject*> tarray(
+      cx, &args.thisv().toObject().as<TypedArrayObject>());
+
+  auto arrayLength = tarray->length();
+  if (!arrayLength) {
+    ReportOutOfBounds(cx, tarray);
+    return false;
+  }
+  size_t len = *arrayLength;
+
+  // Steps 4-7.
+  size_t startIndex = 0;
+  if (args.hasDefined(0)) {
+    if (!ToIntegerIndex(cx, args[0], len, &startIndex)) {
       return false;
     }
-    (bytes_.infallibleAppend(args), ...);
-    return true;
-  }
-};
-
-class TypedArraySink final {
-  Handle<TypedArrayObject*> typedArray_;
-  size_t maxLength_;
-  size_t index_ = 0;
-
- public:
-  TypedArraySink(Handle<TypedArrayObject*> typedArray, size_t maxLength)
-      : typedArray_(typedArray), maxLength_(maxLength) {
-    MOZ_ASSERT(typedArray->type() == Scalar::Uint8);
-
-    // The underlying buffer must neither be detached nor shrunk. (It may have
-    // been grown when it's a growable shared buffer and a concurrent thread
-    // resized the buffer.)
-    MOZ_ASSERT(!typedArray->hasDetachedBuffer());
-    MOZ_ASSERT(typedArray->length().valueOr(0) >= maxLength);
   }
 
-  size_t written() const { return index_; }
-
-  bool canAppend(size_t n = 1) const { return maxLength_ - index_ >= n; }
-
-  template <typename... Args>
-  bool append(Args... args) {
-    MOZ_ASSERT(canAppend(sizeof...(args)));
-    (TypedArrayObjectTemplate<uint8_t>::setIndex(*typedArray_, index_++, args),
-     ...);
-    return true;
+  // Steps 8-11.
+  size_t endIndex = len;
+  if (args.hasDefined(1)) {
+    if (!ToIntegerIndex(cx, args[1], len, &endIndex)) {
+      return false;
+    }
   }
-};
+
+  // Step 12.
+  size_t count = endIndex >= startIndex ? endIndex - startIndex : 0;
+
+  // Step 13.
+  Rooted<TypedArrayObject*> unwrappedResult(
+      cx, TypedArraySpeciesCreate(cx, tarray, count));
+  if (!unwrappedResult) {
+    return false;
+  }
+
+  // Additional step from <https://tc39.es/proposal-immutable-arraybuffer>.
+  MOZ_ASSERT(!unwrappedResult->is<ImmutableTypedArrayObject>());
+
+  // Step 14.
+  if (count > 0) {
+    // Steps 14.a-b.
+    auto arrayLength = tarray->length();
+    if (!arrayLength) {
+      ReportOutOfBounds(cx, tarray);
+      return false;
+    }
+
+    // Step 14.c.
+    endIndex = std::min(endIndex, *arrayLength);
+
+    // Step 14.d.
+    count = endIndex >= startIndex ? endIndex - startIndex : 0;
+
+    // Copy if updated |count| is still non-zero.
+    if (count > 0) {
+      // Step 14.e.
+      auto srcType = tarray->type();
+
+      // Step 14.f.
+      auto targetType = unwrappedResult->type();
+
+      // Steps 14.g-h.
+      //
+      // The specification requires us to perform bitwise copying when |result|
+      // and |tarray| have the same type. Additionally, as an optimization, we
+      // can also perform bitwise copying when both types have compatible
+      // bit-level representations.
+      if (MOZ_LIKELY(CanUseBitwiseCopy(targetType, srcType))) {
+        TypedArrayBitwiseSlice(tarray, startIndex, count, unwrappedResult);
+      } else {
+        TypedArraySliceCopySlow(tarray, startIndex, count, unwrappedResult);
+      }
+    }
+  }
+
+  // Step 15.
+  if (MOZ_LIKELY(cx->compartment() == unwrappedResult->compartment())) {
+    args.rval().setObject(*unwrappedResult);
+  } else {
+    Rooted<JSObject*> wrappedResult(cx, unwrappedResult);
+    if (!cx->compartment()->wrap(cx, &wrappedResult)) {
+      return false;
+    }
+    args.rval().setObject(*wrappedResult);
+  }
+  return true;
+}
+
+/**
+ * %TypedArray%.prototype.slice ( start, end )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+static bool TypedArray_slice(JSContext* cx, unsigned argc, Value* vp) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "[TypedArray].prototype", "slice");
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<IsTypedArrayObject, TypedArray_slice>(cx, args);
+}
+
+/**
+ * %TypedArray%.prototype.subarray ( start, end )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+static bool TypedArray_subarray(JSContext* cx, const CallArgs& args) {
+  MOZ_ASSERT(IsTypedArrayObject(args.thisv()));
+
+  // Steps 1-3.
+  Rooted<TypedArrayObject*> tarray(
+      cx, &args.thisv().toObject().as<TypedArrayObject>());
+
+  // Step 4.
+  if (!TypedArrayObject::ensureHasBuffer(cx, tarray)) {
+    return false;
+  }
+  Rooted<ArrayBufferObjectMaybeShared*> buffer(cx, tarray->bufferEither());
+
+  // Steps 5-7.
+  size_t srcLength = tarray->length().valueOr(0);
+
+  // Step 13.
+  //
+  // Reordered because otherwise it'd be observable that we reset
+  // the byteOffset to zero when the underlying array buffer gets detached.
+  size_t srcByteOffset = tarray->byteOffsetMaybeOutOfBounds();
+
+  // Steps 8-11.
+  size_t startIndex = 0;
+  if (args.hasDefined(0)) {
+    if (!ToIntegerIndex(cx, args[0], srcLength, &startIndex)) {
+      return false;
+    }
+  }
+
+  // Step 12.
+  size_t elementSize = TypedArrayElemSize(tarray->type());
+
+  // Step 14.
+  size_t beginByteOffset = srcByteOffset + (startIndex * elementSize);
+
+  // Steps 15-16.
+  TypedArrayObject* unwrappedResult;
+  if (!args.hasDefined(1) && tarray->is<ResizableTypedArrayObject>() &&
+      tarray->as<ResizableTypedArrayObject>().isAutoLength()) {
+    // Step 15.a.
+    unwrappedResult =
+        TypedArraySpeciesCreate(cx, tarray, buffer, beginByteOffset);
+  } else {
+    // Steps 16.a-d.
+    size_t endIndex = srcLength;
+    if (args.hasDefined(1)) {
+      if (!ToIntegerIndex(cx, args[1], srcLength, &endIndex)) {
+        return false;
+      }
+    }
+
+    // Step 16.e.
+    size_t newLength = endIndex >= startIndex ? endIndex - startIndex : 0;
+
+    // Step 16.f.
+    unwrappedResult =
+        TypedArraySpeciesCreate(cx, tarray, buffer, beginByteOffset, newLength);
+  }
+  if (!unwrappedResult) {
+    return false;
+  }
+
+  // Step 17.
+  if (MOZ_LIKELY(cx->compartment() == unwrappedResult->compartment())) {
+    args.rval().setObject(*unwrappedResult);
+  } else {
+    Rooted<JSObject*> wrappedResult(cx, unwrappedResult);
+    if (!cx->compartment()->wrap(cx, &wrappedResult)) {
+      return false;
+    }
+    args.rval().setObject(*wrappedResult);
+  }
+  return true;
+}
+
+/**
+ * %TypedArray%.prototype.subarray ( start, end )
+ *
+ * ES2026 draft rev 60c4df0b65e1c2e6b6581a5bc08a9311223be1da
+ */
+static bool TypedArray_subarray(JSContext* cx, unsigned argc, Value* vp) {
+  AutoJSMethodProfilerEntry pseudoFrame(cx, "[TypedArray].prototype",
+                                        "subarray");
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<IsTypedArrayObject, TypedArray_subarray>(cx,
+                                                                       args);
+}
+
+TypedArrayObject* js::TypedArraySubarray(JSContext* cx,
+                                         Handle<TypedArrayObject*> obj,
+                                         intptr_t start, intptr_t end) {
+  MOZ_ASSERT(!obj->hasDetachedBuffer());
+  MOZ_ASSERT(!obj->is<ResizableTypedArrayObject>());
+
+  size_t srcLength = obj->length().valueOr(0);
+
+  size_t startIndex = ToIntegerIndex(start, srcLength);
+  size_t endIndex = ToIntegerIndex(end, srcLength);
+
+  size_t newLength = endIndex >= startIndex ? endIndex - startIndex : 0;
+
+  return TypedArraySubarrayWithLength(cx, obj, startIndex, newLength);
+}
+
+TypedArrayObject* js::TypedArraySubarrayWithLength(
+    JSContext* cx, Handle<TypedArrayObject*> obj, intptr_t start,
+    intptr_t length) {
+  MOZ_ASSERT(!obj->hasDetachedBuffer());
+  MOZ_ASSERT(!obj->is<ResizableTypedArrayObject>());
+  MOZ_ASSERT(start >= 0);
+  MOZ_ASSERT(length >= 0);
+  MOZ_ASSERT(size_t(start + length) <= obj->length().valueOr(0));
+
+  if (!TypedArrayObject::ensureHasBuffer(cx, obj)) {
+    return nullptr;
+  }
+  Rooted<ArrayBufferObjectMaybeShared*> buffer(cx, obj->bufferEither());
+
+  size_t srcByteOffset = obj->byteOffset().valueOr(0);
+  size_t elementSize = TypedArrayElemSize(obj->type());
+  size_t beginByteOffset = srcByteOffset + (start * elementSize);
+
+  auto* result =
+      TypedArrayCreateSameType(cx, obj, buffer, beginByteOffset, length);
+
+  // Other exceptions aren't allowed, because TypedArraySubarray is a
+  // recoverable operation.
+  MOZ_ASSERT_IF(!result, cx->isThrowingOutOfMemory());
+
+  return result;
+}
+
+static auto* TypedArrayFromDetachedBuffer(JSContext* cx,
+                                          Handle<TypedArrayObject*> obj) {
+  MOZ_ASSERT(obj->hasDetachedBuffer());
+
+  Rooted<ArrayBufferObject*> buffer(cx, obj->bufferUnshared());
+
+  switch (obj->type()) {
+#define TYPED_ARRAY_CREATE(_, NativeType, Name) \
+  case Scalar::Name:                            \
+    return FixedLengthTypedArrayObjectTemplate< \
+        NativeType>::fromDetachedBuffer(cx, buffer);
+    JS_FOR_EACH_TYPED_ARRAY(TYPED_ARRAY_CREATE)
+#undef TYPED_ARRAY_CREATE
+    default:
+      MOZ_CRASH("Unsupported TypedArray type");
+  }
+}
+
+TypedArrayObject* js::TypedArraySubarrayRecover(JSContext* cx,
+                                                Handle<TypedArrayObject*> obj,
+                                                intptr_t start,
+                                                intptr_t length) {
+  MOZ_ASSERT(!obj->is<ResizableTypedArrayObject>());
+  MOZ_ASSERT(start >= 0);
+  MOZ_ASSERT(length >= 0);
+
+  // Special case: The buffer was detached after calling `subarray`. This case
+  // can only happen when recovering a TypedArraySubarray allocation.
+  if (obj->hasDetachedBuffer()) {
+    return TypedArrayFromDetachedBuffer(cx, obj);
+  }
+  return TypedArraySubarrayWithLength(cx, obj, start, length);
+}
 
 static UniqueChars QuoteString(JSContext* cx, char16_t ch) {
   Sprinter sprinter(cx);
@@ -3291,76 +4329,220 @@ static UniqueChars QuoteString(JSContext* cx, char16_t ch) {
   return sprinter.release();
 }
 
+namespace Hex {
+static constexpr int8_t InvalidChar = -1;
+
+static constexpr auto DecodeTable() {
+  std::array<int8_t, 256> result = {};
+
+  // Initialize all elements to InvalidChar.
+  for (auto& e : result) {
+    e = InvalidChar;
+  }
+
+  // Map the ASCII hexadecimal characters to their values.
+  for (uint8_t i = 0; i < 128; ++i) {
+    if (mozilla::IsAsciiHexDigit(char(i))) {
+      result[i] = mozilla::AsciiAlphanumericToNumber(char(i));
+    }
+  }
+
+  return result;
+}
+
+static constexpr auto Table = DecodeTable();
+}  // namespace Hex
+
 /**
  * FromHex ( string [ , maxLength ] )
  *
  * https://tc39.es/proposal-arraybuffer-base64/spec/#sec-fromhex
  */
-template <class Sink>
-static bool FromHex(JSContext* cx, Handle<JSString*> string, Sink& sink,
-                    size_t* readLength) {
+template <typename Ops, typename CharT>
+static size_t FromHex(const CharT* chars, size_t length,
+                      TypedArrayObject* tarray) {
+  auto data = Ops::extract(tarray).template cast<uint8_t*>();
+
+  static_assert(std::size(Hex::Table) == 256,
+                "can access decode table using Latin-1 character");
+
+  auto decodeChar = [&](CharT ch) -> int32_t {
+    if constexpr (sizeof(CharT) == 1) {
+      return Hex::Table[ch];
+    } else {
+      return ch <= 255 ? Hex::Table[ch] : Hex::InvalidChar;
+    }
+  };
+
+  auto decode2Chars = [&](const CharT* chars) {
+    return (decodeChar(chars[0]) << 4) | (decodeChar(chars[1]) << 0);
+  };
+
+  auto decode4Chars = [&](const CharT* chars) {
+    return (decodeChar(chars[2]) << 12) | (decodeChar(chars[3]) << 8) |
+           (decodeChar(chars[0]) << 4) | (decodeChar(chars[1]) << 0);
+  };
+
+  // Step 4.
+  size_t index = 0;
+
+  // Step 5. (Checked in caller.)
+  MOZ_ASSERT(length % 2 == 0);
+
+  // Process eight characters per loop iteration.
+  if (length >= 8) {
+    // Align |data| to uint32_t.
+    if (MOZ_UNLIKELY(data.unwrapValue() & 3)) {
+      // Performs at most three iterations until |data| is aligned, reading up
+      // to six characters.
+      while (data.unwrapValue() & 3) {
+        // Step 6.a and 6.d.
+        uint32_t byte = decode2Chars(chars + index);
+
+        // Step 6.b.
+        if (MOZ_UNLIKELY(int32_t(byte) < 0)) {
+          return index;
+        }
+        MOZ_ASSERT(byte <= 0xff);
+
+        // Step 6.c.
+        index += 2;
+
+        // Step 6.e.
+        Ops::store(data++, uint8_t(byte));
+      }
+    }
+
+    auto data32 = data.template cast<uint32_t*>();
+
+    // Step 6.
+    size_t lastValidIndex = length - 8;
+    while (index <= lastValidIndex) {
+      // Steps 6.a and 6.d.
+      uint32_t word1 = decode4Chars(chars + index);
+
+      // Step 6.b.
+      if (MOZ_UNLIKELY(int32_t(word1) < 0)) {
+        break;
+      }
+      MOZ_ASSERT(word1 <= 0xffff);
+
+      // Step 6.a and 6.d.
+      uint32_t word2 = decode4Chars(chars + index + 4);
+
+      // Step 6.b.
+      if (MOZ_UNLIKELY(int32_t(word2) < 0)) {
+        break;
+      }
+      MOZ_ASSERT(word2 <= 0xffff);
+
+      // Step 6.c.
+      index += 4 * 2;
+
+      // Step 6.e.
+      //
+      // The word was constructed in little-endian order, so in the unlikely
+      // case of a big-endian system we have to swap it.
+      uint32_t word =
+          mozilla::NativeEndian::swapFromLittleEndian((word2 << 16) | word1);
+      Ops::store(data32++, word);
+    }
+
+    data = data32.template cast<uint8_t*>();
+  }
+
+  // Step 6.
+  while (index < length) {
+    // Step 6.a and 6.d.
+    uint32_t byte = decode2Chars(chars + index);
+
+    // Step 6.b.
+    if (MOZ_UNLIKELY(int32_t(byte) < 0)) {
+      return index;
+    }
+    MOZ_ASSERT(byte <= 0xff);
+
+    // Step 6.c.
+    index += 2;
+
+    // Step 6.e.
+    Ops::store(data++, uint8_t(byte));
+  }
+
+  // Step 7.
+  return index;
+}
+
+/**
+ * FromHex ( string [ , maxLength ] )
+ *
+ * https://tc39.es/proposal-arraybuffer-base64/spec/#sec-fromhex
+ */
+template <typename Ops>
+static size_t FromHex(JSLinearString* linear, size_t length,
+                      TypedArrayObject* tarray) {
+  JS::AutoCheckCannotGC nogc;
+  if (linear->hasLatin1Chars()) {
+    return FromHex<Ops>(linear->latin1Chars(nogc), length, tarray);
+  }
+  return FromHex<Ops>(linear->twoByteChars(nogc), length, tarray);
+}
+
+/**
+ * FromHex ( string [ , maxLength ] )
+ *
+ * https://tc39.es/proposal-arraybuffer-base64/spec/#sec-fromhex
+ */
+static bool FromHex(JSContext* cx, JSString* string, size_t maxLength,
+                    TypedArrayObject* tarray) {
+  MOZ_ASSERT(tarray->type() == Scalar::Uint8);
+
+  // The underlying buffer must neither be detached nor shrunk. (It may have
+  // been grown when it's a growable shared buffer and a concurrent thread
+  // resized the buffer.)
+  MOZ_ASSERT(!tarray->hasDetachedBuffer());
+  MOZ_ASSERT(tarray->length().valueOr(0) >= maxLength);
+
   // Step 1. (Not applicable in our implementation.)
 
   // Step 2.
-  size_t length = string->length();
+  //
+  // Each byte is encoded in two characters.
+  size_t readLength = maxLength * 2;
+  MOZ_ASSERT(readLength <= string->length());
 
-  // Step 3.
-  if (length % 2 != 0) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_TYPED_ARRAY_BAD_HEX_STRING_LENGTH);
-    return false;
-  }
+  // Step 3. (Not applicable in our implementation.)
 
   JSLinearString* linear = string->ensureLinear(cx);
   if (!linear) {
     return false;
   }
 
-  // Step 4. (Not applicable in our implementation.)
-
-  // Step 5.
-  size_t index = 0;
-
-  // Step 6.
-  while (index < length && sink.canAppend()) {
-    // Step 6.a.
+  // Steps 4 and 6-7.
+  size_t index;
+  if (tarray->isSharedMemory()) {
+    index = FromHex<SharedOps>(linear, readLength, tarray);
+  } else {
+    index = FromHex<UnsharedOps>(linear, readLength, tarray);
+  }
+  if (MOZ_UNLIKELY(index < readLength)) {
     char16_t c0 = linear->latin1OrTwoByteChar(index);
     char16_t c1 = linear->latin1OrTwoByteChar(index + 1);
-
-    // Step 6.b.
-    if (MOZ_UNLIKELY(!mozilla::IsAsciiHexDigit(c0) ||
-                     !mozilla::IsAsciiHexDigit(c1))) {
-      char16_t ch = !mozilla::IsAsciiHexDigit(c0) ? c0 : c1;
-      if (auto str = QuoteString(cx, ch)) {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                  JSMSG_TYPED_ARRAY_BAD_HEX_DIGIT, str.get());
-      }
-      return false;
+    char16_t ch = !mozilla::IsAsciiHexDigit(c0) ? c0 : c1;
+    if (auto str = QuoteString(cx, ch)) {
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_TYPED_ARRAY_BAD_HEX_DIGIT, str.get());
     }
-
-    // Step 6.c.
-    index += 2;
-
-    // Step 6.d.
-    uint8_t byte = (mozilla::AsciiAlphanumericToNumber(c0) << 4) +
-                   mozilla::AsciiAlphanumericToNumber(c1);
-
-    // Step 6.e.
-    if (!sink.append(byte)) {
-      return false;
-    }
+    return false;
   }
-
-  // Step 7.
-  *readLength = index;
   return true;
 }
 
 namespace Base64 {
-static constexpr uint8_t InvalidChar = UINT8_MAX;
+static constexpr int8_t InvalidChar = -1;
 
 static constexpr auto DecodeTable(const char (&alphabet)[65]) {
-  std::array<uint8_t, 128> result = {};
+  std::array<int8_t, 256> result = {};
 
   // Initialize all elements to InvalidChar.
   for (auto& e : result) {
@@ -3388,12 +4570,12 @@ static_assert(std::char_traits<char>::length(Base64Url) == 64);
 
 namespace Base64::Decode {
 static constexpr auto Base64 = DecodeTable(Base64::Encode::Base64);
-static_assert(Base64.size() == 128,
-              "128 elements to allow access through ASCII characters");
+static_assert(Base64.size() == 256,
+              "256 elements to allow access through Latin-1 characters");
 
 static constexpr auto Base64Url = DecodeTable(Base64::Encode::Base64Url);
-static_assert(Base64Url.size() == 128,
-              "128 elements to allow access through ASCII characters");
+static_assert(Base64Url.size() == 256,
+              "256 elements to allow access through Latin-1 characters");
 }  // namespace Base64::Decode
 
 enum class Alphabet {
@@ -3425,78 +4607,247 @@ enum class LastChunkHandling {
   StopBeforePartial,
 };
 
+enum class Base64Error {
+  None,
+  BadChar,
+  BadCharAfterPadding,
+  IncompleteChunk,
+  MissingPadding,
+  ExtraBits,
+};
+
+struct Base64Result {
+  Base64Error error;
+  size_t index;
+  size_t written;
+
+  bool isError() const { return error != Base64Error::None; }
+
+  static auto Ok(size_t index, size_t written) {
+    return Base64Result{Base64Error::None, index, written};
+  }
+
+  static auto Error(Base64Error error) {
+    MOZ_ASSERT(error != Base64Error::None);
+    return Base64Result{error, 0, 0};
+  }
+
+  static auto ErrorAt(Base64Error error, size_t index) {
+    MOZ_ASSERT(error != Base64Error::None);
+    return Base64Result{error, index, 0};
+  }
+};
+
+static void ReportBase64Error(JSContext* cx, Base64Result result,
+                              JSLinearString* string) {
+  MOZ_ASSERT(result.isError());
+  switch (result.error) {
+    case Base64Error::None:
+      break;
+    case Base64Error::BadChar:
+      if (auto str =
+              QuoteString(cx, string->latin1OrTwoByteChar(result.index))) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                  JSMSG_TYPED_ARRAY_BAD_BASE64_CHAR, str.get());
+      }
+      return;
+    case Base64Error::BadCharAfterPadding:
+      if (auto str =
+              QuoteString(cx, string->latin1OrTwoByteChar(result.index))) {
+        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                  JSMSG_TYPED_ARRAY_BAD_BASE64_AFTER_PADDING,
+                                  str.get());
+      }
+      return;
+    case Base64Error::IncompleteChunk:
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_TYPED_ARRAY_BAD_INCOMPLETE_CHUNK);
+      return;
+    case Base64Error::MissingPadding:
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_TYPED_ARRAY_MISSING_BASE64_PADDING);
+      return;
+    case Base64Error::ExtraBits:
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_TYPED_ARRAY_EXTRA_BASE64_BITS);
+      return;
+  }
+  MOZ_CRASH("unexpected base64 error");
+}
+
 /**
  * FromBase64 ( string, alphabet, lastChunkHandling [ , maxLength ] )
  *
  * https://tc39.es/proposal-arraybuffer-base64/spec/#sec-frombase64
  */
-template <class Sink>
-static bool FromBase64(JSContext* cx, Handle<JSString*> string,
-                       Alphabet alphabet, LastChunkHandling lastChunkHandling,
-                       Sink& sink, size_t* readLength) {
-  // Steps 1-2. (Not applicable in our implementation.)
+template <class Ops, typename CharT>
+static auto FromBase64(const CharT* chars, size_t length, Alphabet alphabet,
+                       LastChunkHandling lastChunkHandling,
+                       SharedMem<uint8_t*> data, size_t maxLength) {
+  const SharedMem<uint8_t*> dataBegin = data;
+  const SharedMem<uint8_t*> dataEnd = data + maxLength;
 
-  // Step 3.
-  if (!sink.canAppend()) {
-    *readLength = 0;
-    return true;
-  }
+  auto canAppend = [&](size_t n) { return data + n <= dataEnd; };
 
-  JSLinearString* linear = string->ensureLinear(cx);
-  if (!linear) {
-    return false;
-  }
+  auto written = [&]() { return data.unwrap() - dataBegin.unwrap(); };
 
   // DecodeBase64Chunk ( chunk [ , throwOnExtraBits ] )
   //
   // Encode a complete base64 chunk.
   auto decodeChunk = [&](uint32_t chunk) {
     MOZ_ASSERT(chunk <= 0xffffff);
-    return sink.append(chunk >> 16, chunk >> 8, chunk);
+    MOZ_ASSERT(canAppend(3));
+    Ops::store(data++, uint8_t(chunk >> 16));
+    Ops::store(data++, uint8_t(chunk >> 8));
+    Ops::store(data++, uint8_t(chunk));
   };
 
   // DecodeBase64Chunk ( chunk [ , throwOnExtraBits ] )
   //
   // Encode a three element partial base64 chunk.
-  auto decodeChunk3 = [&](uint32_t chunk, bool throwOnExtraBits) {
+  auto decodeChunk3 = [&](uint32_t chunk) {
     MOZ_ASSERT(chunk <= 0x3ffff);
-
-    if (throwOnExtraBits && (chunk & 0x3) != 0) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_TYPED_ARRAY_EXTRA_BASE64_BITS);
-      return false;
-    }
-    return sink.append(chunk >> 10, chunk >> 2);
+    MOZ_ASSERT(canAppend(2));
+    Ops::store(data++, uint8_t(chunk >> 10));
+    Ops::store(data++, uint8_t(chunk >> 2));
   };
 
   // DecodeBase64Chunk ( chunk [ , throwOnExtraBits ] )
   //
   // Encode a two element partial base64 chunk.
-  auto decodeChunk2 = [&](uint32_t chunk, bool throwOnExtraBits) {
+  auto decodeChunk2 = [&](uint32_t chunk) {
     MOZ_ASSERT(chunk <= 0xfff);
-
-    if (throwOnExtraBits && (chunk & 0xf) != 0) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_TYPED_ARRAY_EXTRA_BASE64_BITS);
-      return false;
-    }
-    return sink.append(chunk >> 4);
+    MOZ_ASSERT(canAppend(1));
+    Ops::store(data++, uint8_t(chunk >> 4));
   };
 
   // DecodeBase64Chunk ( chunk [ , throwOnExtraBits ] )
   //
   // Encode a partial base64 chunk.
-  auto decodePartialChunk = [&](uint32_t chunk, uint32_t chunkLength,
-                                bool throwOnExtraBits = false) {
+  auto decodePartialChunk = [&](uint32_t chunk, uint32_t chunkLength) {
     MOZ_ASSERT(chunkLength == 2 || chunkLength == 3);
-    return chunkLength == 2 ? decodeChunk2(chunk, throwOnExtraBits)
-                            : decodeChunk3(chunk, throwOnExtraBits);
+    chunkLength == 2 ? decodeChunk2(chunk) : decodeChunk3(chunk);
   };
+
+  // Steps 1-2. (Not applicable in our implementation.)
+
+  // Step 3.
+  if (maxLength == 0) {
+    return Base64Result::Ok(0, 0);
+  }
+  MOZ_ASSERT(canAppend(1), "can append at least one byte if maxLength > 0");
+
+  // Step 8.
+  //
+  // Current string index.
+  size_t index = 0;
+
+  // Step 9. (Passed as parameter)
+
+  static_assert(std::size(Base64::Decode::Base64) == 256 &&
+                    std::size(Base64::Decode::Base64Url) == 256,
+                "can access decode tables using Latin-1 character");
+
+  const auto& decode = alphabet == Alphabet::Base64 ? Base64::Decode::Base64
+                                                    : Base64::Decode::Base64Url;
+
+  auto decodeChar = [&](CharT ch) -> int32_t {
+    if constexpr (sizeof(CharT) == 1) {
+      return decode[ch];
+    } else {
+      return ch <= 255 ? decode[ch] : Base64::InvalidChar;
+    }
+  };
+
+  auto decode4Chars = [&](const CharT* chars) {
+    return (decodeChar(chars[0]) << 18) | (decodeChar(chars[1]) << 12) |
+           (decodeChar(chars[2]) << 6) | (decodeChar(chars[3]));
+  };
+
+  // Initial loop to process only full chunks. Doesn't perform any error
+  // reporting and expects that at least four characters can be read per loop
+  // iteration and that the output has enough space for a decoded chunk.
+  if (length >= 4) {
+    size_t lastValidIndex = length - 4;
+    while (canAppend(3) && index <= lastValidIndex) {
+      // Fast path: Read four consecutive characters.
+
+      // Step 10.a. (Performed in slow path.)
+
+      // Step 10.b. (Moved out of loop.)
+
+      // Steps 10.c and 10.e-g.
+      uint32_t chunk = decode4Chars(chars + index);
+
+      // Steps 10.h-i. (Not applicable in this loop.)
+
+      // Steps 10.d and 10.j-l.
+      if (MOZ_LIKELY(int32_t(chunk) >= 0)) {
+        // Step 10.j-l.
+        decodeChunk(chunk);
+
+        // Step 10.d.
+        index += 4;
+        continue;
+      }
+
+      // Slow path: Read four characters, ignoring whitespace.
+
+      // Steps 10.a and 10.b.
+      CharT part[4];
+      size_t i = index;
+      size_t j = 0;
+      while (i < length && j < 4) {
+        auto ch = chars[i++];
+
+        // Step 10.a.
+        if (mozilla::IsAsciiWhitespace(ch)) {
+          continue;
+        }
+
+        // Step 10.c.
+        part[j++] = ch;
+      }
+
+      // Steps 10.d-l.
+      if (MOZ_LIKELY(j == 4)) {
+        // Steps 10.e-g.
+        uint32_t chunk = decode4Chars(part);
+
+        // Steps 10.h-i. (Not applicable in this loop.)
+
+        // Steps 10.d and 10.j-l.
+        if (MOZ_LIKELY(int32_t(chunk) >= 0)) {
+          // Step 10.j-l.
+          decodeChunk(chunk);
+
+          // Step 10.d.
+          index = i;
+          continue;
+        }
+      }
+
+      // Padding or invalid characters, or end of input. The next loop will
+      // process any characters left in the input.
+      break;
+    }
+
+    // Step 10.b.ii.
+    if (index == length) {
+      return Base64Result::Ok(length, written());
+    }
+
+    // Step 10.l.v. (Reordered)
+    if (!canAppend(1)) {
+      MOZ_ASSERT(written() > 0);
+      return Base64Result::Ok(index, written());
+    }
+  }
 
   // Step 4.
   //
   // String index after the last fully read base64 chunk.
-  size_t read = 0;
+  size_t read = index;
 
   // Step 5. (Not applicable in our implementation.)
 
@@ -3510,21 +4861,10 @@ static bool FromBase64(JSContext* cx, Handle<JSString*> string,
   // Current base64 chunk length, in the range [0..4].
   size_t chunkLength = 0;
 
-  // Step 8.
-  //
-  // Current string index.
-  size_t index = 0;
-
-  // Step 9.
-  size_t length = linear->length();
-
-  const auto& decode = alphabet == Alphabet::Base64 ? Base64::Decode::Base64
-                                                    : Base64::Decode::Base64Url;
-
   // Step 10.
   for (; index < length; index++) {
     // Step 10.c. (Reordered)
-    char16_t ch = linear->latin1OrTwoByteChar(index);
+    auto ch = chars[index];
 
     // Step 10.a.
     if (mozilla::IsAsciiWhitespace(ch)) {
@@ -3541,24 +4881,17 @@ static bool FromBase64(JSContext* cx, Handle<JSString*> string,
     }
 
     // Steps 10.f-g.
-    uint8_t value = Base64::InvalidChar;
-    if (mozilla::IsAscii(ch)) {
-      value = decode[ch];
+    uint32_t value = decodeChar(ch);
+    if (MOZ_UNLIKELY(int32_t(value) < 0)) {
+      return Base64Result::ErrorAt(Base64Error::BadChar, index);
     }
-    if (MOZ_UNLIKELY(value == Base64::InvalidChar)) {
-      if (auto str = QuoteString(cx, ch)) {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                  JSMSG_TYPED_ARRAY_BAD_BASE64_CHAR, str.get());
-      }
-      return false;
-    }
+    MOZ_ASSERT(value <= 0x7f);
 
     // Step 10.h. (Not applicable in our implementation.)
 
     // Step 10.i.
-    if (chunkLength > 1 && !sink.canAppend(chunkLength)) {
-      *readLength = read;
-      return true;
+    if (chunkLength > 1 && !canAppend(chunkLength)) {
+      return Base64Result::Ok(read, written());
     }
 
     // Step 10.j.
@@ -3567,30 +4900,8 @@ static bool FromBase64(JSContext* cx, Handle<JSString*> string,
     // Step 10.k.
     chunkLength += 1;
 
-    // Step 10.l.
-    if (chunkLength == 4) {
-      // Step 10.l.i.
-      if (!decodeChunk(chunk)) {
-        return false;
-      }
-
-      // Step 10.l.ii.
-      chunk = 0;
-
-      // Step 10.l.iii.
-      chunkLength = 0;
-
-      // Step 10.l.iv.
-      //
-      // NB: Add +1 to include the |index| update from step 10.d.
-      read = index + 1;
-
-      // Step 10.l.v.
-      if (!sink.canAppend()) {
-        *readLength = read;
-        return true;
-      }
-    }
+    // Step 10.l. (Full chunks are processed in the initial loop.)
+    MOZ_ASSERT(chunkLength < 4);
   }
 
   // Step 10.b.
@@ -3599,55 +4910,45 @@ static bool FromBase64(JSContext* cx, Handle<JSString*> string,
     if (chunkLength > 0) {
       // Step 10.b.i.1.
       if (lastChunkHandling == LastChunkHandling::StopBeforePartial) {
-        *readLength = read;
-        return true;
+        return Base64Result::Ok(read, written());
       }
 
       // Steps 10.b.i.2-3.
       if (lastChunkHandling == LastChunkHandling::Loose) {
         // Step 10.b.i.2.a.
         if (chunkLength == 1) {
-          JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                    JSMSG_TYPED_ARRAY_BAD_INCOMPLETE_CHUNK);
-          return false;
+          return Base64Result::Error(Base64Error::IncompleteChunk);
         }
         MOZ_ASSERT(chunkLength == 2 || chunkLength == 3);
 
         // Step 10.b.i.2.b.
-        if (!decodePartialChunk(chunk, chunkLength)) {
-          return false;
-        }
+        decodePartialChunk(chunk, chunkLength);
       } else {
         // Step 10.b.i.3.a.
         MOZ_ASSERT(lastChunkHandling == LastChunkHandling::Strict);
 
         // Step 10.b.i.3.b.
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                  JSMSG_TYPED_ARRAY_BAD_INCOMPLETE_CHUNK);
-        return false;
+        return Base64Result::Error(Base64Error::IncompleteChunk);
       }
     }
 
     // Step 10.b.ii.
-    *readLength = length;
-    return true;
+    return Base64Result::Ok(length, written());
   }
 
   // Step 10.e.
   MOZ_ASSERT(index < length);
-  MOZ_ASSERT(linear->latin1OrTwoByteChar(index) == '=');
+  MOZ_ASSERT(chars[index] == '=');
 
   // Step 10.e.i.
   if (chunkLength < 2) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_TYPED_ARRAY_BAD_INCOMPLETE_CHUNK);
-    return false;
+    return Base64Result::Error(Base64Error::IncompleteChunk);
   }
   MOZ_ASSERT(chunkLength == 2 || chunkLength == 3);
 
   // Step 10.e.ii. (Inlined SkipAsciiWhitespace)
   while (++index < length) {
-    char16_t ch = linear->latin1OrTwoByteChar(index);
+    auto ch = chars[index];
     if (!mozilla::IsAsciiWhitespace(ch)) {
       break;
     }
@@ -3659,24 +4960,21 @@ static bool FromBase64(JSContext* cx, Handle<JSString*> string,
     if (index == length) {
       // Step 10.e.iii.1.a.
       if (lastChunkHandling == LastChunkHandling::StopBeforePartial) {
-        *readLength = read;
-        return true;
+        return Base64Result::Ok(read, written());
       }
 
       // Step 10.e.iii.1.b.
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_TYPED_ARRAY_MISSING_BASE64_PADDING);
-      return false;
+      return Base64Result::Error(Base64Error::MissingPadding);
     }
 
     // Step 10.e.iii.2.
-    char16_t ch = linear->latin1OrTwoByteChar(index);
+    auto ch = chars[index];
 
     // Step 10.e.iii.3.
     if (ch == '=') {
       // Step 10.e.iii.3.a. (Inlined SkipAsciiWhitespace)
       while (++index < length) {
-        char16_t ch = linear->latin1OrTwoByteChar(index);
+        auto ch = chars[index];
         if (!mozilla::IsAsciiWhitespace(ch)) {
           break;
         }
@@ -3686,26 +4984,209 @@ static bool FromBase64(JSContext* cx, Handle<JSString*> string,
 
   // Step 10.e.iv.
   if (index < length) {
-    char16_t ch = linear->latin1OrTwoByteChar(index);
-    if (auto str = QuoteString(cx, ch)) {
-      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                JSMSG_TYPED_ARRAY_BAD_BASE64_AFTER_PADDING,
-                                str.get());
-    }
-    return false;
+    return Base64Result::ErrorAt(Base64Error::BadCharAfterPadding, index);
   }
 
   // Steps 10.e.v-vi.
-  bool throwOnExtraBits = lastChunkHandling == LastChunkHandling::Strict;
+  if (lastChunkHandling == LastChunkHandling::Strict) {
+    uint32_t extraBitsMask = chunkLength == 2 ? 0xf : 0x3;
+    if ((chunk & extraBitsMask) != 0) {
+      return Base64Result::Error(Base64Error::ExtraBits);
+    }
+  }
 
   // Step 10.e.vii.
-  if (!decodePartialChunk(chunk, chunkLength, throwOnExtraBits)) {
+  decodePartialChunk(chunk, chunkLength);
+
+  // Step 10.e.viii.
+  return Base64Result::Ok(length, written());
+}
+
+/**
+ * FromBase64 ( string, alphabet, lastChunkHandling [ , maxLength ] )
+ *
+ * https://tc39.es/proposal-arraybuffer-base64/spec/#sec-frombase64
+ */
+template <class Ops>
+static auto FromBase64(JSLinearString* string, Alphabet alphabet,
+                       LastChunkHandling lastChunkHandling,
+                       SharedMem<uint8_t*> data, size_t maxLength) {
+  JS::AutoCheckCannotGC nogc;
+  if (string->hasLatin1Chars()) {
+    return FromBase64<Ops>(string->latin1Chars(nogc), string->length(),
+                           alphabet, lastChunkHandling, data, maxLength);
+  }
+  return FromBase64<Ops>(string->twoByteChars(nogc), string->length(), alphabet,
+                         lastChunkHandling, data, maxLength);
+}
+
+/**
+ * FromBase64 ( string, alphabet, lastChunkHandling [ , maxLength ] )
+ *
+ * https://tc39.es/proposal-arraybuffer-base64/spec/#sec-frombase64
+ */
+static auto FromBase64(JSLinearString* string, Alphabet alphabet,
+                       LastChunkHandling lastChunkHandling,
+                       TypedArrayObject* tarray, size_t maxLength) {
+  MOZ_ASSERT(tarray->type() == Scalar::Uint8);
+
+  // The underlying buffer must neither be detached nor shrunk. (It may have
+  // been grown when it's a growable shared buffer and a concurrent thread
+  // resized the buffer.)
+  MOZ_ASSERT(!tarray->hasDetachedBuffer());
+  MOZ_ASSERT(tarray->length().valueOr(0) >= maxLength);
+
+  auto data = tarray->dataPointerEither().cast<uint8_t*>();
+
+  if (tarray->isSharedMemory()) {
+    return FromBase64<SharedOps>(string, alphabet, lastChunkHandling, data,
+                                 maxLength);
+  }
+  return FromBase64<UnsharedOps>(string, alphabet, lastChunkHandling, data,
+                                 maxLength);
+}
+
+/**
+ * Allocate uint8_t array for base64 decoding, followed by transformation
+ * to TypedArrayObject.
+ */
+class MOZ_NON_PARAM Uint8Buffer {
+  static constexpr size_t InlineLength =
+      FixedLengthTypedArrayObject::INLINE_BUFFER_LIMIT;
+
+  uint8_t inlineBuf_[InlineLength];
+  UniquePtr<uint8_t[], JS::FreePolicy> ownedBuf_;
+
+  size_t length_ = 0;
+
+ public:
+  size_t length() { return length_; };
+
+  uint8_t* data() { return ownedBuf_ ? ownedBuf_.get() : inlineBuf_; };
+
+  /**
+   * Allocate uint8_t array for base64 decoding. If the length is small enough
+   * use the inlineBuf.
+   */
+  bool maybeAlloc(JSContext* cx, size_t length);
+
+  /**
+   * Reallocate uint8_t array to a smaller length with some acceptable threshold
+   * to not reallocate. If the inlineBuf is used do not reallocate.
+   */
+  bool maybeRealloc(JSContext* cx, size_t newLength);
+
+  /**
+   * Transform the allocated uint8 array into a TypedArrayObject and return it.
+   * If it does not exist (i.e., the inline array) then create a new
+   * TypedArrayObject and copy the contents of the inlineBuf to it.
+   */
+  TypedArrayObject* toTypedArrayObject(JSContext* cx);
+};
+
+bool Uint8Buffer::maybeAlloc(JSContext* cx, size_t length) {
+  length_ = length;
+  if (length <= InlineLength) {
+    return true;
+  }
+
+  ownedBuf_ =
+      cx->make_pod_arena_array<uint8_t>(js::ArrayBufferContentsArena, length);
+  return !!ownedBuf_;
+}
+
+bool Uint8Buffer::maybeRealloc(JSContext* cx, size_t newLength) {
+  MOZ_ASSERT(newLength <= length_);
+  if (length_ <= InlineLength) {
+    length_ = newLength;
+    return true;
+  }
+  MOZ_ASSERT(ownedBuf_);
+
+  if (newLength <= InlineLength) {
+    std::copy_n(ownedBuf_.get(), newLength, inlineBuf_);
+    ownedBuf_ = nullptr;
+    length_ = newLength;
+    return true;
+  }
+
+  // The initial byte size estimation is based on the complete string length,
+  // so it includes trailing padding and interspersed whitespace characters.
+  // Common base64 variants split lines at 64 characters (RFC 1421, RFC 7468) or
+  // 76 characters (RFC 2045, RFC 9580), which can introduce ~4% whitespace. To
+  // avoid reallocating for these common base64 formats, small over-allocations
+  // are deemed acceptable. We allow up to 6.25% wasted memory instead of 4%,
+  // because the former can easily be computed with a single shift operation.
+  //
+  // Also don't bother shrinking the allocation unless at least 80 bytes will be
+  // saved, which is a somewhat arbitrary number.
+  constexpr size_t minBytesToReclaim = 80;
+
+  size_t overAllocation = length_ - newLength;
+
+  if (overAllocation < minBytesToReclaim || overAllocation <= length_ / 16) {
+    length_ = newLength;
+    return true;
+  }
+
+  uint8_t* oldOwnedBuf = ownedBuf_.release();
+  uint8_t* newOwnedBuf = cx->pod_arena_realloc<uint8_t>(
+      js::ArrayBufferContentsArena, oldOwnedBuf, length_, newLength);
+
+  if (!newOwnedBuf) {
+    js_free(oldOwnedBuf);
     return false;
   }
 
-  // Step 10.e.viii.
-  *readLength = length;
+  ownedBuf_ = UniquePtr<uint8_t[], JS::FreePolicy>(newOwnedBuf);
+  length_ = newLength;
   return true;
+}
+
+TypedArrayObject* Uint8Buffer::toTypedArrayObject(JSContext* cx) {
+  if (!ownedBuf_) {
+    TypedArrayObject* tarray =
+        TypedArrayObjectTemplate<uint8_t>::fromLength(cx, length_);
+    if (!tarray) {
+      return nullptr;
+    }
+
+    auto target = SharedMem<uint8_t*>::unshared(tarray->dataPointerUnshared());
+    auto source = SharedMem<uint8_t*>::unshared(inlineBuf_);
+    UnsharedOps::podCopy(target, source, length_);
+
+    return tarray;
+  }
+
+  auto bufferContents =
+      ArrayBufferObject::BufferContents::createMallocedArrayBufferContentsArena(
+          ownedBuf_.get());
+
+  Rooted<ArrayBufferObject*> buffer(
+      cx, ArrayBufferObject::createForContents(cx, length_, bufferContents));
+  if (!buffer) {
+    return nullptr;
+  }
+
+  // If and only if an ArrayBuffer is successfully created, ownership of
+  // |ownedBuf_| is transferred to the new ArrayBuffer.
+  (void)ownedBuf_.release();
+
+  return TypedArrayObjectTemplate<uint8_t>::fromBuffer(cx, buffer, 0, length_);
+}
+
+/**
+ * FromBase64 ( string, alphabet, lastChunkHandling [ , maxLength ] )
+ *
+ * https://tc39.es/proposal-arraybuffer-base64/spec/#sec-frombase64
+ */
+static auto FromBase64(JSLinearString* string, Alphabet alphabet,
+                       LastChunkHandling lastChunkHandling,
+                       Uint8Buffer& bytes) {
+  auto data = SharedMem<uint8_t*>::unshared(bytes.data());
+  size_t maxLength = bytes.length();
+  return FromBase64<UnsharedOps>(string, alphabet, lastChunkHandling, data,
+                                 maxLength);
 }
 
 /**
@@ -3737,12 +5218,12 @@ static bool GetAlphabetOption(JSContext* cx, Handle<JSObject*> options,
     return false;
   }
 
-  if (StringEqualsAscii(linear, "base64")) {
+  if (StringEqualsLiteral(linear, "base64")) {
     *result = Alphabet::Base64;
     return true;
   }
 
-  if (StringEqualsAscii(linear, "base64url")) {
+  if (StringEqualsLiteral(linear, "base64url")) {
     *result = Alphabet::Base64Url;
     return true;
   }
@@ -3781,17 +5262,17 @@ static bool GetLastChunkHandlingOption(JSContext* cx, Handle<JSObject*> options,
     return false;
   }
 
-  if (StringEqualsAscii(linear, "loose")) {
+  if (StringEqualsLiteral(linear, "loose")) {
     *result = LastChunkHandling::Loose;
     return true;
   }
 
-  if (StringEqualsAscii(linear, "strict")) {
+  if (StringEqualsLiteral(linear, "strict")) {
     *result = LastChunkHandling::Strict;
     return true;
   }
 
-  if (StringEqualsAscii(linear, "stop-before-partial")) {
+  if (StringEqualsLiteral(linear, "stop-before-partial")) {
     *result = LastChunkHandling::StopBeforePartial;
     return true;
   }
@@ -3856,29 +5337,48 @@ static bool uint8array_fromBase64(JSContext* cx, unsigned argc, Value* vp) {
     }
   }
 
+  // Compute the output byte length. Four input characters are decoded into
+  // three bytes, so the output length can't be larger than ⌈length × 3/4⌉.
+  auto outLength = mozilla::CheckedInt<size_t>{string->length()};
+  outLength += 3;
+  outLength /= 4;
+  outLength *= 3;
+  MOZ_ASSERT(outLength.isValid(), "can't overflow");
+
+  static_assert(JSString::MAX_LENGTH <= TypedArrayObject::ByteLengthLimit,
+                "string length doesn't exceed maximum typed array length");
+
   // Step 10.
-  ByteVector bytes(cx);
-  ByteSink sink{bytes};
-  size_t unusedReadLength;
-  if (!FromBase64(cx, string, alphabet, lastChunkHandling, sink,
-                  &unusedReadLength)) {
+  Uint8Buffer bytes;
+  if (!bytes.maybeAlloc(cx, outLength.value())) {
     return false;
   }
 
-  // Step 11.
-  size_t resultLength = bytes.length();
+  JSLinearString* linear = string->ensureLinear(cx);
+  if (!linear) {
+    return false;
+  }
 
-  // Step 12.
-  auto* tarray =
-      TypedArrayObjectTemplate<uint8_t>::fromLength(cx, resultLength);
+  auto result = FromBase64(linear, alphabet, lastChunkHandling, bytes);
+  if (MOZ_UNLIKELY(result.isError())) {
+    ReportBase64Error(cx, result, linear);
+    return false;
+  }
+  MOZ_ASSERT(result.index <= linear->length());
+  MOZ_ASSERT(result.written <= bytes.length());
+
+  // Step 11.
+  size_t resultLength = result.written;
+
+  // Step 12-13.
+  if (!bytes.maybeRealloc(cx, resultLength)) {
+    return false;
+  }
+
+  TypedArrayObject* tarray = bytes.toTypedArrayObject(cx);
   if (!tarray) {
     return false;
   }
-
-  // Step 13.
-  auto target = SharedMem<uint8_t*>::unshared(tarray->dataPointerUnshared());
-  auto source = SharedMem<uint8_t*>::unshared(bytes.begin());
-  UnsharedOps::podCopy(target, source, resultLength);
 
   // Step 14.
   args.rval().setObject(*tarray);
@@ -3900,28 +5400,30 @@ static bool uint8array_fromHex(JSContext* cx, unsigned argc, Value* vp) {
   }
   Rooted<JSString*> string(cx, args[0].toString());
 
-  // Step 2.
-  ByteVector bytes(cx);
-  ByteSink sink{bytes};
-  size_t unusedReadLength;
-  if (!FromHex(cx, string, sink, &unusedReadLength)) {
+  // FromHex, step 2.
+  size_t stringLength = string->length();
+
+  // FromHex, step 3.
+  if (stringLength % 2 != 0) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_TYPED_ARRAY_BAD_HEX_STRING_LENGTH);
     return false;
   }
 
-  // Step 3.
-  size_t resultLength = bytes.length();
+  // Step 4. (Reordered)
+  size_t resultLength = stringLength / 2;
 
-  // Step 4.
-  auto* tarray =
-      TypedArrayObjectTemplate<uint8_t>::fromLength(cx, resultLength);
+  // Step 5. (Reordered)
+  Rooted<TypedArrayObject*> tarray(
+      cx, TypedArrayObjectTemplate<uint8_t>::fromLength(cx, resultLength));
   if (!tarray) {
     return false;
   }
 
-  // Step 5.
-  auto target = SharedMem<uint8_t*>::unshared(tarray->dataPointerUnshared());
-  auto source = SharedMem<uint8_t*>::unshared(bytes.begin());
-  UnsharedOps::podCopy(target, source, resultLength);
+  // Steps 2-3.
+  if (!FromHex(cx, string, resultLength, tarray)) {
+    return false;
+  }
 
   // Step 6.
   args.rval().setObject(*tarray);
@@ -3936,6 +5438,13 @@ static bool uint8array_fromHex(JSContext* cx, unsigned argc, Value* vp) {
 static bool uint8array_setFromBase64(JSContext* cx, const CallArgs& args) {
   Rooted<TypedArrayObject*> tarray(
       cx, &args.thisv().toObject().as<TypedArrayObject>());
+
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (tarray->is<ImmutableTypedArrayObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
+    return false;
+  }
 
   // Step 3.
   if (!args.get(0).isString()) {
@@ -3973,16 +5482,27 @@ static bool uint8array_setFromBase64(JSContext* cx, const CallArgs& args) {
     return false;
   }
 
-  // Steps 15-17.
-  ByteVector bytes(cx);
-  TypedArraySink sink{tarray, *length};
-  size_t readLength;
-  if (!FromBase64(cx, string, alphabet, lastChunkHandling, sink, &readLength)) {
-    return false;
-  }
+  // Steps 15-18.
+  size_t readLength = 0;
+  size_t written = 0;
+  if (*length > 0) {
+    JSLinearString* linear = string->ensureLinear(cx);
+    if (!linear) {
+      return false;
+    }
 
-  // Step 18.
-  size_t written = sink.written();
+    auto result =
+        FromBase64(linear, alphabet, lastChunkHandling, tarray, *length);
+    if (MOZ_UNLIKELY(result.isError())) {
+      ReportBase64Error(cx, result, linear);
+      return false;
+    }
+    MOZ_ASSERT(result.index <= linear->length());
+    MOZ_ASSERT(result.written <= *length);
+
+    readLength = result.index;
+    written = result.written;
+  }
 
   // Steps 19-21. (Not applicable in our implementation.)
 
@@ -4031,6 +5551,13 @@ static bool uint8array_setFromHex(JSContext* cx, const CallArgs& args) {
   Rooted<TypedArrayObject*> tarray(
       cx, &args.thisv().toObject().as<TypedArrayObject>());
 
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (tarray->is<ImmutableTypedArrayObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
+    return false;
+  }
+
   // Step 3.
   if (!args.get(0).isString()) {
     return ReportValueError(cx, JSMSG_UNEXPECTED_TYPE, JSDVG_SEARCH_STACK,
@@ -4039,23 +5566,32 @@ static bool uint8array_setFromHex(JSContext* cx, const CallArgs& args) {
   Rooted<JSString*> string(cx, args[0].toString());
 
   // Steps 4-6.
-  auto length = tarray->length();
-  if (!length) {
+  auto byteLength = tarray->length();
+  if (!byteLength) {
     ReportOutOfBounds(cx, tarray);
     return false;
   }
 
-  // Steps 7-9.
-  TypedArraySink sink{tarray, *length};
-  size_t readLength;
-  if (!FromHex(cx, string, sink, &readLength)) {
+  // FromHex, step 2.
+  size_t stringLength = string->length();
+
+  // FromHex, step 3.
+  if (stringLength % 2 != 0) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_TYPED_ARRAY_BAD_HEX_STRING_LENGTH);
     return false;
   }
 
-  // Step 10.
-  size_t written = sink.written();
+  // |string| encodes |stringLength / 2| bytes, but we can't write more bytes
+  // than there is space in |tarray|.
+  size_t maxLength = std::min(*byteLength, stringLength / 2);
 
-  // Steps 11-13. (Not applicable in our implementation.)
+  // Steps 7-9.
+  if (!FromHex(cx, string, maxLength, tarray)) {
+    return false;
+  }
+
+  // Steps 10-13. (Not applicable in our implementation.)
 
   // Step 14.
   Rooted<PlainObject*> result(cx, NewPlainObject(cx));
@@ -4064,13 +5600,18 @@ static bool uint8array_setFromHex(JSContext* cx, const CallArgs& args) {
   }
 
   // Step 15.
-  Rooted<Value> readValue(cx, NumberValue(readLength));
+  //
+  // Each byte is encoded in two characters, so the number of read characters is
+  // exactly twice as large as |maxLength|.
+  Rooted<Value> readValue(cx, NumberValue(maxLength * 2));
   if (!DefineDataProperty(cx, result, cx->names().read, readValue)) {
     return false;
   }
 
   // Step 16.
-  Rooted<Value> writtenValue(cx, NumberValue(written));
+  //
+  // |maxLength| was constrained to the number of bytes written on success.
+  Rooted<Value> writtenValue(cx, NumberValue(maxLength));
   if (!DefineDataProperty(cx, result, cx->names().written, writtenValue)) {
     return false;
   }
@@ -4091,6 +5632,146 @@ static bool uint8array_setFromHex(JSContext* cx, unsigned argc, Value* vp) {
   // Steps 1-2.
   return CallNonGenericMethod<IsUint8ArrayObject, uint8array_setFromHex>(cx,
                                                                          args);
+}
+
+template <typename Ops>
+static void ToBase64(TypedArrayObject* tarray, size_t length, Alphabet alphabet,
+                     OmitPadding omitPadding, mozilla::Range<Latin1Char> out) {
+  const auto& base64Chars = alphabet == Alphabet::Base64
+                                ? Base64::Encode::Base64
+                                : Base64::Encode::Base64Url;
+
+  auto encode = [&base64Chars](uint32_t value) {
+    return base64Chars[value & 0x3f];
+  };
+
+  auto outPtr = out.begin();
+
+  auto append = [&](char ch) { *outPtr++ = ch; };
+
+  auto appendN = [&]<size_t N>(const char (&s)[N]) {
+    auto* dest = outPtr.get();
+
+    // Increment before writing to assert we're still in range.
+    outPtr += N;
+    std::memcpy(dest, s, N);
+  };
+
+  // Our implementation directly converts the bytes to their string
+  // representation instead of first collecting them into an intermediate list.
+  auto data = Ops::extract(tarray).template cast<uint8_t*>();
+  auto toRead = length;
+
+  if (toRead >= 12) {
+    // Align |data| to uint32_t.
+    if (MOZ_UNLIKELY(data.unwrapValue() & 3)) {
+      // Performs at most three iterations until |data| is aligned, reading up
+      // to nine bytes.
+      while (data.unwrapValue() & 3) {
+        // Combine three input bytes into a single uint24 value.
+        auto byte0 = Ops::load(data++);
+        auto byte1 = Ops::load(data++);
+        auto byte2 = Ops::load(data++);
+        auto u24 = (uint32_t(byte0) << 16) | (uint32_t(byte1) << 8) | byte2;
+
+        // Encode the uint24 value as base64.
+        char chars[] = {
+            encode(u24 >> 18),
+            encode(u24 >> 12),
+            encode(u24 >> 6),
+            encode(u24 >> 0),
+        };
+        appendN(chars);
+
+        MOZ_ASSERT(toRead >= 3);
+        toRead -= 3;
+      }
+    }
+
+    auto data32 = data.template cast<uint32_t*>();
+    for (; toRead >= 12; toRead -= 12) {
+      // Read three 32-bit words.
+      auto word0 = mozilla::NativeEndian::swapToBigEndian(Ops::load(data32++));
+      auto word1 = mozilla::NativeEndian::swapToBigEndian(Ops::load(data32++));
+      auto word2 = mozilla::NativeEndian::swapToBigEndian(Ops::load(data32++));
+
+      // Split into four uint24 values.
+      auto u24_0 = word0 >> 8;
+      auto u24_1 = (word0 << 16) | (word1 >> 16);
+      auto u24_2 = (word1 << 8) | (word2 >> 24);
+      auto u24_3 = word2;
+
+      // Encode the uint24 values as base64 and write in blocks of eight
+      // characters.
+      char chars1[] = {
+          encode(u24_0 >> 18), encode(u24_0 >> 12),
+          encode(u24_0 >> 6),  encode(u24_0 >> 0),
+
+          encode(u24_1 >> 18), encode(u24_1 >> 12),
+          encode(u24_1 >> 6),  encode(u24_1 >> 0),
+      };
+      appendN(chars1);
+
+      char chars2[] = {
+          encode(u24_2 >> 18), encode(u24_2 >> 12),
+          encode(u24_2 >> 6),  encode(u24_2 >> 0),
+
+          encode(u24_3 >> 18), encode(u24_3 >> 12),
+          encode(u24_3 >> 6),  encode(u24_3 >> 0),
+      };
+      appendN(chars2);
+    }
+    data = data32.template cast<uint8_t*>();
+  }
+
+  for (; toRead >= 3; toRead -= 3) {
+    // Combine three input bytes into a single uint24 value.
+    auto byte0 = Ops::load(data++);
+    auto byte1 = Ops::load(data++);
+    auto byte2 = Ops::load(data++);
+    auto u24 = (uint32_t(byte0) << 16) | (uint32_t(byte1) << 8) | byte2;
+
+    // Encode the uint24 value as base64.
+    char chars[] = {
+        encode(u24 >> 18),
+        encode(u24 >> 12),
+        encode(u24 >> 6),
+        encode(u24 >> 0),
+    };
+    appendN(chars);
+  }
+
+  // Trailing two and one element bytes are optionally padded with '='.
+  if (toRead == 2) {
+    // Combine two input bytes into a single uint24 value.
+    auto byte0 = Ops::load(data++);
+    auto byte1 = Ops::load(data++);
+    auto u24 = (uint32_t(byte0) << 16) | (uint32_t(byte1) << 8);
+
+    // Encode the uint24 value as base64, optionally including padding.
+    append(encode(u24 >> 18));
+    append(encode(u24 >> 12));
+    append(encode(u24 >> 6));
+    if (omitPadding == OmitPadding::No) {
+      append('=');
+    }
+  } else if (toRead == 1) {
+    // Combine one input byte into a single uint24 value.
+    auto byte0 = Ops::load(data++);
+    auto u24 = uint32_t(byte0) << 16;
+
+    // Encode the uint24 value as base64, optionally including padding.
+    append(encode(u24 >> 18));
+    append(encode(u24 >> 12));
+    if (omitPadding == OmitPadding::No) {
+      append('=');
+      append('=');
+    }
+  } else {
+    MOZ_ASSERT(toRead == 0);
+  }
+
+  MOZ_ASSERT(outPtr == out.end(), "all characters were written");
 }
 
 /**
@@ -4147,72 +5828,25 @@ static bool uint8array_toBase64(JSContext* cx, const CallArgs& args) {
     return false;
   }
 
-  JSStringBuilder sb(cx);
-  if (!sb.reserve(outLength.value())) {
+  StringChars<Latin1Char> chars(cx);
+  if (!chars.maybeAlloc(cx, outLength.value())) {
     return false;
   }
 
   // Steps 9-10.
-  const auto& base64Chars = alphabet == Alphabet::Base64
-                                ? Base64::Encode::Base64
-                                : Base64::Encode::Base64Url;
+  {
+    JS::AutoCheckCannotGC nogc;
+    mozilla::Range<Latin1Char> r(chars.data(nogc), outLength.value());
 
-  auto encode = [&base64Chars](uint32_t value) {
-    return base64Chars[value & 0x3f];
-  };
-
-  // Our implementation directly converts the bytes to their string
-  // representation instead of first collecting them into an intermediate list.
-  auto data = tarray->dataPointerEither().cast<uint8_t*>();
-  auto toRead = *length;
-  for (; toRead >= 3; toRead -= 3) {
-    // Combine three input bytes into a single uint24 value.
-    auto byte0 = jit::AtomicOperations::loadSafeWhenRacy(data++);
-    auto byte1 = jit::AtomicOperations::loadSafeWhenRacy(data++);
-    auto byte2 = jit::AtomicOperations::loadSafeWhenRacy(data++);
-    auto u24 = (uint32_t(byte0) << 16) | (uint32_t(byte1) << 8) | byte2;
-
-    // Encode the uint24 value as base64.
-    sb.infallibleAppend(encode(u24 >> 18));
-    sb.infallibleAppend(encode(u24 >> 12));
-    sb.infallibleAppend(encode(u24 >> 6));
-    sb.infallibleAppend(encode(u24 >> 0));
-  }
-
-  // Trailing two and one element bytes are optionally padded with '='.
-  if (toRead == 2) {
-    // Combine two input bytes into a single uint24 value.
-    auto byte0 = jit::AtomicOperations::loadSafeWhenRacy(data++);
-    auto byte1 = jit::AtomicOperations::loadSafeWhenRacy(data++);
-    auto u24 = (uint32_t(byte0) << 16) | (uint32_t(byte1) << 8);
-
-    // Encode the uint24 value as base64, optionally including padding.
-    sb.infallibleAppend(encode(u24 >> 18));
-    sb.infallibleAppend(encode(u24 >> 12));
-    sb.infallibleAppend(encode(u24 >> 6));
-    if (omitPadding == OmitPadding::No) {
-      sb.infallibleAppend('=');
+    if (tarray->isSharedMemory()) {
+      ToBase64<SharedOps>(tarray, *length, alphabet, omitPadding, r);
+    } else {
+      ToBase64<UnsharedOps>(tarray, *length, alphabet, omitPadding, r);
     }
-  } else if (toRead == 1) {
-    // Combine one input byte into a single uint24 value.
-    auto byte0 = jit::AtomicOperations::loadSafeWhenRacy(data++);
-    auto u24 = uint32_t(byte0) << 16;
-
-    // Encode the uint24 value as base64, optionally including padding.
-    sb.infallibleAppend(encode(u24 >> 18));
-    sb.infallibleAppend(encode(u24 >> 12));
-    if (omitPadding == OmitPadding::No) {
-      sb.infallibleAppend('=');
-      sb.infallibleAppend('=');
-    }
-  } else {
-    MOZ_ASSERT(toRead == 0);
   }
-
-  MOZ_ASSERT(sb.length() == outLength.value(), "all characters were written");
 
   // Step 11.
-  auto* str = sb.finishString();
+  auto* str = chars.toStringDontDeflate<CanGC>(cx, outLength.value());
   if (!str) {
     return false;
   }
@@ -4232,6 +5866,92 @@ static bool uint8array_toBase64(JSContext* cx, unsigned argc, Value* vp) {
   // Steps 1-2.
   return CallNonGenericMethod<IsUint8ArrayObject, uint8array_toBase64>(cx,
                                                                        args);
+}
+
+template <typename Ops>
+static void ToHex(TypedArrayObject* tarray, size_t length,
+                  mozilla::Range<Latin1Char> out) {
+  // NB: Lower case hex digits.
+  static constexpr char HexDigits[] = "0123456789abcdef";
+  static_assert(std::char_traits<char>::length(HexDigits) == 16);
+
+  auto outPtr = out.begin();
+
+  auto appendN = [&]<size_t N>(const char (&s)[N]) {
+    auto* dest = outPtr.get();
+
+    // Increment before writing to assert we're still in range.
+    outPtr += N;
+    std::memcpy(dest, s, N);
+  };
+
+  // Process multiple bytes per loop to reduce number of calls to
+  // infallibleAppend. Choose four bytes because tested compilers can optimize
+  // this amount of bytes into a single write operation.
+  constexpr size_t BYTES_PER_LOOP = 4;
+
+  size_t alignedLength = length & ~(BYTES_PER_LOOP - 1);
+
+  // Steps 3 and 5.
+  //
+  // Our implementation directly converts the bytes to their string
+  // representation instead of first collecting them into an intermediate list.
+  auto data = Ops::extract(tarray).template cast<uint8_t*>();
+  for (size_t index = 0; index < alignedLength;) {
+    char chars[BYTES_PER_LOOP * 2];
+
+    for (size_t i = 0; i < BYTES_PER_LOOP; ++i) {
+      auto byte = Ops::load(data + index++);
+      chars[i * 2 + 0] = HexDigits[byte >> 4];
+      chars[i * 2 + 1] = HexDigits[byte & 0xf];
+    }
+
+    appendN(chars);
+  }
+
+  // Write the remaining characters.
+  for (size_t index = alignedLength; index < length;) {
+    char chars[2];
+
+    auto byte = Ops::load(data + index++);
+    chars[0] = HexDigits[byte >> 4];
+    chars[1] = HexDigits[byte & 0xf];
+
+    appendN(chars);
+  }
+
+  MOZ_ASSERT(outPtr == out.end(), "all characters were written");
+}
+
+template <>
+void ToHex<UnsharedOps>(TypedArrayObject* tarray, size_t length,
+                        mozilla::Range<Latin1Char> out) {
+  // Convert to lower case hex digit.
+  //
+  // Doesn't use a lookup table to make it optimizable for the auto-vectorizer.
+  // The auto-vectorizer can't inline through SharedOps, so this code path is
+  // only used for UnsharedOps.
+  //
+  // https://lemire.me/blog/2026/02/02/converting-data-to-hexadecimal-outputs-quickly/
+  auto toLowerHex = [](uint8_t x) -> char {
+    static_assert('a' - '9' == 40);
+    return x + '0' + ((x > 9) * 39);
+  };
+
+  auto outPtr = out.begin();
+
+  // Steps 3 and 5.
+  //
+  // Our implementation directly converts the bytes to their string
+  // representation instead of first collecting them into an intermediate list.
+  auto data = UnsharedOps::extract(tarray).template cast<uint8_t*>();
+  for (size_t index = 0; index < length;) {
+    auto byte = UnsharedOps::load(data + index++);
+    *outPtr++ = toLowerHex(byte >> 4);
+    *outPtr++ = toLowerHex(byte & 0xf);
+  }
+
+  MOZ_ASSERT(outPtr == out.end(), "all characters were written");
 }
 
 /**
@@ -4265,31 +5985,25 @@ static bool uint8array_toHex(JSContext* cx, const CallArgs& args) {
   }
 
   // Step 4.
-  JSStringBuilder sb(cx);
-  if (!sb.reserve(outLength)) {
+  StringChars<Latin1Char> chars(cx);
+  if (!chars.maybeAlloc(cx, outLength)) {
     return false;
   }
 
-  // NB: Lower case hex digits.
-  static constexpr char HexDigits[] = "0123456789abcdef";
-  static_assert(std::char_traits<char>::length(HexDigits) == 16);
-
   // Steps 3 and 5.
-  //
-  // Our implementation directly converts the bytes to their string
-  // representation instead of first collecting them into an intermediate list.
-  auto data = tarray->dataPointerEither().cast<uint8_t*>();
-  for (size_t index = 0; index < *length; index++) {
-    auto byte = jit::AtomicOperations::loadSafeWhenRacy(data + index);
+  {
+    JS::AutoCheckCannotGC nogc;
+    mozilla::Range<Latin1Char> r(chars.data(nogc), outLength);
 
-    sb.infallibleAppend(HexDigits[byte >> 4]);
-    sb.infallibleAppend(HexDigits[byte & 0xf]);
+    if (tarray->isSharedMemory()) {
+      ToHex<SharedOps>(tarray, *length, r);
+    } else {
+      ToHex<UnsharedOps>(tarray, *length, r);
+    }
   }
 
-  MOZ_ASSERT(sb.length() == outLength, "all characters were written");
-
   // Step 6.
-  auto* str = sb.finishString();
+  auto* str = chars.toStringDontDeflate<CanGC>(cx, outLength);
   if (!str) {
     return false;
   }
@@ -4311,11 +6025,11 @@ static bool uint8array_toHex(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 /* static */ const JSFunctionSpec TypedArrayObject::protoFunctions[] = {
-    JS_SELF_HOSTED_FN("subarray", "TypedArraySubarray", 2, 0),
-    JS_FN("set", TypedArray_set, 1, 0),
+    JS_INLINABLE_FN("subarray", TypedArray_subarray, 2, 0, TypedArraySubarray),
+    JS_INLINABLE_FN("set", TypedArray_set, 1, 0, TypedArraySet),
     JS_FN("copyWithin", TypedArray_copyWithin, 2, 0),
     JS_SELF_HOSTED_FN("every", "TypedArrayEvery", 1, 0),
-    JS_FN("fill", TypedArray_fill, 1, 0),
+    JS_INLINABLE_FN("fill", TypedArray_fill, 1, 0, TypedArrayFill),
     JS_SELF_HOSTED_FN("filter", "TypedArrayFilter", 1, 0),
     JS_SELF_HOSTED_FN("find", "TypedArrayFind", 1, 0),
     JS_SELF_HOSTED_FN("findIndex", "TypedArrayFindIndex", 1, 0),
@@ -4329,7 +6043,7 @@ static bool uint8array_toHex(JSContext* cx, unsigned argc, Value* vp) {
     JS_SELF_HOSTED_FN("reduce", "TypedArrayReduce", 1, 0),
     JS_SELF_HOSTED_FN("reduceRight", "TypedArrayReduceRight", 1, 0),
     JS_FN("reverse", TypedArray_reverse, 0, 0),
-    JS_SELF_HOSTED_FN("slice", "TypedArraySlice", 2, 0),
+    JS_FN("slice", TypedArray_slice, 2, 0),
     JS_SELF_HOSTED_FN("some", "TypedArraySome", 1, 0),
     JS_TRAMPOLINE_FN("sort", TypedArrayObject::sort, 1, 0, TypedArraySort),
     JS_SELF_HOSTED_FN("entries", "TypedArrayEntries", 0, 0),
@@ -4370,7 +6084,7 @@ static const ClassSpec TypedArrayObjectSharedTypedArrayPrototypeClassSpec = {
     TypedArrayObject::staticProperties,
     TypedArrayObject::protoFunctions,
     TypedArrayObject::protoAccessors,
-    nullptr,
+    GenericFinishInit<WhichHasRealmFuseProperty::ProtoAndCtor>,
     ClassSpec::DontDefineConstructor,
 };
 
@@ -4604,29 +6318,16 @@ bool TypedArrayObject::getElements(JSContext* cx,
  */
 
 static const JSClassOps TypedArrayClassOps = {
-    nullptr,                                // addProperty
-    nullptr,                                // delProperty
-    nullptr,                                // enumerate
-    nullptr,                                // newEnumerate
-    nullptr,                                // resolve
-    nullptr,                                // mayResolve
-    FixedLengthTypedArrayObject::finalize,  // finalize
-    nullptr,                                // call
-    nullptr,                                // construct
-    ArrayBufferViewObject::trace,           // trace
+    .finalize = FixedLengthTypedArrayObject::finalize,
+    .trace = ArrayBufferViewObject::trace,
 };
 
 static const JSClassOps ResizableTypedArrayClassOps = {
-    nullptr,                       // addProperty
-    nullptr,                       // delProperty
-    nullptr,                       // enumerate
-    nullptr,                       // newEnumerate
-    nullptr,                       // resolve
-    nullptr,                       // mayResolve
-    nullptr,                       // finalize
-    nullptr,                       // call
-    nullptr,                       // construct
-    ArrayBufferViewObject::trace,  // trace
+    .trace = ArrayBufferViewObject::trace,
+};
+
+static const JSClassOps ImmutableTypedArrayClassOps = {
+    .trace = ArrayBufferViewObject::trace,
 };
 
 static const ClassExtension TypedArrayClassExtension = {
@@ -4686,7 +6387,7 @@ static const ClassSpec
       static_prototype_properties[Scalar::Type::Name],              \
       TypedArrayMethods(Scalar::Type::Name),                        \
       static_prototype_properties[Scalar::Type::Name],              \
-      nullptr,                                                      \
+      GenericFinishInit<WhichHasRealmFuseProperty::Proto>,          \
       JSProto_TypedArray,                                           \
   },
 
@@ -4694,9 +6395,10 @@ static const ClassSpec
 #undef IMPL_TYPED_ARRAY_CLASS_SPEC
 };
 
-// Class definitions for fixed length and resizable typed arrays. Stored into a
-// 2-dimensional array to ensure the classes are in contiguous memory.
-const JSClass TypedArrayObject::anyClasses[2][Scalar::MaxTypedArrayViewType] = {
+// Class definitions for fixed length, resizable, and immutable typed arrays.
+// Stored into a 2-dimensional array to ensure the classes are in contiguous
+// memory.
+const JSClass TypedArrayObject::anyClasses[3][Scalar::MaxTypedArrayViewType] = {
     // Class definitions for fixed length typed arrays.
     {
 #define IMPL_TYPED_ARRAY_CLASS(ExternalType, NativeType, Name)             \
@@ -4709,6 +6411,23 @@ const JSClass TypedArrayObject::anyClasses[2][Scalar::MaxTypedArrayViewType] = {
       &TypedArrayClassOps,                                                 \
       &TypedArrayObjectClassSpecs[Scalar::Type::Name],                     \
       &TypedArrayClassExtension,                                           \
+  },
+
+        JS_FOR_EACH_TYPED_ARRAY(IMPL_TYPED_ARRAY_CLASS)
+#undef IMPL_TYPED_ARRAY_CLASS
+    },
+
+    // Class definitions for immutable typed arrays.
+    {
+#define IMPL_TYPED_ARRAY_CLASS(ExternalType, NativeType, Name)                \
+  {                                                                           \
+      #Name "Array",                                                          \
+      JSCLASS_HAS_RESERVED_SLOTS(ImmutableTypedArrayObject::RESERVED_SLOTS) | \
+          JSCLASS_HAS_CACHED_PROTO(JSProto_##Name##Array) |                   \
+          JSCLASS_DELAY_METADATA_BUILDER,                                     \
+      &ImmutableTypedArrayClassOps,                                           \
+      &TypedArrayObjectClassSpecs[Scalar::Type::Name],                        \
+      JS_NULL_CLASS_EXT,                                                      \
   },
 
         JS_FOR_EACH_TYPED_ARRAY(IMPL_TYPED_ARRAY_CLASS)
@@ -4759,21 +6478,6 @@ const JSClass TypedArrayObject::protoClasses[Scalar::MaxTypedArrayViewType] = {
 #undef IMPL_TYPED_ARRAY_PROTO_CLASS
 };
 
-/* static */
-bool TypedArrayObject::isOriginalLengthGetter(Native native) {
-  return native == TypedArray_lengthGetter;
-}
-
-/* static */
-bool TypedArrayObject::isOriginalByteOffsetGetter(Native native) {
-  return native == TypedArray_byteOffsetGetter;
-}
-
-/* static */
-bool TypedArrayObject::isOriginalByteLengthGetter(Native native) {
-  return native == TypedArray_byteLengthGetter;
-}
-
 bool js::IsTypedArrayConstructor(const JSObject* obj) {
 #define CHECK_TYPED_ARRAY_CONSTRUCTOR(_, T, N)                                 \
   if (IsNativeFunction(obj, TypedArrayObjectTemplate<T>::class_constructor)) { \
@@ -4799,9 +6503,24 @@ JSNative js::TypedArrayConstructorNative(Scalar::Type type) {
   MOZ_CRASH("unexpected typed array type");
 }
 
+Scalar::Type js::TypedArrayConstructorType(const JSFunction* fun) {
+  if (!fun->isNativeFun()) {
+    return Scalar::MaxTypedArrayViewType;
+  }
+
+#define CHECK_TYPED_ARRAY_CONSTRUCTOR(_, T, N)                           \
+  if (fun->native() == TypedArrayObjectTemplate<T>::class_constructor) { \
+    return Scalar::N;                                                    \
+  }
+  JS_FOR_EACH_TYPED_ARRAY(CHECK_TYPED_ARRAY_CONSTRUCTOR)
+#undef CHECK_TYPED_ARRAY_CONSTRUCTOR
+
+  return Scalar::MaxTypedArrayViewType;
+}
+
 bool js::IsBufferSource(JSContext* cx, JSObject* object, bool allowShared,
                         bool allowResizable, SharedMem<uint8_t*>* dataPointer,
-                        size_t* byteLength) {
+                        size_t* byteLength, bool* isShared) {
   if (object->is<TypedArrayObject>()) {
     Rooted<TypedArrayObject*> view(cx, &object->as<TypedArrayObject>());
     if (!allowShared && view->isSharedMemory()) {
@@ -4818,6 +6537,9 @@ bool js::IsBufferSource(JSContext* cx, JSObject* object, bool allowShared,
     }
     *dataPointer = view->dataPointerEither().cast<uint8_t*>();
     *byteLength = view->byteLength().valueOr(0);
+    if (isShared) {
+      *isShared = view->isSharedMemory();
+    }
     return true;
   }
 
@@ -4837,6 +6559,9 @@ bool js::IsBufferSource(JSContext* cx, JSObject* object, bool allowShared,
     }
     *dataPointer = view->dataPointerEither().cast<uint8_t*>();
     *byteLength = view->byteLength().valueOr(0);
+    if (isShared) {
+      *isShared = view->isSharedMemory();
+    }
     return true;
   }
 
@@ -4852,6 +6577,9 @@ bool js::IsBufferSource(JSContext* cx, JSObject* object, bool allowShared,
     }
     *dataPointer = buffer->dataPointerEither();
     *byteLength = buffer->byteLength();
+    if (isShared) {
+      *isShared = false;
+    }
     return true;
   }
 
@@ -4863,6 +6591,9 @@ bool js::IsBufferSource(JSContext* cx, JSObject* object, bool allowShared,
     // This will always be locked and out of line.
     *dataPointer = buffer.dataPointerShared();
     *byteLength = buffer.byteLength();
+    if (isShared) {
+      *isShared = true;
+    }
     return true;
   }
 
@@ -5043,8 +6774,11 @@ bool js::DefineTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
     return result.fail(JSMSG_DEFINE_BAD_INDEX);
   }
 
+  // TypedArray elements are modifiable unless the backing buffer is immutable.
+  bool modifiable = !obj->is<ImmutableTypedArrayObject>();
+
   // Step ii.
-  if (desc.hasConfigurable() && !desc.configurable()) {
+  if (desc.hasConfigurable() && desc.configurable() != modifiable) {
     return result.fail(JSMSG_CANT_REDEFINE_PROP);
   }
 
@@ -5059,13 +6793,29 @@ bool js::DefineTypedArrayElement(JSContext* cx, Handle<TypedArrayObject*> obj,
   }
 
   // Step v.
-  if (desc.hasWritable() && !desc.writable()) {
+  if (desc.hasWritable() && desc.writable() != modifiable) {
     return result.fail(JSMSG_CANT_REDEFINE_PROP);
   }
 
   // Step vi.
   if (desc.hasValue()) {
-    return SetTypedArrayElement(cx, obj, index, desc.value(), result);
+    if (modifiable) {
+      return SetTypedArrayElement(cx, obj, index, desc.value(), result);
+    }
+
+    Rooted<Value> currentValue(cx);
+    if (!obj->getElement<CanGC>(cx, index, &currentValue)) {
+      return false;
+    }
+
+    bool sameValue;
+    if (!SameValue(cx, desc.value(), currentValue, &sameValue)) {
+      return false;
+    }
+
+    if (!sameValue) {
+      return result.fail(JSMSG_CANT_REDEFINE_PROP);
+    }
   }
 
   // Step vii.
@@ -5487,6 +7237,13 @@ static MOZ_ALWAYS_INLINE bool TypedArraySortPrologue(JSContext* cx,
     return false;
   }
 
+  // Additional step from Immutable ArrayBuffer proposal.
+  if (tarrayUnwrapped->is<ImmutableTypedArrayObject>()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_ARRAYBUFFER_IMMUTABLE);
+    return false;
+  }
+
   // Step 4.
   size_t len = *arrayLength;
 
@@ -5609,7 +7366,8 @@ bool TypedArrayObject::sort(JSContext* cx, unsigned argc, Value* vp) {
   // If we have a comparator argument, use the JIT trampoline implementation
   // instead. This avoids a performance cliff (especially with large arrays)
   // because C++ => JIT calls are much slower than Trampoline => JIT calls.
-  if (args.hasDefined(0) && jit::IsBaselineInterpreterEnabled()) {
+  if (args.hasDefined(0) && jit::IsBaselineInterpreterEnabled() &&
+      !jit::TooManyActualArguments(args.length())) {
     return CallTrampolineNativeJitCode(
         cx, jit::TrampolineNative::TypedArraySort, args);
   }
@@ -5648,7 +7406,7 @@ bool TypedArrayObject::sort(JSContext* cx, unsigned argc, Value* vp) {
         return true;
 
       case ArraySortResult::CallJS:
-      case ArraySortResult::CallJSSameRealmNoRectifier:
+      case ArraySortResult::CallJSSameRealmNoUnderflow:
         MOZ_ASSERT(data.get().comparatorThisValue().isUndefined());
         MOZ_ASSERT(&args[0].toObject() == data.get().comparator());
         callArgs[0].set(data.get().comparatorArg(0));
@@ -5716,7 +7474,9 @@ ArraySortResult js::TypedArraySortFromJit(
     if (clasp != FixedLengthTypedArrayObjectTemplate<                         \
                      NativeType>::instanceClass() &&                          \
         clasp !=                                                              \
-            ResizableTypedArrayObjectTemplate<NativeType>::instanceClass()) { \
+            ResizableTypedArrayObjectTemplate<NativeType>::instanceClass() && \
+        clasp !=                                                              \
+            ImmutableTypedArrayObjectTemplate<NativeType>::instanceClass()) { \
       return nullptr;                                                         \
     }                                                                         \
     return obj;                                                               \
@@ -5818,6 +7578,8 @@ namespace JS {
 
 const JSClass* const TypedArray_base::fixedLengthClasses =
     TypedArrayObject::fixedLengthClasses;
+const JSClass* const TypedArray_base::immutableClasses =
+    TypedArrayObject::immutableClasses;
 const JSClass* const TypedArray_base::resizableClasses =
     TypedArrayObject::resizableClasses;
 
@@ -5853,6 +7615,15 @@ bool JS::ArrayBufferOrView::isResizable() const {
     return obj->as<ArrayBufferObjectMaybeShared>().isResizable();
   } else {
     return obj->as<ArrayBufferViewObject>().hasResizableBuffer();
+  }
+}
+
+bool JS::ArrayBufferOrView::isImmutable() const {
+  MOZ_ASSERT(obj);
+  if (obj->is<ArrayBufferObjectMaybeShared>()) {
+    return obj->as<ArrayBufferObjectMaybeShared>().isImmutable();
+  } else {
+    return obj->as<ArrayBufferViewObject>().hasImmutableBuffer();
   }
 }
 

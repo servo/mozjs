@@ -73,6 +73,7 @@ def print_header(outfh):
     print(
         """\
 <!DOCTYPE html>
+<html>
 <head>
 <meta charset="utf-8">
 <style>
@@ -83,6 +84,11 @@ input {
 }
 tt {
   background: #eee;
+}
+.gccall {
+  font-weight: bold;
+  font-style: italic;
+  color: #060;
 }
 .tab-label {
   cursor: s-resize;
@@ -95,10 +101,7 @@ tt {
 }
 .tab-label::after {
   content: " \\25B6";
-  width: 1em;
-  height: 1em;
   color: #75f;
-  text-align: center;
   transition: all 0.35s;
 }
 .accorntent {
@@ -127,13 +130,68 @@ input:checked ~ .accorntent {
     )
 
 
-def print_footer(outfh):
-    print("</ol></body>", file=outfh)
+def parse_function(readable):
+    """Do a very simple parse of a full function declaration, splitting it into
+    a prefix, the function name, and a suffix."""
+
+    s = readable
+
+    # Remove all template parameter lists, recursively.
+    while True:
+        s, count = re.subn(r"<[^<]*>", "", s)
+        if count == 0:
+            break
+
+    if m := re.search(r"((?:~?\w+|operator[^(]+))\(", s):
+        # Grab the function name just before the first open paren.
+        funcName = m.group(1)
+
+        # Expand the function name to include any namespaces (and class names,
+        # as long as they aren't templatized).
+        name_start = readable.index(funcName)
+        name_end = name_start + len(funcName)
+        s = readable[: name_end + 1]
+        m = re.search(r"((?:[\w:]+|operator[^(]+))\(", s)
+        if m:
+            funcName = m.group(1)
+    elif m := re.search(r"\:\d+$", s):
+        # Field call, like "IDL_foo:0"
+        funcName = s
+    elif m := re.search(r"[^:]:(\w+)$", s):
+        # <filename>:<cfunc>
+        funcName = m.group(1)
+    elif m := re.match(r"\w+$", s):
+        # <cfunc>
+        funcName = s
+    else:
+        # There is a wide variety of messy other formats for function names. We
+        # are unlikely to run across them in this code, but fall back to the
+        # full string.
+        print(f"FAILED function_parse on {s}", file=sys.stderr)
+        funcName = s
+
+    name_start = readable.index(funcName)
+
+    return {
+        "prefix": readable[:name_start],
+        "name": funcName,
+        "suffix": readable[name_start + len(funcName) :],
+        "call": funcName + "()",
+    }
 
 
-def sourcelink(symbol=None, loc=None, range=None):
+def brief_function(readable):
+    '''Convert eg "Result<int> js::evil::foo(const Danger<float,
+    Error<false>>&)" to just "js::evil::foo()"'''
+    return parse_function(readable)["call"]
+
+
+def sourcelink(symbol=None, readable=None, loc=None, range=None):
     if symbol:
-        return f"https://searchfox.org/mozilla-central/search?q=symbol:{symbol}"
+        if symbol.startswith("_Z") or readable is None:
+            return f"https://searchfox.org/mozilla-central/search?q=symbol:{symbol}"
+        info = parse_function(readable)
+        return f"https://searchfox.org/mozilla-central/search?q={info['name']}"
     elif range:
         filename, lineno = loc.split(":")
         [f0, l0] = range[0]
@@ -151,6 +209,13 @@ def sourcelink(symbol=None, loc=None, range=None):
 
 def quoted_dict(d):
     return {k: escape(v) for k, v in d.items() if type(v) is str}
+
+
+def func_link(result):
+    return "<code>{prefix}<a href='{src}'>{name}</a>{suffix}</code>".format(
+        **parse_function(escape(result["readable"])),
+        src=sourcelink(symbol=result["mangled"], readable=result["readable"]),
+    )
 
 
 num_hazards = 0
@@ -180,6 +245,7 @@ try:
 
         checkboxCounter = 0
         hazard_results = []
+        missing = []
         seen_time = False
         for result in results:
             if result["record"] == "unrooted":
@@ -215,6 +281,7 @@ try:
                     ),
                     file=hazards,
                 )
+                missing.append(result)
                 num_missing += 1
 
         readable2mangled = {}
@@ -244,13 +311,24 @@ try:
                 gcExplanations[splitfunc(current_func)[0]] = explanation
 
         print(
-            "Found %d hazards, %d unsafe references, %d missing."
-            % (num_hazards, num_refs, num_missing),
+            f"<details open><summary>Found {num_hazards} hazards, {num_missing} expected hazards missing.</summary>",
             file=html,
         )
         print("<ol>", file=html)
 
-        for result in hazard_results:
+        for result in missing:
+            print(
+                "<li>MISSING expected hazard in <a href='{loc_url}'><tt>{call_short}</tt></a> at {loc}".format(
+                    loc_url=sourcelink(range=result["range"], loc=result["loc"]),
+                    call_short=brief_function(result["readable"]),
+                    loc=result["loc"],
+                ),
+                file=html,
+            )
+
+        # Put expected results last, so they can be hidden by default.
+        expected_banner_shown = False
+        for result in sorted(hazard_results, key=lambda r: r.get("expected")):
             (result["gccall_mangled"], result["gccall_readable"]) = splitfunc(
                 result["gccall"]
             )
@@ -286,7 +364,12 @@ try:
             print(file=hazards)
 
             if result.get("expected"):
-                continue
+                if not expected_banner_shown:
+                    expected_banner_shown = True
+                    print("</ol></details>\n", file=html)
+                    print(
+                        "<details><summary>Expected Hazards</summary>\n<ol>", file=html
+                    )
 
             cfgid = f"CFG_{checkboxCounter}"
             gcid = f"GC_{checkboxCounter}"
@@ -294,31 +377,36 @@ try:
             print(
                 (
                     "<li><ul>\n"
-                    "<li>Function <a href='{symbol_url}'>{readable}</a>\n"
+                    "<li>Function {func}\n"
                     "<li>has unrooted <tt>{variable}</tt> of type '<tt>{type}</tt>'\n"
                     "<li><input type='checkbox' id='{cfgid}'><label class='tab-label' for='{cfgid}'>"
-                    "live across GC call to"
+                    "live across GC call"
                     "</label>\n"
                     "<div class='accorntent'>\n"
                 ).format(
                     **quoted_dict(result),
-                    symbol_url=sourcelink(symbol=result["mangled"]),
+                    func=func_link(result),
                     cfgid=cfgid,
                 ),
                 file=html,
             )
             for edge in result["trace"]:
+                lineText = escape(edge["lineText"])
+                edgeText = escape(edge["edgeText"]).replace(
+                    "[[GC call]]", "<span class=gccall><-- GC call</span>"
+                )
                 print(
-                    "<pre>    {lineText}: {edgeText}</pre>".format(**quoted_dict(edge)),
+                    f"<pre>    {lineText}: {edgeText}</pre>",
                     file=html,
                 )
             print("</div>", file=html)
+            qresult = quoted_dict(result)
             print(
                 "<li><input type='checkbox' id='{gcid}'><label class='tab-label' for='{gcid}'>"
-                "<a href='{loc_url}'><tt>{gccall_short}</tt></a> at {loc}"
+                "to <a href='{loc_url}'><tt>{gccall_short}</tt></a>"
                 "</label>\n"
                 "<div class='accorntent'>".format(
-                    **quoted_dict(result),
+                    **qresult,
                     loc_url=sourcelink(range=result["gcrange"], loc=result["loc"]),
                     gcid=gcid,
                 ),
@@ -326,20 +414,46 @@ try:
             )
             for func in explanation:
                 print(f"<pre>{escape(func)}</pre>", file=html)
-            print("</div><hr></ul>", file=html)
+            print("</div>", file=html)
+            print(
+                "<li>at {loc}".format(**qresult),
+                file=html,
+            )
+            print("<hr></ul>", file=html)
 
-        print_footer(html)
+        print("</ol></details>\n", file=html)
+
+        print(
+            f"<details><summary>Found {num_refs} unsafe references</summary>\n",
+            file=html,
+        )
+        if num_refs > 0:
+            print("<ol>\n", file=html)
+            for result in [r for r in results if r["record"] == "address"]:
+                print(
+                    (
+                        "<li>\n"
+                        "Function {func} "
+                        "takes unsafe address of unrooted <tt>{variable}</tt> at <a href='{loc_url}'>{loc}</a>\n"
+                    ).format(
+                        **quoted_dict(result),
+                        func=func_link(result),
+                        loc_url=sourcelink(loc=result["loc"]),
+                    ),
+                    file=html,
+                )
+            print("</ol>\n", file=html)
+        print("</details>\n", file=html)
+
+        print("</body>\n</html>", file=html)
 
 except OSError as e:
-    print("Failed: %s" % str(e))
+    print(f"Failed: {e}")
 
 if args.verbose:
-    print("Wrote %s" % args.hazards)
-    print("Wrote %s" % args.extra)
-    print("Wrote %s" % args.refs)
-    print("Wrote %s" % args.html)
+    print(f"Wrote {args.hazards}")
+    print(f"Wrote {args.extra}")
+    print(f"Wrote {args.refs}")
+    print(f"Wrote {args.html}")
 
-print(
-    "Found %d hazards %d unsafe references %d missing"
-    % (num_hazards, num_refs, num_missing)
-)
+print(f"Found {num_hazards} hazards {num_refs} unsafe references {num_missing} missing")

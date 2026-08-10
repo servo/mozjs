@@ -29,17 +29,15 @@ test_data_path = mozpath.join(test_data_path, "data")
 class TestJarStruct(unittest.TestCase):
     class Foo(JarStruct):
         MAGIC = 0x01020304
-        STRUCT = OrderedDict(
-            [
-                ("foo", "uint32"),
-                ("bar", "uint16"),
-                ("qux", "uint16"),
-                ("length", "uint16"),
-                ("length2", "uint16"),
-                ("string", "length"),
-                ("string2", "length2"),
-            ]
-        )
+        STRUCT = OrderedDict([
+            ("foo", "uint32"),
+            ("bar", "uint16"),
+            ("qux", "uint16"),
+            ("length", "uint16"),
+            ("length2", "uint16"),
+            ("string", "length"),
+            ("string2", "length2"),
+        ])
 
     def test_jar_struct(self):
         foo = TestJarStruct.Foo()
@@ -304,30 +302,26 @@ class TestPreload(unittest.TestCase):
 class TestJarLog(unittest.TestCase):
     def test_jarlog(self):
         s = StringIO(
-            "\n".join(
-                [
-                    "bar/baz.jar first",
-                    "bar/baz.jar second",
-                    "bar/baz.jar third",
-                    "bar/baz.jar second",
-                    "bar/baz.jar second",
-                    "omni.ja stuff",
-                    "bar/baz.jar first",
-                    "omni.ja other/stuff",
-                    "omni.ja stuff",
-                    "bar/baz.jar third",
-                ]
-            )
+            "\n".join([
+                "bar/baz.jar first",
+                "bar/baz.jar second",
+                "bar/baz.jar third",
+                "bar/baz.jar second",
+                "bar/baz.jar second",
+                "omni.ja stuff",
+                "bar/baz.jar first",
+                "omni.ja other/stuff",
+                "omni.ja stuff",
+                "bar/baz.jar third",
+            ])
         )
         log = JarLog(fileobj=s)
         self.assertEqual(
             set(log.keys()),
-            set(
-                [
-                    "bar/baz.jar",
-                    "omni.ja",
-                ]
-            ),
+            set([
+                "bar/baz.jar",
+                "omni.ja",
+            ]),
         )
         self.assertEqual(
             log["bar/baz.jar"],

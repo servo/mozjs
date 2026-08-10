@@ -1,11 +1,6 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-#include <array>
 
 #include "ds/SinglyLinkedList.h"
 #include "jsapi-tests/tests.h"
@@ -25,23 +20,23 @@ BEGIN_TEST(testSinglyLinkedList) {
 
   TestList list;
   CHECK(list.isEmpty());
-  CHECK(!list.first());
-  CHECK(!list.last());
+  CHECK(!list.getFirst());
+  CHECK(!list.getLast());
   CHECK(CountList(list) == 0);
 
   // Test list pushBack and first/last accessors.
 
   list.pushBack(MakeElement(1));
   CHECK(!list.isEmpty());
-  CHECK(list.first()->value == 1);
-  CHECK(list.last()->value == 1);
+  CHECK(list.getFirst()->value == 1);
+  CHECK(list.getLast()->value == 1);
   CHECK(CheckList<1>(list));
 
   list.pushBack(MakeElement(2));
   list.pushBack(MakeElement(3));
   CHECK(!list.isEmpty());
-  CHECK(list.first()->value == 1);
-  CHECK(list.last()->value == 3);
+  CHECK(list.getFirst()->value == 1);
+  CHECK(list.getLast()->value == 3);
   CHECK((CheckList<1, 2, 3>(list)));
 
   // Test popFront.
@@ -49,29 +44,29 @@ BEGIN_TEST(testSinglyLinkedList) {
   IntSinglyLinkedElement* e = list.popFront();
   CHECK(e->value == 1);
   js_delete(e);
-  CHECK(list.first()->value == 2);
+  CHECK(list.getFirst()->value == 2);
   CHECK((CheckList<2, 3>(list)));
 
   e = list.popFront();
   CHECK(e->value == 2);
   js_delete(e);
-  CHECK(list.first()->value == 3);
+  CHECK(list.getFirst()->value == 3);
 
   //  Test pushFront.
 
   list.pushFront(MakeElement(2));
-  CHECK(list.first()->value == 2);
+  CHECK(list.getFirst()->value == 2);
   CHECK((CheckList<2, 3>(list)));
 
   list.pushFront(MakeElement(1));
-  CHECK(list.first()->value == 1);
+  CHECK(list.getFirst()->value == 1);
   CHECK((CheckList<1, 2, 3>(list)));
 
   // Test moveFrontToBack.
 
   list.moveFrontToBack();
-  CHECK(list.first()->value == 2);
-  CHECK(list.last()->value == 1);
+  CHECK(list.getFirst()->value == 2);
+  CHECK(list.getLast()->value == 1);
   CHECK((CheckList<2, 3, 1>(list)));
   list.moveFrontToBack();
   list.moveFrontToBack();
@@ -146,17 +141,17 @@ BEGIN_TEST(testSinglyLinkedList) {
 
   iter = list.iter();
   CHECK(!iter.done());
-  CHECK(iter.get() == list.first());
+  CHECK(iter.get() == list.getFirst());
 
-  iter = list.iterFrom(list.last());
+  iter = list.iterFrom(list.getLast());
   CHECK(!iter.done());
-  CHECK(iter.get() == list.last());
+  CHECK(iter.get() == list.getLast());
 
   // Test removeRange.
 
   e = FindElement(list, 3);
   CHECK(e);
-  list.removeRange(e, list.last());
+  list.removeRange(e, list.getLast());
   CHECK((CheckList<7, 8, 9, 1, 2, 3>(list)));
 
   e = FindElement(list, 8);
@@ -172,8 +167,8 @@ BEGIN_TEST(testSinglyLinkedList) {
     js_delete(list.popFront());
   }
   CHECK(list.isEmpty());
-  CHECK(!list.first());
-  CHECK(!list.last());
+  CHECK(!list.getFirst());
+  CHECK(!list.getLast());
   CHECK(CountList(list) == 0);
 
   return true;

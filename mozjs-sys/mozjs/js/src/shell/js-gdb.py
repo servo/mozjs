@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-""" GDB Python customization auto-loader for JS shell binary """
+"""GDB Python customization auto-loader for JS shell binary"""
 
 # This script will be installed into $objdir/dist/bin. Add $objdir to gdb's
 # source search path and load in the Gecko+JS init file.

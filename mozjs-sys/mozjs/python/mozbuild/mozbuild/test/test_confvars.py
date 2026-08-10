@@ -13,7 +13,6 @@ def TemporaryConfVars():
 
 
 class TestContext(unittest.TestCase):
-
     def loads(self, *lines):
         with NamedTemporaryFile("wt", delete=False) as ntf:
             ntf.writelines(lines)
@@ -64,7 +63,7 @@ class TestContext(unittest.TestCase):
         )
 
     def test_parse_quoted_assignment(self):
-        confvars = self.loads("a='b'\n" "b=' c'\n" 'c=" \'c"\n')
+        confvars = self.loads("a='b'\nb=' c'\nc=\" 'c\"\n")
         self.assertEqual(confvars, {"a": "b", "b": " c", "c": " 'c"})
 
     def test_parse_invalid_assignment(self):

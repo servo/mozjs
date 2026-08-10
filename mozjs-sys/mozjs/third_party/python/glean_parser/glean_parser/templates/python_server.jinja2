@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 import json
+import sys
 
 GLEAN_EVENT_MOZLOG_TYPE = "glean-server-event"
 
@@ -32,35 +33,41 @@ class {{ ping|camelize }}ServerEventLogger:
         self._app_display_version = app_display_version
         self._channel = channel
 
-    def _record(
+    def record(
         self,
-        user_agent: str,
-        ip_address: str,
+        user_agent: str | None = None,
+        ip_address: str | None = None,
         {% for metric_type, metrics in metrics_by_type.items() %}
         {% if metric_type != 'event' %}
         {% for metric in metrics %}
-        {{ metric.category }}_{{ metric.name }}: {{ metric.type|py_metric_type }},
+        {{ metric.category }}_{{ metric.name }}: {{ metric.type|py_metric_type }} | None = None,
         {% endfor %}
         {% endif %}
         {% endfor %}
-        event: dict[str, Any]
+        events: list[dict[str, Any]] | None = None,
     ) -> None:
         now = datetime.now(timezone.utc)
         timestamp = now.isoformat()
-        event["timestamp"] = int(1000.0 * now.timestamp())  # Milliseconds since epoch
+        events = [] if events is None else events
+        for event in events:
+            event["timestamp"] = 0
         event_payload = {
             "metrics": {
                 {% for metric_type, metrics in metrics_by_type.items() %}
                 {% if metric_type != 'event' %}
                 "{{ metric_type }}": {
-                    {% for metric in metrics %}
-                    "{{ metric.category }}.{{ metric.name }}": {{ metric.category }}_{{ metric.name }},
-                    {% endfor %}
+                    key: value
+                    for key, value in [
+                        {% for metric in metrics %}
+                        ("{{ metric.category }}.{{ metric.name }}", {{ metric.category }}_{{ metric.name }}),
+                        {% endfor %}
+                    ]
+                    if value is not None
                 },
                 {% endif %}
                 {% endfor %}
             },
-            "events": [event],
+            "events": events,
             "ping_info": {
                 # seq is required in the Glean schema, however is not useful in server context
                 "seq": 0,
@@ -110,28 +117,28 @@ class {{ ping|camelize }}ServerEventLogger:
         }
         ping_envelope_serialized = json.dumps(ping_envelope)
 
-        print(ping_envelope_serialized)
+        sys.stdout.write(f"{ping_envelope_serialized}\n")
 
     {% for event in metrics_by_type["event"] %}
     def {{ event|record_event_function_name }}(
         self,
-        user_agent: str,
-        ip_address: str,
+        user_agent: str | None = None,
+        ip_address: str | None = None,
         {% for metric_type, metrics in metrics_by_type.items() %}
         {% if metric_type != 'event' %}
         {% for metric in metrics %}
-        {{ metric.category }}_{{ metric.name }}: {{ metric.type|py_metric_type }},
+        {{ metric.category }}_{{ metric.name }}: {{ metric.type|py_metric_type }} | None = None,
         {% endfor %}
         {% endif %}
         {% endfor %}
         {% for extra, metadata in event.extra_keys.items() %}
-        {{ extra }}: {{ metadata.type|py_metric_type }},
+        {{ extra }}: {{ metadata.type|py_metric_type }} | None = None,
         {% endfor %}
     ) -> None:
         """
         Record and submit a {{ event.category }}_{{ event.name }} event:
         {{ event.description|clean_string }}
-        Event is logged to STDOUT via `print`.
+        Event is logged to STDOUT via `sys.stdout.write`.
 
         :param str user_agent: The user agent.
         :param str ip_address: The IP address. Will be used to decode Geo information
@@ -154,13 +161,17 @@ class {{ ping|camelize }}ServerEventLogger:
             "name": "{{ event.name }}",
             {% if event.extra_keys %}
             "extra": {
-                {% for extra, metadata in event.extra_keys.items() %}
-                "{{ extra }}": str({{ extra }}){% if 'bool' == metadata.type|py_metric_type %}.lower(){% endif %},
-                {% endfor %}
+                key: value
+                for key, value in [
+                    {% for extra, metadata in event.extra_keys.items() %}
+                    ("{{ extra }}", str({{ extra }}){% if 'bool' == metadata.type|py_metric_type %}.lower(){% endif %}),
+                    {% endfor %}
+                ]
+                if value is not None
             },
             {% endif %}
         }
-        self._record(
+        self.record(
             user_agent,
             ip_address,
             {% for metric_type, metrics in metrics_by_type.items() %}
@@ -170,7 +181,7 @@ class {{ ping|camelize }}ServerEventLogger:
             {% endfor %}
             {% endif %}
             {% endfor %}
-            event
+            [event],
         )
     {% endfor %}
 {% endfor %}

@@ -20,7 +20,6 @@ None of the instances (or the underlying caches) are safe for concurrent use.
 A future need, perhaps.
 """
 
-
 import binascii
 import hashlib
 import logging
@@ -77,7 +76,7 @@ class ArtifactPersistLimit(dlmanager.PersistLimit):
     """
 
     def __init__(self, log=None):
-        super(ArtifactPersistLimit, self).__init__(
+        super().__init__(
             size_limit=MAX_CACHED_ARTIFACTS_SIZE, file_limit=MIN_CACHED_ARTIFACTS
         )
         self._log = log
@@ -105,11 +104,11 @@ class ArtifactPersistLimit(dlmanager.PersistLimit):
             except OSError:
                 pass
             self._downloaded_now.add(path)
-        super(ArtifactPersistLimit, self).register_file(path)
+        super().register_file(path)
 
     def register_dir_content(self, directory, pattern="*"):
         self._registering_dir = True
-        super(ArtifactPersistLimit, self).register_dir_content(directory, pattern)
+        super().register_dir_content(directory, pattern)
         self._registering_dir = False
 
     def remove_old_files(self):

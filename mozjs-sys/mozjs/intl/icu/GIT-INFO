@@ -1,7 +1,5 @@
-commit f23af97cf467a3ae761e5943a6caf793415ac857
-Author: Markus Scherer <markus.icu@gmail.com>
-Date:   Wed Mar 12 16:40:58 2025 +0000
+commit 21d1eb0f306e1141c10931e914dfc038c06121da
+Author: Peter Edberg <pedberg@unicode.org>
+Date:   Mon Mar 16 15:41:53 2026 -0700
 
-    ICU-22923 ICU 77 release page updates
-    
-    See #3432
+    ICU-23316 Integrate CLDR 48.2 (final) to ICU maint-78; updates one tool

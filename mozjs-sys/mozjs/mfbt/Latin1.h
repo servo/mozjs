@@ -12,12 +12,13 @@
 #ifndef mozilla_Latin1_h
 #define mozilla_Latin1_h
 
+#include <cstddef>
 #include <type_traits>
 
 #include "mozilla/JsRust.h"
-#include "mozilla/Span.h"
 
 #if MOZ_HAS_JSRUST()
+#  include "mozilla/Span.h"
 #  include "encoding_rs_mem.h"
 #endif
 

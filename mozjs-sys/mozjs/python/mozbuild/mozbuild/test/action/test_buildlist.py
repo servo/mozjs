@@ -47,7 +47,7 @@ class TestBuildList(unittest.TestCase):
             self.assertEqual(line, l.pop(0))
         self.assertTrue(
             len(l) == 0,
-            f"not enough lines in file! (expected '{l}'," f" got '{lines}'",
+            f"not enough lines in file! (expected '{l}', got '{lines}'",
         )
 
     def test_basic(self):

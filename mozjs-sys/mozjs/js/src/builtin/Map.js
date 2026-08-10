@@ -197,10 +197,9 @@ function MapGroupBy(items, callbackfn) {
   return map;
 }
 
-#ifdef NIGHTLY_BUILD
 /**
  * Upsert proposal
- * 
+ *
  * Map.prototype.getOrInsertComputed ( key, callbackfn )
  *
  * https://tc39.es/proposal-upsert/
@@ -226,6 +225,10 @@ function MapGetOrInsertComputed(key, callbackfn) {
   }
 
   // Step 4.  Set key to CanonicalizeKeyedCollectionKey(key).
+  // key === 0 is true for both -0 and +0
+  if (key === 0) {
+    key = 0;
+  }
   // Step 5.  For each Record { [[Key]], [[Value]] } p of M.[[MapData]], do
   // Step 5.a.  If p.[[Key]] is not empty and SameValue(p.[[Key]], key) is true, return p.[[Value]].
   if (callFunction(std_Map_has, M, key)) {
@@ -245,5 +248,3 @@ function MapGetOrInsertComputed(key, callbackfn) {
   // Step 7.a.ii, 10. Return value.
   return value;
 }
-#endif  // #ifdef NIGHTLY_BUILD
-

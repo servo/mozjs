@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -101,13 +99,11 @@ static_assert(sizeof(Foo32) >= sizeof(uintptr_t) ||
                   sizeof(Result<Foo16, Foo32>) <= sizeof(uintptr_t),
               "Result with small types should be pointer-sized");
 
-#if __cplusplus < 202002L
-static_assert(std::is_literal_type_v<Result<int*, Failed>>);
-static_assert(std::is_literal_type_v<Result<Ok, Failed>>);
-static_assert(std::is_literal_type_v<Result<Ok, Foo8>>);
-static_assert(std::is_literal_type_v<Result<Foo8, Foo16>>);
-static_assert(!std::is_literal_type_v<Result<Ok, UniquePtr<int>>>);
-#endif
+static_assert(__is_literal_type(Result<int*, Failed>));
+static_assert(__is_literal_type(Result<Ok, Failed>));
+static_assert(__is_literal_type(Result<Ok, Foo8>));
+static_assert(__is_literal_type(Result<Foo8, Foo16>));
+static_assert(!__is_literal_type(Result<Ok, UniquePtr<int>>));
 
 static constexpr GenericErrorResult<Failed> Fail() { return Err(Failed{}); }
 
@@ -146,13 +142,6 @@ static constexpr Result<int, TestUnusedZeroEnum> Task2UnusedZeroEnumErr(
 }
 
 static Result<int, Failed> Task3(bool pass1, bool pass2, int value) {
-  int x, y;
-  MOZ_TRY_VAR(x, Task2(pass1, value));
-  MOZ_TRY_VAR(y, Task2(pass2, value));
-  return x + y;
-}
-
-static Result<int, Failed> Task4(bool pass1, bool pass2, int value) {
   auto x = MOZ_TRY(Task2(pass1, value));
   auto y = MOZ_TRY(Task2(pass2, value));
   return x + y;
@@ -187,13 +176,6 @@ static void BasicTests() {
   MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).isErr());
   MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).unwrapOr(6) == 6);
 
-  MOZ_RELEASE_ASSERT(Task4(true, true, 3).isOk());
-  MOZ_RELEASE_ASSERT(Task4(true, true, 3).unwrap() == 6);
-  MOZ_RELEASE_ASSERT(Task4(true, false, 3).isErr());
-  MOZ_RELEASE_ASSERT(Task4(false, true, 3).isErr());
-  MOZ_RELEASE_ASSERT(Task4(false, true, 3).unwrapOr(6) == 6);
-
-  // MOZ_TRY_VAR works.
   MOZ_RELEASE_ASSERT(Task3(true, true, 3).isOk());
   MOZ_RELEASE_ASSERT(Task3(true, true, 3).unwrap() == 6);
   MOZ_RELEASE_ASSERT(Task3(true, false, 3).isErr());

@@ -5,10 +5,7 @@
 #ifndef V8_UTIL_VECTOR_H_
 #define V8_UTIL_VECTOR_H_
 
-#include <algorithm>
 #include <cstring>
-#include <iterator>
-#include <memory>
 
 #include "js/AllocPolicy.h"
 #include "js/Utility.h"
@@ -24,9 +21,9 @@ namespace internal {
 
 template <typename T>
 T* NewArray(size_t size) {
-  static_assert(std::is_pod<T>::value, "");
+  static_assert(std::is_trivially_copyable_v<T>);
   js::AutoEnterOOMUnsafeRegion oomUnsafe;
-  T* result = static_cast<T*>(js_malloc(size * sizeof(T)));
+  T* result = js_pod_malloc<T>(size);
   if (!result) {
     oomUnsafe.crash("Irregexp NewArray");
   }
@@ -35,6 +32,7 @@ T* NewArray(size_t size) {
 
 template <typename T>
 void DeleteArray(T* array) {
+  static_assert(std::is_trivially_destructible_v<T>);
   js_free(array);
 }
 
@@ -169,6 +167,11 @@ inline Vector<const char> CStrVector(const char* data) {
   return Vector<const char>(data, strlen(data));
 }
 
+template <typename T, size_t N>
+inline constexpr Vector<T> ArrayVector(T (&arr)[N]) {
+  return {arr, N};
+}
+
 // Construct a Vector from a start pointer and a size.
 template <typename T>
 inline constexpr Vector<T> VectorOf(T* start, size_t size) {
@@ -186,14 +189,26 @@ class DefaultAllocator {
 // as a thin wrapper.
 // V8's implementation:
 // https://github.com/v8/v8/blob/main/src/base/small-vector.h
-template <typename T, size_t kSize, typename Allocator = DefaultAllocator>
+template <typename T, size_t Size, typename Allocator = DefaultAllocator>
 class SmallVector {
  public:
   explicit SmallVector(const Allocator& allocator = DefaultAllocator())
       : inner_(allocator.policy()) {}
-  SmallVector(size_t size) { resize_no_init(size); }
+  SmallVector(size_t size, const Allocator& allocator = DefaultAllocator())
+      : inner_(allocator.policy()) {
+    resize(size);
+  }
+  SmallVector(size_t size, const T& initialValue,
+              const Allocator& allocator = DefaultAllocator())
+      : inner_(allocator.policy()) {
+    js::AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (!inner_.appendN(initialValue, size)) {
+      oomUnsafe.crash("Irregexp SmallVector constructor");
+    }
+  }
 
   inline bool empty() const { return inner_.empty(); }
+  inline T& back() { return inner_.back(); }
   inline const T& back() const { return inner_.back(); }
   inline void pop_back() { inner_.popBack(); };
   template <typename... Args>
@@ -207,21 +222,47 @@ class SmallVector {
   inline const T& at(size_t index) const { return inner_[index]; }
   T* data() { return inner_.begin(); }
   T* begin() { return inner_.begin(); }
+  const T* begin() const { return inner_.begin(); }
+  T* end() { return inner_.end(); }
+  const T* end() const { return inner_.end(); }
 
   T& operator[](size_t index) { return inner_[index]; }
   const T& operator[](size_t index) const { return inner_[index]; }
 
   inline void clear() { inner_.clear(); }
 
-  void resize_no_init(size_t new_size) {
+  void push_back(T&& val) {
     js::AutoEnterOOMUnsafeRegion oomUnsafe;
-    if (!inner_.resizeUninitialized(new_size)) {
+    if (!inner_.append(val)) {
+      oomUnsafe.crash("Irregexp SmallVector push_back");
+    }
+  }
+
+  void resize(size_t new_size) {
+    js::AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (!inner_.resize(new_size)) {
       oomUnsafe.crash("Irregexp SmallVector resize");
     }
   }
 
+  template <typename OT, size_t OSize, class OAllocator>
+  void insert(T* position, SmallVector<OT, OSize, OAllocator>& other) {
+    js::AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (position == end()) {
+      if (!inner_.appendAll(other.inner_)) {
+        oomUnsafe.crash("Irregexp SmallVector insert");
+      }
+    } else {
+      // V8 supports splicing an arbitrary iterator into a SmallVector at an
+      // arbitrary position. mozilla::Vector doesn't support that. The shim
+      // doesn't currently need it. If it ever becomes necessary, we can decide
+      // whether to add support for doing it efficiently.
+      MOZ_CRASH("unimplemented");
+    }
+  }
+
  private:
-  js::Vector<T, kSize, typename Allocator::Policy> inner_;
+  js::Vector<T, Size, typename Allocator::Policy> inner_;
 };
 
 }  // namespace base

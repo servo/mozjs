@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -193,6 +192,22 @@ static_assert(Maybe<int>(std::in_place, 43) ==
               Maybe<int>(std::in_place, 42).map([](int val) {
                 return val + 1;
               }));
+
+/* Test we're not using extra bytes to store trivial scalars */
+template <class T>
+struct FakeStorage {
+  T value;
+  char flag;
+};
+
+static_assert(sizeof(FakeStorage<char>) == sizeof(Maybe<char>),
+              "extra padding does not change structure size");
+static_assert(sizeof(FakeStorage<short>) == sizeof(Maybe<short>),
+              "extra padding does not change structure size");
+static_assert(sizeof(FakeStorage<int>) == sizeof(Maybe<int>),
+              "extra padding does not change structure size");
+static_assert(sizeof(FakeStorage<long>) == sizeof(Maybe<long>),
+              "extra padding does not change structure size");
 
 struct TriviallyDestructible {
   TriviallyDestructible() {  // not trivially constructible
@@ -1690,6 +1705,52 @@ static bool TestComposedMoves() {
   return true;
 }
 
+static bool TestBeginEnd() {
+  for ([[maybe_unused]] auto v : static_cast<Maybe<int>>(Nothing())) {
+    MOZ_CRASH("Nothing should not be iterated");
+  }
+
+  for (auto v : Some(42)) {
+    MOZ_RELEASE_ASSERT(v == 42, "Some(42) should be iterated");
+  }
+
+  Maybe<int> maybe;
+  for ([[maybe_unused]] auto v : maybe) {
+    MOZ_CRASH("Nothing should not be iterated");
+  }
+
+  maybe = Some(42);
+
+  for (auto v : maybe) {
+    MOZ_RELEASE_ASSERT(v == 42, "Some(42) should be iterated");
+  }
+
+  maybe = Nothing();
+
+  for ([[maybe_unused]] auto v : maybe) {
+    MOZ_CRASH("Nothing should not be iterated");
+  }
+
+  int v = 42;
+  Maybe<int*> maybePtr;
+  for ([[maybe_unused]] auto* v : maybePtr) {
+    MOZ_CRASH("Nothing should not be iterated");
+  }
+
+  maybePtr = Some(&v);
+
+  for (auto* v : maybePtr) {
+    MOZ_RELEASE_ASSERT(*v == 42, "Some(address) should be iterated");
+  }
+
+  maybePtr = Nothing();
+  for ([[maybe_unused]] auto* v : maybePtr) {
+    MOZ_CRASH("Nothing should not be iterated");
+  }
+
+  return true;
+}
+
 // These are quasi-implementation details, but we assert them here to prevent
 // backsliding to earlier times when Maybe<T> for smaller T took up more space
 // than T's alignment required.
@@ -1722,6 +1783,7 @@ int main() {
   RUN_TEST(TestAndThen);
   RUN_TEST(TestOrElse);
   RUN_TEST(TestComposedMoves);
+  RUN_TEST(TestBeginEnd);
 
   return 0;
 }

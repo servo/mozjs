@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -310,6 +308,10 @@ class MOZ_NON_PARAM Val : public LitVal {
     MOZ_ASSERT(isAnyRef());
     return cell_.ref_;
   }
+  AnyRef* anyRefPtr() {
+    MOZ_ASSERT(isAnyRef() || isInvalid());
+    return &cell_.ref_;
+  }
 
   // Initialize from `loc` which is a rooted location and needs no barriers.
   void initFromRootedLocation(ValType type, const void* loc);
@@ -321,7 +323,8 @@ class MOZ_NON_PARAM Val : public LitVal {
   // Read from `loc` which is in the heap.
   void readFromHeapLocation(const void* loc);
   // Write to `loc` which is in the heap and must be barriered.
-  void writeToHeapLocation(void* loc) const;
+  void writeToHeapLocation(gc::Cell* owner, void* loc) const;
+  void writeToTenuredHeapLocation(void* loc) const;
 
   // See the comment for `ToWebAssemblyValue` below.
   static bool fromJSValue(JSContext* cx, ValType targetType, HandleValue val,
@@ -332,7 +335,7 @@ class MOZ_NON_PARAM Val : public LitVal {
   void trace(JSTracer* trc) const;
 };
 
-using GCPtrVal = GCPtr<Val>;
+using HeapPtrVal = HeapPtr<Val>;
 using RootedVal = Rooted<Val>;
 using HandleVal = Handle<Val>;
 using MutableHandleVal = MutableHandle<Val>;
@@ -405,6 +408,11 @@ extern bool ToJSValue(JSContext* cx, const void* src, ValType type,
                       CoercionLevel level = CoercionLevel::Spec);
 template <typename Debug = NoDebug>
 extern bool ToJSValueMayGC(ValType type);
+
+#ifdef DEBUG
+void AssertEdgeSourceNotInsideNursery(void* vp);
+#endif
+
 }  // namespace wasm
 
 template <>
@@ -420,6 +428,13 @@ struct InternalBarrierMethods<wasm::AnyRef> {
   static MOZ_ALWAYS_INLINE void postBarrier(wasm::AnyRef* vp,
                                             const wasm::AnyRef prev,
                                             const wasm::AnyRef next) {
+    // This assumes that callers have already checked that |vp| is in the
+    // tenured heap. Don't use HeapPtr<AnyRef> for things that could be in the
+    // nursery!
+#ifdef DEBUG
+    AssertEdgeSourceNotInsideNursery(vp);
+#endif
+
     // If the target needs an entry, add it.
     gc::StoreBuffer* sb;
     if (next.isGCThing() && (sb = next.toGCThing()->storeBuffer())) {
@@ -430,7 +445,7 @@ struct InternalBarrierMethods<wasm::AnyRef> {
       if (prev.isGCThing() && prev.toGCThing()->storeBuffer()) {
         return;
       }
-      sb->putWasmAnyRef(vp);
+      sb->putWasmAnyRefEdgeFromTenured(vp);
       return;
     }
     // Remove the prev entry if the new value does not need it.
@@ -455,6 +470,16 @@ struct InternalBarrierMethods<wasm::AnyRef> {
 };
 
 template <>
+struct AtomicMethods<wasm::AnyRef> {
+  static wasm::AnyRef atomicGet(wasm::AnyRef const* vp) {
+    return vp->atomicGet();
+  }
+  static void atomicSet(wasm::AnyRef* vp, const wasm::AnyRef& v) {
+    vp->atomicSet(v);
+  }
+};
+
+template <>
 struct InternalBarrierMethods<wasm::Val> {
   static bool isMarkable(const wasm::Val& v) { return v.isAnyRef(); }
 
@@ -468,16 +493,15 @@ struct InternalBarrierMethods<wasm::Val> {
                                             const wasm::Val& prev,
                                             const wasm::Val& next) {
     // A wasm::Val can transition from being uninitialized to holding an anyref
-    // but cannot change kind after that.
+    // but cannot change kind after that, except on destruction.
     MOZ_ASSERT_IF(next.isAnyRef(), prev.isAnyRef() || prev.isInvalid());
-    MOZ_ASSERT_IF(prev.isAnyRef(), next.isAnyRef());
+    MOZ_ASSERT_IF(prev.isAnyRef(), next.isAnyRef() || next.isInvalid());
 
-    if (next.isAnyRef()) {
+    if (prev.isAnyRef() || next.isAnyRef()) {
       InternalBarrierMethods<wasm::AnyRef>::postBarrier(
-          &vp->toAnyRef(),
+          vp->anyRefPtr(),
           prev.isAnyRef() ? prev.toAnyRef() : wasm::AnyRef::null(),
-          next.toAnyRef());
-      return;
+          next.isAnyRef() ? next.toAnyRef() : wasm::AnyRef::null());
     }
   }
 
@@ -500,7 +524,9 @@ struct InternalBarrierMethods<wasm::Val> {
 
 template <>
 struct JS::SafelyInitialized<js::wasm::AnyRef> {
-  static js::wasm::AnyRef create() { return js::wasm::AnyRef::null(); }
+  static constexpr js::wasm::AnyRef create() {
+    return js::wasm::AnyRef::null();
+  }
 };
 
 #endif  // wasm_val_h

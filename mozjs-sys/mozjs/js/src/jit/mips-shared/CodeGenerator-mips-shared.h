@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -32,8 +30,6 @@ class CodeGeneratorMIPSShared : public CodeGeneratorShared {
   Operand ToOperand(const LAllocation* a);
   Operand ToOperand(const LDefinition* def);
 
-  Operand ToOperandOrRegister64(const LInt64Allocation& input);
-
   MoveOperand toMoveOperand(LAllocation a) const;
 
   template <typename T1, typename T2>
@@ -57,13 +53,8 @@ class CodeGeneratorMIPSShared : public CodeGeneratorShared {
     masm.branchPtr(c, lhs, rhs, &bail);
     bailoutFrom(&bail, snapshot);
   }
-  void bailoutTestPtr(Assembler::Condition c, Register lhs, Register rhs,
-                      LSnapshot* snapshot) {
-    Label bail;
-    masm.branchTestPtr(c, lhs, rhs, &bail);
-    bailoutFrom(&bail, snapshot);
-  }
-  void bailoutIfFalseBool(Register reg, LSnapshot* snapshot) {
+  template <typename T>
+  void bailoutIfFalseBool(T reg, LSnapshot* snapshot) {
     Label bail;
     masm.branchTest32(Assembler::Zero, reg, Imm32(0xFF), &bail);
     bailoutFrom(&bail, snapshot);
@@ -120,6 +111,8 @@ class CodeGeneratorMIPSShared : public CodeGeneratorShared {
                                   const S& value, const T& mem,
                                   Register flagTemp, Register valueTemp,
                                   Register offsetTemp, Register maskTemp);
+
+  void emitMulI64(Register lhs, int64_t rhs, Register dest);
 
  public:
   // Out of line visitors.

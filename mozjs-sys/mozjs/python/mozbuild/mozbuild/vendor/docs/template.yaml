@@ -158,7 +158,7 @@ vendoring:
   # All three file/path parameters ("keep", "exclude", and "include") support
   # filenames, directory names, and globs/wildcards.
 
-  # Actions to take after updating. Applied in order.
+  # Actions to take after updating but before applying patches. Applied in order.
   # The action subfield is required. It must be one of:
   #   - copy-file
   #   - move-file
@@ -167,6 +167,7 @@ vendoring:
   #   - replace-in-file-regex
   #   - delete-path
   #   - run-script
+  #   - vcs-add-remove-files
   # Unless otherwise noted, all subfields of action are required.
   #
   # If the action is copy-file, move-file, or move-dir:
@@ -179,6 +180,10 @@ vendoring:
   #     '{revision}' for the commit we are updating to.
   #   File is the file to replace it in.
   #
+  # If the action is vcs-add-remove-files
+  #   path is the directory to add all new files to version control, and
+  #     delete all removed files.
+  #
   # If the action is delete-path
   #   path is the file or directory to recursively delete
   #
@@ -186,6 +191,11 @@ vendoring:
   #   script is the script to run
   #   cwd is the directory the script should run with as its cwd
   #   args is a list of arguments to pass to the script
+  #   Note: 'script', 'cwd', and entries in 'args' support path placeholders
+  #     '{vendor_dir}', '{yaml_dir}', '{tmpextractdir}', '{topsrcdir}'.
+  #     For 'run-script'/'run-command', '{cwd}' is also supported but must
+  #     appear only at the beginning of a path. In 'args', the literal
+  #     '{revision}' will be replaced with the target revision string.
   #
   # If the action is run-command:
   #   command is the command to run
@@ -195,13 +205,13 @@ vendoring:
   #   cwd is the directory the command should run with as its cwd
   #   args is a list of arguments to pass to the command
   #
-  #
   # Unless specified otherwise, all files/directories are relative to the
-  #     vendor-directory. If the vendor-directory is different from the
-  #     directory of the yaml file, the keyword '{yaml_dir}' may be used
-  #     to make the path relative to that directory.
-  # 'run-script' supports the addictional keyword {cwd} which, if used,
-  #     must only be used at the beginning of the path.
+  #     vendor-directory. The following placeholders are supported in most
+  #     path fields: '{vendor_dir}', '{yaml_dir}', '{tmpextractdir}', '{topsrcdir}'.
+  #     If the vendor-directory differs from the yaml directory, '{yaml_dir}'
+  #     makes the path relative to the yaml directory.
+  #     For 'run-script'/'run-command', '{cwd}' is additionally supported and
+  #     must only be used at the beginning of a path.
   #
   # optional
   update-actions:
@@ -220,6 +230,15 @@ vendoring:
     - action: run-script
       script: '{cwd}/generate_sources.sh'
       cwd: '{yaml_dir}'
+
+  # Actions to take after patches have been applied. Applied in order.
+  # Uses the same action types as update-actions.
+  # optional
+  post-patch-actions:
+    - action: run-script
+      script: '{yaml_dir}/post_patch_script.py'
+      cwd: '{yaml_dir}'
+      args: ['{revision}']
 
 
 # Configuration for automatic updating system.

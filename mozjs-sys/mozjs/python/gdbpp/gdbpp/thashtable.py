@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -90,7 +88,7 @@ class thashtable_printer:
             if f.is_base_class:
                 continue
             # ...just to skip the fields we know exist...
-            if f.name == "mKeyHash" or f.name == "mData":
+            if f.name in {"mKeyHash", "mData"}:
                 continue
             # ...and assume the first one we find is the key.
             self.key_field_name = f.name

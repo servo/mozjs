@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -117,10 +115,6 @@ inline bool JSObject::setQualifiedVarObj(
   return setFlag(cx, obj, js::ObjectFlag::QualifiedVarObj);
 }
 
-inline bool JSObject::canHaveFixedElements() const {
-  return is<js::ArrayObject>();
-}
-
 namespace js {
 
 #ifdef DEBUG
@@ -132,6 +126,7 @@ inline bool ClassCanHaveFixedData(const JSClass* clasp) {
   return !clasp->isNativeObject() ||
          clasp == &js::FixedLengthArrayBufferObject::class_ ||
          clasp == &js::ResizableArrayBufferObject::class_ ||
+         clasp == &js::ImmutableArrayBufferObject::class_ ||
          js::IsTypedArrayClass(clasp);
 }
 #endif
@@ -362,10 +357,11 @@ inline NativeObject* NewObjectWithGivenTaggedProtoAndAllocSite(
 namespace detail {
 
 template <typename T, NewObjectKind NewKind>
-inline T* NewObjectWithGivenTaggedProtoForKind(JSContext* cx,
-                                               Handle<TaggedProto> proto) {
-  JSObject* obj = NewObjectWithGivenTaggedProto<NewKind>(cx, &T::class_, proto,
-                                                         ObjectFlags());
+inline T* NewObjectWithGivenTaggedProtoForKind(
+    JSContext* cx, Handle<TaggedProto> proto,
+    ObjectFlags objFlags = ObjectFlags()) {
+  JSObject* obj =
+      NewObjectWithGivenTaggedProto<NewKind>(cx, &T::class_, proto, objFlags);
   return obj ? &obj->as<T>() : nullptr;
 }
 
@@ -400,15 +396,17 @@ inline NativeObject* NewTenuredObjectWithGivenProto(
 }
 
 template <typename T>
-inline T* NewObjectWithGivenProto(JSContext* cx, HandleObject proto) {
+inline T* NewObjectWithGivenProto(JSContext* cx, HandleObject proto,
+                                  ObjectFlags objFlags = ObjectFlags()) {
   return detail::NewObjectWithGivenTaggedProtoForKind<T, GenericObject>(
-      cx, AsTaggedProto(proto));
+      cx, AsTaggedProto(proto), objFlags);
 }
 
 template <typename T>
-inline T* NewTenuredObjectWithGivenProto(JSContext* cx, HandleObject proto) {
+inline T* NewTenuredObjectWithGivenProto(JSContext* cx, HandleObject proto,
+                                         ObjectFlags objFlags = ObjectFlags()) {
   return detail::NewObjectWithGivenTaggedProtoForKind<T, TenuredObject>(
-      cx, AsTaggedProto(proto));
+      cx, AsTaggedProto(proto), objFlags);
 }
 
 template <typename T>
@@ -550,12 +548,18 @@ inline bool IsConstructor(const Value& v) {
 }
 
 static inline bool MaybePreserveDOMWrapper(JSContext* cx, HandleObject obj) {
-  if (!obj->getClass()->isDOMClass()) {
+  const JSClass* clasp = obj->getClass();
+  // If this ever changes, we'll just need to reevaluate the check below
+  MOZ_ASSERT_IF(clasp->preservesWrapper(), clasp->isDOMClass());
+  if (!clasp->isDOMClass()) {
     return true;
   }
 
-  MOZ_ASSERT(cx->runtime()->preserveWrapperCallback);
-  return cx->runtime()->preserveWrapperCallback(cx, obj);
+  if (!obj->zone()->preserveWrapper(obj.get())) {
+    return cx->runtime()->preserveWrapperCallback(cx, obj);
+  }
+
+  return true;
 }
 
 } /* namespace js */

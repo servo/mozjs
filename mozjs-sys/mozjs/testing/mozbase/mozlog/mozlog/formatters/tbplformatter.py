@@ -29,7 +29,7 @@ class TbplFormatter(BaseFormatter):
     """
 
     def __init__(self, compact=False, summary_on_shutdown=False, **kwargs):
-        super(TbplFormatter, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         self.suite_start_time = None
         self.test_start_times = {}
         self.buffer = None
@@ -42,7 +42,7 @@ class TbplFormatter(BaseFormatter):
     def __call__(self, data):
         if self.summary_on_shutdown:
             self.summary(data)
-        return super(TbplFormatter, self).__call__(data)
+        return super().__call__(data)
 
     @property
     def compact(self):
@@ -61,9 +61,11 @@ class TbplFormatter(BaseFormatter):
         if subtract_context:
             count -= len(self.buffer)
         self.subtests_count = 0
-        return self._log(
-            {"level": "INFO", "message": "." * count, "component": component}
-        )
+        return self._log({
+            "level": "INFO",
+            "message": "." * count,
+            "component": component,
+        })
 
     @output_subtests
     def log(self, data):
@@ -105,12 +107,21 @@ class TbplFormatter(BaseFormatter):
     @output_subtests
     def crash(self, data):
         id = data["test"] if "test" in data else "pid: %s" % data["process"]
+        quiet = data.get("quiet", False)
+        crash_prefix = "INFO crashed process" if quiet else "PROCESS-CRASH"
+
+        # Add minidump name to crash prefix for treeherder linking
+        if data.get("minidump_path"):
+            import os
+
+            minidump_name = os.path.splitext(os.path.basename(data["minidump_path"]))[0]
+            crash_prefix = crash_prefix + " | " + minidump_name
 
         if data.get("java_stack"):
             # use "<exception> at <top frame>" as a crash signature for java exception
             sig = data["java_stack"].split("\n")
             sig = " ".join(sig[0:2])
-            rv = ["PROCESS-CRASH | %s | %s\n[%s]" % (id, sig, data["java_stack"])]
+            rv = ["%s | %s | %s\n[%s]" % (crash_prefix, id, sig, data["java_stack"])]
 
             if data.get("reason"):
                 rv.append("Mozilla crash reason: %s" % data["reason"])
@@ -121,7 +132,7 @@ class TbplFormatter(BaseFormatter):
         else:
             signature = data["signature"] if data["signature"] else "unknown top frame"
             reason = data.get("reason", "application crashed")
-            rv = ["PROCESS-CRASH | %s [%s] | %s " % (reason, signature, id)]
+            rv = ["%s | %s [%s] | %s " % (crash_prefix, reason, signature, id)]
 
             if data.get("process_type"):
                 rv.append("Process type: {}".format(data["process_type"]))
@@ -206,7 +217,7 @@ class TbplFormatter(BaseFormatter):
         )
 
     def _format_status(self, data):
-        message = "- " + data["message"] if "message" in data else ""
+        message = data.get("message", "")
         if "stack" in data:
             message += "\n%s" % data["stack"]
         if message and message[-1] == "\n":
@@ -214,28 +225,43 @@ class TbplFormatter(BaseFormatter):
 
         status = data["status"]
 
+        subtest = data.get("subtest")
+
         if "expected" in data:
             if status in data.get("known_intermittent", []):
                 status = "KNOWN-INTERMITTENT-%s" % status
             else:
                 if not message:
-                    message = "- expected %s" % data["expected"]
-                failure_line = "TEST-UNEXPECTED-%s | %s | %s %s\n" % (
+                    message = "expected %s" % data["expected"]
+                # When there's a subtest, format as: "subtest - message"
+                # Otherwise just use the message as-is
+                if subtest:
+                    subtest_msg = subtest + " - " + message
+                else:
+                    subtest_msg = message
+                failure_line = "TEST-UNEXPECTED-%s | %s | %s\n" % (
                     status,
                     data["test"],
-                    data["subtest"],
-                    message,
+                    subtest_msg,
                 )
                 if data["expected"] != "PASS":
                     info_line = "TEST-INFO | expected %s\n" % data["expected"]
                     return failure_line + info_line
                 return failure_line
 
-        return "TEST-%s | %s | %s %s\n" % (
+        # When there's a subtest, format as: "subtest - message"
+        # Otherwise just use the message as-is
+        if subtest:
+            subtest_msg = subtest
+            if message:
+                subtest_msg += " - " + message
+        else:
+            subtest_msg = message
+
+        return "TEST-%s | %s | %s\n" % (
             status,
             data["test"],
-            data["subtest"],
-            message,
+            subtest_msg,
         )
 
     def test_end(self, data):
@@ -366,7 +392,7 @@ class TbplFormatter(BaseFormatter):
     def mozleak_object(self, data):
         return "TEST-INFO | leakcheck | %s leaked %d %s\n" % (
             data["process"],
-            data["bytes"],
+            data["count"],
             data["name"],
         )
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2023 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -63,6 +61,13 @@ extern void DumpArrayType(const ArrayType& arrayType,
                           const TypeContext* types = nullptr);
 extern void DumpArrayType(const ArrayType& arrayType, StructuredPrinter& out,
                           const TypeContext* types = nullptr);
+
+#ifdef ENABLE_WASM_JSPI
+extern void DumpContType(const ContType& contType,
+                         const TypeContext* types = nullptr);
+extern void DumpContType(const ContType& contType, StructuredPrinter& out,
+                         const TypeContext* types = nullptr);
+#endif  // ENABLE_WASM_JSPI
 
 extern void DumpTypeDef(const TypeDef& typeDef, int32_t index = -1,
                         const TypeContext* types = nullptr);

@@ -106,11 +106,10 @@ class Report:
         if path is not None:
             with gzip.open(path) as file:
                 return json.loads(file.read())
+        elif cost_dict is not None:
+            return cost_dict
         else:
-            if cost_dict is not None:
-                return cost_dict
-            else:
-                raise Exception
+            raise Exception
 
     def organize_data(self):
         costs = self.cost_dict

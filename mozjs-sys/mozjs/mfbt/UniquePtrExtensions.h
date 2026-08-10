@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,19 +7,24 @@
 #ifndef mozilla_UniquePtrExtensions_h
 #define mozilla_UniquePtrExtensions_h
 
+#include <cstdlib>
 #include <type_traits>
 
-#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/DebugOnly.h"
 #include "mozilla/fallible.h"
+#include "mozilla/Types.h"
 #include "mozilla/UniquePtr.h"
 
 #ifdef XP_WIN
 #  include <cstdint>
 #endif
-#if defined(XP_DARWIN) && !defined(RUST_BINDGEN)
+#if defined(XP_DARWIN)
 #  include <mach/mach.h>
+#  include "mozilla/Assertions.h"
+#  include "mozilla/DebugOnly.h"
+#endif
+#if defined(XP_UNIX) && (defined(DEBUG) || defined(FUZZING))
+#  include "mozilla/Assertions.h"
 #endif
 
 namespace mozilla {
@@ -93,29 +96,30 @@ struct FreePolicy {
   void operator()(const void* ptr) { free(const_cast<void*>(ptr)); }
 };
 
-#if !defined(RUST_BINDGEN)
-#  if defined(XP_WIN)
+#if defined(XP_WIN)
 // Can't include <windows.h> to get the actual definition of HANDLE
 // because of namespace pollution.
 typedef void* FileHandleType;
-#  elif defined(XP_UNIX)
+#elif defined(XP_UNIX)
 typedef int FileHandleType;
-#  else
-#    error "Unsupported OS?"
-#  endif
+#else
+#  error "Unsupported OS?"
+#endif
 
 struct FileHandleHelper {
   MOZ_IMPLICIT FileHandleHelper(FileHandleType aHandle) : mHandle(aHandle) {
-#  if defined(XP_UNIX) && (defined(DEBUG) || defined(FUZZING))
+#if defined(XP_UNIX) && (defined(DEBUG) || defined(FUZZING))
     MOZ_RELEASE_ASSERT(aHandle == kInvalidHandle || aHandle > 2);
-#  endif
+#endif
   }
+
+  MOZ_IMPLICIT constexpr FileHandleHelper() : mHandle(kInvalidHandle) {}
 
   MOZ_IMPLICIT constexpr FileHandleHelper(std::nullptr_t)
       : mHandle(kInvalidHandle) {}
 
   bool operator!=(std::nullptr_t) const {
-#  ifdef XP_WIN
+#ifdef XP_WIN
     // Windows uses both nullptr and INVALID_HANDLE_VALUE (-1 cast to
     // HANDLE) in different situations, but nullptr is more reliably
     // null while -1 is also valid input to some calls that take
@@ -124,20 +128,20 @@ struct FileHandleHelper {
     if (mHandle == (void*)-1) {
       return false;
     }
-#  endif
+#endif
     return mHandle != kInvalidHandle;
   }
 
   operator FileHandleType() const { return mHandle; }
 
-#  ifdef XP_WIN
+#ifdef XP_WIN
   // NSPR uses an integer type for PROsfd, so this conversion is
   // provided for working with it without needing reinterpret casts
   // everywhere.
   operator std::intptr_t() const {
     return reinterpret_cast<std::intptr_t>(mHandle);
   }
-#  endif
+#endif
 
   // When there's only one user-defined conversion operator, the
   // compiler will use that to derive equality, but that doesn't work
@@ -149,13 +153,13 @@ struct FileHandleHelper {
  private:
   FileHandleType mHandle;
 
-#  ifdef XP_WIN
+#ifdef XP_WIN
   // See above for why this is nullptr.  (Also, INVALID_HANDLE_VALUE
   // can't be expressed as a constexpr.)
   static constexpr FileHandleType kInvalidHandle = nullptr;
-#  else
+#else
   static constexpr FileHandleType kInvalidHandle = -1;
-#  endif
+#endif
 };
 
 struct FileHandleDeleter {
@@ -163,14 +167,14 @@ struct FileHandleDeleter {
   using receiver = FileHandleType;
   MFBT_API void operator()(FileHandleHelper aHelper);
 };
-#endif
 
-#if defined(XP_DARWIN) && !defined(RUST_BINDGEN)
+#if defined(XP_DARWIN)
 struct MachPortHelper {
   MOZ_IMPLICIT MachPortHelper(mach_port_t aPort) : mPort(aPort) {}
 
-  MOZ_IMPLICIT constexpr MachPortHelper(std::nullptr_t)
-      : mPort(MACH_PORT_NULL) {}
+  MOZ_IMPLICIT constexpr MachPortHelper() : mPort(MACH_PORT_NULL) {}
+
+  MOZ_IMPLICIT constexpr MachPortHelper(std::nullptr_t) : MachPortHelper() {}
 
   bool operator!=(std::nullptr_t) const { return mPort != MACH_PORT_NULL; }
 
@@ -217,22 +221,29 @@ struct MachPortSetDeleter {
 template <typename T>
 using UniqueFreePtr = UniquePtr<T, detail::FreePolicy<T>>;
 
-#if !defined(RUST_BINDGEN)
 // A RAII class for the OS construct used for open files and similar
 // objects: a file descriptor on Unix or a handle on Windows.
 using UniqueFileHandle =
     UniquePtr<detail::FileHandleType, detail::FileHandleDeleter>;
 
-#  ifndef __wasm__
+#ifndef __wasm__
 // WASI does not have `dup`
+// On Unix, these set the close-on-exec flag for the new fd.
 MFBT_API UniqueFileHandle DuplicateFileHandle(detail::FileHandleType aFile);
 inline UniqueFileHandle DuplicateFileHandle(const UniqueFileHandle& aFile) {
   return DuplicateFileHandle(aFile.get());
 }
-#  endif
+#endif  // not wasm
+
+#ifdef XP_UNIX
+// For systems that don't have the full set of POSIX atomic cloexec APIs.
+MFBT_API void SetCloseOnExec(detail::FileHandleType aFile);
+inline void SetCloseOnExec(const UniqueFileHandle& aFile) {
+  SetCloseOnExec(aFile.get());
+}
 #endif
 
-#if defined(XP_DARWIN) && !defined(RUST_BINDGEN)
+#if defined(XP_DARWIN)
 // A RAII class for a Mach port that names a send right.
 using UniqueMachSendRight =
     UniquePtr<mach_port_t, detail::MachSendRightDeleter>;
@@ -256,41 +267,34 @@ inline UniqueMachSendRight RetainMachSendRight(mach_port_t aPort) {
 
 namespace detail {
 
-struct HasReceiverTypeHelper {
-  template <class U>
-  static double Test(...);
-  template <class U>
-  static char Test(typename U::receiver* = 0);
+template <typename T, typename D, typename = void>
+struct PointerType {
+  using type = T*;
 };
 
-template <class T>
-class HasReceiverType
-    : public std::integral_constant<bool, sizeof(HasReceiverTypeHelper::Test<T>(
-                                              0)) == 1> {};
-
-template <class T, class D, bool = HasReceiverType<D>::value>
-struct ReceiverTypeImpl {
-  using Type = typename D::receiver;
+template <typename T, typename D>
+struct PointerType<T, D,
+                   std::void_t<typename std::remove_reference_t<D>::pointer>> {
+  using type = typename std::remove_reference_t<D>::pointer;
 };
 
-template <class T, class D>
-struct ReceiverTypeImpl<T, D, false> {
-  using Type = typename PointerType<T, D>::Type;
-};
+template <typename T, typename D, typename = void>
+struct ReceiverType : PointerType<T, D> {};
 
-template <class T, class D>
-struct ReceiverType {
-  using Type = typename ReceiverTypeImpl<T, std::remove_reference_t<D>>::Type;
+template <typename T, typename D>
+struct ReceiverType<
+    T, D, std::void_t<typename std::remove_reference_t<D>::receiver>> {
+  using type = typename std::remove_reference_t<D>::receiver;
 };
 
 template <typename T, typename D>
 class MOZ_TEMPORARY_CLASS UniquePtrGetterTransfers {
  public:
   using Ptr = UniquePtr<T, D>;
-  using Receiver = typename detail::ReceiverType<T, D>::Type;
+  using Receiver = typename ReceiverType<T, D>::type;
 
   explicit UniquePtrGetterTransfers(Ptr& p)
-      : mPtr(p), mReceiver(typename Ptr::Pointer(nullptr)) {}
+      : mPtr(p), mReceiver(typename Ptr::pointer(nullptr)) {}
   ~UniquePtrGetterTransfers() { mPtr.reset(mReceiver); }
 
   operator Receiver*() { return &mReceiver; }
@@ -298,8 +302,8 @@ class MOZ_TEMPORARY_CLASS UniquePtrGetterTransfers {
 
   // operator void** is conditionally enabled if `Receiver` is a pointer.
   template <typename U = Receiver,
-            std::enable_if_t<
-                std::is_pointer_v<U> && std::is_same_v<U, Receiver>, int> = 0>
+            typename = std::enable_if_t<
+                std::is_pointer_v<U> && std::is_same_v<U, Receiver>, void>>
   operator void**() {
     return reinterpret_cast<void**>(&mReceiver);
   }

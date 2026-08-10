@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,8 +15,6 @@
  */
 
 #include "wasm/WasmModule.h"
-
-#include <chrono>
 
 #include "js/BuildId.h"                 // JS::BuildIdCharVector
 #include "js/experimental/TypedData.h"  // JS_NewUint8Array
@@ -53,8 +49,8 @@ using namespace js::jit;
 using namespace js::wasm;
 
 static UniqueChars Tier2ResultsContext(const ScriptedCaller& scriptedCaller) {
-  return scriptedCaller.filename
-             ? JS_smprintf("%s:%d", scriptedCaller.filename.get(),
+  return scriptedCaller.source
+             ? JS_smprintf("%s:%d", scriptedCaller.source.get(),
                            scriptedCaller.line)
              : UniqueChars();
 }
@@ -263,10 +259,20 @@ bool wasm::GetOptimizedEncodingBuildId(JS::BuildIdCharVector* buildId) {
   buildId->infallibleAppend(')');
 
   buildId->infallibleAppend('m');
-  buildId->infallibleAppend(wasm::IsHugeMemoryEnabled(AddressType::I32) ? '+'
-                                                                        : '-');
-  buildId->infallibleAppend(wasm::IsHugeMemoryEnabled(AddressType::I64) ? '+'
-                                                                        : '-');
+  buildId->infallibleAppend(
+      wasm::IsHugeMemoryEnabled(AddressType::I32, PageSize::Standard) ? '+'
+                                                                      : '-');
+  buildId->infallibleAppend(
+      wasm::IsHugeMemoryEnabled(AddressType::I64, PageSize::Standard) ? '+'
+                                                                      : '-');
+
+  // We don't expect huge memory to be supported if custom page sizes are used.
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+  MOZ_RELEASE_ASSERT(
+      !wasm::IsHugeMemoryEnabled(AddressType::I32, PageSize::Tiny));
+  MOZ_RELEASE_ASSERT(
+      !wasm::IsHugeMemoryEnabled(AddressType::I64, PageSize::Tiny));
+#endif
 
   return true;
 }
@@ -484,6 +490,19 @@ static bool CheckSharing(JSContext* cx, bool declaredShared, bool isShared) {
   return true;
 }
 
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+static bool CheckPageSize(JSContext* cx, PageSize declaredPageSize,
+                          PageSize actualPageSize) {
+  if (declaredPageSize != actualPageSize) {
+    JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                             JSMSG_WASM_BAD_IMP_PAGE_SIZE);
+    return false;
+  }
+
+  return true;
+}
+#endif
+
 // asm.js module instantiation supplies its own buffer, but for wasm, create and
 // initialize the buffer if one is requested. Either way, the buffer is wrapped
 // in a WebAssembly.Memory object which is what the Instance stores.
@@ -508,8 +527,17 @@ bool Module::instantiateMemories(
         return false;
       }
 
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+      // Page size needs to be checked first because comparisons between
+      // incompatible page sizes are invalid in CheckLimits.
+      if (!CheckPageSize(cx, desc.pageSize(), memory->pageSize())) {
+        return false;
+      }
+#endif
+
       if (!CheckLimits(cx, desc.initialPages(), desc.maximumPages(),
-                       /* defaultMax */ MaxMemoryPages(desc.addressType()),
+                       /* defaultMax */
+                       MaxMemoryPages(desc.addressType(), desc.pageSize()),
                        /* actualLength */
                        memory->volatilePages(), memory->sourceMaxPages(),
                        codeMeta().isAsmJS(), "Memory")) {
@@ -522,7 +550,8 @@ bool Module::instantiateMemories(
     } else {
       MOZ_ASSERT(!codeMeta().isAsmJS());
 
-      if (desc.initialPages() > MaxMemoryPages(desc.addressType())) {
+      if (desc.initialPages() >
+          MaxMemoryPages(desc.addressType(), desc.pageSize())) {
         JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                  JSMSG_WASM_MEM_IMP_LIMIT);
         return false;
@@ -536,15 +565,17 @@ bool Module::instantiateMemories(
 
       RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmMemory));
       memory = WasmMemoryObject::create(
-          cx, buffer, IsHugeMemoryEnabled(desc.addressType()), proto);
+          cx, buffer, IsHugeMemoryEnabled(desc.addressType(), desc.pageSize()),
+          proto);
       if (!memory) {
         return false;
       }
     }
 
-    MOZ_RELEASE_ASSERT(codeMeta().isAsmJS() ||
-                       memory->isHuge() ==
-                           IsHugeMemoryEnabled(desc.addressType()));
+    MOZ_RELEASE_ASSERT(
+        codeMeta().isAsmJS() ||
+        memory->isHuge() ==
+            IsHugeMemoryEnabled(desc.addressType(), desc.pageSize()));
 
     if (!memoryObjs.get().append(memory)) {
       ReportOutOfMemory(cx);
@@ -631,7 +662,7 @@ bool Module::instantiateLocalTable(JSContext* cx, const TableDesc& td,
   Rooted<WasmTableObject*> tableObj(cx);
   if (td.isExported) {
     RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmTable));
-    tableObj.set(WasmTableObject::create(cx, td.limits, td.elemType, proto));
+    tableObj.set(WasmTableObject::create(cx, td.type, proto));
     if (!tableObj) {
       return false;
     }
@@ -992,15 +1023,6 @@ bool Module::instantiate(JSContext* cx, ImportValues& imports,
     // Warn if the user is using the legacy exceptions proposal.
     if (moduleMeta().featureUsage & FeatureUsage::LegacyExceptions) {
       if (!js::WarnNumberASCII(cx, JSMSG_WASM_LEGACY_EXCEPTIONS_DEPRECATED)) {
-        if (cx->isExceptionPending()) {
-          cx->clearPendingException();
-        }
-      }
-    }
-
-    // Warn if the user is using asm.js still.
-    if (JS::Prefs::warn_asmjs_deprecation() && codeMeta().isAsmJS()) {
-      if (!js::WarnNumberASCII(cx, JSMSG_USE_ASM_DEPRECATED)) {
         if (cx->isExceptionPending()) {
           cx->clearPendingException();
         }

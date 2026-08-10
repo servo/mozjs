@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -29,8 +27,7 @@ inline void EmitCallIC(MacroAssembler& masm, CodeOffset* callOffset) {
   masm.loadPtr(Address(ICStubReg, ICStub::offsetOfStubCode()), R2.scratchReg());
 
   // Call the stubcode via a direct jump-and-link
-  masm.call(R2.scratchReg());
-  *callOffset = CodeOffset(masm.currentOffset());
+  *callOffset = masm.call(R2.scratchReg());
 }
 inline void EmitReturnFromIC(MacroAssembler& masm) { masm.branch(ra); }
 inline void EmitBaselineLeaveStubFrame(MacroAssembler& masm) {
@@ -50,8 +47,6 @@ inline void EmitBaselineLeaveStubFrame(MacroAssembler& masm) {
     Register scratch2 = temps.Acquire();
     masm.Pop(scratch2);
   }
-
-  masm.checkStackAlignment();
 }
 
 inline void EmitStubGuardFailure(MacroAssembler& masm) {

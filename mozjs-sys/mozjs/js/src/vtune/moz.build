@@ -1,0 +1,27 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+FINAL_LIBRARY = "js"
+
+# Includes should be relative to parent path
+LOCAL_INCLUDES += ["!..", ".."]
+
+include("../js-compileflags.mozbuild")
+include("../js-config.mozbuild")
+include("../js-cxxflags.mozbuild")
+
+SOURCES += [
+    "ittnotify_static.c",
+    "jitprofiling.c",
+    "VTuneWrapper.cpp",
+]
+SOURCES["ittnotify_static.c"].flags += [
+    "-Wno-varargs",
+    "-Wno-sign-compare",
+    "-Wno-unknown-pragmas",
+]
+if CONFIG["CC_TYPE"] == "gcc":
+    SOURCES["ittnotify_static.c"].flags += ["-Wno-stringop-overflow"]
+    if int(CONFIG["CC_VERSION"].split(".")[0]) >= 8:
+        SOURCES["ittnotify_static.c"].flags += ["-Wno-stringop-truncation"]

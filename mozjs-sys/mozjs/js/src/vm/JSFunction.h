@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -212,6 +210,7 @@ class JSFunction : public js::NativeObject {
     return flags().isNativeWithoutJitEntry();
   }
   bool isBuiltinNative() const { return flags().isBuiltinNative(); }
+  bool isTrampolineNative() const { return flags().isTrampolineNative(); }
 
   bool hasJitEntry() const { return flags().hasJitEntry(); }
 
@@ -769,10 +768,10 @@ static_assert(
 static_assert(unsigned(JSFunction::AtomSlot) ==
               unsigned(JS::shadow::Function::AtomSlot));
 
-extern JSString* fun_toStringHelper(JSContext* cx, js::HandleObject obj,
-                                    bool isToSource);
-
 namespace js {
+
+extern JSString* fun_toStringHelper(JSContext* cx, HandleObject obj,
+                                    bool isToSource);
 
 extern bool Function(JSContext* cx, unsigned argc, Value* vp);
 

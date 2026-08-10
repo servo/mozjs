@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -412,6 +410,7 @@ enum ThreeByteOpcodeID {
   OP3_VFMADD231PD_VxHxWx = 0xB8,
   OP3_VFNMADD231PS_VxHxWx = 0xBC,
   OP3_VFNMADD231PD_VxHxWx = 0xBC,
+  OP3_ANDN_GyByEy = 0xF2,
   OP3_SHLX_GyEyBy = 0xF7,
   OP3_SARX_GyEyBy = 0xF7,
   OP3_SHRX_GyEyBy = 0xF7,

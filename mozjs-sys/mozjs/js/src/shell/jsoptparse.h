@@ -1,13 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef shell_jsoptparse_h
 #define shell_jsoptparse_h
-
-#include <stdio.h>
 
 #include "js/AllocPolicy.h"
 #include "js/Utility.h"
@@ -21,7 +17,7 @@ namespace detail {
 // We want to use the shell's option parser before initializing the JS engine.
 // The JS malloc arena isn't available yet at this point, so we use a custom
 // allocation policy that uses the system malloc instead.
-class OptionAllocPolicy {
+class OptionAllocPolicy : public AllocPolicyBase {
  public:
   template <typename T>
   T* pod_malloc(size_t numElems) {
@@ -40,9 +36,6 @@ class OptionAllocPolicy {
     }
     return static_cast<T*>(realloc(p, bytes));
   }
-
-  void reportAllocOverflow() const {}
-  bool checkSimulatedOOM() const { return !js::oom::ShouldFailWithOOM(); }
 
   template <typename T>
   void free_(T* p, size_t numElems = 0) {

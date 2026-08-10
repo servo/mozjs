@@ -62,10 +62,8 @@ def generate_update_properties(context, config):
         conditions = _generate_conditions(context, entry.get("conditions", {}))
 
         if conditions is not None:
-            result.append(
-                {
-                    "fields": fields,
-                    "for": conditions,
-                }
-            )
+            result.append({
+                "fields": fields,
+                "for": conditions,
+            })
     return result

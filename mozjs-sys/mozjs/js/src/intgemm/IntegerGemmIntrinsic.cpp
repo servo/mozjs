@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
@@ -74,6 +72,12 @@
     return gemmology::Engine<decltype(arch)>::FUNC(args...);     \
   })
 
+#define GEMMOLOGY_DISPATCH_E(FUNC)                               \
+  xsimd::dispatch<SUPPORTED_ARCHS>([](auto arch, auto... args) { \
+    gemmology::SequentialExecutionEngine E;                      \
+    return gemmology::Engine<decltype(arch)>::FUNC(args..., E);  \
+  })
+
 template <size_t TextLength = 512, typename CharT = char>
 struct AutoProfilerMarker {
   AutoProfilerMarker(js::GeckoProfilerRuntime& profiler, const CharT* name)
@@ -118,58 +122,41 @@ static constexpr uint32_t ROWS_B_MULTIPLIER = COLUMNS_A_MULTIPLIER;
 static constexpr uint32_t COLUMNS_B_MULTIPLIER = 8;
 static constexpr uint32_t SELECTED_COLUMNS_B_MULTIPLIER = 8;
 
-void ReportGemmError(JSContext* cx, const unsigned errorNumber) {
-  JS_ReportErrorNumberASCII(cx, js::GetErrorMessage, nullptr, errorNumber);
-}
-
 size_t GetWasmRawBufferLength(const uint8_t* memBase) {
   const js::WasmArrayRawBuffer* rawBuf =
       js::WasmArrayRawBuffer::fromDataPtr(memBase);
   return rawBuf->byteLength();
 }
 
-bool CheckMatrixDimension(JSContext* cx, uint32_t size,
-                          uint32_t sizeMultiplier) {
+bool CheckMatrixDimension(uint32_t size, uint32_t sizeMultiplier) {
   // A valid size is a positive integral multiple of Multiplier
-  if ((size == 0) || (size % sizeMultiplier != 0)) {
-    js::wasm::Log(
-        cx, "Invalid dimension value:%" PRIu32 " (should be a multiple of %u)",
-        size, sizeMultiplier);
-    return false;
-  }
-  return true;
+  return !((size == 0) || (size % sizeMultiplier != 0));
 }
 
-bool CheckMatrixBound(JSContext* cx, uint32_t input, uint64_t inputSize,
-                      size_t wasmBufferSize) {
+bool CheckMatrixBound(uint32_t input, uint64_t inputSize, size_t wasmBufferSize,
+                      size_t itemSize) {
   mozilla::CheckedUint64 inputUpperLimit(inputSize);
+  inputUpperLimit *= itemSize;
   inputUpperLimit += input;
 
   // Bound check fails if size overflows or it spans outside the wasm memory
-  if (!inputUpperLimit.isValid() ||
-      (inputUpperLimit.value() >= (uint64_t)wasmBufferSize)) {
-    js::wasm::Log(cx, "Memory out of wasm bounds for matrix:%" PRIu32, input);
-    return false;
-  }
-  return true;
+  return !(!inputUpperLimit.isValid() ||
+           (inputUpperLimit.value() >= (uint64_t)wasmBufferSize));
 }
 
-bool CheckMatrixBoundAndAlignment(JSContext* cx, uint32_t input,
-                                  uint64_t inputSize, size_t wasmBufferSize) {
+bool CheckMatrixBoundAndAlignment(uint32_t input, uint64_t inputSize,
+                                  size_t wasmBufferSize, size_t itemSize) {
   // Alignment check: It is sufficient to check alignment for the offset rather
   // than for the actual pointer within wasm memory (as long as following assert
   // is satisfied)
   static_assert(js::gc::PageSize >= ARRAY_ALIGNMENT,
                 "PageSize should be bigger than Alignment");
   if (input % ARRAY_ALIGNMENT != 0) {
-    js::wasm::Log(
-        cx, "Unaligned access for matrix:%" PRIu32 " (should be %u aligned)",
-        input, ARRAY_ALIGNMENT);
     return false;
   }
 
   // Check Bound
-  return CheckMatrixBound(cx, input, inputSize, wasmBufferSize);
+  return CheckMatrixBound(input, inputSize, wasmBufferSize, itemSize);
 }
 
 int32_t js::intgemm::IntrI8PrepareB(wasm::Instance* instance,
@@ -180,27 +167,21 @@ int32_t js::intgemm::IntrI8PrepareB(wasm::Instance* instance,
   MOZ_ASSERT(wasm::SASigIntrI8PrepareB.failureMode ==
              wasm::FailureMode::FailOnNegI32);
   JSContext* cx = instance->cx();
+  AutoUnsafeCallWithABI unsafe;
 
   // Size checks for matricies
-  if (!CheckMatrixDimension(cx, rowsB, ROWS_B_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, colsB, COLUMNS_B_MULTIPLIER)) {
-    wasm::Log(cx, "%s: rowsB:%" PRIu32 "  colsB:%" PRIu32, __FUNCTION__, rowsB,
-              colsB);
-    ReportGemmError(cx, JSMSG_WASM_UNREACHABLE);
+  if (!CheckMatrixDimension(rowsB, ROWS_B_MULTIPLIER) ||
+      !CheckMatrixDimension(colsB, COLUMNS_B_MULTIPLIER)) {
     return -1;
   }
 
   // Memory Bound and Alignment checks for matricies
   uint64_t sizeB = (uint64_t)rowsB * (uint64_t)colsB;
   size_t wasmBufferSize = GetWasmRawBufferLength(memBase);
-  if (!CheckMatrixBoundAndAlignment(cx, inputMatrixB, sizeB, wasmBufferSize) ||
-      !CheckMatrixBoundAndAlignment(cx, outputMatrixB, sizeB, wasmBufferSize)) {
-    wasm::Log(cx,
-              "%s: inputB:%x  rowsB:%" PRIu32 "  colsB:%" PRIu32
-              "  outputB:%x  sizeB:%" PRIu64 "  wasmBufferSize:%zu",
-              __FUNCTION__, inputMatrixB, rowsB, colsB, outputMatrixB, sizeB,
-              wasmBufferSize);
-    ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+  if (!CheckMatrixBoundAndAlignment(inputMatrixB, sizeB, wasmBufferSize,
+                                    sizeof(float)) ||
+      !CheckMatrixBoundAndAlignment(outputMatrixB, sizeB, wasmBufferSize,
+                                    sizeof(int8_t))) {
     return -1;
   }
 
@@ -209,8 +190,8 @@ int32_t js::intgemm::IntrI8PrepareB(wasm::Instance* instance,
       reinterpret_cast<const float*>(&memBase[inputMatrixB]);
   int8_t* outputMatrixBPtr = reinterpret_cast<int8_t*>(&memBase[outputMatrixB]);
   AutoProfilerMarker marker(cx->runtime()->geckoProfiler(), "integemm::PreparB",
-                            FMT_STRING("rowsB: {} colsB: {} sizeB: {}"), rowsB,
-                            colsB, sizeB);
+                            "rowsB: {} colsB: {} sizeB: {}", rowsB, colsB,
+                            sizeB);
   GEMMOLOGY_DISPATCH(PrepareB)
   (inputMatrixBPtr, outputMatrixBPtr,
    scale,  // Quant Mult
@@ -225,28 +206,21 @@ int32_t js::intgemm::IntrI8PrepareBFromTransposed(
   MOZ_ASSERT(wasm::SASigIntrI8PrepareBFromTransposed.failureMode ==
              wasm::FailureMode::FailOnNegI32);
   JSContext* cx = instance->cx();
+  AutoUnsafeCallWithABI unsafe;
 
   // Size checks for matricies
-  if (!CheckMatrixDimension(cx, rowsB, ROWS_B_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, colsB, COLUMNS_B_MULTIPLIER)) {
-    wasm::Log(cx, "%s: rowsB:%" PRIu32 "  colsB:%" PRIu32, __FUNCTION__, rowsB,
-              colsB);
-    ReportGemmError(cx, JSMSG_WASM_UNREACHABLE);
+  if (!CheckMatrixDimension(rowsB, ROWS_B_MULTIPLIER) ||
+      !CheckMatrixDimension(colsB, COLUMNS_B_MULTIPLIER)) {
     return -1;
   }
 
   // Memory Bound checks for all matricies
   uint64_t sizeB = (uint64_t)rowsB * (uint64_t)colsB;
   size_t wasmBufferSize = GetWasmRawBufferLength(memBase);
-  if (!CheckMatrixBoundAndAlignment(cx, inputMatrixBTransposed, sizeB,
-                                    wasmBufferSize) ||
-      !CheckMatrixBoundAndAlignment(cx, outputMatrixB, sizeB, wasmBufferSize)) {
-    wasm::Log(cx,
-              "%s: inputBT:%x  rowsB:%" PRIu32 "  colsB:%" PRIu32
-              "  outputB:%x  sizeB:%" PRIu64 "  wasmBufferSize:%zu",
-              __FUNCTION__, inputMatrixBTransposed, rowsB, colsB, outputMatrixB,
-              sizeB, wasmBufferSize);
-    ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+  if (!CheckMatrixBoundAndAlignment(inputMatrixBTransposed, sizeB,
+                                    wasmBufferSize, sizeof(float)) ||
+      !CheckMatrixBoundAndAlignment(outputMatrixB, sizeB, wasmBufferSize,
+                                    sizeof(int8_t))) {
     return -1;
   }
 
@@ -256,7 +230,7 @@ int32_t js::intgemm::IntrI8PrepareBFromTransposed(
   int8_t* outputMatrixBPtr = reinterpret_cast<int8_t*>(&memBase[outputMatrixB]);
   AutoProfilerMarker marker(
       cx->runtime()->geckoProfiler(), "intgemm::PreparBTransposed",
-      FMT_STRING("rowsB: {} colsB: {} sizeB: {}"), rowsB, colsB, sizeB);
+      "rowsB: {} colsB: {} sizeB: {}", rowsB, colsB, sizeB);
   GEMMOLOGY_DISPATCH(PrepareBTransposed)
   (inputMatrixBTransposedPtr, outputMatrixBPtr,
    scale,  // Quant Mult
@@ -270,28 +244,21 @@ int32_t js::intgemm::IntrI8PrepareBFromQuantizedTransposed(
   MOZ_ASSERT(wasm::SASigIntrI8PrepareBFromQuantizedTransposed.failureMode ==
              wasm::FailureMode::FailOnNegI32);
   JSContext* cx = instance->cx();
+  AutoUnsafeCallWithABI unsafe;
 
   // Size checks for matricies
-  if (!CheckMatrixDimension(cx, rowsB, ROWS_B_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, colsB, COLUMNS_B_MULTIPLIER)) {
-    wasm::Log(cx, "%s: rowsB:%" PRIu32 "  colsB:%" PRIu32, __FUNCTION__, rowsB,
-              colsB);
-    ReportGemmError(cx, JSMSG_WASM_UNREACHABLE);
+  if (!CheckMatrixDimension(rowsB, ROWS_B_MULTIPLIER) ||
+      !CheckMatrixDimension(colsB, COLUMNS_B_MULTIPLIER)) {
     return -1;
   }
 
   // Memory Bound checks for all matricies
   uint64_t sizeB = (uint64_t)rowsB * (uint64_t)colsB;
   size_t wasmBufferSize = GetWasmRawBufferLength(memBase);
-  if (!CheckMatrixBoundAndAlignment(cx, inputMatrixBQuantizedTransposed, sizeB,
-                                    wasmBufferSize) ||
-      !CheckMatrixBoundAndAlignment(cx, outputMatrixB, sizeB, wasmBufferSize)) {
-    wasm::Log(cx,
-              "%s: inputBQT:%x  rowsB:%" PRIu32 "  colsB:%" PRIu32
-              "  outputB:%x  sizeA:%" PRIu64 "  wasmBufferSize:%zu",
-              __FUNCTION__, inputMatrixBQuantizedTransposed, rowsB, colsB,
-              outputMatrixB, sizeB, wasmBufferSize);
-    ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+  if (!CheckMatrixBoundAndAlignment(inputMatrixBQuantizedTransposed, sizeB,
+                                    wasmBufferSize, sizeof(int8_t)) ||
+      !CheckMatrixBoundAndAlignment(outputMatrixB, sizeB, wasmBufferSize,
+                                    sizeof(int8_t))) {
     return -1;
   }
 
@@ -302,7 +269,7 @@ int32_t js::intgemm::IntrI8PrepareBFromQuantizedTransposed(
   int8_t* outputMatrixBPtr = reinterpret_cast<int8_t*>(&memBase[outputMatrixB]);
   AutoProfilerMarker marker(cx->runtime()->geckoProfiler(),
                             "intgemm::PrepareBQuantizedTransposed",
-                            FMT_STRING("rowsB: {}, colsB: {}"), rowsB, colsB);
+                            "rowsB: {}, colsB: {}", rowsB, colsB);
   GEMMOLOGY_DISPATCH(PrepareBQuantizedTransposed)
   (inputMatrixBQuantizedTransposedPtr, outputMatrixBPtr, rowsB, colsB);
   return 0;
@@ -316,26 +283,21 @@ int32_t js::intgemm::IntrI8PrepareA(wasm::Instance* instance,
   MOZ_ASSERT(wasm::SASigIntrI8PrepareA.failureMode ==
              wasm::FailureMode::FailOnNegI32);
   JSContext* cx = instance->cx();
+  AutoUnsafeCallWithABI unsafe;
+
   // Size checks for matricies
-  if (!CheckMatrixDimension(cx, rowsA, ROWS_A_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, colsA, COLUMNS_A_MULTIPLIER)) {
-    wasm::Log(cx, "%s: rowsA:%" PRIu32 "  colsA:%" PRIu32, __FUNCTION__, rowsA,
-              colsA);
-    ReportGemmError(cx, JSMSG_WASM_UNREACHABLE);
+  if (!CheckMatrixDimension(rowsA, ROWS_A_MULTIPLIER) ||
+      !CheckMatrixDimension(colsA, COLUMNS_A_MULTIPLIER)) {
     return -1;
   }
 
   // Memory Bound checks for all matricies
   uint64_t sizeA = (uint64_t)rowsA * (uint64_t)colsA;
   size_t wasmBufferSize = GetWasmRawBufferLength(memBase);
-  if (!CheckMatrixBoundAndAlignment(cx, inputMatrixA, sizeA, wasmBufferSize) ||
-      !CheckMatrixBoundAndAlignment(cx, outputMatrixA, sizeA, wasmBufferSize)) {
-    wasm::Log(cx,
-              "%s: inputA:%x  rowsA:%" PRIu32 "  colsA:%" PRIu32
-              "  outputA:%x  sizeA:%" PRIu64 "  wasmBufferSize:%zu",
-              __FUNCTION__, inputMatrixA, rowsA, colsA, outputMatrixA, sizeA,
-              wasmBufferSize);
-    ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+  if (!CheckMatrixBoundAndAlignment(inputMatrixA, sizeA, wasmBufferSize,
+                                    sizeof(float)) ||
+      !CheckMatrixBoundAndAlignment(outputMatrixA, sizeA, wasmBufferSize,
+                                    sizeof(uint8_t))) {
     return -1;
   }
 
@@ -344,7 +306,7 @@ int32_t js::intgemm::IntrI8PrepareA(wasm::Instance* instance,
       reinterpret_cast<const float*>(&memBase[inputMatrixA]);
   uint8_t* outputMatrixAPtr = &memBase[outputMatrixA];
   AutoProfilerMarker marker(cx->runtime()->geckoProfiler(), "intgemm::PrepareA",
-                            FMT_STRING("rowsA: {}, colsA: {}"), rowsA, colsA);
+                            "rowsA: {}, colsA: {}", rowsA, colsA);
   GEMMOLOGY_DISPATCH(Shift::PrepareA)
   (inputMatrixAPtr, outputMatrixAPtr, scale, rowsA, colsA);
   return 0;
@@ -357,13 +319,11 @@ int32_t js::intgemm::IntrI8PrepareBias(
   MOZ_ASSERT(wasm::SASigIntrI8PrepareBias.failureMode ==
              wasm::FailureMode::FailOnNegI32);
   JSContext* cx = instance->cx();
+  AutoUnsafeCallWithABI unsafe;
 
   // Size checks for matricies
-  if (!CheckMatrixDimension(cx, rowsB, ROWS_B_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, colsB, COLUMNS_B_MULTIPLIER)) {
-    wasm::Log(cx, "%s: rowsB:%" PRIu32 "  colsB:%" PRIu32, __FUNCTION__, rowsB,
-              colsB);
-    ReportGemmError(cx, JSMSG_WASM_UNREACHABLE);
+  if (!CheckMatrixDimension(rowsB, ROWS_B_MULTIPLIER) ||
+      !CheckMatrixDimension(colsB, COLUMNS_B_MULTIPLIER)) {
     return -1;
   }
 
@@ -371,15 +331,9 @@ int32_t js::intgemm::IntrI8PrepareBias(
   uint64_t sizeB = (uint64_t)rowsB * (uint64_t)colsB;
   uint64_t sizeBias = colsB;
   size_t wasmBufferSize = GetWasmRawBufferLength(memBase);
-  if (!CheckMatrixBoundAndAlignment(cx, inputMatrixBPrepared, sizeB,
-                                    wasmBufferSize) ||
-      !CheckMatrixBound(cx, output, sizeBias, wasmBufferSize)) {
-    wasm::Log(cx,
-              "%s: preparedB:%x  rowsB:%" PRIu32 "  colsB:%" PRIu32
-              "  outputBias:%x  sizeB:%" PRIu64 "  wasmBufferSize:%zu",
-              __FUNCTION__, inputMatrixBPrepared, rowsB, colsB, output, sizeB,
-              wasmBufferSize);
-    ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+  if (!CheckMatrixBoundAndAlignment(inputMatrixBPrepared, sizeB, wasmBufferSize,
+                                    sizeof(int8_t)) ||
+      !CheckMatrixBound(output, sizeBias, wasmBufferSize, sizeof(float))) {
     return -1;
   }
 
@@ -391,17 +345,14 @@ int32_t js::intgemm::IntrI8PrepareBias(
       (-1) * ((127.0f / scaleA) * (127.0f / scaleB)) / (127.0f);
 
   if (inputBias) {
-    if (!CheckMatrixBound(cx, inputBias, sizeBias, wasmBufferSize)) {
-      wasm::Log(cx, "%s: inputBias:%x wasmBufferSize:%zu", __FUNCTION__,
-                inputBias, wasmBufferSize);
-      ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+    if (!CheckMatrixBound(inputBias, sizeBias, wasmBufferSize, sizeof(float))) {
       return -1;
     }
     const float* inputBiasPtr = reinterpret_cast<float*>(&memBase[inputBias]);
 
     AutoProfilerMarker marker(
         cx->runtime()->geckoProfiler(), "intgemm::PrepareBias w/ input bias",
-        FMT_STRING("rowsB: {} colsB: {} sizeB: {}"), rowsB, colsB, sizeB);
+        "rowsB: {} colsB: {} sizeB: {}", rowsB, colsB, sizeB);
     GEMMOLOGY_DISPATCH(Shift::PrepareBias)
     (inputMatrixBPreparedPtr, rowsB, colsB,
      gemmology::callbacks::UnquantizeAndAddBiasAndWrite(
@@ -409,7 +360,7 @@ int32_t js::intgemm::IntrI8PrepareBias(
   } else {
     AutoProfilerMarker marker(
         cx->runtime()->geckoProfiler(), "intgemm::PrepareBias",
-        FMT_STRING("rowsB: {} colsB: {} sizeB: {}"), rowsB, colsB, sizeB);
+        "rowsB: {} colsB: {} sizeB: {}", rowsB, colsB, sizeB);
     GEMMOLOGY_DISPATCH(Shift::PrepareBias)
     (inputMatrixBPreparedPtr, rowsB, colsB,
      gemmology::callbacks::UnquantizeAndWrite(unquantFactor, outputPtr));
@@ -426,14 +377,12 @@ int32_t js::intgemm::IntrI8MultiplyAndAddBias(
   MOZ_ASSERT(wasm::SASigIntrI8MultiplyAndAddBias.failureMode ==
              wasm::FailureMode::FailOnNegI32);
   JSContext* cx = instance->cx();
+  AutoUnsafeCallWithABI unsafe;
 
   // Size checks for matricies
-  if (!CheckMatrixDimension(cx, rowsA, ROWS_A_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, width, COLUMNS_A_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, colsB, COLUMNS_B_MULTIPLIER)) {
-    wasm::Log(cx, "%s: rowsA:%" PRIu32 "  width:%" PRIu32 "  colsB:%" PRIu32,
-              __FUNCTION__, rowsA, width, colsB);
-    ReportGemmError(cx, JSMSG_WASM_UNREACHABLE);
+  if (!CheckMatrixDimension(rowsA, ROWS_A_MULTIPLIER) ||
+      !CheckMatrixDimension(width, COLUMNS_A_MULTIPLIER) ||
+      !CheckMatrixDimension(colsB, COLUMNS_B_MULTIPLIER)) {
     return -1;
   }
 
@@ -443,21 +392,13 @@ int32_t js::intgemm::IntrI8MultiplyAndAddBias(
   uint64_t sizeBias = (uint64_t)colsB;
   uint64_t sizeOutput = (uint64_t)rowsA * (uint64_t)colsB;
   size_t wasmBufferSize = GetWasmRawBufferLength(memBase);
-  if (!CheckMatrixBoundAndAlignment(cx, inputMatrixAPrepared, sizeA,
-                                    wasmBufferSize) ||
-      !CheckMatrixBoundAndAlignment(cx, inputMatrixBPrepared, sizeB,
-                                    wasmBufferSize) ||
-      !CheckMatrixBound(cx, inputBiasPrepared, sizeBias, wasmBufferSize) ||
-      !CheckMatrixBound(cx, output, sizeOutput, wasmBufferSize)) {
-    wasm::Log(cx,
-              "%s: preparedA:%x  preparedB:%x  preparedBias:%x  rowsA:%" PRIu32
-              "  width:%" PRIu32 "  colsB:%" PRIu32
-              "  output:%x  sizeA:%" PRIu64 "  sizeB:%" PRIu64
-              "  sizeBias:%" PRIu64 "  sizeOutput:%" PRIu64,
-              __FUNCTION__, inputMatrixAPrepared, inputMatrixBPrepared,
-              inputBiasPrepared, rowsA, width, colsB, output, sizeA, sizeB,
-              sizeBias, sizeOutput);
-    ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+  if (!CheckMatrixBoundAndAlignment(inputMatrixAPrepared, sizeA, wasmBufferSize,
+                                    sizeof(uint8_t)) ||
+      !CheckMatrixBoundAndAlignment(inputMatrixBPrepared, sizeB, wasmBufferSize,
+                                    sizeof(int8_t)) ||
+      !CheckMatrixBound(inputBiasPrepared, sizeBias, wasmBufferSize,
+                        sizeof(float)) ||
+      !CheckMatrixBound(output, sizeOutput, wasmBufferSize, sizeof(float))) {
     return -1;
   }
 
@@ -472,8 +413,8 @@ int32_t js::intgemm::IntrI8MultiplyAndAddBias(
 
   AutoProfilerMarker marker(
       cx->runtime()->geckoProfiler(), "intgemm::Shift::Multiply",
-      FMT_STRING("rowsA: {}, width: {}, colsA: {}"), rowsA, width, colsB);
-  GEMMOLOGY_DISPATCH(Shift::Multiply)
+      "rowsA: {}, width: {}, colsA: {}", rowsA, width, colsB);
+  GEMMOLOGY_DISPATCH_E(Shift::Multiply)
   (inputMatrixAPreparedPtr, inputMatrixBPreparedPtr, rowsA, width, colsB,
    gemmology::callbacks::UnquantizeAndAddBiasAndWrite(
        unquantFactor, inputBiasPreparedPtr, outputPtr));
@@ -489,17 +430,12 @@ int32_t js::intgemm::IntrI8SelectColumnsOfB(wasm::Instance* instance,
   MOZ_ASSERT(wasm::SASigIntrI8SelectColumnsOfB.failureMode ==
              wasm::FailureMode::FailOnNegI32);
   JSContext* cx = instance->cx();
+  AutoUnsafeCallWithABI unsafe;
 
   // Size checks for matricies
-  if (!CheckMatrixDimension(cx, rowsB, ROWS_B_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, colsB, COLUMNS_B_MULTIPLIER) ||
-      !CheckMatrixDimension(cx, sizeColIndexList,
-                            SELECTED_COLUMNS_B_MULTIPLIER)) {
-    wasm::Log(cx,
-              "%s: rowsB:%" PRIu32 "  colsB:%" PRIu32
-              "  sizeColIndexList:%" PRIu32,
-              __FUNCTION__, rowsB, colsB, sizeColIndexList);
-    ReportGemmError(cx, JSMSG_WASM_UNREACHABLE);
+  if (!CheckMatrixDimension(rowsB, ROWS_B_MULTIPLIER) ||
+      !CheckMatrixDimension(colsB, COLUMNS_B_MULTIPLIER) ||
+      !CheckMatrixDimension(sizeColIndexList, SELECTED_COLUMNS_B_MULTIPLIER)) {
     return -1;
   }
 
@@ -507,17 +443,11 @@ int32_t js::intgemm::IntrI8SelectColumnsOfB(wasm::Instance* instance,
   uint64_t sizeB = (uint64_t)rowsB * (uint64_t)colsB;
   uint64_t sizeOutput = (uint64_t)rowsB * (uint64_t)sizeColIndexList;
   size_t wasmBufferSize = GetWasmRawBufferLength(memBase);
-  if (!CheckMatrixBoundAndAlignment(cx, inputMatrixBPrepared, sizeB,
-                                    wasmBufferSize) ||
-      !CheckMatrixBound(cx, colIndexList, sizeColIndexList, wasmBufferSize) ||
-      !CheckMatrixBound(cx, output, sizeOutput, wasmBufferSize)) {
-    wasm::Log(cx,
-              "%s: preparedB:%x  rowsB:%" PRIu32 "  colsB:%" PRIu32
-              "  colList:%x  sizeColList:%" PRIu32 " output:%x  sizeB:%" PRIu64
-              "  sizeOutput:%" PRIu64,
-              __FUNCTION__, inputMatrixBPrepared, rowsB, colsB, colIndexList,
-              sizeColIndexList, output, sizeB, sizeOutput);
-    ReportGemmError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
+  if (!CheckMatrixBoundAndAlignment(inputMatrixBPrepared, sizeB, wasmBufferSize,
+                                    sizeof(int8_t)) ||
+      !CheckMatrixBound(colIndexList, sizeColIndexList, wasmBufferSize,
+                        sizeof(uint32_t)) ||
+      !CheckMatrixBound(output, sizeOutput, wasmBufferSize, sizeof(int8_t))) {
     return -1;
   }
 
@@ -527,10 +457,10 @@ int32_t js::intgemm::IntrI8SelectColumnsOfB(wasm::Instance* instance,
   const uint32_t* colIndexListPtr =
       reinterpret_cast<const uint32_t*>(&memBase[colIndexList]);
   int8_t* outputPtr = reinterpret_cast<int8_t*>(&memBase[output]);
-  AutoProfilerMarker marker(
-      cx->runtime()->geckoProfiler(), "integemm::SelectColumnsB",
-      FMT_STRING("rowsB: {} colsB: {} sizecolList: {}, sizeB: {}"), rowsB,
-      colsB, sizeColIndexList, sizeB);
+  AutoProfilerMarker marker(cx->runtime()->geckoProfiler(),
+                            "integemm::SelectColumnsB",
+                            "rowsB: {} colsB: {} sizecolList: {}, sizeB: {}",
+                            rowsB, colsB, sizeColIndexList, sizeB);
   GEMMOLOGY_DISPATCH(SelectColumnsB)
   (inputMatrixBPreparedPtr, outputPtr, rowsB, colIndexListPtr,
    colIndexListPtr + sizeColIndexList);

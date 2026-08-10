@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -24,10 +22,14 @@ def configure_error(message):
 # Returns a tuple (retcode, stdout, stderr).
 @imports("os")
 @imports("subprocess")
-@imports(_from="mozbuild.shellutil", _import="quote")
+@imports(_from="mozshellutil", _import="quote")
 @imports(_from="mozbuild.util", _import="system_encoding")
+@imports(_from="mozbuild.util", _import="sanitize_shell_env")
 def get_cmd_output(*args, **kwargs):
     log.debug("Executing: `%s`", quote(*args))
+    env = kwargs.get("env") or os.environ
+    if env:
+        kwargs["env"] = sanitize_shell_env(env)
     proc = subprocess.Popen(
         args,
         stdout=subprocess.PIPE,
@@ -49,7 +51,7 @@ def get_cmd_output(*args, **kwargs):
 # output to log.debug and calls die or the given error callback if it
 # does not.
 @imports(_from="mozbuild.configure.util", _import="LineIO")
-@imports(_from="mozbuild.shellutil", _import="quote")
+@imports(_from="mozshellutil", _import="quote")
 def check_cmd_output(*args, **kwargs):
     onerror = kwargs.pop("onerror", None)
 
@@ -121,7 +123,7 @@ def get_GetShortPathNameW():
 @template
 @imports("ctypes")
 @imports("platform")
-@imports(_from="mozbuild.shellutil", _import="quote")
+@imports(_from="mozshellutil", _import="quote")
 def normalize_path():
     # Until the build system can properly handle programs that need quoting,
     # transform those paths into their short version on Windows (e.g.

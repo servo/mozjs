@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -313,8 +311,7 @@ using namespace js;
 /* static */ bool DisposableStackObject::disposed_impl(
     JSContext* cx, const JS::CallArgs& args) {
   // Step 1. Let disposableStack be the this value.
-  JS::Rooted<DisposableStackObject*> disposableStack(
-      cx, &args.thisv().toObject().as<DisposableStackObject>());
+  auto* disposableStack = &args.thisv().toObject().as<DisposableStackObject>();
 
   // Step 2. Perform ? RequireInternalSlot(disposableStack,
   // [[DisposableState]]).

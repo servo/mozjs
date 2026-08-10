@@ -43,6 +43,7 @@
  */
 
 #include <float.h>
+#include <math.h>
 
 #include "math_private.h"
 

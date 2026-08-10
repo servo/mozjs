@@ -1,8 +1,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-""" Collects visualmetrics dependencies.
-"""
+"""Collects visualmetrics dependencies."""
+
 import contextlib
 import os
 import subprocess
@@ -270,8 +270,8 @@ def get_dependencies():
     return (
         "https://files.pythonhosted.org/packages/" + NUMPY[get_plat()],
         "https://files.pythonhosted.org/packages/" + SCIPY[get_plat()],
-        "Pillow==%s" % _PILLOW_VERSION,
-        "pyssim==%s" % _PYSSIM_VERSION,
+        f"Pillow=={_PILLOW_VERSION}",
+        f"pyssim=={_PYSSIM_VERSION}",
         "influxdb==5.3.0",
         "grafana_api==1.0.3",
     )

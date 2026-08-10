@@ -2,9 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import buildconfig
+
 from mozbuild.dirutils import ensureParentDir
+from mozbuild.nodeutil import find_node_executable
 from mozbuild.util import ensure_bytes
-from mozpack.errors import ErrorMessage, errors
+from mozpack.errors import ErrorMessage
 from mozpack.files import (
     AbsoluteSymlinkFile,
     ComposedFinder,
@@ -38,7 +41,7 @@ import random
 import sys
 import tarfile
 import unittest
-from io import BytesIO, StringIO
+from io import BytesIO
 from tempfile import mkdtemp
 
 import mozfile
@@ -273,7 +276,7 @@ class TestFile(TestWithTmpDir):
 
 class TestAbsoluteSymlinkFile(TestWithTmpDir):
     def test_absolute_relative(self):
-        AbsoluteSymlinkFile("/foo")
+        AbsoluteSymlinkFile(os.path.abspath("/foo"))
 
         with self.assertRaisesRegex(ValueError, "Symlink target not absolute"):
             AbsoluteSymlinkFile("./foo")
@@ -826,12 +829,12 @@ class TestManifestFile(TestWithTmpDir):
 # because they will be automatically included by virtue of being an
 # argument to a method of |bar|.
 bar_xpt = GeneratedFile(
-    b"\x58\x50\x43\x4F\x4D\x0A\x54\x79\x70\x65\x4C\x69\x62\x0D\x0A\x1A"
-    + b"\x01\x02\x00\x02\x00\x00\x00\x7B\x00\x00\x00\x24\x00\x00\x00\x5C"
+    b"\x58\x50\x43\x4f\x4d\x0a\x54\x79\x70\x65\x4c\x69\x62\x0d\x0a\x1a"
+    + b"\x01\x02\x00\x02\x00\x00\x00\x7b\x00\x00\x00\x24\x00\x00\x00\x5c"
     + b"\x80\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-    + b"\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x5F"
-    + b"\x70\xDA\x76\x51\x9C\x48\x58\xB7\x1E\xE3\xC9\x23\x33\xE2\xD6\x00"
-    + b"\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00\x0D\x00\x66\x6F\x6F\x00"
+    + b"\x00\x00\x00\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x5f"
+    + b"\x70\xda\x76\x51\x9c\x48\x58\xb7\x1e\xe3\xc9\x23\x33\xe2\xd6\x00"
+    + b"\x00\x00\x05\x00\x00\x00\x00\x00\x00\x00\x0d\x00\x66\x6f\x6f\x00"
     + b"\x62\x61\x72\x00\x62\x61\x72\x00\x00\x00\x00\x01\x00\x00\x00\x00"
     + b"\x09\x01\x80\x92\x00\x01\x80\x06\x00\x00\x80"
 )
@@ -842,11 +845,11 @@ bar_xpt = GeneratedFile(
 #         void foo();
 #     };
 foo_xpt = GeneratedFile(
-    b"\x58\x50\x43\x4F\x4D\x0A\x54\x79\x70\x65\x4C\x69\x62\x0D\x0A\x1A"
+    b"\x58\x50\x43\x4f\x4d\x0a\x54\x79\x70\x65\x4c\x69\x62\x0d\x0a\x1a"
     + b"\x01\x02\x00\x01\x00\x00\x00\x57\x00\x00\x00\x24\x00\x00\x00\x40"
-    + b"\x80\x00\x00\x32\x71\xBE\xBC\x92\x7E\x4B\xEF\x93\x5E\x44\xE0\xAA"
-    + b"\xF3\xC1\xE5\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x09\x00"
-    + b"\x66\x6F\x6F\x00\x66\x6F\x6F\x00\x00\x00\x00\x01\x00\x00\x00\x00"
+    + b"\x80\x00\x00\x32\x71\xbe\xbc\x92\x7e\x4b\xef\x93\x5e\x44\xe0\xaa"
+    + b"\xf3\xc1\xe5\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x09\x00"
+    + b"\x66\x6f\x6f\x00\x66\x6f\x6f\x00\x00\x00\x00\x01\x00\x00\x00\x00"
     + b"\x05\x00\x80\x06\x00\x00\x00"
 )
 
@@ -856,11 +859,11 @@ foo_xpt = GeneratedFile(
 #         void foo();
 #     };
 foo2_xpt = GeneratedFile(
-    b"\x58\x50\x43\x4F\x4D\x0A\x54\x79\x70\x65\x4C\x69\x62\x0D\x0A\x1A"
+    b"\x58\x50\x43\x4f\x4d\x0a\x54\x79\x70\x65\x4c\x69\x62\x0d\x0a\x1a"
     + b"\x01\x02\x00\x01\x00\x00\x00\x57\x00\x00\x00\x24\x00\x00\x00\x40"
-    + b"\x80\x00\x00\x70\x57\xF2\xAA\xFD\xC2\x45\x59\xAB\xDE\x08\xD9\x39"
-    + b"\xF7\xE8\x0D\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x09\x00"
-    + b"\x66\x6F\x6F\x00\x66\x6F\x6F\x00\x00\x00\x00\x01\x00\x00\x00\x00"
+    + b"\x80\x00\x00\x70\x57\xf2\xaa\xfd\xc2\x45\x59\xab\xde\x08\xd9\x39"
+    + b"\xf7\xe8\x0d\x00\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x09\x00"
+    + b"\x66\x6f\x6f\x00\x66\x6f\x6f\x00\x00\x00\x00\x01\x00\x00\x00\x00"
     + b"\x05\x00\x80\x06\x00\x00\x00"
 )
 
@@ -891,44 +894,91 @@ class TestMinifiedJavaScript(TestWithTmpDir):
         "// Another comment",
     ]
 
+    def setUp(self):
+        super().setUp()
+        if not buildconfig.substs.get("NODEJS"):
+            node_exe, _ = find_node_executable()
+            if node_exe:
+                buildconfig.substs["NODEJS"] = node_exe
+
     def test_minified_javascript(self):
-        orig_f = GeneratedFile("\n".join(self.orig_lines))
-        min_f = MinifiedJavaScript(orig_f)
+        """Test that MinifiedJavaScript minifies JavaScript content."""
+        orig_f = GeneratedFile("\n".join(self.orig_lines).encode())
+        min_f = MinifiedJavaScript(orig_f, "test.js")
 
-        mini_lines = min_f.open().readlines()
-        self.assertTrue(mini_lines)
-        self.assertTrue(len(mini_lines) < len(self.orig_lines))
+        mini_content = min_f.open().read()
+        orig_content = orig_f.open().read()
 
-    def _verify_command(self, code):
-        our_dir = os.path.abspath(os.path.dirname(__file__))
-        return [
-            sys.executable,
-            os.path.join(our_dir, "support", "minify_js_verify.py"),
-            code,
-        ]
+        # Verify minification occurred (content should be smaller)
+        self.assertTrue(len(mini_content) < len(orig_content))
+        # Verify content is not empty
+        self.assertTrue(len(mini_content) > 0)
 
-    def test_minified_verify_success(self):
-        orig_f = GeneratedFile("\n".join(self.orig_lines))
-        min_f = MinifiedJavaScript(orig_f, verify_command=self._verify_command("0"))
+    def test_minified_javascript_open(self):
+        """Test that MinifiedJavaScript.open returns appropriately reset file object."""
+        orig_f = GeneratedFile("\n".join(self.orig_lines).encode())
+        min_f = MinifiedJavaScript(orig_f, "test.js")
 
-        mini_lines = [s.decode() for s in min_f.open().readlines()]
-        self.assertTrue(mini_lines)
-        self.assertTrue(len(mini_lines) < len(self.orig_lines))
+        # Test reading partial content
+        first_read = min_f.open().read(10)
+        self.assertTrue(len(first_read) <= 10)
 
-    def test_minified_verify_failure(self):
-        orig_f = GeneratedFile("\n".join(self.orig_lines))
-        errors.out = StringIO()
-        min_f = MinifiedJavaScript(orig_f, verify_command=self._verify_command("1"))
+        # Test reading full content multiple times
+        full_content = min_f.open().read()
+        second_read = min_f.open().read()
+        self.assertEqual(full_content, second_read)
 
-        mini_lines = min_f.open().readlines()
-        output = errors.out.getvalue()
-        errors.out = sys.stderr
-        self.assertEqual(
-            output,
-            "warning: JS minification verification failed for <unknown>:\n"
-            "warning: Error message\n",
-        )
-        self.assertEqual(mini_lines, orig_f.open().readlines())
+    def test_preserves_functionality(self):
+        """Test that Terser preserves JavaScript functionality."""
+        # More complex JavaScript with functions and objects
+        complex_js = """
+        // This is a test function
+        function testFunction(param) {
+            let result = {
+                value: param * 2,
+                toString: function() {
+                    return "Result: " + this.value;
+                }
+            };
+            return result;
+        }
+
+        // Export for testing
+        var exported = testFunction;
+        """
+
+        orig_f = GeneratedFile(complex_js.encode())
+        min_f = MinifiedJavaScript(orig_f, "complex.js")
+
+        minified_content = min_f.open().read().decode()
+
+        # Verify it's minified
+        self.assertTrue(len(minified_content) < len(complex_js))
+        # Verify functions are still present)
+        self.assertIn("function", minified_content)
+
+    def test_handles_empty_file(self):
+        """Test that MinifiedJavaScript handles empty files gracefully."""
+        empty_f = GeneratedFile(b"")
+        min_f = MinifiedJavaScript(empty_f, "empty.js")
+
+        # Should handle empty content gracefully
+        result = min_f.open().read()
+        self.assertEqual(result, b"")
+
+    def test_handles_syntax_errors(self):
+        """Test that MinifiedJavaScript raises an error for syntax errors."""
+        # JavaScript with syntax error
+        broken_js = b"function broken( { return 'missing parenthesis'; }"
+
+        orig_f = GeneratedFile(broken_js)
+        min_f = MinifiedJavaScript(orig_f, "broken.js")
+
+        # Should raise an ErrorMessage when minification fails
+        from mozpack.errors import ErrorMessage
+
+        with self.assertRaises(ErrorMessage):
+            min_f.open().read()
 
 
 class MatchTestTemplate:
@@ -1232,12 +1282,10 @@ class TestComposedFinder(MatchTestTemplate, TestWithTmpDir):
         ensureParentDir(self.tmppath("a/foo/qux/hoge"))
         open(self.tmppath("a/foo/qux/hoge"), "wb").write(b"hoge")
         open(self.tmppath("a/foo/qux/bar"), "wb").write(b"not the right content")
-        self.finder = ComposedFinder(
-            {
-                "": FileFinder(self.tmppath("a")),
-                "foo/qux": FileFinder(self.tmppath("b")),
-            }
-        )
+        self.finder = ComposedFinder({
+            "": FileFinder(self.tmppath("a")),
+            "foo/qux": FileFinder(self.tmppath("b")),
+        })
         self.do_match_test()
 
         self.assertIsNone(self.finder.get("does-not-exist"))
@@ -1248,7 +1296,7 @@ class TestComposedFinder(MatchTestTemplate, TestWithTmpDir):
 @unittest.skipIf(os.name == "nt", "Does not currently work in Python3 on Windows")
 class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
     def setUp(self):
-        super(TestMercurialRevisionFinder, self).setUp()
+        super().setUp()
         hglib.init(self.tmpdir)
         self._clients = []
 
@@ -1262,7 +1310,7 @@ class TestMercurialRevisionFinder(MatchTestTemplate, TestWithTmpDir):
 
         self._clients[:] = []
 
-        super(TestMercurialRevisionFinder, self).tearDown()
+        super().tearDown()
 
     def _client(self):
         configs = (

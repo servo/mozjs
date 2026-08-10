@@ -4,7 +4,6 @@
 #ifndef intl_components_DisplayNames_h_
 #define intl_components_DisplayNames_h_
 
-#include <string>
 #include <string_view>
 #include "unicode/udat.h"
 #include "unicode/udatpg.h"
@@ -386,11 +385,10 @@ class DisplayNames final {
       Fallback aFallback = Fallback::None) const {
     static_assert(std::is_same<typename B::CharType, char16_t>::value);
 
-    mozilla::intl::RegionSubtag region;
     if (!IsStructurallyValidRegionTag(aCode)) {
       return Err(DisplayNamesError::InvalidOption);
     }
-    region.Set(aCode);
+    mozilla::intl::RegionSubtag region{aCode};
 
     mozilla::intl::Locale tag;
     tag.SetLanguage("und");
@@ -528,15 +526,14 @@ class DisplayNames final {
       B& aBuffer, Span<const char> aScript,
       Fallback aFallback = Fallback::None) const {
     static_assert(std::is_same<typename B::CharType, char16_t>::value);
-    mozilla::intl::ScriptSubtag script;
+
     if (!IsStructurallyValidScriptTag(aScript)) {
       return Err(DisplayNamesError::InvalidOption);
     }
-    script.Set(aScript);
+    mozilla::intl::ScriptSubtag script{aScript};
 
     mozilla::intl::Locale tag;
     tag.SetLanguage("und");
-
     tag.SetScript(script);
 
     {
@@ -850,7 +847,29 @@ class DisplayNames final {
   Result<Ok, DisplayNamesError> GetDayPeriod(
       B& aBuffer, DayPeriod aDayPeriod, Span<const char> aCalendar,
       Fallback aFallback = Fallback::None) {
-    UDateFormatSymbolType symbolType = UDAT_AM_PMS;
+    UDateFormatSymbolType symbolType;
+    switch (mOptions.style) {
+      case DisplayNames::Style::Long:
+#ifndef U_HIDE_DRAFT_API
+        symbolType = UDAT_AM_PMS_WIDE;
+#else
+        symbolType = UDAT_AM_PMS;
+#endif
+        break;
+
+      case DisplayNames::Style::Abbreviated:
+      case DisplayNames::Style::Short:
+        symbolType = UDAT_AM_PMS;
+        break;
+
+      case DisplayNames::Style::Narrow:
+#ifndef U_HIDE_DRAFT_API
+        symbolType = UDAT_AM_PMS_NARROW;
+#else
+        symbolType = UDAT_AM_PMS;
+#endif
+        break;
+    }
 
     static constexpr int32_t indices[] = {UCAL_AM, UCAL_PM};
 

@@ -3,10 +3,11 @@
 // found in the LICENSE file.
 #include "jit/riscv64/extension/extension-riscv-zifencei.h"
 
-#include "jit/riscv64/extension/base-assembler-riscv.h"
+#include "jit/riscv64/base/base-assembler-riscv.h"
 #include "jit/riscv64/constant/Constant-riscv64.h"
 #include "jit/riscv64/Assembler-riscv64.h"
 #include "jit/riscv64/Architecture-riscv64.h"
+
 namespace js {
 namespace jit {
 

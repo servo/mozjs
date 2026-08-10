@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 // Copyright 2007-2008 the V8 project authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -11,7 +8,6 @@
 #ifdef JS_DISASM_ARM
 
 #  include "mozilla/Assertions.h"
-#  include "mozilla/Types.h"
 
 #  include <stdio.h>
 

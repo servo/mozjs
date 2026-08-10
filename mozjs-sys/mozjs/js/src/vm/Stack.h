@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -104,6 +102,8 @@ class AbstractFramePtr {
     TagMask = 0x3
   };
 
+  explicit AbstractFramePtr(uintptr_t ptr) : ptr_(ptr) {}
+
  public:
   AbstractFramePtr() : ptr_(0) {}
 
@@ -165,6 +165,9 @@ class AbstractFramePtr {
   }
 
   void* raw() const { return reinterpret_cast<void*>(ptr_); }
+  static AbstractFramePtr fromRaw(void* raw) {
+    return AbstractFramePtr(reinterpret_cast<uintptr_t>(raw));
+  }
 
   bool operator==(const AbstractFramePtr& other) const {
     return ptr_ == other.ptr_;
@@ -839,7 +842,7 @@ class InterpreterStack {
   }
 };
 
-void TraceInterpreterActivations(JSContext* cx, JSTracer* trc);
+void TraceActivations(JSContext* cx, JSTracer* trc);
 
 /*****************************************************************************/
 
@@ -848,6 +851,7 @@ class AnyInvokeArgs : public JS::CallArgs {};
 
 /** Base class for all function construction args. */
 class AnyConstructArgs : public JS::CallArgs {
+ public:
   // Only js::Construct (or internal methods that call the qualified CallArgs
   // versions) should do these things!
   void setCallee(const Value& v) = delete;

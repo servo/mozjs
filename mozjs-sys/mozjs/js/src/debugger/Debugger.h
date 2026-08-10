@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -29,7 +27,7 @@
 #include "debugger/Object.h"        // for DebuggerObject
 #include "ds/TraceableFifo.h"       // for TraceableFifo
 #include "gc/Barrier.h"             //
-#include "gc/Tracer.h"              // for TraceNullableEdge, TraceEdge
+#include "gc/Tracer.h"              // for TraceEdge, TraceEdge
 #include "gc/WeakMap.h"             // for WeakMap
 #include "gc/ZoneAllocator.h"       // for ZoneAllocPolicy
 #include "js/Debug.h"               // JS_DefineDebuggerObject
@@ -68,7 +66,7 @@ class Debugger;
 class DebuggerEnvironment;
 class PromiseObject;
 namespace gc {
-struct Cell;
+class Cell;
 } /* namespace gc */
 namespace wasm {
 class Instance;
@@ -336,7 +334,7 @@ extern void CheckDebuggeeThing(JSObject* obj, bool invisibleOk);
  * beacomes a debuggee again later, new Frame objects are created.)
  */
 template <class Referent, class Wrapper, bool InvisibleKeysOk = false>
-class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
+class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*, ZoneAllocPolicy> {
  private:
   using Key = Referent*;
   using Value = Wrapper*;
@@ -344,12 +342,11 @@ class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
   JS::Compartment* compartment;
 
  public:
-  using Base = WeakMap<Key, Value>;
+  using Base = WeakMap<Key, Value, ZoneAllocPolicy>;
   using ReferentType = Referent;
   using WrapperType = Wrapper;
 
-  explicit DebuggerWeakMap(JSContext* cx)
-      : Base(cx), compartment(cx->compartment()) {}
+  explicit DebuggerWeakMap(JSContext* cx);
 
  public:
   // Expose those parts of HashMap public interface that are used by Debugger
@@ -358,12 +355,12 @@ class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
   using Entry = typename Base::Entry;
   using Ptr = typename Base::Ptr;
   using AddPtr = typename Base::AddPtr;
-  using Range = typename Base::Range;
+  using Iterator = typename Base::Iterator;
+  using ModIterator = typename Base::ModIterator;
   using Lookup = typename Base::Lookup;
 
   // Expose WeakMap public interface.
 
-  using Base::all;
   using Base::has;
   using Base::lookup;
   using Base::lookupForAdd;
@@ -375,10 +372,8 @@ class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
   using Base::hasEntry;
 #endif
 
-  class Enum : public Base::Enum {
-   public:
-    explicit Enum(DebuggerWeakMap& map) : Base::Enum(map) {}
-  };
+  Iterator iter() const { return Base::iter(); }
+  ModIterator modIter() { return Base::modIter(); }
 
   template <typename KeyInput, typename ValueInput>
   bool relookupOrAdd(AddPtr& p, const KeyInput& k, const ValueInput& v) {
@@ -393,9 +388,14 @@ class DebuggerWeakMap : private WeakMap<Referent*, Wrapper*> {
 
  public:
   void traceCrossCompartmentEdges(JSTracer* tracer) {
-    for (Enum e(*this); !e.empty(); e.popFront()) {
-      TraceEdge(tracer, &e.front().mutableKey(), "Debugger WeakMap key");
-      e.front().value()->trace(tracer);
+    for (auto iter = modIter(); !iter.done(); iter.next()) {
+      // The values are debugger objects which contain a cross-compartment
+      // debuggee pointer, so trace their contents.
+      iter.get().value()->trace(tracer);
+
+      // Trace the keys, which are cross compartment debuggee pointers.
+      // This can rekey the entry and invalidate |e.front()|.
+      Base::traceKey(tracer, iter);
     }
   }
 
@@ -425,6 +425,7 @@ class MOZ_RAII EvalOptions {
   JS::UniqueChars filename_;
   unsigned lineno_ = 1;
   bool hideFromDebugger_ = false;
+  bool bypassCSP_ = false;
   EnvKind kind_;
 
  public:
@@ -433,6 +434,7 @@ class MOZ_RAII EvalOptions {
   const char* filename() const { return filename_.get(); }
   unsigned lineno() const { return lineno_; }
   bool hideFromDebugger() const { return hideFromDebugger_; }
+  bool bypassCSP() const { return bypassCSP_; }
   EnvKind kind() const { return kind_; }
   void setUseInnerBindings() {
     MOZ_ASSERT(kind_ == EvalOptions::EnvKind::GlobalWithExtraOuterBindings);
@@ -441,6 +443,7 @@ class MOZ_RAII EvalOptions {
   [[nodiscard]] bool setFilename(JSContext* cx, const char* filename);
   void setLineno(unsigned lineno) { lineno_ = lineno; }
   void setHideFromDebugger(bool hide) { hideFromDebugger_ = hide; }
+  void setBypassCSP(bool bypass) { bypassCSP_ = bypass; }
 };
 
 /*
@@ -626,7 +629,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
     bool inNursery;
 
     void trace(JSTracer* trc) {
-      TraceNullableEdge(trc, &frame, "Debugger::AllocationsLogEntry::frame");
+      TraceEdge(trc, &frame, "Debugger::AllocationsLogEntry::frame");
     }
   };
 
@@ -659,6 +662,9 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   template <typename T>
   struct DebuggerLinkAccess {
     static mozilla::DoublyLinkedListElement<T>& Get(T* aThis) {
+      return aThis->debuggerLink;
+    }
+    static const mozilla::DoublyLinkedListElement<T>& Get(const T* aThis) {
       return aThis->debuggerLink;
     }
   };
@@ -702,12 +708,20 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   static bool cannotTrackAllocations(const GlobalObject& global);
 
   /*
-   * Add allocations tracking for objects allocated within the given
-   * debuggee's compartment. The given debuggee global must be observed by at
-   * least one Debugger that is tracking allocations.
+   * Check whether there is an existing object metadata callback for the given
+   * global's compartment and throw an exception if so.
    */
-  [[nodiscard]] static bool addAllocationsTracking(
+  [[nodiscard]] static bool checkCanAddAllocationsTracking(
       JSContext* cx, Handle<GlobalObject*> debuggee);
+
+  /*
+   * Add allocations tracking for objects allocated within the given debuggee's
+   * compartment. The given debuggee global must be observed by at least one
+   * Debugger that is tracking allocations and there must be no existing object
+   * metadata callback installed.
+   */
+  static void addAllocationsTracking(JSContext* cx,
+                                     Handle<GlobalObject*> debuggee);
 
   /*
    * Remove allocations tracking for objects allocated within the given
@@ -827,7 +841,7 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   [[nodiscard]] bool addDebuggeeGlobal(JSContext* cx,
                                        Handle<GlobalObject*> obj);
   void removeDebuggeeGlobal(JS::GCContext* gcx, GlobalObject* global,
-                            WeakGlobalObjectSet::Enum* debugEnum,
+                            WeakGlobalObjectSet::ModIterator* debugIter,
                             FromSweep fromSweep);
 
   /*
@@ -945,8 +959,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    * Terminate a given DebuggerFrame, removing all internal state and all
    * references to the frame from the Debugger itself. If the frame is being
    * terminated while 'frames' or 'generatorFrames' are being iterated, pass a
-   * pointer to the iteration Enum to remove the entry and ensure that iteration
-   * behaves properly.
+   * pointer to the current iterator so the entry can be removed without
+   * invalidating iteration.
    *
    * The AbstractFramePtr may be omited in a call so long as it is either
    * called again later with the correct 'frame', or the frame itself has never
@@ -954,8 +968,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
    */
   static void terminateDebuggerFrame(
       JS::GCContext* gcx, Debugger* dbg, DebuggerFrame* dbgFrame,
-      AbstractFramePtr frame, FrameMap::Enum* maybeFramesEnum = nullptr,
-      GeneratorWeakMap::Enum* maybeGeneratorFramesEnum = nullptr);
+      AbstractFramePtr frame, FrameMap::ModIterator* maybeFramesIter = nullptr,
+      GeneratorWeakMap::ModIterator* maybeGeneratorFramesIter = nullptr);
 
   static bool updateExecutionObservabilityOfFrames(
       JSContext* cx, const DebugAPI::ExecutionObservableSet& obs,
@@ -1138,14 +1152,19 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
 
   inline Breakpoint* firstBreakpoint() const;
 
-  [[nodiscard]] static bool replaceFrameGuts(JSContext* cx,
-                                             AbstractFramePtr from,
-                                             AbstractFramePtr to,
-                                             ScriptFrameIter& iter);
+  /*
+   * Update the frame guts for OSR and bailout. Crashes on OOM
+   * rather than trying to maintain invariants across OOM.
+   */
+  static void replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
+                               AbstractFramePtr to, ScriptFrameIter& iter);
 
  public:
   Debugger(JSContext* cx, NativeObject* dbg);
   ~Debugger();
+
+  Debugger(const Debugger&) = delete;
+  Debugger& operator=(const Debugger&) = delete;
 
   inline const js::HeapPtr<NativeObject*>& toJSObject() const;
   inline js::HeapPtr<NativeObject*>& toJSObjectRef();
@@ -1160,7 +1179,9 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
   bool hasMemory() const;
   DebuggerMemory& memory() const;
 
-  WeakGlobalObjectSet::Range allDebuggees() const { return debuggees.all(); }
+  WeakGlobalObjectSet::Iterator allDebuggees() const {
+    return debuggees.iter();
+  }
 
 #ifdef DEBUG
   static bool isDebuggerCrossCompartmentEdge(JSObject* obj,
@@ -1301,10 +1322,6 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
                                  Handle<WasmInstanceObject*> wasmInstance);
 
   DebuggerDebuggeeLink* getDebuggeeLink();
-
- private:
-  Debugger(const Debugger&) = delete;
-  Debugger& operator=(const Debugger&) = delete;
 };
 
 // Specialize InternalBarrierMethods so we can have WeakHeapPtr<Debugger*>.
@@ -1464,6 +1481,9 @@ class BreakpointSite {
   template <typename T>
   struct SiteLinkAccess {
     static mozilla::DoublyLinkedListElement<T>& Get(T* aThis) {
+      return aThis->siteLink;
+    }
+    static const mozilla::DoublyLinkedListElement<T>& Get(const T* aThis) {
       return aThis->siteLink;
     }
   };

@@ -1,10 +1,11 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/ShuffleAnalysis.h"
-#include "mozilla/MathAlgorithms.h"
+
+#include <bit>
+
 #include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "wasm/WasmFeatures.h"
@@ -380,7 +381,7 @@ static Maybe<SimdPermuteOp> TryZeroExtend(SimdConstant* control) {
   for (; i <= 4 && lanes[i] == int8_t(i); i++) {
   }
   // The length of the fragment has to be a power of 2, and next item is zero.
-  if (!mozilla::IsPowerOfTwo(i) || lanes[i] < 16) {
+  if (!std::has_single_bit(i) || lanes[i] < 16) {
     return Nothing();
   }
   MOZ_ASSERT(i > 0 && i <= 4);
@@ -390,7 +391,7 @@ static Maybe<SimdPermuteOp> TryZeroExtend(SimdConstant* control) {
   }
   // The length of the entire fragment of zero and non-zero items
   // needs to be power of 2.
-  if (!mozilla::IsPowerOfTwo(i)) {
+  if (!std::has_single_bit(i)) {
     return Nothing();
   }
   MOZ_ASSERT(i > fromLen && i <= 8);

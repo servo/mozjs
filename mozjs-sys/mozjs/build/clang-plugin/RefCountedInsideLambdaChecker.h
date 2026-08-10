@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef RefCountedInsideLambdaChecker_h__
-#define RefCountedInsideLambdaChecker_h__
+#ifndef RefCountedInsideLambdaChecker_h_
+#define RefCountedInsideLambdaChecker_h_
 
 #include "plugin.h"
 
@@ -16,6 +16,9 @@ public:
   void check(const MatchFinder::MatchResult &Result) override;
 
   void emitDiagnostics(SourceLocation Loc, StringRef Name, QualType Type);
+  bool isLanguageVersionSupported(const LangOptions &LangOpts) const override {
+    return LangOpts.CPlusPlus;
+  }
 
 private:
   class ThisVisitor : public RecursiveASTVisitor<ThisVisitor> {

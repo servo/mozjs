@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -57,9 +55,7 @@ enum class CalendarId : int32_t {
   Indian,
 
   // Islamic lunar calendars.
-  Islamic,
   IslamicCivil,
-  IslamicRGSA,
   IslamicTabular,
   IslamicUmmAlQura,
 
@@ -84,23 +80,9 @@ inline constexpr auto availableCalendars = {
     CalendarId::Gregorian,
     CalendarId::Hebrew,
     CalendarId::Indian,
-// See Bug 1950425, this calendar is only available on Nightly due to
-// inconsistencies between ICU4X and ICU4C.
-#ifdef NIGHTLY_BUILD
-    CalendarId::Islamic,
-#endif
     CalendarId::IslamicCivil,
-// See Bug 1950425, this calendar is only available on Nightly due to
-// inconsistencies between ICU4X and ICU4C.
-#ifdef NIGHTLY_BUILD
-    CalendarId::IslamicRGSA,
-#endif
     CalendarId::IslamicTabular,
-// See Bug 1950425, this calendar is only available on Nightly due to
-// inconsistencies between ICU4X and ICU4C.
-#ifdef NIGHTLY_BUILD
     CalendarId::IslamicUmmAlQura,
-#endif
     CalendarId::Japanese,
     CalendarId::Persian,
     CalendarId::ROC,
@@ -131,7 +113,7 @@ class CalendarObject : public NativeObject {
  * Calendar value, which is a string containing a canonical calendar identifier.
  */
 class MOZ_STACK_CLASS CalendarValue final {
-  JS::Value value_{};
+  JS::Value value_;
 
  public:
   /**

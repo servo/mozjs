@@ -22,36 +22,32 @@ void FopenUsageChecker::registerMatchers(MatchFinder *AstMatcher) {
 
   AstMatcher->addMatcher(
       callExpr(
-          allOf(
-              isFirstParty(),
-              callee(functionDecl(allOf(
-                  isInSystemHeader(),
-                  anyOf(
-                      allOf(anyOf(allOf(hasName("fopen"),
-                                        hasConstCharPtrParam(0)),
-                                  allOf(hasName("fopen_s"),
-                                        hasParameter(
-                                            0, hasType(pointsTo(pointsTo(
-                                                   asString("FILE"))))),
-                                        hasConstCharPtrParam(2))),
-                            hasConstCharPtrParam(1)),
-                      allOf(anyOf(hasName("open"),
-                                  allOf(hasName("_open"), hasIntegerParam(2)),
-                                  allOf(hasName("_sopen"), hasIntegerParam(3))),
-                            hasConstCharPtrParam(0), hasIntegerParam(1)),
-                      allOf(hasName("_sopen_s"),
-                            hasParameter(0, hasType(pointsTo(isInteger()))),
-                            hasConstCharPtrParam(1), hasIntegerParam(2),
-                            hasIntegerParam(3), hasIntegerParam(4)),
-                      allOf(hasName("OpenFile"), hasConstCharPtrParam(0),
-                            hasParamOfType(1, "LPOFSTRUCT"),
-                            hasIntegerParam(2)),
-                      allOf(hasName("CreateFileA"), hasConstCharPtrParam(0),
-                            hasIntegerParam(1), hasIntegerParam(2),
-                            hasParamOfType(3, "LPSECURITY_ATTRIBUTES"),
-                            hasIntegerParam(4), hasIntegerParam(5),
-                            hasParamOfType(6, "HANDLE")))))),
-              unless(isInWhitelistForFopenUsage())))
+          isFirstParty(),
+          callee(functionDecl(
+              isInSystemHeader(),
+              anyOf(
+                  allOf(anyOf(allOf(hasName("fopen"), hasConstCharPtrParam(0)),
+                              allOf(hasName("fopen_s"),
+                                    hasParameter(0, hasType(pointsTo(pointsTo(
+                                                        asString("FILE"))))),
+                                    hasConstCharPtrParam(2))),
+                        hasConstCharPtrParam(1)),
+                  allOf(anyOf(hasName("open"),
+                              allOf(hasName("_open"), hasIntegerParam(2)),
+                              allOf(hasName("_sopen"), hasIntegerParam(3))),
+                        hasConstCharPtrParam(0), hasIntegerParam(1)),
+                  allOf(hasName("_sopen_s"),
+                        hasParameter(0, hasType(pointsTo(isInteger()))),
+                        hasConstCharPtrParam(1), hasIntegerParam(2),
+                        hasIntegerParam(3), hasIntegerParam(4)),
+                  allOf(hasName("OpenFile"), hasConstCharPtrParam(0),
+                        hasParamOfType(1, "LPOFSTRUCT"), hasIntegerParam(2)),
+                  allOf(hasName("CreateFileA"), hasConstCharPtrParam(0),
+                        hasIntegerParam(1), hasIntegerParam(2),
+                        hasParamOfType(3, "LPSECURITY_ATTRIBUTES"),
+                        hasIntegerParam(4), hasIntegerParam(5),
+                        hasParamOfType(6, "HANDLE"))))),
+          unless(isInWhitelistForFopenUsage()))
           .bind("funcCall"),
       this);
 }
@@ -63,11 +59,9 @@ void FopenUsageChecker::check(const MatchFinder::MatchResult &Result) {
       "_sopen_s, OpenFile, CreateFileA should never be used due to lossy "
       "conversion from UTF8 to ANSI.";
 
-  if (FuncCall) {
     diag(FuncCall->getBeginLoc(),
          "Usage of ASCII file functions (here %0) is forbidden on Windows.",
          DiagnosticIDs::Warning)
         << FuncCall->getDirectCallee()->getName();
     diag(FuncCall->getBeginLoc(), ExtraInfo, DiagnosticIDs::Note);
-  }
 }

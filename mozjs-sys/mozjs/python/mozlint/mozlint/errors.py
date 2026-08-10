@@ -29,5 +29,5 @@ class LintersNotConfigured(LintException):
     def __init__(self):
         LintException.__init__(
             self,
-            "No linters registered! Use `LintRoller.read` " "to register a linter.",
+            "No linters registered! Use `LintRoller.read` to register a linter.",
         )

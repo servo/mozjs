@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -255,7 +253,6 @@ class MOZ_RAII RunState {
   InterpreterFrame* pushInterpreterFrame(JSContext* cx);
   inline void setReturnValue(const Value& v);
 
- private:
   RunState(const RunState& other) = delete;
   RunState(const ExecuteState& other) = delete;
   RunState(const InvokeState& other) = delete;
@@ -646,7 +643,7 @@ bool SpreadCallOperation(JSContext* cx, HandleScript script, jsbytecode* pc,
 bool OptimizeSpreadCall(JSContext* cx, HandleValue arg,
                         MutableHandleValue result);
 
-bool OptimizeGetIterator(const Value& arg, JSContext* cx);
+bool OptimizeGetIterator(Value arg, JSContext* cx);
 
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
 enum class SyncDisposalClosureSlots : uint8_t {

@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -55,7 +54,6 @@ int PR_CALLBACK Writev(int argc, char** argv) {
   PLOptStatus os;
   PLOptState* opt = PL_CreateOptState(argc, argv, "dh:m:s:f:");
 
-  PR_STDIO_INIT();
   rv = PR_InitializeNetAddr(PR_IpAddrLoopback, BASE_PORT, &serverAddr);
   PR_ASSERT(PR_SUCCESS == rv);
 

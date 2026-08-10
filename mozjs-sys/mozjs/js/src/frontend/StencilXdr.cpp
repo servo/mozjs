@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -12,6 +10,7 @@
 #include "mozilla/ScopeExit.h"              // mozilla::MakeScopeExit
 #include "mozilla/Try.h"                    // MOZ_TRY
 
+#include <bit>          // std::endian
 #include <stddef.h>     // size_t
 #include <stdint.h>     // uint8_t, uint16_t, uint32_t
 #include <type_traits>  // std::has_unique_object_representations
@@ -600,6 +599,7 @@ template <XDRMode mode>
   MOZ_TRY(xdr->codeUint32(stencil.specifier.rawDataRef()));
   MOZ_TRY(xdr->codeUint32(stencil.firstUnsupportedAttributeKey.rawDataRef()));
   MOZ_TRY(XDRVectorContent(xdr, stencil.attributes));
+  MOZ_TRY(xdr->codeUint8(reinterpret_cast<uint8_t*>(&stencil.phase)));
 
   return Ok();
 }
@@ -1386,7 +1386,11 @@ JS_PUBLIC_API bool JS::GetScriptTranscodingBuildId(
   // XDR depends on pointer size and endianness.
   static_assert(sizeof(uintptr_t) == 4 || sizeof(uintptr_t) == 8);
   buildId->infallibleAppend(sizeof(uintptr_t) == 4 ? '4' : '8');
-  buildId->infallibleAppend(MOZ_LITTLE_ENDIAN() ? 'l' : 'b');
+  if constexpr (std::endian::native == std::endian::little) {
+    buildId->infallibleAppend('l');
+  } else {
+    buildId->infallibleAppend('b');
+  }
 
   return true;
 }
@@ -1494,11 +1498,15 @@ static JS::TranscodeResult EncodeStencilImpl(
 JS::TranscodeResult JS::EncodeStencil(JSContext* cx, JS::Stencil* stencil,
                                       JS::TranscodeBuffer& buffer) {
   AutoReportFrontendContext fc(cx);
+  return JS::EncodeStencil(&fc, stencil, buffer);
+}
 
+JS::TranscodeResult JS::EncodeStencil(FrontendContext* fc, JS::Stencil* stencil,
+                                      JS::TranscodeBuffer& buffer) {
   const CompilationStencil* initial;
   UniquePtr<CompilationStencil> merged;
   if (stencil->canLazilyParse()) {
-    merged.reset(stencil->getMerged(&fc));
+    merged.reset(stencil->getMerged(fc));
     if (!merged) {
       return TranscodeResult::Throw;
     }
@@ -1507,7 +1515,7 @@ JS::TranscodeResult JS::EncodeStencil(JSContext* cx, JS::Stencil* stencil,
     initial = stencil->getInitial();
   }
 
-  return EncodeStencilImpl(&fc, initial, buffer);
+  return EncodeStencilImpl(fc, initial, buffer);
 }
 
 JS::TranscodeResult js::EncodeStencil(JSContext* cx,
@@ -1515,6 +1523,12 @@ JS::TranscodeResult js::EncodeStencil(JSContext* cx,
                                       JS::TranscodeBuffer& buffer) {
   AutoReportFrontendContext fc(cx);
   return EncodeStencilImpl(&fc, stencil, buffer);
+}
+
+JS::TranscodeResult js::EncodeStencil(FrontendContext* fc,
+                                      frontend::CompilationStencil* stencil,
+                                      JS::TranscodeBuffer& buffer) {
+  return EncodeStencilImpl(fc, stencil, buffer);
 }
 
 XDRResult XDRStencilDecoder::codeStencil(

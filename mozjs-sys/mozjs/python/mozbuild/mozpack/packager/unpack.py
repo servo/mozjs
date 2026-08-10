@@ -170,7 +170,8 @@ class UnpackFinder(BaseFinder):
         base = entry.base
         jar, relpath = urlparse(relpath).path.split("!", 1)
         entry = (
-            entry.rebase(mozpath.join(base, "jar:%s!" % jar))
+            entry
+            .rebase(mozpath.join(base, "jar:%s!" % jar))
             .move(mozpath.join(base, mozpath.splitext(jar)[0]))
             .rebase(base)
         )

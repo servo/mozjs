@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -17,8 +15,6 @@ static JSProtoKey ToProtoKey(BuiltinObjectKind kind) {
   switch (kind) {
     case BuiltinObjectKind::Array:
       return JSProto_Array;
-    case BuiltinObjectKind::ListFormat:
-      return JSProto_ListFormat;
     case BuiltinObjectKind::Map:
       return JSProto_Map;
     case BuiltinObjectKind::Promise:
@@ -35,11 +31,6 @@ static JSProtoKey ToProtoKey(BuiltinObjectKind kind) {
     case BuiltinObjectKind::IteratorPrototype:
       return JSProto_Iterator;
 
-    case BuiltinObjectKind::DateTimeFormatPrototype:
-      return JSProto_DateTimeFormat;
-    case BuiltinObjectKind::NumberFormatPrototype:
-      return JSProto_NumberFormat;
-
     case BuiltinObjectKind::None:
       break;
   }
@@ -49,7 +40,6 @@ static JSProtoKey ToProtoKey(BuiltinObjectKind kind) {
 static bool IsPrototype(BuiltinObjectKind kind) {
   switch (kind) {
     case BuiltinObjectKind::Array:
-    case BuiltinObjectKind::ListFormat:
     case BuiltinObjectKind::Map:
     case BuiltinObjectKind::Promise:
     case BuiltinObjectKind::RegExp:
@@ -59,10 +49,6 @@ static bool IsPrototype(BuiltinObjectKind kind) {
 
     case BuiltinObjectKind::FunctionPrototype:
     case BuiltinObjectKind::IteratorPrototype:
-      return true;
-
-    case BuiltinObjectKind::DateTimeFormatPrototype:
-    case BuiltinObjectKind::NumberFormatPrototype:
       return true;
 
     case BuiltinObjectKind::None:
@@ -75,9 +61,6 @@ BuiltinObjectKind js::BuiltinConstructorForName(
     frontend::TaggedParserAtomIndex name) {
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Array()) {
     return BuiltinObjectKind::Array;
-  }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::ListFormat()) {
-    return BuiltinObjectKind::ListFormat;
   }
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Map()) {
     return BuiltinObjectKind::Map;
@@ -105,12 +88,6 @@ BuiltinObjectKind js::BuiltinPrototypeForName(
   if (name == frontend::TaggedParserAtomIndex::WellKnown::Iterator()) {
     return BuiltinObjectKind::IteratorPrototype;
   }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::DateTimeFormat()) {
-    return BuiltinObjectKind::DateTimeFormatPrototype;
-  }
-  if (name == frontend::TaggedParserAtomIndex::WellKnown::NumberFormat()) {
-    return BuiltinObjectKind::NumberFormatPrototype;
-  }
   return BuiltinObjectKind::None;
 }
 
@@ -135,8 +112,6 @@ const char* js::BuiltinObjectName(BuiltinObjectKind kind) {
   switch (kind) {
     case BuiltinObjectKind::Array:
       return "Array";
-    case BuiltinObjectKind::ListFormat:
-      return "ListFormat";
     case BuiltinObjectKind::Map:
       return "Map";
     case BuiltinObjectKind::Promise:
@@ -152,11 +127,6 @@ const char* js::BuiltinObjectName(BuiltinObjectKind kind) {
       return "Function.prototype";
     case BuiltinObjectKind::IteratorPrototype:
       return "Iterator.prototype";
-
-    case BuiltinObjectKind::DateTimeFormatPrototype:
-      return "DateTimeFormat.prototype";
-    case BuiltinObjectKind::NumberFormatPrototype:
-      return "NumberFormat.prototype";
 
     case BuiltinObjectKind::None:
       break;

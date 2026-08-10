@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -12,11 +10,11 @@
 #include <cmath>
 #include <cstdlib>
 
-#include "jsnum.h"
 #include "jspubtd.h"
 #include "NamespaceImports.h"
 
 #include "builtin/intl/DateTimeFormat.h"
+#include "builtin/Number.h"
 #include "builtin/temporal/Duration.h"
 #include "builtin/temporal/PlainDateTime.h"
 #include "builtin/temporal/Temporal.h"
@@ -274,7 +272,7 @@ static PlainTimeObject* CreateTemporalTime(JSContext* cx, const CallArgs& args,
 
   // Step 3.
   auto packedTime = PackedTime::pack(time);
-  object->setFixedSlot(
+  object->initFixedSlot(
       PlainTimeObject::PACKED_TIME_SLOT,
       DoubleValue(mozilla::BitwiseCast<double>(packedTime.value)));
 
@@ -297,7 +295,7 @@ PlainTimeObject* js::temporal::CreateTemporalTime(JSContext* cx,
 
   // Step 3.
   auto packedTime = PackedTime::pack(time);
-  object->setFixedSlot(
+  object->initFixedSlot(
       PlainTimeObject::PACKED_TIME_SLOT,
       DoubleValue(mozilla::BitwiseCast<double>(packedTime.value)));
 
@@ -802,6 +800,7 @@ TimeRecord js::temporal::RoundTime(const Time& time, Increment increment,
       result = &nanosecond;
       break;
 
+    case TemporalUnit::Unset:
     case TemporalUnit::Auto:
     case TemporalUnit::Year:
     case TemporalUnit::Month:
@@ -1346,8 +1345,8 @@ static bool PlainTime_round(JSContext* cx, const CallArgs& args) {
   auto* temporalTime = &args.thisv().toObject().as<PlainTimeObject>();
   auto time = temporalTime->time();
 
-  // Steps 3-12.
-  auto smallestUnit = TemporalUnit::Auto;
+  // Steps 3-13.
+  auto smallestUnit = TemporalUnit::Unset;
   auto roundingMode = TemporalRoundingMode::HalfExpand;
   auto roundingIncrement = Increment{1};
   if (args.get(0).isString()) {
@@ -1355,13 +1354,18 @@ static bool PlainTime_round(JSContext* cx, const CallArgs& args) {
 
     // Step 9.
     Rooted<JSString*> paramString(cx, args[0].toString());
-    if (!GetTemporalUnitValuedOption(cx, paramString,
-                                     TemporalUnitKey::SmallestUnit,
-                                     TemporalUnitGroup::Time, &smallestUnit)) {
+    if (!GetTemporalUnitValuedOption(
+            cx, paramString, TemporalUnitKey::SmallestUnit, &smallestUnit)) {
       return false;
     }
 
-    // Steps 6-8 and 10-12. (Implicit)
+    // Step 10.
+    if (!ValidateTemporalUnitValue(cx, TemporalUnitKey::SmallestUnit,
+                                   smallestUnit, TemporalUnitGroup::Time)) {
+      return false;
+    }
+
+    // Steps 6-8 and 11-13. (Implicit)
   } else {
     // Steps 3 and 5.
     Rooted<JSObject*> options(
@@ -1382,30 +1386,36 @@ static bool PlainTime_round(JSContext* cx, const CallArgs& args) {
 
     // Step 9.
     if (!GetTemporalUnitValuedOption(cx, options, TemporalUnitKey::SmallestUnit,
-                                     TemporalUnitGroup::Time, &smallestUnit)) {
+                                     &smallestUnit)) {
       return false;
     }
 
-    if (smallestUnit == TemporalUnit::Auto) {
+    if (smallestUnit == TemporalUnit::Unset) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_TEMPORAL_MISSING_OPTION, "smallestUnit");
       return false;
     }
 
-    // Steps 10-11.
+    // Step 10.
+    if (!ValidateTemporalUnitValue(cx, TemporalUnitKey::SmallestUnit,
+                                   smallestUnit, TemporalUnitGroup::Time)) {
+      return false;
+    }
+
+    // Steps 11-12.
     auto maximum = MaximumTemporalDurationRoundingIncrement(smallestUnit);
 
-    // Step 12.
+    // Step 13.
     if (!ValidateTemporalRoundingIncrement(cx, roundingIncrement, maximum,
                                            false)) {
       return false;
     }
   }
 
-  // Step 13.
+  // Step 14.
   auto result = RoundTime(time, roundingIncrement, smallestUnit, roundingMode);
 
-  // Step 14.
+  // Step 15.
   auto* obj = CreateTemporalTime(cx, result.time);
   if (!obj) {
     return false;
@@ -1480,13 +1490,19 @@ static bool PlainTime_toString(JSContext* cx, const CallArgs& args) {
     }
 
     // Step 7.
-    auto smallestUnit = TemporalUnit::Auto;
+    auto smallestUnit = TemporalUnit::Unset;
     if (!GetTemporalUnitValuedOption(cx, options, TemporalUnitKey::SmallestUnit,
-                                     TemporalUnitGroup::Time, &smallestUnit)) {
+                                     &smallestUnit)) {
       return false;
     }
 
     // Step 8.
+    if (!ValidateTemporalUnitValue(cx, TemporalUnitKey::SmallestUnit,
+                                   smallestUnit, TemporalUnitGroup::Time)) {
+      return false;
+    }
+
+    // Step 9.
     if (smallestUnit == TemporalUnit::Hour) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_TEMPORAL_INVALID_UNIT_OPTION, "hour",
@@ -1494,15 +1510,15 @@ static bool PlainTime_toString(JSContext* cx, const CallArgs& args) {
       return false;
     }
 
-    // Step 9.
+    // Step 10.
     precision = ToSecondsStringPrecision(smallestUnit, digits);
   }
 
-  // Step 10.
+  // Step 11.
   auto roundedTime =
       RoundTime(time, precision.increment, precision.unit, roundingMode);
 
-  // Step 11.
+  // Step 12.
   JSString* str = TimeRecordToString(cx, roundedTime.time, precision.precision);
   if (!str) {
     return false;
@@ -1526,9 +1542,8 @@ static bool PlainTime_toString(JSContext* cx, unsigned argc, Value* vp) {
  */
 static bool PlainTime_toLocaleString(JSContext* cx, const CallArgs& args) {
   // Steps 3-4.
-  Handle<PropertyName*> required = cx->names().time;
-  Handle<PropertyName*> defaults = cx->names().time;
-  return TemporalObjectToLocaleString(cx, args, required, defaults);
+  return intl::TemporalObjectToLocaleString(cx, args,
+                                            intl::DateTimeFormatKind::Time);
 }
 
 /**

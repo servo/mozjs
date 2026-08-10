@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -121,21 +119,16 @@ class OffThreadPromiseTask : public JS::Dispatchable {
   JSRuntime* runtime_;
   JS::PersistentRooted<PromiseObject*> promise_;
 
-  // The registered_ flag indicates that this task is counted as part of
-  // numRegistered_ of OffThreadPromiseRuntimeState, which will wait untill
-  // all registered tasks have been run or destroyed.
-  bool registered_;
-
   // Indicates that this is an undispatched cancellable task, which is a member
   // of the Cancellable list.  If cancellable is set to false, we can no longer
   // terminate the task early, this means it is no longer tracked by the
   // Cancellable list, and a dispatch has been attempted.
   bool cancellable_;
 
-  void operator=(const OffThreadPromiseTask&) = delete;
-  OffThreadPromiseTask(const OffThreadPromiseTask&) = delete;
-
   void unregister(OffThreadPromiseRuntimeState& state);
+  // Used when we want to reuse a lock for unregistration and deletion.
+  void unregister(OffThreadPromiseRuntimeState& state,
+                  const AutoLockHelperThreadState& lock);
 
  protected:
   OffThreadPromiseTask(JSContext* cx, JS::Handle<PromiseObject*> promise);
@@ -162,7 +155,13 @@ class OffThreadPromiseTask : public JS::Dispatchable {
 
  public:
   ~OffThreadPromiseTask() override;
-  static void DestroyUndispatchedTask(OffThreadPromiseTask* task);
+
+  void operator=(const OffThreadPromiseTask&) = delete;
+  OffThreadPromiseTask(const OffThreadPromiseTask&) = delete;
+
+  static void DestroyUndispatchedTask(OffThreadPromiseTask* task,
+                                      OffThreadPromiseRuntimeState& state,
+                                      const AutoLockHelperThreadState& lock);
 
   JSRuntime* runtime() { return runtime_; }
 
@@ -257,12 +256,34 @@ class OffThreadPromiseRuntimeState {
   // not require a lock.
   JS::DispatchToEventLoopCallback dispatchToEventLoopCallback_;
   JS::DelayedDispatchToEventLoopCallback delayedDispatchToEventLoopCallback_;
+  JS::AsyncTaskStartedCallback asyncTaskStartedCallback_;
+  JS::AsyncTaskFinishedCallback asyncTaskFinishedCallback_;
   void* dispatchToEventLoopClosure_;
 
+#ifdef DEBUG
+  // Set to true when the JS shell is force-quitting.
+  // In this case the tasks won't be drained and the destructor cannot
+  // assert anything.
+  HelperThreadLockData<bool> forceQuitting_;
+#endif
+
   // A set of all OffThreadPromiseTasks that have successfully called 'init'.
-  // This set doesn't own tasks. OffThreadPromiseTask's destructor removes them
-  // from the set.
+  // This set doesn't own tasks. OffThreadPromiseTask's destructor decrements
+  // this counter.
   HelperThreadLockData<size_t> numRegistered_;
+
+  // Currently, we have a subset of tasks which are not registered with
+  // OffThreadPromiseRuntimeState (as they do not contain a promise), but
+  // still depend on the internalDispatchQueue. These are JS::Dispatchables
+  // that do not inherit from OffThreadPromiseTask, namely
+  // WaitAsyncTimeoutTask. As a result, our assertions are broken. In order
+  // to handle these non-registered tasks, we keep a separate counter for
+  // dispatchables that are passed from the delayed dispatch queue to the
+  // internal dispatch queue.
+  //
+  // This is a temporary fix that allows us to track these tasks.
+  // TODO: remove this once we clean up this behavior.
+  HelperThreadLockData<size_t> numDelayed_;
 
   // The cancellable hashmap tracks the registered, but thusfar
   // undispatched tasks. Not all undispatched tasks are cancellable, namely
@@ -285,7 +306,6 @@ class OffThreadPromiseRuntimeState {
   // mean "the DispatchToEventLoopCallback failed after this task was dispatched
   // for execution".
   HelperThreadLockData<ConditionVariable> allFailed_;
-  HelperThreadLockData<size_t> numFailed_;
 
   // The queue of JS::Dispatchables used by the DispatchToEventLoopCallback that
   // calling js::UseInternalJobQueues installs.
@@ -318,14 +338,21 @@ class OffThreadPromiseRuntimeState {
       void*, js::UniquePtr<JS::Dispatchable>&&, uint32_t);
   bool usingInternalDispatchQueue() const;
 
-  void operator=(const OffThreadPromiseRuntimeState&) = delete;
-  OffThreadPromiseRuntimeState(const OffThreadPromiseRuntimeState&) = delete;
+  // Used by OffThreadPromiseTask
+  void registerTask(JSContext* cx, OffThreadPromiseTask* task);
+  void unregisterTask(OffThreadPromiseTask* task);
 
  public:
   OffThreadPromiseRuntimeState();
   ~OffThreadPromiseRuntimeState();
-  void init(JS::DispatchToEventLoopCallback callback,
-            JS::DelayedDispatchToEventLoopCallback delayCallback,
+
+  void operator=(const OffThreadPromiseRuntimeState&) = delete;
+  OffThreadPromiseRuntimeState(const OffThreadPromiseRuntimeState&) = delete;
+
+  void init(JS::DispatchToEventLoopCallback dispatchCallback,
+            JS::DelayedDispatchToEventLoopCallback delayedDispatchCallback,
+            JS::AsyncTaskStartedCallback asyncTaskStartedCallback,
+            JS::AsyncTaskFinishedCallback asyncTaskFinishedCallback,
             void* closure);
   void initInternalDispatchQueue();
   bool initialized() const;
@@ -342,8 +369,15 @@ class OffThreadPromiseRuntimeState {
   bool delayedDispatchToEventLoop(
       js::UniquePtr<JS::Dispatchable>&& dispatchable, uint32_t delay);
 
+  void cancelTasks(JSContext* cx);
+  void cancelTasks(AutoLockHelperThreadState& lock, JSContext* cx);
+
   // shutdown() must be called by the JSRuntime while the JSRuntime is valid.
   void shutdown(JSContext* cx);
+
+#ifdef DEBUG
+  void setForceQuitting() { forceQuitting_ = true; }
+#endif
 };
 
 }  // namespace js

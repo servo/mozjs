@@ -73,7 +73,7 @@ type ping struct {
     Payload           string `json:"payload"`
 }
 
-type metrics map[string]map[string]interface{}
+type metrics map[string]map[string]any
 
 type pingPayload struct {
     ClientInfo clientInfo   `json:"client_info"`
@@ -187,7 +187,7 @@ func newGleanEvent(category, name string, extra map[string]string) gleanEvent {
     return gleanEvent{
         Category:  category,
         Name:      name,
-        Timestamp: time.Now().UnixMilli(),
+        Timestamp: 0,
         Extra: extra,
     }
 }
@@ -220,6 +220,18 @@ func (e {{ event|event_type_name }}) gleanEvent() gleanEvent {
 }
 {% endfor %}
 {% endif %}
+{# Generate struct types for labeled_boolean metrics #}
+{% if labeled_booleans %}
+{% for metric in labeled_booleans %}
+
+// {{ metric.description|clean_string }}
+type {{ metric|metric_argument_name }} struct {
+    {% for label in metric.ordered_labels %}
+    {{ label|event_extra_name }} *bool `json:"{{ label }},omitempty"`
+    {% endfor %}
+}
+{% endfor %}
+{% endif %}
 {# struct & methods for submitting pings #}
 {% for ping, metrics_by_type in pings.items() %}
 {% if metrics_by_type['event'] %}
@@ -240,7 +252,11 @@ type {{ ping|ping_type_name }} struct {
     {% for metric_type, metrics in metrics_by_type.items() %}
     {% if metric_type != 'event' %}
     {% for metric in metrics %}
+    {% if metric_type == 'labeled_boolean' %}
+    {{ metric|metric_argument_name }} {{ metric|metric_argument_name }} // {{ metric.description|clean_string }}
+    {% else %}
     {{ metric|metric_argument_name }} {{ metric_type|go_metric_type}} // {{ metric.description|clean_string }}
+    {% endif %}
     {% endfor %}
     {% endif %}
     {% endfor %}
@@ -254,6 +270,14 @@ func (g GleanEventsLogger) Record{{ ping|ping_type_name }}(
     requestInfo RequestInfo,
     params {{ ping|ping_type_name }},
 ) error {
+    {% if metrics_by_type['string_list'] %}
+    {% for metric in metrics_by_type['string_list'] %}
+    // Ensure nil string_list metrics serialize as empty arrays, not null
+    if params.{{ metric|metric_argument_name }} == nil {
+        params.{{ metric|metric_argument_name }} = []string{}
+    }
+    {% endfor %}
+    {% endif %}
     metrics := metrics{
     {% for metric_type, metrics in metrics_by_type.items() %}
     {% if metric_type != 'event' %}

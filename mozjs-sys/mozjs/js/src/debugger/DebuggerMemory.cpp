@@ -1,16 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "debugger/DebuggerMemory.h"
-
-#include "mozilla/Maybe.h"
-#include "mozilla/Vector.h"
-
-#include <stdlib.h>
-#include <utility>
 
 #include "jsapi.h"
 
@@ -316,8 +308,8 @@ bool DebuggerMemory::CallData::setAllocationSamplingProbability() {
     // If this is a change any debuggees would observe, have all debuggee
     // realms recompute their sampling probabilities.
     if (dbg->trackingAllocationSites) {
-      for (auto r = dbg->debuggees.all(); !r.empty(); r.popFront()) {
-        r.front()->realm()->chooseAllocationSamplingProbability();
+      for (auto iter = dbg->debuggees.iter(); !iter.done(); iter.next()) {
+        iter.get()->realm()->chooseAllocationSamplingProbability();
       }
     }
   }
@@ -391,9 +383,8 @@ bool DebuggerMemory::CallData::takeCensus() {
   RootedObject dbgObj(cx, dbg->object);
 
   // Populate our target set of debuggee zones.
-  for (WeakGlobalObjectSet::Range r = dbg->allDebuggees(); !r.empty();
-       r.popFront()) {
-    if (!census.targetZones.put(r.front()->zone())) {
+  for (auto iter = dbg->allDebuggees(); !iter.done(); iter.next()) {
+    if (!census.targetZones.put(iter.get()->zone())) {
       ReportOutOfMemory(cx);
       return false;
     }

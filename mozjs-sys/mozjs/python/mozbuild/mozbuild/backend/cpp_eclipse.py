@@ -29,7 +29,7 @@ class CppEclipseBackend(CommonBackend):
                 "Eclipse is not supported on Windows. "
                 "Consider using Visual Studio instead."
             )
-        super(CppEclipseBackend, self).__init__(environment)
+        super().__init__(environment)
 
     def _init(self):
         CommonBackend._init(self)
@@ -210,18 +210,16 @@ class CppEclipseBackend(CommonBackend):
         self._write_noindex()
 
         try:
-            subprocess.check_call(
-                [
-                    "eclipse",
-                    "-application",
-                    "-nosplash",
-                    "org.eclipse.cdt.managedbuilder.core.headlessbuild",
-                    "-data",
-                    self._workspace_dir,
-                    "-importAll",
-                    self._project_dir,
-                ]
-            )
+            subprocess.check_call([
+                "eclipse",
+                "-application",
+                "-nosplash",
+                "org.eclipse.cdt.managedbuilder.core.headlessbuild",
+                "-data",
+                self._workspace_dir,
+                "-importAll",
+                self._project_dir,
+            ])
         except OSError as e:
             # Remove the workspace directory so we re-generate it and
             # try to import again when the backend is invoked again.
@@ -339,7 +337,7 @@ class CppEclipseBackend(CommonBackend):
             for i in args["includes"]:
                 dirsettings += add_abs_include_path(i)
             for d in args["defines"]:
-                assert d[:2] == "-D" or d[:2] == "-U"
+                assert d[:2] in {"-D", "-U"}
                 if d[:2] == "-U":
                     # gfx/harfbuzz/src uses -UDEBUG, at least on Mac
                     # netwerk/sctp/src uses -U__APPLE__ on Mac

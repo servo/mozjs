@@ -18,11 +18,11 @@ def process_define_file(output, input):
     taking the corresponding source file and replacing some *#define/#undef*
     occurences:
 
-      - "#undef NAME" is turned into "#define NAME VALUE"
-      - "#define NAME" is unchanged
-      - "#define NAME ORIGINAL_VALUE" is turned into "#define NAME VALUE"
-      - "#undef UNKNOWN_NAME" is turned into "/* #undef UNKNOWN_NAME */"
-      -  Whitespaces are preserved.
+      - ``#undef NAME`` is turned into ``#define NAME VALUE``
+      - ``#define NAME`` is unchanged
+      - ``#define NAME ORIGINAL_VALUE`` is turned into ``#define NAME VALUE``
+      - ``#undef UNKNOWN_NAME`` is turned into ``/* #undef UNKNOWN_NAME */``
+      - Whitespaces are preserved.
 
     As a special rule, "#undef ALLDEFINES" is turned into "#define NAME
     VALUE" for all the defined variables.
@@ -37,11 +37,11 @@ def process_define_file(output, input):
     ) and not config.substs.get("JS_STANDALONE"):
         config = PartialConfigEnvironment(mozpath.join(topobjdir, "js", "src"))
 
-    with open(path) as input:
+    with open(path) as input_file:
         r = re.compile(
             r"^\s*#\s*(?P<cmd>[a-z]+)(?:\s+(?P<name>\S+)(?:\s+(?P<value>\S+))?)?", re.U
         )
-        for l in input:
+        for l in input_file:
             m = r.match(l)
             if m:
                 cmd = m.group("cmd")

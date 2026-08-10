@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import argparse
+import functools
 import os
 import re
 import subprocess
@@ -12,11 +13,12 @@ import buildconfig
 from mozpack.executables import ELF, UNKNOWN, get_type
 from packaging.version import Version
 
-from mozbuild.util import memoize
-
-STDCXX_MAX_VERSION = Version("3.4.19")
-CXXABI_MAX_VERSION = Version("1.3.7")
-GLIBC_MAX_VERSION = Version("2.17")
+IS_ARM64 = buildconfig.substs.get("TARGET_CPU") == "aarch64"
+# libstdc++ 4.8.1 of higher (6.0 or higher on arm64)
+STDCXX_MAX_VERSION = Version("3.4.22" if IS_ARM64 else "3.4.19")
+CXXABI_MAX_VERSION = Version("1.3.10" if IS_ARM64 else "1.3.7")
+# glibc 2.17 or higher (2.28 or higher on arm64)
+GLIBC_MAX_VERSION = Version("2.28" if IS_ARM64 else "2.17")
 LIBGCC_MAX_VERSION = Version("4.8")
 
 PLATFORM = buildconfig.substs["OS_TARGET"]
@@ -30,10 +32,10 @@ else:
     GUESSED_NSMODULE_SIZE = 4
 
 
-get_type = memoize(get_type)
+get_type = functools.cache(get_type)
 
 
-@memoize
+@functools.cache
 def get_output(*cmd):
     env = dict(os.environ)
     env["LC_ALL"] = "C"
@@ -205,43 +207,39 @@ def check_mozglue_order(binary):
 
 def check_networking(binary):
     retcode = 0
-    networking_functions = set(
-        [
-            # socketpair is not concerning; it is restricted to AF_UNIX
-            "recv",
-            "send",
-            # We would be concerned by recvmsg and sendmsg; but we believe
-            # they are okay as documented in 1376621#c23
-            "gethostbyname",
-            "gethostbyaddr",
-            "gethostent",
-            "sethostent",
-            "endhostent",
-            "gethostent_r",
-            "gethostbyname2",
-            "gethostbyaddr_r",
-            "gethostbyname_r",
-            "gethostbyname2_r",
-            "getservent",
-            "getservbyname",
-            "getservbyport",
-            "setservent",
-            "getprotoent",
-            "getprotobyname",
-            "getprotobynumber",
-            "setprotoent",
-            "endprotoent",
-        ]
-    )
+    networking_functions = set([
+        # socketpair is not concerning; it is restricted to AF_UNIX
+        "recv",
+        "send",
+        # We would be concerned by recvmsg and sendmsg; but we believe
+        # they are okay as documented in 1376621#c23
+        "gethostbyname",
+        "gethostbyaddr",
+        "gethostent",
+        "sethostent",
+        "endhostent",
+        "gethostent_r",
+        "gethostbyname2",
+        "gethostbyaddr_r",
+        "gethostbyname_r",
+        "gethostbyname2_r",
+        "getservent",
+        "getservbyname",
+        "getservbyport",
+        "setservent",
+        "getprotoent",
+        "getprotobyname",
+        "getprotobynumber",
+        "setprotoent",
+        "endprotoent",
+    ])
     # These are used by the crash monitor & crash monitor client to talk with
     # the main process on Linux and macOS.
-    socket_functions = set(
-        [
-            "connect",
-            "accept",
-            "listen",
-        ]
-    )
+    socket_functions = set([
+        "connect",
+        "accept",
+        "listen",
+    ])
 
     if PLATFORM == "WINNT":
         networking_functions |= socket_functions

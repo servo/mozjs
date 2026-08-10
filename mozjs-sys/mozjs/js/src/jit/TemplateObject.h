@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -26,7 +24,7 @@ class TemplateObject {
 
   inline gc::AllocKind getAllocKind() const;
 
-  // The following methods rely on the object's group->clasp. This is safe
+  // The following methods rely on the object's shape->base->clasp. This is safe
   // to read off-thread for template objects.
   inline bool isNativeObject() const;
   inline const TemplateNativeObject& asTemplateNativeObject() const;

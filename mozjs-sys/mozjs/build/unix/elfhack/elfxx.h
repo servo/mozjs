@@ -2,6 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#ifndef BUILD_UNIX_ELFHACK_ELFXX_H_
+#define BUILD_UNIX_ELFHACK_ELFXX_H_
+
 #include <stdexcept>
 #include <list>
 #include <vector>
@@ -697,3 +700,5 @@ inline const char* ElfLocation::getBuffer() {
 inline unsigned int ElfSize::getValue() { return section->getSize(); }
 
 inline unsigned int ElfEntSize::getValue() { return section->getEntSize(); }
+
+#endif  // BUILD_UNIX_ELFHACK_ELFXX_H_

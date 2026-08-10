@@ -97,6 +97,12 @@ class BaseHost:
 
     def download_single_file(self, url, destination):
         response = self.session.get(url, stream=True)
+        if response.status_code == requests.codes.not_found:
+            if os.path.isfile(destination):
+                # File no longer exists remove local copy.
+                os.remove(destination)
+            return False
+
         if response.status_code != 200:
             raise HttpError(response.status_code, url)
         with mozfile.NamedTemporaryFile() as tmpfile:
@@ -106,3 +112,4 @@ class BaseHost:
             tmpfile.seek(0)
             os.makedirs(os.path.dirname(destination), exist_ok=True)
             self._transform_single_file_to_destination(tmpfile, destination)
+        return True

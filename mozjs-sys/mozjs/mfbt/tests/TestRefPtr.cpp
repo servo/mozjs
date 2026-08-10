@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -50,7 +48,7 @@ void GetNewFoo(Foo** aFoo) {
 
 void GetNewFoo(RefPtr<Foo>* aFoo) { *aFoo = new Bar(); }
 
-already_AddRefed<Foo> GetNullFoo() { return 0; }
+already_AddRefed<Foo> GetNullFoo() { return nullptr; }
 
 int main() {
   MOZ_RELEASE_ASSERT(0 == Foo::sNumDestroyed);

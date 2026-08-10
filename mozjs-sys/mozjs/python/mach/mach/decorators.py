@@ -7,8 +7,6 @@ import collections
 import collections.abc
 from typing import Optional
 
-from mozbuild.base import MachCommandBase
-
 from .base import MachError
 from .registrar import Registrar
 
@@ -76,7 +74,7 @@ class _MachCommand:
         self.hidden = hidden
         if ok_if_tests_disabled and category != "testing":
             raise ValueError(
-                "ok_if_tests_disabled should only be set for " "`testing` mach commands"
+                "ok_if_tests_disabled should only be set for `testing` mach commands"
             )
         self.ok_if_tests_disabled = ok_if_tests_disabled
 
@@ -87,9 +85,7 @@ class _MachCommand:
         self.no_auto_log = no_auto_log
 
     def create_instance(self, context, virtualenv_name):
-        metrics = None
-        if self.metrics_path:
-            metrics = context.telemetry.metrics(self.metrics_path)
+        from mozbuild.base import MachCommandBase
 
         # This ensures the resulting class is defined inside `mach` so that logging
         # works as expected, and has a meaningful name
@@ -97,7 +93,7 @@ class _MachCommand:
         return subclass(
             context,
             virtualenv_name=virtualenv_name,
-            metrics=metrics,
+            metrics_path=self.metrics_path,
             no_auto_log=self.no_auto_log,
         )
 
@@ -152,15 +148,13 @@ class _MachCommand:
         else:
             if self.name not in Registrar.command_handlers:
                 raise MachError(
-                    "Command referenced by sub-command does not exist: %s" % self.name
+                    f"Command referenced by sub-command does not exist: {self.name}"
                 )
-
             self.func = func
             parent = Registrar.command_handlers[self.name]
 
             if self.subcommand in parent.subcommand_handlers:
-                raise MachError("sub-command already defined: %s" % self.subcommand)
-
+                raise MachError(f"sub-command already defined: {self.subcommand}")
             parent.subcommand_handlers[self.subcommand] = self
 
 
@@ -183,7 +177,7 @@ class Command:
 
     .. code-block:: python
 
-        @Command('foo', category='misc', description='Run the foo action')
+        @Command("foo", category="misc", description="Run the foo action")
         def foo(self, command_context):
             pass
     """
@@ -263,9 +257,10 @@ class CommandArgument:
 
     .. code-block:: python
 
-        @Command('foo', help='Run the foo action')
-        @CommandArgument('-b', '--bar', action='store_true', default=False,
-            help='Enable bar mode.')
+        @Command("foo", help="Run the foo action")
+        @CommandArgument(
+            "-b", "--bar", action="store_true", default=False, help="Enable bar mode."
+        )
         def foo(self, command_context):
             pass
     """

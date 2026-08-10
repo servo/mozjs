@@ -24,7 +24,7 @@ BUILDCONFIG = {
 }
 
 basic_file = """TN:Compartment_5f7f5c30251800
-SF:resource://gre/modules/osfile.jsm
+SF:resource://gre/modules/osfile.sys.mjs
 FN:1,top-level
 FNDA:1,top-level
 FNF:1
@@ -92,7 +92,7 @@ end_of_record
 """
 
 fn_with_multiple_commas = """TN:Compartment_5f7f5c30251800
-SF:resource://gre/modules/osfile.jsm
+SF:resource://gre/modules/osfile.sys.mjs
 FN:1,function,name,with,commas
 FNDA:1,function,name,with,commas
 FNF:1
@@ -430,8 +430,8 @@ class TestUrlFinder(unittest.TestCase):
             ),
             # Path with query
             (
-                "resource://newtab/lib/PrefsFeed.jsm?q=0.9098419174803978",
-                ("browser/components/newtab/lib/PrefsFeed.jsm", None),
+                "resource://newtab/lib/PrefsFeed.sys.mjs?q=0.9098419174803978",
+                ("browser/components/newtab/lib/PrefsFeed.sys.mjs", None),
             ),
         ]
 

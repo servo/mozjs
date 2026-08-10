@@ -1,0 +1,27 @@
+# Mapping of Android OS version → API level. The single source of truth
+# consumed by:
+#   - mozinfo.platforminfo (Python)
+#   - tools/lint/mozcheck (Rust, via include_str!)
+#
+# Sources:
+#   https://developer.android.com/tools/releases/platforms
+#   https://apilevels.com/
+#   https://en.wikipedia.org/wiki/Android_version_history
+#   testing/mozbase/mozdevice/mozdevice/version_codes.py
+# MUST be a 1-1 map. Order is preserved and matters: the "Unknown Android
+# API version" error message lists APIs in this order.
+android_os_to_api_map:
+  "7.0": "24"
+  "7.1": "25"
+  "8.0": "26"
+  "8.1": "27"
+  "9.0": "28"
+  "10.0": "29"
+  "11.0": "30"
+  "12.0": "31"
+  "12.1": "32"
+  "13": "33"
+  "14": "34"
+  "15": "35"
+  "16": "36"
+  "17": "37"

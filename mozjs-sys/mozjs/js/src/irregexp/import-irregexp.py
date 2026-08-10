@@ -37,13 +37,16 @@ def copy_and_update_includes(src_path, dst_path):
     need_shim = [
         "property-sequences.h",
         "regexp-ast.h",
+        "regexp-bytecode-analysis.h",
         "regexp-bytecode-peephole.h",
         "regexp-bytecodes.h",
+        "regexp-compiler.h",
         "regexp-dotprinter.h",
         "regexp-error.h",
         "regexp.h",
         "regexp-macro-assembler.h",
         "regexp-parser.h",
+        "regexp-printer.h",
         "regexp-stack.h",
         "special-case.h",
     ]
@@ -58,7 +61,7 @@ def copy_and_update_includes(src_path, dst_path):
     regexp_include_new = '#include "irregexp/imported'
 
     # 2. Remove includes of other V8 headers
-    other_include = re.compile('#include "src/')
+    other_include = re.compile('#include "(src|include)/')
 
     # 3. If needed, add '#include "irregexp/RegExpShim.h"'.
     #    Note: We get a little fancy to ensure that header files are
@@ -115,7 +118,7 @@ if __name__ == "__main__":
     current_path = Path(os.getcwd())
     expected_path = "js/src/irregexp"
     if not current_path.match(expected_path):
-        raise RuntimeError("%s must be run from %s" % (sys.argv[0], expected_path))
+        raise RuntimeError(f"{sys.argv[0]} must be run from {expected_path}")
 
     parser = argparse.ArgumentParser(description="Import irregexp from v8")
     parser.add_argument("-p", "--path", help="path to v8/src/regexp", required=False)
@@ -126,7 +129,7 @@ if __name__ == "__main__":
         provided_path = "the command-line"
     elif "TASK_ID" in os.environ:
         src_path = Path("/builds/worker/v8/")
-        subprocess.run("git pull origin master", shell=True, cwd=src_path)
+        subprocess.run("git pull origin master", check=True, shell=True, cwd=src_path)
 
         src_path = Path("/builds/worker/v8/src/regexp")
         provided_path = "the hardcoded path in the taskcluster image"
@@ -136,7 +139,7 @@ if __name__ == "__main__":
     else:
         tempdir = tempfile.TemporaryDirectory()
         v8_git = "https://github.com/v8/v8.git"
-        clone = "git clone --depth 1 %s %s" % (v8_git, tempdir.name)
+        clone = f"git clone --depth 1 {v8_git} {tempdir.name}"
         os.system(clone)
         src_path = Path(tempdir.name) / "src/regexp"
         provided_path = "the temporary git checkout"

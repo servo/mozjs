@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-# vim: set expandtab tabstop=4 shiftwidth=4:
 
 import os
 import shutil
@@ -118,16 +117,14 @@ def repackage_snap(
 
 def unpack_tarball(package, destdir):
     os.makedirs(destdir, exist_ok=True)
-    subprocess.check_call(
-        [
-            "tar",
-            "-C",
-            destdir,
-            "-xvf",
-            package,
-            "--strip-components=1",
-        ]
-    )
+    subprocess.check_call([
+        "tar",
+        "-C",
+        destdir,
+        "-xvf",
+        package,
+        "--strip-components=1",
+    ])
 
 
 def missing_connections(app_name):

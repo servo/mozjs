@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,6 +20,13 @@ namespace jit {
 // To support this, use a tree that records the inlinings done during
 // compilation.
 class InlineScriptTree {
+ public:
+  // Maximum inlining depth. This is the depth used by Ion/Warp compilation.
+  // Trial inlining uses a smaller depth (see MaxICScriptDepth in
+  // TrialInlining.cpp).
+  static constexpr uint32_t MaxDepth = 8;
+
+ private:
   // InlineScriptTree for the caller
   InlineScriptTree* caller_;
 

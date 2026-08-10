@@ -17,7 +17,9 @@ run_fragment("Root.HeapSlot")
 
 # This depends on implementation details of arrays, but since HeapSlot is
 # not a public type, I'm not sure how to avoid doing *something* ugly.
-assert_pretty("((js::NativeObject *) array.ptr)->elements_[0]", '$JS::Value("plinth")')
+assert_pretty(
+    "((js::NativeObject *) array.ptr)->elements_.get()[0]", '$JS::Value("plinth")'
+)
 
 run_fragment("Root.barriers")
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -62,7 +60,7 @@ class MonthCodeField final {
   MOZ_IMPLICIT MonthCodeField(MonthCode monthCode)
       : MonthCodeField(monthCode.ordinal(), monthCode.isLeapMonth()) {}
 
-  int32_t ordinal() const { return (code_ >> 1); }
+  int32_t ordinal() const { return static_cast<int32_t>((code_ >> 1)); }
 
   bool isLeapMonth() const { return bool(code_ & 1); }
 };
@@ -90,13 +88,13 @@ class OffsetField final {
 // [1]
 // <https://tc39.es/proposal-temporal/#table-temporal-calendar-fields-record-fields>
 class MOZ_STACK_CLASS CalendarFields final {
-  mozilla::EnumSet<CalendarField> fields_ = {};
+  mozilla::EnumSet<CalendarField> fields_;
 
   JSString* era_ = nullptr;
   double eraYear_ = mozilla::UnspecifiedNaN<double>();
   double year_ = mozilla::UnspecifiedNaN<double>();
   double month_ = mozilla::UnspecifiedNaN<double>();
-  MonthCodeField monthCode_ = {};
+  MonthCodeField monthCode_;
   double day_ = mozilla::UnspecifiedNaN<double>();
   double hour_ = 0;
   double minute_ = 0;
@@ -104,8 +102,8 @@ class MOZ_STACK_CLASS CalendarFields final {
   double millisecond_ = 0;
   double microsecond_ = 0;
   double nanosecond_ = 0;
-  OffsetField offset_ = {};
-  TimeZoneValue timeZone_ = {};
+  OffsetField offset_;
+  TimeZoneValue timeZone_;
 
  public:
   CalendarFields() = default;

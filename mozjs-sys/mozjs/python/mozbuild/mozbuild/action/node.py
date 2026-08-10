@@ -7,8 +7,7 @@ import subprocess
 import sys
 
 import buildconfig
-
-from mozbuild.shellutil import quote as shell_quote
+from mozshellutil import quote as shell_quote
 
 SCRIPT_ALLOWLIST = [buildconfig.topsrcdir + "/devtools/client/shared/build/build.js"]
 

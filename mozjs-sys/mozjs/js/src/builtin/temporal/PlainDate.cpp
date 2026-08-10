@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,20 +6,18 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/CheckedInt.h"
-#include "mozilla/EnumSet.h"
 
 #include <cmath>
 #include <cstdlib>
 #include <stdint.h>
-#include <utility>
 
-#include "jsdate.h"
-#include "jsnum.h"
 #include "jspubtd.h"
 #include "jstypes.h"
 #include "NamespaceImports.h"
 
+#include "builtin/Date.h"
 #include "builtin/intl/DateTimeFormat.h"
+#include "builtin/Number.h"
 #include "builtin/temporal/Calendar.h"
 #include "builtin/temporal/CalendarFields.h"
 #include "builtin/temporal/Duration.h"
@@ -215,11 +211,11 @@ static PlainDateObject* CreateTemporalDate(JSContext* cx, const CallArgs& args,
 
   // Step 4.
   auto packedDate = PackedDate::pack(isoDate);
-  object->setFixedSlot(PlainDateObject::PACKED_DATE_SLOT,
-                       PrivateUint32Value(packedDate.value));
+  object->initFixedSlot(PlainDateObject::PACKED_DATE_SLOT,
+                        PrivateUint32Value(packedDate.value));
 
   // Step 5.
-  object->setFixedSlot(PlainDateObject::CALENDAR_SLOT, calendar.toSlotValue());
+  object->initFixedSlot(PlainDateObject::CALENDAR_SLOT, calendar.toSlotValue());
 
   // Step 6.
   return object;
@@ -247,11 +243,11 @@ PlainDateObject* js::temporal::CreateTemporalDate(
 
   // Step 4.
   auto packedDate = PackedDate::pack(isoDate);
-  object->setFixedSlot(PlainDateObject::PACKED_DATE_SLOT,
-                       PrivateUint32Value(packedDate.value));
+  object->initFixedSlot(PlainDateObject::PACKED_DATE_SLOT,
+                        PrivateUint32Value(packedDate.value));
 
   // Step 5.
-  object->setFixedSlot(PlainDateObject::CALENDAR_SLOT, calendar.toSlotValue());
+  object->initFixedSlot(PlainDateObject::CALENDAR_SLOT, calendar.toSlotValue());
 
   // Step 6.
   return object;
@@ -645,16 +641,19 @@ static bool DifferenceTemporalPlainDate(JSContext* cx,
     auto isoDateTime = ISODateTime{temporalDate.date(), {}};
 
     // Step 8.b.
-    auto isoDateTimeOther = ISODateTime{other.date(), {}};
+    auto originEpochNs = GetUTCEpochNanoseconds(isoDateTime);
 
     // Step 8.c.
-    auto destEpochNs = GetUTCEpochNanoseconds(isoDateTimeOther);
+    auto isoDateTimeOther = ISODateTime{other.date(), {}};
 
     // Step 8.d.
+    auto destEpochNs = GetUTCEpochNanoseconds(isoDateTimeOther);
+
+    // Step 8.e.
     Rooted<TimeZoneValue> timeZone(cx, TimeZoneValue{});
-    if (!RoundRelativeDuration(cx, duration, destEpochNs, isoDateTime, timeZone,
-                               temporalDate.calendar(), settings.largestUnit,
-                               settings.roundingIncrement,
+    if (!RoundRelativeDuration(cx, duration, originEpochNs, destEpochNs,
+                               isoDateTime, timeZone, temporalDate.calendar(),
+                               settings.largestUnit, settings.roundingIncrement,
                                settings.smallestUnit, settings.roundingMode,
                                &duration)) {
       return false;
@@ -1666,9 +1665,8 @@ static bool PlainDate_toString(JSContext* cx, unsigned argc, Value* vp) {
  */
 static bool PlainDate_toLocaleString(JSContext* cx, const CallArgs& args) {
   // Steps 3-4.
-  Handle<PropertyName*> required = cx->names().date;
-  Handle<PropertyName*> defaults = cx->names().date;
-  return TemporalObjectToLocaleString(cx, args, required, defaults);
+  return intl::TemporalObjectToLocaleString(cx, args,
+                                            intl::DateTimeFormatKind::Date);
 }
 
 /**

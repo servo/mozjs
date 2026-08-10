@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -77,7 +74,7 @@ BEGIN_TEST(testJitDCEinGVN_phi) {
   // z = x * y;
   // return y;
 
-  MConstant* c1 = MConstant::New(func.alloc, DoubleValue(1.0));
+  MConstant* c1 = MConstant::NewDouble(func.alloc, 1.0);
   block->add(c1);
   MPhi* x = MPhi::New(func.alloc);
   MPhi* y = MPhi::New(func.alloc);
@@ -90,7 +87,7 @@ BEGIN_TEST(testJitDCEinGVN_phi) {
   //   x = 1.0
   //   y = 3.0;
   MOZ_RELEASE_ASSERT(x->addInputSlow(c1));
-  MConstant* c3 = MConstant::New(func.alloc, DoubleValue(3.0));
+  MConstant* c3 = MConstant::NewDouble(func.alloc, 3.0);
   thenBlock1->add(c3);
   MOZ_RELEASE_ASSERT(y->addInputSlow(c3));
   thenBlock1->end(MGoto::New(func.alloc, joinBlock));
@@ -103,10 +100,10 @@ BEGIN_TEST(testJitDCEinGVN_phi) {
 
   //   x = 2.0
   //   y = 4.0;
-  MConstant* c2 = MConstant::New(func.alloc, DoubleValue(2.0));
+  MConstant* c2 = MConstant::NewDouble(func.alloc, 2.0);
   thenBlock2->add(c2);
   MOZ_RELEASE_ASSERT(x->addInputSlow(c2));
-  MConstant* c4 = MConstant::New(func.alloc, DoubleValue(4.0));
+  MConstant* c4 = MConstant::NewDouble(func.alloc, 4.0);
   thenBlock2->add(c4);
   MOZ_RELEASE_ASSERT(y->addInputSlow(c4));
   thenBlock2->end(MGoto::New(func.alloc, joinBlock));
@@ -117,7 +114,7 @@ BEGIN_TEST(testJitDCEinGVN_phi) {
   //   y = 5.0;
   // }
   MOZ_RELEASE_ASSERT(x->addInputSlow(c1));
-  MConstant* c5 = MConstant::New(func.alloc, DoubleValue(5.0));
+  MConstant* c5 = MConstant::NewDouble(func.alloc, 5.0);
   elseBlock->add(c5);
   MOZ_RELEASE_ASSERT(y->addInputSlow(c5));
   elseBlock->end(MGoto::New(func.alloc, joinBlock));

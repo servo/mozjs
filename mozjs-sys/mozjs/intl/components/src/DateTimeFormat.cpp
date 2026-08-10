@@ -18,6 +18,7 @@
 #include "mozilla/intl/Calendar.h"
 #include "mozilla/intl/DateTimeFormat.h"
 #include "mozilla/intl/DateTimePatternGenerator.h"
+#include "mozilla/intl/Locale.h"
 
 namespace mozilla::intl {
 
@@ -634,54 +635,45 @@ Result<UniquePtr<Calendar>, ICUError> DateTimeFormat::CloneCalendar(
  * ICU locale identifier consisting of a language and a region subtag.
  */
 class LanguageRegionLocaleId {
-  // unicode_language_subtag = alpha{2,3} | alpha{5,8} ;
-  static constexpr size_t LanguageLength = 8;
-
-  // unicode_region_subtag = (alpha{2} | digit{3}) ;
-  static constexpr size_t RegionLength = 3;
-
   // Add +1 to account for the separator.
-  static constexpr size_t LRLength = LanguageLength + RegionLength + 1;
+  static constexpr size_t LRLength =
+      LanguageTagLimits::LanguageLength + LanguageTagLimits::RegionLength + 1;
 
   // Add +1 to zero terminate the string.
   char mLocale[LRLength + 1] = {};
 
-  // Pointer to the start of the region subtag within |locale_|.
+  // Pointer to the start of the region subtag within |mLocale|.
   char* mRegion = nullptr;
 
  public:
-  LanguageRegionLocaleId(Span<const char> aLanguage,
-                         Maybe<Span<const char>> aRegion);
+  LanguageRegionLocaleId(const LanguageSubtag& aLanguage,
+                         const RegionSubtag& aRegion);
 
   const char* languageRegion() const { return mLocale; }
   const char* region() const { return mRegion; }
 };
 
-LanguageRegionLocaleId::LanguageRegionLocaleId(
-    Span<const char> aLanguage, Maybe<Span<const char>> aRegion) {
-  MOZ_RELEASE_ASSERT(aLanguage.Length() <= LanguageLength);
-  MOZ_RELEASE_ASSERT(!aRegion || aRegion->Length() <= RegionLength);
+LanguageRegionLocaleId::LanguageRegionLocaleId(const LanguageSubtag& aLanguage,
+                                               const RegionSubtag& aRegion) {
+  auto language = aLanguage.Span();
+  MOZ_ASSERT(IsStructurallyValidLanguageTag(language));
 
-  size_t languageLength = aLanguage.Length();
+  auto region = aRegion.Span();
+  MOZ_ASSERT(IsStructurallyValidRegionTag(region));
 
-  std::memcpy(mLocale, aLanguage.Elements(), languageLength);
+  char* out = std::copy_n(language.Elements(), language.Length(), mLocale);
 
   // ICU locale identifiers are separated by underscores.
-  mLocale[languageLength] = '_';
+  *out++ = '_';
 
-  mRegion = mLocale + languageLength + 1;
-  if (aRegion) {
-    std::memcpy(mRegion, aRegion->Elements(), aRegion->Length());
-  } else {
-    // Use "001" (UN M.49 code for the World) as the fallback to match ICU.
-    std::strcpy(mRegion, "001");
-  }
+  mRegion = out;
+  std::copy_n(region.Elements(), region.Length(), mRegion);
 }
 
 /* static */
 Result<DateTimeFormat::HourCyclesVector, ICUError>
-DateTimeFormat::GetAllowedHourCycles(Span<const char> aLanguage,
-                                     Maybe<Span<const char>> aRegion) {
+DateTimeFormat::GetAllowedHourCycles(const LanguageSubtag& aLanguage,
+                                     const RegionSubtag& aRegion) {
   // ICU doesn't expose a public API to retrieve the hour cyles for a locale, so
   // we have to reconstruct |DateTimePatternGenerator::getAllowedHourFormats()|
   // using the public UResourceBundle API.
@@ -693,14 +685,14 @@ DateTimeFormat::GetAllowedHourCycles(Span<const char> aLanguage,
   // [2]
   // https://github.com/unicode-org/cldr/blob/master/common/supplemental/supplementalData.xml
 
+  LanguageRegionLocaleId localeId(aLanguage, aRegion);
+
   HourCyclesVector result;
 
   // Reserve space for the maximum number of hour cycles. This call always
   // succeeds because it matches the inline capacity. We can now infallibly
   // append all hour cycles to the vector.
   MOZ_ALWAYS_TRUE(result.reserve(HourCyclesVector::InlineLength));
-
-  LanguageRegionLocaleId localeId(aLanguage, aRegion);
 
   // First open the "supplementalData" resource bundle.
   UErrorCode status = U_ZERO_ERROR;
@@ -729,8 +721,6 @@ DateTimeFormat::GetAllowedHourCycles(Span<const char> aLanguage,
     hclocale = ures_getByKey(timeData, localeId.region(), nullptr, &status);
   }
   if (status == U_MISSING_RESOURCE_ERROR) {
-    // Default to "h23" if no resource was found at all. This matches ICU.
-    result.infallibleAppend(HourCycle::H23);
     return result;
   }
   if (U_FAILURE(status)) {
@@ -1174,91 +1164,6 @@ DateTimeFormat::ResolveComponents() {
     }
   }
   return bag;
-}
-
-const char* DateTimeFormat::ToString(
-    DateTimeFormat::TimeZoneName aTimeZoneName) {
-  switch (aTimeZoneName) {
-    case TimeZoneName::Long:
-      return "long";
-    case TimeZoneName::Short:
-      return "short";
-    case TimeZoneName::ShortOffset:
-      return "shortOffset";
-    case TimeZoneName::LongOffset:
-      return "longOffset";
-    case TimeZoneName::ShortGeneric:
-      return "shortGeneric";
-    case TimeZoneName::LongGeneric:
-      return "longGeneric";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::TimeZoneName");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Month aMonth) {
-  switch (aMonth) {
-    case Month::Numeric:
-      return "numeric";
-    case Month::TwoDigit:
-      return "2-digit";
-    case Month::Long:
-      return "long";
-    case Month::Short:
-      return "short";
-    case Month::Narrow:
-      return "narrow";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Month");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Text aText) {
-  switch (aText) {
-    case Text::Long:
-      return "long";
-    case Text::Short:
-      return "short";
-    case Text::Narrow:
-      return "narrow";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Text");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Numeric aNumeric) {
-  switch (aNumeric) {
-    case Numeric::Numeric:
-      return "numeric";
-    case Numeric::TwoDigit:
-      return "2-digit";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Numeric");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::Style aStyle) {
-  switch (aStyle) {
-    case Style::Full:
-      return "full";
-    case Style::Long:
-      return "long";
-    case Style::Medium:
-      return "medium";
-    case Style::Short:
-      return "short";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::Style");
-}
-
-const char* DateTimeFormat::ToString(DateTimeFormat::HourCycle aHourCycle) {
-  switch (aHourCycle) {
-    case HourCycle::H11:
-      return "h11";
-    case HourCycle::H12:
-      return "h12";
-    case HourCycle::H23:
-      return "h23";
-    case HourCycle::H24:
-      return "h24";
-  }
-  MOZ_CRASH("Unexpected DateTimeFormat::HourCycle");
 }
 
 ICUResult DateTimeFormat::TryFormatToParts(

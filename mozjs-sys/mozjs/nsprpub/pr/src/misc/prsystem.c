@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -22,10 +21,6 @@
 #  include <mach/mach_port.h>
 #endif
 
-#if defined(HPUX)
-#  include <sys/mpctl.h>
-#  include <sys/pstat.h>
-#endif
 
 #if defined(XP_UNIX)
 #  include <unistd.h>
@@ -181,12 +176,6 @@ PR_IMPLEMENT(PRInt32) PR_GetNumberOfProcessors(void) {
     numCpus = -1; /* set to -1 for return value on error */
     _PR_MD_MAP_DEFAULT_ERROR(_MD_ERRNO());
   }
-#elif defined(HPUX)
-  numCpus = mpctl(MPC_GETNUMSPUS, 0, 0);
-  if (numCpus < 1) {
-    numCpus = -1; /* set to -1 for return value on error */
-    _PR_MD_MAP_DEFAULT_ERROR(_MD_ERRNO());
-  }
 #elif defined(RISCOS)
   numCpus = 1;
 #elif defined(LINUX)
@@ -273,14 +262,6 @@ PR_IMPLEMENT(PRUint64) PR_GetPhysicalMemorySize(void) {
   rc = sysctl(mib, 2, &memSize, &len, NULL, 0);
   if (-1 != rc) {
     bytes = memSize;
-  }
-
-#elif defined(HPUX)
-
-  struct pst_static info;
-  int result = pstat_getstatic(&info, sizeof(info), 1, 0);
-  if (result == 1) {
-    bytes = (PRUint64)info.physical_memory * info.page_size;
   }
 
 #elif defined(DARWIN)

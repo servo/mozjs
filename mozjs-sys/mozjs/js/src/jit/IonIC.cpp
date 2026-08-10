@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -174,7 +172,7 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   MOZ_ASSERT(!val.isMagic());
 
   TryAttachIonStub<GetPropIRGenerator>(cx, ic, ionScript, ic->kind(), val,
-                                       idVal);
+                                       idVal, val);
 
   if (ic->kind() == CacheKind::GetProp) {
     Rooted<PropertyName*> name(cx, idVal.toString()->asAtom().asPropertyName());
@@ -219,7 +217,7 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
   RootedValue val(cx, ObjectValue(*obj));
 
   TryAttachIonStub<GetPropIRGenerator>(cx, ic, ionScript, ic->kind(), val,
-                                       idVal);
+                                       idVal, receiver);
 
   if (ic->kind() == CacheKind::GetPropSuper) {
     Rooted<PropertyName*> name(cx, idVal.toString()->asAtom().asPropertyName());

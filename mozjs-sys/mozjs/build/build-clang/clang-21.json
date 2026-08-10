@@ -1,0 +1,27 @@
+{
+    "patches": [
+        "allow-unversioned-android.patch",
+        "find_symbolizer_linux_clang_15.patch",
+        "android-mangling-error_clang_12.patch",
+        "unpoison-thread-stacks_clang_21.patch",
+        "downgrade-mangling-error_clang_12.patch",
+        "fuzzing_ccov_build_clang_12.patch",
+        "revert-llvmorg-21-init-18245-gfe56f69810b1.patch",
+        "revert-llvmorg-16-init-11301-g163bb6d64e5f_clang_21.patch",
+        "revert-llvmorg-15-init-13446-g7524fe962e47.patch",
+        "llvmorg-22-init-1937-g2672719a09cf.patch",
+        "llvmorg-22-init-2380-gd9971be83e5d.patch",
+        "llvmorg-22-init-4745-gbe179d069664.patch",
+        "llvmorg-22-init-11861-gfbcd82aab5ff.patch",
+        "llvmorg-22-init-14349-g7d5c11f6e926.patch",
+        "llvmorg-22-init-14556-g6a8943942335.patch",
+        "llvmorg-23-init-5314-g19e9bcba0bab.patch",
+        "llvmorg-23-init-5315-gf2a10ab74ff7.patch",
+        "llvmorg-23-init-5316-g4f4087edb182.patch",
+        "android-hardware-buffer-header-workaround_clang_21.patch",
+        "arm64e-hack.patch",
+        "no-no-rosegment.patch",
+        "sanitizer_deadlock_suppression.patch",
+        "compiler-rt-rss-limit-heap-profile.patch"
+    ]
+}

@@ -312,22 +312,20 @@ def main(*args, **kwargs):
             args.append("--color=yes")
 
         module = __import__("__main__")
-        args.extend(
-            [
-                "--rootdir",
-                str(topsrcdir),
-                "-c",
-                os.path.join(here, "pytest.ini"),
-                "-vv",
-                "--tb=short",
-                "-p",
-                "mozlog.pytest_mozlog.plugin",
-                "-p",
-                "mozunit.pytest_plugin",
-                "-p",
-                "no:cacheprovider",
-                "-rsx",  # show reasons for skip / xfail
-                module.__file__,
-            ]
-        )
+        args.extend([
+            "--rootdir",
+            str(topsrcdir),
+            "-c",
+            os.path.join(here, "pytest.ini"),
+            "-vv",
+            "--tb=short",
+            "-p",
+            "mozlog.pytest_mozlog.plugin",
+            "-p",
+            "mozunit.pytest_plugin",
+            "-p",
+            "no:cacheprovider",
+            "-rsx",  # show reasons for skip / xfail
+            module.__file__,
+        ])
         sys.exit(pytest.main(args))

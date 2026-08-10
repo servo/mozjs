@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,6 +7,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/BufferList.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/StringBuffer.h"
 
@@ -704,6 +703,8 @@ class JS_PUBLIC_API JSAutoStructuredCloneBuffer {
 
   JS::StructuredCloneScope scope() const { return data_.scope(); }
 
+  uint32_t version() const { return version_; }
+
   /**
    * Adopt some memory. It will be automatically freed by the destructor.
    * data must have been allocated by the JS engine (e.g., extracted via
@@ -780,8 +781,29 @@ JS_PUBLIC_API bool JS_ReadDouble(JSStructuredCloneReader* r, double* v);
 JS_PUBLIC_API bool JS_ReadTypedArray(JSStructuredCloneReader* r,
                                      JS::MutableHandleValue vp);
 
-JS_PUBLIC_API bool JS_WriteUint32Pair(JSStructuredCloneWriter* w, uint32_t tag,
-                                      uint32_t data);
+/**
+ * Same as JS_WriteUint32Pair but let implicit conversions from integers of a
+ * wider range happen without performing bounds checks.
+ * Using this function directly is not recommended: it is here mainly to allow
+ * compiler optimizations in JS_WriteUint32Pair for cases where integer values
+ * are known at compile time (in which case .isValid() calls can be elided)
+ */
+JS_PUBLIC_API bool JS_WriteUint32PairUnchecked(JSStructuredCloneWriter* w,
+                                               uint32_t tag, uint32_t data);
+/**
+ * Write a pair of integers. Returns false if either argument is invalid or if
+ * the underlying write fails.
+ * Note that the arguments are CheckedUint32 so any implicit conversion from a
+ * wider type is bounds-checked
+ */
+JS_PUBLIC_API inline bool JS_WriteUint32Pair(JSStructuredCloneWriter* w,
+                                             mozilla::CheckedUint32 tag,
+                                             mozilla::CheckedUint32 data) {
+  if (!tag.isValid() || !data.isValid()) [[unlikely]] {
+    return false;
+  }
+  return JS_WriteUint32PairUnchecked(w, tag.value(), data.value());
+}
 
 JS_PUBLIC_API bool JS_WriteBytes(JSStructuredCloneWriter* w, const void* p,
                                  size_t len);

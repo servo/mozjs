@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -69,7 +67,7 @@ static_assert((CompilingScript & SpecialScriptBit) != 0);
 static BaselineScript* const BaselineDisabledScriptPtr =
     reinterpret_cast<BaselineScript*>(DisabledScript);
 static BaselineScript* const BaselineQueuedScriptPtr =
-    reinterpret_cast<BaselineScript*>(DisabledScript);
+    reinterpret_cast<BaselineScript*>(QueuedScript);
 static BaselineScript* const BaselineCompilingScriptPtr =
     reinterpret_cast<BaselineScript*>(CompilingScript);
 
@@ -126,6 +124,7 @@ class alignas(uintptr_t) ICScript final : public TrailingArray<ICScript> {
            InliningRoot* inliningRoot = nullptr)
       : inliningRoot_(inliningRoot),
         warmUpCount_(warmUpCount),
+        ionThreshold_(JitOptions.normalIonWarmUpThreshold),
         fallbackStubsOffset_(fallbackStubsOffset),
         endOffset_(endOffset),
         depth_(depth),
@@ -173,6 +172,9 @@ class alignas(uintptr_t) ICScript final : public TrailingArray<ICScript> {
   static constexpr Offset offsetOfWarmUpCount() {
     return offsetof(ICScript, warmUpCount_);
   }
+  static constexpr Offset offsetOfIonThreshold() {
+    return offsetof(ICScript, ionThreshold_);
+  }
   static constexpr Offset offsetOfDepth() { return offsetof(ICScript, depth_); }
 
   static constexpr Offset offsetOfICEntries() { return sizeof(ICScript); }
@@ -203,9 +205,12 @@ class alignas(uintptr_t) ICScript final : public TrailingArray<ICScript> {
   void setActive() { active_ = true; }
   void resetActive() { active_ = false; }
 
-  gc::AllocSite* getOrCreateAllocSite(JSScript* outerScript, uint32_t pcOffset);
+  gc::AllocSite* getOrCreateAllocSite(JSScript* outerScript, uint32_t pcOffset,
+                                      const gc::AutoMarkingLock& lock);
 
-  void ensureEnvAllocSite(JSScript* outerScript);
+  void ensureEnvAllocSite(JSScript* outerScript,
+                          const gc::AutoMarkingLock& lock);
+
   gc::AllocSite* maybeEnvAllocSite() const { return envAllocSite_; }
 
   void prepareForDestruction(Zone* zone);
@@ -213,8 +218,10 @@ class alignas(uintptr_t) ICScript final : public TrailingArray<ICScript> {
   void trace(JSTracer* trc);
   bool traceWeak(JSTracer* trc);
 
+  gc::MarkingLock& markingLock() { return markingLock_; }
+
 #ifdef DEBUG
-  mozilla::HashNumber hash();
+  mozilla::HashNumber hash(JSContext* cx);
 #endif
 
  private:
@@ -247,6 +254,8 @@ class alignas(uintptr_t) ICScript final : public TrailingArray<ICScript> {
   // See also the ScriptWarmUpData class.
   mozilla::Atomic<uint32_t, mozilla::Relaxed> warmUpCount_ = {};
 
+  uint32_t ionThreshold_;
+
   // The offset of the ICFallbackStub array.
   Offset fallbackStubsOffset_;
 
@@ -258,6 +267,9 @@ class alignas(uintptr_t) ICScript final : public TrailingArray<ICScript> {
 
   // Bytecode size of the JSScript corresponding to this ICScript.
   uint32_t bytecodeSize_;
+
+  // Lock used to synchronise mutation during concurrent marking.
+  gc::MarkingLock markingLock_;
 
   // Flag set when discarding JIT code to indicate this script is on the stack
   // and should not be discarded.
@@ -362,6 +374,7 @@ class alignas(uintptr_t) JitScript final
   struct Flags {
     // True if this script entered Ion via OSR at a loop header.
     bool hadIonOSR : 1;
+    bool ranBytecodeAnalysis : 1;
   };
   Flags flags_ = {};  // Zero-initialize flags.
 
@@ -402,6 +415,9 @@ class alignas(uintptr_t) JitScript final
   void setHadIonOSR() { flags_.hadIonOSR = true; }
   bool hadIonOSR() const { return flags_.hadIonOSR; }
 
+  void setRanBytecodeAnalysis() { flags_.ranBytecodeAnalysis = true; }
+  bool ranBytecodeAnalysis() const { return flags_.ranBytecodeAnalysis; }
+
   uint32_t numICEntries() const { return icScript_.numICEntries(); }
 
 #ifdef DEBUG
@@ -410,6 +426,7 @@ class alignas(uintptr_t) JitScript final
   void resetAllActiveFlags();
 
   void ensureProfileString(JSContext* cx, JSScript* script);
+  void ensureProfilerScriptSource(JSContext* cx, JSScript* script);
 
   const char* profileString() const {
     MOZ_ASSERT(profileString_);
@@ -436,6 +453,8 @@ class alignas(uintptr_t) JitScript final
   uint32_t warmUpCount() const { return icScript_.warmUpCount_; }
   void incWarmUpCount() { icScript_.warmUpCount_++; }
   void resetWarmUpCount(uint32_t count);
+
+  void setIonThreshold(uint32_t count) { icScript_.ionThreshold_ = count; }
 
   void prepareForDestruction(Zone* zone);
 
@@ -488,6 +507,11 @@ class alignas(uintptr_t) JitScript final
   void setBaselineScriptImpl(JSScript* script, BaselineScript* baselineScript);
   void setBaselineScriptImpl(JS::GCContext* gcx, JSScript* script,
                              BaselineScript* baselineScript);
+  void maybeRemoveFromCompileQueue(JSScript* script) {
+    if (isBaselineQueued()) {
+      script->realm()->removeFromCompileQueue(script);
+    }
+  }
 
  public:
   // Methods for getting/setting/clearing a BaselineScript*.
@@ -505,6 +529,7 @@ class alignas(uintptr_t) JitScript final
   }
   void setBaselineScript(JSScript* script, BaselineScript* baselineScript) {
     MOZ_ASSERT(!hasBaselineScript());
+    maybeRemoveFromCompileQueue(script);
     setBaselineScriptImpl(script, baselineScript);
     MOZ_ASSERT(hasBaselineScript());
   }
@@ -526,6 +551,7 @@ class alignas(uintptr_t) JitScript final
   }
   void setIsBaselineCompiling(JSScript* script) {
     MOZ_ASSERT(baselineScript_ == nullptr);
+    maybeRemoveFromCompileQueue(script);
     setBaselineScriptImpl(script, BaselineCompilingScriptPtr);
   }
   void clearIsBaselineCompiling(JSScript* script) {
@@ -620,12 +646,12 @@ class MOZ_RAII AutoKeepJitScripts {
   jit::JitZone* zone_;
   bool prev_;
 
-  AutoKeepJitScripts(const AutoKeepJitScripts&) = delete;
-  void operator=(const AutoKeepJitScripts&) = delete;
-
  public:
   explicit inline AutoKeepJitScripts(JSContext* cx);
   inline ~AutoKeepJitScripts();
+
+  AutoKeepJitScripts(const AutoKeepJitScripts&) = delete;
+  void operator=(const AutoKeepJitScripts&) = delete;
 };
 
 // Mark ICScripts on the stack as active, so that they are not discarded

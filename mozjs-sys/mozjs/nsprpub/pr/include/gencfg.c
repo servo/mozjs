@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,10 +12,8 @@ error -
 #endif
 
 #if defined(__hpux)
-#  ifndef HPUX
         error -
-    HPUX is not defined
-#  endif
+    HPUX is not supported
 #endif
 
 #if defined(__alpha)
@@ -59,11 +56,7 @@ error -
 #    define INT64 long
 #  endif
 #else
-#  if defined(HPUX)
-#    define INT64 long
-#  else
 #    define INT64 long long
-#  endif
 #endif
 
                      struct align_short {

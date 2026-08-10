@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -16,13 +14,12 @@ namespace js {
 
 class ArrayObject;
 class GlobalObject;
+class LanguageId;
 
 /* Initialize the String class, returning its prototype object. */
 extern JSObject* InitStringClass(JSContext* cx, Handle<GlobalObject*> global);
 
 // String methods exposed so they can be installed in the self-hosting global.
-
-extern bool str_fromCharCode(JSContext* cx, unsigned argc, Value* vp);
 
 extern bool str_fromCodePoint(JSContext* cx, unsigned argc, Value* vp);
 
@@ -30,35 +27,9 @@ extern bool str_includes(JSContext* cx, unsigned argc, Value* vp);
 
 extern bool str_indexOf(JSContext* cx, unsigned argc, Value* vp);
 
-extern bool str_startsWith(JSContext* cx, unsigned argc, Value* vp);
-
 extern bool str_toString(JSContext* cx, unsigned argc, Value* vp);
 
-extern bool str_charCodeAt(JSContext* cx, unsigned argc, Value* vp);
-
 extern bool str_codePointAt(JSContext* cx, unsigned argc, Value* vp);
-
-extern bool str_endsWith(JSContext* cx, unsigned argc, Value* vp);
-
-#if JS_HAS_INTL_API
-/**
- * Returns the input string converted to lower case based on the language
- * specific case mappings for the input locale.
- *
- * Usage: lowerCase = intl_toLocaleLowerCase(string, locale)
- */
-[[nodiscard]] extern bool intl_toLocaleLowerCase(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-
-/**
- * Returns the input string converted to upper case based on the language
- * specific case mappings for the input locale.
- *
- * Usage: upperCase = intl_toLocaleUpperCase(string, locale)
- */
-[[nodiscard]] extern bool intl_toLocaleUpperCase(JSContext* cx, unsigned argc,
-                                                 Value* vp);
-#endif
 
 ArrayObject* StringSplitString(JSContext* cx, HandleString str,
                                HandleString sep, uint32_t limit);
@@ -109,6 +80,10 @@ extern bool FlatStringSearch(JSContext* cx, unsigned argc, Value* vp);
 extern JSLinearString* StringFromCharCode(JSContext* cx, int32_t charCode);
 
 extern JSLinearString* StringFromCodePoint(JSContext* cx, char32_t codePoint);
+
+#if JS_HAS_INTL_API
+bool LocaleHasDefaultCaseMapping(LanguageId locale);
+#endif
 
 } /* namespace js */
 

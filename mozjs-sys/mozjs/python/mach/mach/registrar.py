@@ -33,13 +33,13 @@ class MachRegistrar:
 
         if not handler.category:
             raise MachError(
-                "Cannot register a mach command without a " "category: %s" % name
+                f"Cannot register a mach command without a category: {name}"
             )
 
         if handler.category not in self.categories:
             raise MachError(
                 "Cannot register a command to an undefined "
-                "category: %s -> %s" % (name, handler.category)
+                f"category: {name} -> {handler.category}"
             )
 
         self.command_handlers[name] = handler
@@ -56,7 +56,7 @@ class MachRegistrar:
     def _condition_failed_message(cls, name, conditions):
         msg = ["\n"]
         for c in conditions:
-            part = ["  %s" % getattr(c, "__name__", c)]
+            part = [f"  {getattr(c, '__name__', c)}"]
             if c.__doc__ is not None:
                 part.append(c.__doc__)
             msg.append(" - ".join(part))

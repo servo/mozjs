@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -45,7 +44,7 @@ MFBT_API MOZ_COLD MOZ_NEVER_INLINE MOZ_FORMAT_PRINTF(1, 2) const
 
 MOZ_END_EXTERN_C
 
-MFBT_API MOZ_NORETURN MOZ_COLD void mozilla::detail::InvalidArrayIndex_CRASH(
+[[noreturn]] MFBT_API MOZ_COLD void mozilla::detail::InvalidArrayIndex_CRASH(
     size_t aIndex, size_t aLength) {
   MOZ_CRASH_UNSAFE_PRINTF("ElementAt(aIndex = %zu, aLength = %zu)", aIndex,
                           aLength);

@@ -1,16 +1,13 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_none_MacroAssembler_none_h
 #define jit_none_MacroAssembler_none_h
 
-#include <iterator>
-
 #include "jit/MoveResolver.h"
 #include "jit/none/Assembler-none.h"
+#include "jit/shared/IonAssemblerBuffer.h"
 #include "wasm/WasmCodegenTypes.h"
 #include "wasm/WasmTypeDecls.h"
 
@@ -97,7 +94,7 @@ class MacroAssemblerNone : public Assembler {
   void nop() { MOZ_CRASH(); }
   void breakpoint() { MOZ_CRASH(); }
   void abiret() { MOZ_CRASH(); }
-  void ret() { MOZ_CRASH(); }
+  BufferOffset ret() { MOZ_CRASH(); }
 
   CodeOffset toggledJump(Label*) { MOZ_CRASH(); }
   CodeOffset toggledCall(JitCode*, bool) { MOZ_CRASH(); }
@@ -339,6 +336,7 @@ class MacroAssemblerNone : public Assembler {
 
   void boxDouble(FloatRegister, ValueOperand, FloatRegister) { MOZ_CRASH(); }
   void boxNonDouble(JSValueType, Register, ValueOperand) { MOZ_CRASH(); }
+  void boxNonDouble(Register, Register, ValueOperand) { MOZ_CRASH(); }
   template <typename T>
   void boxDouble(FloatRegister src, const T& dest) {
     MOZ_CRASH();
@@ -390,10 +388,6 @@ class MacroAssemblerNone : public Assembler {
 
   void getWasmAnyRefGCThingChunk(Register, Register) { MOZ_CRASH(); }
 
-  template <typename T>
-  void unboxObjectOrNull(const T& src, Register dest) {
-    MOZ_CRASH();
-  }
   void notBoolean(ValueOperand) { MOZ_CRASH(); }
   [[nodiscard]] Register extractObject(Address, Register) { MOZ_CRASH(); }
   [[nodiscard]] Register extractObject(ValueOperand, Register) { MOZ_CRASH(); }
@@ -443,10 +437,6 @@ class MacroAssemblerNone : public Assembler {
   }
   template <typename T>
   void storeUnboxedValue(const ConstantOrRegister&, MIRType, T) {
-    MOZ_CRASH();
-  }
-  template <typename T>
-  void storeUnboxedPayload(ValueOperand value, T, size_t, JSValueType) {
     MOZ_CRASH();
   }
 

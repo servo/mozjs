@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2014 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -99,6 +97,12 @@ using namespace js::wasm;
 #      define RFP_sig(p) ((p)->sc_x[29])
 #      define RLR_sig(p) ((p)->sc_lr)
 #      define R31_sig(p) ((p)->sc_sp)
+#    endif
+#    if defined(__riscv)
+#      define RPC_sig(p) ((p)->sc_sepc)
+#      define RRA_sig(p) ((p)->sc_ra)
+#      define RFP_sig(p) ((p)->sc_s[0])
+#      define R02_sig(p) ((p)->sc_sp)
 #    endif
 #    if defined(__mips__)
 #      define EPC_sig(p) ((p)->sc_pc)
@@ -512,6 +516,7 @@ struct AutoHandlingTrap {
 };
 
 [[nodiscard]] static bool HandleTrap(CONTEXT* context,
+                                     uint8_t* faultAddr = nullptr,
                                      JSContext* assertCx = nullptr) {
   MOZ_ASSERT(sAlreadyHandlingTrap.get());
 
@@ -538,6 +543,24 @@ struct AutoHandlingTrap {
   MOZ_RELEASE_ASSERT(&instance->code() == codeBlock->code ||
                      trap == Trap::IndirectCallBadSig);
 
+  // For OutOfBounds triggered by a memory fault (faultAddr != nullptr), verify
+  // the address is actually within a wasm memory's mapped region. This catches
+  // bugs where an unrelated fault at an arbitrary address would otherwise be
+  // silently swallowed as an OOB. When faultAddr is null (explicit trap
+  // instruction, e.g. from an inlined bounds check), skip validation.
+  uint32_t faultMemoryIndex = 0;
+  uint64_t faultByteOffset = 0;
+  if (trap == Trap::OutOfBounds && faultAddr) {
+    if (!instance->memoryAccessInMappedRegion(faultAddr, &faultMemoryIndex,
+                                              &faultByteOffset)) {
+      return false;
+    }
+  }
+
+  // Ensure the active FP has a valid instance pointer that the trap stub can
+  // use.
+  ((FrameWithInstances*)frame)->setCalleeInstance(instance);
+
   JSContext* cx =
       instance->realm()->runtimeFromAnyThread()->mainContextFromAnyThread();
   MOZ_RELEASE_ASSERT(!assertCx || cx == assertCx);
@@ -547,6 +570,9 @@ struct AutoHandlingTrap {
   // will call finishWasmTrap().
   jit::JitActivation* activation = cx->activation()->asJit();
   activation->startWasmTrap(trap, trapSite, ToRegisterState(context));
+  if (trap == Trap::OutOfBounds && faultAddr) {
+    activation->setWasmTrapFaultInfo(faultMemoryIndex, faultByteOffset);
+  }
   SetContextPC(context, codeBlock->code->trapCode());
   return true;
 }
@@ -578,8 +604,13 @@ static LONG WINAPI WasmTrapHandler(LPEXCEPTION_POINTERS exception) {
     return EXCEPTION_CONTINUE_SEARCH;
   }
 
+  uint8_t* faultAddr = nullptr;
+  if (record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
+    faultAddr = (uint8_t*)record->ExceptionInformation[1];
+  }
+
   JSContext* cx = TlsContext.get();  // Cold signal handling code
-  if (!HandleTrap(exception->ContextRecord, cx)) {
+  if (!HandleTrap(exception->ContextRecord, faultAddr, cx)) {
     return EXCEPTION_CONTINUE_SEARCH;
   }
 
@@ -663,7 +694,11 @@ static bool HandleMachException(const ExceptionRequest& request) {
   {
     AutoNoteSingleThreadedRegion anstr;
     AutoHandlingTrap aht;
-    if (!HandleTrap(&context)) {
+    uint8_t* faultAddr = nullptr;
+    if (request.body.exception == EXC_BAD_ACCESS) {
+      faultAddr = (uint8_t*)request.body.code[1];
+    }
+    if (!HandleTrap(&context, faultAddr)) {
       return false;
     }
   }
@@ -749,13 +784,25 @@ static struct sigaction sPrevSEGVHandler;
 static struct sigaction sPrevSIGBUSHandler;
 static struct sigaction sPrevWasmTrapHandler;
 
+typedef void (*sa_sigaction_t)(int, siginfo_t*, void*);
+
+// See the uses below for more context. We need to cast the SIG_DFL/SIG_IGN
+// sentinel values to check to see if they're in the sa_sigaction field (which
+// may or may not be in a union with the sa_handler field).
+#    define SIG_ACTION_DFL ((sa_sigaction_t)SIG_DFL)
+#    define SIG_ACTION_IGN ((sa_sigaction_t)SIG_IGN)
+
 static void WasmTrapHandler(int signum, siginfo_t* info, void* context) {
   if (!sAlreadyHandlingTrap.get()) {
     AutoHandlingTrap aht;
     MOZ_RELEASE_ASSERT(signum == SIGSEGV || signum == SIGBUS ||
                        signum == kWasmTrapSignal);
+    uint8_t* faultAddr = nullptr;
+    if (signum == SIGSEGV || signum == SIGBUS) {
+      faultAddr = (uint8_t*)info->si_addr;
+    }
     JSContext* cx = TlsContext.get();  // Cold signal handling code
-    if (HandleTrap((CONTEXT*)context, cx)) {
+    if (HandleTrap((CONTEXT*)context, faultAddr, cx)) {
       return;
     }
   }
@@ -774,7 +821,7 @@ static void WasmTrapHandler(int signum, siginfo_t* info, void* context) {
   }
   MOZ_ASSERT(previousSignal);
 
-  // This signal is not for any asm.js code we expect, so we need to forward
+  // This signal is not for any wasm code we expect, so we need to forward
   // the signal to the next handler. If there is no next handler (SIG_IGN or
   // SIG_DFL), then it's time to crash. To do this, we set the signal back to
   // its original disposition and return. This will cause the faulting op to
@@ -786,7 +833,15 @@ static void WasmTrapHandler(int signum, siginfo_t* info, void* context) {
   // signal to it's original disposition and returning.
   //
   // Note: the order of these tests matter.
-  if (previousSignal->sa_flags & SA_SIGINFO) {
+  //
+  // POSIX specifies that if SA_SIGINFO is set, then sa_sigaction should be
+  // called instead of sa_handler. However, it appears that the flag can be set
+  // even when sa_sigaction is not a valid function pointer but instead one of
+  // the SIG_DFL/SIG_IGN sentinel values. In this case, we should not call the
+  // function, but fallthrough.
+  if ((previousSignal->sa_flags & SA_SIGINFO) &&
+      previousSignal->sa_sigaction != SIG_ACTION_DFL &&
+      previousSignal->sa_sigaction != SIG_ACTION_IGN) {
     previousSignal->sa_sigaction(signum, info, context);
   } else if (previousSignal->sa_handler == SIG_DFL ||
              previousSignal->sa_handler == SIG_IGN) {
@@ -993,28 +1048,7 @@ bool wasm::MemoryAccessTraps(const RegisterState& regs, uint8_t* addr,
     case Trap::OutOfBounds:
       break;
     case Trap::NullPointerDereference:
-      break;
-#  ifdef WASM_HAS_HEAPREG
-    case Trap::IndirectCallToNull:
-      // We use the null pointer exception from loading the heapreg to
-      // handle indirect calls to null.
-      break;
-#  endif
-    default:
-      return false;
-  }
-
-  const Instance& instance =
-      *GetNearestEffectiveInstance(Frame::fromUntaggedWasmExitFP(regs.fp));
-  MOZ_ASSERT(&instance.code() == codeBlock->code);
-
-  switch (trap) {
-    case Trap::OutOfBounds:
-      if (!instance.memoryAccessInGuardRegion((uint8_t*)addr, numBytes)) {
-        return false;
-      }
-      break;
-    case Trap::NullPointerDereference:
+    case Trap::BadCast:
       if ((uintptr_t)addr >= NullPtrGuardSize) {
         return false;
       }
@@ -1029,12 +1063,45 @@ bool wasm::MemoryAccessTraps(const RegisterState& regs, uint8_t* addr,
       break;
 #  endif
     default:
+      return false;
+  }
+
+  // This is a safe and expected wasm trap. This guarantees that FP is pointing
+  // at a wasm frame.
+  FrameWithInstances* frame = (FrameWithInstances*)(regs.fp);
+  Instance& instance = *GetNearestEffectiveInstance(frame);
+  MOZ_ASSERT(&instance.code() == codeBlock->code);
+
+  // Ensure the active FP has a valid instance pointer that the trap stub can
+  // use.
+  frame->setCalleeInstance(&instance);
+
+  uint32_t faultMemoryIndex = 0;
+  uint64_t faultByteOffset = 0;
+  switch (trap) {
+    case Trap::OutOfBounds:
+      if (!instance.memoryAccessInGuardRegion((uint8_t*)addr, numBytes)) {
+        return false;
+      }
+      MOZ_ALWAYS_TRUE(instance.memoryAccessInMappedRegion(
+          (uint8_t*)addr, &faultMemoryIndex, &faultByteOffset));
+      break;
+    case Trap::NullPointerDereference:
+    case Trap::BadCast:
+#  ifdef WASM_HAS_HEAPREG
+    case Trap::IndirectCallToNull:
+#  endif
+      break;
+    default:
       MOZ_CRASH("Should not happen");
   }
 
   JSContext* cx = TlsContext.get();  // Cold simulator helper function
   jit::JitActivation* activation = cx->activation()->asJit();
   activation->startWasmTrap(trap, trapSite, regs);
+  if (trap == Trap::OutOfBounds) {
+    activation->setWasmTrapFaultInfo(faultMemoryIndex, faultByteOffset);
+  }
   *newPC = codeBlock->code->trapCode();
   return true;
 #endif
@@ -1055,6 +1122,16 @@ bool wasm::HandleIllegalInstruction(const RegisterState& regs,
   if (!codeBlock->code->lookupTrap(regs.pc, &trap, &trapSite)) {
     return false;
   }
+
+  // This is a safe and expected wasm trap. This guarantees that FP is pointing
+  // at a wasm frame.
+  FrameWithInstances* frame = (FrameWithInstances*)(regs.fp);
+  Instance& instance = *GetNearestEffectiveInstance(frame);
+  MOZ_ASSERT(&instance.code() == codeBlock->code);
+
+  // Ensure the active FP has a valid instance pointer that the trap stub can
+  // use.
+  frame->setCalleeInstance(&instance);
 
   JSContext* cx = TlsContext.get();  // Cold simulator helper function
   jit::JitActivation* activation = cx->activation()->asJit();

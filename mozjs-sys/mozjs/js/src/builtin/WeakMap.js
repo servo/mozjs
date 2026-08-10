@@ -27,10 +27,9 @@ function WeakMapConstructorInit(iterable) {
   }
 }
 
-#ifdef NIGHTLY_BUILD
 /**
  * Upsert proposal
- * 
+ *
  * WeakMap.prototype.getOrInsertComputed ( key, callbackfn )
  *
  * https://tc39.es/proposal-upsert/
@@ -56,6 +55,10 @@ function WeakMapGetOrInsertComputed(key, callbackfn) {
   }
 
   // Step 4.  If CanBeHeldWeakly(key) is false, throw a TypeError exception.
+  if (!CanBeHeldWeakly(key)) {
+    ThrowTypeError(JSMSG_WEAKMAP_KEY_CANT_BE_HELD_WEAKLY, DecompileArg(0, key));
+  }
+
   // Step 5.  For each Record { [[Key]], [[Value]] } p of M.[[WeakMapData]], do
   // Step 5.a.  If p.[[Key]] is not empty and SameValue(p.[[Key]], key) is true, return p.[[Value]].
   if (callFunction(std_WeakMap_has, M, key)) {
@@ -75,4 +78,3 @@ function WeakMapGetOrInsertComputed(key, callbackfn) {
   // Step 7.a.ii, 10. Return value.
   return value;
 }
-#endif  // #ifdef NIGHTLY_BUILD

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -61,7 +59,6 @@ class MOZ_RAII CacheIRCloner {
 
   Shape* getShapeField(uint32_t stubOffset);
   Shape* getWeakShapeField(uint32_t stubOffset);
-  GetterSetter* getWeakGetterSetterField(uint32_t stubOffset);
   JSObject* getObjectField(uint32_t stubOffset);
   JSObject* getWeakObjectField(uint32_t stubOffset);
   JSString* getStringField(uint32_t stubOffset);
@@ -73,7 +70,8 @@ class MOZ_RAII CacheIRCloner {
   const void* getRawPointerField(uint32_t stubOffset);
   const ICScript* getICScriptField(uint32_t stubOffset);
   jsid getIdField(uint32_t stubOffset);
-  const Value getValueField(uint32_t stubOffset);
+  Value getValueField(uint32_t stubOffset);
+  Value getWeakValueField(uint32_t stubOffset);
   uint64_t getRawInt64Field(uint32_t stubOffset);
   double getDoubleField(uint32_t stubOffset);
   gc::AllocSite* getAllocSiteField(uint32_t stubOffset);

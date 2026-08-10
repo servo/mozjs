@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,6 +44,10 @@ RefType RefType::topType() const {
       return wasm::RefType::extern_();
     case wasm::RefTypeHierarchy::Exn:
       return wasm::RefType::exn();
+#ifdef ENABLE_WASM_JSPI
+    case wasm::RefTypeHierarchy::Cont:
+      return wasm::RefType::cont();
+#endif
     default:
       MOZ_CRASH("switch is exhaustive");
   }
@@ -61,6 +63,10 @@ RefType RefType::bottomType() const {
       return wasm::RefType::noextern();
     case wasm::RefTypeHierarchy::Exn:
       return wasm::RefType::noexn();
+#ifdef ENABLE_WASM_JSPI
+    case wasm::RefTypeHierarchy::Cont:
+      return wasm::RefType::nocont();
+#endif
     default:
       MOZ_CRASH("switch is exhaustive");
   }
@@ -137,10 +143,42 @@ RefType RefType::leastUpperBound(RefType a, RefType b) {
     case RefTypeHierarchy::Exn:
       common = FirstCommonSuperType(a, b, {RefType::noexn(), RefType::exn()});
       break;
+#ifdef ENABLE_WASM_JSPI
+    case RefTypeHierarchy::Cont:
+      common = FirstCommonSuperType(a, b, {RefType::nocont(), RefType::cont()});
+      break;
+#endif
     default:
       MOZ_CRASH("unknown type hierarchy");
   }
   return common.withIsNullable(nullable);
+}
+
+RefType RefType::greatestLowerBound(RefType a, RefType b) {
+  // Types in different hierarchies have no common bound. Validation should
+  // always prevent two such types from being compared.
+  MOZ_RELEASE_ASSERT(a.hierarchy() == b.hierarchy());
+
+  // The GLB is easy in WASM because the type hierarchies nearly form a tree. If
+  // two types are in a subtype relationship, the lower of the two is obviously
+  // the GLB. Otherwise, the only possible common subtype is `none` (or the
+  // equivalent bottom type for other hierarchies.)
+
+  // Whether the GLB is nullable can be determined by the nullability of a and
+  // b, regardless of their actual types.
+  bool nullable = a.isNullable() && b.isNullable();
+
+  // If one type is a subtype of the other, the lower type is the GLB. The
+  // nullability should already match what we expect.
+  if (RefType::isSubTypeOf(a.asNonNullable(), b.asNonNullable())) {
+    return a.withIsNullable(nullable);
+  }
+  if (RefType::isSubTypeOf(b.asNonNullable(), a.asNonNullable())) {
+    return b.withIsNullable(nullable);
+  }
+
+  // The only possible common type now is the hierarchy's bottom type.
+  return a.bottomType().withIsNullable(nullable);
 }
 
 TypeDefKind RefType::typeDefKind() const {
@@ -151,6 +189,10 @@ TypeDefKind RefType::typeDefKind() const {
       return TypeDefKind::Array;
     case RefType::Func:
       return TypeDefKind::Func;
+#ifdef ENABLE_WASM_JSPI
+    case RefType::Cont:
+      return TypeDefKind::Cont;
+#endif
     default:
       return TypeDefKind::None;
   }
@@ -170,11 +212,9 @@ static bool ToRefType(JSContext* cx, const JSLinearString* typeLinearStr,
     *out = RefType::extern_();
     return true;
   }
-  if (ExnRefAvailable(cx)) {
-    if (StringEqualsLiteral(typeLinearStr, "exnref")) {
-      *out = RefType::exn();
-      return true;
-    }
+  if (StringEqualsLiteral(typeLinearStr, "exnref")) {
+    *out = RefType::exn();
+    return true;
   }
   if (StringEqualsLiteral(typeLinearStr, "anyref")) {
     *out = RefType::any();
@@ -212,6 +252,19 @@ static bool ToRefType(JSContext* cx, const JSLinearString* typeLinearStr,
     *out = RefType::none();
     return true;
   }
+
+#ifdef ENABLE_WASM_JSPI
+  if (StackSwitchingAvailable(cx)) {
+    if (StringEqualsLiteral(typeLinearStr, "contref")) {
+      *out = RefType::cont();
+      return true;
+    }
+    if (StringEqualsLiteral(typeLinearStr, "nullcontref")) {
+      *out = RefType::nocont();
+      return true;
+    }
+  }
+#endif
 
   JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                            JSMSG_WASM_BAD_STRING_VAL_TYPE);
@@ -288,6 +341,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
       case RefType::Exn:
         literal = "exnref";
         break;
+#ifdef ENABLE_WASM_JSPI
+      case RefType::Cont:
+        literal = "contref";
+        break;
+#endif
       case RefType::Any:
         literal = "anyref";
         break;
@@ -300,6 +358,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
       case RefType::NoExtern:
         literal = "nullexternref";
         break;
+#ifdef ENABLE_WASM_JSPI
+      case RefType::NoCont:
+        literal = "nullcontref";
+        break;
+#endif
       case RefType::None:
         literal = "nullref";
         break;
@@ -334,6 +397,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
     case RefType::Exn:
       heapType = "exn";
       break;
+#ifdef ENABLE_WASM_JSPI
+    case RefType::Cont:
+      heapType = "cont";
+      break;
+#endif
     case RefType::Any:
       heapType = "any";
       break;
@@ -343,6 +411,11 @@ UniqueChars wasm::ToString(RefType type, const TypeContext* types) {
     case RefType::NoExn:
       heapType = "noexn";
       break;
+#ifdef ENABLE_WASM_JSPI
+    case RefType::NoCont:
+      heapType = "nocont";
+      break;
+#endif
     case RefType::NoExtern:
       heapType = "noextern";
       break;

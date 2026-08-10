@@ -47,18 +47,18 @@ class TestUnifiedFinder(TestUnified):
             sorted=["test"],
         )
         self.assertEqual(
-            sorted(
-                [(f, c.open().read().decode("utf-8")) for f, c in finder.find("foo")]
-            ),
+            sorted([
+                (f, c.open().read().decode("utf-8")) for f, c in finder.find("foo")
+            ]),
             [("foo/bar", "foobar"), ("foo/baz", "foobaz")],
         )
         self.assertRaises(ErrorMessage, any, finder.find("bar"))
         self.assertRaises(ErrorMessage, any, finder.find("baz"))
         self.assertRaises(ErrorMessage, any, finder.find("qux"))
         self.assertEqual(
-            sorted(
-                [(f, c.open().read().decode("utf-8")) for f, c in finder.find("test")]
-            ),
+            sorted([
+                (f, c.open().read().decode("utf-8")) for f, c in finder.find("test")
+            ]),
             [("test/bar", "a\nb\nc\n"), ("test/foo", "a\nb\nc\n")],
         )
 
@@ -74,12 +74,10 @@ class TestUnifiedBuildFinder(TestUnified):
         self.create_one("a", "chrome/chrome.manifest", "a\nb\nc\n")
         self.create_one("b", "chrome/chrome.manifest", "b\nc\na\n")
         self.assertEqual(
-            sorted(
-                [
-                    (f, c.open().read().decode("utf-8"))
-                    for f, c in finder.find("**/chrome.manifest")
-                ]
-            ),
+            sorted([
+                (f, c.open().read().decode("utf-8"))
+                for f, c in finder.find("**/chrome.manifest")
+            ]),
             [("chrome.manifest", "a\nb\nc\n"), ("chrome/chrome.manifest", "a\nb\nc\n")],
         )
 
@@ -87,59 +85,51 @@ class TestUnifiedBuildFinder(TestUnified):
         self.create_one(
             "a",
             "chrome/browser/foo/buildconfig.html",
-            "\n".join(
-                [
-                    "<html>",
-                    "  <body>",
-                    "    <div>",
-                    "      <h1>Build Configuration</h1>",
-                    "      <div>foo</div>",
-                    "    </div>",
-                    "  </body>",
-                    "</html>",
-                ]
-            ),
+            "\n".join([
+                "<html>",
+                "  <body>",
+                "    <div>",
+                "      <h1>Build Configuration</h1>",
+                "      <div>foo</div>",
+                "    </div>",
+                "  </body>",
+                "</html>",
+            ]),
         )
         self.create_one(
             "b",
             "chrome/browser/foo/buildconfig.html",
-            "\n".join(
-                [
-                    "<html>",
-                    "  <body>",
-                    "    <div>",
-                    "      <h1>Build Configuration</h1>",
-                    "      <div>bar</div>",
-                    "    </div>",
-                    "  </body>",
-                    "</html>",
-                ]
-            ),
+            "\n".join([
+                "<html>",
+                "  <body>",
+                "    <div>",
+                "      <h1>Build Configuration</h1>",
+                "      <div>bar</div>",
+                "    </div>",
+                "  </body>",
+                "</html>",
+            ]),
         )
         self.assertEqual(
-            sorted(
-                [
-                    (f, c.open().read().decode("utf-8"))
-                    for f, c in finder.find("**/buildconfig.html")
-                ]
-            ),
+            sorted([
+                (f, c.open().read().decode("utf-8"))
+                for f, c in finder.find("**/buildconfig.html")
+            ]),
             [
                 (
                     "chrome/browser/foo/buildconfig.html",
-                    "\n".join(
-                        [
-                            "<html>",
-                            "  <body>",
-                            "    <div>",
-                            "      <h1>Build Configuration</h1>",
-                            "      <div>foo</div>",
-                            "      <hr> </hr>",
-                            "      <div>bar</div>",
-                            "    </div>",
-                            "  </body>",
-                            "</html>",
-                        ]
-                    ),
+                    "\n".join([
+                        "<html>",
+                        "  <body>",
+                        "    <div>",
+                        "      <h1>Build Configuration</h1>",
+                        "      <div>foo</div>",
+                        "      <hr> </hr>",
+                        "      <div>bar</div>",
+                        "    </div>",
+                        "  </body>",
+                        "</html>",
+                    ]),
                 )
             ],
         )
@@ -171,23 +161,19 @@ class TestUnifiedBuildFinder(TestUnified):
         target_tag = "<{em}targetPlatform>{platform}</{em}targetPlatform>"
         target_attr = '{em}targetPlatform="{platform}" '
 
-        rdf_tag = "".join(
-            [
-                '<{RDF}Description {em}bar="bar" {em}qux="qux">',
-                "<{em}foo>foo</{em}foo>",
-                "{targets}",
-                "<{em}baz>baz</{em}baz>",
-                "</{RDF}Description>",
-            ]
-        )
-        rdf_attr = "".join(
-            [
-                '<{RDF}Description {em}bar="bar" {attr}{em}qux="qux">',
-                "{targets}",
-                "<{em}foo>foo</{em}foo><{em}baz>baz</{em}baz>",
-                "</{RDF}Description>",
-            ]
-        )
+        rdf_tag = "".join([
+            '<{RDF}Description {em}bar="bar" {em}qux="qux">',
+            "<{em}foo>foo</{em}foo>",
+            "{targets}",
+            "<{em}baz>baz</{em}baz>",
+            "</{RDF}Description>",
+        ])
+        rdf_attr = "".join([
+            '<{RDF}Description {em}bar="bar" {attr}{em}qux="qux">',
+            "{targets}",
+            "<{em}foo>foo</{em}foo><{em}baz>baz</{em}baz>",
+            "</{RDF}Description>",
+        ])
 
         for descr_ns, target_ns in (("RDF:", ""), ("", "em:"), ("RDF:", "em:")):
             # First we need to infuse the above strings with our namespaces and
@@ -236,12 +222,10 @@ class TestUnifiedBuildFinder(TestUnified):
                 results.append((filename, result))
 
             self.assertEqual(
-                sorted(
-                    [
-                        (f, c.open().read().decode("utf-8"))
-                        for f, c in finder.find("**/install.rdf")
-                    ]
-                ),
+                sorted([
+                    (f, c.open().read().decode("utf-8"))
+                    for f, c in finder.find("**/install.rdf")
+                ]),
                 results,
             )
 

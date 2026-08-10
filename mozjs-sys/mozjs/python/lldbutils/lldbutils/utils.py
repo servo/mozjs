@@ -26,9 +26,9 @@ def format_char(c):
     elif c == 0x27:
         return "\\'"
     elif c < 0x20 or c >= 0x80 and c <= 0xFF:
-        return "\\x%02x" % c
+        return f"\\x{c:02x}"
     elif c >= 0x0100:
-        return "\\u%04x" % c
+        return f"\\u{c:04x}"
     else:
         return chr(c)
 
@@ -47,7 +47,7 @@ def format_string(lldb_value, length=100):
         size = 2
         mask = 0xFFFF
     else:
-        return "(cannot format string with char type %s)" % char_type.GetName()
+        return f"(cannot format string with char type {char_type.GetName()})"
     i = 0
     terminated = False
     while i < length:

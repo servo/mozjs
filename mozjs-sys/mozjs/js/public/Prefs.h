@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -72,6 +71,13 @@
 // It's also possible to add a custom shell flag. In this case you have to
 // override the pref value yourself based on this flag.
 //
+// Fuzzing
+// =======
+// A pref that's not safe to toggle while fuzzing (for instance because the
+// feature is experimental or incomplete) should be marked |fuzzing_safe: false|
+// in StaticPrefList.yaml. When the JS shell runs with --fuzzing-safe, attempts
+// to change such a pref are ignored with a warning.
+//
 // Testing Functions
 // =================
 // The |getAllPrefNames()| function will return an array with all JS pref names.
@@ -86,6 +92,13 @@ class Prefs {
   // For each pref, define a static |pref_| member.
   JS_PREF_CLASS_FIELDS;
 
+  // When true, prefs that are marked |fuzzing_safe: false| can't be changed.
+  // Set by the JS shell when the --fuzzing-safe flag is used.
+  static bool fuzzingSafe_;
+  static bool reportIgnoredFuzzingUnsafePrefs_;
+
+  static void reportIgnoredFuzzingUnsafePref(const char* name);
+
 #ifdef DEBUG
   static void assertCanSetStartupPref();
 #else
@@ -93,12 +106,24 @@ class Prefs {
 #endif
 
  public:
+  static void setFuzzingSafe(bool fuzzingSafe) { fuzzingSafe_ = fuzzingSafe; }
+  static bool fuzzingSafe() { return fuzzingSafe_; }
+
+  static void setReportIgnoredFuzzingUnsafePrefs(bool report) {
+    reportIgnoredFuzzingUnsafePrefs_ = report;
+  }
+
   // For each pref, define static getter/setter accessors.
-#define DEF_GETSET(NAME, CPP_NAME, TYPE, SETTER, IS_STARTUP_PREF) \
+#define DEF_GETSET(NAME, CPP_NAME, TYPE, SETTER, IS_STARTUP_PREF, \
+                   FUZZING_SAFE)                                  \
   static TYPE CPP_NAME() { return CPP_NAME##_; }                  \
   static void SETTER(TYPE value) {                                \
     if (IS_STARTUP_PREF) {                                        \
       assertCanSetStartupPref();                                  \
+    }                                                             \
+    if (fuzzingSafe_ && !FUZZING_SAFE) {                          \
+      reportIgnoredFuzzingUnsafePref(NAME);                       \
+      return;                                                     \
     }                                                             \
     CPP_NAME##_ = value;                                          \
   }

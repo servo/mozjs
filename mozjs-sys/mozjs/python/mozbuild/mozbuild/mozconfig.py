@@ -13,6 +13,8 @@ from textwrap import dedent
 from mozboot.mozconfig import find_mozconfig
 from mozpack import path as mozpath
 
+from mozbuild.util import sanitize_shell_env
+
 MOZCONFIG_BAD_EXIT_CODE = """
 Evaluation of your mozconfig exited with an error. This could be triggered
 by a command inside your mozconfig failing. Please change your mozconfig
@@ -131,7 +133,7 @@ class MozconfigLoader:
         # actually leads to two shell executions on Windows. Avoid this by
         # directly calling sh mozconfig_loader.
         shell = "sh"
-        env = dict(os.environ)
+        env = sanitize_shell_env(os.environ)
         env["PYTHONIOENCODING"] = "utf-8"
 
         if "MOZILLABUILD" in os.environ:

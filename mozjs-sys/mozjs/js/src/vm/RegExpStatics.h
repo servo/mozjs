@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -46,6 +44,30 @@ class RegExpStatics {
 
   inline void checkInvariants();
 
+  // Legacy RegExp static properties support.
+ private:
+  bool invalidated_ = false;
+
+ public:
+  bool isInvalidated() const {
+    if (!JS::Prefs::experimental_legacy_regexp()) {
+      return false;
+    }
+    return invalidated_;
+  }
+
+  inline void invalidate() {
+    if (JS::Prefs::experimental_legacy_regexp()) {
+      invalidated_ = true;
+    }
+  }
+
+  inline void clearInvalidation() {
+    if (JS::Prefs::experimental_legacy_regexp()) {
+      invalidated_ = false;
+    }
+  }
+
   /*
    * Check whether a match for pair |pairNum| occurred.  If so, allocate and
    * store the match string in |*out|; otherwise place |undefined| in |*out|.
@@ -76,9 +98,9 @@ class RegExpStatics {
      * Changes to this function must also be reflected in
      * RegExpStatics::AutoRooter::trace().
      */
-    TraceNullableEdge(trc, &matchesInput, "res->matchesInput");
-    TraceNullableEdge(trc, &lazySource, "res->lazySource");
-    TraceNullableEdge(trc, &pendingInput, "res->pendingInput");
+    TraceEdge(trc, &matchesInput, "res->matchesInput");
+    TraceEdge(trc, &lazySource, "res->lazySource");
+    TraceEdge(trc, &pendingInput, "res->pendingInput");
   }
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
@@ -116,6 +138,10 @@ class RegExpStatics {
 
   static size_t offsetOfPendingLazyEvaluation() {
     return offsetof(RegExpStatics, pendingLazyEvaluation);
+  }
+
+  static size_t offsetOfInvalidated() {
+    return offsetof(RegExpStatics, invalidated_);
   }
 };
 
@@ -162,6 +188,12 @@ inline bool RegExpStatics::createLastMatch(JSContext* cx,
   if (!executeLazy(cx)) {
     return false;
   }
+
+  if (isInvalidated()) {
+    out.setUndefined();
+    return true;
+  }
+
   return makeMatch(cx, 0, out);
 }
 
@@ -169,6 +201,11 @@ inline bool RegExpStatics::createLastParen(JSContext* cx,
                                            MutableHandleValue out) {
   if (!executeLazy(cx)) {
     return false;
+  }
+
+  if (isInvalidated()) {
+    out.setUndefined();
+    return true;
   }
 
   if (matches.empty() || matches.pairCount() == 1) {
@@ -192,6 +229,11 @@ inline bool RegExpStatics::createParen(JSContext* cx, size_t pairNum,
     return false;
   }
 
+  if (isInvalidated()) {
+    out.setUndefined();
+    return true;
+  }
+
   if (matches.empty() || pairNum >= matches.pairCount()) {
     out.setString(cx->runtime()->emptyString);
     return true;
@@ -203,6 +245,11 @@ inline bool RegExpStatics::createLeftContext(JSContext* cx,
                                              MutableHandleValue out) {
   if (!executeLazy(cx)) {
     return false;
+  }
+
+  if (isInvalidated()) {
+    out.setUndefined();
+    return true;
   }
 
   if (matches.empty()) {
@@ -220,6 +267,11 @@ inline bool RegExpStatics::createRightContext(JSContext* cx,
                                               MutableHandleValue out) {
   if (!executeLazy(cx)) {
     return false;
+  }
+
+  if (isInvalidated()) {
+    out.setUndefined();
+    return true;
   }
 
   if (matches.empty()) {
@@ -242,9 +294,8 @@ inline bool RegExpStatics::updateFromMatchPairs(JSContext* cx,
   pendingLazyEvaluation = false;
   this->lazySource = nullptr;
   this->lazyIndex = size_t(-1);
-
-  BarrieredSetPair<JSString, JSLinearString>(cx->zone(), pendingInput, input,
-                                             matchesInput, input);
+  this->pendingInput = input;
+  this->matchesInput = input;
 
   if (!matches.initArrayFrom(newPairs)) {
     ReportOutOfMemory(cx);
@@ -252,6 +303,7 @@ inline bool RegExpStatics::updateFromMatchPairs(JSContext* cx,
     return false;
   }
 
+  clearInvalidation();
   return true;
 }
 

@@ -6,6 +6,7 @@
 import hashlib
 import logging
 import os
+import sys
 from optparse import OptionParser
 
 logger = logging.getLogger("checksums.py")
@@ -57,8 +58,8 @@ def process_files(dirs, output_filename, digests):
         logger.debug('Creating a new checksums file "%s"' % output_filename)
     with open(output_filename, "w+") as output:
         for d in dirs:
-            for root, dirs, files in os.walk(d):
-                for f in files:
+            for root, _, files in os.walk(d):
+                for f in sorted(files):
                     full = os.path.join(root, f)
                     rel = os.path.relpath(full, d)
 
@@ -145,7 +146,7 @@ def main():
     for i in args:
         if not os.path.isdir(i):
             logger.error("%s is not a directory" % i)
-            exit(1)
+            sys.exit(1)
 
     process_files(args, options.outfile, options.digests)
 

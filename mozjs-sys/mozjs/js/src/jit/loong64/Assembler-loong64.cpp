@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -13,20 +11,13 @@
 #include "jit/AutoWritableJitCode.h"
 #include "jit/ExecutableAllocator.h"
 #include "vm/Realm.h"
+#include "wasm/WasmFrame.h"
 
 using mozilla::DebugOnly;
 
 using namespace js;
 using namespace js::jit;
 
-// Note this is used for inter-wasm calls and may pass arguments and results
-// in floating point registers even if the system ABI does not.
-
-// TODO(loong64): Inconsistent with LoongArch's calling convention.
-// LoongArch floating-point parameters calling convention:
-//   The first eight floating-point parameters should be passed in f0-f7, and
-//   the other floating point parameters will be passed like integer parameters.
-// But we just pass the other floating-point parameters on stack here.
 ABIArg ABIArgGenerator::next(MIRType type) {
   switch (type) {
     case MIRType::Int32:
@@ -47,6 +38,14 @@ ABIArg ABIArgGenerator::next(MIRType type) {
     case MIRType::Float32:
     case MIRType::Double: {
       if (floatRegIndex_ == NumFloatArgRegs) {
+        // LoongArch floating-point parameters calling convention:
+        //   The first 8 floating-point parameters should be passed in f0-f7,
+        //   and the rest will be passed like integer parameters.
+        if (kind_ == ABIKind::System && intRegIndex_ != NumIntArgRegs) {
+          current_ = ABIArg(Register::FromCode(intRegIndex_ + a0.encoding()));
+          intRegIndex_++;
+          break;
+        }
         current_ = ABIArg(stackOffset_);
         stackOffset_ += sizeof(double);
         break;
@@ -231,7 +230,7 @@ AssemblerLOONG64::DoubleCondition AssemblerLOONG64::InvertCondition(
   }
 }
 
-AssemblerLOONG64::Condition AssemblerLOONG64::InvertCmpCondition(
+AssemblerLOONG64::Condition AssemblerLOONG64::SwapCmpOperandsCondition(
     Condition cond) {
   switch (cond) {
     case Equal:
@@ -242,9 +241,9 @@ AssemblerLOONG64::Condition AssemblerLOONG64::InvertCmpCondition(
     case LessThanOrEqual:
       return GreaterThanOrEqual;
     case GreaterThan:
-      return LessThanOrEqual;
-    case GreaterThanOrEqual:
       return LessThan;
+    case GreaterThanOrEqual:
+      return LessThanOrEqual;
     case Above:
       return Below;
     case AboveOrEqual:
@@ -2285,14 +2284,17 @@ void Assembler::bind(InstImm* inst, uintptr_t branch, uintptr_t target) {
     return;
   }
 
+  UseScratchRegisterScope temps(*this);
+
   // Generate the long jump for calls because return address has to be the
   // address after the reserved block.
   if (inst[0].encode() == inst_jirl.encode()) {
+    Register scratch = temps.Acquire();
     addLongJump(BufferOffset(branch), BufferOffset(target));
-    Assembler::WriteLoad64Instructions(inst, ScratchRegister,
+    Assembler::WriteLoad64Instructions(inst, scratch,
                                        LabelBase::INVALID_OFFSET);
     inst[3].makeNop();  // There are 1 nop.
-    inst[4] = InstImm(op_jirl, BOffImm16(0), ScratchRegister, ra);
+    inst[4] = InstImm(op_jirl, BOffImm16(0), scratch, ra);
     return;
   }
 
@@ -2314,17 +2316,19 @@ void Assembler::bind(InstImm* inst, uintptr_t branch, uintptr_t target) {
   if (inst[0].encode() == inst_beq.encode()) {
     // Handle long unconditional jump. Only four 4 instruction.
     addLongJump(BufferOffset(branch), BufferOffset(target));
-    Assembler::WriteLoad64Instructions(inst, ScratchRegister,
+    Register scratch = temps.Acquire();
+    Assembler::WriteLoad64Instructions(inst, scratch,
                                        LabelBase::INVALID_OFFSET);
-    inst[3] = InstImm(op_jirl, BOffImm16(0), ScratchRegister, zero);
+    inst[3] = InstImm(op_jirl, BOffImm16(0), scratch, zero);
   } else {
     // Handle long conditional jump.
     inst[0] = invertBranch(inst[0], BOffImm16(5 * sizeof(uint32_t)));
     // No need for a "nop" here because we can clobber scratch.
     addLongJump(BufferOffset(branch + sizeof(uint32_t)), BufferOffset(target));
-    Assembler::WriteLoad64Instructions(&inst[1], ScratchRegister,
+    Register scratch = temps.Acquire();
+    Assembler::WriteLoad64Instructions(&inst[1], scratch,
                                        LabelBase::INVALID_OFFSET);
-    inst[4] = InstImm(op_jirl, BOffImm16(0), ScratchRegister, zero);
+    inst[4] = InstImm(op_jirl, BOffImm16(0), scratch, zero);
   }
 }
 
@@ -2349,8 +2353,9 @@ void Assembler::PatchWrite_NearCall(CodeLocationLabel start,
   // - Jump has to be the same size because of PatchWrite_NearCallSize.
   // - Return address has to be at the end of replaced block.
   // Short jump wouldn't be more efficient.
-  Assembler::WriteLoad64Instructions(inst, ScratchRegister, (uint64_t)dest);
-  inst[3] = InstImm(op_jirl, BOffImm16(0), ScratchRegister, ra);
+  Assembler::WriteLoad64Instructions(inst, SavedScratchRegister,
+                                     (uint64_t)dest);
+  inst[3] = InstImm(op_jirl, BOffImm16(0), SavedScratchRegister, ra);
 }
 
 uint64_t Assembler::ExtractLoad64Value(Instruction* inst0) {
@@ -2470,10 +2475,42 @@ void Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled) {
 
   if (enabled) {
     MOZ_ASSERT((i3->extractBitField(31, 25)) != ((uint32_t)op_lu12i_w >> 25));
-    InstImm jirl = InstImm(op_jirl, BOffImm16(0), ScratchRegister, ra);
+    InstImm jirl =
+        InstImm(op_jirl, BOffImm16(0), Register::FromCode(i2->extractRD()), ra);
     *i3 = jirl;
   } else {
     InstNOP nop;
     *i3 = nop;
   }
+}
+
+UseScratchRegisterScope::UseScratchRegisterScope(Assembler& assembler)
+    : available_(assembler.GetScratchRegisterList()),
+      old_available_(*available_) {}
+
+UseScratchRegisterScope::UseScratchRegisterScope(Assembler* assembler)
+    : available_(assembler->GetScratchRegisterList()),
+      old_available_(*available_) {}
+
+UseScratchRegisterScope::~UseScratchRegisterScope() {
+  *available_ = old_available_;
+}
+
+Register UseScratchRegisterScope::Acquire() {
+  MOZ_ASSERT(available_ != nullptr);
+  MOZ_ASSERT(!available_->empty());
+  Register index = GeneralRegisterSet::FirstRegister(available_->bits());
+  available_->takeRegisterIndex(index);
+  return index;
+}
+
+void UseScratchRegisterScope::Release(const Register& reg) {
+  MOZ_ASSERT(available_ != nullptr);
+  MOZ_ASSERT(old_available_.hasRegisterIndex(reg));
+  MOZ_ASSERT(!available_->hasRegisterIndex(reg));
+  Include(GeneralRegisterSet(1 << reg.code()));
+}
+
+bool UseScratchRegisterScope::hasAvailable() const {
+  return (available_->size()) != 0;
 }

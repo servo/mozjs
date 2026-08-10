@@ -4,6 +4,7 @@
 
 
 import json
+import math
 import os
 from collections import defaultdict
 
@@ -13,18 +14,23 @@ from .base import BaseFormatter
 class ErrorSummaryFormatter(BaseFormatter):
     def __init__(self):
         self.test_to_group = {}
+        self.manifest_groups = set()
         self.groups = defaultdict(
             lambda: {
                 "status": None,
+                "group_start": None,
+                "group_end": None,
+                "all_skipped": True,
+                "test_starts": {},
                 "test_times": [],
-                "start": None,
-                "end": None,
             }
         )
+        self.test_time_divisor = 1
+        self.test_time_divisor_group = None
         self.line_count = 0
         self.dump_passing_tests = False
 
-        if os.environ.get("MOZLOG_DUMP_ALL_TESTS", False):
+        if os.environ.get("MOZLOG_DUMP_ALL_TESTS"):
             self.dump_passing_tests = True
 
     def __call__(self, data):
@@ -64,15 +70,14 @@ class ErrorSummaryFormatter(BaseFormatter):
         known_intermittent = item.get("known_intermittent", [])
 
         if test_status == "SKIP":
-            self.groups[group]["start"] = None
             if result is None:
                 result = "SKIP"
-        elif test_status == test_expected or test_status in known_intermittent:
-            # If the test status is expected, or it's a known intermittent
-            # the group has at least one passing test
-            result = "OK"
         else:
-            result = "ERROR"
+            self.groups[group]["all_skipped"] = False
+            if test_status == test_expected or test_status in known_intermittent:
+                result = "OK"
+            else:
+                result = "ERROR"
 
         return result
 
@@ -85,12 +90,27 @@ class ErrorSummaryFormatter(BaseFormatter):
 
     def suite_start(self, item):
         self.test_to_group = {v: k for k in item["tests"] for v in item["tests"][k]}
+        self.manifest_groups = set(item["tests"].keys())
+        # Initialize groups with no tests (missing manifests) with SKIP status
+        for group, tests in item["tests"].items():
+            if not tests:  # Empty test list
+                self.groups[group] = {
+                    "status": "SKIP",
+                    "group_start": None,
+                    "group_end": None,
+                    "all_skipped": True,
+                    "test_starts": {},
+                    "test_times": [],
+                }
         return self._output("test_groups", {"groups": list(item["tests"].keys())})
 
     def suite_end(self, data):
         output = []
         for group, info in self.groups.items():
-            duration = sum(info["test_times"])
+            if info["group_start"] is not None and info["group_end"] is not None:
+                duration = info["group_end"] - info["group_start"]
+            else:
+                duration = sum(info["test_times"])
 
             output.append(
                 self._output(
@@ -105,12 +125,30 @@ class ErrorSummaryFormatter(BaseFormatter):
 
         return "".join(output)
 
+    def group_start(self, item):
+        group = item["name"]
+        if group in self.manifest_groups:
+            self.groups[group]["group_start"] = item["time"]
+        else:
+            extra = item.get("extra") or {}
+            threads = extra.get("threads")
+            if threads and threads > 1:
+                self.test_time_divisor = threads
+                self.test_time_divisor_group = group
+
+    def group_end(self, item):
+        group = item["name"]
+        if group in self.manifest_groups and not self.groups[group]["all_skipped"]:
+            self.groups[group]["group_end"] = item["time"]
+        elif group == self.test_time_divisor_group:
+            self.test_time_divisor = 1
+            self.test_time_divisor_group = None
+
     def test_start(self, item):
-        group = item.get(
-            "group", self.test_to_group.get(self._clean_test_name(item["test"]), None)
-        )
-        if group and self.groups[group]["start"] is None:
-            self.groups[group]["start"] = item["time"]
+        test = self._clean_test_name(item["test"])
+        group = item.get("group", self.test_to_group.get(test, None))
+        if group:
+            self.groups[group]["test_starts"][test] = item["time"]
 
     def test_status(self, item):
         group = item.get(
@@ -130,16 +168,16 @@ class ErrorSummaryFormatter(BaseFormatter):
         )
 
     def test_end(self, item):
-        group = item.get(
-            "group", self.test_to_group.get(self._clean_test_name(item["test"]), None)
-        )
+        test = self._clean_test_name(item["test"])
+        group = item.get("group", self.test_to_group.get(test, None))
         if group:
             self.groups[group]["status"] = self._get_group_result(group, item)
-            if self.groups[group]["start"]:
+            start_time = self.groups[group]["test_starts"].pop(test, None)
+            if item["status"] != "SKIP" and start_time is not None:
+                elapsed = item["time"] - start_time
                 self.groups[group]["test_times"].append(
-                    item["time"] - self.groups[group]["start"]
+                    math.ceil(elapsed / self.test_time_divisor)
                 )
-                self.groups[group]["start"] = None
 
         if not self.dump_passing_tests and "expected" not in item:
             return
@@ -147,7 +185,7 @@ class ErrorSummaryFormatter(BaseFormatter):
         if item.get("expected", "") == "":
             item["expected"] = item["status"]
 
-        return self._output_test(self._clean_test_name(item["test"]), None, item)
+        return self._output_test(test, None, item)
 
     def log(self, item):
         if item["level"] not in ("ERROR", "CRITICAL"):
@@ -163,13 +201,11 @@ class ErrorSummaryFormatter(BaseFormatter):
             data["group"] = data["group"][0]
             self.groups[data["group"]]["status"] = "FAIL"
         else:
-            self.log(
-                {
-                    "level": "ERROR",
-                    "message": "Group '%s' was not found in known groups: %s.  Please look at item: %s"
-                    % (item["group"], self.groups, item),
-                }
-            )
+            self.log({
+                "level": "ERROR",
+                "message": "Group '%s' was not found in known groups: %s.  Please look at item: %s"
+                % (item["group"], self.groups, item),
+            })
         return self._output("log", data)
 
     def crash(self, item):

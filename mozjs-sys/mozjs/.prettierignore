@@ -8,6 +8,7 @@
 !*.xhtml
 !*.html
 !*.ts
+!*.css
 
 # Prettier currently fails to parse this.
 toolkit/components/extensions/types/ext-tabs-base.d.ts
@@ -42,6 +43,7 @@ dom/security/test/sri/script*
 # Files that are intentionally broken for tests.
 dom/base/test/file_bug687859-charset.js
 dom/base/test/file_bug687859-inherit.js
+dom/security/test/sri/file_bug_1271796.css
 parser/htmlparser/tests/mochitest/broken_xml.xhtml
 parser/htmlparser/tests/mochitest/test_bug563322.xhtml
 
@@ -84,7 +86,9 @@ toolkit/content/buildconfig.html
 toolkit/content/license.html
 toolkit/mozapps/downloads/content/unknownContentType.xhtml
 toolkit/mozapps/update/content/updateElevation.xhtml
+toolkit/profile/content/createProfileWizard.xhtml
 toolkit/profile/content/profileDowngrade.xhtml
+toolkit/profile/content/profileSelection.xhtml
 
 # Ignore non-UTF8/non-us-ascii files.
 browser/components/places/tests/browser/keyword_form.html
@@ -209,7 +213,6 @@ browser/components/textrecognition/textrecognition.html
 browser/components/urlbar/content/quicksuggestOnboarding.html
 browser/components/urlbar/tests/browser/dummy_page.html
 browser/components/urlbar/tests/browser/file_urlbar_edit_dos.html
-browser/extensions/webcompat/run.js
 browser/tools/mozscreenshots/mozscreenshots/extension/lib/controlCenter/mixed.html
 browser/tools/mozscreenshots/mozscreenshots/extension/lib/controlCenter/mixed_passive.html
 devtools/client/aboutdebugging/test/browser/test-tab-favicons.html
@@ -687,7 +690,6 @@ dom/tests/mochitest/chrome/test_intlUtils_isAppLocaleRTL.html
 dom/tests/mochitest/chrome/test_nodesFromRect.html
 dom/tests/mochitest/chrome/test_queryCaretRect.html
 dom/tests/mochitest/chrome/test_selectAtPoint.html
-dom/tests/mochitest/chrome/test_window_getRegionalPrefsLocales.html
 dom/tests/mochitest/chrome/window_focus.xhtml
 dom/tests/mochitest/general/file_clonewrapper.html
 dom/tests/mochitest/general/file_focusrings.html
@@ -829,7 +831,6 @@ image/test/mochitest/test_mq_dynamic_svg.html
 image/test/mochitest/test_svg_animatedGIF.html
 intl/uconv/tests/test_big5_encoder.html
 intl/uconv/tests/test_bug335816.html
-js/src/README.html
 js/xpconnect/tests/chrome/file_bug618176.xhtml
 layout/base/tests/accessiblecaret_magnifier.html
 layout/base/tests/bug1263288-ref.html
@@ -907,6 +908,7 @@ layout/tables/test/test_bug337124.html
 mobile/android/android-components/docs/_includes/footer.html
 mobile/android/android-components/docs/_includes/head.html
 mobile/android/android-components/docs/_layouts/home.html
+mobile/android/fenix/app/src/androidTest/assets/pages/downloads.html
 mobile/android/fenix/app/src/androidTest/assets/pages/htmlControls.html
 mobile/android/fenix/app/src/androidTest/assets/pages/trackingPage.html
 mobile/android/geckoview/src/androidTest/assets/www/accessibility/test-headings.html
@@ -1016,22 +1018,12 @@ browser/base/content/test/urlbar/file_blank_but_not_blank.html
 # Test files that are really json not js, and don't need to be linted.
 browser/components/sessionstore/test/unit/data/sessionstore_valid.js
 browser/components/sessionstore/test/unit/data/sessionstore_invalid.js
-# This file is split into two in order to keep it as a valid json file
-# for documentation purposes (policies.json) but to be accessed by the
-# code as a .sys.mjs (schema.sys.mjs)
-browser/components/enterprisepolicies/schemas/schema.sys.mjs
-# generated or library files in pocket
-browser/components/pocket/content/panels/js/tmpl.js
-browser/components/pocket/content/panels/js/vendor.bundle.js
-browser/components/pocket/content/panels/js/main.bundle.js
 # Include the Storybook config files.
 !browser/components/storybook/.storybook/
 !browser/components/storybook/.storybook/*.js
 
 # Ignore newtab files
 browser/extensions/newtab/logs/
-# JS file using the #include pre-processor macro, leading to syntax errors.
-browser/extensions/newtab/webext-glue/builtin-newtab.js
 
 # Ignore about:welcome files
 browser/components/aboutwelcome/logs/
@@ -1056,6 +1048,7 @@ devtools/client/preferences/
 
 # Ignore devtools generated code
 devtools/**/*.snapshot.mjs
+tools/profiler/tests/browser/browser_test_feature_jstracing_objtestutils.snapshot.mjs
 devtools/client/webconsole/test/node/fixtures/stubs/*.js
 !devtools/client/webconsole/test/node/fixtures/stubs/index.js
 devtools/client/shared/components/test/node/stubs/reps/*.js
@@ -1063,13 +1056,13 @@ devtools/client/shared/source-map-loader/test/browser/fixtures/*.js
 
 # Ignore devtools files testing sourcemaps / code style
 devtools/client/framework/test/code_*
-devtools/client/inspector/markup/test/events_bundle.js
+devtools/client/inspector/markup/test/events/events_bundle.js
 devtools/client/netmonitor/test/xhr_bundle.js
 devtools/client/webconsole/test/browser/code_bundle_nosource.js
 devtools/client/webconsole/test/browser/code_bundle_invalidmap.js
 devtools/client/webconsole/test/browser/test-autocomplete-mapped.js
 devtools/client/webconsole/test/browser/test-autocomplete-mapped.src.js
-devtools/client/inspector/markup/test/shadowdom_open_debugger.min.js
+devtools/client/inspector/markup/test/shadowdom/shadowdom_open_debugger.min.js
 devtools/client/webconsole/test/browser/test-click-function-to-source*.js
 devtools/client/webconsole/test/browser/test-external-script-errors.js
 devtools/client/webconsole/test/browser/test-mangled-function.*
@@ -1080,7 +1073,7 @@ devtools/server/tests/xpcshell/setBreakpoint*
 devtools/server/tests/xpcshell/sourcemapped.js
 
 # Ignore generated code from wasm-bindgen
-devtools/client/performance-new/shared/profiler_get_symbols.js
+devtools/shared/performance-new/profiler_get_symbols.js
 
 # Testing syntax error
 devtools/client/aboutdebugging/test/browser/resources/bad-extensions/invalid-json/manifest.json
@@ -1116,12 +1109,14 @@ dom/media/test/hls/*.ts
 
 # Intentional broken files
 dom/base/test/file_js_cache_syntax_error.js
+dom/base/test/file_js_cache_large_syntax_error.js
 dom/base/test/jsmodules/test_scriptNotParsedAsModule.html
 dom/base/test/jsmodules/test_syntaxError.html
 dom/base/test/jsmodules/test_syntaxErrorAsync.html
 dom/base/test/jsmodules/module_badSyntax.mjs
 dom/base/test/jsmodules/test_syntaxErrorInline.html
 dom/base/test/jsmodules/test_syntaxErrorInlineAsync.html
+dom/base/test/jsmodules/parse_error.js
 dom/base/test/test_bug687859.html
 dom/media/webrtc/tests/mochitests/identity/idp-bad.js
 dom/security/test/general/file_nonscript.json
@@ -1161,9 +1156,8 @@ mobile/android/app/geckoview-prefs.js
 mobile/android/installer/
 mobile/android/locales/
 
-# Android - Web extensions: manifest.json files may be generated by the build system.
-mobile/android/android-components/components/feature/readerview/src/main/assets/extensions/readerview/manifest.json
-mobile/android/android-components/samples/browser/src/main/assets/extensions/test/manifest.json
+# Contains pref files.
+mobile/ios/app/
 
 # Pre-processed/pref files
 modules/libpref/greprefs.js
@@ -1252,6 +1246,97 @@ browser/extensions/translations/extension/
 # "scaffolding" used by uniffi which isn't valid JS in its original form.
 toolkit/components/uniffi-bindgen-gecko-js/src/templates/js/
 toolkit/components/uniffi-bindgen-gecko-js/components/generated/*
+toolkit/components/uniffi-bindgen-gecko-js/tests/generated/*
+
+##############################################################################
+# The list below is copied from .stylelintignore. Prettier doesn't currently
+# support multiple ignore files or dynamic ignore configurations.
+# When this is implemented, we'll update the configuration below (bug 1825508)
+##############################################################################
+
+# These files are generated in some way.
+browser/components/aboutwelcome/**/*.css
+browser/components/asrouter/**/*.css
+browser/extensions/newtab/**/*.css
+browser/extensions/newtab/data/content/bundled-renderer-index.js
+
+# Note that the debugger has its own stylelint setup, but that currently
+# produces errors. Bug 1831302 tracks making this better
+devtools/client/debugger/src/components/PrimaryPanes/Outline.css
+devtools/client/debugger/src/components/PrimaryPanes/Sources.css
+devtools/client/debugger/src/components/shared/AccessibleImage.css
+devtools/client/debugger/src/utils/editor/source-editor.css
+devtools/client/debugger/test/mochitest/examples/
+
+# These get their sourcemap annotations autofixed, though they produce
+# no errors at all.
+devtools/client/inspector/rules/test/doc_sourcemaps.css
+
+# This is intended to simulate a css file generated from a scss file in order to
+# test sourcemaps.
+devtools/client/inspector/rules/test/doc_sourcemaps2.css
+
+# Some of these produce parse errors, some have sourcemaps modified.
+# They're tests, so let's just ignore all of them:
+devtools/client/inspector/computed/test/doc_sourcemaps.css
+devtools/client/inspector/rules/test/doc_copystyles.css
+devtools/client/inspector/rules/test/doc_invalid_sourcemap.css
+devtools/client/shared/sourceeditor/test/css_statemachine_testcases.css
+devtools/client/webconsole/test/browser/*.css
+devtools/shared/commands/resource/tests/style_iframe.css
+devtools/shared/commands/resource/tests/style_document.css
+
+# Style editor tests check how it copes with invalid or "special" CSS,
+# so don't try to "fix" those.
+devtools/client/styleeditor/test/**/*.css
+
+# These are empty or have funky charsets
+dom/base/test/bug466409-empty.css
+dom/encoding/test/file_utf16_be_bom.css
+dom/encoding/test/file_utf16_le_bom.css
+dom/security/test/cors/file_cors_logging_test.html.css
+dom/security/test/sri/test_bug_1271796.html
+dom/tests/mochitest/general/cssA.css
+dom/tests/mochitest/general/cssC.css
+
+# These are test-only and cause us to complain about font families or
+# similar, but we don't want to touch these tests at this point.
+dom/security/test/sri/file_bug_1271796.css
+dom/security/test/csp/file_CSP.css
+dom/security/test/sri/style2.css
+dom/xml/test/old/docbook.css
+dom/xml/test/old/toc/book.css
+dom/xml/test/old/toc/toc.css
+
+# Tests we don't want to modify at this point:
+layout/base/tests/stylesheet_change_events.css
+layout/inspector/tests/bug856317.css
+layout/inspector/tests/chrome/test_bug467669.css
+layout/inspector/tests/chrome/test_bug708874.css
+layout/style/test/gtest/example.css
+layout/style/test/mapped2.css
+layout/style/test/unstyled-frame.css
+
+# Bug 1893763
+mobile/android/android-components/components/feature/readerview/src/main/assets/extensions/readerview/readerview.css
+# Three dashes at top of file (for Jekyll?) cause syntax error:
+mobile/android/android-components/docs/assets/main.scss
+
+# Empty test files:
+netwerk/test/mochitests/test1.css
+netwerk/test/mochitests/test2.css
+
+# Has substitution gunk in it:
+python/mozbuild/mozbuild/test/backend/data/build/foo.css
+
+# This is third-party in a way:
+toolkit/components/pdfjs/content/web/debugger.css
+toolkit/components/pdfjs/content/web/viewer.css
+toolkit/components/pdfjs/content/web/viewer-geckoview.css
+build/pgo/blueprint/**/*.css
+
+# Ignore web-platform tests as they are not necessarily under our control.
+testing/web-platform/tests/
 
 ##############################################################################
 # The list below is copied from ThirdPartyPaths.txt. Prettier doesn't currently
@@ -1259,14 +1344,12 @@ toolkit/components/uniffi-bindgen-gecko-js/components/generated/*
 # When this is implemented, we'll update the configuration below (bug 1825508)
 ##############################################################################
 
-browser/components/pocket/content/panels/css/normalize.scss
-browser/components/pocket/content/panels/js/vendor/
 browser/components/storybook/node_modules/
 browser/components/topsites/content/tippytop/favicons/
 browser/components/topsites/content/tippytop/images/
 browser/extensions/formautofill/content/third-party/
 browser/extensions/formautofill/test/fixtures/third_party/
-devtools/client/inspector/markup/test/lib_*
+devtools/client/inspector/markup/test/events/lib_*
 devtools/client/jsonview/lib/require.js
 devtools/client/shared/build/babel.js
 devtools/client/shared/source-map/
@@ -1275,7 +1358,7 @@ devtools/client/shared/sourceeditor/codemirror6/
 devtools/client/shared/sourceeditor/test/cm_mode_ruby.js
 devtools/client/shared/sourceeditor/test/codemirror/
 devtools/client/shared/vendor/
-devtools/client/inspector/markup/test/helper_diff.js
+devtools/client/inspector/markup/test/events/helper_diff.js
 devtools/client/debugger/src/workers/parser/utils/parse-script-tags/
 devtools/shared/acorn/
 devtools/shared/compatibility/dataset/css-properties.json
@@ -1298,6 +1381,7 @@ dom/media/platforms/ffmpeg/ffmpeg58/
 dom/media/platforms/ffmpeg/ffmpeg59/
 dom/media/platforms/ffmpeg/ffmpeg60/
 dom/media/platforms/ffmpeg/ffmpeg61/
+dom/media/platforms/ffmpeg/ffmpeg62/
 dom/media/platforms/ffmpeg/libav53/
 dom/media/platforms/ffmpeg/libav54/
 dom/media/platforms/ffmpeg/libav55/
@@ -1410,7 +1494,6 @@ modules/zlib/
 mozglue/misc/decimal/
 mozglue/static/lz4/.*
 mozglue/tests/glibc_printf_tests/
-netwerk/dns/nsIDNKitInterface.h
 netwerk/sctp/src/
 netwerk/srtp/src/
 nsprpub/
@@ -1458,10 +1541,8 @@ toolkit/components/translations/bergamot-translator/thirdparty
 toolkit/components/translations/bergamot-translator/bergamot-translator.js
 toolkit/components/url-classifier/chromium/
 toolkit/components/utils/mozjexl.sys.mjs
-toolkit/components/viaduct/fetch_msg_types.pb.cc
-toolkit/components/viaduct/fetch_msg_types.pb.h
 toolkit/content/vendor/react/
-toolkit/content/widgets/vendor/lit.all.mjs
+toolkit/content/widgets/vendor/
 toolkit/crashreporter/breakpad-client/
 toolkit/crashreporter/google-breakpad/
 toolkit/modules/third_party/
@@ -1480,19 +1561,23 @@ rlbox/rlbox_sandbox.hpp
 ##############################################################################
 
 .gradle/
-build/vs/vs2022.yaml
 browser/components/aboutwelcome/content/aboutwelcome.bundle.js
 browser/components/aboutwelcome/logs/
 browser/components/aboutwelcome/node_modules/
+browser/components/aiwindow/models/PreferencesNavMap.sys.mjs
 browser/components/asrouter/node_modules/
 browser/components/asrouter/content/asrouter-admin.bundle.js
+browser/components/asrouter/content/components/asrouter-newtab-multistage/asrouter-newtab-multistage.bundle.js
 browser/components/asrouter/logs/
 browser/components/asrouter/content-src/schemas/BackgroundTaskMessagingExperiment.schema.json
 browser/components/asrouter/content-src/schemas/MessagingExperiment.schema.json
 browser/components/asrouter/tests/InflightAssetsMessageProvider.sys.mjs
 browser/components/asrouter/tests/NimbusRolloutMessageProvider.sys.mjs
+browser/components/backup/tests/marionette/compat-files/backups
 browser/components/storybook/storybook-static/
 browser/extensions/newtab/data/content/activity-stream.bundle.js
+browser/extensions/newtab/data/content/vendor.bundle.js
+browser/extensions/newtab/test/vendor/react-dom-test-utils.js
 browser/extensions/newtab/logs/
 browser/extensions/newtab/node_modules/
 browser/extensions/newtab/prerendered/
@@ -1516,8 +1601,8 @@ mobile/android/**/.gradle
 mobile/android/**/build
 mobile/android/**/bin
 mobile/android/**/generated
-mobile/android/**\/local.properties
-mobile/android/**\/manifest.json
+mobile/android/**/local.properties
+mobile/android/**/manifest.json
 mobile/android/android-components/components/feature/search/src/main/assets/search/search_telemetry_v2.json
 mobile/android/android-components/components/browser/engine-system/src/main/res/
 mobile/android/android-components/components/browser/errorpages/src/main/res/
@@ -1577,10 +1662,13 @@ mobile/android/android-components/components/compose/browser-toolbar/lint-baseli
 mobile/android/android-components/components/compose/cfr/lint-baseline.xml
 mobile/android/android-components/components/compose/engine/lint-baseline.xml
 mobile/android/android-components/components/compose/tabstray/lint-baseline.xml
+mobile/android/android-components/components/concept/accelerometer/lint-baseline.xml
 mobile/android/android-components/components/concept/awesomebar/lint-baseline.xml
 mobile/android/android-components/components/concept/base/lint-baseline.xml
 mobile/android/android-components/components/concept/engine/lint-baseline.xml
 mobile/android/android-components/components/concept/fetch/lint-baseline.xml
+mobile/android/android-components/components/concept/integrity/lint-baseline.xml
+mobile/android/android-components/components/concept/llm/lint-baseline.xml
 mobile/android/android-components/components/concept/menu/lint-baseline.xml
 mobile/android/android-components/components/concept/push/lint-baseline.xml
 mobile/android/android-components/components/concept/storage/lint-baseline.xml
@@ -1604,6 +1692,7 @@ mobile/android/android-components/components/feature/logins/lint-baseline.xml
 mobile/android/android-components/components/feature/media/lint-baseline.xml
 mobile/android/android-components/components/feature/privatemode/lint-baseline.xml
 mobile/android/android-components/components/feature/prompts/lint-baseline.xml
+mobile/android/android-components/components/feature/protection-dashboard/lint-baseline.xml
 mobile/android/android-components/components/feature/push/lint-baseline.xml
 mobile/android/android-components/components/feature/pwa/lint-baseline.xml
 mobile/android/android-components/components/feature/qr/lint-baseline.xml
@@ -1615,6 +1704,7 @@ mobile/android/android-components/components/feature/serviceworker/lint-baseline
 mobile/android/android-components/components/feature/session/lint-baseline.xml
 mobile/android/android-components/components/feature/share/lint-baseline.xml
 mobile/android/android-components/components/feature/sitepermissions/lint-baseline.xml
+mobile/android/android-components/components/feature/summarize/lint-baseline.xml
 mobile/android/android-components/components/feature/syncedtabs/lint-baseline.xml
 mobile/android/android-components/components/feature/tab-collections/lint-baseline.xml
 mobile/android/android-components/components/feature/tabs/lint-baseline.xml
@@ -1624,21 +1714,28 @@ mobile/android/android-components/components/feature/webauthn/lint-baseline.xml
 mobile/android/android-components/components/feature/webcompat-reporter/lint-baseline.xml
 mobile/android/android-components/components/feature/webcompat/lint-baseline.xml
 mobile/android/android-components/components/feature/webnotifications/lint-baseline.xml
+mobile/android/android-components/components/lib/accelerometer-sensormanager/lint-baseline.xml
 mobile/android/android-components/components/lib/auth/lint-baseline.xml
 mobile/android/android-components/components/lib/crash-sentry/lint-baseline.xml
 mobile/android/android-components/components/lib/crash/lint-baseline.xml
 mobile/android/android-components/components/lib/dataprotect/lint-baseline.xml
 mobile/android/android-components/components/lib/fetch-httpurlconnection/lint-baseline.xml
 mobile/android/android-components/components/lib/fetch-okhttp/lint-baseline.xml
+mobile/android/android-components/components/lib/integrity-googleplay/lint-baseline.xml
 mobile/android/android-components/components/lib/jexl/lint-baseline.xml
+mobile/android/android-components/components/lib/llm-gemininano/lint-baseline.xml
+mobile/android/android-components/components/lib/llm-mlpa/lint-baseline.xml
 mobile/android/android-components/components/lib/publicsuffixlist/lint-baseline.xml
 mobile/android/android-components/components/lib/push-firebase/lint-baseline.xml
+mobile/android/android-components/components/lib/shake/lint-baseline.xml
 mobile/android/android-components/components/lib/state/lint-baseline.xml
 mobile/android/android-components/components/service/digitalassetlinks/lint-baseline.xml
 mobile/android/android-components/components/service/firefox-accounts/lint-baseline.xml
+mobile/android/android-components/components/service/firefox-relay/lint-baseline.xml
 mobile/android/android-components/components/service/glean/lint-baseline.xml
 mobile/android/android-components/components/service/location/lint-baseline.xml
 mobile/android/android-components/components/service/mars/lint-baseline.xml
+mobile/android/android-components/components/service/merino-manifest/lint-baseline.xml
 mobile/android/android-components/components/service/nimbus/lint-baseline.xml
 mobile/android/android-components/components/service/pocket/lint-baseline.xml
 mobile/android/android-components/components/service/sync-autofill/lint-baseline.xml
@@ -1664,22 +1761,23 @@ mobile/android/android-components/components/ui/autocomplete/lint-baseline.xml
 mobile/android/android-components/components/ui/colors/lint-baseline.xml
 mobile/android/android-components/components/ui/fonts/lint-baseline.xml
 mobile/android/android-components/components/ui/icons/lint-baseline.xml
+mobile/android/android-components/components/ui/richtext/lint-baseline.xml
 mobile/android/android-components/components/ui/tabcounter/lint-baseline.xml
 mobile/android/android-components/components/ui/widgets/lint-baseline.xml
+mobile/android/android-components/samples/acorn-components/lint-baseline.xml
 mobile/android/android-components/samples/browser/lint-baseline.xml
 mobile/android/android-components/samples/compose-browser/lint-baseline.xml
 mobile/android/android-components/samples/crash/lint-baseline.xml
 mobile/android/android-components/samples/dataprotect/lint-baseline.xml
 mobile/android/android-components/samples/firefox-accounts/lint-baseline.xml
+mobile/android/android-components/samples/firefox-relay/lint-baseline.xml
 mobile/android/android-components/samples/glean/lint-baseline.xml
 mobile/android/android-components/samples/glean/samples-glean-library/lint-baseline.xml
 mobile/android/android-components/samples/sync-logins/lint-baseline.xml
 mobile/android/android-components/samples/sync/lint-baseline.xml
 mobile/android/android-components/samples/toolbar/lint-baseline.xml
 mobile/android/fenix/app/lint-baseline.xml
-mobile/android/fenix/app/src/debug/res/raw/initial_experiments.json
 mobile/android/fenix/app/src/main/res/
-mobile/android/fenix/app/src/main/res/raw/initial_experiments.json
 mobile/android/fenix/config/detekt-baseline.xml
 mobile/android/fenix/gradle/wrapper/
 mobile/android/focus-android/app/lint-baseline.xml
@@ -1690,7 +1788,6 @@ mobile/locales/l10n-changesets.json
 mobile/locales/l10n-onchange-changesets.json
 node_modules/
 python/mozperftest/mozperftest/tests/data/
-security/manager/tools/KnownRootHashes.json
 security/manager/tools/PreloadedHPKPins.json
 services/settings/dumps/
 toolkit/components/nimbus/schemas/ExperimentFeature.schema.json
@@ -1703,8 +1800,8 @@ toolkit/components/uniffi-bindgen-gecko-js/fixtures/generated
 tools/@types/generated/
 tools/@types/subs/
 tools/browsertime/package.json
-tools/browsertime/package-lock.json
 tools/ts/error_list.json
 tools/ts/test/baselines/
 try_task_config.json
 xpcom/idl-parser/xpidl/fixtures/xpctest.d.json
+**/package-lock.json

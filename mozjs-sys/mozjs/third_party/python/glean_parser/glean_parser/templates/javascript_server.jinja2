@@ -126,7 +126,7 @@ class {{ ping|event_class_name(metrics_by_type) }} {
     const now = new Date();
     const timestamp = now.toISOString();
     {% if 'event' in metrics_by_type %}
-    event.timestamp = now.getTime();
+    event.timestamp = 0;
     {% endif %}
     const eventPayload = {
       metrics: {

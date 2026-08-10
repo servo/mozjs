@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,7 +30,10 @@ class TypeDef;
 // definitions. Rethink this if we have more than several type definitions.
 struct StaticTypeDefs {
   static const TypeDef* arrayMutI16;
-  static const TypeDef* jsTag;
+  static const TypeDef* jsExceptionTag;
+#ifdef ENABLE_WASM_JSPI
+  static const TypeDef* jsPromiseTag;
+#endif
 
   [[nodiscard]] static bool init();
   static void destroy();

@@ -9,18 +9,19 @@ import subprocess
 import tarfile
 import tempfile
 import zipfile
+from email.utils import format_datetime
 
 import mozfile
 import mozpack.path as mozpath
 from mozilla_version.gecko import GeckoVersion
 
 from mozbuild.repackaging.utils import (
+    application_ini_data_from_tar,
     copy_plain_config,
     get_build_variables,
     inject_desktop_entry_file,
     inject_distribution_folder,
     inject_prefs_file,
-    load_application_ini_data,
     mv_manpage_files,
     render_templates,
 )
@@ -79,7 +80,7 @@ def repackage_deb(
     arch,
     version,
     build_number,
-    release_product,
+    product,
     release_type,
     fluent_localization,
     fluent_resource_loader,
@@ -91,13 +92,25 @@ def repackage_deb(
     source_dir = os.path.join(tmpdir, "source")
     try:
         mozfile.extract_tarball(infile, source_dir)
-        application_ini_data = _load_application_ini_data(infile, version, build_number)
+        extracted = os.listdir(source_dir)
+        if len(extracted) != 1:
+            raise Exception(
+                f"Input file {infile} didn't extract to a single directory."
+            )
+        app_name = extracted[0]
+        application_ini_data = application_ini_data_from_tar(infile)
+        pkg_version = _get_deb_pkg_version(
+            version, application_ini_data["build_id"], build_number
+        )
         build_variables = get_build_variables(
             application_ini_data,
             _DEB_ARCH[arch],
-            application_ini_data["pkg_version"],
-            depends="${shlibs:Depends},",
-            release_product=release_product,
+            pkg_version,
+            product=product,
+        )
+        build_variables["DEPENDS"] = "${shlibs:Depends},"
+        build_variables["CHANGELOG_DATE"] = format_datetime(
+            build_variables["TIMESTAMP"]
         )
 
         deb_dir = mozpath.join(source_dir, "debian")
@@ -110,10 +123,7 @@ def repackage_deb(
             exclude_file_names=["package-prefs.js"],
         )
 
-        app_name = application_ini_data["name"]
-        with open(
-            mozpath.join(source_dir, app_name.lower(), "is-packaged-app"), "w"
-        ) as f:
+        with open(mozpath.join(source_dir, app_name, "is-packaged-app"), "w") as f:
             f.write("This is a packaged app.\n")
 
         inject_distribution_folder(source_dir, "debian", app_name)
@@ -121,7 +131,7 @@ def repackage_deb(
             log,
             deb_dir,
             build_variables,
-            release_product,
+            product,
             release_type,
             fluent_localization,
             fluent_resource_loader,
@@ -147,7 +157,7 @@ def repackage_deb_l10n(
     template_dir,
     version,
     build_number,
-    release_product,
+    product,
     extensions_dir,
 ):
     arch = "all"
@@ -157,16 +167,27 @@ def repackage_deb_l10n(
     try:
         langpack_metadata = _extract_langpack_metadata(input_xpi_file)
         langpack_dir = mozpath.join(source_dir, extensions_dir)
-        application_ini_data = _load_application_ini_data(
-            input_tar_file, version, build_number
+        application_ini_data = application_ini_data_from_tar(input_tar_file)
+        pkg_version = _get_deb_pkg_version(
+            version, application_ini_data["build_id"], build_number
         )
         langpack_id = langpack_metadata["langpack_id"]
-        if release_product == "devedition":
+        build_variables = get_build_variables(
+            application_ini_data,
+            _DEB_ARCH[arch],
+            pkg_version,
+            # Debian package names are only lowercase
+            package_name_suffix=f"-l10n-{langpack_id.lower()}",
+            description_suffix=f" - {langpack_metadata['description']}",
+            product=product,
+        )
+
+        if product == "devedition":
             depends_package = "firefox-devedition"
         else:
             depends_package = application_ini_data["remoting_name"]
 
-        depends_version = application_ini_data["pkg_version"]
+        depends_version = build_variables["PKG_VERSION"]
 
         # Thunderbird prepends epoch 1 to the version number to prevent
         # accidental downgrading to Thunderbird .debs in non-Mozilla APT
@@ -178,15 +199,9 @@ def repackage_deb_l10n(
 
         depends = f"{depends_package} (= {depends_version})"
 
-        build_variables = get_build_variables(
-            application_ini_data,
-            _DEB_ARCH[arch],
-            application_ini_data["pkg_version"],
-            depends=depends,
-            # Debian package names are only lowercase
-            package_name_suffix=f"-l10n-{langpack_id.lower()}",
-            description_suffix=f" - {langpack_metadata['description']}",
-            release_product=release_product,
+        build_variables["DEPENDS"] = depends
+        build_variables["CHANGELOG_DATE"] = format_datetime(
+            build_variables["TIMESTAMP"]
         )
 
         deb_dir = mozpath.join(source_dir, "debian")
@@ -211,17 +226,6 @@ def repackage_deb_l10n(
         )
     finally:
         shutil.rmtree(tmpdir)
-
-
-def _load_application_ini_data(infile, version, build_number):
-    application_ini_data = load_application_ini_data(infile, version, build_number)
-
-    # Replace the pkg_version with the Debian version format
-    application_ini_data["pkg_version"] = _get_deb_pkg_version(
-        version, application_ini_data["build_id"], build_number
-    )
-
-    return application_ini_data
 
 
 def _get_deb_pkg_version(version, build_id, build_number):
@@ -256,7 +260,7 @@ def _get_command(arch):
     deb_arch = _DEB_ARCH[arch]
     command = [
         "dpkg-buildpackage",
-        # TODO: Use long options once we stop supporting Debian Jesse. They're more
+        # TODO: Use long options once we stop supporting Debian Jessie. They're more
         # explicit.
         #
         # Long options were added in dpkg 1.18.8 which is part of Debian Stretch.

@@ -1,10 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/MIRGraph.h"
+
+#include "mozilla/HashFunctions.h"
 
 #include "jit/CompileInfo.h"
 #include "jit/InlineScriptTree.h"
@@ -18,6 +18,8 @@
 using namespace js;
 using namespace js::jit;
 
+using mozilla::DebugOnly;
+
 MIRGenerator::MIRGenerator(CompileRealm* realm,
                            const JitCompileOptions& options,
                            TempAllocator* alloc, MIRGraph* graph,
@@ -28,6 +30,7 @@ MIRGenerator::MIRGenerator(CompileRealm* realm,
       runtime(realm ? realm->runtime() : nullptr),
       outerInfo_(info),
       optimizationInfo_(optimizationInfo),
+      wasmCodeMeta_(wasmCodeMeta),
       alloc_(alloc),
       graph_(graph),
       offThreadStatus_(Ok()),
@@ -41,9 +44,8 @@ MIRGenerator::MIRGenerator(CompileRealm* realm,
                                    : false),
       bigIntsCanBeInNursery_(realm ? realm->zone()->canNurseryAllocateBigInts()
                                    : false),
-      minWasmMemory0Length_(0),
       options(options),
-      gs_(alloc, wasmCodeMeta) {}
+      jitSpewer_(alloc, wasmCodeMeta) {}
 
 bool MIRGenerator::licmEnabled() const {
   return optimizationInfo().licmEnabled() && !disableLICM_ &&
@@ -72,6 +74,54 @@ mozilla::GenericErrorResult<AbortReason> MIRGenerator::abort(AbortReason r) {
     }
   }
   return Err(std::move(r));
+}
+
+void MIRGenerator::spewBeginFunction(JSScript* function) {
+  jitSpewer_.init(&graph(), function);
+  jitSpewer_.beginFunction(function);
+#ifdef JS_JITSPEW
+  if (graphSpewer_) {
+    graphSpewer_->beginFunction(function);
+  }
+#endif
+  perfSpewer().startRecording();
+}
+
+void MIRGenerator::spewBeginWasmFunction(unsigned funcIndex) {
+  jitSpewer_.init(&graph(), nullptr);
+  jitSpewer_.beginWasmFunction(funcIndex);
+#ifdef JS_JITSPEW
+  if (graphSpewer_) {
+    graphSpewer_->beginWasmFunction(funcIndex);
+  }
+#endif
+  perfSpewer().startRecording(wasmCodeMeta_);
+}
+
+void MIRGenerator::spewPass(const char* name, BacktrackingAllocator* ra) {
+  jitSpewer_.spewPass(name, ra);
+#ifdef JS_JITSPEW
+  if (graphSpewer_) {
+    graphSpewer_->spewPass(name, &graph(), ra);
+  }
+#endif
+  perfSpewer().recordPass(name, &graph(), ra);
+}
+
+void MIRGenerator::spewEndFunction() {
+  jitSpewer_.endFunction();
+#ifdef JS_JITSPEW
+  if (graphSpewer_) {
+    graphSpewer_->endFunction();
+  }
+#endif
+  perfSpewer().endRecording();
+}
+
+AutoSpewEndFunction::~AutoSpewEndFunction() {
+  if (mir_) {
+    mir_->spewEndFunction();
+  }
 }
 
 mozilla::GenericErrorResult<AbortReason> MIRGenerator::abortFmt(
@@ -748,7 +798,7 @@ MConstant* MBasicBlock::optimizedOutConstant(TempAllocator& alloc) {
     return ins->toConstant();
   }
 
-  MConstant* constant = MConstant::New(alloc, MagicValue(JS_OPTIMIZED_OUT));
+  MConstant* constant = MConstant::NewMagic(alloc, JS_OPTIMIZED_OUT);
   insertBefore(ins, constant);
   return constant;
 }
@@ -1416,4 +1466,689 @@ void MBasicBlock::dump() {
   Fprinter out(stderr);
   dump(out);
   out.finish();
+}
+
+#ifdef DEBUG
+static bool CheckSuccessorImpliesPredecessor(MBasicBlock* A, MBasicBlock* B) {
+  // Assuming B = succ(A), verify A = pred(B).
+  for (size_t i = 0; i < B->numPredecessors(); i++) {
+    if (A == B->getPredecessor(i)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+static bool CheckPredecessorImpliesSuccessor(MBasicBlock* A, MBasicBlock* B) {
+  // Assuming B = pred(A), verify A = succ(B).
+  for (size_t i = 0; i < B->numSuccessors(); i++) {
+    if (A == B->getSuccessor(i)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// If you have issues with the usesBalance assertions, then define the macro
+// _DEBUG_CHECK_OPERANDS_USES_BALANCE to spew information on the error output.
+// This output can then be processed with the following awk script to filter and
+// highlight which checks are missing or if there is an unexpected operand /
+// use.
+//
+// define _DEBUG_CHECK_OPERANDS_USES_BALANCE 1
+/*
+
+$ ./js 2>stderr.log
+$ gawk '
+    /^==Check/ { context = ""; state = $2; }
+    /^[a-z]/ { context = context "\n\t" $0; }
+    /^==End/ {
+      if (state == "Operand") {
+        list[context] = list[context] - 1;
+      } else if (state == "Use") {
+        list[context] = list[context] + 1;
+      }
+    }
+    END {
+      for (ctx in list) {
+        if (list[ctx] > 0) {
+          print "Missing operand check", ctx, "\n"
+        }
+        if (list[ctx] < 0) {
+          print "Missing use check", ctx, "\n"
+        }
+      };
+    }'  < stderr.log
+
+*/
+
+static void CheckOperand(const MNode* consumer, const MUse* use,
+                         int32_t* usesBalance) {
+  MOZ_ASSERT(use->hasProducer());
+  MDefinition* producer = use->producer();
+  MOZ_ASSERT(!producer->isDiscarded());
+  MOZ_ASSERT(producer->block() != nullptr);
+  MOZ_ASSERT(use->consumer() == consumer);
+#  ifdef _DEBUG_CHECK_OPERANDS_USES_BALANCE
+  Fprinter print(stderr);
+  print.printf("==Check Operand\n");
+  use->producer()->dump(print);
+  print.printf("  index: %zu\n", use->consumer()->indexOf(use));
+  use->consumer()->dump(print);
+  print.printf("==End\n");
+#  endif
+  --*usesBalance;
+}
+
+static void CheckUse(const MDefinition* producer, const MUse* use,
+                     int32_t* usesBalance) {
+  MOZ_ASSERT(!use->consumer()->block()->isDead());
+  MOZ_ASSERT_IF(use->consumer()->isDefinition(),
+                !use->consumer()->toDefinition()->isDiscarded());
+  MOZ_ASSERT(use->consumer()->block() != nullptr);
+  MOZ_ASSERT(use->consumer()->getOperand(use->index()) == producer);
+#  ifdef _DEBUG_CHECK_OPERANDS_USES_BALANCE
+  Fprinter print(stderr);
+  print.printf("==Check Use\n");
+  use->producer()->dump(print);
+  print.printf("  index: %zu\n", use->consumer()->indexOf(use));
+  use->consumer()->dump(print);
+  print.printf("==End\n");
+#  endif
+  ++*usesBalance;
+}
+
+// To properly encode entry resume points, we have to ensure that all the
+// operands of the entry resume point are located before the safeInsertTop
+// location.
+static void AssertOperandsBeforeSafeInsertTop(MResumePoint* resume) {
+  MBasicBlock* block = resume->block();
+  if (block == block->graph().osrBlock()) {
+    return;
+  }
+  MInstruction* stop = block->safeInsertTop();
+  for (size_t i = 0, e = resume->numOperands(); i < e; ++i) {
+    MDefinition* def = resume->getOperand(i);
+    if (def->block() != block) {
+      continue;
+    }
+    if (def->isPhi()) {
+      continue;
+    }
+
+    for (MInstructionIterator ins = block->begin(); true; ins++) {
+      if (*ins == def) {
+        break;
+      }
+      MOZ_ASSERT(
+          *ins != stop,
+          "Resume point operand located after the safeInsertTop location");
+    }
+  }
+}
+#endif  // DEBUG
+
+void jit::AssertBasicGraphCoherency(MIRGraph& graph, bool force) {
+#ifdef DEBUG
+  if (!JitOptions.fullDebugChecks && !force) {
+    return;
+  }
+
+  MOZ_ASSERT(graph.entryBlock()->numPredecessors() == 0);
+  MOZ_ASSERT(graph.entryBlock()->phisEmpty());
+  MOZ_ASSERT(!graph.entryBlock()->unreachable());
+
+  if (MBasicBlock* osrBlock = graph.osrBlock()) {
+    MOZ_ASSERT(osrBlock->numPredecessors() == 0);
+    MOZ_ASSERT(osrBlock->phisEmpty());
+    MOZ_ASSERT(osrBlock != graph.entryBlock());
+    MOZ_ASSERT(!osrBlock->unreachable());
+  }
+
+  if (MResumePoint* resumePoint = graph.entryResumePoint()) {
+    MOZ_ASSERT(resumePoint->block() == graph.entryBlock());
+  }
+
+  // Assert successor and predecessor list coherency.
+  uint32_t count = 0;
+  int32_t usesBalance = 0;
+  for (MBasicBlockIterator block(graph.begin()); block != graph.end();
+       block++) {
+    count++;
+
+    MOZ_ASSERT(&block->graph() == &graph);
+    MOZ_ASSERT(!block->isDead());
+    MOZ_ASSERT_IF(block->outerResumePoint() != nullptr,
+                  block->entryResumePoint() != nullptr);
+
+    for (size_t i = 0; i < block->numSuccessors(); i++) {
+      MOZ_ASSERT(
+          CheckSuccessorImpliesPredecessor(*block, block->getSuccessor(i)));
+    }
+
+    for (size_t i = 0; i < block->numPredecessors(); i++) {
+      MOZ_ASSERT(
+          CheckPredecessorImpliesSuccessor(*block, block->getPredecessor(i)));
+    }
+
+    if (MResumePoint* resume = block->entryResumePoint()) {
+      MOZ_ASSERT(!resume->instruction());
+      MOZ_ASSERT(resume->block() == *block);
+      AssertOperandsBeforeSafeInsertTop(resume);
+    }
+    if (MResumePoint* resume = block->outerResumePoint()) {
+      MOZ_ASSERT(!resume->instruction());
+      MOZ_ASSERT(resume->block() == *block);
+    }
+    for (MResumePointIterator iter(block->resumePointsBegin());
+         iter != block->resumePointsEnd(); iter++) {
+      // We cannot yet assert that is there is no instruction then this is
+      // the entry resume point because we are still storing resume points
+      // in the InlinePropertyTable.
+      MOZ_ASSERT_IF(iter->instruction(),
+                    iter->instruction()->block() == *block);
+      for (uint32_t i = 0, e = iter->numOperands(); i < e; i++) {
+        CheckOperand(*iter, iter->getUseFor(i), &usesBalance);
+      }
+    }
+    for (MPhiIterator phi(block->phisBegin()); phi != block->phisEnd(); phi++) {
+      MOZ_ASSERT(phi->numOperands() == block->numPredecessors());
+      MOZ_ASSERT(!phi->isRecoveredOnBailout());
+      MOZ_ASSERT(phi->type() != MIRType::None);
+      MOZ_ASSERT(phi->dependency() == nullptr);
+    }
+    for (MDefinitionIterator iter(*block); iter; iter++) {
+      MOZ_ASSERT(iter->block() == *block);
+      MOZ_ASSERT_IF(iter->hasUses(), iter->type() != MIRType::None);
+      MOZ_ASSERT(!iter->isDiscarded());
+      MOZ_ASSERT_IF(iter->isStart(),
+                    *block == graph.entryBlock() || *block == graph.osrBlock());
+      MOZ_ASSERT_IF(iter->isParameter(),
+                    *block == graph.entryBlock() || *block == graph.osrBlock());
+      MOZ_ASSERT_IF(iter->isOsrEntry(), *block == graph.osrBlock());
+      MOZ_ASSERT_IF(iter->isOsrValue(), *block == graph.osrBlock());
+
+      // Assert that use chains are valid for this instruction.
+      for (uint32_t i = 0, end = iter->numOperands(); i < end; i++) {
+        CheckOperand(*iter, iter->getUseFor(i), &usesBalance);
+      }
+      for (MUseIterator use(iter->usesBegin()); use != iter->usesEnd(); use++) {
+        CheckUse(*iter, *use, &usesBalance);
+      }
+
+      if (iter->isInstruction()) {
+        if (MResumePoint* resume = iter->toInstruction()->resumePoint()) {
+          MOZ_ASSERT(resume->instruction() == *iter);
+          MOZ_ASSERT(resume->block() == *block);
+          MOZ_ASSERT(resume->block()->entryResumePoint() != nullptr);
+        }
+      }
+
+      if (iter->isRecoveredOnBailout()) {
+        MOZ_ASSERT(!iter->hasLiveDefUses());
+      }
+    }
+
+    // The control instruction is not visited by the MDefinitionIterator.
+    MControlInstruction* control = block->lastIns();
+    MOZ_ASSERT(control->block() == *block);
+    MOZ_ASSERT(!control->hasUses());
+    MOZ_ASSERT(control->type() == MIRType::None);
+    MOZ_ASSERT(!control->isDiscarded());
+    MOZ_ASSERT(!control->isRecoveredOnBailout());
+    MOZ_ASSERT(control->resumePoint() == nullptr);
+    for (uint32_t i = 0, end = control->numOperands(); i < end; i++) {
+      CheckOperand(control, control->getUseFor(i), &usesBalance);
+    }
+    for (size_t i = 0; i < control->numSuccessors(); i++) {
+      MOZ_ASSERT(control->getSuccessor(i));
+    }
+  }
+
+  // In case issues, see the _DEBUG_CHECK_OPERANDS_USES_BALANCE macro above.
+  MOZ_ASSERT(usesBalance <= 0, "More use checks than operand checks");
+  MOZ_ASSERT(usesBalance >= 0, "More operand checks than use checks");
+  MOZ_ASSERT(graph.numBlocks() == count);
+#endif
+}
+
+#ifdef DEBUG
+static void AssertReversePostorder(MIRGraph& graph) {
+  // Check that every block is visited after all its predecessors (except
+  // backedges).
+  for (ReversePostorderIterator iter(graph.rpoBegin()); iter != graph.rpoEnd();
+       ++iter) {
+    MBasicBlock* block = *iter;
+    MOZ_ASSERT(!block->isMarked());
+
+    for (size_t i = 0; i < block->numPredecessors(); i++) {
+      MBasicBlock* pred = block->getPredecessor(i);
+      if (!pred->isMarked()) {
+        MOZ_ASSERT(pred->isLoopBackedge());
+        MOZ_ASSERT(block->backedge() == pred);
+      }
+    }
+
+    block->mark();
+  }
+
+  graph.unmarkBlocks();
+}
+#endif
+
+#ifdef DEBUG
+static void AssertDominatorTree(MIRGraph& graph) {
+  // Check dominators.
+
+  MOZ_ASSERT(graph.entryBlock()->immediateDominator() == graph.entryBlock());
+  if (MBasicBlock* osrBlock = graph.osrBlock()) {
+    MOZ_ASSERT(osrBlock->immediateDominator() == osrBlock);
+  } else {
+    MOZ_ASSERT(graph.entryBlock()->numDominated() == graph.numBlocks());
+  }
+
+  size_t i = graph.numBlocks();
+  size_t totalNumDominated = 0;
+  for (MBasicBlockIterator block(graph.begin()); block != graph.end();
+       block++) {
+    MOZ_ASSERT(block->dominates(*block));
+
+    MBasicBlock* idom = block->immediateDominator();
+    MOZ_ASSERT(idom->dominates(*block));
+    MOZ_ASSERT(idom == *block || idom->id() < block->id());
+
+    if (idom == *block) {
+      totalNumDominated += block->numDominated();
+    } else {
+      bool foundInParent = false;
+      for (size_t j = 0; j < idom->numImmediatelyDominatedBlocks(); j++) {
+        if (idom->getImmediatelyDominatedBlock(j) == *block) {
+          foundInParent = true;
+          break;
+        }
+      }
+      MOZ_ASSERT(foundInParent);
+    }
+
+    size_t numDominated = 1;
+    for (size_t j = 0; j < block->numImmediatelyDominatedBlocks(); j++) {
+      MBasicBlock* dom = block->getImmediatelyDominatedBlock(j);
+      MOZ_ASSERT(block->dominates(dom));
+      MOZ_ASSERT(dom->id() > block->id());
+      MOZ_ASSERT(dom->immediateDominator() == *block);
+
+      numDominated += dom->numDominated();
+    }
+    MOZ_ASSERT(block->numDominated() == numDominated);
+    MOZ_ASSERT(block->numDominated() <= i);
+    MOZ_ASSERT(block->numSuccessors() != 0 || block->numDominated() == 1);
+    i--;
+  }
+  MOZ_ASSERT(i == 0);
+  MOZ_ASSERT(totalNumDominated == graph.numBlocks());
+}
+#endif
+
+void jit::AssertGraphCoherency(MIRGraph& graph, bool force) {
+#ifdef DEBUG
+  if (!JitOptions.checkGraphConsistency) {
+    return;
+  }
+  if (!JitOptions.fullDebugChecks && !force) {
+    return;
+  }
+  AssertBasicGraphCoherency(graph, force);
+  AssertReversePostorder(graph);
+#endif
+}
+
+#ifdef DEBUG
+static bool IsResumableMIRType(MIRType type) {
+  // see CodeGeneratorShared::encodeAllocation
+  switch (type) {
+    case MIRType::Undefined:
+    case MIRType::Null:
+    case MIRType::Boolean:
+    case MIRType::Int32:
+    case MIRType::Double:
+    case MIRType::Float32:
+    case MIRType::String:
+    case MIRType::Symbol:
+    case MIRType::BigInt:
+    case MIRType::Object:
+    case MIRType::Shape:
+    case MIRType::MagicOptimizedOut:
+    case MIRType::MagicUninitializedLexical:
+    case MIRType::MagicIsConstructing:
+    case MIRType::Value:
+    case MIRType::Int64:
+    case MIRType::IntPtr:
+      return true;
+
+    case MIRType::Simd128:
+    case MIRType::MagicHole:
+    case MIRType::None:
+    case MIRType::Slots:
+    case MIRType::Elements:
+    case MIRType::Pointer:
+    case MIRType::WasmAnyRef:
+    case MIRType::WasmStructData:
+    case MIRType::WasmArrayData:
+    case MIRType::StackResults:
+      return false;
+  }
+  MOZ_CRASH("Unknown MIRType.");
+}
+
+static void AssertResumableOperands(MNode* node) {
+  for (size_t i = 0, e = node->numOperands(); i < e; ++i) {
+    MDefinition* op = node->getOperand(i);
+    if (op->isRecoveredOnBailout()) {
+      continue;
+    }
+    MOZ_ASSERT(IsResumableMIRType(op->type()),
+               "Resume point cannot encode its operands");
+  }
+}
+
+static void AssertIfResumableInstruction(MDefinition* def) {
+  if (!def->isRecoveredOnBailout()) {
+    return;
+  }
+  AssertResumableOperands(def);
+}
+
+static void AssertResumePointDominatedByOperands(MResumePoint* resume) {
+  for (size_t i = 0, e = resume->numOperands(); i < e; ++i) {
+    MDefinition* op = resume->getOperand(i);
+    MOZ_ASSERT(op->block()->dominates(resume->block()),
+               "Resume point is not dominated by its operands");
+  }
+}
+#endif  // DEBUG
+
+// Checks the basic GraphCoherency but also other conditions that
+// do not hold immediately (such as the fact that critical edges
+// are split, or conditions related to wasm semantics)
+void jit::AssertExtendedGraphCoherency(MIRGraph& graph, bool underValueNumberer,
+                                       bool force) {
+#ifdef DEBUG
+  if (!JitOptions.checkGraphConsistency) {
+    return;
+  }
+  if (!JitOptions.fullDebugChecks && !force) {
+    return;
+  }
+
+  AssertGraphCoherency(graph, force);
+
+  AssertDominatorTree(graph);
+
+  DebugOnly<uint32_t> idx = 0;
+  for (MBasicBlockIterator block(graph.begin()); block != graph.end();
+       block++) {
+    MOZ_ASSERT(block->id() == idx);
+    ++idx;
+
+    // No critical edges:
+    if (block->numSuccessors() > 1) {
+      for (size_t i = 0; i < block->numSuccessors(); i++) {
+        MOZ_ASSERT(block->getSuccessor(i)->numPredecessors() == 1);
+      }
+    }
+
+    if (block->isLoopHeader()) {
+      if (underValueNumberer && block->numPredecessors() == 3) {
+        // Fixup block.
+        MOZ_ASSERT(block->getPredecessor(1)->numPredecessors() == 0);
+        MOZ_ASSERT(graph.osrBlock(),
+                   "Fixup blocks should only exists if we have an osr block.");
+      } else {
+        MOZ_ASSERT(block->numPredecessors() == 2);
+      }
+      MBasicBlock* backedge = block->backedge();
+      MOZ_ASSERT(backedge->id() >= block->id());
+      MOZ_ASSERT(backedge->numSuccessors() == 1);
+      MOZ_ASSERT(backedge->getSuccessor(0) == *block);
+    }
+
+    if (!block->phisEmpty()) {
+      for (size_t i = 0; i < block->numPredecessors(); i++) {
+        MBasicBlock* pred = block->getPredecessor(i);
+        MOZ_ASSERT(pred->successorWithPhis() == *block);
+        MOZ_ASSERT(pred->positionInPhiSuccessor() == i);
+      }
+    }
+
+    uint32_t successorWithPhis = 0;
+    for (size_t i = 0; i < block->numSuccessors(); i++) {
+      if (!block->getSuccessor(i)->phisEmpty()) {
+        successorWithPhis++;
+      }
+    }
+
+    MOZ_ASSERT(successorWithPhis <= 1);
+    MOZ_ASSERT((successorWithPhis != 0) ==
+               (block->successorWithPhis() != nullptr));
+
+    // Verify that phi operands dominate the corresponding CFG predecessor
+    // edges.
+    for (MPhiIterator iter(block->phisBegin()), end(block->phisEnd());
+         iter != end; ++iter) {
+      MPhi* phi = *iter;
+      for (size_t i = 0, e = phi->numOperands(); i < e; ++i) {
+        MOZ_ASSERT(
+            phi->getOperand(i)->block()->dominates(block->getPredecessor(i)),
+            "Phi input is not dominated by its operand");
+      }
+    }
+
+    // Verify that instructions are dominated by their operands.
+    for (MInstruction* ins : **block) {
+      for (size_t i = 0, e = ins->numOperands(); i < e; ++i) {
+        MDefinition* op = ins->getOperand(i);
+        MOZ_ASSERT(op->dominates(ins),
+                   "instruction is not dominated by its operands");
+      }
+      AssertIfResumableInstruction(ins);
+      if (MResumePoint* resume = ins->resumePoint()) {
+        AssertResumePointDominatedByOperands(resume);
+        AssertResumableOperands(resume);
+      }
+    }
+
+    // Verify that the block resume points are dominated by their operands.
+    if (MResumePoint* resume = block->entryResumePoint()) {
+      AssertResumePointDominatedByOperands(resume);
+      AssertResumableOperands(resume);
+    }
+    if (MResumePoint* resume = block->outerResumePoint()) {
+      AssertResumePointDominatedByOperands(resume);
+      AssertResumableOperands(resume);
+    }
+
+    // Verify that any nodes with a wasm ref type have MIRType WasmAnyRef.
+    for (MDefinitionIterator def(*block); def; def++) {
+      MOZ_ASSERT_IF(def->wasmRefType().isSome(),
+                    def->type() == MIRType::WasmAnyRef);
+    }
+  }
+#endif
+}
+
+void jit::DumpHashedPointer(GenericPrinter& out, const void* p) {
+#ifdef JS_JITSPEW
+  if (!p) {
+    out.printf("NULL");
+    return;
+  }
+  char tab[27] = "abcdefghijklmnopqrstuvwxyz";
+  MOZ_ASSERT(tab[26] == '\0');
+  mozilla::HashNumber hash = mozilla::AddToHash(mozilla::HashNumber(0), p);
+  hash %= (26 * 26 * 26 * 26 * 26);
+  char buf[6];
+  for (int i = 0; i <= 4; i++) {
+    buf[i] = tab[hash % 26];
+    hash /= 26;
+  }
+  buf[5] = '\0';
+  out.printf("%s", buf);
+#endif
+}
+
+void jit::DumpMIRDefinitionID(GenericPrinter& out, const MDefinition* def,
+                              bool showDetails) {
+#ifdef JS_JITSPEW
+  if (!def) {
+    out.printf("(null)");
+    return;
+  }
+  if (showDetails) {
+    DumpHashedPointer(out, def);
+    out.printf(".");
+  }
+  out.printf("%u", def->id());
+#endif
+}
+
+void jit::DumpMIRDefinition(GenericPrinter& out, const MDefinition* def,
+                            bool showDetails) {
+#ifdef JS_JITSPEW
+  DumpMIRDefinitionID(out, def, showDetails);
+  out.printf(" = %s.", StringFromMIRType(def->type()));
+  if (def->isConstant()) {
+    def->printOpcode(out);
+  } else {
+    MDefinition::PrintOpcodeName(out, def->op());
+  }
+
+  // Get any extra bits of text that the MIR node wants to show us.  Both the
+  // vector and the strings added to it belong to this function, so both will
+  // be automatically freed at exit.
+  ExtrasCollector extras;
+  def->getExtras(&extras);
+  for (size_t i = 0; i < extras.count(); i++) {
+    out.printf(" %s", extras.get(i).get());
+  }
+
+  for (size_t i = 0; i < def->numOperands(); i++) {
+    out.printf(" ");
+    DumpMIRDefinitionID(out, def->getOperand(i), showDetails);
+  }
+
+  if (def->dependency() && showDetails) {
+    out.printf(" DEP=");
+    DumpMIRDefinitionID(out, def->dependency(), showDetails);
+  }
+
+  if (def->hasUses()) {
+    out.printf("   uses=");
+    bool first = true;
+    for (auto use = def->usesBegin(); use != def->usesEnd(); use++) {
+      MNode* consumer = (*use)->consumer();
+      if (!first) {
+        out.printf(",");
+      }
+      if (consumer->isDefinition()) {
+        out.printf("%d", consumer->toDefinition()->id());
+      } else {
+        out.printf("?");
+      }
+      first = false;
+    }
+  }
+
+  if (def->hasAnyFlags() && showDetails) {
+    out.printf("   flags=");
+    bool first = true;
+#  define OUTPUT_FLAG(_F)                          \
+    do {                                           \
+      if (def->is##_F()) {                         \
+        out.printf("%s%s", first ? "" : ",", #_F); \
+        first = false;                             \
+      }                                            \
+    } while (0);
+    MIR_FLAG_LIST(OUTPUT_FLAG);
+#  undef OUTPUT_FLAG
+  }
+#endif
+}
+
+void jit::DumpMIRBlockID(GenericPrinter& out, const MBasicBlock* block,
+                         bool showDetails) {
+#ifdef JS_JITSPEW
+  if (!block) {
+    out.printf("Block(null)");
+    return;
+  }
+  out.printf("Block");
+  if (showDetails) {
+    out.printf(".");
+    DumpHashedPointer(out, block);
+    out.printf(".");
+  }
+  out.printf("%u", block->id());
+#endif
+}
+
+void jit::DumpMIRBlock(GenericPrinter& out, MBasicBlock* block,
+                       bool showDetails) {
+#ifdef JS_JITSPEW
+  out.printf("  ");
+  DumpMIRBlockID(out, block, showDetails);
+  out.printf(" -- preds=[");
+  for (uint32_t i = 0; i < block->numPredecessors(); i++) {
+    MBasicBlock* pred = block->getPredecessor(i);
+    out.printf("%s", i == 0 ? "" : ", ");
+    DumpMIRBlockID(out, pred, showDetails);
+  }
+  out.printf("] -- LD=%u -- K=%s -- s-w-phis=", block->loopDepth(),
+             block->nameOfKind());
+  if (block->successorWithPhis()) {
+    DumpMIRBlockID(out, block->successorWithPhis(), showDetails);
+    out.printf(",#%u\n", block->positionInPhiSuccessor());
+  } else {
+    out.printf("(null)\n");
+  }
+  for (MPhiIterator iter(block->phisBegin()), end(block->phisEnd());
+       iter != end; iter++) {
+    out.printf("    ");
+    jit::DumpMIRDefinition(out, *iter, showDetails);
+    out.printf("\n");
+  }
+  for (MInstruction* ins : *block) {
+    out.printf("    ");
+    DumpMIRDefinition(out, ins, showDetails);
+    out.printf("\n");
+  }
+#endif
+}
+
+void jit::DumpMIRGraph(GenericPrinter& out, MIRGraph& graph, bool showDetails) {
+#ifdef JS_JITSPEW
+  for (ReversePostorderIterator block(graph.rpoBegin());
+       block != graph.rpoEnd(); block++) {
+    DumpMIRBlock(out, *block, showDetails);
+  }
+#endif
+}
+
+void jit::DumpMIRExpressions(GenericPrinter& out, MIRGraph& graph,
+                             const CompileInfo& info, const char* phase,
+                             bool showDetails) {
+#ifdef JS_JITSPEW
+  if (!JitSpewEnabled(JitSpew_MIRExpressions)) {
+    return;
+  }
+
+  out.printf("===== %s =====\n", phase);
+
+  DumpMIRGraph(out, graph, showDetails);
+
+  if (info.compilingWasm()) {
+    out.printf("===== end wasm MIR dump =====\n");
+  } else {
+    out.printf("===== %s:%u =====\n", info.filename(), info.lineno());
+  }
+#endif
 }

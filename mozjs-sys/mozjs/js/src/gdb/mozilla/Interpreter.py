@@ -6,7 +6,7 @@
 
 import gdb
 
-import mozilla.prettyprinters as prettyprinters
+from mozilla import prettyprinters
 
 prettyprinters.clear_module_printers(__name__)
 

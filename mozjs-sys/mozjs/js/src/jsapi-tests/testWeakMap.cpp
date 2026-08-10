@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -90,7 +87,8 @@ BEGIN_TEST(testWeakMap_setWeakMapEntry_invalid_key) {
   JS::Rooted<JS::Value> exn(cx);
   CHECK(JS_GetPendingException(cx, &exn));
   JS::Rooted<JSObject*> obj(cx, &exn.toObject());
-  JSErrorReport* err = JS_ErrorFromException(cx, obj);
+  JS::BorrowedErrorReport err(cx);
+  CHECK(JS_ErrorFromException(cx, obj, err));
   CHECK(err->exnType == JSEXN_TYPEERR);
 
   JS_ClearPendingException(cx);
@@ -104,7 +102,6 @@ BEGIN_TEST(testWeakMap_setWeakMapEntry_invalid_key) {
 }
 END_TEST(testWeakMap_setWeakMapEntry_invalid_key)
 
-#ifdef NIGHTLY_BUILD
 BEGIN_TEST(testWeakMap_basicOperations_symbols_as_keys) {
   JS::RootedObject map(cx, JS::NewWeakMapObject(cx));
   CHECK(IsWeakMapObject(map));
@@ -142,7 +139,6 @@ BEGIN_TEST(testWeakMap_basicOperations_symbols_as_keys) {
   return true;
 }
 END_TEST(testWeakMap_basicOperations_symbols_as_keys)
-#endif
 
 BEGIN_TEST(testWeakMap_keyDelegates) {
   AutoLeaveZeal nozeal(cx);
@@ -271,16 +267,7 @@ JSObject* newCCW(JS::HandleObject sourceZone, JS::HandleObject destZone) {
 
 JSObject* newDelegate() {
   static const JSClassOps delegateClassOps = {
-      nullptr,                   // addProperty
-      nullptr,                   // delProperty
-      nullptr,                   // enumerate
-      nullptr,                   // newEnumerate
-      nullptr,                   // resolve
-      nullptr,                   // mayResolve
-      nullptr,                   // finalize
-      nullptr,                   // call
-      nullptr,                   // construct
-      JS_GlobalObjectTraceHook,  // trace
+      .trace = JS_GlobalObjectTraceHook,
   };
 
   static const js::ClassExtension delegateClassExtension = {
@@ -311,12 +298,12 @@ JSObject* newDelegate() {
 
 void performIncrementalGC() {
   JSRuntime* rt = cx->runtime();
-  JS::SliceBudget budget(JS::WorkBudget(1000));
+  JS::SliceBudget budget(JS::WorkBudget(200));
   rt->gc.startDebugGC(JS::GCOptions::Normal, budget);
 
-  // Wait until we've started marking before finishing the GC
-  // non-incrementally.
-  while (rt->gc.state() == gc::State::Prepare) {
+  // Wait until we've started sweeping before finishing the GC
+  // non-incrementally otherwise we'll put all zones into one sweep group.
+  while (rt->gc.state() < gc::State::Sweep) {
     rt->gc.debugGCSlice(budget);
   }
   if (JS::IsIncrementalGCInProgress(cx)) {

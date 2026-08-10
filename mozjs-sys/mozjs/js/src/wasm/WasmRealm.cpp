@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -92,7 +90,9 @@ bool wasm::Realm::registerInstance(JSContext* cx,
   }
 
   // Notify the debugger after wasmInstances is unlocked.
-  DebugAPI::onNewWasmInstance(cx, instanceObj);
+  if (!instance.codeMeta().isSelfHostedModule()) {
+    DebugAPI::onNewWasmInstance(cx, instanceObj);
+  }
   return true;
 }
 
@@ -132,25 +132,6 @@ void wasm::InterruptRunningCode(JSContext* cx) {
 void wasm::ResetInterruptState(JSContext* cx) {
   auto runtimeInstances = cx->runtime()->wasmInstances.lock();
   for (Instance* instance : runtimeInstances.get()) {
-    instance->resetInterrupt(cx);
+    instance->resetInterrupt();
   }
 }
-
-#ifdef ENABLE_WASM_JSPI
-void wasm::UpdateInstanceStackLimitsForSuspendableStack(
-    JSContext* cx, JS::NativeStackLimit limit) {
-  auto runtimeInstances = cx->runtime()->wasmInstances.lock();
-  cx->wasm().suspendableStackLimit = limit;
-  for (Instance* instance : runtimeInstances.get()) {
-    instance->setTemporaryStackLimit(limit);
-  }
-}
-
-void wasm::ResetInstanceStackLimits(JSContext* cx) {
-  auto runtimeInstances = cx->runtime()->wasmInstances.lock();
-  cx->wasm().suspendableStackLimit = JS::NativeStackLimitMin;
-  for (Instance* instance : runtimeInstances.get()) {
-    instance->resetTemporaryStackLimit(cx);
-  }
-}
-#endif  // ENABLE_WASM_JSPI

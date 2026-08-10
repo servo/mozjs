@@ -1071,6 +1071,54 @@ SimpleDateFormat::_format(Calendar& cal, UnicodeString& appendTo,
         }
     }
 
+    // Set or reset Gannen year numbering.
+    if (typeid(*fCalendar) == typeid(JapaneseCalendar) && fHasHanYearChar &&
+        uprv_strcmp(fLocale.getLanguage(), "ja") == 0) {
+
+        int32_t era = workCal->get(UCAL_ERA, status);
+        if (U_FAILURE(status)) {
+            return appendTo;
+        }
+
+        // Cast away constness.
+        auto* self = const_cast<SimpleDateFormat *>(this);
+
+        // Does the current calendar era uses Gannen year numbering?
+        bool useGannen = era != GregorianCalendar::AD && era != GregorianCalendar::BC;
+
+        // Code to set/reset numbering copied from `SimpleDateFormat::applyPattern`.
+        if (!useGannen && fDateOverride == UnicodeString(u"y=jpanyear")) {
+            // Gannen numbering is set but current era should not use it, unset;
+            // use procedure from adoptNumberFormat to clear overrides
+            if (fSharedNumberFormatters) {
+                freeSharedNumberFormatters(fSharedNumberFormatters);
+                self->fSharedNumberFormatters = nullptr;
+            }
+            self->fDateOverride.setToBogus(); // record status
+        } else if (useGannen && fDateOverride.isBogus()) {
+            // No current override (=> no Gannen numbering) but current era needs it;
+            // use procedures from initNUmberFormatters / adoptNumberFormat
+            umtx_lock(&LOCK);
+            if (fSharedNumberFormatters == nullptr) {
+                self->fSharedNumberFormatters = allocSharedNumberFormatters();
+            }
+            umtx_unlock(&LOCK);
+            if (fSharedNumberFormatters != nullptr) {
+                Locale ovrLoc(fLocale.getLanguage(), fLocale.getCountry(), fLocale.getVariant(), "numbers=jpanyear");
+                const SharedNumberFormat *snf = createSharedNumberFormat(ovrLoc, status);
+                if (U_FAILURE(status)) {
+                    return appendTo;
+                }
+                // Now that we have an appropriate number formatter, fill in the
+                // appropriate slot in the number formatters table.
+                UDateFormatField patternCharIndex = DateFormatSymbols::getPatternCharIndex(u'y');
+                SharedObject::copyPtr(snf, fSharedNumberFormatters[patternCharIndex]);
+                snf->deleteIfZeroRefCount();
+                self->fDateOverride.setTo(u"y=jpanyear", -1); // record status
+            }
+        }
+    }
+
     UBool inQuote = false;
     char16_t prevCh = 0;
     int32_t count = 0;
@@ -1528,8 +1576,9 @@ SimpleDateFormat::subFormat(UnicodeString &appendTo,
     // "GGGG" is wide era name, "GGGGG" is narrow era name, anything else is abbreviated name
     case UDAT_ERA_FIELD:
         {
-            if (typeid(cal) == typeid(ChineseCalendar) ||
-                typeid(cal) == typeid(DangiCalendar)) {
+            const char* type = cal.getType();
+            if (strcmp(type, "chinese") == 0 ||
+                strcmp(type, "dangi") == 0) {
                 zeroPaddingNumber(currentNumberFormat,appendTo, value, 1, 9); // as in ICU4J
             } else {
                 if (count == 5) {
@@ -1726,12 +1775,15 @@ SimpleDateFormat::subFormat(UnicodeString &appendTo,
 
     // for "a" symbol, write out the whole AM/PM string
     case UDAT_AM_PM_FIELD:
-        if (count < 5) {
-            _appendSymbol(appendTo, value, fSymbols->fAmPms,
-                          fSymbols->fAmPmsCount);
-        } else {
+        if (count == 4) {
+            _appendSymbol(appendTo, value, fSymbols->fWideAmPms,
+                          fSymbols->fWideAmPmsCount);
+        } else if (count == 5) {
             _appendSymbol(appendTo, value, fSymbols->fNarrowAmPms,
                           fSymbols->fNarrowAmPmsCount);
+        } else {
+            _appendSymbol(appendTo, value, fSymbols->fAmPms,
+                          fSymbols->fAmPmsCount);
         }
         break;
 
@@ -1867,7 +1919,30 @@ SimpleDateFormat::subFormat(UnicodeString &appendTo,
                     UPRV_UNREACHABLE_EXIT;
                 }
             }
-            appendTo += zoneString;
+            // CLDR analyzes abbreviations as attaching to "standard time" and "daylight-saving time".
+            // In en-GB, however, the abbreviations for Europe/London should attach to the offset:
+            // +0: "GMT"
+            // +1: "BST" either for British Summer Time or, in the turn of the 1960s and 1970s, British Standard Time
+            // +2: "BDST" for British Double Summer Time (in the 1940s only)
+            //
+            // Do "GMT+2" instead of "BDST" at least for now on the assumption that present-day users
+            // might not recognize the historical abbreviation.
+            UnicodeString id;
+            if (zoneString == u"GMT+0" && strcmp(fLocale.getBaseName(), "en_GB") == 0 && tz.getID(id) == u"Europe/London") {
+                // Previously in upstream, +0 was formatted as "GMT" regardless of year. However, upstream
+                // started doing "GMT+0" for +0 before 1970 while keeping "GMT" for +0 for newer dates, and that turned up
+                // a Web compat issue with a British bank, so restoring "GMT" even for older dates.
+                // https://unicode-org.atlassian.net/browse/CLDR-19362
+                appendTo += u"GMT";
+            } else if (zoneString == u"GMT+1" && strcmp(fLocale.getBaseName(), "en_GB") == 0 && tz.getID(id) == u"Europe/London") {
+                // Avoid formatting +2 as "BST". This is about formatting correctness, not Web compat.
+                // The same bank form that requires +0 to be formatted as "GMT" appears not
+                // to expect a specific formatting for cases other than +0.
+                // https://unicode-org.atlassian.net/browse/CLDR-19382
+                appendTo += u"BST";
+            } else {
+                appendTo += zoneString;
+            }
         }
         break;
 
@@ -3483,8 +3558,14 @@ int32_t SimpleDateFormat::subParse(const UnicodeString& text, int32_t& start, ch
         {
             // optionally try both wide/abbrev and narrow forms
             int32_t newStart = 0;
-            // try wide/abbrev
-            if( getBooleanAttribute(UDAT_PARSE_MULTIPLE_PATTERNS_FOR_MATCH, status) || count < 5 ) {
+            // try wide
+            if( getBooleanAttribute(UDAT_PARSE_MULTIPLE_PATTERNS_FOR_MATCH, status) || count == 4 ) {
+                if ((newStart = matchString(text, start, UCAL_AM_PM, fSymbols->fWideAmPms, fSymbols->fWideAmPmsCount, nullptr, cal)) > 0) {
+                    return newStart;
+                }
+            }
+            // try abbreviated
+            if( getBooleanAttribute(UDAT_PARSE_MULTIPLE_PATTERNS_FOR_MATCH, status) || count <= 3 ) {
                 if ((newStart = matchString(text, start, UCAL_AM_PM, fSymbols->fAmPms, fSymbols->fAmPmsCount, nullptr, cal)) > 0) {
                     return newStart;
                 }

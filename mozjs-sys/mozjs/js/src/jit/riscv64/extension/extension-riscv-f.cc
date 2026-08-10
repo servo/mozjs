@@ -130,7 +130,6 @@ void AssemblerRISCVF::fmv_w_x(FPURegister rd, Register rs1) {
   GenInstrALUFP_rr(0b1111000, 0b000, rd, rs1, zero_reg);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 // RV64F Standard Extension (in addition to RV32F)
 
 void AssemblerRISCVF::fcvt_l_s(Register rd, FPURegister rs1,
@@ -152,7 +151,6 @@ void AssemblerRISCVF::fcvt_s_lu(FPURegister rd, Register rs1,
                                 FPURoundingMode frm) {
   GenInstrALUFP_rr(0b1101000, frm, rd, rs1, ToRegister(3));
 }
-#endif
 
 }  // namespace jit
 }  // namespace js

@@ -4,10 +4,11 @@
 
 #ifndef jit_riscv64_extension_Extension_riscv_v_h_
 #define jit_riscv64_extension_Extension_riscv_v_h_
+
 #ifdef CAN_USE_RVV
 #  include "jit/riscv64/Architecture-riscv64.h"
+#  include "jit/riscv64/base/base-assembler-riscv.h"
 #  include "jit/riscv64/constant/Constant-riscv64.h"
-#  include "jit/riscv64/extension/base-assembler-riscv.h"
 
 namespace js {
 namespace jit {

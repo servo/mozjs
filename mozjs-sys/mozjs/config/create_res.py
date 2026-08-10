@@ -61,7 +61,7 @@ def generate_res():
             if verbose:
                 print("Executing:", " ".join(command))
             with os.fdopen(fd, "wb") as fh:
-                retcode = subprocess.run(command, stdout=fh).returncode
+                retcode = subprocess.run(command, check=False, stdout=fh).returncode
                 if retcode:
                     # Rely on the subprocess printing out any relevant error
                     return retcode
@@ -87,7 +87,7 @@ def generate_res():
 
         if verbose:
             print("Executing:", " ".join(command))
-        retcode = subprocess.run(command).returncode
+        retcode = subprocess.run(command, check=False).returncode
         if retcode:
             # Rely on the subprocess printing out any relevant error
             return retcode

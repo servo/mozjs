@@ -12,23 +12,24 @@ import mozpack.path as mozpath
 
 from mozbuild.util import hash_file
 
-# Regular expression to strip ANSI color sequences from a string. This is
-# needed to properly analyze Clang compiler output, which may be colorized.
-# It assumes ANSI escape sequences.
-RE_STRIP_COLORS = re.compile(r"\x1b\[[\d;]+m")
+# Regular expression to strip ANSI escape sequences from a string. This is
+# needed to properly analyze compiler output, which may be colorized.
+RE_STRIP_COLORS = re.compile(r"\x1b\[[\d;]*[mK]")
 
 # This captures Clang diagnostics with the standard formatting.
+# The file pattern handles Windows paths with drive letters (e.g.: D:/path/file.cpp)
 RE_CLANG_WARNING_AND_ERROR = re.compile(
     r"""
-    (?P<file>[^:]+)
+    (?P<file>(?:[A-Za-z]:)?[^:]+)
     :
     (?P<line>\d+)
     :
     (?P<column>\d+)
     :
-    \s(?P<type>warning|error):\s
-    (?P<message>.+)
-    \[(?P<flag>[^\]]+)
+    \s(?:fatal\s+)?(?P<type>warning|error):\s
+    (?P<message>.+?)
+    (?:\[(?P<flag>[^\]]+)\])?
+    $
     """,
     re.X,
 )
@@ -38,9 +39,10 @@ RE_CLANG_CL_WARNING_AND_ERROR = re.compile(
     r"""
     (?P<file>.*)
     \((?P<line>\d+),(?P<column>\d+)\)
-    \s?:\s+(?P<type>warning|error):\s
-    (?P<message>.*)
-    \[(?P<flag>[^\]]+)
+    \s?:\s+(?:fatal\s+)?(?P<type>warning|error):\s
+    (?P<message>.+?)
+    (?:\[(?P<flag>[^\]]+)\])?
+    $
     """,
     re.X,
 )
@@ -139,8 +141,7 @@ class WarningsDatabase:
 
     def __iter__(self):
         for value in self._files.values():
-            for warning in value["warnings"]:
-                yield warning
+            yield from value["warnings"]
 
     def __contains__(self, item):
         for value in self._files.values():
@@ -154,8 +155,7 @@ class WarningsDatabase:
     def warnings(self):
         """All the CompilerWarning instances in this database."""
         for value in self._files.values():
-            for w in value["warnings"]:
-                yield w
+            yield from value["warnings"]
 
     def type_counts(self, dirpath=None):
         """Returns a mapping of warning types to their counts."""
@@ -183,8 +183,7 @@ class WarningsDatabase:
         """Obtain the warnings for the specified file."""
         f = self._files.get(filename, {"warnings": []})
 
-        for warning in f["warnings"]:
-            yield warning
+        yield from f["warnings"]
 
     def insert(self, warning, compute_hash=True):
         assert isinstance(warning, CompilerWarning)

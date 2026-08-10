@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 // Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -31,9 +30,9 @@
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/EndianUtils.h"
-#include "mozilla/FloatingPoint.h"
 #include "mozilla/Likely.h"
-#include "mozilla/MathAlgorithms.h"
+
+#include <bit>
 
 #include "jit/arm/Assembler-arm.h"
 #include "jit/arm/disasm/Constants-arm.h"
@@ -1094,7 +1093,7 @@ void Simulator::setLastDebuggerInput(char* input) {
 
 /* static */
 void SimulatorProcess::FlushICache(void* start_addr, size_t size) {
-  JitSpewCont(JitSpew_CacheFlush, "[%p %zx]", start_addr, size);
+  JitSpew(JitSpew_CacheFlush, "[%p %zx]", start_addr, size);
   if (!ICacheCheckingDisableCount) {
     AutoLockSimulatorCache als;
     js::jit::FlushICacheLocked(icache(), start_addr, size);
@@ -2239,7 +2238,7 @@ int32_t Simulator::processPU(SimInstruction* instr, int num_regs, int reg_size,
 // Addressing Mode 4 - Load and Store Multiple
 void Simulator::handleRList(SimInstruction* instr, bool load) {
   int rlist = instr->rlistValue();
-  int num_regs = mozilla::CountPopulation32(rlist);
+  int num_regs = std::popcount(unsigned(rlist));
 
   intptr_t start_address = 0;
   intptr_t end_address = 0;
@@ -2845,12 +2844,7 @@ void Simulator::decodeType01(SimInstruction* instr) {
       switch (instr->bits(7, 4)) {
         case 1: {  // CLZ
           uint32_t bits = get_register(rm);
-          int leading_zeros = 0;
-          if (bits == 0) {
-            leading_zeros = 32;
-          } else {
-            leading_zeros = mozilla::CountLeadingZeroes32(bits);
-          }
+          int leading_zeros = std::countl_zero(bits);
           set_register(rd, leading_zeros);
           break;
         }
@@ -3205,7 +3199,7 @@ void Simulator::decodeType3(SimInstruction* instr) {
                 // Rev
                 uint32_t rm_val = get_register(instr->rmValue());
 
-                static_assert(MOZ_LITTLE_ENDIAN());
+                static_assert(std::endian::native == std::endian::little);
                 set_register(rd,
                              mozilla::NativeEndian::swapToBigEndian(rm_val));
               } else if (instr->bits(20, 16) == 0b1'1111 &&
@@ -3213,7 +3207,7 @@ void Simulator::decodeType3(SimInstruction* instr) {
                 // Rev16
                 uint32_t rm_val = get_register(instr->rmValue());
 
-                static_assert(MOZ_LITTLE_ENDIAN());
+                static_assert(std::endian::native == std::endian::little);
                 uint32_t hi = mozilla::NativeEndian::swapToBigEndian(
                     uint16_t(rm_val >> 16));
                 uint32_t lo =
@@ -3269,7 +3263,7 @@ void Simulator::decodeType3(SimInstruction* instr) {
                 // Revsh
                 uint32_t rm_val = get_register(instr->rmValue());
 
-                static_assert(MOZ_LITTLE_ENDIAN());
+                static_assert(std::endian::native == std::endian::little);
                 set_register(
                     rd, int32_t(int16_t(mozilla::NativeEndian::swapToBigEndian(
                             uint16_t(rm_val)))));

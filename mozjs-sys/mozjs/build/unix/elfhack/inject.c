@@ -3,7 +3,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <stdint.h>
-#include <stdlib.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <elf.h>

@@ -35,10 +35,11 @@ STEPS = {
         jj new -m "FIRST PATCH"
         echo bar >> bar
         """,
+        # snapshot, since bug 1962245 suppresses automatic ones
         """
         jj new -m "SECOND PATCH"
         printf "baz\\r\\nqux" > baz
-        jj log -n0 # snapshot, since bug 1962245 suppresses automatic ones
+        jj log -n0
        """,
     ],
 }
@@ -50,10 +51,10 @@ def test_get_commit_patches(repo):
 
     # Create some commits and note the SHAs.
     repo.execute_next_step()
-    nodes.append(vcs.head_ref)
+    nodes.append(vcs.head_rev)
 
     repo.execute_next_step()
-    nodes.append(vcs.head_ref)
+    nodes.append(vcs.head_rev)
 
     patches = vcs.get_commit_patches(nodes)
 

@@ -8,7 +8,7 @@ import re
 
 import gdb
 
-import mozilla.prettyprinters as prettyprinters
+from mozilla import prettyprinters
 from mozilla.CellHeader import get_header_ptr
 from mozilla.jsval import JSValue
 from mozilla.prettyprinters import ptr_pretty_printer, ref_pretty_printer
@@ -46,7 +46,7 @@ gdb_string_regexp = re.compile(r'(?:0x[0-9a-z]+ )?(?:<.*> )?"(.*)"', re.I)
 @ptr_pretty_printer("JSObject")
 class JSObjectPtrOrRef(prettyprinters.Pointer):
     def __init__(self, value, cache):
-        super(JSObjectPtrOrRef, self).__init__(value, cache)
+        super().__init__(value, cache)
         if not cache.mod_JSObject:
             cache.mod_JSObject = JSObjectTypeCache()
         self.otc = cache.mod_JSObject

@@ -21,9 +21,9 @@ not on all platforms and was specific to the Browsertime framework.
 
 `mozperftest` currently provides the `mach perftest` command, that will scan
 for all tests that are declared in ini files such as
-https://searchfox.org/mozilla-central/source/netwerk/test/perf/perftest.toml and
+:searchfox:`netwerk/test/perf/perftest.toml` and
 registered under **PERFTESTS_MANIFESTS** in `moz.build` files such as
-https://searchfox.org/mozilla-central/source/netwerk/test/moz.build#17
+:searchfox:`netwerk/test/moz.build#17`
 
 The framework loads perf tests and reads its metadata, that can be declared
 within the test. We have a parser that is currently able to recognize and load

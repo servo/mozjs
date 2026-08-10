@@ -28,32 +28,7 @@
 // code are installed via the std_functions JSFunctionSpec[] in
 // SelfHosting.cpp.
 
-/********** Specification types **********/
-
-// A "Record" is an internal type used in the ECMAScript spec to define a struct
-// made up of key / values. It is never exposed to user script, but we use a
-// simple Object (with null prototype) as a convenient implementation.
-function new_Record() {
-  return std_Object_create(null);
-}
-
 /********** Abstract operations defined in ECMAScript Language Specification **********/
-
-/* Spec: ECMAScript Language Specification, 5.1 edition, 9.2 and 11.4.9 */
-function ToBoolean(v) {
-  return !!v;
-}
-
-/* Spec: ECMAScript Language Specification, 5.1 edition, 9.3 and 11.4.6 */
-function ToNumber(v) {
-  return +v;
-}
-
-// ES2017 draft rev aebf014403a3e641fb1622aec47c40f051943527
-// 7.2.10 SameValueZero ( x, y )
-function SameValueZero(x, y) {
-  return x === y || (x !== x && y !== y);
-}
 
 // ES 2017 draft (April 6, 2016) 7.3.9
 function GetMethod(V, P) {

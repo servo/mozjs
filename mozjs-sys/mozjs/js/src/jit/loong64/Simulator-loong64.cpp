@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80: */
 // Copyright 2020 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -29,6 +27,7 @@
 
 #include "jit/loong64/Simulator-loong64.h"
 
+#include <cinttypes>
 #include <float.h>
 #include <limits>
 
@@ -2149,7 +2148,7 @@ bool Simulator::overRecursedWithExtra(uint32_t extra) const {
 
 // Unsupported instructions use format to print an error and stop execution.
 void Simulator::format(SimInstruction* instr, const char* format) {
-  printf("Simulator found unsupported instruction:\n 0x%016lx: %s\n",
+  printf("Simulator found unsupported instruction:\n 0x%016" PRIxPTR ": %s\n",
          reinterpret_cast<intptr_t>(instr), format);
   MOZ_CRASH();
 }
@@ -3423,38 +3422,38 @@ void Simulator::decodeTypeOp17(SimInstruction* instr) {
       setRegister(rd_reg(instr), rj(instr) & (~rk(instr)));
       break;
     case op_sll_w:
-      setRegister(rd_reg(instr), (int32_t)rj(instr) << (rk_u(instr) % 32));
+      setRegister(rd_reg(instr), (int32_t)rj(instr) << (rk_u(instr) & 0x1f));
       break;
     case op_srl_w: {
       alu_out =
-          static_cast<int32_t>((uint32_t)rj_u(instr) >> (rk_u(instr) % 32));
+          static_cast<int32_t>((uint32_t)rj_u(instr) >> (rk_u(instr) & 0x1f));
       setRegister(rd_reg(instr), alu_out);
       break;
     }
     case op_sra_w:
-      setRegister(rd_reg(instr), (int32_t)rj(instr) >> (rk_u(instr) % 32));
+      setRegister(rd_reg(instr), (int32_t)rj(instr) >> (rk_u(instr) & 0x1f));
       break;
     case op_sll_d:
-      setRegister(rd_reg(instr), rj(instr) << (rk_u(instr) % 64));
+      setRegister(rd_reg(instr), rj(instr) << (rk_u(instr) & 0x3f));
       break;
     case op_srl_d: {
-      alu_out = static_cast<int64_t>(rj_u(instr) >> (rk_u(instr) % 64));
+      alu_out = static_cast<int64_t>(rj_u(instr) >> (rk_u(instr) & 0x3f));
       setRegister(rd_reg(instr), alu_out);
       break;
     }
     case op_sra_d:
-      setRegister(rd_reg(instr), rj(instr) >> (rk_u(instr) % 64));
+      setRegister(rd_reg(instr), rj(instr) >> (rk_u(instr) & 0x3f));
       break;
     case op_rotr_w: {
       alu_out = static_cast<int32_t>(
           RotateRight32(static_cast<const uint32_t>(rj_u(instr)),
-                        static_cast<const uint32_t>(rk_u(instr) % 32)));
+                        static_cast<const uint32_t>(rk_u(instr) & 0x1f)));
       setRegister(rd_reg(instr), alu_out);
       break;
     }
     case op_rotr_d: {
       alu_out = static_cast<int64_t>(
-          RotateRight64((rj_u(instr)), (rk_u(instr) % 64)));
+          RotateRight64((rj_u(instr)), (rk_u(instr) & 0x3f)));
       setRegister(rd_reg(instr), alu_out);
       break;
     }
@@ -3807,10 +3806,12 @@ void Simulator::decodeTypeOp17(SimInstruction* instr) {
       UNIMPLEMENTED();
       break;
     case op_fcopysign_s:
-      UNIMPLEMENTED();
+      setFpuRegisterFloat(fd_reg(instr),
+                          std::copysign(fj_float(instr), fk_float(instr)));
       break;
     case op_fcopysign_d:
-      UNIMPLEMENTED();
+      setFpuRegisterDouble(fd_reg(instr),
+                           std::copysign(fj_double(instr), fk_double(instr)));
       break;
     default:
       UNREACHABLE();

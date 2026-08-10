@@ -223,7 +223,8 @@ def test_help_help_selected(*kwargs):
 @mock.patch("mozbuild.base.MachCommandBase.activate_virtualenv")
 @mock.patch("mozperftest.utils.run_python_script")
 @mock.patch("mozperftest.utils.install_package")
-def test_side_by_side(mock1, mock2, mock3, patched_mozperftest_tools):
+@mock.patch("mozperftest.runner.subprocess.check_call")
+def test_side_by_side(mock_check_call, mock1, mock2, mock3, patched_mozperftest_tools):
     with mock.patch(
         "mozperftest.utils.create_path", return_value="fake_path"
     ) as _, mock.patch(
@@ -240,7 +241,10 @@ def test_side_by_side(mock1, mock2, mock3, patched_mozperftest_tools):
 @mock.patch("mozbuild.base.MachCommandBase.activate_virtualenv")
 @mock.patch("mozperftest.utils.run_python_script")
 @mock.patch("mozperftest.utils.install_package")
-def test_change_detector(mock1, mock2, mock3, patched_mozperftest_tools):
+@mock.patch("mozperftest.runner.subprocess.check_call")
+def test_change_detector(
+    mock_check_call, mock1, mock2, mock3, patched_mozperftest_tools
+):
     with mock.patch(
         "mozperftest.utils.create_path", return_value="fake_path"
     ) as _, mock.patch(

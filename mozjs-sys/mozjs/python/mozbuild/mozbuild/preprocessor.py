@@ -184,7 +184,6 @@ class Expression:
     def __ignore_whitespace(self):
         ws_len = re.match(r"\s*", self.content).end()
         self.__strip(ws_len)
-        return
 
     def __strip(self, length):
         """
@@ -815,7 +814,6 @@ class Preprocessor:
             if f in current:
                 del current[f]
         self.filters = [(fn, current[fn]) for fn in sorted(current.keys())]
-        return
 
     # Filters
     #

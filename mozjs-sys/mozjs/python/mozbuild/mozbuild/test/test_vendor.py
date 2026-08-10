@@ -32,16 +32,14 @@ def test_up_to_date_vendor():
         # Verify that re-vendoring did not cause file changes.
         # Note that we don't want hg-ignored generated files
         # to bust the diff, so we exclude them (pycache, egg-info).
-        subprocess.check_call(
-            [
-                "diff",
-                "-r",
-                os.path.join(topsrcdir, os.path.join("third_party", "python")),
-                os.path.join(work_dir, os.path.join("third_party", "python")),
-                "--exclude=__pycache__",
-                "--strip-trailing-cr",
-            ]
-        )
+        subprocess.check_call([
+            "diff",
+            "-r",
+            os.path.join(topsrcdir, os.path.join("third_party", "python")),
+            os.path.join(work_dir, os.path.join("third_party", "python")),
+            "--exclude=__pycache__",
+            "--strip-trailing-cr",
+        ])
 
 
 if __name__ == "__main__":

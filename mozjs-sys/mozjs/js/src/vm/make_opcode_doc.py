@@ -4,14 +4,14 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-""" Usage: python make_opcode_doc.py
+"""Usage: python make_opcode_doc.py
 
-    This script generates SpiderMonkey bytecode documentation
-    from js/src/vm/Opcodes.h.
+This script generates SpiderMonkey bytecode documentation
+from js/src/vm/Opcodes.h.
 
-    Output is written to stdout and should be pasted into the following
-    MDN page:
-    https://developer.mozilla.org/en-US/docs/SpiderMonkey/Internals/Bytecode
+Output is written to stdout and should be pasted into the following
+MDN page:
+https://developer.mozilla.org/en-US/docs/SpiderMonkey/Internals/Bytecode
 """
 
 import os
@@ -65,7 +65,7 @@ except ImportError as exc:
     raise exc
 
 
-SOURCE_BASE = "https://searchfox.org/mozilla-central/source"
+SOURCE_BASE = "https://searchfox.org/firefox-main/source"
 
 FORMAT_TO_IGNORE = {
     "JOF_BYTE",

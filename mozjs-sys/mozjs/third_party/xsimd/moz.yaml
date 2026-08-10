@@ -2,7 +2,7 @@ schema: 1
 
 bugzilla:
   product: Core
-  component: Performance
+  component: "Performance: General"
 
 origin:
   name: xsimd
@@ -10,8 +10,8 @@ origin:
 
   url: https://github.com/QuantStack/xsimd
 
-  release: c0a7b5d2666c18303d27aa10ae4d50f00056aaad (2025-02-26T11:05:33Z).
-  revision: c0a7b5d2666c18303d27aa10ae4d50f00056aaad
+  release: 50d205d47b7e37e282a662b30aefdafa71f9cde7 (2026-05-16T12:08:06Z).
+  revision: 50d205d47b7e37e282a662b30aefdafa71f9cde7
 
   license: BSD-3-Clause
 

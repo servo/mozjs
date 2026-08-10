@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -21,6 +19,7 @@
 #include "js/GCAPI.h"
 #include "js/SliceBudget.h"
 #include "js/Vector.h"
+#include "vm/Logging.h"
 
 namespace js {
 
@@ -201,7 +200,7 @@ struct Statistics {
   void nonincremental(GCAbortReason reason) {
     MOZ_ASSERT(reason != GCAbortReason::None);
     nonincrementalReason_ = reason;
-    log("Non-incremental reason: %s", nonincrementalReason());
+    JS_LOG(gc, Info, "non-incremental for reason %s", nonincrementalReason());
   }
 
   bool nonincremental() const {
@@ -324,21 +323,11 @@ struct Statistics {
 
   bool bufferAllocStatsEnabled() const { return enableBufferAllocStats_; }
 
-#ifdef DEBUG
-  // Print a logging message.
-  void log(const char* fmt, ...);
-#else
-  void log(const char* fmt, ...) {};
-#endif
-
  private:
   gc::GCRuntime* const gc;
 
   /* File used for MOZ_GCTIMER output. */
   FILE* gcTimerFile;
-
-  /* File used for JS_GC_DEBUG output. */
-  FILE* gcDebugFile;
 
   /* File used for JS_GC_PROFILE output. */
   FILE* gcProfileFile;
@@ -478,9 +467,8 @@ struct Statistics {
   void sccDurations(TimeDuration* total, TimeDuration* maxPause) const;
   void printStats();
 
-  template <typename LegacyFn, typename GleanFn>
-  void reportLongestPhaseInMajorGC(PhaseKind longest, LegacyFn legacyReportFn,
-                                   GleanFn gleanReportFn);
+  template <typename GleanFn>
+  void reportLongestPhaseInMajorGC(PhaseKind longest, GleanFn gleanReportFn);
 
   UniqueChars formatCompactSlicePhaseTimes(const PhaseTimes& phaseTimes) const;
 

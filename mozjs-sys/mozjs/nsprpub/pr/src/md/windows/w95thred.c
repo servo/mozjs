@@ -1,5 +1,3 @@
-
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -109,6 +107,7 @@ PRStatus _PR_MD_INIT_THREAD(PRThread* thread) {
                         FALSE,                  /* Inheritable */
                         DUPLICATE_SAME_ACCESS); /* Options */
     if (!ok) {
+      _MD_win32_map_default_error(GetLastError());
       return PR_FAILURE;
     }
     thread->id = GetCurrentThreadId();
@@ -118,6 +117,7 @@ PRStatus _PR_MD_INIT_THREAD(PRThread* thread) {
   /* Create the blocking IO semaphore */
   thread->md.blocked_sema = CreateSemaphore(NULL, 0, 1, NULL);
   if (thread->md.blocked_sema == NULL) {
+    _MD_win32_map_default_error(GetLastError());
     return PR_FAILURE;
   } else {
     return PR_SUCCESS;
@@ -138,6 +138,22 @@ PRStatus _PR_MD_CREATE_THREAD(PRThread* thread, void (*start)(void*),
       NULL, thread->stack->stackSize, pr_root, (void*)thread,
       CREATE_SUSPENDED | STACK_SIZE_PARAM_IS_A_RESERVATION, &(thread->id));
   if (!thread->md.handle) {
+    PRErrorCode prerror;
+    PRInt32 oserr = (PRInt32)GetLastError();
+    switch (errno) {
+      case ENOMEM:
+        prerror = PR_OUT_OF_MEMORY_ERROR;
+        break;
+      case EAGAIN:
+        prerror = PR_INSUFFICIENT_RESOURCES_ERROR;
+        break;
+      case EINVAL:
+        prerror = PR_INVALID_ARGUMENT_ERROR;
+        break;
+      default:
+        prerror = PR_UNKNOWN_ERROR;
+    }
+    PR_SetError(prerror, oserr);
     return PR_FAILURE;
   }
 
@@ -155,6 +171,7 @@ PRStatus _PR_MD_CREATE_THREAD(PRThread* thread, void (*start)(void*),
     return PR_SUCCESS;
   }
 
+  _MD_win32_map_default_error(GetLastError());
   return PR_FAILURE;
 }
 

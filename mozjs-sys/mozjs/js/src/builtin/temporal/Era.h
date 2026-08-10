@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,17 +6,13 @@
 #define builtin_temporal_Era_h
 
 #include "mozilla/Assertions.h"
-#include "mozilla/MathAlgorithms.h"
 
 #include <initializer_list>
-#include <stddef.h>
-#include <stdint.h>
 #include <string_view>
 
 #include "jstypes.h"
 
 #include "builtin/temporal/Calendar.h"
-#include "builtin/temporal/Crash.h"
 
 namespace js::temporal {
 
@@ -62,49 +56,46 @@ inline constexpr auto Empty = {
     ""sv,
 };
 
-inline constexpr auto Coptic = {
-    "coptic"sv,
+inline constexpr auto Buddhist = {
+    "be"sv,
 };
 
-inline constexpr auto CopticInverse = {
-    "coptic-inverse"sv,
+inline constexpr auto Coptic = {
+    "am"sv,
+};
+
+inline constexpr auto EthiopianAmeteAlem = {
+    "aa"sv,
 };
 
 inline constexpr auto Ethiopian = {
-    "ethiopic"sv,
-    "incar"sv,
-};
-
-inline constexpr auto EthiopianInverse = {
-    "ethioaa"sv,
-    "ethiopic-amete-alem"sv,
-    "mundi"sv,
+    "am"sv,
 };
 
 inline constexpr auto Gregorian = {
-    "gregory"sv,
     "ce"sv,
     "ad"sv,
 };
 
 inline constexpr auto GregorianInverse = {
-    "gregory-inverse"sv,
-    "bc"sv,
     "bce"sv,
+    "bc"sv,
 };
 
-inline constexpr auto Japanese = {
-    "japanese"sv,
-    "gregory"sv,
-    "ad"sv,
-    "ce"sv,
+inline constexpr auto Hebrew = {
+    "am"sv,
 };
 
-inline constexpr auto JapaneseInverse = {
-    "japanese-inverse"sv,
-    "gregory-inverse"sv,
-    "bc"sv,
-    "bce"sv,
+inline constexpr auto Indian = {
+    "shaka"sv,
+};
+
+inline constexpr auto Islamic = {
+    "ah"sv,
+};
+
+inline constexpr auto IslamicInverse = {
+    "bh"sv,
 };
 
 inline constexpr auto JapaneseMeiji = {
@@ -127,79 +118,111 @@ inline constexpr auto JapaneseReiwa = {
     "reiwa"sv,
 };
 
+inline constexpr auto Persian = {
+    "ap"sv,
+};
+
 inline constexpr auto ROC = {
     "roc"sv,
-    "minguo"sv,
 };
 
 inline constexpr auto ROCInverse = {
-    "roc-inverse"sv,
-    "before-roc"sv,
+    "broc"sv,
 };
 }  // namespace names
 }  // namespace eras
 
-constexpr auto& CalendarEras(CalendarId id) {
-  switch (id) {
+constexpr auto& CalendarEras(CalendarId calendar) {
+  switch (calendar) {
     case CalendarId::ISO8601:
     case CalendarId::Buddhist:
     case CalendarId::Chinese:
+    case CalendarId::Coptic:
     case CalendarId::Dangi:
     case CalendarId::EthiopianAmeteAlem:
     case CalendarId::Hebrew:
     case CalendarId::Indian:
-    case CalendarId::Islamic:
-    case CalendarId::IslamicCivil:
-    case CalendarId::IslamicRGSA:
-    case CalendarId::IslamicTabular:
-    case CalendarId::IslamicUmmAlQura:
     case CalendarId::Persian:
       return eras::Standard;
 
-    case CalendarId::Coptic:
     case CalendarId::Ethiopian:
     case CalendarId::Gregorian:
+    case CalendarId::IslamicCivil:
+    case CalendarId::IslamicTabular:
+    case CalendarId::IslamicUmmAlQura:
     case CalendarId::ROC:
       return eras::StandardInverse;
 
     case CalendarId::Japanese:
       return eras::Japanese;
   }
-  JS_CONSTEXPR_CRASH("invalid calendar id");
+  MOZ_CRASH("invalid calendar id");
 }
 
-constexpr bool CalendarEraRelevant(CalendarId calendar) {
-  return CalendarEras(calendar).size() > 1;
+/**
+ * CalendarSupportsEra ( calendar )
+ */
+constexpr bool CalendarSupportsEra(CalendarId calendar) {
+  switch (calendar) {
+    case CalendarId::ISO8601:
+    case CalendarId::Chinese:
+    case CalendarId::Dangi:
+      return false;
+
+    case CalendarId::Buddhist:
+    case CalendarId::Coptic:
+    case CalendarId::Ethiopian:
+    case CalendarId::EthiopianAmeteAlem:
+    case CalendarId::Hebrew:
+    case CalendarId::Indian:
+    case CalendarId::Persian:
+    case CalendarId::Gregorian:
+    case CalendarId::IslamicCivil:
+    case CalendarId::IslamicTabular:
+    case CalendarId::IslamicUmmAlQura:
+    case CalendarId::ROC:
+    case CalendarId::Japanese:
+      return true;
+  }
+  MOZ_CRASH("invalid calendar id");
 }
 
 constexpr auto& CalendarEraNames(CalendarId calendar, EraCode era) {
   switch (calendar) {
     case CalendarId::ISO8601:
-    case CalendarId::Buddhist:
     case CalendarId::Chinese:
     case CalendarId::Dangi:
-    case CalendarId::EthiopianAmeteAlem:
-    case CalendarId::Hebrew:
-    case CalendarId::Indian:
-    case CalendarId::Islamic:
-    case CalendarId::IslamicCivil:
-    case CalendarId::IslamicRGSA:
-    case CalendarId::IslamicTabular:
-    case CalendarId::IslamicUmmAlQura:
-    case CalendarId::Persian:
+      MOZ_ASSERT(era == EraCode::Standard);
       return eras::names::Empty;
 
-    case CalendarId::Coptic: {
-      MOZ_ASSERT(era == EraCode::Standard || era == EraCode::Inverse);
-      return era == EraCode::Standard ? eras::names::Coptic
-                                      : eras::names::CopticInverse;
-    }
+    case CalendarId::Buddhist:
+      MOZ_ASSERT(era == EraCode::Standard);
+      return eras::names::Buddhist;
 
-    case CalendarId::Ethiopian: {
+    case CalendarId::Coptic:
+      MOZ_ASSERT(era == EraCode::Standard);
+      return eras::names::Coptic;
+
+    case CalendarId::Ethiopian:
       MOZ_ASSERT(era == EraCode::Standard || era == EraCode::Inverse);
       return era == EraCode::Standard ? eras::names::Ethiopian
-                                      : eras::names::EthiopianInverse;
-    }
+                                      : eras::names::EthiopianAmeteAlem;
+
+    case CalendarId::EthiopianAmeteAlem:
+      MOZ_ASSERT(era == EraCode::Standard);
+      return eras::names::EthiopianAmeteAlem;
+
+    case CalendarId::Hebrew:
+      MOZ_ASSERT(era == EraCode::Standard);
+      return eras::names::Hebrew;
+
+    case CalendarId::Indian:
+      MOZ_ASSERT(era == EraCode::Standard);
+      return eras::names::Indian;
+
+    case CalendarId::Persian:
+      MOZ_ASSERT(era == EraCode::Standard);
+      return eras::names::Persian;
 
     case CalendarId::Gregorian: {
       MOZ_ASSERT(era == EraCode::Standard || era == EraCode::Inverse);
@@ -207,12 +230,20 @@ constexpr auto& CalendarEraNames(CalendarId calendar, EraCode era) {
                                       : eras::names::GregorianInverse;
     }
 
+    case CalendarId::IslamicCivil:
+    case CalendarId::IslamicTabular:
+    case CalendarId::IslamicUmmAlQura: {
+      MOZ_ASSERT(era == EraCode::Standard || era == EraCode::Inverse);
+      return era == EraCode::Standard ? eras::names::Islamic
+                                      : eras::names::IslamicInverse;
+    }
+
     case CalendarId::Japanese: {
       switch (era) {
         case EraCode::Standard:
-          return eras::names::Japanese;
+          return eras::names::Gregorian;
         case EraCode::Inverse:
-          return eras::names::JapaneseInverse;
+          return eras::names::GregorianInverse;
         case EraCode::Meiji:
           return eras::names::JapaneseMeiji;
         case EraCode::Taisho:
@@ -233,64 +264,24 @@ constexpr auto& CalendarEraNames(CalendarId calendar, EraCode era) {
                                       : eras::names::ROCInverse;
     }
   }
-  JS_CONSTEXPR_CRASH("invalid era");
+  MOZ_CRASH("invalid era");
 }
 
 constexpr auto CalendarEraName(CalendarId calendar, EraCode era) {
-  auto& names = CalendarEraNames(calendar, era);
+  const auto& names = CalendarEraNames(calendar, era);
   MOZ_ASSERT(names.size() > 0);
   return *names.begin();
 }
 
-constexpr bool CalendarEraStartsAtYearBoundary(CalendarId id) {
-  switch (id) {
-    // Calendar system which use a single era.
-    case CalendarId::ISO8601:
-    case CalendarId::Buddhist:
-    case CalendarId::Chinese:
-    case CalendarId::Dangi:
-    case CalendarId::EthiopianAmeteAlem:
-    case CalendarId::Hebrew:
-    case CalendarId::Indian:
-    case CalendarId::Islamic:
-    case CalendarId::IslamicCivil:
-    case CalendarId::IslamicRGSA:
-    case CalendarId::IslamicTabular:
-    case CalendarId::IslamicUmmAlQura:
-    case CalendarId::Persian:
-      return true;
-
-    // Calendar system which use multiple eras, but each era starts at a year
-    // boundary.
-    case CalendarId::Coptic:
-    case CalendarId::Ethiopian:
-    case CalendarId::Gregorian:
-    case CalendarId::ROC:
-      return true;
-
-    // Calendar system which use multiple eras and eras can start within a year.
-    case CalendarId::Japanese:
-      return false;
-  }
-  JS_CONSTEXPR_CRASH("invalid calendar id");
-}
-
-constexpr bool CalendarEraStartsAtYearBoundary(CalendarId id, EraCode era) {
-  MOZ_ASSERT_IF(id != CalendarId::Japanese,
-                CalendarEraStartsAtYearBoundary(id));
-  return era == EraCode::Standard || era == EraCode::Inverse;
-}
-
-struct EraYear {
-  EraCode era = EraCode::Standard;
-  int32_t year = 0;
-};
-
-constexpr EraYear CalendarEraYear(CalendarId id, int32_t year) {
-  if (year > 0 || !CalendarEraRelevant(id)) {
-    return EraYear{EraCode::Standard, year};
-  }
-  return EraYear{EraCode::Inverse, int32_t(mozilla::Abs(year) + 1)};
+/**
+ * CalendarHasMidYearEras ( calendar )
+ */
+constexpr bool CalendarHasMidYearEras(CalendarId calendar) {
+  // Steps 1-2.
+  //
+  // Japanese eras can start in the middle of the year. All other calendars
+  // start their eras at year boundaries. (Or don't have eras at all.)
+  return calendar == CalendarId::Japanese;
 }
 
 }  // namespace js::temporal

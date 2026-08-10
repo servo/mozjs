@@ -1,16 +1,14 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/arm/Assembler-arm.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Sprintf.h"
 
+#include <bit>
 #include <type_traits>
 
 #include "gc/Marking.h"
@@ -20,11 +18,11 @@
 #include "jit/ExecutableAllocator.h"
 #include "jit/MacroAssembler.h"
 #include "vm/Realm.h"
+#include "wasm/WasmFrame.h"
 
 using namespace js;
 using namespace js::jit;
 
-using mozilla::CountLeadingZeroes32;
 using mozilla::DebugOnly;
 
 using LabelDoc = DisassemblerSpew::LabelDoc;
@@ -36,10 +34,10 @@ void dbg_break() {}
 // calls. The system ABI can either be SoftFp or HardFp, and inter-wasm calls
 // are always HardFp calls. The initialization defaults to HardFp, and the ABI
 // choice is made before any system ABI calls with the method "setUseHardFp".
-ABIArgGenerator::ABIArgGenerator()
-    : intRegIndex_(0),
+ABIArgGenerator::ABIArgGenerator(ABIKind kind)
+    : ABIArgGeneratorShared(kind),
+      intRegIndex_(0),
       floatRegIndex_(0),
-      stackOffset_(0),
       current_(),
       useHardFp_(true) {}
 
@@ -837,7 +835,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
   // Also remember, values are rotated by multiples of two, and left, mid or
   // right can have length zero.
   uint32_t imm1, imm2;
-  int left = CountLeadingZeroes32(imm) & 0x1E;
+  int left = std::countl_zero(imm) & 0x1E;
   uint32_t no_n1 = imm & ~(0xff << (24 - left));
 
   // Not technically needed: this case only happens if we can encode as a
@@ -847,7 +845,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
     return TwoImm8mData();
   }
 
-  int mid = CountLeadingZeroes32(no_n1) & 0x1E;
+  int mid = std::countl_zero(no_n1) & 0x1E;
   uint32_t no_n2 =
       no_n1 & ~((0xff << ((24 - mid) & 0x1f)) | 0xff >> ((8 + mid) & 0x1f));
 
@@ -879,7 +877,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
     return TwoImm8mData();
   }
 
-  int right = 32 - (CountLeadingZeroes32(no_n2) & 30);
+  int right = 32 - (std::countl_zero(no_n2) & 30);
   // All remaining set bits *must* fit into the lower 8 bits.
   // The right == 8 case should be handled by the previous case.
   if (right > 8) {
@@ -895,7 +893,7 @@ Imm8::TwoImm8mData Imm8::EncodeTwoImms(uint32_t imm) {
     // second op for 0x4000, and 0x1 cannot be included in the encoding of
     // 0x04100000.
     no_n1 = imm & ~((0xff >> (8 - right)) | (0xff << (24 + right)));
-    mid = CountLeadingZeroes32(no_n1) & 30;
+    mid = std::countl_zero(no_n1) & 30;
     no_n2 = no_n1 & ~((0xff << ((24 - mid) & 31)) | 0xff >> ((8 + mid) & 31));
     if (no_n2 != 0) {
       return TwoImm8mData();
@@ -1583,16 +1581,17 @@ BufferOffset Assembler::as_dtm(LoadStore ls, Register rn, uint32_t mask,
   return writeInst(0x08000000 | RN(rn) | ls | mode | mask | c | wb);
 }
 
-BufferOffset Assembler::allocLiteralLoadEntry(
-    size_t numInst, unsigned numPoolEntries, PoolHintPun& php, uint8_t* data,
-    const LiteralDoc& doc, ARMBuffer::PoolEntry* pe, bool loadToPC) {
+BufferOffset Assembler::allocLiteralLoadEntry(size_t numInst,
+                                              unsigned numPoolEntries,
+                                              PoolHintPun& php, uint8_t* data,
+                                              const LiteralDoc& doc,
+                                              bool loadToPC) {
   uint8_t* inst = (uint8_t*)&php.raw;
 
   MOZ_ASSERT(inst);
   MOZ_ASSERT(numInst == 1);  // Or fix the disassembly
 
-  BufferOffset offs =
-      m_buffer.allocEntry(numInst, numPoolEntries, inst, data, pe);
+  BufferOffset offs = m_buffer.allocEntry(numInst, numPoolEntries, inst, data);
   propagateOOM(offs.assigned());
 #ifdef JS_DISASM_ARM
   Instruction* instruction = m_buffer.getInstOrNull(offs);
@@ -1610,8 +1609,8 @@ BufferOffset Assembler::as_Imm32Pool(Register dest, uint32_t value,
                                      Condition c) {
   PoolHintPun php;
   php.phd.init(0, c, PoolHintData::PoolDTR, dest);
-  BufferOffset offs = allocLiteralLoadEntry(
-      1, 1, php, (uint8_t*)&value, LiteralDoc(value), nullptr, dest == pc);
+  BufferOffset offs = allocLiteralLoadEntry(1, 1, php, (uint8_t*)&value,
+                                            LiteralDoc(value), dest == pc);
   return offs;
 }
 

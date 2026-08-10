@@ -52,9 +52,9 @@ def ping_desc(
 
     if ping_name in pings.RESERVED_PING_NAMES:
         desc = (
-            "This is a built-in ping that is assembled out of the "
-            "box by the Glean SDK."
+            "This is a built-in ping that is assembled out of the box by the Glean SDK."
         )
+
     elif ping_name == "all-pings":
         desc = "These metrics are sent in every ping."
     elif custom_pings_cache is not None and ping_name in custom_pings_cache:

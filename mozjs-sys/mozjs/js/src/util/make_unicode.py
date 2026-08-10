@@ -25,21 +25,10 @@ import re
 import sys
 from contextlib import closing
 from functools import partial
-from itertools import chain, tee
+from itertools import chain, tee, zip_longest
 from operator import is_not, itemgetter
+from urllib.request import urlopen
 from zipfile import ZipFile
-
-if sys.version_info.major == 2:
-    from itertools import ifilter as filter
-    from itertools import imap as map
-    from itertools import izip_longest as zip_longest
-
-    from urllib2 import urlopen
-
-    range = xrange
-else:
-    from itertools import zip_longest
-    from urllib.request import urlopen
 
 
 class codepoint_dict(dict):
@@ -418,7 +407,7 @@ def process_case_folding(case_folding):
         else:
             rev_folding = []
 
-        if folding != code or len(rev_folding):
+        if folding != code or rev_folding:
             item = [code]
             if folding != code:
                 item.append(folding)
@@ -582,15 +571,13 @@ def process_special_casing(special_casing, table, index):
     )
 
     # Ensure all case mapping contexts are known (see Unicode 9.0, §3.13 Default Case Algorithms).
-    assert set(
-        [
-            "After_I",
-            "After_Soft_Dotted",
-            "Final_Sigma",
-            "More_Above",
-            "Not_Before_Dot",
-        ]
-    ).issuperset(
+    assert set([
+        "After_I",
+        "After_Soft_Dotted",
+        "Final_Sigma",
+        "More_Above",
+        "Not_Before_Dot",
+    ]).issuperset(
         set(
             filter(
                 partial(is_not, None),
@@ -934,7 +921,7 @@ def write_ascii_lookup_tables(table, index, write, println):
 
 def write_latin1_lookup_tables(table, index, write, println):
     def case_info(code):
-        assert 0 <= code and code <= MAX_BMP
+        assert 0 <= code <= MAX_BMP
         (upper, lower, flags) = table[index[code]]
         return ((code + upper) & 0xFFFF, (code + lower) & 0xFFFF, flags)
 

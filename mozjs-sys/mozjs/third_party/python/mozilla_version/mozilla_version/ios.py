@@ -24,11 +24,15 @@ class MobileIosVersion(ShipItVersion):
         r"""
         ^(?P<major_number>\d+)
         \.(?P<minor_number>\d+)
+        (\.(?P<patch_number>\d+))?
         (b(?P<beta_number>\d+))?$""",
         re.VERBOSE,
     )
 
-    _OPTIONAL_NUMBERS = ("beta_number",)
+    _OPTIONAL_NUMBERS = (
+        "patch_number",
+        "beta_number",
+    )
     _ALL_NUMBERS = ShipItVersion._MANDATORY_NUMBERS + _OPTIONAL_NUMBERS
 
     def __str__(self):
@@ -39,27 +43,26 @@ class MobileIosVersion(ShipItVersion):
         """
         version = f"{self.major_number}.{self.minor_number}"
 
+        if self.patch_number:
+            version += f".{self.patch_number}"
+
         if self.beta_number is not None:
             version += f"b{self.beta_number}"
 
         return version
 
     def _create_bump_kwargs(self, field):
-        """
-        Create a version bump for the required field.
-
-        Version bumping is a bit different for iOS as we don't have a patch number
-        despite shipit expecting one. So when asked to bump the patch version, we bump
-        the minor instead.
-        """
-        if field == "patch_number":
-            field = "minor_number"
-
+        """Create a version bump for the required field."""
         kwargs = super()._create_bump_kwargs(field)
 
         # If we get a bump request for anything but the beta number, remove it
         if field != "beta_number":
             del kwargs["beta_number"]
+
+        # Prevent patch_number from being set to 0
+        # This happens when bumping minor_number on a version like 2.0
+        if kwargs.get("patch_number") == 0:
+            del kwargs["patch_number"]
 
         return kwargs
 
@@ -89,3 +92,25 @@ class MobileIosVersion(ShipItVersion):
             return difference
 
         return self._substract_other_number_from_this_number(other, "beta_number")
+
+    def _get_all_error_messages_for_attributes(self):
+        error_messages = super()._get_all_error_messages_for_attributes()
+
+        error_messages.extend(
+            [
+                pattern_message
+                for condition, pattern_message in (
+                    (
+                        self.beta_number is not None and self.patch_number is not None,
+                        "Beta number and patch number cannot be both defined",
+                    ),
+                    (
+                        self.patch_number == 0,
+                        "The patch number should be absent instead of being 0",
+                    ),
+                )
+                if condition
+            ]
+        )
+
+        return error_messages

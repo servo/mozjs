@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,15 +22,16 @@
 
 #include <stdint.h>  // int32_t, int64_t, uint32_t
 
-#include "gc/Barrier.h"        // HeapPtr
-#include "gc/ZoneAllocator.h"  // ZoneAllocPolicy
-#include "js/AllocPolicy.h"    // SystemAllocPolicy
-#include "js/Class.h"          // JSClassOps, ClassSpec
-#include "js/GCHashTable.h"    // GCHashMap, GCHashSet
-#include "js/GCVector.h"       // GCVector
-#include "js/PropertySpec.h"   // JSPropertySpec, JSFunctionSpec
-#include "js/RootingAPI.h"     // StableCellHasher
-#include "js/SweepingAPI.h"    // JS::WeakCache
+#include "gc/Barrier.h"         // HeapPtr
+#include "gc/ZoneAllocator.h"   // ZoneAllocPolicy
+#include "js/AllocPolicy.h"     // SystemAllocPolicy
+#include "js/Class.h"           // JSClassOps, ClassSpec
+#include "js/CompileOptions.h"  // JS::ReadOnlyCompileOptions
+#include "js/GCHashTable.h"     // GCHashMap, GCHashSet
+#include "js/GCVector.h"        // GCVector
+#include "js/PropertySpec.h"    // JSPropertySpec, JSFunctionSpec
+#include "js/RootingAPI.h"      // StableCellHasher
+#include "js/SweepingAPI.h"     // JS::WeakCache
 #include "js/TypeDecls.h"  // HandleValue, HandleObject, MutableHandleObject, MutableHandleFunction
 #include "js/Vector.h"  // JS::Vector
 #include "js/WasmFeatures.h"
@@ -101,6 +100,11 @@ struct ImportValues;
 
 bool IsSharedWasmMemoryObject(JSObject* obj);
 
+[[nodiscard]] bool CompileForESM(JSContext* cx,
+                                 const JS::ReadOnlyCompileOptions& options,
+                                 const BytecodeSource& source,
+                                 MutableHandleObject moduleObj);
+
 }  // namespace wasm
 
 // The class of WebAssembly.Module. Each WasmModuleObject owns a
@@ -130,6 +134,33 @@ class WasmModuleObject : public NativeObject {
   const wasm::Module& module() const;
 };
 
+#ifdef ENABLE_WASM_COMPONENTS
+// The class of WebAssembly.Component.
+// TODO(wasm-cm): Leave a more descriptive comment. See WasmModuleObject for
+// comparison.
+
+class WasmComponentObject : public NativeObject {
+  static const unsigned COMPONENT_SLOT = 0;
+  static const JSClassOps classOps_;
+  static const ClassSpec classSpec_;
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
+
+ public:
+  static const unsigned RESERVED_SLOTS = 1;
+  static const JSClass class_;
+  static const JSClass& protoClass_;
+  static const JSPropertySpec properties[];
+  static const JSFunctionSpec methods[];
+  static const JSFunctionSpec static_methods[];
+  static bool construct(JSContext*, unsigned, Value*);
+
+  static WasmComponentObject* create(JSContext* cx,
+                                     const wasm::Component& component,
+                                     HandleObject proto);
+  const wasm::Component& component() const;
+};
+#endif
+
 // The class of WebAssembly.Global.  This wraps a storage location, and there is
 // a per-agent one-to-one relationship between the WasmGlobalObject and the
 // storage location (the Cell) it wraps: if a module re-exports an imported
@@ -154,7 +185,7 @@ class WasmGlobalObject : public NativeObject {
   static bool valueSetterImpl(JSContext* cx, const CallArgs& args);
   static bool valueSetter(JSContext* cx, unsigned argc, Value* vp);
 
-  wasm::GCPtrVal& mutableVal();
+  wasm::HeapPtrVal& mutableVal();
 
  public:
   static const unsigned RESERVED_SLOTS = 2;
@@ -171,7 +202,7 @@ class WasmGlobalObject : public NativeObject {
 
   bool isMutable() const;
   wasm::ValType type() const;
-  const wasm::GCPtrVal& val() const;
+  const wasm::HeapPtrVal& val() const;
   void setVal(wasm::HandleVal value);
   void* addressOfCell() const;
 };
@@ -320,6 +351,7 @@ class WasmMemoryObject : public NativeObject {
   bool isHuge() const;
   bool movingGrowable() const;
   size_t boundsCheckLimit() const;
+  wasm::PageSize pageSize() const;
 
   // If isShared() is true then obtain the underlying buffer object.
   WasmSharedArrayRawBuffer* sharedArrayRawBuffer() const;
@@ -365,8 +397,8 @@ class WasmTableObject : public NativeObject {
   // Note that, after creation, a WasmTableObject's table() is not initialized
   // and must be initialized before use.
 
-  static WasmTableObject* create(JSContext* cx, wasm::Limits limits,
-                                 wasm::RefType tableType, HandleObject proto);
+  static WasmTableObject* create(JSContext* cx, const wasm::TableType& type,
+                                 HandleObject proto);
   wasm::Table& table() const;
 
   // Perform the standard `ToWebAssemblyValue` coercion on `value` and fill the
@@ -457,6 +489,15 @@ class WasmExceptionObject : public NativeObject {
   bool isWrappedJSValue() const;
   Value wrappedJSValue() const;
 
+  // Returns the exception value that JS would see if this was thrown. This
+  // will unwrap if `isWrappedJSValue`.
+  Value toJSValue() {
+    if (isWrappedJSValue()) {
+      return wrappedJSValue();
+    }
+    return JS::ObjectValue(*this);
+  }
+
   static size_t offsetOfData() {
     return NativeObject::getFixedSlotOffset(DATA_SLOT);
   }
@@ -468,7 +509,10 @@ class WasmNamespaceObject : public NativeObject {
  public:
   static const JSClass class_;
   static const unsigned JS_VALUE_TAG_SLOT = 0;
-  static const unsigned RESERVED_SLOTS = 1;
+#ifdef ENABLE_WASM_JSPI
+  static const unsigned JS_PROMISE_TAG_SLOT = 1;
+#endif
+  static const unsigned RESERVED_SLOTS = 2;
 
   WasmTagObject* wrappedJSValueTag() const {
     return &getReservedSlot(JS_VALUE_TAG_SLOT)
@@ -478,6 +522,16 @@ class WasmNamespaceObject : public NativeObject {
   void setWrappedJSValueTag(WasmTagObject* tag) {
     return setReservedSlot(JS_VALUE_TAG_SLOT, ObjectValue(*tag));
   }
+#ifdef ENABLE_WASM_JSPI
+  WasmTagObject* jsPromiseTag() const {
+    return &getReservedSlot(JS_PROMISE_TAG_SLOT)
+                .toObjectOrNull()
+                ->as<WasmTagObject>();
+  }
+  void setJSPromiseTag(WasmTagObject* tag) {
+    return setReservedSlot(JS_PROMISE_TAG_SLOT, ObjectValue(*tag));
+  }
+#endif
 
   static WasmNamespaceObject* getOrCreate(JSContext* cx);
 

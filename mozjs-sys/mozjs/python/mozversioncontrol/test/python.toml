@@ -1,11 +1,15 @@
 [DEFAULT]
 subsuite = "mozversioncontrol"
 
+["test_notes.py"]
+
 ["test_branch.py"]
 
 ["test_commit.py"]
 
 ["test_context_manager.py"]
+
+["test_diff_stream.py"]
 
 ["test_get_commits.py"]
 
@@ -13,7 +17,11 @@ subsuite = "mozversioncontrol"
 
 ["test_get_mozilla_remote_args.py"]
 
+["test_get_remote_url.py"]
+
 ["test_get_upstream_remotes.py"]
+
+["test_push.py"]
 
 ["test_push_to_try.py"]
 

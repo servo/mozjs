@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +19,6 @@
 
 #include "mozilla/Atomics.h"
 #include "mozilla/Maybe.h"
-
-#include <functional>
 
 #include "gc/Barrier.h"
 #include "js/shadow/Zone.h"  // for BarrierState
@@ -45,6 +41,8 @@ class WasmGcObject;
 class WasmStructObject;
 class WasmArrayObject;
 
+struct AllocationMetadataBuilder;
+
 namespace gc {
 class StoreBuffer;
 }  // namespace gc
@@ -59,6 +57,7 @@ struct FuncExportInstanceData;
 struct MemoryDesc;
 struct MemoryInstanceData;
 class GlobalDesc;
+struct Handlers;
 struct TableDesc;
 struct TableInstanceData;
 struct TagDesc;
@@ -88,9 +87,11 @@ class alignas(16) Instance {
   // always in sync with the MemoryInstanceData for memory 0.
   uint8_t* memory0Base_;
 
-  // Bounds check limit in bytes (or zero if there is no memory) for memory 0
-  // This is 64-bits on 64-bit systems so as to allow for heap lengths up to and
-  // beyond 4GB, and 32-bits on 32-bit systems, where memories are limited to
+  // Bounds check limit in bytes for memory 0. If there is no memory 0, this
+  // value will be zero.
+  //
+  // This is 64 bits on 64-bit systems so as to allow for heap lengths up to and
+  // beyond 4GB, and 32 bits on 32-bit systems, where memories are limited to
   // 2GB.
   //
   // See "Linear memory addresses and bounds checking" in WasmMemory.cpp.
@@ -117,22 +118,13 @@ class alignas(16) Instance {
   // The tag object of the pending exception.
   GCPtr<AnyRef> pendingExceptionTag_;
 
-  // Usually equal to cx->stackLimitForJitCode(JS::StackForUntrustedScript),
-  // but can be racily set to trigger immediate trap as an opportunity to
-  // CheckForInterrupt without an additional branch.
-  mozilla::Atomic<JS::NativeStackLimit, mozilla::Relaxed> stackLimit_;
-
   // Set to 1 when wasm should call CheckForInterrupt.
   mozilla::Atomic<uint32_t, mozilla::Relaxed> interrupt_;
 
-  // Boolean value set to true when instance code is executed on a suspendable
-  // stack. Aligned to int32_t to be used on JIT code.
-  int32_t onSuspendableStack_;
-
-  // The address of the realm()->zone()->needsIncrementalBarrier(). This is
+  // The address of the realm()->zone()->needsMarkingBarrier(). This is
   // specific to this instance and not a process wide field, and so it cannot
   // be linked into code.
-  const JS::shadow::Zone::BarrierState* addressOfNeedsIncrementalBarrier_;
+  const JS::shadow::Zone::BarrierState* addressOfNeedsMarkingBarrier_;
 
   // An array of AllocSites allocated for Wasm GC operations such as struct.new,
   // array.new, etc.
@@ -148,14 +140,22 @@ class alignas(16) Instance {
   }
 
   // The number of baseline scratch storage words available.
-  static constexpr size_t N_BASELINE_SCRATCH_WORDS = 4;
+  static constexpr size_t N_BASELINE_SCRATCH_WORDS = 8;
+
+  // The size and offset of baselineScratchWords_.
+  static constexpr size_t sizeofBaselineScratchWords() {
+    return sizeof(baselineScratchWords_);
+  }
+  static constexpr size_t offsetofBaselineScratchWords() {
+    return offsetof(Instance, baselineScratchWords_);
+  }
 
  private:
   // When compiling with tiering, the jumpTable has one entry for each
   // baseline-compiled function.
   void** jumpTable_;
 
-  // 4 words of scratch storage for the baseline compiler, which can't always
+  // 8 words of scratch storage for the baseline compiler, which can't always
   // use the stack for this.
   uintptr_t baselineScratchWords_[N_BASELINE_SCRATCH_WORDS];
 
@@ -163,9 +163,6 @@ class alignas(16) Instance {
   // this into code, but the only use-sites are register restricted and cannot
   // easily use a symbolic address.
   const JSClass* valueBoxClass_;
-
-  // Address of the JitRuntime's arguments rectifier trampoline
-  void* jsJitArgsRectifier_;
 
   // Address of the JitRuntime's exception handler trampoline
   void* jsJitExceptionHandler_;
@@ -214,11 +211,12 @@ class alignas(16) Instance {
   void* allocatedBase_;
 
   // Fields from the JS context for memory allocation, stashed on the instance
-  // so it can be accessed from JIT code.
+  // so it can be accessed from JIT code efficiently.
   const void* addressOfNurseryPosition_;
 #ifdef JS_GC_ZEAL
   const void* addressOfGCZealModeBits_;
 #endif
+  const js::AllocationMetadataBuilder* allocationMetadataBuilder_;
 
   // A copy of the runtime's addressOfLastBufferedWholeCell, used for whole-cell
   // store buffer entries.
@@ -235,7 +233,7 @@ class alignas(16) Instance {
   // The data must be the last field.  Globals for the module start here
   // and are inline in this structure.  16-byte alignment is required for SIMD
   // data.
-  MOZ_ALIGNED_DECL(16, char data_);
+  alignas(16) char data_;
 
   // Internal helpers:
   FuncDefInstanceData* funcDefInstanceData(uint32_t funcIndex) const;
@@ -287,7 +285,8 @@ class alignas(16) Instance {
   uintptr_t traceFrame(JSTracer* trc, const wasm::WasmFrameIter& wfi,
                        uint8_t* nextPC,
                        uintptr_t highestByteVisitedInPrevFrame);
-  void updateFrameForMovingGC(const wasm::WasmFrameIter& wfi, uint8_t* nextPC);
+  void updateFrameForMovingGC(const wasm::WasmFrameIter& wfi, uint8_t* nextPC,
+                              Nursery& nursery);
 
   static constexpr size_t offsetOfMemory0Base() {
     return offsetof(Instance, memory0Base_);
@@ -316,23 +315,20 @@ class alignas(16) Instance {
   static constexpr size_t offsetOfPendingExceptionTag() {
     return offsetof(Instance, pendingExceptionTag_);
   }
-  static constexpr size_t offsetOfStackLimit() {
-    return offsetof(Instance, stackLimit_);
-  }
   static constexpr size_t offsetOfInterrupt() {
     return offsetof(Instance, interrupt_);
-  }
-  static constexpr size_t offsetOfOnSuspendableStack() {
-    return offsetof(Instance, onSuspendableStack_);
   }
   static constexpr size_t offsetOfAllocSites() {
     return offsetof(Instance, allocSites_);
   }
+  static constexpr size_t offsetOfAllocationMetadataBuilder() {
+    return offsetof(Instance, allocationMetadataBuilder_);
+  }
   static constexpr size_t offsetOfAddressOfLastBufferedWholeCell() {
     return offsetof(Instance, addressOfLastBufferedWholeCell_);
   }
-  static constexpr size_t offsetOfAddressOfNeedsIncrementalBarrier() {
-    return offsetof(Instance, addressOfNeedsIncrementalBarrier_);
+  static constexpr size_t offsetOfAddressOfNeedsMarkingBarrier() {
+    return offsetof(Instance, addressOfNeedsMarkingBarrier_);
   }
   static constexpr size_t offsetOfJumpTable() {
     return offsetof(Instance, jumpTable_);
@@ -342,9 +338,6 @@ class alignas(16) Instance {
   }
   static constexpr size_t sizeOfBaselineScratchWords() {
     return sizeof(baselineScratchWords_);
-  }
-  static constexpr size_t offsetOfJSJitArgsRectifier() {
-    return offsetof(Instance, jsJitArgsRectifier_);
   }
   static constexpr size_t offsetOfJSJitExceptionHandler() {
     return offsetof(Instance, jsJitExceptionHandler_);
@@ -389,16 +382,20 @@ class alignas(16) Instance {
   SharedArrayRawBuffer* sharedMemoryBuffer(
       uint32_t memoryIndex) const;  // never null
   bool memoryAccessInGuardRegion(const uint8_t* addr, unsigned numBytes) const;
+  bool memoryAccessInMappedRegion(const uint8_t* addr, uint32_t* memoryIndex,
+                                  uint64_t* offset) const;
 
   // Methods to set, test and clear the interrupt fields. Both interrupt
   // fields are Relaxed and so no consistency/ordering can be assumed.
 
   void setInterrupt();
   bool isInterrupted() const;
-  void resetInterrupt(JSContext* cx);
+  void resetInterrupt();
 
-  void setTemporaryStackLimit(JS::NativeStackLimit limit);
-  void resetTemporaryStackLimit(JSContext* cx);
+  void setAllocationMetadataBuilder(
+      const js::AllocationMetadataBuilder* allocationMetadataBuilder) {
+    allocationMetadataBuilder_ = allocationMetadataBuilder;
+  }
 
   int32_t computeInitialHotnessCounter(uint32_t funcIndex,
                                        size_t codeSectionSize);
@@ -628,14 +625,16 @@ class alignas(16) Instance {
   static int32_t arrayCopy(Instance* instance, void* dstArray,
                            uint32_t dstIndex, void* srcArray, uint32_t srcIndex,
                            uint32_t numElements, uint32_t elementSize);
-  static int32_t arrayFill(Instance* instance, void* array, uint32_t index,
-                           uint32_t numElements);
+#ifdef ENABLE_WASM_JSPI
+  static void* contNew(Instance* instance, void* funcRef);
+  static void* contNewEmpty(Instance* instance);
+  static void contUnwind(Instance* instance, wasm::Handlers* handlers);
+#endif
   static int32_t refTest(Instance* instance, void* refPtr,
                          const wasm::TypeDef* typeDef);
   static int32_t intrI8VecMul(Instance* instance, uint32_t dest, uint32_t src1,
                               uint32_t src2, uint32_t len, uint8_t* memBase);
 
-#ifdef ENABLE_WASM_JS_STRING_BUILTINS
   static int32_t stringTest(Instance* instance, void* stringArg);
   static void* stringCast(Instance* instance, void* stringArg);
   static void* stringFromCharCodeArray(Instance* instance, void* arrayArg,
@@ -657,7 +656,8 @@ class alignas(16) Instance {
                               void* secondStringArg);
   static int32_t stringCompare(Instance* instance, void* firstStringArg,
                                void* secondStringArg);
-#endif  // ENABLE_WASM_JS_STRING_BUILTINS
+  static void addSubI128(Instance* instance, uint32_t isAdd);
+  static void mulI64Wide(Instance* instance, uint32_t isSigned);
 };
 
 bool ResultsToJSValue(JSContext* cx, ResultType type, void* registerResultLoc,

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,6 +6,8 @@
 #define jit_RegisterAllocator_h
 
 #include "mozilla/MathAlgorithms.h"
+
+#include <compare>  // std::strong_ordering
 
 #include "jit/LIR.h"
 #include "jit/MIRGenerator.h"
@@ -164,17 +164,7 @@ class CodePosition {
 
   SubPosition subpos() const { return (SubPosition)(bits_ & SUBPOSITION_MASK); }
 
-  bool operator<(CodePosition other) const { return bits_ < other.bits_; }
-
-  bool operator<=(CodePosition other) const { return bits_ <= other.bits_; }
-
-  bool operator!=(CodePosition other) const { return bits_ != other.bits_; }
-
-  bool operator==(CodePosition other) const { return bits_ == other.bits_; }
-
-  bool operator>(CodePosition other) const { return bits_ > other.bits_; }
-
-  bool operator>=(CodePosition other) const { return bits_ >= other.bits_; }
+  constexpr auto operator<=>(const CodePosition& other) const = default;
 
   uint32_t operator-(CodePosition other) const {
     MOZ_ASSERT(bits_ >= other.bits_);
@@ -196,7 +186,7 @@ class InstructionDataMap {
   FixedList<LNode*> insData_;
 
  public:
-  InstructionDataMap() {}
+  InstructionDataMap() = default;
 
   [[nodiscard]] bool init(MIRGenerator* gen, uint32_t numInstructions) {
     if (!insData_.init(gen->alloc(), numInstructions)) {
@@ -216,9 +206,6 @@ class InstructionDataMap {
 
 // Common superclass for register allocators.
 class RegisterAllocator {
-  void operator=(const RegisterAllocator&) = delete;
-  RegisterAllocator(const RegisterAllocator&) = delete;
-
  protected:
   // Context
   MIRGenerator* mir;
@@ -282,6 +269,9 @@ class RegisterAllocator {
 #endif
     MOZ_ASSERT(!regs.has(FramePointer));
   }
+
+  void operator=(const RegisterAllocator&) = delete;
+  RegisterAllocator(const RegisterAllocator&) = delete;
 };
 
 static inline AnyRegister GetFixedRegister(const LDefinition* def,

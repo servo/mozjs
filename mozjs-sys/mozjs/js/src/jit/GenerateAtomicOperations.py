@@ -736,6 +736,8 @@ HEADER_TEMPLATE = """\
 
 #include "mozilla/Attributes.h"
 
+#include <cstdint>
+
 namespace js {
 namespace jit {
 

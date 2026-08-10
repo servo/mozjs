@@ -3,7 +3,6 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
-import sys
 import unittest
 
 import mozpack.path as mozpath
@@ -13,11 +12,6 @@ from mozbuild import schedules
 from mozbuild.frontend.context import BugzillaComponent
 from mozbuild.frontend.reader import BuildReader, BuildReaderError
 from mozbuild.test.common import MockConfig
-
-if sys.version_info.major == 2:
-    text_type = "unicode"
-else:
-    text_type = "str"
 
 data_path = mozpath.abspath(mozpath.dirname(__file__))
 data_path = mozpath.join(data_path, "data")
@@ -141,7 +135,7 @@ class TestBuildReader(unittest.TestCase):
             list(reader.read_topsrcdir())
 
         e = bre.exception
-        self.assertIn("Python syntax error on line 5", str(e))
+        self.assertIn("Python syntax error on line 4", str(e))
         self.assertIn("    foo =", str(e))
         self.assertIn("         ^", str(e))
 
@@ -152,7 +146,7 @@ class TestBuildReader(unittest.TestCase):
             list(reader.read_topsrcdir())
 
         e = bre.exception
-        self.assertIn("The error was triggered on line 5", str(e))
+        self.assertIn("The error was triggered on line 4", str(e))
         self.assertIn("The underlying problem is an attempt to read", str(e))
         self.assertIn("    FOO", str(e))
 
@@ -163,7 +157,7 @@ class TestBuildReader(unittest.TestCase):
             list(reader.read_topsrcdir())
 
         e = bre.exception
-        self.assertIn("The error was triggered on line 7", str(e))
+        self.assertIn("The error was triggered on line 6", str(e))
         self.assertIn("The underlying problem is an attempt to write", str(e))
         self.assertIn("    FOO", str(e))
 
@@ -174,13 +168,13 @@ class TestBuildReader(unittest.TestCase):
             list(reader.read_topsrcdir())
 
         e = bre.exception
-        self.assertIn("The error was triggered on line 5", str(e))
+        self.assertIn("The error was triggered on line 4", str(e))
         self.assertIn("is an attempt to write an illegal value to a special", str(e))
 
         self.assertIn("variable whose value was rejected is:\n\n    DIRS", str(e))
 
         self.assertIn(
-            "written to it was of the following type:\n\n    %s" % text_type, str(e)
+            "written to it was of the following type:\n\n    %s" % "str", str(e)
         )
 
         self.assertIn("expects the following type(s):\n\n    list", str(e))
@@ -295,9 +289,9 @@ class TestBuildReader(unittest.TestCase):
         )
 
         # Missing moz.build from missing intermediate directory.
-        paths = reader._find_relevant_mozbuilds(
-            ["d1/no-intermediate-moz-build/child/file"]
-        )
+        paths = reader._find_relevant_mozbuilds([
+            "d1/no-intermediate-moz-build/child/file"
+        ])
         self.assertEqual(
             paths,
             {
@@ -310,9 +304,9 @@ class TestBuildReader(unittest.TestCase):
         )
 
         # Lots of empty directories.
-        paths = reader._find_relevant_mozbuilds(
-            ["d1/parent-is-far/dir1/dir2/dir3/file"]
-        )
+        paths = reader._find_relevant_mozbuilds([
+            "d1/parent-is-far/dir1/dir2/dir3/file"
+        ])
         self.assertEqual(
             paths,
             {
@@ -325,9 +319,10 @@ class TestBuildReader(unittest.TestCase):
         )
 
         # Lots of levels.
-        paths = reader._find_relevant_mozbuilds(
-            ["d1/every-level/a/file", "d1/every-level/b/file"]
-        )
+        paths = reader._find_relevant_mozbuilds([
+            "d1/every-level/a/file",
+            "d1/every-level/b/file",
+        ])
         self.assertEqual(
             paths,
             {
@@ -360,9 +355,11 @@ class TestBuildReader(unittest.TestCase):
     def test_read_relevant_mozbuilds(self):
         reader = self.reader("reader-relevant-mozbuild")
 
-        paths, contexts = reader.read_relevant_mozbuilds(
-            ["d1/every-level/a/file", "d1/every-level/b/file", "d2/file"]
-        )
+        paths, contexts = reader.read_relevant_mozbuilds([
+            "d1/every-level/a/file",
+            "d1/every-level/b/file",
+            "d2/file",
+        ])
         self.assertEqual(len(paths), 3)
         self.assertEqual(len(contexts), 6)
 
@@ -393,13 +390,11 @@ class TestBuildReader(unittest.TestCase):
     def test_files_bug_component_static(self):
         reader = self.reader("files-info")
 
-        v = reader.files_info(
-            [
-                "bug_component/static/foo",
-                "bug_component/static/bar",
-                "bug_component/static/foo/baz",
-            ]
-        )
+        v = reader.files_info([
+            "bug_component/static/foo",
+            "bug_component/static/bar",
+            "bug_component/static/foo/baz",
+        ])
         self.assertEqual(len(v), 3)
         self.assertEqual(
             v["bug_component/static/foo"]["BUG_COMPONENT"],
@@ -426,16 +421,14 @@ class TestBuildReader(unittest.TestCase):
     def test_files_bug_component_different_matchers(self):
         reader = self.reader("files-info")
 
-        v = reader.files_info(
-            [
-                "bug_component/different-matchers/foo.jsm",
-                "bug_component/different-matchers/bar.cpp",
-                "bug_component/different-matchers/baz.misc",
-            ]
-        )
+        v = reader.files_info([
+            "bug_component/different-matchers/foo.sys.mjs",
+            "bug_component/different-matchers/bar.cpp",
+            "bug_component/different-matchers/baz.misc",
+        ])
         self.assertEqual(len(v), 3)
 
-        js_flags = v["bug_component/different-matchers/foo.jsm"]
+        js_flags = v["bug_component/different-matchers/foo.sys.mjs"]
         cpp_flags = v["bug_component/different-matchers/bar.cpp"]
         misc_flags = v["bug_component/different-matchers/baz.misc"]
 
@@ -451,14 +444,12 @@ class TestBuildReader(unittest.TestCase):
     def test_files_bug_component_final(self):
         reader = self.reader("files-info")
 
-        v = reader.files_info(
-            [
-                "bug_component/final/foo",
-                "bug_component/final/Makefile.in",
-                "bug_component/final/subcomponent/Makefile.in",
-                "bug_component/final/subcomponent/bar",
-            ]
-        )
+        v = reader.files_info([
+            "bug_component/final/foo",
+            "bug_component/final/Makefile.in",
+            "bug_component/final/subcomponent/Makefile.in",
+            "bug_component/final/subcomponent/bar",
+        ])
 
         self.assertEqual(
             v["bug_component/final/foo"]["BUG_COMPONENT"],
@@ -485,17 +476,15 @@ class TestBuildReader(unittest.TestCase):
 
     def test_schedules(self):
         reader = self.reader("schedules")
-        info = reader.files_info(
-            [
-                "win.and.osx",
-                "somefile",
-                "foo.win",
-                "foo.osx",
-                "subd/aa.py",
-                "subd/yaml.py",
-                "subd/win.js",
-            ]
-        )
+        info = reader.files_info([
+            "win.and.osx",
+            "somefile",
+            "foo.win",
+            "foo.osx",
+            "subd/aa.py",
+            "subd/yaml.py",
+            "subd/win.js",
+        ])
         # default: all exclusive, no inclusive
         self.assertEqual(info["somefile"]["SCHEDULES"].inclusive, [])
         self.assertEqual(

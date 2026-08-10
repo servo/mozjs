@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,19 +12,19 @@
 namespace js {
 
 /*
- * Simple struct for encoding comparison ops with constant values (
- * that can be extracted during parsing) presently used with the
- * StrictConstantEq and StrictConstantNe opcodes. The operand encodes
- * the type of the constant and the payload if applicable within a
- * uint16_t. The type is encoded in the range of the top 8 bits, and the
- * payload in the bottom 8 bits.
+ * Simple struct for encoding comparison operations with parse-time constant
+ * values, presently used with the |StrictConstantEq| and |StrictConstantNe|
+ * opcodes.
  *
- * TODO (Bug 1958722): Investigate if larger payloads can be supported
- * in the empty bits.
+ * The operand encodes the type of the constant and its payload. The type is
+ * encoded in the high-byte and the payload in the low-byte of a 16-bit word.
+ *
+ * TODO (Bug 1958722): Investigate if larger payloads can be supported in the
+ * empty bits of the type.
  */
 struct ConstantCompareOperand {
  public:
-  enum class EncodedType : uint16_t {
+  enum class EncodedType : uint8_t {
     Int32 = JSVAL_TYPE_INT32,
     Boolean = JSVAL_TYPE_BOOLEAN,
     Null = JSVAL_TYPE_NULL,
@@ -60,8 +58,7 @@ struct ConstantCompareOperand {
   }
   explicit ConstantCompareOperand(EncodedType type) : value_(encodeType(type)) {
     MOZ_ASSERT(type == EncodedType::Undefined || type == EncodedType::Null);
-    MOZ_ASSERT_IF(type == EncodedType::Undefined, this->isUndefined());
-    MOZ_ASSERT_IF(type == EncodedType::Null, this->isNull());
+    MOZ_ASSERT(type == this->type());
   }
 
   static ConstantCompareOperand fromRawValue(uint16_t value) {
@@ -76,20 +73,7 @@ struct ConstantCompareOperand {
     return static_cast<EncodedType>((value_ & MASK_TYPE) >> SHIFT_TYPE);
   }
 
-  bool isNumber() const { return type() == EncodedType::Int32; }
-  bool isBoolean() const { return type() == EncodedType::Boolean; }
-  bool isNullOrUndefined() const {
-    return type() == EncodedType::Undefined || type() == EncodedType::Null;
-  }
-  bool isUndefined() const { return type() == EncodedType::Undefined; }
-  bool isNull() const { return type() == EncodedType::Null; }
-
   int32_t toInt32() const {
-    MOZ_ASSERT(type() == EncodedType::Int32);
-    return static_cast<int8_t>(value_ & MASK_VALUE);
-  }
-
-  double toNumber() const {
     MOZ_ASSERT(type() == EncodedType::Int32);
     return static_cast<int8_t>(value_ & MASK_VALUE);
   }

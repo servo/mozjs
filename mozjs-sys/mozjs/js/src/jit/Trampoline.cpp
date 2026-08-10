@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -49,7 +47,7 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
 #ifdef DEBUG
     masm.loadPtr(Address(framePtr, CommonFrameLayout::offsetOfDescriptor()),
                  scratch);
-    masm.and32(Imm32(FRAMETYPE_MASK), scratch);
+    masm.and32(Imm32(FrameDescriptor::TypeMask), scratch);
 
     Label checkOk;
     for (FrameType type : types) {
@@ -102,8 +100,6 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
   // |
   // ^--- Entry Frame (BaselineInterpreter) (unwrapped)
   // |
-  // ^--- Arguments Rectifier (unwrapped)
-  // |
   // ^--- Trampoline Native (unwrapped)
   // |
   // ^--- Entry Frame (CppToJSJit or WasmToJSJit)
@@ -135,7 +131,7 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
 #endif
 
   // Move FP into a scratch register and use that scratch register below, to
-  // allow unwrapping rectifier frames without clobbering FP.
+  // allow unwrapping frames without clobbering FP.
   Register fpScratch = regs.takeAny();
   masm.mov(FramePointer, fpScratch);
 
@@ -146,12 +142,11 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
   // on its type.
   masm.loadPtr(Address(fpScratch, JitFrameLayout::offsetOfDescriptor()),
                scratch);
-  masm.and32(Imm32(FRAMETYPE_MASK), scratch);
+  masm.and32(Imm32(FrameDescriptor::TypeMask), scratch);
 
   // Handling of each case is dependent on FrameDescriptor.type
   Label handle_BaselineOrIonJS;
   Label handle_BaselineStub;
-  Label handle_Rectifier;
   Label handle_TrampolineNative;
   Label handle_BaselineInterpreterEntry;
   Label handle_IonICCall;
@@ -163,8 +158,6 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
                 &handle_BaselineOrIonJS);
   masm.branch32(Assembler::Equal, scratch, Imm32(FrameType::BaselineStub),
                 &handle_BaselineStub);
-  masm.branch32(Assembler::Equal, scratch, Imm32(FrameType::Rectifier),
-                &handle_Rectifier);
   if (JitOptions.emitInterpreterEntryTrampoline) {
     masm.branch32(Assembler::Equal, scratch,
                   Imm32(FrameType::BaselineInterpreterEntry),
@@ -234,25 +227,14 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
     emitHandleStubFrame(FrameType::IonJS);
   }
 
-  masm.bind(&handle_Rectifier);
-  {
-    // There can be multiple previous frame types so just "unwrap" the arguments
-    // rectifier frame and try again.
-    masm.loadPtr(Address(fpScratch, CallerFPOffset), fpScratch);
-    emitAssertPrevFrameType(
-        fpScratch, scratch,
-        {FrameType::IonJS, FrameType::BaselineStub, FrameType::TrampolineNative,
-         FrameType::CppToJSJit, FrameType::WasmToJSJit});
-    masm.jump(&again);
-  }
-
   masm.bind(&handle_TrampolineNative);
   {
-    // Unwrap this frame, similar to arguments rectifier frames.
+    // There can be multiple previous frame types so just "unwrap" this frame
+    // and try again.
     masm.loadPtr(Address(fpScratch, CallerFPOffset), fpScratch);
     emitAssertPrevFrameType(
         fpScratch, scratch,
-        {FrameType::IonJS, FrameType::BaselineStub, FrameType::Rectifier,
+        {FrameType::IonJS, FrameType::BaselineStub, FrameType::IonICCall,
          FrameType::CppToJSJit, FrameType::WasmToJSJit});
     masm.jump(&again);
   }
@@ -266,7 +248,7 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
           fpScratch, scratch,
           {FrameType::IonJS, FrameType::BaselineJS, FrameType::BaselineStub,
            FrameType::CppToJSJit, FrameType::WasmToJSJit, FrameType::IonICCall,
-           FrameType::Rectifier});
+           FrameType::TrampolineNative});
       masm.jump(&again);
     }
   }
@@ -287,3 +269,109 @@ void JitRuntime::generateProfilerExitFrameTailStub(MacroAssembler& masm,
     masm.ret();
   }
 }
+
+#ifndef JS_CODEGEN_ARM64
+// This is a shared path used by generateEnterJit on all architectures
+// except arm64, which has its own implementation that avoids using the
+// pseudo stack pointer.
+void JitRuntime::generateEnterJitShared(MacroAssembler& masm, Register argcReg,
+                                        Register argvReg,
+                                        Register calleeTokenReg,
+                                        Register scratch, Register scratch2,
+                                        Register scratch3) {
+  // Preconditions:
+  // - argcReg contains the number of actual args passed (not including this).
+  // - argvReg points to the beginning of an array of argcReg argument values,
+  //   *not including* `this`. `this` is at argvReg[-1]. If newTarget exists,
+  //   it follows the last argument at argvReg[argcReg].
+  // - calleeTokenReg contains the calleeToken, still tagged.
+  // - no alignment is assumed.
+  //
+  // Postconditions:
+  // - stack padding has been inserted if necessary for alignment.
+  // - if necessary, newTarget has been copied into place.
+  // - if calleeToken is a function and argc < fun->nargs(), `undefined` values
+  //   have been pushed to make up the difference.
+  // - the arguments have been pushed to the stack.
+  // - the callee token has been pushed
+  // - the descriptor has *not* been pushed, because x86 doesn't have enough
+  //   registers available to pass in actualArgs.
+  static_assert(
+      sizeof(JitFrameLayout) % JitStackAlignment == 0,
+      "No need to consider the JitFrameLayout for aligning the stack");
+
+  Label notFunction, doneArgs;
+  masm.branchTest32(Assembler::NonZero, calleeTokenReg,
+                    Imm32(CalleeTokenScriptBit), &notFunction);
+
+  // Compute the number of arguments that will be pushed (excluding this and
+  // newTarget).
+  Register actualArgs = scratch;
+  masm.andPtr(Imm32(uint32_t(CalleeTokenMask)), calleeTokenReg, actualArgs);
+  masm.loadFunctionArgCount(actualArgs, actualArgs);
+  masm.max32(actualArgs, argcReg, actualArgs);
+
+  // Align the stack.
+  if (JitStackValueAlignment == 1) {
+    masm.andToStackPtr(Imm32(~(JitStackAlignment - 1)));
+  } else {
+    MOZ_ASSERT(JitStackValueAlignment == 2);
+    // We will push actualArgs arguments, `this`, and maybe `newTarget`.
+    // Each value we push is 8 bytes. If we push an even number of values,
+    // we want to align to 16 bytes. If we push an odd number, we want to be
+    // offset from that by 8. For alignment purposes, we only care about the
+    // parity of the total, so we can use the low bit of
+    //   1 (this) + actualArgs + calleeTokenReg (for the constructing bit)
+    static_assert(CalleeToken_FunctionConstructing == 1);
+    masm.computeEffectiveAddress(
+        BaseIndex(calleeTokenReg, actualArgs, Scale::TimesOne, 1), scratch2);
+    masm.and32(Imm32(1), scratch2);
+    masm.lshift32(Imm32(3), scratch2);
+    masm.moveStackPtrTo(scratch3);
+    masm.subPtr(scratch2, scratch3);
+    masm.andPtr(Imm32(JitStackAlignment - 1), scratch3);
+    masm.subFromStackPtr(scratch3);
+  }
+
+  // We set up argCursor to point 8 bytes *after* the next argument to push.
+  // This allows us to compare against argvReg in the arguments loop while
+  // still pushing `this`.
+  Register argCursor = scratch3;
+  masm.computeEffectiveAddress(BaseValueIndex(argvReg, argcReg), argCursor);
+
+  // Push newTarget if necessary.
+  Label notConstructing;
+  masm.branchTest32(Assembler::Zero, calleeTokenReg,
+                    Imm32(CalleeToken_FunctionConstructing), &notConstructing);
+  masm.pushValue(Address(argCursor, 0));
+  masm.bind(&notConstructing);
+
+  // Push undefined arguments if necessary, decrementing actualArgs
+  // until it matches argc.
+  Label undefLoop, doneUndef;
+  masm.bind(&undefLoop);
+  masm.branch32(Assembler::Equal, actualArgs, argcReg, &doneUndef);
+  masm.pushValue(UndefinedValue());
+  masm.sub32(Imm32(1), actualArgs);
+  masm.jump(&undefLoop);
+  masm.bind(&doneUndef);
+
+  // Loop pushing arguments.
+  Label argLoop;
+  masm.bind(&argLoop);
+  masm.pushValue(Address(argCursor, -int32_t(sizeof(Value))));
+  masm.subPtr(Imm32(sizeof(Value)), argCursor);
+  masm.branchPtr(Assembler::AboveOrEqual, argCursor, argvReg, &argLoop);
+
+  masm.jump(&doneArgs);
+
+  // If we're invoking a script, we will push no arguments. We can therefore
+  // simply align to the JitStackAlignment.
+  masm.bind(&notFunction);
+  masm.andToStackPtr(Imm32(~(JitStackAlignment - 1)));
+  masm.bind(&doneArgs);
+
+  // Push the callee token.
+  masm.push(calleeTokenReg);
+}
+#endif  // !JS_CODEGEN_ARM64

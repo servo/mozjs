@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -17,14 +15,15 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/Types.h"
 
 #include <algorithm>
-#include <cctype>
-#include <iterator>
+#include <bit>
 #include <optional>
+#include <ostream>
 
 #include "irregexp/RegExpTypes.h"
+#include "irregexp/util/BitFieldShim.h"
+#include "irregexp/util/BitVectorShim.h"
 #include "irregexp/util/FlagsShim.h"
 #include "irregexp/util/VectorShim.h"
 #include "irregexp/util/ZoneShim.h"
@@ -42,13 +41,24 @@
 #include "vm/RegExpShared.h"
 
 // Forward declaration of classes
+namespace js::jit {
+class MacroAssembler;
+}
+
 namespace v8 {
 namespace internal {
 
 class Heap;
 class Isolate;
 class RegExpMatchInfo;
-class RegExpStack;
+
+namespace regexp {
+class Stack;
+class SMRegExpMacroAssembler;
+class Utils;
+}  // namespace regexp
+
+using MacroAssembler = ::js::jit::MacroAssembler;
 
 template <typename T>
 class Handle;
@@ -61,6 +71,11 @@ class Handle;
 #define V8_FALLTHROUGH [[fallthrough]]
 #define V8_NODISCARD [[nodiscard]]
 #define V8_NOEXCEPT noexcept
+#define V8_LIFETIME_BOUND /* unsupported */
+#define V8_GSL_POINTER    /* [[gsl::Pointer]] unsupported */
+
+#define V8_LIKELY(x) MOZ_LIKELY(x)
+#define V8_UNLIKELY(x) MOZ_UNLIKELY(x)
 
 #define FATAL(x) MOZ_CRASH(x)
 #define UNREACHABLE() MOZ_CRASH("unreachable code")
@@ -79,8 +94,11 @@ class Handle;
 #define DCHECK_IMPLIES(lhs, rhs) MOZ_ASSERT_IF(lhs, rhs)
 #define CHECK MOZ_RELEASE_ASSERT
 #define CHECK_EQ(lhs, rhs) MOZ_RELEASE_ASSERT((lhs) == (rhs))
-#define CHECK_LE(lhs, rhs) MOZ_RELEASE_ASSERT((lhs) <= (rhs))
+#define CHECK_NE(lhs, rhs) MOZ_RELEASE_ASSERT((lhs) != (rhs))
+#define CHECK_GT(lhs, rhs) MOZ_RELEASE_ASSERT((lhs) > (rhs))
 #define CHECK_GE(lhs, rhs) MOZ_RELEASE_ASSERT((lhs) >= (rhs))
+#define CHECK_LT(lhs, rhs) MOZ_RELEASE_ASSERT((lhs) < (rhs))
+#define CHECK_LE(lhs, rhs) MOZ_RELEASE_ASSERT((lhs) <= (rhs))
 #define CHECK_IMPLIES(lhs, rhs) MOZ_RELEASE_ASSERT(!(lhs) || (rhs))
 #define CONSTEXPR_DCHECK MOZ_ASSERT
 
@@ -96,7 +114,40 @@ class Handle;
 #define SBXCHECK_LT(lhs, rhs) MOZ_ASSERT((lhs) < (rhs))
 #define SBXCHECK_LE(lhs, rhs) MOZ_ASSERT((lhs) <= (rhs))
 
+// GET_NTH_ARG(N, ...) returns the Nth argument in the list of arguments
+// following. Currently, up to N=8 is supported.
+#define GET_NTH_ARG(N, ...) CONCAT(GET_NTH_ARG_IMPL_, N)(__VA_ARGS__)
+#define GET_NTH_ARG_IMPL_0(_0, ...) _0
+#define GET_NTH_ARG_IMPL_1(_0, _1, ...) _1
+#define GET_NTH_ARG_IMPL_2(_0, _1, _2, ...) _2
+#define GET_NTH_ARG_IMPL_3(_0, _1, _2, _3, ...) _3
+#define GET_NTH_ARG_IMPL_4(_0, _1, _2, _3, _4, ...) _4
+#define GET_NTH_ARG_IMPL_5(_0, _1, _2, _3, _4, _5, ...) _5
+#define GET_NTH_ARG_IMPL_6(_0, _1, _2, _3, _4, _5, _6, ...) _6
+#define GET_NTH_ARG_IMPL_7(_0, _1, _2, _3, _4, _5, _6, _7, ...) _7
+
+// Expands to true if __VA_ARGS__ is empty, false otherwise.
+#define IS_VA_EMPTY(...) GET_NTH_ARG(0, __VA_OPT__(false, ) true)
+
+// UNPAREN(x) removes a layer of nested parentheses on x, if any. This means
+// that both UNPAREN(x) and UNPAREN((x)) expand to x. This is helpful for macros
+// that want to support multi argument templates with commas, e.g.
+//
+//   #define FOO(Type, Name) UNPAREN(Type) Name;
+//
+// will work with both
+//
+//   FOO(int, x);
+//   FOO((Foo<int, double, float>), x);
+#define CONCAT_(a, ...) a##__VA_ARGS__
+#define CONCAT(a, ...) CONCAT_(a, __VA_ARGS__)
+#define UNPAREN(X) CONCAT(DROP_, UNPAREN_ X)
+#define UNPAREN_(...) UNPAREN_ __VA_ARGS__
+#define DROP_UNPAREN_
+
 #define MemCopy memcpy
+
+#define PROFILE(isolate, event)
 
 // Origin:
 // https://github.com/v8/v8/blob/855591a54d160303349a5f0a32fab15825c708d1/src/base/macros.h#L310-L319
@@ -111,7 +162,19 @@ class Handle;
 #  define V8PRIuPTRDIFF "tu"
 #endif
 
-#define arraysize std::size
+// The arraysize(arr) macro returns the # of elements in an array arr.
+// The expression is a compile-time constant, and therefore can be
+// used in defining new arrays, for example.  If you use arraysize on
+// a pointer by mistake, you will get a compile-time error.
+#define arraysize(array) (sizeof(ArraySizeHelper(array)))
+
+// This template function declaration is used in defining arraysize.
+// Note that the function doesn't need an implementation, as we only
+// use its type.
+template <typename T, size_t N>
+char (&ArraySizeHelper(T (&array)[N]))[N];
+template <typename T, size_t N>
+char (&ArraySizeHelper(const T (&array)[N]))[N];
 
 // Explicitly declare the assignment operator as deleted.
 #define DISALLOW_ASSIGN(TypeName) TypeName& operator=(const TypeName&) = delete
@@ -130,6 +193,16 @@ class Handle;
   TypeName() = delete;                           \
   DISALLOW_COPY_AND_ASSIGN(TypeName)
 
+#define ZONE_NAME __func__
+
+#if defined(JS_CODEGEN_ARM)
+#  define kUnalignedReadSupported !js::jit::ARMFlags::HasAlignmentFault
+#elif defined(JS_CODEGEN_MIPS64)
+#  define kUnalignedReadSupported false
+#else
+#  define kUnalignedReadSupported true
+#endif
+
 namespace v8 {
 
 // Origin:
@@ -144,6 +217,39 @@ static const Address kNullAddress = 0;
 
 inline uintptr_t GetCurrentStackPosition() {
   return reinterpret_cast<uintptr_t>(__builtin_frame_address(0));
+}
+
+// Return the largest multiple of m which is <= x.
+template <typename T>
+constexpr T RoundDown(T x, intptr_t m) {
+  static_assert(std::is_integral_v<T>);
+  // m must be a power of two.
+  DCHECK(m != 0 && ((m & (m - 1)) == 0));
+  return x & static_cast<T>(-m);
+}
+template <intptr_t m, typename T>
+constexpr T RoundDown(T x) {
+  static_assert(std::is_integral_v<T>);
+  // m must be a power of two.
+  static_assert(m != 0 && ((m & (m - 1)) == 0));
+  return x & static_cast<T>(-m);
+}
+
+// Return the smallest multiple of m which is >= x.
+template <typename T>
+constexpr T RoundUp(T x, intptr_t m) {
+  static_assert(std::is_integral_v<T>);
+  DCHECK_GE(x, 0);
+  DCHECK_GE(std::numeric_limits<T>::max() - x, m - 1);  // Overflow check.
+  return RoundDown<T>(static_cast<T>(x + (m - 1)), m);
+}
+
+template <intptr_t m, typename T>
+constexpr T RoundUp(T x) {
+  static_assert(std::is_integral_v<T>);
+  DCHECK_GE(x, 0);
+  DCHECK_GE(std::numeric_limits<T>::max() - x, m - 1);  // Overflow check.
+  return RoundDown<m, T>(static_cast<T>(x + (m - 1)));
 }
 
 namespace base {
@@ -233,6 +339,36 @@ class LazyInstance {
   using type = LazyInstanceImpl<T>;
 };
 
+// LeakyObject<T> wraps an object of type T, which is initialized in the
+// constructor but never destructed. Thus LeakyObject<T> is trivially
+// destructible and can be used in static (lazily initialized) variables.
+template <typename T>
+class LeakyObject {
+ public:
+  template <typename... Args>
+  explicit LeakyObject(Args&&... args) {
+    new (storage_) T(std::forward<Args>(args)...);
+  }
+
+  LeakyObject(const LeakyObject&) = delete;
+  LeakyObject& operator=(const LeakyObject&) = delete;
+
+  T* get() { return reinterpret_cast<T*>(storage_); }
+
+ private:
+  alignas(T) char storage_[sizeof(T)];
+};
+
+// Define a function which returns a pointer to a lazily initialized and never
+// destructed object of type T, using a static local variable.
+// This is Meyer's singleton, and is guaranteed to be thread-safe.
+// See https://stackoverflow.com/a/1661564.
+#define DEFINE_LAZY_LEAKY_OBJECT_GETTER(T, FunctionName, ...) \
+  T* FunctionName() {                                         \
+    static ::v8::base::LeakyObject<T> object{__VA_ARGS__};    \
+    return object.get();                                      \
+  }
+
 // Origin:
 // https://github.com/v8/v8/blob/855591a54d160303349a5f0a32fab15825c708d1/src/utils/utils.h#L40-L48
 // Returns the value (0 .. 15) of a hexadecimal character c.
@@ -254,19 +390,51 @@ template <typename... Args>
 namespace bits {
 
 inline uint64_t CountTrailingZeros(uint64_t value) {
-  return mozilla::CountTrailingZeroes64(value);
+  return std::countr_zero(value);
 }
 
-inline size_t RoundUpToPowerOfTwo32(size_t value) {
+inline constexpr size_t RoundUpToPowerOfTwo32(size_t value) {
+  return mozilla::RoundUpPow2(value);
+}
+
+inline constexpr size_t RoundUpToPowerOfTwo(size_t value) {
   return mozilla::RoundUpPow2(value);
 }
 
 template <typename T>
 constexpr bool IsPowerOfTwo(T value) {
-  return value > 0 && (value & (value - 1)) == 0;
+  return std::has_single_bit(value);
+}
+
+constexpr uint32_t CountPopulation(uint32_t value) {
+  return std::popcount(value);
 }
 
 }  // namespace bits
+
+namespace internal {
+
+template <typename T>
+class CheckedNumeric : public mozilla::CheckedInt<T> {
+ public:
+  template <typename U>
+  MOZ_IMPLICIT constexpr CheckedNumeric(U val) : mozilla::CheckedInt<T>(val) {}
+
+  // AssignIfValid(Dst) - Assigns the underlying value if it is currently valid
+  // and is within the range supported by the destination type. Returns true if
+  // successful and false otherwise.
+  template <typename Dst>
+  bool AssignIfValid(Dst* result) const {
+    if (MOZ_LIKELY(this->isValid() && std::in_range<Dst>(this->value()))) {
+      *result = this->value();
+      return true;
+    }
+    return false;
+  }
+};
+
+}  // namespace internal
+
 }  // namespace base
 
 namespace unibrow {
@@ -434,6 +602,7 @@ constexpr int32_t MB = 1024 * 1024;
 #define kMaxInt JSVAL_INT_MAX
 #define kMinInt JSVAL_INT_MIN
 constexpr int kSystemPointerSize = sizeof(void*);
+constexpr int kSystemPointerHexDigits = kSystemPointerSize == 4 ? 8 : 12;
 
 // The largest integer n such that n and n + 1 are both exactly
 // representable as a Number value.  ES6 section 20.1.2.6
@@ -448,6 +617,7 @@ constexpr int kUInt32Size = sizeof(uint32_t);
 constexpr int kInt64Size = sizeof(int64_t);
 
 constexpr int kMaxUInt16 = (1 << 16) - 1;
+constexpr uint32_t kMaxUInt32 = 0xffffffff;
 
 inline constexpr bool IsDecimalDigit(base::uc32 c) {
   return c >= '0' && c <= '9';
@@ -455,11 +625,7 @@ inline constexpr bool IsDecimalDigit(base::uc32 c) {
 
 inline constexpr int AsciiAlphaToLower(base::uc32 c) { return c | 0x20; }
 
-inline bool is_uint24(int64_t val) { return (val >> 24) == 0; }
-inline bool is_int24(int64_t val) {
-  int64_t limit = int64_t(1) << 23;
-  return (-limit <= val) && (val < limit);
-}
+inline bool is_uint8(int64_t val) { return (val >> 8) == 0; }
 
 inline bool IsIdentifierStart(base::uc32 c) {
   return js::unicode::IsIdentifierStart(char32_t(c));
@@ -479,8 +645,24 @@ struct AsUC32 {
   int32_t value;
 };
 
+// Output the given value as hex, with a minimum width and optional prefix (0x).
+// E.g. AsHex(23, 3, true) produces "0x017". Produces an empty string if both
+// {min_width} and the value are 0.
+struct AsHex {
+  explicit AsHex(uint64_t v, uint8_t min_width = 1, bool with_prefix = false)
+      : value(v), min_width(min_width), with_prefix(with_prefix) {}
+  uint64_t value;
+  uint8_t min_width;
+  bool with_prefix;
+
+  static AsHex Address(Address a) {
+    return AsHex(a, kSystemPointerHexDigits, true);
+  }
+};
+
 std::ostream& operator<<(std::ostream& os, const AsUC16& c);
 std::ostream& operator<<(std::ostream& os, const AsUC32& c);
+std::ostream& operator<<(std::ostream& os, const AsHex& c);
 
 // This class is used for the output of trace-regexp-parser.  V8 has
 // an elaborate implementation to ensure that the output gets to the
@@ -488,11 +670,9 @@ std::ostream& operator<<(std::ostream& os, const AsUC32& c);
 // print output (ideally to stderr, to match the rest of our tracing
 // code). This is an empty wrapper that will convert itself to
 // std::cerr when used.
-class StdoutStream {
+class StdoutStream : public std::ostream {
  public:
-  operator std::ostream&() const;
-  template <typename T>
-  std::ostream& operator<<(T t);
+  StdoutStream();
 };
 
 // Reuse existing Maybe implementation
@@ -608,7 +788,7 @@ class Object {
 // isolate->stack_guard()->HandleInterrupts(). We want to handle
 // interrupts in the caller, so we return a magic value from
 // HandleInterrupts and check for it here.
-inline bool IsException(Object obj, Isolate*) {
+inline bool IsExceptionHole(Object obj) {
   return obj.value().isMagic(JS_INTERRUPT_REGEXP);
 }
 
@@ -644,7 +824,7 @@ class HeapObject : public Object {
 template <typename T>
 class Tagged {
  public:
-  Tagged() {}
+  Tagged() = default;
   MOZ_IMPLICIT Tagged(const T& value) : value_(value) {}
   MOZ_IMPLICIT Tagged(T&& value) : value_(std::move(value)) {}
 
@@ -677,6 +857,8 @@ class FixedArray : public HeapObject {
   }
   inline static FixedArray cast(Object object) {
     FixedArray f;
+    MOZ_ASSERT(object.value().isObject() &&
+               object.value().toObject().is<js::ArrayObject>());
     f.setValue(object.value());
     return f;
   }
@@ -713,6 +895,16 @@ T ByteArrayData::getTyped(uint32_t index) {
   return typedData<T>()[index];
 }
 
+// V8 uses this wrapper class as an alias for uint32_t to help enforce
+// sandbox safety. See https://issues.chromium.org/issues/425896305.
+class SafeHeapObjectSize {
+  uint32_t value_;
+
+ public:
+  explicit SafeHeapObjectSize(uint32_t value) : value_(value) {}
+  uint32_t value() { return value_; }
+};
+
 template <typename T>
 void ByteArrayData::setTyped(uint32_t index, T value) {
   MOZ_ASSERT(index < length() / sizeof(T));
@@ -734,8 +926,12 @@ class ByteArray : public HeapObject {
   uint8_t get(uint32_t index) { return inner()->get(index); }
   void set(uint32_t index, uint8_t val) { inner()->set(index, val); }
 
-  uint32_t length() const { return inner()->length(); }
+  SafeHeapObjectSize length() const {
+    return SafeHeapObjectSize(inner()->length());
+  }
+  SafeHeapObjectSize ulength() const { return length(); }
   uint8_t* begin() { return inner()->data(); }
+  uint8_t* end() { return inner()->data() + inner()->length(); }
 
   static ByteArray cast(Object object) {
     ByteArray b;
@@ -743,7 +939,7 @@ class ByteArray : public HeapObject {
     return b;
   }
 
-  friend class SMRegExpMacroAssembler;
+  friend class regexp::SMRegExpMacroAssembler;
 };
 
 // A byte array that can be trusted to not contain malicious data.
@@ -786,10 +982,10 @@ class FixedIntegerArray : public ByteArray {
     return f;
   }
 
-  uint32_t length() const {
-    uint32_t byteLength = ByteArray::length();
+  SafeHeapObjectSize length() const {
+    uint32_t byteLength = ByteArray::length().value();
     MOZ_ASSERT(byteLength % sizeof(T) == 0);
-    return byteLength / sizeof(T);
+    return SafeHeapObjectSize(byteLength / sizeof(T));
   }
 };
 
@@ -848,9 +1044,16 @@ class MOZ_NONHEAP_CLASS Handle {
             typename = std::enable_if_t<std::is_convertible_v<S*, T*>>>
   inline Handle(Handle<S> handle) : location_(handle.location_) {}
 
+  static Handle null() { return Handle(); }
   inline bool is_null() const { return location_ == nullptr; }
 
   inline T operator*() const { return T::cast(Object(*location_)); };
+
+  template <typename S>
+  inline static Handle<T> cast(Handle<S> that) {
+    T::cast(Object(*that.location_));
+    return Handle<T>(that.location_);
+  }
 
   // {ObjectRef} is returned by {Handle::operator->}. It should never be stored
   // anywhere or used in any other code; no one should ever have to spell out
@@ -885,6 +1088,11 @@ class MOZ_NONHEAP_CLASS Handle {
 
   const JS::Value* location_;
 };
+
+template <typename To, typename From>
+inline Handle<To> CheckedCast(Handle<From> value) {
+  return Handle<To>::cast(value);
+}
 
 // A Handle can be converted into a MaybeHandle. Converting a MaybeHandle
 // into a Handle requires checking that it does not point to nullptr.  This
@@ -965,7 +1173,7 @@ using DisallowGarbageCollection = JS::AutoAssertNoGC;
 
 class AllowGarbageCollection {
  public:
-  AllowGarbageCollection() {}
+  AllowGarbageCollection() = default;
 };
 
 // Origin:
@@ -1044,7 +1252,7 @@ class String : public HeapObject {
   base::Vector<const Char> GetCharVector(
       const DisallowGarbageCollection& no_gc);
 
-  friend class RegExpUtils;
+  friend class regexp::Utils;
 };
 
 template <>
@@ -1063,8 +1271,10 @@ inline base::Vector<const base::uc16> String::GetCharVector(
   return flat.ToUC16Vector();
 }
 
-using RegExpFlags = JS::RegExpFlags;
-using RegExpFlag = JS::RegExpFlags::Flag;
+namespace regexp {
+using Flags = JS::RegExpFlags;
+using Flag = JS::RegExpFlags::Flag;
+}  // namespace regexp
 
 class JSRegExp {
  public:
@@ -1073,10 +1283,10 @@ class JSRegExp {
     return (count + 1) * 2;
   }
 
-  static RegExpFlags AsRegExpFlags(RegExpFlags flags) { return flags; }
-  static RegExpFlags AsJSRegExpFlags(RegExpFlags flags) { return flags; }
+  static regexp::Flags AsRegExpFlags(regexp::Flags flags) { return flags; }
+  static regexp::Flags AsJSRegExpFlags(regexp::Flags flags) { return flags; }
 
-  static Handle<String> StringFromFlags(Isolate* isolate, RegExpFlags flags);
+  static Handle<String> StringFromFlags(Isolate* isolate, regexp::Flags flags);
 
   // ******************************
   // Static constants
@@ -1087,10 +1297,10 @@ class JSRegExp {
   static constexpr int kNoBacktrackLimit = 0;
 };
 
-class IrRegExpData : public HeapObject {
+class RegExpData : public HeapObject {
  public:
-  IrRegExpData() : HeapObject() {}
-  IrRegExpData(js::RegExpShared* re) { setValue(JS::PrivateGCThingValue(re)); }
+  RegExpData() : HeapObject() {}
+  RegExpData(js::RegExpShared* re) { setValue(JS::PrivateGCThingValue(re)); }
 
   // ******************************************************
   // Methods that are called from inside the implementation
@@ -1102,11 +1312,15 @@ class IrRegExpData : public HeapObject {
         Object(JS::PrivateValue(inner()->getByteCode(is_latin1))));
   }
 
+  bool has_bytecode(bool is_latin1) const {
+    return inner()->getByteCode(is_latin1) != nullptr;
+  }
+
   // TODO: should we expose this?
   uint32_t backtrack_limit() const { return 0; }
 
-  static IrRegExpData cast(Object object) {
-    IrRegExpData regexp;
+  static RegExpData cast(Object object) {
+    RegExpData regexp;
     js::gc::Cell* regexpShared = object.value().toGCThing();
     MOZ_ASSERT(regexpShared->is<js::RegExpShared>());
     regexp.setValue(JS::PrivateGCThingValue(regexpShared));
@@ -1117,12 +1331,14 @@ class IrRegExpData : public HeapObject {
     return inner()->getMaxRegisters();
   }
 
-  RegExpFlags flags() const { return inner()->getFlags(); }
+  regexp::Flags flags() const { return inner()->getFlags(); }
 
   size_t capture_count() const {
     // Subtract 1 because pairCount includes the implicit global capture.
     return inner()->pairCount() - 1;
   }
+
+  Tagged<String> escaped_source() const { return String(inner()->getSource()); }
 
  private:
   js::RegExpShared* inner() const {
@@ -1130,33 +1346,40 @@ class IrRegExpData : public HeapObject {
   }
 };
 
-inline bool IsUnicode(RegExpFlags flags) { return flags.unicode(); }
-inline bool IsGlobal(RegExpFlags flags) { return flags.global(); }
-inline bool IsIgnoreCase(RegExpFlags flags) { return flags.ignoreCase(); }
-inline bool IsMultiline(RegExpFlags flags) { return flags.multiline(); }
-inline bool IsDotAll(RegExpFlags flags) { return flags.dotAll(); }
-inline bool IsSticky(RegExpFlags flags) { return flags.sticky(); }
-inline bool IsUnicodeSets(RegExpFlags flags) { return flags.unicodeSets(); }
-inline bool IsEitherUnicode(RegExpFlags flags) {
+class IrRegExpData : public RegExpData {
+ public:
+  IrRegExpData() : RegExpData() {}
+  IrRegExpData(js::RegExpShared* re) : RegExpData(re) {}
+
+  static IrRegExpData cast(Object object) {
+    IrRegExpData regexp;
+    js::gc::Cell* regexpShared = object.value().toGCThing();
+    MOZ_ASSERT(regexpShared->is<js::RegExpShared>());
+    regexp.setValue(JS::PrivateGCThingValue(regexpShared));
+    return regexp;
+  }
+};
+
+inline bool IsUnicode(regexp::Flags flags) { return flags.unicode(); }
+inline bool IsGlobal(regexp::Flags flags) { return flags.global(); }
+inline bool IsIgnoreCase(regexp::Flags flags) { return flags.ignoreCase(); }
+inline bool IsMultiline(regexp::Flags flags) { return flags.multiline(); }
+inline bool IsDotAll(regexp::Flags flags) { return flags.dotAll(); }
+inline bool IsSticky(regexp::Flags flags) { return flags.sticky(); }
+inline bool IsUnicodeSets(regexp::Flags flags) { return flags.unicodeSets(); }
+inline bool IsEitherUnicode(regexp::Flags flags) {
   return flags.unicode() || flags.unicodeSets();
 }
 
-inline std::optional<RegExpFlag> TryRegExpFlagFromChar(char c) {
-  RegExpFlag flag;
+inline std::optional<regexp::Flag> TryFlagFromChar(char c) {
+  regexp::Flag flag;
 
   // The parser only calls this after verifying that it's a supported flag.
   if (JS::MaybeParseRegExpFlag(c, &flag)) {
     return flag;
   }
 
-  return std::optional<RegExpFlag>{};
-}
-
-inline bool operator==(const RegExpFlags& lhs, const int& rhs) {
-  return lhs.value() == rhs;
-}
-inline bool operator!=(const RegExpFlags& lhs, const int& rhs) {
-  return !(lhs == rhs);
+  return std::optional<regexp::Flag>{};
 }
 
 class Histogram {
@@ -1170,6 +1393,18 @@ class Counters {
 
  private:
   Histogram regexp_backtracks_;
+};
+
+class LocalHeap {
+ public:
+  using GCEpilogueCallback = void(void*);
+
+  // Adds a callback that is invoked with the given |data| after each GC.
+  // V8 uses this to update RegExpBytecodeIterator so that it is not
+  // invalidated if the GC moves the underlying ByteArray. We implement
+  // ByteArray using non-GC memory, so this is not relevant to us.
+  void AddGCEpilogueCallback(GCEpilogueCallback, void*) {}
+  void RemoveGCEpilogueCallback(GCEpilogueCallback, void*) {}
 };
 
 enum class AllocationType : uint8_t {
@@ -1186,10 +1421,14 @@ class Isolate {
   ~Isolate();
   bool init();
 
+  static Isolate* Current() { return js::TlsContext.get()->isolate; }
+
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
   //********** Isolate code **********//
-  RegExpStack* regexp_stack() const { return regexpStack_; }
+  regexp::Stack* regexp_stack() const { return regexpStack_; }
+
+  js::LifoAlloc* allocator() { return &cx_->tempLifoAlloc(); }
 
   // This is called from inside no-GC code. Instead of suppressing GC
   // to allocate the error, we return false from Execute and call
@@ -1220,6 +1459,8 @@ class Isolate {
   void IncreaseTotalRegexpCodeGenerated(Handle<HeapObject> code) {}
 
   Counters* counters() { return &counters_; }
+
+  LocalHeap* main_thread_local_heap() { return &main_thread_local_heap_; }
 
   //********** Factory code **********//
   inline Factory* factory() { return this; }
@@ -1290,8 +1531,9 @@ class Isolate {
   friend class HandleScope;
 
   JSContext* cx_;
-  RegExpStack* regexpStack_{};
+  regexp::Stack* regexpStack_{};
   Counters counters_{};
+  LocalHeap main_thread_local_heap_;
 #ifdef DEBUG
  public:
   uint32_t shouldSimulateInterrupt_ = 0;
@@ -1336,7 +1578,7 @@ class ExternalReference {
  public:
   static const void* TopOfRegexpStack(Isolate* isolate);
   static size_t SizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
-                                    RegExpStack* regexpStack);
+                                    regexp::Stack* regexpStack);
 };
 
 class Code : public HeapObject {
@@ -1359,8 +1601,24 @@ class Code : public HeapObject {
 // (NativeRegExpMacroAssembler::CheckStackGuardState)
 class InstructionStream {};
 
+namespace regexp {
+
+inline bool operator==(const Flags& lhs, const int& rhs) {
+  return lhs.value() == rhs;
+}
+inline bool operator!=(const Flags& lhs, const int& rhs) {
+  return !(lhs == rhs);
+}
+
 // Only used in the definition of RegExpGlobalExecRunner, which we don't use.
-class RegExpResultVectorScope {};
+class ResultVectorScope {};
+
+class Utils {
+ public:
+  static uint64_t AdvanceStringIndex(Tagged<String> string, uint64_t index,
+                                     bool unicode);
+};
+}  // namespace regexp
 
 // Origin: https://github.com/v8/v8/blob/master/src/codegen/label.h
 class Label {
@@ -1370,6 +1628,7 @@ class Label {
   js::jit::Label* inner() { return &inner_; }
 
   void Unuse() { inner_.reset(); }
+  void UnuseNear() { inner_.reset(); }
 
   bool is_linked() { return inner_.used(); }
   bool is_bound() { return inner_.bound(); }
@@ -1383,13 +1642,7 @@ class Label {
   js::jit::Label inner_;
   js::jit::CodeOffset patchOffset_;
 
-  friend class SMRegExpMacroAssembler;
-};
-
-class RegExpUtils {
- public:
-  static uint64_t AdvanceStringIndex(Tagged<String> string, uint64_t index,
-                                     bool unicode);
+  friend class regexp::SMRegExpMacroAssembler;
 };
 
 #define v8_flags js::jit::JitOptions

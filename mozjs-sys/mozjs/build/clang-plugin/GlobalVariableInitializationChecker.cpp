@@ -9,11 +9,11 @@ void GlobalVariableInitializationChecker::registerMatchers(MatchFinder *AstMatch
   auto FirstPartyGlobalVariable = varDecl(
       hasGlobalStorage(),
       unless(hasDeclContext(functionDecl())),
-      allOf(isDefinition(), isFirstParty(), unless(isExpansionInSystemHeader()))
+      isDefinition(), isFirstParty(), unless(isExpansionInSystemHeader())
   );
 
   auto FirstPartyGlobalVariableWithRuntimeInit = varDecl(FirstPartyGlobalVariable,
-      allOf(anyOf(isConstexpr(), hasConstInitAttr(), hasConstantInitializer(), hasMozGlobalType()), isMozGlobal()),
+      anyOf(isConstexpr(), hasConstInitAttr(), hasConstantInitializer(), hasMozGlobalType()), isMozGlobal(),
       unless(isMozGenerated())
       );
 
@@ -32,7 +32,7 @@ void GlobalVariableInitializationChecker::check(
   if (const VarDecl *VD =
           Result.Nodes.getNodeAs<VarDecl>("flagged-constinit_global")) {
     if (VD->hasConstantInitialization()) {
-      diag(VD->getBeginLoc(), "Global variable flagged as MOZ_RUNINIT but actually has constinit initialisation. Consider flagging it as constexpr or MOZ_CONSTINIT instead.",
+      diag(VD->getBeginLoc(), "Global variable flagged as MOZ_RUNINIT but actually has constinit initialisation. Consider flagging it as constexpr or constinit instead.",
            DiagnosticIDs::Error);
     }
     else {
@@ -58,7 +58,7 @@ void GlobalVariableInitializationChecker::check(
     if (getFilename(SM, Loc).ends_with(".cc")) {
       return;
     }
-    diag(VD->getBeginLoc(), "Global variable has runtime initialisation, try to remove it, make it constexpr or MOZ_CONSTINIT if possible, or as a last resort flag it as MOZ_RUNINIT.",
+    diag(VD->getBeginLoc(), "Global variable has runtime initialisation, try to remove it, make it constexpr or constinit if possible, or as a last resort flag it as MOZ_RUNINIT.",
          DiagnosticIDs::Error);
   }
 }

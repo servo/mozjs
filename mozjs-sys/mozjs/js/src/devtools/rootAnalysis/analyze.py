@@ -10,15 +10,12 @@ Runs the static rooting analysis
 """
 
 import argparse
+import json
 import os
 import subprocess
 import sys
 from shlex import quote
 from subprocess import Popen
-
-
-def execfile(thefile, globals):
-    exec(compile(open(thefile).read(), filename=thefile, mode="exec"), globals)
 
 
 # Label a string as an output.
@@ -313,8 +310,8 @@ def max_parallel_jobs(job_size=4 * 2**30):
 config = {"analysis_scriptdir": os.path.dirname(__file__)}
 
 defaults = [
-    "%s/defaults.py" % config["analysis_scriptdir"],
-    "%s/defaults.py" % os.getcwd(),
+    "%s/config.json" % config["analysis_scriptdir"],
+    "%s/config.json" % os.getcwd(),
 ]
 
 parser = argparse.ArgumentParser(
@@ -358,7 +355,7 @@ parser.add_argument(
     "--expect-file",
     type=str,
     nargs="?",
-    help="deprecated option, temporarily still present for backwards " "compatibility",
+    help="deprecated option, temporarily still present for backwards compatibility",
 )
 parser.add_argument(
     "--verbose",
@@ -372,18 +369,20 @@ parser.add_argument("--quiet", "-q", action="count", default=0, help="Suppress o
 args = parser.parse_args()
 args.verbose = max(0, args.verbose - args.quiet)
 
+data = None
+firsterr = None
 for default in defaults:
     try:
-        execfile(default, config)
+        with open(default) as fh:
+            data = json.load(fh)
         if args.verbose > 1:
-            print("Loaded %s" % default)
-    except Exception:
+            print(f"Loaded {default}")
+    except OSError as e:
+        firsterr = firsterr or e
         pass
 
-# execfile() used config as the globals for running the
-# defaults.py script, and will have set a __builtins__ key as a side effect.
-del config["__builtins__"]
-data = config.copy()
+if data is None:
+    raise firsterr
 
 for k, v in vars(args).items():
     if v is not None:
@@ -434,12 +433,13 @@ for step in steps:
             # Trim the {curly brackets} off of the output keys.
             data[name[1:-1]] = outfiles[i]
             num_outputs += 1
-        assert (
-            len(outfiles) == num_outputs
-        ), 'step "%s": mismatched number of output files (%d) and params (%d)' % (
-            step,
-            num_outputs,
-            len(outfiles),
+        assert len(outfiles) == num_outputs, (
+            'step "%s": mismatched number of output files (%d) and params (%d)'
+            % (
+                step,
+                num_outputs,
+                len(outfiles),
+            )
         )  # NOQA: E501
 
 if args.step:

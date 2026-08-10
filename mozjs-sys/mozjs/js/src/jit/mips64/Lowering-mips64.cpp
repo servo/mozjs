@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -33,14 +31,11 @@ LBoxAllocation LIRGeneratorMIPS64::useBoxFixed(MDefinition* mir, Register reg1,
   return LBoxAllocation(LUse(reg1, mir->virtualRegister(), useAtStart));
 }
 
-void LIRGeneratorMIPS64::lowerDivI64(MDiv* div) {
-  if (div->isUnsigned()) {
-    lowerUDivI64(div);
-    return;
-  }
+LDefinition LIRGeneratorMIPS64::tempToUnbox() { return temp(); }
 
-  LDivOrModI64* lir = new (alloc())
-      LDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()), temp());
+void LIRGeneratorMIPS64::lowerDivI64(MDiv* div) {
+  auto* lir = new (alloc())
+      LDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()));
   defineInt64(lir, div);
 }
 
@@ -49,13 +44,8 @@ void LIRGeneratorMIPS64::lowerWasmBuiltinDivI64(MWasmBuiltinDivI64* div) {
 }
 
 void LIRGeneratorMIPS64::lowerModI64(MMod* mod) {
-  if (mod->isUnsigned()) {
-    lowerUModI64(mod);
-    return;
-  }
-
-  LDivOrModI64* lir = new (alloc())
-      LDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()), temp());
+  auto* lir = new (alloc())
+      LDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()));
   defineInt64(lir, mod);
 }
 
@@ -64,14 +54,14 @@ void LIRGeneratorMIPS64::lowerWasmBuiltinModI64(MWasmBuiltinModI64* mod) {
 }
 
 void LIRGeneratorMIPS64::lowerUDivI64(MDiv* div) {
-  LUDivOrModI64* lir = new (alloc())
-      LUDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()), temp());
+  auto* lir = new (alloc())
+      LUDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()));
   defineInt64(lir, div);
 }
 
 void LIRGeneratorMIPS64::lowerUModI64(MMod* mod) {
-  LUDivOrModI64* lir = new (alloc())
-      LUDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()), temp());
+  auto* lir = new (alloc())
+      LUDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()));
   defineInt64(lir, mod);
 }
 
@@ -106,7 +96,7 @@ void LIRGenerator::visitBox(MBox* box) {
     define(new (alloc()) LValue(opd->toConstant()->toJSValue()), box,
            LDefinition(LDefinition::BOX));
   } else {
-    LBox* ins = new (alloc()) LBox(useRegister(opd), opd->type());
+    LBox* ins = new (alloc()) LBox(useRegisterAtStart(opd), opd->type());
     define(ins, box, LDefinition(LDefinition::BOX));
   }
 }

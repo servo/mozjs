@@ -1,8 +1,7 @@
 diff --git a/math_private.h b/math_private.h
 --- a/math_private.h
 +++ b/math_private.h
-@@ -12,16 +12,17 @@
- /*
+@@ -13,16 +13,17 @@
   * from: @(#)fdlibm.h 5.1 93/09/24
   * $FreeBSD$
   */
@@ -10,12 +9,13 @@ diff --git a/math_private.h b/math_private.h
  #ifndef _MATH_PRIVATE_H_
  #define	_MATH_PRIVATE_H_
  
+ #include <bit>
 +#include <cfloat>
  #include <stdint.h>
  #include <sys/types.h>
  
- #include "mozilla/EndianUtils.h"
- 
  #include "fdlibm.h"
  
  /*
+  * The original fdlibm code used statements like:
+  *	n0 = ((*(int*)&one)>>29)^1;		* index of high word *

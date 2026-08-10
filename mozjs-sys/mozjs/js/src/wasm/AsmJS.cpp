@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2014 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,10 +27,10 @@
 #include "mozilla/Variant.h"
 
 #include <algorithm>
+#include <bit>
 #include <new>
 
-#include "jsmath.h"
-
+#include "builtin/Math.h"
 #include "frontend/BytecodeCompiler.h"    // CompileStandaloneFunction
 #include "frontend/FrontendContext.h"     // js::FrontendContext
 #include "frontend/FunctionSyntaxKind.h"  // FunctionSyntaxKind
@@ -96,7 +94,6 @@ using mozilla::CeilingLog2;
 using mozilla::HashGeneric;
 using mozilla::IsNegativeZero;
 using mozilla::IsPositiveZero;
-using mozilla::IsPowerOfTwo;
 using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::PodZero;
@@ -116,18 +113,51 @@ enum class MemoryUsage { None = false, Unshared = 1, Shared = 2 };
 
 // The asm.js valid heap lengths are precisely the WASM valid heap lengths for
 // ARM greater or equal to MinHeapLength
-static const size_t MinHeapLength = PageSize;
+static const size_t MinHeapLength = StandardPageSizeBytes;
 // An asm.js heap can in principle be up to INT32_MAX bytes but requirements
 // on the format restrict it further to the largest pseudo-ARM-immediate.
 // See IsValidAsmJSHeapLength().
 static const uint64_t MaxHeapLength = 0x7f000000;
+
+// Because ARM has a fixed-width instruction encoding, ARM can only express a
+// limited subset of immediates (in a single instruction).
+static const uint64_t HighestValidARMImmediate = 0xff000000;
+
+//  Heap length on ARM should fit in an ARM immediate. We approximate the set
+//  of valid ARM immediates with the predicate:
+//    2^n for n in [16, 24)
+//  or
+//    2^24 * n for n >= 1.
+static bool IsValidARMImmediate(uint32_t i) {
+  bool valid = (std::has_single_bit(i) || (i & 0x00ffffff) == 0);
+
+  MOZ_ASSERT_IF(valid, i % StandardPageSizeBytes == 0);
+
+  return valid;
+}
+
+static uint64_t RoundUpToNextValidARMImmediate(uint64_t i) {
+  MOZ_ASSERT(i <= HighestValidARMImmediate);
+  static_assert(HighestValidARMImmediate == 0xff000000,
+                "algorithm relies on specific constant");
+
+  if (i <= 16 * 1024 * 1024) {
+    i = i ? mozilla::RoundUpPow2(i) : 0;
+  } else {
+    i = (i + 0x00ffffff) & ~0x00ffffff;
+  }
+
+  MOZ_ASSERT(IsValidARMImmediate(i));
+
+  return i;
+}
 
 static uint64_t RoundUpToNextValidAsmJSHeapLength(uint64_t length) {
   if (length <= MinHeapLength) {
     return MinHeapLength;
   }
 
-  return wasm::RoundUpToNextValidARMImmediate(length);
+  return RoundUpToNextValidARMImmediate(length);
 }
 
 static uint64_t DivideRoundingUp(uint64_t a, uint64_t b) {
@@ -204,8 +234,8 @@ struct LitValPOD {
   }
 };
 
-static_assert(std::is_pod_v<LitValPOD>,
-              "must be POD to be simply serialized/deserialized");
+static_assert(std::is_trivially_copyable_v<LitValPOD>,
+              "must be trivially copyable for serialization/deserialization");
 
 // An AsmJSGlobal represents a JS global variable in the asm.js module function.
 class AsmJSGlobal {
@@ -758,7 +788,7 @@ class NumLit {
   };
 
  private:
-  Which which_;
+  Which which_ = OutOfRangeInt;
   JS::Value value_;
 
  public:
@@ -1076,10 +1106,12 @@ static const unsigned VALIDATION_LIFO_DEFAULT_CHUNK_SIZE = 4 * 1024;
 class MOZ_STACK_CLASS ModuleValidatorShared {
  public:
   struct Memory {
-    MemoryUsage usage;
-    uint64_t minLength;
+    MemoryUsage usage = MemoryUsage::Unshared;
+    uint64_t minLength = 0;
 
-    uint64_t minPages() const { return DivideRoundingUp(minLength, PageSize); }
+    uint64_t minPages() const {
+      return DivideRoundingUp(minLength, StandardPageSizeBytes);
+    }
 
     Memory() = default;
   };
@@ -1545,8 +1577,9 @@ class MOZ_STACK_CLASS ModuleValidatorShared {
     MOZ_ASSERT(type == Type::canonicalize(Type::lit(lit)));
 
     uint32_t index = codeMeta_->globals.length();
-    if (!codeMeta_->globals.emplaceBack(type.canonicalToValType(), !isConst,
-                                        index, ModuleKind::AsmJS)) {
+    if (!codeMeta_->globals.emplaceBack(
+            GlobalType(type.canonicalToValType(), !isConst), index,
+            ModuleKind::AsmJS)) {
       return false;
     }
 
@@ -1581,7 +1614,7 @@ class MOZ_STACK_CLASS ModuleValidatorShared {
 
     uint32_t index = codeMeta_->globals.length();
     ValType valType = type.canonicalToValType();
-    if (!codeMeta_->globals.emplaceBack(valType, !isConst, index,
+    if (!codeMeta_->globals.emplaceBack(GlobalType(valType, !isConst), index,
                                         ModuleKind::AsmJS)) {
       return false;
     }
@@ -2059,9 +2092,10 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
       return false;
     }
 
-    Limits limits = Limits(mask + 1, Nothing(), Shareable::False);
+    Limits limits =
+        Limits(mask + 1, Nothing(), Shareable::False, PageSize::Standard);
     codeMeta_->asmJSSigToTableIndex[sigIndex] = codeMeta_->tables.length();
-    if (!codeMeta_->tables.emplaceBack(limits, RefType::func(),
+    if (!codeMeta_->tables.emplaceBack(TableType(limits, RefType::func()),
                                        /* initExpr */ Nothing(),
                                        /*isAsmJS*/ true)) {
       return false;
@@ -2124,6 +2158,7 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
       limits.initial = memory_.minPages();
       limits.maximum = Nothing();
       limits.addressType = AddressType::I32;
+      limits.pageSize = PageSize::Standard;
       if (!codeMeta_->memories.append(MemoryDesc(limits))) {
         return nullptr;
       }
@@ -2132,10 +2167,9 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
     if (!codeMeta_->funcs.resize(funcImportMap_.count() + funcDefs_.length())) {
       return nullptr;
     }
-    for (FuncImportMap::Range r = funcImportMap_.all(); !r.empty();
-         r.popFront()) {
-      uint32_t funcIndex = r.front().value();
-      uint32_t funcTypeIndex = r.front().key().sigIndex();
+    for (auto iter = funcImportMap_.iter(); !iter.done(); iter.next()) {
+      uint32_t funcIndex = iter.get().value();
+      uint32_t funcTypeIndex = iter.get().key().sigIndex();
       codeMeta_->funcs[funcIndex] = FuncDesc(funcTypeIndex);
     }
     for (const Func& func : funcDefs_) {
@@ -2195,8 +2229,14 @@ class MOZ_STACK_CLASS ModuleValidator : public ModuleValidatorShared {
       return nullptr;
     }
 
+    // We must give the generator a reference to an error to fill in. We don't
+    // use it ourselves though because the only error we should get is for
+    // implementation limits like 'stack frame too big' which we couldn't guard
+    // against ahead of time. Returning nullptr is the right thing to do in
+    // these cases.
+    UniqueChars error;
     ModuleGenerator mg(*codeMeta_, compilerEnv_, compilerEnv_.initialState(),
-                       nullptr, nullptr, nullptr);
+                       nullptr, &error, nullptr);
     if (!mg.initializeCompleteTier(codeMetaForAsmJS_.get())) {
       return nullptr;
     }
@@ -3256,13 +3296,13 @@ static bool CheckArguments(FunctionValidatorShared& f, ParseNode** stmtIter,
       return false;
     }
 
+    if (argTypes->length() > MaxParams) {
+      return f.fail(stmt, "too many parameters");
+    }
+
     if (!f.addLocal(argpn, name, type)) {
       return false;
     }
-  }
-
-  if (argTypes->length() > MaxParams) {
-    return f.fail(stmt, "too many parameters");
   }
 
   *stmtIter = stmt;
@@ -3554,7 +3594,7 @@ static bool WriteArrayAccessFlags(FunctionValidatorShared& f,
                                   Scalar::Type viewType) {
   // asm.js only has naturally-aligned accesses.
   size_t align = TypedArrayElemSize(viewType);
-  MOZ_ASSERT(IsPowerOfTwo(align));
+  MOZ_ASSERT(std::has_single_bit(align));
   if (!f.encoder().writeFixedU8(CeilingLog2(align))) {
     return false;
   }
@@ -4135,7 +4175,7 @@ static bool CheckFuncPtrCall(FunctionValidator<Unit>& f, ParseNode* callNode,
 
   uint32_t mask;
   if (!IsLiteralInt(f.m(), maskNode, &mask) || mask == UINT32_MAX ||
-      !IsPowerOfTwo(mask + 1)) {
+      !std::has_single_bit(mask + 1)) {
     return f.fail(maskNode,
                   "function-pointer table index mask value must be a power of "
                   "two minus 1");
@@ -6227,7 +6267,7 @@ static bool CheckFuncPtrTable(ModuleValidator<Unit>& m, ParseNode* decl) {
 
   unsigned length = ListLength(arrayLiteral);
 
-  if (!IsPowerOfTwo(length)) {
+  if (!std::has_single_bit(length)) {
     return m.failf(arrayLiteral,
                    "function-pointer table length must be a power of 2 (is %u)",
                    length);
@@ -6419,8 +6459,8 @@ static SharedModule CheckModule(FrontendContext* fc,
   ScriptedCaller scriptedCaller;
   if (parser.ss->filename()) {
     scriptedCaller.line = 0;  // unused
-    scriptedCaller.filename = DuplicateString(parser.ss->filename());
-    if (!scriptedCaller.filename) {
+    scriptedCaller.source = DuplicateString(parser.ss->filename());
+    if (!scriptedCaller.source) {
       return nullptr;
     }
   }
@@ -6837,7 +6877,7 @@ static bool CheckBuffer(JSContext* cx, const CodeMetadata& codeMeta,
   // because heap loads and stores start on an aligned boundary and the heap
   // byteLength has larger alignment.
   uint64_t minMemoryLength = codeMeta.memories.length() != 0
-                                 ? codeMeta.memories[0].initialLength32()
+                                 ? codeMeta.memories[0].initialLength()
                                  : 0;
   MOZ_ASSERT((minMemoryLength - 1) <= INT32_MAX);
   if (memoryLength < minMemoryLength) {
@@ -6870,6 +6910,11 @@ static bool CheckBuffer(JSContext* cx, const CodeMetadata& codeMeta,
   if (buffer->isResizable()) {
     return LinkFail(cx,
                     "Unable to prepare resizable ArrayBuffer for asm.js use");
+  }
+
+  if (buffer->isImmutable()) {
+    return LinkFail(cx,
+                    "Unable to prepare immutable ArrayBuffer for asm.js use");
   }
 
   if (!buffer->prepareForAsmJS()) {
@@ -7382,9 +7427,10 @@ bool js::IsValidAsmJSHeapLength(size_t length) {
   }
 
   // The heap length is limited by what a wasm memory32 can handle.
-  if (length > MaxMemoryBytes(AddressType::I32)) {
+  if (length > MaxMemoryBytes(AddressType::I32, wasm::PageSize::Standard)) {
     return false;
   }
 
-  return wasm::IsValidARMImmediate(length);
+  // asm.js specifies that the heap size must fit in an ARM immediate.
+  return IsValidARMImmediate(length);
 }

@@ -6,7 +6,6 @@ template<class T>
 class MOZ_NEEDS_MEMMOVABLE_TYPE Mover { T mForceInst; };
 
 #include <atomic>
-#include <cstdint>
 struct CustomType{};
 static struct {
   Mover<std::atomic<CustomType>>         m1;

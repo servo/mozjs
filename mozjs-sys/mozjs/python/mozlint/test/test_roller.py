@@ -189,6 +189,16 @@ def test_roll_code_review_warnings_soft(linters, files):
     assert result.returncode == 0
 
 
+def _linter_filtered_files(files, linters):
+    extensions = set()
+    extensions.update(*[linter.get("extensions", []) for linter in linters])
+    return [
+        f
+        for f in files
+        if os.path.isdir(f) or any(f.endswith(ext) for ext in extensions)
+    ]
+
+
 def fake_run_worker(config, paths, **lintargs):
     result = ResultSummary(lintargs["root"])
     result.issues["count"].append(1)
@@ -207,17 +217,18 @@ def test_number_of_jobs(monkeypatch, lint, linters, files, num_procs):
     lint.read(linters)
     num_jobs = len(lint.roll(files, num_procs=num_procs).issues["count"])
 
-    if len(files) >= num_procs:
+    filtered_files = _linter_filtered_files(files, lint.linters)
+    if len(filtered_files) >= num_procs:
         assert num_jobs == num_procs * len(linters)
     else:
-        assert num_jobs == len(files) * len(linters)
+        assert num_jobs == len(filtered_files) * len(linters)
 
 
 @pytest.mark.skipif(
     platform.system() == "Windows",
     reason="monkeypatch issues with multiprocessing on Windows",
 )
-@pytest.mark.parametrize("max_paths,expected_jobs", [(1, 12), (4, 6), (16, 6)])
+@pytest.mark.parametrize("max_paths,expected_jobs", [(1, 9), (4, 6), (16, 6)])
 def test_max_paths_per_job(monkeypatch, lint, linters, files, max_paths, expected_jobs):
     monkeypatch.setattr(sys.modules[lint.__module__], "_run_worker", fake_run_worker)
 
@@ -325,7 +336,7 @@ def test_support_files(lint, linters, filedir, monkeypatch, files):
     actual_files = sorted(chain(*jobs))
     assert actual_files == [path]
 
-    expected_files = sorted(files)
+    expected_files = sorted(_linter_filtered_files(files, lint.linters))
 
     jobs = []
     lint.roll(path, workdir=True)
@@ -356,7 +367,7 @@ def test_support_files(lint, linters, filedir, monkeypatch, files):
     jobs = []
     lint.roll(path, outgoing=True)
     actual_files = sorted(chain(*jobs))
-    assert actual_files == sorted([path, vcs_path]), (
+    assert actual_files == [path], (
         "`--fix` with `--outgoing` on a `support-files` change should "
         "avoid linting the entire root."
     )
@@ -364,7 +375,7 @@ def test_support_files(lint, linters, filedir, monkeypatch, files):
     jobs = []
     lint.roll(path, workdir=True)
     actual_files = sorted(chain(*jobs))
-    assert actual_files == sorted([path, vcs_path]), (
+    assert actual_files == [path], (
         "`--fix` with `--workdir` on a `support-files` change should "
         "avoid linting the entire root."
     )
@@ -372,7 +383,7 @@ def test_support_files(lint, linters, filedir, monkeypatch, files):
     jobs = []
     lint.roll(path, rev='draft() and keyword("dummy revset expression")')
     actual_files = sorted(chain(*jobs))
-    assert actual_files == sorted([path, vcs_path]), (
+    assert actual_files == [path], (
         "`--fix` with `--rev` on a `support-files` change should "
         "avoid linting the entire root."
     )
@@ -382,12 +393,24 @@ def test_setup(lint, linters, filedir, capfd):
     with pytest.raises(NoValidLinter):
         lint.setup()
 
-    lint.read(linters("setup", "setupfailed", "setupraised"))
-    lint.setup()
+    lint.read(linters("setup", "setupfailed", "setupraised", "setupskipped"))
+    ret = lint.setup()
+    assert ret == 1
+
     out, err = capfd.readouterr()
     assert "oh no setup failed" in err
     assert "ERROR: problem with lint setup, skipping" in err
     assert lint.result.failed_setup == set(["SetupFailedLinter", "SetupRaisedLinter"])
+
+
+def test_setup_all_skipped(lint, linters, filedir, capfd):
+    lint.read(linters("setupskipped"))
+    ret = lint.setup()
+    assert ret == 1
+
+    out, err = capfd.readouterr()
+    assert "ERROR: all linters were skipped due to setup, nothing to do!" in err
+    assert lint.result.failed_setup == set()
 
 
 if __name__ == "__main__":

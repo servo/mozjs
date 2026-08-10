@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,7 +5,6 @@
 #ifndef PHC_h
 #define PHC_h
 
-#include "mozilla/Assertions.h"
 #include "mozilla/Maybe.h"
 #include <stdint.h>
 #include <stdlib.h>
@@ -93,7 +90,8 @@ class AddrInfo {
   bool mPhcWasLocked = false;
 
   // Default to no PHC info.
-  AddrInfo() : mKind(Kind::Unknown), mBaseAddr(nullptr), mUsableSize(0) {}
+  constexpr AddrInfo()
+      : mKind(Kind::Unknown), mBaseAddr(nullptr), mUsableSize(0) {}
 };
 
 // Global instance that is retrieved by the process generating the crash report
@@ -129,6 +127,10 @@ enum PHCState {
 
 MOZ_JEMALLOC_API void SetPHCState(PHCState aState);
 
+// Set the maximum allowed memory usage of PHC, including fragmentation and
+// metadata.
+MOZ_JEMALLOC_API void SetPHCSize(size_t aNumPHCBytes);
+
 MOZ_JEMALLOC_API void SetPHCProbabilities(int64_t aAvgDelayFirst,
                                           int64_t aAvgDelayNormal,
                                           int64_t aAvgDelayPageReuse);
@@ -141,6 +143,9 @@ struct MemoryUsage {
   // The amount of memory lost due to rounding allocation sizes up to the
   // nearest page.  AKA internal fragmentation.
   size_t mFragmentationBytes = 0;
+
+  // The amount of memory allocated from PHC.
+  size_t mAllocatedBytes = 0;
 };
 
 MOZ_JEMALLOC_API void PHCMemoryUsage(MemoryUsage& aMemoryUsage);
@@ -156,5 +161,8 @@ MOZ_JEMALLOC_API void GetPHCStats(PHCStats& aStats);
 
 }  // namespace phc
 }  // namespace mozilla
+
+// Initialise PHC (called from mozjemalloc's initialisation.
+void phc_init();
 
 #endif /* PHC_h */

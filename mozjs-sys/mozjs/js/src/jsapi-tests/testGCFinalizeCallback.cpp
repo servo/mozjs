@@ -149,7 +149,7 @@ JSObject* createTestGlobal() {
 }
 
 virtual bool init() override {
-  if (!JSAPIRuntimeTest::init()) {
+  if (!RuntimeTest::init()) {
     return false;
   }
 
@@ -159,7 +159,7 @@ virtual bool init() override {
 
 virtual void uninit() override {
   JS_RemoveFinalizeCallback(cx, FinalizeCallback);
-  JSAPIRuntimeTest::uninit();
+  RuntimeTest::uninit();
 }
 
 bool checkSingleGroup() {

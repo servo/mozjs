@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -53,10 +51,23 @@ struct JSPrincipals {
   virtual bool write(JSContext* cx, JSStructuredCloneWriter* writer) = 0;
 
   /*
-   * Whether the principal corresponds to a System or AddOn Principal.
+   * Whether the principal corresponds to a System Principal.
+   */
+  virtual bool isSystemPrincipal() = 0;
+
+  /*
+   * Whether the principal corresponds to an AddOn Principal.
    * Technically this also checks for an ExpandedAddonPrincipal.
    */
-  virtual bool isSystemOrAddonPrincipal() = 0;
+  virtual bool isAddonPrincipal() = 0;
+
+  /*
+   * Whether the principal corresponds to a System or AddOn Principal using the
+   * above two methods.
+   */
+  bool isSystemOrAddonPrincipal() {
+    return isSystemPrincipal() || isAddonPrincipal();
+  }
 
   /*
    * This is not defined by the JS engine but should be provided by the
@@ -90,8 +101,7 @@ enum class CompilationType { DirectEval, IndirectEval, Function, Undefined };
  *
  * An Undefined compilationType is used for cases that are not covered by that
  * spec and unused parameters are null/empty. Currently, this includes Wasm
- * (only check if compilation is enabled) and ShadowRealmEval (only check
- * codeString).
+ * (only check if compilation is enabled).
  *
  * `outCanCompileStrings` is set to false if this callback prevents the
  * execution/compilation of the code and to true otherwise.

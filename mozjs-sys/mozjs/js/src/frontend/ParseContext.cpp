@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -179,8 +177,8 @@ void UsedNameTracker::rewind(RewindToken token) {
   scriptCounter_ = token.scriptId;
   scopeCounter_ = token.scopeId;
 
-  for (UsedNameMap::Range r = map_.all(); !r.empty(); r.popFront()) {
-    r.front().value().resetToScope(token.scriptId, token.scopeId);
+  for (auto iter = map_.iter(); !iter.done(); iter.next()) {
+    iter.get().value().resetToScope(token.scriptId, token.scopeId);
   }
 }
 
@@ -190,8 +188,8 @@ void UsedNameTracker::dump(ParserAtomsTable& table) {
 
   out.printf("Used names:\n");
 
-  for (UsedNameMap::Range r = map_.all(); !r.empty(); r.popFront()) {
-    const auto& item = r.front();
+  for (auto iter = map_.iter(); !iter.done(); iter.next()) {
+    const auto& item = iter.get();
 
     const auto& name = item.key();
     const auto& nameInfo = item.value();
@@ -232,14 +230,14 @@ void ParseContext::Scope::dump(ParseContext* pc, ParserBase* parser) {
   fprintf(stdout, "ParseScope %p", this);
 
   fprintf(stdout, "\n  decls:\n");
-  for (DeclaredNameMap::Range r = declared_->all(); !r.empty(); r.popFront()) {
-    auto index = r.front().key();
+  for (auto iter = declared_->iter(); !iter.done(); iter.next()) {
+    auto index = iter.get().key();
     UniqueChars bytes = parser->parserAtoms().toPrintableString(index);
     if (!bytes) {
       ReportOutOfMemory(pc->sc()->fc_);
       return;
     }
-    DeclaredNameInfo& info = r.front().value().wrapped;
+    DeclaredNameInfo& info = iter.get().value().wrapped;
     fprintf(stdout, "    %s %s%s\n", DeclarationKindString(info.kind()),
             bytes.get(), info.closedOver() ? " (closed over)" : "");
   }
@@ -320,12 +318,12 @@ bool ParseContext::Scope::addCatchParameters(ParseContext* pc,
     return true;
   }
 
-  for (DeclaredNameMap::Range r = catchParamScope.declared_->all(); !r.empty();
-       r.popFront()) {
-    DeclarationKind kind = r.front().value()->kind();
-    uint32_t pos = r.front().value()->pos();
+  for (auto iter = catchParamScope.declared_->iter(); !iter.done();
+       iter.next()) {
+    DeclarationKind kind = iter.get().value()->kind();
+    uint32_t pos = iter.get().value()->pos();
     MOZ_ASSERT(DeclarationKindIsCatchParameter(kind));
-    auto name = r.front().key();
+    auto name = iter.get().key();
     AddDeclaredNamePtr p = lookupDeclaredNameForAdd(name);
     MOZ_ASSERT(!p);
     if (!addDeclaredName(pc, p, name, kind, pos)) {
@@ -342,15 +340,15 @@ void ParseContext::Scope::removeCatchParameters(ParseContext* pc,
     return;
   }
 
-  for (DeclaredNameMap::Range r = catchParamScope.declared_->all(); !r.empty();
-       r.popFront()) {
-    auto name = r.front().key();
+  for (auto iter = catchParamScope.declared_->iter(); !iter.done();
+       iter.next()) {
+    auto name = iter.get().key();
     DeclaredNamePtr p = declared_->lookup(name);
     MOZ_ASSERT(p);
 
     // This check is needed because the catch body could have declared
     // vars, which would have been added to catchParamScope.
-    if (DeclarationKindIsCatchParameter(r.front().value()->kind())) {
+    if (DeclarationKindIsCatchParameter(iter.get().value()->kind())) {
       declared_->remove(p);
     }
   }

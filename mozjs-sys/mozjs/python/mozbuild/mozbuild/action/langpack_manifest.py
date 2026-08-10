@@ -64,13 +64,13 @@ def get_build_date():
 ###
 def get_dt_from_hg(path):
     with mozversioncontrol.get_repository_object(path=path) as repo:
-        phase = repo._run("log", "-r", ".", "-T" "{phase}")
+        phase = repo._run("log", "-r", ".", "-T{phase}")
         if phase.strip() != "public":
             return get_build_date()
         repo_url = repo._run("paths", "default")
         repo_url = repo_url.strip().replace("ssh://", "https://")
         repo_url = repo_url.replace("hg://", "https://")
-        cs = repo._run("log", "-r", ".", "-T" "{node}")
+        cs = repo._run("log", "-r", ".", "-T{node}")
 
     url = pushlog_api_url.format(repo_url, cs)
     session = requests.Session()
@@ -354,15 +354,13 @@ def parse_chrome_manifest(path, base_path, chrome_entries):
             entry_path = os.path.join(
                 os.path.relpath(os.path.dirname(path), base_path), entry.relpath
             )
-            chrome_entries.append(
-                {
-                    "type": "locale",
-                    "alias": entry.name,
-                    "locale": entry.id,
-                    "platforms": convert_entry_flags_to_platform_codes(entry.flags),
-                    "path": mozpath.normsep(entry_path),
-                }
-            )
+            chrome_entries.append({
+                "type": "locale",
+                "alias": entry.name,
+                "locale": entry.id,
+                "platforms": convert_entry_flags_to_platform_codes(entry.flags),
+                "path": mozpath.normsep(entry_path),
+            })
         else:
             raise Exception(f"Unknown type {entry.name}")
 
@@ -525,7 +523,7 @@ def create_webmanifest(
                 assert entry["alias"] not in cr
                 cr[entry["alias"]] = entry["path"]
         else:
-            raise Exception("Unknown type {0}".format(entry["type"]))
+            raise Exception("Unknown type {}".format(entry["type"]))
 
     for loc in locales:
         manifest["languages"][loc] = {

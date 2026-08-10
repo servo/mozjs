@@ -49,15 +49,11 @@ def cppBool(v):
 
 
 def specTypeToMIRType(specType):
-    if specType == "i32" or specType == "i64" or specType == "f32" or specType == "f64":
+    if isinstance(specType, dict):
+        return "MIRType::WasmAnyRef"
+    if specType in {"i32", "i64", "f32", "f64"}:
         return f"ValType::{specType}().toMIRType()"
-    if (
-        specType == "externref"
-        or specType == "anyref"
-        or specType == "funcref"
-        or specType == "exnref"
-        or isinstance(specType, dict)
-    ):
+    if specType in {"externref", "anyref", "funcref", "contref", "exnref"}:
         return "MIRType::WasmAnyRef"
     raise ValueError()
 
@@ -71,6 +67,8 @@ def specHeapTypeToTypeCode(specHeapType):
         return "Extern"
     if specHeapType == "exn":
         return "Exn"
+    if specHeapType == "cont":
+        return "Cont"
     if specHeapType == "array":
         return "Array"
     if specHeapType == "struct":
@@ -79,21 +77,6 @@ def specHeapTypeToTypeCode(specHeapType):
 
 
 def specTypeToValType(specType):
-    if specType == "i32" or specType == "i64" or specType == "f32" or specType == "f64":
-        return f"ValType::{specType}()"
-
-    if specType == "externref":
-        return "ValType(RefType::extern_())"
-
-    if specType == "exnref":
-        return "ValType(RefType::exn())"
-
-    if specType == "anyref":
-        return "ValType(RefType::any())"
-
-    if specType == "funcref":
-        return "ValType(RefType::func())"
-
     if isinstance(specType, dict):
         nullable = cppBool(specType["nullable"])
         if "type" in specType:
@@ -103,7 +86,33 @@ def specTypeToValType(specType):
             code = specType["code"]
             return f"ValType(RefType::fromTypeCode(TypeCode(RefType::{specHeapTypeToTypeCode(code)}), {nullable}))"
 
+    if specType in {"i32", "i64", "f32", "f64"}:
+        return f"ValType::{specType}()"
+
+    if specType == "externref":
+        return "ValType(RefType::extern_())"
+
+    if specType == "exnref":
+        return "ValType(RefType::exn())"
+
+    if specType == "contref":
+        return "ValType(RefType::cont())"
+
+    if specType == "anyref":
+        return "ValType(RefType::any())"
+
+    if specType == "funcref":
+        return "ValType(RefType::func())"
+
     raise ValueError()
+
+
+def failureTrap(op):
+    if not "fail_trap" in op:
+        if op["fail_mode"] == "Infallible":
+            return "Limit"
+        return "ThrowReported"
+    return op["fail_trap"]
 
 
 def main(c_out, yaml_path):
@@ -118,15 +127,24 @@ def main(c_out, yaml_path):
         if "inline_op" in op:
             inlineOp = f"BuiltinInlineOp::{op['inline_op']}"
         contents += (
-            f"    M({op['op']}, \"{op['export']}\", "
-            f"{sa['name']}, {sa['type']}, {op['entry']}, {cppBool(op['uses_memory'])}, {inlineOp}, {i})\\\n"
+            f'    M({op["op"]}, "{op["export"]}", '
+            f"{sa['name']}, {sa['type']}, {cppBool(sa['needs_thunk'])}, {op['entry']}, {cppBool(op['uses_memory'])}, {inlineOp}, {i})\\\n"
         )
     contents += "\n"
 
     for op in data:
         # Define DECLARE_BUILTIN_MODULE_FUNC_PARAM_VALTYPES_<op> as:
         # `{ValType::I32, ValType::I32, ...}`.
-        valTypes = ", ".join(specTypeToValType(p) for p in op["params"])
+        if "params" in op:
+            params = op["params"]
+        else:
+            params = []
+
+        contents += (
+            f"#define DECLARE_BUILTIN_MODULE_FUNC_NUM_PARAMS_{op['op']} {len(params)}\n"
+        )
+
+        valTypes = ", ".join(specTypeToValType(p) for p in params)
         contents += (
             f"#define DECLARE_BUILTIN_MODULE_FUNC_PARAM_VALTYPES_{op['op']} "
             f"{{{valTypes}}}\n"
@@ -134,9 +152,9 @@ def main(c_out, yaml_path):
 
         # Define DECLARE_BUILTIN_MODULE_FUNC_PARAM_MIRTYPES_<op> as:
         # `<num_types>, {MIRType::Pointer, _I32, ..., MIRType::Pointer, _END}`.
-        num_types = len(op["params"]) + 1
+        num_types = len(params) + 1
         mir_types = "{MIRType::Pointer"
-        mir_types += "".join(", " + specTypeToMIRType(p) for p in op["params"])
+        mir_types += "".join(", " + specTypeToMIRType(p) for p in params)
         if op["uses_memory"]:
             mir_types += ", MIRType::Pointer"
             num_types += 1
@@ -166,5 +184,9 @@ def main(c_out, yaml_path):
         # Define DECLARE_BUILTIN_MODULE_FUNC_FAILMODE_<op> as:
         # `FailureMode::X`.
         contents += f"#define DECLARE_BUILTIN_MODULE_FUNC_FAILMODE_{op['op']} FailureMode::{op['fail_mode']}\n"
+
+        # Define DECLARE_BUILTIN_MODULE_FUNC_FAILTRAP_<op> as:
+        # `Trap::X`.
+        contents += f"#define DECLARE_BUILTIN_MODULE_FUNC_FAILTRAP_{op['op']} Trap::{failureTrap(op)}\n"
 
     generate_header(c_out, "wasm_WasmBuiltinModuleGenerated_h", contents)

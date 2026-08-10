@@ -12,7 +12,7 @@ template void Engine<xsimd::avxvnni>::SelectColumnsB(int8_t const*, int8_t*,
                                                   uint32_t const*);
 template void Engine<xsimd::avxvnni>::Shift::Multiply(
     uint8_t const*, int8_t const*, size_t, size_t, size_t,
-    gemmology::callbacks::UnquantizeAndAddBiasAndWrite);
+    gemmology::callbacks::UnquantizeAndAddBiasAndWrite, gemmology::SequentialExecutionEngine&);
 template void Engine<xsimd::avxvnni>::Shift::PrepareBias(
     int8_t const*, size_t, size_t,
     gemmology::callbacks::UnquantizeAndAddBiasAndWrite);

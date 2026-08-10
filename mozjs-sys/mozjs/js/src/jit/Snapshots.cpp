@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -365,12 +363,18 @@ void RValueAllocation::readPayload(CompactBufferReader& reader,
     case PAYLOAD_STACK_OFFSET:
       p->stackOffset = reader.readSigned();
       break;
-    case PAYLOAD_GPR:
-      p->gpr = Register::FromCode(reader.readByte());
+    case PAYLOAD_GPR: {
+      uint8_t code = reader.readByte();
+      MOZ_RELEASE_ASSERT(code < Registers::Total);
+      p->gpr = Register::FromCode(code);
       break;
-    case PAYLOAD_FPU:
-      p->fpu.data = reader.readByte();
+    }
+    case PAYLOAD_FPU: {
+      uint8_t code = reader.readByte();
+      MOZ_RELEASE_ASSERT(code < FloatRegisters::Total);
+      p->fpu.data = code;
       break;
+    }
     case PAYLOAD_PACKED_TAG:
       p->type = JSValueType(*mode & PACKED_TAG_MASK);
       *mode = *mode & ~PACKED_TAG_MASK;
@@ -553,14 +557,14 @@ void SnapshotReader::readTrackSnapshot() {
 void SnapshotReader::spewBailingFrom() const {
 #  ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonBailouts)) {
-    JitSpewHeader(JitSpew_IonBailouts);
-    Fprinter& out = JitSpewPrinter();
-    out.printf(" bailing from bytecode: %s, MIR: ", CodeName(JSOp(pcOpcode_)));
-    MDefinition::PrintOpcodeName(out, MDefinition::Opcode(mirOpcode_));
-    out.printf(" [%u], LIR: ", mirId_);
-    LInstruction::printName(out, LInstruction::Opcode(lirOpcode_));
-    out.printf(" [%u]", lirId_);
-    out.printf("\n");
+    AutoJitSpewMessage msg(
+        JitSpew_IonBailouts,
+        " bailing from bytecode: %s, MIR: ", CodeName(JSOp(pcOpcode_)));
+    MDefinition::PrintOpcodeName(msg.printer(),
+                                 MDefinition::Opcode(mirOpcode_));
+    msg.append(" [%u], LIR: ", mirId_);
+    LInstruction::printName(msg.printer(), LInstruction::Opcode(lirOpcode_));
+    msg.append(" [%u]", lirId_);
   }
 #  endif
 }
@@ -586,7 +590,10 @@ SnapshotWriter::SnapshotWriter()
 
 RecoverReader::RecoverReader(SnapshotReader& snapshot, const uint8_t* recovers,
                              uint32_t size)
-    : reader_(nullptr, nullptr), numInstructions_(0), numInstructionsRead_(0) {
+    : reader_(nullptr, nullptr),
+      numInstructions_(0),
+      numInstructionsRead_(0),
+      numOperands_(0) {
   if (!recovers) {
     return;
   }
@@ -599,7 +606,8 @@ RecoverReader::RecoverReader(SnapshotReader& snapshot, const uint8_t* recovers,
 RecoverReader::RecoverReader(const RecoverReader& rr)
     : reader_(rr.reader_),
       numInstructions_(rr.numInstructions_),
-      numInstructionsRead_(rr.numInstructionsRead_) {
+      numInstructionsRead_(rr.numInstructionsRead_),
+      numOperands_(rr.numOperands_) {
   if (reader_.currentPosition()) {
     rr.instruction()->cloneInto(&rawData_);
   }
@@ -609,6 +617,7 @@ RecoverReader& RecoverReader::operator=(const RecoverReader& rr) {
   reader_ = rr.reader_;
   numInstructions_ = rr.numInstructions_;
   numInstructionsRead_ = rr.numInstructionsRead_;
+  numOperands_ = rr.numOperands_;
   if (reader_.currentPosition()) {
     rr.instruction()->cloneInto(&rawData_);
   }
@@ -617,15 +626,15 @@ RecoverReader& RecoverReader::operator=(const RecoverReader& rr) {
 
 void RecoverReader::readRecoverHeader() {
   numInstructions_ = reader_.readUnsigned();
-  MOZ_ASSERT(numInstructions_);
+  MOZ_RELEASE_ASSERT(numInstructions_ > 0);
 
   JitSpew(JitSpew_IonSnapshots, "Read recover header with instructionCount %u",
           numInstructions_);
 }
 
 void RecoverReader::readInstruction() {
-  MOZ_ASSERT(moreInstructions());
-  RInstruction::readRecoverData(reader_, &rawData_);
+  MOZ_RELEASE_ASSERT(moreInstructions());
+  numOperands_ = RInstruction::readRecoverData(reader_, &rawData_);
   numInstructionsRead_++;
 }
 
@@ -675,11 +684,9 @@ bool SnapshotWriter::add(const RValueAllocation& alloc) {
 
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonSnapshots)) {
-    JitSpewHeader(JitSpew_IonSnapshots);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("    slot %u (%u): ", allocWritten_, offset);
-    alloc.dump(out);
-    out.printf("\n");
+    AutoJitSpewMessage msg(JitSpew_IonSnapshots,
+                           "    slot %u (%u): ", allocWritten_, offset);
+    alloc.dump(msg.printer());
   }
 #endif
 

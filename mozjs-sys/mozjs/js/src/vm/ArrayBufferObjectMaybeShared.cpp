@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -83,4 +81,14 @@ JS_PUBLIC_API bool JS::IsResizableArrayBufferMaybeShared(JSObject* obj) {
     return obj->as<ArrayBufferObject>().isResizable();
   }
   return obj->as<SharedArrayBufferObject>().isGrowable();
+}
+
+JS_PUBLIC_API bool JS::IsImmutableArrayBufferMaybeShared(JSObject* obj) {
+  obj = UnwrapArrayBufferMaybeShared(obj);
+  MOZ_ASSERT(obj);
+
+  if (obj->is<ArrayBufferObject>()) {
+    return obj->as<ArrayBufferObject>().isImmutable();
+  }
+  return false;
 }

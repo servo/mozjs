@@ -302,7 +302,7 @@ def main():
         sys.exit(1)
 
     log = mozlog.commandline.setup_logging(
-        "remotecppunittests", options, {"tbpl": sys.stdout}
+        "remotecppunittests", options, {"raw": sys.stdout}
     )
     try:
         result = run_test_harness(options, args)

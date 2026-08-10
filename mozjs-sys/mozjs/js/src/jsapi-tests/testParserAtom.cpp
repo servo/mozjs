@@ -5,9 +5,8 @@
 #include "mozilla/Range.h"  // mozilla::Range
 #include "mozilla/Utf8.h"   // mozilla::Utf8Unit
 
-#include <string>   // std::char_traits
-#include <utility>  // std::initializer_list
-#include <vector>   // std::vector
+#include <string>  // std::char_traits
+#include <vector>  // std::vector
 
 #include "frontend/FrontendContext.h"  // AutoReportFrontendContext
 #include "frontend/ParserAtom.h"  // js::frontend::ParserAtomsTable, js::frontend::WellKnownParserAtoms

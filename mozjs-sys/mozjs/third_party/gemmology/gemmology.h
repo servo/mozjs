@@ -7,6 +7,11 @@
 #include <cstring>
 #include <tuple>
 
+#ifdef GEMMOLOGY_WITH_STD_THREAD
+#include <thread>
+#include <vector>
+#endif
+
 #include <xsimd/xsimd.hpp>
 
 namespace gemmology {
@@ -581,6 +586,17 @@ maddw(xsimd::batch<uint8_t, Arch> x, xsimd::batch<int8_t, Arch> y,
 }
 
 template <class Arch>
+inline xsimd::batch<int32_t, Arch>
+maddw(xsimd::batch<uint8_t, Arch> x, xsimd::batch<int8_t, Arch> y,
+      xsimd::kernel::requires_arch<xsimd::neon64>) {
+  int16x8_t tl = vmulq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_low_u8(x))),
+                           vmovl_s8(vget_low_s8(y)));
+  int16x8_t th = vmulq_s16(vreinterpretq_s16_u16(vmovl_u8(vget_high_u8(x))),
+                           vmovl_s8(vget_high_s8(y)));
+  return vpadalq_s16(vpaddlq_s16(tl), th);
+}
+
+template <class Arch>
 inline xsimd::batch<int32_t, Arch> Pack0123(xsimd::batch<int32_t, Arch> sum0,
                                       xsimd::batch<int32_t, Arch> sum1,
                                       xsimd::batch<int32_t, Arch> sum2,
@@ -597,8 +613,15 @@ template <class Arch>
 inline xsimd::batch<int32_t, Arch>
 maddw(xsimd::batch<uint8_t, Arch> x, xsimd::batch<int8_t, Arch> y,
       xsimd::batch<int32_t, Arch> z,
-      xsimd::kernel::requires_arch<xsimd::generic>) {
+      xsimd::kernel::requires_arch<xsimd::common>) {
   return z + madd(xsimd::batch<int16_t, Arch>(1), madd(x, y, Arch{}), Arch{});
+}
+
+template <class Arch>
+inline xsimd::batch<int32_t, Arch>
+maddw(xsimd::batch<uint8_t, Arch> x, xsimd::batch<int8_t, Arch> y,
+      xsimd::kernel::requires_arch<xsimd::common>) {
+  return maddw(x, y, xsimd::batch<int32_t, Arch>(0), Arch{});
 }
 
 } // namespace kernel
@@ -650,7 +673,7 @@ template <class Arch>
 inline xsimd::batch<int32_t, Arch> maddw(xsimd::batch<uint8_t, Arch> x,
                                          xsimd::batch<int8_t, Arch> y
                                          ) {
-  return maddw(x, y, xsimd::batch<int32_t, Arch>((int32_t)0));
+  return kernel::maddw(x, y, Arch{});
 }
 
 template <class Arch>
@@ -668,7 +691,7 @@ namespace kernel {
                                         xsimd::batch<int32_t, Arch> sum1,
                                         xsimd::batch<int32_t, Arch> sum2,
                                         xsimd::batch<int32_t, Arch> sum3,
-                                        xsimd::kernel::requires_arch<xsimd::generic>) {
+                                        xsimd::kernel::requires_arch<xsimd::common>) {
 
     std::tie(sum0, sum1) = interleave(sum0, sum1, Arch{});
     auto pack01 = sum0 + sum1;
@@ -813,7 +836,7 @@ public:
 
       return xsimd::bitwise_cast<int8_t>(
           xsimd::swizzle(xsimd::bitwise_cast<int32_t>(packed),
-                         xsimd::make_batch_constant<uint32_t, Arch, Tiler<Arch>>()));
+                         xsimd::make_batch_constant<uint32_t, Tiler<Arch>, Arch>()));
     } else if constexpr (batchf32::size == 8)
       return Tile(quant_mult, input, input + 2 * cols, input + 16 * cols,
                   input + 18 * cols);
@@ -855,7 +878,7 @@ public:
     // and the values are only used for GEMM.
     return xsimd::bitwise_cast<int8_t>(
         xsimd::swizzle(xsimd::bitwise_cast<int32_t>(packed),
-                       xsimd::make_batch_constant<uint32_t, Arch, Tiler<Arch>>()));
+                       xsimd::make_batch_constant<uint32_t, Tiler<Arch>, Arch>()));
   }
 
 private:
@@ -891,7 +914,7 @@ private:
     // and the values are only used for GEMM.
     return xsimd::bitwise_cast<uint8_t>(
         xsimd::swizzle(xsimd::bitwise_cast<int32_t>(packed),
-                       xsimd::make_batch_constant<uint32_t, Arch, Tiler<Arch>>()));
+                       xsimd::make_batch_constant<uint32_t, Tiler<Arch>, Arch>()));
   }
 };
 
@@ -1134,7 +1157,9 @@ void Engine<Arch>::Quantize(const float *const input, int8_t *const output,
   }
   auto result =
       QuantizeTile8::Tile(q, inputs[0], inputs[1], inputs[2], inputs[3]);
-  std::memcpy(output + (size & ~(kBatch - 1)), &result, overhang);
+  alignas(Arch::alignment()) int8_t buffer[kBatch];
+  result.store_aligned(buffer);
+  std::memcpy(output + (size & ~(kBatch - 1)), buffer, overhang);
 }
 
 template <class Arch>
@@ -1186,6 +1211,21 @@ void Engine<Arch>::PrepareBQuantizedTransposed(const int8_t *input,
       for (size_t ri = 0; ri < 8; ++ri)
         *output_it++ =
             *reinterpret_cast<const batch8 *>(input + (r + ri) * cols + c);
+}
+
+template <class Arch>
+void Engine<Arch>::PrepareBQuantized(const int8_t *input,
+                                     int8_t *output, size_t cols,
+                                     size_t rows) {
+  using batch8 = xsimd::batch<int8_t, Arch>;
+  const size_t RegisterElems = batch8::size;
+  const size_t kColStride = 8;
+
+  auto *output_it = reinterpret_cast<batch8 *>(output);
+  for (size_t r = 0; r < rows; r += kColStride)
+    for (size_t c = 0; c < cols; c += RegisterElems)
+      for (size_t ri = 0; ri < 8; ++ri)
+        *output_it++ = batch8::load_unaligned(input + (c) * rows + r + ri);
 }
 
 template <class Arch>
@@ -1246,17 +1286,17 @@ void Engine<Arch>::Shift::PrepareA(const float *input, uint8_t *output,
 }
 
 template <class Arch>
-template <class Callback>
+template <class Callback, class ExecutionEngine>
 void Engine<Arch>::Shift::Multiply(const uint8_t *A, const int8_t *B,
                                    size_t A_rows, size_t width, size_t B_cols,
-                                   Callback callback) {
+                                   Callback callback, ExecutionEngine& engine) {
 
   using batch8 = xsimd::batch<int8_t, Arch>;
   using ubatch8 = xsimd::batch<uint8_t, Arch>;
   using batch32 = xsimd::batch<int32_t, Arch>;
 
-  const size_t simd_width = width / batch8::size;
-  for (size_t B0_colidx = 0; B0_colidx < B_cols; B0_colidx += 8) {
+  engine(0, B_cols, 8, [A, B, A_rows, width, B_cols, &callback](size_t B0_colidx) {
+    const size_t simd_width = width / batch8::size;
     const auto *B0_col =
         reinterpret_cast<const batch8 *>(B) + simd_width * B0_colidx;
     /* Process one row of A at a time.  Doesn't seem to be faster to do multiple
@@ -1298,7 +1338,7 @@ void Engine<Arch>::Shift::Multiply(const uint8_t *A, const int8_t *B,
       auto total = PermuteSummer(pack0123, pack4567);
       callback(total, A_rowidx, B0_colidx, B_cols);
     }
-  }
+  });
 }
 
 template <class Arch>

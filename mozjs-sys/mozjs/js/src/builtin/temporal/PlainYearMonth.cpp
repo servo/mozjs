@@ -1,15 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "builtin/temporal/PlainYearMonth.h"
 
 #include "mozilla/Assertions.h"
-#include "mozilla/EnumSet.h"
-
-#include <utility>
 
 #include "jspubtd.h"
 #include "NamespaceImports.h"
@@ -110,12 +105,12 @@ static PlainYearMonthObject* CreateTemporalYearMonth(
 
   // Step 4.
   auto packedDate = PackedDate::pack(isoDate);
-  object->setFixedSlot(PlainYearMonthObject::PACKED_DATE_SLOT,
-                       PrivateUint32Value(packedDate.value));
+  object->initFixedSlot(PlainYearMonthObject::PACKED_DATE_SLOT,
+                        PrivateUint32Value(packedDate.value));
 
   // Step 5.
-  object->setFixedSlot(PlainYearMonthObject::CALENDAR_SLOT,
-                       calendar.toSlotValue());
+  object->initFixedSlot(PlainYearMonthObject::CALENDAR_SLOT,
+                        calendar.toSlotValue());
 
   // Step 6.
   return object;
@@ -139,12 +134,12 @@ PlainYearMonthObject* js::temporal::CreateTemporalYearMonth(
 
   // Step 4.
   auto packedDate = PackedDate::pack(yearMonth);
-  object->setFixedSlot(PlainYearMonthObject::PACKED_DATE_SLOT,
-                       PrivateUint32Value(packedDate.value));
+  object->initFixedSlot(PlainYearMonthObject::PACKED_DATE_SLOT,
+                        PrivateUint32Value(packedDate.value));
 
   // Step 5.
-  object->setFixedSlot(PlainYearMonthObject::CALENDAR_SLOT,
-                       yearMonth.calendar().toSlotValue());
+  object->initFixedSlot(PlainYearMonthObject::CALENDAR_SLOT,
+                        yearMonth.calendar().toSlotValue());
 
   // Step 6.
   return object;
@@ -443,16 +438,22 @@ static bool DifferenceTemporalPlainYearMonth(JSContext* cx,
   if (settings.smallestUnit != TemporalUnit::Month ||
       settings.roundingIncrement != Increment{1}) {
     // Step 16.a.
-    auto destEpochNs = GetUTCEpochNanoseconds(ISODateTime{otherDate, {}});
+    auto isoDateTime = ISODateTime{thisDate, {}};
 
-    // Steps 16.b-c.
-    auto dateTime = ISODateTime{thisDate, {}};
+    // Step 16.b.
+    auto originEpochNs = GetUTCEpochNanoseconds(isoDateTime);
+
+    // Step 16.c.
+    auto isoDateTimeOther = ISODateTime{otherDate, {}};
 
     // Step 16.d.
+    auto destEpochNs = GetUTCEpochNanoseconds(isoDateTimeOther);
+
+    // Step 16.e.
     Rooted<TimeZoneValue> timeZone(cx, TimeZoneValue{});
     if (!RoundRelativeDuration(
-            cx, duration, destEpochNs, dateTime, timeZone, calendar,
-            settings.largestUnit, settings.roundingIncrement,
+            cx, duration, originEpochNs, destEpochNs, isoDateTime, timeZone,
+            calendar, settings.largestUnit, settings.roundingIncrement,
             settings.smallestUnit, settings.roundingMode, &duration)) {
       return false;
     }
@@ -480,6 +481,34 @@ static bool DifferenceTemporalPlainYearMonth(JSContext* cx,
   return true;
 }
 
+const char* NonZeroDurationPartAfterMonths(const Duration& duration) {
+  if (duration.weeks != 0) {
+    return "weeks";
+  }
+  if (duration.days != 0) {
+    return "days";
+  }
+  if (duration.hours != 0) {
+    return "hours";
+  }
+  if (duration.minutes != 0) {
+    return "minutes";
+  }
+  if (duration.seconds != 0) {
+    return "seconds";
+  }
+  if (duration.milliseconds != 0) {
+    return "milliseconds";
+  }
+  if (duration.microseconds != 0) {
+    return "microseconds";
+  }
+  if (duration.nanoseconds != 0) {
+    return "nanoseconds";
+  }
+  return nullptr;
+}
+
 /**
  * AddDurationToYearMonth ( operation, yearMonth, temporalDurationLike, options
  * )
@@ -500,86 +529,58 @@ static bool AddDurationToYearMonth(JSContext* cx, TemporalAddDuration operation,
     duration = duration.negate();
   }
 
-  // Steps 3-4.
+  // Step 3.
+  auto internalDuration = ToInternalDurationRecord(duration);
+
+  // Steps 4-5.
   auto overflow = TemporalOverflow::Constrain;
   if (args.hasDefined(1)) {
-    // Step 3.
+    // Step 4.
     Rooted<JSObject*> options(
         cx, RequireObjectArg(cx, "options", ToName(operation), args[1]));
     if (!options) {
       return false;
     }
 
-    // Step 4.
+    // Step 5.
     if (!GetTemporalOverflowOption(cx, options, &overflow)) {
       return false;
     }
   }
 
-  // Step 5.
-  int32_t sign = DurationSign(duration);
-
   // Step 6.
-  auto calendar = yearMonth.calendar();
+  const auto& durationToAdd = internalDuration.date;
 
   // Step 7.
+  if (durationToAdd.weeks != 0 || durationToAdd.days != 0 ||
+      internalDuration.time != TimeDuration{}) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_TEMPORAL_PLAIN_YEAR_MONTH_BAD_DURATION,
+                              NonZeroDurationPartAfterMonths(duration));
+    return false;
+  }
+
+  // Step 8.
+  auto calendar = yearMonth.calendar();
+
+  // Step 9.
   Rooted<CalendarFields> fields(cx);
   if (!ISODateToFields(cx, yearMonth, &fields)) {
     return false;
   }
 
-  // Step 8.
+  // Step 10.
   MOZ_ASSERT(!fields.has(CalendarField::Day));
   fields.setDay(1);
 
-  // Step 9.
-  Rooted<PlainDate> intermediateDate(cx);
+  // Step 11.
+  Rooted<PlainDate> date(cx);
   if (!CalendarDateFromFields(cx, calendar, fields, TemporalOverflow::Constrain,
-                              &intermediateDate)) {
+                              &date)) {
     return false;
   }
 
-  // Steps 10-11.
-  ISODate date;
-  if (sign < 0) {
-    // |intermediateDate| is initialized to the first day of |yearMonth|'s
-    // month. Compute the last day of |yearMonth|'s month by first adding one
-    // month and then subtracting one day.
-    //
-    // This is roughly equivalent to these calls:
-    //
-    // js> var ym = new Temporal.PlainYearMonth(2023, 1);
-    // js> ym.toPlainDate({day: 1}).add({months: 1}).subtract({days: 1}).day
-    // 31
-    //
-    // For many calendars this is equivalent to `ym.daysInMonth`, except when
-    // some days are skipped, for example consider the Julian-to-Gregorian
-    // calendar transition.
-
-    // Step 10.a.
-    auto oneMonthDuration = DateDuration{0, 1};
-
-    // Step 10.b.
-    ISODate nextMonth;
-    if (!CalendarDateAdd(cx, calendar, intermediateDate, oneMonthDuration,
-                         TemporalOverflow::Constrain, &nextMonth)) {
-      return false;
-    }
-
-    // Step 10.c.
-    date = BalanceISODate(nextMonth, -1);
-
-    // Step 10.d.
-    MOZ_ASSERT(ISODateWithinLimits(date));
-  } else {
-    // Step 11.a.
-    date = intermediateDate;
-  }
-
-  // Steps 12.
-  auto durationToAdd = ToDateDurationRecordWithoutTime(duration);
-
-  // Step 13.
+  // Step 12.
   ISODate addedDate;
   if (!CalendarDateAdd(cx, calendar, date, durationToAdd, overflow,
                        &addedDate)) {
@@ -590,21 +591,21 @@ static bool AddDurationToYearMonth(JSContext* cx, TemporalAddDuration operation,
   Rooted<PlainYearMonth> addedYearMonth(cx,
                                         PlainYearMonth{addedDate, calendar});
 
-  // Step 14.
+  // Step 13.
   Rooted<CalendarFields> addedDateFields(cx);
   if (!ISODateToFields(cx, addedYearMonth, &addedDateFields)) {
     return false;
   }
 
-  // Step 15.
-  Rooted<PlainYearMonth> result(cx);
+  // Step 14.
+  Rooted<PlainYearMonth> isoDate(cx);
   if (!CalendarYearMonthFromFields(cx, calendar, addedDateFields, overflow,
-                                   &result)) {
+                                   &isoDate)) {
     return false;
   }
 
-  // Step 16.
-  auto* obj = CreateTemporalYearMonth(cx, result);
+  // Step 15.
+  auto* obj = CreateTemporalYearMonth(cx, isoDate);
   if (!obj) {
     return false;
   }
@@ -1175,9 +1176,8 @@ static bool PlainYearMonth_toString(JSContext* cx, unsigned argc, Value* vp) {
  */
 static bool PlainYearMonth_toLocaleString(JSContext* cx, const CallArgs& args) {
   // Steps 3-4.
-  Handle<PropertyName*> required = cx->names().date;
-  Handle<PropertyName*> defaults = cx->names().date;
-  return TemporalObjectToLocaleString(cx, args, required, defaults);
+  return intl::TemporalObjectToLocaleString(cx, args,
+                                            intl::DateTimeFormatKind::Date);
 }
 
 /**

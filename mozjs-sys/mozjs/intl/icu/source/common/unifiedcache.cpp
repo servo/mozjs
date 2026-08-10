@@ -14,7 +14,7 @@
 
 #include <algorithm>      // For std::max()
 #ifndef __wasi__
- #include <mutex>
+#include <mutex>
 #endif
 
 #include "uassert.h"

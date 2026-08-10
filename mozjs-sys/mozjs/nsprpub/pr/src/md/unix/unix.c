@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -35,7 +34,7 @@
  */
 #if defined(HAVE_SOCKLEN_T) || (defined(__GLIBC__) && __GLIBC__ >= 2)
 #  define _PRSockLen_t socklen_t
-#elif defined(HPUX) || defined(SOLARIS) || defined(AIX4_1) || \
+#elif defined(SOLARIS) || defined(AIX4_1) || \
     defined(LINUX) || defined(DARWIN) || defined(QNX)
 #  define _PRSockLen_t int
 #elif (defined(AIX) && !defined(AIX4_1)) || defined(FREEBSD) || \

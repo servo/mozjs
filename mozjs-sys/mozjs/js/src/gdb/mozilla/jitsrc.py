@@ -106,7 +106,7 @@ patterns = [
 
 class JitSource(gdb.Command):
     def __init__(self):
-        super(JitSource, self).__init__("jitsrc", gdb.COMMAND_RUNNING)
+        super().__init__("jitsrc", gdb.COMMAND_RUNNING)
         self.dont_repeat()
 
     def disable_breakpoints(self):

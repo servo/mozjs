@@ -7,7 +7,6 @@ import posixpath
 from abc import ABCMeta, abstractmethod
 from shutil import which
 
-import six
 from mozdevice import ADBDeviceFactory
 from mozprofile import (
     ChromeProfile,
@@ -38,8 +37,7 @@ class DefaultContext:
     profile_class = Profile
 
 
-@six.add_metaclass(ABCMeta)
-class RemoteContext:
+class RemoteContext(metaclass=ABCMeta):
     device = None
     _remote_profile = None
     _adb = None
@@ -83,7 +81,7 @@ class RemoteContext:
         return self._remote_profile
 
     def which(self, binary):
-        paths = os.environ.get("PATH", {}).split(os.pathsep)
+        paths = os.environ.get("PATH", "").split(os.pathsep)
         if self.bindir is not None and os.path.abspath(self.bindir) not in paths:
             paths.insert(0, os.path.abspath(self.bindir))
             os.environ["PATH"] = os.pathsep.join(paths)
@@ -114,7 +112,6 @@ class FennecContext(RemoteContext):
         # Create a mozdevice.ADBDevice object for the specified device_serial
         # and cache it for future use. If the same device_serial is subsequently
         # requested, retrieve it from the cache to avoid costly re-initialization.
-        global devices
         if device_serial in devices:
             device = devices[device_serial]
         else:

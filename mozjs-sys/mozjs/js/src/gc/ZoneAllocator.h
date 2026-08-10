@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -15,10 +13,13 @@
 
 #include "jsfriendapi.h"
 #include "jstypes.h"
+#include "gc/Allocator.h"
 #include "gc/Cell.h"
 #include "gc/Scheduling.h"
+#include "gc/Tracer.h"
 #include "js/GCAPI.h"
 #include "js/shadow/Zone.h"  // JS::shadow::Zone
+#include "js/Utility.h"
 #include "vm/MallocProvider.h"
 
 namespace JS {
@@ -57,7 +58,7 @@ class ZoneAllocator : public JS::shadow::Zone,
   [[nodiscard]] void* onOutOfMemory(js::AllocFunction allocFunc,
                                     arena_id_t arena, size_t nbytes,
                                     void* reallocPtr = nullptr);
-  void reportAllocationOverflow() const;
+  void reportAllocOverflow() const;
 
   void updateSchedulingStateOnGCStart();
   void updateGCStartThresholds(gc::GCRuntime& gc);
@@ -281,12 +282,6 @@ class TrackedAllocPolicy : public MallocProvider<TrackedAllocPolicy<kind>> {
     }
   }
 
-  [[nodiscard]] bool checkSimulatedOOM() const {
-    return !js::oom::ShouldFailWithOOM();
-  }
-
-  void reportAllocOverflow() const { reportAllocationOverflow(); }
-
   // Internal methods called by the MallocProvider implementation.
 
   [[nodiscard]] void* onOutOfMemory(js::AllocFunction allocFunc,
@@ -294,7 +289,7 @@ class TrackedAllocPolicy : public MallocProvider<TrackedAllocPolicy<kind>> {
                                     void* reallocPtr = nullptr) {
     return zone()->onOutOfMemory(allocFunc, arena, nbytes, reallocPtr);
   }
-  void reportAllocationOverflow() const { zone()->reportAllocationOverflow(); }
+  void reportAllocOverflow() const { zone()->reportAllocOverflow(); }
   void updateMallocCounter(size_t nbytes) {
     zone()->incNonGCMemory(this, nbytes, MemoryUse::TrackedAllocPolicy);
   }
@@ -309,6 +304,106 @@ class TrackedAllocPolicy : public MallocProvider<TrackedAllocPolicy<kind>> {
 
 using ZoneAllocPolicy = TrackedAllocPolicy<TrackingKind::Zone>;
 using CellAllocPolicy = TrackedAllocPolicy<TrackingKind::Cell>;
+
+class BufferAllocPolicy : public AllocPolicyBase {
+ public:
+  JS::Zone* zone;
+  bool nurseryOwned;
+
+ public:
+  explicit BufferAllocPolicy(gc::Cell* owner)
+      : zone(owner->zone()), nurseryOwned(!owner->isTenured()) {}
+
+  explicit BufferAllocPolicy(JS::Zone* zone)
+      : zone(zone), nurseryOwned(false) {}
+
+  template <class T>
+  T* pod_malloc(size_t numElems) {
+    return maybe_pod_malloc<T>(numElems);
+  }
+
+  template <class T>
+  T* pod_calloc(size_t numElems = 1) {
+    return maybe_pod_calloc<T>(numElems);
+  }
+
+  template <class T>
+  T* pod_realloc(T* prior, size_t oldSize, size_t newSize) {
+    return maybe_pod_realloc(prior, oldSize, newSize);
+  }
+
+  template <class T>
+  T* maybe_pod_malloc(size_t numElems) {
+    size_t bytes;
+    if (MOZ_UNLIKELY(!CalculateAllocSize<T>(numElems, &bytes))) {
+      return nullptr;
+    }
+    return static_cast<T*>(gc::AllocBuffer(zone, bytes, nurseryOwned));
+  }
+
+  template <class T>
+  T* maybe_pod_calloc(size_t numElems) {
+    size_t bytes;
+    if (MOZ_UNLIKELY(!CalculateAllocSize<T>(numElems, &bytes))) {
+      return nullptr;
+    }
+    void* p = gc::AllocBuffer(zone, bytes, nurseryOwned);
+    if (!p) {
+      return nullptr;
+    }
+    memset(p, 0, bytes);
+    return static_cast<T*>(p);
+  }
+
+  template <class T>
+  T* maybe_pod_realloc(T* prior, size_t oldSize, size_t newSize) {
+    size_t bytes;
+    if (MOZ_UNLIKELY(!CalculateAllocSize<T>(newSize, &bytes))) {
+      return nullptr;
+    }
+    return static_cast<T*>(gc::ReallocBuffer(zone, prior, bytes, nurseryOwned));
+  }
+
+  template <typename T>
+  void free_(T* p, size_t numElems) {
+    if (p) {
+      FreeBuffer(zone, p);
+    }
+  }
+
+  void updateOwningGCThing(gc::Cell* maybeOwner) {
+    MOZ_ASSERT_IF(nurseryOwned, maybeOwner);
+    if (gc::Cell* owner = maybeOwner) {
+      MOZ_ASSERT(owner->zoneFromAnyThread() == zone);
+      MOZ_ASSERT_IF(!nurseryOwned, owner->isTenured());
+      if (nurseryOwned && owner->isTenured()) {
+        nurseryOwned = false;
+      }
+    }
+  }
+
+  template <typename T>
+  inline void traceOwnedAlloc(JSTracer* trc, T** bufferp, const char* name) {
+    MOZ_ASSERT(bufferp);
+    MOZ_ASSERT(*bufferp);
+    void** ptrp = reinterpret_cast<void**>(bufferp);
+    gc::TraceBufferEdgeInternal(trc, ptrp, name);
+  }
+
+  size_t getAllocSize(void* ptr, mozilla::MallocSizeOf mallocSizeOf) {
+    return gc::GetAllocSize(zone, ptr);
+  }
+
+  void reportAllocOverflow() const;
+};
+
+namespace gc {
+template <typename T, typename... Args>
+T* NewBuffer(Cell* owner, Args&&... args) {
+  return NewSizedBuffer<T>(owner->zone(), sizeof(T), IsInsideNursery(owner),
+                           std::forward<Args>(args)...);
+}
+}  // namespace gc
 
 // Functions for memory accounting on the zone.
 

@@ -2,11 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import json
 from pathlib import Path
 
 import mozunit
 import pytest
+from mozfile import json
 from mozilla_version.gecko import GeckoVersion
 
 from mozrelease.balrog import generate_update_properties
@@ -35,6 +35,26 @@ DATA_PATH = Path(__file__).parent.joinpath("data")
             },
             "whatsnew-62.0.3.yml",
             "Firefox-64.0b13.update.json",
+        ),
+        (
+            {
+                "release-type": "release",
+                "product": "firefox",
+                "version": GeckoVersion.parse("140.0"),
+                "blob-type": "wnp",
+            },
+            "whatsnew-firefox-com.yml",
+            "Firefox-140.0.update.json",
+        ),
+        (
+            {
+                "release-type": "release",
+                "product": "firefox",
+                "version": GeckoVersion.parse("140.0.1"),
+                "blob-type": "wnp",
+            },
+            "whatsnew-firefox-com.yml",
+            "Firefox-140.0.1.update.json",
         ),
     ],
 )

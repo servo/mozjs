@@ -101,11 +101,12 @@ def test_environment(
     # override the user's choice here.  See bug 1049688.
     env.setdefault("MOZ_DISABLE_NONLOCAL_CONNECTIONS", "1")
 
-    # Set WebRTC logging in case it is not set yet
-    env.setdefault("MOZ_LOG", "signaling:3,mtransport:4,DataChannel:4,jsep:4")
-    env.setdefault("R_LOG_LEVEL", "6")
-    env.setdefault("R_LOG_DESTINATION", "stderr")
-    env.setdefault("R_LOG_VERBOSE", "1")
+    # Only enable verbose WebRTC logging in CI.
+    if "MOZ_AUTOMATION" in os.environ:
+        env.setdefault("MOZ_LOG", "signaling:3,mtransport:4,DataChannel:3,jsep:4")
+        env.setdefault("R_LOG_LEVEL", "6")
+        env.setdefault("R_LOG_DESTINATION", "stderr")
+        env.setdefault("R_LOG_VERBOSE", "1")
 
     # Ask NSS to use lower-security password encryption. See Bug 1594559
     env.setdefault("NSS_MAX_MP_PBE_ITERATION_COUNT", "10")
@@ -170,7 +171,7 @@ def test_environment(
                 # lsanOptions.append("report_objects=1")
                 env["LSAN_OPTIONS"] = ":".join(lsanOptions)
 
-            if len(asanOptions):
+            if asanOptions:
                 env["ASAN_OPTIONS"] = ":".join(asanOptions)
 
         except OSError as err:
@@ -217,7 +218,7 @@ def get_stack_fixer_function(utilityPath, symbolsPath, hideErrors=False):
     if not mozinfo.info.get("debug"):
         return None
 
-    if os.getenv("MOZ_DISABLE_STACK_FIX", 0):
+    if os.getenv("MOZ_DISABLE_STACK_FIX"):
         print(
             "WARNING: No stack-fixing will occur because MOZ_DISABLE_STACK_FIX is set"
         )

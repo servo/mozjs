@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -32,6 +30,7 @@
 namespace js {
 namespace jit {
 
+class BacktrackingAllocator;
 class JitRuntime;
 class MIRGraph;
 class OptimizationInfo;
@@ -43,8 +42,6 @@ class MIRGenerator final {
                const CompileInfo* outerInfo,
                const OptimizationInfo* optimizationInfo,
                const wasm::CodeMetadata* wasmCodeMeta = nullptr);
-
-  void initMinWasmMemory0Length(uint64_t init) { minWasmMemory0Length_ = init; }
 
   TempAllocator& alloc() { return *alloc_; }
   MIRGraph& graph() { return *graph_; }
@@ -59,7 +56,7 @@ class MIRGenerator final {
   }
 
   template <typename T>
-  T* allocate(size_t count = 1) {
+  js::lifo_alloc_pointer<T*> allocate(size_t count = 1) {
     size_t bytes;
     if (MOZ_UNLIKELY(!CalculateAllocSize<T>(count, &bytes))) {
       return nullptr;
@@ -123,7 +120,6 @@ class MIRGenerator final {
     MOZ_ASSERT(compilingWasm());
     wasmMaxStackArgBytes_ = std::max(n, wasmMaxStackArgBytes_);
   }
-  uint64_t minWasmMemory0Length() const { return minWasmMemory0Length_; }
 
   void setNeedsOverrecursedCheck() { needsOverrecursedCheck_ = true; }
   bool needsOverrecursedCheck() const { return needsOverrecursedCheck_; }
@@ -138,8 +134,9 @@ class MIRGenerator final {
  private:
   // The CompileInfo for the outermost script.
   const CompileInfo* outerInfo_;
-
   const OptimizationInfo* optimizationInfo_;
+  const wasm::CodeMetadata* wasmCodeMeta_;
+
   TempAllocator* alloc_;
   MIRGraph* graph_;
   AbortReasonOr<Ok> offThreadStatus_;
@@ -161,23 +158,53 @@ class MIRGenerator final {
   bool licmEnabled() const;
   bool branchHintingEnabled() const;
 
- private:
-  uint64_t minWasmMemory0Length_;
-
-  IonPerfSpewer wasmPerfSpewer_;
-
- public:
-  IonPerfSpewer& perfSpewer() { return wasmPerfSpewer_; }
+  const wasm::CodeMetadata* wasmCodeMeta() const {
+    MOZ_ASSERT(wasmCodeMeta_);
+    return wasmCodeMeta_;
+  }
 
  public:
   const JitCompileOptions options;
 
  private:
-  GraphSpewer gs_;
+#ifdef JS_JITSPEW
+  GraphSpewer* graphSpewer_ = nullptr;
+#endif
+  JitSpewGraphSpewer jitSpewer_;
+  IonPerfSpewer perfSpewer_;
 
  public:
-  GraphSpewer& graphSpewer() { return gs_; }
+#ifdef JS_JITSPEW
+  void setGraphSpewer(GraphSpewer* graphSpewer) {
+    MOZ_ASSERT(!graphSpewer_);
+    graphSpewer_ = graphSpewer;
+  }
+#endif
+  IonPerfSpewer& perfSpewer() { return perfSpewer_; }
+
+  void spewBeginFunction(JSScript* function);
+  void spewBeginWasmFunction(unsigned funcIndex);
+  void spewPass(const char* name, BacktrackingAllocator* ra = nullptr);
+  void spewEndFunction();
+
+  // Explicitly reset compilation dependencies and perf spewer debug info.
+  // This must be called to correctly free compilation dependencies, which may
+  // have virtual destructors.
+  void cleanup() {
+    tracker.reset();
+    perfSpewer().reset();
+  }
+
   CompilationDependencyTracker tracker;
+};
+
+class AutoSpewEndFunction {
+ private:
+  MIRGenerator* mir_;
+
+ public:
+  explicit AutoSpewEndFunction(MIRGenerator* mir) : mir_(mir) {}
+  ~AutoSpewEndFunction();
 };
 
 }  // namespace jit

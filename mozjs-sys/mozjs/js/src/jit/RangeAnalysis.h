@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -251,12 +249,11 @@ class Range : public TempObject {
     MOZ_ASSERT(adjustedExponent >= mozilla::FloorLog2(mozilla::Abs(upper_)));
     MOZ_ASSERT(adjustedExponent >= mozilla::FloorLog2(mozilla::Abs(lower_)));
 
-    // The following are essentially static assertions, but FloorLog2 isn't
-    // trivially suitable for constexpr :(.
-    MOZ_ASSERT(mozilla::FloorLog2(JSVAL_INT_MIN) == MaxInt32Exponent);
-    MOZ_ASSERT(mozilla::FloorLog2(JSVAL_INT_MAX) == 30);
-    MOZ_ASSERT(mozilla::FloorLog2(UINT32_MAX) == MaxUInt32Exponent);
-    MOZ_ASSERT(mozilla::FloorLog2(0) == 0);
+    static_assert(mozilla::FloorLog2(uint32_t(JSVAL_INT_MIN)) ==
+                  MaxInt32Exponent);
+    static_assert(mozilla::FloorLog2(uint32_t(JSVAL_INT_MAX)) == 30);
+    static_assert(mozilla::FloorLog2(UINT32_MAX) == MaxUInt32Exponent);
+    static_assert(mozilla::FloorLog2(0u) == 0);
   }
 
   // Set the lower_ and hasInt32LowerBound_ values.

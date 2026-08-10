@@ -434,19 +434,17 @@ def tree(directory, sort_key=lambda x: x.lower()):
         # add the files
         if filenames:
             last_file = filenames[-1]
-            retval.extend(
-                [
-                    (
-                        "%s%s%s"
-                        % (
-                            "".join(indent),
-                            files_end if filename == last_file else item_marker,
-                            filename,
-                        )
+            retval.extend([
+                (
+                    "%s%s%s"
+                    % (
+                        "".join(indent),
+                        files_end if filename == last_file else item_marker,
+                        filename,
                     )
-                    for index, filename in enumerate(filenames)
-                ]
-            )
+                )
+                for index, filename in enumerate(filenames)
+            ])
 
     return "\n".join(retval)
 

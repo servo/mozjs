@@ -38,36 +38,33 @@ def symbolicate_profile_json(profile_path, firefox_symbols_path):
 
     symbol_paths = {"FIREFOX": firefox_symbols_path, "WINDOWS": windows_symbol_path}
 
-    symbolicator = ProfileSymbolicator(
-        {
-            # Trace-level logging (verbose)
-            "enableTracing": 0,
-            # Fallback server if symbol is not found locally
-            "remoteSymbolServer": "https://symbolication.services.mozilla.com/symbolicate/v4",
-            # Maximum number of symbol files to keep in memory
-            "maxCacheEntries": 2000000,
-            # Frequency of checking for recent symbols to
-            # cache (in hours)
-            "prefetchInterval": 12,
-            # Oldest file age to prefetch (in hours)
-            "prefetchThreshold": 48,
-            # Maximum number of library versions to pre-fetch
-            # per library
-            "prefetchMaxSymbolsPerLib": 3,
-            # Default symbol lookup directories
-            "defaultApp": "FIREFOX",
-            "defaultOs": "WINDOWS",
-            # Paths to .SYM files, expressed internally as a
-            # mapping of app or platform names to directories
-            # Note: App & OS names from requests are converted
-            # to all-uppercase internally
-            "symbolPaths": symbol_paths,
-        }
-    )
+    symbolicator = ProfileSymbolicator({
+        # Trace-level logging (verbose)
+        "enableTracing": 0,
+        # Fallback server if symbol is not found locally
+        "remoteSymbolServer": "https://symbolication.services.mozilla.com/symbolicate/v4",
+        # Maximum number of symbol files to keep in memory
+        "maxCacheEntries": 2000000,
+        # Frequency of checking for recent symbols to
+        # cache (in hours)
+        "prefetchInterval": 12,
+        # Oldest file age to prefetch (in hours)
+        "prefetchThreshold": 48,
+        # Maximum number of library versions to pre-fetch
+        # per library
+        "prefetchMaxSymbolsPerLib": 3,
+        # Default symbol lookup directories
+        "defaultApp": "FIREFOX",
+        "defaultOs": "WINDOWS",
+        # Paths to .SYM files, expressed internally as a
+        # mapping of app or platform names to directories
+        # Note: App & OS names from requests are converted
+        # to all-uppercase internally
+        "symbolPaths": symbol_paths,
+    })
 
     LOG.info(
-        "Symbolicating the performance profile... This could take a couple "
-        "of minutes."
+        "Symbolicating the performance profile... This could take a couple of minutes."
     )
 
     try:
@@ -82,7 +79,7 @@ def symbolicate_profile_json(profile_path, firefox_symbols_path):
         save_gecko_profile(profile, profile_path)
     except MemoryError:
         LOG.error(
-            "Ran out of memory while trying" f" to symbolicate profile {profile_path}"
+            f"Ran out of memory while trying to symbolicate profile {profile_path}"
         )
     except Exception as e:
         LOG.error("Encountered an exception during profile symbolication")

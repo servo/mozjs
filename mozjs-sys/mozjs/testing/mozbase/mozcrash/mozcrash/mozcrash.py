@@ -19,7 +19,6 @@ from urllib.request import urlopen
 import mozfile
 import mozinfo
 import mozlog
-import six
 from redo import retriable
 
 __all__ = [
@@ -45,6 +44,7 @@ StackInfo = namedtuple(
         "pid",
         "reason",
         "java_stack",
+        "crashing_thread_stack",
     ],
 )
 
@@ -145,8 +145,6 @@ def check_for_crashes(
                 err="\n".join(info.stackwalk_errors),
             )
         if output is not None:
-            if six.PY2 and sys.stdout.encoding != "UTF-8":
-                output = output.encode("utf-8")
             print(output)
 
     return crash_count
@@ -164,17 +162,23 @@ def log_crashes(
 ):
     """Log crashes using a structured logger"""
     crash_count = 0
-    for info in CrashInfo(
+    crash_info = CrashInfo(
         dump_directory,
         symbols_path,
         dump_save_path=dump_save_path,
         stackwalk_binary=stackwalk_binary,
-    ):
+    )
+    if num_dumps := len(crash_info.dump_files):
+        message = f"processing {num_dumps} crash" + ("es" if num_dumps != 1 else "")
+        logger.group_start(message)
+    for info in crash_info:
         crash_count += 1
-        if not quiet:
-            kwargs = info._asdict()
-            kwargs.pop("extra")
-            logger.crash(process=process, test=test, **kwargs)
+        kwargs = info._asdict()
+        kwargs.pop("extra")
+        kwargs["quiet"] = quiet
+        logger.crash(process=process, test=test, **kwargs)
+    if num_dumps:
+        logger.group_end(message)
     return crash_count
 
 
@@ -375,6 +379,7 @@ class CrashInfo:
         annotations = None
         pid = None
         process_type = "unknown"
+        crashing_thread_stack = None
         if (
             self.stackwalk_binary
             and os.path.exists(self.stackwalk_binary)
@@ -391,37 +396,43 @@ class CrashInfo:
             ):
                 command.append("--symbols-url=https://symbols.mozilla.org/")
 
-            with tempfile.TemporaryDirectory() as json_dir:
-                crash_id = os.path.basename(path)[:-4]
-                json_output = os.path.join(json_dir, f"{crash_id}.trace")
-                # Specify the kind of output
-                command.append(f"--cyborg={json_output}")
-                if self.brief_output:
-                    command.append("--brief")
+            crash_id = os.path.basename(path)[:-4]
+            json_dir = (
+                self.dump_save_path
+                if self.dump_save_path and os.path.isdir(self.dump_save_path)
+                else tempfile.gettempdir()
+            )
+            json_output = os.path.join(json_dir, f"{crash_id}.json")
+            # Specify the kind of output
+            command.append(f"--cyborg={json_output}")
+            if self.brief_output:
+                command.append("--brief")
 
-                # The minidump path and symbols_path values are positional and come last
-                # (in practice the CLI parsers are more permissive, but best not to
-                # unecessarily play with fire).
-                command.append(path)
+            # The minidump path and symbols_path values are positional and come last
+            # (in practice the CLI parsers are more permissive, but best not to
+            # unecessarily play with fire).
+            command.append(path)
 
-                if self.symbols_path:
-                    command.append(self.symbols_path)
+            if self.symbols_path:
+                command.append(self.symbols_path)
 
-                self.logger.info("Copy/paste: {}".format(" ".join(command)))
-                # run minidump-stackwalk
-                p = subprocess.Popen(
-                    command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
-                (out, err) = p.communicate()
-                retcode = p.returncode
-                if six.PY3:
-                    out = six.ensure_str(out)
-                    err = six.ensure_str(err)
+            self.logger.info("Copy/paste: {}".format(" ".join(command)))
+            # run minidump-stackwalk
+            p = subprocess.Popen(
+                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+            )
+            (out, err) = p.communicate()
+            retcode = p.returncode
+            if isinstance(out, bytes):
+                out = out.decode()
+            if isinstance(err, bytes):
+                err = err.decode()
 
-                if retcode == 0:
-                    processed_crash = self._process_json_output(json_output)
-                    signature = processed_crash.get("signature")
-                    pid = processed_crash.get("pid")
+            if retcode == 0:
+                processed_crash = self._process_json_output(json_output)
+                signature = processed_crash.get("signature")
+                pid = processed_crash.get("pid")
+                crashing_thread_stack = processed_crash.get("crashing_thread_stack")
 
         elif not self.stackwalk_binary:
             errors.append(
@@ -454,6 +465,9 @@ class CrashInfo:
         if os.path.exists(extra) and not self.keep:
             mozfile.remove(extra)
 
+        if signature is None:
+            signature = "[Unknown]"
+
         return StackInfo(
             path,
             signature,
@@ -466,11 +480,13 @@ class CrashInfo:
             pid,
             reason,
             java_stack,
+            crashing_thread_stack,
         )
 
     def _process_json_output(self, json_path):
         signature = None
         pid = None
+        crashing_thread_stack = None
 
         try:
             json_file = open(json_path)
@@ -479,6 +495,7 @@ class CrashInfo:
 
             signature = self._generate_signature(crash_json)
             pid = crash_json.get("pid")
+            crashing_thread_stack = self._extract_crashing_thread_stack(crash_json)
 
         except Exception as e:
             traceback.print_exc()
@@ -487,6 +504,7 @@ class CrashInfo:
         return {
             "pid": pid,
             "signature": signature,
+            "crashing_thread_stack": crashing_thread_stack,
         }
 
     def _generate_signature(self, crash_json):
@@ -528,6 +546,65 @@ class CrashInfo:
                 signature = pmatch.group(1)
 
         return signature
+
+    def _extract_crashing_thread_stack(self, crash_json):
+        """Extract the crashing thread stack as a structured array of frames.
+
+        Returns a list of frame dictionaries with keys:
+        - function: function name (optional)
+        - module: module/library name (optional)
+        - file: source file path (optional)
+        - line: line number (optional)
+        - offset: hex offset for unsymbolicated frames (optional)
+        - inlined: boolean indicating if this is an inlined frame
+        """
+        if not (
+            (crashing_thread := crash_json.get("crashing_thread"))
+            and (frames := crashing_thread.get("frames"))
+        ):
+            return None
+
+        structured_stack = []
+
+        def process_frame(frame, parent_frame=None):
+            """Process a single frame (inline or main) and append to structured_stack.
+
+            Args:
+                frame: Frame data dictionary
+                parent_frame: Parent frame dict (for inline frames to inherit module)
+            """
+            result = {}
+
+            if func := frame.get("function"):
+                result["function"] = func
+            if file_str := frame.get("file"):
+                result["file"] = file_str
+            if line := frame.get("line"):
+                result["line"] = line
+
+            # Inline frames inherit module from parent, main frames have their own
+            if parent_frame:
+                result["inlined"] = True
+                if module := parent_frame.get("module"):
+                    result["module"] = module
+            elif module := frame.get("module"):
+                result["module"] = module
+                if module_offset := frame.get("module_offset"):
+                    result["module_offset"] = int(module_offset, 16)
+                if function_offset := frame.get("function_offset"):
+                    result["function_offset"] = int(function_offset, 16)
+            elif offset := frame.get("offset"):
+                # JIT code or unknown frame - use raw address
+                result["offset"] = int(offset, 16)
+
+            structured_stack.append(result)
+
+        for frame in frames:
+            for inline in frame.get("inlines") or []:
+                process_frame(inline, parent_frame=frame)
+            process_frame(frame)
+
+        return structured_stack if structured_stack else None
 
     def _parse_extra_file(self, path):
         with open(path) as file:
@@ -725,11 +802,16 @@ if mozinfo.isWin:
         :param pid: PID of the process to terminate.
         """
         PROCESS_TERMINATE = 0x0001
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
         SYNCHRONIZE = 0x00100000
         WAIT_OBJECT_0 = 0x0
         WAIT_FAILED = -1
+        ERROR_ACCESS_DENIED = 5
+        STILL_ACTIVE = 259
         logger = get_logger()
-        handle = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, 0, pid)
+        handle = OpenProcess(
+            PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, pid
+        )
         if handle:
             if kernel32.TerminateProcess(handle, 1):
                 # TerminateProcess is async; wait up to 30 seconds for process to
@@ -739,25 +821,30 @@ if mozinfo.isWin:
                 if status == WAIT_FAILED:
                     err = kernel32.GetLastError()
                     logger.warning(
-                        "kill_pid(): wait failed (%d) terminating pid %d: error %d"
-                        % (status, pid, err)
+                        f"kill_pid(): wait failed ({status}) terminating pid {pid}: error {err}"
                     )
                 elif status != WAIT_OBJECT_0:
                     logger.warning(
-                        "kill_pid(): wait failed (%d) terminating pid %d"
-                        % (status, pid)
+                        f"kill_pid(): wait failed ({status}) terminating pid {pid}"
                     )
             else:
                 err = kernel32.GetLastError()
-                logger.warning(
-                    "kill_pid(): unable to terminate pid %d: %d" % (pid, err)
-                )
+                status = ctypes.c_uint()
+                result = kernel32.GetExitCodeProcess(handle, ctypes.byref(status))
+                if (err == ERROR_ACCESS_DENIED) and result and (status != STILL_ACTIVE):
+                    pass  # Process had already terminated when we called `TerminateProcess()`
+                else:
+                    logger.warning(
+                        f"kill_pid(): unable to terminate pid {pid}: error {err}"
+                    )
+                    if not result:
+                        logger.warning(
+                            f"kill_pid(): process {pid} status is unknown: error {kernel32.GetLastError()}"
+                        )
             CloseHandle(handle)
         else:
             err = kernel32.GetLastError()
-            logger.warning(
-                "kill_pid(): unable to get handle for pid %d: %d" % (pid, err)
-            )
+            logger.warning(f"kill_pid(): unable to get handle for pid {pid}: {err}")
 
 else:
 

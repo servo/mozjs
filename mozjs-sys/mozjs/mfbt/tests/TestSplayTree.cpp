@@ -1,13 +1,11 @@
-/* -*- Mode: C++; tab-width: 9; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/SplayTree.h"
-#include "mozilla/Unused.h"
+
+#include <array>
 
 using mozilla::SplayTree;
 using mozilla::SplayTreeNode;
@@ -115,7 +113,7 @@ struct SplayNoCopy : SplayTreeNode<SplayNoCopy> {
 static SplayTree<SplayNoCopy, SplayNoCopy> testNoCopy;
 
 int main() {
-  mozilla::Unused << testNoCopy;
+  (void)testNoCopy;
 
   SplayTree<SplayInt, SplayInt> tree;
 

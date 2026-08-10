@@ -36,7 +36,7 @@ class Hooks(MachLogger):
                 _LOADED_MODULES[path] = hook_module
             self._hooks = _LOADED_MODULES[path]
         else:
-            raise OSError("Could not find hook module. %s" % str(hook_module))
+            raise OSError(f"Could not find hook module. {hook_module}")
 
     def cleanup(self):
         if self.tmp_dir is None:
@@ -59,5 +59,5 @@ class Hooks(MachLogger):
             return
         if not hasattr(self._hooks, name):
             return
-        self.debug("Running hook %s" % name)
+        self.debug(f"Running hook {name}")
         return getattr(self._hooks, name)(*args, **kw)

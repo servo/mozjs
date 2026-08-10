@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -166,6 +165,7 @@ PL_ArenaGrow(PLArenaPool* pool, void* p, PRUint32 size, PRUint32 incr) {
   PL_ARENA_ALLOCATE(newp, pool, size + incr);
   if (newp) {
     memcpy(newp, p, size);
+    PL_MAKE_MEM_NOACCESS(p, size);
   }
   return newp;
 }
@@ -210,6 +210,7 @@ PR_IMPLEMENT(void) PL_ArenaRelease(PLArenaPool* pool, char* mark) {
   for (a = &pool->first; a; a = a->next) {
     if (PR_UPTRDIFF(mark, a->base) <= PR_UPTRDIFF(a->avail, a->base)) {
       a->avail = (PRUword)PL_ARENA_ALIGN(pool, mark);
+      PL_MAKE_MEM_NOACCESS((void*)a->avail, a->limit - a->avail);
       FreeArenaList(pool, a);
       return;
     }

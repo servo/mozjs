@@ -8,12 +8,14 @@ import re
 import subprocess
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Callable, Optional, Union
 
 from mach.util import to_optional_path
 from mozfile import which
 
 from mozversioncontrol.errors import MissingVCSInfo, MissingVCSTool
+
+HG_TRY_URL = "ssh://hg.mozilla.org/try"
 
 
 def get_tool_path(tool: Optional[Union[str, Path]] = None):
@@ -85,12 +87,14 @@ class Repository(abc.ABC):
             return "src"
 
         (cmd, return_codes, env) = self._process_run_args(*args, **runargs)
+        stderr = runargs.get("stderr", None)
         try:
             return subprocess.check_output(
                 cmd,
                 cwd=self.path,
                 encoding=encoding,
                 env=env,
+                stderr=stderr,
             )
         except subprocess.CalledProcessError as e:
             if e.returncode in return_codes:
@@ -133,7 +137,12 @@ class Repository(abc.ABC):
     @property
     @abc.abstractmethod
     def head_ref(self):
-        """Hash of HEAD revision."""
+        """Head reference."""
+
+    @property
+    @abc.abstractmethod
+    def head_rev(self):
+        """Head revision."""
 
     @property
     @abc.abstractmethod
@@ -181,6 +190,10 @@ class Repository(abc.ABC):
 
         If no email is configured, then None is returned.
         """
+
+    @abc.abstractmethod
+    def get_remote_url(self, remote=None, push=False):
+        """Return the URL for the specified remote."""
 
     @abc.abstractmethod
     def get_changed_files(self, diff_filter, mode="unstaged", rev=None):
@@ -264,10 +277,72 @@ class Repository(abc.ABC):
         """
 
     @abc.abstractmethod
+    def push(
+        self,
+        remote: Optional[str] = None,
+        ref: Optional[str] = None,
+        dest_branch: Optional[str] = None,
+        force: bool = False,
+    ):
+        """Push to a remote repository.
+
+        `remote` specifies the remote to push to. If None, the default remote is used.
+        `ref` specifies the branch or ref to push. If None, the current branch/ref is used.
+        `dest_branch` specifies the destination branch name. If None, pushes ref to ref.
+        `force` whether to use a force push (default False).
+        """
+
+    def add_note(
+        self,
+        note: str,
+        content: str,
+        commit: Optional[str] = None,
+    ):
+        """Attach a git note with `content` to `commit`.
+
+        `note` is the notes namespace under refs/notes/.
+        `content` is the data to store in the note.
+        `commit` is the commit to associage the note with (defaults to HEAD).
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def _resolve_try_branch(self) -> str:
+        pass
+
+    def _push_to_git_try(self, message, changed_files, remote):
+        dest_branch = self._resolve_try_branch()
+        email = self.get_user_email()
+        if not email:
+            raise ValueError(
+                "user.email is not configured; run 'git config user.email <email>'"
+            )
+
+        user_prefix = f"{email.split('@', 1)[0]}/"
+        if not dest_branch.startswith(user_prefix):
+            dest_branch = f"{user_prefix}{dest_branch}"
+
+        global_prefix = "user/"
+        if not dest_branch.startswith(global_prefix):
+            dest_branch = f"{global_prefix}{dest_branch}"
+
+        with self.try_commit(message, changed_files) as head:
+            self.push(
+                remote,
+                ref=head,
+                dest_branch=dest_branch,
+                force=True,
+            )
+
+    @abc.abstractmethod
+    def _push_to_hg_try(self, message, changed_files, allow_log_capture):
+        pass
+
     def push_to_try(
         self,
         message: str,
-        changed_files: Dict[str, str] = {},
+        changed_files: dict[str, str] = {},
+        remote: str = HG_TRY_URL,
         allow_log_capture: bool = False,
     ):
         """Create a temporary commit, push it to try and clean it up
@@ -283,6 +358,10 @@ class Repository(abc.ABC):
         If `allow_log_capture` is set to `True`, then the push-to-try will be run using
         Popen instead of check_call so that the logs can be captured elsewhere.
         """
+        if HG_TRY_URL in remote:
+            self._push_to_hg_try(message, changed_files, allow_log_capture)
+        else:
+            self._push_to_git_try(message, changed_files, remote)
 
     @abc.abstractmethod
     def update(self, ref):
@@ -343,18 +422,18 @@ class Repository(abc.ABC):
         self,
         head: Optional[str] = None,
         limit: Optional[int] = None,
-        follow: Optional[List[str]] = None,
-    ) -> List[str]:
+        follow: Optional[list[str]] = None,
+    ) -> list[str]:
         """Return a list of commit SHAs for nodes on the current branch."""
 
     @abc.abstractmethod
-    def get_commit_patches(self, nodes: str) -> List[bytes]:
+    def get_commit_patches(self, nodes: str) -> list[bytes]:
         """Return the contents of the patch `node` in the VCS's standard format."""
 
     @contextmanager
     @abc.abstractmethod
     def try_commit(
-        self, commit_message: str, changed_files: Optional[Dict[str, str]] = None
+        self, commit_message: str, changed_files: Optional[dict[str, str]] = None
     ):
         """Create a temporary try commit as a context manager.
 
@@ -365,7 +444,13 @@ class Repository(abc.ABC):
         see `stage_changes`.
         """
 
-    def stage_changes(self, changed_files: Dict[str, str]):
+    @abc.abstractmethod
+    def prepare_try_push(
+        self, commit_message: str, changed_files: Optional[dict[str, str]] = None
+    ) -> tuple[Optional[str], Callable]:
+        pass
+
+    def stage_changes(self, changed_files: dict[str, str]):
         """Stage a set of file changes
 
         `changed_files` is a dict that contains the paths of files to change or
@@ -385,4 +470,9 @@ class Repository(abc.ABC):
     @abc.abstractmethod
     def get_last_modified_time_for_file(self, path: Path):
         """Return last modified in VCS time for the specified file."""
+        pass
+
+    @abc.abstractmethod
+    def configure(self, state_dir: Path, update_only: bool = False):
+        """Perform initial VCS setup, applying sensible defaults for configuration."""
         pass

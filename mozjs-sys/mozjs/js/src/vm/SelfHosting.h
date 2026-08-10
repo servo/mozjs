@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -255,7 +253,11 @@ void SetUnclonedSelfHostedCanonicalName(JSFunction* fun, JSAtom* name);
 
 bool IsCallSelfHostedNonGenericMethod(NativeImpl impl);
 
-bool ReportIncompatibleSelfHostedMethod(JSContext* cx, Handle<Value> thisValue);
+enum class IncompatibleContext { Regular, RegExpExec };
+
+bool ReportIncompatibleSelfHostedMethod(
+    JSContext* cx, Handle<Value> thisValue,
+    IncompatibleContext incompatibleContext);
 
 /* Get the compile options used when compiling self hosted code. */
 void FillSelfHostingCompileOptions(JS::CompileOptions& options);

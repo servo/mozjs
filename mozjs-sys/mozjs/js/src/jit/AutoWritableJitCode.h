@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,7 +7,6 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/ScopeExit.h"
 #include "mozilla/TimeStamp.h"
 
 #include <stddef.h>
@@ -49,19 +46,6 @@ class MOZ_RAII AutoWritableJitCodeFallible {
   }
 
   ~AutoWritableJitCodeFallible() {
-    // Taking TimeStamps frequently can be expensive, and there's no point
-    // measuring this if write protection is disabled.
-    const bool measuringTime = JitOptions.writeProtectCode;
-    const mozilla::TimeStamp startTime =
-        measuringTime ? mozilla::TimeStamp::Now() : mozilla::TimeStamp();
-    auto timer = mozilla::MakeScopeExit([&] {
-      if (measuringTime) {
-        if (Realm* realm = rt_->mainContextFromOwnThread()->realm()) {
-          realm->timers.protectTime += mozilla::TimeStamp::Now() - startTime;
-        }
-      }
-    });
-
     if (!ExecutableAllocator::makeExecutableAndFlushICache(addr_, size_)) {
       MOZ_CRASH();
     }

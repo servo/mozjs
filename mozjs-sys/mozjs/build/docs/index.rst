@@ -26,6 +26,7 @@ Important Concepts
    defining-binaries
    defining-xpcom-components
    toolchains
+   toolchains-update-policy
    locales
    unified-builds
    cross-compile

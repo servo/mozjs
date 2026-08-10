@@ -339,16 +339,14 @@ class ManifestContract(ManifestEntry):
 
 
 # All manifest classes by their type name.
-MANIFESTS_TYPES = dict(
-    [
-        (c.type, c)
-        for c in globals().values()
-        if type(c) is type
-        and issubclass(c, ManifestEntry)
-        and hasattr(c, "type")
-        and c.type
-    ]
-)
+MANIFESTS_TYPES = dict([
+    (c.type, c)
+    for c in globals().values()
+    if type(c) is type
+    and issubclass(c, ManifestEntry)
+    and hasattr(c, "type")
+    and c.type
+])
 
 MANIFEST_RE = re.compile(r"^#.*$")
 

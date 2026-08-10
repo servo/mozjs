@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -30,9 +28,6 @@ class CodeGeneratorWasm32 : public CodeGeneratorShared {
   }
   template <typename T1, typename T2>
   void bailoutCmpPtr(Assembler::Condition, T1, T2, LSnapshot*) {
-    MOZ_CRASH();
-  }
-  void bailoutTestPtr(Assembler::Condition, Register, Register, LSnapshot*) {
     MOZ_CRASH();
   }
   void bailoutIfFalseBool(Register, LSnapshot*) { MOZ_CRASH(); }

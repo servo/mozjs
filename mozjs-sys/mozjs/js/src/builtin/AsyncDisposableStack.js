@@ -5,7 +5,7 @@
 // Explicit Resource Management
 // 27.4.3.3 AsyncDisposableStack.prototype.disposeAsync ( )
 // https://arai-a.github.io/ecma262-compare/?pr=3000&id=sec-asyncdisposablestack.prototype.disposeAsync
-async function $AsyncDisposableStackDisposeAsync() {
+async function AsyncDisposableStackDisposeAsyncImpl() {
   // Step 1. Let asyncDisposableStack be the this value.
   var asyncDisposableStack = this;
 
@@ -50,5 +50,9 @@ async function $AsyncDisposableStackDisposeAsync() {
   // Step 8. Perform ! Call(promiseCapability.[[Resolve]], undefined, « result »).
   // Step 9. Return promiseCapability.[[Promise]].
   return undefined;
+}
+
+function $AsyncDisposableStackDisposeAsync() {
+  return callFunction(AsyncDisposableStackDisposeAsyncImpl, this);
 }
 SetCanonicalName($AsyncDisposableStackDisposeAsync, "disposeAsync");

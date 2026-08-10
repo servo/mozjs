@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,14 +9,15 @@
 #include "mozilla/CheckedInt.h"
 
 #include <cmath>
+#include <compare>
 #include <stdint.h>
 #include <type_traits>
 #include <utility>
 
 #include "jstypes.h"
 
-#include "builtin/temporal/Int128.h"
 #include "builtin/temporal/TemporalUnit.h"
+#include "vm/Int128.h"
 
 namespace js::temporal {
 
@@ -53,33 +52,20 @@ struct SecondsAndNanoseconds {
   // Nanoseconds part in the range [0, 999'999'999].
   int32_t nanoseconds = 0;
 
-  constexpr bool operator==(const SecondsAndNanoseconds& other) const {
-    return seconds == other.seconds && nanoseconds == other.nanoseconds;
-  }
-
-  constexpr bool operator<(const SecondsAndNanoseconds& other) const {
+  constexpr auto operator<=>(const SecondsAndNanoseconds& other) const {
     // The compiler can optimize expressions like |epochNs < EpochNanoseconds{}|
     // to a single right-shift operation when we propagate the range of
     // nanoseconds.
     JS_ASSUME(nanoseconds >= 0);
     JS_ASSUME(other.nanoseconds >= 0);
-    return (seconds < other.seconds) ||
-           (seconds == other.seconds && nanoseconds < other.nanoseconds);
+    auto r = seconds <=> other.seconds;
+    if (r != 0) {
+      return r;
+    }
+    return nanoseconds <=> other.nanoseconds;
   }
 
-  // Other operators are implemented in terms of operator== and operator<.
-  constexpr bool operator!=(const SecondsAndNanoseconds& other) const {
-    return !(*this == other);
-  }
-  constexpr bool operator>(const SecondsAndNanoseconds& other) const {
-    return other < *this;
-  }
-  constexpr bool operator<=(const SecondsAndNanoseconds& other) const {
-    return !(other < *this);
-  }
-  constexpr bool operator>=(const SecondsAndNanoseconds& other) const {
-    return !(*this < other);
-  }
+  constexpr bool operator==(const SecondsAndNanoseconds&) const = default;
 
  protected:
   template <typename T, typename U, class R = Derived>
@@ -415,33 +401,7 @@ struct ISODate final {
   // [1, 31]
   int32_t day = 0;
 
-  constexpr bool operator==(const ISODate& other) const {
-    return year == other.year && month == other.month && day == other.day;
-  }
-
-  constexpr bool operator!=(const ISODate& other) const {
-    return !(*this == other);
-  }
-
-  constexpr bool operator<(const ISODate& other) const {
-    if (year != other.year) {
-      return year < other.year;
-    }
-    if (month != other.month) {
-      return month < other.month;
-    }
-    return day < other.day;
-  }
-
-  constexpr bool operator>(const ISODate& other) const { return other < *this; }
-
-  constexpr bool operator<=(const ISODate& other) const {
-    return !(other < *this);
-  }
-
-  constexpr bool operator>=(const ISODate& other) const {
-    return !(*this < other);
-  }
+  constexpr auto operator<=>(const ISODate&) const = default;
 
   /**
    * The minimum ISODate within the valid limits is -271821 April, 19.
@@ -477,44 +437,7 @@ struct Time final {
   // [0, 999]
   int32_t nanosecond = 0;
 
-  constexpr bool operator==(const Time& other) const {
-    return hour == other.hour && minute == other.minute &&
-           second == other.second && millisecond == other.millisecond &&
-           microsecond == other.microsecond && nanosecond == other.nanosecond;
-  }
-
-  constexpr bool operator!=(const Time& other) const {
-    return !(*this == other);
-  }
-
-  constexpr bool operator<(const Time& other) const {
-    if (hour != other.hour) {
-      return hour < other.hour;
-    }
-    if (minute != other.minute) {
-      return minute < other.minute;
-    }
-    if (second != other.second) {
-      return second < other.second;
-    }
-    if (millisecond != other.millisecond) {
-      return millisecond < other.millisecond;
-    }
-    if (microsecond != other.microsecond) {
-      return microsecond < other.microsecond;
-    }
-    return nanosecond < other.nanosecond;
-  }
-
-  constexpr bool operator>(const Time& other) const { return other < *this; }
-
-  constexpr bool operator<=(const Time& other) const {
-    return !(other < *this);
-  }
-
-  constexpr bool operator>=(const Time& other) const {
-    return !(*this < other);
-  }
+  constexpr auto operator<=>(const Time&) const = default;
 };
 
 /**
@@ -524,11 +447,10 @@ struct ISODateTime final {
   ISODate date;
   Time time;
 
-  bool operator==(const ISODateTime& other) const {
-    return date == other.date && time == other.time;
-  }
+  constexpr auto operator<=>(const ISODateTime&) const = default;
 
-  bool operator!=(const ISODateTime& other) const { return !(*this == other); }
+  // Explicit overrides for relational comparison operators to generate better
+  // code when compiling with Clang.
 
   constexpr bool operator<(const ISODateTime& other) const {
     if (date != other.date) {
@@ -653,18 +575,7 @@ struct Duration final {
   // abs(nanoseconds) < (2**53) * (1000**3)
   double nanoseconds = 0;
 
-  constexpr bool operator==(const Duration& other) const {
-    return years == other.years && months == other.months &&
-           weeks == other.weeks && days == other.days && hours == other.hours &&
-           minutes == other.minutes && seconds == other.seconds &&
-           milliseconds == other.milliseconds &&
-           microseconds == other.microseconds &&
-           nanoseconds == other.nanoseconds;
-  }
-
-  constexpr bool operator!=(const Duration& other) const {
-    return !(*this == other);
-  }
+  constexpr bool operator==(const Duration&) const = default;
 
   /**
    * Return a new duration with every component negated.
@@ -702,14 +613,7 @@ struct DateDuration final {
   // abs(days) < ⌈(2**53) / (24 * 60 * 60)⌉
   int64_t days = 0;
 
-  constexpr bool operator==(const DateDuration& other) const {
-    return years == other.years && months == other.months &&
-           weeks == other.weeks && days == other.days;
-  }
-
-  constexpr bool operator!=(const DateDuration& other) const {
-    return !(*this == other);
-  }
+  constexpr bool operator==(const DateDuration&) const = default;
 
   constexpr Duration toDuration() const {
     return {
@@ -774,13 +678,7 @@ struct InternalDuration final {
   DateDuration date;
   TimeDuration time;
 
-  constexpr bool operator==(const InternalDuration& other) const {
-    return date == other.date && time == other.time;
-  }
-
-  constexpr bool operator!=(const InternalDuration& other) const {
-    return !(*this == other);
-  }
+  constexpr bool operator==(const InternalDuration&) const = default;
 };
 
 } /* namespace js::temporal */

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -112,6 +110,37 @@ class SlimLinkedListElement {
   ElementPtr getPrev() { return isFirst() ? nullptr : getPrevUnchecked(); }
   ConstElementPtr getPrev() const {
     return isFirst() ? nullptr : getPrevUnchecked();
+  }
+
+  // Remove an element that is in one of the given lists. The element must be
+  // contained in one of the lists.
+  //
+  // Usage: elt->removeFromOneOf(list1, list2, ...)
+  template <typename... Lists>
+  void removeFromOneOf(Lists&... lists) {
+#ifdef DEBUG
+    bool found = (... || lists.contains(thisElement()));
+    MOZ_ASSERT(found, "element not found in any of the lists");
+#endif
+    auto removeFrom = [this](SlimLinkedList<T>& list) {
+      if (this == list.getFirst()) {
+        list.remove(thisElement());
+        return true;
+      }
+      return false;
+    };
+    // Scan through the lists. If this element is the first element of a list,
+    // remove it and short-circuit the scan, skipping the remaining lists. If it
+    // is not the head of any of the lists, fall back to a generic removal from
+    // any list. This is equivalent to the more terse:
+    //
+    // (... || (this == lsts.getFirst() && (lsts.remove(thisElement()), true)))
+    //
+    // but there's already too much magic here.
+    bool removed = (... || removeFrom(lists));
+    if (!removed) {
+      remove();
+    }
   }
 
  private:
@@ -387,6 +416,7 @@ class SlimLinkedList {
       if (i == 100) {
         return;  // Limit time spent checking.
       }
+      i++;
     }
     MOZ_CRASH("Element not found");
 #endif
@@ -411,6 +441,21 @@ class SlimLinkedList {
   void drain(F&& func) {
     while (ElementPtr element = popFirst()) {
       func(element);
+    }
+  }
+
+  /*
+   * Remove all the elements from the list that match a predicate.
+   */
+  template <typename F>
+  void eraseIf(F&& pred) {
+    ElementPtr element = getFirst();
+    while (element) {
+      ElementPtr next = element->getNext();
+      if (pred(element)) {
+        remove(element);
+      }
+      element = next;
     }
   }
 

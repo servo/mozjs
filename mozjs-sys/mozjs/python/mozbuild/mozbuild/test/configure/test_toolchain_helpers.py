@@ -49,7 +49,8 @@ class CompilerPreprocessor(Preprocessor):
 
         def normalize_has_feature_or_builtin(expr):
             return (
-                self.HAS_FEATURE_OR_BUILTIN.sub(r"\1\2", expr)
+                self.HAS_FEATURE_OR_BUILTIN
+                .sub(r"\1\2", expr)
                 .replace("-", "_")
                 .replace("+", "_")
             )
@@ -98,9 +99,10 @@ class TestCompilerPreprocessor(unittest.TestCase):
         self.assertEqual(pp.out.getvalue(), '1 . 2 . c "D"')
 
     def test_normalization(self):
-        pp = CompilerPreprocessor(
-            {"__has_attribute(bar)": 1, '__has_warning("-Wc++98-foo")': 1}
-        )
+        pp = CompilerPreprocessor({
+            "__has_attribute(bar)": 1,
+            '__has_warning("-Wc++98-foo")': 1,
+        })
         pp.out = StringIO()
         input = StringIO(
             dedent(
@@ -239,7 +241,14 @@ class FakeCompiler(dict):
                     apply_defn(defn)
 
             for flag in flags:
-                apply_defn(self.get(flag, {}))
+                if flag.startswith("-D"):
+                    name, val = flag[2:].split("=")
+                    apply_defn({name: val})
+                elif flag.startswith("-U"):
+                    name = flag[2:]
+                    apply_defn({name: False})
+                else:
+                    apply_defn(self.get(flag, {}))
 
             pp.out = StringIO()
             pp.do_include(file)
@@ -261,15 +270,13 @@ class TestFakeCompiler(unittest.TestCase):
             compiler = FakeCompiler({"A": "1", "B": "2"})
             self.assertEqual(compiler(None, ["-E", "file"]), (0, "1 2 C", ""))
 
-            compiler = FakeCompiler(
-                {
-                    None: {"A": "1", "B": "2"},
-                    "-foo": {"C": "foo"},
-                    "-bar": {"B": "bar", "C": "bar"},
-                    "-qux": {"B": False},
-                    "*.c": {"B": "42"},
-                }
-            )
+            compiler = FakeCompiler({
+                None: {"A": "1", "B": "2"},
+                "-foo": {"C": "foo"},
+                "-bar": {"B": "bar", "C": "bar"},
+                "-qux": {"B": False},
+                "*.c": {"B": "42"},
+            })
             self.assertEqual(compiler(None, ["-E", "file"]), (0, "1 2 C", ""))
             self.assertEqual(compiler(None, ["-E", "-foo", "file"]), (0, "1 2 foo", ""))
             self.assertEqual(
@@ -337,7 +344,7 @@ class CompilerResult(ReadOnlyNamespace):
             flags = []
         if wrapper is None:
             wrapper = []
-        super(CompilerResult, self).__init__(
+        super().__init__(
             flags=flags,
             version=version,
             type=type,

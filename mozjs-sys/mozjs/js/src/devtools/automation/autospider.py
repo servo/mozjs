@@ -30,8 +30,7 @@ def directories(pathmodule, cwd, fixup=lambda s: s):
     source = pathmodule.abspath(pathmodule.join(js_src, "..", ".."))
     mozbuild = pathmodule.abspath(
         # os.path.expanduser does not work on Windows.
-        env.get("MOZBUILD_STATE_PATH")
-        or pathmodule.join(Path.home(), ".mozbuild")
+        env.get("MOZBUILD_STATE_PATH") or pathmodule.join(Path.home(), ".mozbuild")
     )
     fetches = pathmodule.abspath(env.get("MOZ_FETCHES_DIR", mozbuild))
     return Dirs(scripts, js_src, source, fetches)
@@ -50,7 +49,7 @@ def quote(s):
 # DIR, but when running under the shell, use POSIX style paths.
 DIR = directories(os.path, os.getcwd())
 
-AUTOMATION = env.get("AUTOMATION", False)
+AUTOMATION = bool(env.get("AUTOMATION"))
 
 parser = argparse.ArgumentParser(description="Run a spidermonkey shell build job")
 parser.add_argument(
@@ -148,8 +147,7 @@ parser.add_argument(
     type=str,
     metavar="TESTSUITE",
     default="",
-    help="comma-separated set of test suites to remove from the variant's default "
-    "set",
+    help="comma-separated set of test suites to remove from the variant's default set",
 )
 parser.add_argument(
     "--build-only",
@@ -315,11 +313,10 @@ if word_bits == 32:
             sse_flags = "-arch:SSE2"
         else:
             sse_flags = "-msse -msse2 -mfpmath=sse"
-        env["CCFLAGS"] = "{0} {1}".format(env.get("CCFLAGS", ""), sse_flags)
-        env["CXXFLAGS"] = "{0} {1}".format(env.get("CXXFLAGS", ""), sse_flags)
-else:
-    if platform.system() == "Windows":
-        CONFIGURE_ARGS += " --target=x86_64-pc-windows-msvc"
+        env["CCFLAGS"] = "{} {}".format(env.get("CCFLAGS", ""), sse_flags)
+        env["CXXFLAGS"] = "{} {}".format(env.get("CXXFLAGS", ""), sse_flags)
+elif platform.system() == "Windows":
+    CONFIGURE_ARGS += " --target=x86_64-pc-windows-msvc"
 
 if platform.system() == "Linux" and AUTOMATION:
     CONFIGURE_ARGS = "--enable-stdcxx-compat " + CONFIGURE_ARGS
@@ -592,12 +589,10 @@ if "jittest" in test_suites:
             "--timeout=300",
             "--jitflags=all",
         ]
-    results.append(
-        (
-            "mach jit-test",
-            run_mach_command(["jit-test", "--", *auto_args, *extra_args["jit-test"]]),
-        )
-    )
+    results.append((
+        "mach jit-test",
+        run_mach_command(["jit-test", "--", *auto_args, *extra_args["jit-test"]]),
+    ))
 if "jsapitests" in test_suites:
     st = run_jsapitests([])
     if st == 0:
@@ -607,23 +602,17 @@ if "jstests" in test_suites:
     auto_args = []
     if AUTOMATION:
         auto_args = ["--no-progress", "--format=automation", "--timeout=300"]
-    results.append(
-        (
-            "mach jstests",
-            run_mach_command(["jstests", "--", *auto_args, *extra_args["jstests"]]),
-        )
-    )
+    results.append((
+        "mach jstests",
+        run_mach_command(["jstests", "--", *auto_args, *extra_args["jstests"]]),
+    ))
 if "gdb" in test_suites:
     test_script = os.path.join(DIR.js_src, "gdb", "run-tests.py")
     auto_args = ["-s", "-o", "--no-progress"] if AUTOMATION else []
-    results.append(
-        (
-            "gdb",
-            run_test_command(
-                [PYTHON, test_script, *auto_args, *extra_args["gdb"], OBJDIR]
-            ),
-        )
-    )
+    results.append((
+        "gdb",
+        run_test_command([PYTHON, test_script, *auto_args, *extra_args["gdb"], OBJDIR]),
+    ))
 
 # FIXME bug 1291449: This would be unnecessary if we could run msan with -mllvm
 # -msan-keep-going, but in clang 3.8 it causes a hang during compilation.
@@ -692,15 +681,13 @@ if args.variant == "wasi":
 
 # Generate stacks from minidumps.
 if use_minidump:
-    run_mach_command(
-        [
-            "python",
-            "--virtualenv=build",
-            os.path.join(DIR.source, "testing/mozbase/mozcrash/mozcrash/mozcrash.py"),
-            os.getenv("TMPDIR", "/tmp"),
-            os.path.join(OBJDIR, "dist/crashreporter-symbols"),
-        ]
-    )
+    run_mach_command([
+        "python",
+        "--virtualenv=build",
+        os.path.join(DIR.source, "testing/mozbase/mozcrash/mozcrash/mozcrash.py"),
+        os.getenv("TMPDIR", "/tmp"),
+        os.path.join(OBJDIR, "dist/crashreporter-symbols"),
+    ])
 
 for name, st in results:
     print("exit status %d for '%s'" % (st, name))

@@ -8,7 +8,7 @@ separators (always use forward slashes).
 Also contains a few additional utilities not found in :py:mod:`os.path`.
 """
 
-import ctypes
+import functools
 import os
 import posixpath
 import re
@@ -35,21 +35,25 @@ def normsep(path):
     return path
 
 
-def cargo_workaround(path):
-    unc = "//?/"
-    if path.startswith(unc):
-        return path[len(unc) :]
-    return path
+def strip_extended_length_prefix(path):
+    """Strip the Windows extended-length path prefix and normalize.
+
+    On Windows, some APIs return paths prefixed with ``\\\\?\\`` (or
+    ``//?/`` after separator normalisation).  Strip that prefix so
+    comparisons against regular paths succeed.
+    """
+    return os.path.normpath(path.removeprefix("\\\\?\\").removeprefix("//?/"))
 
 
+@functools.cache
 def relpath(path, start):
     path = normsep(path)
     start = normsep(start)
     if sys.platform == "win32":
         # os.path.relpath can't handle relative paths between UNC and non-UNC
-        # paths, so strip a //?/ prefix if present (bug 1581248)
-        path = cargo_workaround(path)
-        start = cargo_workaround(start)
+        # paths, so strip an extended-length prefix if present (bug 1581248)
+        path = strip_extended_length_prefix(path)
+        start = strip_extended_length_prefix(start)
     try:
         rel = os.path.relpath(path, start)
     except ValueError:
@@ -179,68 +183,3 @@ def rebase(oldbase, base, relativepath):
     if relativepath.endswith("/") and not result.endswith("/"):
         result += "/"
     return result
-
-
-def readlink(path):
-    if hasattr(os, "readlink"):
-        return normsep(os.readlink(path))
-
-    # Unfortunately os.path.realpath doesn't support symlinks on Windows, and os.readlink
-    # is only available on Windows with Python 3.2+. We have to resort to ctypes...
-
-    assert sys.platform == "win32"
-
-    CreateFileW = ctypes.windll.kernel32.CreateFileW
-    CreateFileW.argtypes = [
-        ctypes.wintypes.LPCWSTR,
-        ctypes.wintypes.DWORD,
-        ctypes.wintypes.DWORD,
-        ctypes.wintypes.LPVOID,
-        ctypes.wintypes.DWORD,
-        ctypes.wintypes.DWORD,
-        ctypes.wintypes.HANDLE,
-    ]
-    CreateFileW.restype = ctypes.wintypes.HANDLE
-
-    GENERIC_READ = 0x80000000
-    FILE_SHARE_READ = 0x00000001
-    OPEN_EXISTING = 3
-    FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
-
-    handle = CreateFileW(
-        path,
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        0,
-        OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS,
-        0,
-    )
-    assert handle != 1, f"Failed getting a handle to: {path}"
-
-    MAX_PATH = 260
-
-    buf = ctypes.create_unicode_buffer(MAX_PATH)
-    GetFinalPathNameByHandleW = ctypes.windll.kernel32.GetFinalPathNameByHandleW
-    GetFinalPathNameByHandleW.argtypes = [
-        ctypes.wintypes.HANDLE,
-        ctypes.wintypes.LPWSTR,
-        ctypes.wintypes.DWORD,
-        ctypes.wintypes.DWORD,
-    ]
-    GetFinalPathNameByHandleW.restype = ctypes.wintypes.DWORD
-
-    FILE_NAME_NORMALIZED = 0x0
-
-    rv = GetFinalPathNameByHandleW(handle, buf, MAX_PATH, FILE_NAME_NORMALIZED)
-    assert rv != 0 and rv <= MAX_PATH, f"Failed getting final path for: {path}"
-
-    CloseHandle = ctypes.windll.kernel32.CloseHandle
-    CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
-    CloseHandle.restype = ctypes.wintypes.BOOL
-
-    rv = CloseHandle(handle)
-    assert rv != 0, "Failed closing handle"
-
-    # Remove leading '\\?\' from the result.
-    return normsep(buf.value[4:])

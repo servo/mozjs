@@ -43,15 +43,11 @@ def dump_symbols(target, tracking_file, count_ctors=False):
     elif os_arch == "Linux":
         sym_store_args.extend(["-c", "--vcs-info"])
 
-    sym_store_args.append(
-        "--install-manifest=%s,%s"
-        % (
-            os.path.join(
-                buildconfig.topobjdir, "_build_manifests", "install", "dist_include"
-            ),
-            os.path.join(buildconfig.topobjdir, "dist", "include"),
-        )
+    install_manifest = os.path.join(
+        buildconfig.topobjdir, "_build_manifests", "install", "dist_include"
     )
+    dist_include = os.path.join(buildconfig.topobjdir, "dist", "include")
+    sym_store_args.append(f"--install-manifest={install_manifest},{dist_include}")
     objcopy = buildconfig.substs.get("OBJCOPY")
     if objcopy:
         os.environ["OBJCOPY"] = objcopy
@@ -81,8 +77,22 @@ def dump_symbols(target, tracking_file, count_ctors=False):
     )
     if count_ctors:
         args.append("--count-ctors")
-    print("Running: %s" % " ".join(args))
-    out_files = subprocess.check_output(args, universal_newlines=True)
+    print(f"Running: {' '.join(args)}")
+    # symbolstore.py's stderr is sometimes dropped from build logs (see bug 2027747),
+    # so capture and write it to stdout, which is logged reliably.
+    result = subprocess.run(
+        args,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stderr:
+        sys.stdout.write(result.stderr)
+    if result.returncode != 0:
+        raise subprocess.CalledProcessError(
+            result.returncode, args, output=result.stdout
+        )
+    out_files = result.stdout
     with open(tracking_file, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(out_files)
         fh.flush()

@@ -314,7 +314,7 @@ Enabling GDB instrumentation may require launching a JS shell executable that sh
 
 ### Finding the code that generated a JIT instruction (from rr)
 
-If you are looking at a JIT instruction and need to know what code generated it, you can use [jitsrc.py](https://searchfox.org/mozilla-central/source/js/src/gdb/mozilla/jitsrc.py). This script adds a `jitsrc` command to rr that will trace backwards from the JIT instruction to the code that generated it.
+If you are looking at a JIT instruction and need to know what code generated it, you can use [jitsrc.py](https://searchfox.org/firefox-main/source/js/src/gdb/mozilla/jitsrc.py). This script adds a `jitsrc` command to rr that will trace backwards from the JIT instruction to the code that generated it.
 
 To use the `jitsrc` command, add the following line to your .gdbinit file, or run it manually:
 
@@ -380,7 +380,7 @@ The output file can then be used with **kcachegrind**, which provides a graphica
 
 IonMonkey spew is extremely verbose (not as much as the INFER spew), but you can filter it to focus on the list of compiled scripts or channels, IonMonkey spew channels can be selected with the IONFLAGS environment variable, and compilation spew can be filtered with IONFILTER.
 
-IONFLAGS contains the names of [each channel separated by commas](https://searchfox.org/mozilla-central/source/js/src/jit/JitSpewer.cpp#338). The **logs** channel produces one file (_/tmp/ion.json_), made to be used with [iongraph](https://github.com/sstangl/iongraph) (made by Sean Stangl). This tool will show the MIR & LIR steps done by IonMonkey during the compilation. To use [iongraph](https://github.com/sstangl/iongraph), you must install [Graphviz](https://www.graphviz.org/download/ "graphviz downloads").
+IONFLAGS contains the names of [each channel separated by commas](https://searchfox.org/firefox-main/source/js/src/jit/JitSpewer.cpp#338). The **logs** channel produces one file (_/tmp/ion.json_), made to be used with [iongraph](https://github.com/sstangl/iongraph) (made by Sean Stangl). This tool will show the MIR & LIR steps done by IonMonkey during the compilation. To use [iongraph](https://github.com/sstangl/iongraph), you must install [Graphviz](https://www.graphviz.org/download/ "graphviz downloads").
 
 Compilation logs and spew can be filtered with the IONFILTER environment variable which contains locations as output by other spew channels. Multiple locations can be specified using comma as a separator.
 

@@ -1,0 +1,50 @@
+From be179d069664ce03c485e49fa1f6e2ca3d6286fa Mon Sep 17 00:00:00 2001
+From: Mike Hommey <mh@glandium.org>
+Date: Fri, 22 Aug 2025 14:55:42 +0900
+Subject: [PATCH] Be explicit about what libstdc++ C++11 ABI to use (#154447)
+
+libstdc++ can be configured to default to a different C++11 ABI, and
+when the system that is used to build clang has a different default than
+the system used to build a clang plugin, that leads to uses of different
+ABIs, leading to breakage (missing symbols) when using clang APIs that
+use types like std::string.
+
+We arbitrarily choose to default to the old ABI, but the user can opt-in
+to the new ABI. The important part is that whichever is picked is
+reflected in llvm-config's output.
+---
+ llvm/cmake/modules/HandleLLVMOptions.cmake | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
+
+diff --git a/llvm/cmake/modules/HandleLLVMOptions.cmake b/llvm/cmake/modules/HandleLLVMOptions.cmake
+index c487f57da346..373b9052c91d 100644
+--- a/llvm/cmake/modules/HandleLLVMOptions.cmake
++++ b/llvm/cmake/modules/HandleLLVMOptions.cmake
+@@ -175,6 +175,24 @@ if(LLVM_ENABLE_EXPENSIVE_CHECKS)
+   endif()
+ endif()
+ 
++CHECK_CXX_SOURCE_COMPILES("
++#include <iosfwd>
++#if !defined(__GLIBCXX__)
++#error Not libstdc++
++#endif
++int main() { return 0; }
++" LLVM_USES_LIBSTDCXX)
++
++option(GLIBCXX_USE_CXX11_ABI "Use new libstdc++ CXX11 ABI" OFF)
++
++if (LLVM_USES_LIBSTDCXX)
++  if (GLIBCXX_USE_CXX11_ABI)
++    add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=1)
++  else()
++    add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
++  endif()
++endif()
++
+ if (LLVM_ENABLE_STRICT_FIXED_SIZE_VECTORS)
+   add_compile_definitions(STRICT_FIXED_SIZE_VECTORS)
+ endif()
+-- 
+2.51.0.1.g7a422dac74
+

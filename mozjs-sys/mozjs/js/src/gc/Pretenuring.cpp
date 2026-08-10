@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sw=2 et tw=80:
- *
+/*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -131,7 +129,6 @@ size_t PretenuringNursery::doPretenuring(GCRuntime* gc, JS::GCReason reason,
       }
     } else if (site->isMissing()) {
       sitesActive++;
-      updateTotalAllocCounts(site);
       site->processMissingSite(reportFilter);
     }
 
@@ -222,7 +219,10 @@ void AllocSite::processMissingSite(const AllocSiteFilter& reportFilter) {
   MOZ_ASSERT(isMissing());
   MOZ_ASSERT(nurseryAllocCount >= nurseryPromotedCount);
 
-  // Forward counts from missing sites to the relevant unknown site.
+  // Forward counts from missing sites to the relevant unknown site, where they
+  // would show up if missing alloc sites were disabled. The counts from unknown
+  // alloc sites are themselves added to the zone totals so we don't need to
+  // call updateTotalAllocCounts for missing sites.
   AllocSite* unknownSite = zone()->unknownAllocSite(traceKind());
   unknownSite->nurseryAllocCount += nurseryAllocCount;
   unknownSite->nurseryPromotedCount += nurseryPromotedCount;
@@ -386,15 +386,6 @@ bool AllocSite::traceWeak(JSTracer* trc) {
   return true;
 }
 
-bool AllocSite::needsSweep(JSTracer* trc) const {
-  if (hasScript()) {
-    JSScript* s = script();
-    return IsAboutToBeFinalizedUnbarriered(s);
-  }
-
-  return false;
-}
-
 bool PretenuringZone::calculateYoungTenuredSurvivalRate(double* rateOut) {
   MOZ_ASSERT(allocCountInNewlyCreatedArenas >=
              survivorCountInNewlyCreatedArenas);
@@ -453,6 +444,8 @@ static const char* AllocSiteKindName(AllocSite::Kind kind) {
       return "optimized";
     case AllocSite::Kind::Missing:
       return "missing";
+    case AllocSite::Kind::Tenuring:
+      return "tenuring";
     default:
       MOZ_CRASH("Bad AllocSite kind");
   }
@@ -494,7 +487,7 @@ void AllocSite::printInfo(bool hasPromotionRate, double promotionRate,
   // Location and bytecode op (not present for catch-all sites).
   char location[21] = {'\0'};
   char opName[13] = {'\0'};
-  if (hasScript()) {
+  if (hasScript() && pcOffset() != EnvSitePCOffset) {
     uint32_t line = PCToLineNumber(script(), script()->offsetToPC(pcOffset()));
     const char* scriptName = FindBaseName(script()->filename());
     SprintfLiteral(location, "%s:%u", scriptName, line);

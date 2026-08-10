@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -62,8 +60,17 @@ void LIRGraph::dump() {
 #endif
 
 LBlock::LBlock(MBasicBlock* from)
-    : block_(from), entryMoveGroup_(nullptr), exitMoveGroup_(nullptr) {
+    : block_(from),
+      entryMoveGroup_(nullptr),
+      exitMoveGroup_(nullptr),
+      isOutOfLine_(false) {
   from->assignLir(this);
+
+  // If branch hinting is enabled, and this block is unlikely to be executed,
+  // it will be generated out of line.
+  if (from->info().branchHintingEnabled() && from->isUnlikelyFrequency()) {
+    isOutOfLine_ = true;
+  }
 }
 
 bool LBlock::init(TempAllocator& alloc) {
@@ -131,7 +138,7 @@ const LInstruction* LBlock::firstInstructionWithId() const {
       return *i;
     }
   }
-  return 0;
+  return nullptr;
 }
 
 LMoveGroup* LBlock::getEntryMoveGroup(TempAllocator& alloc) {
@@ -152,14 +159,38 @@ LMoveGroup* LBlock::getExitMoveGroup(TempAllocator& alloc) {
   return exitMoveGroup_;
 }
 
+LBlock* LBlock::isMoveGroupsThenGoto() {
+  if (mir()->isLoopHeader()) {
+    return nullptr;
+  }
+  auto riter = rbegin();
+  if (!riter->isGoto()) {
+    return nullptr;
+  }
+  riter++;
+  // This loop doesn't iterate much.  Its highest trip-count for all of
+  // JetStream3 is 3.
+  while (riter != rend()) {
+    if (!(*riter)->isMoveGroup()) {
+      return nullptr;
+    }
+    riter++;
+  }
+  LGoto* ins = rbegin()->toGoto();
+  MOZ_ASSERT(ins->numSuccessors() == 1);
+  return ins->getSuccessor(0)->lir();
+}
+
 #ifdef JS_JITSPEW
 void LBlock::dump(GenericPrinter& out) {
   out.printf("block%u:\n", mir()->id());
   for (size_t i = 0; i < numPhis(); ++i) {
+    out.printf("  ");
     getPhi(i)->dump(out);
     out.printf("\n");
   }
   for (LInstructionIterator iter = begin(); iter != end(); iter++) {
+    out.printf("  ");
     iter->dump(out);
     if (iter->safepoint()) {
       out.printf(" SAFEPOINT(0x%p) ", iter->safepoint());
@@ -358,6 +389,10 @@ static const char* DefTypeName(LDefinition::Type type) {
       return "s";
     case LDefinition::WASM_ANYREF:
       return "wr";
+    case LDefinition::WASM_STRUCT_DATA:
+      return "wsd";
+    case LDefinition::WASM_ARRAY_DATA:
+      return "wad";
     case LDefinition::FLOAT32:
       return "f";
     case LDefinition::DOUBLE:
@@ -452,7 +487,7 @@ UniqueChars LAllocation::toString() const {
               if (!spr.init()) {
                 oomUnsafe.crash("LAllocation::toString()");
               }
-              spr.putString(cx, c->toString());
+              spr.putString(cx, c->toString()->unwrap());
               buf = spr.release();
             } else {
               buf = JS_smprintf("string");
@@ -552,12 +587,11 @@ void LInstruction::assignSnapshot(LSnapshot* snapshot) {
 
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_IonSnapshots)) {
-    JitSpewHeader(JitSpew_IonSnapshots);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("Assigning snapshot %p to instruction %p (", (void*)snapshot,
-               (void*)this);
-    printName(out);
-    out.printf(")\n");
+    AutoJitSpewMessage msg(JitSpew_IonSnapshots,
+                           "Assigning snapshot %p to instruction %p (",
+                           (void*)snapshot, (void*)this);
+    printName(msg.printer());
+    msg.append(")");
   }
 #endif
 }
@@ -692,6 +726,10 @@ bool LSafepoint::addGCAllocation(uint32_t vregId, LDefinition* def,
 
     case LDefinition::WASM_ANYREF:
       return addWasmAnyRef(a);
+    case LDefinition::WASM_STRUCT_DATA:
+      return addWasmStructDataPointer(a);
+    case LDefinition::WASM_ARRAY_DATA:
+      return addWasmArrayDataPointer(a);
 
 #ifdef JS_NUNBOX32
     case LDefinition::TYPE:

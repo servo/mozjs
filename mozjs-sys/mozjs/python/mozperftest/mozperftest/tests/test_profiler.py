@@ -56,14 +56,18 @@ def test_profiling_mediator():
     mock_profiler3.is_enabled.return_value = False
     mock_profiler3.get_controller.return_value = controller3
 
-    """Use a list of mock profilers here.  We expect each pofiler
+    """Use a dict of mock profilers here.  We expect each profiler
        to test their own controllers directly.
     """
     with mock.patch(
         "mozperftest.profiler.PROFILERS",
-        {mock_profiler1, mock_profiler2, mock_profiler3},
+        {
+            "profiler1": mock_profiler1,
+            "profiler2": mock_profiler2,
+            "profiler3": mock_profiler3,
+        },
     ):
-        profiler = ProfilingMediator()
+        profiler = ProfilingMediator(["profiler1", "profiler2", "profiler3"])
 
         assert len(profiler.active_profilers) == 2
         assert controller1 in profiler.active_profilers
@@ -92,6 +96,35 @@ def test_profiling_mediator():
         assert controller2.output_path == output_path
         assert controller2.index == index
         assert not controller3.stop_called
+
+
+def test_profiling_mediator_defaults_to_all_profilers():
+    """Test that ProfilingMediator defaults to all profilers when profilers=None."""
+
+    controller1 = MockProfilerController("controller1")
+    controller2 = MockProfilerController("controller2")
+
+    mock_profiler1 = mock.MagicMock()
+    mock_profiler1.is_enabled.return_value = True
+    mock_profiler1.get_controller.return_value = controller1
+
+    mock_profiler2 = mock.MagicMock()
+    mock_profiler2.is_enabled.return_value = True
+    mock_profiler2.get_controller.return_value = controller2
+
+    with mock.patch(
+        "mozperftest.profiler.PROFILERS",
+        {
+            "profiler1": mock_profiler1,
+            "profiler2": mock_profiler2,
+        },
+    ):
+        # Pass None to use all profilers
+        profiler = ProfilingMediator(None)
+
+        assert len(profiler.active_profilers) == 2
+        assert controller1 in profiler.active_profilers
+        assert controller2 in profiler.active_profilers
 
 
 if __name__ == "__main__":

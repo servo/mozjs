@@ -327,6 +327,7 @@ def _run_python_test(command_context, test, jobs, verbose):
 
     result = subprocess.run(
         cmd,
+        check=False,
         env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,

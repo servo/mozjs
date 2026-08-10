@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -27,7 +25,7 @@ JS_PUBLIC_API const char* GCTraceKindToAscii(JS::TraceKind kind);
 JS_PUBLIC_API size_t GCTraceKindSize(JS::TraceKind kind);
 
 // Kinds of JSTracer.
-enum class TracerKind {
+enum class TracerKind : uint8_t {
   // Generic tracers: Internal tracers that have a different virtual method
   // called for each edge kind.
   Marking,
@@ -51,7 +49,7 @@ enum class TracerKind {
   HeapCheck
 };
 
-enum class WeakMapTraceAction {
+enum class WeakMapTraceAction : uint8_t {
   /**
    * Do not trace into weak map keys or values during traversal. Users must
    * handle weak maps manually.
@@ -78,7 +76,7 @@ enum class WeakMapTraceAction {
 };
 
 // Whether a tracer should trace weak edges. GCMarker sets this to Skip.
-enum class WeakEdgeTraceAction { Skip, Trace };
+enum class WeakEdgeTraceAction : bool { Skip, Trace };
 
 struct TraceOptions {
   JS::WeakMapTraceAction weakMapAction = WeakMapTraceAction::TraceValues;
@@ -184,7 +182,7 @@ class JS_PUBLIC_API JSTracer {
   // which is freqently useful if, for example, we only want to process one type
   // of edge.
 #define DEFINE_ON_EDGE_METHOD(name, type, _1, _2) \
-  virtual void on##name##Edge(type** thingp, const char* name) = 0;
+  virtual bool on##name##Edge(type** thingp, const char* name) = 0;
   JS_FOR_EACH_TRACEKIND(DEFINE_ON_EDGE_METHOD)
 #undef DEFINE_ON_EDGE_METHOD
 
@@ -195,9 +193,9 @@ class JS_PUBLIC_API JSTracer {
 
  private:
   JSRuntime* const runtime_;
+  JS::TracingContext context_;
   const JS::TracerKind kind_;
   const JS::TraceOptions options_;
-  JS::TracingContext context_;
 };
 
 namespace js {
@@ -215,8 +213,8 @@ class GenericTracerImpl : public JSTracer {
   T* derived() { return static_cast<T*>(this); }
 
 #define DEFINE_ON_EDGE_METHOD(name, type, _1, _2)              \
-  void on##name##Edge(type** thingp, const char* name) final { \
-    derived()->onEdge(thingp, name);                           \
+  bool on##name##Edge(type** thingp, const char* name) final { \
+    return derived()->onEdge(thingp, name);                    \
   }
   JS_FOR_EACH_TRACEKIND(DEFINE_ON_EDGE_METHOD)
 #undef DEFINE_ON_EDGE_METHOD
@@ -239,12 +237,16 @@ class JS_PUBLIC_API CallbackTracer
 
   // Override this method to receive notification when a node in the GC
   // heap graph is visited.
-  virtual void onChild(JS::GCCellPtr thing, const char* name) = 0;
+  virtual bool onChild(JS::GCCellPtr thing, const char* name) = 0;
 
  private:
   template <typename T>
-  void onEdge(T** thingp, const char* name) {
-    onChild(JS::GCCellPtr(*thingp), name);
+  bool onEdge(T** thingp, const char* name) {
+    T* thing = *thingp;
+    if (!thing) {
+      return true;
+    }
+    return onChild(JS::GCCellPtr(thing), name);
   }
   friend class js::GenericTracerImpl<CallbackTracer>;
 };
@@ -399,9 +401,6 @@ inline bool IsTracerKind(JSTracer* trc, JS::TracerKind kind) {
 
 // Trace an edge that is not a GC root and is not wrapped in a barriered
 // wrapper for some reason.
-//
-// This method does not check if |*edgep| is non-null before tracing through
-// it, so callers must check any nullable pointer before calling this method.
 extern JS_PUBLIC_API void UnsafeTraceManuallyBarrieredEdge(JSTracer* trc,
                                                            JSObject** thingp,
                                                            const char* name);

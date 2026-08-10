@@ -1,39 +1,23 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 // This header contains all definitions related to Base Profiler labels (outside
 // of XUL).
-// It is safe to include unconditionally, and only defines empty macros if
-// MOZ_GECKO_PROFILER is not set.
 
 #ifndef BaseProfilerLabels_h
 #define BaseProfilerLabels_h
 
-#ifndef MOZ_GECKO_PROFILER
+#include "BaseProfilingStack.h"
 
-#  define AUTO_BASE_PROFILER_LABEL(label, categoryPair)
-#  define AUTO_BASE_PROFILER_LABEL_CATEGORY_PAIR(categoryPair)
-#  define AUTO_BASE_PROFILER_LABEL_DYNAMIC_CSTR(label, categoryPair, cStr)
-#  define AUTO_BASE_PROFILER_LABEL_DYNAMIC_STRING(label, categoryPair, str)
-#  define AUTO_BASE_PROFILER_LABEL_FAST(label, categoryPair, ctx)
-#  define AUTO_BASE_PROFILER_LABEL_DYNAMIC_FAST(label, dynamicString, \
-                                                categoryPair, ctx, flags)
+#include "mozilla/Attributes.h"
+#include "mozilla/Maybe.h"
+#include "mozilla/BaseProfilerRAIIMacro.h"
+#include "mozilla/BaseProfilerState.h"
+#include "mozilla/ThreadLocal.h"
 
-#else  // !MOZ_GECKO_PROFILER
-
-#  include "BaseProfilingStack.h"
-
-#  include "mozilla/Attributes.h"
-#  include "mozilla/Maybe.h"
-#  include "mozilla/BaseProfilerRAIIMacro.h"
-#  include "mozilla/BaseProfilerState.h"
-#  include "mozilla/ThreadLocal.h"
-
-#  include <stdint.h>
-#  include <string>
+#include <stdint.h>
+#include <string>
 
 namespace mozilla::baseprofiler {
 
@@ -47,22 +31,22 @@ namespace mozilla::baseprofiler {
 //
 // Use AUTO_BASE_PROFILER_LABEL_DYNAMIC_* if you want to add additional /
 // dynamic information to the label stack frame.
-#  define AUTO_BASE_PROFILER_LABEL(label, categoryPair)       \
-    ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII( \
-        label, nullptr,                                       \
-        ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair)
+#define AUTO_BASE_PROFILER_LABEL(label, categoryPair)       \
+  ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII( \
+      label, nullptr,                                       \
+      ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair)
 
 // Similar to AUTO_BASE_PROFILER_LABEL, but with only one argument: the category
 // pair. The label string is taken from the category pair. This is convenient
 // for labels like
 // AUTO_BASE_PROFILER_LABEL_CATEGORY_PAIR(GRAPHICS_LayerBuilding) which would
 // otherwise just repeat the string.
-#  define AUTO_BASE_PROFILER_LABEL_CATEGORY_PAIR(categoryPair)         \
-    ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(          \
-        "", nullptr,                                                   \
-        ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair,  \
-        uint32_t(::mozilla::baseprofiler::ProfilingStackFrame::Flags:: \
-                     LABEL_DETERMINED_BY_CATEGORY_PAIR))
+#define AUTO_BASE_PROFILER_LABEL_CATEGORY_PAIR(categoryPair)         \
+  ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(          \
+      "", nullptr,                                                   \
+      ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair,  \
+      uint32_t(::mozilla::baseprofiler::ProfilingStackFrame::Flags:: \
+                   LABEL_DETERMINED_BY_CATEGORY_PAIR))
 
 // Similar to AUTO_BASE_PROFILER_LABEL, but with an additional string. The
 // inserted RAII object stores the cStr pointer in a field; it does not copy the
@@ -84,10 +68,10 @@ namespace mozilla::baseprofiler {
 // the profile buffer can just store the raw pointers to the literal strings.
 // Consequently, AUTO_BASE_PROFILER_LABEL frames take up considerably less space
 // in the profile buffer than AUTO_BASE_PROFILER_LABEL_DYNAMIC_* frames.
-#  define AUTO_BASE_PROFILER_LABEL_DYNAMIC_CSTR(label, categoryPair, cStr) \
-    ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(              \
-        label, cStr,                                                       \
-        ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair)
+#define AUTO_BASE_PROFILER_LABEL_DYNAMIC_CSTR(label, categoryPair, cStr) \
+  ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(              \
+      label, cStr,                                                       \
+      ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair)
 
 // Similar to AUTO_BASE_PROFILER_LABEL_DYNAMIC_CSTR, but takes an std::string.
 //
@@ -96,34 +80,34 @@ namespace mozilla::baseprofiler {
 // cost of the string assignment unless the profiler is active. Therefore,
 // unlike AUTO_BASE_PROFILER_LABEL and AUTO_BASE_PROFILER_LABEL_DYNAMIC_CSTR,
 // this macro doesn't push/pop a label when the profiler is inactive.
-#  define AUTO_BASE_PROFILER_LABEL_DYNAMIC_STRING(label, categoryPair, str) \
-    Maybe<std::string> autoStr;                                             \
-    Maybe<::mozilla::baseprofiler::AutoProfilerLabel> raiiObjectString;     \
-    if (::mozilla::baseprofiler::profiler_is_active()) {                    \
-      autoStr.emplace(str);                                                 \
-      raiiObjectString.emplace(                                             \
-          label, autoStr->c_str(),                                          \
-          ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair);    \
-    }
+#define AUTO_BASE_PROFILER_LABEL_DYNAMIC_STRING(label, categoryPair, str) \
+  Maybe<std::string> autoStr;                                             \
+  Maybe<::mozilla::baseprofiler::AutoProfilerLabel> raiiObjectString;     \
+  if (::mozilla::baseprofiler::profiler_is_active()) {                    \
+    autoStr.emplace(str);                                                 \
+    raiiObjectString.emplace(                                             \
+        label, autoStr->c_str(),                                          \
+        ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair);    \
+  }
 
 // Similar to AUTO_BASE_PROFILER_LABEL, but accepting a JSContext* parameter,
 // and a no-op if the profiler is disabled. Used to annotate functions for which
 // overhead in the range of nanoseconds is noticeable. It avoids overhead from
 // the TLS lookup because it can get the ProfilingStack from the JS context, and
 // avoids almost all overhead in the case where the profiler is disabled.
-#  define AUTO_BASE_PROFILER_LABEL_FAST(label, categoryPair, ctx) \
-    ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(     \
-        ctx, label, nullptr,                                      \
-        ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair)
+#define AUTO_BASE_PROFILER_LABEL_FAST(label, categoryPair, ctx) \
+  ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(     \
+      ctx, label, nullptr,                                      \
+      ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair)
 
 // Similar to AUTO_BASE_PROFILER_LABEL_FAST, but also takes an extra string and
 // an additional set of flags. The flags parameter should carry values from the
 // ProfilingStackFrame::Flags enum.
-#  define AUTO_BASE_PROFILER_LABEL_DYNAMIC_FAST(label, dynamicString,     \
-                                                categoryPair, ctx, flags) \
-    ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(             \
-        ctx, label, dynamicString,                                        \
-        ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair, flags)
+#define AUTO_BASE_PROFILER_LABEL_DYNAMIC_FAST(label, dynamicString,     \
+                                              categoryPair, ctx, flags) \
+  ::mozilla::baseprofiler::AutoProfilerLabel PROFILER_RAII(             \
+      ctx, label, dynamicString,                                        \
+      ::mozilla::baseprofiler::ProfilingCategoryPair::categoryPair, flags)
 
 // This class creates a non-owning ProfilingStack reference. Objects of this
 // class are stack-allocated, and so exist within a thread, and are thus bounded
@@ -172,7 +156,5 @@ class MOZ_RAII AutoProfilerLabel {
 };
 
 }  // namespace mozilla::baseprofiler
-
-#endif  // !MOZ_GECKO_PROFILER
 
 #endif  // BaseProfilerLabels_h

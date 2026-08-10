@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -178,11 +176,194 @@ class BitSetSuite {
     }
   }
 
+  void testFormatting() {
+    TestBitSet<30> bitset;
+
+    auto&& check_fmt = [](const auto& bitset, const char* expected) {
+      auto formatted = fmt::format("{}", bitset);
+      MOZ_RELEASE_ASSERT(formatted == expected);
+    };
+
+    // No bits set.
+    check_fmt(bitset, "{}");
+
+    // Single bit set.
+    bitset[0] = true;
+    check_fmt(bitset, "{0}");
+
+    bitset.ResetAll();
+    bitset[7] = true;
+    check_fmt(bitset, "{7}");
+
+    bitset.ResetAll();
+    bitset[23] = true;
+    check_fmt(bitset, "{23}");
+
+    // Multiple bits.
+    bitset[0] = true;
+    check_fmt(bitset, "{0,23}");
+
+    bitset[1] = true;
+    check_fmt(bitset, "{0,1,23}");
+
+    bitset[2] = true;
+    check_fmt(bitset, "{0-2,23}");
+
+    bitset[22] = true;
+    check_fmt(bitset, "{0-2,22,23}");
+
+    bitset[24] = true;
+    check_fmt(bitset, "{0-2,22-24}");
+
+    bitset[1] = false;
+    check_fmt(bitset, "{0,2,22-24}");
+
+    // Bit ranges not anchored at the beginning.
+    bitset.ResetAll();
+    bitset[8] = true;
+    check_fmt(bitset, "{8}");
+
+    bitset[9] = true;
+    check_fmt(bitset, "{8,9}");
+
+    bitset[10] = true;
+    check_fmt(bitset, "{8-10}");
+
+    // Up against the end.
+    bitset.ResetAll();
+    bitset[29] = true;
+    check_fmt(bitset, "{29}");
+
+    bitset[28] = true;
+    check_fmt(bitset, "{28,29}");
+
+    bitset[27] = true;
+    check_fmt(bitset, "{27-29}");
+
+    // All bits on.
+    for (size_t i = 0; i < 30; i++) {
+      bitset[i] = true;
+    }
+    check_fmt(bitset, "{0-29}");
+
+    // Allow formatting flags.
+    auto formatted = fmt::format("{:#x}", bitset);
+    MOZ_RELEASE_ASSERT(formatted == "{0x0-0x1d}");
+  }
+
+  void testCount() {
+    testCountForSize<1>();
+    testCountForSize<kBitsPerWord>();
+    testCountForSize<kBitsPerWord + 1>();
+  }
+
+  template <size_t N>
+  void testCountForSize() {
+    TestBitSet<N> bits;
+    MOZ_RELEASE_ASSERT(bits.Count() == 0);
+    bits.SetAll();
+    MOZ_RELEASE_ASSERT(bits.Count() == N);
+    bits.ResetAll();
+    bits[0] = true;
+    MOZ_RELEASE_ASSERT(bits.Count() == 1);
+    bits[0] = false;
+    bits[N - 1] = true;
+    MOZ_RELEASE_ASSERT(bits.Count() == 1);
+  }
+
+  void testComparison() {
+    testComparisonForSize<1>();
+    testComparisonForSize<kBitsPerWord>();
+    testComparisonForSize<kBitsPerWord + 1>();
+  }
+
+  template <size_t N>
+  void testComparisonForSize() {
+    TestBitSet<N> a;
+    TestBitSet<N> b;
+    MOZ_RELEASE_ASSERT(a == b);
+    MOZ_RELEASE_ASSERT(!(a != b));
+    a[0] = true;
+    MOZ_RELEASE_ASSERT(a != b);
+    MOZ_RELEASE_ASSERT(!(a == b));
+    b[0] = true;
+    MOZ_RELEASE_ASSERT(a == b);
+    MOZ_RELEASE_ASSERT(!(a != b));
+    a.SetAll();
+    b.SetAll();
+    MOZ_RELEASE_ASSERT(a == b);
+    MOZ_RELEASE_ASSERT(!(a != b));
+    a[N - 1] = false;
+    MOZ_RELEASE_ASSERT(a != b);
+    MOZ_RELEASE_ASSERT(!(a == b));
+    b[N - 1] = false;
+    MOZ_RELEASE_ASSERT(a == b);
+    MOZ_RELEASE_ASSERT(!(a != b));
+  }
+
+  void testLogical() {
+    testLogicalForSize<2>();
+    testLogicalForSize<kBitsPerWord>();
+    testLogicalForSize<kBitsPerWord + 1>();
+  }
+
+  template <size_t N>
+  void testLogicalForSize() {
+    TestBitSet<N> none;
+    TestBitSet<N> all;
+    all.SetAll();
+    TestBitSet<N> some;
+    for (size_t i = 0; i < N; i += 2) {
+      some[i] = true;
+    }
+
+    // operator& is implemented in terms of operator&= (and likewise for
+    // operator|) so this tests both.
+
+    MOZ_RELEASE_ASSERT(none.Count() == 0);
+    MOZ_RELEASE_ASSERT(all.Count() == N);
+    MOZ_RELEASE_ASSERT(some.Count() == (N + 1) / 2);
+
+    MOZ_RELEASE_ASSERT((none & none) == none);
+    MOZ_RELEASE_ASSERT((none & all) == none);
+    MOZ_RELEASE_ASSERT((none & some) == none);
+
+    MOZ_RELEASE_ASSERT((all & none) == none);
+    MOZ_RELEASE_ASSERT((all & all) == all);
+    MOZ_RELEASE_ASSERT((all & some) == some);
+
+    MOZ_RELEASE_ASSERT((some & none) == none);
+    MOZ_RELEASE_ASSERT((some & all) == some);
+    MOZ_RELEASE_ASSERT((some & some) == some);
+
+    MOZ_RELEASE_ASSERT((none | none) == none);
+    MOZ_RELEASE_ASSERT((none | all) == all);
+    MOZ_RELEASE_ASSERT((none | some) == some);
+
+    MOZ_RELEASE_ASSERT((all | none) == all);
+    MOZ_RELEASE_ASSERT((all | all) == all);
+    MOZ_RELEASE_ASSERT((all | some) == all);
+
+    MOZ_RELEASE_ASSERT((some | none) == some);
+    MOZ_RELEASE_ASSERT((some | all) == all);
+    MOZ_RELEASE_ASSERT((some | some) == some);
+
+    MOZ_RELEASE_ASSERT(~none == all);
+    MOZ_RELEASE_ASSERT(~all == none);
+    MOZ_RELEASE_ASSERT(~some != some);
+    MOZ_RELEASE_ASSERT(~some != all);
+    MOZ_RELEASE_ASSERT(~some != none);
+  }
+
   void runTests() {
     testLength();
     testConstructAndAssign();
     testSetBit();
     testFindBits();
+    testCount();
+    testComparison();
+    testLogical();
+    testFormatting();
   }
 };
 

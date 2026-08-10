@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -147,17 +145,6 @@ constexpr uint8_t kAllocPoison = 0xe5;
 // Junk - write this junk value to freshly allocated cells.
 constexpr uint8_t kAllocJunk = 0xe4;
 
-// Maximum size of L1 cache line.  This is used to avoid cache line aliasing,
-// so over-estimates are okay (up to a point), but under-estimates will
-// negatively affect performance.
-constexpr size_t kCacheLineSize =
-#  if defined(XP_DARWIN) && defined(__aarch64__)
-    128
-#  else
-    64
-#  endif
-    ;
-
 #endif  // MOZ_MEMORY
 
 // Dummy implementation of the moz_arena_* API, falling back to a given
@@ -172,10 +159,10 @@ struct DummyArenaAllocator {
 
   static bool moz_enable_deferred_purge(bool aEnable) { return false; }
 
-  static purge_result_t moz_may_purge_now(
+  static may_purge_now_result_t moz_may_purge_now(
       bool aPeekOnly, uint32_t aReuseGraceMS,
       const mozilla::Maybe<std::function<bool()>>& aKeepGoing) {
-    return purge_result_t::Done;
+    return may_purge_now_result_t::Done;
   }
 
 #define MALLOC_DECL(name, return_type, ...)                 \

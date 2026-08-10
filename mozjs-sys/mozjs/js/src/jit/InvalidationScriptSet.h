@@ -1,35 +1,48 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_InvalidationScriptSet_h
 #define jit_InvalidationScriptSet_h
 
+#include "mozilla/MemoryReporting.h"
+
 #include "gc/Barrier.h"
+#include "jit/Invalidation.h"
 #include "jit/IonTypes.h"
 #include "js/AllocPolicy.h"
 #include "js/GCVector.h"
 #include "js/SweepingAPI.h"
 
-class JSScript;
-
 namespace js::jit {
 
-using WeakScriptSet =
-    GCHashSet<WeakHeapPtr<JSScript*>, StableCellHasher<WeakHeapPtr<JSScript*>>,
-              js::SystemAllocPolicy>;
+// A set of Ion scripts that will be invalidated simultaneously.
+//
+// When using this class, make sure the traceWeak method is called by the GC to
+// sweep dead scripts.
+class DependentIonScriptSet {
+  IonScriptKeyVector ionScripts_;
 
-// A weak cache of scripts all of which will be invalidated simultaneously.
-using WeakScriptCache = JS::WeakCache<WeakScriptSet>;
+  // To avoid keeping a lot of stale entries for invalidated IonScripts between
+  // GCs, we compact the vector when it grows too large.
+  size_t lengthAfterLastCompaction_ = 0;
 
-void InvalidateAndClearScriptSet(JSContext* cx, WeakScriptCache& scripts,
-                                 const char* reason);
-bool AddScriptToSet(WeakScriptCache& scripts, Handle<JSScript*> script);
+ public:
+  [[nodiscard]] bool addToSet(const IonScriptKey& ionScript);
+  void invalidateAndClear(JSContext* cx, const char* reason);
 
-// Remove a script from a script set if found.
-void RemoveFromScriptSet(WeakScriptCache& scripts, JSScript* script);
+  bool empty() const { return ionScripts_.empty(); }
+
+  bool traceWeak(JSTracer* trc) {
+    bool res = ionScripts_.traceWeak(trc);
+    lengthAfterLastCompaction_ = ionScripts_.length();
+    return res;
+  }
+
+  size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
+    return ionScripts_.sizeOfExcludingThis(mallocSizeOf);
+  }
+};
 
 }  // namespace js::jit
 

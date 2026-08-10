@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +16,6 @@
 
 #include "wasm/WasmTypeDef.h"
 
-#include "mozilla/MathAlgorithms.h"
-
 #include "jit/JitOptions.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/HashTable.h"
@@ -32,13 +28,14 @@
 #include "wasm/WasmGcObject.h"
 #include "wasm/WasmJS.h"
 
+#include "gc/ObjectKind-inl.h"
+
 using namespace js;
 using namespace js::jit;
 using namespace js::wasm;
 
 using mozilla::CheckedInt32;
 using mozilla::CheckedUint32;
-using mozilla::IsPowerOfTwo;
 using mozilla::MallocSizeOf;
 
 // [SMDOC] Immediate type signature encoding
@@ -267,115 +264,82 @@ size_t FuncType::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
 }
 
 //=========================================================================
-// StructType and StructLayout
-
-static inline CheckedInt32 RoundUpToAlignment(CheckedInt32 address,
-                                              uint32_t align) {
-  MOZ_ASSERT(IsPowerOfTwo(align));
-
-  // Note: Be careful to order operators such that we first make the
-  // value smaller and then larger, so that we don't get false
-  // overflow errors due to (e.g.) adding `align` and then
-  // subtracting `1` afterwards when merely adding `align-1` would
-  // not have overflowed. Note that due to the nature of two's
-  // complement representation, if `address` is already aligned,
-  // then adding `align-1` cannot itself cause an overflow.
-
-  return ((address + (align - 1)) / align) * align;
-}
-
-CheckedInt32 StructLayout::addField(StorageType type) {
-  uint32_t fieldSize = type.size();
-  uint32_t fieldAlignment = type.alignmentInStruct();
-
-  // We have to ensure that `offset` is chosen so that no field crosses the
-  // inline/outline boundary.  The assertions here ensure that.  See comment
-  // on `class StructLayout` for background.
-  MOZ_ASSERT(fieldSize >= 1 && fieldSize <= 16);
-  MOZ_ASSERT((fieldSize & (fieldSize - 1)) == 0);  // is a power of 2
-  MOZ_ASSERT(fieldAlignment == fieldSize);         // is naturally aligned
-
-  // Alignment of the struct is the max of the alignment of its fields.
-  structAlignment = std::max(structAlignment, fieldAlignment);
-
-  // Align the pointer.
-  CheckedInt32 offset = RoundUpToAlignment(sizeSoFar, fieldAlignment);
-  if (!offset.isValid()) {
-    return offset;
-  }
-
-  // Allocate space.
-  sizeSoFar = offset + fieldSize;
-  if (!sizeSoFar.isValid()) {
-    return sizeSoFar;
-  }
-
-  // The following should hold if the three assertions above hold.
-  MOZ_ASSERT(offset / 16 == (offset + fieldSize - 1) / 16);
-  return offset;
-}
-
-CheckedInt32 StructLayout::close() {
-  CheckedInt32 size = RoundUpToAlignment(sizeSoFar, structAlignment);
-  // What we are computing into `size` is the size of
-  // WasmGcObject::inlineData_, or the size of the outline data area.  Either
-  // way, it is helpful if the area size is an integral number of machine
-  // words, since this would make any initialisation loop for inline
-  // allocation able to operate on machine word sized units, should we decide
-  // to do inline allocation.
-  if (structAlignment < sizeof(uintptr_t)) {
-    size = RoundUpToAlignment(size, sizeof(uintptr_t));
-  }
-  return size;
-}
+// StructType
 
 bool StructType::init() {
-  bool isDefaultable = true;
+  isDefaultable_ = true;
 
-  StructLayout layout;
-  for (FieldType& field : fields_) {
-    CheckedInt32 offset = layout.addField(field.type);
-    if (!offset.isValid()) {
-      return false;
-    }
+  // Ensures the inline storage area is word-aligned.
+  static_assert((sizeof(WasmStructObject) % sizeof(uintptr_t)) == 0);
 
-    // Add the offset to the list
-    if (!fieldOffsets_.append(offset.value())) {
-      return false;
-    }
-
-    // If any field is not defaultable, this whole struct is not defaultable
-    if (!field.type.isDefaultable()) {
-      isDefaultable = false;
-    }
-
-    // If this field is not a ref, then don't add it to the trace lists
-    if (!field.type.isRefRepr()) {
-      continue;
-    }
-
-    bool isOutline;
-    uint32_t adjustedOffset;
-    WasmStructObject::fieldOffsetToAreaAndOffset(field.type, offset.value(),
-                                                 &isOutline, &adjustedOffset);
-    if (isOutline) {
-      if (!outlineTraceOffsets_.append(adjustedOffset)) {
-        return false;
-      }
-    } else {
-      if (!inlineTraceOffsets_.append(adjustedOffset)) {
-        return false;
-      }
-    }
-  }
-
-  CheckedInt32 size = layout.close();
-  if (!size.isValid()) {
+  MOZ_ASSERT(fieldAccessPaths_.empty() && outlineTraceOffsets_.empty() &&
+             inlineTraceOffsets_.empty());
+  if (!fieldAccessPaths_.reserve(fields_.length())) {
     return false;
   }
 
-  size_ = size.value();
-  isDefaultable_ = isDefaultable;
+  // So as to guarantee the value will fit in payloadOffsetIL_, since it is
+  // a uint8_t.
+  static_assert(WasmStructObject_Size_ASSUMED <
+                (1 << (8 * sizeof(StructType::payloadOffsetIL_))));
+  payloadOffsetIL_ = WasmStructObject_Size_ASSUMED;
+
+  StructLayout layout;
+  if (!layout.init(payloadOffsetIL_, WasmStructObject_MaxInlineBytes_ASSUMED)) {
+    return false;
+  }
+
+  for (FieldType& field : fields_) {
+    // Get a placement decision for the field
+    FieldAccessPath path;
+    if (!layout.addField(field.type.size(), &path)) {
+      return false;
+    }
+
+    // Add the access path to the vector thereof
+    fieldAccessPaths_.infallibleAppend(path);
+
+    // If any field is not defaultable, this whole struct is not defaultable
+    if (!field.type.isDefaultable()) {
+      isDefaultable_ = false;
+    }
+
+    // If this field is a ref, add it to the trace vectors
+    if (field.type.isRefRepr()) {
+      if (path.hasOOL()) {
+        if (!outlineTraceOffsets_.append(path.oolOffset())) {
+          return false;
+        }
+      } else {
+        if (!inlineTraceOffsets_.append(path.ilOffset())) {
+          return false;
+        }
+      }
+    }
+  }
+
+  if (layout.hasOOL()) {
+    totalSizeOOL_ = layout.totalSizeOOL();
+    MOZ_ASSERT(totalSizeOOL_ > 0);
+    if (totalSizeOOL_ < sizeof(uintptr_t)) {
+      // This is required by WasmStructObject::obj_moved, in order to ensure
+      // that the block is at least big enough to hold a forwarding pointer.
+      // See comments at WasmStructObject::obj_moved.
+      totalSizeOOL_ = sizeof(uintptr_t);
+    }
+    FieldAccessPath oolPointerPath = layout.oolPointerPath();
+    MOZ_ASSERT(!oolPointerPath.hasOOL());
+    oolPointerOffset_ = oolPointerPath.ilOffset();
+  } else {
+    totalSizeOOL_ = 0;
+    oolPointerOffset_ = StructType::InvalidOffset;
+  }
+
+  totalSizeIL_ = layout.totalSizeIL();
+  // payloadOffsetIL_ set above
+  allocKind_ = gc::GetGCObjectKindForBytes(totalSizeIL_);
+  // isDefaultable_ set above
+
   return true;
 }
 
@@ -402,6 +366,14 @@ size_t ArrayType::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
   return 0;
 }
 
+#ifdef ENABLE_WASM_JSPI
+const FuncType& ContType::funcType() const { return funcTypeDef_->funcType(); }
+
+size_t ContType::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
+  return 0;
+}
+#endif  // ENABLE_WASM_JSPI
+
 size_t TypeDef::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
   switch (kind_) {
     case TypeDefKind::Struct: {
@@ -413,6 +385,11 @@ size_t TypeDef::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
     case TypeDefKind::Array: {
       return arrayType_.sizeOfExcludingThis(mallocSizeOf);
     }
+#ifdef ENABLE_WASM_JSPI
+    case TypeDefKind::Cont: {
+      return contType_.sizeOfExcludingThis(mallocSizeOf);
+    }
+#endif
     case TypeDefKind::None: {
       return 0;
     }

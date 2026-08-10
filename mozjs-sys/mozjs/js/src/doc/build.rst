@@ -153,7 +153,7 @@ Building SpiderMonkey on Android
     $ export PATH="$PATH:~/.mozbuild/android-sdk-linux/platform-tools"
 
 - Create a typical `mozconfig` file for compiling SpiderMonkey, as outlined in
-  the :ref:`Setting up a MOZCONFIG` documentation, and include the following
+  the :ref:`mozconfig` documentation, and include the following
   line:
 
 .. code:: console

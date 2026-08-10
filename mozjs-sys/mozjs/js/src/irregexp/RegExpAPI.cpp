@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -24,6 +22,7 @@
 #include "irregexp/imported/regexp-macro-assembler-arch.h"
 #include "irregexp/imported/regexp-macro-assembler-tracer.h"
 #include "irregexp/imported/regexp-parser.h"
+#include "irregexp/imported/regexp-printer.h"
 #include "irregexp/imported/regexp-stack.h"
 #include "irregexp/imported/regexp.h"
 #include "irregexp/RegExpNativeMacroAssembler.h"
@@ -51,26 +50,26 @@ using frontend::TokenStreamAnyChars;
 
 using v8::internal::DisallowGarbageCollection;
 using v8::internal::HandleScope;
-using v8::internal::InputOutputData;
-using v8::internal::IrregexpInterpreter;
-using v8::internal::NativeRegExpMacroAssembler;
-using v8::internal::RegExpBytecodeGenerator;
-using v8::internal::RegExpCapture;
-using v8::internal::RegExpCompileData;
-using v8::internal::RegExpCompiler;
-using v8::internal::RegExpError;
-using v8::internal::RegExpMacroAssembler;
-using v8::internal::RegExpMacroAssemblerTracer;
-using v8::internal::RegExpNode;
-using v8::internal::RegExpParser;
-using v8::internal::SMRegExpMacroAssembler;
 using v8::internal::Zone;
 using v8::internal::ZoneVector;
+using v8::internal::regexp::InputOutputData;
+using v8::internal::regexp::IrregexpInterpreter;
+using v8::internal::regexp::NativeRegExpMacroAssembler;
+using v8::internal::regexp::RegExpMacroAssembler;
+using v8::internal::regexp::SMRegExpMacroAssembler;
+
+using RegExpBytecodeGenerator = v8::internal::regexp::BytecodeGenerator;
+using RegExpCapture = v8::internal::regexp::Capture;
+using RegExpCompileData = v8::internal::regexp::CompileData;
+using RegExpCompiler = v8::internal::regexp::Compiler;
+using RegExpError = v8::internal::regexp::Error;
+using RegExpNode = v8::internal::regexp::Node;
+using RegExpParser = v8::internal::regexp::Parser;
 
 using V8HandleString = v8::internal::Handle<v8::internal::String>;
 using V8HandleRegExp = v8::internal::Handle<v8::internal::IrRegExpData>;
 
-using namespace v8::internal::regexp_compiler_constants;
+using namespace v8::internal::regexp::compiler_constants;
 
 static uint32_t ErrorNumber(RegExpError err) {
   switch (err) {
@@ -144,6 +143,11 @@ static uint32_t ErrorNumber(RegExpError err) {
       return JSMSG_INVALID_CHAR_IN_CLASS;
     case RegExpError::kNegatedCharacterClassWithStrings:
       return JSMSG_NEGATED_CLASS_WITH_STR;
+
+    // V8 used this while implementing assembly from bytecode.
+    // It is now dead, and should be removed soon.
+    case RegExpError::kUnsupportedBytecode:
+      MOZ_CRASH("All bytecodes are now supported.");
 
     case RegExpError::NumErrors:
       MOZ_CRASH("Unreachable");
@@ -303,8 +307,7 @@ static bool CheckPatternSyntaxImpl(js::LifoAlloc& alloc,
                                    JS::RegExpFlags flags,
                                    RegExpCompileData* result,
                                    JS::AutoAssertNoGC& nogc) {
-  LifoAllocScope allocScope(&alloc);
-  Zone zone(allocScope.alloc());
+  Zone zone(&alloc);
 
   return RegExpParser::VerifyRegExpSyntax(&zone, stackLimit, input, inputLength,
                                           flags, result, nogc);
@@ -354,8 +357,7 @@ bool CheckPatternSyntax(JSContext* cx, JS::NativeStackLimit stackLimit,
 // table lookups in irregexp are done modulo tableSize (128).
 template <typename CharT>
 static bool HasFewDifferentCharacters(const CharT* chars, size_t length) {
-  const uint32_t tableSize =
-      v8::internal::NativeRegExpMacroAssembler::kTableSize;
+  const uint32_t tableSize = NativeRegExpMacroAssembler::kTableSize;
   bool character_found[tableSize] = {};
   uint32_t different = 0;
   for (uint32_t i = 0; i < length; i++) {
@@ -408,21 +410,19 @@ static void SampleCharacters(Handle<JSLinearString*> sample_subject,
 // `/(a(a(a(a(a(a(a(...(a)...))))))))/`) may overflow the stack while
 // compiling. To avoid this, we use V8's implementation of the Visitor
 // pattern to walk the AST first with an overly large stack frame.
-class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
+class RegExpDepthCheck final : public v8::internal::regexp::Visitor {
  public:
   explicit RegExpDepthCheck(JSContext* cx) : cx_(cx) {}
 
-  bool check(v8::internal::RegExpTree* root) {
+  bool check(v8::internal::regexp::Tree* root) {
     return !!root->Accept(this, nullptr);
   }
 
   // Leaf nodes with no children
-#define LEAF_DEPTH(Kind)                                                \
-  void* Visit##Kind(v8::internal::RegExp##Kind* node, void*) override { \
-    uint8_t padding[FRAME_PADDING];                                     \
-    dummy_ = padding; /* Prevent padding from being optimized away.*/   \
-    AutoCheckRecursionLimit recursion(cx_);                             \
-    return (void*)recursion.checkDontReport(cx_);                       \
+#define LEAF_DEPTH(Kind)                                                  \
+  void* Visit##Kind(v8::internal::regexp::Kind* node, void*) override {   \
+    AutoCheckRecursionLimit recursion(cx_);                               \
+    return (void*)recursion.checkWithExtraDontReport(cx_, FRAME_PADDING); \
   }
 
   LEAF_DEPTH(Assertion)
@@ -436,11 +436,9 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
 
   // Wrapper nodes with one child
 #define WRAPPER_DEPTH(Kind)                                             \
-  void* Visit##Kind(v8::internal::RegExp##Kind* node, void*) override { \
-    uint8_t padding[FRAME_PADDING];                                     \
-    dummy_ = padding; /* Prevent padding from being optimized away.*/   \
+  void* Visit##Kind(v8::internal::regexp::Kind* node, void*) override { \
     AutoCheckRecursionLimit recursion(cx_);                             \
-    if (!recursion.checkDontReport(cx_)) {                              \
+    if (!recursion.checkWithExtraDontReport(cx_, FRAME_PADDING)) {      \
       return nullptr;                                                   \
     }                                                                   \
     return node->body()->Accept(this, nullptr);                         \
@@ -452,12 +450,10 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
   WRAPPER_DEPTH(Quantifier)
 #undef WRAPPER_DEPTH
 
-  void* VisitAlternative(v8::internal::RegExpAlternative* node,
+  void* VisitAlternative(v8::internal::regexp::Alternative* node,
                          void*) override {
-    uint8_t padding[FRAME_PADDING];
-    dummy_ = padding; /* Prevent padding from being optimized away.*/
     AutoCheckRecursionLimit recursion(cx_);
-    if (!recursion.checkDontReport(cx_)) {
+    if (!recursion.checkWithExtraDontReport(cx_, FRAME_PADDING)) {
       return nullptr;
     }
     for (auto* child : *node->nodes()) {
@@ -467,12 +463,10 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
     }
     return (void*)true;
   }
-  void* VisitDisjunction(v8::internal::RegExpDisjunction* node,
+  void* VisitDisjunction(v8::internal::regexp::Disjunction* node,
                          void*) override {
-    uint8_t padding[FRAME_PADDING];
-    dummy_ = padding; /* Prevent padding from being optimized away.*/
     AutoCheckRecursionLimit recursion(cx_);
-    if (!recursion.checkDontReport(cx_)) {
+    if (!recursion.checkWithExtraDontReport(cx_, FRAME_PADDING)) {
       return nullptr;
     }
     for (auto* child : *node->alternatives()) {
@@ -482,12 +476,10 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
     }
     return (void*)true;
   }
-  void* VisitClassSetExpression(v8::internal::RegExpClassSetExpression* node,
+  void* VisitClassSetExpression(v8::internal::regexp::ClassSetExpression* node,
                                 void*) override {
-    uint8_t padding[FRAME_PADDING];
-    dummy_ = padding; /* Prevent padding from being optimized away.*/
     AutoCheckRecursionLimit recursion(cx_);
-    if (!recursion.checkDontReport(cx_)) {
+    if (!recursion.checkWithExtraDontReport(cx_, FRAME_PADDING)) {
       return nullptr;
     }
     for (auto* child : *node->operands()) {
@@ -500,11 +492,15 @@ class RegExpDepthCheck final : public v8::internal::RegExpVisitor {
 
  private:
   JSContext* cx_;
-  void* dummy_ = nullptr;
 
   // This size is picked to be comfortably larger than any
   // RegExp*::ToNode stack frame.
+#if !defined(DEBUG) && !defined(MOZ_CODE_COVERAGE)
   static const size_t FRAME_PADDING = 256;
+#else
+  // Use a slightly larger padding for debug and code coverage builds.
+  static const size_t FRAME_PADDING = 256 * 2;
+#endif
 };
 
 enum class AssembleResult {
@@ -523,10 +519,11 @@ enum class AssembleResult {
   Maybe<jit::JitContext> jctx;
   Maybe<js::jit::StackMacroAssembler> stack_masm;
   UniquePtr<RegExpMacroAssembler> masm;
+  SMRegExpMacroAssembler* native_masm = nullptr;
+  NativeRegExpMacroAssembler::Mode mode =
+      isLatin1 ? NativeRegExpMacroAssembler::LATIN1
+               : NativeRegExpMacroAssembler::UC16;
   if (useNativeCode) {
-    NativeRegExpMacroAssembler::Mode mode =
-        isLatin1 ? NativeRegExpMacroAssembler::LATIN1
-                 : NativeRegExpMacroAssembler::UC16;
     // If we are compiling native code, we need a macroassembler,
     // which needs a jit context.
     jctx.emplace(cx);
@@ -540,8 +537,9 @@ enum class AssembleResult {
     uint32_t num_capture_registers = re->pairCount() * 2;
     masm = MakeUnique<SMRegExpMacroAssembler>(cx, stack_masm.ref(), zone, mode,
                                               num_capture_registers);
+    native_masm = static_cast<SMRegExpMacroAssembler*>(masm.get());
   } else {
-    masm = MakeUnique<RegExpBytecodeGenerator>(cx->isolate, zone);
+    masm = MakeUnique<RegExpBytecodeGenerator>(cx->isolate, zone, mode);
   }
   if (!masm) {
     ReportOutOfMemory(cx);
@@ -549,8 +547,7 @@ enum class AssembleResult {
   }
 
   bool isLargePattern =
-      pattern->length() > v8::internal::RegExp::kRegExpTooLargeToOptimize;
-  masm->set_slow_safe(isLargePattern);
+      pattern->length() > v8::internal::RegExp::kMaxOptimizedPatternLength;
   if (compiler->optimize()) {
     compiler->set_optimize(!isLargePattern);
   }
@@ -560,8 +557,9 @@ enum class AssembleResult {
   // strings. This decision is made here because it depends on
   // information in the AST that isn't replicated in the Node
   // structure used inside the compiler.
-  bool is_start_anchored = data->tree->IsAnchoredAtStart();
-  bool is_end_anchored = data->tree->IsAnchoredAtEnd();
+  const uint32_t budget = RegExpNode::kRecursionBudget;
+  bool is_start_anchored = data->tree->IsCertainlyAnchoredAtStart(budget);
+  bool is_end_anchored = data->tree->IsCertainlyAnchoredAtEnd(budget);
   int max_length = data->tree->max_match();
   static const int kMaxBacksearchLimit = 1024;
   if (is_end_anchored && !is_start_anchored && !re->sticky() &&
@@ -580,19 +578,17 @@ enum class AssembleResult {
   }
 
   // The masm tracer works as a thin wrapper around another macroassembler.
-  RegExpMacroAssembler* masm_ptr = masm.get();
-#ifdef DEBUG
-  UniquePtr<RegExpMacroAssembler> tracer_masm;
+#ifdef JS_JITSPEW
   if (jit::JitOptions.trace_regexp_assembler) {
-    tracer_masm = MakeUnique<RegExpMacroAssemblerTracer>(cx->isolate, masm_ptr);
-    masm_ptr = tracer_masm.get();
+    masm = MakeUnique<v8::internal::regexp::RegExpMacroAssemblerTracer>(
+        std::move(masm));
   }
 #endif
 
   // Compile the regexp.
-  V8HandleString wrappedPattern(v8::internal::String(pattern), cx->isolate);
+  V8HandleRegExp wrappedRegExp(v8::internal::IrRegExpData(re), cx->isolate);
   RegExpCompiler::CompilationResult result = compiler->Assemble(
-      cx->isolate, masm_ptr, data->node, data->capture_count, wrappedPattern);
+      cx->isolate, masm.get(), data->node, data->capture_count, wrappedRegExp);
 
   if (useNativeCode) {
 #ifdef DEBUG
@@ -615,8 +611,7 @@ enum class AssembleResult {
   if (useNativeCode) {
     // Transfer ownership of the tables from the macroassembler to the
     // RegExpShared.
-    SMRegExpMacroAssembler::TableVector& tables =
-        static_cast<SMRegExpMacroAssembler*>(masm.get())->tables();
+    SMRegExpMacroAssembler::TableVector& tables = native_masm->tables();
     for (uint32_t i = 0; i < tables.length(); i++) {
       if (!re->addTable(std::move(tables[i]))) {
         ReportOutOfMemory(cx);
@@ -774,9 +769,8 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
                     RegExpShared::CodeKind codeKind) {
   Rooted<JSAtom*> pattern(cx, re->getSource());
   JS::RegExpFlags flags = re->getFlags();
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
   HandleScope handleScope(cx->isolate);
-  Zone zone(allocScope.alloc());
+  Zone zone(&cx->tempLifoAlloc());
 
   RegExpCompileData data;
   {
@@ -794,8 +788,7 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
   // Avoid stack overflow while recursively walking the AST.
   RegExpDepthCheck depthCheck(cx);
   if (!depthCheck.check(data.tree)) {
-    JS_ReportErrorASCII(cx, "regexp too big");
-    cx->reportResourceExhaustion();
+    ReportOverRecursed(cx);
     return false;
   }
 
@@ -810,7 +803,7 @@ bool CompilePattern(JSContext* cx, MutableHandleRegExpShared re,
         searchAtom = re->getSource();
       } else if (data.tree->IsAtom() && data.capture_count == 0) {
         // The parse-tree is a single atom that is not equal to the pattern.
-        v8::internal::RegExpAtom* atom = data.tree->AsAtom();
+        v8::internal::regexp::Atom* atom = data.tree->AsAtom();
         const char16_t* twoByteChars = atom->data().begin();
         searchAtom = AtomizeChars(cx, twoByteChars, atom->length());
         if (!searchAtom) {
@@ -958,7 +951,7 @@ RegExpRunStatus ExecuteForFuzzing(JSContext* cx, Handle<JSAtom*> pattern,
   return RegExpShared::execute(cx, &re, input, startIndex, matches);
 }
 
-bool GrowBacktrackStack(RegExpStack* regexp_stack) {
+bool GrowBacktrackStack(irregexp::RegExpStack* regexp_stack) {
   return SMRegExpMacroAssembler::GrowBacktrackStack(regexp_stack);
 }
 

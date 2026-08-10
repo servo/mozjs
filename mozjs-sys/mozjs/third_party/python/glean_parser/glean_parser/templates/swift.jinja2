@@ -44,30 +44,74 @@ struct {{ obj.name|Camelize }}{{ suffix }}: EventExtras {
     }
 {% endmacro %}
 
-{%- macro generate_structure(name, struct) %}
-{%- if struct.type == "array" -%}
+{%- macro generate_structure(name, struct, toplevel) %}
+{%- if struct.type == "oneof" -%}
+    enum {{ name }}: Codable, Equatable {
+        {% for ty in struct.subtypes %}
+          case {{ty}}({{ty|structure_type_name}})
+        {% endfor %}
+
+        func encode(to __encoder: Encoder) throws {
+            var __container = __encoder.singleValueContainer()
+            switch self {
+            {% for ty in struct.subtypes %}
+              case .{{ty}}(let __val):
+                try __container.encode(__val)
+            {% endfor %}
+            }
+        }
+    }
+
+{%- elif struct.type == "array" -%}
     typealias {{ name }} = [{{ name }}Item]
 
     {{ generate_structure(name ~ "Item", struct["items"]) }}
 
 {%- elif struct.type == "object" -%}
-    struct {{ name }}: Codable, Equatable, ObjectSerialize {
+    struct {{ name }}: Codable, Equatable {% if toplevel %}, ObjectSerialize{% endif %} {
         {% for itemname, val in struct.properties.items() %}
+          {%- set varname = itemname|camelize|variable_name -%}
           {% if val.type == "array" %}
-          var {{itemname|camelize|variable_name}}: {{ name ~ itemname|Camelize }} = []
+          var {{varname}}: {{ name ~ itemname|Camelize }} = []
           {% elif val.type == "object" %}
-          var {{itemname|camelize|variable_name}}: {{ name ~ "Item" ~ itemname|Camelize ~ "Object" }}?
+          var {{varname}}: {{ name ~ "Item" ~ itemname|Camelize ~ "Object" }}?
+          {% elif val.type == "oneof" %}
+          var {{varname}}: {{ name ~ itemname|Camelize ~ "Enum" }}?
           {% else %}
-          var {{itemname|camelize|variable_name}}: {{val.type|structure_type_name}}?
+          var {{varname}}: {{val.type|structure_type_name}}?
           {% endif %}
         {% endfor %}
 
+        enum CodingKeys: String, CodingKey {
+        {% for itemname, val in struct.properties.items() %}
+          {%- set varname = itemname|camelize|variable_name -%}
+          case {{varname}} = "{{ itemname }}"
+        {% endfor %}
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            {% for itemname, val in struct.properties.items() %}
+              {%- set varname = itemname|camelize|variable_name -%}
+              {% if val.type == "array" %}
+              if {{varname}}.count > 0 {
+                let {{varname}} = self.{{varname}}
+              {% else %}
+              if let {{varname}} = self.{{varname}} {
+              {% endif %}
+              try container.encode({{varname}}, forKey: .{{varname}})
+              }
+            {% endfor %}
+    }
+
+        {% if toplevel %}
         func intoSerializedObject() -> String {
             let jsonEncoder = JSONEncoder()
             let jsonData = try! jsonEncoder.encode(self)
             let json = String(data: jsonData, encoding: String.Encoding.utf8)!
             return json
         }
+        {% endif %}
     }
 
     {% for itemname, val in struct.properties.items() %}
@@ -76,6 +120,9 @@ struct {{ obj.name|Camelize }}{{ suffix }}: EventExtras {
         {{ generate_structure(nested_name, val) }}
         {% elif val.type == "object" %}
         {% set nested_name = name ~ "Item" ~ itemname|Camelize ~ "Object" %}
+        {{ generate_structure(nested_name, val) }}
+        {% elif val.type == "oneof" %}
+        {% set nested_name = name ~ itemname|Camelize ~ "Enum" %}
         {{ generate_structure(nested_name, val) }}
         {% endif %}
     {% endfor %}
@@ -111,7 +158,7 @@ extension {{ namespace }} {
 
     {% for category in categories %}
     {% if category.contains_pings %}
-    class {{ category.name|Camelize }} {
+    final class {{ category.name|Camelize }}: Sendable {
         public static let shared = {{ category.name|Camelize }}()
         private init() {
             // Intentionally left private, no external user can instantiate a new global object.
@@ -121,7 +168,7 @@ extension {{ namespace }} {
         {% if obj|attr("_generate_enums") %}
         {% for name, suffix in obj["_generate_enums"] %}
         {% if obj|attr(name)|length %}
-        enum {{ obj.name|Camelize }}{{ suffix }}: Int, ReasonCodes {
+        enum {{ obj.name|Camelize }}{{ suffix }}: Int, ReasonCodes, Sendable {
             {% for key in obj|attr(name) %}
             case {{ key|camelize|variable_name }} = {{ loop.index-1 }}
             {% endfor %}
@@ -155,7 +202,7 @@ extension {{ namespace }} {
     enum {{ category.name|Camelize }} {
     {% for obj in category.objs.values() %}
         {% if obj|attr("_generate_structure") %}
-        {{ generate_structure(obj.name|Camelize ~ "Object", obj._generate_structure) }}
+        {{ generate_structure(obj.name|Camelize ~ "Object", obj._generate_structure, true) }}
         {%- endif %}
         {% if obj|attr("_generate_enums") %}
         {% for name, suffix in obj["_generate_enums"] %}

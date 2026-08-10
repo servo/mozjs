@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -135,9 +132,9 @@ BEGIN_TEST(testJitRangeAnalysis_MathSignBeta) {
   // if (p < 0)
   MParameter* p = func.createParameter();
   entry->add(p);
-  MConstant* c0 = MConstant::New(func.alloc, DoubleValue(0.0));
+  MConstant* c0 = MConstant::NewDouble(func.alloc, 0.0);
   entry->add(c0);
-  MConstant* cm0 = MConstant::New(func.alloc, DoubleValue(-0.0));
+  MConstant* cm0 = MConstant::NewDouble(func.alloc, -0.0);
   entry->add(cm0);
   MCompare* cmp =
       MCompare::New(func.alloc, p, c0, JSOp::Lt, MCompare::Compare_Double);
@@ -194,18 +191,25 @@ BEGIN_TEST(testJitRangeAnalysis_MathSignBeta) {
   CHECK(EquivalentRanges(cm0->range(),
                          Range::NewDoubleSingletonRange(func.alloc, -0.0)));
 
-  // On the (p < 0) side, p is negative and not -0 (surprise!)
+  // As 0 == -0, checking for (p < 0) implies that negative zero is excluded as
+  // well. So normally we should exclude -0 from the output, except that
+  // denormals might introduce extra confusion.
+  //
+  // What appears as 0, could be non-zero when seen in Range Analysis, while
+  // being zero when executed. As such we have to be conservative and include
+  // every possible outcome.
   CHECK(EquivalentRanges(
       thenAdd->range(),
       new (func.alloc)
           Range(Range::NoInt32LowerBound, 0, Range::IncludesFractionalParts,
-                Range::ExcludesNegativeZero, Range::IncludesInfinity)));
+                Range::IncludesNegativeZero, Range::IncludesInfinity)));
 
-  // Consequently, its Math.sign value is not -0 either.
+  // Consequently, its Math.sign value is not -0 either, but as we are
+  // conservative, we should include it here too.
   CHECK(EquivalentRanges(thenSign->range(),
                          new (func.alloc)
                              Range(-1, 0, Range::ExcludesFractionalParts,
-                                   Range::ExcludesNegativeZero, 0)));
+                                   Range::IncludesNegativeZero, 0)));
 
   // On the (p >= 0) side, p is not negative and may be -0 (surprise!)
   CHECK(EquivalentRanges(
@@ -238,7 +242,7 @@ BEGIN_TEST(testJitRangeAnalysis_StrictCompareBeta) {
   // if (p === 0)
   MParameter* p = func.createParameter();
   entry->add(p);
-  MConstant* c0 = MConstant::New(func.alloc, DoubleValue(0.0));
+  MConstant* c0 = MConstant::NewDouble(func.alloc, 0.0);
   entry->add(c0);
   MCompare* cmp = MCompare::New(func.alloc, p, c0, JSOp::StrictEq,
                                 MCompare::Compare_Double);
@@ -249,7 +253,7 @@ BEGIN_TEST(testJitRangeAnalysis_StrictCompareBeta) {
   // {
   //   return p + -0;
   // }
-  MConstant* cm0 = MConstant::New(func.alloc, DoubleValue(-0.0));
+  MConstant* cm0 = MConstant::NewDouble(func.alloc, -0.0);
   thenBlock->add(cm0);
   MAdd* thenAdd = MAdd::New(func.alloc, p, cm0, MIRType::Double);
   thenBlock->add(thenAdd);
@@ -293,7 +297,7 @@ BEGIN_TEST(testJitRangeAnalysis_StrictCompareBeta) {
     return false;
   }
   CHECK(EquivalentRanges(thenAdd->range(),
-                         Range::NewDoubleRange(func.alloc, 0.0, 0.0)));
+                         Range::NewDoubleRange(func.alloc, -0.0, 0.0)));
 
   return true;
 }

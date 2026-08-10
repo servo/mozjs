@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -293,7 +292,6 @@ int Tmocon(int argc, char** argv) {
   shared->messages = DEFAULT_MESSAGES;
   shared->message_length = DEFAULT_MESSAGESIZE;
 
-  PR_STDIO_INIT();
   memset(&shared->serverAddress, 0, sizeof(shared->serverAddress));
   rv = PR_InitializeNetAddr(PR_IpAddrLoopback, BASE_PORT,
                             &shared->serverAddress);

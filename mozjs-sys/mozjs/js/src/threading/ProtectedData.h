@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,6 +6,7 @@
 #define threading_ProtectedData_h
 
 #include "mozilla/Atomics.h"
+#include <utility>
 #include "jstypes.h"
 #include "threading/ThreadId.h"
 
@@ -101,7 +100,7 @@ class ProtectedData {
 
   template <typename U>
   ThisType& operator=(U&& p) {
-    this->ref() = std::move(p);
+    this->ref() = std::forward<U>(p);
     return *this;
   }
 
@@ -155,7 +154,7 @@ class ProtectedData {
   T& refNoCheck() { return value; }
   const T& refNoCheck() const { return value; }
 
-  static size_t offsetOfValue() { return offsetof(ThisType, value); }
+  static constexpr size_t offsetOfValue() { return offsetof(ThisType, value); }
 
  private:
   T value;

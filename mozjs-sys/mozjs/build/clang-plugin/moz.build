@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -16,9 +14,12 @@ HOST_SOURCES += [
     "CustomTypeAnnotation.cpp",
     "DanglingOnTemporaryChecker.cpp",
     "DiagnosticsMatcher.cpp",
+    "EnumSerializerChecker.cpp",
     "ExplicitImplicitChecker.cpp",
     "ExplicitOperatorBoolChecker.cpp",
+    "FinalCycleCollectingIsupportsChecker.cpp",
     "GlobalVariableInitializationChecker.cpp",
+    "IntToEnumCastChecker.cpp",
     "JSHandleRootedTypedefChecker.cpp",
     "KnownLiveChecker.cpp",
     "KungFuDeathGripChecker.cpp",
@@ -35,6 +36,7 @@ HOST_SOURCES += [
     "NonMemMovableMemberChecker.cpp",
     "NonMemMovableTemplateArgChecker.cpp",
     "NonParamInsideFunctionDeclChecker.cpp",
+    "NonTerminatedStringChecker.cpp",
     "NonTrivialTypeInFfiChecker.cpp",
     "NoPrincipalGetURI.cpp",
     "NoUsingNamespaceMozillaJavaChecker.cpp",
@@ -46,6 +48,7 @@ HOST_SOURCES += [
     "RefCountedThisInsideConstructorChecker.cpp",
     "ScopeChecker.cpp",
     "SprintfLiteralChecker.cpp",
+    "SupportsWeakPtrCycleCollectionChecker.cpp",
     "TrivialCtorDtorChecker.cpp",
     "TrivialDtorChecker.cpp",
     "VariableUsageHelpers.cpp",
@@ -55,6 +58,7 @@ HOST_SOURCES += [
 if CONFIG["OS_ARCH"] == "WINNT":
     HOST_DEFINES["TARGET_IS_WINDOWS"] = True
     HOST_SOURCES += [
+        "EmptyBasesChecker.cpp",
         "FopenUsageChecker.cpp",
         "LoadLibraryUsageChecker.cpp",
     ]
@@ -91,16 +95,31 @@ GeneratedFile(
 HOST_COMPILE_FLAGS["STL"] = []
 HOST_COMPILE_FLAGS["VISIBILITY"] = []
 
+HOST_LDFLAGS += CONFIG["LLVM_LDFLAGS"]
+
 # libc++ is required to build plugins against clang on OS X.
 if CONFIG["HOST_OS_ARCH"] == "Darwin":
     HOST_CXXFLAGS += ["-stdlib=libc++"]
+
+    # We need to make sure that we use the symbols coming from the clang
+    # binary. In order to do this, we need to pass -flat_namespace and
+    # -undefined suppress to the linker. This makes sure that we link the
+    # symbols into the flat namespace provided by clang, and thus get
+    # access to all of the symbols which are undefined in our dylib as we
+    # are building it right now, and also that we don't fail the build
+    # due to undefined symbols (which will be provided by clang).
+    HOST_LDFLAGS += ["-Wl,-flat_namespace", "-Wl,-undefined,suppress"]
 
 # As of clang 8, llvm-config doesn't output the flags used to build clang
 # itself, so we don't end up with -fPIC as a side effect. llvm.org/PR8220
 if CONFIG["HOST_OS_ARCH"] != "WINNT":
     HOST_CXXFLAGS += ["-fPIC"]
+    HOST_LDFLAGS += ["-shared"]
+else:
+    # clang-plugin.dll needs to be deterministic for sccache hashes
+    HOST_LDFLAGS += ["-brepro"]
 
-DIRS += [
+TEST_DIRS += [
     "tests",
 ]
 
@@ -119,6 +138,9 @@ if CONFIG["HOST_OS_ARCH"] == "WINNT":
     # but as of writing, it's not necessary for the plugin code, so enable
     # the escape hatch, at least until we generally upgrade to VS 2019.
     HOST_DEFINES["LLVM_FORCE_USE_OLD_TOOLCHAIN"] = True
+    # Clang 20+ needs /Zc:dllexportInlines- to work around CLANG_ABI issues with inline methods
+    if CONFIG["HOST_CC_VERSION"] and int(CONFIG["HOST_CC_VERSION"].split(".")[0]) >= 20:
+        extra_cxxflags += ["/Zc:dllexportInlines-"]
 else:
     extra_cxxflags = ["-fno-rtti", "-fno-exceptions"]
 

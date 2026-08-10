@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,7 +8,8 @@
 #include "jit/MacroAssembler.h"
 
 #include "mozilla/FloatingPoint.h"
-#include "mozilla/MathAlgorithms.h"
+
+#include <bit>
 
 #include "gc/Zone.h"
 #include "jit/CalleeToken.h"
@@ -124,8 +123,6 @@ void MacroAssembler::call(const wasm::CallSiteDesc& desc, wasm::Trap trap) {
 
 CodeOffset MacroAssembler::call(const wasm::CallSiteDesc& desc,
                                 wasm::SymbolicAddress imm) {
-  MOZ_ASSERT(wasm::NeedsBuiltinThunk(imm),
-             "only for functions which may appear in profiler");
   CodeOffset raOffset = call(imm);
   append(desc, raOffset);
   return raOffset;
@@ -195,6 +192,9 @@ ABIFunctionType MacroAssembler::signature() const {
     case Args_Int32_Float32:
     case Args_Double_Double:
     case Args_Double_Int:
+    case Args_Double_IntInt:
+    case Args_Double_IntIntInt:
+    case Args_Double_IntInt64:
     case Args_Double_DoubleInt:
     case Args_Double_DoubleDouble:
     case Args_Double_IntDouble:
@@ -205,6 +205,9 @@ ABIFunctionType MacroAssembler::signature() const {
     case Args_Double_DoubleDoubleDouble:
     case Args_Double_DoubleDoubleDoubleDouble:
     case Args_Int64_GeneralGeneral:
+    case Args_General_GeneralInt64GeneralGeneral:
+    case Args_General_GeneralFloat32GeneralGeneral:
+    case Args_General_GeneralFloat64General:
       break;
     default:
       MOZ_CRASH("Unexpected type");
@@ -255,46 +258,43 @@ uint32_t MacroAssembler::callJit(ImmPtr callee) {
   return currentOffset();
 }
 
-void MacroAssembler::pushFrameDescriptor(FrameType type) {
-  uint32_t descriptor = MakeFrameDescriptor(type);
-  push(Imm32(descriptor));
+void MacroAssembler::push(FrameDescriptor descriptor) {
+  push(Imm32(descriptor.value()));
 }
 
-void MacroAssembler::PushFrameDescriptor(FrameType type) {
-  uint32_t descriptor = MakeFrameDescriptor(type);
-  Push(Imm32(descriptor));
+void MacroAssembler::Push(FrameDescriptor descriptor) {
+  Push(Imm32(descriptor.value()));
 }
 
-void MacroAssembler::pushFrameDescriptorForJitCall(FrameType type,
-                                                   uint32_t argc) {
-  uint32_t descriptor = MakeFrameDescriptorForJitCall(type, argc);
-  push(Imm32(descriptor));
-}
-
-void MacroAssembler::PushFrameDescriptorForJitCall(FrameType type,
-                                                   uint32_t argc) {
-  uint32_t descriptor = MakeFrameDescriptorForJitCall(type, argc);
-  Push(Imm32(descriptor));
+void MacroAssembler::makeFrameDescriptorForJitCall(FrameType type,
+                                                   Register argc, Register dest,
+                                                   bool hasInlineICScript) {
+  lshift32(Imm32(FrameDescriptor::NumActualArgsShift), argc, dest);
+  FrameDescriptor base(type, 0, hasInlineICScript);
+  if (base.value()) {
+    or32(Imm32(base.value()), dest);
+  }
 }
 
 void MacroAssembler::pushFrameDescriptorForJitCall(FrameType type,
                                                    Register argc,
-                                                   Register scratch) {
-  lshift32(Imm32(NUMACTUALARGS_SHIFT), argc, scratch);
-  or32(Imm32(int32_t(type)), scratch);
+                                                   Register scratch,
+                                                   bool hasInlineICScript) {
+  makeFrameDescriptorForJitCall(type, argc, scratch, hasInlineICScript);
   push(scratch);
 }
 
 void MacroAssembler::PushFrameDescriptorForJitCall(FrameType type,
                                                    Register argc,
-                                                   Register scratch) {
-  pushFrameDescriptorForJitCall(type, argc, scratch);
+                                                   Register scratch,
+                                                   bool hasInlineICScript) {
+  pushFrameDescriptorForJitCall(type, argc, scratch, hasInlineICScript);
   framePushed_ += sizeof(uintptr_t);
 }
 
 void MacroAssembler::loadNumActualArgs(Register framePtr, Register dest) {
   loadPtr(Address(framePtr, JitFrameLayout::offsetOfDescriptor()), dest);
-  rshift32(Imm32(NUMACTUALARGS_SHIFT), dest);
+  rshift32(Imm32(FrameDescriptor::NumActualArgsShift), dest);
 }
 
 void MacroAssembler::PushCalleeToken(Register callee, bool constructing) {
@@ -327,7 +327,7 @@ void MacroAssembler::loadFunctionFromCalleeToken(Address token, Register dest) {
 uint32_t MacroAssembler::buildFakeExitFrame(Register scratch) {
   mozilla::DebugOnly<uint32_t> initialDepth = framePushed();
 
-  PushFrameDescriptor(FrameType::IonJS);
+  Push(FrameDescriptor(FrameType::IonJS));
   uint32_t retAddr = pushFakeReturnAddress(scratch);
   Push(FramePointer);
 
@@ -434,22 +434,23 @@ void MacroAssembler::branchIfNotNullOrUndefined(ValueOperand val,
 
 void MacroAssembler::branchIfRope(Register str, Label* label) {
   Address flags(str, JSString::offsetOfFlags());
-  branchTest32(Assembler::Zero, flags, Imm32(JSString::LINEAR_BIT), label);
+  branchTest32(Assembler::Zero, flags, Imm32(StringFlags::LINEAR_BIT), label);
 }
 
 void MacroAssembler::branchIfNotRope(Register str, Label* label) {
   Address flags(str, JSString::offsetOfFlags());
-  branchTest32(Assembler::NonZero, flags, Imm32(JSString::LINEAR_BIT), label);
+  branchTest32(Assembler::NonZero, flags, Imm32(StringFlags::LINEAR_BIT),
+               label);
 }
 
 void MacroAssembler::branchLatin1String(Register string, Label* label) {
   branchTest32(Assembler::NonZero, Address(string, JSString::offsetOfFlags()),
-               Imm32(JSString::LATIN1_CHARS_BIT), label);
+               Imm32(StringFlags::LATIN1_CHARS_BIT), label);
 }
 
 void MacroAssembler::branchTwoByteString(Register string, Label* label) {
   branchTest32(Assembler::Zero, Address(string, JSString::offsetOfFlags()),
-               Imm32(JSString::LATIN1_CHARS_BIT), label);
+               Imm32(StringFlags::LATIN1_CHARS_BIT), label);
 }
 
 void MacroAssembler::branchIfBigIntIsNegative(Register bigInt, Label* label) {
@@ -553,9 +554,8 @@ void MacroAssembler::branchIfObjectEmulatesUndefined(Register objReg,
 
   Label done;
 
-  loadPtr(
-      AbsoluteAddress(runtime()->addressOfHasSeenObjectEmulateUndefinedFuse()),
-      scratch);
+  loadRuntimeFuse(RuntimeFuses::FuseIndex::HasSeenObjectEmulateUndefinedFuse,
+                  scratch);
   branchPtr(Assembler::Equal, scratch, ImmPtr(nullptr), &done);
 
   loadObjClassUnsafe(objReg, scratch);
@@ -646,51 +646,20 @@ void MacroAssembler::branchTestObjClass(Condition cond, Register obj,
   }
 }
 
-void MacroAssembler::branchTestClass(
-    Condition cond, Register clasp,
-    std::pair<const JSClass*, const JSClass*> classes, Label* label) {
+void MacroAssembler::branchTestClassIsFunction(Condition cond, Register clasp,
+                                               Label* label) {
   MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
 
   if (cond == Assembler::Equal) {
-    branchPtr(Assembler::Equal, clasp, ImmPtr(classes.first), label);
-    branchPtr(Assembler::Equal, clasp, ImmPtr(classes.second), label);
+    branchPtr(Assembler::Equal, clasp, ImmPtr(&FunctionClass), label);
+    branchPtr(Assembler::Equal, clasp, ImmPtr(&ExtendedFunctionClass), label);
     return;
   }
 
   Label isClass;
-  branchPtr(Assembler::Equal, clasp, ImmPtr(classes.first), &isClass);
-  branchPtr(Assembler::NotEqual, clasp, ImmPtr(classes.second), label);
+  branchPtr(Assembler::Equal, clasp, ImmPtr(&FunctionClass), &isClass);
+  branchPtr(Assembler::NotEqual, clasp, ImmPtr(&ExtendedFunctionClass), label);
   bind(&isClass);
-}
-
-void MacroAssembler::branchTestObjClass(
-    Condition cond, Register obj,
-    std::pair<const JSClass*, const JSClass*> classes, Register scratch,
-    Register spectreRegToZero, Label* label) {
-  MOZ_ASSERT(scratch != spectreRegToZero);
-
-  branchTestObjClassNoSpectreMitigations(cond, obj, classes, scratch, label);
-
-  if (JitOptions.spectreObjectMitigations) {
-    spectreZeroRegister(cond, scratch, spectreRegToZero);
-  }
-}
-
-void MacroAssembler::branchTestObjClassNoSpectreMitigations(
-    Condition cond, Register obj,
-    std::pair<const JSClass*, const JSClass*> classes, Register scratch,
-    Label* label) {
-  MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
-  MOZ_ASSERT(obj != scratch);
-
-  loadObjClassUnsafe(obj, scratch);
-  branchTestClass(cond, scratch, classes, label);
-}
-
-void MacroAssembler::branchTestClassIsFunction(Condition cond, Register clasp,
-                                               Label* label) {
-  return branchTestClass(cond, clasp, {&FunctionClass, &ExtendedFunctionClass},
-                         label);
 }
 
 void MacroAssembler::branchTestObjIsFunction(Condition cond, Register obj,
@@ -809,24 +778,25 @@ void MacroAssembler::branchTestProxyHandlerFamily(Condition cond,
   branchPtr(cond, familyAddr, ImmPtr(handlerp), label);
 }
 
-void MacroAssembler::branchTestNeedsIncrementalBarrier(Condition cond,
-                                                       Label* label) {
+void MacroAssembler::branchTestNeedsMarkingBarrier(Condition cond,
+                                                   Label* label) {
   MOZ_ASSERT(cond == Zero || cond == NonZero);
   CompileZone* zone = realm()->zone();
-  const uint32_t* needsBarrierAddr = zone->addressOfNeedsIncrementalBarrier();
+  const uint32_t* needsBarrierAddr = zone->addressOfNeedsMarkingBarrier();
   branchTest32(cond, AbsoluteAddress(needsBarrierAddr), Imm32(0x1), label);
 }
 
-void MacroAssembler::branchTestNeedsIncrementalBarrierAnyZone(
-    Condition cond, Label* label, Register scratch) {
+void MacroAssembler::branchTestNeedsMarkingBarrierAnyZone(Condition cond,
+                                                          Label* label,
+                                                          Register scratch) {
   MOZ_ASSERT(cond == Zero || cond == NonZero);
   if (maybeRealm_) {
-    branchTestNeedsIncrementalBarrier(cond, label);
+    branchTestNeedsMarkingBarrier(cond, label);
   } else {
     // We are compiling the interpreter or another runtime-wide trampoline, so
     // we have to load cx->zone.
     loadPtr(AbsoluteAddress(runtime()->addressOfZone()), scratch);
-    Address needsBarrierAddr(scratch, Zone::offsetOfNeedsIncrementalBarrier());
+    Address needsBarrierAddr(scratch, Zone::offsetOfNeedsMarkingBarrier());
     branchTest32(cond, needsBarrierAddr, Imm32(0x1), label);
   }
 }
@@ -904,18 +874,56 @@ void MacroAssembler::branchFloat32NotInUInt64Range(Address src, Register temp,
 
 // ========================================================================
 // Canonicalization primitives.
-void MacroAssembler::canonicalizeFloat(FloatRegister reg) {
+void MacroAssembler::canonicalizeFloatNaN(FloatRegister reg) {
   Label notNaN;
   branchFloat(DoubleOrdered, reg, reg, &notNaN);
   loadConstantFloat32(float(JS::GenericNaN()), reg);
   bind(&notNaN);
 }
 
-void MacroAssembler::canonicalizeDouble(FloatRegister reg) {
+void MacroAssembler::canonicalizeDoubleNaN(FloatRegister reg) {
   Label notNaN;
   branchDouble(DoubleOrdered, reg, reg, &notNaN);
   loadConstantDouble(JS::GenericNaN(), reg);
   bind(&notNaN);
+}
+
+void MacroAssembler::canonicalizeDoubleZero(FloatRegister reg,
+                                            FloatRegister scratch) {
+  // If denormals are disabled, then operations on them will flush denormal
+  // values to zero (FTZ flag). We need the cheapest operation that is the
+  // identity function.
+  //
+  // Unfortunately, just moving the float register doesn't trigger FTZ. Adding
+  // '+-0' isn't an identity function, because it can toggle the sign bit.
+  //
+  // Therefore we choose to multiply by 1.0, which won't change the result.
+  loadConstantDouble(1.0, scratch);
+  mulDouble(scratch, reg);
+}
+
+void MacroAssembler::canonicalizeValueZero(ValueOperand value,
+                                           FloatRegister scratch) {
+  // Don't do anything if this isn't a double value.
+  Label notDouble;
+  branchTestDouble(Assembler::NotEqual, value, &notDouble);
+
+  // Unbox the double.
+  unboxDouble(value, scratch);
+
+  {
+    // Minimize the duration of using the scratch double to avoid
+    // conflict with unboxDouble.
+    ScratchDoubleScope tmpD(*this);
+
+    // Canonicalize the double.
+    canonicalizeDoubleZero(scratch, tmpD);
+
+    // Box the double back into value.
+    boxDouble(scratch, value, tmpD);
+  }
+
+  bind(&notDouble);
 }
 
 // ========================================================================
@@ -1059,11 +1067,49 @@ void MacroAssembler::loadStringLength(Register str, Register dest) {
   load32(Address(str, JSString::offsetOfLength()), dest);
 }
 
+template <typename Table, typename Match>
+void MacroAssembler::lookupMFBT(Register hashTable, Register hashCode,
+                                Register scratch, Register scratch2,
+                                Register scratch3, Register scratch4,
+                                Register scratch5, Label* missing,
+                                Match match) {
+  // Inline implementation of |lookup| for mozilla::detail::HashTable
+
+  // If the hashtable is empty, we won't find an entry.
+  branch32(Assembler::Equal, Address(hashTable, Table::offsetOfEntryCount()),
+           Imm32(0), missing);
+
+  // Compute the primary hash address:
+  // HashNumber h1 = hash1(aKeyHash);
+  Register hash1 = scratch5;
+  computeHash1MFBT<Table>(hashTable, hashCode, hash1, scratch);
+
+  Label primaryCollision;
+  checkForMatchMFBT<Table>(hashTable, hash1, hashCode, scratch, scratch2,
+                           missing, &primaryCollision);
+  match();
+  bind(&primaryCollision);
+
+  // Otherwise, we've had a collision. Double-hash.
+  Register hash2 = scratch4;
+  Register sizeMask = scratch3;
+  computeHash2MFBT<Table>(hashTable, hashCode, hash2, sizeMask, scratch);
+
+  Label loop;
+  bind(&loop);
+
+  applyDoubleHashMFBT(hash1, hash2, sizeMask);
+  checkForMatchMFBT<Table>(hashTable, hash1, hashCode, scratch, scratch2,
+                           missing, &loop);
+  match();
+  jump(&loop);
+}
+
 void MacroAssembler::assertStackAlignment(uint32_t alignment,
                                           int32_t offset /* = 0 */) {
 #ifdef DEBUG
   Label ok, bad;
-  MOZ_ASSERT(mozilla::IsPowerOfTwo(alignment));
+  MOZ_ASSERT(std::has_single_bit(alignment));
 
   // Wrap around the offset to be a non-negative number.
   offset %= alignment;
@@ -1074,7 +1120,7 @@ void MacroAssembler::assertStackAlignment(uint32_t alignment,
   // Test if each bit from offset is set.
   uint32_t off = offset;
   while (off) {
-    uint32_t lowestBit = 1 << mozilla::CountTrailingZeroes32(off);
+    uint32_t lowestBit = 1 << std::countr_zero(off);
     branchTestStackPtr(Assembler::Zero, Imm32(lowestBit), &bad);
     off ^= lowestBit;
   }

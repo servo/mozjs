@@ -21,16 +21,16 @@ class ErrorCollector:
 
     Warnings, errors and fatal errors may be logged by calls to the following
     functions:
-      - errors.warn(message)
-      - errors.error(message)
-      - errors.fatal(message)
+
+    - errors.warn(message)
+    - errors.error(message)
+    - errors.fatal(message)
 
     Warnings only send the message on the logging output, while errors and
     fatal errors send the message and throw an ErrorMessage exception. The
     exception, however, may be deferred. See further below.
 
-    Errors may be ignored by calling:
-      - errors.ignore_errors()
+    Errors may be ignored by calling ``errors.ignore_errors()``.
 
     After calling that function, only fatal errors throw an exception.
 

@@ -11,7 +11,7 @@ Usage: buildlist.py <filename> <entry> [<entry> ...]
 import os.path
 import sys
 
-from filelock import SoftFileLock
+from mach.filelock import SoftFileLock
 
 from mozbuild.dirutils import ensureParentDir
 
@@ -23,12 +23,12 @@ def addEntriesToListFile(listFile, entries):
     ensureParentDir(listFile)
     with SoftFileLock(listFile + ".lck", timeout=-1):
         if os.path.exists(listFile):
-            with open(listFile) as f:
+            with open(listFile, encoding="utf-8") as f:
                 existing = {x.strip() for x in f.readlines()}
         else:
             existing = set()
         existing.update(entries)
-        with open(listFile, "w", newline="\n") as f:
+        with open(listFile, "w", encoding="utf-8", newline="\n") as f:
             f.write("\n".join(sorted(existing)) + "\n")
 
 

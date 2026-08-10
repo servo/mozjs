@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -19,7 +17,6 @@
 #include "NamespaceImports.h"
 
 #include "builtin/temporal/Calendar.h"
-#include "builtin/temporal/Crash.h"
 #include "builtin/temporal/Era.h"
 #include "builtin/temporal/Temporal.h"
 #include "builtin/temporal/TemporalParser.h"
@@ -47,7 +44,7 @@ using namespace js;
 using namespace js::temporal;
 
 void CalendarFields::trace(JSTracer* trc) {
-  TraceNullableRoot(trc, &era_, "CalendarFields::era");
+  TraceRoot(trc, &era_, "CalendarFields::era");
   timeZone_.trace(trc);
 }
 
@@ -167,7 +164,7 @@ static constexpr const char* ToCString(CalendarField field) {
     case CalendarField::TimeZone:
       return "timeZone";
   }
-  JS_CONSTEXPR_CRASH("invalid temporal field name");
+  MOZ_CRASH("invalid temporal field name");
 }
 
 static constexpr bool CalendarFieldsAreSorted() {
@@ -200,72 +197,68 @@ static mozilla::EnumSet<CalendarField> CalendarExtraFields(
 
   // Step 2.
 
-  // "era" and "eraYear" are relevant for calendars with multiple eras when
+  // "era" and "eraYear" are relevant for calendars supporting eras when
   // "year" is present.
-  if (fields.contains(CalendarField::Year) && CalendarEraRelevant(calendar)) {
+  if (fields.contains(CalendarField::Year) && CalendarSupportsEra(calendar)) {
     return {CalendarField::Era, CalendarField::EraYear};
   }
   return {};
 }
 
 /**
- * ToMonthCode ( argument )
+ * ParseMonthCode ( argument )
  */
 template <typename CharT>
-static mozilla::Maybe<MonthCodeField> ToMonthCode(
+static mozilla::Maybe<MonthCodeField> ParseMonthCode(
     mozilla::Range<const CharT> chars) {
   // Steps 1-2. (Not applicable)
 
-  // Step 3.
-  //
-  // Caller is responsible to ensure the string has the correct length.
-  MOZ_ASSERT(chars.length() >= 3 && chars.length() <= 4);
+  // Steps 3-6.
+  if (chars.length() < 3 || chars.length() > 4) {
+    return mozilla::Nothing();
+  }
 
-  // Steps 4 and 7.
-  //
   // Starts with capital letter 'M'. Leap months end with capital letter 'L'.
   bool isLeapMonth = chars.length() == 4;
   if (chars[0] != 'M' || (isLeapMonth && chars[3] != 'L')) {
     return mozilla::Nothing();
   }
 
-  // Steps 5-6.
-  //
   // Month numbers are ASCII digits.
   if (!mozilla::IsAsciiDigit(chars[1]) || !mozilla::IsAsciiDigit(chars[2])) {
     return mozilla::Nothing();
   }
 
-  // Steps 8-9.
+  // Steps 6-7.
   int32_t ordinal =
       AsciiDigitToNumber(chars[1]) * 10 + AsciiDigitToNumber(chars[2]);
 
-  // Step 10.
+  // Step 8.
   if (ordinal == 0 && !isLeapMonth) {
     return mozilla::Nothing();
   }
 
-  // Step 11.
+  // Step 9.
   return mozilla::Some(MonthCodeField{ordinal, isLeapMonth});
 }
 
 /**
- * ToMonthCode ( argument )
+ * ParseMonthCode ( argument )
  */
-static auto ToMonthCode(const JSLinearString* linear) {
+static auto ParseMonthCode(const JSLinearString* linear) {
   JS::AutoCheckCannotGC nogc;
 
   if (linear->hasLatin1Chars()) {
-    return ToMonthCode(linear->latin1Range(nogc));
+    return ParseMonthCode(linear->latin1Range(nogc));
   }
-  return ToMonthCode(linear->twoByteRange(nogc));
+  return ParseMonthCode(linear->twoByteRange(nogc));
 }
 
 /**
- * ToMonthCode ( argument )
+ * ParseMonthCode ( argument )
  */
-static bool ToMonthCode(JSContext* cx, Handle<Value> value,
-                        MonthCodeField* result) {
+static bool ParseMonthCode(JSContext* cx, Handle<Value> value,
+                           MonthCodeField* result) {
   auto reportInvalidMonthCode = [&](JSLinearString* monthCode) {
     if (auto code = QuoteString(cx, monthCode)) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
@@ -293,13 +286,8 @@ static bool ToMonthCode(JSContext* cx, Handle<Value> value,
     return false;
   }
 
-  // Step 3.
-  if (monthCodeStr->length() < 3 || monthCodeStr->length() > 4) {
-    return reportInvalidMonthCode(monthCodeStr);
-  }
-
-  // Steps 4-11.
-  auto parsed = ToMonthCode(monthCodeStr);
+  // Steps 3-9.
+  auto parsed = ParseMonthCode(monthCodeStr);
   if (!parsed) {
     return reportInvalidMonthCode(monthCodeStr);
   }
@@ -418,7 +406,7 @@ static bool PrepareCalendarFields(
         }
         case CalendarField::MonthCode: {
           MonthCodeField monthCode;
-          if (!ToMonthCode(cx, value, &monthCode)) {
+          if (!ParseMonthCode(cx, value, &monthCode)) {
             return false;
           }
           result.setMonthCode(monthCode);
@@ -546,31 +534,10 @@ bool js::temporal::PreparePartialCalendarFields(
 }
 
 /**
- * CalendarFieldKeysToIgnore ( calendar, keys )
+ * NonISOFieldKeysToIgnore ( calendar, keys )
  */
-static auto CalendarFieldKeysToIgnore(CalendarId calendar,
-                                      mozilla::EnumSet<CalendarField> keys) {
-  // Step 1.
-  if (calendar == CalendarId::ISO8601) {
-    // Steps 1.a and 1.b.i.
-    auto ignoredKeys = keys;
-
-    // Step 1.b.ii.
-    if (keys.contains(CalendarField::Month)) {
-      ignoredKeys += CalendarField::MonthCode;
-    }
-
-    // Step 1.b.iii.
-    else if (keys.contains(CalendarField::MonthCode)) {
-      ignoredKeys += CalendarField::Month;
-    }
-
-    // Steps 1.c-d.
-    return ignoredKeys;
-  }
-
-  // Step 2.
-
+static auto NonISOFieldKeysToIgnore(CalendarId calendar,
+                                    mozilla::EnumSet<CalendarField> keys) {
   static constexpr auto eraOrEraYear = mozilla::EnumSet{
       CalendarField::Era,
       CalendarField::EraYear,
@@ -602,20 +569,47 @@ static auto CalendarFieldKeysToIgnore(CalendarId calendar,
     result += monthOrMonthCode;
   }
 
-  // "era", "eraYear", and "year" are mutually exclusive in non-single era
-  // calendar systems.
-  if (CalendarEraRelevant(calendar) && !(keys & eraOrAnyYear).isEmpty()) {
+  // "era", "eraYear", and "year" are mutually exclusive when the calendar
+  // supports eras.
+  if (CalendarSupportsEra(calendar) && !(keys & eraOrAnyYear).isEmpty()) {
     result += eraOrAnyYear;
   }
 
-  // If eras don't start at year boundaries, we have to ignore "era" and
+  // If eras can start in the middle of the year, we have to ignore "era" and
   // "eraYear" if any of "day", "month", or "monthCode" is present.
-  if (!CalendarEraStartsAtYearBoundary(calendar) &&
-      !(keys & dayOrAnyMonth).isEmpty()) {
+  if (CalendarHasMidYearEras(calendar) && !(keys & dayOrAnyMonth).isEmpty()) {
     result += eraOrEraYear;
   }
 
   return result;
+}
+
+/**
+ * CalendarFieldKeysToIgnore ( calendar, keys )
+ */
+static auto CalendarFieldKeysToIgnore(CalendarId calendar,
+                                      mozilla::EnumSet<CalendarField> keys) {
+  // Step 1.
+  if (calendar == CalendarId::ISO8601) {
+    // Steps 1.a and 1.b.i.
+    auto ignoredKeys = keys;
+
+    // Step 1.b.ii.
+    if (keys.contains(CalendarField::Month)) {
+      ignoredKeys += CalendarField::MonthCode;
+    }
+
+    // Step 1.b.iii.
+    else if (keys.contains(CalendarField::MonthCode)) {
+      ignoredKeys += CalendarField::Month;
+    }
+
+    // Steps 1.c-d.
+    return ignoredKeys;
+  }
+
+  // Step 2.
+  return NonISOFieldKeysToIgnore(calendar, keys);
 }
 
 /**

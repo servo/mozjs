@@ -3,7 +3,7 @@ to C code.
 diff --git a/fdlibm.h b/fdlibm.h
 --- a/fdlibm.h
 +++ b/fdlibm.h
-@@ -16,67 +16,67 @@
+@@ -16,50 +16,50 @@
  
  #ifndef mozilla_imported_fdlibm_h
  #define	mozilla_imported_fdlibm_h
@@ -44,13 +44,6 @@ diff --git a/fdlibm.h b/fdlibm.h
 -double	pow(double, double);
 +double	fdlibm_pow(double, double);
  
--double	ceil(double);
--double	fabs(double);
--double	floor(double);
-+double	fdlibm_ceil(double);
-+double	fdlibm_fabs(double);
-+double	fdlibm_floor(double);
- 
 -double	acosh(double);
 -double	asinh(double);
 -double	atanh(double);
@@ -60,11 +53,6 @@ diff --git a/fdlibm.h b/fdlibm.h
 -double	hypot(double, double);
 -double	log1p(double);
 -double	log2(double);
--double	rint(double);
--double	copysign(double, double);
--double	nearbyint(double);
--double	scalbn(double, int);
--double	trunc(double);
 -float	acosf(float);
 -float	asinf(float);
 -float	atanf(float);
@@ -76,7 +64,6 @@ diff --git a/fdlibm.h b/fdlibm.h
 -float	log10f(float);
 -float	logf(float);
 -float	powf(float, float);
--float	sqrtf(float);
 +double	fdlibm_acosh(double);
 +double	fdlibm_asinh(double);
 +double	fdlibm_atanh(double);
@@ -86,11 +73,6 @@ diff --git a/fdlibm.h b/fdlibm.h
 +double	fdlibm_hypot(double, double);
 +double	fdlibm_log1p(double);
 +double	fdlibm_log2(double);
-+double	fdlibm_rint(double);
-+double	fdlibm_copysign(double, double);
-+double	fdlibm_nearbyint(double);
-+double	fdlibm_scalbn(double, int);
-+double	fdlibm_trunc(double);
 +float	fdlibm_acosf(float);
 +float	fdlibm_asinf(float);
 +float	fdlibm_atanf(float);
@@ -102,30 +84,15 @@ diff --git a/fdlibm.h b/fdlibm.h
 +float	fdlibm_log10f(float);
 +float	fdlibm_logf(float);
 +float	fdlibm_powf(float, float);
-+float	fdlibm_sqrtf(float);
  
--float	ceilf(float);
--float	fabsf(float);
--float	floorf(float);
 -float	hypotf(float, float);
--float	nearbyintf(float);
--float	rintf(float);
--float	scalbnf(float, int);
--float	truncf(float);
-+float	fdlibm_ceilf(float);
-+float	fdlibm_fabsf(float);
-+float	fdlibm_floorf(float);
 +float	fdlibm_hypotf(float, float);
-+float	fdlibm_nearbyintf(float);
-+float	fdlibm_rintf(float);
-+float	fdlibm_scalbnf(float, int);
-+float	fdlibm_truncf(float);
  
  #endif /* !mozilla_imported_fdlibm_h */
 diff --git a/math_private.h b/math_private.h
 --- a/math_private.h
 +++ b/math_private.h
-@@ -867,16 +867,69 @@ irintl(long double x)
+@@ -867,16 +867,52 @@ irintl(long double x)
  #define	__ieee754_j1f	j1f
  #define	__ieee754_y0f	y0f
  #define	__ieee754_y1f	y1f
@@ -160,11 +127,6 @@ diff --git a/math_private.h b/math_private.h
 +#define log10f fdlibm_log10f
 +#define pow fdlibm_pow
 +#define powf fdlibm_powf
-+#define ceil fdlibm_ceil
-+#define ceilf fdlibm_ceilf
-+#define fabs fdlibm_fabs
-+#define fabsf fdlibm_fabsf
-+#define floor fdlibm_floor
 +#define acosh fdlibm_acosh
 +#define asinh fdlibm_asinh
 +#define atanh fdlibm_atanh
@@ -174,18 +136,6 @@ diff --git a/math_private.h b/math_private.h
 +#define hypotf fdlibm_hypotf
 +#define log1p fdlibm_log1p
 +#define log2 fdlibm_log2
-+#define scalb fdlibm_scalb
-+#define copysign fdlibm_copysign
-+#define scalbn fdlibm_scalbn
-+#define scalbnf fdlibm_scalbnf
-+#define trunc fdlibm_trunc
-+#define truncf fdlibm_truncf
-+#define floorf fdlibm_floorf
-+#define nearbyint fdlibm_nearbyint
-+#define nearbyintf fdlibm_nearbyintf
-+#define rint fdlibm_rint
-+#define rintf fdlibm_rintf
-+#define sqrtf fdlibm_sqrtf
 +
  /* fdlibm kernel function */
  int	__kernel_rem_pio2(double*,double*,int,int,int);

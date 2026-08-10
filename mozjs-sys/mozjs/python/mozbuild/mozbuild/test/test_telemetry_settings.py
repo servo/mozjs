@@ -101,8 +101,8 @@ def _initialize_telemetry(settings, is_employee, contributor_prompt_response=Non
         return_value=contributor_prompt_response,
     ) as prompt_mock, mock.patch(
         "subprocess.run", return_value=Mock(returncode=0)
-    ), mock.patch(
-        "mach.config.ConfigSettings"
+    ), mock.patch("mach.config.ConfigSettings"), mock.patch(
+        "mach.telemetry.record_is_employee_telemetry_setting"
     ):
         initialize_telemetry_setting(settings, "", "")
         return prompt_mock.call_count == 1
@@ -140,24 +140,38 @@ def test_initialize_noop_when_telemetry_disabled_env(monkeypatch):
         assert not did_prompt
 
 
-def test_initialize_noop_when_request_error(settings):
+def test_initialize_when_request_error_falls_back_to_vcs(settings, monkeypatch):
+    monkeypatch.delenv("MOZ_AUTOMATION", raising=False)
     with mock.patch(
-        "mach.telemetry.resolve_is_employee",
+        "requests.get",
         side_effect=requests.exceptions.RequestException("Unlucky"),
-    ), mock.patch("mach.telemetry.record_telemetry_settings") as record_mock:
-        initialize_telemetry_setting(None, None, None)
-        assert record_mock.call_count == 0
+    ), mock.patch(
+        "mach.telemetry.resolve_is_employee_by_vcs", return_value=True
+    ), mock.patch(
+        "mach.telemetry.prompt_telemetry_message_contributor"
+    ) as prompt_mock, mock.patch(
+        "mach.telemetry.record_telemetry_settings"
+    ) as record_mock:
+        initialize_telemetry_setting(settings, "", "")
+        assert prompt_mock.call_count == 0
+        assert record_mock.call_count == 1
+        args, kwargs = record_mock.call_args
+        assert args[2]
 
 
-def test_resolve_is_employee():
+def test_resolve_is_employee(tmpdir, monkeypatch):
+    monkeypatch.delenv("MOZ_AUTOMATION", raising=False)
+
     def mock_and_run(is_employee_bugzilla, is_employee_vcs):
         with mock.patch(
             "mach.telemetry.resolve_is_employee_by_credentials",
             return_value=is_employee_bugzilla,
         ), mock.patch(
             "mach.telemetry.resolve_is_employee_by_vcs", return_value=is_employee_vcs
-        ):
-            return resolve_is_employee(None)
+        ), mock.patch("mach.telemetry.record_is_employee_telemetry_setting"):
+            fake_settings = Mock()
+            fake_settings.mach_telemetry.is_employee = None
+            return resolve_is_employee(None, str(tmpdir), fake_settings)
 
     assert not mock_and_run(False, False)
     assert not mock_and_run(False, True)
@@ -167,6 +181,28 @@ def test_resolve_is_employee():
     assert mock_and_run(True, None)
     assert not mock_and_run(None, False)
     assert mock_and_run(None, True)
+
+
+def test_resolve_is_employee_no_cache_when_unknown(tmpdir, monkeypatch):
+    """Test that cache is not updated when employee status cannot be determined."""
+    monkeypatch.delenv("MOZ_AUTOMATION", raising=False)
+
+    with mock.patch(
+        "mach.telemetry.resolve_is_employee_by_credentials",
+        return_value=None,
+    ), mock.patch(
+        "mach.telemetry.resolve_is_employee_by_vcs", return_value=None
+    ), mock.patch("mach.telemetry.record_is_employee_telemetry_setting") as record_mock:
+        fake_settings = Mock()
+        fake_settings.mach_telemetry.is_employee = None
+        result = resolve_is_employee(None, str(tmpdir), fake_settings)
+
+        # When we can't determine if somebody is an employee, we should return None
+        assert result is None
+        # We should not cache the value when employee status is unknown, allowing
+        # future attempts to determine it (e.g., network connectivity is restored
+        # or their VCS is configured with their e-mail)
+        assert record_mock.call_count == 0
 
 
 if __name__ == "__main__":

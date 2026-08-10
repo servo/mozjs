@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,8 +6,6 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/Maybe.h"
-
-#include <string.h>
 
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit, js::GetNativeStackLimit
@@ -41,7 +37,7 @@ static bool ProxySetOnExpando(JSContext* cx, HandleObject proxy, HandleId id,
   MOZ_ASSERT(id.isPrivateName());
 
   // For BaseProxyHandler, private names are stored in the expando object.
-  RootedObject expando(cx, proxy->as<ProxyObject>().expando().toObjectOrNull());
+  RootedObject expando(cx, proxy->as<ProxyObject>().expando());
 
   // SetPrivateElementOperation checks for hasOwn first, which ensures the
   // expando exsists.
@@ -64,15 +60,14 @@ static bool ProxySetOnExpando(JSContext* cx, HandleObject proxy, HandleId id,
     return false;
   }
 
-  RootedValue expandoValue(cx, proxy->as<ProxyObject>().expando());
-  return SetPropertyIgnoringNamedGetter(cx, expando, id, v, expandoValue,
-                                        ownDesc, result);
+  return SetPropertyIgnoringNamedGetter(cx, expando, id, v, receiver, ownDesc,
+                                        result);
 }
 
 static bool ProxyGetOwnPropertyDescriptorFromExpando(
     JSContext* cx, HandleObject proxy, HandleId id,
     MutableHandle<mozilla::Maybe<PropertyDescriptor>> desc) {
-  RootedObject expando(cx, proxy->as<ProxyObject>().expando().toObjectOrNull());
+  RootedObject expando(cx, proxy->as<ProxyObject>().expando());
 
   if (!expando) {
     return true;
@@ -85,7 +80,7 @@ static bool ProxyGetOnExpando(JSContext* cx, HandleObject proxy,
                               HandleValue receiver, HandleId id,
                               MutableHandleValue vp) {
   // For BaseProxyHandler, private names are stored in the expando object.
-  RootedObject expando(cx, proxy->as<ProxyObject>().expando().toObjectOrNull());
+  RootedObject expando(cx, proxy->as<ProxyObject>().expando());
 
   // We must have the expando, or GetPrivateElemOperation didn't call
   // hasPrivate first.
@@ -125,7 +120,7 @@ static bool ProxyGetOnExpando(JSContext* cx, HandleObject proxy,
 static bool ProxyHasOnExpando(JSContext* cx, HandleObject proxy, HandleId id,
                               bool* bp) {
   // For BaseProxyHandler, private names are stored in the expando object.
-  RootedObject expando(cx, proxy->as<ProxyObject>().expando().toObjectOrNull());
+  RootedObject expando(cx, proxy->as<ProxyObject>().expando());
 
   // If there is no expando object, then there is no private field.
   if (!expando) {
@@ -142,7 +137,7 @@ static bool ProxyDefineOnExpando(JSContext* cx, HandleObject proxy, HandleId id,
   MOZ_ASSERT(id.isPrivateName());
 
   // For BaseProxyHandler, private names are stored in the expando object.
-  RootedObject expando(cx, proxy->as<ProxyObject>().expando().toObjectOrNull());
+  RootedObject expando(cx, proxy->as<ProxyObject>().expando());
 
   if (!expando) {
     expando = NewPlainObjectWithProto(cx, nullptr);
@@ -425,9 +420,7 @@ bool js::ProxyHas(JSContext* cx, HandleObject proxy, HandleValue idVal,
   if (!ToPropertyKey(cx, idVal, &id)) {
     return false;
   }
-  if (MOZ_UNLIKELY(!proxy->is<ProxyObject>())) {
-    return HasProperty(cx, proxy, id, result);
-  }
+
   return Proxy::has(cx, proxy, id, result);
 }
 
@@ -468,9 +461,7 @@ bool js::ProxyHasOwn(JSContext* cx, HandleObject proxy, HandleValue idVal,
   if (!ToPropertyKey(cx, idVal, &id)) {
     return false;
   }
-  if (MOZ_UNLIKELY(!proxy->is<ProxyObject>())) {
-    return HasOwnProperty(cx, proxy, id, result);
-  }
+
   return Proxy::hasOwn(cx, proxy, id, result);
 }
 
@@ -552,9 +543,6 @@ bool js::ProxyGetPropertyByValue(JSContext* cx, HandleObject proxy,
   }
 
   RootedValue receiver(cx, ObjectValue(*proxy));
-  if (MOZ_UNLIKELY(!proxy->is<ProxyObject>())) {
-    return GetProperty(cx, proxy, receiver, id, vp);
-  }
   return Proxy::getInternal(cx, proxy, receiver, id, vp);
 }
 
@@ -628,11 +616,7 @@ bool js::ProxySetPropertyByValue(JSContext* cx, HandleObject proxy,
 
   ObjectOpResult result;
   RootedValue receiver(cx, ObjectValue(*proxy));
-  if (MOZ_UNLIKELY(!proxy->is<ProxyObject>())) {
-    if (!SetProperty(cx, proxy, id, val, receiver, result)) {
-      return false;
-    }
-  } else if (!Proxy::setInternal(cx, proxy, id, val, receiver, result)) {
+  if (!Proxy::setInternal(cx, proxy, id, val, receiver, result)) {
     return false;
   }
   return result.checkStrictModeError(cx, proxy, id, strict);
@@ -880,9 +864,9 @@ void ProxyObject::traceEdgeToTarget(JSTracer* trc, ProxyObject* obj) {
 #ifdef DEBUG
 static inline void CheckProxyIsInCCWMap(ProxyObject* proxy) {
   if (proxy->zone()->isGCCompacting()) {
-    // Skip this check during compacting GC since objects' object groups may be
-    // forwarded. It's not impossible to make this work, but requires adding a
-    // parallel lookupWrapper() path for this one case.
+    // Skip this check during compacting GC since objects' shapes and base
+    // shapes may be forwarded. It's not impossible to make this work, but
+    // requires adding a parallel lookupWrapper() path for this one case.
     return;
   }
 
@@ -892,7 +876,7 @@ static inline void CheckProxyIsInCCWMap(ProxyObject* proxy) {
     // invariant that the wrapped object is the key in the wrapper map.
     ObjectWrapperMap::Ptr p = proxy->compartment()->lookupWrapper(referent);
     MOZ_ASSERT(p);
-    MOZ_ASSERT(*p->value().unsafeGet() == proxy);
+    MOZ_ASSERT(p->value().unbarrieredGet() == proxy);
   }
 }
 #endif
@@ -901,7 +885,7 @@ static inline void CheckProxyIsInCCWMap(ProxyObject* proxy) {
 void ProxyObject::trace(JSTracer* trc, JSObject* obj) {
   ProxyObject* proxy = &obj->as<ProxyObject>();
 
-  TraceNullableEdge(trc, proxy->slotOfExpando(), "expando");
+  TraceEdge(trc, proxy->expandoPtr(), "expando");
 
 #ifdef DEBUG
   JSContext* cx = TlsContext.get();
@@ -938,49 +922,16 @@ static void proxy_Finalize(JS::GCContext* gcx, JSObject* obj) {
   MOZ_ASSERT(obj->is<ProxyObject>());
   ProxyObject* proxy = &obj->as<ProxyObject>();
   proxy->handler()->finalize(gcx, obj);
-
-  if (!proxy->usingInlineValueArray() && proxy->isTenured()) {
-    auto* valArray = js::detail::GetProxyDataLayout(obj)->values();
-    size_t size =
-        js::detail::ProxyValueArray::sizeOf(proxy->numReservedSlots());
-    gcx->free_(obj, valArray, size, MemoryUse::ProxyExternalValueArray);
-  }
 }
 
 size_t js::proxy_ObjectMoved(JSObject* obj, JSObject* old) {
   ProxyObject& proxy = obj->as<ProxyObject>();
-
-  if (IsInsideNursery(old)) {
-    proxy.nurseryProxyTenured(&old->as<ProxyObject>());
-  }
-
   return proxy.handler()->objectMoved(obj, old);
 }
 
-void ProxyObject::nurseryProxyTenured(ProxyObject* old) {
-  if (old->usingInlineValueArray()) {
-    setInlineValueArray();
-    return;
-  }
-
-  Nursery& nursery = runtimeFromMainThread()->gc.nursery();
-  nursery.removeMallocedBufferDuringMinorGC(data.values());
-
-  size_t size = detail::ProxyValueArray::sizeOf(numReservedSlots());
-  AddCellMemory(this, size, MemoryUse::ProxyExternalValueArray);
-}
-
 const JSClassOps js::ProxyClassOps = {
-    nullptr,             // addProperty
-    nullptr,             // delProperty
-    nullptr,             // enumerate
-    nullptr,             // newEnumerate
-    nullptr,             // resolve
-    nullptr,             // mayResolve
-    proxy_Finalize,      // finalize
-    nullptr,             // call
-    nullptr,             // construct
-    ProxyObject::trace,  // trace
+    .finalize = proxy_Finalize,
+    .trace = ProxyObject::trace,
 };
 
 const ClassExtension js::ProxyClassExtension = {
@@ -1013,7 +964,8 @@ static const ClassSpec ProxyClassSpec = {
 
 const JSClass js::ProxyClass = PROXY_CLASS_DEF_WITH_CLASS_SPEC(
     "Proxy",
-    JSCLASS_HAS_CACHED_PROTO(JSProto_Proxy) | JSCLASS_HAS_RESERVED_SLOTS(2),
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Proxy) |
+        JSCLASS_HAS_RESERVED_SLOTS(SwappableProxyReservedSlots),
     &ProxyClassSpec);
 
 JS_PUBLIC_API JSObject* js::NewProxyObject(JSContext* cx,

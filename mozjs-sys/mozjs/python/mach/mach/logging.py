@@ -7,7 +7,6 @@
 # logging framework.
 
 import codecs
-import json
 import logging
 import os
 import sys
@@ -15,9 +14,26 @@ import time
 
 import blessed
 from mozbuild.buildversion import mozilla_build_version
+from mozfile import json
 from packaging.version import Version
 
 IS_WINDOWS = sys.platform.startswith("win")
+
+# Custom log levels for 'weaker' warnings, between DEBUG (10) and INFO (20)
+# to make them suppressed by default.
+THIRD_PARTY_WARNING = 15
+SUPPRESSED_WARNING = 16
+assert logging.DEBUG < THIRD_PARTY_WARNING < SUPPRESSED_WARNING < logging.INFO
+
+# Custom log level for build errors, between WARNING (30) and ERROR (40).
+# Using ERROR would trigger Sentry's LoggingIntegration for each line, which
+# generates excessive telemetry events and is very slow (~400ms per line).
+BUILD_ERROR = 35
+assert logging.WARNING < BUILD_ERROR < logging.ERROR
+
+logging.addLevelName(THIRD_PARTY_WARNING, "THIRD_PARTY_WARNING")
+logging.addLevelName(SUPPRESSED_WARNING, "SUPPRESSED_WARNING")
+logging.addLevelName(BUILD_ERROR, "BUILD_ERROR")
 
 if IS_WINDOWS:
     import msvcrt
@@ -78,8 +94,11 @@ def format_level(level, terminal=None):
     levels = {
         logging.NOTSET: ("N", "bright_white"),
         logging.DEBUG: ("D", "blue"),
+        THIRD_PARTY_WARNING: ("TPW", "yellow"),
+        SUPPRESSED_WARNING: ("SW", "yellow"),
         logging.INFO: (None, None),
         logging.WARNING: ("W", "yellow"),
+        BUILD_ERROR: ("E", "red"),
         logging.ERROR: ("E", "red"),
         logging.CRITICAL: ("C", "black_on_red"),
     }
@@ -113,8 +132,9 @@ class StructuredJSONFormatter(logging.Formatter):
     def format(self, record):
         action = getattr(record, "action", "UNKNOWN")
         params = getattr(record, "params", {})
+        msg = record.msg
 
-        return json.dumps([record.created, action, params])
+        return json.dumps([record.created, action, params, msg])
 
 
 class StructuredHumanFormatter(logging.Formatter):
@@ -260,7 +280,7 @@ class LoggingManager:
     def __init__(self):
         self.start_time = time.time()
 
-        self.json_handlers = []
+        self.file_handlers = []
         self.terminal_handler = None
         self.terminal_formatter = None
 
@@ -296,19 +316,39 @@ class LoggingManager:
     def terminal(self):
         return self._terminal
 
-    def add_json_handler(self, fh):
-        """Enable JSON logging on the specified file object."""
-
-        # Configure the consumer of structured messages.
+    def _add_file_handler(self, fh, formatter, filter=None):
+        """Internal helper to create and register a file handler."""
         handler = logging.StreamHandler(stream=fh)
-        handler.setFormatter(StructuredJSONFormatter())
+        handler.setFormatter(formatter)
         handler.setLevel(logging.DEBUG)
+        if filter:
+            handler.addFilter(filter)
 
-        # And hook it up.
         for logger in self.structured_loggers:
             logger.addHandler(handler)
 
-        self.json_handlers.append(handler)
+        self.file_handlers.append(handler)
+
+    def _add_file_handlers_to_logger(self, logger):
+        """Internal helper to add all file handlers to a logger."""
+        for handler in self.file_handlers:
+            logger.addHandler(handler)
+
+    def _remove_file_handlers_from_logger(self, logger):
+        """Internal helper to remove all file handlers from a logger."""
+        for handler in self.file_handlers:
+            logger.removeHandler(handler)
+
+    def add_json_handler(self, fh):
+        """Enable JSON logging on the specified file object."""
+        self._add_file_handler(fh, StructuredJSONFormatter())
+
+    def add_text_handler(self, fh):
+        """Enable human-readable text logging on the specified file object."""
+        formatter = StructuredHumanFormatter(
+            self.start_time, write_interval=False, write_times=True
+        )
+        self._add_file_handler(fh, formatter, self.structured_filter)
 
     def add_terminal_logging(
         self, fh=sys.stdout, level=logging.INFO, write_interval=False, write_times=True
@@ -372,14 +412,18 @@ class LoggingManager:
         if self.terminal_handler:
             self.terminal_handler.addFilter(self.structured_filter)
             self.root_logger.addHandler(self.terminal_handler)
+            for logger in self.structured_loggers:
+                logger.propagate = False
 
     def disable_unstructured(self):
         """Disable logging of unstructured messages."""
         if self.terminal_handler:
             self.terminal_handler.removeFilter(self.structured_filter)
             self.root_logger.removeHandler(self.terminal_handler)
+            for logger in self.structured_loggers:
+                logger.propagate = True
 
-    def register_structured_logger(self, logger, terminal=True, json=True):
+    def register_structured_logger(self, logger, terminal=True, file=True):
         """Register a structured logger.
 
         This needs to be called for all structured loggers that don't chain up
@@ -390,19 +434,20 @@ class LoggingManager:
         if terminal and self.terminal_handler:
             logger.addHandler(self.terminal_handler)
 
-        if json:
-            for handler in self.json_handlers:
-                logger.addHandler(handler)
+        if file:
+            self._add_file_handlers_to_logger(logger)
 
-    def enable_all_structured_loggers(self, terminal=True, json=True):
+    def enable_all_structured_loggers(self, terminal=True, file=True):
         """Enable logging of all structured messages from all loggers.
 
-        ``terminal`` and ``json`` determine which log handlers to operate
+        ``terminal`` and ``file`` determine which log handlers to operate
         on. By default, all known handlers are operated on.
         """
 
-        # Glean makes logs that we're not interested in, so we squelch them.
+        # Glean and filelock make logs that we're not interested in, so we
+        # squelch them.
         logging.getLogger("glean").setLevel(logging.CRITICAL)
+        logging.getLogger("filelock").setLevel(logging.CRITICAL)
 
         # Remove current handlers from all loggers so we don't double
         # register handlers.
@@ -414,11 +459,10 @@ class LoggingManager:
             if terminal:
                 logger.removeHandler(self.terminal_handler)
 
-            if json:
-                for handler in self.json_handlers:
-                    logger.removeHandler(handler)
+            if file:
+                self._remove_file_handlers_from_logger(logger)
 
         # Wipe out existing registered structured loggers since they
         # all propagate to root logger.
         self.structured_loggers = []
-        self.register_structured_logger(self.root_logger, terminal=terminal, json=json)
+        self.register_structured_logger(self.root_logger, terminal=terminal, file=file)

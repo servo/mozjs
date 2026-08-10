@@ -49,7 +49,7 @@ def runUtil(util, args, inputdata=None, outputstream=None):
         pathvar = "LD_LIBRARY_PATH"
         app_path = os.path.dirname(util)
         if pathvar in env:
-            env[pathvar] = "%s%s%s" % (app_path, os.pathsep, env[pathvar])
+            env[pathvar] = f"{app_path}{os.pathsep}{env[pathvar]}"
         else:
             env[pathvar] = app_path
     proc = subprocess.Popen(

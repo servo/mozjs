@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -48,6 +46,7 @@ UNIFIED_SOURCES += [
     "testException.cpp",
     "testExecuteInJSMEnvironment.cpp",
     "testExternalStrings.cpp",
+    "testFifo.cpp",
     "testFindSCCs.cpp",
     "testForceLexicalInitialization.cpp",
     "testForOfIterator.cpp",
@@ -88,6 +87,7 @@ UNIFIED_SOURCES += [
     "testJSEvaluateScript.cpp",
     "testJSON.cpp",
     "testLargeArrayBuffers.cpp",
+    "testLightLock.cpp",
     "testLinkedList.cpp",
     "testLookup.cpp",
     "testLooselyEqual.cpp",
@@ -102,17 +102,20 @@ UNIFIED_SOURCES += [
     "testObjectEmulatingUndefined.cpp",
     "testObjectSwap.cpp",
     "testObjectWithStashedPointer.cpp",
+    "testObserverList.cpp",
     "testOOM.cpp",
     "testParseJSON.cpp",
     "testParserAtom.cpp",
     "testPersistentRooted.cpp",
     "testPreserveJitCode.cpp",
+    "testPrinter.cpp",
     "testPrintf.cpp",
     "testPrivateGCThingValue.cpp",
     "testProfileStrings.cpp",
     "testPromise.cpp",
     "testPropCache.cpp",
     "testPropertyKey.cpp",
+    "testRealmOptions.cpp",
     "testRegExp.cpp",
     "testResolveRecursion.cpp",
     "testResult.cpp",
@@ -143,10 +146,12 @@ UNIFIED_SOURCES += [
     "testThreadingMutex.cpp",
     "testThreadingThread.cpp",
     "testToSignedOrUnsignedInteger.cpp",
+    "testTraceableFifoValue.cpp",
     "testTypedArrays.cpp",
     "testUbiNode.cpp",
     "testUncaughtSymbol.cpp",
     "testUTF8.cpp",
+    "testValueNaN.cpp",
     "testWasmEncoder.cpp",
     "testWasmLEB128.cpp",
     "testWasmMasm.cpp",
@@ -207,6 +212,9 @@ LOCAL_INCLUDES += [
 USE_LIBS += [
     "static:js",
 ]
+
+if CONFIG["MOZ_LTO_FAT"]:
+    LDFLAGS += ["-fno-lto"]
 
 DEFINES["topsrcdir"] = "%s/js/src" % TOPSRCDIR
 OBJDIR_PP_FILES.js.src["jsapi-tests"] += ["jsapi-tests-gdb.py.in"]

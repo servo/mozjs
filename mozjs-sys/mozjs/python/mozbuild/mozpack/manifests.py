@@ -250,9 +250,9 @@ class InstallManifest:
                     type = self.LINK if type == self.PATTERN_LINK else self.COPY
                     finder = FileFinder(base)
                     paths = [f[0] for f in finder.find(pattern)]
-                    for path in paths:
-                        source = mozpath.join(base, path)
-                        parts = ["%d" % type, mozpath.join(dest, path), source]
+                    for file_path in paths:
+                        source = mozpath.join(base, file_path)
+                        parts = ["%d" % type, mozpath.join(dest, file_path), source]
                         fh.write("%s\n" % self.FIELD_SEPARATOR.join(parts))
                 else:
                     parts = ["%d" % entry[0], dest]

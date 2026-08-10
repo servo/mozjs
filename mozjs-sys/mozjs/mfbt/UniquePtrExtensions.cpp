@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,6 +12,7 @@
 #else
 #  include <errno.h>
 #  include <unistd.h>
+#  include <fcntl.h>
 #endif
 
 namespace mozilla {
@@ -33,6 +32,20 @@ void FileHandleDeleter::operator()(FileHandleHelper aHelper) {
 
 }  // namespace detail
 
+#ifdef XP_UNIX
+void SetCloseOnExec(detail::FileHandleType aFile) {
+  // The fcntl calls shouldn't fail if aFile is valid.
+  if (aFile >= 0) {
+    int fdFlags = fcntl(aFile, F_GETFD);
+    MOZ_ASSERT(fdFlags >= 0);
+    if (fdFlags >= 0) {
+      DebugOnly<int> rv = fcntl(aFile, F_SETFD, fdFlags | FD_CLOEXEC);
+      MOZ_ASSERT(rv != -1);
+    }
+  }
+}
+#endif
+
 #ifndef __wasm__
 UniqueFileHandle DuplicateFileHandle(detail::FileHandleType aFile) {
 #  ifdef XP_WIN
@@ -46,7 +59,15 @@ UniqueFileHandle DuplicateFileHandle(detail::FileHandleType aFile) {
   }
 #  else
   if (aFile != -1) {
-    return UniqueFileHandle{dup(aFile)};
+    int fd;
+    // Set cloexec atomically if supported; otherwise fall back to non-atomic.
+#    ifdef F_DUPFD_CLOEXEC
+    fd = fcntl(aFile, F_DUPFD_CLOEXEC, 0);
+#    else
+    fd = dup(aFile);
+    SetCloseOnExec(fd);
+#    endif
+    return UniqueFileHandle{fd};
   }
 #  endif
   return nullptr;

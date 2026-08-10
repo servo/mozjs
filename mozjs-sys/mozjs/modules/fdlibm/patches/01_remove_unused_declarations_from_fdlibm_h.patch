@@ -1,7 +1,7 @@
 diff --git a/fdlibm.h b/fdlibm.h
 --- a/fdlibm.h
 +++ b/fdlibm.h
-@@ -12,504 +12,68 @@
+@@ -12,504 +12,51 @@
  /*
   * from: @(#)fdlibm.h 5.1 93/09/24
   * $FreeBSD$
@@ -240,12 +240,11 @@ diff --git a/fdlibm.h b/fdlibm.h
  double	pow(double, double);
 -double	sqrt(double);
  
- double	ceil(double);
+-double	ceil(double);
 -double	fabs(double) __pure2;
-+double	fabs(double);
- double	floor(double);
+-double	floor(double);
 -double	fmod(double, double);
- 
+-
 -/*
 - * These functions are not in C90.
 - */
@@ -273,7 +272,7 @@ diff --git a/fdlibm.h b/fdlibm.h
 -double	nextafter(double, double);
 -double	remainder(double, double);
 -double	remquo(double, double, int *);
- double	rint(double);
+-double	rint(double);
 -#endif /* __BSD_VISIBLE || __ISO_C_VISIBLE >= 1999 || __XSI_VISIBLE */
 -
 -#if __BSD_VISIBLE || __XSI_VISIBLE
@@ -298,13 +297,12 @@ diff --git a/fdlibm.h b/fdlibm.h
 -double	fdim(double, double);
 -double	fmax(double, double) __pure2;
 -double	fmin(double, double) __pure2;
-+double	copysign(double, double);
- double	nearbyint(double);
+-double	nearbyint(double);
 -double	round(double);
 -double	scalbln(double, long);
- double	scalbn(double, int);
+-double	scalbn(double, int);
 -double	tgamma(double);
- double	trunc(double);
+-double	trunc(double);
 -#endif
 -
 -/*
@@ -355,18 +353,17 @@ diff --git a/fdlibm.h b/fdlibm.h
 -float	modff(float, float *);	/* fundamentally !__pure2 */
 -
  float	powf(float, float);
- float	sqrtf(float);
- 
- float	ceilf(float);
+-float	sqrtf(float);
+-
+-float	ceilf(float);
 -float	fabsf(float) __pure2;
-+float	fabsf(float);
- float	floorf(float);
+-float	floorf(float);
 -float	fmodf(float, float);
 -float	roundf(float);
 -
 -float	erff(float);
 -float	erfcf(float);
- float	hypotf(float, float);
+-float	hypotf(float, float);
 -float	lgammaf(float);
 -float	tgammaf(float);
 -
@@ -381,15 +378,15 @@ diff --git a/fdlibm.h b/fdlibm.h
 -long	lrintf(float);
 -long	lroundf(float);
 -float	nanf(const char *) __pure2;
- float	nearbyintf(float);
+-float	nearbyintf(float);
 -float	nextafterf(float, float);
 -float	remainderf(float, float);
 -float	remquof(float, float, int *);
- float	rintf(float);
+-float	rintf(float);
 -float	scalblnf(float, long);
- float	scalbnf(float, int);
- float	truncf(float);
- 
+-float	scalbnf(float, int);
+-float	truncf(float);
+-
 -float	fdimf(float, float);
 -float	fmaf(float, float, float);
 -float	fmaxf(float, float) __pure2;
@@ -424,7 +421,7 @@ diff --git a/fdlibm.h b/fdlibm.h
 - */
 -float	significandf(float);
 -#endif	/* __BSD_VISIBLE */
--
+ 
 -/*
 - * long double versions of ISO/POSIX math functions
 - */
@@ -507,5 +504,6 @@ diff --git a/fdlibm.h b/fdlibm.h
 -#endif
 -
 -__END_DECLS
--
++float	hypotf(float, float);
+ 
  #endif /* !_MATH_H_ */

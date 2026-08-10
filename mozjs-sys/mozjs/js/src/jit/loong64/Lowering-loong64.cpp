@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -31,9 +29,7 @@ LTableSwitchV* LIRGeneratorLOONG64::newLTableSwitchV(const LBoxAllocation& in) {
 void LIRGeneratorLOONG64::lowerForShift(LInstructionHelper<1, 2, 0>* ins,
                                         MDefinition* mir, MDefinition* lhs,
                                         MDefinition* rhs) {
-  ins->setOperand(0, useRegister(lhs));
-  ins->setOperand(1, useRegisterOrConstant(rhs));
-  define(ins, mir);
+  lowerForALU(ins, mir, lhs, rhs);
 }
 
 template <class LInstr>
@@ -42,13 +38,12 @@ void LIRGeneratorLOONG64::lowerForShiftInt64(LInstr* ins, MDefinition* mir,
                                              MDefinition* rhs) {
   if constexpr (std::is_same_v<LInstr, LShiftI64>) {
     ins->setLhs(useInt64RegisterAtStart(lhs));
-    ins->setRhs(useRegisterOrConstant(rhs));
-    defineInt64ReuseInput(ins, mir, LShiftI64::LhsIndex);
+    ins->setRhs(useRegisterOrConstantAtStart(rhs));
   } else {
     ins->setInput(useInt64RegisterAtStart(lhs));
-    ins->setCount(useRegisterOrConstant(rhs));
-    defineInt64ReuseInput(ins, mir, LRotateI64::InputIndex);
+    ins->setCount(useRegisterOrConstantAtStart(rhs));
   }
+  defineInt64(ins, mir);
 }
 
 template void LIRGeneratorLOONG64::lowerForShiftInt64(LShiftI64* ins,
@@ -63,88 +58,56 @@ template void LIRGeneratorLOONG64::lowerForShiftInt64(LRotateI64* ins,
 // x = !y
 void LIRGeneratorLOONG64::lowerForALU(LInstructionHelper<1, 1, 0>* ins,
                                       MDefinition* mir, MDefinition* input) {
-  ins->setOperand(0, useRegister(input));
-  define(
-      ins, mir,
-      LDefinition(LDefinition::TypeFrom(mir->type()), LDefinition::REGISTER));
+  // Unary ALU operations don't read the input after writing to the output, even
+  // for fallible operations, so we can use at-start allocations.
+  ins->setOperand(0, useRegisterAtStart(input));
+  define(ins, mir);
 }
 
 // z = x + y
 void LIRGeneratorLOONG64::lowerForALU(LInstructionHelper<1, 2, 0>* ins,
                                       MDefinition* mir, MDefinition* lhs,
                                       MDefinition* rhs) {
-  ins->setOperand(0, useRegister(lhs));
-  ins->setOperand(1, useRegisterOrConstant(rhs));
-  define(
-      ins, mir,
-      LDefinition(LDefinition::TypeFrom(mir->type()), LDefinition::REGISTER));
+  // Binary ALU operations don't read any input after writing to the output,
+  // even for fallible operations, so we can use at-start allocations.
+  ins->setOperand(0, useRegisterAtStart(lhs));
+  ins->setOperand(1, useRegisterOrConstantAtStart(rhs));
+  define(ins, mir);
 }
 
 void LIRGeneratorLOONG64::lowerForALUInt64(
     LInstructionHelper<INT64_PIECES, INT64_PIECES, 0>* ins, MDefinition* mir,
     MDefinition* input) {
   ins->setInt64Operand(0, useInt64RegisterAtStart(input));
-  defineInt64ReuseInput(ins, mir, 0);
+  defineInt64(ins, mir);
 }
 
 void LIRGeneratorLOONG64::lowerForALUInt64(
     LInstructionHelper<INT64_PIECES, 2 * INT64_PIECES, 0>* ins,
     MDefinition* mir, MDefinition* lhs, MDefinition* rhs) {
   ins->setInt64Operand(0, useInt64RegisterAtStart(lhs));
-  ins->setInt64Operand(INT64_PIECES, willHaveDifferentLIRNodes(lhs, rhs)
-                                         ? useInt64OrConstant(rhs)
-                                         : useInt64OrConstantAtStart(rhs));
-  defineInt64ReuseInput(ins, mir, 0);
+  ins->setInt64Operand(INT64_PIECES, useInt64RegisterOrConstantAtStart(rhs));
+  defineInt64(ins, mir);
 }
 
 void LIRGeneratorLOONG64::lowerForMulInt64(LMulI64* ins, MMul* mir,
                                            MDefinition* lhs, MDefinition* rhs) {
-  bool needsTemp = false;
-  bool cannotAliasRhs = false;
-  bool reuseInput = true;
-
-  ins->setLhs(useInt64RegisterAtStart(lhs));
-  ins->setRhs((willHaveDifferentLIRNodes(lhs, rhs) || cannotAliasRhs)
-                  ? useInt64OrConstant(rhs)
-                  : useInt64OrConstantAtStart(rhs));
-
-  if (needsTemp) {
-    ins->setTemp0(temp());
-  }
-  if (reuseInput) {
-    defineInt64ReuseInput(ins, mir, 0);
-  } else {
-    defineInt64(ins, mir);
-  }
+  lowerForALUInt64(ins, mir, lhs, rhs);
 }
 
 void LIRGeneratorLOONG64::lowerForFPU(LInstructionHelper<1, 1, 0>* ins,
                                       MDefinition* mir, MDefinition* input) {
-  ins->setOperand(0, useRegister(input));
-  define(
-      ins, mir,
-      LDefinition(LDefinition::TypeFrom(mir->type()), LDefinition::REGISTER));
+  ins->setOperand(0, useRegisterAtStart(input));
+  define(ins, mir);
 }
 
-template <size_t Temps>
-void LIRGeneratorLOONG64::lowerForFPU(LInstructionHelper<1, 2, Temps>* ins,
+void LIRGeneratorLOONG64::lowerForFPU(LInstructionHelper<1, 2, 0>* ins,
                                       MDefinition* mir, MDefinition* lhs,
                                       MDefinition* rhs) {
-  ins->setOperand(0, useRegister(lhs));
-  ins->setOperand(1, useRegister(rhs));
-  define(
-      ins, mir,
-      LDefinition(LDefinition::TypeFrom(mir->type()), LDefinition::REGISTER));
+  ins->setOperand(0, useRegisterAtStart(lhs));
+  ins->setOperand(1, useRegisterAtStart(rhs));
+  define(ins, mir);
 }
-
-template void LIRGeneratorLOONG64::lowerForFPU(LInstructionHelper<1, 2, 0>* ins,
-                                               MDefinition* mir,
-                                               MDefinition* lhs,
-                                               MDefinition* rhs);
-template void LIRGeneratorLOONG64::lowerForFPU(LInstructionHelper<1, 2, 1>* ins,
-                                               MDefinition* mir,
-                                               MDefinition* lhs,
-                                               MDefinition* rhs);
 
 LBoxAllocation LIRGeneratorLOONG64::useBoxFixed(MDefinition* mir, Register reg1,
                                                 Register reg2,
@@ -185,14 +148,6 @@ void LIRGeneratorLOONG64::defineInt64Phi(MPhi* phi, size_t lirIndex) {
   defineTypedPhi(phi, lirIndex);
 }
 
-void LIRGeneratorLOONG64::lowerNegI(MInstruction* ins, MDefinition* input) {
-  define(new (alloc()) LNegI(useRegisterAtStart(input)), ins);
-}
-void LIRGeneratorLOONG64::lowerNegI64(MInstruction* ins, MDefinition* input) {
-  defineInt64ReuseInput(new (alloc()) LNegI64(useInt64RegisterAtStart(input)),
-                        ins, 0);
-}
-
 void LIRGeneratorLOONG64::lowerMulI(MMul* mul, MDefinition* lhs,
                                     MDefinition* rhs) {
   LMulI* lir = new (alloc()) LMulI;
@@ -200,15 +155,19 @@ void LIRGeneratorLOONG64::lowerMulI(MMul* mul, MDefinition* lhs,
     assignSnapshot(lir, mul->bailoutKind());
   }
 
+  // Negative zero check reads |lhs| and |rhs| after writing to the output, so
+  // we can't use at-start allocations.
+  if (mul->canBeNegativeZero() && !rhs->isConstant()) {
+    lir->setOperand(0, useRegister(lhs));
+    lir->setOperand(1, useRegister(rhs));
+    define(lir, mul);
+    return;
+  }
+
   lowerForALU(lir, mul, lhs, rhs);
 }
 
 void LIRGeneratorLOONG64::lowerDivI(MDiv* div) {
-  if (div->isUnsigned()) {
-    lowerUDiv(div);
-    return;
-  }
-
   // Division instructions are slow. Division by constant denominators can be
   // rewritten to use other instructions.
   if (div->rhs()->isConstant()) {
@@ -218,7 +177,7 @@ void LIRGeneratorLOONG64::lowerDivI(MDiv* div) {
     // possible; division by negative powers of two can be optimized in a
     // similar manner as positive powers of two, and division by other
     // constants can be optimized by a reciprocal multiplication technique.
-    int32_t shift = FloorLog2(rhs);
+    int32_t shift = FloorLog2(uint32_t(rhs));
     if (rhs > 0 && 1 << shift == rhs) {
       LDivPowTwoI* lir =
           new (alloc()) LDivPowTwoI(useRegister(div->lhs()), temp(), shift);
@@ -239,25 +198,15 @@ void LIRGeneratorLOONG64::lowerDivI(MDiv* div) {
 }
 
 void LIRGeneratorLOONG64::lowerDivI64(MDiv* div) {
-  if (div->isUnsigned()) {
-    lowerUDivI64(div);
-    return;
-  }
-
-  LDivOrModI64* lir = new (alloc())
-      LDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()), temp());
+  auto* lir = new (alloc())
+      LDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()));
   defineInt64(lir, div);
 }
 
 void LIRGeneratorLOONG64::lowerModI(MMod* mod) {
-  if (mod->isUnsigned()) {
-    lowerUMod(mod);
-    return;
-  }
-
   if (mod->rhs()->isConstant()) {
     int32_t rhs = mod->rhs()->toConstant()->toInt32();
-    int32_t shift = FloorLog2(rhs);
+    int32_t shift = FloorLog2(uint32_t(rhs));
     if (rhs > 0 && 1 << shift == rhs) {
       LModPowTwoI* lir =
           new (alloc()) LModPowTwoI(useRegister(mod->lhs()), shift);
@@ -276,8 +225,8 @@ void LIRGeneratorLOONG64::lowerModI(MMod* mod) {
       return;
     }
   }
-  LModI* lir = new (alloc())
-      LModI(useRegister(mod->lhs()), useRegister(mod->rhs()), temp());
+  auto* lir =
+      new (alloc()) LModI(useRegister(mod->lhs()), useRegister(mod->rhs()));
 
   if (mod->fallible()) {
     assignSnapshot(lir, mod->bailoutKind());
@@ -286,13 +235,8 @@ void LIRGeneratorLOONG64::lowerModI(MMod* mod) {
 }
 
 void LIRGeneratorLOONG64::lowerModI64(MMod* mod) {
-  if (mod->isUnsigned()) {
-    lowerUModI64(mod);
-    return;
-  }
-
-  LDivOrModI64* lir = new (alloc())
-      LDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()), temp());
+  auto* lir = new (alloc())
+      LDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()));
   defineInt64(lir, mod);
 }
 
@@ -311,8 +255,8 @@ void LIRGeneratorLOONG64::lowerUDiv(MDiv* div) {
 }
 
 void LIRGeneratorLOONG64::lowerUDivI64(MDiv* div) {
-  LUDivOrModI64* lir = new (alloc())
-      LUDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()), temp());
+  auto* lir = new (alloc())
+      LUDivOrModI64(useRegister(div->lhs()), useRegister(div->rhs()));
   defineInt64(lir, div);
 }
 
@@ -331,8 +275,8 @@ void LIRGeneratorLOONG64::lowerUMod(MMod* mod) {
 }
 
 void LIRGeneratorLOONG64::lowerUModI64(MMod* mod) {
-  LUDivOrModI64* lir = new (alloc())
-      LUDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()), temp());
+  auto* lir = new (alloc())
+      LUDivOrModI64(useRegister(mod->lhs()), useRegister(mod->rhs()));
   defineInt64(lir, mod);
 }
 
@@ -343,8 +287,8 @@ void LIRGeneratorLOONG64::lowerUrshD(MUrsh* mir) {
   MOZ_ASSERT(lhs->type() == MIRType::Int32);
   MOZ_ASSERT(rhs->type() == MIRType::Int32);
 
-  LUrshD* lir = new (alloc())
-      LUrshD(useRegister(lhs), useRegisterOrConstant(rhs), temp());
+  auto* lir = new (alloc()) LUrshD(useRegisterAtStart(lhs),
+                                   useRegisterOrConstantAtStart(rhs), temp());
   define(lir, mir);
 }
 
@@ -505,7 +449,7 @@ void LIRGenerator::visitBox(MBox* box) {
     define(new (alloc()) LValue(opd->toConstant()->toJSValue()), box,
            LDefinition(LDefinition::BOX));
   } else {
-    LBox* ins = new (alloc()) LBox(useRegister(opd), opd->type());
+    LBox* ins = new (alloc()) LBox(useRegisterAtStart(opd), opd->type());
     define(ins, box, LDefinition(LDefinition::BOX));
   }
 }
@@ -533,10 +477,6 @@ void LIRGenerator::visitUnbox(MUnbox* unbox) {
   define(lir, unbox);
 }
 
-void LIRGenerator::visitAbs(MAbs* ins) {
-  define(allocateAbs(ins, useRegisterAtStart(ins->input())), ins);
-}
-
 void LIRGenerator::visitCopySign(MCopySign* ins) {
   MDefinition* lhs = ins->lhs();
   MDefinition* rhs = ins->rhs();
@@ -545,28 +485,14 @@ void LIRGenerator::visitCopySign(MCopySign* ins) {
   MOZ_ASSERT(lhs->type() == rhs->type());
   MOZ_ASSERT(lhs->type() == ins->type());
 
-  LInstructionHelper<1, 2, 2>* lir;
+  LInstructionHelper<1, 2, 0>* lir;
   if (lhs->type() == MIRType::Double) {
     lir = new (alloc()) LCopySignD();
   } else {
     lir = new (alloc()) LCopySignF();
   }
 
-  lir->setTemp(0, temp());
-  lir->setTemp(1, temp());
-
-  lir->setOperand(0, useRegisterAtStart(lhs));
-  lir->setOperand(1, willHaveDifferentLIRNodes(lhs, rhs)
-                         ? useRegister(rhs)
-                         : useRegisterAtStart(rhs));
-  defineReuseInput(lir, ins, 0);
-}
-
-void LIRGenerator::visitPowHalf(MPowHalf* ins) {
-  MDefinition* input = ins->input();
-  MOZ_ASSERT(input->type() == MIRType::Double);
-  LPowHalfD* lir = new (alloc()) LPowHalfD(useRegisterAtStart(input));
-  defineReuseInput(lir, ins, 0);
+  lowerForFPU(lir, ins, lhs, rhs);
 }
 
 void LIRGenerator::visitExtendInt32ToInt64(MExtendInt32ToInt64* ins) {
@@ -869,17 +795,6 @@ void LIRGenerator::visitWasmStore(MWasmStore* ins) {
   auto* lir =
       new (alloc()) LWasmStore(baseAlloc, valueAlloc, memoryBase, ptrCopy);
   add(lir, ins);
-}
-
-void LIRGenerator::visitWasmNeg(MWasmNeg* ins) {
-  if (ins->type() == MIRType::Int32) {
-    define(new (alloc()) LNegI(useRegisterAtStart(ins->input())), ins);
-  } else if (ins->type() == MIRType::Float32) {
-    define(new (alloc()) LNegF(useRegisterAtStart(ins->input())), ins);
-  } else {
-    MOZ_ASSERT(ins->type() == MIRType::Double);
-    define(new (alloc()) LNegD(useRegisterAtStart(ins->input())), ins);
-  }
 }
 
 void LIRGenerator::visitWasmTruncateToInt64(MWasmTruncateToInt64* ins) {

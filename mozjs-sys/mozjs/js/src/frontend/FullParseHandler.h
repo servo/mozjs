@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -163,9 +161,8 @@ class FullParseHandler {
   UnaryNodeResult newSyntheticComputedName(Node expr, uint32_t begin,
                                            uint32_t end) {
     TokenPos pos(begin, end);
-    UnaryNode* node;
-    MOZ_TRY_VAR(node,
-                newResult<UnaryNode>(ParseNodeKind::ComputedName, pos, expr));
+    UnaryNode* node =
+        MOZ_TRY(newResult<UnaryNode>(ParseNodeKind::ComputedName, pos, expr));
     node->setSyntheticComputedName();
     return node;
   }
@@ -204,11 +201,9 @@ class FullParseHandler {
   }
 
   CallSiteNodeResult newCallSiteObject(uint32_t begin) {
-    CallSiteNode* callSiteObj;
-    MOZ_TRY_VAR(callSiteObj, newResult<CallSiteNode>(begin));
+    CallSiteNode* callSiteObj = MOZ_TRY(newResult<CallSiteNode>(begin));
 
-    ListNode* rawNodes;
-    MOZ_TRY_VAR(rawNodes, newArrayLiteral(callSiteObj->pn_pos.begin));
+    ListNode* rawNodes = MOZ_TRY(newArrayLiteral(callSiteObj->pn_pos.begin));
 
     addArrayElement(callSiteObj, rawNodes);
 
@@ -262,6 +257,10 @@ class FullParseHandler {
       return newUnary(ParseNodeKind::DeletePropExpr, begin, expr);
     }
 
+    if (expr->isKind(ParseNodeKind::ArgumentsLength)) {
+      return newUnary(ParseNodeKind::DeletePropExpr, begin, expr);
+    }
+
     if (expr->isKind(ParseNodeKind::ElemExpr)) {
       return newUnary(ParseNodeKind::DeleteElemExpr, begin, expr);
     }
@@ -276,6 +275,9 @@ class FullParseHandler {
           kid->isKind(ParseNodeKind::OptionalElemExpr)) {
         return newUnary(ParseNodeKind::DeleteOptionalChainExpr, begin, kid);
       }
+
+      // ArgumentsLength shouldn't be used for optional chain.
+      MOZ_ASSERT(!kid->isKind(ParseNodeKind::ArgumentsLength));
     }
 
     return newUnary(ParseNodeKind::DeleteExpr, begin, expr);
@@ -695,6 +697,13 @@ class FullParseHandler {
                                  moduleRequest);
   }
 
+  BinaryNodeResult newImportSourceDeclaration(Node importedBinding,
+                                              Node moduleRequest,
+                                              const TokenPos& pos) {
+    return newResult<BinaryNode>(ParseNodeKind::ImportSourceDecl, pos,
+                                 importedBinding, moduleRequest);
+  }
+
   BinaryNodeResult newImportSpec(Node importNameNode, Node bindingName) {
     return newBinary(ParseNodeKind::ImportSpec, importNameNode, bindingName);
   }
@@ -709,9 +718,8 @@ class FullParseHandler {
 
   BinaryNodeResult newExportFromDeclaration(uint32_t begin, Node exportSpecSet,
                                             Node moduleRequest) {
-    BinaryNode* decl;
-    MOZ_TRY_VAR(decl, newResult<BinaryNode>(ParseNodeKind::ExportFromStmt,
-                                            exportSpecSet, moduleRequest));
+    BinaryNode* decl = MOZ_TRY(newResult<BinaryNode>(
+        ParseNodeKind::ExportFromStmt, exportSpecSet, moduleRequest));
     decl->pn_pos.begin = begin;
     return decl;
   }
@@ -747,9 +755,9 @@ class FullParseHandler {
                                  metaHolder);
   }
 
-  BinaryNodeResult newCallImport(NullaryNodeType importHolder, Node singleArg) {
-    return newResult<BinaryNode>(ParseNodeKind::CallImportExpr, importHolder,
-                                 singleArg);
+  BinaryNodeResult newCallImport(NullaryNodeType importHolder, Node singleArg,
+                                 ParseNodeKind kind) {
+    return newResult<BinaryNode>(kind, importHolder, singleArg);
   }
 
   BinaryNodeResult newCallImportSpec(Node specifierArg, Node optionalArg) {
@@ -765,9 +773,8 @@ class FullParseHandler {
 
   TernaryNodeResult newIfStatement(uint32_t begin, Node cond, Node thenBranch,
                                    Node elseBranch) {
-    TernaryNode* node;
-    MOZ_TRY_VAR(node, newResult<TernaryNode>(ParseNodeKind::IfStmt, cond,
-                                             thenBranch, elseBranch));
+    TernaryNode* node = MOZ_TRY(newResult<TernaryNode>(
+        ParseNodeKind::IfStmt, cond, thenBranch, elseBranch));
     node->pn_pos.begin = begin;
     return node;
   }

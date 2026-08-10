@@ -2,15 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import json
 import logging
 import os
+import pathlib
 import time
 
 import mozinfo
 from mach.decorators import Command, CommandArgument
 from mozbuild.base import BinaryNotFoundException
 from mozbuild.base import MachCommandConditions as conditions
+from mozfile import json
 
 
 def is_valgrind_build(cls):
@@ -196,6 +197,11 @@ def valgrind_test(command_context, suppressions):
                     {"data": json.dumps(data)},
                     "PERFHERDER_DATA: {data}",
                 )
+                upload_path = pathlib.Path(os.environ.get("MOZ_PERFHERDER_UPLOAD"))
+                upload_path.parent.mkdir(parents=True, exist_ok=True)
+                with upload_path.open("w", encoding="utf-8") as f:
+                    json.dump(data, f)
+
         except BinaryNotFoundException as e:
             binary_not_found_exception = e
         finally:

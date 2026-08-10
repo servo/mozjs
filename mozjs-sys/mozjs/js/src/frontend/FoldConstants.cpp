@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,16 +7,15 @@
 #include "mozilla/Maybe.h"  // mozilla::Maybe
 #include "mozilla/Try.h"    // MOZ_TRY*
 
-#include "jslibmath.h"
-#include "jsmath.h"
-
+#include "builtin/Math.h"
 #include "frontend/FullParseHandler.h"
 #include "frontend/ParseNode.h"
 #include "frontend/ParseNodeVisitor.h"
 #include "frontend/Parser-macros.h"  // MOZ_TRY_VAR_OR_RETURN
 #include "frontend/ParserAtom.h"     // ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Conversions.h"
-#include "js/Stack.h"            // JS::NativeStackLimit
+#include "js/Stack.h"  // JS::NativeStackLimit
+#include "util/PortableMath.h"
 #include "util/StringBuilder.h"  // StringBuilder
 
 using namespace js;
@@ -161,6 +158,7 @@ restart:
     case ParseNodeKind::BreakStmt:
     case ParseNodeKind::ContinueStmt:
     case ParseNodeKind::ImportDecl:
+    case ParseNodeKind::ImportSourceDecl:
     case ParseNodeKind::ImportSpecList:
     case ParseNodeKind::ImportSpec:
     case ParseNodeKind::ImportNamespaceSpec:
@@ -172,6 +170,7 @@ restart:
     case ParseNodeKind::ExportStmt:
     case ParseNodeKind::ExportBatchSpecStmt:
     case ParseNodeKind::CallImportExpr:
+    case ParseNodeKind::CallImportSourceExpr:
     case ParseNodeKind::CallImportSpec:
     case ParseNodeKind::ImportAttributeList:
     case ParseNodeKind::ImportAttribute:

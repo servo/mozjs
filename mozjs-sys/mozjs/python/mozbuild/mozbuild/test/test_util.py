@@ -8,7 +8,6 @@ import itertools
 import os
 import re
 import string
-import sys
 import unittest
 
 import pytest
@@ -32,8 +31,6 @@ from mozbuild.util import (
     group_unified_files,
     hash_file,
     hexdump,
-    memoize,
-    memoized_property,
     pair,
     resolve_target_to_make,
 )
@@ -447,12 +444,10 @@ class TestStrictOrderingOnAppendListWithAction(unittest.TestCase):
 
 class TestStrictOrderingOnAppendListWithFlagsFactory(unittest.TestCase):
     def test_strict_ordering_on_append_list_with_flags_factory(self):
-        cls = StrictOrderingOnAppendListWithFlagsFactory(
-            {
-                "foo": bool,
-                "bar": int,
-            }
-        )
+        cls = StrictOrderingOnAppendListWithFlagsFactory({
+            "foo": bool,
+            "bar": int,
+        })
 
         l = cls()
         l += ["a", "b"]
@@ -540,78 +535,6 @@ class TestStrictOrderingOnAppendListWithFlagsFactory(unittest.TestCase):
         self.assertEqual(len(foo), 3)
         foo[3:] = zot
         assertExtended(foo)
-
-
-class TestMemoize(unittest.TestCase):
-    def test_memoize(self):
-        self._count = 0
-
-        @memoize
-        def wrapped(a, b):
-            self._count += 1
-            return a + b
-
-        self.assertEqual(self._count, 0)
-        self.assertEqual(wrapped(1, 1), 2)
-        self.assertEqual(self._count, 1)
-        self.assertEqual(wrapped(1, 1), 2)
-        self.assertEqual(self._count, 1)
-        self.assertEqual(wrapped(2, 1), 3)
-        self.assertEqual(self._count, 2)
-        self.assertEqual(wrapped(1, 2), 3)
-        self.assertEqual(self._count, 3)
-        self.assertEqual(wrapped(1, 2), 3)
-        self.assertEqual(self._count, 3)
-        self.assertEqual(wrapped(1, 1), 2)
-        self.assertEqual(self._count, 3)
-
-    def test_memoize_method(self):
-        class foo:
-            def __init__(self):
-                self._count = 0
-
-            @memoize
-            def wrapped(self, a, b):
-                self._count += 1
-                return a + b
-
-        instance = foo()
-        refcount = sys.getrefcount(instance)
-        self.assertEqual(instance._count, 0)
-        self.assertEqual(instance.wrapped(1, 1), 2)
-        self.assertEqual(instance._count, 1)
-        self.assertEqual(instance.wrapped(1, 1), 2)
-        self.assertEqual(instance._count, 1)
-        self.assertEqual(instance.wrapped(2, 1), 3)
-        self.assertEqual(instance._count, 2)
-        self.assertEqual(instance.wrapped(1, 2), 3)
-        self.assertEqual(instance._count, 3)
-        self.assertEqual(instance.wrapped(1, 2), 3)
-        self.assertEqual(instance._count, 3)
-        self.assertEqual(instance.wrapped(1, 1), 2)
-        self.assertEqual(instance._count, 3)
-
-        # Memoization of methods is expected to not keep references to
-        # instances, so the refcount shouldn't have changed after executing the
-        # memoized method.
-        self.assertEqual(refcount, sys.getrefcount(instance))
-
-    def test_memoized_property(self):
-        class foo:
-            def __init__(self):
-                self._count = 0
-
-            @memoized_property
-            def wrapped(self):
-                self._count += 1
-                return 42
-
-        instance = foo()
-        self.assertEqual(instance._count, 0)
-        self.assertEqual(instance.wrapped, 42)
-        self.assertEqual(instance._count, 1)
-        self.assertEqual(instance.wrapped, 42)
-        self.assertEqual(instance._count, 1)
 
 
 class TestTypedList(unittest.TestCase):

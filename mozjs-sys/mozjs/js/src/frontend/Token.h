@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,6 +12,7 @@
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 
+#include <compare>   // std::strong_ordering
 #include <stdint.h>  // uint32_t
 
 #include "frontend/ParserAtom.h"  // TaggedParserAtomIndex, TrivialTaggedParserAtomIndex
@@ -39,21 +38,11 @@ struct TokenPos {
     return TokenPos(left.begin, right.end);
   }
 
-  bool operator==(const TokenPos& bpos) const {
-    return begin == bpos.begin && end == bpos.end;
+  constexpr bool operator==(const TokenPos& bpos) const = default;
+
+  constexpr auto operator<=>(const TokenPos& bpos) const {
+    return begin <=> bpos.begin;
   }
-
-  bool operator!=(const TokenPos& bpos) const {
-    return begin != bpos.begin || end != bpos.end;
-  }
-
-  bool operator<(const TokenPos& bpos) const { return begin < bpos.begin; }
-
-  bool operator<=(const TokenPos& bpos) const { return begin <= bpos.begin; }
-
-  bool operator>(const TokenPos& bpos) const { return !(*this <= bpos); }
-
-  bool operator>=(const TokenPos& bpos) const { return !(*this < bpos); }
 
   bool encloses(const TokenPos& pos) const {
     return begin <= pos.begin && pos.end <= end;

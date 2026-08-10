@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,6 +18,7 @@
 #define wasm_compile_h
 
 #include "vm/Runtime.h"
+#include "wasm/WasmComponent.h"
 #include "wasm/WasmModule.h"
 
 namespace JS {
@@ -31,15 +30,18 @@ namespace wasm {
 
 class Code;
 
+#ifdef ENABLE_WASM_COMPONENTS
+using SharedModuleOrComponent =
+    mozilla::Maybe<mozilla::Variant<SharedModule, SharedComponent>>;
+#endif
+
 // Return a uint32_t which captures the observed properties of the CPU that
 // affect compilation. If code compiled now is to be serialized and executed
 // later, the ObservedCPUFeatures() must be ensured to be the same.
-
 uint32_t ObservedCPUFeatures();
 
 // Return the estimated compiled (machine) code size for the given bytecode size
 // compiled at the given tier.
-
 double EstimateCompiledCodeSize(Tier tier, size_t bytecodeSize);
 
 // Compile the given WebAssembly bytecode with the given arguments into a
@@ -47,21 +49,30 @@ double EstimateCompiledCodeSize(Tier tier, size_t bytecodeSize);
 // SharedModule pointer is null and either:
 //  - *error points to a string description of the error
 //  - *error is null and the caller should report out-of-memory.
-
-SharedModule CompileBuffer(const CompileArgs& args,
+SharedModule CompileModule(const CompileArgs& args,
                            const BytecodeBufferOrSource& bytecode,
                            UniqueChars* error, UniqueCharsVector* warnings,
                            JS::OptimizedEncodingListener* listener = nullptr);
 
-// Attempt to compile the second tier of the given wasm::Module.
+#ifdef ENABLE_WASM_COMPONENTS
+SharedComponent CompileComponent(
+    const CompileArgs& args, const BytecodeBufferOrSource& bytecode,
+    UniqueChars* error, UniqueCharsVector* warnings,
+    JS::OptimizedEncodingListener* listener = nullptr);
 
+SharedModuleOrComponent CompileBuffer(
+    const CompileArgs& args, const BytecodeBufferOrSource& bytecode,
+    UniqueChars* error, UniqueCharsVector* warnings,
+    JS::OptimizedEncodingListener* listener = nullptr);
+#endif
+
+// Attempt to compile the second tier of the given wasm::Module.
 bool CompileCompleteTier2(const ShareableBytes* codeSection,
                           const Module& module, UniqueChars* error,
                           UniqueCharsVector* warnings,
                           mozilla::Atomic<bool>* cancelled);
 
 // Attempt to compile the second tier for the given functions of a wasm::Module.
-
 bool CompilePartialTier2(const Code& code, uint32_t funcIndex,
                          UniqueChars* error, UniqueCharsVector* warnings,
                          mozilla::Atomic<bool>* cancelled);
@@ -83,7 +94,6 @@ bool CompilePartialTier2(const Code& code, uint32_t funcIndex,
 // If cancelled is set to true, compilation aborts and returns null. After
 // cancellation is set, both ExclusiveWaitableData will be notified and so every
 // wait() loop must check cancelled.
-
 using ExclusiveBytesPtr = ExclusiveWaitableData<const uint8_t*>;
 
 struct StreamEndData {
@@ -103,18 +113,9 @@ SharedModule CompileStreaming(const CompileArgs& args,
                               const mozilla::Atomic<bool>& cancelled,
                               UniqueChars* error, UniqueCharsVector* warnings);
 
-// What to print out from dumping a function from Ion.
-enum class IonDumpContents {
-  UnoptimizedMIR,
-  OptimizedMIR,
-  LIR,
-
-  Default = UnoptimizedMIR,
-};
-
 bool DumpIonFunctionInModule(const ShareableBytes& bytecode,
-                             uint32_t targetFuncIndex, IonDumpContents contents,
-                             GenericPrinter& out, UniqueChars* error);
+                             uint32_t targetFuncIndex, GenericPrinter& out,
+                             UniqueChars* error);
 
 }  // namespace wasm
 }  // namespace js

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * ***** BEGIN LICENSE BLOCK *****
  * Copyright (C) 2008 Apple Inc. All rights reserved.
  *
@@ -58,11 +56,11 @@ class BaseAssembler : public GenericAssembler {
   bool swapBuffer(wasm::Bytes& other) { return m_formatter.swapBuffer(other); }
 
   void nop() {
-    spew("nop");
+    spew(currentOffset(), "nop");
     m_formatter.oneByteOp(OP_NOP);
   }
 
-  void comment(const char* msg) { spew("; %s", msg); }
+  void comment(const char* msg) { spew(currentOffset(), "; %s", msg); }
 
   static void patchFiveByteNopToCall(uint8_t* callsite, uint8_t* target) {
     // Note: the offset is relative to the address of the instruction after
@@ -72,8 +70,8 @@ class BaseAssembler : public GenericAssembler {
     // See also nop_five.
     MOZ_ASSERT(inst[0] == OP_NOP_0F || inst[0] == OP_CALL_rel32);
     MOZ_ASSERT_IF(inst[0] == OP_NOP_0F,
-                  inst[1] == OP_NOP_1F || inst[2] == OP_NOP_44 ||
-                      inst[3] == OP_NOP_00 || inst[4] == OP_NOP_00);
+                  inst[1] == OP_NOP_1F && inst[2] == OP_NOP_44 &&
+                      inst[3] == OP_NOP_00 && inst[4] == OP_NOP_00);
     inst[0] = OP_CALL_rel32;
     SetRel32(callsite, target);
   }
@@ -83,8 +81,8 @@ class BaseAssembler : public GenericAssembler {
     uint8_t* inst = callsite - sizeof(int32_t) - 1;
     // The call can be already patched as nop.
     if (inst[0] == OP_NOP_0F) {
-      MOZ_ASSERT(inst[1] == OP_NOP_1F || inst[2] == OP_NOP_44 ||
-                 inst[3] == OP_NOP_00 || inst[4] == OP_NOP_00);
+      MOZ_ASSERT(inst[1] == OP_NOP_1F && inst[2] == OP_NOP_44 &&
+                 inst[3] == OP_NOP_00 && inst[4] == OP_NOP_00);
       return;
     }
     MOZ_ASSERT(inst[0] == OP_CALL_rel32);
@@ -218,17 +216,17 @@ class BaseAssembler : public GenericAssembler {
   // Stack operations:
 
   void push_r(RegisterID reg) {
-    spew("push       %s", GPRegName(reg));
+    spew(currentOffset(), "push       %s", GPRegName(reg));
     m_formatter.oneByteOp(OP_PUSH_EAX, reg);
   }
 
   void pop_r(RegisterID reg) {
-    spew("pop        %s", GPRegName(reg));
+    spew(currentOffset(), "pop        %s", GPRegName(reg));
     m_formatter.oneByteOp(OP_POP_EAX, reg);
   }
 
   void push_i(int32_t imm) {
-    spew("push       $%s0x%x", PRETTYHEX(imm));
+    spew(currentOffset(), "push       $%s0x%x", PRETTYHEX(imm));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_PUSH_Ib);
       m_formatter.immediate8s(imm);
@@ -239,68 +237,73 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void push_i32(int32_t imm) {
-    spew("push       $%s0x%04x", PRETTYHEX(imm));
+    spew(currentOffset(), "push       $%s0x%04x", PRETTYHEX(imm));
     m_formatter.oneByteOp(OP_PUSH_Iz);
     m_formatter.immediate32(imm);
   }
 
   void push_m(int32_t offset, RegisterID base) {
-    spew("push       " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "push       " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, GROUP5_OP_PUSH);
   }
   void push_m(int32_t offset, RegisterID base, RegisterID index, int scale) {
-    spew("push       " MEM_obs, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "push       " MEM_obs,
+         ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, index, scale,
                           GROUP5_OP_PUSH);
   }
 
   void pop_m(int32_t offset, RegisterID base) {
-    spew("pop        " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "pop        " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1A_Ev, offset, base, GROUP1A_OP_POP);
   }
 
   void push_flags() {
-    spew("pushf");
+    spew(currentOffset(), "pushf");
     m_formatter.oneByteOp(OP_PUSHFLAGS);
   }
 
   void pop_flags() {
-    spew("popf");
+    spew(currentOffset(), "popf");
     m_formatter.oneByteOp(OP_POPFLAGS);
   }
 
   // Arithmetic operations:
 
   void addl_rr(RegisterID src, RegisterID dst) {
-    spew("addl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "addl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_ADD_GvEv, src, dst);
   }
 
   void addw_rr(RegisterID src, RegisterID dst) {
-    spew("addw       %s, %s", GPReg16Name(src), GPReg16Name(dst));
+    spew(currentOffset(), "addw       %s, %s", GPReg16Name(src),
+         GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_ADD_GvEv, src, dst);
   }
 
   void addl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("addl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "addl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_ADD_GvEv, offset, base, dst);
   }
 
   void addl_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("addl       %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "addl       %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_ADD_EvGv, offset, base, src);
   }
 
   void addl_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("addl       %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "addl       %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_ADD_EvGv, offset, base, index, scale, src);
   }
 
   void addl_ir(int32_t imm, RegisterID dst) {
-    spew("addl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "addl       $%d, %s", imm, GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_ADD);
       m_formatter.immediate8s(imm);
@@ -315,7 +318,7 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void addw_ir(int32_t imm, RegisterID dst) {
-    spew("addw       $%d, %s", int16_t(imm), GPReg16Name(dst));
+    spew(currentOffset(), "addw       $%d, %s", int16_t(imm), GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_GROUP1_EvIz, dst, GROUP1_OP_ADD);
     m_formatter.immediate16(imm);
@@ -323,7 +326,8 @@ class BaseAssembler : public GenericAssembler {
 
   void addl_i32r(int32_t imm, RegisterID dst) {
     // 32-bit immediate always, for patching.
-    spew("addl       $0x%04x, %s", uint32_t(imm), GPReg32Name(dst));
+    spew(currentOffset(), "addl       $0x%04x, %s", uint32_t(imm),
+         GPReg32Name(dst));
     if (dst == rax) {
       m_formatter.oneByteOp(OP_ADD_EAXIv);
     } else {
@@ -333,7 +337,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void addl_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("addl       $%d, " MEM_ob, imm, ADDR_ob(offset, base));
+    spew(currentOffset(), "addl       $%d, " MEM_ob, imm,
+         ADDR_ob(offset, base));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_ADD);
       m_formatter.immediate8s(imm);
@@ -345,7 +350,8 @@ class BaseAssembler : public GenericAssembler {
 
   void addl_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("addl       $%d, " MEM_obs, imm, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "addl       $%d, " MEM_obs, imm,
+         ADDR_obs(offset, base, index, scale));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, index, scale,
                             GROUP1_OP_ADD);
@@ -358,7 +364,7 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void addl_im(int32_t imm, const void* addr) {
-    spew("addl       $%d, %p", imm, addr);
+    spew(currentOffset(), "addl       $%d, %p", imm, addr);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_ADD);
       m_formatter.immediate8s(imm);
@@ -368,7 +374,7 @@ class BaseAssembler : public GenericAssembler {
     }
   }
   void addw_im(int32_t imm, const void* addr) {
-    spew("addw       $%d, %p", int16_t(imm), addr);
+    spew(currentOffset(), "addw       $%d, %p", int16_t(imm), addr);
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_ADD);
@@ -380,7 +386,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void addw_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("addw       $%d, " MEM_ob, int16_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "addw       $%d, " MEM_ob, int16_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_GROUP1_EvIz, offset, base, GROUP1_OP_ADD);
     m_formatter.immediate16(imm);
@@ -388,7 +395,7 @@ class BaseAssembler : public GenericAssembler {
 
   void addw_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("addw       $%d, " MEM_obs, int16_t(imm),
+    spew(currentOffset(), "addw       $%d, " MEM_obs, int16_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_GROUP1_EvIz, offset, base, index, scale,
@@ -397,28 +404,30 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void addw_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("addw       %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "addw       %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_ADD_EvGv, offset, base, src);
   }
 
   void addw_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("addw       %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "addw       %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_ADD_EvGv, offset, base, index, scale, src);
   }
 
   void addb_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("addb       $%d, " MEM_ob, int8_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "addb       $%d, " MEM_ob, int8_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, GROUP1_OP_ADD);
     m_formatter.immediate8(imm);
   }
 
   void addb_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("addb       $%d, " MEM_obs, int8_t(imm),
+    spew(currentOffset(), "addb       $%d, " MEM_obs, int8_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, index, scale,
                           GROUP1_OP_ADD);
@@ -426,26 +435,28 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void addb_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("addb       %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "addb       %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_ADD_EbGb, offset, base, src);
   }
 
   void addb_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("addb       %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "addb       %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_ADD_EbGb, offset, base, index, scale, src);
   }
 
   void subb_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("subb       $%d, " MEM_ob, int8_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "subb       $%d, " MEM_ob, int8_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, GROUP1_OP_SUB);
     m_formatter.immediate8(imm);
   }
 
   void subb_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("subb       $%d, " MEM_obs, int8_t(imm),
+    spew(currentOffset(), "subb       $%d, " MEM_obs, int8_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, index, scale,
                           GROUP1_OP_SUB);
@@ -453,26 +464,28 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void subb_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("subb       %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "subb       %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_SUB_EbGb, offset, base, src);
   }
 
   void subb_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("subb       %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "subb       %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_SUB_EbGb, offset, base, index, scale, src);
   }
 
   void andb_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("andb       $%d, " MEM_ob, int8_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "andb       $%d, " MEM_ob, int8_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, GROUP1_OP_AND);
     m_formatter.immediate8(imm);
   }
 
   void andb_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("andb       $%d, " MEM_obs, int8_t(imm),
+    spew(currentOffset(), "andb       $%d, " MEM_obs, int8_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, index, scale,
                           GROUP1_OP_AND);
@@ -480,26 +493,28 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void andb_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("andb       %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "andb       %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_AND_EbGb, offset, base, src);
   }
 
   void andb_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("andb       %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "andb       %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_AND_EbGb, offset, base, index, scale, src);
   }
 
   void orb_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("orb       $%d, " MEM_ob, int8_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "orb       $%d, " MEM_ob, int8_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, GROUP1_OP_OR);
     m_formatter.immediate8(imm);
   }
 
   void orb_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
               int scale) {
-    spew("orb        $%d, " MEM_obs, int8_t(imm),
+    spew(currentOffset(), "orb        $%d, " MEM_obs, int8_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, index, scale,
                           GROUP1_OP_OR);
@@ -507,26 +522,28 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void orb_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("orb       %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "orb       %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_OR_EbGb, offset, base, src);
   }
 
   void orb_rm(RegisterID src, int32_t offset, RegisterID base, RegisterID index,
               int scale) {
-    spew("orb        %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "orb        %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_OR_EbGb, offset, base, index, scale, src);
   }
 
   void xorb_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("xorb       $%d, " MEM_ob, int8_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "xorb       $%d, " MEM_ob, int8_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, GROUP1_OP_XOR);
     m_formatter.immediate8(imm);
   }
 
   void xorb_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("xorb       $%d, " MEM_obs, int8_t(imm),
+    spew(currentOffset(), "xorb       $%d, " MEM_obs, int8_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, index, scale,
                           GROUP1_OP_XOR);
@@ -534,40 +551,43 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void xorb_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("xorb       %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "xorb       %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_XOR_EbGb, offset, base, src);
   }
 
   void xorb_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("xorb       %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "xorb       %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_XOR_EbGb, offset, base, index, scale, src);
   }
 
   void lock_xaddb_rm(RegisterID srcdest, int32_t offset, RegisterID base) {
-    spew("lock xaddb %s, " MEM_ob, GPReg8Name(srcdest), ADDR_ob(offset, base));
+    spew(currentOffset(), "lock xaddb %s, " MEM_ob, GPReg8Name(srcdest),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(PRE_LOCK);
     m_formatter.twoByteOp8(OP2_XADD_EbGb, offset, base, srcdest);
   }
 
   void lock_xaddb_rm(RegisterID srcdest, int32_t offset, RegisterID base,
                      RegisterID index, int scale) {
-    spew("lock xaddb %s, " MEM_obs, GPReg8Name(srcdest),
+    spew(currentOffset(), "lock xaddb %s, " MEM_obs, GPReg8Name(srcdest),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(PRE_LOCK);
     m_formatter.twoByteOp8(OP2_XADD_EbGb, offset, base, index, scale, srcdest);
   }
 
   void lock_xaddl_rm(RegisterID srcdest, int32_t offset, RegisterID base) {
-    spew("lock xaddl %s, " MEM_ob, GPReg32Name(srcdest), ADDR_ob(offset, base));
+    spew(currentOffset(), "lock xaddl %s, " MEM_ob, GPReg32Name(srcdest),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(PRE_LOCK);
     m_formatter.twoByteOp(OP2_XADD_EvGv, offset, base, srcdest);
   }
 
   void lock_xaddl_rm(RegisterID srcdest, int32_t offset, RegisterID base,
                      RegisterID index, int scale) {
-    spew("lock xaddl %s, " MEM_obs, GPReg32Name(srcdest),
+    spew(currentOffset(), "lock xaddl %s, " MEM_obs, GPReg32Name(srcdest),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(PRE_LOCK);
     m_formatter.twoByteOp(OP2_XADD_EvGv, offset, base, index, scale, srcdest);
@@ -935,56 +955,62 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void andl_rr(RegisterID src, RegisterID dst) {
-    spew("andl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "andl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_AND_GvEv, src, dst);
   }
 
   void andw_rr(RegisterID src, RegisterID dst) {
-    spew("andw       %s, %s", GPReg16Name(src), GPReg16Name(dst));
+    spew(currentOffset(), "andw       %s, %s", GPReg16Name(src),
+         GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_AND_GvEv, src, dst);
   }
 
   void andl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("andl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "andl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_AND_GvEv, offset, base, dst);
   }
 
   void andl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                RegisterID dst) {
-    spew("andl       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "andl       " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.oneByteOp(OP_AND_GvEv, offset, base, index, scale, dst);
   }
 
   void andl_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("andl       %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "andl       %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_AND_EvGv, offset, base, src);
   }
 
   void andw_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("andw       %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "andw       %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_AND_EvGv, offset, base, src);
   }
 
   void andl_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("andl       %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "andl       %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_AND_EvGv, offset, base, index, scale, src);
   }
 
   void andw_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("andw       %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "andw       %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_AND_EvGv, offset, base, index, scale, src);
   }
 
   void andl_ir(int32_t imm, RegisterID dst) {
-    spew("andl       $0x%x, %s", uint32_t(imm), GPReg32Name(dst));
+    spew(currentOffset(), "andl       $0x%x, %s", uint32_t(imm),
+         GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_AND);
       m_formatter.immediate8s(imm);
@@ -999,7 +1025,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void andw_ir(int32_t imm, RegisterID dst) {
-    spew("andw       $0x%x, %s", uint16_t(imm), GPReg16Name(dst));
+    spew(currentOffset(), "andw       $0x%x, %s", uint16_t(imm),
+         GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_AND);
@@ -1015,7 +1042,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void andl_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("andl       $0x%x, " MEM_ob, uint32_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "andl       $0x%x, " MEM_ob, uint32_t(imm),
+         ADDR_ob(offset, base));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_AND);
       m_formatter.immediate8s(imm);
@@ -1026,7 +1054,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void andw_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("andw       $0x%x, " MEM_ob, uint16_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "andw       $0x%x, " MEM_ob, uint16_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_AND);
@@ -1039,7 +1068,8 @@ class BaseAssembler : public GenericAssembler {
 
   void andl_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("andl       $%d, " MEM_obs, imm, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "andl       $%d, " MEM_obs, imm,
+         ADDR_obs(offset, base, index, scale));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, index, scale,
                             GROUP1_OP_AND);
@@ -1053,7 +1083,7 @@ class BaseAssembler : public GenericAssembler {
 
   void andw_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("andw       $%d, " MEM_obs, int16_t(imm),
+    spew(currentOffset(), "andw       $%d, " MEM_obs, int16_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -1068,111 +1098,117 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void fld_m(int32_t offset, RegisterID base) {
-    spew("fld        " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fld        " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6, offset, base, FPU6_OP_FLD);
   }
   void fld32_m(int32_t offset, RegisterID base) {
-    spew("fld        " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fld        " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FLD);
   }
   void faddp() {
-    spew("addp       ");
+    spew(currentOffset(), "addp       ");
     m_formatter.oneByteOp(OP_FPU6_ADDP);
     m_formatter.oneByteOp(OP_ADDP_ST0_ST1);
   }
   void fisttp_m(int32_t offset, RegisterID base) {
-    spew("fisttp     " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fisttp     " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6, offset, base, FPU6_OP_FISTTP);
   }
   void fistp_m(int32_t offset, RegisterID base) {
-    spew("fistp      " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fistp      " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FILD, offset, base, FPU6_OP_FISTP);
   }
   void fstp_m(int32_t offset, RegisterID base) {
-    spew("fstp       " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fstp       " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6, offset, base, FPU6_OP_FSTP);
   }
   void fstp32_m(int32_t offset, RegisterID base) {
-    spew("fstp32     " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fstp32     " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FSTP);
   }
   void fnstcw_m(int32_t offset, RegisterID base) {
-    spew("fnstcw     " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fnstcw     " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FISTP);
   }
   void fldcw_m(int32_t offset, RegisterID base) {
-    spew("fldcw      " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fldcw      " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6_F32, offset, base, FPU6_OP_FLDCW);
   }
   void fnstsw_m(int32_t offset, RegisterID base) {
-    spew("fnstsw     " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "fnstsw     " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_FPU6, offset, base, FPU6_OP_FISTP);
   }
 
   void negl_r(RegisterID dst) {
-    spew("negl       %s", GPReg32Name(dst));
+    spew(currentOffset(), "negl       %s", GPReg32Name(dst));
     m_formatter.oneByteOp(OP_GROUP3_Ev, dst, GROUP3_OP_NEG);
   }
 
   void negl_m(int32_t offset, RegisterID base) {
-    spew("negl       " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "negl       " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP3_Ev, offset, base, GROUP3_OP_NEG);
   }
 
   void notl_r(RegisterID dst) {
-    spew("notl       %s", GPReg32Name(dst));
+    spew(currentOffset(), "notl       %s", GPReg32Name(dst));
     m_formatter.oneByteOp(OP_GROUP3_Ev, dst, GROUP3_OP_NOT);
   }
 
   void notl_m(int32_t offset, RegisterID base) {
-    spew("notl       " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "notl       " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP3_Ev, offset, base, GROUP3_OP_NOT);
   }
 
   void orl_rr(RegisterID src, RegisterID dst) {
-    spew("orl        %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "orl        %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_OR_GvEv, src, dst);
   }
 
   void orw_rr(RegisterID src, RegisterID dst) {
-    spew("orw        %s, %s", GPReg16Name(src), GPReg16Name(dst));
+    spew(currentOffset(), "orw        %s, %s", GPReg16Name(src),
+         GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_OR_GvEv, src, dst);
   }
 
   void orl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("orl        " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "orl        " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_OR_GvEv, offset, base, dst);
   }
 
   void orl_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("orl        %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "orl        %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_OR_EvGv, offset, base, src);
   }
 
   void orw_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("orw        %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "orw        %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_OR_EvGv, offset, base, src);
   }
 
   void orl_rm(RegisterID src, int32_t offset, RegisterID base, RegisterID index,
               int scale) {
-    spew("orl        %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "orl        %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_OR_EvGv, offset, base, index, scale, src);
   }
 
   void orw_rm(RegisterID src, int32_t offset, RegisterID base, RegisterID index,
               int scale) {
-    spew("orw        %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "orw        %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_OR_EvGv, offset, base, index, scale, src);
   }
 
   void orl_ir(int32_t imm, RegisterID dst) {
-    spew("orl        $0x%x, %s", uint32_t(imm), GPReg32Name(dst));
+    spew(currentOffset(), "orl        $0x%x, %s", uint32_t(imm),
+         GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_OR);
       m_formatter.immediate8s(imm);
@@ -1187,7 +1223,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void orw_ir(int32_t imm, RegisterID dst) {
-    spew("orw        $0x%x, %s", uint16_t(imm), GPReg16Name(dst));
+    spew(currentOffset(), "orw        $0x%x, %s", uint16_t(imm),
+         GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_OR);
@@ -1203,7 +1240,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void orl_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("orl        $0x%x, " MEM_ob, uint32_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "orl        $0x%x, " MEM_ob, uint32_t(imm),
+         ADDR_ob(offset, base));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_OR);
       m_formatter.immediate8s(imm);
@@ -1214,7 +1252,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void orw_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("orw        $0x%x, " MEM_ob, uint16_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "orw        $0x%x, " MEM_ob, uint16_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_OR);
@@ -1227,7 +1266,8 @@ class BaseAssembler : public GenericAssembler {
 
   void orl_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
               int scale) {
-    spew("orl        $%d, " MEM_obs, imm, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "orl        $%d, " MEM_obs, imm,
+         ADDR_obs(offset, base, index, scale));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, index, scale,
                             GROUP1_OP_OR);
@@ -1241,7 +1281,7 @@ class BaseAssembler : public GenericAssembler {
 
   void orw_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
               int scale) {
-    spew("orw        $%d, " MEM_obs, int16_t(imm),
+    spew(currentOffset(), "orw        $%d, " MEM_obs, int16_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -1256,54 +1296,60 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void sbbl_rr(RegisterID src, RegisterID dst) {
-    spew("sbbl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "sbbl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_SBB_GvEv, src, dst);
   }
 
   void subl_rr(RegisterID src, RegisterID dst) {
-    spew("subl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "subl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_SUB_GvEv, src, dst);
   }
 
   void subw_rr(RegisterID src, RegisterID dst) {
-    spew("subw       %s, %s", GPReg16Name(src), GPReg16Name(dst));
+    spew(currentOffset(), "subw       %s, %s", GPReg16Name(src),
+         GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_SUB_GvEv, src, dst);
   }
 
   void subl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("subl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "subl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_SUB_GvEv, offset, base, dst);
   }
 
   void subl_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("subl       %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "subl       %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_SUB_EvGv, offset, base, src);
   }
 
   void subw_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("subw       %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "subw       %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_SUB_EvGv, offset, base, src);
   }
 
   void subl_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("subl       %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "subl       %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_SUB_EvGv, offset, base, index, scale, src);
   }
 
   void subw_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("subw       %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "subw       %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_SUB_EvGv, offset, base, index, scale, src);
   }
 
   size_t subl_ir(int32_t imm, RegisterID dst) {
-    spew("subl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "subl       $%d, %s", imm, GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_SUB);
       m_formatter.immediate8s(imm);
@@ -1320,7 +1366,7 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void subw_ir(int32_t imm, RegisterID dst) {
-    spew("subw       $%d, %s", int16_t(imm), GPReg16Name(dst));
+    spew(currentOffset(), "subw       $%d, %s", int16_t(imm), GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_SUB);
@@ -1336,7 +1382,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   size_t subl_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("subl       $%d, " MEM_ob, imm, ADDR_ob(offset, base));
+    spew(currentOffset(), "subl       $%d, " MEM_ob, imm,
+         ADDR_ob(offset, base));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_SUB);
       m_formatter.immediate8s(imm);
@@ -1349,7 +1396,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void subw_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("subw       $%d, " MEM_ob, int16_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "subw       $%d, " MEM_ob, int16_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_SUB);
@@ -1362,7 +1410,8 @@ class BaseAssembler : public GenericAssembler {
 
   size_t subl_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                  int scale) {
-    spew("subl       $%d, " MEM_obs, imm, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "subl       $%d, " MEM_obs, imm,
+         ADDR_obs(offset, base, index, scale));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, index, scale,
                             GROUP1_OP_SUB);
@@ -1378,7 +1427,7 @@ class BaseAssembler : public GenericAssembler {
 
   void subw_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("subw       $%d, " MEM_obs, int16_t(imm),
+    spew(currentOffset(), "subw       $%d, " MEM_obs, int16_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -1393,49 +1442,55 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void xorl_rr(RegisterID src, RegisterID dst) {
-    spew("xorl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "xorl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_XOR_GvEv, src, dst);
   }
 
   void xorw_rr(RegisterID src, RegisterID dst) {
-    spew("xorw       %s, %s", GPReg16Name(src), GPReg16Name(dst));
+    spew(currentOffset(), "xorw       %s, %s", GPReg16Name(src),
+         GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_XOR_GvEv, src, dst);
   }
 
   void xorl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("xorl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "xorl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_XOR_GvEv, offset, base, dst);
   }
 
   void xorl_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("xorl       %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "xorl       %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_XOR_EvGv, offset, base, src);
   }
 
   void xorw_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("xorw       %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "xorw       %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_XOR_EvGv, offset, base, src);
   }
 
   void xorl_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("xorl       %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "xorl       %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_XOR_EvGv, offset, base, index, scale, src);
   }
 
   void xorw_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("xorw       %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "xorw       %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_XOR_EvGv, offset, base, index, scale, src);
   }
 
   void xorl_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("xorl       $0x%x, " MEM_ob, uint32_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "xorl       $0x%x, " MEM_ob, uint32_t(imm),
+         ADDR_ob(offset, base));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_XOR);
       m_formatter.immediate8s(imm);
@@ -1446,7 +1501,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void xorw_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("xorw       $0x%x, " MEM_ob, uint16_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "xorw       $0x%x, " MEM_ob, uint16_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_XOR);
@@ -1459,7 +1515,8 @@ class BaseAssembler : public GenericAssembler {
 
   void xorl_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("xorl       $%d, " MEM_obs, imm, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "xorl       $%d, " MEM_obs, imm,
+         ADDR_obs(offset, base, index, scale));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, index, scale,
                             GROUP1_OP_XOR);
@@ -1473,7 +1530,7 @@ class BaseAssembler : public GenericAssembler {
 
   void xorw_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("xorw       $%d, " MEM_obs, int16_t(imm),
+    spew(currentOffset(), "xorw       $%d, " MEM_obs, int16_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
@@ -1488,7 +1545,7 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void xorl_ir(int32_t imm, RegisterID dst) {
-    spew("xorl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "xorl       $%d, %s", imm, GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_XOR);
       m_formatter.immediate8s(imm);
@@ -1503,7 +1560,7 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void xorw_ir(int32_t imm, RegisterID dst) {
-    spew("xorw       $%d, %s", int16_t(imm), GPReg16Name(dst));
+    spew(currentOffset(), "xorw       $%d, %s", int16_t(imm), GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_XOR);
@@ -1519,13 +1576,13 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void bswapl_r(RegisterID dst) {
-    spew("bswap      %s", GPReg32Name(dst));
+    spew(currentOffset(), "bswap      %s", GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_BSWAP, dst);
   }
 
   void sarl_ir(int32_t imm, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("sarl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "sarl       $%d, %s", imm, GPReg32Name(dst));
     if (imm == 1) {
       m_formatter.oneByteOp(OP_GROUP2_Ev1, dst, GROUP2_OP_SAR);
     } else {
@@ -1535,13 +1592,13 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void sarl_CLr(RegisterID dst) {
-    spew("sarl       %%cl, %s", GPReg32Name(dst));
+    spew(currentOffset(), "sarl       %%cl, %s", GPReg32Name(dst));
     m_formatter.oneByteOp(OP_GROUP2_EvCL, dst, GROUP2_OP_SAR);
   }
 
   void shrl_ir(int32_t imm, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("shrl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "shrl       $%d, %s", imm, GPReg32Name(dst));
     if (imm == 1) {
       m_formatter.oneByteOp(OP_GROUP2_Ev1, dst, GROUP2_OP_SHR);
     } else {
@@ -1551,23 +1608,25 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void shrl_CLr(RegisterID dst) {
-    spew("shrl       %%cl, %s", GPReg32Name(dst));
+    spew(currentOffset(), "shrl       %%cl, %s", GPReg32Name(dst));
     m_formatter.oneByteOp(OP_GROUP2_EvCL, dst, GROUP2_OP_SHR);
   }
 
   void shrdl_CLr(RegisterID src, RegisterID dst) {
-    spew("shrdl      %%cl, %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "shrdl      %%cl, %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_SHRD_GvEv, dst, src);
   }
 
   void shldl_CLr(RegisterID src, RegisterID dst) {
-    spew("shldl      %%cl, %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "shldl      %%cl, %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_SHLD_GvEv, dst, src);
   }
 
   void shll_ir(int32_t imm, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("shll       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "shll       $%d, %s", imm, GPReg32Name(dst));
     if (imm == 1) {
       m_formatter.oneByteOp(OP_GROUP2_Ev1, dst, GROUP2_OP_SHL);
     } else {
@@ -1577,13 +1636,13 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void shll_CLr(RegisterID dst) {
-    spew("shll       %%cl, %s", GPReg32Name(dst));
+    spew(currentOffset(), "shll       %%cl, %s", GPReg32Name(dst));
     m_formatter.oneByteOp(OP_GROUP2_EvCL, dst, GROUP2_OP_SHL);
   }
 
   void roll_ir(int32_t imm, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("roll       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "roll       $%d, %s", imm, GPReg32Name(dst));
     if (imm == 1) {
       m_formatter.oneByteOp(OP_GROUP2_Ev1, dst, GROUP2_OP_ROL);
     } else {
@@ -1593,7 +1652,7 @@ class BaseAssembler : public GenericAssembler {
   }
   void rolw_ir(int32_t imm, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("roll       $%d, %s", imm, GPReg16Name(dst));
+    spew(currentOffset(), "roll       $%d, %s", imm, GPReg16Name(dst));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     if (imm == 1) {
       m_formatter.oneByteOp(OP_GROUP2_Ev1, dst, GROUP2_OP_ROL);
@@ -1603,13 +1662,13 @@ class BaseAssembler : public GenericAssembler {
     }
   }
   void roll_CLr(RegisterID dst) {
-    spew("roll       %%cl, %s", GPReg32Name(dst));
+    spew(currentOffset(), "roll       %%cl, %s", GPReg32Name(dst));
     m_formatter.oneByteOp(OP_GROUP2_EvCL, dst, GROUP2_OP_ROL);
   }
 
   void rorl_ir(int32_t imm, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("rorl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "rorl       $%d, %s", imm, GPReg32Name(dst));
     if (imm == 1) {
       m_formatter.oneByteOp(OP_GROUP2_Ev1, dst, GROUP2_OP_ROR);
     } else {
@@ -1618,55 +1677,63 @@ class BaseAssembler : public GenericAssembler {
     }
   }
   void rorl_CLr(RegisterID dst) {
-    spew("rorl       %%cl, %s", GPReg32Name(dst));
+    spew(currentOffset(), "rorl       %%cl, %s", GPReg32Name(dst));
     m_formatter.oneByteOp(OP_GROUP2_EvCL, dst, GROUP2_OP_ROR);
   }
 
   void bsrl_rr(RegisterID src, RegisterID dst) {
-    spew("bsrl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "bsrl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_BSR_GvEv, src, dst);
   }
 
   void bsfl_rr(RegisterID src, RegisterID dst) {
-    spew("bsfl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "bsfl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_BSF_GvEv, src, dst);
   }
 
   void lzcntl_rr(RegisterID src, RegisterID dst) {
-    spew("lzcntl     %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "lzcntl     %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.legacySSEPrefix(VEX_SS);
     m_formatter.twoByteOp(OP2_LZCNT_GvEv, src, dst);
   }
 
   void tzcntl_rr(RegisterID src, RegisterID dst) {
-    spew("tzcntl     %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "tzcntl     %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.legacySSEPrefix(VEX_SS);
     m_formatter.twoByteOp(OP2_TZCNT_GvEv, src, dst);
   }
 
   void popcntl_rr(RegisterID src, RegisterID dst) {
-    spew("popcntl    %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "popcntl    %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.legacySSEPrefix(VEX_SS);
     m_formatter.twoByteOp(OP2_POPCNT_GvEv, src, dst);
   }
 
   void imull_rr(RegisterID src, RegisterID dst) {
-    spew("imull      %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "imull      %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_IMUL_GvEv, src, dst);
   }
 
   void imull_r(RegisterID multiplier) {
-    spew("imull      %s", GPReg32Name(multiplier));
+    spew(currentOffset(), "imull      %s", GPReg32Name(multiplier));
     m_formatter.oneByteOp(OP_GROUP3_Ev, multiplier, GROUP3_OP_IMUL);
   }
 
   void imull_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("imull      " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "imull      " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_IMUL_GvEv, offset, base, dst);
   }
 
   void imull_ir(int32_t value, RegisterID src, RegisterID dst) {
-    spew("imull      $%d, %s, %s", value, GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "imull      $%d, %s, %s", value, GPReg32Name(src),
+         GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(value)) {
       m_formatter.oneByteOp(OP_IMUL_GvEvIb, src, dst);
       m_formatter.immediate8s(value);
@@ -1677,37 +1744,37 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void mull_r(RegisterID multiplier) {
-    spew("mull       %s", GPReg32Name(multiplier));
+    spew(currentOffset(), "mull       %s", GPReg32Name(multiplier));
     m_formatter.oneByteOp(OP_GROUP3_Ev, multiplier, GROUP3_OP_MUL);
   }
 
   void idivl_r(RegisterID divisor) {
-    spew("idivl      %s", GPReg32Name(divisor));
+    spew(currentOffset(), "idivl      %s", GPReg32Name(divisor));
     m_formatter.oneByteOp(OP_GROUP3_Ev, divisor, GROUP3_OP_IDIV);
   }
 
   void divl_r(RegisterID divisor) {
-    spew("div        %s", GPReg32Name(divisor));
+    spew(currentOffset(), "div        %s", GPReg32Name(divisor));
     m_formatter.oneByteOp(OP_GROUP3_Ev, divisor, GROUP3_OP_DIV);
   }
 
   void prefix_lock() {
-    spew("lock");
+    spew(currentOffset(), "lock");
     m_formatter.oneByteOp(PRE_LOCK);
   }
 
   void prefix_16_for_32() {
-    spew("[16-bit operands next]");
+    spew(currentOffset(), "[16-bit operands next]");
     m_formatter.prefix(PRE_OPERAND_SIZE);
   }
 
   void incl_m32(int32_t offset, RegisterID base) {
-    spew("incl       " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "incl       " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, GROUP5_OP_INC);
   }
 
   void decl_m32(int32_t offset, RegisterID base) {
-    spew("decl       " MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "decl       " MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, GROUP5_OP_DEC);
   }
 
@@ -1717,34 +1784,37 @@ class BaseAssembler : public GenericAssembler {
   // For the 8-bit operations src must also be an 8-bit register.
 
   void cmpxchgb(RegisterID src, int32_t offset, RegisterID base) {
-    spew("cmpxchgb   %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpxchgb   %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.twoByteOp8(OP2_CMPXCHG_GvEb, offset, base, src);
   }
   void cmpxchgb(RegisterID src, int32_t offset, RegisterID base,
                 RegisterID index, int scale) {
-    spew("cmpxchgb   %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "cmpxchgb   %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.twoByteOp8(OP2_CMPXCHG_GvEb, offset, base, index, scale, src);
   }
   void cmpxchgw(RegisterID src, int32_t offset, RegisterID base) {
-    spew("cmpxchgw   %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpxchgw   %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.twoByteOp(OP2_CMPXCHG_GvEw, offset, base, src);
   }
   void cmpxchgw(RegisterID src, int32_t offset, RegisterID base,
                 RegisterID index, int scale) {
-    spew("cmpxchgw   %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "cmpxchgw   %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.twoByteOp(OP2_CMPXCHG_GvEw, offset, base, index, scale, src);
   }
   void cmpxchgl(RegisterID src, int32_t offset, RegisterID base) {
-    spew("cmpxchgl   %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpxchgl   %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.twoByteOp(OP2_CMPXCHG_GvEw, offset, base, src);
   }
   void cmpxchgl(RegisterID src, int32_t offset, RegisterID base,
                 RegisterID index, int scale) {
-    spew("cmpxchgl   %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "cmpxchgl   %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.twoByteOp(OP2_CMPXCHG_GvEw, offset, base, index, scale, src);
   }
@@ -1753,7 +1823,8 @@ class BaseAssembler : public GenericAssembler {
                  RegisterID newLo, int32_t offset, RegisterID base) {
     MOZ_ASSERT(srcHi == edx.code() && srcLo == eax.code());
     MOZ_ASSERT(newHi == ecx.code() && newLo == ebx.code());
-    spew("cmpxchg8b  %s, " MEM_ob, "edx:eax", ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpxchg8b  %s, " MEM_ob, "edx:eax",
+         ADDR_ob(offset, base));
     m_formatter.twoByteOp(OP2_CMPXCHGNB, offset, base, 1);
   }
   void cmpxchg8b(RegisterID srcHi, RegisterID srcLo, RegisterID newHi,
@@ -1761,7 +1832,7 @@ class BaseAssembler : public GenericAssembler {
                  RegisterID index, int scale) {
     MOZ_ASSERT(srcHi == edx.code() && srcLo == eax.code());
     MOZ_ASSERT(newHi == ecx.code() && newLo == ebx.code());
-    spew("cmpxchg8b  %s, " MEM_obs, "edx:eax",
+    spew(currentOffset(), "cmpxchg8b  %s, " MEM_obs, "edx:eax",
          ADDR_obs(offset, base, index, scale));
     m_formatter.twoByteOp(OP2_CMPXCHGNB, offset, base, index, scale, 1);
   }
@@ -1769,29 +1840,32 @@ class BaseAssembler : public GenericAssembler {
   // Comparisons:
 
   void cmpl_rr(RegisterID rhs, RegisterID lhs) {
-    spew("cmpl       %s, %s", GPReg32Name(rhs), GPReg32Name(lhs));
+    spew(currentOffset(), "cmpl       %s, %s", GPReg32Name(rhs),
+         GPReg32Name(lhs));
     m_formatter.oneByteOp(OP_CMP_GvEv, rhs, lhs);
   }
 
   void cmpl_rm(RegisterID rhs, int32_t offset, RegisterID base) {
-    spew("cmpl       %s, " MEM_ob, GPReg32Name(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpl       %s, " MEM_ob, GPReg32Name(rhs),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_CMP_EvGv, offset, base, rhs);
   }
 
   void cmpl_rm(RegisterID rhs, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("cmpl       %s, " MEM_obs, GPReg32Name(rhs),
+    spew(currentOffset(), "cmpl       %s, " MEM_obs, GPReg32Name(rhs),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_CMP_EvGv, offset, base, index, scale, rhs);
   }
 
   void cmpl_mr(int32_t offset, RegisterID base, RegisterID lhs) {
-    spew("cmpl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(lhs));
+    spew(currentOffset(), "cmpl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(lhs));
     m_formatter.oneByteOp(OP_CMP_GvEv, offset, base, lhs);
   }
 
   void cmpl_mr(const void* address, RegisterID lhs) {
-    spew("cmpl       %p, %s", address, GPReg32Name(lhs));
+    spew(currentOffset(), "cmpl       %p, %s", address, GPReg32Name(lhs));
     m_formatter.oneByteOp(OP_CMP_GvEv, address, lhs);
   }
 
@@ -1801,7 +1875,8 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("cmpl       $0x%x, %s", uint32_t(rhs), GPReg32Name(lhs));
+    spew(currentOffset(), "cmpl       $0x%x, %s", uint32_t(rhs),
+         GPReg32Name(lhs));
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, lhs, GROUP1_OP_CMP);
       m_formatter.immediate8s(rhs);
@@ -1816,7 +1891,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpl_i32r(int32_t rhs, RegisterID lhs) {
-    spew("cmpl       $0x%04x, %s", uint32_t(rhs), GPReg32Name(lhs));
+    spew(currentOffset(), "cmpl       $0x%04x, %s", uint32_t(rhs),
+         GPReg32Name(lhs));
     if (lhs == rax) {
       m_formatter.oneByteOp(OP_CMP_EAXIv);
     } else {
@@ -1826,7 +1902,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpl_im(int32_t rhs, int32_t offset, RegisterID base) {
-    spew("cmpl       $0x%x, " MEM_ob, uint32_t(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpl       $0x%x, " MEM_ob, uint32_t(rhs),
+         ADDR_ob(offset, base));
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_CMP);
       m_formatter.immediate8s(rhs);
@@ -1837,24 +1914,26 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpb_rr(RegisterID rhs, RegisterID lhs) {
-    spew("cmpb       %s, %s", GPReg8Name(rhs), GPReg8Name(lhs));
+    spew(currentOffset(), "cmpb       %s, %s", GPReg8Name(rhs),
+         GPReg8Name(lhs));
     m_formatter.oneByteOp8(OP_CMP_GbEb, rhs, lhs);
   }
 
   void cmpb_rm(RegisterID rhs, int32_t offset, RegisterID base) {
-    spew("cmpb       %s, " MEM_ob, GPReg8Name(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpb       %s, " MEM_ob, GPReg8Name(rhs),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_CMP_EbGb, offset, base, rhs);
   }
 
   void cmpb_rm(RegisterID rhs, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("cmpb       %s, " MEM_obs, GPReg8Name(rhs),
+    spew(currentOffset(), "cmpb       %s, " MEM_obs, GPReg8Name(rhs),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_CMP_EbGb, offset, base, index, scale, rhs);
   }
 
   void cmpb_rm(RegisterID rhs, const void* addr) {
-    spew("cmpb       %s, %p", GPReg8Name(rhs), addr);
+    spew(currentOffset(), "cmpb       %s, %p", GPReg8Name(rhs), addr);
     m_formatter.oneByteOp8(OP_CMP_EbGb, addr, rhs);
   }
 
@@ -1864,7 +1943,8 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("cmpb       $0x%x, %s", uint32_t(rhs), GPReg8Name(lhs));
+    spew(currentOffset(), "cmpb       $0x%x, %s", uint32_t(rhs),
+         GPReg8Name(lhs));
     if (lhs == rax) {
       m_formatter.oneByteOp8(OP_CMP_EAXIb);
     } else {
@@ -1874,14 +1954,15 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpb_im(int32_t rhs, int32_t offset, RegisterID base) {
-    spew("cmpb       $0x%x, " MEM_ob, uint32_t(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpb       $0x%x, " MEM_ob, uint32_t(rhs),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, GROUP1_OP_CMP);
     m_formatter.immediate8(rhs);
   }
 
   void cmpb_im(int32_t rhs, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("cmpb       $0x%x, " MEM_obs, uint32_t(rhs),
+    spew(currentOffset(), "cmpb       $0x%x, " MEM_obs, uint32_t(rhs),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP1_EbIb, offset, base, index, scale,
                           GROUP1_OP_CMP);
@@ -1889,14 +1970,14 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpb_im(int32_t rhs, const void* addr) {
-    spew("cmpb       $0x%x, %p", uint32_t(rhs), addr);
+    spew(currentOffset(), "cmpb       $0x%x, %p", uint32_t(rhs), addr);
     m_formatter.oneByteOp(OP_GROUP1_EbIb, addr, GROUP1_OP_CMP);
     m_formatter.immediate8(rhs);
   }
 
   void cmpl_im(int32_t rhs, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("cmpl       $0x%x, " MEM_obs, uint32_t(rhs),
+    spew(currentOffset(), "cmpl       $0x%x, " MEM_obs, uint32_t(rhs),
          ADDR_obs(offset, base, index, scale));
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, index, scale,
@@ -1911,7 +1992,8 @@ class BaseAssembler : public GenericAssembler {
 
   [[nodiscard]] JmpSrc cmpl_im_disp32(int32_t rhs, int32_t offset,
                                       RegisterID base) {
-    spew("cmpl       $0x%x, " MEM_o32b, uint32_t(rhs), ADDR_o32b(offset, base));
+    spew(currentOffset(), "cmpl       $0x%x, " MEM_o32b, uint32_t(rhs),
+         ADDR_o32b(offset, base));
     JmpSrc r;
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.oneByteOp_disp32(OP_GROUP1_EvIb, offset, base, GROUP1_OP_CMP);
@@ -1926,7 +2008,7 @@ class BaseAssembler : public GenericAssembler {
   }
 
   [[nodiscard]] JmpSrc cmpl_im_disp32(int32_t rhs, const void* addr) {
-    spew("cmpl       $0x%x, %p", uint32_t(rhs), addr);
+    spew(currentOffset(), "cmpl       $0x%x, %p", uint32_t(rhs), addr);
     JmpSrc r;
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.oneByteOp_disp32(OP_GROUP1_EvIb, addr, GROUP1_OP_CMP);
@@ -1941,29 +2023,30 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpl_i32m(int32_t rhs, int32_t offset, RegisterID base) {
-    spew("cmpl       $0x%04x, " MEM_ob, uint32_t(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpl       $0x%04x, " MEM_ob, uint32_t(rhs),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP1_EvIz, offset, base, GROUP1_OP_CMP);
     m_formatter.immediate32(rhs);
   }
 
   void cmpl_i32m(int32_t rhs, const void* addr) {
-    spew("cmpl       $0x%04x, %p", uint32_t(rhs), addr);
+    spew(currentOffset(), "cmpl       $0x%04x, %p", uint32_t(rhs), addr);
     m_formatter.oneByteOp(OP_GROUP1_EvIz, addr, GROUP1_OP_CMP);
     m_formatter.immediate32(rhs);
   }
 
   void cmpl_rm(RegisterID rhs, const void* addr) {
-    spew("cmpl       %s, %p", GPReg32Name(rhs), addr);
+    spew(currentOffset(), "cmpl       %s, %p", GPReg32Name(rhs), addr);
     m_formatter.oneByteOp(OP_CMP_EvGv, addr, rhs);
   }
 
   void cmpl_rm_disp32(RegisterID rhs, const void* addr) {
-    spew("cmpl       %s, %p", GPReg32Name(rhs), addr);
+    spew(currentOffset(), "cmpl       %s, %p", GPReg32Name(rhs), addr);
     m_formatter.oneByteOp_disp32(OP_CMP_EvGv, addr, rhs);
   }
 
   void cmpl_im(int32_t rhs, const void* addr) {
-    spew("cmpl       $0x%x, %p", uint32_t(rhs), addr);
+    spew(currentOffset(), "cmpl       $0x%x, %p", uint32_t(rhs), addr);
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_CMP);
       m_formatter.immediate8s(rhs);
@@ -1974,14 +2057,15 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpw_rr(RegisterID rhs, RegisterID lhs) {
-    spew("cmpw       %s, %s", GPReg16Name(rhs), GPReg16Name(lhs));
+    spew(currentOffset(), "cmpw       %s, %s", GPReg16Name(rhs),
+         GPReg16Name(lhs));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_CMP_GvEv, rhs, lhs);
   }
 
   void cmpw_rm(RegisterID rhs, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("cmpw       %s, " MEM_obs, GPReg16Name(rhs),
+    spew(currentOffset(), "cmpw       %s, " MEM_obs, GPReg16Name(rhs),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_CMP_EvGv, offset, base, index, scale, rhs);
@@ -1993,7 +2077,8 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("cmpw       $0x%x, %s", uint32_t(rhs), GPReg16Name(lhs));
+    spew(currentOffset(), "cmpw       $0x%x, %s", uint32_t(rhs),
+         GPReg16Name(lhs));
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.prefix(PRE_OPERAND_SIZE);
       m_formatter.oneByteOp(OP_GROUP1_EvIb, lhs, GROUP1_OP_CMP);
@@ -2006,7 +2091,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpw_im(int32_t rhs, int32_t offset, RegisterID base) {
-    spew("cmpw       $0x%x, " MEM_ob, uint32_t(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "cmpw       $0x%x, " MEM_ob, uint32_t(rhs),
+         ADDR_ob(offset, base));
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.prefix(PRE_OPERAND_SIZE);
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, GROUP1_OP_CMP);
@@ -2020,7 +2106,8 @@ class BaseAssembler : public GenericAssembler {
 
   void cmpw_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("cmpw       $%d, " MEM_obs, imm, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "cmpw       $%d, " MEM_obs, imm,
+         ADDR_obs(offset, base, index, scale));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.prefix(PRE_OPERAND_SIZE);
       m_formatter.oneByteOp(OP_GROUP1_EvIb, offset, base, index, scale,
@@ -2035,7 +2122,7 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void cmpw_im(int32_t rhs, const void* addr) {
-    spew("cmpw       $0x%x, %p", uint32_t(rhs), addr);
+    spew(currentOffset(), "cmpw       $0x%x, %p", uint32_t(rhs), addr);
     if (CAN_SIGN_EXTEND_8_32(rhs)) {
       m_formatter.prefix(PRE_OPERAND_SIZE);
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_CMP);
@@ -2048,12 +2135,14 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void testl_rr(RegisterID rhs, RegisterID lhs) {
-    spew("testl      %s, %s", GPReg32Name(rhs), GPReg32Name(lhs));
+    spew(currentOffset(), "testl      %s, %s", GPReg32Name(rhs),
+         GPReg32Name(lhs));
     m_formatter.oneByteOp(OP_TEST_EvGv, lhs, rhs);
   }
 
   void testb_rr(RegisterID rhs, RegisterID lhs) {
-    spew("testb      %s, %s", GPReg8Name(rhs), GPReg8Name(lhs));
+    spew(currentOffset(), "testb      %s, %s", GPReg8Name(rhs),
+         GPReg8Name(lhs));
     m_formatter.oneByteOp8(OP_TEST_EbGb, lhs, rhs);
   }
 
@@ -2070,7 +2159,8 @@ class BaseAssembler : public GenericAssembler {
       testb_ir_norex(rhs >> 8, GetSubregH(lhs));
       return;
     }
-    spew("testl      $0x%x, %s", uint32_t(rhs), GPReg32Name(lhs));
+    spew(currentOffset(), "testl      $0x%x, %s", uint32_t(rhs),
+         GPReg32Name(lhs));
     if (lhs == rax) {
       m_formatter.oneByteOp(OP_TEST_EAXIv);
     } else {
@@ -2080,26 +2170,28 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void testl_i32m(int32_t rhs, int32_t offset, RegisterID base) {
-    spew("testl      $0x%x, " MEM_ob, uint32_t(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "testl      $0x%x, " MEM_ob, uint32_t(rhs),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP3_EvIz, offset, base, GROUP3_OP_TEST);
     m_formatter.immediate32(rhs);
   }
 
   void testl_i32m(int32_t rhs, const void* addr) {
-    spew("testl      $0x%x, %p", uint32_t(rhs), addr);
+    spew(currentOffset(), "testl      $0x%x, %p", uint32_t(rhs), addr);
     m_formatter.oneByteOp(OP_GROUP3_EvIz, addr, GROUP3_OP_TEST);
     m_formatter.immediate32(rhs);
   }
 
   void testb_im(int32_t rhs, int32_t offset, RegisterID base) {
-    spew("testb      $0x%x, " MEM_ob, uint32_t(rhs), ADDR_ob(offset, base));
+    spew(currentOffset(), "testb      $0x%x, " MEM_ob, uint32_t(rhs),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP3_EbIb, offset, base, GROUP3_OP_TEST);
     m_formatter.immediate8(rhs);
   }
 
   void testb_im(int32_t rhs, int32_t offset, RegisterID base, RegisterID index,
                 int scale) {
-    spew("testb      $0x%x, " MEM_obs, uint32_t(rhs),
+    spew(currentOffset(), "testb      $0x%x, " MEM_obs, uint32_t(rhs),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP3_EbIb, offset, base, index, scale,
                           GROUP3_OP_TEST);
@@ -2108,7 +2200,7 @@ class BaseAssembler : public GenericAssembler {
 
   void testl_i32m(int32_t rhs, int32_t offset, RegisterID base,
                   RegisterID index, int scale) {
-    spew("testl      $0x%4x, " MEM_obs, uint32_t(rhs),
+    spew(currentOffset(), "testl      $0x%4x, " MEM_obs, uint32_t(rhs),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP3_EvIz, offset, base, index, scale,
                           GROUP3_OP_TEST);
@@ -2116,13 +2208,15 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void testw_rr(RegisterID rhs, RegisterID lhs) {
-    spew("testw      %s, %s", GPReg16Name(rhs), GPReg16Name(lhs));
+    spew(currentOffset(), "testw      %s, %s", GPReg16Name(rhs),
+         GPReg16Name(lhs));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_TEST_EvGv, lhs, rhs);
   }
 
   void testb_ir(int32_t rhs, RegisterID lhs) {
-    spew("testb      $0x%x, %s", uint32_t(rhs), GPReg8Name(lhs));
+    spew(currentOffset(), "testb      $0x%x, %s", uint32_t(rhs),
+         GPReg8Name(lhs));
     if (lhs == rax) {
       m_formatter.oneByteOp8(OP_TEST_EAXIb);
     } else {
@@ -2134,13 +2228,14 @@ class BaseAssembler : public GenericAssembler {
   // Like testb_ir, but never emits a REX prefix. This may be used to
   // reference ah..bh.
   void testb_ir_norex(int32_t rhs, HRegisterID lhs) {
-    spew("testb      $0x%x, %s", uint32_t(rhs), HRegName8(lhs));
+    spew(currentOffset(), "testb      $0x%x, %s", uint32_t(rhs),
+         HRegName8(lhs));
     m_formatter.oneByteOp8_norex(OP_GROUP3_EbIb, lhs, GROUP3_OP_TEST);
     m_formatter.immediate8(rhs);
   }
 
   void setCC_r(Condition cond, RegisterID lhs) {
-    spew("set%s      %s", CCName(cond), GPReg8Name(lhs));
+    spew(currentOffset(), "set%s      %s", CCName(cond), GPReg8Name(lhs));
     m_formatter.twoByteOp8(setccOpcode(cond), lhs, (GroupOpcodeID)0);
   }
 
@@ -2155,110 +2250,120 @@ class BaseAssembler : public GenericAssembler {
   // Various move ops:
 
   void cdq() {
-    spew("cdq        ");
+    spew(currentOffset(), "cdq        ");
     m_formatter.oneByteOp(OP_CDQ);
   }
 
   void xchgb_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("xchgb      %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "xchgb      %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_XCHG_GbEb, offset, base, src);
   }
   void xchgb_rm(RegisterID src, int32_t offset, RegisterID base,
                 RegisterID index, int scale) {
-    spew("xchgb      %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "xchgb      %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_XCHG_GbEb, offset, base, index, scale, src);
   }
 
   void xchgw_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("xchgw      %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "xchgw      %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_XCHG_GvEv, offset, base, src);
   }
   void xchgw_rm(RegisterID src, int32_t offset, RegisterID base,
                 RegisterID index, int scale) {
-    spew("xchgw      %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "xchgw      %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_XCHG_GvEv, offset, base, index, scale, src);
   }
 
   void xchgl_rr(RegisterID src, RegisterID dst) {
-    spew("xchgl      %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "xchgl      %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_XCHG_GvEv, src, dst);
   }
   void xchgl_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("xchgl      %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "xchgl      %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_XCHG_GvEv, offset, base, src);
   }
   void xchgl_rm(RegisterID src, int32_t offset, RegisterID base,
                 RegisterID index, int scale) {
-    spew("xchgl      %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "xchgl      %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_XCHG_GvEv, offset, base, index, scale, src);
   }
 
   void cmovCCl_rr(Condition cond, RegisterID src, RegisterID dst) {
-    spew("cmov%s     %s, %s", CCName(cond), GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "cmov%s     %s, %s", CCName(cond), GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(cmovccOpcode(cond), src, dst);
   }
   void cmovCCl_mr(Condition cond, int32_t offset, RegisterID base,
                   RegisterID dst) {
-    spew("cmov%s     " MEM_ob ", %s", CCName(cond), ADDR_ob(offset, base),
-         GPReg32Name(dst));
+    spew(currentOffset(), "cmov%s     " MEM_ob ", %s", CCName(cond),
+         ADDR_ob(offset, base), GPReg32Name(dst));
     m_formatter.twoByteOp(cmovccOpcode(cond), offset, base, dst);
   }
   void cmovCCl_mr(Condition cond, int32_t offset, RegisterID base,
                   RegisterID index, int scale, RegisterID dst) {
-    spew("cmov%s     " MEM_obs ", %s", CCName(cond),
+    spew(currentOffset(), "cmov%s     " MEM_obs ", %s", CCName(cond),
          ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.twoByteOp(cmovccOpcode(cond), offset, base, index, scale, dst);
   }
 
   void movl_rr(RegisterID src, RegisterID dst) {
-    spew("movl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "movl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_MOV_GvEv, src, dst);
   }
 
   void movw_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("movw       %s, " MEM_ob, GPReg16Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "movw       %s, " MEM_ob, GPReg16Name(src),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_MOV_EvGv, offset, base, src);
   }
 
   void movw_rm_disp32(RegisterID src, int32_t offset, RegisterID base) {
-    spew("movw       %s, " MEM_o32b, GPReg16Name(src), ADDR_o32b(offset, base));
+    spew(currentOffset(), "movw       %s, " MEM_o32b, GPReg16Name(src),
+         ADDR_o32b(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp_disp32(OP_MOV_EvGv, offset, base, src);
   }
 
   void movw_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("movw       %s, " MEM_obs, GPReg16Name(src),
+    spew(currentOffset(), "movw       %s, " MEM_obs, GPReg16Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_MOV_EvGv, offset, base, index, scale, src);
   }
 
   void movw_rm(RegisterID src, const void* addr) {
-    spew("movw       %s, %p", GPReg16Name(src), addr);
+    spew(currentOffset(), "movw       %s, %p", GPReg16Name(src), addr);
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp_disp32(OP_MOV_EvGv, addr, src);
   }
 
   void movl_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("movl       %s, " MEM_ob, GPReg32Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "movl       %s, " MEM_ob, GPReg32Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_MOV_EvGv, offset, base, src);
   }
 
   void movl_rm_disp32(RegisterID src, int32_t offset, RegisterID base) {
-    spew("movl       %s, " MEM_o32b, GPReg32Name(src), ADDR_o32b(offset, base));
+    spew(currentOffset(), "movl       %s, " MEM_o32b, GPReg32Name(src),
+         ADDR_o32b(offset, base));
     m_formatter.oneByteOp_disp32(OP_MOV_EvGv, offset, base, src);
   }
 
   void movl_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("movl       %s, " MEM_obs, GPReg32Name(src),
+    spew(currentOffset(), "movl       %s, " MEM_obs, GPReg32Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_MOV_EvGv, offset, base, index, scale, src);
   }
@@ -2272,9 +2377,9 @@ class BaseAssembler : public GenericAssembler {
 #endif
 
 #ifdef JS_CODEGEN_X64
-    spew("movabs     %p, %%eax", addr);
+    spew(currentOffset(), "movabs     %p, %%eax", addr);
 #else
-    spew("movl       %p, %%eax", addr);
+    spew(currentOffset(), "movl       %p, %%eax", addr);
 #endif
     m_formatter.oneByteOp(OP_MOV_EAXOv);
 #ifdef JS_CODEGEN_X64
@@ -2285,28 +2390,29 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void movl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "movl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_MOV_GvEv, offset, base, dst);
   }
 
   void movl_mr_disp32(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movl       " MEM_o32b ", %s", ADDR_o32b(offset, base),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movl       " MEM_o32b ", %s",
+         ADDR_o32b(offset, base), GPReg32Name(dst));
     m_formatter.oneByteOp_disp32(OP_MOV_GvEv, offset, base, dst);
   }
 
   void movl_mr(const void* base, RegisterID index, int scale, RegisterID dst) {
     int32_t disp = AddressImmediate(base);
 
-    spew("movl       " MEM_os ", %s", ADDR_os(disp, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movl       " MEM_os ", %s",
+         ADDR_os(disp, index, scale), GPReg32Name(dst));
     m_formatter.oneByteOp_disp32(OP_MOV_GvEv, disp, index, scale, dst);
   }
 
   void movl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                RegisterID dst) {
-    spew("movl       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movl       " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.oneByteOp(OP_MOV_GvEv, offset, base, index, scale, dst);
   }
 
@@ -2320,31 +2426,34 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("movl       %p, %s", addr, GPReg32Name(dst));
+    spew(currentOffset(), "movl       %p, %s", addr, GPReg32Name(dst));
     m_formatter.oneByteOp(OP_MOV_GvEv, addr, dst);
   }
 
   void movl_i32r(int32_t imm, RegisterID dst) {
-    spew("movl       $0x%x, %s", uint32_t(imm), GPReg32Name(dst));
+    spew(currentOffset(), "movl       $0x%x, %s", uint32_t(imm),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_MOV_EAXIv, dst);
     m_formatter.immediate32(imm);
   }
 
   void movb_ir(int32_t imm, RegisterID reg) {
-    spew("movb       $0x%x, %s", uint32_t(imm), GPReg8Name(reg));
+    spew(currentOffset(), "movb       $0x%x, %s", uint32_t(imm),
+         GPReg8Name(reg));
     m_formatter.oneByteOp8(OP_MOV_EbIb, reg);
     m_formatter.immediate8(imm);
   }
 
   void movb_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("movb       $0x%x, " MEM_ob, uint32_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "movb       $0x%x, " MEM_ob, uint32_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP11_EvIb, offset, base, GROUP11_MOV);
     m_formatter.immediate8(imm);
   }
 
   void movb_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("movb       $0x%x, " MEM_obs, uint32_t(imm),
+    spew(currentOffset(), "movb       $0x%x, " MEM_obs, uint32_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP11_EvIb, offset, base, index, scale,
                           GROUP11_MOV);
@@ -2352,34 +2461,36 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void movb_im(int32_t imm, const void* addr) {
-    spew("movb       $%d, %p", imm, addr);
+    spew(currentOffset(), "movb       $%d, %p", imm, addr);
     m_formatter.oneByteOp_disp32(OP_GROUP11_EvIb, addr, GROUP11_MOV);
     m_formatter.immediate8(imm);
   }
 
   void movw_im(int32_t imm, int32_t offset, RegisterID base) {
-    spew("movw       $0x%x, " MEM_ob, uint32_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "movw       $0x%x, " MEM_ob, uint32_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_GROUP11_EvIz, offset, base, GROUP11_MOV);
     m_formatter.immediate16(imm);
   }
 
   void movw_im(int32_t imm, const void* addr) {
-    spew("movw       $%d, %p", imm, addr);
+    spew(currentOffset(), "movw       $%d, %p", imm, addr);
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp_disp32(OP_GROUP11_EvIz, addr, GROUP11_MOV);
     m_formatter.immediate16(imm);
   }
 
   void movl_i32m(int32_t imm, int32_t offset, RegisterID base) {
-    spew("movl       $0x%x, " MEM_ob, uint32_t(imm), ADDR_ob(offset, base));
+    spew(currentOffset(), "movl       $0x%x, " MEM_ob, uint32_t(imm),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP11_EvIz, offset, base, GROUP11_MOV);
     m_formatter.immediate32(imm);
   }
 
   void movw_im(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                int scale) {
-    spew("movw       $0x%x, " MEM_obs, uint32_t(imm),
+    spew(currentOffset(), "movw       $0x%x, " MEM_obs, uint32_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.prefix(PRE_OPERAND_SIZE);
     m_formatter.oneByteOp(OP_GROUP11_EvIz, offset, base, index, scale,
@@ -2389,7 +2500,7 @@ class BaseAssembler : public GenericAssembler {
 
   void movl_i32m(int32_t imm, int32_t offset, RegisterID base, RegisterID index,
                  int scale) {
-    spew("movl       $0x%x, " MEM_obs, uint32_t(imm),
+    spew(currentOffset(), "movl       $0x%x, " MEM_obs, uint32_t(imm),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP11_EvIz, offset, base, index, scale,
                           GROUP11_MOV);
@@ -2404,7 +2515,7 @@ class BaseAssembler : public GenericAssembler {
     }
 #endif
 
-    spew("movl       %%eax, %p", addr);
+    spew(currentOffset(), "movl       %%eax, %p", addr);
     m_formatter.oneByteOp(OP_MOV_OvEAX);
 #ifdef JS_CODEGEN_X64
     m_formatter.immediate64(reinterpret_cast<int64_t>(addr));
@@ -2471,190 +2582,210 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("movl       %s, %p", GPReg32Name(src), addr);
+    spew(currentOffset(), "movl       %s, %p", GPReg32Name(src), addr);
     m_formatter.oneByteOp(OP_MOV_EvGv, addr, src);
   }
 
   void movl_i32m(int32_t imm, const void* addr) {
-    spew("movl       $%d, %p", imm, addr);
+    spew(currentOffset(), "movl       $%d, %p", imm, addr);
     m_formatter.oneByteOp(OP_GROUP11_EvIz, addr, GROUP11_MOV);
     m_formatter.immediate32(imm);
   }
 
   void movb_rm(RegisterID src, int32_t offset, RegisterID base) {
-    spew("movb       %s, " MEM_ob, GPReg8Name(src), ADDR_ob(offset, base));
+    spew(currentOffset(), "movb       %s, " MEM_ob, GPReg8Name(src),
+         ADDR_ob(offset, base));
     m_formatter.oneByteOp8(OP_MOV_EbGv, offset, base, src);
   }
 
   void movb_rm_disp32(RegisterID src, int32_t offset, RegisterID base) {
-    spew("movb       %s, " MEM_o32b, GPReg8Name(src), ADDR_o32b(offset, base));
+    spew(currentOffset(), "movb       %s, " MEM_o32b, GPReg8Name(src),
+         ADDR_o32b(offset, base));
     m_formatter.oneByteOp8_disp32(OP_MOV_EbGv, offset, base, src);
   }
 
   void movb_rm(RegisterID src, int32_t offset, RegisterID base,
                RegisterID index, int scale) {
-    spew("movb       %s, " MEM_obs, GPReg8Name(src),
+    spew(currentOffset(), "movb       %s, " MEM_obs, GPReg8Name(src),
          ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp8(OP_MOV_EbGv, offset, base, index, scale, src);
   }
 
   void movb_rm(RegisterID src, const void* addr) {
-    spew("movb       %s, %p", GPReg8Name(src), addr);
+    spew(currentOffset(), "movb       %s, %p", GPReg8Name(src), addr);
     m_formatter.oneByteOp8(OP_MOV_EbGv, addr, src);
   }
 
   void movb_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movb       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg8Name(dst));
+    spew(currentOffset(), "movb       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg8Name(dst));
     m_formatter.oneByteOp(OP_MOV_GvEb, offset, base, dst);
   }
 
   void movb_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                RegisterID dst) {
-    spew("movb       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg8Name(dst));
+    spew(currentOffset(), "movb       " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg8Name(dst));
     m_formatter.oneByteOp(OP_MOV_GvEb, offset, base, index, scale, dst);
   }
 
   void movzbl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movzbl     " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "movzbl     " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVZX_GvEb, offset, base, dst);
   }
 
   void movzbl_mr_disp32(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movzbl     " MEM_o32b ", %s", ADDR_o32b(offset, base),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movzbl     " MEM_o32b ", %s",
+         ADDR_o32b(offset, base), GPReg32Name(dst));
     m_formatter.twoByteOp_disp32(OP2_MOVZX_GvEb, offset, base, dst);
   }
 
   void movzbl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                  RegisterID dst) {
-    spew("movzbl     " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movzbl     " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVZX_GvEb, offset, base, index, scale, dst);
   }
 
   void movzbl_mr(const void* addr, RegisterID dst) {
-    spew("movzbl     %p, %s", addr, GPReg32Name(dst));
+    spew(currentOffset(), "movzbl     %p, %s", addr, GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVZX_GvEb, addr, dst);
   }
 
   void movsbl_rr(RegisterID src, RegisterID dst) {
-    spew("movsbl     %s, %s", GPReg8Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "movsbl     %s, %s", GPReg8Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp8_movx(OP2_MOVSX_GvEb, src, dst);
   }
 
   void movsbl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movsbl     " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "movsbl     " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVSX_GvEb, offset, base, dst);
   }
 
   void movsbl_mr_disp32(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movsbl     " MEM_o32b ", %s", ADDR_o32b(offset, base),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movsbl     " MEM_o32b ", %s",
+         ADDR_o32b(offset, base), GPReg32Name(dst));
     m_formatter.twoByteOp_disp32(OP2_MOVSX_GvEb, offset, base, dst);
   }
 
   void movsbl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                  RegisterID dst) {
-    spew("movsbl     " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movsbl     " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVSX_GvEb, offset, base, index, scale, dst);
   }
 
   void movsbl_mr(const void* addr, RegisterID dst) {
-    spew("movsbl     %p, %s", addr, GPReg32Name(dst));
+    spew(currentOffset(), "movsbl     %p, %s", addr, GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVSX_GvEb, addr, dst);
   }
 
   void movzwl_rr(RegisterID src, RegisterID dst) {
-    spew("movzwl     %s, %s", GPReg16Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "movzwl     %s, %s", GPReg16Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVZX_GvEw, src, dst);
   }
 
   void movzwl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movzwl     " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "movzwl     " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVZX_GvEw, offset, base, dst);
   }
 
   void movzwl_mr_disp32(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movzwl     " MEM_o32b ", %s", ADDR_o32b(offset, base),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movzwl     " MEM_o32b ", %s",
+         ADDR_o32b(offset, base), GPReg32Name(dst));
     m_formatter.twoByteOp_disp32(OP2_MOVZX_GvEw, offset, base, dst);
   }
 
   void movzwl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                  RegisterID dst) {
-    spew("movzwl     " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movzwl     " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVZX_GvEw, offset, base, index, scale, dst);
   }
 
   void movzwl_mr(const void* addr, RegisterID dst) {
-    spew("movzwl     %p, %s", addr, GPReg32Name(dst));
+    spew(currentOffset(), "movzwl     %p, %s", addr, GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVZX_GvEw, addr, dst);
   }
 
   void movswl_rr(RegisterID src, RegisterID dst) {
-    spew("movswl     %s, %s", GPReg16Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "movswl     %s, %s", GPReg16Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVSX_GvEw, src, dst);
   }
 
   void movswl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movswl     " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "movswl     " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVSX_GvEw, offset, base, dst);
   }
 
   void movswl_mr_disp32(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("movswl     " MEM_o32b ", %s", ADDR_o32b(offset, base),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movswl     " MEM_o32b ", %s",
+         ADDR_o32b(offset, base), GPReg32Name(dst));
     m_formatter.twoByteOp_disp32(OP2_MOVSX_GvEw, offset, base, dst);
   }
 
   void movswl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                  RegisterID dst) {
-    spew("movswl     " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "movswl     " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVSX_GvEw, offset, base, index, scale, dst);
   }
 
   void movswl_mr(const void* addr, RegisterID dst) {
-    spew("movswl     %p, %s", addr, GPReg32Name(dst));
+    spew(currentOffset(), "movswl     %p, %s", addr, GPReg32Name(dst));
     m_formatter.twoByteOp(OP2_MOVSX_GvEw, addr, dst);
   }
 
   void movzbl_rr(RegisterID src, RegisterID dst) {
-    spew("movzbl     %s, %s", GPReg8Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "movzbl     %s, %s", GPReg8Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp8_movx(OP2_MOVZX_GvEb, src, dst);
   }
 
   void leal_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                RegisterID dst) {
-    spew("leal       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "leal       " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.oneByteOp(OP_LEA, offset, base, index, scale, dst);
   }
 
   void leal_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("leal       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "leal       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_LEA, offset, base, dst);
+  }
+
+  void leal_mr(int32_t offset, RegisterID index, int scale, RegisterID dst) {
+    spew(currentOffset(), "leal       " MEM_o32s ", %s",
+         ADDR_o32s(offset, index, scale), GPReg32Name(dst));
+    m_formatter.oneByteOp_disp32(OP_LEA, offset, index, scale, dst);
   }
 
   // Flow control:
 
   [[nodiscard]] JmpSrc call() {
+    auto offset = currentOffset();
     m_formatter.oneByteOp(OP_CALL_rel32);
     JmpSrc r = m_formatter.immediateRel32();
-    spew("call       .Lfrom%d", r.offset());
+    spew(offset, "call       .Lfrom%d", r.offset());
     return r;
   }
 
   void call_r(RegisterID dst) {
+    auto offset = currentOffset();
     m_formatter.oneByteOp(OP_GROUP5_Ev, dst, GROUP5_OP_CALLN);
-    spew("call       *%s", GPRegName(dst));
+    spew(offset, "call       *%s", GPRegName(dst));
   }
 
   void call_m(int32_t offset, RegisterID base) {
-    spew("call       *" MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "call       *" MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, GROUP5_OP_CALLN);
   }
 
@@ -2662,15 +2793,16 @@ class BaseAssembler : public GenericAssembler {
   // in as if it were a jump target. The intention is to toggle the first
   // byte of the instruction between a CMP and a JMP to produce a pseudo-NOP.
   [[nodiscard]] JmpSrc cmp_eax() {
+    auto offset = currentOffset();
     m_formatter.oneByteOp(OP_CMP_EAXIv);
     JmpSrc r = m_formatter.immediateRel32();
-    spew("cmpl       %%eax, .Lfrom%d", r.offset());
+    spew(offset, "cmpl       %%eax, .Lfrom%d", r.offset());
     return r;
   }
 
   void jmp_i(JmpDst dst) {
     int32_t diff = dst.offset() - m_formatter.size();
-    spew("jmp        .Llabel%d", dst.offset());
+    spew(currentOffset(), "jmp        .Llabel%d", dst.offset());
 
     // The jump immediate is an offset from the end of the jump instruction.
     // A jump instruction is either 1 byte opcode and 1 byte offset, or 1
@@ -2684,31 +2816,34 @@ class BaseAssembler : public GenericAssembler {
     }
   }
   [[nodiscard]] JmpSrc jmp() {
+    auto offset = currentOffset();
     m_formatter.oneByteOp(OP_JMP_rel32);
     JmpSrc r = m_formatter.immediateRel32();
-    spew("jmp        .Lfrom%d", r.offset());
+    spew(offset, "jmp        .Lfrom%d", r.offset());
     return r;
   }
 
   void jmp_r(RegisterID dst) {
-    spew("jmp        *%s", GPRegName(dst));
+    spew(currentOffset(), "jmp        *%s", GPRegName(dst));
     m_formatter.oneByteOp(OP_GROUP5_Ev, dst, GROUP5_OP_JMPN);
   }
 
   void jmp_m(int32_t offset, RegisterID base) {
-    spew("jmp        *" MEM_ob, ADDR_ob(offset, base));
+    spew(currentOffset(), "jmp        *" MEM_ob, ADDR_ob(offset, base));
     m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, GROUP5_OP_JMPN);
   }
 
   void jmp_m(int32_t offset, RegisterID base, RegisterID index, int scale) {
-    spew("jmp        *" MEM_obs, ADDR_obs(offset, base, index, scale));
+    spew(currentOffset(), "jmp        *" MEM_obs,
+         ADDR_obs(offset, base, index, scale));
     m_formatter.oneByteOp(OP_GROUP5_Ev, offset, base, index, scale,
                           GROUP5_OP_JMPN);
   }
 
   void jCC_i(Condition cond, JmpDst dst) {
+    auto offset = currentOffset();
     int32_t diff = dst.offset() - m_formatter.size();
-    spew("j%s        .Llabel%d", CCName(cond), dst.offset());
+    spew(offset, "j%s        .Llabel%d", CCName(cond), dst.offset());
 
     // The jump immediate is an offset from the end of the jump instruction.
     // A conditional jump instruction is either 1 byte opcode and 1 byte
@@ -2723,9 +2858,10 @@ class BaseAssembler : public GenericAssembler {
   }
 
   [[nodiscard]] JmpSrc jCC(Condition cond) {
+    auto offset = currentOffset();
     m_formatter.twoByteOp(jccRel32(cond));
     JmpSrc r = m_formatter.immediateRel32();
-    spew("j%s        .Lfrom%d", CCName(cond), r.offset());
+    spew(offset, "j%s        .Lfrom%d", CCName(cond), r.offset());
     return r;
   }
 
@@ -3725,6 +3861,10 @@ class BaseAssembler : public GenericAssembler {
     twoByteOpSimd("vxorpd", VEX_PD, OP2_XORPD_VpdWpd, src1, src0, dst);
   }
 
+  void vxorpd_mr(const void* address, XMMRegisterID src0, XMMRegisterID dst) {
+    twoByteOpSimd("vxorpd", VEX_PD, OP2_XORPD_VpdWpd, address, src0, dst);
+  }
+
   void vorpd_rr(XMMRegisterID src1, XMMRegisterID src0, XMMRegisterID dst) {
     twoByteOpSimd("vorpd", VEX_PD, OP2_ORPD_VpdWpd, src1, src0, dst);
   }
@@ -4428,7 +4568,8 @@ class BaseAssembler : public GenericAssembler {
   // F16C instructions:
 
   void vcvtph2ps_rr(XMMRegisterID src, XMMRegisterID dst) {
-    spew("vcvtph2ps  %s, %s", XMMRegName(src), XMMRegName(dst));
+    spew(currentOffset(), "vcvtph2ps  %s, %s", XMMRegName(src),
+         XMMRegName(dst));
     m_formatter.threeByteOpVex(VEX_PD, OP3_VCVTPH2PS_VxWxIb, ESCAPE_38,
                                RegisterID(src), invalid_xmm, dst);
   }
@@ -4440,8 +4581,8 @@ class BaseAssembler : public GenericAssembler {
     // MXCSR.RC is the default option.
     constexpr int8_t roundingMode = 4;
 
-    spew("vcvtps2ph  $0x%x, %s, %s", roundingMode, XMMRegName(src),
-         XMMRegName(dst));
+    spew(currentOffset(), "vcvtps2ph  $0x%x, %s, %s", roundingMode,
+         XMMRegName(src), XMMRegName(dst));
     m_formatter.threeByteOpVex(VEX_PD, OP3_VCVTPS2PH_WxVxIb, ESCAPE_3A,
                                RegisterID(dst), invalid_xmm, src);
     m_formatter.immediate8(roundingMode);
@@ -4449,8 +4590,8 @@ class BaseAssembler : public GenericAssembler {
 
   void vcvtps2ph_rr(XMMRegisterID src, XMMRegisterID dst,
                     RoundingMode roundingMode) {
-    spew("vcvtps2ph  $0x%x, %s, %s", roundingMode, XMMRegName(src),
-         XMMRegName(dst));
+    spew(currentOffset(), "vcvtps2ph  $0x%x, %s, %s", roundingMode,
+         XMMRegName(src), XMMRegName(dst));
     m_formatter.threeByteOpVex(VEX_PD, OP3_VCVTPS2PH_WxVxIb, ESCAPE_3A,
                                RegisterID(dst), invalid_xmm, src);
     m_formatter.immediate8(roundingMode);
@@ -4459,8 +4600,8 @@ class BaseAssembler : public GenericAssembler {
   // BMI instructions:
 
   void sarxl_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
-    spew("sarxl      %s, %s, %s", GPReg32Name(src), GPReg32Name(shift),
-         GPReg32Name(dst));
+    spew(currentOffset(), "sarxl      %s, %s, %s", GPReg32Name(src),
+         GPReg32Name(shift), GPReg32Name(dst));
 
     RegisterID rm = src;
     XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
@@ -4470,8 +4611,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void shlxl_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
-    spew("shlxl      %s, %s, %s", GPReg32Name(src), GPReg32Name(shift),
-         GPReg32Name(dst));
+    spew(currentOffset(), "shlxl      %s, %s, %s", GPReg32Name(src),
+         GPReg32Name(shift), GPReg32Name(dst));
 
     RegisterID rm = src;
     XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
@@ -4481,8 +4622,8 @@ class BaseAssembler : public GenericAssembler {
   }
 
   void shrxl_rrr(RegisterID src, RegisterID shift, RegisterID dst) {
-    spew("shrxl      %s, %s, %s", GPReg32Name(src), GPReg32Name(shift),
-         GPReg32Name(dst));
+    spew(currentOffset(), "shrxl      %s, %s, %s", GPReg32Name(src),
+         GPReg32Name(shift), GPReg32Name(dst));
 
     RegisterID rm = src;
     XMMRegisterID src0 = static_cast<XMMRegisterID>(shift);
@@ -4491,12 +4632,23 @@ class BaseAssembler : public GenericAssembler {
                                rm, src0, reg);
   }
 
+  void andnl_rrr(RegisterID src1, RegisterID src2, RegisterID dst) {
+    spew(currentOffset(), "andnl      %s, %s, %s", GPReg32Name(src1),
+         GPReg32Name(src2), GPReg32Name(dst));
+
+    RegisterID rm = src2;
+    XMMRegisterID src0 = static_cast<XMMRegisterID>(src1);
+    int reg = dst;
+    m_formatter.threeByteOpVex(VEX_PS, OP3_ANDN_GyByEy, ESCAPE_38, rm, src0,
+                               reg);
+  }
+
   // FMA instructions:
 
   void vfmadd231ps_rrr(XMMRegisterID src1, XMMRegisterID src0,
                        XMMRegisterID dst) {
-    spew("vfmadd213ps %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
-         XMMRegName(dst));
+    spew(currentOffset(), "vfmadd213ps %s, %s, %s", XMMRegName(src1),
+         XMMRegName(src0), XMMRegName(dst));
 
     m_formatter.threeByteOpVex(VEX_PD, OP3_VFMADD231PS_VxHxWx, ESCAPE_38,
                                (RegisterID)src1, src0, (RegisterID)dst);
@@ -4504,8 +4656,8 @@ class BaseAssembler : public GenericAssembler {
 
   void vfnmadd231ps_rrr(XMMRegisterID src1, XMMRegisterID src0,
                         XMMRegisterID dst) {
-    spew("vfnmadd213ps %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
-         XMMRegName(dst));
+    spew(currentOffset(), "vfnmadd213ps %s, %s, %s", XMMRegName(src1),
+         XMMRegName(src0), XMMRegName(dst));
 
     m_formatter.threeByteOpVex(VEX_PD, OP3_VFNMADD231PS_VxHxWx, ESCAPE_38,
                                (RegisterID)src1, src0, (RegisterID)dst);
@@ -4513,8 +4665,8 @@ class BaseAssembler : public GenericAssembler {
 
   void vfmadd231pd_rrr(XMMRegisterID src1, XMMRegisterID src0,
                        XMMRegisterID dst) {
-    spew("vfmadd213pd %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
-         XMMRegName(dst));
+    spew(currentOffset(), "vfmadd213pd %s, %s, %s", XMMRegName(src1),
+         XMMRegName(src0), XMMRegName(dst));
 
     m_formatter.threeByteOpVex64(VEX_PD, OP3_VFMADD231PD_VxHxWx, ESCAPE_38,
                                  (RegisterID)src1, src0, (RegisterID)dst);
@@ -4522,8 +4674,8 @@ class BaseAssembler : public GenericAssembler {
 
   void vfnmadd231pd_rrr(XMMRegisterID src1, XMMRegisterID src0,
                         XMMRegisterID dst) {
-    spew("vfnmadd213pd %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
-         XMMRegName(dst));
+    spew(currentOffset(), "vfnmadd213pd %s, %s, %s", XMMRegName(src1),
+         XMMRegName(src0), XMMRegName(dst));
 
     m_formatter.threeByteOpVex64(VEX_PD, OP3_VFNMADD231PD_VxHxWx, ESCAPE_38,
                                  (RegisterID)src1, src0, (RegisterID)dst);
@@ -4532,37 +4684,37 @@ class BaseAssembler : public GenericAssembler {
   // Misc instructions:
 
   void int3() {
-    spew("int3");
+    spew(currentOffset(), "int3");
     m_formatter.oneByteOp(OP_INT3);
   }
 
   void ud2() {
-    spew("ud2");
+    spew(currentOffset(), "ud2");
     m_formatter.twoByteOp(OP2_UD2);
   }
 
   void ret() {
-    spew("ret");
+    spew(currentOffset(), "ret");
     m_formatter.oneByteOp(OP_RET);
   }
 
   void ret_i(int32_t imm) {
-    spew("ret        $%d", imm);
+    spew(currentOffset(), "ret        $%d", imm);
     m_formatter.oneByteOp(OP_RET_Iz);
     m_formatter.immediate16u(imm);
   }
 
   void lfence() {
-    spew("lfence");
+    spew(currentOffset(), "lfence");
     m_formatter.twoByteOp(OP_FENCE, (RegisterID)0, 0b101);
   }
   void mfence() {
-    spew("mfence");
+    spew(currentOffset(), "mfence");
     m_formatter.twoByteOp(OP_FENCE, (RegisterID)0, 0b110);
   }
 
   void pause() {
-    spew("pause");
+    spew(currentOffset(), "pause");
     m_formatter.oneByteOp(PRE_REP);
     m_formatter.oneByteOp(OP_NOP);
   }
@@ -4571,25 +4723,26 @@ class BaseAssembler : public GenericAssembler {
 
   JmpDst label() {
     JmpDst r = JmpDst(m_formatter.size());
-    spew(".set .Llabel%d, .", r.offset());
+    spew(currentOffset(), ".set .Llabel%d, .", r.offset());
     return r;
   }
 
-  size_t currentOffset() const { return m_formatter.size(); }
+  inline size_t currentOffset() const { return m_formatter.size(); }
 
   static JmpDst labelFor(JmpSrc jump, intptr_t offset = 0) {
     return JmpDst(jump.offset() + offset);
   }
 
   void haltingAlign(int alignment) {
-    spew(".balign %d, 0x%x   # hlt", alignment, unsigned(OP_HLT));
+    spew(currentOffset(), ".balign %d, 0x%x   # hlt", alignment,
+         unsigned(OP_HLT));
     while (!m_formatter.isAligned(alignment)) {
       m_formatter.oneByteOp(OP_HLT);
     }
   }
 
   void nopAlign(int alignment) {
-    spew(".balign %d", alignment);
+    spew(currentOffset(), ".balign %d", alignment);
 
     int remainder = m_formatter.size() % alignment;
     if (remainder > 0) {
@@ -4599,35 +4752,36 @@ class BaseAssembler : public GenericAssembler {
 
   void jumpTablePointer(uintptr_t ptr) {
 #ifdef JS_CODEGEN_X64
-    spew(".quad 0x%" PRIxPTR, ptr);
+    spew(currentOffset(), ".quad 0x%" PRIxPTR, ptr);
 #else
-    spew(".int 0x%" PRIxPTR, ptr);
+    spew(currentOffset(), ".int 0x%" PRIxPTR, ptr);
 #endif
     m_formatter.jumpTablePointer(ptr);
   }
 
   void doubleConstant(double d) {
-    spew(".double %.16g", d);
+    spew(currentOffset(), ".double %.16g", d);
     m_formatter.doubleConstant(d);
   }
   void floatConstant(float f) {
-    spew(".float %.16g", f);
+    spew(currentOffset(), ".float %.16g", f);
     m_formatter.floatConstant(f);
   }
 
   void simd128Constant(const void* data) {
     const uint32_t* dw = reinterpret_cast<const uint32_t*>(data);
-    spew(".int 0x%08x,0x%08x,0x%08x,0x%08x", dw[0], dw[1], dw[2], dw[3]);
+    spew(currentOffset(), ".int 0x%08x,0x%08x,0x%08x,0x%08x", dw[0], dw[1],
+         dw[2], dw[3]);
     MOZ_ASSERT(m_formatter.isAligned(16));
     m_formatter.simd128Constant(data);
   }
 
   void int32Constant(int32_t i) {
-    spew(".int %d", i);
+    spew(currentOffset(), ".int %d", i);
     m_formatter.int32Constant(i);
   }
   void int64Constant(int64_t i) {
-    spew(".quad %lld", (long long)i);
+    spew(currentOffset(), ".quad %lld", (long long)i);
     m_formatter.int64Constant(i);
   }
 
@@ -4688,7 +4842,8 @@ class BaseAssembler : public GenericAssembler {
     assertValidJmpSrc(from);
     MOZ_RELEASE_ASSERT(size_t(to.offset()) <= size());
 
-    spew(".set .Lfrom%d, .Llabel%d", from.offset(), to.offset());
+    spew(currentOffset(), ".set .Lfrom%d, .Llabel%d", from.offset(),
+         to.offset());
     unsigned char* code = m_formatter.data();
     SetRel32(code + from.offset(), code + to.offset(), from.trailing());
   }
@@ -4776,11 +4931,11 @@ class BaseAssembler : public GenericAssembler {
                      XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, %s", legacySSEOpName(name), XMMRegName(dst),
-             XMMRegName(rm));
+        spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+             XMMRegName(dst), XMMRegName(rm));
       } else {
-        spew("%-11s%s, %s", legacySSEOpName(name), XMMRegName(rm),
-             XMMRegName(dst));
+        spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+             XMMRegName(rm), XMMRegName(dst));
       }
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, (RegisterID)rm, dst);
@@ -4789,13 +4944,15 @@ class BaseAssembler : public GenericAssembler {
 
     if (src0 == invalid_xmm) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, %s", name, XMMRegName(dst), XMMRegName(rm));
+        spew(currentOffset(), "%-11s%s, %s", name, XMMRegName(dst),
+             XMMRegName(rm));
       } else {
-        spew("%-11s%s, %s", name, XMMRegName(rm), XMMRegName(dst));
+        spew(currentOffset(), "%-11s%s, %s", name, XMMRegName(rm),
+             XMMRegName(dst));
       }
     } else {
-      spew("%-11s%s, %s, %s", name, XMMRegName(rm), XMMRegName(src0),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s%s, %s, %s", name, XMMRegName(rm),
+           XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.twoByteOpVex(ty, opcode, (RegisterID)rm, src0, dst);
   }
@@ -4804,8 +4961,8 @@ class BaseAssembler : public GenericAssembler {
                         TwoByteOpcodeID opcode, uint32_t imm, XMMRegisterID rm,
                         XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, %s, %s", legacySSEOpName(name), imm, XMMRegName(rm),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", legacySSEOpName(name), imm,
+           XMMRegName(rm), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, (RegisterID)rm, dst);
       m_formatter.immediate8u(imm);
@@ -4813,9 +4970,10 @@ class BaseAssembler : public GenericAssembler {
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s$0x%x, %s, %s", name, imm, XMMRegName(rm), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", name, imm, XMMRegName(rm),
+           XMMRegName(dst));
     } else {
-      spew("%-11s$0x%x, %s, %s, %s", name, imm, XMMRegName(rm),
+      spew(currentOffset(), "%-11s$0x%x, %s, %s, %s", name, imm, XMMRegName(rm),
            XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.twoByteOpVex(ty, opcode, (RegisterID)rm, src0, dst);
@@ -4827,10 +4985,10 @@ class BaseAssembler : public GenericAssembler {
                      XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, " MEM_ob, legacySSEOpName(name), XMMRegName(dst),
-             ADDR_ob(offset, base));
+        spew(currentOffset(), "%-11s%s, " MEM_ob, legacySSEOpName(name),
+             XMMRegName(dst), ADDR_ob(offset, base));
       } else {
-        spew("%-11s" MEM_ob ", %s", legacySSEOpName(name),
+        spew(currentOffset(), "%-11s" MEM_ob ", %s", legacySSEOpName(name),
              ADDR_ob(offset, base), XMMRegName(dst));
       }
       m_formatter.legacySSEPrefix(ty);
@@ -4840,14 +4998,15 @@ class BaseAssembler : public GenericAssembler {
 
     if (src0 == invalid_xmm) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, " MEM_ob, name, XMMRegName(dst), ADDR_ob(offset, base));
+        spew(currentOffset(), "%-11s%s, " MEM_ob, name, XMMRegName(dst),
+             ADDR_ob(offset, base));
       } else {
-        spew("%-11s" MEM_ob ", %s", name, ADDR_ob(offset, base),
-             XMMRegName(dst));
+        spew(currentOffset(), "%-11s" MEM_ob ", %s", name,
+             ADDR_ob(offset, base), XMMRegName(dst));
       }
     } else {
-      spew("%-11s" MEM_ob ", %s, %s", name, ADDR_ob(offset, base),
-           XMMRegName(src0), XMMRegName(dst));
+      spew(currentOffset(), "%-11s" MEM_ob ", %s, %s", name,
+           ADDR_ob(offset, base), XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.twoByteOpVex(ty, opcode, offset, base, src0, dst);
   }
@@ -4858,10 +5017,10 @@ class BaseAssembler : public GenericAssembler {
                             XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, " MEM_o32b, legacySSEOpName(name), XMMRegName(dst),
-             ADDR_o32b(offset, base));
+        spew(currentOffset(), "%-11s%s, " MEM_o32b, legacySSEOpName(name),
+             XMMRegName(dst), ADDR_o32b(offset, base));
       } else {
-        spew("%-11s" MEM_o32b ", %s", legacySSEOpName(name),
+        spew(currentOffset(), "%-11s" MEM_o32b ", %s", legacySSEOpName(name),
              ADDR_o32b(offset, base), XMMRegName(dst));
       }
       m_formatter.legacySSEPrefix(ty);
@@ -4871,15 +5030,15 @@ class BaseAssembler : public GenericAssembler {
 
     if (src0 == invalid_xmm) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, " MEM_o32b, name, XMMRegName(dst),
+        spew(currentOffset(), "%-11s%s, " MEM_o32b, name, XMMRegName(dst),
              ADDR_o32b(offset, base));
       } else {
-        spew("%-11s" MEM_o32b ", %s", name, ADDR_o32b(offset, base),
-             XMMRegName(dst));
+        spew(currentOffset(), "%-11s" MEM_o32b ", %s", name,
+             ADDR_o32b(offset, base), XMMRegName(dst));
       }
     } else {
-      spew("%-11s" MEM_o32b ", %s, %s", name, ADDR_o32b(offset, base),
-           XMMRegName(src0), XMMRegName(dst));
+      spew(currentOffset(), "%-11s" MEM_o32b ", %s, %s", name,
+           ADDR_o32b(offset, base), XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.twoByteOpVex_disp32(ty, opcode, offset, base, src0, dst);
   }
@@ -4889,16 +5048,16 @@ class BaseAssembler : public GenericAssembler {
                         RegisterID base, XMMRegisterID src0,
                         XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name), imm,
-           ADDR_ob(offset, base), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name),
+           imm, ADDR_ob(offset, base), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, offset, base, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, " MEM_ob ", %s, %s", name, imm, ADDR_ob(offset, base),
-         XMMRegName(src0), XMMRegName(dst));
+    spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s, %s", name, imm,
+         ADDR_ob(offset, base), XMMRegName(src0), XMMRegName(dst));
     m_formatter.twoByteOpVex(ty, opcode, offset, base, src0, dst);
     m_formatter.immediate8u(imm);
   }
@@ -4909,10 +5068,10 @@ class BaseAssembler : public GenericAssembler {
                      XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, " MEM_obs, legacySSEOpName(name), XMMRegName(dst),
-             ADDR_obs(offset, base, index, scale));
+        spew(currentOffset(), "%-11s%s, " MEM_obs, legacySSEOpName(name),
+             XMMRegName(dst), ADDR_obs(offset, base, index, scale));
       } else {
-        spew("%-11s" MEM_obs ", %s", legacySSEOpName(name),
+        spew(currentOffset(), "%-11s" MEM_obs ", %s", legacySSEOpName(name),
              ADDR_obs(offset, base, index, scale), XMMRegName(dst));
       }
       m_formatter.legacySSEPrefix(ty);
@@ -4922,14 +5081,14 @@ class BaseAssembler : public GenericAssembler {
 
     if (src0 == invalid_xmm) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, " MEM_obs, name, XMMRegName(dst),
+        spew(currentOffset(), "%-11s%s, " MEM_obs, name, XMMRegName(dst),
              ADDR_obs(offset, base, index, scale));
       } else {
-        spew("%-11s" MEM_obs ", %s", name, ADDR_obs(offset, base, index, scale),
-             XMMRegName(dst));
+        spew(currentOffset(), "%-11s" MEM_obs ", %s", name,
+             ADDR_obs(offset, base, index, scale), XMMRegName(dst));
       }
     } else {
-      spew("%-11s" MEM_obs ", %s, %s", name,
+      spew(currentOffset(), "%-11s" MEM_obs ", %s, %s", name,
            ADDR_obs(offset, base, index, scale), XMMRegName(src0),
            XMMRegName(dst));
     }
@@ -4941,9 +5100,11 @@ class BaseAssembler : public GenericAssembler {
                      XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, %p", legacySSEOpName(name), XMMRegName(dst), address);
+        spew(currentOffset(), "%-11s%s, %p", legacySSEOpName(name),
+             XMMRegName(dst), address);
       } else {
-        spew("%-11s%p, %s", legacySSEOpName(name), address, XMMRegName(dst));
+        spew(currentOffset(), "%-11s%p, %s", legacySSEOpName(name), address,
+             XMMRegName(dst));
       }
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, address, dst);
@@ -4952,12 +5113,13 @@ class BaseAssembler : public GenericAssembler {
 
     if (src0 == invalid_xmm) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, %p", name, XMMRegName(dst), address);
+        spew(currentOffset(), "%-11s%s, %p", name, XMMRegName(dst), address);
       } else {
-        spew("%-11s%p, %s", name, address, XMMRegName(dst));
+        spew(currentOffset(), "%-11s%p, %s", name, address, XMMRegName(dst));
       }
     } else {
-      spew("%-11s%p, %s, %s", name, address, XMMRegName(src0), XMMRegName(dst));
+      spew(currentOffset(), "%-11s%p, %s, %s", name, address, XMMRegName(src0),
+           XMMRegName(dst));
     }
     m_formatter.twoByteOpVex(ty, opcode, address, src0, dst);
   }
@@ -4967,16 +5129,16 @@ class BaseAssembler : public GenericAssembler {
                         const void* address, XMMRegisterID src0,
                         XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, %p, %s", legacySSEOpName(name), imm, address,
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, %p, %s", legacySSEOpName(name), imm,
+           address, XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, address, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, %p, %s, %s", name, imm, address, XMMRegName(src0),
-         XMMRegName(dst));
+    spew(currentOffset(), "%-11s$0x%x, %p, %s, %s", name, imm, address,
+         XMMRegName(src0), XMMRegName(dst));
     m_formatter.twoByteOpVex(ty, opcode, address, src0, dst);
     m_formatter.immediate8u(imm);
   }
@@ -4986,11 +5148,11 @@ class BaseAssembler : public GenericAssembler {
                           XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, %s", legacySSEOpName(name), XMMRegName(dst),
-             GPReg32Name(rm));
+        spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+             XMMRegName(dst), GPReg32Name(rm));
       } else {
-        spew("%-11s%s, %s", legacySSEOpName(name), GPReg32Name(rm),
-             XMMRegName(dst));
+        spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+             GPReg32Name(rm), XMMRegName(dst));
       }
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, rm, dst);
@@ -4999,13 +5161,15 @@ class BaseAssembler : public GenericAssembler {
 
     if (src0 == invalid_xmm) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, %s", name, XMMRegName(dst), GPReg32Name(rm));
+        spew(currentOffset(), "%-11s%s, %s", name, XMMRegName(dst),
+             GPReg32Name(rm));
       } else {
-        spew("%-11s%s, %s", name, GPReg32Name(rm), XMMRegName(dst));
+        spew(currentOffset(), "%-11s%s, %s", name, GPReg32Name(rm),
+             XMMRegName(dst));
       }
     } else {
-      spew("%-11s%s, %s, %s", name, GPReg32Name(rm), XMMRegName(src0),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s%s, %s, %s", name, GPReg32Name(rm),
+           XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.twoByteOpVex(ty, opcode, rm, src0, dst);
   }
@@ -5015,14 +5179,14 @@ class BaseAssembler : public GenericAssembler {
                           RegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
       if (IsXMMReversedOperands(opcode)) {
-        spew("%-11s%s, %s", legacySSEOpName(name), GPReg32Name(dst),
-             XMMRegName(rm));
+        spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+             GPReg32Name(dst), XMMRegName(rm));
       } else if (opcode == OP2_MOVD_EdVd) {
-        spew("%-11s%s, %s", legacySSEOpName(name),
+        spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
              XMMRegName((XMMRegisterID)dst), GPReg32Name((RegisterID)rm));
       } else {
-        spew("%-11s%s, %s", legacySSEOpName(name), XMMRegName(rm),
-             GPReg32Name(dst));
+        spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+             XMMRegName(rm), GPReg32Name(dst));
       }
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, (RegisterID)rm, dst);
@@ -5030,12 +5194,14 @@ class BaseAssembler : public GenericAssembler {
     }
 
     if (IsXMMReversedOperands(opcode)) {
-      spew("%-11s%s, %s", name, GPReg32Name(dst), XMMRegName(rm));
+      spew(currentOffset(), "%-11s%s, %s", name, GPReg32Name(dst),
+           XMMRegName(rm));
     } else if (opcode == OP2_MOVD_EdVd) {
-      spew("%-11s%s, %s", name, XMMRegName((XMMRegisterID)dst),
+      spew(currentOffset(), "%-11s%s, %s", name, XMMRegName((XMMRegisterID)dst),
            GPReg32Name((RegisterID)rm));
     } else {
-      spew("%-11s%s, %s", name, XMMRegName(rm), GPReg32Name(dst));
+      spew(currentOffset(), "%-11s%s, %s", name, XMMRegName(rm),
+           GPReg32Name(dst));
     }
     m_formatter.twoByteOpVex(ty, opcode, (RegisterID)rm, invalid_xmm, dst);
   }
@@ -5044,15 +5210,16 @@ class BaseAssembler : public GenericAssembler {
                              TwoByteOpcodeID opcode, uint32_t imm,
                              XMMRegisterID rm, RegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s$0x%x, %s, %s", legacySSEOpName(name), imm, XMMRegName(rm),
-           GPReg32Name(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", legacySSEOpName(name), imm,
+           XMMRegName(rm), GPReg32Name(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, (RegisterID)rm, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, %s, %s", name, imm, XMMRegName(rm), GPReg32Name(dst));
+    spew(currentOffset(), "%-11s$0x%x, %s, %s", name, imm, XMMRegName(rm),
+         GPReg32Name(dst));
     m_formatter.twoByteOpVex(ty, opcode, (RegisterID)rm, invalid_xmm, dst);
     m_formatter.immediate8u(imm);
   }
@@ -5062,15 +5229,16 @@ class BaseAssembler : public GenericAssembler {
                              RegisterID rm, XMMRegisterID src0,
                              XMMRegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s$0x%x, %s, %s", legacySSEOpName(name), imm, GPReg32Name(rm),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", legacySSEOpName(name), imm,
+           GPReg32Name(rm), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, rm, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, %s, %s", name, imm, GPReg32Name(rm), XMMRegName(dst));
+    spew(currentOffset(), "%-11s$0x%x, %s, %s", name, imm, GPReg32Name(rm),
+         XMMRegName(dst));
     m_formatter.twoByteOpVex(ty, opcode, rm, src0, dst);
     m_formatter.immediate8u(imm);
   }
@@ -5080,16 +5248,16 @@ class BaseAssembler : public GenericAssembler {
                              int32_t offset, RegisterID base,
                              XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name), imm,
-           ADDR_ob(offset, base), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name),
+           imm, ADDR_ob(offset, base), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, offset, base, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, " MEM_ob ", %s, %s", name, imm, ADDR_ob(offset, base),
-         XMMRegName(src0), XMMRegName(dst));
+    spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s, %s", name, imm,
+         ADDR_ob(offset, base), XMMRegName(src0), XMMRegName(dst));
     m_formatter.twoByteOpVex(ty, opcode, offset, base, src0, dst);
     m_formatter.immediate8u(imm);
   }
@@ -5099,15 +5267,16 @@ class BaseAssembler : public GenericAssembler {
                              int32_t offset, RegisterID base, RegisterID index,
                              int scale, XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s$0x%x, " MEM_obs ", %s", legacySSEOpName(name), imm,
-           ADDR_obs(offset, base, index, scale), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s",
+           legacySSEOpName(name), imm, ADDR_obs(offset, base, index, scale),
+           XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, offset, base, index, scale, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, " MEM_obs ", %s, %s", name, imm,
+    spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s, %s", name, imm,
          ADDR_obs(offset, base, index, scale), XMMRegName(src0),
          XMMRegName(dst));
     m_formatter.twoByteOpVex(ty, opcode, offset, base, index, scale, src0, dst);
@@ -5118,14 +5287,14 @@ class BaseAssembler : public GenericAssembler {
                           TwoByteOpcodeID opcode, XMMRegisterID rm,
                           XMMRegisterID reg) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s%s, %s", legacySSEOpName(name), XMMRegName(rm),
-           XMMRegName(reg));
+      spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+           XMMRegName(rm), XMMRegName(reg));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, (RegisterID)rm, reg);
       return;
     }
 
-    spew("%-11s%s, %s", name, XMMRegName(rm), XMMRegName(reg));
+    spew(currentOffset(), "%-11s%s, %s", name, XMMRegName(rm), XMMRegName(reg));
     m_formatter.twoByteOpVex(ty, opcode, (RegisterID)rm, invalid_xmm,
                              (XMMRegisterID)reg);
   }
@@ -5134,14 +5303,15 @@ class BaseAssembler : public GenericAssembler {
                           TwoByteOpcodeID opcode, int32_t offset,
                           RegisterID base, XMMRegisterID reg) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s" MEM_ob ", %s", legacySSEOpName(name), ADDR_ob(offset, base),
-           XMMRegName(reg));
+      spew(currentOffset(), "%-11s" MEM_ob ", %s", legacySSEOpName(name),
+           ADDR_ob(offset, base), XMMRegName(reg));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.twoByteOp(opcode, offset, base, reg);
       return;
     }
 
-    spew("%-11s" MEM_ob ", %s", name, ADDR_ob(offset, base), XMMRegName(reg));
+    spew(currentOffset(), "%-11s" MEM_ob ", %s", name, ADDR_ob(offset, base),
+         XMMRegName(reg));
     m_formatter.twoByteOpVex(ty, opcode, offset, base, invalid_xmm,
                              (XMMRegisterID)reg);
   }
@@ -5151,18 +5321,19 @@ class BaseAssembler : public GenericAssembler {
                        XMMRegisterID rm, XMMRegisterID src0,
                        XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s%s, %s", legacySSEOpName(name), XMMRegName(rm),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+           XMMRegName(rm), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, (RegisterID)rm, dst);
       return;
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s%s, %s", name, XMMRegName(rm), XMMRegName(dst));
-    } else {
-      spew("%-11s%s, %s, %s", name, XMMRegName(rm), XMMRegName(src0),
+      spew(currentOffset(), "%-11s%s, %s", name, XMMRegName(rm),
            XMMRegName(dst));
+    } else {
+      spew(currentOffset(), "%-11s%s, %s, %s", name, XMMRegName(rm),
+           XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.threeByteOpVex(ty, opcode, escape, (RegisterID)rm, src0, dst);
   }
@@ -5172,8 +5343,8 @@ class BaseAssembler : public GenericAssembler {
                           uint32_t imm, XMMRegisterID rm, XMMRegisterID src0,
                           XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, %s, %s", legacySSEOpName(name), imm, XMMRegName(rm),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", legacySSEOpName(name), imm,
+           XMMRegName(rm), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, (RegisterID)rm, dst);
       m_formatter.immediate8u(imm);
@@ -5181,9 +5352,10 @@ class BaseAssembler : public GenericAssembler {
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s$0x%x, %s, %s", name, imm, XMMRegName(rm), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", name, imm, XMMRegName(rm),
+           XMMRegName(dst));
     } else {
-      spew("%-11s$0x%x, %s, %s, %s", name, imm, XMMRegName(rm),
+      spew(currentOffset(), "%-11s$0x%x, %s, %s, %s", name, imm, XMMRegName(rm),
            XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.threeByteOpVex(ty, opcode, escape, (RegisterID)rm, src0, dst);
@@ -5195,18 +5367,19 @@ class BaseAssembler : public GenericAssembler {
                        int32_t offset, RegisterID base, XMMRegisterID src0,
                        XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s" MEM_ob ", %s", legacySSEOpName(name), ADDR_ob(offset, base),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s" MEM_ob ", %s", legacySSEOpName(name),
+           ADDR_ob(offset, base), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, dst);
       return;
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s" MEM_ob ", %s", name, ADDR_ob(offset, base), XMMRegName(dst));
+      spew(currentOffset(), "%-11s" MEM_ob ", %s", name, ADDR_ob(offset, base),
+           XMMRegName(dst));
     } else {
-      spew("%-11s" MEM_ob ", %s, %s", name, ADDR_ob(offset, base),
-           XMMRegName(src0), XMMRegName(dst));
+      spew(currentOffset(), "%-11s" MEM_ob ", %s, %s", name,
+           ADDR_ob(offset, base), XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.threeByteOpVex(ty, opcode, escape, offset, base, src0, dst);
   }
@@ -5216,7 +5389,7 @@ class BaseAssembler : public GenericAssembler {
                        int32_t offset, RegisterID base, RegisterID index,
                        int32_t scale, XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s" MEM_obs ", %s", legacySSEOpName(name),
+      spew(currentOffset(), "%-11s" MEM_obs ", %s", legacySSEOpName(name),
            ADDR_obs(offset, base, index, scale), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, index, scale, dst);
@@ -5224,10 +5397,10 @@ class BaseAssembler : public GenericAssembler {
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s" MEM_obs ", %s", name, ADDR_obs(offset, base, index, scale),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s" MEM_obs ", %s", name,
+           ADDR_obs(offset, base, index, scale), XMMRegName(dst));
     } else {
-      spew("%-11s" MEM_obs ", %s, %s", name,
+      spew(currentOffset(), "%-11s" MEM_obs ", %s, %s", name,
            ADDR_obs(offset, base, index, scale), XMMRegName(src0),
            XMMRegName(dst));
     }
@@ -5240,8 +5413,8 @@ class BaseAssembler : public GenericAssembler {
                           uint32_t imm, int32_t offset, RegisterID base,
                           XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name), imm,
-           ADDR_ob(offset, base), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name),
+           imm, ADDR_ob(offset, base), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, dst);
       m_formatter.immediate8u(imm);
@@ -5249,11 +5422,11 @@ class BaseAssembler : public GenericAssembler {
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s$0x%x, " MEM_ob ", %s", name, imm, ADDR_ob(offset, base),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s", name, imm,
+           ADDR_ob(offset, base), XMMRegName(dst));
     } else {
-      spew("%-11s$0x%x, " MEM_ob ", %s, %s", name, imm, ADDR_ob(offset, base),
-           XMMRegName(src0), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s, %s", name, imm,
+           ADDR_ob(offset, base), XMMRegName(src0), XMMRegName(dst));
     }
     m_formatter.threeByteOpVex(ty, opcode, escape, offset, base, src0, dst);
     m_formatter.immediate8u(imm);
@@ -5265,8 +5438,9 @@ class BaseAssembler : public GenericAssembler {
                           RegisterID index, int scale, XMMRegisterID src0,
                           XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, " MEM_obs ", %s", legacySSEOpName(name), imm,
-           ADDR_obs(offset, base, index, scale), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s",
+           legacySSEOpName(name), imm, ADDR_obs(offset, base, index, scale),
+           XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, index, scale, dst);
       m_formatter.immediate8u(imm);
@@ -5274,10 +5448,10 @@ class BaseAssembler : public GenericAssembler {
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s$0x%x, " MEM_obs ", %s", name, imm,
+      spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s", name, imm,
            ADDR_obs(offset, base, index, scale), XMMRegName(dst));
     } else {
-      spew("%-11s$0x%x, " MEM_obs ", %s, %s", name, imm,
+      spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s, %s", name, imm,
            ADDR_obs(offset, base, index, scale), XMMRegName(src0),
            XMMRegName(dst));
     }
@@ -5291,16 +5465,18 @@ class BaseAssembler : public GenericAssembler {
                        const void* address, XMMRegisterID src0,
                        XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s%p, %s", legacySSEOpName(name), address, XMMRegName(dst));
+      spew(currentOffset(), "%-11s%p, %s", legacySSEOpName(name), address,
+           XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, address, dst);
       return;
     }
 
     if (src0 == invalid_xmm) {
-      spew("%-11s%p, %s", name, address, XMMRegName(dst));
+      spew(currentOffset(), "%-11s%p, %s", name, address, XMMRegName(dst));
     } else {
-      spew("%-11s%p, %s, %s", name, address, XMMRegName(src0), XMMRegName(dst));
+      spew(currentOffset(), "%-11s%p, %s, %s", name, address, XMMRegName(src0),
+           XMMRegName(dst));
     }
     m_formatter.threeByteOpVex(ty, opcode, escape, address, src0, dst);
   }
@@ -5310,16 +5486,16 @@ class BaseAssembler : public GenericAssembler {
                                uint32_t imm, RegisterID src1,
                                XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, %s, %s", legacySSEOpName(name), imm, GPReg32Name(src1),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", legacySSEOpName(name), imm,
+           GPReg32Name(src1), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, src1, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, %s, %s, %s", name, imm, GPReg32Name(src1),
-         XMMRegName(src0), XMMRegName(dst));
+    spew(currentOffset(), "%-11s$0x%x, %s, %s, %s", name, imm,
+         GPReg32Name(src1), XMMRegName(src0), XMMRegName(dst));
     m_formatter.threeByteOpVex(ty, opcode, escape, src1, src0, dst);
     m_formatter.immediate8u(imm);
   }
@@ -5329,16 +5505,16 @@ class BaseAssembler : public GenericAssembler {
                                uint32_t imm, int32_t offset, RegisterID base,
                                XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name), imm,
-           ADDR_ob(offset, base), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name),
+           imm, ADDR_ob(offset, base), XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, " MEM_ob ", %s, %s", name, imm, ADDR_ob(offset, base),
-         XMMRegName(src0), XMMRegName(dst));
+    spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s, %s", name, imm,
+         ADDR_ob(offset, base), XMMRegName(src0), XMMRegName(dst));
     m_formatter.threeByteOpVex(ty, opcode, escape, offset, base, src0, dst);
     m_formatter.immediate8u(imm);
   }
@@ -5349,15 +5525,16 @@ class BaseAssembler : public GenericAssembler {
                                RegisterID index, int scale, XMMRegisterID src0,
                                XMMRegisterID dst) {
     if (useLegacySSEEncoding(src0, dst)) {
-      spew("%-11s$0x%x, " MEM_obs ", %s", legacySSEOpName(name), imm,
-           ADDR_obs(offset, base, index, scale), XMMRegName(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s",
+           legacySSEOpName(name), imm, ADDR_obs(offset, base, index, scale),
+           XMMRegName(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, index, scale, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, " MEM_obs ", %s, %s", name, imm,
+    spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s, %s", name, imm,
          ADDR_obs(offset, base, index, scale), XMMRegName(src0),
          XMMRegName(dst));
     m_formatter.threeByteOpVex(ty, opcode, escape, offset, base, index, scale,
@@ -5370,8 +5547,8 @@ class BaseAssembler : public GenericAssembler {
                                uint32_t imm, XMMRegisterID src,
                                RegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s$0x%x, %s, %s", legacySSEOpName(name), imm, XMMRegName(src),
-           GPReg32Name(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", legacySSEOpName(name), imm,
+           XMMRegName(src), GPReg32Name(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, (RegisterID)src, dst);
       m_formatter.immediate8u(imm);
@@ -5379,10 +5556,11 @@ class BaseAssembler : public GenericAssembler {
     }
 
     if (opcode == OP3_PEXTRD_EvVdqIb) {
-      spew("%-11s$0x%x, %s, %s", name, imm, XMMRegName((XMMRegisterID)dst),
-           GPReg32Name((RegisterID)src));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", name, imm,
+           XMMRegName((XMMRegisterID)dst), GPReg32Name((RegisterID)src));
     } else {
-      spew("%-11s$0x%x, %s, %s", name, imm, XMMRegName(src), GPReg32Name(dst));
+      spew(currentOffset(), "%-11s$0x%x, %s, %s", name, imm, XMMRegName(src),
+           GPReg32Name(dst));
     }
     m_formatter.threeByteOpVex(ty, opcode, escape, (RegisterID)src, invalid_xmm,
                                dst);
@@ -5394,16 +5572,16 @@ class BaseAssembler : public GenericAssembler {
                                uint32_t imm, int32_t offset, RegisterID base,
                                RegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name), imm,
-           ADDR_ob(offset, base), GPReg32Name(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s", legacySSEOpName(name),
+           imm, ADDR_ob(offset, base), GPReg32Name(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, " MEM_ob ", %s", name, imm, ADDR_ob(offset, base),
-         GPReg32Name(dst));
+    spew(currentOffset(), "%-11s$0x%x, " MEM_ob ", %s", name, imm,
+         ADDR_ob(offset, base), GPReg32Name(dst));
     m_formatter.threeByteOpVex(ty, opcode, escape, offset, base, invalid_xmm,
                                dst);
     m_formatter.immediate8u(imm);
@@ -5414,15 +5592,16 @@ class BaseAssembler : public GenericAssembler {
                                uint32_t imm, int32_t offset, RegisterID base,
                                RegisterID index, int scale, RegisterID dst) {
     if (useLegacySSEEncodingAlways()) {
-      spew("%-11s$0x%x, " MEM_obs ", %s", legacySSEOpName(name), imm,
-           ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
+      spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s",
+           legacySSEOpName(name), imm, ADDR_obs(offset, base, index, scale),
+           GPReg32Name(dst));
       m_formatter.legacySSEPrefix(ty);
       m_formatter.threeByteOp(opcode, escape, offset, base, index, scale, dst);
       m_formatter.immediate8u(imm);
       return;
     }
 
-    spew("%-11s$0x%x, " MEM_obs ", %s", name, imm,
+    spew(currentOffset(), "%-11s$0x%x, " MEM_obs ", %s", name, imm,
          ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.threeByteOpVex(ty, opcode, escape, offset, base, index, scale,
                                invalid_xmm, dst);
@@ -5435,8 +5614,8 @@ class BaseAssembler : public GenericAssembler {
                      ThreeByteOpcodeID vexOpcode, XMMRegisterID mask,
                      XMMRegisterID rm, XMMRegisterID src0, XMMRegisterID dst) {
     if (useLegacySSEEncodingForVblendv(mask, src0, dst)) {
-      spew("%-11s%s, %s", legacySSEOpName(name), XMMRegName(rm),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s%s, %s", legacySSEOpName(name),
+           XMMRegName(rm), XMMRegName(dst));
       // Even though a "ps" instruction, vblendv is encoded with the "pd"
       // prefix.
       m_formatter.legacySSEPrefix(VEX_PD);
@@ -5444,8 +5623,8 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("%-11s%s, %s, %s, %s", name, XMMRegName(mask), XMMRegName(rm),
-         XMMRegName(src0), XMMRegName(dst));
+    spew(currentOffset(), "%-11s%s, %s, %s, %s", name, XMMRegName(mask),
+         XMMRegName(rm), XMMRegName(src0), XMMRegName(dst));
     // Even though a "ps" instruction, vblendv is encoded with the "pd" prefix.
     m_formatter.vblendvOpVex(VEX_PD, vexOpcode, ESCAPE_3A, mask, (RegisterID)rm,
                              src0, dst);
@@ -5456,8 +5635,8 @@ class BaseAssembler : public GenericAssembler {
                      int32_t offset, RegisterID base, XMMRegisterID src0,
                      XMMRegisterID dst) {
     if (useLegacySSEEncodingForVblendv(mask, src0, dst)) {
-      spew("%-11s" MEM_ob ", %s", legacySSEOpName(name), ADDR_ob(offset, base),
-           XMMRegName(dst));
+      spew(currentOffset(), "%-11s" MEM_ob ", %s", legacySSEOpName(name),
+           ADDR_ob(offset, base), XMMRegName(dst));
       // Even though a "ps" instruction, vblendv is encoded with the "pd"
       // prefix.
       m_formatter.legacySSEPrefix(VEX_PD);
@@ -5465,7 +5644,7 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("%-11s%s, " MEM_ob ", %s, %s", name, XMMRegName(mask),
+    spew(currentOffset(), "%-11s%s, " MEM_ob ", %s, %s", name, XMMRegName(mask),
          ADDR_ob(offset, base), XMMRegName(src0), XMMRegName(dst));
     // Even though a "ps" instruction, vblendv is encoded with the "pd" prefix.
     m_formatter.vblendvOpVex(VEX_PD, vexOpcode, ESCAPE_3A, mask, offset, base,
@@ -5476,7 +5655,7 @@ class BaseAssembler : public GenericAssembler {
                       ShiftID shiftKind, uint32_t imm, XMMRegisterID src,
                       XMMRegisterID dst) {
     if (useLegacySSEEncoding(src, dst)) {
-      spew("%-11s$%d, %s", legacySSEOpName(name), int32_t(imm),
+      spew(currentOffset(), "%-11s$%d, %s", legacySSEOpName(name), int32_t(imm),
            XMMRegName(dst));
       m_formatter.legacySSEPrefix(VEX_PD);
       m_formatter.twoByteOp(opcode, (RegisterID)dst, (int)shiftKind);
@@ -5484,8 +5663,8 @@ class BaseAssembler : public GenericAssembler {
       return;
     }
 
-    spew("%-11s$%d, %s, %s", name, int32_t(imm), XMMRegName(src),
-         XMMRegName(dst));
+    spew(currentOffset(), "%-11s$%d, %s, %s", name, int32_t(imm),
+         XMMRegName(src), XMMRegName(dst));
     // For shift instructions, destination is stored in vvvv field.
     m_formatter.twoByteOpVex(VEX_PD, opcode, (RegisterID)src, dst,
                              (int)shiftKind);
@@ -5979,6 +6158,14 @@ class BaseAssembler : public GenericAssembler {
       emitRexW(reg, index, base);
       m_buffer.putByteUnchecked(opcode);
       memoryModRM(offset, base, index, scale, reg);
+    }
+
+    void oneByteOp64_disp32(OneByteOpcodeID opcode, int32_t offset,
+                            RegisterID index, int scale, int reg) {
+      m_buffer.ensureSpace(MaxInstructionSize);
+      emitRexW(reg, index, 0);
+      m_buffer.putByteUnchecked(opcode);
+      memoryModRM_disp32(offset, index, scale, reg);
     }
 
     void oneByteOp64(OneByteOpcodeID opcode, const void* address, int reg) {

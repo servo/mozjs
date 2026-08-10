@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,7 +6,6 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include <stdlib.h>
 #include <utility>
 
 #include "jspubtd.h"
@@ -518,6 +515,11 @@ class NodeBuilder {
   [[nodiscard]] bool importDeclaration(NodeVector& elts, HandleValue moduleSpec,
                                        TokenPos* pos, MutableHandleValue dst);
 
+  [[nodiscard]] bool importSourceDeclaration(HandleValue bindingName,
+                                             HandleValue moduleSpec,
+                                             TokenPos* pos,
+                                             MutableHandleValue dst);
+
   [[nodiscard]] bool importSpecifier(HandleValue importName,
                                      HandleValue bindingName, TokenPos* pos,
                                      MutableHandleValue dst);
@@ -640,9 +642,11 @@ class NodeBuilder {
   [[nodiscard]] bool metaProperty(HandleValue meta, HandleValue property,
                                   TokenPos* pos, MutableHandleValue dst);
 
-  [[nodiscard]] bool callImportExpression(HandleValue ident, NodeVector& args,
-                                          TokenPos* pos,
-                                          MutableHandleValue dst);
+  [[nodiscard]] bool callImportExpression(HandleValue meta,
+                                          HandleValue property,
+                                          NodeVector& args, TokenPos* pos,
+                                          MutableHandleValue dst,
+                                          bool isImportSource = false);
 
   [[nodiscard]] bool super(TokenPos* pos, MutableHandleValue dst);
 
@@ -1171,6 +1175,14 @@ bool NodeBuilder::importDeclaration(NodeVector& elts, HandleValue moduleRequest,
                  moduleRequest, dst);
 }
 
+bool NodeBuilder::importSourceDeclaration(HandleValue bindingName,
+                                          HandleValue moduleRequest,
+                                          TokenPos* pos,
+                                          MutableHandleValue dst) {
+  return newNode(AST_IMPORT_SOURCE_DECL, pos, "binding", bindingName,
+                 "moduleRequest", moduleRequest, dst);
+}
+
 bool NodeBuilder::importSpecifier(HandleValue importName,
                                   HandleValue bindingName, TokenPos* pos,
                                   MutableHandleValue dst) {
@@ -1386,14 +1398,22 @@ bool NodeBuilder::metaProperty(HandleValue meta, HandleValue property,
                  dst);
 }
 
-bool NodeBuilder::callImportExpression(HandleValue ident, NodeVector& args,
-                                       TokenPos* pos, MutableHandleValue dst) {
+bool NodeBuilder::callImportExpression(HandleValue meta, HandleValue property,
+                                       NodeVector& args, TokenPos* pos,
+                                       MutableHandleValue dst,
+                                       bool isImportSource /* = false */) {
   RootedValue array(cx);
   if (!newArray(args, &array)) {
     return false;
   }
 
-  return newNode(AST_CALL_IMPORT, pos, "ident", ident, "arguments", array, dst);
+  if (isImportSource) {
+    return newNode(AST_CALL_IMPORT_SOURCE, pos, "meta", meta, "property",
+                   property, "arguments", array, dst);
+  } else {
+    return newNode(AST_CALL_IMPORT, pos, "ident", meta, "arguments", array,
+                   dst);
+  }
 }
 
 bool NodeBuilder::super(TokenPos* pos, MutableHandleValue dst) {
@@ -1436,6 +1456,7 @@ class ASTSerializer {
                            MutableHandleValue dst);
   bool variableDeclarator(ParseNode* pn, MutableHandleValue dst);
   bool importDeclaration(BinaryNode* importNode, MutableHandleValue dst);
+  bool importSourceDeclaration(BinaryNode* importNode, MutableHandleValue dst);
   bool importSpecifier(BinaryNode* importSpec, MutableHandleValue dst);
   bool importNamespaceSpecifier(UnaryNode* importSpec, MutableHandleValue dst);
   bool exportDeclaration(ParseNode* exportNode, MutableHandleValue dst);
@@ -1880,6 +1901,43 @@ bool ASTSerializer::importDeclaration(BinaryNode* importNode,
                                    &importNode->pn_pos, dst);
 }
 
+bool ASTSerializer::importSourceDeclaration(BinaryNode* importNode,
+                                            MutableHandleValue dst) {
+  MOZ_ASSERT(importNode->isKind(ParseNodeKind::ImportSourceDecl));
+
+  NameNode* bindingName = &importNode->left()->as<NameNode>();
+  MOZ_ASSERT(bindingName->isKind(ParseNodeKind::Name));
+
+  auto* moduleRequest = &importNode->right()->as<BinaryNode>();
+  MOZ_ASSERT(moduleRequest->isKind(ParseNodeKind::ImportModuleRequest));
+
+  ParseNode* moduleSpecNode = moduleRequest->left();
+  MOZ_ASSERT(moduleSpecNode->isKind(ParseNodeKind::StringExpr));
+
+  RootedValue bindingNameValue(cx);
+  if (!identifier(bindingName, &bindingNameValue)) {
+    return false;
+  }
+
+  RootedValue moduleSpec(cx);
+  if (!literal(moduleSpecNode, &moduleSpec)) {
+    return false;
+  }
+
+  // Import source declarations do not have import attributes.
+  MOZ_ASSERT(moduleRequest->right()->isKind(ParseNodeKind::PosHolder));
+  NodeVector attributes(cx);
+
+  RootedValue moduleRequestValue(cx);
+  if (!builder.moduleRequest(moduleSpec, attributes, &importNode->pn_pos,
+                             &moduleRequestValue)) {
+    return false;
+  }
+
+  return builder.importSourceDeclaration(bindingNameValue, moduleRequestValue,
+                                         &importNode->pn_pos, dst);
+}
+
 bool ASTSerializer::importSpecifier(BinaryNode* importSpec,
                                     MutableHandleValue dst) {
   MOZ_ASSERT(importSpec->isKind(ParseNodeKind::ImportSpec));
@@ -2168,7 +2226,8 @@ bool ASTSerializer::forInit(ParseNode* pn, MutableHandleValue dst) {
   bool lexical = pn->isKind(ParseNodeKind::LetDecl) ||
                  pn->isKind(ParseNodeKind::ConstDecl)
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
-                 || pn->isKind(ParseNodeKind::UsingDecl)
+                 || pn->isKind(ParseNodeKind::UsingDecl) ||
+                 pn->isKind(ParseNodeKind::AwaitUsingDecl)
 #endif
       ;
   return (lexical || pn->isKind(ParseNodeKind::VarStmt))
@@ -2253,6 +2312,9 @@ bool ASTSerializer::statement(ParseNode* pn, MutableHandleValue dst) {
 
     case ParseNodeKind::ImportDecl:
       return importDeclaration(&pn->as<BinaryNode>(), dst);
+
+    case ParseNodeKind::ImportSourceDecl:
+      return importSourceDeclaration(&pn->as<BinaryNode>(), dst);
 
     case ParseNodeKind::ExportStmt:
     case ParseNodeKind::ExportDefaultStmt:
@@ -3216,6 +3278,7 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
              builder.metaProperty(firstIdent, secondIdent, &node->pn_pos, dst);
     }
 
+    case ParseNodeKind::CallImportSourceExpr:
     case ParseNodeKind::CallImportExpr: {
       BinaryNode* node = &pn->as<BinaryNode>();
       ParseNode* identNode = node->left();
@@ -3232,10 +3295,21 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
       ParseNode* optionsArgNode = specNode->as<BinaryNode>().right();
       MOZ_ASSERT(node->pn_pos.encloses(optionsArgNode->pn_pos));
 
-      RootedValue ident(cx);
-      Handle<PropertyName*> name = cx->names().import;
-      if (!identifier(name, &identNode->pn_pos, &ident)) {
+      RootedValue meta(cx);
+      RootedValue property(cx);
+
+      Rooted<JSAtom*> importStr(cx, cx->names().import);
+      if (!identifier(importStr, &identNode->pn_pos, &meta)) {
         return false;
+      }
+
+      if (pn->isKind(ParseNodeKind::CallImportSourceExpr)) {
+        Rooted<JSAtom*> sourceStr(cx, cx->names().source);
+        if (!identifier(sourceStr, &identNode->pn_pos, &property)) {
+          return false;
+        }
+      } else {
+        property = NullValue();
       }
 
       NodeVector args(cx);
@@ -3258,7 +3332,11 @@ bool ASTSerializer::expression(ParseNode* pn, MutableHandleValue dst) {
         }
       }
 
-      return builder.callImportExpression(ident, args, &pn->pn_pos, dst);
+      bool isImportSource = false;
+      isImportSource = pn->isKind(ParseNodeKind::CallImportSourceExpr);
+
+      return builder.callImportExpression(meta, property, args, &pn->pn_pos,
+                                          dst, isImportSource);
     }
 
     case ParseNodeKind::SetThis: {

@@ -3,12 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #ifndef intl_components_DateTimeFormat_h_
 #define intl_components_DateTimeFormat_h_
-#include <functional>
 #include "unicode/udat.h"
 
-#include "mozilla/Assertions.h"
 #include "mozilla/intl/ICU4CGlue.h"
 #include "mozilla/intl/ICUError.h"
+#include "mozilla/intl/Locale.h"
 
 #include "mozilla/intl/DateTimePart.h"
 #include "mozilla/intl/DateTimePatternGenerator.h"
@@ -16,8 +15,6 @@
 #include "mozilla/Span.h"
 #include "mozilla/Try.h"
 #include "mozilla/UniquePtr.h"
-#include "mozilla/Utf8.h"
-#include "mozilla/Variant.h"
 #include "mozilla/Vector.h"
 
 /*
@@ -212,18 +209,6 @@ class DateTimeFormat final {
     ShortGeneric,
     LongGeneric,
   };
-
-  /**
-   * Get static strings representing the enums. These match ECMA-402's resolved
-   * options.
-   * https://tc39.es/ecma402/#sec-intl.datetimeformat.prototype.resolvedoptions
-   */
-  static const char* ToString(DateTimeFormat::HourCycle aHourCycle);
-  static const char* ToString(DateTimeFormat::Style aStyle);
-  static const char* ToString(DateTimeFormat::Numeric aNumeric);
-  static const char* ToString(DateTimeFormat::Text aText);
-  static const char* ToString(DateTimeFormat::Month aMonth);
-  static const char* ToString(DateTimeFormat::TimeZoneName aTimeZoneName);
 
   /**
    * A components bag specifies the components used to display a DateTime. Each
@@ -509,14 +494,9 @@ class DateTimeFormat final {
 
   /**
    * Returns the allowed hour cycles for the input locale.
-   *
-   * NOTE: This function currently takes a language subtag and an optional
-   * region subtag. This is a restriction until bug 1719746 has migrated
-   * language tag processing into the unified Intl component. After bug 1719746,
-   * this function should be changed to accept a single locale tag.
    */
   static Result<HourCyclesVector, ICUError> GetAllowedHourCycles(
-      Span<const char> aLanguage, Maybe<Span<const char>> aRegion);
+      const LanguageSubtag& aLanguage, const RegionSubtag& aRegion);
 
   /**
    * Returns an iterator over all supported date-time formatter locales.

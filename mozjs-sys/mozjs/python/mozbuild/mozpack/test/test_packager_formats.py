@@ -107,27 +107,23 @@ RESULT_FLAT = {
 }
 
 for addon in ("addon0", "addon1", "app/chrome/addons/addon2"):
-    RESULT_FLAT.update(
-        {
-            mozpath.join(addon, p): f
-            for p, f in {
-                "chrome.manifest": [
-                    "manifest chrome/chrome.manifest",
-                    "manifest components/components.manifest",
-                ],
-                "chrome/chrome.manifest": [
-                    "content %s foo/bar/" % mozpath.basename(addon)
-                ],
-                "chrome/foo/bar/baz": FILES[mozpath.join(addon, "chrome/foo/bar/baz")],
-                "components/components.manifest": [
-                    "interfaces bar.xpt",
-                    "interfaces foo.xpt",
-                ],
-                "components/bar.xpt": bar_xpt,
-                "components/foo.xpt": foo2_xpt,
-            }.items()
-        }
-    )
+    RESULT_FLAT.update({
+        mozpath.join(addon, p): f
+        for p, f in {
+            "chrome.manifest": [
+                "manifest chrome/chrome.manifest",
+                "manifest components/components.manifest",
+            ],
+            "chrome/chrome.manifest": ["content %s foo/bar/" % mozpath.basename(addon)],
+            "chrome/foo/bar/baz": FILES[mozpath.join(addon, "chrome/foo/bar/baz")],
+            "components/components.manifest": [
+                "interfaces bar.xpt",
+                "interfaces foo.xpt",
+            ],
+            "components/bar.xpt": bar_xpt,
+            "components/foo.xpt": foo2_xpt,
+        }.items()
+    })
 
 RESULT_JAR = {
     p: RESULT_FLAT[p]
@@ -149,42 +145,40 @@ RESULT_JAR = {
     )
 }
 
-RESULT_JAR.update(
-    {
-        "chrome/f/f.manifest": [
-            "content oo jar:oo.jar!/",
-            "content bar jar:oo.jar!/bar/",
-            "resource foo resource://bar/",
-        ],
-        "chrome/f/oo.jar": {
-            "bar/baz": FILES["chrome/f/oo/bar/baz"],
-            "baz": FILES["chrome/f/oo/baz"],
-            "qux": FILES["chrome/f/oo/qux"],
-        },
-        "app/chrome/chrome.manifest": [
-            "content content jar:foo.jar!/",
-        ],
-        "app/chrome/foo.jar": {
-            "foo": FILES["app/chrome/foo/foo"],
-        },
-        "addon0/chrome/chrome.manifest": [
-            "content addon0 jar:foo.jar!/bar/",
-        ],
-        "addon0/chrome/foo.jar": {
-            "bar/baz": FILES["addon0/chrome/foo/bar/baz"],
-        },
-        "addon1.xpi": {
-            mozpath.relpath(p, "addon1"): f
-            for p, f in RESULT_FLAT.items()
-            if p.startswith("addon1/")
-        },
-        "app/chrome/addons/addon2.xpi": {
-            mozpath.relpath(p, "app/chrome/addons/addon2"): f
-            for p, f in RESULT_FLAT.items()
-            if p.startswith("app/chrome/addons/addon2/")
-        },
-    }
-)
+RESULT_JAR.update({
+    "chrome/f/f.manifest": [
+        "content oo jar:oo.jar!/",
+        "content bar jar:oo.jar!/bar/",
+        "resource foo resource://bar/",
+    ],
+    "chrome/f/oo.jar": {
+        "bar/baz": FILES["chrome/f/oo/bar/baz"],
+        "baz": FILES["chrome/f/oo/baz"],
+        "qux": FILES["chrome/f/oo/qux"],
+    },
+    "app/chrome/chrome.manifest": [
+        "content content jar:foo.jar!/",
+    ],
+    "app/chrome/foo.jar": {
+        "foo": FILES["app/chrome/foo/foo"],
+    },
+    "addon0/chrome/chrome.manifest": [
+        "content addon0 jar:foo.jar!/bar/",
+    ],
+    "addon0/chrome/foo.jar": {
+        "bar/baz": FILES["addon0/chrome/foo/bar/baz"],
+    },
+    "addon1.xpi": {
+        mozpath.relpath(p, "addon1"): f
+        for p, f in RESULT_FLAT.items()
+        if p.startswith("addon1/")
+    },
+    "app/chrome/addons/addon2.xpi": {
+        mozpath.relpath(p, "app/chrome/addons/addon2"): f
+        for p, f in RESULT_FLAT.items()
+        if p.startswith("app/chrome/addons/addon2/")
+    },
+})
 
 RESULT_OMNIJAR = {
     p: RESULT_FLAT[p]
@@ -196,55 +190,51 @@ RESULT_OMNIJAR = {
 
 RESULT_OMNIJAR.update({p: RESULT_JAR[p] for p in RESULT_JAR if p.startswith("addon")})
 
-RESULT_OMNIJAR.update(
-    {
-        "omni.foo": {
-            "components/components.manifest": [
-                "interfaces bar.xpt",
-                "interfaces foo.xpt",
-            ],
-        },
-        "chrome.manifest": [
-            "manifest components/components.manifest",
-        ],
+RESULT_OMNIJAR.update({
+    "omni.foo": {
         "components/components.manifest": [
-            "binary-component foo.so",
+            "interfaces bar.xpt",
+            "interfaces foo.xpt",
         ],
-        "app/omni.foo": {
-            p: RESULT_FLAT["app/" + p]
-            for p in chain(
-                (
-                    "chrome.manifest",
-                    "chrome/chrome.manifest",
-                    "chrome/foo/foo",
-                    "components/components.manifest",
-                    "components/foo.js",
-                ),
-                (
-                    mozpath.relpath(p, "app")
-                    for p in RESULT_FLAT.keys()
-                    if p.startswith("app/chrome/addons/addon2/")
-                ),
-            )
-        },
-    }
-)
-
-RESULT_OMNIJAR["omni.foo"].update(
-    {
-        p: RESULT_FLAT[p]
-        for p in (
-            "chrome.manifest",
-            "chrome/chrome.manifest",
-            "chrome/f/f.manifest",
-            "chrome/f/oo/bar/baz",
-            "chrome/f/oo/baz",
-            "chrome/f/oo/qux",
-            "components/foo.xpt",
-            "components/bar.xpt",
+    },
+    "chrome.manifest": [
+        "manifest components/components.manifest",
+    ],
+    "components/components.manifest": [
+        "binary-component foo.so",
+    ],
+    "app/omni.foo": {
+        p: RESULT_FLAT["app/" + p]
+        for p in chain(
+            (
+                "chrome.manifest",
+                "chrome/chrome.manifest",
+                "chrome/foo/foo",
+                "components/components.manifest",
+                "components/foo.js",
+            ),
+            (
+                mozpath.relpath(p, "app")
+                for p in RESULT_FLAT.keys()
+                if p.startswith("app/chrome/addons/addon2/")
+            ),
         )
-    }
-)
+    },
+})
+
+RESULT_OMNIJAR["omni.foo"].update({
+    p: RESULT_FLAT[p]
+    for p in (
+        "chrome.manifest",
+        "chrome/chrome.manifest",
+        "chrome/f/f.manifest",
+        "chrome/f/oo/bar/baz",
+        "chrome/f/oo/baz",
+        "chrome/f/oo/qux",
+        "components/foo.xpt",
+        "components/bar.xpt",
+    )
+})
 
 RESULT_OMNIJAR_WITH_SUBPATH = {
     k.replace("omni.foo", "bar/omni.foo"): v for k, v in RESULT_OMNIJAR.items()
@@ -421,7 +411,7 @@ class TestFormatters(TestErrors, unittest.TestCase):
             self.assertFalse(is_resource(base, "defaults/pref/channel-prefs.js"))
             self.assertTrue(is_resource(base, "defaults/preferences/foo.js"))
             self.assertFalse(is_resource(base, "defaults/preferences/channel-prefs.js"))
-            self.assertTrue(is_resource(base, "modules/foo.jsm"))
+            self.assertTrue(is_resource(base, "modules/foo.sys.mjs"))
             self.assertTrue(is_resource(base, "greprefs.js"))
             self.assertTrue(is_resource(base, "hyphenation/foo"))
             self.assertTrue(is_resource(base, "default.locale"))
@@ -453,7 +443,7 @@ class TestFormatters(TestErrors, unittest.TestCase):
 
         self.assertEqual(
             str(e.exception),
-            'error: "content foo foo/" overrides ' '"content foo foo/unix"',
+            'error: "content foo foo/" overrides "content foo foo/unix"',
         )
 
         # Chrome with the same name and same flags overrides the previous
@@ -475,7 +465,7 @@ class TestFormatters(TestErrors, unittest.TestCase):
 
         self.assertEqual(
             str(e.exception),
-            'error: "content bar bar/unix" overrides ' '"content bar bar/win os=WINNT"',
+            'error: "content bar bar/unix" overrides "content bar bar/win os=WINNT"',
         )
 
         # Adding something more specific still works.

@@ -15,10 +15,6 @@ description: |
 $id: moz://mozilla.org/schemas/glean/pings/2-0-0
 
 definitions:
-  dotted_snake_case:
-    type: string
-    pattern: "^[a-z_][a-z0-9_]{0,29}(\\.[a-z_][a-z0-9_]{0,29})*$"
-    maxLength: 40
   # Prior to version 2.0.0 of the schema, special ping names with underscores
   # were also supported.
   kebab_case:
@@ -172,7 +168,7 @@ additionalProperties:
         ping, e.g., tracking its original implementation or later changes to
         it.
 
-        It must be a URI to a bug page in a tracker.
+        It must be a URL to a bug page in a tracker.
 
         Prior to version 2.0.0 of the schema, bugs could also be integers.
       type: array
@@ -186,7 +182,7 @@ additionalProperties:
       description: |
         **Required.**
 
-        A list of URIs to any data collection reviews relevant to the ping.
+        A list of URLs to any data collection reviews relevant to the ping.
       type: array
       items:
         type: string

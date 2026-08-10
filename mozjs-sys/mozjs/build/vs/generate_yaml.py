@@ -6,7 +6,7 @@
 import sys
 
 import yaml
-from mozbuild.shellutil import quote as shellquote
+from mozshellutil import quote as shellquote
 from vsdownload import (
     getArgsParser,
     getManifest,
@@ -25,14 +25,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     lowercaseIgnores(args)
 
-    packages = getPackages(getManifest(args))
+    packages = getPackages(getManifest(args), "x64")
     setPackageSelection(args, packages)
     selected = getSelectedPackages(packages, args)
     reduced = []
     # Filter-out data we won't be using.
     for s in selected:
         type = s["type"]
-        if type == "Component" or type == "Workload" or type == "Group":
+        if type in {"Component", "Workload", "Group"}:
             continue
         if type == "Vsix" or s["id"].startswith(("Win10SDK", "Win11SDK")):
             filtered = {k: v for k, v in s.items() if k in ("type", "id", "version")}

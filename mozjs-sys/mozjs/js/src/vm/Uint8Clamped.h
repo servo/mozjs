@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -32,14 +30,7 @@ class uint8_clamped final {
   }
 
  public:
-  // The default constructor can be 'constexpr' when we switch to C++20.
-  //
-  // C++17 requires explicit initialization of all members when using a
-  // 'constexpr' default constructor. That means `val` needs to be initialized
-  // through a member initializer. But adding a member initializer makes the
-  // class no longer trivial, which breaks memcpy/memset optimizations.
-
-  /* constexpr */ uint8_clamped() = default;
+  constexpr uint8_clamped() = default;
   constexpr uint8_clamped(const uint8_clamped&) = default;
 
   constexpr explicit uint8_clamped(uint8_t x) : val(x) {}

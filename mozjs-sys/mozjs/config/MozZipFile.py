@@ -6,7 +6,7 @@ import os
 import time
 import zipfile
 
-from filelock import SoftFileLock
+from mach.filelock import SoftFileLock
 
 
 class ZipFile(zipfile.ZipFile):

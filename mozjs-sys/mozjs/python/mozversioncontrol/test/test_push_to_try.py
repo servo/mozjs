@@ -76,8 +76,8 @@ def test_push_to_try(repo, monkeypatch):
                 os.path.join(vcs.path, "extra-file"),
                 os.path.join(vcs.path, "other", "extra-file"),
             ),
-            (str(tool), "push-to-try", "-m", commit_message),
-            (str(tool), "revert", "-a"),
+            (str(tool), "push-to-try", "--message", commit_message),
+            (str(tool), "revert", "--all"),
         ]
         expected_inputs = []
     elif repo.vcs == "git":
@@ -142,25 +142,80 @@ def test_push_to_try(repo, monkeypatch):
             (str(vcs._git._tool), "cinnabar", "--version"),
             (
                 str(tool),
-                "--ignore-working-copy",
+                "--quiet",
                 "operation",
                 "log",
-                "-n1",
+                "--limit=1",
                 "--no-graph",
-                "-T",
+                "--template",
                 "id.short(16)",
             ),
-            (str(tool), "new", "-m", "commit message", "latest((@ ~ empty()) | @-)"),
-            (str(tool), "log", "-n0"),
             (
                 str(tool),
+                "--quiet",
+                "log",
+                "--no-graph",
+                "--revisions",
+                "heads(trunk() | (remote_bookmarks() & ancestors(@)))..@ ~ description(exact:'')",
+                "--template",
+                "'  ' ++ description.first_line() ++ '\n'",
+            ),
+            (
+                str(tool),
+                "--quiet",
+                "log",
+                "--limit=0",
+                "--template",
+                '"snapshot: prepare_try_push"',
+            ),
+            (
+                str(tool),
+                "--quiet",
+                "operation",
+                "log",
+                "--limit=1",
+                "--no-graph",
+                "--template",
+                "id.short(16)",
+            ),
+            (
+                str(tool),
+                "--quiet",
+                "new",
+                "--message",
+                "commit message",
+                'coalesce(@ ~ (empty() & description(exact:"")) ~ bookmarks(), @-)',
+            ),
+            (str(tool), "--quiet", "file", "track", "extra-file"),
+            (str(tool), "--quiet", "file", "track", "other/extra-file"),
+            (
+                str(tool),
+                "--quiet",
+                "log",
+                "--limit=0",
+                "--template",
+                '"snapshot: prepare_try_push"',
+            ),
+            (
+                str(tool),
+                "--quiet",
+                "bookmark",
+                "move",
+                "--from",
+                "heads(@- & bookmarks())",
+                "--to",
+                "@",
+            ),
+            (
+                str(tool),
+                "--quiet",
                 "--ignore-working-copy",
                 "log",
                 "--no-graph",
-                "-n1",
-                "-r",
+                "--limit=1",
+                "--revisions",
                 "@",
-                "-T",
+                "--template",
                 "change_id.short()",
             ),
             (str(vcs._git._tool), "remote"),
@@ -171,9 +226,10 @@ def test_push_to_try(repo, monkeypatch):
                 "mach_tryserver",
                 "hg::ssh://hg.mozilla.org/try",
             ),
-            (str(tool), "git", "import"),
+            (str(tool), "--quiet", "git", "import"),
             (
                 str(tool),
+                "--quiet",
                 "git",
                 "push",
                 "--remote",
@@ -183,8 +239,8 @@ def test_push_to_try(repo, monkeypatch):
                 "--allow-new",
                 "--allow-empty-description",
             ),
-            (str(tool), "operation", "restore", ""),
-            (str(tool), "git", "remote", "remove", "mach_tryserver"),
+            (str(tool), "--quiet", "operation", "restore", ""),
+            (str(tool), "--quiet", "git", "remote", "remove", "mach_tryserver"),
         ]
         expected_inputs = []
 
@@ -197,6 +253,90 @@ def test_push_to_try(repo, monkeypatch):
         assert value == expected_inputs[i]
 
     assert len(captured_inputs) == len(expected_inputs)
+
+
+def test_push_to_git_try(repo, mocker):
+    if repo.vcs not in ("git", "jj"):
+        pytest.skip("pushing to git try only applies to git/jj")
+
+    vcs = get_repository_object(repo.dir)
+    remote = "upstream"
+
+    mock_try_commit = mocker.patch.object(vcs, "try_commit")
+    mock_try_commit.return_value.__enter__.return_value = "fakehead"
+    mock_push = mocker.patch.object(vcs, "push")
+
+    vcs.push_to_try("msg", remote=remote)
+
+    mock_push.assert_called_once_with(
+        remote, ref="fakehead", dest_branch="user/test/master", force=True
+    )
+
+
+def test_push_to_git_try_creates_bookmark(repo, mocker):
+    if repo.vcs != "jj":
+        pytest.skip("bookmark creation only applies to jj")
+
+    vcs = get_repository_object(repo.dir)
+    remote = "upstream"
+
+    mocker.patch.object(
+        type(vcs), "branch", new_callable=mocker.PropertyMock, return_value=None
+    )
+
+    def fake_run_read_only(*args, **kwargs):
+        if args[:3] == ("config", "get", "user.email"):
+            return "test@example.org"
+        if args[0] == "config":
+            return ""
+        if args[0] == "log":
+            return "push-abc123\n"
+        return ""
+
+    mocker.patch.object(vcs, "_run_read_only", side_effect=fake_run_read_only)
+    mock_run = mocker.patch.object(vcs, "_run")
+    mock_try_commit = mocker.patch.object(vcs, "try_commit")
+    mock_try_commit.return_value.__enter__.return_value = "fakehead"
+    mock_push = mocker.patch.object(vcs, "push")
+
+    vcs.push_to_try("msg", remote=remote)
+
+    mock_run.assert_called_once_with(
+        "bookmark", "create", "push-abc123", "--revision", vcs.HEAD_REVSET
+    )
+    mock_push.assert_called_once_with(
+        remote, ref="fakehead", dest_branch="user/test/push-abc123", force=True
+    )
+
+
+def test_push_to_git_try_bookmark_persists(repo, mocker):
+    if repo.vcs != "jj":
+        pytest.skip("bookmark persistence only applies to jj")
+
+    subprocess.check_call(
+        ["jj", "new", "--message", "test commit"],
+        cwd=repo.dir,
+        env={**os.environ, "JJ_CONFIG": ""},
+    )
+
+    vcs = get_repository_object(repo.dir)
+    assert vcs.branch is None
+
+    mocker.patch.object(vcs, "push")
+
+    vcs._push_to_git_try("msg", {}, "upstream")
+
+    output = vcs._run_read_only(
+        "log",
+        "--no-graph",
+        "--limit=1",
+        "--revisions",
+        "@",
+        "--template",
+        'local_bookmarks.join("\n")',
+    )
+    bookmark = output.split("\n")[0].strip()
+    assert bookmark.startswith("push-")
 
 
 def test_push_to_try_missing_extensions(repo, monkeypatch):

@@ -3,6 +3,7 @@
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+import shutil
 import sys
 
 from mach.decorators import Command, CommandArgument, SubCommand
@@ -157,7 +158,7 @@ def vendor(
         new_files_only,
     )
 
-    sys.exit(0)
+    return 0
 
 
 def check_modified_files(command_context):
@@ -177,9 +178,7 @@ def check_modified_files(command_context):
 {files}
 
 Please commit or stash these changes before vendoring, or re-run with `--ignore-modified`.
-""".format(
-                files="\n".join(sorted(modified))
-            ),
+""".format(files="\n".join(sorted(modified))),
         )
         sys.exit(1)
 
@@ -208,15 +207,23 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
     "--issues-json",
     help="Path to a code-review issues.json file to write out",
 )
+@CommandArgument(
+    "--vcs-diff",
+    help="Path to a diff. file to write out, if there are uncommitted changes present after running",
+)
 def vendor_rust(command_context, **kwargs):
     from mozbuild.vendor.vendor_rust import VendorRust
 
     vendor_command = command_context._spawn(VendorRust)
     issues_json = kwargs.pop("issues_json", None)
+    vcs_diff = kwargs.pop("vcs_diff", None)
     ok = vendor_command.vendor(**kwargs)
     if issues_json:
         with open(issues_json, "w") as fh:
             fh.write(vendor_command.serialize_issues_json())
+    if vcs_diff:
+        with open(vcs_diff, "w", encoding="utf-8", newline="\n") as fh:
+            shutil.copyfileobj(vendor_command.generate_diff_stream(), fh)
     if ok:
         sys.exit(0)
     else:
@@ -234,7 +241,7 @@ def vendor_rust(command_context, **kwargs):
     "Some extra files like docs and tests will automatically be excluded."
     "Downloads the packages listed in third_party/python/pyproject.toml, along "
     "with their transitive dependencies, and adds them to version control.",
-    virtualenv_name="vendor",
+    virtualenv_name="uv",
 )
 @CommandArgument(
     "--keep-extra-files",

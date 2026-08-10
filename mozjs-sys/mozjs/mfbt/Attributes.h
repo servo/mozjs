@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,7 +7,9 @@
 #ifndef mozilla_Attributes_h
 #define mozilla_Attributes_h
 
-#include "mozilla/Compiler.h"
+#ifdef __cplusplus
+#  include <version>  // IWYU pragma: keep(__GLIBCXX__ lookup)
+#endif
 
 /*
  * MOZ_ALWAYS_INLINE is a macro which expands to tell the compiler that the
@@ -29,6 +29,17 @@
 #  define MOZ_ALWAYS_INLINE_EVEN_DEBUG inline
 #endif
 
+/* [[no_unique_address]] tells the compiler that if the associated class member
+ * as a size of zero, it is not subject to the rule that each object must be
+ * addressable and thus use at lease a byte
+ */
+#if defined(_MSC_VER)
+// FIXME: should be [[no_unique_address]] for everyone in C++20
+#  define MOZ_NO_UNIQUE_ADDRESS [[msvc::no_unique_address]]
+#else
+#  define MOZ_NO_UNIQUE_ADDRESS [[no_unique_address]]
+#endif
+
 #if !defined(DEBUG)
 #  define MOZ_ALWAYS_INLINE MOZ_ALWAYS_INLINE_EVEN_DEBUG
 #elif defined(_MSC_VER) && !defined(__cplusplus)
@@ -38,16 +49,7 @@
 #endif
 
 #if defined(_MSC_VER)
-/*
- * g++ requires -std=c++0x or -std=gnu++0x to support C++11 functionality
- * without warnings (functionality used by the macros below).  These modes are
- * detectable by checking whether __GXX_EXPERIMENTAL_CXX0X__ is defined or, more
- * standardly, by checking whether __cplusplus has a C++11 or greater value.
- * Current versions of g++ do not correctly set __cplusplus, so we check both
- * for forward compatibility.
- */
 #  define MOZ_HAVE_NEVER_INLINE __declspec(noinline)
-#  define MOZ_HAVE_NORETURN __declspec(noreturn)
 #elif defined(__clang__)
 /*
  * Per Clang documentation, "Note that marketing version numbers should not
@@ -61,12 +63,8 @@
 #  if __has_attribute(noinline)
 #    define MOZ_HAVE_NEVER_INLINE __attribute__((noinline))
 #  endif
-#  if __has_attribute(noreturn)
-#    define MOZ_HAVE_NORETURN __attribute__((noreturn))
-#  endif
 #elif defined(__GNUC__)
 #  define MOZ_HAVE_NEVER_INLINE __attribute__((noinline))
-#  define MOZ_HAVE_NORETURN __attribute__((noreturn))
 #  define MOZ_HAVE_NORETURN_PTR __attribute__((noreturn))
 #endif
 
@@ -83,6 +81,15 @@
 #  define MOZ_HAS_CLANG_ATTRIBUTE(attr) __has_attribute(attr)
 #else
 #  define MOZ_HAS_CLANG_ATTRIBUTE(attr) 0
+#endif
+
+// Prevent a class with non-trivial destructor and/or non-trivial move
+// assignment or move-constructor to be passed by hidden reference, a.k.a
+// pointer.
+#if MOZ_HAS_CLANG_ATTRIBUTE(__trivial_abi__)
+#  define MOZ_TRIVIAL_ABI __attribute__((__trivial_abi__))
+#else
+#  define MOZ_TRIVIAL_ABI
 #endif
 
 /*
@@ -154,27 +161,11 @@
 #  define MOZ_NEVER_INLINE_DEBUG /* don't inline in opt builds */
 #endif
 /*
- * MOZ_NORETURN, specified at the start of a function declaration, indicates
- * that the given function does not return.  (The function definition does not
- * need to be annotated.)
- *
- *   MOZ_NORETURN void abort(const char* msg);
- *
- * This modifier permits the compiler to optimize code assuming a call to such a
- * function will never return.  It also enables the compiler to avoid spurious
- * warnings about not initializing variables, or about any other seemingly-dodgy
- * operations performed after the function returns.
- *
- * There are two variants. The GCC version of NORETURN may be applied to a
- * function pointer, while for MSVC it may not.
+ * MOZ_HAVE_NORETURN_PTR is equivalent to [[noreturn]] but can be set on
+ * function pointers.
  *
  * This modifier does not affect the corresponding function's linking behavior.
  */
-#if defined(MOZ_HAVE_NORETURN)
-#  define MOZ_NORETURN MOZ_HAVE_NORETURN
-#else
-#  define MOZ_NORETURN /* no support */
-#endif
 #if defined(MOZ_HAVE_NORETURN_PTR)
 #  define MOZ_NORETURN_PTR MOZ_HAVE_NORETURN_PTR
 #else
@@ -410,27 +401,6 @@
 #  define MOZ_INFALLIBLE_ALLOCATOR
 #endif
 
-/**
- * MOZ_MAYBE_UNUSED suppresses compiler warnings about functions that are
- * never called (in this build configuration, at least).
- *
- * Place this attribute at the very beginning of a function declaration. For
- * example, write
- *
- *   MOZ_MAYBE_UNUSED int foo();
- *
- * or
- *
- *   MOZ_MAYBE_UNUSED int foo() { return 42; }
- */
-#if defined(__GNUC__) || defined(__clang__)
-#  define MOZ_MAYBE_UNUSED __attribute__((__unused__))
-#elif defined(_MSC_VER)
-#  define MOZ_MAYBE_UNUSED __pragma(warning(suppress : 4505))
-#else
-#  define MOZ_MAYBE_UNUSED
-#endif
-
 /*
  * MOZ_NO_STACK_PROTECTOR, specified at the start of a function declaration,
  * indicates that the given function should *NOT* be instrumented to detect
@@ -514,6 +484,53 @@
 #  endif
 #else
 #  define MOZ_LIFETIME_CAPTURE_BY(x) /* nothing */
+#endif
+
+/**
+ * MOZ_REINITIALIZES tells static analyser that a call to the associated
+ * method leave it in an initialized state, typically after a std::move.
+ */
+#if defined(__clang__) && defined(__has_cpp_attribute)
+#  if __has_cpp_attribute(clang::reinitializes)
+#    define MOZ_REINITIALIZES [[clang::reinitializes]]
+#  else
+#    define MOZ_REINITIALIZES /* nothing */
+#  endif
+#else
+#  define MOZ_REINITIALIZES /* nothing */
+#endif
+
+/**
+ * MOZ_NULL_AFTER_MOVE indicates that the associated type behaves as
+ * std::unique_ptr once being moved, i.e. it's considered empty/null, and only
+ * calls to opererator*(), operator-> and operator[]() are reported by static
+ * analysis as invalid use-after-move.
+ *
+ * See:
+ * https://clang.llvm.org/extra/clang-tidy/checks/bugprone/use-after-move.html#use
+ */
+#if defined(__clang__)
+#  define MOZ_NULL_AFTER_MOVE                                  \
+    [[clang::annotate("clang-tidy", "bugprone-use-after-move", \
+                      "null_after_move")]]
+#else
+#  define MOZ_NULL_AFTER_MOVE /* nothing */
+#endif
+
+/**
+ * MOZ_STANDALONE_DEBUG causes complete debug information to be emitted
+ * for a record type when clang would otherwise try to elide some of it.
+ * This helps certain third party debugging tools introspect types.
+ * See: https://clang.llvm.org/docs/AttributeReference.html#standalone-debug
+ */
+#if defined(__clang__) && defined(__has_cpp_attribute)
+#  if __has_cpp_attribute(clang::standalone_debug)
+#    define MOZ_STANDALONE_DEBUG [[clang::standalone_debug]]
+#  else
+#    define MOZ_STANDALONE_DEBUG /* nothing */
+#  endif
+#else
+#  define MOZ_STANDALONE_DEBUG /* nothing */
 #endif
 
 #ifdef __cplusplus
@@ -669,7 +686,6 @@
  *   expression. If a member of another class uses this class, or if another
  *   class inherits from this class, then it is considered to be a non-heap
  *   class as well, although this attribute need not be provided in such cases.
- * MOZ_CONSTINIT: pre-C++20 equivalent to `constinit`.
  * MOZ_RUNINIT: Applies to global variables with runtime initialization.
  * MOZ_GLOBINIT: Applies to global variables with potential runtime
  *   initialization (e.g. inside macro or when initialisation status depends on
@@ -758,6 +774,11 @@
  *
  *   Use of this annotation is discouraged when a strong reference or one of
  *   the above two annotations can be used instead.
+ * MOZ_NON_TERMINATED_STRING: Applies to function declarations.  Indicates that
+ *   the return value is a character pointer that is not null-terminated.
+ *   Makes it a compile time error to pass the return value of such a function
+ *   as an argument to a printf-like function (one annotated with
+ *   MOZ_FORMAT_PRINTF), since printf %s expects null-terminated input.
  * MOZ_NO_ADDREF_RELEASE_ON_RETURN: Applies to function declarations.  Makes it
  *   a compile time error to call AddRef or Release on the return value of a
  *   function.  This is intended to be used with operator->() of our smart
@@ -827,6 +848,16 @@
  *   indicate that is has been looked at, but it did not need any
  *   MOZ_GUARDED_BY()/REQUIRES()/etc (and thus static analysis knows it can
  * ignore this Mutex/Monitor/etc)
+ * MOZ_ENUM_SERIALIZER_ALLOW_SENTINEL_UPPER_BOUND: Applies to ParamTraits
+ *   specializations that inherit from ContiguousEnumSerializerInclusive.
+ *   Suppresses the EnumSerializer checker warning about including a sentinel
+ *   enumerator (e.g. one named *_END, *Count, *Invalid) as a valid serialized
+ *   value. Use only when the sentinel is genuinely a valid value to send.
+ * MOZ_ENUM_SERIALIZER_ALLOW_MIN_MISMATCH: Applies to ParamTraits
+ *   specializations that inherit from ContiguousEnumSerializer[Inclusive].
+ *   Suppresses the EnumSerializer checker warning about the min template
+ *   argument not matching the first (lowest-valued) enumerator. Use when
+ *   deliberately excluding lower enumerators from being serialized.
  */
 
 // gcc emits a nuisance warning -Wignored-attributes because attributes do not
@@ -886,6 +917,8 @@
 #    define MOZ_OWNING_REF __attribute__((annotate("moz_owning_ref")))
 #    define MOZ_NON_OWNING_REF __attribute__((annotate("moz_non_owning_ref")))
 #    define MOZ_UNSAFE_REF(reason) __attribute__((annotate("moz_unsafe_ref")))
+#    define MOZ_NON_TERMINATED_STRING \
+      __attribute__((annotate("moz_non_terminated_string")))
 #    define MOZ_NO_ADDREF_RELEASE_ON_RETURN \
       __attribute__((annotate("moz_no_addref_release_on_return")))
 #    define MOZ_NEEDS_NO_VTABLE_TYPE \
@@ -904,6 +937,11 @@
 #    define MOZ_INIT_OUTSIDE_CTOR
 #    define MOZ_IS_CLASS_INIT
 #    define MOZ_NON_PARAM __attribute__((annotate("moz_non_param")))
+#    define MOZ_ENUM_SERIALIZER_ALLOW_SENTINEL_UPPER_BOUND \
+      __attribute__((                                      \
+          annotate("moz_enum_serializer_allow_sentinel_upper_bound")))
+#    define MOZ_ENUM_SERIALIZER_ALLOW_MIN_MISMATCH \
+      __attribute__((annotate("moz_enum_serializer_allow_min_mismatch")))
 #    define MOZ_REQUIRED_BASE_METHOD \
       __attribute__((annotate("moz_required_base_method")))
 #    define MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG \
@@ -922,6 +960,16 @@
 #      define MOZ_ANNOTATED   /* nothing */
 #      define MOZ_RUNINIT     /* nothing */
 #      define MOZ_GLOBINIT    /* nothing */
+#    endif
+
+/*
+ * Should be constinit per C++20 standard, but we sometimes link with an older
+ * libstdc++
+ */
+#    if defined(__GLIBCXX__) && (__GLIBCXX__ <= 20230707)
+#      define MOZ_GLIBCXX_CONSTINIT MOZ_RUNINIT
+#    else
+#      define MOZ_GLIBCXX_CONSTINIT constinit
 #    endif
 
 /*
@@ -945,6 +993,8 @@
 #    define MOZ_STATIC_CLASS                                /* nothing */
 #    define MOZ_RUNINIT                                     /* nothing */
 #    define MOZ_GLOBINIT                                    /* nothing */
+#    define MOZ_GLIBCXX_CONSTINIT                           /* nothing */
+#    define MOZ_RELEASE_CONSTINIT                           /* nothing */
 #    define MOZ_STATIC_LOCAL_CLASS                          /* nothing */
 #    define MOZ_STACK_CLASS                                 /* nothing */
 #    define MOZ_NONHEAP_CLASS                               /* nothing */
@@ -962,6 +1012,7 @@
 #    define MOZ_OWNING_REF                                  /* nothing */
 #    define MOZ_NON_OWNING_REF                              /* nothing */
 #    define MOZ_UNSAFE_REF(reason)                          /* nothing */
+#    define MOZ_NON_TERMINATED_STRING                       /* nothing */
 #    define MOZ_NO_ADDREF_RELEASE_ON_RETURN                 /* nothing */
 #    define MOZ_NEEDS_NO_VTABLE_TYPE                        /* nothing */
 #    define MOZ_NON_MEMMOVABLE                              /* nothing */
@@ -972,6 +1023,8 @@
 #    define MOZ_INIT_OUTSIDE_CTOR                           /* nothing */
 #    define MOZ_IS_CLASS_INIT                               /* nothing */
 #    define MOZ_NON_PARAM                                   /* nothing */
+#    define MOZ_ENUM_SERIALIZER_ALLOW_SENTINEL_UPPER_BOUND  /* nothing */
+#    define MOZ_ENUM_SERIALIZER_ALLOW_MIN_MISMATCH          /* nothing */
 #    define MOZ_NON_AUTOABLE                                /* nothing */
 #    define MOZ_REQUIRED_BASE_METHOD                        /* nothing */
 #    define MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG      /* nothing */
@@ -1094,19 +1147,6 @@
 #  define MOZ_EMPTY_BASES __declspec(empty_bases)
 #else
 #  define MOZ_EMPTY_BASES
-#endif
-
-/**
- * Pre- C++20 equivalent to constinit
- */
-#if defined(__cpp_constinit)
-#  define MOZ_CONSTINIT constinit
-#elif defined(__clang__)
-#  define MOZ_CONSTINIT [[clang::require_constant_initialization]]
-#elif MOZ_GCC_VERSION_AT_LEAST(10, 1, 0)
-#  define MOZ_CONSTINIT __constinit
-#else
-#  define MOZ_CONSTINIT
 #endif
 
 // XXX: GCC somehow does not allow attributes before lambda return types, while

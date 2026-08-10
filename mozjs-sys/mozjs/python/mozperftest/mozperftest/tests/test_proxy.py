@@ -143,7 +143,7 @@ def test_playback_no_mode(killer):
 
 @mock.patch("mozperftest.system.proxy.OutputHandler", new=FakeOutputHandler)
 @mock.patch("mozperftest.system.proxy.ProcessHandler", new=ProcHandler)
-@mock.patch("mozperftest.system.proxy.ADBDevice", new=FakeDevice)
+@mock.patch("mozperftest.system.proxy.get_adb_device_or_emu", new=FakeDevice)
 @mock.patch("os.kill")
 def test_android_proxy(killer):
     mach_cmd, metadata, env = running_env()

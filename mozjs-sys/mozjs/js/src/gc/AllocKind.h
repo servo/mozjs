@@ -1,7 +1,4 @@
-
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -15,7 +12,6 @@
 #include "mozilla/EnumeratedArray.h"
 #include "mozilla/EnumeratedRange.h"
 
-#include <iterator>
 #include <stdint.h>
 
 #include "js/TraceKind.h"
@@ -72,6 +68,10 @@ namespace gc {
     D(OBJECT4,             Object,       JSObject,              JSObject_Slots4,       None,       true,   true) \
     D(OBJECT4_FOREGROUND,  Object,       JSObject,              JSObject_Slots4,       Foreground, true,   true) \
     D(OBJECT4_BACKGROUND,  Object,       JSObject,              JSObject_Slots4,       Background, true,   true) \
+    D(ARRAYBUFFER6,        Object,       JSObject,              JSObject_Slots6,       Background, true,   true) \
+    D(OBJECT6,             Object,       JSObject,              JSObject_Slots6,       None,       true,   true) \
+    D(OBJECT6_FOREGROUND,  Object,       JSObject,              JSObject_Slots6,       Foreground, true,   true) \
+    D(OBJECT6_BACKGROUND,  Object,       JSObject,              JSObject_Slots6,       Background, true,   true) \
     D(ARRAYBUFFER8,        Object,       JSObject,              JSObject_Slots8,       Background, true,   true) \
     D(OBJECT8,             Object,       JSObject,              JSObject_Slots8,       None,       true,   true) \
     D(OBJECT8_FOREGROUND,  Object,       JSObject,              JSObject_Slots8,       Foreground, true,   true) \
@@ -90,7 +90,7 @@ namespace gc {
     D(SCRIPT,              Script,       js::BaseScript,        js::BaseScript,        Foreground, false,  true) \
     D(SHAPE,               Shape,        js::Shape,             js::SizedShape,        Background, false,  true) \
     D(BASE_SHAPE,          BaseShape,    js::BaseShape,         js::BaseShape,         None,       false,  true) \
-    D(GETTER_SETTER,       GetterSetter, js::GetterSetter,      js::GetterSetter,      None,       false,  true) \
+    D(GETTER_SETTER,       GetterSetter, js::GetterSetter,      js::GetterSetter,      None,       true,   true) \
     D(COMPACT_PROP_MAP,    PropMap,      js::CompactPropMap,    js::CompactPropMap,    Background, false,  true) \
     D(NORMAL_PROP_MAP,     PropMap,      js::NormalPropMap,     js::NormalPropMap,     Background, false,  true) \
     D(DICT_PROP_MAP,       PropMap,      js::DictionaryPropMap, js::DictionaryPropMap, Background, false,  true) \
@@ -99,25 +99,17 @@ namespace gc {
     D(ATOM,                String,       js::NormalAtom,        js::NormalAtom,        Background, false,  false) \
     D(SYMBOL,              Symbol,       JS::Symbol,            JS::Symbol,            None,       false,  false) \
     D(JITCODE,             JitCode,      js::jit::JitCode,      js::jit::JitCode,      Foreground, false,  false) \
-    D(SCOPE,               Scope,        js::Scope,             js::Scope,             Background, false,  true) \
+    D(SCOPE,               Scope,        js::Scope,             js::Scope,             None,       false,  true) \
     D(REGEXP_SHARED,       RegExpShared, js::RegExpShared,      js::RegExpShared,      Background, false,  true)
 
 #define FOR_EACH_NONOBJECT_NURSERY_ALLOCKIND(D) \
  /* AllocKind              TraceKind     TypeName               SizedType              Finalize    Nursery Compact */ \
-    D(BIGINT,              BigInt,       JS::BigInt,            JS::BigInt,            Background, true,   true)
+    D(BIGINT,              BigInt,       JS::BigInt,            JS::BigInt,            None,       true,   true)
 
 #define FOR_EACH_NURSERY_STRING_ALLOCKIND(D) \
  /* AllocKind              TraceKind     TypeName               SizedType              Finalize    Nursery Compact */ \
     D(FAT_INLINE_STRING,   String,       JSFatInlineString,     JSFatInlineString,     None,       true,   true) \
     D(STRING,              String,       JSString,              JSString,              Background, true,   true)
-
-#define FOR_EACH_BUFFER_ALLOCKIND(D) \
- /* AllocKind              TraceKind     TypeName               SizedType                  Finalize Nursery Compact */ \
-  D(BUFFER16,              SmallBuffer,  js::gc::SmallBuffer,   js::gc::SmallBufferN<16>,  None,    false,  true) \
-  D(BUFFER32,              SmallBuffer,  js::gc::SmallBuffer,   js::gc::SmallBufferN<32>,  None,    false,  true) \
-  D(BUFFER64,              SmallBuffer,  js::gc::SmallBuffer,   js::gc::SmallBufferN<64>,  None,    false,  true) \
-  D(BUFFER128,             SmallBuffer,  js::gc::SmallBuffer,   js::gc::SmallBufferN<128>, None,    false,  true)
-// clang-format on
 
 #define FOR_EACH_NONOBJECT_NONBUFFER_ALLOCKIND(D) \
   FOR_EACH_NONOBJECT_NONNURSERY_ALLOCKIND(D)      \
@@ -126,7 +118,6 @@ namespace gc {
 
 #define FOR_EACH_ALLOCKIND(D)  \
   FOR_EACH_OBJECT_ALLOCKIND(D) \
-  FOR_EACH_BUFFER_ALLOCKIND(D) \
   FOR_EACH_NONOBJECT_NONBUFFER_ALLOCKIND(D)
 
 #define DEFINE_ALLOC_KIND(allocKind, _1, _2, _3, _4, _5, _6) allocKind,
@@ -137,11 +128,6 @@ enum class AllocKind : uint8_t {
     OBJECT_LIMIT,
     OBJECT_LAST = OBJECT_LIMIT - 1,
 
-    FOR_EACH_BUFFER_ALLOCKIND(DEFINE_ALLOC_KIND)
-
-    BUFFER_LIMIT,
-    BUFFER_LAST = BUFFER_LIMIT - 1,
-
     FOR_EACH_NONOBJECT_NONBUFFER_ALLOCKIND(DEFINE_ALLOC_KIND)
 
     LIMIT,
@@ -151,8 +137,6 @@ enum class AllocKind : uint8_t {
 
     FIRST = 0,
     OBJECT_FIRST = FUNCTION, // Hardcoded to first object kind.
-
-    BUFFER_FIRST = BUFFER16
   // clang-format on
 };
 #undef DEFINE_ALLOC_KIND
@@ -200,10 +184,6 @@ const char* AllocKindName(AllocKind kind);
 
 constexpr bool IsObjectAllocKind(AllocKind kind) {
   return kind >= AllocKind::OBJECT_FIRST && kind <= AllocKind::OBJECT_LAST;
-}
-
-constexpr bool IsBufferAllocKind(AllocKind kind) {
-  return kind > AllocKind::OBJECT_LAST && kind <= AllocKind::BUFFER_LAST;
 }
 
 constexpr bool IsShapeAllocKind(AllocKind kind) {

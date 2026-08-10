@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -88,9 +86,11 @@ class DebugScript {
   void delete_(JS::GCContext* gcx, DebugScriptObject* owner);
 
   static DebugScript* get(JSScript* script);
+  static DebugScript* getUnbarriered(JSScript* script);
   static DebugScript* getOrCreate(JSContext* cx, HandleScript script);
 
  public:
+  static bool hasBreakpointSite(JSScript* script, jsbytecode* pc);
   static JSBreakpointSite* getBreakpointSite(JSScript* script, jsbytecode* pc);
   static JSBreakpointSite* getOrCreateBreakpointSite(JSContext* cx,
                                                      HandleScript script,
@@ -150,9 +150,10 @@ class DebugScriptObject : public NativeObject {
 };
 
 // A weak map from JSScripts to DebugScriptObjects.
-class DebugScriptMap : public WeakMap<JSScript*, DebugScriptObject*> {
+class DebugScriptMap
+    : public WeakMap<JSScript*, DebugScriptObject*, ZoneAllocPolicy> {
  public:
-  explicit DebugScriptMap(JSContext* cx) : WeakMap(cx) {}
+  explicit DebugScriptMap(JSContext* cx);
 };
 
 } /* namespace js */

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -47,6 +45,11 @@ Cell* cell() {
   return &c;
 }
 
+union CellPtr {
+  Cell* c;
+  void* vp;
+};
+
 template <typename T, typename U>
 struct SimpleTemplate {
   int member;
@@ -75,6 +78,8 @@ Cell* f() {
   Container<Container<SimpleTemplate<int, int>, float>,
             Container<float, SimpleTemplate<char, char>>>
       c4;
+  Container<Cell*, Cell*> c5;
+  CellPtr cp;
 
   return nullptr;
 }

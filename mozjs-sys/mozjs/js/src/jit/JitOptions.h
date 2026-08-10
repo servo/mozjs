@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -66,10 +64,12 @@ struct DefaultJitOptions {
   bool disableRecoverIns;
   bool disableScalarReplacement;
   bool disableCacheIR;
-  bool disableSink;
+  bool disableStubFolding;
+  bool disableStubFoldingLoadsAndStores;
   bool disableRedundantShapeGuards;
   bool disableRedundantGCBarriers;
   bool disableBailoutLoopCheck;
+  bool disableObjectKeysScalarReplacement;
 #ifdef ENABLE_PORTABLE_BASELINE_INTERP
   bool portableBaselineInterpreter;
 #endif
@@ -150,14 +150,23 @@ struct DefaultJitOptions {
   bool enable_regexp_unaligned_accesses;
   bool js_regexp_modifiers;
   bool js_regexp_duplicate_named_groups;
+  bool js_regexp_buffer_boundaries;
   bool regexp_possessive_quantifier;
   bool regexp_optimization;
   bool regexp_peephole_optimization;
+  bool regexp_unroll;
+  bool regexp_quick_check;
   bool regexp_tier_up;
+  bool regexp_bytecode_analysis;
   bool trace_regexp_assembler;
+  bool trace_regexp_compiler;
+  bool trace_regexp_graph_building;
   bool trace_regexp_bytecodes;
   bool trace_regexp_parser;
+  bool trace_regexp_bytecode_analysis;
   bool trace_regexp_peephole_optimization;
+  bool log_colour;
+  bool enable_slow_asserts;
 
   DefaultJitOptions();
   bool isSmallFunction(JSScript* script) const;

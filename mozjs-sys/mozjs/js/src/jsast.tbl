@@ -1,5 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+/*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -43,6 +42,7 @@ ASTDEF(AST_CLASS_EXPR,            "ClassExpression")
 ASTDEF(AST_METAPROPERTY,          "MetaProperty")
 ASTDEF(AST_SUPER,                 "Super")
 ASTDEF(AST_CALL_IMPORT,           "CallImport")
+ASTDEF(AST_CALL_IMPORT_SOURCE,    "CallImportSource")
 ASTDEF(AST_EMPTY_STMT,            "EmptyStatement")
 ASTDEF(AST_BLOCK_STMT,            "BlockStatement")
 ASTDEF(AST_EXPR_STMT,             "ExpressionStatement")
@@ -65,6 +65,7 @@ ASTDEF(AST_LET_STMT,              "LetStatement")
 ASTDEF(AST_MODULE_REQUEST,        "ModuleRequest")
 ASTDEF(AST_IMPORT_ATTRIBUTE,      "ImportAttribute")
 ASTDEF(AST_IMPORT_DECL,           "ImportDeclaration")
+ASTDEF(AST_IMPORT_SOURCE_DECL,    "ImportSourceDeclaration")
 ASTDEF(AST_IMPORT_SPEC,           "ImportSpecifier")
 ASTDEF(AST_IMPORT_NAMESPACE_SPEC, "ImportNamespaceSpecifier")
 ASTDEF(AST_EXPORT_DECL,           "ExportDeclaration")

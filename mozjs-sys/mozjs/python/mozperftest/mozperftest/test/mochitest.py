@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import json
 import os
+import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
@@ -11,9 +12,11 @@ from mozperftest.test.functionaltestrunner import (
     FunctionalTestRunner,
 )
 from mozperftest.utils import (
-    METRICS_MATCHER,
+    EVAL_DATA_MATCHER,
     ON_TRY,
+    PERF_METRICS_MATCHER,
     LogProcessor,
+    NoEvalDataError,
     NoPerfMetricsError,
     install_requirements_file,
 )
@@ -52,7 +55,7 @@ class MochitestData:
     merge = transform
 
 
-class Mochitest(Layer):
+class _Mochitest(Layer):
     """Runs a mochitest test through `mach test` locally, and directly with mochitest in CI."""
 
     name = "mochitest"
@@ -98,7 +101,7 @@ class Mochitest(Layer):
     }
 
     def __init__(self, env, mach_cmd):
-        super(Mochitest, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.topsrcdir = mach_cmd.topsrcdir
         self._mach_context = mach_cmd._mach_context
         self.python_path = mach_cmd.virtualenv_manager.python_path
@@ -106,7 +109,7 @@ class Mochitest(Layer):
         self.distdir = mach_cmd.distdir
         self.bindir = mach_cmd.bindir
         self.statedir = mach_cmd.statedir
-        self.metrics = []
+        self.payloads_from_log = []
         self.topsrcdir = mach_cmd.topsrcdir
 
     def setup(self):
@@ -136,15 +139,13 @@ class Mochitest(Layer):
         gecko_profile_entries = os.getenv("MOZ_PROFILER_STARTUP_ENTRIES", "65536000")
         gecko_profile_interval = os.getenv("MOZ_PROFILER_STARTUP_INTERVAL", None)
 
-        if self.get_arg("gecko-profile") or os.getenv("MOZ_PROFILER_STARTUP") == "1":
+        if self.get_arg("gecko-profile"):
             gecko_profile_args.append("--profiler")
-            gecko_profile_args.extend(
-                [
-                    f"--setenv=MOZ_PROFILER_STARTUP_FEATURES={gecko_profile_features}",
-                    f"--setenv=MOZ_PROFILER_STARTUP_FILTERS={gecko_profile_threads}",
-                    f"--setenv=MOZ_PROFILER_STARTUP_ENTRIES={gecko_profile_entries}",
-                ]
-            )
+            gecko_profile_args.extend([
+                f"--setenv=MOZ_PROFILER_STARTUP_FEATURES={gecko_profile_features}",
+                f"--setenv=MOZ_PROFILER_STARTUP_FILTERS={gecko_profile_threads}",
+                f"--setenv=MOZ_PROFILER_STARTUP_ENTRIES={gecko_profile_entries}",
+            ])
             if gecko_profile_interval:
                 gecko_profile_args.append(
                     f"--setenv=MOZ_PROFILER_STARTUP_INTERVAL={gecko_profile_interval}"
@@ -175,6 +176,14 @@ class Mochitest(Layer):
             parsed_extra_args.append(f"--{arg}")
         return parsed_extra_args
 
+    def _parse_browser_prefs(self, metadata):
+        """Sets up browser prefs from metadata for passing to mochitest."""
+        mochitest_prefs = []
+        browser_prefs = metadata.get_options("browser_prefs")
+        for key, value in browser_prefs.items():
+            mochitest_prefs.append(f"--setpref={key}={value}")
+        return mochitest_prefs
+
     def _setup_mochitest_android_args(self, metadata):
         """Sets up all the arguments needed to run mochitest android tests."""
         app = metadata.binary
@@ -192,23 +201,19 @@ class Mochitest(Layer):
 
         if not ON_TRY:
             os.environ["MOZ_HOST_BIN"] = self.mach_cmd.bindir
-            mochitest_android_args.extend(
-                [
-                    f"--setenv=MOZ_HOST_BIN={os.environ['MOZ_HOST_BIN']}",
-                ]
-            )
+            mochitest_android_args.extend([
+                f"--setenv=MOZ_HOST_BIN={os.environ['MOZ_HOST_BIN']}",
+            ])
         else:
             os.environ["MOZ_HOST_BIN"] = str(
                 Path(os.getenv("MOZ_FETCHES_DIR"), "hostutils")
             )
-            mochitest_android_args.extend(
-                [
-                    f"--setenv=MOZ_HOST_BIN={os.environ['MOZ_HOST_BIN']}",
-                    f"--remote-webserver={os.environ['HOST_IP']}",
-                    "--http-port=8854",
-                    "--ssl-port=4454",
-                ]
-            )
+            mochitest_android_args.extend([
+                f"--setenv=MOZ_HOST_BIN={os.environ['MOZ_HOST_BIN']}",
+                f"--remote-webserver={os.environ['HOST_IP']}",
+                "--http-port=8854",
+                "--ssl-port=4454",
+            ])
 
         return mochitest_android_args
 
@@ -218,6 +223,7 @@ class Mochitest(Layer):
 
         mochitest_args.extend(self._enable_gecko_profiling())
         mochitest_args.extend(self._parse_extra_args())
+        mochitest_args.extend(self._parse_browser_prefs(metadata))
 
         if self.get_arg("android"):
             mochitest_args.extend(self._setup_mochitest_android_args(metadata))
@@ -240,13 +246,18 @@ class Mochitest(Layer):
             )
         if not manifest_flavor:
             raise MissingMochitestInformation(
-                "Mochitest flavor needs to be provided"
-                "(e.g. plain, browser-chrome, ...)"
+                "Mochitest flavor needs to be provided(e.g. plain, browser-chrome, ...)"
             )
 
         manifest_path = Path(test.parent, manifest_name)
         manifest = TestManifest([str(manifest_path)], strict=False)
-        manifest.active_tests(paths=[str(test)])
+        test_list = manifest.active_tests(paths=(str(test),))
+
+        subsuite = None
+        for parsed_test in test_list or []:
+            if str(test) in str(Path(parsed_test.get("path", ""))):
+                subsuite = parsed_test.get("subsuite", None)
+                break
 
         # Use the mochitest argument parser to parse the extra argument
         # options, and produce an `args` object that has all the defaults
@@ -262,6 +273,9 @@ class Mochitest(Layer):
         args.topobjdir = self.topobjdir
         args.topsrcdir = self.topsrcdir
         args.flavor = manifest_flavor
+
+        if subsuite:
+            args.subsuite = subsuite
 
         fetch_dir = os.getenv("MOZ_FETCHES_DIR")
         if self.get_arg("android"):
@@ -279,8 +293,13 @@ class Mochitest(Layer):
             args.symbolsPath = str(Path(fetch_dir, "crashreporter-symbols"))
             args.certPath = str(Path(fetch_dir, "certs"))
 
-        log_processor = LogProcessor(METRICS_MATCHER)
+        log_processor = self._get_log_processor()
+
         with redirect_stdout(log_processor):
+            # Perftest calls mochitest in-process, so there's no mozharness
+            # layer to convert structured logs to TBPL. Request TBPL format
+            # explicitly so the log processor sees human-readable lines.
+            args.log_tbpl = [sys.stdout]
             if self.get_arg("android"):
                 result = runtestsremote.run_test_harness(parser, args)
             else:
@@ -295,10 +314,8 @@ class Mochitest(Layer):
         else:
             test_name = test.name
 
-        results = []
         cycles = self.get_arg("cycles", 1)
         for cycle in range(1, cycles + 1):
-
             metadata.run_hook(
                 "before_cycle", metadata, self.env, cycle, metadata.script
             )
@@ -319,14 +336,46 @@ class Mochitest(Layer):
             if status is not None and status != 0:
                 raise MochitestTestFailure("Test failed to run")
 
-            # Parse metrics found
-            for metrics_line in log_processor.match:
-                self.metrics.append(json.loads(metrics_line.split("|")[-1].strip()))
+            self._extract_payload_from_log(log_processor, metadata)
 
-        for m in self.metrics:
+        self._handle_payloads(metadata, test_name)
+
+        return metadata
+
+    @staticmethod
+    def _get_log_processor():
+        raise NotImplementedError
+
+    def _extract_payload_from_log(self, log_processor, metadata):
+        """The payload for perftests and evals are output to the log, and extracted
+        into the mozperftest harness for processing."""
+        raise NotImplementedError
+
+    def _handle_payloads(self, metadata, test_name):
+        """After the payloads are extracting from the log, handle the final processing."""
+        raise NotImplementedError
+
+
+class PerfMochitest(_Mochitest):
+    """A mochitest that collects the `perfResults` from stdout"""
+
+    @staticmethod
+    def _get_log_processor():
+        return LogProcessor(PERF_METRICS_MATCHER)
+
+    def _extract_payload_from_log(self, log_processor, metadata):
+        """Parse metrics found"""
+        for metrics_line in log_processor.match:
+            self.payloads_from_log.append(
+                json.loads(metrics_line.split("|")[-1].strip())
+            )
+
+    def _handle_payloads(self, metadata, test_name):
+        results = []
+        for payload in self.payloads_from_log:
             # Expecting results like {"metric-name": value, "metric-name2": value, ...}
-            if isinstance(m, dict):
-                for key, val in m.items():
+            if isinstance(payload, dict):
+                for key, val in payload.items():
                     for r in results:
                         if r["name"] == key:
                             r["values"].append(val)
@@ -338,7 +387,7 @@ class Mochitest(Layer):
             #     {"name": "metric-name2", "values": [value1, value2, ...], ...},
             # ]
             else:
-                for metric in m:
+                for metric in payload:
                     for r in results:
                         if r["name"] == metric["name"]:
                             r["values"].extend(metric["values"])
@@ -346,16 +395,54 @@ class Mochitest(Layer):
                     else:
                         results.append(metric)
 
-        if len(results) == 0:
+        if not results:
             raise NoPerfMetricsError("mochitest")
 
-        metadata.add_result(
-            {
-                "name": test_name,
-                "framework": {"name": "mozperftest"},
-                "transformer": "mozperftest.test.mochitest:MochitestData",
-                "results": results,
-            }
-        )
+        metadata.add_result({
+            "name": test_name,
+            "framework": {"name": "mozperftest"},
+            "transformer": "mozperftest.test.mochitest:MochitestData",
+            "results": results,
+        })
 
-        return metadata
+
+class EvalMochitest(_Mochitest):
+    """A mochitest that collects the `evalDataPayload` from stdout"""
+
+    @staticmethod
+    def _get_log_processor():
+        return LogProcessor(EVAL_DATA_MATCHER)
+
+    def _extract_payload_from_log(self, log_processor, metadata):
+        """Parse the eval data payload from the log."""
+        for eval_line in log_processor.match:
+            self.payloads_from_log.append(
+                # Take:
+                #   "evalDataPayload | { ... }"
+                # Partition into:
+                #   ('evalDataPayload ', '|', " { ... }")
+                # Then extract the payload:
+                #   "{ ... }"
+                # And finally load it as JSON
+                #   { ... }
+                json.loads(eval_line.partition("|")[2].strip())
+            )
+
+    def _handle_payloads(self, metadata, test_name):
+        if not self.payloads_from_log:
+            raise NoEvalDataError("mochitest")
+
+        output_dir = Path(self.get_arg("output")).resolve()
+        output_dir.mkdir(parents=True, exist_ok=True)
+        out_file = output_dir / f"{Path(test_name).stem}-eval-data.json"
+        pretty_json = json.dumps(self.payloads_from_log, indent=2)
+        out_file.write_text(pretty_json)
+
+        try:
+            display_path = out_file.relative_to(Path(self.topsrcdir))
+        except ValueError:
+            display_path = out_file
+
+        print(f"Evaluation data written to {display_path}")
+
+        metadata.add_eval_payload(test_name, self.payloads_from_log)

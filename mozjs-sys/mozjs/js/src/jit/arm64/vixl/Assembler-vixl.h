@@ -31,6 +31,8 @@
 #include "jit/arm64/vixl/Globals-vixl.h"
 #include "jit/arm64/vixl/Instructions-vixl.h"
 #include "jit/arm64/vixl/MozBaseAssembler-vixl.h"
+#include "jit/arm64/vixl/Operands-vixl.h"
+#include "jit/arm64/vixl/Registers-vixl.h"
 #include "jit/arm64/vixl/Utils-vixl.h"
 
 #include "jit/JitSpewer.h"
@@ -54,772 +56,6 @@ using js::jit::BaseIndex;
 using js::jit::DisassemblerSpew;
 
 using LabelDoc = DisassemblerSpew::LabelDoc;
-
-typedef uint64_t RegList;
-static const int kRegListSizeInBits = sizeof(RegList) * 8;
-
-
-// Registers.
-
-// Some CPURegister methods can return Register or VRegister types, so we need
-// to declare them in advance.
-class Register;
-class VRegister;
-
-class CPURegister {
- public:
-  enum RegisterType {
-    // The kInvalid value is used to detect uninitialized static instances,
-    // which are always zero-initialized before any constructors are called.
-    kInvalid = 0,
-    kRegister,
-    kVRegister,
-    kFPRegister = kVRegister,
-    kNoRegister
-  };
-
-  constexpr CPURegister() : code_(0), size_(0), type_(kNoRegister) {
-  }
-
-  constexpr CPURegister(unsigned code, unsigned size, RegisterType type)
-      : code_(code), size_(size), type_(type) {
-  }
-
-  unsigned code() const {
-    VIXL_ASSERT(IsValid());
-    return code_;
-  }
-
-  RegisterType type() const {
-    VIXL_ASSERT(IsValidOrNone());
-    return type_;
-  }
-
-  RegList Bit() const {
-    VIXL_ASSERT(code_ < (sizeof(RegList) * 8));
-    return IsValid() ? (static_cast<RegList>(1) << code_) : 0;
-  }
-
-  unsigned size() const {
-    VIXL_ASSERT(IsValid());
-    return size_;
-  }
-
-  int SizeInBytes() const {
-    VIXL_ASSERT(IsValid());
-    VIXL_ASSERT(size() % 8 == 0);
-    return size_ / 8;
-  }
-
-  int SizeInBits() const {
-    VIXL_ASSERT(IsValid());
-    return size_;
-  }
-
-  bool Is8Bits() const {
-    VIXL_ASSERT(IsValid());
-    return size_ == 8;
-  }
-
-  bool Is16Bits() const {
-    VIXL_ASSERT(IsValid());
-    return size_ == 16;
-  }
-
-  bool Is32Bits() const {
-    VIXL_ASSERT(IsValid());
-    return size_ == 32;
-  }
-
-  bool Is64Bits() const {
-    VIXL_ASSERT(IsValid());
-    return size_ == 64;
-  }
-
-  bool Is128Bits() const {
-    VIXL_ASSERT(IsValid());
-    return size_ == 128;
-  }
-
-  bool IsValid() const {
-    if (IsValidRegister() || IsValidVRegister()) {
-      VIXL_ASSERT(!IsNone());
-      return true;
-    } else {
-      // This assert is hit when the register has not been properly initialized.
-      // One cause for this can be an initialisation order fiasco. See
-      // https://isocpp.org/wiki/faq/ctors#static-init-order for some details.
-      VIXL_ASSERT(IsNone());
-      return false;
-    }
-  }
-
-  bool IsValidRegister() const {
-    return IsRegister() &&
-           ((size_ == kWRegSize) || (size_ == kXRegSize)) &&
-           ((code_ < kNumberOfRegisters) || (code_ == kSPRegInternalCode));
-  }
-
-  bool IsValidVRegister() const {
-    return IsVRegister() &&
-           ((size_ == kBRegSize) || (size_ == kHRegSize) ||
-            (size_ == kSRegSize) || (size_ == kDRegSize) ||
-            (size_ == kQRegSize)) &&
-           (code_ < kNumberOfVRegisters);
-  }
-
-  bool IsValidFPRegister() const {
-    return IsFPRegister() && (code_ < kNumberOfVRegisters);
-  }
-
-  bool IsNone() const {
-    // kNoRegister types should always have size 0 and code 0.
-    VIXL_ASSERT((type_ != kNoRegister) || (code_ == 0));
-    VIXL_ASSERT((type_ != kNoRegister) || (size_ == 0));
-
-    return type_ == kNoRegister;
-  }
-
-  bool Aliases(const CPURegister& other) const {
-    VIXL_ASSERT(IsValidOrNone() && other.IsValidOrNone());
-    return (code_ == other.code_) && (type_ == other.type_);
-  }
-
-  bool Is(const CPURegister& other) const {
-    VIXL_ASSERT(IsValidOrNone() && other.IsValidOrNone());
-    return Aliases(other) && (size_ == other.size_);
-  }
-
-  bool IsZero() const {
-    VIXL_ASSERT(IsValid());
-    return IsRegister() && (code_ == kZeroRegCode);
-  }
-
-  bool IsSP() const {
-    VIXL_ASSERT(IsValid());
-    return IsRegister() && (code_ == kSPRegInternalCode);
-  }
-
-  bool IsRegister() const {
-    return type_ == kRegister;
-  }
-
-  bool IsVRegister() const {
-    return type_ == kVRegister;
-  }
-
-  bool IsFPRegister() const {
-    return IsS() || IsD();
-  }
-
-  bool IsW() const { return IsValidRegister() && Is32Bits(); }
-  bool IsX() const { return IsValidRegister() && Is64Bits(); }
-
-  // These assertions ensure that the size and type of the register are as
-  // described. They do not consider the number of lanes that make up a vector.
-  // So, for example, Is8B() implies IsD(), and Is1D() implies IsD, but IsD()
-  // does not imply Is1D() or Is8B().
-  // Check the number of lanes, ie. the format of the vector, using methods such
-  // as Is8B(), Is1D(), etc. in the VRegister class.
-  bool IsV() const { return IsVRegister(); }
-  bool IsB() const { return IsV() && Is8Bits(); }
-  bool IsH() const { return IsV() && Is16Bits(); }
-  bool IsS() const { return IsV() && Is32Bits(); }
-  bool IsD() const { return IsV() && Is64Bits(); }
-  bool IsQ() const { return IsV() && Is128Bits(); }
-
-  const Register& W() const;
-  const Register& X() const;
-  const VRegister& V() const;
-  const VRegister& B() const;
-  const VRegister& H() const;
-  const VRegister& S() const;
-  const VRegister& D() const;
-  const VRegister& Q() const;
-
-  bool IsSameSizeAndType(const CPURegister& other) const {
-    return (size_ == other.size_) && (type_ == other.type_);
-  }
-
- protected:
-  unsigned code_;
-  unsigned size_;
-  RegisterType type_;
-
- private:
-  bool IsValidOrNone() const {
-    return IsValid() || IsNone();
-  }
-};
-
-
-class Register : public CPURegister {
- public:
-  Register() : CPURegister() {}
-  explicit Register(const CPURegister& other)
-      : CPURegister(other.code(), other.size(), other.type()) {
-    VIXL_ASSERT(IsValidRegister());
-  }
-  constexpr Register(unsigned code, unsigned size)
-      : CPURegister(code, size, kRegister) {}
-
-  constexpr Register(js::jit::Register r, unsigned size)
-    : CPURegister(r.code(), size, kRegister) {}
-
-  bool IsValid() const {
-    VIXL_ASSERT(IsRegister() || IsNone());
-    return IsValidRegister();
-  }
-
-  js::jit::Register asUnsized() const {
-    // asUnsized() is only ever used on temp registers or on registers that
-    // are known not to be SP, and there should be no risk of it being
-    // applied to SP.  Check anyway.
-    VIXL_ASSERT(code_ != kSPRegInternalCode);
-    return js::jit::Register::FromCode((js::jit::Register::Code)code_);
-  }
-
-
-  static const Register& WRegFromCode(unsigned code);
-  static const Register& XRegFromCode(unsigned code);
-
- private:
-  static const Register wregisters[];
-  static const Register xregisters[];
-};
-
-
-class VRegister : public CPURegister {
- public:
-  VRegister() : CPURegister(), lanes_(1) {}
-  explicit VRegister(const CPURegister& other)
-      : CPURegister(other.code(), other.size(), other.type()), lanes_(1) {
-    VIXL_ASSERT(IsValidVRegister());
-    VIXL_ASSERT(IsPowerOf2(lanes_) && (lanes_ <= 16));
-  }
-  constexpr VRegister(unsigned code, unsigned size, unsigned lanes = 1)
-      : CPURegister(code, size, kVRegister), lanes_(lanes) {
-    // VIXL_ASSERT(IsPowerOf2(lanes_) && (lanes_ <= 16));
-  }
-  constexpr VRegister(js::jit::FloatRegister r)
-      : CPURegister(r.encoding(), r.size() * 8, kVRegister), lanes_(1) {
-  }
-  constexpr VRegister(js::jit::FloatRegister r, unsigned size)
-      : CPURegister(r.encoding(), size, kVRegister), lanes_(1) {
-  }
-  VRegister(unsigned code, VectorFormat format)
-      : CPURegister(code, RegisterSizeInBitsFromFormat(format), kVRegister),
-        lanes_(IsVectorFormat(format) ? LaneCountFromFormat(format) : 1) {
-    VIXL_ASSERT(IsPowerOf2(lanes_) && (lanes_ <= 16));
-  }
-
-  bool IsValid() const {
-    VIXL_ASSERT(IsVRegister() || IsNone());
-    return IsValidVRegister();
-  }
-
-  static const VRegister& BRegFromCode(unsigned code);
-  static const VRegister& HRegFromCode(unsigned code);
-  static const VRegister& SRegFromCode(unsigned code);
-  static const VRegister& DRegFromCode(unsigned code);
-  static const VRegister& QRegFromCode(unsigned code);
-  static const VRegister& VRegFromCode(unsigned code);
-
-  VRegister V8B() const { return VRegister(code_, kDRegSize, 8); }
-  VRegister V16B() const { return VRegister(code_, kQRegSize, 16); }
-  VRegister V4H() const { return VRegister(code_, kDRegSize, 4); }
-  VRegister V8H() const { return VRegister(code_, kQRegSize, 8); }
-  VRegister V2S() const { return VRegister(code_, kDRegSize, 2); }
-  VRegister V4S() const { return VRegister(code_, kQRegSize, 4); }
-  VRegister V2D() const { return VRegister(code_, kQRegSize, 2); }
-  VRegister V1D() const { return VRegister(code_, kDRegSize, 1); }
-
-  bool Is8B() const { return (Is64Bits() && (lanes_ == 8)); }
-  bool Is16B() const { return (Is128Bits() && (lanes_ == 16)); }
-  bool Is4H() const { return (Is64Bits() && (lanes_ == 4)); }
-  bool Is8H() const { return (Is128Bits() && (lanes_ == 8)); }
-  bool Is2S() const { return (Is64Bits() && (lanes_ == 2)); }
-  bool Is4S() const { return (Is128Bits() && (lanes_ == 4)); }
-  bool Is1D() const { return (Is64Bits() && (lanes_ == 1)); }
-  bool Is2D() const { return (Is128Bits() && (lanes_ == 2)); }
-
-  // For consistency, we assert the number of lanes of these scalar registers,
-  // even though there are no vectors of equivalent total size with which they
-  // could alias.
-  bool Is1B() const {
-    VIXL_ASSERT(!(Is8Bits() && IsVector()));
-    return Is8Bits();
-  }
-  bool Is1H() const {
-    VIXL_ASSERT(!(Is16Bits() && IsVector()));
-    return Is16Bits();
-  }
-  bool Is1S() const {
-    VIXL_ASSERT(!(Is32Bits() && IsVector()));
-    return Is32Bits();
-  }
-
-  bool IsLaneSizeB() const { return LaneSizeInBits() == kBRegSize; }
-  bool IsLaneSizeH() const { return LaneSizeInBits() == kHRegSize; }
-  bool IsLaneSizeS() const { return LaneSizeInBits() == kSRegSize; }
-  bool IsLaneSizeD() const { return LaneSizeInBits() == kDRegSize; }
-
-  int lanes() const {
-    return lanes_;
-  }
-
-  bool IsScalar() const {
-    return lanes_ == 1;
-  }
-
-  bool IsVector() const {
-    return lanes_ > 1;
-  }
-
-  bool IsSameFormat(const VRegister& other) const {
-    return (size_ == other.size_) && (lanes_ == other.lanes_);
-  }
-
-  unsigned LaneSizeInBytes() const {
-    return SizeInBytes() / lanes_;
-  }
-
-  unsigned LaneSizeInBits() const {
-    return LaneSizeInBytes() * 8;
-  }
-
- private:
-  static const VRegister bregisters[];
-  static const VRegister hregisters[];
-  static const VRegister sregisters[];
-  static const VRegister dregisters[];
-  static const VRegister qregisters[];
-  static const VRegister vregisters[];
-  int lanes_;
-};
-
-
-// Backward compatibility for FPRegisters.
-typedef VRegister FPRegister;
-
-// No*Reg is used to indicate an unused argument, or an error case. Note that
-// these all compare equal (using the Is() method). The Register and VRegister
-// variants are provided for convenience.
-const Register NoReg;
-const VRegister NoVReg;
-const FPRegister NoFPReg;  // For backward compatibility.
-const CPURegister NoCPUReg;
-
-
-#define DEFINE_REGISTERS(N)  \
-constexpr Register w##N(N, kWRegSize);  \
-constexpr Register x##N(N, kXRegSize);
-REGISTER_CODE_LIST(DEFINE_REGISTERS)
-#undef DEFINE_REGISTERS
-constexpr Register wsp(kSPRegInternalCode, kWRegSize);
-constexpr Register sp(kSPRegInternalCode, kXRegSize);
-
-
-#define DEFINE_VREGISTERS(N)  \
-constexpr VRegister b##N(N, kBRegSize);  \
-constexpr VRegister h##N(N, kHRegSize);  \
-constexpr VRegister s##N(N, kSRegSize);  \
-constexpr VRegister d##N(N, kDRegSize);  \
-constexpr VRegister q##N(N, kQRegSize);  \
-constexpr VRegister v##N(N, kQRegSize);
-REGISTER_CODE_LIST(DEFINE_VREGISTERS)
-#undef DEFINE_VREGISTERS
-
-
-// Registers aliases.
-constexpr Register ip0 = x16;
-constexpr Register ip1 = x17;
-constexpr Register lr = x30;
-constexpr Register xzr = x31;
-constexpr Register wzr = w31;
-
-
-// AreAliased returns true if any of the named registers overlap. Arguments
-// set to NoReg are ignored. The system stack pointer may be specified.
-bool AreAliased(const CPURegister& reg1,
-                const CPURegister& reg2,
-                const CPURegister& reg3 = NoReg,
-                const CPURegister& reg4 = NoReg,
-                const CPURegister& reg5 = NoReg,
-                const CPURegister& reg6 = NoReg,
-                const CPURegister& reg7 = NoReg,
-                const CPURegister& reg8 = NoReg);
-
-
-// AreSameSizeAndType returns true if all of the specified registers have the
-// same size, and are of the same type. The system stack pointer may be
-// specified. Arguments set to NoReg are ignored, as are any subsequent
-// arguments. At least one argument (reg1) must be valid (not NoCPUReg).
-bool AreSameSizeAndType(const CPURegister& reg1,
-                        const CPURegister& reg2,
-                        const CPURegister& reg3 = NoCPUReg,
-                        const CPURegister& reg4 = NoCPUReg,
-                        const CPURegister& reg5 = NoCPUReg,
-                        const CPURegister& reg6 = NoCPUReg,
-                        const CPURegister& reg7 = NoCPUReg,
-                        const CPURegister& reg8 = NoCPUReg);
-
-// AreEven returns true if all of the specified registers have even register
-// indices. Arguments set to NoReg are ignored, as are any subsequent
-// arguments. At least one argument (reg1) must be valid (not NoCPUReg).
-bool AreEven(const CPURegister& reg1,
-             const CPURegister& reg2,
-             const CPURegister& reg3 = NoReg,
-             const CPURegister& reg4 = NoReg,
-             const CPURegister& reg5 = NoReg,
-             const CPURegister& reg6 = NoReg,
-             const CPURegister& reg7 = NoReg,
-             const CPURegister& reg8 = NoReg);
-
-// AreConsecutive returns true if all of the specified registers are
-// consecutive in the register file. Arguments set to NoReg are ignored, as are
-// any subsequent arguments. At least one argument (reg1) must be valid
-// (not NoCPUReg).
-bool AreConsecutive(const CPURegister& reg1,
-                    const CPURegister& reg2,
-                    const CPURegister& reg3 = NoCPUReg,
-                    const CPURegister& reg4 = NoCPUReg);
-
-// AreSameFormat returns true if all of the specified VRegisters have the same
-// vector format. Arguments set to NoReg are ignored, as are any subsequent
-// arguments. At least one argument (reg1) must be valid (not NoVReg).
-bool AreSameFormat(const VRegister& reg1,
-                   const VRegister& reg2,
-                   const VRegister& reg3 = NoVReg,
-                   const VRegister& reg4 = NoVReg);
-
-
-// AreConsecutive returns true if all of the specified VRegisters are
-// consecutive in the register file. Arguments set to NoReg are ignored, as are
-// any subsequent arguments. At least one argument (reg1) must be valid
-// (not NoVReg).
-bool AreConsecutive(const VRegister& reg1,
-                    const VRegister& reg2,
-                    const VRegister& reg3 = NoVReg,
-                    const VRegister& reg4 = NoVReg);
-
-
-// Lists of registers.
-class CPURegList {
- public:
-  explicit CPURegList(CPURegister reg1,
-                      CPURegister reg2 = NoCPUReg,
-                      CPURegister reg3 = NoCPUReg,
-                      CPURegister reg4 = NoCPUReg)
-      : list_(reg1.Bit() | reg2.Bit() | reg3.Bit() | reg4.Bit()),
-        size_(reg1.size()), type_(reg1.type()) {
-    VIXL_ASSERT(AreSameSizeAndType(reg1, reg2, reg3, reg4));
-    VIXL_ASSERT(IsValid());
-  }
-
-  CPURegList(CPURegister::RegisterType type, unsigned size, RegList list)
-      : list_(list), size_(size), type_(type) {
-    VIXL_ASSERT(IsValid());
-  }
-
-  CPURegList(CPURegister::RegisterType type, unsigned size,
-             unsigned first_reg, unsigned last_reg)
-      : size_(size), type_(type) {
-    VIXL_ASSERT(((type == CPURegister::kRegister) &&
-                 (last_reg < kNumberOfRegisters)) ||
-                ((type == CPURegister::kVRegister) &&
-                 (last_reg < kNumberOfVRegisters)));
-    VIXL_ASSERT(last_reg >= first_reg);
-    list_ = (UINT64_C(1) << (last_reg + 1)) - 1;
-    list_ &= ~((UINT64_C(1) << first_reg) - 1);
-    VIXL_ASSERT(IsValid());
-  }
-
-  CPURegister::RegisterType type() const {
-    VIXL_ASSERT(IsValid());
-    return type_;
-  }
-
-  // Combine another CPURegList into this one. Registers that already exist in
-  // this list are left unchanged. The type and size of the registers in the
-  // 'other' list must match those in this list.
-  void Combine(const CPURegList& other) {
-    VIXL_ASSERT(IsValid());
-    VIXL_ASSERT(other.type() == type_);
-    VIXL_ASSERT(other.RegisterSizeInBits() == size_);
-    list_ |= other.list();
-  }
-
-  // Remove every register in the other CPURegList from this one. Registers that
-  // do not exist in this list are ignored. The type and size of the registers
-  // in the 'other' list must match those in this list.
-  void Remove(const CPURegList& other) {
-    VIXL_ASSERT(IsValid());
-    VIXL_ASSERT(other.type() == type_);
-    VIXL_ASSERT(other.RegisterSizeInBits() == size_);
-    list_ &= ~other.list();
-  }
-
-  // Variants of Combine and Remove which take a single register.
-  void Combine(const CPURegister& other) {
-    VIXL_ASSERT(other.type() == type_);
-    VIXL_ASSERT(other.size() == size_);
-    Combine(other.code());
-  }
-
-  void Remove(const CPURegister& other) {
-    VIXL_ASSERT(other.type() == type_);
-    VIXL_ASSERT(other.size() == size_);
-    Remove(other.code());
-  }
-
-  // Variants of Combine and Remove which take a single register by its code;
-  // the type and size of the register is inferred from this list.
-  void Combine(int code) {
-    VIXL_ASSERT(IsValid());
-    VIXL_ASSERT(CPURegister(code, size_, type_).IsValid());
-    list_ |= (UINT64_C(1) << code);
-  }
-
-  void Remove(int code) {
-    VIXL_ASSERT(IsValid());
-    VIXL_ASSERT(CPURegister(code, size_, type_).IsValid());
-    list_ &= ~(UINT64_C(1) << code);
-  }
-
-  static CPURegList Union(const CPURegList& list_1, const CPURegList& list_2) {
-    VIXL_ASSERT(list_1.type_ == list_2.type_);
-    VIXL_ASSERT(list_1.size_ == list_2.size_);
-    return CPURegList(list_1.type_, list_1.size_, list_1.list_ | list_2.list_);
-  }
-  static CPURegList Union(const CPURegList& list_1,
-                          const CPURegList& list_2,
-                          const CPURegList& list_3);
-  static CPURegList Union(const CPURegList& list_1,
-                          const CPURegList& list_2,
-                          const CPURegList& list_3,
-                          const CPURegList& list_4);
-
-  static CPURegList Intersection(const CPURegList& list_1,
-                                 const CPURegList& list_2) {
-    VIXL_ASSERT(list_1.type_ == list_2.type_);
-    VIXL_ASSERT(list_1.size_ == list_2.size_);
-    return CPURegList(list_1.type_, list_1.size_, list_1.list_ & list_2.list_);
-  }
-  static CPURegList Intersection(const CPURegList& list_1,
-                                 const CPURegList& list_2,
-                                 const CPURegList& list_3);
-  static CPURegList Intersection(const CPURegList& list_1,
-                                 const CPURegList& list_2,
-                                 const CPURegList& list_3,
-                                 const CPURegList& list_4);
-
-  bool Overlaps(const CPURegList& other) const {
-    return (type_ == other.type_) && ((list_ & other.list_) != 0);
-  }
-
-  RegList list() const {
-    VIXL_ASSERT(IsValid());
-    return list_;
-  }
-
-  void set_list(RegList new_list) {
-    VIXL_ASSERT(IsValid());
-    list_ = new_list;
-  }
-
-  // Remove all callee-saved registers from the list. This can be useful when
-  // preparing registers for an AAPCS64 function call, for example.
-  void RemoveCalleeSaved();
-
-  CPURegister PopLowestIndex();
-  CPURegister PopHighestIndex();
-
-  // AAPCS64 callee-saved registers.
-  static CPURegList GetCalleeSaved(unsigned size = kXRegSize);
-  static CPURegList GetCalleeSavedV(unsigned size = kDRegSize);
-
-  // AAPCS64 caller-saved registers. Note that this includes lr.
-  // TODO(all): Determine how we handle d8-d15 being callee-saved, but the top
-  // 64-bits being caller-saved.
-  static CPURegList GetCallerSaved(unsigned size = kXRegSize);
-  static CPURegList GetCallerSavedV(unsigned size = kDRegSize);
-
-  bool IsEmpty() const {
-    VIXL_ASSERT(IsValid());
-    return list_ == 0;
-  }
-
-  bool IncludesAliasOf(const CPURegister& other) const {
-    VIXL_ASSERT(IsValid());
-    return (type_ == other.type()) && ((other.Bit() & list_) != 0);
-  }
-
-  bool IncludesAliasOf(int code) const {
-    VIXL_ASSERT(IsValid());
-    return ((code & list_) != 0);
-  }
-
-  int Count() const {
-    VIXL_ASSERT(IsValid());
-    return CountSetBits(list_);
-  }
-
-  unsigned RegisterSizeInBits() const {
-    VIXL_ASSERT(IsValid());
-    return size_;
-  }
-
-  unsigned RegisterSizeInBytes() const {
-    int size_in_bits = RegisterSizeInBits();
-    VIXL_ASSERT((size_in_bits % 8) == 0);
-    return size_in_bits / 8;
-  }
-
-  unsigned TotalSizeInBytes() const {
-    VIXL_ASSERT(IsValid());
-    return RegisterSizeInBytes() * Count();
-  }
-
- private:
-  RegList list_;
-  unsigned size_;
-  CPURegister::RegisterType type_;
-
-  bool IsValid() const;
-};
-
-
-// AAPCS64 callee-saved registers.
-extern const CPURegList kCalleeSaved;
-extern const CPURegList kCalleeSavedV;
-
-
-// AAPCS64 caller-saved registers. Note that this includes lr.
-extern const CPURegList kCallerSaved;
-extern const CPURegList kCallerSavedV;
-
-
-// Operand.
-class Operand {
- public:
-  // #<immediate>
-  // where <immediate> is int64_t.
-  // This is allowed to be an implicit constructor because Operand is
-  // a wrapper class that doesn't normally perform any type conversion.
-  Operand(int64_t immediate = 0);           // NOLINT(runtime/explicit)
-
-  // rm, {<shift> #<shift_amount>}
-  // where <shift> is one of {LSL, LSR, ASR, ROR}.
-  //       <shift_amount> is uint6_t.
-  // This is allowed to be an implicit constructor because Operand is
-  // a wrapper class that doesn't normally perform any type conversion.
-  Operand(Register reg,
-          Shift shift = LSL,
-          unsigned shift_amount = 0);   // NOLINT(runtime/explicit)
-
-  // rm, {<extend> {#<shift_amount>}}
-  // where <extend> is one of {UXTB, UXTH, UXTW, UXTX, SXTB, SXTH, SXTW, SXTX}.
-  //       <shift_amount> is uint2_t.
-  explicit Operand(Register reg, Extend extend, unsigned shift_amount = 0);
-
-  bool IsImmediate() const;
-  bool IsShiftedRegister() const;
-  bool IsExtendedRegister() const;
-  bool IsZero() const;
-
-  // This returns an LSL shift (<= 4) operand as an equivalent extend operand,
-  // which helps in the encoding of instructions that use the stack pointer.
-  Operand ToExtendedRegister() const;
-
-  int64_t immediate() const {
-    VIXL_ASSERT(IsImmediate());
-    return immediate_;
-  }
-
-  Register reg() const {
-    VIXL_ASSERT(IsShiftedRegister() || IsExtendedRegister());
-    return reg_;
-  }
-
-  CPURegister maybeReg() const {
-    if (IsShiftedRegister() || IsExtendedRegister())
-      return reg_;
-    return NoCPUReg;
-  }
-
-  Shift shift() const {
-    VIXL_ASSERT(IsShiftedRegister());
-    return shift_;
-  }
-
-  Extend extend() const {
-    VIXL_ASSERT(IsExtendedRegister());
-    return extend_;
-  }
-
-  unsigned shift_amount() const {
-    VIXL_ASSERT(IsShiftedRegister() || IsExtendedRegister());
-    return shift_amount_;
-  }
-
- private:
-  int64_t immediate_;
-  Register reg_;
-  Shift shift_;
-  Extend extend_;
-  unsigned shift_amount_;
-};
-
-
-// MemOperand represents the addressing mode of a load or store instruction.
-class MemOperand {
- public:
-  explicit MemOperand(Register base,
-                      int64_t offset = 0,
-                      AddrMode addrmode = Offset);
-  MemOperand(Register base,
-             Register regoffset,
-             Shift shift = LSL,
-             unsigned shift_amount = 0);
-  MemOperand(Register base,
-             Register regoffset,
-             Extend extend,
-             unsigned shift_amount = 0);
-  MemOperand(Register base,
-             const Operand& offset,
-             AddrMode addrmode = Offset);
-
-  // Adapter constructors using C++11 delegating.
-  // TODO: If sp == kSPRegInternalCode, the xzr check isn't necessary.
-  explicit MemOperand(js::jit::Address addr)
-    : MemOperand(IsHiddenSP(addr.base) ? sp : Register(AsRegister(addr.base), 64),
-                 (ptrdiff_t)addr.offset) {
-  }
-
-  const Register& base() const { return base_; }
-  const Register& regoffset() const { return regoffset_; }
-  int64_t offset() const { return offset_; }
-  AddrMode addrmode() const { return addrmode_; }
-  Shift shift() const { return shift_; }
-  Extend extend() const { return extend_; }
-  unsigned shift_amount() const { return shift_amount_; }
-  bool IsImmediateOffset() const;
-  bool IsRegisterOffset() const;
-  bool IsPreIndex() const;
-  bool IsPostIndex() const;
-
-  void AddOffset(int64_t offset);
-
- private:
-  Register base_;
-  Register regoffset_;
-  int64_t offset_;
-  AddrMode addrmode_;
-  Shift shift_;
-  Extend extend_;
-  unsigned shift_amount_;
-};
 
 
 // Control whether or not position-independent code should be emitted.
@@ -928,7 +164,7 @@ class Assembler : public MozBaseAssembler {
   }
 
   // This is chaging the condition codes for cmp a, b to the same codes for cmp b, a.
-  static inline Condition InvertCmpCondition(Condition cond) {
+  static inline Condition SwapCmpOperandsCondition(Condition cond) {
     // Conditions al and nv behave identically, as "always true". They can't be
     // inverted, because there is no "always false" condition.
     switch (cond) {
@@ -936,13 +172,13 @@ class Assembler : public MozBaseAssembler {
     case ne:
       return cond;
     case gt:
-      return le;
-    case le:
-      return gt;
-    case ge:
       return lt;
-    case lt:
+    case le:
       return ge;
+    case ge:
+      return le;
+    case lt:
+      return gt;
     case hi:
       return lo;
     case lo:
@@ -1033,21 +269,21 @@ class Assembler : public MozBaseAssembler {
   void bl(Label* label);
 
   // Branch with link to PC offset.
-  void bl(int imm26, const LabelDoc& doc);
+  BufferOffset bl(int imm26, const LabelDoc& doc);
   static void bl(Instruction* at, int imm26);
 
   // Compare and branch to label if zero.
   void cbz(const Register& rt, Label* label);
 
   // Compare and branch to PC offset if zero.
-  void cbz(const Register& rt, int imm19, const LabelDoc& doc);
+  BufferOffset cbz(const Register& rt, int imm19, const LabelDoc& doc);
   static void cbz(Instruction* at, const Register& rt, int imm19);
 
   // Compare and branch to label if not zero.
   void cbnz(const Register& rt, Label* label);
 
   // Compare and branch to PC offset if not zero.
-  void cbnz(const Register& rt, int imm19, const LabelDoc& doc);
+  BufferOffset cbnz(const Register& rt, int imm19, const LabelDoc& doc);
   static void cbnz(Instruction* at, const Register& rt, int imm19);
 
   // Table lookup from one register.
@@ -1106,14 +342,14 @@ class Assembler : public MozBaseAssembler {
   void tbz(const Register& rt, unsigned bit_pos, Label* label);
 
   // Test bit and branch to PC offset if zero.
-  void tbz(const Register& rt, unsigned bit_pos, int imm14, const LabelDoc& doc);
+  BufferOffset tbz(const Register& rt, unsigned bit_pos, int imm14, const LabelDoc& doc);
   static void tbz(Instruction* at, const Register& rt, unsigned bit_pos, int imm14);
 
   // Test bit and branch to label if not zero.
   void tbnz(const Register& rt, unsigned bit_pos, Label* label);
 
   // Test bit and branch to PC offset if not zero.
-  void tbnz(const Register& rt, unsigned bit_pos, int imm14, const LabelDoc& doc);
+  BufferOffset tbnz(const Register& rt, unsigned bit_pos, int imm14, const LabelDoc& doc);
   static void tbnz(Instruction* at, const Register& rt, unsigned bit_pos, int imm14);
 
   // Address calculation instructions.
@@ -1124,14 +360,14 @@ class Assembler : public MozBaseAssembler {
   void adr(const Register& rd, Label* label);
 
   // Calculate the address of a PC offset.
-  void adr(const Register& rd, int imm21, const LabelDoc& doc);
+  BufferOffset adr(const Register& rd, int imm21, const LabelDoc& doc);
   static void adr(Instruction* at, const Register& rd, int imm21);
 
   // Calculate the page address of a label.
   void adrp(const Register& rd, Label* label);
 
   // Calculate the page address of a PC offset.
-  void adrp(const Register& rd, int imm21, const LabelDoc& doc);
+  BufferOffset adrp(const Register& rd, int imm21, const LabelDoc& doc);
   static void adrp(Instruction* at, const Register& rd, int imm21);
 
   // Data Processing instructions.
@@ -4193,7 +3429,29 @@ class Assembler : public MozBaseAssembler {
   void fminnmp(const VRegister& vd,
                const VRegister& vn);
 
+  // Absolute value.
+  void abs(const Register& rd, const Register& rn);
+
+  // Count bits.
+  void cnt(const Register& rd, const Register& rn);
+
+  // Count Trailing Zeros.
+  void ctz(const Register& rd, const Register& rn);
+
+  // Signed Maximum.
+  void smax(const Register& rd, const Register& rn, const Operand& op);
+
+  // Signed Minimum.
+  void smin(const Register& rd, const Register& rn, const Operand& op);
+
+  // Unsigned Maximum.
+  void umax(const Register& rd, const Register& rn, const Operand& op);
+
+  // Unsigned Minimum.
+  void umin(const Register& rd, const Register& rn, const Operand& op);
+
   // Emit generic instructions.
+
   // Emit raw instructions into the instruction stream.
   void dci(Instr raw_inst) { Emit(raw_inst); }
 
@@ -4278,6 +3536,26 @@ class Assembler : public MozBaseAssembler {
     return cond << Condition_offset;
   }
 
+  // Generic immediate encoding.
+  template <int hibit, int lobit>
+  static Instr ImmField(int64_t imm) {
+    VIXL_STATIC_ASSERT((hibit >= lobit) && (lobit >= 0));
+    VIXL_STATIC_ASSERT(hibit < (sizeof(Instr) * kBitsPerByte));
+    int fieldsize = hibit - lobit + 1;
+    VIXL_ASSERT(IsIntN(fieldsize, imm));
+    return static_cast<Instr>(TruncateToUintN(fieldsize, imm) << lobit);
+  }
+
+  // For unsigned immediate encoding.
+  // TODO: Handle signed and unsigned immediate in satisfactory way.
+  template <int hibit, int lobit>
+  static Instr ImmUnsignedField(uint64_t imm) {
+    VIXL_STATIC_ASSERT((hibit >= lobit) && (lobit >= 0));
+    VIXL_STATIC_ASSERT(hibit < (sizeof(Instr) * kBitsPerByte));
+    VIXL_ASSERT(IsUintN(hibit - lobit + 1, imm));
+    return static_cast<Instr>(imm << lobit);
+  }
+
   // PC-relative address encoding.
   static Instr ImmPCRelAddress(int imm21) {
     VIXL_ASSERT(IsInt21(imm21));
@@ -4328,7 +3606,7 @@ class Assembler : public MozBaseAssembler {
     if (IsUint12(imm)) {  // No shift required.
       imm <<= ImmAddSub_offset;
     } else {
-      imm = ((imm >> 12) << ImmAddSub_offset) | (1 << ShiftAddSub_offset);
+      imm = ((imm >> 12) << ImmAddSub_offset) | (1 << ImmAddSubShift_offset);
     }
     return imm;
   }
@@ -4942,22 +4220,6 @@ class Assembler : public MozBaseAssembler {
   Instr LoadStoreMemOperand(const MemOperand& addr,
                             unsigned access_size,
                             LoadStoreScalingOption option);
-
- protected:
-  // Prevent generation of a literal pool for the next |maxInst| instructions.
-  // Guarantees instruction linearity.
-  class AutoBlockLiteralPool {
-    ARMBuffer* armbuffer_;
-
-   public:
-    AutoBlockLiteralPool(Assembler* assembler, size_t maxInst)
-      : armbuffer_(&assembler->armbuffer_) {
-      armbuffer_->enterNoPool(maxInst);
-    }
-    ~AutoBlockLiteralPool() {
-      armbuffer_->leaveNoPool();
-    }
-  };
 
  protected:
   // Buffer where the code is emitted.

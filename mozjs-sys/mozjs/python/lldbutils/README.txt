@@ -208,9 +208,9 @@ the "expr -R -- EXPR" command can be used to show its actual member variables.
     }
   }
 
-* nsTextNode, nsTextFragment
+* nsTextNode, CharacterDataBuffer
 
-  Text nodes have a type summary that shows the nsTextFragment in the
+  Text nodes have a type summary that shows the CharacterDataBuffer in the
   nsTextNode, which itself has a type summary that shows the text
   content.
 

@@ -5,7 +5,6 @@
 #include <atomic>
 #include <array>
 #include <errno.h>
-#include <stdlib.h>
 
 #include "mozilla/Assertions.h"
 #include "mozilla/DebugOnly.h"

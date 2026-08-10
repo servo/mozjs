@@ -56,9 +56,7 @@ class Transformer:
     @files.setter
     def files(self, val):
         if not isinstance(val, list):
-            self.logger.warning(
-                "`files` must be a list, got %s" % type(val), self.prefix
-            )
+            self.logger.warning(f"`files` must be a list, got {type(val)}", self.prefix)
             return
         self._files = val
 
@@ -99,9 +97,9 @@ class Transformer:
                     data = self.open_data(file)
             except Exception as e:
                 self.logger.warning(
-                    "Failed to open file %s, skipping" % file, self.prefix
+                    f"Failed to open file {file}, skipping", self.prefix
                 )
-                self.logger.warning("%s %s" % (e.__class__.__name__, e), self.prefix)
+                self.logger.warning(f"{e.__class__.__name__} {e}", self.prefix)
 
             # Transform data
             try:
@@ -115,9 +113,9 @@ class Transformer:
                 trfmdata.extend(data)
             except Exception as e:
                 self.logger.warning(
-                    "Failed to transform file %s, skipping" % file, self.prefix
+                    f"Failed to transform file {file}, skipping", self.prefix
                 )
-                self.logger.warning("%s %s" % (e.__class__.__name__, e), self.prefix)
+                self.logger.warning(f"{e.__class__.__name__} {e}", self.prefix)
 
         merged = self._custom_transformer.merge(trfmdata)
 
@@ -176,11 +174,13 @@ def get_transformer(path, ret_members=False):
 
     members = inspect.getmembers(
         module,
-        lambda c: inspect.isclass(c)
-        and hasattr(c, "transform")
-        and hasattr(c, "merge")
-        and callable(c.transform)
-        and callable(c.merge),
+        lambda c: (
+            inspect.isclass(c)
+            and hasattr(c, "transform")
+            and hasattr(c, "merge")
+            and callable(c.transform)
+            and callable(c.merge)
+        ),
     )
 
     if not members and not ret_members:

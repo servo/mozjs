@@ -1,0 +1,17 @@
+{
+  ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml|.skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js|test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7": {
+    "bugid": "1111111",
+    "comment": "Disabled test due to failures in test file: \"browser_aboutNewTab_bookmarksToolbar.js\"",
+    "component": "",
+    "description": "",
+    "disposition": 1,
+    "label": "test-macosx1500-aarch64-shippable/opt-mochitest-browser-chrome-spi-nw-7",
+    "manifest": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser.toml",
+    "path": ".skip_fails_cache/7cf7a9720f4ead03213f1799f3dcc00a413c7a02/browser_aboutNewTab_bookmarksToolbar.js",
+    "product": "",
+    "revision": "7cf7a9720f4ead03213f1799f3dcc00a413c7a02",
+    "skip_if": "os == 'mac' && os_version == '15.30' && arch == 'aarch64' && opt && socketprocess_networking",
+    "summary": "",
+    "task_id": "BLpDT23eSfO-Xf_NLrMkCA"
+  }
+}
