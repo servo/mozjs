@@ -366,9 +366,9 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
     // `.cpp(true)` from cc_rs_builder will not propagate to bindgen clang-args,
     // so we need to set it explicitly here.
     let mut builder = if is_msvc {
-        // /TP is the equivalent of `-x c++` for msvc:
+        // /TP is the equivalent of `-x c++` for msvc, but it causes `libclang` to error out.
         // <https://learn.microsoft.com/en-us/cpp/build/reference/tc-tp-tc-tp-specify-source-file-type?view=msvc-170>
-        builder.clang_args(["/TP"])
+        builder
     } else {
         builder.clang_args(["-x", "c++"])
     };
