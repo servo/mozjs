@@ -1512,11 +1512,14 @@ pub mod wrappers {
     use crate::jsapi::ColumnNumberOneOrigin;
     use crate::jsapi::CompartmentTransplantCallback;
     use crate::jsapi::EnvironmentChain;
+    use crate::jsapi::GenericMicroTask;
     use crate::jsapi::JSONParseHandler;
     use crate::jsapi::Latin1Char;
     use crate::jsapi::PropertyKey;
     use crate::jsapi::TaggedColumnNumberOneOrigin;
     //use jsapi::DynamicImportStatus;
+    use crate::jsapi::BorrowedErrorReport;
+    use crate::jsapi::CollectDelazificationsResult;
     use crate::jsapi::ESClass;
     use crate::jsapi::ExceptionStackBehavior;
     use crate::jsapi::ForOfIterator;
@@ -1528,6 +1531,7 @@ pub mod wrappers {
     use crate::jsapi::JSExnType;
     use crate::jsapi::JSFunctionSpecWithHelp;
     use crate::jsapi::JSJitInfo;
+    use crate::jsapi::JSMicroTask;
     use crate::jsapi::JSONWriteCallback;
     use crate::jsapi::JSPrincipals;
     use crate::jsapi::JSPropertySpec;
@@ -1536,6 +1540,8 @@ pub mod wrappers {
     use crate::jsapi::JSScript;
     use crate::jsapi::JSStructuredCloneData;
     use crate::jsapi::JSType;
+    use crate::jsapi::LoadModuleRejectedCallback;
+    use crate::jsapi::LoadModuleResolvedCallback;
     use crate::jsapi::ModuleErrorBehaviour;
     use crate::jsapi::ModuleType;
     use crate::jsapi::MutableHandleIdVector;
