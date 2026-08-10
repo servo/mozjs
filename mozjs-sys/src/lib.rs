@@ -10,8 +10,20 @@
 // These extern crates are needed for linking
 extern crate encoding_c;
 extern crate encoding_c_mem;
+
+extern crate mozjs_normalizer_glue;
+
 #[cfg(feature = "intl")]
 extern crate icu_capi;
+#[cfg(feature = "intl")]
+extern crate mozjs_collator_glue;
+#[cfg(feature = "intl")]
+extern crate mozjs_locale_glue;
+#[cfg(feature = "intl")]
+extern crate mozjs_properties_glue;
+#[cfg(feature = "intl")]
+extern crate mozjs_unicode_bidi_ffi;
+
 #[cfg(feature = "libz-rs")]
 extern crate libz_rs_sys;
 #[cfg(feature = "libz-sys")]

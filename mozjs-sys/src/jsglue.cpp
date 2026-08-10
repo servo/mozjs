@@ -33,9 +33,10 @@
 #include "js/experimental/TypedData.h"
 #include "js/friend/DumpFunctions.h"
 #include "js/friend/ErrorMessages.h"
+#include "js/friend/MicroTask.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
-#include "mozilla/Unused.h"
+#include "mozilla/PodOperations.h"
 
 typedef bool (*WantToMeasure)(JSObject* obj);
 typedef size_t (*GetSize)(JSObject* obj);
@@ -43,14 +44,13 @@ typedef size_t (*GetSize)(JSObject* obj);
 WantToMeasure gWantToMeasure = nullptr;
 
 struct JobQueueTraps {
-  bool (*getHostDefinedData)(const void* queue, JSContext* cx,
-                             JS::MutableHandle<JSObject*> data);
-  bool (*enqueuePromiseJob)(const void* queue, JSContext* cx,
-                            JS::HandleObject promise, JS::HandleObject job,
-                            JS::HandleObject allocationSite,
-                            JS::HandleObject hostDefinedData) = 0;
+  bool (*getHostDefinedData)(
+      JSContext* cx, JS::MutableHandle<JSObject*> incumbentGlobal,
+      JS::MutableHandle<JSObject*> optionalHostDefinedData);
+  bool (*getHostDefinedGlobal)(JSContext* cx,
+                               JS::MutableHandle<JSObject*> data);
   void (*runJobs)(const void* queue, JSContext* cx);
-  bool (*empty)(const void* queue);
+  void (*traceNonGCThingMicroTask)(JSTracer* trc, JS::Value* valuePtr);
 
   // Create a new queue, push it onto an embedder-side stack, and return the new
   // queue.
@@ -73,32 +73,35 @@ class RustJobQueue : public JS::JobQueue {
                void* aInterruptQueues)
       : mTraps(aTraps), mQueue(aQueue), mInterruptQueues(aInterruptQueues) {}
 
-  ~RustJobQueue() { mTraps.dropInterruptQueues(mInterruptQueues); }
+  ~RustJobQueue() override { mTraps.dropInterruptQueues(mInterruptQueues); }
 
   virtual bool getHostDefinedData(
+      JSContext* cx, JS::MutableHandle<JSObject*> incumbentGlobal,
+      JS::MutableHandle<JSObject*> optionalHostDefinedData) const override {
+    return mTraps.getHostDefinedData(cx, incumbentGlobal,
+                                     optionalHostDefinedData);
+  }
+  virtual bool getHostDefinedGlobal(
       JSContext* cx, JS::MutableHandle<JSObject*> data) const override {
-    return mTraps.getHostDefinedData(mQueue, cx, data);
+    return mTraps.getHostDefinedGlobal(cx, data);
   }
-  virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
-                                 JS::HandleObject job,
-                                 JS::HandleObject allocationSite,
-                                 JS::HandleObject hostDefinedData) override {
-    return mTraps.enqueuePromiseJob(mQueue, cx, promise, job, allocationSite,
-                                    hostDefinedData);
-  }
-
-  virtual bool empty() const override { return mTraps.empty(mQueue); }
-
   virtual void runJobs(JSContext* cx) override { mTraps.runJobs(mQueue, cx); }
 
   bool isDrainingStopped() const override { return false; }
 
+  virtual void traceNonGCThingMicroTask(JSTracer* trc,
+                                        JS::Value* valuePtr) override {
+    mTraps.traceNonGCThingMicroTask(trc, valuePtr);
+  }
+
  private:
   class SavedQueue : public JS::JobQueue::SavedJobQueue {
    public:
-    SavedQueue(const JobQueueTraps& aTraps, void* aInterruptQueues,
-               const void** aCurrentQueue, const void* aNewQueue)
+    explicit SavedQueue(const JobQueueTraps& aTraps, void* aInterruptQueues,
+                        const void** aCurrentQueue, const void* aNewQueue,
+                        JSContext* cx)
         : mTraps(aTraps),
+          cx(cx),
           mInterruptQueues(aInterruptQueues),
           mCurrentQueue(aCurrentQueue),
           mNewQueue(aNewQueue),
@@ -109,6 +112,7 @@ class RustJobQueue : public JS::JobQueue {
       // "vm/JSContext.h"?
       //
       // MOZ_ASSERT(cx->jobQueue.ref());
+      mSavedMicroTaskQueue = JS::SaveMicroTaskQueue(cx);
 
       // Set the current queue to mNewQueue.
       // We need to take care of this, so that we can save the old queue in the
@@ -126,7 +130,9 @@ class RustJobQueue : public JS::JobQueue {
 
       // Check that the current queue is empty, as required by the SavedJobQueue
       // contract.
-      MOZ_ASSERT(mTraps.empty(*mCurrentQueue));
+      MOZ_ASSERT(JS::GetRegularMicroTaskCount(cx) == 0);
+
+      JS::RestoreMicroTaskQueue(cx, std::move(mSavedMicroTaskQueue));
 
       // Destroy the topmost queue, checking that it was the queue this
       // SavedQueue expects to restore from. Imagine we have normal queue A,
@@ -142,6 +148,9 @@ class RustJobQueue : public JS::JobQueue {
    private:
     // Required for embedder FFI.
     JobQueueTraps mTraps;
+    JSContext* cx;
+    js::UniquePtr<JS::SavedMicroTaskQueue> mSavedMicroTaskQueue;
+
     void* mInterruptQueues;
 
     // Pointer to the RustJobQueue::mQueue field to write to when switching.
@@ -159,8 +168,8 @@ class RustJobQueue : public JS::JobQueue {
     // Servo uses infallible allocation here, so it should never return nullptr.
     MOZ_ASSERT(!!newQueue);
 
-    auto result =
-        js::MakeUnique<SavedQueue>(mTraps, mInterruptQueues, &mQueue, newQueue);
+    auto result = js::MakeUnique<SavedQueue>(mTraps, mInterruptQueues, &mQueue,
+                                             newQueue, cx);
     if (!result) {
       // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
       // and return a null UniquePtr.”
@@ -606,7 +615,8 @@ class ServoDOMVisitor : public JS::ObjectPrivateVisitor {
 
 struct JSPrincipalsCallbacks {
   bool (*write)(JSPrincipals*, JSContext* cx, JSStructuredCloneWriter* writer);
-  bool (*isSystemOrAddonPrincipal)(JSPrincipals*);
+  bool (*isSystemPrincipal)(JSPrincipals*);
+  bool (*isAddonPrincipal)(JSPrincipals*);
 };
 
 class RustJSPrincipals final : public JSPrincipals {
@@ -624,8 +634,12 @@ class RustJSPrincipals final : public JSPrincipals {
                                  : false;
   }
 
-  bool isSystemOrAddonPrincipal() override {
-    return this->callbacks.isSystemOrAddonPrincipal(this);
+  bool isSystemPrincipal() override {
+    return this->callbacks.isSystemPrincipal(this);
+  }
+
+  bool isAddonPrincipal() override {
+    return this->callbacks.isAddonPrincipal(this);
   }
 };
 
@@ -782,7 +796,8 @@ JSObject* WrapperNew(JSContext* aCx, JS::HandleObject aObj,
 }
 
 const JSClass WindowProxyClass = PROXY_CLASS_DEF(
-    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(1)); /* additional class flags */
+    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(
+                 js::SwappableProxyReservedSlots)); /* additional class flags */
 
 const JSClass* GetWindowProxyClass() { return &WindowProxyClass; }
 
@@ -1097,6 +1112,11 @@ bool WriteBytesToJSStructuredCloneData(const uint8_t* src, size_t len,
 // to ensure the calling convention is right.
 // https://web.archive.org/web/20180929193700/https://mozilla.logbot.info/jsapi/20180622#c14918658
 
+void JS_DequeueNextMicroTask(JSContext* cx,
+                             JS::MutableHandle<JS::GenericMicroTask> task) {
+  task.set(JS::DequeueNextMicroTask(cx));
+}
+
 void JS_GetPromiseResult(JS::HandleObject promise,
                          JS::MutableHandleValue dest) {
   dest.set(JS::GetPromiseResult(promise));
@@ -1104,10 +1124,6 @@ void JS_GetPromiseResult(JS::HandleObject promise,
 
 void JS_GetScriptPrivate(JSScript* script, JS::MutableHandleValue dest) {
   dest.set(JS::GetScriptPrivate(script));
-}
-
-void JS_MaybeGetScriptPrivate(JSObject* obj, JS::MutableHandleValue dest) {
-  dest.set(js::MaybeGetScriptPrivate(obj));
 }
 
 void JS_GetModulePrivate(JSObject* module, JS::MutableHandleValue dest) {
@@ -1188,13 +1204,16 @@ bool DispatchToEventLoop(void* closure,
 
 void SetUpEventLoopDispatch(JSContext* cx,
                             RustDispatchToEventLoopCallback callback,
+                            JS::AsyncTaskStartedCallback startedCallback,
+                            JS::AsyncTaskFinishedCallback finishedCallback,
                             void* closure) {
   // Intentionally leaked; this data needs to live as long as the JS runtime.
   EventLoopCallbackData* data = new EventLoopCallbackData{
       callback,
       closure,
   };
-  JS::InitDispatchsToEventLoop(cx, DispatchToEventLoop, nullptr, data);
+  JS::InitAsyncTaskCallbacks(cx, DispatchToEventLoop, nullptr, startedCallback,
+                             finishedCallback, data);
 }
 
 void DispatchableRun(JSContext* cx, DispatchablePointer* ptr,
