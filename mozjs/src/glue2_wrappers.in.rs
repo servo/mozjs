@@ -26,7 +26,6 @@ wrap!(glue: pub fn CreateRootedObjectVector(aCx: &mut JSContext) -> *mut Persist
 wrap!(glue: pub fn CollectServoSizes(cx: &mut JSContext, sizes: *mut ServoSizes, gs: GetSize) -> bool);
 wrap!(glue: pub fn JS_GetPromiseResult(promise: HandleObject, dest: MutableHandleValue));
 wrap!(glue: pub fn JS_GetScriptPrivate(script: *mut JSScript, dest: MutableHandleValue));
-wrap!(glue: pub fn JS_MaybeGetScriptPrivate(obj: *mut JSObject, dest: MutableHandleValue));
 wrap!(glue: pub fn JS_GetModulePrivate(module: *mut JSObject, dest: MutableHandleValue));
 wrap!(glue: pub fn JS_GetScriptedCallerPrivate(cx: &mut JSContext, dest: MutableHandleValue));
 wrap!(glue: pub fn JS_GetNaNValue(cx: &mut JSContext, dest: *mut Value));
@@ -34,7 +33,7 @@ wrap!(glue: pub fn JS_GetPositiveInfinityValue(cx: &mut JSContext, dest: *mut Va
 wrap!(glue: pub fn JS_GetEmptyStringValue(cx: &mut JSContext, dest: *mut Value));
 wrap!(glue: pub fn JS_GetRegExpFlags(cx: &mut JSContext, obj: HandleObject, flags: *mut RegExpFlags));
 wrap!(glue: pub fn EncodeStringToUTF8(cx: &mut JSContext, str_: HandleString, cb: EncodedStringCallback));
-wrap!(glue: pub fn SetUpEventLoopDispatch(cx: &mut JSContext, callback: RustDispatchToEventLoopCallback, closure: *mut ::std::os::raw::c_void));
+wrap!(glue: pub fn SetUpEventLoopDispatch(cx: &mut JSContext, callback: RustDispatchToEventLoopCallback, startedCallback: AsyncTaskStartedCallback, finishedCallback: AsyncTaskFinishedCallback, closure: *mut ::std::os::raw::c_void));
 wrap!(glue: pub fn DispatchableRun(cx: &mut JSContext, ptr: *mut DispatchablePointer, mb: Dispatchable_MaybeShuttingDown));
 wrap!(glue: pub fn DescribeScriptedCaller(cx: &JSContext, buffer: *mut ::std::os::raw::c_char, buflen: usize, line: *mut u32, col: *mut u32) -> bool);
 wrap!(glue: pub fn PendingExceptionStackInfo(cx: &mut JSContext, callback: StringCallback, message_target: *mut ::std::os::raw::c_void, filename_target: *mut ::std::os::raw::c_void, line: *mut u32, col: *mut u32, dest: MutableHandleValue) -> bool);
@@ -45,3 +44,4 @@ wrap!(glue: pub fn StackGCVectorValueLength(vec: Handle<StackGCVector<Value, Tem
 wrap!(glue: pub fn StackGCVectorStringLength(vec: Handle<StackGCVector<*mut JSString, TempAllocPolicy>>) -> u32);
 wrap!(glue: pub fn StackGCVectorValueAtIndex(vec: Handle<StackGCVector<Value, TempAllocPolicy>>, index: u32) -> *const Value);
 wrap!(glue: pub fn StackGCVectorStringAtIndex(vec: Handle<StackGCVector<*mut JSString, TempAllocPolicy>>, index: u32) -> *const *mut JSString);
+wrap!(glue: pub fn CopyExpandoProperties(cx: &mut JSContext, target: HandleObject, obj: HandleObject) -> bool);
