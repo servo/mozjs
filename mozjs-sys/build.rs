@@ -319,22 +319,11 @@ fn is_buggy_make_version() -> bool {
 }
 
 fn build(build_dir: &Path, target: BuildTarget) {
-    let mut build = cc::Build::new();
-    build.cpp(true).file(target.path());
-
-    for flag in cc_flags(false) {
-        build.flag_if_supported(flag);
-    }
+    let mut build = get_common_cc(build_dir, target);
+    build.file(target.path());
 
     if let Ok(android_api) = env::var("ANDROID_API_LEVEL").as_deref() {
         build.define("__ANDROID_MIN_SDK_VERSION__", android_api);
-    }
-
-    build.flag(include_file_flag(build.get_compiler().is_like_msvc()));
-    build.flag(&js_config_path(build_dir));
-
-    for path in target.include_paths(build_dir) {
-        build.include(path);
     }
 
     build.out_dir(build_dir).compile(target.output());
@@ -353,7 +342,7 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
     config &= !CodegenConfig::DESTRUCTORS;
     config &= !CodegenConfig::METHODS;
 
-    let mut builder = bindgen::builder()
+    let builder = bindgen::builder()
         .rust_target(minimum_rust_target())
         .header(target.path())
         // Translate every enum with the "rustified enum" strategy. We should
@@ -363,8 +352,43 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
         .derive_partialeq(true)
         .size_t_is_usize(true)
         .enable_cxx_namespaces()
-        .with_codegen_config(config)
-        .clang_args(cc_flags(true));
+        .with_codegen_config(config);
+
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap();
+
+    let mut cc_rs_builder = get_common_cc(build_dir, target);
+    cc_rs_builder.define("RUST_BINDGEN", None);
+    let is_msvc = cc_rs_builder.get_compiler().is_like_msvc();
+    if is_msvc {
+        cc_rs_builder.flag("--driver-mode=cl");
+    }
+
+    // `.cpp(true)` from cc_rs_builder will not propagate to bindgen clang-args,
+    // so we need to set it explicitly here.
+    let mut builder = if is_msvc {
+        // /TP is the equivalent of `-x c++` for msvc, but it causes `libclang` to error out.
+        // <https://learn.microsoft.com/en-us/cpp/build/reference/tc-tp-tc-tp-specify-source-file-type?view=msvc-170>
+        builder
+    } else {
+        builder.clang_args(["-x", "c++"])
+    };
+
+    let compiler = cc_rs_builder.get_compiler();
+
+    // Setting CLANG_PATH to the absolute path (when using the default c++ compiler on macos),
+    // allows bindgen to find the c++ headers (not just the system headers).
+    if env::var_os("CLANG_PATH").is_none() {
+        if target_os == "macos" && compiler.path().to_str() == Some("c++") {
+            env::set_var("CLANG_PATH", "/usr/bin/c++");
+        }
+    }
+
+    for arg in compiler.args() {
+        builder = builder.clang_arg(
+            arg.to_str()
+                .expect("Non UTF-8 compiler flag in cc::Build args"),
+        );
+    }
 
     if env::var("TARGET").unwrap().contains("wasi") {
         builder = builder
@@ -378,22 +402,6 @@ fn build_bindings(build_dir: &Path, target: BuildTarget) {
             .allowlist_file(target.path())
             .allowlist_recursively(false);
     }
-
-    for path in target.include_paths(build_dir) {
-        builder = builder.clang_args(&["-I", &path]);
-    }
-
-    if let Some(flags) = get_cc_rs_env("CXXFLAGS") {
-        for flag in flags.split_whitespace() {
-            builder = builder.clang_arg(flag);
-        }
-    }
-
-    let target_env = env::var("TARGET").unwrap();
-    builder = builder.clang_args(&[
-        include_file_flag(target_env.contains("windows")),
-        &js_config_path(build_dir),
-    ]);
 
     println!(
         "Generating bindings {:?} {}.",
@@ -515,75 +523,90 @@ fn minimum_rust_target() -> RustTarget {
     }
 }
 
-fn cc_flags(bindgen: bool) -> Vec<&'static str> {
-    let mut flags = Vec::new();
+fn get_common_cc(build_dir: &Path, target: BuildTarget) -> cc::Build {
+    let mut builder = cc::Build::new();
 
-    let target = env::var("TARGET").unwrap();
+    let target_triple = env::var("TARGET").unwrap();
 
-    if target.contains("windows") {
-        if bindgen {
-            flags.push("--driver-mode=cl");
-        }
+    // Must be set before any `get_compiler()` call.
+    builder.cpp(true);
 
-        flags.extend(&[
-            "-std:c++17",
-            "-Zi",
-            "-GR-",
-            "-DWIN32",
+    if target_triple.contains("windows") {
+        builder
+            .std("c++17")
+            .flag_if_supported("-Zi")
+            .flag_if_supported("-GR-")
+            .define("WIN32", None)
             // Don't use reinterpret_cast() in offsetof(),
             // since it's not a constant expression, so can't
             // be used in static_assert().
-            "-D_CRT_USE_BUILTIN_OFFSETOF",
-        ]);
+            .define("_CRT_USE_BUILTIN_OFFSETOF", None);
     } else {
-        flags.extend(&[
-            "-std=gnu++17",
-            "-std=c++17",
-            "-xc++",
-            "-fPIC",
-            "-fno-rtti",
-            "-fno-sized-deallocation",
-            "-Wno-c++0x-extensions",
-            "-Wno-return-type-c-linkage",
-            "-Wno-unused-parameter",
-            "-Wno-invalid-offsetof",
-            "-Wno-unused-private-field",
-        ]);
+        builder
+            .std("gnu++17")
+            .pic(true)
+            .flag_if_supported("-fno-rtti")
+            .flag_if_supported("-fno-sized-deallocation")
+            .flag_if_supported("-Wno-c++0x-extensions")
+            .flag_if_supported("-Wno-return-type-c-linkage")
+            .flag_if_supported("-Wno-unused-parameter")
+            .flag_if_supported("-Wno-invalid-offsetof")
+            .flag_if_supported("-Wno-unused-private-field");
 
         if env::var_os("CARGO_FEATURE_PROFILEMOZJS").is_some() {
-            flags.push("-fno-omit-frame-pointer");
+            builder.force_frame_pointer(true);
         }
 
-        if target.contains("wasi") {
+        if target_triple.contains("wasi") {
             // Unconditionally target p1 for now. Even if the application
             // targets p2, an adapter will take care of it.
-            flags.push("--target=wasm32-wasip1");
-            flags.push("-fvisibility=default");
+            // TODO: This looks wierd to me. As part of the cc-rs migration,
+            // we'll stick with using the raw `.flag` instead of `.target()` for
+            // now, since using `.target()` would have other side-effects too,
+            // like looking at other `<VAR>_<target>` variables (if the cargo target
+            // doesn't match `-wasip1`).
+            // Someone familiar with wasi should look into this.
+            builder
+                .flag("--target=wasm32-wasip1")
+                .flag_if_supported("-fvisibility=default");
         }
     }
 
-    flags.extend(&["-DSTATIC_JS_API", "-DRUST_BINDGEN"]);
+    // Force-include the JS header with the configure defines.
+    // This is not the same as `builder.include()`!
+    builder.flag(include_file_flag(builder.get_compiler().is_like_msvc()));
+    builder.flag(&js_config_path(build_dir));
+
+    for path in target.include_paths(build_dir) {
+        builder.include(path);
+    }
+
+    builder.define("STATIC_JS_API", None);
     if env::var_os("CARGO_FEATURE_DEBUGMOZJS").is_some() {
-        flags.extend(&["-DJS_GC_ZEAL", "-DDEBUG", "-DJS_DEBUG"]);
+        builder
+            .define("JS_GC_ZEAL", None)
+            .define("DEBUG", None)
+            .define("JS_DEBUG", None);
 
-        if !bindgen && !target.contains("windows") {
-            flags.push("-g");
+        if !target_triple.contains("windows") {
+            builder.debug(true);
         }
     }
 
-    let is_apple = target.contains("apple");
-    let is_freebsd = target.contains("freebsd");
-    let is_ohos = target.contains("ohos");
-
-    if is_apple || is_freebsd || is_ohos {
-        flags.push("-stdlib=libc++");
+    if get_cc_rs_env_os("CXXSTDLIB").is_none() {
+        let is_apple = target_triple.contains("apple");
+        let is_freebsd = target_triple.contains("freebsd");
+        let is_ohos = target_triple.contains("ohos");
+        if is_apple || is_freebsd || is_ohos {
+            builder.cpp_set_stdlib("c++");
+        }
     }
 
-    if target.contains("wasi") {
-        flags.push("-D_WASI_EMULATED_GETPID");
+    if target_triple.contains("wasi") {
+        builder.define("_WASI_EMULATED_GETPID", None);
     }
 
-    flags
+    builder
 }
 
 fn include_file_flag(msvc_like: bool) -> &'static str {
@@ -1253,11 +1276,6 @@ fn join_path(base: &Path, additional: &str) -> PathBuf {
 /// have the values that users of `cc-rs` would expect.
 ///
 /// Adapted from https://github.com/rust-lang/cc-rs/blob/3ba23569a623074748a3030f382afd22483555df/src/lib.rs#L3617
-fn get_cc_rs_env(var_base: &str) -> Option<String> {
-    get_cc_rs_env_os(var_base).map(|val| val.to_str().expect("Not a valid string.").to_string())
-}
-
-/// Like `get_cc_rs_env()` but returns the OsString value.
 fn get_cc_rs_env_os(var_base: &str) -> Option<OsString> {
     fn get_env(var: &str) -> Option<OsString> {
         println!("cargo:rerun-if-env-changed={}", var);

@@ -57,6 +57,16 @@ def set_toolchain_binaries_in_env(toolchain_dir: str, target_triple: str, env: D
     env["LIBCLANG_PATH"] = os.path.join(toolchain_dir, "lib")
     env["CLANG_PATH"] = cxx
     env[f'CXXSTDLIB_{target_triple_underscore}'] = "c++"
+    # bindgen uses libclang directly, so the sysroot parameter passed via the SDK clang wrapper needs to be manually added here.
+    # TODO: Servo adds more arguments from the clang-wrapper (`-DMUSL`), so we should probably sync this
+    # with servos mach logic.
+    sysroot_arg = f"--sysroot={os.path.normpath(os.path.join(toolchain_dir, '..', 'sysroot'))}"
+    extra_clang_args: str | None = env.get("BINDGEN_EXTRA_CLANG_ARGS")
+    if extra_clang_args is None:
+        extra_clang_args = sysroot_arg
+    else:
+        extra_clang_args += " " + sysroot_arg
+    env["BINDGEN_EXTRA_CLANG_ARGS"] = extra_clang_args
 
 
 def create_environment_for_build() -> Dict[str, str]:
