@@ -243,9 +243,11 @@ fn build_spidermonkey(build_dir: &Path) {
         cxxflags.push(String::from("-stdlib=libc++"));
     }
 
-    let base_cxxflags = env::var("CXXFLAGS").unwrap_or_default();
-    let mut cxxflags = cxxflags.join(" ");
-    cxxflags.push_str(&base_cxxflags);
+    if let Some(user_cxxflags) = get_cc_rs_env("CXXFLAGS").filter(|s| !s.is_empty()) {
+        // We want the user-provided CXXFLAGS after ours, since that allows overriding.
+        cxxflags.push(user_cxxflags);
+    };
+    let cxxflags = cxxflags.join(" ");
     cmd.env("CXXFLAGS", cxxflags);
 
     let cargo_manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
@@ -1267,6 +1269,13 @@ fn join_path(base: &Path, additional: &str) -> PathBuf {
         base.push(component);
     }
     base
+}
+
+/// Returns the value `cc-rs` would use for `var_base`.
+///
+/// See also [get_cc_rs_env_os].
+fn get_cc_rs_env(var_base: &str) -> Option<String> {
+    get_cc_rs_env_os(var_base).map(|val| val.to_str().expect("Not a valid string.").to_string())
 }
 
 /// Returns the value `cc-rs` would use for `var_base`
