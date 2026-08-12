@@ -9,6 +9,8 @@ on:
 jobs:
     bump:
         runs-on: ubuntu-latest
+        # We don't want to run the security bump in forks.
+        if: github.repository == 'servo/mozjs'
         permissions:
             contents: write
             pull-requests: write
