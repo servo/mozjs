@@ -226,12 +226,14 @@ jobs:
         target: ["aarch64-unknown-linux-ohos", "x86_64-unknown-linux-ohos"]
         features: ["", "--features debugmozjs"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Setup OpenHarmony SDK
         id: setup_sdk
-        uses: openharmony-rs/setup-ohos-sdk@v0.2
+        uses: openharmony-rs/setup-ohos-sdk@v1.0
         with:
-          version: "5.0.2"
+          version: "6.0.0.1"
+      - name: Install cargo-ohos
+        run: cargo install cargo-ohos@0.3.0
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
@@ -243,7 +245,7 @@ jobs:
         env:
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
         run: |
-          ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} --download-prebuilt=19
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
@@ -251,7 +253,7 @@ jobs:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
       - name: Test linking (build unit-tests)
-        run: ./ohos-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" ${{ matrix.features }} --tests
+        run: cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} --tests --download-prebuilt=19
 
   wasi:
     name: wasm32-${{ matrix.target }}
