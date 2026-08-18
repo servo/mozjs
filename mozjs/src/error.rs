@@ -6,7 +6,8 @@
 
 #![deny(missing_docs)]
 
-use crate::jsapi::{JSContext, JSErrorFormatString, JSExnType, JS_ReportErrorNumberUTF8};
+use crate::context::{JSContext, RawJSContext};
+use crate::jsapi::{JSErrorFormatString, JSExnType, JS_ReportErrorNumberUTF8};
 use libc;
 use std::ffi::CStr;
 use std::{mem, os, ptr};
@@ -51,7 +52,7 @@ unsafe extern "C" fn get_error_message(
 /// Reuse the jsapi error codes to distinguish the error_number
 /// passed back to the get_error_message callback.
 /// c_uint is u32, so this cast is safe, as is casting to/from i32 from there.
-unsafe fn throw_js_error(cx: *mut JSContext, error: &CStr, error_number: u32) {
+unsafe fn throw_js_error(cx: *mut RawJSContext, error: &CStr, error_number: u32) {
     JS_ReportErrorNumberUTF8(
         cx,
         Some(get_error_message),
@@ -62,16 +63,34 @@ unsafe fn throw_js_error(cx: *mut JSContext, error: &CStr, error_number: u32) {
 }
 
 /// Throw a `TypeError` with the given message.
-pub unsafe fn throw_type_error(cx: *mut JSContext, error: &CStr) {
+#[deprecated = "use throw_type_error_safe instead"]
+pub unsafe fn throw_type_error(cx: *mut RawJSContext, error: &CStr) {
     throw_js_error(cx, error, JSExnType::JSEXN_TYPEERR as u32);
 }
 
 /// Throw a `RangeError` with the given message.
-pub unsafe fn throw_range_error(cx: *mut JSContext, error: &CStr) {
+#[deprecated = "use throw_range_error_safe instead"]
+pub unsafe fn throw_range_error(cx: *mut RawJSContext, error: &CStr) {
     throw_js_error(cx, error, JSExnType::JSEXN_RANGEERR as u32);
 }
 
 /// Throw an `InternalError` with the given message.
-pub unsafe fn throw_internal_error(cx: *mut JSContext, error: &CStr) {
+#[deprecated = "use throw_internal_error_safe instead"]
+pub unsafe fn throw_internal_error(cx: *mut RawJSContext, error: &CStr) {
     throw_js_error(cx, error, JSExnType::JSEXN_INTERNALERR as u32);
+}
+
+/// Throw a `TypeError` with the given message.
+pub fn throw_type_error_safe(cx: &mut JSContext, error: &CStr) {
+    unsafe { throw_js_error(cx.raw_cx(), error, JSExnType::JSEXN_TYPEERR as u32) };
+}
+
+/// Throw a `RangeError` with the given message.
+pub fn throw_range_error_safe(cx: &mut JSContext, error: &CStr) {
+    unsafe { throw_js_error(cx.raw_cx(), error, JSExnType::JSEXN_RANGEERR as u32) };
+}
+
+/// Throw an `InternalError` with the given message.
+pub fn throw_internal_error_safe(cx: &mut JSContext, error: &CStr) {
+    unsafe { throw_js_error(cx.raw_cx(), error, JSExnType::JSEXN_INTERNALERR as u32) };
 }

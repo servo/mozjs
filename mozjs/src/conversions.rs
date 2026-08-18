@@ -28,7 +28,7 @@
 
 #![deny(missing_docs)]
 
-use crate::error::throw_type_error;
+use crate::error::throw_type_error_safe;
 use crate::jsapi::Heap;
 use crate::jsapi::JS;
 use crate::jsapi::{JSContext, JSObject, JSString};
@@ -216,12 +216,7 @@ where
     f64: As<D>,
 {
     if d.is_infinite() {
-        unsafe {
-            throw_type_error(
-                cx.raw_cx(),
-                c"value out of range in an EnforceRange argument",
-            )
-        };
+        throw_type_error_safe(cx, c"value out of range in an EnforceRange argument");
         return Err(());
     }
 
@@ -229,12 +224,7 @@ where
     if D::MIN.cast() <= rounded && rounded <= D::MAX.cast() {
         Ok(ConversionResult::Success(rounded.cast()))
     } else {
-        unsafe {
-            throw_type_error(
-                cx.raw_cx(),
-                c"value out of range in an EnforceRange argument",
-            )
-        };
+        throw_type_error_safe(cx, c"value out of range in an EnforceRange argument");
         Err(())
     }
 }
@@ -821,7 +811,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
             }
             Err(ForOfIterationFailure::JSFailed) => Err(()),
             Err(ForOfIterationFailure::Other(error)) => {
-                unsafe { throw_type_error(cx.raw_cx(), error.as_ref()) };
+                throw_type_error_safe(cx, error.as_ref());
                 Err(())
             }
         }
@@ -866,9 +856,7 @@ impl FromJSValConvertible for *mut JSObject {
         _option: (),
     ) -> Result<ConversionResult<*mut JSObject>, ()> {
         if !value.is_object() {
-            unsafe {
-                throw_type_error(cx.raw_cx(), c"value is not an object");
-            }
+            throw_type_error_safe(cx, c"value is not an object");
             return Err(());
         }
 
@@ -895,9 +883,7 @@ impl FromJSValConvertible for *mut JS::Symbol {
         _option: (),
     ) -> Result<ConversionResult<*mut JS::Symbol>, ()> {
         if !value.is_symbol() {
-            unsafe {
-                throw_type_error(cx.raw_cx(), c"value is not a symbol");
-            }
+            throw_type_error_safe(cx, c"value is not a symbol");
             return Err(());
         }
 
