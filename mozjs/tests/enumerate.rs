@@ -45,7 +45,7 @@ fn enumerate() {
         assert!(rval.is_object());
 
         rooted!(&in(context) let object = rval.to_object());
-        let mut ids = IdVector::new(context.raw_cx());
+        let mut ids = IdVector::new(context);
         assert!(GetPropertyKeys(
             context,
             object.handle().into(),

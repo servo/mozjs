@@ -19,15 +19,14 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use self::wrappers2::{
-    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
-    StackGCVectorValueLength, ToStringSlow,
+    CreateRootedIdVector, CreateRootedObjectVector, StackGCVectorStringAtIndex,
+    StackGCVectorStringLength, StackGCVectorValueAtIndex, StackGCVectorValueLength, ToStringSlow,
 };
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use crate::default_heapsize;
 pub use crate::gc::*;
 use crate::glue::AppendToRootedObjectVector;
-use crate::glue::{CreateRootedIdVector, CreateRootedObjectVector};
 use crate::glue::{
     DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
     PendingExceptionStackInfo,
@@ -508,7 +507,7 @@ pub struct RootedObjectVectorWrapper {
 }
 
 impl RootedObjectVectorWrapper {
-    pub fn new(cx: *mut JSContext) -> RootedObjectVectorWrapper {
+    pub fn new(cx: &mut crate::context::JSContext) -> RootedObjectVectorWrapper {
         RootedObjectVectorWrapper {
             ptr: unsafe { CreateRootedObjectVector(cx) },
         }
@@ -790,8 +789,8 @@ pub unsafe extern "C" fn report_warning(_cx: *mut JSContext, report: *mut JSErro
 pub struct IdVector(*mut PersistentRootedIdVector);
 
 impl IdVector {
-    pub unsafe fn new(cx: *mut JSContext) -> IdVector {
-        let vector = CreateRootedIdVector(cx);
+    pub fn new(cx: &mut crate::context::JSContext) -> IdVector {
+        let vector = unsafe { CreateRootedIdVector(cx) };
         assert!(!vector.is_null());
         IdVector(vector)
     }
@@ -1270,13 +1269,11 @@ pub struct EnvironmentChain {
 
 impl EnvironmentChain {
     pub fn new(
-        cx: *mut JSContext,
+        cx: &mut crate::context::JSContext,
         support_unscopeables: crate::jsapi::JS::SupportUnscopables,
     ) -> Self {
-        unsafe {
-            Self {
-                chain: crate::jsapi::glue::NewEnvironmentChain(cx, support_unscopeables),
-            }
+        Self {
+            chain: unsafe { wrappers2::NewEnvironmentChain(cx, support_unscopeables) },
         }
     }
 
