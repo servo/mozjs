@@ -246,6 +246,14 @@ void js::jit::JitActivation::startWasmTrap(wasm::Trap trap,
   const wasm::Code& code = wasm::GetNearestEffectiveInstance(fp)->code();
   MOZ_RELEASE_ASSERT(&code == wasm::LookupCode(pc));
 
+  // Keep the trapping code alive across a GC. For an IndirectCallBadSig trap
+  // reached through a tail call, this code can belong to a different instance
+  // than the effective one above, whose frame has already been unwound. Nothing
+  // else then keeps alive the code segment we are about to run the trap stub
+  // in.
+  wasmTrapCode_ = wasm::LookupCode(state.pc);
+  MOZ_RELEASE_ASSERT(wasmTrapCode_);
+
   setWasmExitFP(fp);
   wasmTrapData_.emplace();
   wasmTrapData_->resumePC =
@@ -271,6 +279,9 @@ void js::jit::JitActivation::startWasmTrap(wasm::Trap trap,
 
 void js::jit::JitActivation::finishWasmTrap() {
   MOZ_ASSERT(isWasmTrapping());
+  // Keep wasmTrapCode_ alive: we are still executing inside this code and are
+  // about to return into it, so releasing it now could free it. It is released
+  // on the next trap or when the activation is destroyed.
   packedExitFP_ = nullptr;
   wasmTrapData_.reset();
   MOZ_ASSERT(!isWasmTrapping());
