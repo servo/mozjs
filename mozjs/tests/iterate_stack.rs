@@ -20,15 +20,17 @@ fn iterate_stack_frames() {
         _vp: *mut Value,
     ) -> bool {
         let mut context = mozjs::context::JSContext::from_ptr(NonNull::new(context).unwrap());
+        let cx = &mut context;
+
         let mut function_names = vec![];
-        capture_stack!(&in(context) let stack);
-        stack.unwrap().for_each_stack_frame(|frame| {
-            rooted!(&in(context) let mut result: *mut jsapi::JSString = ptr::null_mut());
+        capture_stack!(&in(cx) let stack);
+        stack.unwrap().for_each_stack_frame(|cx, frame| {
+            rooted!(&in(cx) let mut result: *mut jsapi::JSString = ptr::null_mut());
 
             // Get function name
             unsafe {
                 wrappers2::GetSavedFrameFunctionDisplayName(
-                    &mut context,
+                    cx,
                     ptr::null_mut(),
                     frame.into(),
                     result.handle_mut().into(),
@@ -37,7 +39,7 @@ fn iterate_stack_frames() {
             }
             let buffer = if !result.is_null() {
                 let mut buffer = vec![0; 3];
-                wrappers2::JS_EncodeStringToBuffer(&mut context, *result, buffer.as_mut_ptr(), 3);
+                wrappers2::JS_EncodeStringToBuffer(cx, *result, buffer.as_mut_ptr(), 3);
                 Some(buffer.into_iter().map(|c| c as u8).collect())
             } else {
                 None

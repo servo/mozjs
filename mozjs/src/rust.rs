@@ -19,8 +19,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
 use self::wrappers2::{
-    CreateRootedIdVector, CreateRootedObjectVector, StackGCVectorStringAtIndex,
-    StackGCVectorStringLength, StackGCVectorValueAtIndex, StackGCVectorValueLength, ToStringSlow,
+    BuildStackString, CaptureCurrentStack, CreateRootedIdVector, CreateRootedObjectVector,
+    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
+    StackGCVectorValueLength, ToStringSlow,
 };
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
@@ -46,8 +47,8 @@ use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
+use crate::jsapi::StackFormat;
 use crate::jsapi::{already_AddRefed, jsid};
-use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
 use crate::jsapi::{HandleValueArray, StencilRelease};
 use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
 use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
@@ -1165,13 +1166,13 @@ pub unsafe fn error_info_from_exception_stack(
 }
 
 pub struct CapturedJSStack<'a> {
-    cx: *mut JSContext,
+    cx: &'a mut crate::context::JSContext,
     stack: RootedGuard<'a, *mut JSObject>,
 }
 
 impl<'a> CapturedJSStack<'a> {
     pub unsafe fn new(
-        cx: *mut JSContext,
+        cx: &'a mut crate::context::JSContext,
         mut guard: RootedGuard<'a, *mut JSObject>,
         max_frame_count: Option<u32>,
     ) -> Option<Self> {
@@ -1182,60 +1183,53 @@ impl<'a> CapturedJSStack<'a> {
         };
         let ref mut stack_capture = stack_capture.assume_init();
 
-        if !CaptureCurrentStack(
-            cx,
-            guard.handle_mut().raw(),
-            stack_capture,
-            HandleObject::null().into(),
-        ) {
+        if !CaptureCurrentStack(cx, guard.handle_mut(), stack_capture, HandleObject::null()) {
             None
         } else {
             Some(CapturedJSStack { cx, stack: guard })
         }
     }
 
-    pub fn as_string(&self, indent: Option<usize>, format: StackFormat) -> Option<String> {
-        unsafe {
-            let stack_handle = self.stack.handle();
-            rooted!(in(self.cx) let mut js_string = ptr::null_mut::<JSString>());
-            let mut string_handle = js_string.handle_mut();
+    pub fn as_string(&mut self, indent: Option<usize>, format: StackFormat) -> Option<String> {
+        let stack_handle = self.stack.handle();
+        rooted!(&in(self.cx) let mut js_string = ptr::null_mut::<JSString>());
 
+        unsafe {
             if !BuildStackString(
                 self.cx,
                 ptr::null_mut(),
-                stack_handle.into(),
-                string_handle.raw(),
+                stack_handle,
+                js_string.handle_mut(),
                 indent.unwrap_or(0),
                 format,
             ) {
                 return None;
             }
 
-            #[expect(deprecated)]
-            Some(crate::conversions::unsafe_jsstr_to_string(
+            Some(crate::conversions::jsstr_to_string(
                 self.cx,
-                NonNull::new(string_handle.get())?,
+                NonNull::new(js_string.get())?,
             ))
         }
     }
 
     /// Executes the provided closure for each frame on the js stack
-    pub fn for_each_stack_frame<F>(&self, mut f: F)
+    pub fn for_each_stack_frame<F>(&mut self, mut f: F)
     where
-        F: FnMut(Handle<*mut JSObject>),
+        F: FnMut(&mut crate::context::JSContext, Handle<*mut JSObject>),
     {
-        rooted!(in(self.cx) let mut current_element = self.stack.clone());
-        rooted!(in(self.cx) let mut next_element = ptr::null_mut::<JSObject>());
+        rooted!(&in(self.cx) let mut current_element = self.stack.clone());
+        rooted!(&in(self.cx) let mut next_element = ptr::null_mut::<JSObject>());
 
         loop {
-            f(current_element.handle());
+            f(self.cx, current_element.handle());
 
             unsafe {
-                let result = jsapi::GetSavedFrameParent(
+                let result = wrappers2::GetSavedFrameParent(
                     self.cx,
                     ptr::null_mut(),
-                    current_element.handle().into_handle(),
-                    next_element.handle_mut().into_handle_mut(),
+                    current_element.handle(),
+                    next_element.handle_mut(),
                     jsapi::SavedFrameSelfHosted::Include,
                 );
 
@@ -1250,15 +1244,12 @@ impl<'a> CapturedJSStack<'a> {
 
 #[macro_export]
 macro_rules! capture_stack {
-    (&in($cx:expr) $($t:tt)*) => {
-        capture_stack!(in(unsafe {$cx.raw_cx()}) $($t)*);
-    };
-    (in($cx:expr) let $name:ident = with max depth($max_frame_count:expr)) => {
-        rooted!(in($cx) let mut __obj = ::std::ptr::null_mut());
+    (&in($cx:expr) let $name:ident = with max depth($max_frame_count:expr)) => {
+        rooted!(&in($cx) let mut __obj = ::std::ptr::null_mut());
         let $name = $crate::rust::CapturedJSStack::new($cx, __obj, Some($max_frame_count));
     };
-    (in($cx:expr) let $name:ident ) => {
-        rooted!(in($cx) let mut __obj = ::std::ptr::null_mut());
+    (&in($cx:expr) let $name:ident ) => {
+        rooted!(&in($cx) let mut __obj = ::std::ptr::null_mut());
         let $name = $crate::rust::CapturedJSStack::new($cx, __obj, None);
     }
 }
