@@ -160,7 +160,7 @@ class JS_PUBLIC_API Wrapper;
  * explicit override for the method in SecurityWrapper. See bug 945826 comment
  * 0.
  */
-class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
+class JS_PUBLIC_API BaseProxyHandler {
   /*
    * Sometimes it's desirable to designate groups of proxy handlers as
    * "similar". For this, we use the notion of a "family": A consumer-provided

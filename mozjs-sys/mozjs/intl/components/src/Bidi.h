@@ -10,7 +10,7 @@
 // Use the Rust unicode-bidi crate to back the Bidi component.
 // (Define to 0 to use the legacy ICU4C implementation instead,
 // until that code is removed altogether.)
-#define USE_RUST_UNICODE_BIDI 0
+#define USE_RUST_UNICODE_BIDI 1
 
 #if USE_RUST_UNICODE_BIDI
 #  include "mozilla/intl/unicode_bidi_ffi_generated.h"
