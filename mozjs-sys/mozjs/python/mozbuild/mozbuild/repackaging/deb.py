@@ -148,6 +148,7 @@ def repackage_deb_l10n(
     version,
     build_number,
     release_product,
+    extensions_dir,
 ):
     arch = "all"
 
@@ -155,7 +156,7 @@ def repackage_deb_l10n(
     source_dir = os.path.join(tmpdir, "source")
     try:
         langpack_metadata = _extract_langpack_metadata(input_xpi_file)
-        langpack_dir = mozpath.join(source_dir, "firefox", "distribution", "extensions")
+        langpack_dir = mozpath.join(source_dir, extensions_dir)
         application_ini_data = _load_application_ini_data(
             input_tar_file, version, build_number
         )
