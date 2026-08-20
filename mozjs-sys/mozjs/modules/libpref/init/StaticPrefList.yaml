@@ -13056,6 +13056,14 @@
   value: true
   mirror: always
 
+# When true, Negotiate authentication sends a tls-server-end-point channel
+# binding token, as required by servers with Windows Extended Protection
+# enabled. Only has an effect when the SSPI auth module is in use.
+- name: network.auth.negotiate_channel_binding
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # See the full list of values in nsICookieService.idl.
 - name: network.cookie.cookieBehavior
   type: RelaxedAtomicInt32

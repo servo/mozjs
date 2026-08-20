@@ -123,7 +123,7 @@ class JS_PUBLIC_API ReadOnlyDecodeOptions;
 
 // Compilation-specific part of JS::ContextOptions which is supposed to be
 // configured by user prefs.
-class JS_PUBLIC_API __attribute__((__packed__)) PrefableCompileOptions {
+class JS_PUBLIC_API PrefableCompileOptions {
  public:
   PrefableCompileOptions()
       : importAttributes_(false),
@@ -238,7 +238,7 @@ class JS_PUBLIC_API __attribute__((__packed__)) PrefableCompileOptions {
  * Use this in code that needs to propagate compile options from one
  * compilation unit to another.
  */
-class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
+class JS_PUBLIC_API TransitiveCompileOptions {
   friend class JS_PUBLIC_API ReadOnlyDecodeOptions;
 
  protected:
@@ -463,8 +463,7 @@ class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
  * is protected anyway); instead, create instances only of the derived classes:
  * CompileOptions and OwningCompileOptions.
  */
-class JS_PUBLIC_API __attribute__((__packed__)) ReadOnlyCompileOptions
-    : public TransitiveCompileOptions {
+class JS_PUBLIC_API ReadOnlyCompileOptions : public TransitiveCompileOptions {
  public:
   // POD options.
 

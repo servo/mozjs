@@ -10,6 +10,7 @@
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 #include "mozilla/Atomics.h"     // mozilla::Atomic, mozilla::Relaxed
 #include "mozilla/Maybe.h"       // mozilla::Maybe
+#include "mozilla/RefPtr.h"      // RefPtr
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t, uint32_t, uintptr_t
@@ -95,6 +96,12 @@ class JitActivation : public Activation {
   // When wasm traps, the signal handler records some data for unwinding
   // purposes. Wasm code can't trap reentrantly.
   mozilla::Maybe<wasm::TrapData> wasmTrapData_;
+
+  // Keeps the trapping code alive while the trap is handled. With tail calls
+  // the trapping frame may already be unwound, so no wasm::Frame keeps it alive
+  // and a GC (e.g. while building the RuntimeError) could otherwise free the
+  // code segment we are still executing in.
+  RefPtr<const wasm::Code> wasmTrapCode_;
 
 #ifdef CHECK_OSIPOINT_REGISTERS
  protected:
