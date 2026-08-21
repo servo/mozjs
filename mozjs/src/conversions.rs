@@ -327,7 +327,7 @@ fn convert_int_from_jsval<T, M>(
     cx: &mut crate::context::JSContext,
     value: HandleValue,
     option: ConversionBehavior,
-    convert_fn: unsafe fn(*mut JSContext, HandleValue) -> Result<M, ()>,
+    convert_fn: unsafe fn(&mut crate::context::JSContext, HandleValue) -> Result<M, ()>,
 ) -> Result<ConversionResult<T>, ()>
 where
     T: Number + As<f64> + PrimInt,
@@ -336,14 +336,14 @@ where
 {
     match option {
         ConversionBehavior::Default => Ok(ConversionResult::Success(unsafe {
-            convert_fn(cx.raw_cx(), value)?.cast()
+            convert_fn(cx, value)?.cast()
         })),
         ConversionBehavior::EnforceRange => {
-            let number = unsafe { ToNumber(cx.raw_cx(), value) }?;
+            let number = unsafe { ToNumber(cx, value) }?;
             enforce_range(cx, number)
         }
         ConversionBehavior::Clamp => Ok(ConversionResult::Success(clamp_to(unsafe {
-            ToNumber(cx.raw_cx(), value)
+            ToNumber(cx, value)
         }?))),
     }
 }
@@ -554,7 +554,7 @@ impl FromJSValConvertible for f32 {
         val: HandleValue,
         _option: (),
     ) -> Result<ConversionResult<f32>, ()> {
-        let result = unsafe { ToNumber(cx.raw_cx(), val) };
+        let result = unsafe { ToNumber(cx, val) };
         result.map(|f| f as f32).map(ConversionResult::Success)
     }
 }
@@ -576,7 +576,7 @@ impl FromJSValConvertible for f64 {
         val: HandleValue,
         _option: (),
     ) -> Result<ConversionResult<f64>, ()> {
-        unsafe { ToNumber(cx.raw_cx(), val).map(ConversionResult::Success) }
+        unsafe { ToNumber(cx, val).map(ConversionResult::Success) }
     }
 }
 

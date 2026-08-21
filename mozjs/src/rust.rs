@@ -21,7 +21,8 @@ use std::sync::{Arc, Mutex, RwLock};
 use self::wrappers2::{
     BuildStackString, CaptureCurrentStack, CreateRootedIdVector, CreateRootedObjectVector,
     StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
-    StackGCVectorValueLength, ToStringSlow,
+    StackGCVectorValueLength, ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow,
+    ToUint32Slow, ToUint64Slow,
 };
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
@@ -43,7 +44,6 @@ use crate::jsapi::js::frontend::InitialStencilAndDelazifications;
 use crate::jsapi::mozilla::Utf8Unit;
 use crate::jsapi::shadow::BaseShape;
 use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
-use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
@@ -63,11 +63,8 @@ use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWa
 use crate::jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
 use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
-use crate::jsapi::{
-    RootedObject, RootedValue, ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow,
-};
+use crate::jsapi::{RootedObject, RootedValue, ToWindowProxyIfWindowSlow};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
-use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToUint16Slow};
 use crate::jsval::{JSVal, ObjectValue, UndefinedValue};
 use crate::panic::maybe_resume_unwind;
 use crate::realm::AutoRealm;
@@ -679,14 +676,14 @@ pub unsafe fn ToBoolean(v: HandleValue) -> bool {
 }
 
 #[inline]
-pub unsafe fn ToNumber(cx: *mut JSContext, v: HandleValue) -> Result<f64, ()> {
+pub unsafe fn ToNumber(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<f64, ()> {
     let val = *v.ptr.as_ptr();
     if val.is_number() {
         return Ok(val.to_number());
     }
 
     let mut out = Default::default();
-    if ToNumberSlow(cx, v.into_handle(), &mut out) {
+    if ToNumberSlow(cx, v, &mut out) {
         Ok(out)
     } else {
         Err(())
@@ -695,9 +692,9 @@ pub unsafe fn ToNumber(cx: *mut JSContext, v: HandleValue) -> Result<f64, ()> {
 
 #[inline]
 unsafe fn convert_from_int32<T: Default + Copy>(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     v: HandleValue,
-    conv_fn: unsafe extern "C" fn(*mut JSContext, RawHandleValue, *mut T) -> bool,
+    conv_fn: unsafe fn(&mut crate::context::JSContext, HandleValue, *mut T) -> bool,
 ) -> Result<T, ()> {
     let val = *v.ptr.as_ptr();
     if val.is_int32() {
@@ -708,7 +705,7 @@ unsafe fn convert_from_int32<T: Default + Copy>(
     }
 
     let mut out = Default::default();
-    if conv_fn(cx, v.into(), &mut out) {
+    if conv_fn(cx, v, &mut out) {
         Ok(out)
     } else {
         Err(())
@@ -716,27 +713,27 @@ unsafe fn convert_from_int32<T: Default + Copy>(
 }
 
 #[inline]
-pub unsafe fn ToInt32(cx: *mut JSContext, v: HandleValue) -> Result<i32, ()> {
+pub unsafe fn ToInt32(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<i32, ()> {
     convert_from_int32::<i32>(cx, v, ToInt32Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint32(cx: *mut JSContext, v: HandleValue) -> Result<u32, ()> {
+pub unsafe fn ToUint32(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u32, ()> {
     convert_from_int32::<u32>(cx, v, ToUint32Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint16(cx: *mut JSContext, v: HandleValue) -> Result<u16, ()> {
+pub unsafe fn ToUint16(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u16, ()> {
     convert_from_int32::<u16>(cx, v, ToUint16Slow)
 }
 
 #[inline]
-pub unsafe fn ToInt64(cx: *mut JSContext, v: HandleValue) -> Result<i64, ()> {
+pub unsafe fn ToInt64(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<i64, ()> {
     convert_from_int32::<i64>(cx, v, ToInt64Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint64(cx: *mut JSContext, v: HandleValue) -> Result<u64, ()> {
+pub unsafe fn ToUint64(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u64, ()> {
     convert_from_int32::<u64>(cx, v, ToUint64Slow)
 }
 
