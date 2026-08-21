@@ -62,12 +62,9 @@ fn typedarray() {
         assert_eq!(view.unwrap().get_array_type(), Type::Uint8);
 
         rooted!(&in(context) let mut rval = ptr::null_mut::<JSObject>());
-        assert!(Uint32Array::create(
-            context.raw_cx(),
-            CreateWith::Slice(&[1, 3, 5]),
-            rval.handle_mut()
-        )
-        .is_ok());
+        assert!(
+            Uint32Array::create(context, CreateWith::Slice(&[1, 3, 5]), rval.handle_mut()).is_ok()
+        );
 
         typedarray!(&in(context) let array: Uint32Array = rval.get());
         let mut uint32array = array.unwrap();
@@ -79,9 +76,7 @@ fn typedarray() {
         assert!(array.is_err());
 
         rooted!(&in(context) let mut rval = ptr::null_mut::<JSObject>());
-        assert!(
-            Uint32Array::create(context.raw_cx(), CreateWith::Length(5), rval.handle_mut()).is_ok()
-        );
+        assert!(Uint32Array::create(context, CreateWith::Length(5), rval.handle_mut()).is_ok());
 
         typedarray!(&in(context) let array: Uint32Array = rval.get());
         let mut uint32array = array.unwrap();
@@ -101,12 +96,9 @@ fn typedarray() {
         assert_eq!(view.is_shared(), false);
 
         rooted!(&in(context) let mut rval = ptr::null_mut::<JSObject>());
-        assert!(ArrayBuffer::create(
-            context.raw_cx(),
-            CreateWith::Slice(&[1, 2, 3]),
-            rval.handle_mut()
-        )
-        .is_ok());
+        assert!(
+            ArrayBuffer::create(context, CreateWith::Slice(&[1, 2, 3]), rval.handle_mut()).is_ok()
+        );
         typedarray!(&in(context) let arraybuffer: ArrayBuffer = rval.get());
         assert_eq!(
             arraybuffer.as_ref().unwrap().as_slice_safe(context),
