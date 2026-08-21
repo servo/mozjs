@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use std::ptr;
+use std::ptr::{self, NonNull};
 
 use mozjs::capture_stack;
 use mozjs::jsapi::{CallArgs, JSContext, OnNewGlobalHookOption, StackFormat, Value};
@@ -17,9 +17,11 @@ use mozjs::rust::{
 #[test]
 fn capture_stack() {
     unsafe extern "C" fn print_stack(context: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+        let mut context = mozjs::context::JSContext::from_ptr(NonNull::new(context).unwrap());
+        let cx = &mut context;
         let args = CallArgs::from_vp(vp, argc);
 
-        capture_stack!(in(context) let stack);
+        capture_stack!(&in(cx) let stack);
         let str_stack = stack
             .unwrap()
             .as_string(None, StackFormat::SpiderMonkey)

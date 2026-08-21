@@ -429,10 +429,6 @@ impl<'a, T> MutableHandle<'a, T> {
             anchor: PhantomData,
         }
     }
-
-    pub(crate) fn raw(&mut self) -> RawMutableHandle<T> {
-        unsafe { RawMutableHandle::from_marked_location(self.ptr.as_ptr()) }
-    }
 }
 
 impl<'a, T> MutableHandle<'a, Option<T>> {
