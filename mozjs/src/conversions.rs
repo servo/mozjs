@@ -791,7 +791,7 @@ impl<C: Clone, T: FromJSValConvertible<Config = C>> FromJSValConvertible for Vec
         }
 
         let mut return_value = vec![];
-        let result = for_of(unsafe { cx.raw_cx() }, value, |iterator_element| {
+        let result = for_of(cx, value, |cx, iterator_element| {
             let conversion_result = T::safe_from_jsval(cx, iterator_element, option.clone())
                 .map_err(|_| ForOfIterationFailure::JSFailed)?;
             return_value.push(match conversion_result {

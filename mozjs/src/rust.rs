@@ -1334,14 +1334,20 @@ impl<OtherError> From<OtherError> for ForOfIterationFailure<OtherError> {
 ///
 /// The callback returns `Err()` to indicate a pending exception or `Ok()` containing a boolean
 /// value that is `true` if the iterator should continue iterating.
-pub fn for_of<Callback, OtherError>(
-    cx: *mut JSContext,
+pub fn for_of<Context, Callback, OtherError>(
+    cx: &mut Context,
     iterable: HandleValue<'_>,
     mut callback: Callback,
 ) -> Result<(), ForOfIterationFailure<OtherError>>
 where
-    Callback: FnMut(HandleValue<'_>) -> Result<ControlFlow<()>, ForOfIterationFailure<OtherError>>,
+    Context: AsMut<crate::context::JSContext>,
+    Callback: FnMut(
+        &mut Context,
+        HandleValue<'_>,
+    ) -> Result<ControlFlow<()>, ForOfIterationFailure<OtherError>>,
 {
+    let raw_cx = unsafe { cx.as_mut().raw_cx() };
+
     // Depending on the version of LLVM in use, bindgen can end up including
     // a padding field in the ForOfIterator. To support multiple versions of
     // LLVM that may not have the same fields as a result, we create an empty
@@ -1350,7 +1356,7 @@ where
     #[allow(unused_variables)]
     let zero = unsafe { mem::zeroed() };
     let mut iterator = jsapi::ForOfIterator {
-        cx_: cx,
+        cx_: raw_cx,
         iterator: RootedObject::new_unrooted(ptr::null_mut()),
         nextMethod: RootedValue::new_unrooted(JSVal { asBits_: 0 }),
         index: ::std::u32::MAX, // NOT_ARRAY
@@ -1377,8 +1383,8 @@ where
     let iterator = &mut *guard.inner;
 
     unsafe {
-        RootedObject::add_to_root_stack(&raw mut iterator.iterator, cx);
-        RootedValue::add_to_root_stack(&raw mut iterator.nextMethod, cx);
+        RootedObject::add_to_root_stack(&raw mut iterator.iterator, raw_cx);
+        RootedValue::add_to_root_stack(&raw mut iterator.nextMethod, raw_cx);
     }
 
     let success = unsafe {
@@ -1395,7 +1401,7 @@ where
     }
 
     let mut done = false;
-    rooted!(in(cx) let mut value = UndefinedValue());
+    rooted!(in(raw_cx) let mut value = UndefinedValue());
     loop {
         if !unsafe { iterator.next(value.handle_mut().into(), &mut done) } {
             return Err(ForOfIterationFailure::JSFailed);
@@ -1405,7 +1411,7 @@ where
             break;
         }
 
-        if callback(value.handle())?.is_break() {
+        if callback(cx, value.handle())?.is_break() {
             break;
         }
     }
