@@ -42,7 +42,7 @@ fn rooting() {
 
         rooted!(&in(context) let prototype_proto = GetRealmObjectPrototype(context));
         rooted!(&in(context) let proto = JS_NewObjectWithGivenProto(context, &CLASS as *const _, prototype_proto.handle().into()));
-        define_methods(context.raw_cx(), proto.handle(), METHODS).unwrap();
+        define_methods(context, proto.handle(), METHODS).unwrap();
 
         rooted!(&in(context) let root: JSVal);
         assert_eq!(root.get().is_undefined(), true);

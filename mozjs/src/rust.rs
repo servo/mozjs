@@ -20,9 +20,9 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use self::wrappers2::{
     BuildStackString, CaptureCurrentStack, CreateRootedIdVector, CreateRootedObjectVector,
-    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
-    StackGCVectorValueLength, ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow,
-    ToUint32Slow, ToUint64Slow,
+    JS_DefineFunctions, JS_DefineProperties, StackGCVectorStringAtIndex, StackGCVectorStringLength,
+    StackGCVectorValueAtIndex, StackGCVectorValueLength, ToInt32Slow, ToInt64Slow, ToNumberSlow,
+    ToStringSlow, ToUint16Slow, ToUint32Slow, ToUint64Slow,
 };
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
@@ -56,7 +56,7 @@ use crate::jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS
 use crate::jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use crate::jsapi::{JSObject, JSPropertySpec, JSRuntime};
 use crate::jsapi::{JSString, Object, PersistentRootedIdVector};
-use crate::jsapi::{JS_DefineFunctions, JS_DefineProperties, JS_DestroyContext, JS_ShutDown};
+use crate::jsapi::{JS_DestroyContext, JS_ShutDown};
 use crate::jsapi::{JS_EnumerateStandardClasses, JS_GlobalObjectTraceHook};
 use crate::jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
 use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWait};
@@ -831,10 +831,9 @@ impl Deref for IdVector {
 ///
 /// # Safety
 ///
-/// - `cx` must be valid.
 /// - This function calls into unaudited C++ code.
 pub unsafe fn define_methods(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     obj: HandleObject,
     methods: &'static [JSFunctionSpec],
 ) -> Result<(), ()> {
@@ -857,7 +856,7 @@ pub unsafe fn define_methods(
         }
     });
 
-    JS_DefineFunctions(cx, obj.into(), methods.as_ptr()).to_result()
+    JS_DefineFunctions(cx, obj, methods.as_ptr()).to_result()
 }
 
 /// Defines attributes on `obj`. The last entry of `properties` must contain
@@ -873,10 +872,9 @@ pub unsafe fn define_methods(
 ///
 /// # Safety
 ///
-/// - `cx` must be valid.
 /// - This function calls into unaudited C++ code.
 pub unsafe fn define_properties(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     obj: HandleObject,
     properties: &'static [JSPropertySpec],
 ) -> Result<(), ()> {
@@ -887,7 +885,7 @@ pub unsafe fn define_properties(
         }
     });
 
-    JS_DefineProperties(cx, obj.into(), properties.as_ptr()).to_result()
+    JS_DefineProperties(cx, obj, properties.as_ptr()).to_result()
 }
 
 static SIMPLE_GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
@@ -973,9 +971,9 @@ pub unsafe fn try_to_outerize_object(mut rval: MutableHandleObject) {
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object(cx: *mut JSContext, mut obj: MutableHandleObject) {
-    if get_object_realm(*obj) != get_context_realm(cx) {
-        assert!(JS_WrapObject(cx, obj.reborrow().into()));
+pub unsafe fn maybe_wrap_object(cx: &mut crate::context::JSContext, mut obj: MutableHandleObject) {
+    if get_object_realm(*obj) != get_context_realm(cx.raw_cx()) {
+        assert!(JS_WrapObject(cx.raw_cx(), obj.reborrow().into()));
     }
     try_to_outerize_object(obj);
 }
