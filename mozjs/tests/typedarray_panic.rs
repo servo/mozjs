@@ -34,7 +34,7 @@ fn typedarray_update_panic() {
 
         rooted!(&in(context) let mut rval = ptr::null_mut::<JSObject>());
         let _ = Uint32Array::create(
-            context.raw_cx(),
+            context,
             CreateWith::Slice(&[1, 2, 3, 4, 5]),
             rval.handle_mut(),
         );

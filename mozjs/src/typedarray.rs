@@ -8,6 +8,7 @@
 
 use std::ptr::NonNull;
 
+use crate::context::JSContext;
 use crate::context::NoGC;
 use crate::conversions::ConversionResult;
 use crate::conversions::FromJSValConvertible;
@@ -25,7 +26,6 @@ use crate::jsapi::GetArrayBufferData;
 use crate::jsapi::GetArrayBufferLengthAndData;
 use crate::jsapi::GetArrayBufferViewLengthAndData;
 use crate::jsapi::Heap;
-use crate::jsapi::JSContext;
 use crate::jsapi::JSObject;
 use crate::jsapi::JSTracer;
 use crate::jsapi::JS_GetArrayBufferViewType;
@@ -39,16 +39,6 @@ use crate::jsapi::JS_GetUint16ArrayData;
 use crate::jsapi::JS_GetUint32ArrayData;
 use crate::jsapi::JS_GetUint8ArrayData;
 use crate::jsapi::JS_GetUint8ClampedArrayData;
-use crate::jsapi::JS_NewFloat32Array;
-use crate::jsapi::JS_NewFloat64Array;
-use crate::jsapi::JS_NewInt16Array;
-use crate::jsapi::JS_NewInt32Array;
-use crate::jsapi::JS_NewInt8Array;
-use crate::jsapi::JS_NewUint16Array;
-use crate::jsapi::JS_NewUint32Array;
-use crate::jsapi::JS_NewUint8Array;
-use crate::jsapi::JS_NewUint8ClampedArray;
-use crate::jsapi::NewArrayBuffer;
 use crate::jsapi::Type;
 use crate::jsapi::UnwrapArrayBuffer;
 use crate::jsapi::UnwrapArrayBufferView;
@@ -61,6 +51,16 @@ use crate::jsapi::UnwrapUint16Array;
 use crate::jsapi::UnwrapUint32Array;
 use crate::jsapi::UnwrapUint8Array;
 use crate::jsapi::UnwrapUint8ClampedArray;
+use crate::rust::wrappers2::JS_NewFloat32Array;
+use crate::rust::wrappers2::JS_NewFloat64Array;
+use crate::rust::wrappers2::JS_NewInt16Array;
+use crate::rust::wrappers2::JS_NewInt32Array;
+use crate::rust::wrappers2::JS_NewInt8Array;
+use crate::rust::wrappers2::JS_NewUint16Array;
+use crate::rust::wrappers2::JS_NewUint32Array;
+use crate::rust::wrappers2::JS_NewUint8Array;
+use crate::rust::wrappers2::JS_NewUint8ClampedArray;
+use crate::rust::wrappers2::NewArrayBuffer;
 use crate::rust::CustomTrace;
 use crate::rust::{HandleValue, MutableHandleObject, MutableHandleValue};
 
@@ -102,7 +102,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> FromJSValConvertible for TypedArr
     type Config = ();
 
     fn safe_from_jsval(
-        _cx: &mut crate::context::JSContext,
+        _cx: &mut JSContext,
         value: HandleValue,
         _option: (),
     ) -> Result<ConversionResult<Self>, ()> {
@@ -116,7 +116,7 @@ impl<T: TypedArrayElement, S: JSObjectStorage> FromJSValConvertible for TypedArr
 
 impl<T: TypedArrayElement, S: JSObjectStorage> ToJSValConvertible for TypedArray<T, S> {
     #[inline]
-    fn safe_to_jsval(&self, cx: &mut crate::context::JSContext, rval: MutableHandleValue) {
+    fn safe_to_jsval(&self, cx: &mut JSContext, rval: MutableHandleValue) {
         ToJSValConvertible::safe_to_jsval(&self.object.as_raw(), cx, rval);
     }
 }
@@ -273,7 +273,7 @@ impl<T: TypedArrayElementCreator + TypedArrayElement, S: JSObjectStorage> TypedA
     /// Create a new JS typed array, optionally providing initial data that will
     /// be copied into the newly-allocated buffer. Returns the new JS reflector.
     pub unsafe fn create(
-        cx: *mut JSContext,
+        cx: &mut JSContext,
         with: CreateWith<T::Element>,
         mut result: MutableHandleObject,
     ) -> Result<(), ()> {
@@ -328,7 +328,7 @@ pub trait TypedArrayElement {
 /// Internal trait for creating new typed arrays.
 pub trait TypedArrayElementCreator: TypedArrayElement {
     /// Create a new typed array.
-    unsafe fn create_new(cx: *mut JSContext, length: usize) -> *mut JSObject;
+    fn create_new(cx: &mut JSContext, length: usize) -> *mut JSObject;
     /// Get the data.
     unsafe fn get_data(obj: *mut JSObject) -> *mut Self::Element;
 }
@@ -367,8 +367,8 @@ macro_rules! typed_array_element {
         typed_array_element!($t, $element, $unwrap, $length_and_data);
 
         impl TypedArrayElementCreator for $t {
-            unsafe fn create_new(cx: *mut JSContext, length: usize) -> *mut JSObject {
-                $create_new(cx, length)
+            fn create_new(cx: &mut JSContext, length: usize) -> *mut JSObject {
+                unsafe { $create_new(cx, length) }
             }
 
             unsafe fn get_data(obj: *mut JSObject) -> *mut Self::Element {

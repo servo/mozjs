@@ -20,8 +20,9 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use self::wrappers2::{
     BuildStackString, CaptureCurrentStack, CreateRootedIdVector, CreateRootedObjectVector,
-    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
-    StackGCVectorValueLength, ToStringSlow,
+    JS_DefineFunctions, JS_DefineProperties, StackGCVectorStringAtIndex, StackGCVectorStringLength,
+    StackGCVectorValueAtIndex, StackGCVectorValueLength, ToInt32Slow, ToInt64Slow, ToNumberSlow,
+    ToStringSlow, ToUint16Slow, ToUint32Slow, ToUint64Slow,
 };
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
@@ -43,7 +44,6 @@ use crate::jsapi::js::frontend::InitialStencilAndDelazifications;
 use crate::jsapi::mozilla::Utf8Unit;
 use crate::jsapi::shadow::BaseShape;
 use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
-use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
@@ -56,18 +56,15 @@ use crate::jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS
 use crate::jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use crate::jsapi::{JSObject, JSPropertySpec, JSRuntime};
 use crate::jsapi::{JSString, Object, PersistentRootedIdVector};
-use crate::jsapi::{JS_DefineFunctions, JS_DefineProperties, JS_DestroyContext, JS_ShutDown};
+use crate::jsapi::{JS_DestroyContext, JS_ShutDown};
 use crate::jsapi::{JS_EnumerateStandardClasses, JS_GlobalObjectTraceHook};
 use crate::jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
 use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWait};
 use crate::jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
 use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
-use crate::jsapi::{
-    RootedObject, RootedValue, ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow,
-};
+use crate::jsapi::{RootedObject, RootedValue, ToWindowProxyIfWindowSlow};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
-use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToUint16Slow};
 use crate::jsval::{JSVal, ObjectValue, UndefinedValue};
 use crate::panic::maybe_resume_unwind;
 use crate::realm::AutoRealm;
@@ -679,14 +676,14 @@ pub unsafe fn ToBoolean(v: HandleValue) -> bool {
 }
 
 #[inline]
-pub unsafe fn ToNumber(cx: *mut JSContext, v: HandleValue) -> Result<f64, ()> {
+pub unsafe fn ToNumber(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<f64, ()> {
     let val = *v.ptr.as_ptr();
     if val.is_number() {
         return Ok(val.to_number());
     }
 
     let mut out = Default::default();
-    if ToNumberSlow(cx, v.into_handle(), &mut out) {
+    if ToNumberSlow(cx, v, &mut out) {
         Ok(out)
     } else {
         Err(())
@@ -695,9 +692,9 @@ pub unsafe fn ToNumber(cx: *mut JSContext, v: HandleValue) -> Result<f64, ()> {
 
 #[inline]
 unsafe fn convert_from_int32<T: Default + Copy>(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     v: HandleValue,
-    conv_fn: unsafe extern "C" fn(*mut JSContext, RawHandleValue, *mut T) -> bool,
+    conv_fn: unsafe fn(&mut crate::context::JSContext, HandleValue, *mut T) -> bool,
 ) -> Result<T, ()> {
     let val = *v.ptr.as_ptr();
     if val.is_int32() {
@@ -708,7 +705,7 @@ unsafe fn convert_from_int32<T: Default + Copy>(
     }
 
     let mut out = Default::default();
-    if conv_fn(cx, v.into(), &mut out) {
+    if conv_fn(cx, v, &mut out) {
         Ok(out)
     } else {
         Err(())
@@ -716,27 +713,27 @@ unsafe fn convert_from_int32<T: Default + Copy>(
 }
 
 #[inline]
-pub unsafe fn ToInt32(cx: *mut JSContext, v: HandleValue) -> Result<i32, ()> {
+pub unsafe fn ToInt32(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<i32, ()> {
     convert_from_int32::<i32>(cx, v, ToInt32Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint32(cx: *mut JSContext, v: HandleValue) -> Result<u32, ()> {
+pub unsafe fn ToUint32(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u32, ()> {
     convert_from_int32::<u32>(cx, v, ToUint32Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint16(cx: *mut JSContext, v: HandleValue) -> Result<u16, ()> {
+pub unsafe fn ToUint16(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u16, ()> {
     convert_from_int32::<u16>(cx, v, ToUint16Slow)
 }
 
 #[inline]
-pub unsafe fn ToInt64(cx: *mut JSContext, v: HandleValue) -> Result<i64, ()> {
+pub unsafe fn ToInt64(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<i64, ()> {
     convert_from_int32::<i64>(cx, v, ToInt64Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint64(cx: *mut JSContext, v: HandleValue) -> Result<u64, ()> {
+pub unsafe fn ToUint64(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u64, ()> {
     convert_from_int32::<u64>(cx, v, ToUint64Slow)
 }
 
@@ -834,10 +831,9 @@ impl Deref for IdVector {
 ///
 /// # Safety
 ///
-/// - `cx` must be valid.
 /// - This function calls into unaudited C++ code.
 pub unsafe fn define_methods(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     obj: HandleObject,
     methods: &'static [JSFunctionSpec],
 ) -> Result<(), ()> {
@@ -860,7 +856,7 @@ pub unsafe fn define_methods(
         }
     });
 
-    JS_DefineFunctions(cx, obj.into(), methods.as_ptr()).to_result()
+    JS_DefineFunctions(cx, obj, methods.as_ptr()).to_result()
 }
 
 /// Defines attributes on `obj`. The last entry of `properties` must contain
@@ -876,10 +872,9 @@ pub unsafe fn define_methods(
 ///
 /// # Safety
 ///
-/// - `cx` must be valid.
 /// - This function calls into unaudited C++ code.
 pub unsafe fn define_properties(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     obj: HandleObject,
     properties: &'static [JSPropertySpec],
 ) -> Result<(), ()> {
@@ -890,7 +885,7 @@ pub unsafe fn define_properties(
         }
     });
 
-    JS_DefineProperties(cx, obj.into(), properties.as_ptr()).to_result()
+    JS_DefineProperties(cx, obj, properties.as_ptr()).to_result()
 }
 
 static SIMPLE_GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
@@ -976,9 +971,9 @@ pub unsafe fn try_to_outerize_object(mut rval: MutableHandleObject) {
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object(cx: *mut JSContext, mut obj: MutableHandleObject) {
-    if get_object_realm(*obj) != get_context_realm(cx) {
-        assert!(JS_WrapObject(cx, obj.reborrow().into()));
+pub unsafe fn maybe_wrap_object(cx: &mut crate::context::JSContext, mut obj: MutableHandleObject) {
+    if get_object_realm(*obj) != get_context_realm(cx.raw_cx()) {
+        assert!(JS_WrapObject(cx.raw_cx(), obj.reborrow().into()));
     }
     try_to_outerize_object(obj);
 }
@@ -1339,14 +1334,20 @@ impl<OtherError> From<OtherError> for ForOfIterationFailure<OtherError> {
 ///
 /// The callback returns `Err()` to indicate a pending exception or `Ok()` containing a boolean
 /// value that is `true` if the iterator should continue iterating.
-pub fn for_of<Callback, OtherError>(
-    cx: *mut JSContext,
+pub fn for_of<Context, Callback, OtherError>(
+    cx: &mut Context,
     iterable: HandleValue<'_>,
     mut callback: Callback,
 ) -> Result<(), ForOfIterationFailure<OtherError>>
 where
-    Callback: FnMut(HandleValue<'_>) -> Result<ControlFlow<()>, ForOfIterationFailure<OtherError>>,
+    Context: AsMut<crate::context::JSContext>,
+    Callback: FnMut(
+        &mut Context,
+        HandleValue<'_>,
+    ) -> Result<ControlFlow<()>, ForOfIterationFailure<OtherError>>,
 {
+    let raw_cx = unsafe { cx.as_mut().raw_cx() };
+
     // Depending on the version of LLVM in use, bindgen can end up including
     // a padding field in the ForOfIterator. To support multiple versions of
     // LLVM that may not have the same fields as a result, we create an empty
@@ -1355,7 +1356,7 @@ where
     #[allow(unused_variables)]
     let zero = unsafe { mem::zeroed() };
     let mut iterator = jsapi::ForOfIterator {
-        cx_: cx,
+        cx_: raw_cx,
         iterator: RootedObject::new_unrooted(ptr::null_mut()),
         nextMethod: RootedValue::new_unrooted(JSVal { asBits_: 0 }),
         index: ::std::u32::MAX, // NOT_ARRAY
@@ -1382,8 +1383,8 @@ where
     let iterator = &mut *guard.inner;
 
     unsafe {
-        RootedObject::add_to_root_stack(&raw mut iterator.iterator, cx);
-        RootedValue::add_to_root_stack(&raw mut iterator.nextMethod, cx);
+        RootedObject::add_to_root_stack(&raw mut iterator.iterator, raw_cx);
+        RootedValue::add_to_root_stack(&raw mut iterator.nextMethod, raw_cx);
     }
 
     let success = unsafe {
@@ -1400,7 +1401,7 @@ where
     }
 
     let mut done = false;
-    rooted!(in(cx) let mut value = UndefinedValue());
+    rooted!(&in(cx.as_mut()) let mut value = UndefinedValue());
     loop {
         if !unsafe { iterator.next(value.handle_mut().into(), &mut done) } {
             return Err(ForOfIterationFailure::JSFailed);
@@ -1410,7 +1411,7 @@ where
             break;
         }
 
-        if callback(value.handle())?.is_break() {
+        if callback(cx, value.handle())?.is_break() {
             break;
         }
     }
