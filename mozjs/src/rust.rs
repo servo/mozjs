@@ -1401,7 +1401,7 @@ where
     }
 
     let mut done = false;
-    rooted!(in(raw_cx) let mut value = UndefinedValue());
+    rooted!(&in(cx.as_mut()) let mut value = UndefinedValue());
     loop {
         if !unsafe { iterator.next(value.handle_mut().into(), &mut done) } {
             return Err(ForOfIterationFailure::JSFailed);
