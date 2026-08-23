@@ -20,23 +20,19 @@ use std::sync::{Arc, Mutex, RwLock};
 
 use self::wrappers2::{
     BuildStackString, CaptureCurrentStack, CreateRootedIdVector, CreateRootedObjectVector,
-    JS_DefineFunctions, JS_DefineProperties, StackGCVectorStringAtIndex, StackGCVectorStringLength,
-    StackGCVectorValueAtIndex, StackGCVectorValueLength, ToInt32Slow, ToInt64Slow, ToNumberSlow,
-    ToStringSlow, ToUint16Slow, ToUint32Slow, ToUint64Slow,
+    JS_DefineFunctions, JS_DefineProperties, JS_WrapObject, JS_WrapValue,
+    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
+    StackGCVectorValueLength, ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow,
+    ToUint32Slow, ToUint64Slow,
 };
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
 use crate::default_heapsize;
 pub use crate::gc::*;
 use crate::glue::AppendToRootedObjectVector;
-use crate::glue::{
-    DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
-    PendingExceptionStackInfo,
-};
+use crate::glue::{DeleteCompileOptions, DeleteRootedObjectVector, DestroyRootedIdVector};
 use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuffer};
-use crate::glue::{
-    GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector,
-};
+use crate::glue::{GetIdVectorAddress, GetObjectVectorAddress, SliceRootedIdVector};
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
 use crate::jsapi::js;
@@ -46,7 +42,6 @@ use crate::jsapi::shadow::BaseShape;
 use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
-use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
 use crate::jsapi::StackFormat;
 use crate::jsapi::{already_AddRefed, jsid};
 use crate::jsapi::{BorrowedErrorReport, Rooted};
@@ -61,7 +56,7 @@ use crate::jsapi::{JS_DestroyContext, JS_ShutDown};
 use crate::jsapi::{JS_EnumerateStandardClasses, JS_GlobalObjectTraceHook};
 use crate::jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
 use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWait};
-use crate::jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue};
+use crate::jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
 use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
 use crate::jsapi::{RootedObject, RootedValue, ToWindowProxyIfWindowSlow};
@@ -540,15 +535,6 @@ impl CompileOptionsWrapper {
         assert!(!ptr.is_null());
         Self { ptr, filename }
     }
-    /// # Safety
-    /// `cx` must point to a non-null, valid [`JSContext`].
-    /// To create an instance from safe code, use [`Runtime::new_compile_options`].
-    #[deprecated(note = "Use CompileOptionsWrapper::new instead")]
-    pub unsafe fn new_raw(cx: *mut JSContext, filename: CString, line: u32) -> Self {
-        let ptr = NewCompileOptions(cx, filename.as_ptr(), line);
-        assert!(!ptr.is_null());
-        Self { ptr, filename }
-    }
 
     pub fn filename(&self) -> &str {
         self.filename.to_str().expect("Guaranteed by new")
@@ -974,7 +960,7 @@ pub unsafe fn try_to_outerize_object(mut rval: MutableHandleObject) {
 #[inline]
 pub unsafe fn maybe_wrap_object(cx: &mut crate::context::JSContext, mut obj: MutableHandleObject) {
     if get_object_realm(*obj) != get_context_realm(cx.raw_cx()) {
-        assert!(JS_WrapObject(cx.raw_cx(), obj.reborrow().into()));
+        assert!(JS_WrapObject(cx, obj.reborrow()));
     }
     try_to_outerize_object(obj);
 }
@@ -987,7 +973,7 @@ pub unsafe fn maybe_wrap_object_value(
     assert!(rval.is_object());
     let obj = rval.to_object();
     if get_object_realm(obj) != get_context_realm(cx.raw_cx()) {
-        assert!(JS_WrapValue(cx.raw_cx(), rval.into()));
+        assert!(JS_WrapValue(cx, rval));
     } else if is_dom_object(obj) {
         try_to_outerize(rval);
     }
@@ -1007,7 +993,7 @@ pub fn maybe_wrap_object_or_null_value(
 #[inline]
 pub fn maybe_wrap_value(cx: &mut crate::context::JSContext, rval: MutableHandleValue) {
     if rval.is_string() {
-        assert!(unsafe { JS_WrapValue(cx.raw_cx(), rval.into()) });
+        assert!(unsafe { JS_WrapValue(cx, rval) });
     } else if rval.is_object() {
         unsafe { maybe_wrap_object_value(cx, rval) };
     }
@@ -1046,22 +1032,6 @@ pub struct ScriptedCaller {
     pub filename: String,
     pub line: u32,
     pub col: u32,
-}
-
-#[deprecated(note = "Use describe_scripted_caller_safe instead")]
-pub unsafe fn describe_scripted_caller(cx: *mut JSContext) -> Result<ScriptedCaller, ()> {
-    let mut buf = [0; 1024];
-    let mut line = 0;
-    let mut col = 0;
-    if !DescribeScriptedCaller(cx, buf.as_mut_ptr(), buf.len(), &mut line, &mut col) {
-        return Err(());
-    }
-    let filename = CStr::from_ptr((&buf) as *const _ as *const _);
-    Ok(ScriptedCaller {
-        filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
-        line,
-        col,
-    })
 }
 
 pub fn describe_scripted_caller_safe(cx: &crate::context::JSContext) -> Result<ScriptedCaller, ()> {
@@ -1120,37 +1090,6 @@ pub fn error_info_from_exception_stack_safe(
         ) {
             return None;
         }
-    }
-
-    Some(ErrorInfo {
-        message,
-        filename,
-        line,
-        col,
-    })
-}
-
-#[deprecated(note = "Use error_info_from_exception_stack_safe instead")]
-pub unsafe fn error_info_from_exception_stack(
-    cx: *mut JSContext,
-    rval: RawMutableHandleValue,
-) -> Option<ErrorInfo> {
-    let mut message = String::new();
-    let mut filename = String::new();
-
-    let mut line = 0;
-    let mut col = 0;
-
-    if !PendingExceptionStackInfo(
-        cx,
-        Some(fill_string_callback),
-        &raw mut message as *mut c_void,
-        &raw mut filename as *mut c_void,
-        &mut line,
-        &mut col,
-        rval,
-    ) {
-        return None;
     }
 
     Some(ErrorInfo {
@@ -1439,161 +1378,6 @@ where
         report.owner_.remove_from_root_stack();
     }
     result
-}
-
-/// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments
-#[deprecated(note = "Use wrappers2 instead")]
-pub mod wrappers {
-    macro_rules! wrap {
-        // The invocation of @inner has the following form:
-        // @inner (input args) <> (accumulator) <> unparsed tokens
-        // when `unparsed tokens == \eps`, accumulator contains the final result
-
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: Handle, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandle, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleFunction , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleScript , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleSymbol , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleFunction , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleScript , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleSymbol , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: $type:ty, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg,) <> $($rest)*);
-        };
-        (@inner ($module:tt: $func_name:ident ($($args:tt)*) -> $outtype:ty) <> ($($argexprs:expr,)*) <> ) => {
-            #[inline]
-            pub unsafe fn $func_name($($args)*) -> $outtype {
-                $module::$func_name($($argexprs),*)
-            }
-        };
-        ($module:tt: pub fn $func_name:ident($($args:tt)*) -> $outtype:ty) => {
-            wrap!(@inner ($module: $func_name ($($args)*) -> $outtype) <> () <> $($args)* ,);
-        };
-        ($module:tt: pub fn $func_name:ident($($args:tt)*)) => {
-            wrap!($module: pub fn $func_name($($args)*) -> ());
-        }
-    }
-
-    use super::*;
-    use crate::glue;
-    use crate::glue::EncodedStringCallback;
-    use crate::glue::StringCallback;
-    use crate::jsapi;
-    use crate::jsapi::js::TempAllocPolicy;
-    use crate::jsapi::jsid;
-    use crate::jsapi::mozilla::Utf8Unit;
-    use crate::jsapi::BigInt;
-    use crate::jsapi::CallArgs;
-    use crate::jsapi::CloneDataPolicy;
-    use crate::jsapi::ColumnNumberOneOrigin;
-    use crate::jsapi::CompartmentTransplantCallback;
-    use crate::jsapi::EnvironmentChain;
-    use crate::jsapi::GenericMicroTask;
-    use crate::jsapi::JSONParseHandler;
-    use crate::jsapi::Latin1Char;
-    use crate::jsapi::PropertyKey;
-    use crate::jsapi::TaggedColumnNumberOneOrigin;
-    //use jsapi::DynamicImportStatus;
-    use crate::jsapi::BorrowedErrorReport;
-    use crate::jsapi::CollectDelazificationsResult;
-    use crate::jsapi::ESClass;
-    use crate::jsapi::ExceptionStackBehavior;
-    use crate::jsapi::ForOfIterator;
-    use crate::jsapi::ForOfIterator_NonIterableBehavior;
-    use crate::jsapi::HandleObjectVector;
-    use crate::jsapi::InstantiateOptions;
-    use crate::jsapi::JSClass;
-    use crate::jsapi::JSErrorReport;
-    use crate::jsapi::JSExnType;
-    use crate::jsapi::JSFunctionSpecWithHelp;
-    use crate::jsapi::JSJitInfo;
-    use crate::jsapi::JSMicroTask;
-    use crate::jsapi::JSONWriteCallback;
-    use crate::jsapi::JSPrincipals;
-    use crate::jsapi::JSPropertySpec;
-    use crate::jsapi::JSPropertySpec_Name;
-    use crate::jsapi::JSProtoKey;
-    use crate::jsapi::JSScript;
-    use crate::jsapi::JSStructuredCloneData;
-    use crate::jsapi::JSType;
-    use crate::jsapi::LoadModuleRejectedCallback;
-    use crate::jsapi::LoadModuleResolvedCallback;
-    use crate::jsapi::ModuleErrorBehaviour;
-    use crate::jsapi::ModuleType;
-    use crate::jsapi::MutableHandleIdVector;
-    use crate::jsapi::PromiseState;
-    use crate::jsapi::PromiseUserInputEventHandlingState;
-    use crate::jsapi::ReadOnlyCompileOptions;
-    use crate::jsapi::Realm;
-    use crate::jsapi::RefPtr;
-    use crate::jsapi::RegExpFlags;
-    use crate::jsapi::ScriptEnvironmentPreparer_Closure;
-    use crate::jsapi::SourceText;
-    use crate::jsapi::StackCapture;
-    use crate::jsapi::Stencil;
-    use crate::jsapi::StructuredCloneScope;
-    use crate::jsapi::Symbol;
-    use crate::jsapi::SymbolCode;
-    use crate::jsapi::TranscodeBuffer;
-    use crate::jsapi::TwoByteChars;
-    use crate::jsapi::UniqueChars;
-    use crate::jsapi::Value;
-    use crate::jsapi::WasmModule;
-    use crate::jsapi::{ElementAdder, IsArrayAnswer, PropertyDescriptor};
-    use crate::jsapi::{JSContext, JSFunction, JSNative, JSObject, JSString};
-    use crate::jsapi::{
-        JSStructuredCloneCallbacks, JSStructuredCloneReader, JSStructuredCloneWriter,
-    };
-    use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
-    use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    include!("jsapi_wrappers.in.rs");
-    include!("glue_wrappers.in.rs");
 }
 
 /// Wrappers for JSAPI/glue methods that accept lifetimed [crate::rust::Handle] and [crate::rust::MutableHandle] arguments and [crate::context::JSContext]
