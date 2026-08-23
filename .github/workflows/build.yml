@@ -242,10 +242,13 @@ jobs:
           targets: ${{ matrix.target }}
           components: "rustfmt"
       - name: Build (arch ${{ matrix.target }} )
-        env:
+        env: &build_ohos_env
           OHOS_SDK_NATIVE: ${{ steps.setup_sdk.outputs.ohos_sdk_native }}
+          # Use a prebuilt version of clang-19 for ohos, instead of the SDK,
+          # since the SDK clang is too old.
+          CARGO_OHOS_DOWNLOAD_PREBUILT: "19"
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} --download-prebuilt=19
+          cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }}
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
@@ -253,7 +256,8 @@ jobs:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
       - name: Test linking (build unit-tests)
-        run: cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} --tests --download-prebuilt=19
+        env: *build_ohos_env
+        run: cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }} --tests
 
   wasi:
     name: wasm32-${{ matrix.target }}
