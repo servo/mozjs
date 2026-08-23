@@ -1034,7 +1034,7 @@ pub struct ScriptedCaller {
     pub col: u32,
 }
 
-pub fn describe_scripted_caller_safe(cx: &crate::context::JSContext) -> Result<ScriptedCaller, ()> {
+pub fn describe_scripted_caller(cx: &crate::context::JSContext) -> Result<ScriptedCaller, ()> {
     let mut buf = [0; 1024];
     let mut line = 0;
     let mut col = 0;
@@ -1068,7 +1068,7 @@ unsafe extern "C" fn fill_string_callback(ptr: *const c_char, len: usize, target
 
 /// Retrieve error info from the pending exception stack, by clearing it.
 /// Return None if there isn't one or if it is a warning.
-pub fn error_info_from_exception_stack_safe(
+pub fn error_info_from_exception_stack(
     cx: &mut crate::context::JSContext,
     rval: MutableHandleValue,
 ) -> Option<ErrorInfo> {

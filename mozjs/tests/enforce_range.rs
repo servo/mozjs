@@ -66,7 +66,7 @@ impl SM {
             )
             .unwrap();
             assert!(!JS_IsExceptionPending(cx));
-            match <T as FromJSValConvertible>::safe_from_jsval(
+            match <T as FromJSValConvertible>::from_jsval(
                 cx,
                 rval.handle(),
                 ConversionBehavior::EnforceRange,

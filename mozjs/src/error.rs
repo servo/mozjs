@@ -65,16 +65,16 @@ fn throw_js_error(cx: &mut JSContext, error: &CStr, error_number: u32) {
 }
 
 /// Throw a `TypeError` with the given message.
-pub fn throw_type_error_safe(cx: &mut JSContext, error: &CStr) {
+pub fn throw_type_error(cx: &mut JSContext, error: &CStr) {
     throw_js_error(cx, error, JSExnType::JSEXN_TYPEERR as u32);
 }
 
 /// Throw a `RangeError` with the given message.
-pub fn throw_range_error_safe(cx: &mut JSContext, error: &CStr) {
+pub fn throw_range_error(cx: &mut JSContext, error: &CStr) {
     throw_js_error(cx, error, JSExnType::JSEXN_RANGEERR as u32);
 }
 
 /// Throw an `InternalError` with the given message.
-pub fn throw_internal_error_safe(cx: &mut JSContext, error: &CStr) {
+pub fn throw_internal_error(cx: &mut JSContext, error: &CStr) {
     throw_js_error(cx, error, JSExnType::JSEXN_INTERNALERR as u32);
 }
