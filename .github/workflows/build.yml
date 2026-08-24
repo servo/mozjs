@@ -217,6 +217,11 @@ jobs:
         with:
           path: ./target/libmozjs-${{ matrix.target }}.tar.gz
           name: libmozjs-${{ matrix.target }}.tar.gz
+      - name: Test linking
+        env:
+          ANDROID_NDK_ROOT: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          ./android-build cargo +${{ steps.toolchain.outputs.name }} build --target="${{ matrix.target }}" --tests
 
   ohos:
     name: "OpenHarmony"
