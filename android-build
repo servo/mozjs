@@ -1,4 +1,4 @@
-#!/bin/env python
+#!/usr/bin/env python3
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -7,7 +7,8 @@ import os
 import platform
 import shutil
 import subprocess
-import sys 
+import sys
+from pathlib import Path
 
 from typing import Dict, Optional
 
@@ -16,7 +17,7 @@ SUPPORTED_NDK_VERSION = '28'
 API_LEVEL = '30'
 
 
-def get_host_string() -> str:
+def get_prebuilt_folder_name() -> str:
     os_type = platform.system().lower()
     if os_type not in ["linux", "darwin"]:
         raise Exception("Android cross builds are only supported on Linux and macOS.")
@@ -27,23 +28,28 @@ def get_host_string() -> str:
         host_suffix = "x86"
     elif cpu_type in ["x86_64", "x86-64", "x64", "amd64"]:
         host_suffix = "x86_64"
+    # There are no arm64 prebuilt versions of LLVM available, so
+    # we need to force x86_64 (which run via rosetta)
+    if os_type == "darwin":
+        host_suffix = "x86_64"
     return os_type + "-" + host_suffix
-
 
 def check_output(*args, **kwargs) -> str:
     return subprocess.check_output(*args, **kwargs).decode("utf-8").strip()
 
 
-def get_target_from_args() -> Optional[str]:
+def get_target_from_args() -> str:
     for arg in sys.argv:
         if arg.startswith("--target="):
             return arg.replace("--target=", "")
-    return None 
+    print("Error: --target not found in args. Note: You must use `--target=<target>` syntax")
+    sys.exit(1)
 
 
-def set_toolchain_binaries_in_env(toolchain_name: str, toolchain_dir: str, env: Dict[str, str]):
-    cc = os.path.join(toolchain_dir, "bin", "clang")
-    cxx = os.path.join(toolchain_dir, "bin", "clang++")
+def set_toolchain_binaries_in_env(toolchain_name: str, toolchain_dir: str, target_triple: str, env: Dict[str, str]):
+    cc = os.path.join(toolchain_dir, "bin", f"{toolchain_name}-clang")
+    cxx = os.path.join(toolchain_dir, "bin", f"{toolchain_name}-clang++")
+    linker = os.path.join(toolchain_dir, "bin", f"{toolchain_name}-clang++")
     ar = check_output([cc, "--print-prog-name=llvm-ar"])
     objcopy = check_output([cc, "--print-prog-name=llvm-objcopy"])
     ranlib = check_output([cc, "--print-prog-name=llvm-ranlib"])
@@ -54,6 +60,9 @@ def set_toolchain_binaries_in_env(toolchain_name: str, toolchain_dir: str, env: 
 
     assert(host_cc)
     assert(host_cxx)
+
+    target_triple_underscore = target_triple.upper().replace('-', '_')
+    env[f'CARGO_TARGET_{target_triple_underscore}_LINKER'] = linker
 
     env["AR"] = ar
     env["CC"] = cc
@@ -93,8 +102,8 @@ def create_environment_for_build() -> Dict[str, str]:
             )
 
     # Add the toolchain to the path.
-    host_string = get_host_string()
-    toolchain_dir = os.path.join(ndk_home_dir, "toolchains", "llvm", "prebuilt", host_string)
+    prebuilt_host_arch = get_prebuilt_folder_name()
+    toolchain_dir = os.path.join(ndk_home_dir, "toolchains", "llvm", "prebuilt", prebuilt_host_arch)
     env['PATH'] = os.pathsep.join([os.path.join(toolchain_dir, "bin"), env["PATH"]])
 
     toolchains_for_targets = {
@@ -102,8 +111,9 @@ def create_environment_for_build() -> Dict[str, str]:
         "aarch64-linux-android": "aarch64-linux-android",
         "x86_64-linux-android": "x86_64-linux-android",
     }
-    toolchain_name = toolchains_for_targets[get_target_from_args()] + API_LEVEL
-    set_toolchain_binaries_in_env(toolchain_name, toolchain_dir, env)
+    target_triple = get_target_from_args()
+    toolchain_name = toolchains_for_targets[target_triple] + API_LEVEL
+    set_toolchain_binaries_in_env(toolchain_name, toolchain_dir, target_triple, env)
 
     # This environment variable is only used by the mozjs build.
     env["ANDROID_API_LEVEL"] = API_LEVEL
