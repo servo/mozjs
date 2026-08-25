@@ -222,6 +222,8 @@ def publish_package(
     command = ["cargo", "publish", "--manifest-path", package.manifest_path]
     if args.no_verify:
         command.append("--no-verify")
+    if args.dry_run:
+        command.append("--dry-run")
 
     log(f"publishing {package.name} {package.version}")
     subprocess.run(command, cwd=WORKSPACE_ROOT, check=True)
@@ -242,6 +244,8 @@ def publish_packages(
             continue
 
         publish_package(args, package)
+        if args.dry_run:
+            continue
         duration_seconds = SLEEP_AFTER_PUBLISH_SECONDS
         log(
             f"published {package.name} {package.version}. Waiting for {duration_seconds}s"
@@ -273,9 +277,6 @@ def main() -> int:
             ", ".join(package.dependencies) if package.dependencies else "none"
         )
         log(f"  {package.name} {package.version} (deps: {dependency_list})")
-
-    if args.dry_run:
-        return 0
 
     timed_out = publish_packages(args, ordered_packages, start_time)
     if timed_out and args.fail_on_timeout:
