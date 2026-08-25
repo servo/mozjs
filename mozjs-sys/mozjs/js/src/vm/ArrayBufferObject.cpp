@@ -3209,6 +3209,19 @@ JS_PUBLIC_API size_t JS::GetArrayBufferByteLength(JSObject* obj) {
   return aobj ? aobj->byteLength() : 0;
 }
 
+JS_PUBLIC_API bool JS::GetResizableArrayBufferMaxByteLength(
+    JSObject* obj, size_t* maxByteLength) {
+  MOZ_ASSERT(maxByteLength);
+
+  auto* buffer = obj->maybeUnwrapIf<ResizableArrayBufferObject>();
+  if (!buffer) {
+    return false;
+  }
+
+  *maxByteLength = buffer->maxByteLength();
+  return true;
+}
+
 JS_PUBLIC_API uint8_t* JS::GetArrayBufferData(JSObject* obj,
                                               bool* isSharedMemory,
                                               const JS::AutoRequireNoGC&) {

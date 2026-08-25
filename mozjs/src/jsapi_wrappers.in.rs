@@ -40,6 +40,8 @@ wrap!(jsapi: pub fn Construct1(cx: *mut JSContext, fun: Handle<Value>, args: *co
 wrap!(jsapi: pub fn ToGetterId(cx: *mut JSContext, id: Handle<PropertyKey>, getterId: MutableHandle<PropertyKey>) -> bool);
 wrap!(jsapi: pub fn ToSetterId(cx: *mut JSContext, id: Handle<PropertyKey>, setterId: MutableHandle<PropertyKey>) -> bool);
 wrap!(jsapi: pub fn ExceptionStackOrNull(obj: HandleObject) -> *mut JSObject);
+wrap!(jsapi: pub fn GetNativeErrorStackString(cx: *mut JSContext, error: HandleObject, result: MutableHandleString) -> bool);
+wrap!(jsapi: pub fn SetNativeErrorStackString(cx: *mut JSContext, error: HandleObject, stack: HandleString) -> bool);
 wrap!(jsapi: pub fn MapSize(cx: *mut JSContext, obj: HandleObject) -> u32);
 wrap!(jsapi: pub fn MapGet(cx: *mut JSContext, obj: HandleObject, key: HandleValue, rval: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn MapHas(cx: *mut JSContext, obj: HandleObject, key: HandleValue, rval: *mut bool) -> bool);
@@ -168,6 +170,7 @@ wrap!(jsapi: pub fn FinishCollectingDelazifications1(cx: *mut JSContext, module:
 wrap!(jsapi: pub fn FinishCollectingDelazifications2(cx: *mut JSContext, script: Handle<*mut JSScript>, stencilOut: *mut *mut Stencil) -> bool);
 wrap!(jsapi: pub fn AbortCollectingDelazifications(script: Handle<*mut JSScript>));
 wrap!(jsapi: pub fn AbortCollectingDelazifications1(module: HandleObject));
+wrap!(jsapi: pub fn CreateResizableArrayBufferView(cx: *mut JSContext, buffer: HandleObject, type_: Scalar::Type, byteOffset: usize, length: usize, lengthTracking: bool, result: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn ForceLexicalInitialization(cx: *mut JSContext, obj: HandleObject) -> bool);
 wrap!(jsapi: pub fn JS_CallFunctionValue(cx: *mut JSContext, obj: HandleObject, fval: Handle<Value>, args: *const HandleValueArray, rval: MutableHandle<Value>) -> bool);
 wrap!(jsapi: pub fn JS_CallFunction(cx: *mut JSContext, obj: HandleObject, fun: Handle<*mut JSFunction>, args: *const HandleValueArray, rval: MutableHandle<Value>) -> bool);
@@ -364,4 +367,5 @@ wrap!(jsapi: pub fn JS_GetOwnUCPropertyDescriptor(cx: *mut JSContext, obj: Handl
 wrap!(jsapi: pub fn JS_GetPropertyDescriptorById(cx: *mut JSContext, obj: HandleObject, id: HandleId, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_GetUCPropertyDescriptor(cx: *mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn CreateError(cx: *mut JSContext, type_: JSExnType, stack: HandleObject, fileName: HandleString, lineNumber: u32, columnNumber: u32, report: *mut JSErrorReport, message: HandleString, cause: HandleValue, rval: MutableHandleValue) -> bool);
+wrap!(jsapi: pub fn CreateErrorWithOptionalCause(cx: *mut JSContext, type_: JSExnType, stack: HandleObject, fileName: HandleString, lineNumber: u32, columnNumber: u32, report: *mut JSErrorReport, message: HandleString, cause: HandleValue, hasCause: bool, rval: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn GetExceptionCause(exc: *mut JSObject, dest: MutableHandleValue));

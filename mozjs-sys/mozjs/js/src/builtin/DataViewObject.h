@@ -192,12 +192,12 @@ class FixedLengthDataViewObject : public DataViewObject {
 class ResizableDataViewObject : public DataViewObject {
   friend class DataViewObject;
 
+ public:
   static ResizableDataViewObject* create(
       JSContext* cx, size_t byteOffset, size_t byteLength,
       AutoLength autoLength, Handle<ArrayBufferObjectMaybeShared*> arrayBuffer,
-      HandleObject proto);
+      HandleObject proto, bool allowOutOfBounds = false);
 
- public:
   static const uint8_t RESERVED_SLOTS = RESIZABLE_RESERVED_SLOTS;
 
   static const JSClass class_;

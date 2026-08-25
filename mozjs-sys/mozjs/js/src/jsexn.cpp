@@ -722,6 +722,11 @@ JSObject* js::CopyErrorObject(JSContext* cx, Handle<ErrorObject*> err) {
   if (!cx->compartment()->wrap(cx, &fileName)) {
     return nullptr;
   }
+  RootedString stackStringOverride(cx, err->stackStringOverride());
+  if (stackStringOverride &&
+      !cx->compartment()->wrap(cx, &stackStringOverride)) {
+    return nullptr;
+  }
   RootedObject stack(cx, err->stack());
   if (!cx->compartment()->wrap(cx, &stack)) {
     return nullptr;
@@ -745,9 +750,17 @@ JSObject* js::CopyErrorObject(JSContext* cx, Handle<ErrorObject*> err) {
   JSExnType errorType = err->type();
 
   // Create the Error object.
-  return ErrorObject::create(cx, errorType, stack, fileName, sourceId,
-                             lineNumber, columnNumber, std::move(copyReport),
-                             message, cause);
+  Rooted<ErrorObject*> copy(
+      cx, ErrorObject::create(cx, errorType, stack, fileName, sourceId,
+                              lineNumber, columnNumber, std::move(copyReport),
+                              message, cause));
+  if (!copy) {
+    return nullptr;
+  }
+  if (stackStringOverride) {
+    copy->setStackStringOverride(stackStringOverride);
+  }
+  return copy;
 }
 
 JS_PUBLIC_API bool JS::CreateError(JSContext* cx, JSExnType type,

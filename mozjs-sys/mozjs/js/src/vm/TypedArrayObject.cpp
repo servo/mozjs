@@ -1042,7 +1042,7 @@ class ResizableTypedArrayObjectTemplate
   static ResizableTypedArrayObject* makeInstance(
       JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
       size_t byteOffset, size_t len, AutoLength autoLength,
-      HandleObject proto) {
+      HandleObject proto, bool allowOutOfBounds = false) {
     MOZ_ASSERT(buffer);
     MOZ_ASSERT(buffer->isResizable());
     MOZ_ASSERT(!buffer->isDetached());
@@ -1060,7 +1060,8 @@ class ResizableTypedArrayObjectTemplate
       obj = newBuiltinClassInstance(cx, allocKind, gc::Heap::Default);
     }
     if (!obj || !obj->initResizable(cx, buffer, byteOffset, len,
-                                    BYTES_PER_ELEMENT, autoLength)) {
+                                    BYTES_PER_ELEMENT, autoLength,
+                                    allowOutOfBounds)) {
       return nullptr;
     }
 
@@ -5688,6 +5689,106 @@ ArraySortResult js::TypedArraySortFromJit(
 }
 
 /* JS Public API */
+
+JS_PUBLIC_API bool JS::CreateResizableArrayBufferView(
+    JSContext* cx, HandleObject bufferObject, Scalar::Type type,
+    size_t byteOffset, size_t length, bool lengthTracking,
+    MutableHandleObject result) {
+  AssertHeapIsIdle();
+  CHECK_THREAD(cx);
+  MOZ_RELEASE_ASSERT(cx->realm());
+  cx->check(bufferObject);
+  result.set(nullptr);
+
+  if (!bufferObject->is<ResizableArrayBufferObject>()) {
+    JS_ReportErrorASCII(cx, "Resizable ArrayBuffer object required");
+    return false;
+  }
+
+  Rooted<ArrayBufferObjectMaybeShared*> buffer(
+      cx, &bufferObject->as<ResizableArrayBufferObject>());
+  auto* resizableBuffer = &buffer->as<ResizableArrayBufferObject>();
+  if (resizableBuffer->isDetached()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_TYPED_ARRAY_DETACHED);
+    return false;
+  }
+  if (resizableBuffer->hasDefinedDetachKey()) {
+    JS_ReportErrorASCII(cx, "Ordinary resizable ArrayBuffer object required");
+    return false;
+  }
+  if (lengthTracking && length != 0) {
+    JS_ReportErrorASCII(cx, "Invalid length-tracking view length");
+    return false;
+  }
+
+  bool isDataView = type == Scalar::MaxTypedArrayViewType;
+  size_t bytesPerElement = 0;
+  switch (type) {
+    case Scalar::MaxTypedArrayViewType:
+      bytesPerElement = 1;
+      break;
+#define SET_BYTES_PER_ELEMENT(ExternalType, NativeType, Name) \
+  case Scalar::Name:                                         \
+    bytesPerElement = sizeof(NativeType);                    \
+    break;
+      JS_FOR_EACH_TYPED_ARRAY(SET_BYTES_PER_ELEMENT)
+#undef SET_BYTES_PER_ELEMENT
+    case Scalar::Int64:
+    case Scalar::Simd128:
+      JS_ReportErrorASCII(cx, "Invalid ArrayBuffer view type");
+      return false;
+  }
+
+  if (!isDataView && byteOffset % bytesPerElement != 0) {
+    JS_ReportErrorASCII(cx, "Misaligned typed array byte offset");
+    return false;
+  }
+  mozilla::CheckedInt<size_t> viewByteLength(length);
+  viewByteLength *= bytesPerElement;
+  mozilla::CheckedInt<size_t> viewEnd(byteOffset);
+  viewEnd += viewByteLength;
+  if (!viewByteLength.isValid() || !viewEnd.isValid() ||
+      viewEnd.value() > resizableBuffer->maxByteLength()) {
+    JS_ReportErrorASCII(cx, "ArrayBuffer view exceeds maximum byte length");
+    return false;
+  }
+
+  auto autoLength = lengthTracking ? ArrayBufferViewObject::AutoLength::Yes
+                                   : ArrayBufferViewObject::AutoLength::No;
+  RootedObject object(cx);
+  if (isDataView) {
+    RootedObject proto(
+        cx, GlobalObject::getOrCreatePrototype(cx, JSProto_DataView));
+    if (!proto) {
+      return false;
+    }
+    object = ResizableDataViewObject::create(
+        cx, byteOffset, length, autoLength, buffer, proto,
+        /* allowOutOfBounds = */ true);
+  } else {
+    RootedObject noProto(cx);
+    switch (type) {
+#define CREATE_RESIZABLE_TYPED_ARRAY(ExternalType, NativeType, Name) \
+  case Scalar::Name:                                                \
+    object = ResizableTypedArrayObjectTemplate<NativeType>::        \
+        makeInstance(cx, buffer, byteOffset, length, autoLength,     \
+                     noProto, /* allowOutOfBounds = */ true);        \
+    break;
+      JS_FOR_EACH_TYPED_ARRAY(CREATE_RESIZABLE_TYPED_ARRAY)
+#undef CREATE_RESIZABLE_TYPED_ARRAY
+      case Scalar::MaxTypedArrayViewType:
+      case Scalar::Int64:
+      case Scalar::Simd128:
+        MOZ_CRASH("invalid typed array type");
+    }
+  }
+  if (!object) {
+    return false;
+  }
+  result.set(object);
+  return true;
+}
 
 #define IMPL_TYPED_ARRAY_JSAPI_CONSTRUCTORS(ExternalType, NativeType, Name)   \
   JS_PUBLIC_API JSObject* JS_New##Name##Array(JSContext* cx,                  \

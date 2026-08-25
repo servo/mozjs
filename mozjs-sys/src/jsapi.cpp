@@ -17,6 +17,7 @@
 #include "js/Date.h"
 #include "js/EnvironmentChain.h"
 #include "js/Equality.h"
+#include "js/Exception.h"
 #include "js/ForOfIterator.h"
 #include "js/Id.h"
 #include "js/Initialization.h"
@@ -112,6 +113,8 @@ uint16_t GetLinearStringCharAt(JSLinearString* s, size_t idx) {
 JSLinearString* AtomToLinearString(JSAtom* atom) {
   return JS::AtomToLinearString(atom);
 }
+
+bool IsProxyObject(const JSObject* obj) { return js::IsProxy(obj); }
 
 // Wrappers around UniquePtr functions
 
@@ -320,6 +323,21 @@ bool CreateError(JSContext* cx, JSExnType type, JS::HandleObject stack,
       cx, type, stack, fileName, lineNumber,
       JS::ColumnNumberOneOrigin(columnNumber), report, message,
       JS::Rooted<mozilla::Maybe<JS::Value>>(cx, mozilla::ToMaybe(&cause)),
+      rval);
+}
+
+bool CreateErrorWithOptionalCause(
+    JSContext* cx, JSExnType type, JS::HandleObject stack,
+    JS::HandleString fileName, uint32_t lineNumber, uint32_t columnNumber,
+    JSErrorReport* report, JS::HandleString message, JS::HandleValue cause,
+    bool hasCause, JS::MutableHandleValue rval) {
+  JS::Rooted<mozilla::Maybe<JS::Value>> maybeCause(cx, mozilla::Nothing());
+  if (hasCause) {
+    maybeCause = mozilla::Some(cause.get());
+  }
+  return JS::CreateError(
+      cx, type, stack, fileName, lineNumber,
+      JS::ColumnNumberOneOrigin(columnNumber), report, message, maybeCause,
       rval);
 }
 

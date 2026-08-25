@@ -135,6 +135,8 @@ wrap!(jsapi: pub fn GetPendingExceptionStack(cx: &mut JSContext, exceptionStack:
 wrap!(jsapi: pub fn StealPendingExceptionStack(cx: &mut JSContext, exceptionStack: *mut ExceptionStack) -> bool);
 wrap!(jsapi: pub fn SetPendingExceptionStack(cx: &JSContext, exceptionStack: *const ExceptionStack));
 wrap!(jsapi: pub fn ExceptionStackOrNull(obj: HandleObject) -> *mut JSObject);
+wrap!(jsapi: pub fn GetNativeErrorStackString(cx: &mut JSContext, error: HandleObject, result: MutableHandleString) -> bool);
+wrap!(jsapi: pub fn SetNativeErrorStackString(cx: &mut JSContext, error: HandleObject, stack: HandleString) -> bool);
 wrap!(jsapi: pub fn CurrentGlobalOrNull(cx: &JSContext) -> *mut JSObject);
 wrap!(jsapi: pub fn CurrentGlobal(cx: &JSContext) -> *const *mut JSObject);
 wrap!(jsapi: pub fn NewMapObject(cx: &mut JSContext) -> *mut JSObject);
@@ -341,6 +343,7 @@ wrap!(jsapi: pub fn FinishCollectingDelazifications1(cx: &mut JSContext, module:
 wrap!(jsapi: pub fn FinishCollectingDelazifications2(cx: &JSContext, script: Handle<*mut JSScript>, stencilOut: *mut *mut Stencil) -> bool);
 wrap!(jsapi: pub fn AbortCollectingDelazifications(script: Handle<*mut JSScript>));
 wrap!(jsapi: pub fn AbortCollectingDelazifications1(module: Handle<*mut JSObject>));
+wrap!(jsapi: pub fn CreateResizableArrayBufferView(cx: &mut JSContext, buffer: HandleObject, type_: Scalar::Type, byteOffset: usize, length: usize, lengthTracking: bool, result: MutableHandleObject) -> bool);
 wrap!(jsapi: pub fn EnsureNonInlineArrayBufferOrView(cx: &mut JSContext, obj: *mut JSObject) -> bool);
 wrap!(jsapi: pub fn ForceLexicalInitialization(cx: &JSContext, obj: HandleObject) -> bool);
 wrap!(jsapi: pub fn JS_ReportOutOfMemory(cx: &JSContext));
@@ -662,5 +665,6 @@ wrap!(jsapi: pub fn JS_GetOwnUCPropertyDescriptor(cx: &mut JSContext, obj: Handl
 wrap!(jsapi: pub fn JS_GetPropertyDescriptorById(cx: &mut JSContext, obj: HandleObject, id: HandleId, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn JS_GetUCPropertyDescriptor(cx: &mut JSContext, obj: HandleObject, name: *const u16, namelen: usize, desc: MutableHandle<PropertyDescriptor>, holder: MutableHandleObject, isNone: *mut bool) -> bool);
 wrap!(jsapi: pub fn CreateError(cx: &mut JSContext, type_: JSExnType, stack: HandleObject, fileName: HandleString, lineNumber: u32, columnNumber: u32, report: *mut JSErrorReport, message: HandleString, cause: HandleValue, rval: MutableHandleValue) -> bool);
+wrap!(jsapi: pub fn CreateErrorWithOptionalCause(cx: &mut JSContext, type_: JSExnType, stack: HandleObject, fileName: HandleString, lineNumber: u32, columnNumber: u32, report: *mut JSErrorReport, message: HandleString, cause: HandleValue, hasCause: bool, rval: MutableHandleValue) -> bool);
 wrap!(jsapi: pub fn GetExceptionCause(exc: *mut JSObject, dest: MutableHandleValue));
 wrap!(jsapi: pub fn NewEnvironmentChain(cx: &mut JSContext, supportUnscopables: SupportUnscopables) -> *mut EnvironmentChain);
