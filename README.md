@@ -6,8 +6,8 @@ that are battle-tested in [Servo](https://servo.org/), split in two crates:
 - `mozjs-sys`:  SpiderMonkey and low-level Rust bindings to its C++ API.
 - `mozjs`: Higher-level bindings to the SpiderMonkey API.
 
-Mozjs is currently tracking SpiderMonkey on [mozilla-esr140](https://searchfox.org/mozilla-esr140/source/) branch
-(currently version 140.5).
+Mozjs is currently tracking SpiderMonkey on [mozilla-esr153](https://searchfox.org/mozilla-esr153/source/) branch
+(currently version 153.0).
 
 ## Building from Pre-built Archive
 
@@ -148,8 +148,8 @@ mozjs = { path = "../mozjs/mozjs" }
 
 In order to upgrade to a new version of SpiderMonkey:
 
-1. Find the mozilla-esr140 commit for the desired version of SpiderMonkey, at
-   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-esr140&filter-searchStr=spidermonkey%20pkg>.
+1. Find the mozilla-esr153 commit for the desired version of SpiderMonkey, at
+   <https://treeherder.mozilla.org/#/jobs?repo=mozilla-esr153&filter-searchStr=spidermonkey%20pkg>.
    You are looking for an SM(pkg) tagged with FIREFOX_RELEASE.
    Take a note of the commit number to the left (a hex number such as ac4fbb7aaca0).
 
@@ -157,7 +157,7 @@ In order to upgrade to a new version of SpiderMonkey:
    commit, including an artefact uploaded link, with a name of the form
    mozjs-*version*.tar.xz. Download it and save it locally.
 
-3. Go to <https://treeherder.mozilla.org/jobs?repo=mozilla-esr140&revision=${COMMIT}> and download artifacts `allFUnctions.txt.gz` and `gcFunctions.txt.gz` from job Linux debug > H
+3. Go to <https://treeherder.mozilla.org/jobs?repo=mozilla-esr153&revision=${COMMIT}> and download artifacts `allFUnctions.txt.gz` and `gcFunctions.txt.gz` from job Linux debug > H
 
 4. Create a new release on github with all files you downloaded. Name the new tag `mozjs-source-${COMMIT}`.
 
