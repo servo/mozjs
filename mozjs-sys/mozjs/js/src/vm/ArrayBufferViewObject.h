@@ -101,7 +101,8 @@ class ArrayBufferViewObject : public NativeObject {
                                    ArrayBufferObjectMaybeShared* buffer,
                                    size_t byteOffset, size_t length,
                                    uint32_t bytesPerElement,
-                                   AutoLength autoLength);
+                                   AutoLength autoLength,
+                                   bool allowOutOfBounds = false);
 
   static ArrayBufferObjectMaybeShared* ensureBufferObject(
       JSContext* cx, Handle<ArrayBufferViewObject*> obj);

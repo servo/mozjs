@@ -185,6 +185,18 @@ extern JS_PUBLIC_API void SetPendingExceptionStack(
  */
 extern JS_PUBLIC_API JSObject* ExceptionStackOrNull(JS::HandleObject obj);
 
+/** Return a native Error object's stack string in the current realm. */
+extern JS_PUBLIC_API bool GetNativeErrorStackString(
+    JSContext* cx, HandleObject error, MutableHandleString result);
+
+/**
+ * Set a native Error object's stack string without defining an own "stack"
+ * property.
+ */
+extern JS_PUBLIC_API bool SetNativeErrorStackString(JSContext* cx,
+                                                    HandleObject error,
+                                                    HandleString stack);
+
 /**
  * If the given object is an exception object, return the error cause for that
  * exception, if any, or mozilla::Nothing.

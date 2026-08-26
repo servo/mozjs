@@ -14,6 +14,7 @@
 
 #include <utility>
 
+#include "jsapi.h"
 #include "jsexn.h"
 #include "jspubtd.h"
 #include "NamespaceImports.h"
@@ -27,6 +28,7 @@
 #include "js/ColumnNumber.h"  // JS::ColumnNumberOneOrigin
 #include "js/Conversions.h"
 #include "js/ErrorReport.h"
+#include "js/Exception.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/PropertySpec.h"
@@ -630,6 +632,7 @@ bool js::ErrorObject::init(JSContext* cx, Handle<ErrorObject*> obj,
     obj->initReservedSlot(CAUSE_SLOT, MagicValue(JS_ERROR_WITHOUT_CAUSE));
   }
   obj->initReservedSlot(SOURCEID_SLOT, Int32Value(sourceId));
+  obj->initReservedSlot(STACK_STRING_OVERRIDE_SLOT, UndefinedValue());
   if (obj->mightBeWasmTrap()) {
     MOZ_ASSERT(JSCLASS_RESERVED_SLOTS(obj->getClass()) > WASM_TRAP_SLOT);
     obj->initReservedSlot(WASM_TRAP_SLOT, BooleanValue(false));
@@ -788,6 +791,70 @@ static bool HasErrorDataSlot(JSContext* cx, HandleObject obj) {
   return false;
 }
 
+JS_PUBLIC_API bool JS::GetNativeErrorStackString(
+    JSContext* cx, HandleObject error, MutableHandleString result) {
+  js::AssertHeapIsIdle();
+  CHECK_THREAD(cx);
+  MOZ_RELEASE_ASSERT(cx->realm());
+  result.set(nullptr);
+
+  RootedObject unwrapped(cx, js::CheckedUnwrapStatic(error));
+  if (!unwrapped || !unwrapped->is<js::ErrorObject>()) {
+    JS_ReportErrorASCII(cx, "Expected a native Error object");
+    return false;
+  }
+
+  Rooted<js::ErrorObject*> errorObject(
+      cx, &unwrapped->as<js::ErrorObject>());
+  RootedString stackString(cx, errorObject->stackStringOverride());
+  if (stackString) {
+    RootedValue stackValue(cx, StringValue(stackString));
+    if (!JS_WrapValue(cx, &stackValue)) {
+      return false;
+    }
+    stackString = stackValue.toString();
+  } else {
+    RootedObject stack(cx, errorObject->stack());
+    if (!JS::BuildStackString(cx, errorObject->realm()->principals(), stack,
+                              &stackString)) {
+      return false;
+    }
+  }
+
+  result.set(stackString);
+  return true;
+}
+
+JS_PUBLIC_API bool JS::SetNativeErrorStackString(JSContext* cx,
+                                                 HandleObject error,
+                                                 HandleString stack) {
+  js::AssertHeapIsIdle();
+  CHECK_THREAD(cx);
+  MOZ_RELEASE_ASSERT(cx->realm());
+
+  if (!stack) {
+    JS_ReportErrorASCII(cx, "Expected an Error stack string");
+    return false;
+  }
+
+  RootedObject unwrapped(cx, js::CheckedUnwrapStatic(error));
+  if (!unwrapped || !unwrapped->is<js::ErrorObject>()) {
+    JS_ReportErrorASCII(cx, "Expected a native Error object");
+    return false;
+  }
+
+  RootedValue stackValue(cx, StringValue(stack));
+  {
+    JSAutoRealm ar(cx, unwrapped);
+    if (!JS_WrapValue(cx, &stackValue)) {
+      return false;
+    }
+    unwrapped->as<js::ErrorObject>().setStackStringOverride(
+        stackValue.toString());
+  }
+  return true;
+}
+
 /* static */
 bool js::ErrorObject::getStack(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -817,13 +884,8 @@ bool js::ErrorObject::getStack_impl(JSContext* cx, const CallArgs& args) {
     return true;
   }
 
-  // Do frame filtering based on the ErrorObject's principals. This ensures we
-  // don't see chrome frames when chrome code accesses .stack over Xrays.
-  JSPrincipals* principals = obj->as<ErrorObject>().realm()->principals();
-
-  RootedObject savedFrameObj(cx, obj->as<ErrorObject>().stack());
   RootedString stackString(cx);
-  if (!BuildStackString(cx, principals, savedFrameObj, &stackString)) {
+  if (!JS::GetNativeErrorStackString(cx, obj, &stackString)) {
     return false;
   }
 

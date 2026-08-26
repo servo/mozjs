@@ -289,6 +289,13 @@ extern JS_PUBLIC_API JSObject* GetObjectAsArrayBuffer(JSObject* obj,
  */
 extern JS_PUBLIC_API size_t GetArrayBufferByteLength(JSObject* obj);
 
+/**
+ * Return the maximum byte length of a resizable ArrayBuffer. Returns false if
+ * |obj| cannot be unwrapped as one.
+ */
+extern JS_PUBLIC_API bool GetResizableArrayBufferMaxByteLength(
+    JSObject* obj, size_t* maxByteLength);
+
 // This one isn't inlined because there are a bunch of different ArrayBuffer
 // classes that would have to be individually handled here.
 //
