@@ -49,6 +49,7 @@ use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
 use crate::jsapi::StackFormat;
 use crate::jsapi::{already_AddRefed, jsid};
+use crate::jsapi::{BorrowedErrorReport, Rooted};
 use crate::jsapi::{HandleValueArray, StencilRelease};
 use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
 use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
@@ -1417,6 +1418,27 @@ where
     }
 
     Ok(())
+}
+
+/// Helper for creating a `BorrowedErrorReport`
+///
+/// `BorrowedErrorReport` needs to be pinned and rooted.
+pub fn borrowed_error_report<F, R>(cx: &crate::context::JSContext, f: F) -> R
+where
+    F: FnOnce(&crate::context::JSContext, &mut BorrowedErrorReport) -> R,
+{
+    let mut report = BorrowedErrorReport {
+        owner_: Rooted::new_unrooted(ptr::null_mut()),
+        report_: ptr::null_mut(),
+    };
+    unsafe {
+        Rooted::add_to_root_stack(&mut report.owner_, cx.raw_cx_no_gc());
+    }
+    let result = f(cx, &mut report);
+    unsafe {
+        report.owner_.remove_from_root_stack();
+    }
+    result
 }
 
 /// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments
