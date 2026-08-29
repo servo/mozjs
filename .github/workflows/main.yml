@@ -1,7 +1,6 @@
 name: Rust
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
   merge_group:
@@ -13,6 +12,7 @@ on:
 # dispatches build workflow with different permissions
 jobs:
   build:
+    if: ${{ github.event_name != 'push' }}
     uses: ./.github/workflows/build.yml
     secrets: inherit
   latest_stable_rust:
