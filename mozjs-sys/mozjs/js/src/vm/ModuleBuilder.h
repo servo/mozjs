@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -103,7 +101,8 @@ class MOZ_STACK_CLASS ModuleBuilder {
 
   MaybeModuleRequestIndex appendModuleRequest(
       frontend::TaggedParserAtomIndex specifier,
-      frontend::ListNode* attributeList);
+      frontend::ListNode* attributeList,
+      ImportPhase phase = ImportPhase::Evaluation);
 
   bool appendExportEntry(frontend::TaggedParserAtomIndex exportName,
                          frontend::TaggedParserAtomIndex localName,
@@ -119,10 +118,6 @@ class MOZ_STACK_CLASS ModuleBuilder {
 
   [[nodiscard]] bool isAttributeSupported(frontend::TaggedParserAtomIndex key);
 };
-
-template <typename T>
-ArrayObject* CreateArray(JSContext* cx,
-                         const JS::Rooted<JS::GCVector<T>>& vector);
 
 }  // namespace js
 

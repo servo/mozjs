@@ -18,7 +18,7 @@ BUGZILLA_BUGLIST_TEMPLATE = "https://bugzilla.mozilla.org/buglist.cgi?bug_id={bu
 BUG_NUMBER_REGEX = re.compile(r"bug \d+", re.IGNORECASE)
 CHANGELOG_TO_FROM_STRING = "{product}_{version}_RELEASE"
 CHANGESET_URL_TEMPLATE = (
-    "{repo}/{logtype}" "?rev={to_version}+%25+{from_version}&revcount=1000"
+    "{repo}/{logtype}?rev={to_version}+%25+{from_version}&revcount=1000"
 )
 FULL_CHANGESET_TEMPLATE = "* [Full Mercurial changelog]({url})\n"
 LIST_DESCRIPTION_TEMPLATE = "Comparing Mercurial tag {from_version} to {to_version}:\n"
@@ -245,10 +245,8 @@ Task group: [{task_group_id}]({root_url}/tasks/groups/{task_group_id})
 
     notify = Notify(notify_options)
     for address in addresses:
-        notify.email(
-            {
-                "address": address,
-                "subject": subject,
-                "content": content,
-            }
-        )
+        notify.email({
+            "address": address,
+            "subject": subject,
+            "content": content,
+        })

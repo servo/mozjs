@@ -14,6 +14,7 @@ from mozperftest.utils import (
     FIREFOX_DESKTOP_APPS,
     FIREFOX_MOBILE_APPS,
     ON_TRY,
+    get_adb_device_or_emu,
 )
 
 
@@ -54,13 +55,16 @@ class BaseVersionProducer:
 class DesktopVersionProducer(BaseVersionProducer):
     def get_binary_version(self, binary, **kwargs):
         try:
-            return super(DesktopVersionProducer, self).get_binary_version(binary)
+            return super().get_binary_version(binary)
         except Exception:
             pass
 
         version = None
         try:
-            if "mac" in platform.system().lower():
+            if (
+                "mac" in platform.system().lower()
+                or "darwin" in platform.system().lower()
+            ):
                 import plistlib
 
                 for plist_file in ("version.plist", "Info.plist"):
@@ -75,7 +79,7 @@ class DesktopVersionProducer(BaseVersionProducer):
             elif "linux" in platform.system().lower():
                 command = [binary, "--version"]
                 proc = subprocess.run(
-                    command, timeout=10, capture_output=True, text=True
+                    command, check=True, timeout=10, capture_output=True, text=True
                 )
 
                 bmeta = proc.stdout.split("\n")
@@ -103,12 +107,11 @@ class DesktopVersionProducer(BaseVersionProducer):
                 else:
                     version = bmeta.strip()
                     self.logger.info(
-                        "Successfully acquired browser version: %s" % version
+                        f"Successfully acquired browser version: {version}"
                     )
         except Exception as e:
             self.logger.warning(
-                "Failed to get browser meta data through fallback method: %s-%s"
-                % (e.__class__.__name__, e)
+                f"Failed to get browser meta data through fallback method: {e.__class__.__name__}-{e}"
             )
             raise e
 
@@ -118,16 +121,12 @@ class DesktopVersionProducer(BaseVersionProducer):
 class MobileVersionProducer(BaseVersionProducer):
     def get_binary_version(self, binary, apk_path=None, **kwargs):
         try:
-            return super(MobileVersionProducer, self).get_binary_version(
-                apk_path or binary
-            )
+            return super().get_binary_version(apk_path or binary)
         except Exception:
             pass
 
-        from mozdevice import ADBDeviceFactory
-
-        device = ADBDeviceFactory(verbose=True)
-        pkg_info = device.shell_output("dumpsys package %s" % binary)
+        device = get_adb_device_or_emu()
+        pkg_info = device.shell_output(f"dumpsys package {binary}")
         version_matcher = re.compile(r".*versionName=([\d.]+)")
         for line in pkg_info.split("\n"):
             match = version_matcher.match(line)

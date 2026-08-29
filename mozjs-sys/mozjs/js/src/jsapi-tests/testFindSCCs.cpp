@@ -1,12 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include <stdarg.h>
-#include <string.h>
 
 #include "gc/FindSCCs.h"
 #include "jsapi-tests/tests.h"
@@ -28,18 +24,18 @@ BEGIN_TEST(testFindSCCs) {
   // no vertices
 
   setup(0);
-  run();
+  findSCCs();
   CHECK(end());
 
   // no edges
 
   setup(1);
-  run();
+  findSCCs();
   CHECK(group(0, -1));
   CHECK(end());
 
   setup(3);
-  run();
+  findSCCs();
   CHECK(group(2, -1));
   CHECK(group(1, -1));
   CHECK(group(0, -1));
@@ -50,7 +46,7 @@ BEGIN_TEST(testFindSCCs) {
   setup(3);
   CHECK(edge(0, 1));
   CHECK(edge(1, 2));
-  run();
+  findSCCs();
   CHECK(group(0, -1));
   CHECK(group(1, -1));
   CHECK(group(2, -1));
@@ -61,7 +57,7 @@ BEGIN_TEST(testFindSCCs) {
   setup(3);
   CHECK(edge(0, 1));
   CHECK(edge(0, 2));
-  run();
+  findSCCs();
   CHECK(group(0, -1));
   if (resultsList && resultsList->index == 1) {
     CHECK(group(1, -1));
@@ -78,7 +74,7 @@ BEGIN_TEST(testFindSCCs) {
   CHECK(edge(0, 1));
   CHECK(edge(1, 2));
   CHECK(edge(2, 0));
-  run();
+  findSCCs();
   CHECK(group(0, 1, 2, -1));
   CHECK(end());
 
@@ -87,7 +83,7 @@ BEGIN_TEST(testFindSCCs) {
   CHECK(edge(1, 2));
   CHECK(edge(2, 1));
   CHECK(edge(2, 3));
-  run();
+  findSCCs();
   CHECK(group(0, -1));
   CHECK(group(1, 2, -1));
   CHECK(group(3, -1));
@@ -97,20 +93,20 @@ BEGIN_TEST(testFindSCCs) {
 
   setup(2);
   CHECK(edge(0, 1));
-  run();
+  findSCCs();
   CHECK(remaining(0, 1, -1));
   CHECK(end());
 
   setup(2);
   CHECK(edge(0, 1));
-  run();
+  findSCCs();
   CHECK(group(0, -1));
   CHECK(remaining(1, -1));
   CHECK(end());
 
   setup(2);
   CHECK(edge(0, 1));
-  run();
+  findSCCs();
   CHECK(group(0, -1));
   CHECK(group(1, -1));
   CHECK(remaining(-1));
@@ -137,7 +133,7 @@ bool edge(unsigned src_index, unsigned dest_index) {
   return Vertex[src_index].gcGraphEdges.put(&Vertex[dest_index]);
 }
 
-void run() {
+void findSCCs() {
   finder = new TestComponentFinder(cx);
   for (unsigned i = 0; i < vertex_count; ++i) {
     finder->addNode(&Vertex[i]);

@@ -1,12 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "js/MemoryMetrics.h"
-
-#include "mozilla/MathAlgorithms.h"
 
 #include <algorithm>
 
@@ -18,6 +14,7 @@
 #include "jit/BaselineJIT.h"
 #include "jit/Ion.h"
 #include "js/HeapAPI.h"
+#include "js/SliceBudget.h"
 #include "util/Text.h"
 #include "vm/BigIntType.h"
 #include "vm/HelperThreadState.h"
@@ -49,16 +46,34 @@ JS_PUBLIC_API size_t MemoryReportingSundriesThreshold() { return 8 * 1024; }
 
 /* static */
 HashNumber InefficientNonFlatteningStringHashPolicy::hash(const Lookup& l) {
+  // To avoid O(N) cost for long strings, hash at most kHashCharBudget chars.
+  // match() does a full byte-exact comparison, so false collisions are merely
+  // a performance concern and don't affect aggregation correctness.
+  constexpr size_t kHashCharBudget = 128;
+
+  size_t len = l->length();
+  HashNumber h = mozilla::HashGeneric(len);
+  size_t toHash = std::min(len, kHashCharBudget);
+
   if (l->isLinear()) {
-    return HashStringChars(&l->asLinear());
+    JS::AutoCheckCannotGC nogc;
+    JSLinearString& linear = l->asLinear();
+    if (linear.hasLatin1Chars()) {
+      h = mozilla::AddToHash(
+          h, mozilla::HashString(linear.latin1Chars(nogc), toHash));
+    } else {
+      h = mozilla::AddToHash(
+          h, mozilla::HashString(linear.twoByteChars(nogc), toHash));
+    }
+    return h;
   }
 
-  // Use rope's non-copying hash function.
-  uint32_t hash = 0;
-  if (!l->asRope().hash(&hash)) {
+  // Rope: hash only the first kHashCharBudget chars to bound traversal cost.
+  uint32_t ropeHash = 0;
+  if (!l->asRope().hashPrefix(kHashCharBudget, &ropeHash)) {
     MOZ_CRASH("oom");
   }
-  return hash;
+  return mozilla::AddToHash(h, ropeHash);
 }
 
 template <typename Char1, typename Char2>
@@ -183,9 +198,14 @@ struct StatsClosure {
   wasm::Code::SeenSet wasmSeenCode;
   wasm::Table::SeenSet wasmSeenTables;
   bool anonymize;
+  // Stop deduplicating strings after this many milliseconds to avoid hangs.
+  JS::SliceBudget stringBudget;
 
   StatsClosure(RuntimeStats* rt, ObjectPrivateVisitor* v, bool anon)
-      : rtStats(rt), opv(v), anonymize(anon) {}
+      : rtStats(rt),
+        opv(v),
+        anonymize(anon),
+        stringBudget(JS::TimeBudget(mozilla::TimeDuration::FromSeconds(5))) {}
 };
 
 static void DecommittedPagesChunkCallback(JSRuntime* rt, void* data,
@@ -210,13 +230,15 @@ static void StatsZoneCallback(JSRuntime* rt, void* data, Zone* zone,
   zone->addSizeOfIncludingThis(
       rtStats->mallocSizeOf_, &zStats.zoneObject, &zStats.code,
       &zStats.regexpZone, &zStats.jitZone, &zStats.cacheIRStubs,
-      &zStats.uniqueIdMap, &zStats.initialPropMapTable, &zStats.shapeTables,
-      &rtStats->runtime.atomsMarkBitmaps, &zStats.compartmentObjects,
-      &zStats.crossCompartmentWrappersTables, &zStats.compartmentsPrivateData,
-      &zStats.scriptCountsMap);
-  zone->bufferAllocator.addSizeOfExcludingThis(&zStats.gcBuffers.usedBytes,
-                                               &zStats.gcBuffers.freeBytes,
-                                               &zStats.gcBuffers.adminBytes);
+      &zStats.objectFuses, &zStats.uniqueIdMap, &zStats.initialPropMapTable,
+      &zStats.shapeTables, &rtStats->runtime.atomsMarkBitmaps,
+      &zStats.compartmentObjects, &zStats.crossCompartmentWrappersTables,
+      &zStats.compartmentsPrivateData, &zStats.scriptCountsMap);
+
+  zone->bufferAllocator.addBufferSizesAndCounts(
+      &zStats.gcBuffers.usedBytes, &zStats.gcBuffers.freeBytes,
+      &zStats.gcBuffers.adminBytes, &zStats.gcBuffers.totalChunks,
+      &zStats.gcBuffers.freeRegions, &zStats.gcBuffers.largeAllocs);
 }
 
 static void StatsRealmCallback(JSContext* cx, void* data, Realm* realm,
@@ -390,8 +412,7 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
       BaseScript* base = &cellptr.as<BaseScript>();
       RealmStats& realmStats = base->realm()->realmStats();
       realmStats.scriptsGCHeap += thingSize;
-      realmStats.scriptsMallocHeapData +=
-          base->sizeOfExcludingThis(rtStats->mallocSizeOf_);
+      realmStats.scriptsGCBuffers += base->sizeOfExcludingThis();
       if (base->hasJitScript()) {
         JSScript* script = static_cast<JSScript*>(base);
         script->addSizeOfJitScript(rtStats->mallocSizeOf_,
@@ -426,19 +447,26 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
       info.numCopies = 1;
 
       zStats->stringInfo.add(info);
+      zStats->stringsTotalCount++;
 
       // The primary use case for anonymization is automated crash submission
       // (to help detect OOM crashes). In that case, we don't want to pay the
       // memory cost required to do notable string detection.
-      if (granularity == FineGrained && !closure->anonymize) {
-        ZoneStats::StringsHashMap::AddPtr p =
-            zStats->allStrings->lookupForAdd(str);
-        if (!p) {
-          bool ok = zStats->allStrings->add(p, str, info);
-          // Ignore failure -- we just won't record the string as notable.
-          (void)ok;
+      if (granularity == FineGrained && !closure->anonymize &&
+          !zStats->stringsDeduplicationTruncated) {
+        closure->stringBudget.step();
+        if (!closure->stringBudget.isOverBudget()) {
+          ZoneStats::StringsHashMap::AddPtr p =
+              zStats->allStrings->lookupForAdd(str);
+          if (!p) {
+            bool ok = zStats->allStrings->add(p, str, info);
+            // Ignore failure -- we just won't record the string as notable.
+            (void)ok;
+          } else {
+            p->value().add(info);
+          }
         } else {
-          p->value().add(info);
+          zStats->stringsDeduplicationTruncated = true;
         }
       }
       break;
@@ -455,8 +483,7 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
         size += Nursery::nurseryCellHeaderSize();
       }
       zStats->bigIntsGCHeap += size;
-      zStats->bigIntsMallocHeap +=
-          bi->sizeOfExcludingThis(rtStats->mallocSizeOf_);
+      zStats->bigIntsGCBuffers += bi->sizeOfExcludingThis();
       break;
     }
 
@@ -470,7 +497,12 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
     }
 
     case JS::TraceKind::GetterSetter: {
-      zStats->getterSettersGCHeap += thingSize;
+      GetterSetter* gs = &cellptr.as<GetterSetter>();
+      size_t size = thingSize;
+      if (!gs->isTenured()) {
+        size += Nursery::nurseryCellHeaderSize();
+      }
+      zStats->getterSettersGCHeap += size;
       break;
     }
 
@@ -513,8 +545,7 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
     case JS::TraceKind::Scope: {
       Scope* scope = &cellptr.as<Scope>();
       zStats->scopesGCHeap += thingSize;
-      zStats->scopesMallocHeap +=
-          scope->sizeOfExcludingThis(rtStats->mallocSizeOf_);
+      zStats->scopesGCBuffers += scope->sizeOfExcludingThis();
       break;
     }
 
@@ -523,13 +554,6 @@ static void StatsCellCallback(JSRuntime* rt, void* data, JS::GCCellPtr cellptr,
       zStats->regExpSharedsGCHeap += thingSize;
       zStats->regExpSharedsMallocHeap +=
           regexp->sizeOfExcludingThis(rtStats->mallocSizeOf_);
-      break;
-    }
-
-    case JS::TraceKind::SmallBuffer: {
-      // Note that this overlaps with memory that is also reported as part of
-      // the owning cell.
-      zStats->smallBuffersGCHeap += thingSize;
       break;
     }
 
@@ -557,10 +581,9 @@ static bool FindNotableStrings(ZoneStats& zStats) {
   // We should only run FindNotableStrings once per ZoneStats object.
   MOZ_ASSERT(zStats.notableStrings.empty());
 
-  for (ZoneStats::StringsHashMap::Range r = zStats.allStrings->all();
-       !r.empty(); r.popFront()) {
-    JSString* str = r.front().key();
-    StringInfo& info = r.front().value();
+  for (auto iter = zStats.allStrings->iter(); !iter.done(); iter.next()) {
+    JSString* str = iter.get().key();
+    StringInfo& info = iter.get().value();
 
     if (!info.isNotable()) {
       continue;
@@ -586,10 +609,9 @@ static bool FindNotableClasses(RealmStats& realmStats) {
   // We should only run FindNotableClasses once per ZoneStats object.
   MOZ_ASSERT(realmStats.notableClasses.empty());
 
-  for (RealmStats::ClassesHashMap::Range r = realmStats.allClasses->all();
-       !r.empty(); r.popFront()) {
-    const char* className = r.front().key();
-    ClassInfo& info = r.front().value();
+  for (auto iter = realmStats.allClasses->iter(); !iter.done(); iter.next()) {
+    const char* className = iter.get().key();
+    ClassInfo& info = iter.get().value();
 
     // If this class isn't notable, or if we can't grow the notableStrings
     // vector, skip this string.
@@ -617,11 +639,10 @@ static bool FindNotableScriptSources(JS::RuntimeSizes& runtime) {
   // We should only run FindNotableScriptSources once per RuntimeSizes.
   MOZ_ASSERT(runtime.notableScriptSources.empty());
 
-  for (RuntimeSizes::ScriptSourcesHashMap::Range r =
-           runtime.allScriptSources->all();
-       !r.empty(); r.popFront()) {
-    const char* filename = r.front().key();
-    ScriptSourceInfo& info = r.front().value();
+  for (auto iter = runtime.allScriptSources->iter(); !iter.done();
+       iter.next()) {
+    const char* filename = iter.get().key();
+    ScriptSourceInfo& info = iter.get().value();
 
     if (!info.isNotable()) {
       continue;
@@ -645,8 +666,9 @@ static bool CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats,
                                       ObjectPrivateVisitor* opv, bool anonymize,
                                       IterateCellCallback statsCellCallback) {
   // Finish any ongoing incremental GC that may change the data we're gathering
-  // and ensure that we don't do anything that could start another one.
-  gc::FinishGC(cx);
+  // and start a trace session. Ensure that we don't do anything that could
+  // start another GC.
+  js::gc::AutoPrepareForTracing session(cx);
   JS::AutoAssertNoGC nogc(cx);
 
   // Wait for any background tasks to finish.
@@ -670,13 +692,13 @@ static bool CollectRuntimeStatsHelper(JSContext* cx, RuntimeStats* rtStats,
 
   if (js::gc::DecommitEnabled()) {
     IterateChunks(cx, &rtStats->gcHeapDecommittedPages,
-                  DecommittedPagesChunkCallback);
+                  DecommittedPagesChunkCallback, session);
   }
 
   // Take the per-compartment measurements.
   StatsClosure closure(rtStats, opv, anonymize);
   IterateHeapUnbarriered(cx, &closure, StatsZoneCallback, StatsRealmCallback,
-                         StatsArenaCallback, statsCellCallback);
+                         StatsArenaCallback, statsCellCallback, session);
 
   // Take the "explicit/js/runtime/" measurements.
   rt->addSizeOfIncludingThis(rtStats->mallocSizeOf_, &rtStats->runtime);
@@ -828,12 +850,11 @@ class SimpleJSRuntimeStats : public JS::RuntimeStats {
                                    const JS::AutoRequireNoGC& nogc) override {}
 };
 
-JS_PUBLIC_API bool AddSizeOfTab(JSContext* cx, HandleObject obj,
+JS_PUBLIC_API bool AddSizeOfTab(JSContext* cx, JS::Zone* zone,
                                 MallocSizeOf mallocSizeOf,
-                                ObjectPrivateVisitor* opv, TabSizes* sizes) {
+                                ObjectPrivateVisitor* opv, TabSizes* sizes,
+                                const JS::AutoRequireNoGC& nogc) {
   SimpleJSRuntimeStats rtStats(mallocSizeOf);
-
-  JS::Zone* zone = GetObjectZone(obj);
 
   size_t numRealms = 0;
   for (CompartmentsInZoneIter comp(zone); !comp.done(); comp.next()) {
@@ -851,9 +872,11 @@ JS_PUBLIC_API bool AddSizeOfTab(JSContext* cx, HandleObject obj,
   // Take the per-compartment measurements. No need to anonymize because
   // these measurements will be aggregated.
   StatsClosure closure(&rtStats, opv, /* anonymize = */ false);
+  MOZ_ASSERT(!JS::IsIncrementalGCInProgress(cx));
+  js::gc::AutoTraceSession session(cx->runtime());
   IterateHeapUnbarrieredForZone(cx, zone, &closure, StatsZoneCallback,
                                 StatsRealmCallback, StatsArenaCallback,
-                                StatsCellCallback<CoarseGrained>);
+                                StatsCellCallback<CoarseGrained>, session);
 
   MOZ_ASSERT(rtStats.zoneStatsVector.length() == 1);
   rtStats.zTotals.addSizes(rtStats.zoneStatsVector[0]);

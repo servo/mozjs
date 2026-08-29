@@ -15,9 +15,9 @@ class TestUnpack(TestWithTmpDir):
     maxDiff = None
 
     @staticmethod
-    def _get_copier(cls):
+    def _get_copier(formatter_class):
         copier = FileCopier()
-        formatter = cls(copier)
+        formatter = formatter_class(copier)
         fill_formatter(formatter, CONTENTS)
         return copier
 
@@ -52,7 +52,7 @@ class TestUnpack(TestWithTmpDir):
             OMNIJAR_NAME = name
 
             def __init__(self, registry):
-                super(OmniFooFormatter, self).__init__(registry, name)
+                super().__init__(registry, name)
 
         return OmniFooFormatter
 

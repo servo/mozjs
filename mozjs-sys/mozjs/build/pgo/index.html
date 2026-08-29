@@ -5,13 +5,54 @@
 
   /* global Quitter */
 
-  var list = [
+  var defaultTimeout = 2 * 1000;
+  var extendedTimeout = 2 * 60 * 1000;
+  var superExtendedTimeout = 5 * 60 * 1000;
+  var hasExtendedCorpus =
+    new URLSearchParams(location.search).get("extendedCorpus") == "true";
+
+  function waitTimeout(time) {
+    return new Promise(resolve => {
+      window.setTimeout(() => {
+        resolve();
+      }, time);
+    });
+  }
+
+  /**
+   * An item in the PGO training corpus
+   */
+  class Item {
+    url;
+    timeout;
+
+    constructor(url, timeout = defaultTimeout) {
+      this.url = url;
+      this.timeout = timeout;
+    }
+
+    async run() {
+      var subWindow = window.open(this.url);
+
+      // Prevent the perf-reftest-singletons from calling alert()
+      subWindow.tpRecordTime = function () {};
+
+      // Wait until the timeout is finished
+      await waitTimeout(this.timeout);
+
+      subWindow.close();
+    }
+  }
+
+  var defaultItemUrls = [
     "blueprint/elements.html",
     "blueprint/forms.html",
     "blueprint/grid.html",
     "blueprint/sample.html",
     "js-input/3d-thingy.html",
     "js-input/crypto-otp.html",
+    "js-input/collator_bench.html",
+    "js-input/normalizer_bench.html",
     "js-input/sunspider/3d-cube.html",
     "js-input/sunspider/3d-morph.html",
     "js-input/sunspider/3d-raytrace.html",
@@ -73,40 +114,44 @@
     "talos/tests/perf-reftest-singletons/svg-text-getExtentOfChar-1.html",
     "talos/tests/perf-reftest-singletons/tiny-traversal-singleton.html",
     "talos/tests/perf-reftest-singletons/window-named-property-get.html",
-    "webkit/PerformanceTests/Speedometer/index.html",
-    "http://localhost:8000/index.html?startAutomatically=true",
-    "webkit/PerformanceTests/webaudio/index.html?raptor&rendering-buffer-length=30",
   ];
-  var defaultInterval = 2000;
-  var idx = 0;
-  var w;
 
-  window.onload = function () {
-    w = window.open("about:blank");
-    window.setTimeout(loadURL, defaultInterval);
-  };
-  function loadURL() {
-    var interval = defaultInterval;
-    var testURL = list[idx++];
-    if (testURL.includes("webkit") || testURL.includes("localhost")) {
-      interval = 120000;
-    }
-    w.close();
-    w = window.open(testURL);
-    // Prevent the perf-reftest-singletons from calling alert()
-    w.tpRecordTime = function () {};
+  // Start with items with the default timeout
+  var items = defaultItemUrls.map(x => new Item(x));
 
-    if (idx < list.length) {
-      window.setTimeout(loadURL, interval);
-    } else {
-      window.setTimeout(Quitter.quit, interval);
-    }
+  // Add items that needs longer timeouts
+  items.push(
+    new Item("webkit/PerformanceTests/Speedometer/index.html", extendedTimeout),
+    new Item(
+      "http://localhost:8000/index.html?startAutomatically=true",
+      extendedTimeout
+    ),
+    new Item(
+      "webkit/PerformanceTests/webaudio/index.html?raptor&rendering-buffer-length=30",
+      extendedTimeout
+    )
+  );
+
+  // Add optional items if there is a 'pgo-extended-corpus' provided
+  if (hasExtendedCorpus) {
+    items.push(
+      new Item(
+        "http://localhost:8001/index.html?startAutomatically=true&testIterationCount=3&worstCaseCount=1",
+        superExtendedTimeout
+      )
+    );
   }
-  var i;
 
-  for (i = 0; i < list.length; i++) {
+  window.onload = async function () {
+    for (let item of items) {
+      await item.run();
+    }
+    Quitter.quit();
+  };
+
+  for (let item of items) {
     // eslint-disable-next-line no-unsanitized/method
-    document.write(list[i]);
+    document.write(item.url);
     document.write("<br>");
   }
 </script>

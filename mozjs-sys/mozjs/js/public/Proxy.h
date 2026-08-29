@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -16,7 +14,6 @@
 #include "js/Class.h"
 #include "js/HeapAPI.h"        // for ObjectIsMarkedBlack
 #include "js/Id.h"             // for jsid
-#include "js/Object.h"         // JS::GetClass
 #include "js/RootingAPI.h"     // for Handle, MutableHandle (ptr only)
 #include "js/shadow/Object.h"  // JS::shadow::Object
 #include "js/TypeDecls.h"  // for HandleObject, HandleId, HandleValue, MutableHandleIdVector, MutableHandleValue, MutableHand...
@@ -380,6 +377,10 @@ class JS_PUBLIC_API __attribute__ ((__packed__)) BaseProxyHandler {
                            ElementAdder* adder) const;
 
   virtual bool isScripted() const { return false; }
+
+  // Whether proxies with this handler may be transplanted/swapped via
+  // JS_TransplantObject or ProxyObject::swap.
+  virtual bool mayBeSwapped() const { return false; }
 };
 
 class JS_PUBLIC_API NurseryAllocableProxyHandler : public BaseProxyHandler {
@@ -395,6 +396,10 @@ class JS_PUBLIC_API NurseryAllocableProxyHandler : public BaseProxyHandler {
 
 extern JS_PUBLIC_DATA const JSClass ProxyClass;
 
+// Number of reserved slots required for proxies that may be swapped by
+// JS_TransplantObject.
+constexpr size_t SwappableProxyReservedSlots = 2;
+
 inline bool IsProxy(const JSObject* obj) {
   return reinterpret_cast<const JS::shadow::Object*>(obj)->shape->isProxy();
 }
@@ -406,92 +411,54 @@ namespace detail {
 //
 // Every proxy has a ProxyValueArray that contains the following Values:
 //
-// - The expando slot. This is used to hold private fields should they be
-//   stamped into a non-forwarding proxy type.
 // - The private slot.
 // - The reserved slots. The number of slots is determined by the proxy's Class.
 //
-// Proxy objects store a pointer to the reserved slots (ProxyReservedSlots*).
-// The ProxyValueArray and the private slot can be accessed using
-// ProxyValueArray::fromReservedSlots or ProxyDataLayout::values.
-//
-// Storing a pointer to ProxyReservedSlots instead of ProxyValueArray has a
-// number of advantages. In particular, it means JS::GetReservedSlot and
-// JS::SetReservedSlot can be used with both proxies and native objects. This
-// works because the ProxyReservedSlots* pointer is stored where native objects
-// store their dynamic slots pointer.
-
-struct ProxyReservedSlots {
-  JS::Value slots[1];
-
-  static constexpr ptrdiff_t offsetOfPrivateSlot();
-
-  static inline int offsetOfSlot(size_t slot) {
-    return offsetof(ProxyReservedSlots, slots[0]) + slot * sizeof(JS::Value);
-  }
+// The ProxyValueArray is allocated inline immediately after the ProxyObject
+// header (containing the object's shape and ProxyDataLayout).
+struct ProxyValueArray {
+  JS::Value privateSlot;
+  JS::Value reservedSlots[1];
 
   void init(size_t nreserved) {
+    privateSlot = JS::UndefinedValue();
     for (size_t i = 0; i < nreserved; i++) {
-      slots[i] = JS::UndefinedValue();
+      reservedSlots[i] = JS::UndefinedValue();
     }
   }
 
-  ProxyReservedSlots(const ProxyReservedSlots&) = delete;
-  void operator=(const ProxyReservedSlots&) = delete;
-};
-
-struct ProxyValueArray {
-  JS::Value expandoSlot;
-  JS::Value privateSlot;
-  ProxyReservedSlots reservedSlots;
-
-  void init(size_t nreserved) {
-    expandoSlot = JS::ObjectOrNullValue(nullptr);
-    privateSlot = JS::UndefinedValue();
-    reservedSlots.init(nreserved);
-  }
-
-  static MOZ_ALWAYS_INLINE ProxyValueArray* fromReservedSlots(
-      ProxyReservedSlots* slots) {
-    uintptr_t p = reinterpret_cast<uintptr_t>(slots);
-    return reinterpret_cast<ProxyValueArray*>(p - offsetOfReservedSlots());
-  }
   static constexpr size_t offsetOfReservedSlots() {
     return offsetof(ProxyValueArray, reservedSlots);
   }
-
   static size_t allocCount(size_t nreserved) {
     static_assert(offsetOfReservedSlots() % sizeof(JS::Value) == 0);
     return offsetOfReservedSlots() / sizeof(JS::Value) + nreserved;
-  }
-  static size_t sizeOf(size_t nreserved) {
-    return allocCount(nreserved) * sizeof(JS::Value);
   }
 
   ProxyValueArray(const ProxyValueArray&) = delete;
   void operator=(const ProxyValueArray&) = delete;
 };
 
-/* static */
-constexpr ptrdiff_t ProxyReservedSlots::offsetOfPrivateSlot() {
-  return -ptrdiff_t(ProxyValueArray::offsetOfReservedSlots()) +
-         offsetof(ProxyValueArray, privateSlot);
-}
-
 // All proxies share the same data layout. Following the object's shape, the
-// proxy has a ProxyDataLayout structure with a pointer to an array of values
-// and the proxy's handler. This is designed both so that proxies can be easily
-// swapped with other objects (via RemapWrapper) and to mimic the layout of
-// other objects (proxies and other objects have the same size) so that common
-// code can access either type of object.
-//
-// See GetReservedOrProxyPrivateSlot below.
+// proxy has a ProxyDataLayout structure with the proxy's handler and expando
+// object pointer. The ProxyValueArray is stored inline immediately after the
+// ProxyDataLayout.
 struct ProxyDataLayout {
-  ProxyReservedSlots* reservedSlots;
   const BaseProxyHandler* handler;
 
+  // The expando object holds private fields should they be stamped into a
+  // non-forwarding proxy. This is nullptr when the proxy has no expando.
+  JSObject* expando;
+
   MOZ_ALWAYS_INLINE ProxyValueArray* values() const {
-    return ProxyValueArray::fromReservedSlots(reservedSlots);
+    return reinterpret_cast<ProxyValueArray*>(
+        reinterpret_cast<uintptr_t>(this) + sizeof(ProxyDataLayout));
+  }
+
+  void init(const BaseProxyHandler* handlerArg, size_t nreserved) {
+    handler = handlerArg;
+    expando = nullptr;
+    values()->init(nreserved);
   }
 };
 
@@ -519,7 +486,7 @@ inline void SetProxyReservedSlotUnchecked(JSObject* obj, size_t n,
                                           const JS::Value& extra) {
   MOZ_ASSERT(n < JSCLASS_RESERVED_SLOTS(JS::GetClass(obj)));
 
-  JS::Value* vp = &GetProxyDataLayout(obj)->reservedSlots->slots[n];
+  JS::Value* vp = &GetProxyDataLayout(obj)->values()->reservedSlots[n];
 
   // Trigger a barrier before writing the slot.
   if (vp->isGCThing() || extra.isGCThing()) {
@@ -539,8 +506,8 @@ inline const JS::Value& GetProxyPrivate(const JSObject* obj) {
   return detail::GetProxyDataLayout(obj)->values()->privateSlot;
 }
 
-inline const JS::Value& GetProxyExpando(const JSObject* obj) {
-  return detail::GetProxyDataLayout(obj)->values()->expandoSlot;
+inline JSObject* GetProxyExpando(const JSObject* obj) {
+  return detail::GetProxyDataLayout(obj)->expando;
 }
 
 inline JSObject* GetProxyTargetObject(const JSObject* obj) {
@@ -549,11 +516,7 @@ inline JSObject* GetProxyTargetObject(const JSObject* obj) {
 
 inline const JS::Value& GetProxyReservedSlot(const JSObject* obj, size_t n) {
   MOZ_ASSERT(n < JSCLASS_RESERVED_SLOTS(JS::GetClass(obj)));
-  return detail::GetProxyDataLayout(obj)->reservedSlots->slots[n];
-}
-
-inline void SetProxyHandler(JSObject* obj, const BaseProxyHandler* handler) {
-  detail::GetProxyDataLayout(obj)->handler = handler;
+  return detail::GetProxyDataLayout(obj)->values()->reservedSlots[n];
 }
 
 inline void SetProxyReservedSlot(JSObject* obj, size_t n,
@@ -707,9 +670,10 @@ class JS_PUBLIC_API AutoWaivePolicy : public AutoEnterPolicy {
   }
 };
 #else
-class JS_PUBLIC_API AutoWaivePolicy{
-  public : AutoWaivePolicy(JSContext * cx, JS::HandleObject proxy,
-                           JS::HandleId id, BaseProxyHandler::Action act){}
+class JS_PUBLIC_API AutoWaivePolicy {
+ public:
+  AutoWaivePolicy(JSContext* cx, JS::HandleObject proxy, JS::HandleId id,
+                  BaseProxyHandler::Action act) {}
 };
 #endif
 
@@ -770,11 +734,6 @@ constexpr unsigned CheckProxyFlags() {
 // access. This will run the proxy's finalizer to perform clean-up before the
 // conversion happens.
 JS_PUBLIC_API void NukeNonCCWProxy(JSContext* cx, JS::HandleObject proxy);
-
-// This is a variant of js::NukeNonCCWProxy() for CCWs. It should only be called
-// on CCWs that have been removed from CCW tables.
-JS_PUBLIC_API void NukeRemovedCrossCompartmentWrapper(JSContext* cx,
-                                                      JSObject* wrapper);
 
 } /* namespace js */
 

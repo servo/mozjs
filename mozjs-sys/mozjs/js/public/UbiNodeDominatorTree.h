@@ -1,14 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef js_UbiNodeDominatorTree_h
 #define js_UbiNodeDominatorTree_h
 
-#include "mozilla/Attributes.h"
-#include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/UniquePtr.h"
 
@@ -398,8 +394,8 @@ class JS_PUBLIC_API DominatorTree {
       if (!predecessorVectors[i].reserve(predecessors->count())) {
         return false;
       }
-      for (auto range = predecessors->all(); !range.empty(); range.popFront()) {
-        auto ptr = nodeToPostOrderIndex.lookup(range.front());
+      for (auto iter = predecessors->iter(); !iter.done(); iter.next()) {
+        auto ptr = nodeToPostOrderIndex.lookup(iter.get());
         MOZ_ASSERT(ptr);
         predecessorVectors[i].infallibleAppend(ptr->value());
       }

@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tarfile
 from pathlib import Path
 
 logging.basicConfig(format="%(levelname)s: %(message)s", level=logging.INFO)
@@ -57,14 +58,8 @@ def parse_version(topsrc_dir):
 
 tmp_dir = Path("/tmp")
 
-tar = os.environ.get("TAR", find_command(["tar"]))
-assert_command("TAR", tar)
-
 rsync = os.environ.get("RSYNC", find_command(["rsync"]))
 assert_command("RSYNC", rsync)
-
-awk = os.environ.get("AWK", find_command(["awk"]))
-assert_command("AWK", awk)
 
 src_dir = Path(os.environ.get("SRC_DIR", Path(__file__).parent.absolute()))
 mozjs_name = os.environ.get("MOZJS_NAME", "mozjs")
@@ -87,14 +82,11 @@ version = "{}-{}.{}.{}".format(
 target_dir = staging_dir / version
 package_name = f"{version}.tar.xz"
 package_file = dist_dir / package_name
-tar_opts = ["-Jcf"]
 
 # Given there might be some external program that reads the following output,
 # use raw `print`, instead of logging.
 print("Environment:")
-print(f"    TAR = {tar}")
 print(f"    RSYNC = {rsync}")
-print(f"    AWK = {awk}")
 print(f"    STAGING = {staging_dir}")
 print(f"    DIST = {dist_dir}")
 print(f"    SRC_DIR = {src_dir}")
@@ -185,6 +177,7 @@ rsync_filter_list = """
 + /layout/tools/reftest/reftest/**
 
 + /testing/*.py
++ /testing/manifest/**
 + /testing/moz.build
 + /testing/mozbase/**
 + /testing/mozharness/**
@@ -200,6 +193,14 @@ rsync_filter_list = """
 
 + /toolkit/crashreporter/tools/symbolstore.py
 + /toolkit/mozapps/installer/package-name.mk
+
++ /toolkit/components/glean/build_scripts/glean_parser_ext/**
++ /toolkit/components/glean/glean.mozbuild
++ /toolkit/components/glean/tags.yaml
+- /toolkit/components/glean/bindings/jog/**
++ /toolkit/components/glean/bindings/**
++ /toolkit/components/glean/ipc/FOGIPC.h
++ /xpcom/ds/tools/perfecthash.py
 
 + /xpcom/geckoprocesstypes_generator/**
 
@@ -433,10 +434,8 @@ def create_tar():
 
     logging.info(f"Packaging source tarball at {package_file}...")
 
-    subprocess.run(
-        [str(tar)] + tar_opts + [str(package_file), "-C", str(staging_dir), version],
-        check=True,
-    )
+    with tarfile.open(str(package_file), "w:xz") as stream:
+        stream.add(staging_dir / version, version)
 
 
 def build():

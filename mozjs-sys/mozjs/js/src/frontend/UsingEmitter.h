@@ -6,9 +6,9 @@
 #define frontend_UsingEmitter_h
 
 #include "mozilla/Attributes.h"
-#include "mozilla/Maybe.h"
 
 #include "frontend/TryEmitter.h"
+#include "js/UniquePtr.h"
 #include "vm/UsingHint.h"
 
 namespace js::frontend {
@@ -99,7 +99,7 @@ class MOZ_STACK_CLASS DisposalEmitter {
 //    ue.emitEnd();
 class MOZ_STACK_CLASS UsingEmitter {
  private:
-  mozilla::Maybe<TryEmitter> tryEmitter_;
+  js::UniquePtr<TryEmitter> tryEmitter_;
 
   bool hasAwaitUsing_ = false;
 
@@ -172,33 +172,31 @@ class MOZ_STACK_CLASS UsingEmitter {
 //     disposeBeforeIter.prepareForForOfLoopIteration();
 //     emit_Loop();
 //
-//   at the point of loop end
-//     prepare_IteratorClose();
-//     disposeBeforeIter.emitEnd();
+//   before each iterator-close emitted by ForOfLoopControl
+//   (with the throwing flag pushed on the stack just above EXC)
+//     disposeBeforeIter.prepareForForOfIteratorClose();
+//     emit_IteratorClose();
 //
 class MOZ_STACK_CLASS ForOfDisposalEmitter : protected UsingEmitter {
  private:
 #ifdef DEBUG
   // The state of this emitter.
+  // +-------+  prepareForForOfLoopIteration       +-----------+
+  // | Start |-------------------------------->+-->| Iteration |--+
+  // +-------+                                 ^   +-----------+  |
+  //                                           |                  |
+  //                             +-------------+                  |
+  //                             |                                |
+  //                             |  prepareForForOfIteratorClose  |
+  //                             +--------------------------------+
   //
-  // +-------+  prepareForForOfLoopIteration   +-----------+
-  // | Start |-------------------------------->| Iteration |--+
-  // +-------+                                 +-----------+  |
-  //                                                          |
-  //   +------------------------------------------------------+
-  //   |
-  //   |  emitEnd  +-----+
-  //   +---------->| End |
-  //               +-----+
   enum class State {
     // The initial state.
     Start,
 
-    // After calling prepareForForOfLoopIteration.
+    // After calling prepareForForOfLoopIteration and
+    // prepareForForOfIteratorClose
     Iteration,
-
-    // After calling emitEnd.
-    End
   };
   State state_ = State::Start;
 #endif
@@ -210,7 +208,7 @@ class MOZ_STACK_CLASS ForOfDisposalEmitter : protected UsingEmitter {
 
   [[nodiscard]] bool prepareForForOfLoopIteration();
 
-  [[nodiscard]] bool emitEnd();
+  [[nodiscard]] bool prepareForForOfIteratorClose();
 };
 
 // This is a version of UsingEmitter specialized to help emit code for
@@ -227,7 +225,7 @@ class MOZ_STACK_CLASS ForOfDisposalEmitter : protected UsingEmitter {
 class MOZ_STACK_CLASS NonLocalIteratorCloseUsingEmitter
     : protected UsingEmitter {
  private:
-  mozilla::Maybe<TryEmitter> tryClosingIterator_;
+  js::UniquePtr<TryEmitter> tryClosingIterator_;
 
 #ifdef DEBUG
   // The state of this emitter.

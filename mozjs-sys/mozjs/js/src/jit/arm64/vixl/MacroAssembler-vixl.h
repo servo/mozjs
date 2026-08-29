@@ -31,7 +31,6 @@
 #include <limits>
 
 #include "jit/arm64/Assembler-arm64.h"
-#include "jit/arm64/vixl/Debugger-vixl.h"
 #include "jit/arm64/vixl/Globals-vixl.h"
 #include "jit/arm64/vixl/Instrument-vixl.h"
 #include "jit/arm64/vixl/Simulator-Constants-vixl.h"
@@ -1184,9 +1183,23 @@ class MacroAssembler : public js::jit::Assembler {
     SingleEmissionCheckScope guard(this);
     mneg(rd, rn, rm);
   }
-  void Mov(const Register& rd, const Register& rn) {
-    SingleEmissionCheckScope guard(this);
-    mov(rd, rn);
+  void Mov(const Register& rd,
+           const Register& rn,
+           DiscardMoveMode discard_mode = kDontDiscardForSameWReg) {
+    // Emit a register move only if the registers are distinct, or if they are
+    // not X registers.
+    //
+    // Note that mov(w0, w0) is not a no-op because it clears the top word of
+    // x0. A flag is provided (kDiscardForSameWReg) if a move between the same W
+    // registers is not required to clear the top word of the X register. In
+    // this case, the instruction is discarded.
+    //
+    // If the sp is an operand, add #0 is emitted, otherwise, orr #0.
+    if (!rd.Is(rn) ||
+        (rd.Is32Bits() && (discard_mode == kDontDiscardForSameWReg))) {
+      SingleEmissionCheckScope guard(this);
+      mov(rd, rn);
+    }
   }
   void Movk(const Register& rd, uint64_t imm, int shift = -1) {
     VIXL_ASSERT(!rd.IsZero());
@@ -2325,6 +2338,26 @@ class MacroAssembler : public js::jit::Assembler {
     crc32cx(rd, rn, rm);
   }
 
+  void Abs(const Register& rd, const Register& rn) {
+     SingleEmissionCheckScope guard(this);
+     abs(rd, rn);
+   }
+
+   void Cnt(const Register& rd, const Register& rn) {
+     SingleEmissionCheckScope guard(this);
+     cnt(rd, rn);
+   }
+
+   void Ctz(const Register& rd, const Register& rn) {
+     SingleEmissionCheckScope guard(this);
+     ctz(rd, rn);
+   }
+
+   void Smax(const Register& rd, const Register& rn, const Operand& op);
+   void Smin(const Register& rd, const Register& rn, const Operand& op);
+   void Umax(const Register& rd, const Register& rn, const Operand& op);
+   void Umin(const Register& rd, const Register& rn, const Operand& op);
+
   // Push the system stack pointer (sp) down to allow the same to be done to
   // the current stack pointer (according to StackPointer()). This must be
   // called _before_ accessing the memory.
@@ -2434,7 +2467,20 @@ class MacroAssembler : public js::jit::Assembler {
       UseScratchRegisterScope* scratch_scope);
 
   bool LabelIsOutOfRange(Label* label, ImmBranchType branch_type) {
-    return !Instruction::IsValidImmPCOffset(branch_type, nextOffset().getOffset() - label->offset());
+    VIXL_ASSERT(label->bound());
+
+    // Prevent nop sequences in branch instructions.
+    js::jit::AutoForbidNops afn(this);
+
+    // Call |nextInstrOffset()| instead of just |nextOffset()| to ensure
+    // branches which are about to go out of range are also taken into account
+    // when computing the next instruction offset.
+    vixl::ImmBranchRangeType branchRange =
+        Instruction::ImmBranchTypeToRange(branch_type);
+    int32_t offset = nextInstrOffset(branchRange).getOffset() - label->offset();
+    VIXL_ASSERT(IsMultiple(offset, kInstructionSize));
+    return !Instruction::IsValidImmPCOffset(branch_type,
+                                            offset / kInstructionSize);
   }
 
   // The register to use as a stack pointer for stack operations.

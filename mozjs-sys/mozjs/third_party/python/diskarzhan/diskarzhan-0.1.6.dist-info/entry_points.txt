@@ -1,0 +1,2 @@
+[console_scripts]
+diskarzhan = diskarzhan.diskarzhan:run

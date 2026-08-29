@@ -20,7 +20,7 @@ from mozbuild.configure.options import (
 class Option(Option):
     def __init__(self, *args, **kwargs):
         kwargs["help"] = "Dummy help"
-        super(Option, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
 
 class TestOption(unittest.TestCase):

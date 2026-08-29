@@ -108,12 +108,10 @@ class TestManifest(unittest.TestCase):
                 "chrome://browser/content/viewSourceOverlay.xul",
             ),
         ]
-        with mozunit.MockedOpen(
-            {
-                "manifest": "\n".join(manifest),
-                "other/manifest": "\n".join(other_manifest),
-            }
-        ):
+        with mozunit.MockedOpen({
+            "manifest": "\n".join(manifest),
+            "other/manifest": "\n".join(other_manifest),
+        }):
             # Ensure we have tests for all types of manifests.
             self.assertEqual(
                 set(type(e) for e in expected_result), set(MANIFESTS_TYPES.values())

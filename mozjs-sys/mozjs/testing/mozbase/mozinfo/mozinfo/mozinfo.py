@@ -11,6 +11,7 @@
 import os
 import platform
 import re
+import subprocess
 import sys
 from ctypes.util import find_library
 
@@ -46,8 +47,7 @@ info = {
     "bits": unknown,
     "has_sandbox": unknown,
     "display": None,
-    "android_version": "",
-    "automation": bool(os.environ.get("MOZ_AUTOMATION", False)),
+    "automation": bool(os.environ.get("MOZ_AUTOMATION")),
 }
 (system, node, release, version, machine, processor) = platform.uname()
 (bits, linkage) = platform.architecture()
@@ -60,32 +60,25 @@ if system in ["Microsoft", "Windows"]:
     processor = machine
     system = os.environ.get("OS", system).replace("_", " ")
     (major, minor, build_number, _, _) = os.sys.getwindowsversion()
-    version = "%d.%d.%d" % (major, minor, build_number)
+    version = f"{major}.{minor}.{build_number}"
     if major == 10 and minor == 0 and build_number >= 22000:
         major = 11
 
     # 2009 == 22H2 software update.  These are the build numbers
     # we use 2009 as the "build" which maps to what taskcluster tasks see
-    if build_number == 22621 or build_number == 19045:
+    if build_number in {22621, 19045}:
         build_number = 2009
 
-    os_version = "%d.%d" % (major, build_number)
+    os_version = f"{major}.{build_number}"
 elif system.startswith(("MINGW", "MSYS_NT")):
     # windows/mingw python build (msys)
     info["os"] = "win"
     os_version = version = unknown
 elif system == "Linux":
-    # Attempt to use distro package to determine Linux distribution first.
-    # Failing that, fall back to use the platform method.
-    # Note that platform.linux_distribution() will be deprecated as of 3.8
-    # and this block will be removed once support for 2.7/3.5 is dropped.
-    try:
-        from distro import linux_distribution
-    except ImportError:
-        from platform import linux_distribution
+    import distro
 
-    output = linux_distribution()
-    (distribution, os_version, codename) = tuple(str(item.title()) for item in output)
+    distribution = distro.name().title()
+    os_version = distro.version().title()
 
     if not processor:
         processor = machine
@@ -93,9 +86,7 @@ elif system == "Linux":
         distribution = "lfs"
     if not os_version:
         os_version = release
-    if not codename:
-        codename = "unknown"
-    version = "%s %s" % (distribution, os_version)
+    version = f"{distribution} {os_version}"
 
     if os.environ.get("WAYLAND_DISPLAY"):
         info["display"] = "wayland"
@@ -109,9 +100,9 @@ elif system in ["DragonFly", "FreeBSD", "NetBSD", "OpenBSD"]:
     version = os_version = sys.platform
 elif system == "Darwin":
     (release, versioninfo, machine) = platform.mac_ver()
-    version = "OS X %s" % release
+    version = f"OS X {release}"
     versionNums = release.split(".")[:2]
-    os_version = "%s.%s" % (versionNums[0], versionNums[1].ljust(2, "0"))
+    os_version = f"{versionNums[0]}.{versionNums[1].ljust(2, '0')}"
     info["os"] = "mac"
 elif sys.platform in ("solaris", "sunos5"):
     info["os"] = "unix"  # community builds
@@ -131,6 +122,23 @@ if (
 info["apple_catalina"] = False
 if info["os"] == "mac" and float(os_version) == 10.15:
     info["apple_catalina"] = True
+
+info["macos_vm"] = False
+if info["os"] == "mac":
+    try:
+        _hw_model = subprocess.run(
+            ["sysctl", "-n", "hw.model"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if _hw_model.returncode == 0 and _hw_model.stdout.strip().startswith(
+            "VirtualMac"
+        ):
+            info["macos_vm"] = True
+    except Exception:
+        pass
 
 info["win10_2009"] = False
 if info["os"] == "win" and version == "10.0.19045":
@@ -160,15 +168,13 @@ elif processor == "arm" and bits == "64bit":
     processor = "aarch64"
 
 bits = re.search(r"(\d+)bit", bits).group(1)
-info.update(
-    {
-        "processor": processor,
-        "bits": int(bits),
-    }
-)
+info.update({
+    "processor": processor,
+    "bits": int(bits),
+})
 
-# we want to transition to this instead of using `!debug`, etc.
-info["arch"] = info["processor"]
+if info.get("arch", "") != "aarch64":
+    info["arch"] = info["processor"]
 
 
 if info["os"] == "linux":
@@ -186,7 +192,7 @@ else:
 
 # standard value of choices, for easy inspection
 choices = {
-    "os": ["linux", "win", "mac"],
+    "os": ["android", "linux", "mac", "win"],
     "bits": [32, 64],
     "processor": ["x86", "x86_64", "aarch64"],
 }
@@ -204,6 +210,9 @@ def sanitize(info):
             info["processor"] = "x86"
             info["bits"] = 32
 
+    if info.get("arch", "") != "aarch64":
+        info["arch"] = info["processor"]
+
 
 # method for updating information
 
@@ -215,9 +224,7 @@ def update(new_info):
     :param new_info: Either a dict containing the new info or a path/url
                      to a json file containing the new info.
     """
-    from six import string_types
-
-    if isinstance(new_info, string_types):
+    if isinstance(new_info, str):
         # lazy import
         import json
 
@@ -320,11 +327,11 @@ def main(args=None):
     parser = OptionParser(description=__doc__)
     for key in choices:
         parser.add_option(
-            "--%s" % key,
+            f"--{key}",
             dest=key,
             action="store_true",
             default=False,
-            help="display choices for %s" % key,
+            help=f"display choices for {key}",
         )
     options, args = parser.parse_args()
 
@@ -345,8 +352,7 @@ def main(args=None):
     for key, value in options.__dict__.items():
         if value is True:
             print(
-                "%s choices: %s"
-                % (key, " ".join([str(choice) for choice in choices[key]]))
+                f"{key} choices: {' '.join([str(choice) for choice in choices[key]])}"
             )
             flag = True
     if flag:
@@ -354,7 +360,7 @@ def main(args=None):
 
     # otherwise, print out all info
     for key, value in info.items():
-        print("%s: %s" % (key, value))
+        print(f"{key}: {value}")
 
 
 if __name__ == "__main__":

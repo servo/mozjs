@@ -87,14 +87,12 @@ class VisualMetrics(Layer):
         self.info(f"Treated {treated} videos.")
 
         if len(self.metrics) > 0:
-            metadata.add_result(
-                {
-                    "name": metadata.script["name"] + "-vm",
-                    "framework": {"name": "mozperftest"},
-                    "transformer": "mozperftest.metrics.visualmetrics:VisualData",
-                    "results": list(self.metrics.values()),
-                }
-            )
+            metadata.add_result({
+                "name": metadata.script["name"] + "-vm",
+                "framework": {"name": "mozperftest"},
+                "transformer": "mozperftest.metrics.visualmetrics:VisualData",
+                "results": list(self.metrics.values()),
+            })
 
             # we also extend --perfherder-metrics and --console-metrics if they
             # are activated
@@ -208,8 +206,8 @@ class VisualMetrics(Layer):
         # we are keeping the last 5 percents
         percents = list(percents.items())
         percents.sort()
-        for percent, value in percents[:5]:
-            self.append_metrics(index, f"{name}{percent}", value, **fields)
+        for percent, progress_value in percents[:5]:
+            self.append_metrics(index, f"{name}{percent}", progress_value, **fields)
 
     def append_metrics(self, index, name, value, **fields):
         if name not in self.metrics_fields:

@@ -100,7 +100,7 @@ class PerftestETL:
             files = newf
         else:
             raise Exception(
-                "Unknown file grouping type provided here: %s" % file_grouping
+                f"Unknown file grouping type provided here: {file_grouping}"
             )
 
         if self.sort_files:
@@ -113,7 +113,7 @@ class PerftestETL:
 
         if not files:
             raise Exception(
-                "Could not find any files in this configuration: %s" % file_grouping
+                f"Could not find any files in this configuration: {file_grouping}"
             )
 
         return files
@@ -160,7 +160,7 @@ class PerftestETL:
         # Write formatted data output to filepath
         output_data_filepath = self.parse_output()
 
-        print("Writing results to %s" % output_data_filepath)
+        print(f"Writing results to {output_data_filepath}")
         with open(output_data_filepath, "w") as f:
             json.dump(self.fmt_data, f, indent=4, sort_keys=True)
 

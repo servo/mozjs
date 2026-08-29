@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -111,9 +109,8 @@ class Table : public ShareableBase<Table> {
   void setNull(uint32_t address);
 
   // Copy entry from |srcTable| at |srcIndex| to this table at |dstIndex|.  Used
-  // by table.copy.  May OOM if it needs to box up a function during an upcast.
-  [[nodiscard]] bool copy(JSContext* cx, const Table& srcTable,
-                          uint32_t dstIndex, uint32_t srcIndex);
+  // by table.copy.
+  void copy(const Table& srcTable, uint32_t dstIndex, uint32_t srcIndex);
 
   // grow() returns (uint32_t)-1 if it could not grow.
   [[nodiscard]] uint32_t grow(uint32_t delta);

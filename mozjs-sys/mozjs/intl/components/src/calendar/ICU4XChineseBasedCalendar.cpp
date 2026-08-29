@@ -4,21 +4,22 @@
 
 #include "mozilla/intl/calendar/ICU4XChineseBasedCalendar.h"
 
+#include "mozilla/Assertions.h"
+
 namespace mozilla::intl::calendar {
 
 ICU4XChineseBasedCalendar::ICU4XChineseBasedCalendar(
-    capi::ICU4XAnyCalendarKind kind, const icu::Locale& locale,
+    icu4x::capi::CalendarKind kind, const icu::Locale& locale,
     UErrorCode& success)
     : ICU4XCalendar(kind, locale, success) {}
 
 ICU4XChineseBasedCalendar::ICU4XChineseBasedCalendar(
-    capi::ICU4XAnyCalendarKind kind, const icu::TimeZone& timeZone,
+    icu4x::capi::CalendarKind kind, const icu::TimeZone& timeZone,
     const icu::Locale& locale, UErrorCode& success)
     : ICU4XCalendar(kind, timeZone, locale, success) {}
 
 ICU4XChineseBasedCalendar::ICU4XChineseBasedCalendar(
-    const ICU4XChineseBasedCalendar& other)
-    : ICU4XCalendar(other) {}
+    const ICU4XChineseBasedCalendar& other) = default;
 
 ICU4XChineseBasedCalendar::~ICU4XChineseBasedCalendar() = default;
 
@@ -30,18 +31,6 @@ bool ICU4XChineseBasedCalendar::hasLeapMonths() const { return true; }
 
 bool ICU4XChineseBasedCalendar::hasMonthCode(MonthCode monthCode) const {
   return monthCode.ordinal() <= 12;
-}
-
-bool ICU4XChineseBasedCalendar::requiresFallbackForExtendedYear(
-    int32_t year) const {
-  // Same limits as in js/src/builtin/temporal/Calendar.cpp.
-  return std::abs(year) > 10'000;
-}
-
-bool ICU4XChineseBasedCalendar::requiresFallbackForGregorianYear(
-    int32_t year) const {
-  // Same limits as in js/src/builtin/temporal/Calendar.cpp.
-  return std::abs(year) > 10'000;
 }
 
 ////////////////////////////////////////////
@@ -59,28 +48,9 @@ bool ICU4XChineseBasedCalendar::inTemporalLeapYear(UErrorCode& status) const {
   return days > (monthsInNonLeapYear * maxDaysInMonth);
 }
 
-int32_t ICU4XChineseBasedCalendar::getRelatedYear(UErrorCode& status) const {
-  int32_t year = get(UCAL_EXTENDED_YEAR, status);
-  if (U_FAILURE(status)) {
-    return 0;
-  }
-  return year + relatedYearDifference();
-}
-
-void ICU4XChineseBasedCalendar::setRelatedYear(int32_t year) {
-  set(UCAL_EXTENDED_YEAR, year - relatedYearDifference());
-}
-
 void ICU4XChineseBasedCalendar::handleComputeFields(int32_t julianDay,
                                                     UErrorCode& status) {
   int32_t gyear = getGregorianYear();
-
-  // Use the fallback calendar for years outside the range supported by ICU4X.
-  if (requiresFallbackForGregorianYear(gyear)) {
-    handleComputeFieldsFromFallback(julianDay, status);
-    return;
-  }
-
   int32_t gmonth = getGregorianMonth() + 1;
   int32_t gday = getGregorianDayOfMonth();
 
@@ -93,25 +63,29 @@ void ICU4XChineseBasedCalendar::handleComputeFields(int32_t julianDay,
   }
   MOZ_ASSERT(date);
 
-  MonthCode monthCode = monthCodeFrom(date.get(), status);
-  if (U_FAILURE(status)) {
-    return;
-  }
-
-  int32_t extendedYear = capi::ICU4XDate_year_in_era(date.get());
-  int32_t month = capi::ICU4XDate_ordinal_month(date.get());
-  int32_t dayOfMonth = capi::ICU4XDate_day_of_month(date.get());
-  int32_t dayOfYear = capi::ICU4XDate_day_of_year(date.get());
+  MonthCode monthCode = monthCodeFrom(date.get());
+  int32_t extendedYear =
+      icu4x::capi::icu4x_Date_era_year_or_related_iso_mv1(date.get());
+  int32_t month = icu4x::capi::icu4x_Date_ordinal_month_mv1(date.get());
+  int32_t dayOfMonth = icu4x::capi::icu4x_Date_day_of_month_mv1(date.get());
+  int32_t dayOfYear = icu4x::capi::icu4x_Date_day_of_year_mv1(date.get());
 
   MOZ_ASSERT(1 <= month && month <= 13);
   MOZ_ASSERT(1 <= dayOfMonth && dayOfMonth <= 30);
   MOZ_ASSERT(1 <= dayOfYear && dayOfYear <= (13 * 30));
 
+  // Difference between the Chinese calendar era (the extended year 1) and the
+  // start year used for cycle computations. This is the sixtieth year of reign
+  // of Huáng Dì. Other sources use the first year of reign, which means using
+  // -2697 instead. Both numbers result in the same year of cycle, but the
+  // latter number gives a different cycle number. To align with the ICU4C
+  // Chinese calendar implementation, we use -2637 here.
+  constexpr int32_t chineseCalendarYearDiff = -2637;
+
   // Compute the cycle and year of cycle relative to the Chinese calendar, even
   // when this is the Dangi calendar.
-  int32_t chineseExtendedYear =
-      extendedYear + relatedYearDifference() - chineseRelatedYearDiff;
-  int32_t cycle_year = chineseExtendedYear - 1;
+  int32_t chineseCalendarYear = extendedYear - chineseCalendarYearDiff;
+  int32_t cycle_year = chineseCalendarYear - 1;
   int32_t cycle = FloorDiv(cycle_year, 60);
   int32_t yearOfCycle = cycle_year - (cycle * 60);
 

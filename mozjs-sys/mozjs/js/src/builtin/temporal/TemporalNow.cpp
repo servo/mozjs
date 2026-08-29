@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,11 +8,11 @@
 
 #include <stdint.h>
 
-#include "jsdate.h"
 #include "jspubtd.h"
 #include "jstypes.h"
 #include "NamespaceImports.h"
 
+#include "builtin/Date.h"
 #include "builtin/temporal/Calendar.h"
 #include "builtin/temporal/Instant.h"
 #include "builtin/temporal/PlainDate.h"
@@ -79,7 +77,7 @@ static bool SystemDateTime(JSContext* cx, Handle<Value> temporalTimeZoneLike,
 
     // Step 4.
     int32_t offsetMillis = DateTimeInfo::getOffsetMilliseconds(
-        DateTimeInfo::forceUTC(cx->realm()), epochMillis,
+        cx->realm()->getDateTimeInfo(), epochMillis,
         DateTimeInfo::TimeZoneOffset::UTC);
     MOZ_ASSERT(std::abs(offsetMillis) < ToMilliseconds(TemporalUnit::Day));
 

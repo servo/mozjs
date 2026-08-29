@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -103,6 +102,13 @@ extern JS_PUBLIC_API bool IsLargeArrayBufferMaybeShared(JSObject* obj);
  * |obj| must pass a JS::IsArrayBufferObjectMaybeShared test.
  */
 extern JS_PUBLIC_API bool IsResizableArrayBufferMaybeShared(JSObject* obj);
+
+/**
+ * Returns whether the passed array buffer is immutable.
+ *
+ * |obj| must pass a JS::IsArrayBufferObjectMaybeShared test.
+ */
+extern JS_PUBLIC_API bool IsImmutableArrayBufferMaybeShared(JSObject* obj);
 
 }  // namespace JS
 

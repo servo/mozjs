@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -107,8 +105,6 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
   static_assert(OsrFrameReg == r3);
 
-  Assembler* aasm = &masm;
-
   // Save non-volatile registers. These must be saved by the trampoline,
   // rather than the JIT'd code, because they are scanned by the conservative
   // scanner.
@@ -142,63 +138,10 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
   masm.loadPtr(slot_vp, r10);
   masm.unboxInt32(Address(r10, 0), r10);
 
-  {
-    Label noNewTarget;
-    masm.branchTest32(Assembler::Zero, r9,
-                      Imm32(CalleeToken_FunctionConstructing), &noNewTarget);
-
-    masm.add32(Imm32(1), r1);
-
-    masm.bind(&noNewTarget);
-  }
-
-  // Guarantee stack alignment of Jit frames.
-  //
-  // This code moves the stack pointer to the location where it should be when
-  // we enter the Jit frame.  It moves the stack pointer such that we have
-  // enough space reserved for pushing the arguments, and the JitFrameLayout.
-  // The stack pointer is also aligned on the alignment expected by the Jit
-  // frames.
-  //
-  // At the end the register r4, is a pointer to the stack where the first
-  // argument is expected by the Jit frame.
-  //
-  aasm->as_sub(r4, sp, O2RegImmShift(r1, LSL, 3));  // r4 = sp - argc*8
-  aasm->as_bic(r4, r4, Imm8(JitStackAlignment - 1));
-  // r4 is now the aligned on the bottom of the list of arguments.
-  static_assert(
-      sizeof(JitFrameLayout) % JitStackAlignment == 0,
-      "No need to consider the JitFrameLayout for aligning the stack");
-  // sp' = ~(JitStackAlignment - 1) & (sp - argc * sizeof(Value))
-  masm.movePtr(r4, sp);
-
-  // Get a copy of the number of args to use as a decrement counter, also set
-  // the zero condition code.
-  aasm->as_mov(r5, O2Reg(r1), SetCC);
-
-  // Loop over arguments, copying them from an unknown buffer onto the Ion
-  // stack so they can be accessed from JIT'ed code.
-  {
-    Label header, footer;
-    // If there aren't any arguments, don't do anything.
-    aasm->as_b(&footer, Assembler::Zero);
-    // Get the top of the loop.
-    masm.bind(&header);
-    aasm->as_sub(r5, r5, Imm8(1), SetCC);
-    // We could be more awesome, and unroll this, using a loadm
-    // (particularly since the offset is effectively 0) but that seems more
-    // error prone, and complex.
-    // BIG FAT WARNING: this loads both r6 and r7.
-    aasm->as_extdtr(IsLoad, 64, true, PostIndex, r6,
-                    EDtrAddr(r2, EDtrOffImm(8)));
-    aasm->as_extdtr(IsStore, 64, true, PostIndex, r6,
-                    EDtrAddr(r4, EDtrOffImm(8)));
-    aasm->as_b(&header, Assembler::NonZero);
-    masm.bind(&footer);
-  }
-
-  // Push the callee token.
-  masm.push(r9);
+  Register argcReg = r1;
+  Register argvReg = r2;
+  Register calleeTokenReg = r9;
+  generateEnterJitShared(masm, argcReg, argvReg, calleeTokenReg, r4, r5, r6);
 
   // Push the frame descriptor.
   masm.pushFrameDescriptorForJitCall(FrameType::CppToJSJit, r10, r10);
@@ -255,7 +198,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.ma_sub(sp, scratch, sp);
 
     // Enter exit frame.
-    masm.pushFrameDescriptor(FrameType::BaselineJS);
+    masm.push(FrameDescriptor(FrameType::BaselineJS));
     masm.push(Imm32(0));  // Fake return address.
     masm.push(FramePointer);
     // No GC things to mark on the stack, push a bare token.
@@ -264,7 +207,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
     masm.push(r0);  // jitcode
 
-    using Fn = bool (*)(BaselineFrame* frame, InterpreterFrame* interpFrame,
+    using Fn = void (*)(BaselineFrame* frame, InterpreterFrame* interpFrame,
                         uint32_t numStackValues);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(framePtrScratch);  // BaselineFrame
@@ -278,9 +221,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
     MOZ_ASSERT(jitcode != ReturnReg);
 
-    Label error;
     masm.addPtr(Imm32(ExitFrameLayout::SizeWithFooter()), sp);
-    masm.branchIfFalseBool(ReturnReg, &error);
 
     // If OSR-ing, then emit instrumentation for setting lastProfilerFrame
     // if profiler instrumentation is enabled.
@@ -295,14 +236,6 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     }
 
     masm.jump(jitcode);
-
-    // OOM: frame epilogue, load error value, discard return address and return.
-    masm.bind(&error);
-    masm.mov(FramePointer, sp);
-    masm.pop(FramePointer);
-    masm.addPtr(Imm32(sizeof(uintptr_t)), sp);  // Return address.
-    masm.moveValue(MagicValue(JS_ION_ERROR), JSReturnOperand);
-    masm.jump(&returnLabel);
 
     masm.bind(&notOsr);
     // Load the scope chain in R1.
@@ -399,122 +332,6 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
 
   // Jump to shared bailout tail. The BailoutInfo pointer has to be in r2.
   masm.jump(bailoutTail);
-}
-
-void JitRuntime::generateArgumentsRectifier(MacroAssembler& masm,
-                                            ArgumentsRectifierKind kind) {
-  AutoCreatedBy acb(masm, "JitRuntime::generateArgumentsRectifier");
-
-  switch (kind) {
-    case ArgumentsRectifierKind::Normal:
-      argumentsRectifierOffset_ = startTrampolineCode(masm);
-      break;
-    case ArgumentsRectifierKind::TrialInlining:
-      trialInliningArgumentsRectifierOffset_ = startTrampolineCode(masm);
-      break;
-  }
-  masm.pushReturnAddress();
-
-  // Frame prologue.
-  //
-  // NOTE: if this changes, fix the Baseline bailout code too!
-  // See BaselineStackBuilder::calculatePrevFramePtr and
-  // BaselineStackBuilder::buildRectifierFrame (in BaselineBailouts.cpp).
-  masm.push(FramePointer);
-  masm.mov(StackPointer, FramePointer);
-
-  static_assert(JitStackAlignment == sizeof(Value));
-
-  // Copy number of actual arguments into r0 and r8.
-  masm.loadNumActualArgs(FramePointer, r0);
-  masm.mov(r0, r8);
-
-  // Load the number of |undefined|s to push into r6.
-  masm.loadPtr(
-      Address(FramePointer, RectifierFrameLayout::offsetOfCalleeToken()), r1);
-  {
-    ScratchRegisterScope scratch(masm);
-    masm.ma_and(Imm32(CalleeTokenMask), r1, r6, scratch);
-  }
-  masm.loadFunctionArgCount(r6, r6);
-
-  masm.ma_sub(r6, r8, r2);
-
-  // Get the topmost argument.
-  {
-    ScratchRegisterScope scratch(masm);
-    masm.ma_alu(sp, lsl(r8, 3), r3, OpAdd);  // r3 <- sp + nargs * 8
-    masm.ma_add(r3, Imm32(sizeof(RectifierFrameLayout)), r3, scratch);
-  }
-
-  {
-    Label notConstructing;
-
-    masm.branchTest32(Assembler::Zero, r1,
-                      Imm32(CalleeToken_FunctionConstructing),
-                      &notConstructing);
-
-    // Add sizeof(Value) to overcome |this|
-    masm.as_extdtr(IsLoad, 64, true, Offset, r4, EDtrAddr(r3, EDtrOffImm(8)));
-    masm.as_extdtr(IsStore, 64, true, PreIndex, r4,
-                   EDtrAddr(sp, EDtrOffImm(-8)));
-
-    masm.bind(&notConstructing);
-  }
-
-  // Push undefined.
-  masm.moveValue(UndefinedValue(), ValueOperand(r5, r4));
-  {
-    Label undefLoopTop;
-    masm.bind(&undefLoopTop);
-    masm.as_extdtr(IsStore, 64, true, PreIndex, r4,
-                   EDtrAddr(sp, EDtrOffImm(-8)));
-    masm.as_sub(r2, r2, Imm8(1), SetCC);
-
-    masm.ma_b(&undefLoopTop, Assembler::NonZero);
-  }
-
-  // Push arguments, |nargs| + 1 times (to include |this|).
-  {
-    Label copyLoopTop;
-    masm.bind(&copyLoopTop);
-    masm.as_extdtr(IsLoad, 64, true, PostIndex, r4,
-                   EDtrAddr(r3, EDtrOffImm(-8)));
-    masm.as_extdtr(IsStore, 64, true, PreIndex, r4,
-                   EDtrAddr(sp, EDtrOffImm(-8)));
-
-    masm.as_sub(r8, r8, Imm8(1), SetCC);
-    masm.ma_b(&copyLoopTop, Assembler::NotSigned);
-  }
-
-  // Construct JitFrameLayout.
-  masm.ma_push(r1);  // callee token
-  masm.pushFrameDescriptorForJitCall(FrameType::Rectifier, r0, r0);
-
-  // Call the target function.
-  masm.andPtr(Imm32(CalleeTokenMask), r1);
-  switch (kind) {
-    case ArgumentsRectifierKind::Normal:
-      masm.loadJitCodeRaw(r1, r3);
-      argumentsRectifierReturnOffset_ = masm.callJitNoProfiler(r3);
-      break;
-    case ArgumentsRectifierKind::TrialInlining:
-      Label noBaselineScript, done;
-      masm.loadBaselineJitCodeRaw(r1, r3, &noBaselineScript);
-      masm.callJitNoProfiler(r3);
-      masm.jump(&done);
-
-      // See BaselineCacheIRCompiler::emitCallInlinedFunction.
-      masm.bind(&noBaselineScript);
-      masm.loadJitCodeRaw(r1, r3);
-      masm.callJitNoProfiler(r3);
-      masm.bind(&done);
-      break;
-  }
-
-  masm.mov(FramePointer, StackPointer);
-  masm.pop(FramePointer);
-  masm.ret();
 }
 
 static void PushBailoutFrame(MacroAssembler& masm, Register spArg) {
@@ -716,8 +533,7 @@ uint32_t JitRuntime::generatePreBarrier(JSContext* cx, MacroAssembler& masm,
   masm.push(temp3);
 
   Label noBarrier;
-  masm.emitPreBarrierFastPath(cx->runtime(), type, temp1, temp2, temp3,
-                              &noBarrier);
+  masm.emitPreBarrierFastPath(type, temp1, temp2, temp3, &noBarrier);
 
   // Call into C++ to mark this GC thing.
   masm.pop(temp3);

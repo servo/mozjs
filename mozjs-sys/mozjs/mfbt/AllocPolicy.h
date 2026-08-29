@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,12 +10,12 @@
 #ifndef mozilla_AllocPolicy_h
 #define mozilla_AllocPolicy_h
 
-#include "mozilla/Attributes.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/TemplateLib.h"
+#include "mozilla/CheckedArithmetic.h"
+#include "mozilla/Likely.h"
 
-#include <stddef.h>
-#include <stdlib.h>
+#include <cstddef>
+#include <cstdlib>
 
 namespace mozilla {
 
@@ -77,10 +75,10 @@ class MallocAllocPolicy {
  public:
   template <typename T>
   T* maybe_pod_malloc(size_t aNumElems) {
-    if (aNumElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+    size_t size;
+    if (MOZ_UNLIKELY(!mozilla::SafeMul(aNumElems, sizeof(T), &size)))
       return nullptr;
-    }
-    return static_cast<T*>(malloc(aNumElems * sizeof(T)));
+    return static_cast<T*>(malloc(size));
   }
 
   template <typename T>
@@ -90,10 +88,10 @@ class MallocAllocPolicy {
 
   template <typename T>
   T* maybe_pod_realloc(T* aPtr, size_t aOldSize, size_t aNewSize) {
-    if (aNewSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
+    size_t size;
+    if (MOZ_UNLIKELY(!mozilla::SafeMul(aNewSize, sizeof(T), &size)))
       return nullptr;
-    }
-    return static_cast<T*>(realloc(aPtr, aNewSize * sizeof(T)));
+    return static_cast<T*>(realloc(aPtr, size));
   }
 
   template <typename T>

@@ -11,6 +11,7 @@ from unittest import mock
 
 import mozunit
 import pytest
+from mozdevice import ADBError
 
 from mozperftest.tests.support import EXAMPLE_TESTS_DIR, requests_content, temp_file
 from mozperftest.utils import (
@@ -20,6 +21,7 @@ from mozperftest.utils import (
     convert_day,
     create_path,
     download_file,
+    get_adb_device_or_emu,
     get_multi_tasks_url,
     get_output_dir,
     get_revision_namespace_url,
@@ -87,15 +89,13 @@ def test_install_package():
     vem.bin_path = "someplace"
     with mock.patch("subprocess.check_call") as mock_check_call:
         assert install_package(vem, "foo")
-        mock_check_call.assert_called_once_with(
-            [
-                vem.python_path,
-                "-m",
-                "pip",
-                "install",
-                "foo",
-            ]
-        )
+        mock_check_call.assert_called_once_with([
+            vem.python_path,
+            "-m",
+            "pip",
+            "install",
+            "foo",
+        ])
 
 
 def test_install_requirements_file():
@@ -105,19 +105,17 @@ def test_install_requirements_file():
         "mozperftest.utils.os"
     ):
         assert install_requirements_file(vem, "foo")
-        mock_check_call.assert_called_once_with(
-            [
-                vem.python_path,
-                "-m",
-                "pip",
-                "install",
-                "-r",
-                "foo",
-                "--no-index",
-                "--find-links",
-                "https://pypi.pub.build.mozilla.org/pub/",
-            ]
-        )
+        mock_check_call.assert_called_once_with([
+            vem.python_path,
+            "-m",
+            "pip",
+            "install",
+            "-r",
+            "foo",
+            "--no-index",
+            "--find-links",
+            "https://pypi.pub.build.mozilla.org/pub/",
+        ])
 
 
 @mock.patch("pip._internal.req.constructors.install_req_from_line", new=_req)
@@ -138,10 +136,12 @@ def test_install_package_failures():
 
 @mock.patch("mozperftest.utils.requests.get", requests_content())
 def test_build_test_list():
-    tests = [EXAMPLE_TESTS_DIR, "https://some/location/perftest_one.js"]
+    http_filename = "perftest_one.js"
+    tests = [EXAMPLE_TESTS_DIR, f"https://some/location/{http_filename}"]
     try:
         files, tmp_dir = build_test_list(tests)
-        assert len(files) == 2
+        assert any(f.startswith(str(EXAMPLE_TESTS_DIR)) for f in files)
+        assert any(http_filename in Path(f).name for f in files)
     finally:
         shutil.rmtree(tmp_dir)
 
@@ -275,6 +275,46 @@ def test_archive_folder():
 
         archive_folder(input_dir_path, output_dir_path, archive_name="testing")
         assert len(list(output_dir_path.glob("testing.tgz"))) == 1
+
+
+class MockADBDeviceFactory:
+    def __init__(self, verbose=False):
+        self.verbose = verbose
+
+
+class EmulatorMockAvailable:
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def is_available(self):
+        return True
+
+    def check_avd(self):
+        return True
+
+    def get_avd_description(self):
+        return "test-avd"
+
+    def start(self):
+        pass
+
+    def wait_for_start(self):
+        pass
+
+
+@mock.patch("mozperftest.utils.input", return_value="y")
+@mock.patch(
+    "mozrunner.devices.android_device.AndroidEmulator", new=EmulatorMockAvailable
+)
+@mock.patch("mozdevice.ADBDeviceFactory")
+def test_launch_emulator_click_yes(mock_factory, mock_input):
+    fake_device = MockADBDeviceFactory(verbose=True)
+    mock_factory.side_effect = [ADBError("No ready devices found."), fake_device]
+
+    result = get_adb_device_or_emu()
+
+    assert isinstance(result, MockADBDeviceFactory)
+    assert mock_factory.call_count == 2
 
 
 if __name__ == "__main__":

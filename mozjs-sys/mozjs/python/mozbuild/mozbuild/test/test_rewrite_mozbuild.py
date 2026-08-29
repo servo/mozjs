@@ -64,6 +64,12 @@ EXPORTS.bob.carol = [
 ]
 """
 
+SAMPLE_SINGLE_SOURCE_MOZBUILD = """
+UNIFIED_SOURCES += [
+    "stub.cpp",
+]
+"""
+
 
 def _make_mozbuild_directory_structure(mozbuild_path, contents):
     d = tempfile.TemporaryDirectory()
@@ -508,6 +514,26 @@ class TestUtils(unittest.TestCase):
                 print(expected_output)
                 print("-------------------")
             self.assertEqual(contents, expected_output)
+
+    def test_mozbuild_adding_already_present(self):
+        mozbuild_path = "third_party/somelib/megazords/full/moz.build"
+        file_to_add = "third_party/somelib/megazords/full/stub.cpp"
+
+        startdir = os.getcwd()
+        try:
+            mozbuild_dir = _make_mozbuild_directory_structure(
+                mozbuild_path, SAMPLE_SINGLE_SOURCE_MOZBUILD
+            )
+            os.chdir(mozbuild_dir.name)
+
+            mu.add_file_to_moz_build_file(file_to_add)
+
+            with open(os.path.join(mozbuild_dir.name, mozbuild_path)) as f:
+                contents = f.read()
+
+            self.assertEqual(contents, SAMPLE_SINGLE_SOURCE_MOZBUILD)
+        finally:
+            os.chdir(startdir)
 
 
 if __name__ == "__main__":

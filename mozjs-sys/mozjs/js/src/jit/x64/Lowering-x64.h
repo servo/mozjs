@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -30,6 +28,10 @@ class LIRGeneratorX64 : public LIRGeneratorX86Shared {
       MDefinition* mir, MDefinition* lhs, MDefinition* rhs);
   void lowerForMulInt64(LMulI64* ins, MMul* mir, MDefinition* lhs,
                         MDefinition* rhs);
+
+  template <class LInstr>
+  void lowerForShiftInt64(LInstr* ins, MDefinition* mir, MDefinition* lhs,
+                          MDefinition* rhs);
 
   // Returns a box allocation. reg2 is ignored on 64-bit platforms.
   LBoxAllocation useBoxFixed(MDefinition* mir, Register reg1, Register,

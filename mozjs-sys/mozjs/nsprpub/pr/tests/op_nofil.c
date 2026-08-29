@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -32,7 +31,6 @@
 static PRFileDesc* t1;
 
 int main(int argc, char** argv) {
-  PR_STDIO_INIT();
   t1 = PR_Open(NO_SUCH_FILE, PR_RDONLY, 0666);
   if (t1 == NULL) {
     if (PR_GetError() == PR_FILE_NOT_FOUND_ERROR) {

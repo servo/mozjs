@@ -278,19 +278,18 @@ class IPGResultsHandler:
        # Run tests - call start_ipg and stop_ipg...
 
        ipg_rh = IPGResultsHandler(
-            ipg.output_files,
-            ipg.output_dir_path,
-            ipg_measure_duration=ipg.ipg_measure_duration,
-            sampling_rate=ipg.sampling_rate
-        )
+           ipg.output_files,
+           ipg.output_dir_path,
+           ipg_measure_duration=ipg.ipg_measure_duration,
+           sampling_rate=ipg.sampling_rate,
+       )
 
        cleaned_data = ipg_rh.clean_ipg_data()
        # you can also get the data from results after calling clean_ipg_data
        cleaned_data = ipg_rh.results
 
        perfherder_data = ipg_rh.format_ipg_data_to_partial_perfherder(
-            experiment_duration,
-            test_name
+           experiment_duration, test_name
        )
        # you can also get the perfherder data from summarized_results
        # after calling format_ipg_data_to_partial_perfherder
@@ -393,12 +392,12 @@ class IPGResultsHandler:
         An uncleaned file looks like this (this contains a partial
         sample of the time series data):
         ```
-        "System Time","RDTSC","Elapsed Time (sec)"
-        "12:11:05:769","61075218263548","   2.002"
-        "12:11:06:774","61077822279584","   3.007"
-        "12:11:07:778","61080424421708","   4.011"
-        "12:11:08:781","61083023535972","   5.013"
-        "12:11:09:784","61085623402302","   6.016"
+        "System Time", "RDTSC", "Elapsed Time (sec)"
+        "12:11:05:769", "61075218263548", "   2.002"
+        "12:11:06:774", "61077822279584", "   3.007"
+        "12:11:07:778", "61080424421708", "   4.011"
+        "12:11:08:781", "61083023535972", "   5.013"
+        "12:11:09:784", "61085623402302", "   6.016"
 
         "Total Elapsed Time (sec) = 10.029232"
         "Measured RDTSC Frequency (GHz) = 2.592"
@@ -491,7 +490,8 @@ class IPGResultsHandler:
             # Make sure we don't have any bad line endings
             # contaminating the cleaned rows.
             fmt_row = [
-                val.replace("\n", "")
+                val
+                .replace("\n", "")
                 .replace("\t", "")
                 .replace("\r", "")
                 .replace("\\n", "")
@@ -818,12 +818,12 @@ class IPGResultsHandler:
         for measure in cut_results:
             if "watt" in measure.lower() and "limit" not in measure.lower():
                 # pylint --py3k W1619
-                watt_usage[replace_measure_name(measure) + "-avg"] = sum(
-                    [float(val) for val in cut_results[measure]]
-                ) / len(cut_results[measure])
-                watt_usage[replace_measure_name(measure) + "-max"] = max(
-                    [float(val) for val in cut_results[measure]]
-                )
+                watt_usage[replace_measure_name(measure) + "-avg"] = sum([
+                    float(val) for val in cut_results[measure]
+                ]) / len(cut_results[measure])
+                watt_usage[replace_measure_name(measure) + "-max"] = max([
+                    float(val) for val in cut_results[measure]
+                ])
 
         # Get average CPU and GPU utilization
         average_utilization = {}
@@ -841,9 +841,9 @@ class IPGResultsHandler:
                 utilized_name = "gpu"
 
             # pylint --py3k W1619
-            average_utilization[utilized_name] = sum(
-                [float(val) for val in cut_results[utilization]]
-            ) / len(cut_results[utilization])
+            average_utilization[utilized_name] = sum([
+                float(val) for val in cut_results[utilization]
+            ]) / len(cut_results[utilization])
 
         # Get average and maximum CPU and GPU frequency
         frequency_info = {"cpu": {}, "gpu": {}}
@@ -861,17 +861,17 @@ class IPGResultsHandler:
                 fmeasure_name = "gpu"
             # pylint --py3k W1619
 
-            frequency_info[fmeasure_name]["favg"] = sum(
-                [float(val) for val in cut_results[frequency_measure]]
-            ) / len(cut_results[frequency_measure])
+            frequency_info[fmeasure_name]["favg"] = sum([
+                float(val) for val in cut_results[frequency_measure]
+            ]) / len(cut_results[frequency_measure])
 
-            frequency_info[fmeasure_name]["fmax"] = max(
-                [float(val) for val in cut_results[frequency_measure]]
-            )
+            frequency_info[fmeasure_name]["fmax"] = max([
+                float(val) for val in cut_results[frequency_measure]
+            ])
 
-            frequency_info[fmeasure_name]["fmin"] = min(
-                [float(val) for val in cut_results[frequency_measure]]
-            )
+            frequency_info[fmeasure_name]["fmin"] = min([
+                float(val) for val in cut_results[frequency_measure]
+            ])
 
         summarized_results = {
             "utilization": {

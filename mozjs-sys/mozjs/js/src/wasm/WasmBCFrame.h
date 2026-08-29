@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -539,14 +537,13 @@ class BaseStackFrame final : public BaseStackFrameAllocator {
   // Note the platform scratch register may be used by branchPtr(), so
   // generally tmp must be something else.
 
-  void checkStack(Register tmp, TrapSiteDesc trapSiteDesc) {
-    stackAddOffset_ = masm.sub32FromStackPtrWithPatch(tmp);
-    Label ok;
-    masm.branchPtr(Assembler::Below,
-                   Address(InstanceReg, wasm::Instance::offsetOfStackLimit()),
-                   tmp, &ok);
-    masm.wasmTrap(Trap::StackOverflow, trapSiteDesc);
-    masm.bind(&ok);
+  void checkStack(Register tmp1, Register tmp2, Label* stackOverflowTrap) {
+    masm.loadPtr(Address(InstanceReg, wasm::Instance::offsetOfCx()), tmp2);
+    stackAddOffset_ = masm.sub32FromStackPtrWithPatch(tmp1);
+    masm.branchPtr(Assembler::AboveOrEqual,
+                   Address(tmp2, JSContext::offsetOfWasm() +
+                                     wasm::Context::offsetOfStackLimit()),
+                   tmp1, stackOverflowTrap);
   }
 
   void patchCheckStack() {
@@ -786,11 +783,7 @@ class BaseStackFrame final : public BaseStackFrameAllocator {
     pushChunkyBytes(StackSizeOfFloat);
     masm.storeFloat32(r, Address(sp_, stackOffset(currentStackHeight())));
 #else
-    if (StackSizeOfFloat == 4) {
-      masm.Push(r);
-    } else {
-      masm.Push(r.asDouble());
-    }
+    masm.Push(r);
 #endif
     maxFramePushed_ = std::max(maxFramePushed_, masm.framePushed());
     MOZ_ASSERT(stackBefore + StackSizeOfFloat == currentStackHeight());
@@ -845,11 +838,7 @@ class BaseStackFrame final : public BaseStackFrameAllocator {
     masm.loadFloat32(Address(sp_, stackOffset(currentStackHeight())), r);
     popChunkyBytes(StackSizeOfFloat);
 #else
-    if (StackSizeOfFloat == 4) {
-      masm.Pop(r);
-    } else {
-      masm.Pop(r.asDouble());
-    }
+    masm.Pop(r);
 #endif
     MOZ_ASSERT(stackBefore - StackSizeOfFloat == currentStackHeight());
   }
@@ -1391,15 +1380,14 @@ struct StackMapGenerator {
   [[nodiscard]] bool generateStackmapEntriesForTrapExit(
       const ArgTypeVector& args, ExitStubMapVector* extras);
 
-  // Creates a stackmap associated with the instruction denoted by
-  // |assemblerOffset|, incorporating pointers from the current operand
+  // Creates a stackmap incorporating pointers from the current operand
   // stack |stk|, incorporating possible extra pointers in |extra| at the
   // lower addressed end, and possibly with the associated frame having a
   // DebugFrame that must be traced, as indicated by |debugFrameWithLiveRefs|.
   [[nodiscard]] bool createStackMap(
       const char* who, const ExitStubMapVector& extras,
-      uint32_t assemblerOffset,
-      HasDebugFrameWithLiveRefs debugFrameWithLiveRefs, const StkVector& stk);
+      HasDebugFrameWithLiveRefs debugFrameWithLiveRefs, const StkVector& stk,
+      wasm::StackMap** result);
 };
 
 }  // namespace wasm

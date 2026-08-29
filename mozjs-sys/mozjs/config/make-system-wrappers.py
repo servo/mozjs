@@ -20,7 +20,7 @@ def gen_wrappers(unused, outdir, *header_list):
     for header in header_list:
         with FileAvoidWrite(os.path.join(outdir, header)) as f:
             includes = include_next_template.format(header=header)
-            if header == "wayland-util.h" or header == "pipewire/pipewire.h":
+            if header in {"wayland-util.h", "pipewire/pipewire.h"}:
                 # wayland-util.h in Wayland < 1.12 and pipewire.h > 1.4 include
                 # math.h inside an extern "C" block, which breaks including the
                 # header from C++. This was fixed in Wayland 1.12, but for versions

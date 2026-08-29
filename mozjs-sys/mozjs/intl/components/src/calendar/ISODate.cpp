@@ -6,7 +6,6 @@
 #include "mozilla/intl/calendar/ISODate.h"
 
 #include <array>
-#include <stddef.h>
 #include <stdint.h>
 
 namespace mozilla::intl::calendar {
@@ -19,7 +18,8 @@ static int32_t DayFromYear(int32_t year) {
 }
 
 static constexpr bool IsISOLeapYear(int32_t year) {
-  return (year % 4 == 0) && ((year % 100 != 0) || (year % 400 == 0));
+  int32_t d = (year % 100 != 0) ? 4 : 16;
+  return (year & (d - 1)) == 0;
 }
 
 static constexpr int32_t ISODaysInMonth(int32_t year, int32_t month) {

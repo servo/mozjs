@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -20,6 +18,7 @@
 
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
+#include "gc/WeakMap.h"
 #include "jit/CacheIRAOT.h"
 #include "jit/ExecutableAllocator.h"
 #include "jit/ICStubSpace.h"
@@ -39,12 +38,27 @@ struct CodeSizes;
 }
 
 namespace js {
+
+class BaseScript;
+
 namespace jit {
 
 enum class CacheKind : uint8_t;
 class CacheIRStubInfo;
 class JitCode;
 class JitScript;
+
+/*
+ *  The EntryTrampolineMap is used to cache the trampoline code for each script
+ *  as they are created.  These trampolines are created only under
+ *  --emit-interpreter-entry and are used to identify which script is being
+ *  interpeted when profiling with external profilers such as perf.
+ *
+ *  This is a weak map keyed by script. The map keeps the JitCode values alive
+ *  as long as the script is alive. When a script is collected, its entry is
+ *  automatically removed.
+ */
+using EntryTrampolineMap = WeakMap<BaseScript*, JitCode*, ZoneAllocPolicy>;
 
 enum class ICStubEngine : uint8_t {
   // Baseline IC, see BaselineIC.h.
@@ -123,19 +137,22 @@ class JitZone {
 
   // HashMap that maps scripts to compilations inlining those scripts.
   using InlinedScriptMap =
-      GCHashMap<WeakHeapPtr<BaseScript*>, RecompileInfoVector,
+      GCHashMap<WeakHeapPtr<BaseScript*>, IonScriptKeyVector,
                 StableCellHasher<WeakHeapPtr<BaseScript*>>, SystemAllocPolicy>;
   InlinedScriptMap inlinedCompilations_;
 
   mozilla::LinkedList<JitScript> jitScripts_;
 
   // The following two fields are a pair of associated scripts. If they are
-  // non-null, the child has been inlined into the parent, and we have bailed
-  // out due to a MonomorphicInlinedStubFolding bailout. If it wasn't
-  // trial-inlined, we need to track for the parent if we attach a new case to
-  // the corresponding folded stub which belongs to the child.
-  WeakHeapPtr<JSScript*> lastStubFoldingBailoutChild_;
-  WeakHeapPtr<JSScript*> lastStubFoldingBailoutParent_;
+  // non-null, we have bailed out from MGuardMultipleShapes. The inner and outer
+  // scripts are either the same script (when no inlining happened) or else the
+  // inner script was inlined into the outer script.
+  //
+  // This is used to distinguish a bailout from MGuardShapeList vs
+  // MGuardMultipleShapes, and for monomorphic inlining we need to track the
+  // outer script that inlined the inner script.
+  WeakHeapPtr<JSScript*> lastStubFoldingBailoutInner_;
+  WeakHeapPtr<JSScript*> lastStubFoldingBailoutOuter_;
 
   // The JitZone stores stubs to concatenate strings inline and perform RegExp
   // calls inline. These bake in zone specific pointers and can't be stored in
@@ -145,6 +162,10 @@ class JitZone {
   // These are weak pointers. Ion compilations store strong references to stubs
   // they depend on in WarpSnapshot.
   Stubs<WeakHeapPtr<JitCode*>> stubs_;
+
+  // Map used to cache entry trampolines for scripts, for external profiling to
+  // identify which functions are being interpreted.
+  js::UniquePtr<EntryTrampolineMap> interpreterEntryMap;
 
   mozilla::Maybe<IonCompilationId> currentCompilationId_;
   bool keepJitScripts_ = false;
@@ -171,6 +192,7 @@ class JitZone {
   ~JitZone() {
     MOZ_ASSERT(jitScripts_.isEmpty());
     MOZ_ASSERT(!keepJitScripts_);
+    MOZ_ASSERT_IF(interpreterEntryMap, interpreterEntryMap->empty());
   }
 
   void traceWeak(JSTracer* trc, Zone* zone);
@@ -215,10 +237,10 @@ class JitZone {
   ExecutableAllocator& execAlloc() { return execAlloc_.ref(); }
   const ExecutableAllocator& execAlloc() const { return execAlloc_.ref(); }
 
-  [[nodiscard]] bool addInlinedCompilation(const RecompileInfo& info,
+  [[nodiscard]] bool addInlinedCompilation(const IonScriptKey& ionScriptKey,
                                            JSScript* inlined);
 
-  RecompileInfoVector* maybeInlinedCompilations(JSScript* inlined) {
+  IonScriptKeyVector* maybeInlinedCompilations(JSScript* inlined) {
     auto p = inlinedCompilations_.lookup(inlined);
     return p ? &p->value() : nullptr;
   }
@@ -227,22 +249,22 @@ class JitZone {
     inlinedCompilations_.remove(inlined);
   }
 
-  void noteStubFoldingBailout(JSScript* child, JSScript* parent) {
-    lastStubFoldingBailoutChild_ = child;
-    lastStubFoldingBailoutParent_ = parent;
+  void noteStubFoldingBailout(JSScript* inner, JSScript* outer) {
+    lastStubFoldingBailoutInner_ = inner;
+    lastStubFoldingBailoutOuter_ = outer;
   }
-  bool hasStubFoldingBailoutData(JSScript* child) const {
-    return lastStubFoldingBailoutChild_ &&
-           lastStubFoldingBailoutChild_.get() == child &&
-           lastStubFoldingBailoutParent_;
+  bool hasStubFoldingBailoutData(JSScript* inner) const {
+    return lastStubFoldingBailoutInner_ &&
+           lastStubFoldingBailoutInner_.get() == inner &&
+           lastStubFoldingBailoutOuter_;
   }
-  JSScript* stubFoldingBailoutParent() const {
-    MOZ_ASSERT(lastStubFoldingBailoutChild_);
-    return lastStubFoldingBailoutParent_.get();
+  JSScript* stubFoldingBailoutOuter() const {
+    MOZ_ASSERT(lastStubFoldingBailoutInner_);
+    return lastStubFoldingBailoutOuter_.get();
   }
   void clearStubFoldingBailoutData() {
-    lastStubFoldingBailoutChild_ = nullptr;
-    lastStubFoldingBailoutParent_ = nullptr;
+    lastStubFoldingBailoutInner_ = nullptr;
+    lastStubFoldingBailoutOuter_ = nullptr;
   }
 
   void registerJitScript(JitScript* script) { jitScripts_.insertBack(script); }
@@ -296,6 +318,9 @@ class JitZone {
 
   void traceWeak(JSTracer* trc, JS::Realm* realm);
 
+  void traceScriptTableRoots(JSTracer* trc);
+  void finishScriptTableRoots();
+
   void discardStubs() {
     for (WeakHeapPtr<JitCode*>& stubRef : stubs_) {
       stubRef = nullptr;
@@ -341,6 +366,11 @@ class JitZone {
     }
     return stubs_[kind];
   }
+
+  EntryTrampolineMap* maybeInterpreterEntryMap() {
+    return interpreterEntryMap.get();
+  }
+  EntryTrampolineMap* getOrCreateInterpreterEntryMap(JS::Zone* zone);
 
   static constexpr size_t offsetOfStringConcatStub() {
     return offsetof(JitZone, stubs_) +

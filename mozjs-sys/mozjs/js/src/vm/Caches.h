@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,8 +9,9 @@
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MruCache.h"
-#include "mozilla/TemplateLib.h"
 #include "mozilla/UniquePtr.h"
+
+#include <bit>
 
 #include "frontend/ScopeBindingCache.h"
 #include "gc/Tracer.h"
@@ -185,13 +184,12 @@ class MegamorphicCache {
   using Entry = MegamorphicCacheEntry;
 
   static constexpr size_t NumEntries = 1024;
-  static constexpr uint8_t ShapeHashShift1 =
-      mozilla::tl::FloorLog2<alignof(Shape)>::value;
+  static constexpr uint8_t ShapeHashShift1 = mozilla::FloorLog2(alignof(Shape));
   static constexpr uint8_t ShapeHashShift2 =
-      ShapeHashShift1 + mozilla::tl::FloorLog2<NumEntries>::value;
+      ShapeHashShift1 + mozilla::FloorLog2(NumEntries);
 
-  static_assert(mozilla::IsPowerOfTwo(alignof(Shape)) &&
-                    mozilla::IsPowerOfTwo(NumEntries),
+  static_assert(std::has_single_bit(alignof(Shape)) &&
+                    std::has_single_bit(NumEntries),
                 "FloorLog2 is exact because alignof(Shape) and NumEntries are "
                 "both powers of two");
 
@@ -203,7 +201,7 @@ class MegamorphicCache {
 
   // NOTE: this logic is mirrored in MacroAssembler::emitMegamorphicCacheLookup
   Entry& getEntry(Shape* shape, PropertyKey key) {
-    static_assert(mozilla::IsPowerOfTwo(NumEntries),
+    static_assert(std::has_single_bit(NumEntries),
                   "NumEntries must be a power-of-two for fast modulo");
     uintptr_t hash = uintptr_t(shape) >> ShapeHashShift1;
     hash ^= uintptr_t(shape) >> ShapeHashShift2;
@@ -330,13 +328,12 @@ class MegamorphicSetPropCache {
   // the sweet spot where we are getting most of the hits we would get with
   // an infinitely sized cache
   static constexpr size_t NumEntries = 1024;
-  static constexpr uint8_t ShapeHashShift1 =
-      mozilla::tl::FloorLog2<alignof(Shape)>::value;
+  static constexpr uint8_t ShapeHashShift1 = mozilla::FloorLog2(alignof(Shape));
   static constexpr uint8_t ShapeHashShift2 =
-      ShapeHashShift1 + mozilla::tl::FloorLog2<NumEntries>::value;
+      ShapeHashShift1 + mozilla::FloorLog2(NumEntries);
 
-  static_assert(mozilla::IsPowerOfTwo(alignof(Shape)) &&
-                    mozilla::IsPowerOfTwo(NumEntries),
+  static_assert(std::has_single_bit(alignof(Shape)) &&
+                    std::has_single_bit(NumEntries),
                 "FloorLog2 is exact because alignof(Shape) and NumEntries are "
                 "both powers of two");
 
@@ -347,7 +344,7 @@ class MegamorphicSetPropCache {
   uint16_t generation_ = 0;
 
   Entry& getEntry(Shape* beforeShape, PropertyKey key) {
-    static_assert(mozilla::IsPowerOfTwo(NumEntries),
+    static_assert(std::has_single_bit(NumEntries),
                   "NumEntries must be a power-of-two for fast modulo");
     uintptr_t hash = uintptr_t(beforeShape) >> ShapeHashShift1;
     hash ^= uintptr_t(beforeShape) >> ShapeHashShift2;

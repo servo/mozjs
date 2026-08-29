@@ -14,6 +14,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Type,
     Union,
@@ -32,6 +33,7 @@ from .console import (
     Console,
     ConsoleOptions,
     ConsoleRenderable,
+    OverflowMethod,
     Group,
     RenderResult,
     group,
@@ -90,8 +92,10 @@ def install(
     show_locals: bool = False,
     locals_max_length: int = LOCALS_MAX_LENGTH,
     locals_max_string: int = LOCALS_MAX_STRING,
+    locals_max_depth: Optional[int] = None,
     locals_hide_dunder: bool = True,
     locals_hide_sunder: Optional[bool] = None,
+    locals_overflow: Optional[OverflowMethod] = None,
     indent_guides: bool = True,
     suppress: Iterable[Union[str, ModuleType]] = (),
     max_frames: int = 100,
@@ -113,8 +117,10 @@ def install(
         locals_max_length (int, optional): Maximum length of containers before abbreviating, or None for no abbreviation.
             Defaults to 10.
         locals_max_string (int, optional): Maximum length of string before truncating, or None to disable. Defaults to 80.
+        locals_max_depth (int, optional): Maximum depths of locals before truncating, or None to disable. Defaults to None.
         locals_hide_dunder (bool, optional): Hide locals prefixed with double underscore. Defaults to True.
         locals_hide_sunder (bool, optional): Hide locals prefixed with single underscore. Defaults to False.
+        locals_overflow (OverflowMethod, optional): How to handle overflowing locals, or None to disable. Defaults to None.
         indent_guides (bool, optional): Enable indent guides in code and locals. Defaults to True.
         suppress (Sequence[Union[str, ModuleType]]): Optional sequence of modules or paths to exclude from traceback.
 
@@ -147,8 +153,10 @@ def install(
             show_locals=show_locals,
             locals_max_length=locals_max_length,
             locals_max_string=locals_max_string,
+            locals_max_depth=locals_max_depth,
             locals_hide_dunder=locals_hide_dunder,
             locals_hide_sunder=bool(locals_hide_sunder),
+            locals_overflow=locals_overflow,
             indent_guides=indent_guides,
             suppress=suppress,
             max_frames=max_frames,
@@ -177,7 +185,9 @@ def install(
 
             # determine correct tb_offset
             compiled = tb_data.get("running_compiled_code", False)
-            tb_offset = tb_data.get("tb_offset", 1 if compiled else 0)
+            tb_offset = tb_data.get("tb_offset")
+            if tb_offset is None:
+                tb_offset = 1 if compiled else 0
             # remove ipython internal frames from trace with tb_offset
             for _ in range(tb_offset):
                 if tb is None:
@@ -265,8 +275,10 @@ class Traceback:
         locals_max_length (int, optional): Maximum length of containers before abbreviating, or None for no abbreviation.
             Defaults to 10.
         locals_max_string (int, optional): Maximum length of string before truncating, or None to disable. Defaults to 80.
+        locals_max_depth (int, optional): Maximum depths of locals before truncating, or None to disable. Defaults to None.
         locals_hide_dunder (bool, optional): Hide locals prefixed with double underscore. Defaults to True.
         locals_hide_sunder (bool, optional): Hide locals prefixed with single underscore. Defaults to False.
+        locals_overflow (OverflowMethod, optional): How to handle overflowing locals, or None to disable. Defaults to None.
         suppress (Sequence[Union[str, ModuleType]]): Optional sequence of modules or paths to exclude from traceback.
         max_frames (int): Maximum number of frames to show in a traceback, 0 for no maximum. Defaults to 100.
 
@@ -292,8 +304,10 @@ class Traceback:
         show_locals: bool = False,
         locals_max_length: int = LOCALS_MAX_LENGTH,
         locals_max_string: int = LOCALS_MAX_STRING,
+        locals_max_depth: Optional[int] = None,
         locals_hide_dunder: bool = True,
         locals_hide_sunder: bool = False,
+        locals_overlow: Optional[OverflowMethod] = None,
         indent_guides: bool = True,
         suppress: Iterable[Union[str, ModuleType]] = (),
         max_frames: int = 100,
@@ -317,8 +331,10 @@ class Traceback:
         self.indent_guides = indent_guides
         self.locals_max_length = locals_max_length
         self.locals_max_string = locals_max_string
+        self.locals_max_depth = locals_max_depth
         self.locals_hide_dunder = locals_hide_dunder
         self.locals_hide_sunder = locals_hide_sunder
+        self.locals_overflow = locals_overlow
 
         self.suppress: Sequence[str] = []
         for suppress_entity in suppress:
@@ -348,8 +364,10 @@ class Traceback:
         show_locals: bool = False,
         locals_max_length: int = LOCALS_MAX_LENGTH,
         locals_max_string: int = LOCALS_MAX_STRING,
+        locals_max_depth: Optional[int] = None,
         locals_hide_dunder: bool = True,
         locals_hide_sunder: bool = False,
+        locals_overflow: Optional[OverflowMethod] = None,
         indent_guides: bool = True,
         suppress: Iterable[Union[str, ModuleType]] = (),
         max_frames: int = 100,
@@ -369,9 +387,11 @@ class Traceback:
             indent_guides (bool, optional): Enable indent guides in code and locals. Defaults to True.
             locals_max_length (int, optional): Maximum length of containers before abbreviating, or None for no abbreviation.
                 Defaults to 10.
+            locals_max_depth (int, optional): Maximum depths of locals before truncating, or None to disable. Defaults to None.
             locals_max_string (int, optional): Maximum length of string before truncating, or None to disable. Defaults to 80.
             locals_hide_dunder (bool, optional): Hide locals prefixed with double underscore. Defaults to True.
             locals_hide_sunder (bool, optional): Hide locals prefixed with single underscore. Defaults to False.
+            locals_overflow (OverflowMethod, optional): How to handle overflowing locals, or None to disable. Defaults to None.
             suppress (Iterable[Union[str, ModuleType]]): Optional sequence of modules or paths to exclude from traceback.
             max_frames (int): Maximum number of frames to show in a traceback, 0 for no maximum. Defaults to 100.
 
@@ -385,6 +405,7 @@ class Traceback:
             show_locals=show_locals,
             locals_max_length=locals_max_length,
             locals_max_string=locals_max_string,
+            locals_max_depth=locals_max_depth,
             locals_hide_dunder=locals_hide_dunder,
             locals_hide_sunder=locals_hide_sunder,
         )
@@ -400,8 +421,10 @@ class Traceback:
             indent_guides=indent_guides,
             locals_max_length=locals_max_length,
             locals_max_string=locals_max_string,
+            locals_max_depth=locals_max_depth,
             locals_hide_dunder=locals_hide_dunder,
             locals_hide_sunder=locals_hide_sunder,
+            locals_overlow=locals_overflow,
             suppress=suppress,
             max_frames=max_frames,
         )
@@ -416,8 +439,10 @@ class Traceback:
         show_locals: bool = False,
         locals_max_length: int = LOCALS_MAX_LENGTH,
         locals_max_string: int = LOCALS_MAX_STRING,
+        locals_max_depth: Optional[int] = None,
         locals_hide_dunder: bool = True,
         locals_hide_sunder: bool = False,
+        _visited_exceptions: Optional[Set[BaseException]] = None,
     ) -> Trace:
         """Extract traceback information.
 
@@ -429,6 +454,7 @@ class Traceback:
             locals_max_length (int, optional): Maximum length of containers before abbreviating, or None for no abbreviation.
                 Defaults to 10.
             locals_max_string (int, optional): Maximum length of string before truncating, or None to disable. Defaults to 80.
+            locals_max_depth (int, optional): Maximum depths of locals before truncating, or None to disable. Defaults to None.
             locals_hide_dunder (bool, optional): Hide locals prefixed with double underscore. Defaults to True.
             locals_hide_sunder (bool, optional): Hide locals prefixed with single underscore. Defaults to False.
 
@@ -442,6 +468,10 @@ class Traceback:
         from rich import _IMPORT_CWD
 
         notes: List[str] = getattr(exc_value, "__notes__", None) or []
+
+        grouped_exceptions: Set[BaseException] = (
+            set() if _visited_exceptions is None else _visited_exceptions
+        )
 
         def safe_str(_object: Any) -> str:
             """Don't allow exceptions from __str__ to propagate."""
@@ -462,6 +492,9 @@ class Traceback:
                 if isinstance(exc_value, (BaseExceptionGroup, ExceptionGroup)):
                     stack.is_group = True
                     for exception in exc_value.exceptions:
+                        if exception in grouped_exceptions:
+                            continue
+                        grouped_exceptions.add(exception)
                         stack.exceptions.append(
                             Traceback.extract(
                                 type(exception),
@@ -471,6 +504,7 @@ class Traceback:
                                 locals_max_length=locals_max_length,
                                 locals_hide_dunder=locals_hide_dunder,
                                 locals_hide_sunder=locals_hide_sunder,
+                                _visited_exceptions=grouped_exceptions,
                             )
                         )
 
@@ -548,6 +582,7 @@ class Traceback:
                                 value,
                                 max_length=locals_max_length,
                                 max_string=locals_max_string,
+                                max_depth=locals_max_depth,
                             )
                             for key, value in get_locals(frame_summary.f_locals.items())
                             if not (inspect.isfunction(value) or inspect.isclass(value))
@@ -561,23 +596,26 @@ class Traceback:
                 if frame_summary.f_locals.get("_rich_traceback_guard", False):
                     del stack.frames[:]
 
-            cause = getattr(exc_value, "__cause__", None)
-            if cause:
-                exc_type = cause.__class__
-                exc_value = cause
-                # __traceback__ can be None, e.g. for exceptions raised by the
-                # 'multiprocessing' module
-                traceback = cause.__traceback__
-                is_cause = True
-                continue
+            if not grouped_exceptions:
+                cause = getattr(exc_value, "__cause__", None)
+                if cause is not None and cause is not exc_value:
+                    exc_type = cause.__class__
+                    exc_value = cause
+                    # __traceback__ can be None, e.g. for exceptions raised by the
+                    # 'multiprocessing' module
+                    traceback = cause.__traceback__
+                    is_cause = True
+                    continue
 
-            cause = exc_value.__context__
-            if cause and not getattr(exc_value, "__suppress_context__", False):
-                exc_type = cause.__class__
-                exc_value = cause
-                traceback = cause.__traceback__
-                is_cause = False
-                continue
+                cause = exc_value.__context__
+                if cause is not None and not getattr(
+                    exc_value, "__suppress_context__", False
+                ):
+                    exc_type = cause.__class__
+                    exc_value = cause
+                    traceback = cause.__traceback__
+                    is_cause = False
+                    continue
             # No cover, code is reached but coverage doesn't recognize it.
             break  # pragma: no cover
 
@@ -739,6 +777,8 @@ class Traceback:
                     indent_guides=self.indent_guides,
                     max_length=self.locals_max_length,
                     max_string=self.locals_max_string,
+                    max_depth=self.locals_max_depth,
+                    overflow=self.locals_overflow,
                 )
 
         exclude_frames: Optional[range] = None

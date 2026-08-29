@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,7 +8,6 @@
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 #include "mozilla/Atomics.h"     // mozilla::Atomic, mozilla::Relaxed
 #include "mozilla/Maybe.h"       // mozilla::Maybe
-#include "mozilla/RefPtr.h"      // RefPtr
 
 #include <stddef.h>  // size_t
 #include <stdint.h>  // uint8_t, uint32_t, uintptr_t
@@ -97,12 +94,6 @@ class JitActivation : public Activation {
   // purposes. Wasm code can't trap reentrantly.
   mozilla::Maybe<wasm::TrapData> wasmTrapData_;
 
-  // Keeps the trapping code alive while the trap is handled. With tail calls
-  // the trapping frame may already be unwound, so no wasm::Frame keeps it alive
-  // and a GC (e.g. while building the RuntimeError) could otherwise free the
-  // code segment we are still executing in.
-  RefPtr<const wasm::Code> wasmTrapCode_;
-
 #ifdef CHECK_OSIPOINT_REGISTERS
  protected:
   // Used to verify that live registers don't change between a VM call and
@@ -114,6 +105,8 @@ class JitActivation : public Activation {
  public:
   explicit JitActivation(JSContext* cx);
   ~JitActivation();
+
+  void trace(JSTracer* trc);
 
   bool isProfiling() const {
     // All JitActivations can be profiled.
@@ -145,7 +138,6 @@ class JitActivation : public Activation {
   void setJSExitFP(uint8_t* fp) { packedExitFP_ = fp; }
 
   uint8_t* packedExitFP() const { return packedExitFP_; }
-  void setPackedExitFP(uint8_t* fp) { packedExitFP_ = fp; }
 
 #ifdef CHECK_OSIPOINT_REGISTERS
   void setCheckRegs(bool check) { checkRegs_ = check; }
@@ -181,8 +173,6 @@ class JitActivation : public Activation {
   // Remove a previous rematerialization by fp.
   void removeRematerializedFrame(uint8_t* top);
 
-  void traceRematerializedFrames(JSTracer* trc);
-
   // Register the results of on Ion frame recovery.
   bool registerIonFrameRecovery(RInstructionResults&& results);
 
@@ -192,8 +182,6 @@ class JitActivation : public Activation {
   // If an Ion frame recovery exists for the |fp| frame exists, then remove it
   // from the activation.
   void removeIonFrameRecovery(JitFrameLayout* fp);
-
-  void traceIonRecovery(JSTracer* trc);
 
   // Return the bailout information if it is registered.
   const BailoutFrameInfo* bailoutData() const { return bailoutData_; }
@@ -248,6 +236,11 @@ class JitActivation : public Activation {
   void finishWasmTrap();
   bool isWasmTrapping() const { return !!wasmTrapData_; }
   const wasm::TrapData& wasmTrapData() { return *wasmTrapData_; }
+  void setWasmTrapFaultInfo(uint32_t memoryIndex, uint64_t offset) {
+    MOZ_ASSERT(isWasmTrapping());
+    wasmTrapData_->faultInfo =
+        mozilla::Some(wasm::TrapData::FaultInfo{memoryIndex, offset});
+  }
 };
 
 // A filtering of the ActivationIterator to only stop at JitActivations.

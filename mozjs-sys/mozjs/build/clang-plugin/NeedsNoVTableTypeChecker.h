@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef NeedsNoVTableTypeChecker_h__
-#define NeedsNoVTableTypeChecker_h__
+#ifndef NeedsNoVTableTypeChecker_h_
+#define NeedsNoVTableTypeChecker_h_
 
 #include "plugin.h"
 
@@ -13,6 +13,9 @@ public:
       : BaseCheck(CheckName, Context) {}
   void registerMatchers(MatchFinder *AstMatcher) override;
   void check(const MatchFinder::MatchResult &Result) override;
+  bool isLanguageVersionSupported(const LangOptions &LangOpts) const override {
+    return LangOpts.CPlusPlus;
+  }
 };
 
 #endif

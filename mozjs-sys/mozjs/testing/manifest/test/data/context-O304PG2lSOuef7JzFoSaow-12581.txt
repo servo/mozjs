@@ -1,0 +1,21 @@
+ 12571: [task 2025-10-16T02:26:19.832+00:00] 02:26:19     INFO - *** End BrowserChrome Test Results ***
+ 12572: [task 2025-10-16T02:26:19.855+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12573: [task 2025-10-16T02:26:19.855+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12574: [task 2025-10-16T02:26:19.855+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12575: [task 2025-10-16T02:26:19.855+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12576: [task 2025-10-16T02:26:19.856+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12577: [task 2025-10-16T02:26:19.856+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12578: [task 2025-10-16T02:26:19.856+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12579: [task 2025-10-16T02:26:19.856+00:00] 02:26:19     INFO - GECKO(3028) | Exiting due to channel error.
+ 12580: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - TEST-INFO | Main app process: exit 0
+>12581: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - TEST-UNEXPECTED-FAIL | docshell/test/browser/browser_cross_process_csp_inheritance.js | Application shut down (without crashing) in the middle of a test!
+ 12582: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - TEST-INFO took 46102ms
+ 12583: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - runtests.py | Application ran for: 0:01:40.912547
+ 12584: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - zombiecheck | Reading PID log: /tmp/tmpvmj_3tappidlog
+ 12585: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - ==> process 3028 launched child process 3031
+ 12586: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - ==> process 3028 launched child process 3032
+ 12587: [task 2025-10-16T02:26:19.857+00:00] 02:26:19     INFO - ==> process 3028 launched child process 3033
+ 12588: [task 2025-10-16T02:26:19.858+00:00] 02:26:19     INFO - ==> process 3028 launched child process 3035
+ 12589: [task 2025-10-16T02:26:19.858+00:00] 02:26:19     INFO - ==> process 3028 launched child process 3036
+ 12590: [task 2025-10-16T02:26:19.858+00:00] 02:26:19     INFO - ==> process 3028 launched child process 3037
+ 12591: [task 2025-10-16T02:26:19.858+00:00] 02:26:19     INFO - ==> process 3028 launched child process 3038

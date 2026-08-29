@@ -154,10 +154,7 @@ __ieee754_exp(double x)	/* default IEEE double exp */
 	if(k==0) 	return one-((x*c)/(c-2.0)-x); 
 	else 		y = one-((lo-(x*c)/(2.0-c))-hi);
 	if(k >= -1021) {
-	    if (k==1024) {
-	        double const_0x1p1023 = pow(2, 1023);
-	        return y*2.0*const_0x1p1023;
-	    }
+	    if (k==1024) return y*2.0*0x1p1023;
 	    return y*twopk;
 	} else {
 	    return y*twopk*twom1000;

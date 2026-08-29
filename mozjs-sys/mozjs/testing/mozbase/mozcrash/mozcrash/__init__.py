@@ -6,4 +6,5 @@
 mozcrash is a library for getting a stack trace out of processes that have crashed
 and left behind a minidump file using the Google Breakpad library.
 """
+
 from .mozcrash import *

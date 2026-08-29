@@ -1,20 +1,14 @@
-# HG changeset patch
-# User Christian Holler <choller@mozilla.com>
-# Date 1596126054 -7200
-#      Thu Jul 30 18:20:54 2020 +0200
-# Node ID 8a2a26b33d516c43c366b2f24d731d27d9843349
-# Parent  997c4109edd112695097fd8c55cbacd976cab24a
-[libFuzzer] Allow external functions to be defined at runtime
+commit eb2fa4068fcdf6e4aaeb4e98e26d444e3e739bde
+Author: Christian Holler <choller@mozilla.com>
+Date:   Thu Jul 30 18:20:54 2020 +0200
+
+    [libFuzzer] Allow external functions to be defined at runtime
 
 diff --git a/FuzzerDriver.cpp b/FuzzerDriver.cpp
+index 5928d1d96acd..ff43cb031dff 100644
 --- a/FuzzerDriver.cpp
 +++ b/FuzzerDriver.cpp
-@@ -608,17 +608,18 @@ static Vector<SizedFile> ReadCorpora(con
-       SizedFiles.push_back({File, Size});
-   return SizedFiles;
- }
- 
- int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
+@@ -653,7 +653,8 @@ int FuzzerDriver(int *argc, char ***argv, UserCallback Callback) {
    using namespace fuzzer;
    assert(argc && argv && "Argument pointers cannot be nullptr");
    std::string Argv0((*argv)[0]);
@@ -24,8 +18,3 @@ diff --git a/FuzzerDriver.cpp b/FuzzerDriver.cpp
    if (EF->LLVMFuzzerInitialize)
      EF->LLVMFuzzerInitialize(argc, argv);
    if (EF->__msan_scoped_disable_interceptor_checks)
-     EF->__msan_scoped_disable_interceptor_checks();
-   const Vector<std::string> Args(*argv, *argv + *argc);
-   assert(!Args.empty());
-   ProgName = new std::string(Args[0]);
-   if (Argv0 != *ProgName) {

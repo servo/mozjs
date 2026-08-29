@@ -26,17 +26,17 @@ class TestLineEndings(unittest.TestCase):
         self.f.flush()
 
     def testMac(self):
-        self.createFile([b"\x0D"] * 3)
+        self.createFile([b"\x0d"] * 3)
         self.pp.do_include(self.f.name)
         self.assertEqual(self.pp.out.getvalue(), "a\nb\nc\n")
 
     def testUnix(self):
-        self.createFile([b"\x0A"] * 3)
+        self.createFile([b"\x0a"] * 3)
         self.pp.do_include(self.f.name)
         self.assertEqual(self.pp.out.getvalue(), "a\nb\nc\n")
 
     def testWindows(self):
-        self.createFile([b"\x0D\x0A"] * 3)
+        self.createFile([b"\x0d\x0a"] * 3)
         self.pp.do_include(self.f.name)
         self.assertEqual(self.pp.out.getvalue(), "a\nb\nc\n")
 

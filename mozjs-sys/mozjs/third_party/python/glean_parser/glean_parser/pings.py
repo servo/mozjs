@@ -48,7 +48,9 @@ class Ping:
         self.metadata = metadata
         self.precise_timestamps = self.metadata.get("precise_timestamps", True)
         self.include_info_sections = self.metadata.get("include_info_sections", True)
-        self.follows_collection_enabled = self.metadata.get("follows_collection_enabled", True)
+        self.follows_collection_enabled = self.metadata.get(
+            "follows_collection_enabled", True
+        )
         if enabled is None:
             enabled = True
         self.enabled = enabled

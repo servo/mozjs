@@ -1,14 +1,12 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "frontend/Stencil.h"
 
-#include "mozilla/AlreadyAddRefed.h"        // already_AddRefed
 #include "mozilla/Assertions.h"             // MOZ_RELEASE_ASSERT
 #include "mozilla/CheckedInt.h"             // mozilla::CheckedInt
+#include "mozilla/glean/JsSrcMetrics.h"     // javascript_self_hosted_cache
 #include "mozilla/Maybe.h"                  // mozilla::Maybe
 #include "mozilla/OperatorNewExtensions.h"  // mozilla::KnownNotNull
 #include "mozilla/PodOperations.h"          // mozilla::PodCopy
@@ -31,12 +29,15 @@
 #include "frontend/SharedContext.h"
 #include "frontend/StencilXdr.h"  // XDRStencilEncoder, XDRStencilDecoder
 #include "gc/AllocKind.h"         // gc::AllocKind
-#include "gc/Tracer.h"            // TraceNullableRoot
-#include "jit/BaselineJIT.h"      // jit::BaselineScript
-#include "jit/JitRuntime.h"       // jit::JitRuntime
-#include "jit/JitScript.h"        // AutoKeepJitScripts
-#include "js/CallArgs.h"          // JSNative
+#include "gc/Tracer.h"            // TraceRoot
+#include "jit/BaselineCompileTask.h"  // BaselineCompileTask::OffThreadBaselineCompilationAvailable
+#include "jit/BaselineJIT.h"  // jit::BaselineScript, jit::CanBaselineCompileScript
+#include "jit/JitContext.h"     // jit::MethodStatus
+#include "jit/JitRuntime.h"     // jit::JitRuntime
+#include "jit/JitScript.h"      // AutoKeepJitScripts
+#include "js/CallArgs.h"        // JSNative
 #include "js/CompileOptions.h"  // JS::DecodeOptions, JS::ReadOnlyDecodeOptions
+#include "js/DOMEventDispatch.h"            // TRACE_FOR_TEST_DOM
 #include "js/experimental/CompileScript.h"  // JS::PrepareForInstantiate
 #include "js/experimental/JSStencil.h"      // JS::Stencil
 #include "js/GCAPI.h"                       // JS::AutoCheckCannotGC
@@ -68,6 +69,7 @@
 #include "vm/StringType.h"    // JSAtom, js::CopyChars
 #include "wasm/AsmJS.h"       // InstantiateAsmJS
 
+#include "jit/JitHints-inl.h"          // JitHints::mightHaveEagerBaselineHint
 #include "jit/JitScript-inl.h"         // AutoKeepJitScripts constructor
 #include "vm/EnvironmentObject-inl.h"  // JSObject::enclosingEnvironment
 #include "vm/JSFunction-inl.h"         // JSFunction::create
@@ -75,6 +77,62 @@
 
 using namespace js;
 using namespace js::frontend;
+
+mozilla::Result<ScopeStencilRef, ScopeStencilRef::EnclosingFailure>
+ScopeStencilRef::enclosing() const {
+  auto& scope = this->scope();
+  if (scope.hasEnclosing()) {
+#ifdef DEBUG
+    // Assert that checking for the same stencil is equivalent to checking for
+    // being encoded in the initial stencil.
+    if (scriptIndex_ != 0) {
+      auto enclosingScript = script().enclosingScript();
+      bool same = context() == enclosingScript.context();
+      MOZ_ASSERT(same == script().isEagerlyCompiledInInitial());
+    }
+#endif
+
+    // By default we are walking the scope within the same function.
+    ScriptIndex scriptIndex = scriptIndex_;
+
+    // `scope.enclosing()` and `scope` would have the same scriptIndex unless
+    // `scope` is the first scope of the script. In which case, the returned
+    // enclosing scope index should be returned with the enclosing script index.
+    //
+    // This can only happen in the initial stencil, as only the initial stencil
+    // can have multiple scripts compiled in the same stencil.
+    if (script().isEagerlyCompiledInInitial()) {
+      auto gcThingsFromContext = script().gcThingsFromInitial();
+      if (gcThingsFromContext[0].toScope() == scopeIndex_) {
+        scriptIndex = script().enclosingScript().scriptIndex_;
+      }
+    }
+
+    return ScopeStencilRef{stencils_, scriptIndex, scope.enclosing()};
+  }
+
+  // By default the previous condition (scope.hasEnclosing()) should trigger,
+  // except when we are at the top-level of a delazification, in which case we
+  // have to find the enclosing script in the stencil of the enclosing script,
+  // to find the lazyFunctionEnclosingScopeIndex which is valid in the stencil
+  // of the enclosing script.
+  //
+  // Note, at one point the enclosing script would be the initial stencil.
+  if (!script().isEagerlyCompiledInInitial()) {
+    auto enclosing = script().enclosingScript();
+    auto& scriptData = script().scriptDataFromEnclosing();
+    MOZ_ASSERT(scriptData.hasLazyFunctionEnclosingScopeIndex());
+    return ScopeStencilRef{stencils_, enclosing.scriptIndex_,
+                           scriptData.lazyFunctionEnclosingScopeIndex()};
+  }
+
+  // The global scope is not known by the Stencil, while parsing inner functions
+  // from Stencils where they are known at the execution using the GlobalScope.
+  if (scope.kind() == ScopeKind::Module) {
+    return mozilla::Err(EnclosingFailure::ModuleScope);
+  }
+  return mozilla::Err(EnclosingFailure::GlobalScope);
+}
 
 // These 2 functions are used to write the same code with lambda using auto
 // arguments. The auto argument type is set by the Variant.match function of the
@@ -111,7 +169,8 @@ InputName InputScript::displayAtom() const {
         return InputName(ptr, ptr->function()->fullDisplayAtom());
       },
       [](const ScriptStencilRef& ref) {
-        return InputName(ref, ref.scriptData().functionAtom);
+        auto& scriptData = ref.scriptDataFromEnclosing();
+        return InputName(ref.enclosingScript(), scriptData.functionAtom);
       });
 }
 
@@ -187,11 +246,11 @@ GenericAtom::GenericAtom(const CompilationStencil& context,
 }
 
 GenericAtom::GenericAtom(ScopeStencilRef& scope, TaggedParserAtomIndex index)
-    : GenericAtom(scope.context_, index) {}
+    : GenericAtom(*scope.context(), index) {}
 
 BindingHasher<TaggedParserAtomIndex>::Lookup::Lookup(ScopeStencilRef& scope_ref,
                                                      const GenericAtom& other)
-    : keyStencil(scope_ref.context_), other(other) {}
+    : keyStencil(*scope_ref.context()), other(other) {}
 
 bool GenericAtom::operator==(const GenericAtom& other) const {
   return ref.match(
@@ -353,9 +412,12 @@ bool StencilScopeBindingCache::canCacheFor(ScopeStencilRef ref) { return true; }
 BindingMap<TaggedParserAtomIndex>* StencilScopeBindingCache::createCacheFor(
     ScopeStencilRef ref) {
 #ifdef DEBUG
-  AssertBorrowingSpan(ref.context_.scopeNames, merger_.getResult().scopeNames);
+  MOZ_ASSERT(&ref.stencils_ == &stencils_);
+  MOZ_ASSERT_IF(
+      ref.stencils_.getInitial() != ref.context(),
+      ref.stencils_.getScriptIndexFor(ref.context()) == ref.scriptIndex_);
 #endif
-  auto* dataPtr = ref.context_.scopeNames[ref.scopeIndex_];
+  auto* dataPtr = ref.context()->scopeNames[ref.scopeIndex_];
   BindingMap<TaggedParserAtomIndex> bindingCache;
   if (!scopeMap.putNew(dataPtr, std::move(bindingCache))) {
     return nullptr;
@@ -367,9 +429,12 @@ BindingMap<TaggedParserAtomIndex>* StencilScopeBindingCache::createCacheFor(
 BindingMap<TaggedParserAtomIndex>* StencilScopeBindingCache::lookupScope(
     ScopeStencilRef ref, CacheGeneration gen) {
 #ifdef DEBUG
-  AssertBorrowingSpan(ref.context_.scopeNames, merger_.getResult().scopeNames);
+  MOZ_ASSERT(&ref.stencils_ == &stencils_);
+  MOZ_ASSERT_IF(
+      ref.stencils_.getInitial() != ref.context(),
+      ref.stencils_.getScriptIndexFor(ref.context()) == ref.scriptIndex_);
 #endif
-  auto* dataPtr = ref.context_.scopeNames[ref.scopeIndex_];
+  auto* dataPtr = ref.context()->scopeNames[ref.scopeIndex_];
   auto ptr = scopeMap.lookup(dataPtr);
   if (!ptr) {
     return nullptr;
@@ -970,7 +1035,7 @@ static bool IsPrivateField(Scope*, JSAtom* atom) {
 
 static bool IsPrivateField(ScopeStencilRef& scope, TaggedParserAtomIndex atom) {
   if (atom.isParserAtomIndex()) {
-    const CompilationStencil& context = scope.context_;
+    const CompilationStencil& context = *scope.context();
     ParserAtom* parserAtom = context.parserAtomData[atom.toParserAtomIndex()];
     return parserAtom->isPrivateName();
   }
@@ -1141,7 +1206,7 @@ NameLocation ScopeContext::searchInEnclosingScopeWithCache(
   mozilla::Maybe<NameLocation> found;
 
   // Number of enclosing scope we walked over.
-  uint8_t hops = 0;
+  uint16_t hops = 0;
 
   for (InputScopeIter si(input.enclosingScope); si; si++) {
     MOZ_ASSERT(NameIsOnEnvironment(fc, parserAtoms, input.atomCache, si.scope(),
@@ -1210,8 +1275,8 @@ NameLocation ScopeContext::searchInEnclosingScopeNoCache(
   // NameLocation which contains relative locations to access `name`.
   mozilla::Maybe<NameLocation> result;
 
-  // Number of enclosing scoep we walked over.
-  uint8_t hops = 0;
+  // Number of enclosing scope we walked over.
+  uint16_t hops = 0;
 
   for (InputScopeIter si(input.enclosingScope); si; si++) {
     MOZ_ASSERT(NameIsOnEnvironment(fc, parserAtoms, input.atomCache, si.scope(),
@@ -1459,7 +1524,7 @@ void InputScope::trace(JSTracer* trc) {
   using ScopePtr = Scope*;
   if (scope_.is<ScopePtr>()) {
     ScopePtr* ptrAddr = &scope_.as<ScopePtr>();
-    TraceNullableRoot(trc, ptrAddr, "compilation-input-scope");
+    TraceRoot(trc, ptrAddr, "compilation-input-scope");
   }
 }
 
@@ -1467,7 +1532,7 @@ void InputScript::trace(JSTracer* trc) {
   using ScriptPtr = BaseScript*;
   if (script_.is<ScriptPtr>()) {
     ScriptPtr* ptrAddr = &script_.as<ScriptPtr>();
-    TraceNullableRoot(trc, ptrAddr, "compilation-input-lazy");
+    TraceRoot(trc, ptrAddr, "compilation-input-lazy");
   }
 }
 
@@ -1604,16 +1669,19 @@ bool CompilationSyntaxParseCache::copyScriptInfo(
   cachedScriptData_ = ScriptDataSpan(nullptr);
   cachedScriptExtra_ = ScriptExtraSpan(nullptr);
 
-  size_t offset = lazy.scriptData().gcThingsOffset.index;
-  size_t length = lazy.scriptData().gcThingsLength;
+  // We are only interested in the functions within the gcthings. The initial
+  // stencil is already aware of all inner functions, and the script indexes can
+  // help build additional ScriptStencilRef.
+  auto gcThings = lazy.gcThingsFromInitial();
+  size_t length = gcThings.Length();
   if (length == 0) {
     return true;
   }
 
   // Reduce the length to the first element which is not a function.
-  for (size_t i = offset; i < offset + length; i++) {
-    if (!lazy.context_.gcThingData[i].isFunction()) {
-      length = i - offset;
+  for (size_t i = 0; i < length; i++) {
+    if (!gcThings[i].isFunction()) {
+      length = i;
       break;
     }
   }
@@ -1630,14 +1698,22 @@ bool CompilationSyntaxParseCache::copyScriptInfo(
   }
 
   for (size_t i = 0; i < length; i++) {
-    ScriptStencilRef inner{lazy.context_,
-                           lazy.context_.gcThingData[i + offset].toFunction()};
+    // The gcThing array is taken out of the initial stencil, thus scriptIndex
+    // are valid for the initial stencil only.
+    ScriptIndex innerIndex = gcThings[i].toFunction();
+    ScriptStencilRef inner{lazy.stencils_, innerIndex};
+
+    // scriptData is extracted from the initial stencil as we are about to
+    // compile the enclosing script.
+    const ScriptStencil& srcData = inner.scriptDataFromInitial();
+
     gcThingsData[i] = TaggedScriptThingIndex(ScriptIndex(i));
     new (mozilla::KnownNotNull, &scriptData[i]) ScriptStencil();
     ScriptStencil& data = scriptData[i];
+    new (mozilla::KnownNotNull, &scriptExtra[i]) ScriptStencilExtra();
     ScriptStencilExtra& extra = scriptExtra[i];
 
-    InputName name{inner, inner.scriptData().functionAtom};
+    InputName name{inner.topLevelScript(), srcData.functionAtom};
     if (!name.isNull()) {
       auto displayAtom = name.internInto(fc, parseAtoms, atomCache);
       if (!displayAtom) {
@@ -1645,7 +1721,7 @@ bool CompilationSyntaxParseCache::copyScriptInfo(
       }
       data.functionAtom = displayAtom;
     }
-    data.functionFlags = inner.scriptData().functionFlags;
+    data.functionFlags = srcData.functionFlags;
 
     extra = inner.scriptExtra();
   }
@@ -1712,15 +1788,14 @@ bool CompilationSyntaxParseCache::copyClosedOverBindings(
   // The gcthings array contains the inner function list followed by the
   // closed-over bindings data. Skip the inner function list, as it is already
   // cached in cachedGCThings_. See also: BaseScript::CreateLazy.
-  size_t offset = lazy.scriptData().gcThingsOffset.index;
-  size_t length = lazy.scriptData().gcThingsLength;
+  auto gcthings = lazy.gcThingsFromInitial();
+  size_t length = gcthings.Length();
   size_t start = cachedGCThings_.Length();
   MOZ_ASSERT(start <= length);
   if (length - start == 0) {
     return true;
   }
   length -= start;
-  start += offset;
 
   // Atoms from the lazy.context (CompilationStencil) are not registered in the
   // the parseAtoms table. Thus we create a new span which will contain all the
@@ -1733,14 +1808,14 @@ bool CompilationSyntaxParseCache::copyClosedOverBindings(
   }
 
   for (size_t i = 0; i < length; i++) {
-    auto gcThing = lazy.context_.gcThingData[i + start];
+    auto gcThing = gcthings[i + start];
     if (gcThing.isNull()) {
       closedOverBindings[i] = TaggedParserAtomIndex::null();
       continue;
     }
 
     MOZ_ASSERT(gcThing.isAtom());
-    InputName name(lazy, gcThing.toAtom());
+    InputName name(lazy.topLevelScript(), gcThing.toAtom());
     auto parserAtom = name.internInto(fc, parseAtoms, atomCache);
     if (!parserAtom) {
       return false;
@@ -1829,12 +1904,12 @@ void PreAllocateableGCArray<T>::trace(JSTracer* trc) {
   }
 
   if (isInline()) {
-    TraceNullableRoot(trc, &inlineElem_, "PreAllocateableGCArray::inlineElem_");
+    TraceRoot(trc, &inlineElem_, "PreAllocateableGCArray::inlineElem_");
     return;
   }
 
   for (size_t i = 0; i < length_; i++) {
-    TraceNullableRoot(trc, &elems_[i], "PreAllocateableGCArray::elems_");
+    TraceRoot(trc, &elems_[i], "PreAllocateableGCArray::elems_");
   }
 }
 
@@ -1870,9 +1945,9 @@ template struct js::frontend::PreAllocateableGCArray<js::Scope*>;
 void CompilationAtomCache::trace(JSTracer* trc) { atoms_.trace(trc); }
 
 void CompilationGCOutput::trace(JSTracer* trc) {
-  TraceNullableRoot(trc, &script, "compilation-gc-output-script");
-  TraceNullableRoot(trc, &module, "compilation-gc-output-module");
-  TraceNullableRoot(trc, &sourceObject, "compilation-gc-output-source");
+  TraceRoot(trc, &script, "compilation-gc-output-script");
+  TraceRoot(trc, &module, "compilation-gc-output-module");
+  TraceRoot(trc, &sourceObject, "compilation-gc-output-source");
   functions.trace(trc);
   scopes.trace(trc);
 }
@@ -2636,6 +2711,89 @@ CompilationStencil::CompilationStencil(
 #endif
 }
 
+// Instantiate JitScripts and eagerly baseline compile any potential
+// candidate functions.
+//
+// Return value indicates whether a failure occured. (i.e. allocation failure.)
+// There is no current indication of whether a function was actually dispatched
+// for eager baseline compilation.
+static bool MaybeDoEagerBaselineCompilations(JSContext* cx,
+                                             const CompilationStencil& stencil,
+                                             CompilationGCOutput& gcOutput,
+                                             bool doAggressive) {
+  if (!jit::IsBaselineJitEnabled(cx)) {
+    return true;
+  }
+
+  if (!cx->zone()->ensureJitZoneExists(cx)) {
+    return false;
+  }
+
+  jit::JitHintsMap* jitHints = nullptr;
+  if (!doAggressive) {
+    if (jit::JitOptions.disableJitHints ||
+        !cx->runtime()->jitRuntime()->hasJitHintsMap()) {
+      return true;
+    }
+    jitHints = cx->runtime()->jitRuntime()->getJitHintsMap();
+  }
+
+  jit::AutoKeepJitScripts keepJitScript(cx);
+  RootedScript script(cx);
+  Rooted<JSFunction*> fn(cx);
+  jit::BaselineCompileQueue& queue = cx->realm()->baselineCompileQueue();
+
+  for (auto item :
+       CompilationStencil::functionScriptStencils(stencil, gcOutput)) {
+    fn = item.function;
+    if (!fn->hasBytecode()) {
+      continue;
+    }
+
+    script = fn->nonLazyScript();
+
+    // Only eagerly baseline compile functions with hints unless aggressive
+    // strategy is set.
+    if (!doAggressive) {
+      if (!jitHints->mightHaveEagerBaselineHint(script)) {
+        continue;
+      }
+    }
+
+    if (!jit::CanBaselineCompileScript(cx, script)) {
+      continue;
+    }
+
+    if (!jit::BaselineCompileTask::OffThreadBaselineCompilationAvailable(
+            cx, script, /* isEager = */ true)) {
+      continue;
+    }
+
+    // Add script to the baseline compile batch queue and dispatch if full.
+    if (queue.numQueued() >= jit::JitOptions.baselineQueueCapacity) {
+      if (!jit::DispatchOffThreadBaselineBatchEager(cx)) {
+        return false;
+      }
+      TRACE_FOR_TEST_DOM(cx, "omt_eager_baseline_dispatch");
+    }
+
+    // Add script to queue. DispatchOffThreadBaselineBatch guarantees
+    // that there will be room.
+    MOZ_ALWAYS_TRUE(queue.enqueue(script));
+    TRACE_FOR_TEST_DOM(cx, "omt_eager_baseline_function", script);
+  }
+
+  // Dispatch any remaining scripts in the queue
+  if (queue.numQueued() > 0) {
+    if (!jit::DispatchOffThreadBaselineBatchEager(cx)) {
+      return false;
+    }
+    TRACE_FOR_TEST_DOM(cx, "omt_eager_baseline_dispatch");
+  }
+
+  return true;
+}
+
 /* static */
 bool CompilationStencil::instantiateStencils(JSContext* cx,
                                              CompilationInput& input,
@@ -2646,7 +2804,25 @@ bool CompilationStencil::instantiateStencils(JSContext* cx,
     return false;
   }
 
-  return instantiateStencilAfterPreparation(cx, input, stencil, gcOutput);
+  if (!instantiateStencilAfterPreparation(cx, input, stencil, gcOutput)) {
+    return false;
+  }
+
+  // While eager baseline is not supported during delazifications,
+  // we instantiate delazifications as a part of
+  // InitialStencilAndDelazifications::instantiateStencils.
+  // Just skip them.
+  if (input.options.eagerBaselineStrategy() != JS::EagerBaselineOption::None &&
+      !input.isDelazifying()) {
+    bool doAggressive = input.options.eagerBaselineStrategy() ==
+                        JS::EagerBaselineOption::Aggressive;
+    if (!MaybeDoEagerBaselineCompilations(cx, stencil, gcOutput,
+                                          doAggressive)) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /* static */
@@ -2736,6 +2912,13 @@ bool CompilationStencil::instantiateStencilAfterPreparation(
     if (isInitialParse) {
       LinkEnclosingLazyScript(stencil, gcOutput);
     }
+  }
+
+  // Trigger the use counter for asm.js. This should fire even if asm.js
+  // optimizations are disabled, see the comment in FunctionBox::setUseAsm()
+  // for how we do that.
+  if (stencil.hasAsmJS()) {
+    cx->runtime()->setUseCounter(cx->global(), JSUseCounter::USE_ASM);
   }
 
   return true;
@@ -2828,11 +3011,9 @@ JSFunction* CompilationStencil::instantiateSelfHostedLazyFunction(
 
   RootedObject env(cx, &cx->global()->lexicalEnvironment());
 
-  RootedFunction fun(
-      cx,
-      NewFunctionWithProto(cx, nullptr, scriptExtra[index].nargs,
-                           scriptData[index].functionFlags, env, funName, proto,
-                           gc::AllocKind::FUNCTION_EXTENDED, TenuredObject));
+  JSFunction* fun = NewFunctionWithProto(
+      cx, nullptr, scriptExtra[index].nargs, scriptData[index].functionFlags,
+      env, funName, proto, gc::AllocKind::FUNCTION_EXTENDED, TenuredObject);
   if (!fun) {
     return nullptr;
   }
@@ -2861,7 +3042,6 @@ bool CompilationStencil::delazifySelfHostedFunction(
   ScopeIndex scopeLimit = (range.limit < scriptData.size())
                               ? getOutermostScope(range.limit)
                               : ScopeIndex(scopeData.size());
-  Rooted<JSAtom*> jitCacheKey(cx, name);
 
   // Prepare to instantiate by allocating the output arrays. We also set a base
   // index to avoid allocations in most cases.
@@ -2942,6 +3122,8 @@ bool CompilationStencil::delazifySelfHostedFunction(
   }
 
   if (JS::Prefs::experimental_self_hosted_cache()) {
+    Rooted<JSRuntime::JitCacheKey> jitCacheKey(cx, name, script->isDebuggee());
+
     // We eagerly baseline-compile self-hosted functions, and cache their
     // JitCode for reuse across the runtime. If the cache already contains an
     // entry for this function, update the JitScript. If not, compile it now and
@@ -2956,6 +3138,8 @@ bool CompilationStencil::delazifySelfHostedFunction(
       JS_LOG(selfHosted, Debug,
              "self_hosted_cache: reusing JIT code for script '%s'",
              nameStr.get());
+      mozilla::glean::javascript_self_hosted_cache::hits.AddToNumerator();
+      mozilla::glean::javascript_self_hosted_cache::total.Add();
 
       if (!cx->zone()->ensureJitZoneExists(cx)) {
         return false;
@@ -2985,6 +3169,7 @@ bool CompilationStencil::delazifySelfHostedFunction(
       JS_LOG(selfHosted, Debug,
              "self_hosted_cache: new JIT code entry for script '%s'",
              nameStr.get());
+      mozilla::glean::javascript_self_hosted_cache::total.Add();
 
       if (!cx->zone()->ensureJitZoneExists(cx)) {
         return false;
@@ -3702,6 +3887,83 @@ void InitialStencilAndDelazifications::Release() {
   }
 }
 
+InitialStencilAndDelazifications::RelativeIndexesGuard
+InitialStencilAndDelazifications::ensureRelativeIndexes(FrontendContext* fc) {
+  auto consumersGuard = relativeIndexes_.consumers_.lock();
+  if (consumersGuard > 0) {
+    MOZ_ASSERT(relativeIndexes_.indexes_.length() ==
+               initial_->scriptData.size() - 1);
+    consumersGuard += 1;
+    return RelativeIndexesGuard(this);
+  }
+
+  if (!relativeIndexes_.indexes_.resize(initial_->scriptData.size() - 1)) {
+    ReportOutOfMemory(fc);
+    return RelativeIndexesGuard(nullptr);
+  }
+
+  auto writeIndex = [&](ScriptIndex index, ScriptIndex enclosingInInitial,
+                        ScriptIndex enclosedInEnclosing) {
+    MOZ_ASSERT(index > 0);
+    MOZ_ASSERT(
+        index == getInitialIndexFor(enclosingInInitial, enclosedInEnclosing),
+        "getInitialIndexFor does not match relativeIndexes_");
+    relativeIndexes_[index - 1] =
+        ScriptIndexes{enclosingInInitial, enclosedInEnclosing};
+  };
+  for (size_t index = 0; index < initial_->scriptData.size(); index++) {
+    auto& scriptData = initial_->scriptData[index];
+    // index > 0 is used to iterate over the top-level which is not flagged as
+    // isInterpreted.
+    if (index > 0 &&
+        (scriptData.isGhost() || !scriptData.functionFlags.isInterpreted())) {
+      continue;
+    }
+
+    auto gcthings = scriptData.gcthings(*initial_.get());
+    if (scriptData.hasSharedData()) {
+      // Then the gc things might not have a contiguous array of inner
+      // functions. Thus we have to iterate over all gcthings.
+      for (auto gcthing : gcthings) {
+        if (gcthing.isFunction()) {
+          writeIndex(gcthing.toFunction(), ScriptIndex(index),
+                     gcthing.toFunction());
+        }
+      }
+      continue;
+    }
+
+    // The function is syntax-parsed in the initial compilation. In this case,
+    // the gcthings contains only the list of inner function indices followed by
+    // the list of closed over bindings. (see
+    // PerHandlerParser<SyntaxParseHandler>::finishFunction)
+
+    // The first element of scriptData and scriptExtra is the compiled script
+    // it-self, in the upcoming delazification stencil, thus we start after, at
+    // 1 to index inner functions.
+    size_t functionIndex = 1;
+    for (auto gcthing : gcthings) {
+      if (!gcthing.isFunction()) {
+        break;
+      }
+      writeIndex(gcthing.toFunction(), ScriptIndex(index),
+                 ScriptIndex(functionIndex));
+      functionIndex++;
+    }
+  }
+
+  consumersGuard += 1;
+  return RelativeIndexesGuard(this);
+}
+
+void InitialStencilAndDelazifications::decrementRelativeIndexesConsumer() {
+  auto consumersGuard = relativeIndexes_.consumers_.lock();
+  consumersGuard -= 1;
+  if (consumersGuard == 0) {
+    relativeIndexes_.indexes_.clearAndFree();
+  }
+}
+
 bool InitialStencilAndDelazifications::init(FrontendContext* fc,
                                             const CompilationStencil* initial) {
   MOZ_ASSERT(initial->isInitialStencil());
@@ -3746,6 +4008,51 @@ InitialStencilAndDelazifications::getDelazificationFor(
   return getDelazificationAt(*maybeIndex);
 }
 
+ScriptIndex InitialStencilAndDelazifications::getScriptIndexFor(
+    const CompilationStencil* delazification) const {
+  MOZ_ASSERT(!delazification->isInitialStencil());
+  auto maybeIndex =
+      functionKeyToInitialScriptIndex_.get(delazification->functionKey);
+  MOZ_ASSERT(maybeIndex,
+             "The delazification should be for a function inside the script");
+  return *maybeIndex;
+}
+
+const ScriptIndexes& InitialStencilAndDelazifications::getRelativeIndexesAt(
+    ScriptIndex initialIndex) const {
+  MOZ_ASSERT(initialIndex.index > 0);
+
+  return relativeIndexes_[initialIndex.index - 1];
+}
+
+ScriptIndex InitialStencilAndDelazifications::getInitialIndexFor(
+    ScriptIndex enclosingInInitial, ScriptIndex enclosedInEnclosing) const {
+  if (enclosedInEnclosing == 0) {
+    // The first function in a CompilationStencil is it-self.
+    return enclosingInInitial;
+  }
+
+  auto& scriptDataFromInitial = initial_->scriptData[enclosingInInitial];
+  auto gcthings = scriptDataFromInitial.gcthings(*initial_.get());
+  // When looking for enclosed script, there is at least one entry in the array
+  // of gc things.
+  MOZ_ASSERT(gcthings.Length() > 0);
+  MOZ_ASSERT(scriptDataFromInitial.hasSharedData() == gcthings[0].isScope());
+  if (scriptDataFromInitial.hasSharedData()) {
+    // The function is already compiled as part of the initial stencil. Thus,
+    // the enclosedInEnclosing index is already an index in the initial stencil.
+    return enclosedInEnclosing;
+  }
+
+  // When the functions does not have associated bytecode and scope-chains,
+  // then we have a contiguous array of inner functions that we can address
+  // using the enclosed index.
+  //
+  // We remove 1 as index 0 corresponds to the enclosing function, which is not
+  // listed in the set of gc things.
+  return gcthings[enclosedInEnclosing - 1].toFunction();
+}
+
 const CompilationStencil* InitialStencilAndDelazifications::storeDelazification(
     RefPtr<CompilationStencil>&& delazification) {
   MOZ_ASSERT(!delazification->hasMultipleReference());
@@ -3760,6 +4067,26 @@ const CompilationStencil* InitialStencilAndDelazifications::storeDelazification(
   if (delazifications_[functionIndex - 1].compareExchange(nullptr, raw)) {
     return raw;
   }
+
+#ifdef DEBUG
+  // The delazification vector already has an entry for the function. This is an
+  // opportunity to test whether we are generating the same stencils.
+  {
+    const CompilationStencil* saved = delazifications_[functionIndex - 1];
+    raw->assertNoExternalDependency();
+    saved->assertNoExternalDependency();
+    MOZ_ASSERT(raw->source == saved->source);
+    MOZ_ASSERT(raw->scriptData.size() == saved->scriptData.size());
+    MOZ_ASSERT(raw->scriptExtra.size() == saved->scriptExtra.size());
+    MOZ_ASSERT(raw->gcThingData.size() == saved->gcThingData.size());
+    MOZ_ASSERT(raw->scopeData.size() == saved->scopeData.size());
+    MOZ_ASSERT(raw->scopeNames.size() == saved->scopeNames.size());
+    MOZ_ASSERT(raw->regExpData.size() == saved->regExpData.size());
+    MOZ_ASSERT(raw->bigIntData.size() == saved->bigIntData.size());
+    MOZ_ASSERT(raw->objLiteralData.size() == saved->objLiteralData.size());
+    MOZ_ASSERT(raw->parserAtomData.size() == saved->parserAtomData.size());
+  }
+#endif
 
   raw->Release();
   return delazifications_[functionIndex - 1];
@@ -3869,7 +4196,7 @@ size_t InitialStencilAndDelazifications::sizeOfExcludingThis(
     // The initial stencil can be shared between multiple owners, but
     // in most case this instance is considered as the main owner, in term
     // of the memory reporting.
-    size += initial_->sizeOfExcludingThis(mallocSizeOf);
+    size += initial_->sizeOfIncludingThis(mallocSizeOf);
   }
 
   size += delazifications_.sizeOfExcludingThis(mallocSizeOf);
@@ -3880,7 +4207,7 @@ size_t InitialStencilAndDelazifications::sizeOfExcludingThis(
     }
 
     // Delazifications are exclusively owned by this instance.
-    size += (*delazification).sizeOfExcludingThis(mallocSizeOf);
+    size += (*delazification).sizeOfIncludingThis(mallocSizeOf);
   }
 
   size += functionKeyToInitialScriptIndex_.sizeOfExcludingThis(mallocSizeOf);
@@ -4885,6 +5212,25 @@ struct DumpOptionsFields {
     json.property(name, valueStr);
   }
 
+  void operator()(const char* name, JS::EagerBaselineOption value) {
+    const char* valueStr = nullptr;
+    switch (value) {
+      case JS::EagerBaselineOption::None:
+        valueStr = "JS::EagerBaselineOption::None";
+        break;
+      case JS::EagerBaselineOption::JitHints:
+        valueStr = "JS::EagerBaselineOption::JitHints";
+        break;
+      case JS::EagerBaselineOption::Aggressive:
+        valueStr = "JS::EagerBaselineOption::Aggressive";
+        break;
+      default:
+        MOZ_CRASH("Unknown JS::EagerBaselineOption enum");
+        break;
+    }
+    json.property(name, valueStr);
+  }
+
   void operator()(const char* name, char16_t* value) {}
 
   void operator()(const char* name, bool value) { json.property(name, value); }
@@ -5197,7 +5543,7 @@ void InitialStencilAndDelazifications::dumpFields(js::JSONPrinter& json) const {
 
 JSString* CompilationAtomCache::getExistingStringAt(
     ParserAtomIndex index) const {
-  MOZ_RELEASE_ASSERT(atoms_.length() >= index);
+  MOZ_RELEASE_ASSERT(index < atoms_.length());
   return atoms_[index];
 }
 
@@ -5920,5 +6266,28 @@ bool JS::IsStencilCacheable(JS::Stencil* stencil) {
     return false;
   }
 
+  return true;
+}
+
+JS_PUBLIC_API size_t JS::GetScriptSourceLength(JS::Stencil* stencil) {
+  const ScriptSource* source = stencil->getInitial()->source;
+  if (!source->hasSourceText()) {
+    return 0;
+  }
+  return source->length();
+}
+
+JS_PUBLIC_API bool JS::GetScriptSourceText(
+    JSContext* cx, JS::Stencil* stencil, JS::MutableHandle<JS::Value> result) {
+  ScriptSource* source = stencil->getInitial()->source;
+  if (!source->hasSourceText()) {
+    result.setUndefined();
+    return true;
+  }
+  JSLinearString* s = source->substring(cx, 0, source->length());
+  if (!s) {
+    return false;
+  }
+  result.setString(s);
   return true;
 }

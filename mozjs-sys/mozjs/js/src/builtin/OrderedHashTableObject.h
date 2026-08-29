@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,8 +6,10 @@
 #define builtin_OrderedHashTableObject_h
 
 /*
- * This file defines js::OrderedHashMapObject (a base class of js::MapObject)
- * and js::OrderedHashSetObject (a base class of js::SetObject).
+ * [SMDOC] OrderedHashTableObject (JS Map/Set implementation)
+ *
+ * This file defines js::OrderedHashMapObject (js::MapObject base class) and
+ * js::OrderedHashSetObject (js::SetObject base class).
  *
  * It also defines two templates, js::OrderedHashMapImpl and
  * js::OrderedHashSetImpl, that operate on these objects and implement the
@@ -17,39 +17,97 @@
  * the JS object types because it lets us switch between different template
  * instantiations to enable or disable GC barriers.
  *
- * The implemented hash table algorithm is also different from HashMap and
- * HashSet:
+ * The implemented hash table algorithm is different from HashMap and HashSet in
+ * MFBT:
  *
- *   - Iterating over an Ordered hash table visits the entries in the order in
- *     which they were inserted. This means that unlike a HashMap, the behavior
- *     of an OrderedHashMapImpl is deterministic (as long as the HashPolicy
- *     methods are effect-free and consistent); the hashing is a pure
- *     performance optimization.
+ *   - JS Map/Set iterators must visit entries in insertion order. The hashing
+ *     is a pure performance optimization and does not affect iteration order.
  *
- *   - Iterator objects remain valid even when entries are added or removed or
- *     the table is resized.
+ *   - Iterator objects must remain valid even when entries are added, removed,
+ *     or the table is resized.
  *
- * Hash policies
+ * Implementation
+ * ==============
+ * The hash table contains two arrays: an array of data entries that stores all
+ * entries (in insertion/enumeration order) and a separate array of hash buckets
+ * that provides O(1) lookup performance instead of O(n).
  *
- * See the comment about "Hash policy" in HashTable.h for general features that
- * hash policy classes must provide. Hash policies for OrderedHashMapImpl and
- * Sets differ in that the hash() method takes an extra argument:
+ * As an optimization, we allocate a single buffer that stores both of these
+ * arrays (and the HashCodeScrambler). We allocate this buffer when the first
+ * entry is added to the table.
  *
- *     static js::HashNumber hash(Lookup, const HashCodeScrambler&);
+ * The capacity of the data array is based on the number of hash buckets and the
+ * FillFactor constant (currently 8.0/3.0).
  *
- * They must additionally provide a distinguished "empty" key value and the
- * following static member functions:
+ * For example, consider the following JS code:
  *
- *     bool isEmpty(const Key&);
- *     void makeEmpty(Key*);
+ *   var m = new Map();
+ *   m.set(1, "a");
+ *   m.set(2, "b");
+ *   m.set(3, "c");
+ *   m.set(4, "d");
+ *   m.delete(2);
+ *
+ * After this, the Map object might look like this:
+ *
+ *   HashTableSlot
+ *     |    +---------+---------+
+ *     +--> | Data #3 | Data #2 |
+ *          +-----+---+-----+---+
+ *                |         |
+ *                +---------|----------------------------+
+ *                          +----------------+           |
+ *                                           |           |
+ *   DataSlot                                v           v
+ *     |    +------------+------------+------------+------------+------------+
+ *     |    | Data #0    | Data #1    | Data #2    | Data #3    | Data #4    |
+ *     +--> | key: 1     | key: $empty| key: 3     | key: 4     | <free>     |
+ *          | value: "a" | value: #   | value: "c" | value: "d" |            |
+ *          | chain: null| chain: null| chain: #0  | chain: #1  |            |
+ *          +------------+------------+------+-----+------+-----+------------+
+ *                 ^            ^            |            |
+ *                 |            |            |            |
+ *                 |            +------------|------------+
+ *                 +-------------------------+
+ *
+ *   LiveCountSlot = 3    (number of entries in the table)
+ *   DataCapacitySlot = 5 (total capacity of the data array)
+ *   DataLengthSlot = 4   (number of entries used, including deleted items)
+ *   HashShiftSlot = 31   (2 hash buckets; see hashShiftToNumHashBuckets)
+ *
+ * In this case we have only two hash buckets and each bucket contains two Data
+ * entries. Entries in the same bucket form a linked list using the |chain|
+ * field. This implements separate chaining for hash collisions.
+ *
+ * When an entry is deleted from the table, we set its key to the
+ * MagicValue(JS_HASH_KEY_EMPTY) tombstone Value, shown as $empty in this
+ * diagram. Deleted entries are removed when the table is resized or compacted.
+ *
+ * Iterators
+ * =========
+ * Each hash table has a doubly linked list of iterators for it. This is used to
+ * update active iterators when we remove an entry, when we compact the table,
+ * or when we clear the table. See TableIteratorObject and IterOps.
+ *
+ * HashCodeScrambler
+ * =================
+ * Each table has a HashCodeScrambler, used to avoid revealing JSObject*
+ * addresses. See bug 1312001 and HashValue in MapObject.cpp
+ *
+ * Nursery GC Optimizations
+ * ========================
+ * Each table has a list of keys allocated in the nursery that's traced by the
+ * OrderedHashTableRef store buffer entry. This avoids tracing all non-nursery
+ * entries during a nursery GC.
+ *
+ * Similarly, each table has a separate list of nursery-allocated iterators.
+ * This list is cleared at the start of a nursery GC and rebuilt when iterators
+ * are promoted. See Nursery::clearMapAndSetNurseryIterators.
  */
 
-#include "mozilla/CheckedInt.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/MemoryReporting.h"
-#include "mozilla/TemplateLib.h"
 
 #include <memory>
 #include <tuple>
@@ -96,6 +154,7 @@ class OrderedHashTableObject : public NativeObject {
   };
 
   inline void* allocateCellBuffer(JSContext* cx, size_t numBytes);
+  inline void freeCellBuffer(JSContext* cx, void* data, size_t numBytes);
 
  public:
   static constexpr size_t offsetOfDataLength() {
@@ -316,7 +375,9 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
   using HashCodeScrambler = mozilla::HashCodeScrambler;
   static constexpr size_t SlotCount = OrderedHashTableObject::SlotCount;
 
-  struct Data {
+  // Note: use alignas(8) to simplify JIT code generation because
+  // alignof(JS::Value) can be either 4 or 8 on 32-bit platforms.
+  struct alignas(8) Data {
     T element;
     Data* chain;
 
@@ -502,18 +563,9 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     return !obj->getReservedSlot(Slots::DataSlot).isUndefined();
   }
 
-  static MOZ_ALWAYS_INLINE bool calcAllocSize(uint32_t dataCapacity,
-                                              uint32_t buckets,
-                                              size_t* numBytes) {
-    using CheckedSize = mozilla::CheckedInt<size_t>;
-    auto res = CheckedSize(dataCapacity) * sizeof(Data) +
-               CheckedSize(sizeof(HashCodeScrambler)) +
-               CheckedSize(buckets) * sizeof(Data*);
-    if (MOZ_UNLIKELY(!res.isValid())) {
-      return false;
-    }
-    *numBytes = res.value();
-    return true;
+  static constexpr size_t calcAllocSize(size_t dataCapacity, size_t buckets) {
+    return dataCapacity * sizeof(Data) + sizeof(HashCodeScrambler) +
+           buckets * sizeof(Data*);
   }
 
   // Allocate a single buffer that stores the data array followed by the hash
@@ -525,11 +577,11 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     MOZ_ASSERT(dataCapacity <= MaxDataCapacity);
     MOZ_ASSERT(buckets <= MaxHashBuckets);
 
-    size_t numBytes = 0;
-    if (MOZ_UNLIKELY(!calcAllocSize(dataCapacity, buckets, &numBytes))) {
-      ReportAllocationOverflow(cx);
-      return {};
-    }
+    // Ensure the maximum buffer size doesn't exceed INT32_MAX. Don't change
+    // this without auditing the buffer allocation code!
+    static_assert(calcAllocSize(MaxDataCapacity, MaxHashBuckets) <= INT32_MAX);
+
+    size_t numBytes = calcAllocSize(dataCapacity, buckets);
 
     void* buf = obj->allocateCellBuffer(cx, numBytes);
     if (!buf) {
@@ -569,8 +621,6 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     if (!dataAlloc) {
       return false;
     }
-
-    AddCellMemory(obj, numBytes, MemoryUse::MapObjectData);
 
     *hcsAlloc = cx->realm()->randomHashCodeScrambler();
 
@@ -635,15 +685,6 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     setHashCodeScrambler(nullptr);
   }
 
-  void destroy(JS::GCContext* gcx) {
-    if (!hasInitializedSlots()) {
-      return;
-    }
-    if (Data* data = maybeData()) {
-      freeData(gcx, data, getDataLength(), getDataCapacity(), hashBuckets());
-    }
-  }
-
   void maybeMoveBufferOnPromotion(Nursery& nursery) {
     if (!hasAllocatedBuffer()) {
       return;
@@ -653,13 +694,11 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     uint32_t dataCapacity = getDataCapacity();
     uint32_t buckets = hashBuckets();
 
-    size_t numBytes = 0;
-    MOZ_ALWAYS_TRUE(calcAllocSize(dataCapacity, buckets, &numBytes));
+    size_t numBytes = calcAllocSize(dataCapacity, buckets);
 
     void* buf = oldData;
     Nursery::WasBufferMoved result =
-        nursery.maybeMoveNurseryOrMallocBufferOnPromotion(
-            &buf, obj, numBytes, MemoryUse::MapObjectData);
+        nursery.maybeMoveBufferOnPromotion(&buf, obj, numBytes);
     if (result == Nursery::BufferNotMoved) {
       return;
     }
@@ -694,11 +733,13 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     setHashCodeScrambler(hcs);
   }
 
-  size_t sizeOfExcludingObject(mozilla::MallocSizeOf mallocSizeOf) const {
+  size_t sizeOfExcludingObject() const {
+    MOZ_ASSERT(obj->isTenured());  // Assumes data is not in the nursery.
+
     size_t size = 0;
     if (hasInitializedSlots() && hasAllocatedBuffer()) {
       // Note: this also includes the HashCodeScrambler and the hashTable array.
-      size += mallocSizeOf(getData());
+      size += gc::GetAllocSize(obj->zone(), getData());
     }
     return size;
   }
@@ -724,12 +765,13 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
    * means the element was not added to the table.
    */
   template <typename ElementInput>
-  [[nodiscard]] bool put(JSContext* cx, ElementInput&& element) {
+  [[nodiscard]] bool put(JSContext* cx, ElementInput&& elementInput) {
+    T element(std::forward<ElementInput>(elementInput));
     HashNumber h;
     if (hasAllocatedBuffer()) {
       h = prepareHash(Ops::getKey(element));
       if (Data* e = lookup(Ops::getKey(element), h)) {
-        e->element = std::forward<ElementInput>(element);
+        e->element = std::move(element);
         return true;
       }
       if (getDataLength() == getDataCapacity() && !rehashOnFull(cx)) {
@@ -742,11 +784,10 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
       h = prepareHash(Ops::getKey(element));
     }
     auto [entry, chain] = addEntry(h);
-    new (entry) Data(std::forward<ElementInput>(element), chain);
+    new (entry) Data(std::move(element), chain);
     return true;
   }
 
-#ifdef NIGHTLY_BUILD
   /*
    * If the table already contains an entry that matches |element|,
    * return that entry. Otherwise add a new entry.
@@ -776,7 +817,6 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     new (entry) Data(std::forward<ElementInput>(element), chain);
     return &entry->element;
   }
-#endif  // #ifdef NIGHTLY_BUILD
 
   /*
    * If the table contains an element matching l, remove it and return true.
@@ -972,6 +1012,13 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
 
   void trace(JSTracer* trc) {
     Data* data = maybeData();
+    if (data) {
+      TraceBufferEdge(trc, &data, "OrderedHashTable data");
+      if (data != maybeData()) {
+        setData(data);
+      }
+    }
+
     uint32_t dataLength = getDataLength();
     for (uint32_t i = 0; i < dataLength; i++) {
       if (!Ops::isEmpty(Ops::getKey(data[i].element))) {
@@ -1092,24 +1139,16 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     }
   }
 
-  void freeData(JS::GCContext* gcx, Data* data, uint32_t length,
-                uint32_t capacity, uint32_t hashBuckets) {
+  void freeData(JSContext* cx, Data* data, uint32_t length, uint32_t capacity,
+                uint32_t hashBuckets) {
     MOZ_ASSERT(data);
     MOZ_ASSERT(capacity > 0);
 
     destroyData(data, length);
 
-    size_t numBytes;
-    MOZ_ALWAYS_TRUE(calcAllocSize(capacity, hashBuckets, &numBytes));
+    size_t numBytes = calcAllocSize(capacity, hashBuckets);
 
-    if (IsInsideNursery(obj)) {
-      if (gcx->runtime()->gc.nursery().isInside(data)) {
-        return;
-      }
-      gcx->runtime()->gc.nursery().removeMallocedBuffer(data, numBytes);
-    }
-
-    gcx->free_(obj, data, numBytes, MemoryUse::MapObjectData);
+    obj->freeCellBuffer(cx, data, numBytes);
   }
 
   Data* lookup(const Lookup& l, HashNumber h) const {
@@ -1247,10 +1286,7 @@ class MOZ_STACK_CLASS OrderedHashTableImpl {
     }
     MOZ_ASSERT(wp == newData + getLiveCount());
 
-    freeData(obj->runtimeFromMainThread()->gcContext(), oldData, oldDataLength,
-             getDataCapacity(), hashBuckets());
-
-    AddCellMemory(obj, numBytes, MemoryUse::MapObjectData);
+    freeData(cx, oldData, oldDataLength, getDataCapacity(), hashBuckets());
 
     setHashTable(newHashTable);
     setData(newData);
@@ -1301,8 +1337,8 @@ class MOZ_STACK_CLASS OrderedHashMapImpl {
    public:
     Entry() = default;
     explicit Entry(const Key& k) : key(k) {}
-    template <typename V>
-    Entry(const Key& k, V&& v) : key(k), value(std::forward<V>(v)) {}
+    template <typename K, typename V>
+    Entry(K&& k, V&& v) : key(std::forward<K>(k)), value(std::forward<V>(v)) {}
     Entry(Entry&& rhs) : key(std::move(rhs.key)), value(std::move(rhs.value)) {}
 
     const Key key{};
@@ -1359,20 +1395,16 @@ class MOZ_STACK_CLASS OrderedHashMapImpl {
   bool remove(JSContext* cx, const Lookup& key) { return impl.remove(cx, key); }
   void clear(JSContext* cx) { impl.clear(cx); }
 
-  void destroy(JS::GCContext* gcx) { impl.destroy(gcx); }
-
   template <typename K, typename V>
   [[nodiscard]] bool put(JSContext* cx, K&& key, V&& value) {
     return impl.put(cx, Entry(std::forward<K>(key), std::forward<V>(value)));
   }
 
-#ifdef NIGHTLY_BUILD
   template <typename K, typename V>
   [[nodiscard]] Entry* getOrAdd(JSContext* cx, K&& key, V&& value) {
     return impl.getOrAdd(cx,
                          Entry(std::forward<K>(key), std::forward<V>(value)));
   }
-#endif  // #ifdef NIGHTLY_BUILD
 
 #ifdef DEBUG
   mozilla::Maybe<HashNumber> hash(const Lookup& key) const {
@@ -1427,9 +1459,7 @@ class MOZ_STACK_CLASS OrderedHashMapImpl {
   }
   static constexpr size_t sizeofImplData() { return Impl::sizeofData(); }
 
-  size_t sizeOfExcludingObject(mozilla::MallocSizeOf mallocSizeOf) const {
-    return impl.sizeOfExcludingObject(mallocSizeOf);
-  }
+  size_t sizeOfExcludingObject() const { return impl.sizeOfExcludingObject(); }
 };
 
 class OrderedHashSetObject : public detail::OrderedHashTableObject {};
@@ -1478,8 +1508,6 @@ class MOZ_STACK_CLASS OrderedHashSetImpl {
     return impl.remove(cx, value);
   }
   void clear(JSContext* cx) { impl.clear(cx); }
-
-  void destroy(JS::GCContext* gcx) { impl.destroy(gcx); }
 
 #ifdef DEBUG
   mozilla::Maybe<HashNumber> hash(const Lookup& value) const {
@@ -1533,9 +1561,7 @@ class MOZ_STACK_CLASS OrderedHashSetImpl {
   }
   static constexpr size_t sizeofImplData() { return Impl::sizeofData(); }
 
-  size_t sizeOfExcludingObject(mozilla::MallocSizeOf mallocSizeOf) const {
-    return impl.sizeOfExcludingObject(mallocSizeOf);
-  }
+  size_t sizeOfExcludingObject() const { return impl.sizeOfExcludingObject(); }
 };
 
 }  // namespace js

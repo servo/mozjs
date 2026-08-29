@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -115,11 +113,9 @@ JSLinearString* StringBuilder::finishStringInternal(JSContext* cx,
                                                     gc::Heap heap) {
   // The Vector must include space for the mozilla::StringBuffer header.
   MOZ_ASSERT(numHeaderChars_ == numHeaderChars<CharT>());
-#ifdef DEBUG
-  auto isZeroChar = [](CharT c) { return c == '\0'; };
   MOZ_ASSERT(std::all_of(chars<CharT>().begin(),
-                         chars<CharT>().begin() + numHeaderChars_, isZeroChar));
-#endif
+                         chars<CharT>().begin() + numHeaderChars_,
+                         [](CharT c) { return c == '\0'; }));
 
   size_t len = length();
 

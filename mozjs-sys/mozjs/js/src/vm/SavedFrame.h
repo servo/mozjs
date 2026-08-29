@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -159,7 +157,7 @@ struct SavedFrame::HashPolicy {
   static bool match(SavedFrame* existing, const Lookup& lookup);
 
   using Key = WeakHeapPtr<SavedFrame*>;
-  static void rekey(Key& key, const Key& newKey);
+  static void rekey(Key& key, SavedFrame* newKey);
 
  private:
   static HashNumber calculateHash(const Lookup& lookup, HashNumber parentHash);
@@ -199,10 +197,19 @@ inline void AssertObjectIsSavedFrameOrWrapper(JSContext* cx,
 // to the subsumes callback, and should be special cased with a shortcut before
 // that.
 struct ReconstructedSavedFramePrincipals : public JSPrincipals {
+ private:
   explicit constexpr ReconstructedSavedFramePrincipals()
-      : JSPrincipals(JSPrincipals::RefCount(1)) {
-    //MOZ_ASSERT(is(this));
-  }
+      : JSPrincipals(JSPrincipals::RefCount(1)) {}
+
+ public:
+  ReconstructedSavedFramePrincipals(const ReconstructedSavedFramePrincipals&) =
+      delete;
+  ReconstructedSavedFramePrincipals& operator=(
+      const ReconstructedSavedFramePrincipals&) = delete;
+  ReconstructedSavedFramePrincipals(ReconstructedSavedFramePrincipals&&) =
+      delete;
+  ReconstructedSavedFramePrincipals& operator=(
+      ReconstructedSavedFramePrincipals&&) = delete;
 
   [[nodiscard]] bool write(JSContext* cx,
                            JSStructuredCloneWriter* writer) override {
@@ -212,7 +219,13 @@ struct ReconstructedSavedFramePrincipals : public JSPrincipals {
     return false;
   }
 
-  bool isSystemOrAddonPrincipal() override {
+  bool isSystemPrincipal() override {
+    MOZ_ASSERT(false,
+               "ReconstructedSavedFramePrincipals should never be exposed to "
+               "embedders");
+    return false;
+  }
+  bool isAddonPrincipal() override {
     MOZ_ASSERT(false,
                "ReconstructedSavedFramePrincipals should never be exposed to "
                "embedders");

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,15 +8,20 @@
 #define mozilla_Casting_h
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Sprintf.h"
 
-#include "fmt/format.h"
-
-#include <cinttypes>
-#include <cstring>
-#include <type_traits>
-#include <limits>
+#include <cstdint>
 #include <cmath>
+#include <limits>
+#include <type_traits>
+
+#ifndef __clang__
+#  include <cstring>
+#endif
+
+#ifdef DEBUG
+#  include "fmt/format.h"  // IWYU pragma: keep(for fmt::)
+#  include <cstdio>
+#endif
 
 namespace mozilla {
 
@@ -45,6 +48,12 @@ namespace mozilla {
  */
 template <typename To, typename From>
 inline void BitwiseCast(const From aFrom, To* aResult) {
+  // FIXME: Use std::bit_cast for the value returning version once we move to
+  // C++20 and minimum GCC to 11. The outparam version can't use std::bit_cast
+  // because of the x87 stack issue described above.
+#if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 11)
+  *aResult = __builtin_bit_cast(To, aFrom);
+#else
   static_assert(sizeof(From) == sizeof(To),
                 "To and From must have the same size");
 
@@ -56,9 +65,9 @@ inline void BitwiseCast(const From aFrom, To* aResult) {
   static_assert(std::is_trivial<To>::value,
                 "shouldn't bitwise-copy a type having non-trivial "
                 "initialization");
-
   std::memcpy(static_cast<void*>(aResult), static_cast<const void*>(&aFrom),
               sizeof(From));
+#endif
 }
 
 template <typename To, typename From>
@@ -122,6 +131,7 @@ T2S(double);
 #undef T2S
 #undef T2SF
 
+#ifdef DEBUG
 template <typename In, typename Out>
 inline void DiagnosticMessage(In aIn, char aDiagnostic[1024]) {
   if constexpr (std::is_same_v<In, char> || std::is_same_v<In, wchar_t> ||
@@ -133,23 +143,18 @@ inline void DiagnosticMessage(In aIn, char aDiagnostic[1024]) {
     // It's always possible to cast them to int64_t for lossless printing of the
     // value.
     auto [out, size] = fmt::format_to_n(
-        aDiagnostic, 1023,
-        FMT_STRING("Cannot cast {:x} from {} to {}: out of range"),
+        aDiagnostic, 1023, "Cannot cast {:x} from {} to {}: out of range",
         static_cast<int64_t>(aIn), TypeToString<In>(), TypeToString<Out>());
     *out = 0;
   } else {
     auto [out, size] = fmt::format_to_n(
-        aDiagnostic, 1023,
-        FMT_STRING("Cannot cast {} from {} to {}: out of range"), aIn,
+        aDiagnostic, 1023, "Cannot cast {} from {} to {}: out of range", aIn,
         TypeToString<In>(), TypeToString<Out>());
     *out = 0;
   }
 }
+#endif
 
-// This is working around https://gcc.gnu.org/bugzilla/show_bug.cgi?id=81676,
-// fixed in gcc-10
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 template <typename In, typename Out>
 bool IsInBounds(In aIn) {
   constexpr bool inSigned = std::is_signed_v<In>;
@@ -167,12 +172,10 @@ bool IsInBounds(In aIn) {
   using select_widest = std::conditional_t<(sizeof(In) > sizeof(Out)), In, Out>;
 
   if constexpr (bothFloat) {
-    if (aIn > select_widest(outMax) || aIn < select_widest(outMin)) {
-      return false;
-    }
+    return select_widest(outMin) <= aIn && aIn <= select_widest(outMax);
   }
   // Normal casting applies, the floating point number is floored.
-  if constexpr (inFloat && !outFloat) {
+  else if constexpr (inFloat && !outFloat) {
     static_assert(sizeof(aIn) <= sizeof(int64_t));
     // Check if the input floating point is larger than the output bounds. This
     // catches situations where the input is a float larger than the max of the
@@ -183,58 +186,37 @@ bool IsInBounds(In aIn) {
     }
     // At this point we know that the input can be converted to an integer.
     // Check if it's larger than the bounds of the target integer.
-    if (outSigned) {
+    if constexpr (outSigned) {
       int64_t asInteger = static_cast<int64_t>(aIn);
-      if (asInteger < outMin || asInteger > outMax) {
-        return false;
-      }
+      return outMin <= asInteger && asInteger <= outMax;
     } else {
       uint64_t asInteger = static_cast<uint64_t>(aIn);
-      if (asInteger > outMax) {
-        return false;
-      }
+      return asInteger <= outMax;
     }
   }
 
   // Checks if the integer is representable exactly as a floating point value of
   // a specific width.
-  if constexpr (!inFloat && outFloat) {
+  else if constexpr (!inFloat && outFloat) {
     if constexpr (inSigned) {
-      if (aIn < -safe_integer<Out>() || aIn > safe_integer<Out>()) {
-        return false;
-      }
+      return -safe_integer<Out>() <= aIn && aIn <= safe_integer<Out>();
     } else {
-      if (aIn >= safe_integer_unsigned<Out>()) {
-        return false;
-      }
+      return aIn < safe_integer_unsigned<Out>();
     }
   }
 
-  if constexpr (noneFloat) {
+  else if constexpr (noneFloat) {
     if constexpr (bothUnsigned) {
-      if (aIn > select_widest(outMax)) {
-        return false;
-      }
-    }
-    if constexpr (bothSigned) {
-      if (aIn > select_widest(outMax) || aIn < select_widest(outMin)) {
-        return false;
-      }
-    }
-    if constexpr (inSigned && !outSigned) {
-      if (aIn < 0 || std::make_unsigned_t<In>(aIn) > outMax) {
-        return false;
-      }
-    }
-    if constexpr (!inSigned && outSigned) {
-      if (aIn > select_widest(outMax)) {
-        return false;
-      }
+      return aIn <= select_widest(outMax);
+    } else if constexpr (bothSigned) {
+      return select_widest(outMin) <= aIn && aIn <= select_widest(outMax);
+    } else if constexpr (inSigned && !outSigned) {
+      return aIn >= 0 && std::make_unsigned_t<In>(aIn) <= outMax;
+    } else if constexpr (!inSigned && outSigned) {
+      return aIn <= select_widest(outMax);
     }
   }
-  return true;
 }
-#pragma GCC diagnostic pop
 
 }  // namespace detail
 

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -31,7 +29,7 @@ struct MaybeStorageBase<T, false> {
   using NonConstT = std::remove_const_t<T>;
 
   union Union {
-    Union() {}
+    constexpr Union() : empty{} {}
     explicit Union(const T& aVal) : val{aVal} {}
     template <typename U,
               typename = std::enable_if_t<std::is_move_constructible_v<U>>>
@@ -43,6 +41,7 @@ struct MaybeStorageBase<T, false> {
     ~Union() {}
 
     NonConstT val;
+    char empty;  // needed to make default constructor constexpr
   } mStorage;
 
  public:

@@ -28,17 +28,17 @@ class XPCShellTests:
         self.log.log_raw({"action": "log", "message": "message"})
 
         # these are the metrics sent by the scripts
-        self.log.log_raw(
-            {
-                "action": "log",
-                "message": '"perfMetrics"',
-                "extra": {"metrics1": 1, "metrics2": 2},
-            }
-        )
+        self.log.log_raw({
+            "action": "log",
+            "message": '"perfMetrics"',
+            "extra": {"metrics1": 1, "metrics2": 2},
+        })
 
-        self.log.log_raw(
-            {"action": "log", "message": '"perfMetrics"', "extra": {"metrics3": 3}}
-        )
+        self.log.log_raw({
+            "action": "log",
+            "message": '"perfMetrics"',
+            "extra": {"metrics3": 3},
+        })
 
         self.log.test_end("test end")
         self.log.suite_end("suite end")

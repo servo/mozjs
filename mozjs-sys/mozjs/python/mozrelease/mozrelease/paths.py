@@ -50,7 +50,7 @@ def getReleaseInstallerPath(
     version,
     platform,
     locale="en-US",
-    last_linux_bz2_version=None,
+    last_linux_bz2_version="134.99.0",
 ):
     if productName not in ("fennec",):
         if platform.startswith("linux"):
@@ -59,38 +59,31 @@ def getReleaseInstallerPath(
                 MozillaVersion(version) > MozillaVersion(last_linux_bz2_version)
             ):
                 compression = "xz"
-            return "/".join(
-                [
-                    p.strip("/")
-                    for p in [
-                        platform,
-                        locale,
-                        "%s-%s.tar.%s" % (productName, version, compression),
-                    ]
+            return "/".join([
+                p.strip("/")
+                for p in [
+                    platform,
+                    locale,
+                    f"{productName}-{version}.tar.{compression}",
                 ]
-            )
+            ])
         elif "mac" in platform:
-            return "/".join(
-                [
-                    p.strip("/")
-                    for p in [platform, locale, "%s %s.dmg" % (brandName, version)]
-                ]
-            )
+            return "/".join([
+                p.strip("/") for p in [platform, locale, f"{brandName} {version}.dmg"]
+            ])
         elif platform.startswith("win"):
-            return "/".join(
-                [
-                    p.strip("/")
-                    for p in [
-                        platform,
-                        locale,
-                        "%s Setup %s.exe" % (brandName, version),
-                    ]
+            return "/".join([
+                p.strip("/")
+                for p in [
+                    platform,
+                    locale,
+                    f"{brandName} Setup {version}.exe",
                 ]
-            )
+            ])
         else:
-            raise "Unsupported platform"
+            raise ValueError("Unsupported platform")
     elif platform.startswith("android"):
-        filename = "%s-%s.%s.android-arm.apk" % (productName, version, locale)
+        filename = f"{productName}-{version}.{locale}.android-arm.apk"
         return "/".join([p.strip("/") for p in [platform, locale, filename]])
     else:
-        raise "Unsupported platform"
+        raise ValueError("Unsupported platform")

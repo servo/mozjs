@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -161,7 +159,7 @@ JS_FOR_EACH_PUBLIC_TAGGED_GC_POINTER_TYPE(JS_DECLARE_IS_HEAP_CONSTRUCTIBLE_TYPE)
 // be used with Heap<>.
 
 namespace gc {
-struct Cell;
+class Cell;
 } /* namespace gc */
 
 // Important: Return a reference so passing a Rooted<T>, etc. to
@@ -223,13 +221,10 @@ JS_PUBLIC_API void HeapScriptWriteBarriers(JSScript** objp, JSScript* prev,
  */
 template <typename T, typename Enable = void>
 struct SafelyInitialized {
-  static T create() {
+  static constexpr T create() {
     // This function wants to presume that |T()| -- which value-initializes a
     // |T| per C++11 [expr.type.conv]p2 -- will produce a safely-initialized,
     // safely-usable T that it can return.
-
-#if defined(XP_WIN) || defined(XP_DARWIN) || \
-    (defined(XP_UNIX) && !defined(__clang__))
 
     // That presumption holds for pointers, where value initialization produces
     // a null pointer.
@@ -245,8 +240,6 @@ struct SafelyInitialized {
 
     static_assert(IsPointer || IsNonTriviallyDefaultConstructibleClassOrUnion,
                   "T() must evaluate to a safely-initialized T");
-
-#endif
 
     return T();
   }
@@ -1164,7 +1157,7 @@ template <typename T>
 class MOZ_RAII Rooted : public detail::RootedTraits<T>::StackBase,
                         public js::RootedOperations<T, Rooted<T>> {
   // Intentionally store a pointer into the stack.
-#if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)
+#if !defined(__clang__) && defined(__GNUC__) && __GNUC__ >= 12
 #  pragma GCC diagnostic push
 #  pragma GCC diagnostic ignored "-Wdangling-pointer"
 #endif
@@ -1173,7 +1166,7 @@ class MOZ_RAII Rooted : public detail::RootedTraits<T>::StackBase,
     this->prev = *this->stack;
     *this->stack = this;
   }
-#if defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 12)
+#if !defined(__clang__) && defined(__GNUC__) && __GNUC__ >= 12
 #  pragma GCC diagnostic pop
 #endif
 
@@ -1221,7 +1214,7 @@ class MOZ_RAII Rooted : public detail::RootedTraits<T>::StackBase,
   template <
       typename RootingContext, typename... CtorArgs,
       typename = std::enable_if_t<detail::IsTraceable_v<T>, RootingContext>>
-  explicit Rooted(const RootingContext& cx, CtorArgs... args)
+  explicit Rooted(const RootingContext& cx, CtorArgs&&... args)
       : ptr(std::forward<CtorArgs>(args)...) {
     MOZ_ASSERT(GCPolicy<T>::isValid(ptr));
     registerWithRootLists(rootLists(cx));
@@ -1254,6 +1247,8 @@ class MOZ_RAII Rooted : public detail::RootedTraits<T>::StackBase,
   T* address() { return &ptr; }
   const T* address() const { return &ptr; }
 
+  static constexpr size_t offsetOfPtr() { return offsetof(Rooted, ptr); }
+
  private:
   T ptr;
 
@@ -1267,10 +1262,48 @@ struct DefineComparisonOps<Rooted<T>> : std::true_type {
   static const T& get(const Rooted<T>& v) { return v.get(); }
 };
 
+template <typename T, typename... Ts>
+struct IndexOfType {};
+
+template <typename T, typename... Ts>
+struct IndexOfType<T, T, Ts...> : public std::integral_constant<size_t, 0> {};
+
+template <typename T, typename U, typename... Ts>
+struct IndexOfType<T, U, Ts...>
+    : public std::integral_constant<size_t, IndexOfType<T, Ts...>::value + 1> {
+};
+
+template <typename T, typename... Ts>
+constexpr size_t IndexOfTypeV = IndexOfType<T, Ts...>::value;
+
 }  // namespace detail
 
 template <typename... Fs>
-using RootedTuple = Rooted<std::tuple<Fs...>>;
+class RootedTuple {
+  using Tuple = std::tuple<Fs...>;
+
+  Rooted<Tuple> fields;
+
+#ifdef DEBUG
+  bool inUse[std::tuple_size_v<Tuple>] = {};
+
+  bool* setFieldInUse(size_t index) {
+    MOZ_ASSERT(index < std::size(inUse));
+    bool& flag = inUse[index];
+    MOZ_ASSERT(!flag,
+               "Field of RootedTuple already in use by another RootedField");
+    flag = true;
+    return &flag;
+  }
+#endif
+
+  template <typename T, size_t N>
+  friend class RootedField;
+
+ public:
+  template <typename RootingContext>
+  explicit RootedTuple(const RootingContext& cx) : fields(cx) {}
+};
 
 // Reference to a field in a RootedTuple. This is a drop-in replacement for an
 // individual Rooted.
@@ -1297,8 +1330,14 @@ using RootedTuple = Rooted<std::tuple<Fs...>>;
 template <typename T, size_t N /* = SIZE_MAX */>
 class MOZ_RAII RootedField : public js::RootedOperations<T, RootedField<T, N>> {
   T* ptr;
-  friend class Handle<T>;
-  friend class MutableHandle<T>;
+  template <typename U>
+  friend class Handle;
+  template <typename U>
+  friend class MutableHandle;
+
+#ifdef DEBUG
+  bool* inUseFlag = nullptr;
+#endif
 
  public:
   using ElementType = T;
@@ -1307,18 +1346,33 @@ class MOZ_RAII RootedField : public js::RootedOperations<T, RootedField<T, N>> {
   explicit RootedField(RootedTuple<Fs...>& rootedTuple) {
     using Tuple = std::tuple<Fs...>;
     if constexpr (N == SIZE_MAX) {
-      ptr = &std::get<T>(rootedTuple.get());
+      ptr = &std::get<T>(rootedTuple.fields.get());
     } else {
       static_assert(N < std::tuple_size_v<Tuple>);
       static_assert(std::is_same_v<T, std::tuple_element_t<N, Tuple>>);
-      ptr = &std::get<N>(rootedTuple.get());
+      ptr = &std::get<N>(rootedTuple.fields.get());
     }
+    *ptr = SafelyInitialized<T>::create();
+#ifdef DEBUG
+    size_t index = N;
+    if constexpr (N == SIZE_MAX) {
+      index = detail::IndexOfTypeV<T, Fs...>;
+    }
+    inUseFlag = rootedTuple.setFieldInUse(index);
+#endif
   }
   template <typename... Fs, typename S>
   explicit RootedField(RootedTuple<Fs...>& rootedTuple, S&& value)
       : RootedField(rootedTuple) {
     *ptr = std::forward<S>(value);
   }
+
+#ifdef DEBUG
+  ~RootedField() {
+    MOZ_ASSERT(*inUseFlag);
+    *inUseFlag = false;
+  }
+#endif
 
   T& get() { return *ptr; }
   const T& get() const { return *ptr; }
@@ -1539,7 +1593,7 @@ class PersistentRooted : public detail::RootedTraits<T>::PersistentBase,
  public:
   using ElementType = T;
 
-  PersistentRooted() : ptr(SafelyInitialized<T>::create()) {}
+  constexpr PersistentRooted() : ptr(SafelyInitialized<T>::create()) {}
 
   template <
       typename RootHolder,
@@ -1653,7 +1707,7 @@ class MutableWrappedPtrOperations<UniquePtr<T, D>, Container>
   UniquePtr<T, D>& uniquePtr() { return static_cast<Container*>(this)->get(); }
 
  public:
-  [[nodiscard]] typename UniquePtr<T, D>::Pointer release() {
+  [[nodiscard]] typename UniquePtr<T, D>::pointer release() {
     return uniquePtr().release();
   }
   void reset(T* ptr = T()) { uniquePtr().reset(ptr); }

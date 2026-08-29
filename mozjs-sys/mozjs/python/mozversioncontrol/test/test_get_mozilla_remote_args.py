@@ -31,6 +31,7 @@ STEPS = {
             True,
             [
                 "--remotes=central",
+                "--remotes=firefox",
                 "--remotes=unified",
             ],
         ),
@@ -50,17 +51,17 @@ def test_get_mozilla_remote_args(is_cinnabar, expected_remotes, repo):
 
     remotes = vcs.get_mozilla_remote_args()
 
-    assert remotes == [
-        "--remotes"
-    ], "Default `--remotes` passed without finding official remote."
+    assert remotes == ["--remotes"], (
+        "Default `--remotes` passed without finding official remote."
+    )
 
     repo.execute_next_step()
 
     remotes = sorted(vcs.get_mozilla_remote_args())
 
-    assert (
-        remotes == expected_remotes
-    ), "Multiple non-try remote arguments should be found."
+    assert remotes == expected_remotes, (
+        "Multiple non-try remote arguments should be found."
+    )
 
 
 if __name__ == "__main__":

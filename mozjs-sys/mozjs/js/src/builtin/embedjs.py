@@ -101,13 +101,11 @@ def embed(
     )
     args = cppflags + ["-D%(k)s=%(v)s" % {"k": k, "v": env[k]} for k in env]
     preprocessed = preprocess(cxx, preprocessorOption, combinedSources, args)
-    processed = "\n".join(
-        [
-            line
-            for line in preprocessed.splitlines()
-            if (line.strip() and not line.startswith("#"))
-        ]
-    )
+    processed = "\n".join([
+        line
+        for line in preprocessed.splitlines()
+        if (line.strip() and not line.startswith("#"))
+    ])
 
     js_out.write(processed)
     import zlib

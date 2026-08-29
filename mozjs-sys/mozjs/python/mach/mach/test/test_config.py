@@ -3,7 +3,10 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from types import SimpleNamespace
 
 from mozfile.mozfile import NamedTemporaryFile
 from mozunit import main
@@ -86,6 +89,19 @@ class Provider5:
     config_settings = [
         ("foo.*", "string", "desc"),
         ("foo.bar", "string", "desc"),
+    ]
+
+
+@SettingsProvider
+class Provider6:
+    config_settings = [
+        (
+            "foo.abc",
+            StringType,
+            "desc",
+            "red",
+            {"choices": lambda: iter(("red", "green", "blue"))},
+        ),
     ]
 
 
@@ -212,6 +228,39 @@ class TestConfigSettings(unittest.TestCase):
 
         foo.abc = "b"
         foo.xyz = "y"
+
+    def test_callable_choices(self):
+        s = ConfigSettings()
+        s.register_provider(Provider6)
+
+        meta = s["foo"].get_meta("abc")
+        choices = meta["choices"]
+        self.assertTrue(callable(choices))
+        self.assertEqual(set(choices()), {"red", "green", "blue"})
+
+        foo = s.foo
+        with self.assertRaises(ValueError):
+            foo.abc = "purple"
+        foo.abc = "green"
+
+    def test_settings_command_callable_choices(self):
+        from mach.registrar import Registrar
+
+        Registrar.register_category("devenv", "devenv", "devenv")
+        from mach.commands.settings import run_settings
+
+        s = ConfigSettings()
+        s.register_provider(Provider6)
+
+        command_context = SimpleNamespace(_mach_context=SimpleNamespace(settings=s))
+
+        buf = StringIO()
+        with redirect_stdout(buf):
+            run_settings(command_context)
+        output = buf.getvalue()
+
+        self.assertIn("[foo]", output)
+        self.assertIn(";abc={red, green, blue}", output)
 
     def test_wildcard_options(self):
         s = ConfigSettings()

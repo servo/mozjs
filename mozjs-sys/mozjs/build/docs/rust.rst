@@ -16,9 +16,9 @@ Linking Rust crates into libxul
 
 Rust crates that you want to link into libxul should be listed in the
 ``dependencies`` section of
-`toolkit/library/rust/shared/Cargo.toml <https://searchfox.org/mozilla-central/source/toolkit/library/rust/shared/Cargo.toml>`_.
+:searchfox:`toolkit/library/rust/shared/Cargo.toml`.
 You must also add an ``extern crate`` reference to
-`toolkit/library/rust/shared/lib.rs <https://searchfox.org/mozilla-central/source/toolkit/library/rust/shared/lib.rs>`_.
+:searchfox:`toolkit/library/rust/shared/lib.rs`.
 This ensures that the Rust code will be linked properly into libxul as well
 as the copy of libxul used for gtests. (Even though Rust 2018 mostly doesn't
 require ``extern crate`` declarations, these ones are necessary because the
@@ -32,7 +32,7 @@ but --frozen was passed to prevent this"**.
 
 By default, all Cargo packages in the mozilla-central repository are part of
 the same
-`workspace <https://searchfox.org/mozilla-central/source/toolkit/library/rust/shared/lib.rs>`_
+:searchfox:`workspace <toolkit/library/rust/shared/lib.rs>`
 and will share the ``Cargo.lock`` file and ``target`` directory in the root of
 the repository.  You can change this behavior by adding a path to the
 ``exclude`` list in the top-level ``Cargo.toml`` file.  You may want to do
@@ -58,7 +58,7 @@ To link Rust code into libraries other than libxul, create a directory with a
     RustLibrary('crate_name')
 
 where ``crate_name`` matches the name from the ``[package]`` section of your
-``Cargo.toml``. You can refer to `the moz.build file <https://searchfox.org/mozilla-central/rev/603b9fded7a11ff213c0f415198cd637b7c86614/toolkit/library/rust/moz.build#9>`_ and `the Cargo.toml file <https://searchfox.org/mozilla-central/rev/603b9fded7a11ff213c0f415198cd637b7c86614/toolkit/library/rust/Cargo.toml>`_ that are used for libxul.
+``Cargo.toml``. You can refer to :searchfox:`the moz.build file <mozilla-central/rev/603b9fded7a11ff213c0f415198cd637b7c86614:toolkit/library/rust/moz.build#9>` and :searchfox:`the Cargo.toml file <mozilla-central/rev/603b9fded7a11ff213c0f415198cd637b7c86614:toolkit/library/rust/Cargo.toml>` that are used for libxul.
 
 You can then add ``USE_LIBS += ['crate_name']`` to the ``moz.build`` file
 that defines the binary as you would with any other library in the tree.
@@ -75,8 +75,7 @@ that defines the binary as you would with any other library in the tree.
 Conditional compilation
 ========================
 
-Edit `tool/library/rust/gkrust-features.mozbuild
-<https://searchfox.org/mozilla-central/source/toolkit/library/rust/gkrust-features.mozbuild>`_
+Edit :searchfox:`tool/library/rust/gkrust-features.mozbuild <toolkit/library/rust/gkrust-features.mozbuild>`
 to expose build flags as Cargo features.
 
 Standalone Rust programs
@@ -175,7 +174,7 @@ Finally, make sure you don't accidentally land the changes to the crate or the
 ``Cargo.lock`` file.
 
 For an example of a more complex workflow involving a third-party crate, see
-`mp4parse-rust/README.md <https://searchfox.org/mozilla-central/source/media/mp4parse-rust/README.md>`_.
+:searchfox:`mp4parse-rust/README.md <media/mp4parse-rust/README.md>`.
 It describes the workflow for a crate that is hosted on GitHub, and for which
 changes are made via GitHub pull requests, but all pull requests must also be
 tested within mozilla-central before being merged.

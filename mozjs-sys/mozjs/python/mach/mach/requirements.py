@@ -28,6 +28,11 @@ class PypiOptionalSpecifier(PypiSpecifier):
         self.repercussion = repercussion
 
 
+class RequirementsTxtSpecifier:
+    def __init__(self, path: str):
+        self.path = path
+
+
 class MachEnvRequirements:
     """Requirements associated with a "site dependency manifest", as
     defined in "python/sites/".
@@ -48,6 +53,10 @@ class MachEnvRequirements:
     pypi-optional -- Attempt to install the package and dependencies from PyPI.
         Continue using the site, even if the package could not be installed.
 
+    requirements-txt -- Specifies a path to a 'requirements.txt' lockfile.
+        All requirements from the lockfile will be installed with hash
+        validation. All entries must include hashes.
+
     packages.txt -- Denotes that the specified path is a child manifest. It
         will be read and processed as if its contents were concatenated
         into the manifest being read.
@@ -65,6 +74,7 @@ class MachEnvRequirements:
         self.pypi_optional_requirements = []
         self.vendored_requirements = []
         self.vendored_fallback_requirements = []
+        self.requirements_txt_files = []
 
     def pths_as_absolute(self, topsrcdir: str):
         return [
@@ -189,13 +199,25 @@ def _parse_mach_env_requirements(
                     _parse_package_specifier(raw_requirement, only_strict_requirements),
                 )
             )
+        elif action == "requirements-txt":
+            if is_thunderbird_packages_txt:
+                raise Exception(THUNDERBIRD_PYPI_ERROR)
+
+            requirements_txt_path = topsrcdir / params
+            if not requirements_txt_path.exists():
+                raise Exception(
+                    f"requirements.txt file not found: {requirements_txt_path}"
+                )
+
+            req_txt_specifier = RequirementsTxtSpecifier(str(requirements_txt_path))
+            requirements_output.requirements_txt_files.append(req_txt_specifier)
         elif action == "thunderbird-packages.txt":
             if is_thunderbird:
                 _parse_requirements_definition_file(
                     topsrcdir / params, is_thunderbird_packages_txt=True
                 )
         else:
-            raise Exception("Unknown requirements definition action: %s" % action)
+            raise Exception(f"Unknown requirements definition action: {action}")
 
     def _parse_requirements_definition_file(
         requirements_path: Path, is_thunderbird_packages_txt

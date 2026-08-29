@@ -11,14 +11,15 @@ import tempfile
 
 import mozfile
 import mozpack.path as mozpath
+from mozilla_version.gecko import GeckoVersion
 
 from mozbuild.repackaging.utils import (
+    application_ini_data_from_tar,
     copy_plain_config,
     get_build_variables,
     inject_desktop_entry_file,
     inject_distribution_folder,
     inject_prefs_file,
-    load_application_ini_data,
     mv_manpage_files,
     prepare_langpack_files,
     render_templates,
@@ -52,7 +53,7 @@ def repackage_rpm(
     arch,
     version,
     build_number,
-    release_product,
+    product,
     release_type,
     fluent_localization,
     fluent_resource_loader,
@@ -67,13 +68,19 @@ def repackage_rpm(
     try:
         mozfile.extract_tarball(infile, source_dir)
 
-        application_ini_data = load_application_ini_data(infile, version, build_number)
-        build_variables = _get_build_variables(
+        application_ini_data = application_ini_data_from_tar(infile)
+        gecko_version = GeckoVersion.parse(version)
+        rpm_build_number = (
+            application_ini_data["build_id"]
+            if gecko_version.is_nightly
+            else str(build_number)
+        )
+        build_variables = get_build_variables(
             application_ini_data,
             arch,
             version,
-            release_product=release_product,
-            build_number=build_number,
+            product=product,
+            build_number=rpm_build_number,
         )
 
         rpm_dir = mozpath.join(source_dir, "rpm")
@@ -93,12 +100,12 @@ def repackage_rpm(
         ) as f:
             f.write("This is a packaged app.\n")
 
-        inject_distribution_folder(source_dir, "rpm", app_name)
+        inject_distribution_folder(rpm_dir, "", app_name)
         inject_desktop_entry_file(
             log,
             rpm_dir,
             build_variables,
-            release_product,
+            product,
             release_type,
             fluent_localization,
             fluent_resource_loader,
@@ -158,15 +165,19 @@ def _generate_rpm_archive(
         os.mkdir(upload_dir)
 
     l10n_rpm_directory = pathlib.Path(target_dir, "noarch")
-    for filename in l10n_rpm_directory.glob("*.rpm"):
-        shutil.copy(filename, upload_dir)
+    for locale in build_variables["LANGUAGES"]:
+        source_filename = f"{build_variables['PKG_NAME']}-l10n-{locale}-{build_variables['PKG_VERSION']}-{build_variables['PKG_BUILD_NUMBER']}.noarch.rpm"
+        new_filename = f"langpack-{locale}.noarch.rpm"
+
+        source_path = l10n_rpm_directory / source_filename
+        shutil.copy(source_path, os.path.join(upload_dir, new_filename))
 
 
 def _get_build_variables(
     application_ini_data,
     arch,
     version,
-    release_product="",
+    product="",
     package_name_suffix="",
     description_suffix="",
     build_number="1",
@@ -175,14 +186,14 @@ def _get_build_variables(
         application_ini_data,
         arch,
         version,
-        release_product=release_product,
+        product=product,
         package_name_suffix=package_name_suffix,
         description_suffix=description_suffix,
         build_number=build_number,
     )
 
-    # The format of the date must use the same format as “Wen Jan 22 2024”
-    build_variables["CHANGELOG_DATE"] = application_ini_data["timestamp"].strftime(
+    # The format of the date must use the same format as “Wed Jan 22 2024”
+    build_variables["CHANGELOG_DATE"] = build_variables["TIMESTAMP"].strftime(
         "%a %b %d %Y"
     )
 

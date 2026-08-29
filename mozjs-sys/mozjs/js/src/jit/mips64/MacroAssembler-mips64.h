@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -27,7 +25,7 @@ struct ImmShiftedTag : public ImmWord {
 };
 
 struct ImmTag : public Imm32 {
-  ImmTag(JSValueTag mask) : Imm32(int32_t(mask)) {}
+  explicit ImmTag(JSValueTag mask) : Imm32(int32_t(mask)) {}
 };
 
 static constexpr ValueOperand JSReturnOperand{JSReturnReg};
@@ -39,10 +37,40 @@ static_assert(1 << defaultShift == sizeof(JS::Value),
 // See documentation for ScratchTagScope and ScratchTagScopeRelease in
 // MacroAssembler-x64.h.
 
-class ScratchTagScope : public SecondScratchRegisterScope {
+class ScratchTagScope {
+  UseScratchRegisterScope temps_;
+  Register scratch_;
+  bool owned_;
+  mozilla::DebugOnly<bool> released_;
+
  public:
-  ScratchTagScope(MacroAssembler& masm, const ValueOperand&)
-      : SecondScratchRegisterScope(masm) {}
+  ScratchTagScope(Assembler& masm, const ValueOperand&)
+      : temps_(masm), owned_(true), released_(false) {
+    scratch_ = temps_.Acquire();
+  }
+
+  operator Register() {
+    MOZ_ASSERT(!released_);
+    return scratch_;
+  }
+
+  void release() {
+    MOZ_ASSERT(!released_);
+    released_ = true;
+    if (owned_) {
+      temps_.Release(scratch_);
+      owned_ = false;
+    }
+  }
+
+  void reacquire() {
+    MOZ_ASSERT(released_);
+    released_ = false;
+    if (!owned_) {
+      scratch_ = temps_.Acquire();
+      owned_ = true;
+    }
+  }
 };
 
 class ScratchTagScopeRelease {
@@ -116,6 +144,7 @@ class MacroAssemblerMIPS64 : public MacroAssemblerMIPSShared {
   // arithmetic based ops
   // add
   void ma_daddu(Register rd, Register rs, Imm32 imm);
+  void ma_daddu(Register rd, Register rs, ImmWord imm);
   void ma_daddu(Register rd, Register rs);
   void ma_daddu(Register rd, Imm32 imm);
   void ma_add32TestOverflow(Register rd, Register rs, Register rt,
@@ -134,8 +163,15 @@ class MacroAssemblerMIPS64 : public MacroAssemblerMIPSShared {
                           Label* overflow);
   void ma_addPtrTestCarry(Condition cond, Register rd, Register rs, ImmWord imm,
                           Label* overflow);
+  void ma_addPtrTestSigned(Condition cond, Register rd, Register rj,
+                           Register rk, Label* taken);
+  void ma_addPtrTestSigned(Condition cond, Register rd, Register rj, Imm32 imm,
+                           Label* taken);
+  void ma_addPtrTestSigned(Condition cond, Register rd, Register rj,
+                           ImmWord imm, Label* taken);
   // subtract
   void ma_dsubu(Register rd, Register rs, Imm32 imm);
+  void ma_dsubu(Register rd, Register rs, ImmWord imm);
   void ma_dsubu(Register rd, Register rs);
   void ma_dsubu(Register rd, Imm32 imm);
   void ma_sub32TestOverflow(Register rd, Register rs, Register rt,
@@ -146,7 +182,8 @@ class MacroAssemblerMIPS64 : public MacroAssemblerMIPSShared {
                              Label* overflow);
 
   // multiplies.  For now, there are only few that we care about.
-  void ma_dmult(Register rs, Imm32 imm);
+  void ma_dmulu(Register rd, Register rs, Register rt);
+  void ma_dmulu(Register rd, Register rs, ImmWord imm);
   void ma_mulPtrTestOverflow(Register rd, Register rs, Register rt,
                              Label* overflow);
 
@@ -154,7 +191,8 @@ class MacroAssemblerMIPS64 : public MacroAssemblerMIPSShared {
   void ma_pop(Register r);
   void ma_push(Register r);
 
-  void branchWithCode(InstImm code, Label* label, JumpKind jumpKind);
+  void branchWithCode(InstImm code, Label* label, JumpKind jumpKind,
+                      Register branchCodeScratch = InvalidReg);
   // branches when done from within mips-specific code
   void ma_b(Register lhs, ImmWord imm, Label* l, Condition c,
             JumpKind jumpKind = LongJump);
@@ -166,9 +204,11 @@ class MacroAssemblerMIPS64 : public MacroAssemblerMIPSShared {
             JumpKind jumpKind = LongJump);
   void ma_b(Address addr, Register rhs, Label* l, Condition c,
             JumpKind jumpKind = LongJump) {
-    MOZ_ASSERT(rhs != ScratchRegister);
-    ma_load(ScratchRegister, addr, SizeDouble);
-    ma_b(ScratchRegister, rhs, l, c, jumpKind);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    MOZ_ASSERT(rhs != scratch);
+    ma_load(scratch, addr, SizeDouble);
+    ma_b(scratch, rhs, l, c, jumpKind);
   }
 
   void ma_bal(Label* l, DelaySlotFill delaySlotFill = FillDelaySlot);
@@ -248,15 +288,25 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
     MOZ_CRASH("Not supported for this target");
   }
 
-  void movq(Register rs, Register rd);
-
   void computeScaledAddress(const BaseIndex& address, Register dest);
+  void computeScaledAddress32(const BaseIndex& address, Register dest);
 
   void computeEffectiveAddress(const Address& address, Register dest) {
     ma_daddu(dest, address.base, Imm32(address.offset));
   }
 
   void computeEffectiveAddress(const BaseIndex& address, Register dest);
+
+  void computeEffectiveAddress32(const Address& address, Register dest) {
+    ma_addu(dest, address.base, Imm32(address.offset));
+  }
+
+  void computeEffectiveAddress32(const BaseIndex& address, Register dest) {
+    computeScaledAddress32(address, dest);
+    if (address.offset) {
+      ma_addu(dest, dest, Imm32(address.offset));
+    }
+  }
 
   void j(Label* dest) { ma_b(dest); }
 
@@ -270,22 +320,24 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   void mov(Address src, Register dest) { MOZ_CRASH("NYI-IC"); }
 
   void writeDataRelocation(const Value& val) {
+    MOZ_ASSERT(val.isGCThing(), "only called for gc-things");
+
     // Raw GC pointer relocations and Value relocations both end up in
     // TraceOneDataRelocation.
-    if (val.isGCThing()) {
-      gc::Cell* cell = val.toGCThing();
-      if (cell && gc::IsInsideNursery(cell)) {
-        embedsNurseryPointers_ = true;
-      }
-      dataRelocations_.writeUnsigned(currentOffset());
+    gc::Cell* cell = val.toGCThing();
+    if (cell && gc::IsInsideNursery(cell)) {
+      embedsNurseryPointers_ = true;
     }
+    dataRelocations_.writeUnsigned(currentOffset());
   }
 
   void branch(JitCode* c) {
+    UseScratchRegisterScope temps(*this);
     BufferOffset bo = m_buffer.nextOffset();
     addPendingJump(bo, ImmPtr(c->raw()), RelocationKind::JITCODE);
-    ma_liPatchable(ScratchRegister, ImmPtr(c->raw()));
-    as_jr(ScratchRegister);
+    Register scratch = temps.Acquire();
+    ma_liPatchable(scratch, ImmPtr(c->raw()));
+    as_jr(scratch);
     as_nop();
   }
   void branch(const Register reg) {
@@ -293,38 +345,41 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
     as_nop();
   }
   void nop() { as_nop(); }
-  void ret() {
+  BufferOffset ret() {
     ma_pop(ra);
-    as_jr(ra);
+    BufferOffset offset = as_jr(ra);
     as_nop();
+    return offset;
   }
   inline void retn(Imm32 n);
   void push(Imm32 imm) {
-    ma_li(ScratchRegister, imm);
-    ma_push(ScratchRegister);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    ma_li(scratch, imm);
+    ma_push(scratch);
   }
   void push(ImmWord imm) {
-    ma_li(ScratchRegister, imm);
-    ma_push(ScratchRegister);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    ma_li(scratch, imm);
+    ma_push(scratch);
   }
   void push(ImmGCPtr imm) {
-    ma_li(ScratchRegister, imm);
-    ma_push(ScratchRegister);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    ma_li(scratch, imm);
+    ma_push(scratch);
   }
   void push(const Address& address) {
-    loadPtr(address, ScratchRegister);
-    ma_push(ScratchRegister);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    loadPtr(address, scratch);
+    ma_push(scratch);
   }
   void push(Register reg) { ma_push(reg); }
-  void push(FloatRegister reg) {
-    MOZ_ASSERT(reg.isDouble(), "float32 and simd128 not supported");
-    ma_push(reg);
-  }
+  void push(FloatRegister reg) { ma_push(reg); }
   void pop(Register reg) { ma_pop(reg); }
-  void pop(FloatRegister reg) {
-    MOZ_ASSERT(reg.isDouble(), "float32 and simd128 not supported");
-    ma_pop(reg);
-  }
+  void pop(FloatRegister reg) { ma_pop(reg); }
 
   // Emit a branch that can be toggled to a non-operation. On MIPS64 we use
   // "andi" instruction to toggle the branch.
@@ -341,8 +396,10 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   }
 
   CodeOffset pushWithPatch(ImmWord imm) {
-    CodeOffset offset = movWithPatch(imm, ScratchRegister);
-    ma_push(ScratchRegister);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    CodeOffset offset = movWithPatch(imm, scratch);
+    ma_push(scratch);
     return offset;
   }
 
@@ -371,8 +428,10 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
     as_nop();
   }
   void jump(const Address& address) {
-    loadPtr(address, ScratchRegister);
-    as_jr(ScratchRegister);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    loadPtr(address, scratch);
+    as_jr(scratch);
     as_nop();
   }
 
@@ -416,22 +475,16 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   }
 
   void unboxNonDouble(Register src, Register dest, JSValueType type) {
+    UseScratchRegisterScope temps(*this);
     MOZ_ASSERT(type != JSVAL_TYPE_DOUBLE);
     if (type == JSVAL_TYPE_INT32 || type == JSVAL_TYPE_BOOLEAN) {
       ma_sll(dest, src, Imm32(0));
       return;
     }
-    MOZ_ASSERT(ScratchRegister != src);
-    mov(ImmShiftedTag(type), ScratchRegister);
-    as_xor(dest, src, ScratchRegister);
-  }
-
-  template <typename T>
-  void unboxObjectOrNull(const T& src, Register dest) {
-    unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
-    static_assert(JS::detail::ValueObjectOrNullBit ==
-                  (uint64_t(0x8) << JSVAL_TAG_SHIFT));
-    ma_dins(dest, zero, Imm32(JSVAL_TAG_SHIFT + 3), Imm32(1));
+    Register scratch = temps.Acquire();
+    MOZ_ASSERT(scratch != src);
+    mov(ImmShiftedTag(type), scratch);
+    as_xor(dest, src, scratch);
   }
 
   void unboxGCThingForGCBarrier(const Address& src, Register dest) {
@@ -443,7 +496,8 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   }
 
   void unboxWasmAnyRefGCThingForGCBarrier(const Address& src, Register dest) {
-    ScratchRegisterScope scratch(asMasm());
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
     MOZ_ASSERT(scratch != dest);
     movePtr(ImmWord(wasm::AnyRef::GCThingMask), scratch);
     loadPtr(src, dest);
@@ -452,7 +506,8 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
 
   // Like unboxGCThingForGCBarrier, but loads the GC thing's chunk base.
   void getGCThingValueChunk(const Address& src, Register dest) {
-    ScratchRegisterScope scratch(asMasm());
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
     MOZ_ASSERT(scratch != dest);
     loadPtr(src, dest);
     movePtr(ImmWord(JS::detail::ValueGCThingPayloadChunkMask), scratch);
@@ -505,7 +560,12 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
 
   // boxing code
   void boxDouble(FloatRegister src, const ValueOperand& dest, FloatRegister);
-  void boxNonDouble(JSValueType type, Register src, const ValueOperand& dest);
+  void boxNonDouble(JSValueType type, Register src, const ValueOperand& dest) {
+    boxValue(type, src, dest.valueReg());
+  }
+  void boxNonDouble(Register type, Register src, const ValueOperand& dest) {
+    boxValue(type, src, dest.valueReg());
+  }
 
   // Extended unboxing API. If the payload is already in a register, returns
   // that register. Otherwise, provides a move to the given scratch register,
@@ -541,7 +601,6 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   [[nodiscard]] Register extractTag(const BaseIndex& address, Register scratch);
   [[nodiscard]] Register extractTag(const ValueOperand& value,
                                     Register scratch) {
-    MOZ_ASSERT(scratch != ScratchRegister);
     splitTag(value, scratch);
     return scratch;
   }
@@ -567,63 +626,8 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
     }
   }
 
-  void storeUnboxedPayload(ValueOperand value, BaseIndex address, size_t nbytes,
-                           JSValueType type) {
-    switch (nbytes) {
-      case 8:
-        if (type == JSVAL_TYPE_OBJECT) {
-          unboxObjectOrNull(value, SecondScratchReg);
-        } else {
-          unboxNonDouble(value, SecondScratchReg, type);
-        }
-        computeEffectiveAddress(address, ScratchRegister);
-        as_sd(SecondScratchReg, ScratchRegister, 0);
-        return;
-      case 4:
-        store32(value.valueReg(), address);
-        return;
-      case 1:
-        store8(value.valueReg(), address);
-        return;
-      default:
-        MOZ_CRASH("Bad payload width");
-    }
-  }
-
-  void storeUnboxedPayload(ValueOperand value, Address address, size_t nbytes,
-                           JSValueType type) {
-    switch (nbytes) {
-      case 8:
-        if (type == JSVAL_TYPE_OBJECT) {
-          unboxObjectOrNull(value, SecondScratchReg);
-        } else {
-          unboxNonDouble(value, SecondScratchReg, type);
-        }
-        storePtr(SecondScratchReg, address);
-        return;
-      case 4:
-        store32(value.valueReg(), address);
-        return;
-      case 1:
-        store8(value.valueReg(), address);
-        return;
-      default:
-        MOZ_CRASH("Bad payload width");
-    }
-  }
-
-  void boxValue(JSValueType type, Register src, Register dest) {
-    MOZ_ASSERT(src != dest);
-
-    JSValueTag tag = (JSValueTag)JSVAL_TYPE_TO_TAG(type);
-    ma_li(dest, Imm32(tag));
-    ma_dsll(dest, dest, Imm32(JSVAL_TAG_SHIFT));
-    if (type == JSVAL_TYPE_INT32 || type == JSVAL_TYPE_BOOLEAN) {
-      ma_dins(dest, src, Imm32(0), Imm32(32));
-    } else {
-      ma_dins(dest, src, Imm32(0), Imm32(JSVAL_TAG_SHIFT));
-    }
-  }
+  void boxValue(JSValueType type, Register src, Register dest);
+  void boxValue(Register type, Register src, Register dest);
 
   void storeValue(ValueOperand val, Operand dst);
   void storeValue(ValueOperand val, const BaseIndex& dest);
@@ -660,16 +664,20 @@ class MacroAssemblerMIPS64Compat : public MacroAssemblerMIPS64 {
   void popValue(ValueOperand val);
   void pushValue(const Value& val) {
     if (val.isGCThing()) {
+      UseScratchRegisterScope temps(*this);
       writeDataRelocation(val);
-      movWithPatch(ImmWord(val.asRawBits()), ScratchRegister);
-      push(ScratchRegister);
+      Register scratch = temps.Acquire();
+      movWithPatch(ImmWord(val.asRawBits()), scratch);
+      push(scratch);
     } else {
       push(ImmWord(val.asRawBits()));
     }
   }
   void pushValue(JSValueType type, Register reg) {
-    boxValue(type, reg, ScratchRegister);
-    push(ScratchRegister);
+    UseScratchRegisterScope temps(*this);
+    Register scratch = temps.Acquire();
+    boxValue(type, reg, scratch);
+    push(scratch);
   }
   void pushValue(const Address& addr);
   void pushValue(const BaseIndex& addr, Register scratch) {

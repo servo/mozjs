@@ -18,7 +18,6 @@ FAILURE_CODE = 1
 SUCCESS_CODE = 0
 
 PLATFORMS = (
-    "linux32",
     "linux64",
     "macosx64",
     "win32",

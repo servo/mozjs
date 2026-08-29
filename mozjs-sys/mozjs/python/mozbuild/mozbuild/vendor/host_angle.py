@@ -20,7 +20,7 @@ class AngleHost(BaseHost):
                     if version["channel"] == "beta":
                         branch = "chromium/" + version["true_branch"]
 
-                        if revision != "HEAD" and revision != branch:
+                        if revision not in {"HEAD", branch}:
                             raise Exception(
                                 "Passing a --revision for Angle that is not HEAD "
                                 + "or the true branch is not supported."

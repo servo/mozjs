@@ -50,6 +50,7 @@ class BaseCompileChecks(unittest.TestCase):
 
         mock_compiler_defs = textwrap.dedent(
             """\
+            moz_automation = dependable(False)
             @depends(when=True)
             def extra_toolchain_flags():
                 return []

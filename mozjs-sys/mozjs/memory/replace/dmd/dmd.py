@@ -816,7 +816,7 @@ def printDigest(args, digest):
 def prettyPrintDmdJson(out, j):
     out.write("{\n")
 
-    out.write(' "version": {0},\n'.format(j["version"]))
+    out.write(' "version": {},\n'.format(j["version"]))
     out.write(' "invocation": ')
     json.dump(j["invocation"], out, sort_keys=True)
     out.write(",\n")

@@ -203,7 +203,6 @@ class SymFileManager:
 
     def PrefetchRecentSymbolFiles(self):
         """This method runs in a loop. Use the options "prefetchThreshold" to adjust"""
-        global PREFETCHED_LIBS
 
         LOG.info("Prefetching recent symbol files")
         # Schedule next timer callback

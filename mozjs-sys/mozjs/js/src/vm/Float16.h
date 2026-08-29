@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,8 +6,8 @@
 #define vm_Float16_h
 
 #include "mozilla/FloatingPoint.h"
-#include "mozilla/MathAlgorithms.h"
 
+#include <bit>
 #include <cstdint>
 #include <cstring>
 #include <limits>
@@ -155,11 +153,11 @@ inline double half2float_impl(unsigned int value) {
   if (abs) {
     hi |= 0x3F000000 << static_cast<unsigned>(abs >= 0x7C00);
 
-    // Mozilla change: Replace the loop with CountLeadingZeroes32.
+    // Mozilla change: Replace the loop with std::countl_zero.
     // for (; abs < 0x400; abs <<= 1, hi -= 0x100000);
     if (abs < 0x400) {
-      // NOTE: CountLeadingZeroes32(0x400) is 21.
-      uint32 shift = mozilla::CountLeadingZeroes32(uint32_t(abs)) - 21;
+      constexpr auto minLeadingZeroes = std::countl_zero(0x400u);
+      uint32 shift = std::countl_zero(uint32_t(abs)) - minLeadingZeroes;
       abs <<= shift;
       hi -= shift * 0x100000;
     }
@@ -183,11 +181,11 @@ inline float half2float_impl(unsigned int value) {
   if (abs) {
     fbits |= 0x38000000 << static_cast<unsigned>(abs >= 0x7C00);
 
-    // Mozilla change: Replace the loop with CountLeadingZeroes32.
+    // Mozilla change: Replace the loop with std::countl_zero.
     // for (; abs < 0x400; abs <<= 1, fbits -= 0x800000);
     if (abs < 0x400) {
-      // NOTE: CountLeadingZeroes32(0x400) is 21.
-      uint32 shift = mozilla::CountLeadingZeroes32(uint32_t(abs)) - 21;
+      constexpr auto minLeadingZeroes = std::countl_zero(0x400u);
+      uint32 shift = std::countl_zero(uint32_t(abs)) - minLeadingZeroes;
       abs <<= shift;
       fbits -= shift * 0x800000;
     }
@@ -205,14 +203,7 @@ class float16 final {
   uint16_t val;
 
  public:
-  // The default constructor can be 'constexpr' when we switch to C++20.
-  //
-  // C++17 requires explicit initialization of all members when using a
-  // 'constexpr' default constructor. That means `val` needs to be initialized
-  // through a member initializer. But adding a member initializer makes the
-  // class no longer trivial, which breaks memcpy/memset optimizations.
-
-  /* constexpr */ float16() = default;
+  constexpr float16() = default;
   constexpr float16(const float16&) = default;
 
   explicit float16(float x) : val(half::float2half_impl(x)) {}
@@ -340,7 +331,7 @@ class std::numeric_limits<js::float16> {
 };
 
 template <>
-struct mozilla::detail::FloatingPointTrait<js::float16> {
+struct mozilla::FloatingPointTrait<js::float16> {
  protected:
   using Bits = uint16_t;
 

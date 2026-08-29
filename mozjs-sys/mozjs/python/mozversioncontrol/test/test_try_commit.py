@@ -22,17 +22,17 @@ def test_try_commit(repo):
     except MissingVCSExtension:
         pytest.xfail("Requires the Mercurial evolve extension.")
 
-    assert (
-        vcs.head_ref == initial_head_ref
-    ), "We should have reverted to previous head after try_commit"
+    assert vcs.head_ref == initial_head_ref, (
+        "We should have reverted to previous head after try_commit"
+    )
 
     # Create an empty commit.
     with vcs.try_commit(commit_message) as head:
         assert vcs.get_changed_files(rev=head) == []
 
-    assert (
-        vcs.head_ref == initial_head_ref
-    ), "We should have reverted to previous head after try_commit"
+    assert vcs.head_ref == initial_head_ref, (
+        "We should have reverted to previous head after try_commit"
+    )
 
 
 if __name__ == "__main__":

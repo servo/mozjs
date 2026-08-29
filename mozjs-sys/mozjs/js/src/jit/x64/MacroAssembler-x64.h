@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -76,8 +74,8 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
                            X86Encoding::XMMRegisterID destId));
 
  protected:
-  void flexibleDivMod64(Register rhs, Register lhsOutput, bool isUnsigned,
-                        bool isDiv);
+  void flexibleDivMod64(Register lhs, Register rhs, Register output,
+                        bool isUnsigned, bool isDiv);
 
  public:
   using MacroAssemblerX86Shared::load32;
@@ -94,15 +92,15 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   // X64 helpers.
   /////////////////////////////////////////////////////////////////
   void writeDataRelocation(const Value& val) {
+    MOZ_ASSERT(val.isGCThing(), "only called for gc-things");
+
     // Raw GC pointer relocations and Value relocations both end up in
     // Assembler::TraceDataRelocations.
-    if (val.isGCThing()) {
-      gc::Cell* cell = val.toGCThing();
-      if (cell && gc::IsInsideNursery(cell)) {
-        embedsNurseryPointers_ = true;
-      }
-      dataRelocations_.writeUnsigned(masm.currentOffset());
+    gc::Cell* cell = val.toGCThing();
+    if (cell && gc::IsInsideNursery(cell)) {
+      embedsNurseryPointers_ = true;
     }
+    dataRelocations_.writeUnsigned(masm.currentOffset());
   }
 
   // Refers to the upper 32 bits of a 64-bit Value operand.
@@ -153,14 +151,14 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   }
   template <typename T>
   void storeValue(const Value& val, const T& dest) {
-    ScratchRegisterScope scratch(asMasm());
     if (val.isGCThing()) {
+      ScratchRegisterScope scratch(asMasm());
       movWithPatch(ImmWord(val.asRawBits()), scratch);
       writeDataRelocation(val);
+      movq(scratch, Operand(dest));
     } else {
-      mov(ImmWord(val.asRawBits()), scratch);
+      storePtr(ImmWord(val.asRawBits()), dest);
     }
-    movq(scratch, Operand(dest));
   }
   void storeValue(ValueOperand val, BaseIndex dest) {
     storeValue(val, Operand(dest));
@@ -185,15 +183,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   void loadUnalignedValue(const Address& src, ValueOperand dest) {
     loadValue(src, dest);
   }
-  void tagValue(JSValueType type, Register payload, ValueOperand dest) {
-    ScratchRegisterScope scratch(asMasm());
-    MOZ_ASSERT(dest.valueReg() != scratch);
-    if (payload != dest.valueReg()) {
-      movq(payload, dest.valueReg());
-    }
-    mov(ImmShiftedTag(type), scratch);
-    orq(scratch, dest.valueReg());
-  }
+  void tagValue(JSValueType type, Register payload, ValueOperand dest);
   void pushValue(ValueOperand val) { push(val.valueReg()); }
   void popValue(ValueOperand val) { pop(val.valueReg()); }
   void pushValue(const Value& val) {
@@ -218,6 +208,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   }
 
   void boxValue(JSValueType type, Register src, Register dest);
+  void boxValue(Register type, Register src, Register dest);
 
   Condition testUndefined(Condition cond, Register tag) {
     MOZ_ASSERT(cond == Equal || cond == NotEqual);
@@ -764,7 +755,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     vmovq(src, dest.valueReg());
   }
   void boxNonDouble(JSValueType type, Register src, const ValueOperand& dest) {
-    MOZ_ASSERT(src != dest.valueReg());
+    boxValue(type, src, dest.valueReg());
+  }
+  void boxNonDouble(Register type, Register src, const ValueOperand& dest) {
     boxValue(type, src, dest.valueReg());
   }
 
@@ -783,16 +776,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   template <typename T>
   void unboxDouble(const T& src, FloatRegister dest) {
     loadDouble(Operand(src), dest);
-  }
-
-  void unboxArgObjMagic(const ValueOperand& src, Register dest) {
-    unboxArgObjMagic(Operand(src.valueReg()), dest);
-  }
-  void unboxArgObjMagic(const Operand& src, Register dest) {
-    mov(ImmWord(0), dest);
-  }
-  void unboxArgObjMagic(const Address& src, Register dest) {
-    unboxArgObjMagic(Operand(src), dest);
   }
 
   void unboxBoolean(const ValueOperand& src, Register dest) {
@@ -899,14 +882,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   }
   void unboxObject(const BaseIndex& src, Register dest) {
     unboxNonDouble(Operand(src), dest, JSVAL_TYPE_OBJECT);
-  }
-
-  template <typename T>
-  void unboxObjectOrNull(const T& src, Register dest) {
-    unboxNonDouble(src, dest, JSVAL_TYPE_OBJECT);
-    ScratchRegisterScope scratch(asMasm());
-    mov(ImmWord(~JS::detail::ValueObjectOrNullBit), scratch);
-    andq(scratch, dest);
   }
 
   // This should only be used for GC barrier code, to unbox a GC thing Value.
@@ -1084,7 +1059,13 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
                      FloatRegister dest);
   void vmulpdSimd128(const SimdConstant& v, FloatRegister lhs,
                      FloatRegister dest);
+  void vandpsSimd128(const SimdConstant& v, FloatRegister lhs,
+                     FloatRegister dest);
   void vandpdSimd128(const SimdConstant& v, FloatRegister lhs,
+                     FloatRegister dest);
+  void vxorpsSimd128(const SimdConstant& v, FloatRegister lhs,
+                     FloatRegister dest);
+  void vxorpdSimd128(const SimdConstant& v, FloatRegister lhs,
                      FloatRegister dest);
   void vminpdSimd128(const SimdConstant& v, FloatRegister lhs,
                      FloatRegister dest);
@@ -1160,34 +1141,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
     }
   }
 
-  template <typename T>
-  void storeUnboxedPayload(ValueOperand value, T address, size_t nbytes,
-                           JSValueType type) {
-    switch (nbytes) {
-      case 8: {
-        ScratchRegisterScope scratch(asMasm());
-        unboxNonDouble(value, scratch, type);
-        storePtr(scratch, address);
-        if (type == JSVAL_TYPE_OBJECT) {
-          // Ideally we would call unboxObjectOrNull, but we need an extra
-          // scratch register for that. So unbox as object, then clear the
-          // object-or-null bit.
-          mov(ImmWord(~JS::detail::ValueObjectOrNullBit), scratch);
-          andq(scratch, Operand(address));
-        }
-        return;
-      }
-      case 4:
-        store32(value.valueReg(), address);
-        return;
-      case 1:
-        store8(value.valueReg(), address);
-        return;
-      default:
-        MOZ_CRASH("Bad payload width");
-    }
-  }
-
   // Checks whether a double is representable as a 64-bit integer. If so, the
   // integer is written to the output register. Otherwise, a bailout is taken to
   // the given snapshot. This function overwrites the scratch float register.
@@ -1222,6 +1175,12 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared {
   }
 
   inline void incrementInt32Value(const Address& addr);
+
+  void minMax32(Register lhs, Register rhs, Register dest, bool isMax);
+  void minMax32(Register lhs, Imm32 rhs, Register dest, bool isMax);
+
+  void minMaxPtr(Register lhs, Register rhs, Register dest, bool isMax);
+  void minMaxPtr(Register lhs, ImmWord rhs, Register dest, bool isMax);
 
  public:
   void handleFailureWithHandlerTail(Label* profilerExitTail, Label* bailoutTail,

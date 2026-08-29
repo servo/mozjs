@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -120,7 +118,6 @@ namespace jit {
   _(Sqrt)                         \
   _(Atan2)                        \
   _(Hypot)                        \
-  _(NearbyInt)                    \
   _(Sign)                         \
   _(MathFunction)                 \
   _(Random)                       \
@@ -140,10 +137,13 @@ namespace jit {
   _(NewTypedArray)                \
   _(NewArray)                     \
   _(NewIterator)                  \
+  _(NewDateObject)                \
   _(NewCallObject)                \
   _(Lambda)                       \
   _(FunctionWithProto)            \
-  _(ObjectKeys)                   \
+  _(Callee)                       \
+  _(FunctionEnvironment)          \
+  _(ObjectKeysFromIterator)       \
   _(ObjectState)                  \
   _(ArrayState)                   \
   _(AtomicIsLockFree)             \
@@ -153,6 +153,7 @@ namespace jit {
   _(CreateArgumentsObject)        \
   _(CreateInlinedArgumentsObject) \
   _(Rest)                         \
+  _(TypedArraySubarray)           \
   _(AssertRecoveredOnBailout)
 
 class RResumePoint;
@@ -190,9 +191,9 @@ class MOZ_NON_PARAM RInstruction {
 
   // Decode an RInstruction on top of the reserved storage space, based on the
   // tag written by the writeRecoverData function of the corresponding MIR
-  // instruction.
-  static void readRecoverData(CompactBufferReader& reader,
-                              RInstructionStorage* raw);
+  // instruction. Returns the decoded instruction's number of operands.
+  static uint32_t readRecoverData(CompactBufferReader& reader,
+                                  RInstructionStorage* raw);
 };
 
 #define RINSTRUCTION_HEADER_(op)                                        \
@@ -785,17 +786,6 @@ class RHypot final : public RInstruction {
                              SnapshotIterator& iter) const override;
 };
 
-class RNearbyInt final : public RInstruction {
- private:
-  uint8_t roundingMode_;
-
- public:
-  RINSTRUCTION_HEADER_NUM_OP_(NearbyInt, 1)
-
-  [[nodiscard]] bool recover(JSContext* cx,
-                             SnapshotIterator& iter) const override;
-};
-
 class RSign final : public RInstruction {
  public:
   RINSTRUCTION_HEADER_NUM_OP_(Sign, 1)
@@ -966,6 +956,14 @@ class RNewIterator final : public RInstruction {
                              SnapshotIterator& iter) const override;
 };
 
+class RNewDateObject final : public RInstruction {
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(NewDateObject, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
 class RLambda final : public RInstruction {
  public:
   RINSTRUCTION_HEADER_NUM_OP_(Lambda, 2)
@@ -982,6 +980,22 @@ class RFunctionWithProto final : public RInstruction {
                              SnapshotIterator& iter) const override;
 };
 
+class RCallee final : public RInstruction {
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(Callee, 0)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RFunctionEnvironment final : public RInstruction {
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(FunctionEnvironment, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
 class RNewCallObject final : public RInstruction {
  public:
   RINSTRUCTION_HEADER_NUM_OP_(NewCallObject, 1)
@@ -990,9 +1004,9 @@ class RNewCallObject final : public RInstruction {
                              SnapshotIterator& iter) const override;
 };
 
-class RObjectKeys final : public RInstruction {
+class RObjectKeysFromIterator final : public RInstruction {
  public:
-  RINSTRUCTION_HEADER_NUM_OP_(ObjectKeys, 1)
+  RINSTRUCTION_HEADER_NUM_OP_(ObjectKeysFromIterator, 1)
 
   [[nodiscard]] bool recover(JSContext* cx,
                              SnapshotIterator& iter) const override;
@@ -1098,6 +1112,14 @@ class RRest final : public RInstruction {
 
  public:
   RINSTRUCTION_HEADER_NUM_OP_(Rest, 1)
+
+  [[nodiscard]] bool recover(JSContext* cx,
+                             SnapshotIterator& iter) const override;
+};
+
+class RTypedArraySubarray final : public RInstruction {
+ public:
+  RINSTRUCTION_HEADER_NUM_OP_(TypedArraySubarray, 3)
 
   [[nodiscard]] bool recover(JSContext* cx,
                              SnapshotIterator& iter) const override;

@@ -150,7 +150,7 @@ class JSValue:
             return "$JS::BooleanValue(%s)" % str(self.box.as_uint32() != 0).lower()
         if tag == self.jtc.MAGIC:
             value = self.box.as_uint32()
-            if 0 <= value and value < len(self.jtc.magic_names):
+            if 0 <= value < len(self.jtc.magic_names):
                 return "$JS::MagicValue(%s)" % (self.jtc.magic_names[value],)
             else:
                 return "$JS::MagicValue(%d)" % (value,)

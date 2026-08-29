@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,10 +8,9 @@
  * and stdio.h/stdlib.h.
  */
 
-#ifndef FuzzerTestHarness_h__
-#define FuzzerTestHarness_h__
+#ifndef FuzzerTestHarness_h_
+#define FuzzerTestHarness_h_
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/IntegerPrintfMacros.h"
 
@@ -253,4 +251,4 @@ ScopedXPCOM::Release() { return 1; }
 
 }  // namespace
 
-#endif  // FuzzerTestHarness_h__
+#endif  // FuzzerTestHarness_h_

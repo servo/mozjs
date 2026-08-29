@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -81,8 +79,8 @@ bool EvalCacheHashPolicy::match(const EvalCacheEntry& cacheEntry,
 }
 
 void EvalCacheLookup::trace(JSTracer* trc) {
-  TraceNullableRoot(trc, &str, "EvalCacheLookup::str");
-  TraceNullableRoot(trc, &callerScript, "EvalCacheLookup::callerScript");
+  TraceRoot(trc, &str, "EvalCacheLookup::str");
+  TraceRoot(trc, &callerScript, "EvalCacheLookup::callerScript");
 }
 
 // Add the script to the eval cache when EvalKernel is finished
@@ -259,8 +257,10 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
   // Steps 6-8.
   JS::RootedVector<JSString*> parameterStrings(cx);
   JS::RootedVector<Value> parameterArgs(cx);
-  bool canCompileStrings = false;
-  if (!cx->isRuntimeCodeGenEnabled(
+  bool canCompileStrings = cx->bypassCSPForDebugger;
+
+  if (!canCompileStrings &&
+      !cx->isRuntimeCodeGenEnabled(
           JS::RuntimeCode::JS, str,
           evalType == DIRECT_EVAL ? JS::CompilationType::DirectEval
                                   : JS::CompilationType::IndirectEval,
@@ -413,8 +413,7 @@ static bool ExecuteInExtensibleLexicalEnvironment(
     JSContext* cx, HandleScript scriptArg,
     Handle<ExtensibleLexicalEnvironmentObject*> env) {
   CHECK_THREAD(cx);
-  cx->check(env);
-  cx->check(scriptArg);
+  cx->check(env, scriptArg);
   MOZ_RELEASE_ASSERT(scriptArg->hasNonSyntacticScope());
 
   RootedValue rval(cx);

@@ -1,13 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef gc_Tenuring_h
 #define gc_Tenuring_h
 
-#include "mozilla/EnumeratedArray.h"
 #include "mozilla/HashTable.h"
 #include "mozilla/Maybe.h"
 
@@ -67,6 +64,12 @@ class TenuringTracer final : public JSTracer {
   // collection when out of memory to insert new entries.
   mozilla::Maybe<StringDeDupSet> stringDeDupSet;
 
+  // Heap location of the source of edges traced via the object trace hook so
+  // the buffer allocator can to update its heap location for any attached
+  // buffers.
+  mozilla::Maybe<bool> sourceIsInNursery;
+  friend class BufferAllocator;
+
   bool tenureEverything;
 
   // A flag set when a GC thing is promoted to the next nursery generation (as
@@ -79,6 +82,8 @@ class TenuringTracer final : public JSTracer {
 #endif
 
  public:
+  static TenuringTracer* From(JSTracer* trc);
+
   TenuringTracer(JSRuntime* rt, Nursery* nursery, bool tenureEverything);
   ~TenuringTracer();
 
@@ -116,16 +121,17 @@ class TenuringTracer final : public JSTracer {
   JSObject* promoteOrForward(JSObject* obj);
   JSString* promoteOrForward(JSString* str);
   JS::BigInt* promoteOrForward(JS::BigInt* bip);
+  GetterSetter* promoteOrForward(GetterSetter* gs);
 
-  // Returns whether any cells in the arena require sweeping.
   template <typename T>
-  bool traceBufferedCells(Arena* arena, ArenaCellSet* cells);
+  void traceBufferedCells(Arena* arena, ArenaCellSet* cells);
 
   class AutoPromotedAnyToNursery;
+  class AutoSetSourceHeap;
 
  private:
 #define DEFINE_ON_EDGE_METHOD(name, type, _1, _2) \
-  void on##name##Edge(type** thingp, const char* name) override;
+  bool on##name##Edge(type** thingp, const char* name) override;
   JS_FOR_EACH_TRACEKIND(DEFINE_ON_EDGE_METHOD)
 #undef DEFINE_ON_EDGE_METHOD
 
@@ -146,12 +152,15 @@ class TenuringTracer final : public JSTracer {
   JSObject* promoteObjectSlow(JSObject* src);
   JSString* promoteString(JSString* src);
   JS::BigInt* promoteBigInt(JS::BigInt* src);
+  GetterSetter* promoteGetterSetter(GetterSetter* src);
 
   size_t moveElements(NativeObject* dst, NativeObject* src,
                       gc::AllocKind dstKind);
   size_t moveSlots(NativeObject* dst, NativeObject* src);
   size_t moveString(JSString* dst, JSString* src, gc::AllocKind dstKind);
   size_t moveBigInt(JS::BigInt* dst, JS::BigInt* src, gc::AllocKind dstKind);
+  size_t moveGetterSetter(GetterSetter* dst, GetterSetter* src,
+                          gc::AllocKind dstKind);
 
   void traceSlots(JS::Value* vp, JS::Value* end);
 };

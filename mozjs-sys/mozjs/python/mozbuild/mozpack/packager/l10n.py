@@ -81,7 +81,7 @@ class LocaleManifestFinder:
 
 class L10NRepackFormatterMixin:
     def __init__(self, *args, **kwargs):
-        super(L10NRepackFormatterMixin, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self._dictionaries = {}
 
     def add(self, path, file):
@@ -104,7 +104,7 @@ class L10NRepackFormatterMixin:
             # in the omnijar, as expected -- but the signatures won't be valid
             # after repacking.  Therefore, drop them.
             return
-        super(L10NRepackFormatterMixin, self).add(path, file)
+        super().add(path, file)
 
 
 def L10NRepackFormatter(klass):

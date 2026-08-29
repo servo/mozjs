@@ -63,11 +63,11 @@ class MozPower:
 
        from mozpower import MozPower
 
-       mp = MozPower(output_file_path='dir/power-testing')
+       mp = MozPower(output_file_path="dir/power-testing")
 
        mp.initialize_power_measurements()
        # Run test...
-       mp.finalize_power_measurements(test_name='raptor-test-name')
+       mp.finalize_power_measurements(test_name="raptor-test-name")
 
        perfherder_data = mp.get_perfherder_data()
     """
@@ -77,7 +77,7 @@ class MozPower:
         android=False,
         logger_name="mozpower",
         output_file_path="power-testing",
-        **kwargs
+        **kwargs,
     ):
         """Initializes the MozPower object, detects OS and CPU (if not android),
         and instatiates the appropriate combo-dependent class for measurements.
@@ -284,11 +284,7 @@ class MozPower:
 
         ::
 
-           {
-               'name': 'mozpower',
-               'unit': 'mWh',
-               'type': 'power'
-           }
+           {"name": "mozpower", "unit": "mWh", "type": "power"}
 
         Subtests produced for each sub-suite (measurement type), have the naming
         pattern: <measurement_type>-<measured_name>

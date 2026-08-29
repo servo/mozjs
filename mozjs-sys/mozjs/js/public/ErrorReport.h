@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -32,6 +31,7 @@
 #include "js/AllocPolicy.h"
 #include "js/CharacterEncoding.h"  // JS::ConstUTF8CharsZ
 #include "js/ColumnNumber.h"       // JS::ColumnNumberOneOrigin
+#include "js/Exception.h"          // JS::BorrowedErrorReport
 #include "js/RootingAPI.h"         // JS::HandleObject, JS::RootedObject
 #include "js/UniquePtr.h"          // js::UniquePtr
 #include "js/Value.h"              // JS::Value
@@ -409,14 +409,19 @@ struct MOZ_STACK_CLASS JS_PUBLIC_API ErrorReportBuilder {
   // Reports exceptions from add-on scopes to telemetry.
   void ReportAddonExceptionToTelemetry(JSContext* cx);
 
-  // We may have a provided JSErrorReport, so need a way to represent that.
+  // Maybe create an (owned) JSErrorReport when obj is a DOM Exception object.
+  // Return the "toStringResult" str.
+  JSString* maybeCreateReportFromDOMException(JS::HandleObject obj,
+                                              JSContext* cx);
+
+  // If non-nullptr, this is either |&ownedReport| or |borrowedReport.report_|.
   JSErrorReport* reportp;
 
   // Or we may need to synthesize a JSErrorReport one of our own.
   JSErrorReport ownedReport;
 
-  // Root our exception value to keep a possibly borrowed |reportp| alive.
-  JS::RootedObject exnObject;
+  // Used to keep a possibly borrowed |reportp| alive.
+  JS::BorrowedErrorReport borrowedReport;
 
   // And for our filename.
   JS::UniqueChars filename;

@@ -37,6 +37,13 @@ $(RUNNABLE_TIERS)::
 # Special rule that does install-manifests (cf. Makefile.in) + compile
 binaries::
 	+$(MAKE) recurse_compile
+# On macOS, `mach run` launches the binaries from the application bundle
+# (.app/Contents/MacOS), which holds separate copies of what is linked into
+# dist/bin. Those copies are refreshed by the tools tier, so run it after the
+# compile tier to ensure `mach build binaries` produces a runnable bundle.
+ifdef MOZ_MACBUNDLE_NAME
+	+$(MAKE) recurse_tools
+endif
 
 # Get current tier and corresponding subtiers from the data in root.mk.
 CURRENT_TIER := $(filter $(foreach tier,$(RUNNABLE_TIERS) $(non_default_tiers),recurse_$(tier) $(tier)-deps),$(MAKECMDGOALS))
@@ -161,12 +168,6 @@ ifeq (.,$(DEPTH))
 ifeq ($(MOZ_WIDGET_TOOLKIT),android)
 recurse_pre-export: mobile/android/pre-export
 endif
-
-# CSS2Properties.webidl needs ServoCSSPropList.py from layout/style
-dom/bindings/export: layout/style/ServoCSSPropList.py
-
-# Various telemetry histogram files need ServoCSSPropList.py from layout/style
-toolkit/components/telemetry/export: layout/style/ServoCSSPropList.py
 
 ifeq ($(TARGET_ENDIANNESS),big)
 config/external/icu/data/target-objects: config/external/icu/data/$(MDDEPDIR)/icudt$(MOZ_ICU_VERSION)b.dat.stub

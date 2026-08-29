@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,7 +7,9 @@
 
 #include "jit/x86-shared/MacroAssembler-x86-shared.h"
 
-#include "mozilla/MathAlgorithms.h"
+#include "mozilla/Casting.h"
+
+#include <bit>
 
 namespace js {
 namespace jit {
@@ -158,7 +158,7 @@ void MacroAssembler::popcnt32(Register input, Register output, Register tmp) {
 
   MOZ_ASSERT(tmp != InvalidReg);
 
-  // Equivalent to mozilla::CountPopulation32()
+  // Equivalent to std::popcount()
 
   movl(input, tmp);
   if (input != output) {
@@ -197,6 +197,10 @@ void MacroAssembler::byteSwap32(Register reg) { bswapl(reg); }
 
 // ===============================================================
 // Arithmetic instructions
+
+void MacroAssembler::add32(const Address& src, Register dest) {
+  addl(Operand(src), dest);
+}
 
 void MacroAssembler::add32(Register src, Register dest) { addl(src, dest); }
 
@@ -252,9 +256,9 @@ void MacroAssembler::mulDouble(FloatRegister src, FloatRegister dest) {
   vmulsd(src, dest, dest);
 }
 
-void MacroAssembler::quotient32(Register rhs, Register srcDest,
+void MacroAssembler::quotient32(Register lhs, Register rhs, Register dest,
                                 Register tempEdx, bool isUnsigned) {
-  MOZ_ASSERT(srcDest == eax && tempEdx == edx);
+  MOZ_ASSERT(lhs == eax && dest == eax && tempEdx == edx);
 
   // Sign extend eax into edx to make (edx:eax): idiv/udiv are 64-bit.
   if (isUnsigned) {
@@ -266,9 +270,9 @@ void MacroAssembler::quotient32(Register rhs, Register srcDest,
   }
 }
 
-void MacroAssembler::remainder32(Register rhs, Register srcDest,
+void MacroAssembler::remainder32(Register lhs, Register rhs, Register dest,
                                  Register tempEdx, bool isUnsigned) {
-  MOZ_ASSERT(srcDest == eax && tempEdx == edx);
+  MOZ_ASSERT(lhs == eax && dest == eax && tempEdx == edx);
 
   // Sign extend eax into edx to make (edx:eax): idiv/udiv are 64-bit.
   if (isUnsigned) {
@@ -292,22 +296,13 @@ void MacroAssembler::divDouble(FloatRegister src, FloatRegister dest) {
 void MacroAssembler::neg32(Register reg) { negl(reg); }
 
 void MacroAssembler::negateFloat(FloatRegister reg) {
-  ScratchFloat32Scope scratch(*this);
-  vpcmpeqw(Operand(scratch), scratch, scratch);
-  vpsllq(Imm32(31), scratch, scratch);
-
   // XOR the float in a float register with -0.0.
-  vxorps(scratch, reg, reg);  // s ^ 0x80000000
+  vxorpsSimd128(SimdConstant::SplatX4(-0.0f), reg, reg);
 }
 
 void MacroAssembler::negateDouble(FloatRegister reg) {
-  // From MacroAssemblerX86Shared::maybeInlineDouble
-  ScratchDoubleScope scratch(*this);
-  vpcmpeqw(Operand(scratch), scratch, scratch);
-  vpsllq(Imm32(63), scratch, scratch);
-
   // XOR the float in a float register with -0.0.
-  vxorpd(scratch, reg, reg);  // s ^ 0x80000000000000
+  vxorpdSimd128(SimdConstant::SplatX2(-0.0), reg, reg);
 }
 
 void MacroAssembler::abs32(Register src, Register dest) {
@@ -321,19 +316,25 @@ void MacroAssembler::abs32(Register src, Register dest) {
 }
 
 void MacroAssembler::absFloat32(FloatRegister src, FloatRegister dest) {
-  ScratchFloat32Scope scratch(*this);
-  loadConstantFloat32(mozilla::SpecificNaN<float>(
-                          0, mozilla::FloatingPoint<float>::kSignificandBits),
-                      scratch);
-  vandps(scratch, src, dest);
+  if (src != dest) {
+    if (!HasAVX()) {
+      moveFloat32(src, dest);
+      src = dest;
+    }
+  }
+  float clearSignMask = mozilla::BitwiseCast<float>(INT32_MAX);
+  vandpsSimd128(SimdConstant::SplatX4(clearSignMask), src, dest);
 }
 
 void MacroAssembler::absDouble(FloatRegister src, FloatRegister dest) {
-  ScratchDoubleScope scratch(*this);
-  loadConstantDouble(mozilla::SpecificNaN<double>(
-                         0, mozilla::FloatingPoint<double>::kSignificandBits),
-                     scratch);
-  vandpd(scratch, src, dest);
+  if (src != dest) {
+    if (!HasAVX()) {
+      moveDouble(src, dest);
+      src = dest;
+    }
+  }
+  double clearSignMask = mozilla::BitwiseCast<double>(INT64_MAX);
+  vandpdSimd128(SimdConstant::SplatX2(clearSignMask), src, dest);
 }
 
 void MacroAssembler::sqrtFloat32(FloatRegister src, FloatRegister dest) {
@@ -551,13 +552,13 @@ void MacroAssembler::branch16(Condition cond, const Address& lhs, Imm32 rhs,
 }
 
 void MacroAssembler::branch32(Condition cond, Register lhs, Register rhs,
-                              Label* label, LhsHighBitsAreClean) {
+                              Label* label) {
   cmp32(lhs, rhs);
   j(cond, label);
 }
 
 void MacroAssembler::branch32(Condition cond, Register lhs, Imm32 rhs,
-                              Label* label, LhsHighBitsAreClean) {
+                              Label* label) {
   cmp32(lhs, rhs);
   j(cond, label);
 }
@@ -654,9 +655,9 @@ void MacroAssembler::branchPtr(Condition cond, const BaseIndex& lhs,
   branchPtrImpl(cond, lhs, rhs, label);
 }
 
-template <typename T, typename S, typename L>
+template <typename T, typename S>
 void MacroAssembler::branchPtrImpl(Condition cond, const T& lhs, const S& rhs,
-                                   L label) {
+                                   Label* label) {
   cmpPtr(Operand(lhs), rhs);
   j(cond, label);
 }
@@ -1164,8 +1165,9 @@ void MacroAssembler::branchTestMagic(Condition cond, const ValueOperand& value,
   branchTestMagicImpl(cond, value, label);
 }
 
-template <typename T, class L>
-void MacroAssembler::branchTestMagicImpl(Condition cond, const T& t, L label) {
+template <typename T>
+void MacroAssembler::branchTestMagicImpl(Condition cond, const T& t,
+                                         Label* label) {
   cond = testMagic(cond, t);
   j(cond, label);
 }
@@ -1913,9 +1915,9 @@ void MacroAssembler::mulInt64x2(FloatRegister lhs, const SimdConstant& rhs,
   // Check if we can specialize that to less than eight instructions
   // (in comparison with the above mulInt64x2 version).
   const int64_t* c = static_cast<const int64_t*>(rhs.bytes());
-  const int64_t val = c[0];
-  if (val == c[1]) {
-    switch (mozilla::CountPopulation64(val)) {
+  if (c[0] == c[1]) {
+    const uint64_t val = static_cast<uint64_t>(c[0]);
+    switch (std::popcount(val)) {
       case 0:  // val == 0
         vpxor(Operand(dest), dest, dest);
         return;
@@ -1927,13 +1929,13 @@ void MacroAssembler::mulInt64x2(FloatRegister lhs, const SimdConstant& rhs,
           moveSimd128Int(lhs, dest);
         } else {
           lhs = moveSimd128IntIfNotAVX(lhs, dest);
-          vpsllq(Imm32(mozilla::CountTrailingZeroes64(val)), lhs, dest);
+          vpsllq(Imm32(std::countr_zero(val)), lhs, dest);
         }
         return;
       case 2: {
         // Constants with 2 bits set, such as 3, 5, 10, etc.
-        int i0 = mozilla::CountTrailingZeroes64(val);
-        int i1 = mozilla::CountTrailingZeroes64(val & (val - 1));
+        int i0 = std::countr_zero(val);
+        int i1 = std::countr_zero(val & (val - 1));
         FloatRegister lhsForTemp = moveSimd128IntIfNotAVX(lhs, temp);
         vpsllq(Imm32(i1), lhsForTemp, temp);
         lhs = moveSimd128IntIfNotAVX(lhs, dest);
@@ -1947,7 +1949,7 @@ void MacroAssembler::mulInt64x2(FloatRegister lhs, const SimdConstant& rhs,
       case 63: {
         // Some constants with 1 bit unset, such as -2, -3, -5, etc.
         FloatRegister lhsForTemp = moveSimd128IntIfNotAVX(lhs, temp);
-        vpsllq(Imm32(mozilla::CountTrailingZeroes64(~val)), lhsForTemp, temp);
+        vpsllq(Imm32(std::countr_one(val)), lhsForTemp, temp);
         negInt64x2(lhs, dest);
         vpsubq(Operand(temp), dest, dest);
         return;

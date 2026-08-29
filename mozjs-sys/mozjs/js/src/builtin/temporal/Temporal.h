@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,15 +7,16 @@
 
 #include "mozilla/Assertions.h"
 
+#include <compare>
 #include <stdint.h>
 
 #include "jstypes.h"
 
-#include "builtin/temporal/Int128.h"
 #include "builtin/temporal/TemporalRoundingMode.h"
 #include "builtin/temporal/TemporalUnit.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
+#include "vm/Int128.h"
 #include "vm/NativeObject.h"
 
 namespace js {
@@ -62,17 +61,7 @@ class Increment final {
    */
   uint32_t value() const { return value_; }
 
-  bool operator==(const Increment& other) const {
-    return value_ == other.value_;
-  }
-
-  bool operator<(const Increment& other) const { return value_ < other.value_; }
-
-  // Other operators are implemented in terms of operator== and operator<.
-  bool operator!=(const Increment& other) const { return !(*this == other); }
-  bool operator>(const Increment& other) const { return other < *this; }
-  bool operator<=(const Increment& other) const { return !(other < *this); }
-  bool operator>=(const Increment& other) const { return !(*this < other); }
+  constexpr auto operator<=>(const Increment&) const = default;
 };
 
 /**
@@ -141,22 +130,23 @@ enum class TemporalUnitKey {
 };
 
 /**
- * GetTemporalUnitValuedOption ( normalizedOptions, key, unitGroup, default [ ,
- * extraValues ] )
+ * GetTemporalUnitValuedOption ( options, key, default )
  */
 bool GetTemporalUnitValuedOption(JSContext* cx, JS::Handle<JSObject*> options,
-                                 TemporalUnitKey key,
-                                 TemporalUnitGroup unitGroup,
-                                 TemporalUnit* unit);
+                                 TemporalUnitKey key, TemporalUnit* unit);
 
 /**
  * GetTemporalUnitValuedOption ( normalizedOptions, key, unitGroup, default [ ,
  * extraValues ] )
  */
 bool GetTemporalUnitValuedOption(JSContext* cx, JS::Handle<JSString*> value,
-                                 TemporalUnitKey key,
-                                 TemporalUnitGroup unitGroup,
-                                 TemporalUnit* unit);
+                                 TemporalUnitKey key, TemporalUnit* unit);
+
+/**
+ * ValidateTemporalUnitValue ( value, unitGroup [ , extraValues ] )
+ */
+bool ValidateTemporalUnitValue(JSContext* cx, TemporalUnitKey key,
+                               TemporalUnit unit, TemporalUnitGroup unitGroup);
 
 /**
  * GetRoundingModeOption ( normalizedOptions, fallback )
@@ -224,11 +214,7 @@ class Precision final {
     MOZ_ASSERT(value < 10);
   }
 
-  bool operator==(const Precision& other) const {
-    return value_ == other.value_;
-  }
-
-  bool operator!=(const Precision& other) const { return !(*this == other); }
+  constexpr auto operator<=>(const Precision&) const = default;
 
   /**
    * Return the number of fractional second digits.
@@ -258,7 +244,7 @@ bool GetTemporalFractionalSecondDigitsOption(JSContext* cx,
 
 struct SecondsStringPrecision final {
   Precision precision = Precision{0};
-  TemporalUnit unit = TemporalUnit::Auto;
+  TemporalUnit unit = TemporalUnit::Unset;
   Increment increment = Increment{1};
 };
 
@@ -354,8 +340,8 @@ inline const char* ToName(TemporalAddDuration addDuration) {
 }
 
 struct DifferenceSettings final {
-  TemporalUnit smallestUnit = TemporalUnit::Auto;
-  TemporalUnit largestUnit = TemporalUnit::Auto;
+  TemporalUnit smallestUnit = TemporalUnit::Unset;
+  TemporalUnit largestUnit = TemporalUnit::Unset;
   TemporalRoundingMode roundingMode = TemporalRoundingMode::Trunc;
   Increment roundingIncrement = Increment{1};
 };

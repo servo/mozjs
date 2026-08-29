@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -17,9 +15,10 @@
 #include "mozilla/Types.h"
 
 #include <algorithm>
-#include <climits>
+#include <bit>
+#include <cstdint>
 #include <limits>
-#include <stdint.h>
+#include <type_traits>
 
 namespace mozilla {
 
@@ -37,8 +36,6 @@ namespace mozilla {
  * these algorithms.  If you must make changes, keep a careful eye out for
  * compiler bustage, particularly PGO-specific bustage.
  */
-
-namespace detail {
 
 /*
  * These implementations assume float/double are 32/64-bit single/double
@@ -67,8 +64,6 @@ struct FloatingPointTrait<double> {
   static constexpr unsigned kSignificandWidth = 52;
 };
 
-}  // namespace detail
-
 /*
  *  This struct contains details regarding the encoding of floating-point
  *  numbers that can be useful for direct bit manipulation. As of now, the
@@ -96,9 +91,9 @@ struct FloatingPointTrait<double> {
  *  http://en.wikipedia.org/wiki/Floating_point#IEEE_754:_floating_point_in_modern_computers
  */
 template <typename T>
-struct FloatingPoint final : private detail::FloatingPointTrait<T> {
+struct FloatingPoint final : private FloatingPointTrait<T> {
  private:
-  using Base = detail::FloatingPointTrait<T>;
+  using Base = FloatingPointTrait<T>;
 
  public:
   /**
@@ -257,6 +252,25 @@ struct SpecificNaNBits {
 };
 
 /**
+ * Computes the bit pattern for any floating point value.
+ */
+template <typename T, int SignBit, typename FloatingPoint<T>::Bits Exponent,
+          typename FloatingPoint<T>::Bits Significand>
+struct SpecificFloatingPointBits {
+  using Traits = FloatingPoint<T>;
+
+  static_assert(SignBit == 0 || SignBit == 1, "bad sign bit");
+  static_assert((Exponent & ~Traits::kExponentBias) == 0,
+                "exponent must only have exponent bits set");
+  static_assert((Significand & ~Traits::kSignificandBits) == 0,
+                "significand must only have significand bits set");
+
+  static constexpr typename Traits::Bits value =
+      (SignBit * Traits::kSignBit) | (Exponent << Traits::kExponentShift) |
+      Significand;
+};
+
+/**
  * Constructs a NaN value with the specified sign bit and significand bits.
  *
  * There is also a variant that returns the value directly.  In most cases, the
@@ -334,7 +348,7 @@ inline bool NumberEqualsSignedInteger(Float aValue, SignedInteger* aInteger) {
   constexpr SignedInteger MinValue =
       std::numeric_limits<SignedInteger>::min();  // e.g. INT32_MIN
 
-  static_assert(IsPowerOfTwo(Abs(MinValue)),
+  static_assert(std::has_single_bit(Abs(MinValue)),
                 "MinValue should be is a small power of two, thus exactly "
                 "representable in float/double both");
 

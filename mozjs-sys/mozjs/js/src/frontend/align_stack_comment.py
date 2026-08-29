@@ -4,13 +4,13 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-""" Usage: align_stack_comment.py FILE
+"""Usage: align_stack_comment.py FILE
 
-    This script aligns the stack transition comment in BytecodeEmitter and
-    its helper classes.
+This script aligns the stack transition comment in BytecodeEmitter and
+its helper classes.
 
-    The stack transition comment looks like the following:
-      //        [stack] VAL1 VAL2 VAL3
+The stack transition comment looks like the following:
+  //        [stack] VAL1 VAL2 VAL3
 """
 
 import re
@@ -38,9 +38,9 @@ def align_stack_comment(path):
         for line in f:
             line_num += 1
             # Python includes \n in lines.
-            line = line.rstrip("\n")
+            stripped_line = line.rstrip("\n")
 
-            m = stack_comment_pat.search(line)
+            m = stack_comment_pat.search(stripped_line)
             if m:
                 head = m.group(1) + " "
                 head_len = len(head)
@@ -66,12 +66,12 @@ def align_stack_comment(path):
                 spaces = max(ALIGNMENT_COLUMN - head_len, 0)
                 formatted = head + " " * spaces + comment
 
-                if formatted != line:
+                if formatted != stripped_line:
                     changed = True
 
                 lines.append(formatted)
             else:
-                lines.append(line)
+                lines.append(stripped_line)
 
         print(
             f"Info: Minimum column number for [stack]: {max_head_len}",

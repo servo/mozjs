@@ -13,9 +13,12 @@ class GitHost(BaseHost):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.workdir = tempfile.TemporaryDirectory(suffix="." + self.repo_url.netloc)
-        subprocess.check_call(
-            ["git", "clone", self.repo_url.geturl(), self.workdir.name]
-        )
+        subprocess.check_call([
+            "git",
+            "clone",
+            self.repo_url.geturl(),
+            self.workdir.name,
+        ])
 
     def upstream_commit(self, revision):
         sha = subprocess.check_output(

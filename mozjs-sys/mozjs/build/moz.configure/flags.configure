@@ -1,5 +1,3 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -28,7 +26,7 @@ check_and_add_flag("-fno-aligned-new", compiler=cxx_compiler)
 @checking("whether we're trying to statically link with libstdc++")
 @imports("os")
 @imports("re")
-@imports(_from="mozbuild.shellutil", _import="split", _as="shell_split")
+@imports(_from="mozshellutil", _import="split", _as="shell_split")
 def link_libstdcxx_statically(
     cxx_compiler,
     extra_toolchain_flags,
@@ -60,7 +58,7 @@ def link_libstdcxx_statically(
                     #include <iostream>
                     int main() { std::cout << 1;}
                 """,
-                ["-o", bin_path] + (extra_toolchain_flags or []),
+                ["-o", bin_path] + extra_toolchain_flags,
                 wrapper=cxx_compiler.wrapper,
                 onerror=lambda: None,
             )
@@ -110,6 +108,11 @@ add_addrsig_flag = depends(c_compiler, when=target_is_android)(
     lambda c: c.type == "clang"
 )
 
+# Make sure that path separators are consistent in cross builds.
+check_and_add_flag("-ffile-reproducible", when=target_is_windows)
+
+# Use absolute paths for diagnostics if supported.
+check_and_add_flag("-fdiagnostics-absolute-paths")
 
 @depends(
     c_compiler,
@@ -137,7 +140,7 @@ def linker_supports_icf(
                                  """,
                 ["-o", bin_path, "-Wl,--icf=safe", "-ffunction-sections"]
                 + (["-faddrsig"] if add_addrsig_flag else [])
-                + (extra_toolchain_flags or []),
+                + extra_toolchain_flags,
                 wrapper=c_compiler.wrapper,
                 onerror=lambda: None,
             )
@@ -244,6 +247,22 @@ def pass_manager(enabled, compiler, host, target, pgo, enable_fuzzing, ubsan):
 
 set_config("MOZ_PASS_MANAGER_FLAGS", pass_manager.flags)
 
+# Tracing option
+##
+
+option(
+    "--trace-compiler",
+    help="Generate compiler usage report for each C/C++ compilation unit",
+)
+with only_when("--trace-compiler"):
+
+    @depends(c_compiler.type)
+    def check_trace_compiler_validity(ct):
+        if ct not in ("clang", "clang-cl"):
+            die("--trace-compiler not supported for current target compiler")
+
+    check_and_add_flag("-ftime-trace")
+
 # Debugging options
 ##
 
@@ -270,7 +289,7 @@ set_config("MOZ_NO_DEBUG_RTL", moz_no_debug_rtl)
     debug_flags,
     when=moz_debug,
 )
-@imports(_from="mozbuild.shellutil", _import="quote")
+@imports(_from="mozshellutil", _import="quote")
 def check_debug_flags(check, flags):
     if not check:
         die(f"These compiler flags are invalid: {quote(*flags)}")
@@ -342,7 +361,7 @@ check_and_add_linker_flag("-Wl,-z,relro", when=building_with_gnu_compatible_cc)
 check_and_add_linker_flag("-Wl,-z,now", when=building_with_gnu_compatible_cc)
 check_and_add_linker_flag("-Wl,-z,nocopyreloc", when=building_with_gnu_compatible_cc)
 
-check_and_add_linker_optimize_flag("-Wl,-dead_strip", when=target_is_darwin & ~dtrace)
+check_and_add_linker_optimize_flag("-Wl,-dead_strip", when=target_is_darwin)
 
 check_and_add_asm_flag(
     "-fPIC", when=building_with_gnu_compatible_cc & ~target_is_windows
@@ -490,7 +509,7 @@ def expand_libs_list_style(c_compiler, link, linker_flags, extra_flags):
         ):
             die("couldn't compile a simple C file")
 
-        ldflags = linker_flags + (extra_flags or [])
+        ldflags = linker_flags + extra_flags
 
         if c_compiler.type == "clang-cl":
             base_linker_cmd = [link] + ldflags + [f"-OUT:{outname}"]
@@ -573,7 +592,7 @@ set_config("HOST_OPTIMIZE_FLAGS", host_optimize_flags)
 
 
 @depends("HOST_CPPFLAGS", host, host_c_compiler)
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def host_cppflags(base_cppflags, host, compiler):
     flags = []
     if host.kernel == "WINNT":
@@ -592,7 +611,7 @@ def host_cppflags(base_cppflags, host, compiler):
 
 
 @depends("HOST_CFLAGS", compilation_flags)
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def host_cflags(base_cflags, compilation_flags):
     flags = list(compilation_flags.host_cflags)
     if base_cflags:
@@ -601,7 +620,7 @@ def host_cflags(base_cflags, compilation_flags):
 
 
 @depends("HOST_CXXFLAGS", compilation_flags)
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def host_cxxflags(base_cxxflags, compilation_flags):
     flags = list(compilation_flags.host_cxxflags)
     if base_cxxflags:
@@ -610,7 +629,7 @@ def host_cxxflags(base_cxxflags, compilation_flags):
 
 
 @depends("HOST_LDFLAGS", linker_flags, host_linker_ldflags, host, host_c_compiler)
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def host_ldflags(env_ldflags, linker_flags, host_linker_ldflags, host, compiler):
     flags = []
     if env_ldflags:
@@ -626,7 +645,7 @@ def host_ldflags(env_ldflags, linker_flags, host_linker_ldflags, host, compiler)
 
 
 @depends("CPPFLAGS")
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def os_cppflags(env_cppflags):
     flags = []
     if env_cppflags:
@@ -635,7 +654,7 @@ def os_cppflags(env_cppflags):
 
 
 @depends("CFLAGS", compilation_flags, android_flags, all_arm_flags)
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def os_cflags(env_cflags, compilation_flags, android_flags, all_arm_flags):
     flags = []
     if android_flags:
@@ -649,7 +668,7 @@ def os_cflags(env_cflags, compilation_flags, android_flags, all_arm_flags):
 
 
 @depends("CXXFLAGS", compilation_flags, android_flags, all_arm_flags)
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def os_cxxflags(env_cxxflags, compilation_flags, android_flags, all_arm_flags):
     flags = []
     if android_flags:
@@ -671,7 +690,7 @@ def os_cxxflags(env_cxxflags, compilation_flags, android_flags, all_arm_flags):
     c_compiler,
     build_project,
 )
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def os_asflags(
     env_asflags,
     asm_flags,

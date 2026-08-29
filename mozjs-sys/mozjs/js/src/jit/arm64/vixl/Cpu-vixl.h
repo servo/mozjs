@@ -55,20 +55,24 @@ class IDRegister {
    public:
     enum Type { kUnsigned, kSigned };
 
-    explicit Field(int lsb, Type type = kUnsigned) : lsb_(lsb), type_(type) {}
-
     static const int kMaxWidthInBits = 4;
 
-    int GetWidthInBits() const {
-      // All current ID fields have four bits.
-      return kMaxWidthInBits;
-    }
+    // This needs to be constexpr so that fields have "constant initialisation".
+    // This avoids initialisation order problems when these values are used to
+    // (dynamically) initialise static variables, etc.
+    explicit constexpr Field(int lsb,
+                             int bitWidth = kMaxWidthInBits,
+                             Type type = kUnsigned)
+        : lsb_(lsb), bitWidth_(bitWidth), type_(type) {}
+
+    int GetWidthInBits() const { return bitWidth_; }
     int GetLsb() const { return lsb_; }
     int GetMsb() const { return lsb_ + GetWidthInBits() - 1; }
     Type GetType() const { return type_; }
 
    private:
     int lsb_;
+    int bitWidth_;
     Type type_;
   };
 
@@ -91,8 +95,11 @@ class AA64PFR0 : public IDRegister {
  private:
   static const Field kFP;
   static const Field kAdvSIMD;
+  static const Field kRAS;
   static const Field kSVE;
   static const Field kDIT;
+  static const Field kCSV2;
+  static const Field kCSV3;
 };
 
 class AA64PFR1 : public IDRegister {
@@ -103,6 +110,9 @@ class AA64PFR1 : public IDRegister {
 
  private:
   static const Field kBT;
+  static const Field kSSBS;
+  static const Field kMTE;
+  static const Field kSME;
 };
 
 class AA64ISAR0 : public IDRegister {
@@ -124,6 +134,7 @@ class AA64ISAR0 : public IDRegister {
   static const Field kDP;
   static const Field kFHM;
   static const Field kTS;
+  static const Field kRNDR;
 };
 
 class AA64ISAR1 : public IDRegister {
@@ -144,6 +155,32 @@ class AA64ISAR1 : public IDRegister {
   static const Field kFRINTTS;
   static const Field kSB;
   static const Field kSPECRES;
+  static const Field kBF16;
+  static const Field kDGH;
+  static const Field kI8MM;
+};
+
+class AA64ISAR2 : public IDRegister {
+ public:
+  explicit AA64ISAR2(uint64_t value) : IDRegister(value) {}
+
+  CPUFeatures GetCPUFeatures() const;
+
+ private:
+  static const Field kWFXT;
+  static const Field kRPRES;
+  static const Field kMOPS;
+  static const Field kCSSC;
+};
+
+class AA64MMFR0 : public IDRegister {
+ public:
+  explicit AA64MMFR0(uint64_t value) : IDRegister(value) {}
+
+  CPUFeatures GetCPUFeatures() const;
+
+ private:
+  static const Field kECV;
 };
 
 class AA64MMFR1 : public IDRegister {
@@ -154,6 +191,51 @@ class AA64MMFR1 : public IDRegister {
 
  private:
   static const Field kLO;
+  static const Field kAFP;
+};
+
+class AA64MMFR2 : public IDRegister {
+ public:
+  explicit AA64MMFR2(uint64_t value) : IDRegister(value) {}
+
+  CPUFeatures GetCPUFeatures() const;
+
+ private:
+  static const Field kAT;
+};
+
+class AA64ZFR0 : public IDRegister {
+ public:
+  explicit AA64ZFR0(uint64_t value) : IDRegister(value) {}
+
+  CPUFeatures GetCPUFeatures() const;
+
+ private:
+  static const Field kSVEver;
+  static const Field kAES;
+  static const Field kBitPerm;
+  static const Field kBF16;
+  static const Field kSHA3;
+  static const Field kSM4;
+  static const Field kI8MM;
+  static const Field kF32MM;
+  static const Field kF64MM;
+};
+
+class AA64SMFR0 : public IDRegister {
+ public:
+  explicit AA64SMFR0(uint64_t value) : IDRegister(value) {}
+
+  CPUFeatures GetCPUFeatures() const;
+
+ private:
+  static const Field kSMEf32f32;
+  static const Field kSMEb16f32;
+  static const Field kSMEf16f32;
+  static const Field kSMEi8i32;
+  static const Field kSMEf64f64;
+  static const Field kSMEi16i64;
+  static const Field kSMEfa64;
 };
 
 class CPU {
@@ -187,6 +269,9 @@ class CPU {
       CPUFeatures::QueryIDRegistersOption option =
           CPUFeatures::kQueryIDRegistersIfAvailable);
 
+  // Query the SVE vector length. This requires CPUFeatures::kSVE.
+  static int ReadSVEVectorLengthInBits();
+
   // Handle tagged pointers.
   template <typename T>
   static T SetPointerTag(T pointer, uint64_t tag) {
@@ -214,14 +299,21 @@ class CPU {
   }
 
  private:
-#define VIXL_AARCH64_ID_REG_LIST(V) \
-  V(AA64PFR0)                       \
-  V(AA64PFR1)                       \
-  V(AA64ISAR0)                      \
-  V(AA64ISAR1)                      \
-  V(AA64MMFR1)
+#define VIXL_AARCH64_ID_REG_LIST(V)                                           \
+  V(AA64PFR0, "ID_AA64PFR0_EL1")                                              \
+  V(AA64PFR1, "ID_AA64PFR1_EL1")                                              \
+  V(AA64ISAR0, "ID_AA64ISAR0_EL1")                                            \
+  V(AA64ISAR1, "ID_AA64ISAR1_EL1")                                            \
+  V(AA64MMFR0, "ID_AA64MMFR0_EL1")                                            \
+  V(AA64MMFR1, "ID_AA64MMFR1_EL1")                                            \
+  /* These registers are RES0 in the baseline Arm8.0. We can always safely */ \
+  /* read them, but some compilers don't accept the symbolic names. */        \
+  V(AA64SMFR0, "S3_0_C0_C4_5")                                                \
+  V(AA64ISAR2, "S3_0_C0_C6_2")                                                \
+  V(AA64MMFR2, "S3_0_C0_C7_2")                                                \
+  V(AA64ZFR0, "S3_0_C0_C4_4")
 
-#define VIXL_READ_ID_REG(NAME) static NAME Read##NAME();
+#define VIXL_READ_ID_REG(NAME, MRS_ARG) static NAME Read##NAME();
   // On native AArch64 platforms, read the named CPU ID registers. These require
   // CPUFeatures::kIDRegisterEmulation, and should not be called on non-AArch64
   // platforms.

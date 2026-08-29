@@ -1,0 +1,16 @@
+[package]
+description = "copy of unicode-bidi-ffi for mozjs-sys"
+links = "unicode-bidi-ffi"
+repository = "https://github.com/servo/mozjs"
+name = "mozjs_unicode_bidi_ffi"
+version = "153.0.0"
+license = "MPL-2.0"
+authors = ["Jonathan Kew <jkew@mozilla.com>"]
+edition = "2021"
+
+[dependencies]
+unicode-bidi = { version = "0.3.15", features = ["smallvec"] }
+icu_properties = { version = "2.0.0", features = ["unicode_bidi"] }
+
+[build-dependencies.cbindgen]
+version = "0.29.4"

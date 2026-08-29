@@ -1,6 +1,5 @@
 # flake8: noqa: F821
 
-
 test.compile("source.cpp")
 test.run_analysis_script()
 hazards = test.load_hazards()
@@ -13,3 +12,8 @@ assert "unsafe3" not in hazmap
 assert "unsafe4" in hazmap
 assert "unsafe5" in hazmap
 assert "safe6" not in hazmap
+
+sgc = test.load_typeInfo()["SingleGCField"]
+assert "CellPtr" in sgc
+assert "Cell" in sgc
+assert "Container<Cell*, Cell*>" not in sgc

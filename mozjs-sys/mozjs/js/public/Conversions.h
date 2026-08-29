@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,9 +8,7 @@
 #define js_Conversions_h
 
 #include "mozilla/Casting.h"
-#include "mozilla/Compiler.h"
 #include "mozilla/FloatingPoint.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/WrappingOperations.h"
 
 #include <cmath>
@@ -377,9 +373,7 @@ inline SignedInteger ToSignedInteger(double d) {
   return mozilla::WrapToSigned(u);
 }
 
-// clang crashes compiling this when targeting arm:
-// https://llvm.org/bugs/show_bug.cgi?id=22974
-#if defined(__arm__) && MOZ_IS_GCC
+#if defined(__arm__)
 
 template <>
 inline int32_t ToSignedInteger<int32_t>(double d) {
@@ -509,7 +503,7 @@ inline int32_t ToSignedInteger<int32_t>(double d) {
   return i;
 }
 
-#endif  // defined (__arm__) && MOZ_IS_GCC
+#endif  // defined (__arm__)
 
 namespace detail {
 

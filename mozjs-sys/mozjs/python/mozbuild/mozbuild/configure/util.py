@@ -72,7 +72,7 @@ class ConfigureOutputHandler(logging.Handler):
     """
 
     def __init__(self, stdout=sys.stdout, stderr=sys.stderr, maxlen=20):
-        super(ConfigureOutputHandler, self).__init__()
+        super().__init__()
 
         self._stdout = stdout
         self._stderr = stderr if stdout != stderr else self._stdout

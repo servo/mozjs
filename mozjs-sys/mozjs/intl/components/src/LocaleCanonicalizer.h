@@ -5,7 +5,6 @@
 #define intl_components_LocaleCanonicalizer_h_
 
 #include "mozilla/intl/ICU4CGlue.h"
-#include "mozilla/Span.h"
 #include "mozilla/Vector.h"
 
 namespace mozilla::intl {

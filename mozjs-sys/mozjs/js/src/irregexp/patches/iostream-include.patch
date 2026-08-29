@@ -1,0 +1,11 @@
+diff --git a/js/src/irregexp/imported/regexp-code-generator.cc b/js/src/irregexp/imported/regexp-code-generator.cc
+--- a/imported/regexp-code-generator.cc
++++ b/imported/regexp-code-generator.cc
+@@ -5,6 +5,7 @@
+ #include "irregexp/imported/regexp-code-generator.h"
+
+ #include <cstddef>
++#include <iostream>
+ #include <tuple>
+ #include <type_traits>
+ #include <utility>

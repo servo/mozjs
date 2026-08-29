@@ -116,7 +116,7 @@ class WebPlatformTestsCreator(Creator):
     local_path = os.path.join("testing", "web-platform", "mozilla", "tests")
 
     def __init__(self, *args, **kwargs):
-        super(WebPlatformTestsCreator, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.reftest = self.suite == "web-platform-tests-reftest"
 
     @classmethod
@@ -161,12 +161,11 @@ testing/web-platform/mozilla/tests for Gecko-only tests"""
             if self.kwargs["wait"]:
                 print("--wait only makes sense for a reftest")
                 return False
-        else:
-            # Set the ref to a url relative to the test
-            if self.kwargs["ref"]:
-                if self.ref_path(self.kwargs["ref"]) is None:
-                    print("--ref doesn't refer to a path inside web-platform-tests")
-                    return False
+        # Set the ref to a url relative to the test
+        elif self.kwargs["ref"]:
+            if self.ref_path(self.kwargs["ref"]) is None:
+                print("--ref doesn't refer to a path inside web-platform-tests")
+                return False
 
     def __iter__(self):
         yield (self.test, self._get_template_contents())
@@ -250,15 +249,14 @@ testing/web-platform/mozilla/tests for Gecko-only tests"""
                 return os.path.join(base, path)
             else:
                 return self.src_rel_path(path)
+        elif self.wpt_type(path) is not None:
+            return path
         else:
-            if self.wpt_type(path) is not None:
-                return path
-            else:
-                test_rel_path = self.src_rel_path(
-                    os.path.join(os.path.dirname(self.test), path)
-                )
-                if self.wpt_type(test_rel_path) is not None:
-                    return test_rel_path
+            test_rel_path = self.src_rel_path(
+                os.path.join(os.path.dirname(self.test), path)
+            )
+            if self.wpt_type(test_rel_path) is not None:
+                return test_rel_path
         # Returning None indicates that the path wasn't valid
 
     def ref_url(self, path):

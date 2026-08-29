@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -12,8 +10,11 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 
+#include "gc/ChunkPool.h"
+#include "gc/GCRuntime.h"
 #include "gc/IteratorUtils.h"
 #include "gc/Marking.h"
+#include "gc/PublicIterators.h"
 #include "gc/Zone.h"
 #include "vm/Runtime.h"
 
@@ -344,6 +345,29 @@ class ZoneCellIter : protected ZoneAllCellIter<T> {
   }
 };
 
+template <typename F>
+inline void GCRuntime::forEachNonEmptyChunk(const AutoLockGC& lock, F&& func) {
+  if (Zone* zone = maybeSharedAtomsZone()) {
+    zone->forEachNonEmptyChunk(this, lock, func);
+  }
+  for (AllZonesIter zone(rt); !zone.done(); zone.next()) {
+    zone->forEachNonEmptyChunk(this, lock, func);
+  }
+}
+
 }  // namespace js::gc
+
+template <typename F>
+inline void JS::Zone::forEachNonEmptyChunk(js::gc::GCRuntime* gc,
+                                           const js::AutoLockGC& lock,
+                                           F&& func) {
+  gc->clearCurrentChunk(this, lock);
+  for (auto chunk = availableChunks(lock).iter(); !chunk.done(); chunk.next()) {
+    func(chunk.get());
+  }
+  for (auto chunk = fullChunks(lock).iter(); !chunk.done(); chunk.next()) {
+    func(chunk.get());
+  }
+}
 
 #endif /* gc_GC_inl_h */

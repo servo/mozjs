@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_x86_shared_Assembler_x86_shared_h
 #define jit_x86_shared_Assembler_x86_shared_h
 
+#include "mozilla/EndianUtils.h"
 #include "mozilla/MathAlgorithms.h"
 
 #include <cstddef>
@@ -48,7 +47,14 @@ struct ScratchSimd128Scope : public AutoFloatRegisterScope {
 
 class Operand {
  public:
-  enum Kind { REG, MEM_REG_DISP, FPREG, MEM_SCALE, MEM_ADDRESS32 };
+  enum Kind {
+    REG,
+    MEM_REG_DISP,
+    FPREG,
+    MEM_SCALE,
+    MEM_ADDRESS32,
+    MEM_SCALE_NOBASE
+  };
 
  private:
   Kind kind_ : 4;
@@ -88,6 +94,12 @@ class Operand {
   Operand(Register base, Register index, Scale scale, int32_t disp = 0)
       : kind_(MEM_SCALE),
         base_(base.encoding()),
+        scale_(scale),
+        index_(index.encoding()),
+        disp_(disp) {}
+  Operand(Register index, Scale scale, int32_t disp)
+      : kind_(MEM_SCALE_NOBASE),
+        base_(Registers::Invalid),
         scale_(scale),
         index_(index.encoding()),
         disp_(disp) {}
@@ -131,11 +143,11 @@ class Operand {
     return Register::Encoding(base_);
   }
   Register::Encoding index() const {
-    MOZ_ASSERT(kind() == MEM_SCALE);
+    MOZ_ASSERT(kind() == MEM_SCALE || kind() == MEM_SCALE_NOBASE);
     return index_;
   }
   Scale scale() const {
-    MOZ_ASSERT(kind() == MEM_SCALE);
+    MOZ_ASSERT(kind() == MEM_SCALE || kind() == MEM_SCALE_NOBASE);
     return scale_;
   }
   FloatRegister::Encoding fpu() const {
@@ -143,7 +155,8 @@ class Operand {
     return FloatRegister::Encoding(base_);
   }
   int32_t disp() const {
-    MOZ_ASSERT(kind() == MEM_REG_DISP || kind() == MEM_SCALE);
+    MOZ_ASSERT(kind() == MEM_REG_DISP || kind() == MEM_SCALE ||
+               kind() == MEM_SCALE_NOBASE);
     return disp_;
   }
   void* address() const {
@@ -159,6 +172,8 @@ class Operand {
         return r.encoding() == base();
       case MEM_SCALE:
         return r.encoding() == base() || r.encoding() == index();
+      case MEM_SCALE_NOBASE:
+        return r.encoding() == index();
       default:
         return false;
     }
@@ -951,6 +966,9 @@ class AssemblerX86Shared : public AssemblerShared {
         masm.leal_mr(src.disp(), src.base(), src.index(), src.scale(),
                      dest.encoding());
         break;
+      case Operand::MEM_SCALE_NOBASE:
+        masm.leal_mr(src.disp(), src.index(), src.scale(), dest.encoding());
+        break;
       default:
         MOZ_CRASH("unexpected operand kind");
     }
@@ -1098,9 +1116,11 @@ class AssemblerX86Shared : public AssemblerShared {
     }
   }
 
-  void ret() {
+  BufferOffset ret() {
     MOZ_ASSERT(hasCreator());
+    BufferOffset ret(masm.currentOffset());
     masm.ret();
+    return ret;
   }
   void retn(Imm32 n) {
     MOZ_ASSERT(hasCreator());
@@ -1734,6 +1754,10 @@ class AssemblerX86Shared : public AssemblerShared {
       default:
         MOZ_CRASH("unexpected operand kind");
     }
+  }
+  void andnl(Register src1, Register src2, Register dest) {
+    MOZ_ASSERT(HasBMI1());
+    masm.andnl_rrr(src1.encoding(), src2.encoding(), dest.encoding());
   }
   void orl(const Operand& src, Register dest) {
     switch (src.kind()) {

@@ -11,8 +11,6 @@ import codecs
 import os
 from urllib import parse
 
-from six import string_types
-
 __all__ = [
     "MissingPrimaryLocationError",
     "MultiplePrimaryLocationsError",
@@ -100,9 +98,9 @@ class Location:
 
     def isEqual(self, location):
         """compare scheme://host:port, but ignore options"""
-        return len(
-            [i for i in self.attrs if getattr(self, i) == getattr(location, i)]
-        ) == len(self.attrs)
+        return len([
+            i for i in self.attrs if getattr(self, i) == getattr(location, i)
+        ]) == len(self.attrs)
 
     __eq__ = isEqual
 
@@ -145,7 +143,7 @@ class ServerLocations:
         self._locations.append(location)
 
     def add_host(self, host, port="80", scheme="http", options="privileged"):
-        if isinstance(options, string_types):
+        if isinstance(options, str):
             options = options.split(",")
         self.add(Location(scheme, host, port, options))
 
@@ -157,7 +155,7 @@ class ServerLocations:
         :param check_for_primary: if True, a ``MissingPrimaryLocationError`` exception is raised
           if no primary is found
 
-        .. _server-locations.txt: http://searchfox.org/mozilla-central/source/build/pgo/server-locations.txt # noqa
+        .. _server-locations.txt: http://searchfox.org/firefox-main/source/build/pgo/server-locations.txt # noqa
 
         The only exception is that the port, if not defined, defaults to 80 or 443.
 
@@ -244,9 +242,11 @@ class Permissions:
                 user_prefs.append(("network.trr.uri", trrUri))
                 user_prefs.append(("network.trr.bootstrapAddr", "127.0.0.1"))
                 user_prefs.append(("network.dns.force_use_https_rr", True))
-                user_prefs.append(
-                    ("network.dns.https_rr.check_record_with_cname", False)
-                )
+                user_prefs.append((
+                    "network.dns.https_rr.check_record_with_cname",
+                    False,
+                ))
+                user_prefs.append(("network.dns.port_prefixed_qname_https_rr", False))
             else:
                 user_prefs = self.pac_prefs(proxy)
         else:

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,12 +8,15 @@
 
 #  include "mozilla/Atomics.h"
 #  include "mozilla/Sprintf.h"
+#  include "mozilla/ThreadLocal.h"
+#  include "mozilla/Vector.h"
 
 #  include "jit/MIR.h"
 #  include "jit/MIRGenerator.h"
 #  include "jit/MIRGraph.h"
 #  include "threading/LockGuard.h"
 #  include "util/GetPidProvider.h"  // getpid()
+#  include "vm/Logging.h"
 #  include "vm/MutexIDs.h"
 
 #  ifndef JIT_SPEW_DIR
@@ -32,10 +33,11 @@ using namespace js;
 using namespace js::jit;
 using namespace js::jitspew::detail;
 
-class IonSpewer {
+class JitSpewGraphOutput {
  private:
   Mutex outputLock_ MOZ_UNANNOTATED;
   Fprinter jsonOutput_;
+  GraphSpewer graphSpewer_;
   bool firstFunction_;
   bool asyncLogging_;
   bool inited_;
@@ -43,14 +45,15 @@ class IonSpewer {
   void release();
 
  public:
-  IonSpewer()
-      : outputLock_(mutexid::IonSpewer),
+  JitSpewGraphOutput()
+      : outputLock_(mutexid::JitSpewGraphOutput),
+        graphSpewer_(jsonOutput_),
         firstFunction_(false),
         asyncLogging_(false),
         inited_(false) {}
 
   // File output is terminated safely upon destruction.
-  ~IonSpewer();
+  ~JitSpewGraphOutput();
 
   bool init();
   bool isEnabled() { return inited_; }
@@ -58,31 +61,99 @@ class IonSpewer {
   bool getAsyncLogging() { return asyncLogging_; }
 
   void beginFunction();
-  void spewPass(GraphSpewer* gs);
-  void endFunction(GraphSpewer* gs);
+  void spewPass(JitSpewGraphSpewer* gs);
+  void endFunction(JitSpewGraphSpewer* gs);
 };
 
-// IonSpewer singleton.
-MOZ_RUNINIT static IonSpewer ionspewer;
+// JitSpewGraphOutput singleton.
+MOZ_RUNINIT static JitSpewGraphOutput jitSpewGraphOutput;
 
 bool jitspew::detail::LoggingChecked = false;
-static_assert(JitSpew_Terminator <= 64,
-              "Increase the size of the LoggingBits global.");
-uint64_t jitspew::detail::LoggingBits = 0;
 mozilla::Atomic<uint32_t, mozilla::Relaxed>
     jitspew::detail::filteredOutCompilations(0);
 
-static const char* const ChannelNames[] = {
-#  define JITSPEW_CHANNEL(name) #name,
+// Set the JS_LOG level for the LogModule matching `channel`.
+static void SetChannelLogLevel(JitSpewChannel channel,
+                               mozilla::LogLevel level) {
+  const js::LogModule* mod = jitspew::detail::channelModules[channel];
+  if (mod->interface.isComplete() && mod->logger) {
+    mod->interface.getLevelRef(mod->logger) = level;
+  }
+}
+
+static size_t ChannelIndentLevel[] = {
+#  define JITSPEW_CHANNEL(name, help) 0,
     JITSPEW_CHANNEL_LIST(JITSPEW_CHANNEL)
 #  undef JITSPEW_CHANNEL
 };
 
-static size_t ChannelIndentLevel[] = {
-#  define JITSPEW_CHANNEL(name) 0,
-    JITSPEW_CHANNEL_LIST(JITSPEW_CHANNEL)
-#  undef JITSPEW_CHANNEL
+struct SpewTlsState;
+
+class TlsBufPrinter final : public js::GenericPrinter {
+ public:
+  explicit TlsBufPrinter(SpewTlsState* state) : state_(state) {}
+  void put(const char* s, size_t len) override;
+
+ private:
+  SpewTlsState* state_;
 };
+
+// Per-thread state used by AutoJitSpewMessage to assemble lines and dispatch
+// them to the matching JS_LOG module.
+struct SpewTlsState {
+  mozilla::Vector<char, 256> buf;
+  TlsBufPrinter printer{this};
+  JitSpewChannel owner = JitSpew_Terminator;
+};
+
+// TLS slot for per-thread spew state.
+static MOZ_THREAD_LOCAL(SpewTlsState*) tlsState;
+
+static SpewTlsState* GetOrCreateSpewTlsState() {
+  SpewTlsState* state = tlsState.get();
+  if (!state) {
+    AutoEnterOOMUnsafeRegion oomUnsafe;
+    state = js_new<SpewTlsState>();
+    if (!state) {
+      oomUnsafe.crash("OOM allocating JIT spew TLS state");
+    }
+    tlsState.set(state);
+  }
+  return state;
+}
+
+// Writes a single line to the JS_LOG LogModule.
+static void FlushTlsBufLine(SpewTlsState* state) {
+  auto& buf = state->buf;
+  if (!buf.append('\0')) {
+    buf.clear();
+    return;
+  }
+  const js::LogModule* mod = jitspew::detail::channelModules[state->owner];
+  if (mod->interface.isComplete() && mod->logger) {
+    mod->interface.logPrint(mod->logger, mozilla::LogLevel::Debug, "%s",
+                            buf.begin());
+  }
+  buf.clear();
+}
+
+void TlsBufPrinter::put(const char* s, size_t len) {
+  auto& buf = state_->buf;
+  while (len > 0) {
+    const char* nl = static_cast<const char*>(memchr(s, '\n', len));
+    size_t chunk = nl ? size_t(nl - s) : len;
+    if (chunk && !buf.append(s, chunk)) {
+      setPendingOutOfMemory();
+    }
+    if (!nl) {
+      // Wait until we see a line terminator.
+      return;
+    }
+    FlushTlsBufLine(state_);
+    s += chunk + 1;
+    len -= chunk + 1;
+  }
+}
 
 // The IONFILTER environment variable specifies an expression to select only
 // certain functions for spewing to reduce amount of log data generated.
@@ -121,24 +192,24 @@ static bool FilterContainsLocation(JSScript* function) {
 }
 
 void jit::EnableIonDebugSyncLogging() {
-  ionspewer.init();
-  ionspewer.setAsyncLogging(false);
-  EnableChannel(JitSpew_IonSyncLogs);
+  jitSpewGraphOutput.init();
+  jitSpewGraphOutput.setAsyncLogging(false);
+  SetChannelLogLevel(JitSpew_IonSyncLogs, mozilla::LogLevel::Debug);
 }
 
 void jit::EnableIonDebugAsyncLogging() {
-  ionspewer.init();
-  ionspewer.setAsyncLogging(true);
+  jitSpewGraphOutput.init();
+  jitSpewGraphOutput.setAsyncLogging(true);
 }
 
-void IonSpewer::release() {
+void JitSpewGraphOutput::release() {
   if (jsonOutput_.isInitialized()) {
     jsonOutput_.finish();
   }
   inited_ = false;
 }
 
-bool IonSpewer::init() {
+bool JitSpewGraphOutput::init() {
   if (inited_) {
     return true;
   }
@@ -156,7 +227,8 @@ bool IonSpewer::init() {
     size_t len;
     len = SprintfLiteral(jsonBuffer, JIT_SPEW_DIR "/ion%" PRIu32 ".json", pid);
     if (bufferLength <= len) {
-      fprintf(stderr, "Warning: IonSpewer::init: Cannot serialize file name.");
+      fprintf(stderr,
+              "Warning: JitSpewGraphOutput::init: Cannot serialize file name.");
       return false;
     }
     jsonFilename = jsonBuffer;
@@ -167,14 +239,14 @@ bool IonSpewer::init() {
     return false;
   }
 
-  jsonOutput_.printf("{\n  \"functions\": [\n");
+  graphSpewer_.begin();
   firstFunction_ = true;
 
   inited_ = true;
   return true;
 }
 
-void IonSpewer::beginFunction() {
+void JitSpewGraphOutput::beginFunction() {
   // If we are doing a synchronous logging then we spew everything as we go,
   // as this is useful in case of failure during the compilation. On the other
   // hand, it is recommended to disable off thread compilation.
@@ -184,14 +256,14 @@ void IonSpewer::beginFunction() {
   }
 }
 
-void IonSpewer::spewPass(GraphSpewer* gs) {
+void JitSpewGraphOutput::spewPass(JitSpewGraphSpewer* gs) {
   if (!getAsyncLogging()) {
     LockGuard<Mutex> guard(outputLock_);
     gs->dump(jsonOutput_);
   }
 }
 
-void IonSpewer::endFunction(GraphSpewer* gs) {
+void JitSpewGraphOutput::endFunction(JitSpewGraphSpewer* gs) {
   LockGuard<Mutex> guard(outputLock_);
   if (getAsyncLogging() && !firstFunction_) {
     jsonOutput_.put(",");  // separate functions
@@ -201,24 +273,24 @@ void IonSpewer::endFunction(GraphSpewer* gs) {
   firstFunction_ = false;
 }
 
-IonSpewer::~IonSpewer() {
+JitSpewGraphOutput::~JitSpewGraphOutput() {
   if (!inited_) {
     return;
   }
 
-  jsonOutput_.printf("\n]}\n");
+  graphSpewer_.end();
   release();
 }
 
-GraphSpewer::GraphSpewer(TempAllocator* alloc,
-                         const wasm::CodeMetadata* wasmCodeMeta)
+JitSpewGraphSpewer::JitSpewGraphSpewer(TempAllocator* alloc,
+                                       const wasm::CodeMetadata* wasmCodeMeta)
     : graph_(nullptr),
       jsonPrinter_(alloc->lifoAlloc()),
-      jsonSpewer_(jsonPrinter_, wasmCodeMeta) {}
+      graphSpewer_(jsonPrinter_, wasmCodeMeta) {}
 
-void GraphSpewer::init(MIRGraph* graph, JSScript* function) {
+void JitSpewGraphSpewer::init(MIRGraph* graph, JSScript* function) {
   MOZ_ASSERT(!isSpewing());
-  if (!ionspewer.isEnabled()) {
+  if (!jitSpewGraphOutput.isEnabled()) {
     return;
   }
 
@@ -233,33 +305,29 @@ void GraphSpewer::init(MIRGraph* graph, JSScript* function) {
   MOZ_ASSERT(isSpewing());
 }
 
-void GraphSpewer::beginFunction(JSScript* function) {
+void JitSpewGraphSpewer::beginFunction(JSScript* function) {
   if (!isSpewing()) {
     return;
   }
-  jsonSpewer_.beginFunction(function);
-  ionspewer.beginFunction();
+  graphSpewer_.beginFunction(function);
+  jitSpewGraphOutput.beginFunction();
 }
 
-void GraphSpewer::beginWasmFunction(unsigned funcIndex) {
+void JitSpewGraphSpewer::beginWasmFunction(unsigned funcIndex) {
   if (!isSpewing()) {
     return;
   }
-  jsonSpewer_.beginWasmFunction(funcIndex);
-  ionspewer.beginFunction();
+  graphSpewer_.beginWasmFunction(funcIndex);
+  jitSpewGraphOutput.beginFunction();
 }
 
-void GraphSpewer::spewPass(const char* pass) {
+void JitSpewGraphSpewer::spewPass(const char* pass, BacktrackingAllocator* ra) {
   if (!isSpewing()) {
     return;
   }
 
-  jsonSpewer_.beginPass(pass);
-  jsonSpewer_.spewMIR(graph_);
-  jsonSpewer_.spewLIR(graph_);
-  jsonSpewer_.endPass();
-
-  ionspewer.spewPass(this);
+  graphSpewer_.spewPass(pass, graph_, ra);
+  jitSpewGraphOutput.spewPass(this);
 
   // As this function is used for debugging, we ignore any of the previous
   // failures and ensure there is enough ballast space, such that we do not
@@ -272,22 +340,8 @@ void GraphSpewer::spewPass(const char* pass) {
   }
 }
 
-void GraphSpewer::spewPass(const char* pass, BacktrackingAllocator* ra) {
-  if (!isSpewing()) {
-    return;
-  }
-
-  jsonSpewer_.beginPass(pass);
-  jsonSpewer_.spewMIR(graph_);
-  jsonSpewer_.spewLIR(graph_);
-  jsonSpewer_.spewRanges(ra);
-  jsonSpewer_.endPass();
-
-  ionspewer.spewPass(this);
-}
-
-void GraphSpewer::endFunction() {
-  if (!ionspewer.isEnabled()) {
+void JitSpewGraphSpewer::endFunction() {
+  if (!jitSpewGraphOutput.isEnabled()) {
     return;
   }
 
@@ -297,13 +351,13 @@ void GraphSpewer::endFunction() {
     return;
   }
 
-  jsonSpewer_.endFunction();
+  graphSpewer_.endFunction();
 
-  ionspewer.endFunction(this);
+  jitSpewGraphOutput.endFunction(this);
   graph_ = nullptr;
 }
 
-void GraphSpewer::dump(Fprinter& jsonOut) {
+void JitSpewGraphSpewer::dump(Fprinter& jsonOut) {
   if (!jsonPrinter_.hadOutOfMemory()) {
     jsonPrinter_.exportInto(jsonOut);
   } else {
@@ -313,86 +367,32 @@ void GraphSpewer::dump(Fprinter& jsonOut) {
   jsonPrinter_.clear();
 }
 
-void jit::SpewBeginFunction(MIRGenerator* mir, JSScript* function) {
-  MIRGraph* graph = &mir->graph();
-  mir->graphSpewer().init(graph, function);
-  mir->graphSpewer().beginFunction(function);
-}
-
-void jit::SpewBeginWasmFunction(MIRGenerator* mir, unsigned funcIndex) {
-  MIRGraph* graph = &mir->graph();
-  mir->graphSpewer().init(graph, nullptr);
-  mir->graphSpewer().beginWasmFunction(funcIndex);
-}
-
-AutoSpewEndFunction::~AutoSpewEndFunction() {
-  mir_->graphSpewer().endFunction();
-}
-
-Fprinter& jit::JitSpewPrinter() {
-  static Fprinter out;
-  return out;
-}
-
 static void PrintHelpAndExit(int status = 0) {
   fflush(nullptr);
-  printf(
+  FILE* out = status == 0 ? stdout : stderr;
+  fputs(
       "\n"
-      "usage: IONFLAGS=option,option,option,... where options can be:\n"
+      "Use MOZ_LOG=help to see the full list of JS_LOG modules.\n"
       "\n"
-      "  aborts        Compilation abort messages\n"
-      "  scripts       Compiled scripts\n"
-      "  mir           MIR information\n"
-      "  prune         Prune unused branches\n"
-      "  escape        Escape analysis\n"
-      "  alias         Alias analysis\n"
-      "  alias-sum     Alias analysis: shows summaries for every block\n"
-      "  gvn           Global Value Numbering\n"
-      "  licm          Loop invariant code motion\n"
-      "  flac          Fold linear arithmetic constants\n"
-      "  eaa           Effective address analysis\n"
-      "  sink          Sink transformation\n"
-      "  regalloc      Register allocation\n"
-      "  inline        Inlining\n"
-      "  snapshots     Snapshot information\n"
-      "  codegen       Native code generation\n"
-      "  bailouts      Bailouts\n"
-      "  caches        Inline caches\n"
-      "  osi           Invalidation\n"
-      "  safepoints    Safepoints\n"
-      "  pools         Literal Pools (ARM only for now)\n"
-      "  cacheflush    Instruction Cache flushes (ARM only for now)\n"
-      "  range         Range Analysis\n"
-      "  branch-hint   Wasm Branch Hinting\n"
-      "  wasmbce       Wasm Bounds Check Elimination\n"
-      "  shapeguards   Redundant shape guard elimination\n"
-      "  gcbarriers    Redundant GC barrier elimination\n"
-      "  loadkeys      Loads used as property keys\n"
-      "  stubfolding   CacheIR stub folding\n"
-      "  logs          JSON visualization logging\n"
-      "  logs-sync     Same as logs, but flushes between each pass (sync. "
-      "compiled functions only).\n"
-      "  profiling     Profiling-related information\n"
-      "  dump-mir-expr Dump the MIR expressions\n"
-      "  unroll        Wasm loop unrolling and peeling -- summary info\n"
-      "  unroll-details  Wasm loop unrolling and peeling -- details\n"
-      "  warp-snapshots WarpSnapshots created by WarpOracle\n"
-      "  warp-transpiler Warp CacheIR transpiler\n"
-      "  warp-trial-inlining Trial inlining for Warp\n"
-      "  all           Everything\n"
+      "usage: IONFLAGS=option,option,option,...\n"
+      "\n",
+      out);
+#  define EMIT(tok, chan) fprintf(out, "  %-22s %s\n", tok, chan##Module.help);
+  IONFLAGS_CHANNEL_LIST(EMIT)
+#  undef EMIT
+  fputs(
       "\n"
-      "  bl-aborts     Baseline compiler abort messages\n"
-      "  bl-scripts    Baseline script-compilation\n"
-      "  bl-op         Baseline compiler detailed op-specific messages\n"
-      "  bl-ic         Baseline inline-cache messages\n"
-      "  bl-ic-fb      Baseline IC fallback stub messages\n"
-      "  bl-osr        Baseline IC OSR messages\n"
-      "  bl-bails      Baseline bailouts\n"
-      "  bl-dbg-osr    Baseline debug mode on stack recompile messages\n"
-      "  bl-all        All baseline spew\n"
+      "  all                    Enable every JIT spew module at Debug level\n"
+      "  bl-all                 Enable all baseline modules\n"
+      "  stubfolding-details    StubFolding + StubFoldingDetails\n"
+      "  unroll-details         Unroll + UnrollDetails\n"
+      "  logs                   JSON visualization logging to /tmp/ion.json\n"
+      "  logs-sync              Same as logs, but flushes between passes "
+      "(sync. compiled functions only)\n"
+      "  help                   Print this message and exit\n"
       "\n"
-      "See also SPEW=help for information on the Structured Spewer."
-      "\n");
+      "See also SPEW=help for information on the Structured Spewer.\n",
+      out);
   exit(status);
 }
 
@@ -406,140 +406,74 @@ void jit::CheckLogging() {
   }
 
   LoggingChecked = true;
+  tlsState.infallibleInit();
 
   char* env = getenv("IONFLAGS");
   if (!env) {
     return;
   }
 
+  auto enable = [](JitSpewChannel channel) {
+    SetChannelLogLevel(channel, mozilla::LogLevel::Debug);
+  };
+
+  struct TokenToChannel {
+    const char* tok;
+    JitSpewChannel chan;
+  };
+  static constexpr TokenToChannel tokenToChannelTable[] = {
+#  define ENTRY(tok, chan) {tok, JitSpew_##chan},
+      IONFLAGS_CHANNEL_LIST(ENTRY)
+#  undef ENTRY
+  };
+
   const char* found = strtok(env, ",");
   while (found) {
     fprintf(stderr, "found tag: %s\n", found);
-    // We're at the end of a flag; check if the previous substring was a
-    // known flag (i-1 is the last character of the flag we just read).
-    if (IsFlag(found, "help")) {
-      PrintHelpAndExit();
-    } else if (IsFlag(found, "aborts")) {
-      EnableChannel(JitSpew_IonAbort);
-    } else if (IsFlag(found, "prune")) {
-      EnableChannel(JitSpew_Prune);
-    } else if (IsFlag(found, "escape")) {
-      EnableChannel(JitSpew_Escape);
-    } else if (IsFlag(found, "alias")) {
-      EnableChannel(JitSpew_Alias);
-    } else if (IsFlag(found, "alias-sum")) {
-      EnableChannel(JitSpew_AliasSummaries);
-    } else if (IsFlag(found, "scripts")) {
-      EnableChannel(JitSpew_IonScripts);
-    } else if (IsFlag(found, "mir")) {
-      EnableChannel(JitSpew_IonMIR);
-    } else if (IsFlag(found, "gvn")) {
-      EnableChannel(JitSpew_GVN);
-    } else if (IsFlag(found, "range")) {
-      EnableChannel(JitSpew_Range);
-    } else if (IsFlag(found, "wasmbce")) {
-      EnableChannel(JitSpew_WasmBCE);
-    } else if (IsFlag(found, "branch-hint")) {
-      EnableChannel(JitSpew_BranchHint);
-    } else if (IsFlag(found, "licm")) {
-      EnableChannel(JitSpew_LICM);
-    } else if (IsFlag(found, "flac")) {
-      EnableChannel(JitSpew_FLAC);
-    } else if (IsFlag(found, "eaa")) {
-      EnableChannel(JitSpew_EAA);
-    } else if (IsFlag(found, "sink")) {
-      EnableChannel(JitSpew_Sink);
-    } else if (IsFlag(found, "regalloc")) {
-      EnableChannel(JitSpew_RegAlloc);
-    } else if (IsFlag(found, "inline")) {
-      EnableChannel(JitSpew_Inlining);
-    } else if (IsFlag(found, "snapshots")) {
-      EnableChannel(JitSpew_IonSnapshots);
-    } else if (IsFlag(found, "codegen")) {
-      EnableChannel(JitSpew_Codegen);
-    } else if (IsFlag(found, "bailouts")) {
-      EnableChannel(JitSpew_IonBailouts);
-    } else if (IsFlag(found, "osi")) {
-      EnableChannel(JitSpew_IonInvalidate);
-    } else if (IsFlag(found, "caches")) {
-      EnableChannel(JitSpew_IonIC);
-    } else if (IsFlag(found, "safepoints")) {
-      EnableChannel(JitSpew_Safepoints);
-    } else if (IsFlag(found, "pools")) {
-      EnableChannel(JitSpew_Pools);
-    } else if (IsFlag(found, "cacheflush")) {
-      EnableChannel(JitSpew_CacheFlush);
-    } else if (IsFlag(found, "shapeguards")) {
-      EnableChannel(JitSpew_RedundantShapeGuards);
-    } else if (IsFlag(found, "gcbarriers")) {
-      EnableChannel(JitSpew_RedundantGCBarriers);
-    } else if (IsFlag(found, "loadkeys")) {
-      EnableChannel(JitSpew_MarkLoadsUsedAsPropertyKeys);
-    } else if (IsFlag(found, "stubfolding")) {
-      EnableChannel(JitSpew_StubFolding);
-    } else if (IsFlag(found, "logs")) {
-      EnableIonDebugAsyncLogging();
-    } else if (IsFlag(found, "logs-sync")) {
-      EnableIonDebugSyncLogging();
-    } else if (IsFlag(found, "profiling")) {
-      EnableChannel(JitSpew_Profiling);
-    } else if (IsFlag(found, "dump-mir-expr")) {
-      EnableChannel(JitSpew_MIRExpressions);
-    } else if (IsFlag(found, "unroll")) {
-      EnableChannel(JitSpew_Unroll);
-    } else if (IsFlag(found, "unroll-details")) {
-      EnableChannel(JitSpew_Unroll);
-      EnableChannel(JitSpew_UnrollDetails);
-    } else if (IsFlag(found, "warp-snapshots")) {
-      EnableChannel(JitSpew_WarpSnapshots);
-    } else if (IsFlag(found, "warp-transpiler")) {
-      EnableChannel(JitSpew_WarpTranspiler);
-    } else if (IsFlag(found, "warp-trial-inlining")) {
-      EnableChannel(JitSpew_WarpTrialInlining);
-    } else if (IsFlag(found, "all")) {
-      LoggingBits = uint64_t(-1);
-    } else if (IsFlag(found, "bl-aborts")) {
-      EnableChannel(JitSpew_BaselineAbort);
-    } else if (IsFlag(found, "bl-scripts")) {
-      EnableChannel(JitSpew_BaselineScripts);
-    } else if (IsFlag(found, "bl-op")) {
-      EnableChannel(JitSpew_BaselineOp);
-    } else if (IsFlag(found, "bl-ic")) {
-      EnableChannel(JitSpew_BaselineIC);
-    } else if (IsFlag(found, "bl-ic-fb")) {
-      EnableChannel(JitSpew_BaselineICFallback);
-    } else if (IsFlag(found, "bl-osr")) {
-      EnableChannel(JitSpew_BaselineOSR);
-    } else if (IsFlag(found, "bl-bails")) {
-      EnableChannel(JitSpew_BaselineBailouts);
-    } else if (IsFlag(found, "bl-dbg-osr")) {
-      EnableChannel(JitSpew_BaselineDebugModeOSR);
-    } else if (IsFlag(found, "bl-all")) {
-      EnableChannel(JitSpew_BaselineAbort);
-      EnableChannel(JitSpew_BaselineScripts);
-      EnableChannel(JitSpew_BaselineOp);
-      EnableChannel(JitSpew_BaselineIC);
-      EnableChannel(JitSpew_BaselineICFallback);
-      EnableChannel(JitSpew_BaselineOSR);
-      EnableChannel(JitSpew_BaselineBailouts);
-      EnableChannel(JitSpew_BaselineDebugModeOSR);
-    } else {
-      fprintf(stderr, "Unknown flag.\n");
-      PrintHelpAndExit(64);
+
+    // Check if this matches a flag in tokenToChannelTable.
+    bool handled = false;
+    for (const auto& entry : tokenToChannelTable) {
+      if (IsFlag(found, entry.tok)) {
+        enable(entry.chan);
+        handled = true;
+        break;
+      }
+    }
+
+    if (!handled) {
+      if (IsFlag(found, "help")) {
+        PrintHelpAndExit();
+      } else if (IsFlag(found, "stubfolding-details")) {
+        enable(JitSpew_StubFolding);
+        enable(JitSpew_StubFoldingDetails);
+      } else if (IsFlag(found, "unroll-details")) {
+        enable(JitSpew_Unroll);
+        enable(JitSpew_UnrollDetails);
+      } else if (IsFlag(found, "logs")) {
+        EnableIonDebugAsyncLogging();
+      } else if (IsFlag(found, "logs-sync")) {
+        EnableIonDebugSyncLogging();
+      } else if (IsFlag(found, "all")) {
+#  define JITSPEW_ENABLE_ALL(name, help) enable(JitSpew_##name);
+        JITSPEW_CHANNEL_LIST(JITSPEW_ENABLE_ALL)
+#  undef JITSPEW_ENABLE_ALL
+      } else if (IsFlag(found, "bl-all")) {
+        enable(JitSpew_BaselineAbort);
+        enable(JitSpew_BaselineScripts);
+        enable(JitSpew_BaselineOp);
+        enable(JitSpew_BaselineIC);
+        enable(JitSpew_BaselineICFallback);
+        enable(JitSpew_BaselineOSR);
+        enable(JitSpew_BaselineBailouts);
+        enable(JitSpew_BaselineDebugModeOSR);
+      } else {
+        fprintf(stderr, "Unknown flag.\n");
+        PrintHelpAndExit(64);
+      }
     }
     found = strtok(nullptr, ",");
   }
-
-  FILE* spewfh = stderr;
-  const char* filename = getenv("ION_SPEW_FILENAME");
-  if (filename && *filename) {
-    char actual_filename[2048] = {0};
-    SprintfLiteral(actual_filename, "%s.%d", filename, getpid());
-    spewfh = fopen(actual_filename, "w");
-    MOZ_RELEASE_ASSERT(spewfh);
-    setbuf(spewfh, nullptr);  // Make unbuffered
-  }
-  JitSpewPrinter().init(spewfh);
 }
 
 JitSpewIndent::JitSpewIndent(JitSpewChannel channel) : channel_(channel) {
@@ -548,63 +482,73 @@ JitSpewIndent::JitSpewIndent(JitSpewChannel channel) : channel_(channel) {
 
 JitSpewIndent::~JitSpewIndent() { ChannelIndentLevel[channel_]--; }
 
-void jit::JitSpewStartVA(JitSpewChannel channel, const char* fmt, va_list ap) {
-  if (!JitSpewEnabled(channel)) {
+AutoJitSpewMessage::AutoJitSpewMessage(JitSpewChannel channel)
+    : enabled_(JitSpewEnabled(channel)) {
+  if (!enabled_) {
     return;
   }
-
-  JitSpewHeader(channel);
-  Fprinter& out = JitSpewPrinter();
-  out.vprintf(fmt, ap);
+  SpewTlsState* state = GetOrCreateSpewTlsState();
+  MOZ_ASSERT(state->owner == JitSpew_Terminator,
+             "Nested AutoJitSpewMessage on the same thread is not supported");
+  state->owner = channel;
+  state->buf.clear();
+  for (size_t i = ChannelIndentLevel[channel]; i != 0; i--) {
+    state->printer.put("  ", 2);
+  }
 }
 
-void jit::JitSpewContVA(JitSpewChannel channel, const char* fmt, va_list ap) {
-  if (!JitSpewEnabled(channel)) {
+AutoJitSpewMessage::AutoJitSpewMessage(JitSpewChannel channel, const char* fmt,
+                                       ...)
+    : AutoJitSpewMessage(channel) {
+  if (!enabled_) {
     return;
   }
-
-  Fprinter& out = JitSpewPrinter();
-  out.vprintf(fmt, ap);
+  va_list ap;
+  va_start(ap, fmt);
+  tlsState.get()->printer.vprintf(fmt, ap);
+  va_end(ap);
 }
 
-void jit::JitSpewFin(JitSpewChannel channel) {
-  if (!JitSpewEnabled(channel)) {
+void AutoJitSpewMessage::append(const char* fmt, ...) {
+  if (!enabled_) {
     return;
   }
+  va_list ap;
+  va_start(ap, fmt);
+  tlsState.get()->printer.vprintf(fmt, ap);
+  va_end(ap);
+}
 
-  Fprinter& out = JitSpewPrinter();
-  out.put("\n");
+js::GenericPrinter& AutoJitSpewMessage::printer() {
+  MOZ_ASSERT(enabled_);
+  return tlsState.get()->printer;
+}
+
+AutoJitSpewMessage::~AutoJitSpewMessage() {
+  if (!enabled_) {
+    return;
+  }
+  SpewTlsState* state = tlsState.get();
+  MOZ_ASSERT(state);
+  MOZ_ASSERT(state->owner != JitSpew_Terminator);
+  if (!state->buf.empty()) {
+    FlushTlsBufLine(state);
+  }
+  state->owner = JitSpew_Terminator;
 }
 
 void jit::JitSpewVA(JitSpewChannel channel, const char* fmt, va_list ap) {
-  JitSpewStartVA(channel, fmt, ap);
-  JitSpewFin(channel);
+  if (!JitSpewEnabled(channel)) {
+    return;
+  }
+  AutoJitSpewMessage msg(channel);
+  msg.printer().vprintf(fmt, ap);
 }
 
 void jit::JitSpew(JitSpewChannel channel, const char* fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
   JitSpewVA(channel, fmt, ap);
-
-  // Suppress hazard analysis on logPrintVA function pointer.
-  JS::AutoSuppressGCAnalysis suppress;
-
-  switch (channel) {
-#  define SpewChannel(x)                                                      \
-    case JitSpew_##x:                                                         \
-      if (x##Module.shouldLog(js::LogLevel::Debug)) {                         \
-        x##Module.interface.logPrintVA(x##Module.logger, js::LogLevel::Debug, \
-                                       fmt, ap);                              \
-      }                                                                       \
-      break;
-
-    JITSPEW_CHANNEL_LIST(SpewChannel)
-
-#  undef SpewChannel
-    case JitSpew_Terminator:
-      MOZ_CRASH("Unexpected JitSpew");
-  }
-
   va_end(ap);
 }
 
@@ -613,47 +557,9 @@ void jit::JitSpewDef(JitSpewChannel channel, const char* str,
   if (!JitSpewEnabled(channel)) {
     return;
   }
-
-  JitSpewHeader(channel);
-  Fprinter& out = JitSpewPrinter();
-  out.put(str);
-  def->dump(out);
-  def->dumpLocation(out);
-}
-
-void jit::JitSpewStart(JitSpewChannel channel, const char* fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  JitSpewStartVA(channel, fmt, ap);
-  va_end(ap);
-}
-void jit::JitSpewCont(JitSpewChannel channel, const char* fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  JitSpewContVA(channel, fmt, ap);
-  va_end(ap);
-}
-
-void jit::JitSpewHeader(JitSpewChannel channel) {
-  if (!JitSpewEnabled(channel)) {
-    return;
-  }
-
-  Fprinter& out = JitSpewPrinter();
-  out.printf("[%s] ", ChannelNames[channel]);
-  for (size_t i = ChannelIndentLevel[channel]; i != 0; i--) {
-    out.put("  ");
-  }
-}
-
-void jit::EnableChannel(JitSpewChannel channel) {
-  MOZ_ASSERT(LoggingChecked);
-  LoggingBits |= uint64_t(1) << uint32_t(channel);
-}
-
-void jit::DisableChannel(JitSpewChannel channel) {
-  MOZ_ASSERT(LoggingChecked);
-  LoggingBits &= ~(uint64_t(1) << uint32_t(channel));
+  AutoJitSpewMessage msg(channel, "%s", str);
+  def->dump(msg.printer());
+  def->dumpLocation(msg.printer());
 }
 
 #endif /* JS_JITSPEW */

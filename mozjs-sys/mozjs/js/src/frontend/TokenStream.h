@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -325,9 +323,9 @@ class MOZ_STACK_CLASS TokenStreamPosition final {
   inline explicit TokenStreamPosition(
       TokenStreamSpecific<Unit, AnyCharsAccess>& tokenStream);
 
- private:
   TokenStreamPosition(const TokenStreamPosition&) = delete;
 
+ private:
   // Technically only TokenStreamSpecific<Unit, AnyCharsAccess>::seek with
   // Unit constant and AnyCharsAccess varying must be friended, but 1) it's
   // hard to friend one function in template classes, and 2) C++ doesn't
@@ -1683,11 +1681,6 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
     return this->sourceUnits.internalMatchCodeUnit(Unit(expect));
   }
 
-  template <typename T>
-  bool matchCodeUnit(T) = delete;
-  template <typename T>
-  bool matchLineTerminator(T) = delete;
-
   int32_t peekCodeUnit() {
     return MOZ_LIKELY(!sourceUnits.atEnd())
                ? CodeUnitValue(sourceUnits.peekCodeUnit())
@@ -1696,13 +1689,6 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
 
   /** Consume a known, non-EOF code unit. */
   inline void consumeKnownCodeUnit(int32_t unit);
-
-  // Forbid accidental calls to consumeKnownCodeUnit *not* with the single
-  // unit-or-EOF type.  Unit should use SourceUnits::consumeKnownCodeUnit;
-  // CodeUnitValue() results should go through toUnit(), or better yet just
-  // use the original Unit.
-  template <typename T>
-  inline void consumeKnownCodeUnit(T) = delete;
 
   /**
    * Add a null-terminated line of context to error information, for the line
@@ -1719,6 +1705,19 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
    */
   [[nodiscard]] bool addLineOfContext(ErrorMetadata* err,
                                       uint32_t offset) const;
+
+ public:
+  template <typename T>
+  bool matchCodeUnit(T) = delete;
+  template <typename T>
+  bool matchLineTerminator(T) = delete;
+
+  // Forbid accidental calls to consumeKnownCodeUnit *not* with the single
+  // unit-or-EOF type.  Unit should use SourceUnits::consumeKnownCodeUnit;
+  // CodeUnitValue() results should go through toUnit(), or better yet just
+  // use the original Unit.
+  template <typename T>
+  inline void consumeKnownCodeUnit(T) = delete;
 };
 
 template <>

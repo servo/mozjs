@@ -1,0 +1,22 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+
+@depends(target)
+def zucchini_is_available(target):
+    # Desktop Linux, macOS or Windows: we exclude Android by checking for GNU.
+    return (target.os, target.kernel) == ("GNU", "Linux") or target.os in (
+        "OSX",
+        "WINNT",
+    )
+
+
+with only_when(zucchini_is_available):
+    option(
+        "--disable-zucchini",
+        help="Disable zucchini support",
+    )
+
+    set_config("MOZ_ZUCCHINI", True, when="--enable-zucchini")
+    set_define("MOZ_ZUCCHINI", True, when="--enable-zucchini")

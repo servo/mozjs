@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2017 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,8 +16,6 @@
 
 #include "wasm/WasmProcess.h"
 
-#include "mozilla/Attributes.h"
-
 #include "gc/Memory.h"
 #include "threading/ExclusiveData.h"
 #include "vm/MutexIDs.h"
@@ -27,6 +23,7 @@
 #include "wasm/WasmBuiltinModule.h"
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmCode.h"
+#include "wasm/WasmComponent.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmModuleTypes.h"
 #include "wasm/WasmStaticTypeDefs.h"
@@ -108,6 +105,10 @@ bool wasm::InCompiledCode(void* pc) {
 }
 
 #ifdef WASM_SUPPORTS_HUGE_MEMORY
+#  if defined(__riscv)
+// On riscv64, Sv39 is not enough for huge memory, so we require at least Sv48.
+static const size_t MinAddressBitsForHugeMemory = 47;
+#  else
 /*
  * Some 64 bit systems greatly limit the range of available virtual memory. We
  * require about 6GiB for each wasm huge memory, which can exhaust the address
@@ -119,6 +120,7 @@ bool wasm::InCompiledCode(void* pc) {
  * for error in detecting the address space limit.
  */
 static const size_t MinAddressBitsForHugeMemory = 38;
+#  endif
 
 /*
  * In addition to the above, some systems impose an independent limit on the
@@ -130,9 +132,9 @@ static const size_t MinVirtualMemoryLimitForHugeMemory =
 
 static bool sHugeMemoryEnabled32 = false;
 
-bool wasm::IsHugeMemoryEnabled(wasm::AddressType t) {
-  if (t == AddressType::I64) {
-    // No support for huge memory with 64-bit memories
+bool wasm::IsHugeMemoryEnabled(wasm::AddressType t, wasm::PageSize sz) {
+  if (t == AddressType::I64 || sz != wasm::PageSize::Standard) {
+    // No support for huge memory with 64-bit memories or custom page sizes.
     return false;
   }
   return sHugeMemoryEnabled32;
@@ -159,16 +161,27 @@ void ConfigureHugeMemory() {
 #endif
 }
 
+#ifdef ENABLE_WASM_JSPI
+const TagType* wasm::sJSPromiseTagType = nullptr;
+#endif
 const TagType* wasm::sWrappedJSValueTagType = nullptr;
 
-static bool InitTagForJSValue() {
+static bool InitStaticTagTypes() {
   MutableTagType type = js_new<TagType>();
-  if (!type || !type->initialize(StaticTypeDefs::jsTag)) {
+  if (!type || !type->initialize(StaticTypeDefs::jsExceptionTag)) {
     return false;
   }
-  MOZ_ASSERT(WrappedJSValueTagType_ValueOffset == type->argOffsets()[0]);
-
+  MOZ_ASSERT(WrappedJSValueTagType_ValueOffset ==
+             type->exceptionArgOffsets()[0]);
   type.forget(&sWrappedJSValueTagType);
+
+#ifdef ENABLE_WASM_JSPI
+  type = js_new<TagType>();
+  if (!type || !type->initialize(StaticTypeDefs::jsPromiseTag)) {
+    return false;
+  }
+  type.forget(&sJSPromiseTagType);
+#endif
 
   return true;
 }
@@ -201,7 +214,7 @@ bool wasm::Init() {
 
   sThreadSafeCodeBlockMap = map;
 
-  if (!InitTagForJSValue()) {
+  if (!InitStaticTagTypes()) {
     oomUnsafe.crash("js::wasm::Init");
   }
 
@@ -219,6 +232,16 @@ void wasm::ShutDown() {
   BuiltinModuleFuncs::destroy();
   StaticTypeDefs::destroy();
   PurgeCanonicalTypes();
+#ifdef ENABLE_WASM_COMPONENTS
+  PurgeComponentCanonicalTypes();
+#endif
+
+#ifdef ENABLE_WASM_JSPI
+  if (sJSPromiseTagType) {
+    sJSPromiseTagType->Release();
+    sJSPromiseTagType = nullptr;
+  }
+#endif
 
   if (sWrappedJSValueTagType) {
     sWrappedJSValueTagType->Release();

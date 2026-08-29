@@ -3003,8 +3003,8 @@ test -n "$target_alias" &&
   program_prefix=${target_alias}-
 
 MOD_MAJOR_VERSION=4
-MOD_MINOR_VERSION=36
-MOD_PATCH_VERSION=2
+MOD_MINOR_VERSION=39
+MOD_PATCH_VERSION=0
 NSPR_MODNAME=nspr20
 _HAVE_PTHREADS=
 USE_PTHREADS=
@@ -7326,170 +7326,6 @@ tools are selected during the Xcode/Developer Tools installation." "$LINENO" 5
     PR_MD_CSRCS=freebsd.c
     ;;
 
-*-hpux*)
-    printf "%s\n" "#define XP_UNIX 1" >>confdefs.h
-
-    printf "%s\n" "#define HPUX 1" >>confdefs.h
-
-    printf "%s\n" "#define _HPUX_SOURCE 1" >>confdefs.h
-
-    # HPUX report the POLLHUP event for a socket when the
-    # shutdown(SHUT_WR) operation is called for the remote end, even though
-    # the socket is still writeable. Use select(), instead of poll(), to
-    # workaround this problem.
-    printf "%s\n" "#define _PR_POLL_WITH_SELECT 1" >>confdefs.h
-
-    printf "%s\n" "#define _USE_BIG_FDS 1" >>confdefs.h
-
-    DSO_LDOPTS='-b +h $(notdir $@)'
-    PR_MD_CSRCS=hpux.c
-    if test "$OS_TEST" = "ia64"; then
-        DLL_SUFFIX=so
-        DSO_LDOPTS="$DSO_LDOPTS +b '\$\$ORIGIN'"
-        CPU_ARCH_TAG=_$OS_TEST
-        if test -z "$USE_64"; then
-            COMPILER_TAG=_32
-        fi
-        PR_MD_ASFILES=os_HPUX_ia64.s
-    else
-        printf "%s\n" "#define hppa 1" >>confdefs.h
-
-        DLL_SUFFIX=sl
-        PR_MD_ASFILES=os_HPUX.s
-    fi
-    if test -n "$USE_64"; then
-        MDCPUCFG_H=_hpux64.cfg
-    else
-        MDCPUCFG_H=_hpux32.cfg
-    fi
-    if test -z "$GNU_CC"; then
-        CC="$CC -Ae"
-        CXX="$CXX -ext"
-        DSO_CFLAGS=+Z
-    else
-        DSO_CFLAGS=-fPIC
-        ASFLAGS="$ASFLAGS -x assembler-with-cpp"
-    fi
-
-    if test -n "$MOZILLA_CLIENT"; then
-        DEFAULT_IMPL_STRATEGY=_EMU
-    fi
-
-    if echo "$OS_RELEASE" | egrep '^(A.09|B.10)' >/dev/null; then
-        printf "%s\n" "#define _PR_NO_LARGE_FILES 1" >>confdefs.h
-
-    fi
-
-    if echo "$OS_RELEASE" | egrep '^(B.10.10|B.10.20)' >/dev/null; then
-        printf "%s\n" "#define _PR_NEED_H_ERRNO 1" >>confdefs.h
-
-    fi
-
-    if echo "$OS_RELEASE" | egrep '^(B.10.10|B.10.20)' >/dev/null; then
-        printf "%s\n" "#define HAVE_INT_LOCALTIME_R 1" >>confdefs.h
-
-    fi
-
-    if echo "$OS_RELEASE" | egrep '^(B.10.30|B.11)' >/dev/null; then
-        printf "%s\n" "#define HAVE_POINTER_LOCALTIME_R 1" >>confdefs.h
-
-    fi
-
-    # HP-UX 11i v2 (B.11.23) or higher
-
-    case "$OS_RELEASE" in
-    [C-Z]*|B.[2-9]*|B.1[2-9]*|B.11.[3-9]*|B.11.2[3-9]*)
-        USE_IPV6=1
-        ;;
-    esac
-
-
-    if test "$OS_RELEASE" = "B.10.01"; then
-        printf "%s\n" "#define HPUX10 1" >>confdefs.h
-
-        DEFAULT_IMPL_STRATEGY=_EMU
-    fi
-
-    if test "$OS_RELEASE" = "B.10.10"; then
-        printf "%s\n" "#define HPUX10 1" >>confdefs.h
-
-        printf "%s\n" "#define HPUX10_10 1" >>confdefs.h
-
-        DEFAULT_IMPL_STRATEGY=_PTH
-    fi
-
-    if test "$OS_RELEASE" = "B.10.20"; then
-        printf "%s\n" "#define HPUX10 1" >>confdefs.h
-
-        printf "%s\n" "#define HPUX10_20 1" >>confdefs.h
-
-        if test -z "$GNU_CC"; then
-            CFLAGS="$CFLAGS +DAportable +DS1.1"
-            CXXFLAGS="$CXXFLAGS +DAportable +DS1.1"
-        fi
-        DEFAULT_IMPL_STRATEGY=_PTH
-    fi
-
-    if test "$OS_RELEASE" = "B.10.30"; then
-        printf "%s\n" "#define HPUX10 1" >>confdefs.h
-
-        printf "%s\n" "#define HPUX10_30 1" >>confdefs.h
-
-        if test -z "$GNU_CC"; then
-            CFLAGS="$CFLAGS +DAportable +DS1.1"
-            CXXFLAGS="$CXXFLAGS +DAportable +DS1.1"
-        fi
-        DEFAULT_IMPL_STRATEGY=_PTH
-    fi
-
-    if echo "$OS_RELEASE" | grep ^B.11 >/dev/null; then
-        printf "%s\n" "#define HPUX10 1" >>confdefs.h
-
-        printf "%s\n" "#define HPUX11 1" >>confdefs.h
-
-        printf "%s\n" "#define _LARGEFILE64_SOURCE 1" >>confdefs.h
-
-        printf "%s\n" "#define _PR_HAVE_OFF64_T 1" >>confdefs.h
-
-        printf "%s\n" "#define HAVE_FCNTL_FILE_LOCKING 1" >>confdefs.h
-
-        if test -z "$GNU_CC"; then
-            if test -z "$USE_64"; then
-                if test "$OS_TEST" = "ia64"; then
-                    CFLAGS="$CFLAGS +DD32"
-                    CXXFLAGS="$CXXFLAGS +DD32"
-                else
-                    CFLAGS="$CFLAGS +DAportable +DS2.0"
-                    CXXFLAGS="$CXXFLAGS +DAportable +DS2.0"
-                fi
-            else
-                if test "$OS_TEST" = "ia64"; then
-                    CFLAGS="$CFLAGS +DD64"
-                    CXXFLAGS="$CXXFLAGS +DD64"
-                else
-                    CFLAGS="$CFLAGS +DA2.0W +DS2.0"
-                    CXXFLAGS="$CXXFLAGS +DA2.0W +DS2.0"
-                fi
-            fi
-        fi
-        DEFAULT_IMPL_STRATEGY=_PTH
-    fi
-
-    if test "$DEFAULT_IMPL_STRATEGY" = "_EMU"; then
-        USE_NSPR_THREADS=1
-        USE_PTHREADS=
-        USE_USER_PTHREADS=
-    elif test "$DEFAULT_IMPL_STRATEGY" = "_PTH"; then
-        USE_PTHREADS=1
-        if test "$USE_NSPR_THREADS"; then
-            USE_PTHREADS=
-        fi
-        if test "$USE_USER_PTHREADS"; then
-            USE_PTHREADS=
-        fi
-    fi
-    ;;
-
 *-linux*|*-gnu*|*-k*bsd*-gnu|*-android*|*-linuxandroid*)
     if test -z "$USE_NSPR_THREADS"; then
         USE_PTHREADS=1
@@ -7771,7 +7607,7 @@ printf "%s\n" "$as_me: WARNING: Unknown version of the Microsoft (R) Manifest To
     esac
 
     case "$target_cpu" in
-    i*86)
+    i*86|x86_64)
 	if test -n "$USE_64"; then
 	    printf "%s\n" "#define _AMD64_ 1" >>confdefs.h
 
@@ -7783,11 +7619,6 @@ printf "%s\n" "$as_me: WARNING: Unknown version of the Microsoft (R) Manifest To
             fi
 	fi
         ;;
-    x86_64)
-	    printf "%s\n" "#define _AMD64_ 1" >>confdefs.h
-
-	    USE_64=1
-	    ;;
     aarch64)
 	    printf "%s\n" "#define _ARM64_ 1" >>confdefs.h
 

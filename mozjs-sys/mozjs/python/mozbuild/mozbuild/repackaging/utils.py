@@ -6,11 +6,9 @@ import json
 import os
 import pathlib
 import shutil
-import subprocess
 import tarfile
 import zipfile
 from datetime import datetime
-from email.utils import format_datetime
 from pathlib import Path
 from string import Template
 from tempfile import TemporaryDirectory
@@ -22,7 +20,7 @@ from mozbuild.repackaging.application_ini import get_application_ini_values
 from mozbuild.repackaging.desktop_file import generate_browser_desktop_entry_file_text
 
 
-def _extract_application_ini_data_from_directory(application_directory):
+def application_ini_data_from_directory(application_directory):
     values = get_application_ini_values(
         application_directory,
         dict(section="App", value="Name"),
@@ -43,7 +41,7 @@ def _extract_application_ini_data_from_directory(application_directory):
     return data
 
 
-def _extract_application_ini_data(input_tar_file):
+def application_ini_data_from_tar(input_tar_file):
     with TemporaryDirectory() as d:
         with tarfile.open(input_tar_file) as tar:
             application_ini_files = [
@@ -63,23 +61,7 @@ def _extract_application_ini_data(input_tar_file):
 
             tar.extract(application_ini_files[0], path=d)
 
-        application_ini_data = _extract_application_ini_data_from_directory(d)
-
-        return application_ini_data
-
-
-def _parse_application_ini_data(application_ini_data, version, build_number):
-    application_ini_data["timestamp"] = datetime.strptime(
-        application_ini_data["build_id"], "%Y%m%d%H%M%S"
-    )
-
-    application_ini_data["remoting_name"] = application_ini_data[
-        "remoting_name"
-    ].lower()
-
-    application_ini_data["pkg_version"] = f"{version}-{build_number}"
-
-    return application_ini_data
+        return application_ini_data_from_directory(d)
 
 
 def copy_plain_config(input_template_dir, source_dir):
@@ -101,18 +83,23 @@ def get_build_variables(
     application_ini_data,
     arch,
     version,
-    depends="",
     package_name_suffix="",
     description_suffix="",
-    release_product="",
+    product="",
     build_number="1",
 ):
-    if release_product == "devedition":
+    """
+    Massage the application.ini info and other metadata into a dict suitable for passing into packaging templates
+    """
+    if product == "devedition":
         pkg_install_path = "usr/lib/firefox-devedition"
         pkg_name = f"firefox-devedition{package_name_suffix}"
     else:
-        pkg_install_path = f"usr/lib/{application_ini_data['remoting_name']}"
-        pkg_name = f"{application_ini_data['remoting_name']}{package_name_suffix}"
+        pkg_install_path = f"usr/lib/{application_ini_data['remoting_name'].lower()}"
+        pkg_name = (
+            f"{application_ini_data['remoting_name'].lower()}{package_name_suffix}"
+        )
+    timestamp = datetime.strptime(application_ini_data["build_id"], "%Y%m%d%H%M%S")
 
     return {
         "DESCRIPTION": f"{application_ini_data['vendor']} {application_ini_data['display_name']}{description_suffix}",
@@ -122,11 +109,11 @@ def get_build_variables(
         "PKG_VERSION": version,
         "PRODUCT_NAME": application_ini_data["name"],
         "DISPLAY_NAME": application_ini_data["display_name"],
-        "CHANGELOG_DATE": format_datetime(application_ini_data["timestamp"]),
-        "MANPAGE_DATE": application_ini_data["timestamp"].strftime("%B %d, %Y"),
+        "TIMESTAMP": timestamp,
+        "MANPAGE_DATE": timestamp.strftime("%B %d, %Y"),
         "ARCH_NAME": arch,
-        "DEPENDS": depends,
         "Icon": pkg_name,
+        "REMOTING_NAME": application_ini_data["remoting_name"],
     }
 
 
@@ -143,7 +130,7 @@ def inject_desktop_entry_file(
     log,
     source_dir,
     build_variables,
-    release_product,
+    product,
     release_type,
     fluent_localization,
     fluent_resource_loader,
@@ -166,7 +153,7 @@ def inject_desktop_entry_file(
     desktop_entry_file_text = generate_browser_desktop_entry_file_text(
         log,
         build_variables,
-        release_product,
+        product,
         release_type,
         fluent_localization,
         fluent_resource_loader,
@@ -179,43 +166,20 @@ def inject_desktop_entry_file(
 def inject_distribution_folder(source_dir, source_type, app_name):
     distribution_ini_path = mozpath.join(source_dir, source_type, "distribution.ini")
 
-    # Check to see if a distribution.ini file is already supplied in the templates directory
-    # If not, continue to download default Firefox distribution.ini from GitHub
-    if os.path.exists(distribution_ini_path):
-        os.makedirs(
-            mozpath.join(source_dir, app_name.lower(), "distribution"), exist_ok=True
-        )
-        shutil.move(
-            distribution_ini_path,
-            mozpath.join(source_dir, app_name.lower(), "distribution"),
-        )
+    distribution_dir = mozpath.join(source_dir, app_name.lower(), "distribution")
+    os.makedirs(distribution_dir, exist_ok=True)
 
-        return
+    destination_path = mozpath.join(distribution_dir, "distribution.ini")
+    if os.path.exists(destination_path):
+        os.remove(destination_path)
 
-    with TemporaryDirectory() as git_clone_dir:
-        subprocess.check_call(
-            [
-                "git",
-                "clone",
-                "https://github.com/mozilla-partners/deb.git",
-                git_clone_dir,
-            ],
-        )
-        shutil.copytree(
-            mozpath.join(git_clone_dir, "desktop/deb/distribution"),
-            mozpath.join(source_dir, app_name.lower(), "distribution"),
-        )
+    shutil.move(distribution_ini_path, destination_path)
 
 
 def inject_prefs_file(source_dir, app_name, template_dir):
     src = mozpath.join(template_dir, "package-prefs.js")
     dst = mozpath.join(source_dir, app_name.lower(), "defaults/pref")
     shutil.copy(src, dst)
-
-
-def load_application_ini_data(infile, version, build_number):
-    application_ini_data = _extract_application_ini_data(infile)
-    return _parse_application_ini_data(application_ini_data, version, build_number)
 
 
 def mv_manpage_files(source_dir, build_variables):
@@ -235,8 +199,12 @@ def prepare_langpack_files(output_dir, xpi_directory):
         manifest = get_manifest_from_langpack(xpi_file, output_dir)
         if manifest is not None:
             language = manifest["langpack_id"]
-            metadata[language] = manifest["description"]
-            output_file = mozpath.join(output_dir, f"{language}.langpack.xpi")
+            extension_id = manifest["browser_specific_settings"]["gecko"]["id"]
+            metadata[language] = {
+                "description": manifest["description"],
+                "extension_id": extension_id,
+            }
+            output_file = mozpath.join(output_dir, f"{extension_id}.xpi")
             shutil.copy(xpi_file, output_file)
 
     return metadata

@@ -90,7 +90,7 @@ class BaseEmulator(Device):
             binary=kwargs.pop("binary", None),
             avd=kwargs.pop("avd", None),
         )
-        super(BaseEmulator, self).__init__(app_ctx, **kwargs)
+        super().__init__(app_ctx, **kwargs)
         self.tmpdir = tempfile.mkdtemp()
         # These rely on telnet
         self.battery = EmulatorBattery(self)
@@ -161,14 +161,14 @@ class BaseEmulator(Device):
         if self.connected:
             return
 
-        super(BaseEmulator, self).connect()
+        super().connect()
         self.port = int(self.serial[self.serial.rindex("-") + 1 :])
 
     def cleanup(self):
         """
         Cleans up and kills the emulator, if it was started by mozrunner.
         """
-        super(BaseEmulator, self).cleanup()
+        super().cleanup()
         if self.proc:
             self.proc.kill()
             self.proc = None
@@ -205,7 +205,7 @@ class BaseEmulator(Device):
 
 class EmulatorAVD(BaseEmulator):
     def __init__(self, app_ctx, binary, avd, port=5554, **kwargs):
-        super(EmulatorAVD, self).__init__(app_ctx, binary=binary, avd=avd, **kwargs)
+        super().__init__(app_ctx, binary=binary, avd=avd, **kwargs)
         self.port = port
 
     @property
@@ -213,7 +213,7 @@ class EmulatorAVD(BaseEmulator):
         """
         Arguments to pass into the emulator binary.
         """
-        qemu_args = super(EmulatorAVD, self).args
+        qemu_args = super().args
         qemu_args.extend(["-avd", self.arch.avd, "-port", str(self.port)])
         qemu_args.extend(self.arch.extra_args)
         return qemu_args
@@ -225,4 +225,4 @@ class EmulatorAVD(BaseEmulator):
         env = os.environ
         env["ANDROID_AVD_HOME"] = self.app_ctx.avd_home
 
-        super(EmulatorAVD, self).start()
+        super().start()

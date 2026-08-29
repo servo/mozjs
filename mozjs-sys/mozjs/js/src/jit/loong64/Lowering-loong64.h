@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -40,9 +38,8 @@ class LIRGeneratorLOONG64 : public LIRGeneratorShared {
                         MDefinition* rhs);
 
   void lowerForFPU(LInstructionHelper<1, 1, 0>* ins, MDefinition* mir,
-                   MDefinition* src);
-  template <size_t Temps>
-  void lowerForFPU(LInstructionHelper<1, 2, Temps>* ins, MDefinition* mir,
+                   MDefinition* input);
+  void lowerForFPU(LInstructionHelper<1, 2, 0>* ins, MDefinition* mir,
                    MDefinition* lhs, MDefinition* rhs);
 
   // Returns a box allocation. reg2 is ignored on 64-bit platforms.
@@ -63,8 +60,6 @@ class LIRGeneratorLOONG64 : public LIRGeneratorShared {
   void lowerInt64PhiInput(MPhi*, uint32_t, LBlock*, size_t);
   void defineInt64Phi(MPhi*, size_t);
 
-  void lowerNegI(MInstruction* ins, MDefinition* input);
-  void lowerNegI64(MInstruction* ins, MDefinition* input);
   void lowerMulI(MMul* mul, MDefinition* lhs, MDefinition* rhs);
   void lowerDivI(MDiv* div);
   void lowerDivI64(MDiv* div);

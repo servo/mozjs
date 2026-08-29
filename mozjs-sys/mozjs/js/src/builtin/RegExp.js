@@ -127,7 +127,7 @@ function RegExpMatch(string) {
 
     if (global) {
       // Step 6.a.
-      var fullUnicode = !!(flags & REGEXP_UNICODE_FLAG) || !!(flags & REGEXP_UNICODESETS_FLAG);
+      var fullUnicode = !!(flags & REGEXP_ANY_UNICODE_MASK);
 
       // Steps 6.b-e.
       return RegExpGlobalMatchOpt(rx, S, fullUnicode);
@@ -731,7 +731,7 @@ function RegExpGetFunctionalReplacement(result, S, position, replaceValue) {
 //   * replaceValue is a string without "$"
 function RegExpGlobalReplaceOptSimple(rx, S, lengthS, replaceValue, flags) {
   // Step 9.a.
-  var fullUnicode = !!(flags & REGEXP_UNICODE_FLAG) || !!(flags &  REGEXP_UNICODESETS_FLAG);
+  var fullUnicode = !!(flags & REGEXP_ANY_UNICODE_MASK);
 
   // Step 9.b.
   var lastIndex = 0;
@@ -957,15 +957,19 @@ function RegExpSplit(string, limit) {
   if (optimizable) {
     // Step 5.
     flags = UnsafeGetInt32FromReservedSlot(rx, REGEXP_FLAGS_SLOT);
-
+    #ifdef NIGHTLY_BUILD
+    assert(!!(flags & REGEXP_LEGACY_FEATURES_ENABLED_FLAG),
+           "Legacy features must be enabled in optimized path");
+    #endif
     // Steps 6-7.
-    unicodeMatching = !!(flags & REGEXP_UNICODE_FLAG);
+    unicodeMatching = !!(flags & REGEXP_ANY_UNICODE_MASK);
 
     // Steps 8-10.
     // If split operation is optimizable, perform non-sticky match.
     if (flags & REGEXP_STICKY_FLAG) {
       var source = UnsafeGetStringFromReservedSlot(rx, REGEXP_SOURCE_SLOT);
-      splitter = RegExpConstructRaw(source, flags & ~REGEXP_STICKY_FLAG);
+      var newFlags = flags & ~(REGEXP_STICKY_FLAG | REGEXP_LEGACY_FEATURES_ENABLED_FLAG);
+      splitter = RegExpConstructRaw(source, newFlags, true);
     } else {
       splitter = rx;
     }
@@ -974,7 +978,7 @@ function RegExpSplit(string, limit) {
     flags = ToString(rx.flags);
 
     // Steps 6-7.
-    unicodeMatching = callFunction(std_String_includes, flags, "u");
+    unicodeMatching = callFunction(std_String_includes, flags, "u") || callFunction(std_String_includes, flags, "v");
 
     // Steps 8-9.
     var newFlags;
@@ -1222,6 +1226,10 @@ function RegExpMatchAll(string) {
     // Step 5, 9-12.
     source = UnsafeGetStringFromReservedSlot(rx, REGEXP_SOURCE_SLOT);
     flags = UnsafeGetInt32FromReservedSlot(rx, REGEXP_FLAGS_SLOT);
+    #ifdef NIGHTLY_BUILD
+    assert(!!(flags & REGEXP_LEGACY_FEATURES_ENABLED_FLAG),
+    "Legacy features must be enabled in optimized path");
+    #endif
 
     // Step 6.
     matcher = rx;
@@ -1244,8 +1252,9 @@ function RegExpMatchAll(string) {
     // Steps 9-12.
     flags =
       (callFunction(std_String_includes, flags, "g") ? REGEXP_GLOBAL_FLAG : 0) |
-      (callFunction(std_String_includes, flags, "u") ? REGEXP_UNICODE_FLAG : 0);
-
+      (callFunction(std_String_includes, flags, "u") ? REGEXP_UNICODE_FLAG : 0) |
+      (callFunction(std_String_includes, flags, "v") ? REGEXP_UNICODESETS_FLAG : 0);
+    
     // Take the non-optimized path.
     lastIndex = REGEXP_STRING_ITERATOR_LASTINDEX_SLOW;
   }
@@ -1327,7 +1336,7 @@ function RegExpStringIteratorNext() {
     REGEXP_STRING_ITERATOR_FLAGS_SLOT
   );
   var global = !!(flags & REGEXP_GLOBAL_FLAG);
-  var fullUnicode = !!(flags & REGEXP_UNICODE_FLAG) || !!(flags & REGEXP_UNICODESETS_FLAG);
+  var fullUnicode = !!(flags & REGEXP_ANY_UNICODE_MASK);
 
   if (lastIndex >= 0) {
     assert(IsRegExpObject(regexp), "|regexp| is a RegExp object");
@@ -1403,7 +1412,8 @@ function RegExpStringIteratorNext() {
     }
 
     // Reify the RegExp object.
-    regexp = RegExpConstructRaw(source, flags);
+    var newFlags = flags & ~REGEXP_LEGACY_FEATURES_ENABLED_FLAG;
+    regexp = RegExpConstructRaw(source, newFlags, true);
     regexp.lastIndex = lastIndex;
     UnsafeSetReservedSlot(obj, REGEXP_STRING_ITERATOR_REGEXP_SLOT, regexp);
 

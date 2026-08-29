@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -396,7 +394,7 @@ typedef enum JSGCParamKey {
   JSGC_HELPER_THREAD_COUNT = 41,
 
   /**
-   * A number that is incremented on every major GC slice.
+   * A number that is incremented at the start of every major GC.
    */
   JSGC_MAJOR_GC_NUMBER = 44,
 
@@ -508,6 +506,31 @@ typedef enum JSGCParamKey {
    * Pref: javascript.options.mem.nursery_max_time_goal_ms
    */
   JSGC_NURSERY_MAX_TIME_GOAL_MS = 57,
+
+  /*
+   * Sets the size of the store buffers used for generational GC.
+   *
+   * The JSGC_STORE_BUFFER_ENTRIES parameter sets the number of store buffer
+   * entries that will be used for a nursery size of 16MB. This is further
+   * scaled based on the actual nursery size and the JSGC_STORE_BUFFER_SCALING
+   * parameter according to the formula:
+   *
+   *    size
+   * ( (---- - 1) * JSGC_STORE_BUFFER_SCALING + 1 ) * JSGC_STORE_BUFFER_ENTRIES
+   *    16MB
+   *
+   */
+  JSGC_STORE_BUFFER_ENTRIES = 58,
+  JSGC_STORE_BUFFER_SCALING = 59,
+
+  /**
+   * Whether experimental concurrent marking support is enabled. This also
+   * requires that the code has been built with --enable-gc-concurrent-marking
+   * configuration flag.
+   *
+   * Default: false
+   */
+  JSGC_CONCURRENT_MARKING_ENABLED = 60,
 } JSGCParamKey;
 
 /*
@@ -516,21 +539,7 @@ typedef enum JSGCParamKey {
  */
 typedef void (*JSTraceDataOp)(JSTracer* trc, void* data);
 
-/*
- * Trace hook used to trace gray roots incrementally.
- *
- * This should return whether tracing is finished. It will be called repeatedly
- * in subsequent GC slices until it returns true.
- *
- * While tracing this should check the budget and return false if it has been
- * exceeded. When passed an unlimited budget it should always return true.
- */
-typedef bool (*JSGrayRootsTracer)(JSTracer* trc, JS::SliceBudget& budget,
-                                  void* data);
-
 typedef enum JSGCStatus { JSGC_BEGIN, JSGC_END } JSGCStatus;
-
-typedef void (*JSObjectsTenuredCallback)(JS::GCContext* gcx, void* data);
 
 typedef enum JSFinalizeStatus {
   /**
@@ -621,6 +630,7 @@ namespace JS {
   D(RESET, 9)                                                          \
   D(OUT_OF_NURSERY, 10)                                                \
   D(EVICT_NURSERY, 11)                                                 \
+  D(FULL_CELL_PTR_GETTER_SETTER_BUFFER, 12)                            \
   D(SHARED_MEMORY_LIMIT, 13)                                           \
   D(EAGER_NURSERY_COLLECTION, 14)                                      \
   D(BG_TASK_FINISHED, 15)                                              \
@@ -639,7 +649,7 @@ namespace JS {
   D(FULL_CELL_PTR_STR_BUFFER, 28)                                      \
   D(TOO_MUCH_JIT_CODE, 29)                                             \
   D(FULL_CELL_PTR_BIGINT_BUFFER, 30)                                   \
-  D(NURSERY_TRAILERS, 31)                                              \
+  D(UNUSED4, 31)                                                       \
   D(NURSERY_MALLOC_BUFFERS, 32)                                        \
                                                                        \
   /*                                                                   \
@@ -981,15 +991,6 @@ extern JS_PUBLIC_API bool AddGCNurseryCollectionCallback(
 extern JS_PUBLIC_API void RemoveGCNurseryCollectionCallback(
     JSContext* cx, GCNurseryCollectionCallback callback, void* data);
 
-typedef void (*DoCycleCollectionCallback)(JSContext* cx);
-
-/**
- * The purge gray callback is called after any COMPARTMENT_REVIVED GC in which
- * the majority of compartments have been marked gray.
- */
-extern JS_PUBLIC_API DoCycleCollectionCallback
-SetDoCycleCollectionCallback(JSContext* cx, DoCycleCollectionCallback callback);
-
 using CreateSliceBudgetCallback = JS::SliceBudget (*)(JS::GCReason reason,
                                                       int64_t millis);
 
@@ -1214,9 +1215,6 @@ extern JS_PUBLIC_API void JS_MaybeGC(JSContext* cx);
 extern JS_PUBLIC_API void JS_SetGCCallback(JSContext* cx, JSGCCallback cb,
                                            void* data);
 
-extern JS_PUBLIC_API void JS_SetObjectsTenuredCallback(
-    JSContext* cx, JSObjectsTenuredCallback cb, void* data);
-
 extern JS_PUBLIC_API bool JS_AddFinalizeCallback(JSContext* cx,
                                                  JSFinalizeCallback cb,
                                                  void* data);
@@ -1376,11 +1374,6 @@ extern JS_PUBLIC_API void SetHostCleanupFinalizationRegistryCallback(
  * https://tc39.es/proposal-weakrefs/#sec-clear-kept-objects
  */
 extern JS_PUBLIC_API void ClearKeptObjects(JSContext* cx);
-
-inline JS_PUBLIC_API bool NeedGrayRootsForZone(Zone* zoneArg) {
-  shadow::Zone* zone = shadow::Zone::from(zoneArg);
-  return zone->isGCMarkingBlackAndGray() || zone->isGCCompacting();
-}
 
 extern JS_PUBLIC_API bool AtomsZoneIsCollecting(JSRuntime* runtime);
 extern JS_PUBLIC_API bool IsAtomsZone(Zone* zone);

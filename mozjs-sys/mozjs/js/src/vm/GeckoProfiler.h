@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -20,8 +18,10 @@
 #include "js/AllocPolicy.h"
 #include "js/HashTable.h"
 #include "js/ProfilingCategory.h"
+#include "js/ProfilingSources.h"
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
+#include "threading/ExclusiveData.h"
 #include "threading/ProtectedData.h"
 
 /*
@@ -112,21 +112,23 @@ namespace js {
 
 class BaseScript;
 class GeckoProfilerThread;
+class ScriptSource;
 
-// The `ProfileStringMap` weakly holds its `BaseScript*` keys and owns its
-// string values. Entries are removed when the `BaseScript` is finalized; see
-// `GeckoProfiler::onScriptFinalized`.
-using ProfileStringMap = HashMap<BaseScript*, JS::UniqueChars,
-                                 DefaultHasher<BaseScript*>, SystemAllocPolicy>;
+using ProfilerScriptSourceSet =
+    HashSet<RefPtr<ScriptSource>, PointerHasher<ScriptSource*>,
+            SystemAllocPolicy>;
 
 class GeckoProfilerRuntime {
   JSRuntime* rt;
-  MainThreadData<ProfileStringMap> strings_;
+  RWExclusiveData<ProfilerScriptSourceSet> scriptSources_;
   bool slowAssertions;
   uint32_t enabled_;
   void (*eventMarker_)(mozilla::MarkerCategory, const char*, const char*);
   void (*intervalMarker_)(mozilla::MarkerCategory, const char*,
                           mozilla::TimeStamp, const char*);
+  void (*flowMarker_)(mozilla::MarkerCategory, const char*, uint64_t);
+  void (*terminatingFlowMarker_)(mozilla::MarkerCategory, const char*,
+                                 uint64_t);
 
  public:
   explicit GeckoProfilerRuntime(JSRuntime* rt);
@@ -141,11 +143,13 @@ class GeckoProfilerRuntime {
                                  const char*));
   void setIntervalMarker(void (*fn)(mozilla::MarkerCategory, const char*,
                                     mozilla::TimeStamp, const char*));
+  void setFlowMarker(void (*fn)(mozilla::MarkerCategory, const char*,
+                                uint64_t));
+  void setTerminatingFlowMarker(void (*fn)(mozilla::MarkerCategory, const char*,
+                                           uint64_t));
 
   static JS::UniqueChars allocProfileString(JSContext* cx, BaseScript* script);
   const char* profileString(JSContext* cx, BaseScript* script);
-
-  void onScriptFinalized(BaseScript* script);
 
   void markEvent(
       const char* event, const char* details,
@@ -155,23 +159,37 @@ class GeckoProfilerRuntime {
       const char* event, mozilla::TimeStamp start, const char* details,
       JS::ProfilingCategoryPair jsPair = JS::ProfilingCategoryPair::JS);
 
-  ProfileStringMap& strings() { return strings_.ref(); }
+  // Note that flowId will be added as a process-scoped id for both
+  // markFlow and markTerminatingFlow.
+  //
+  // See baseprofiler/public/Flow.h
+  void markFlow(
+      const char* markerName, uint64_t flowId,
+      JS::ProfilingCategoryPair jsPair = JS::ProfilingCategoryPair::JS);
+  void markTerminatingFlow(
+      const char* markerName, uint64_t flowId,
+      JS::ProfilingCategoryPair jsPair = JS::ProfilingCategoryPair::JS);
 
-  /* meant to be used for testing, not recommended to call in normal code */
+  // Test interface. Don't call these in normal code.
   size_t stringsCount();
   void stringsReset();
 
+  bool insertScriptSource(ScriptSource* scriptSource) {
+    MOZ_ASSERT(scriptSource);
+    auto guard = scriptSources_.writeLock();
+    if (!enabled_) {
+      return true;
+    }
+
+    return guard->put(scriptSource);
+  }
+
+  js::ProfilerJSSources getProfilerScriptSources(bool gatherSourceText);
+
+  size_t scriptSourcesCount() { return scriptSources_.readLock()->count(); }
+
   const uint32_t* addressOfEnabled() const { return &enabled_; }
-
-  void fixupStringsMapAfterMovingGC();
-#ifdef JSGC_HASH_TABLE_CHECKS
-  void checkStringsMapAfterMovingGC();
-#endif
 };
-
-inline size_t GeckoProfilerRuntime::stringsCount() { return strings().count(); }
-
-inline void GeckoProfilerRuntime::stringsReset() { strings().clear(); }
 
 /*
  * This class is used in RunScript() to push the marker onto the sampling stack
@@ -260,7 +278,7 @@ class MOZ_RAII GeckoProfilerBaselineOSRMarker {
 
  private:
   GeckoProfilerThread* profiler;
-  mozilla::DebugOnly<uint32_t> spBefore_;
+  mozilla::DebugOnly<uint32_t> spBefore_ = 0;
 };
 
 } /* namespace js */

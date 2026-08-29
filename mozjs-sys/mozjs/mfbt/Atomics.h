@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,8 +22,8 @@
 #  include <atomic>
 #endif  // __wasi__
 
-#include <stddef.h>  // For ptrdiff_t
-#include <stdint.h>
+#include <cstddef>
+#include <cstdint>
 #include <type_traits>
 
 #if defined(__i386) || defined(_M_IX86) || defined(__x86_64__) || \
@@ -255,8 +253,8 @@ struct IntrinsicIncDec : public IntrinsicAddSub<T, Order> {
 };
 
 template <typename T, MemoryOrdering Order>
-struct AtomicIntrinsics : public IntrinsicMemoryOps<T, Order>,
-                          public IntrinsicIncDec<T, Order> {
+struct MOZ_EMPTY_BASES AtomicIntrinsics : public IntrinsicMemoryOps<T, Order>,
+                                          public IntrinsicIncDec<T, Order> {
   typedef IntrinsicBase<T, Order> Base;
 
   static T or_(typename Base::ValueType& aPtr, T aVal) {
@@ -273,8 +271,9 @@ struct AtomicIntrinsics : public IntrinsicMemoryOps<T, Order>,
 };
 
 template <typename T, MemoryOrdering Order>
-struct AtomicIntrinsics<T*, Order> : public IntrinsicMemoryOps<T*, Order>,
-                                     public IntrinsicIncDec<T*, Order> {};
+struct MOZ_EMPTY_BASES
+    AtomicIntrinsics<T*, Order> : public IntrinsicMemoryOps<T*, Order>,
+                                  public IntrinsicIncDec<T*, Order> {};
 
 template <typename T>
 struct ToStorageTypeArgument {
@@ -540,6 +539,12 @@ inline void cpu_pause() {
 #if defined(__i386) || defined(_M_IX86) || defined(__x86_64__) || \
     defined(_M_X64)
   _mm_pause();
+#elif defined(__aarch64__) || defined(__arm__)
+  // TODO: Rust uses isb rather than yield on aarch64, see
+  // https://github.com/rust-lang/rust/pull/84725
+  __asm__ __volatile__("yield");
+#else
+  __asm__ __volatile__("" ::: "memory");
 #endif
 }
 

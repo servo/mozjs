@@ -169,7 +169,6 @@ class TaskPool:
                 # Remove the finished tasks from the running set. (Do this here
                 # to avoid mutating the set while iterating over it.)
                 running -= finished
-        return None
 
 
 def get_cpu_count():
@@ -211,11 +210,11 @@ if __name__ == "__main__":
 
         class SortableTask(TaskPool.Task):
             def __init__(self, n):
-                super(SortableTask, self).__init__()
+                super().__init__()
                 self.n = n
 
             def start(self, pipe, deadline):
-                super(SortableTask, self).start(pipe, deadline)
+                super().start(pipe, deadline)
 
             def cmd(self):
                 return ["sh", "-c", "echo out; sleep %d; echo err>&2" % (self.n,)]

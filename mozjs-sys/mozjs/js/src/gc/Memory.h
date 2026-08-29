@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -52,6 +50,11 @@ enum class StallAndRetry : bool {
 void* MapAlignedPages(size_t length, size_t alignment,
                       StallAndRetry stallAndRetry = StallAndRetry::No);
 void UnmapPages(void* region, size_t length);
+
+// Map the region below the current stack pointer as a stack, down to the
+// allowed JS stack depth, so that heap allocations will never intersect with
+// the space that the stack may expand into. (Only on Linux fuzzing builds.)
+void MapStack(size_t stackSize);
 
 // We only decommit unused pages if the system page size is the same as the
 // hardcoded page size for the build.

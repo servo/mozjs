@@ -4,6 +4,7 @@
 
 import argparse
 import plistlib
+import re
 import ssl
 import sys
 from io import BytesIO
@@ -12,6 +13,8 @@ from xml.dom import minidom
 
 import certifi
 from mozpack.macpkg import Pbzx, uncpio, unxar
+
+STRING_VALUES_RE = re.compile(r'"(?P<key>[^"]+)"\s*=\s*"(?P<value>[^"]+)";')
 
 
 def get_english(dict, default=None):
@@ -77,15 +80,37 @@ def show_product_info(product, package_id=None):
                             print(id, p["URL"])
 
 
+def product_matches_filter(product, filter=None):
+    return filter and all(
+        filter not in package.get("MetadataURL", "")
+        for package in product.get("Packages", [])
+    )
+
+
 def show_products(products, filter=None):
     for key, product in products.items():
-        metadata_url = product.get("ServerMetadataURL", "")
-        if metadata_url and (not filter or filter in metadata_url):
+        if product_matches_filter(product, filter):
+            continue
+        if metadata_url := product.get("ServerMetadataURL"):
             metadata = get_plist_at(metadata_url)
             localization = get_english(metadata.get("localization", {}), {})
             title = localization.get("title", None)
             version = metadata.get("CFBundleShortVersionString", None)
             print(key, title, version)
+        elif dist := get_english(product.get("Distributions", {})):
+            data = get_content_at(dist)
+            dom = minidom.parseString(data.decode("utf-8"))
+            strings = {}
+            for s in dom.getElementsByTagName("strings"):
+                if s.firstChild:
+                    for m in STRING_VALUES_RE.finditer(s.firstChild.data):
+                        strings[m.group("key")] = m.group("value")
+            titles = dom.getElementsByTagName("title")
+            title = (
+                titles[0].firstChild.data if titles and titles[0].firstChild else None
+            )
+            title = strings.get(title, title)
+            print(key, title)
 
 
 def main():
@@ -93,7 +118,7 @@ def main():
     parser.add_argument(
         "--catalog",
         help="URL of the catalog",
-        default="https://swscan.apple.com/content/catalogs/others/index-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
+        default="https://swscan.apple.com/content/catalogs/others/index-26-15-14-13-12-10.16-10.15-10.14-10.13-10.12-10.11-10.10-10.9-mountainlion-lion-snowleopard-leopard.merged-1.sucatalog",
     )
     parser.add_argument(
         "--filter", help="Only show entries with metadata url matching the filter"

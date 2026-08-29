@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -92,6 +90,9 @@ struct Streaming {
   };
 };
 
+template <typename T>
+concept HasStreamJSONMarkerData = requires { T::StreamJSONMarkerData; };
+
 // This helper will examine a marker type's `StreamJSONMarkerData` function, see
 // specialization below.
 template <typename T>
@@ -123,16 +124,50 @@ struct StreamFunctionTypeHelper<R(baseprofiler::SpliceableJSONWriter&, As...)> {
   }
 };
 
+// Parallel to StreamFunctionTypeHelper but driven by T::PayloadFields instead
+// of a StreamJSONMarkerData signature. Used for BaseMarkerType-derived markers
+// that don't define their own StreamJSONMarkerData.
+// Forward declaration, specialized below on the expanded TupleType.
+template <typename T, typename TupleType = detail::PayloadFieldsTuple<T>>
+struct PayloadFieldsStreamHelper;
+
+template <typename T, typename... PayloadTypes>
+struct PayloadFieldsStreamHelper<T, std::tuple<PayloadTypes...>> {
+  constexpr static size_t scArity = sizeof...(PayloadTypes);
+  using TupleType = std::tuple<PayloadTypes...>;
+
+  // Concrete parameter types ensure implicit conversions (e.g.
+  // NS_ConvertUTF16toUTF8 → ProfilerString8View) happen at the call site.
+  static ProfileBufferBlockIndex Serialize(
+      ProfileChunkedBuffer& aBuffer, const ProfilerString8View& aName,
+      const MarkerCategory& aCategory, MarkerOptions&& aOptions,
+      Streaming::DeserializerTag aDeserializerTag, const PayloadTypes&... aTs) {
+    return aBuffer.PutObjects(ProfileBufferEntryKind::Marker, aOptions, aName,
+                              aCategory, aDeserializerTag,
+                              MarkerPayloadType::Cpp, aTs...);
+  }
+};
+
+// Lazily selects between StreamFunctionTypeHelper (when T defines
+// StreamJSONMarkerData) and PayloadFieldsStreamHelper (when it doesn't).
+template <typename T, bool = HasStreamJSONMarkerData<T>>
+struct StreamFunctionTypeSelector;
+template <typename T>
+struct StreamFunctionTypeSelector<T, true> {
+  using Type = StreamFunctionTypeHelper<decltype(T::StreamJSONMarkerData)>;
+};
+template <typename T>
+struct StreamFunctionTypeSelector<T, false> {
+  using Type = PayloadFieldsStreamHelper<T>;
+};
+
 // Helper for a marker type.
 // A marker type is defined in a `struct` with some expected static member
 // functions. See example in BaseProfilerMarkers.h.
 template <typename MarkerType>
 struct MarkerTypeSerialization {
-  // Definitions to access the expected
-  // `StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter&, ...)` function
-  // and its parameters.
   using StreamFunctionType =
-      StreamFunctionTypeHelper<decltype(MarkerType::StreamJSONMarkerData)>;
+      typename StreamFunctionTypeSelector<MarkerType>::Type;
   constexpr static size_t scStreamFunctionParameterCount =
       StreamFunctionType::scArity;
   using StreamFunctionUserParametersTuple =
@@ -169,8 +204,9 @@ struct MarkerTypeSerialization {
 
  private:
   // This templated function will recursively deserialize each argument expected
-  // by `MarkerType::StreamJSONMarkerData()` on the stack, and call it at the
-  // end. E.g., for `StreamJSONMarkerData(int, char)`:
+  // by `MarkerType::StreamJSONMarkerData()` (or `StreamJSONMarkerDataImpl` for
+  // BaseMarkerType-derived types without a custom stream function) on the
+  // stack, and call it at the end. E.g., for `StreamJSONMarkerData(int, char)`:
   // - DeserializeArguments<0>(aER, aWriter) reads an int and calls:
   // - DeserializeArguments<1>(aER, aWriter, const int&) reads a char and calls:
   // - MarkerType::StreamJSONMarkerData(aWriter, const int&, const char&).
@@ -189,11 +225,14 @@ struct MarkerTypeSerialization {
       // Add our local argument to the next recursive call.
       DeserializeArguments<i + 1>(aEntryReader, aWriter, aArgs..., argument);
     } else {
-      // We've read all the arguments, finally call the `StreamJSONMarkerData`
-      // function, which should write the appropriate JSON elements for this
-      // marker type. Note that the MarkerType-specific "type" element is
-      // already written.
-      MarkerType::StreamJSONMarkerData(aWriter, aArgs...);
+      // We've read all the arguments, finally call the streaming function,
+      // which should write the appropriate JSON elements for this marker type.
+      // Note that the MarkerType-specific "type" element is already written.
+      if constexpr (HasStreamJSONMarkerData<MarkerType>) {
+        MarkerType::StreamJSONMarkerData(aWriter, aArgs...);
+      } else {
+        MarkerType::StreamJSONMarkerDataImpl(aWriter, aArgs...);
+      }
     }
   }
 

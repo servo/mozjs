@@ -49,6 +49,7 @@ use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::MutableHandleValue as RawMutableHandleValue;
 use crate::jsapi::StackFormat;
 use crate::jsapi::{already_AddRefed, jsid};
+use crate::jsapi::{BorrowedErrorReport, Rooted};
 use crate::jsapi::{HandleValueArray, StencilRelease};
 use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
 use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
@@ -1419,6 +1420,27 @@ where
     Ok(())
 }
 
+/// Helper for creating a `BorrowedErrorReport`
+///
+/// `BorrowedErrorReport` needs to be pinned and rooted.
+pub fn borrowed_error_report<F, R>(cx: &crate::context::JSContext, f: F) -> R
+where
+    F: FnOnce(&crate::context::JSContext, &mut BorrowedErrorReport) -> R,
+{
+    let mut report = BorrowedErrorReport {
+        owner_: Rooted::new_unrooted(ptr::null_mut()),
+        report_: ptr::null_mut(),
+    };
+    unsafe {
+        Rooted::add_to_root_stack(&mut report.owner_, cx.raw_cx_no_gc());
+    }
+    let result = f(cx, &mut report);
+    unsafe {
+        report.owner_.remove_from_root_stack();
+    }
+    result
+}
+
 /// Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments
 #[deprecated(note = "Use wrappers2 instead")]
 pub mod wrappers {
@@ -1512,11 +1534,14 @@ pub mod wrappers {
     use crate::jsapi::ColumnNumberOneOrigin;
     use crate::jsapi::CompartmentTransplantCallback;
     use crate::jsapi::EnvironmentChain;
+    use crate::jsapi::GenericMicroTask;
     use crate::jsapi::JSONParseHandler;
     use crate::jsapi::Latin1Char;
     use crate::jsapi::PropertyKey;
     use crate::jsapi::TaggedColumnNumberOneOrigin;
     //use jsapi::DynamicImportStatus;
+    use crate::jsapi::BorrowedErrorReport;
+    use crate::jsapi::CollectDelazificationsResult;
     use crate::jsapi::ESClass;
     use crate::jsapi::ExceptionStackBehavior;
     use crate::jsapi::ForOfIterator;
@@ -1528,6 +1553,7 @@ pub mod wrappers {
     use crate::jsapi::JSExnType;
     use crate::jsapi::JSFunctionSpecWithHelp;
     use crate::jsapi::JSJitInfo;
+    use crate::jsapi::JSMicroTask;
     use crate::jsapi::JSONWriteCallback;
     use crate::jsapi::JSPrincipals;
     use crate::jsapi::JSPropertySpec;
@@ -1536,6 +1562,8 @@ pub mod wrappers {
     use crate::jsapi::JSScript;
     use crate::jsapi::JSStructuredCloneData;
     use crate::jsapi::JSType;
+    use crate::jsapi::LoadModuleRejectedCallback;
+    use crate::jsapi::LoadModuleResolvedCallback;
     use crate::jsapi::ModuleErrorBehaviour;
     use crate::jsapi::ModuleType;
     use crate::jsapi::MutableHandleIdVector;

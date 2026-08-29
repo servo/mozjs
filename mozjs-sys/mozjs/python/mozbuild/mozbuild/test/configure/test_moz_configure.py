@@ -2,15 +2,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from functools import cached_property
+
 from mozunit import main
 
 from common import BaseConfigureTest, ConfigureTestSandbox
-from mozbuild.util import ReadOnlyNamespace, memoized_property
+from mozbuild.util import ReadOnlyNamespace
 
 
 def sandbox_class(platform):
     class ConfigureTestSandboxOverridingPlatform(ConfigureTestSandbox):
-        @memoized_property
+        @cached_property
         def _wrapped_sys(self):
             sys = {}
             exec("from sys import *", sys)
@@ -102,9 +104,6 @@ class TestTargetWindows(TargetTest):
         self.assertEqual(
             self.get_target(["--host=x86_64-pc-windows-gnu"]), "x86_64-pc-windows-gnu"
         )
-        self.assertEqual(
-            self.get_target(["--host=x86_64-pc-mingw32"]), "x86_64-pc-mingw32"
-        )
 
 
 class TestTargetAndroid(TargetTest):
@@ -154,7 +153,7 @@ class TestTargetOpenBSD(TargetTest):
     def config_sub(self, stdin, args):
         if args[0] == "amd64-unknown-openbsd6.4":
             return 0, "x86_64-unknown-openbsd6.4", ""
-        return super(TestTargetOpenBSD, self).config_sub(stdin, args)
+        return super().config_sub(stdin, args)
 
 
 class TestMozConfigure(BaseConfigureTest):

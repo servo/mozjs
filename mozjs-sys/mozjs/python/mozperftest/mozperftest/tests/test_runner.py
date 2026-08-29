@@ -48,17 +48,13 @@ def test_side_by_side(arg, patched_mozperftest_tools):
         "mozperftest.runner._create_artifacts_dir", return_value="fake_path"
     ) as _, mock.patch(
         "mozperftest.runner._save_params", return_value="fake_path"
-    ) as _, mock.patch(
-        "sys.modules", return_value=mock.MagicMock()
-    ) as _:
-        main(
-            [
-                "tools",
-                "side-by-side",
-                "-t",
-                "fake-test-name",
-            ]
-        )
+    ) as _, mock.patch("sys.modules", return_value=mock.MagicMock()) as _:
+        main([
+            "tools",
+            "side-by-side",
+            "-t",
+            "fake-test-name",
+        ])
 
 
 if __name__ == "__main__":

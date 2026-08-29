@@ -62,7 +62,7 @@ def prod(*iterables):
 
 def getid(descs):
     "Convert a list of ints to a string."
-    return reduce(lambda x, y: x + "{0}{1}".format(*tuple(y)), descs, "")
+    return reduce(lambda x, y: x + "{}{}".format(*tuple(y)), descs, "")
 
 
 def getContent(length):
@@ -207,6 +207,7 @@ for first in allfiles:
 
 class TestExtensiveDeflated(TestExtensiveStored):
     "Test all that has been tested with ZIP_STORED with DEFLATED, too."
+
     compression = zipfile.ZIP_DEFLATED
 
 

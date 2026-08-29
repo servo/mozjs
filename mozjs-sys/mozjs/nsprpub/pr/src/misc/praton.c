@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /*******************************************************************************
  * The following function pr_inet_aton is based on the BSD function inet_aton
  * with some modifications. The license and copyright notices applying to this

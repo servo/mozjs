@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -323,7 +321,8 @@ void CPUInfo::ComputeFlags() {
 
   static constexpr int AVXBit = 1 << 28;
   static constexpr int XSAVEBit = 1 << 27;
-  avxPresent = (flagsEcx & AVXBit) && (flagsEcx & XSAVEBit) && avxEnabled;
+  bool avxSupported = (flagsEcx & AVXBit);
+  avxPresent = avxSupported && (flagsEcx & XSAVEBit) && avxEnabled;
 
   // If the hardware supports AVX, check whether the OS supports it too.
   if (avxPresent) {
@@ -360,10 +359,23 @@ void CPUInfo::ComputeFlags() {
   flagsEax = 0x7;
   ReadCPUInfo(&flagsEax, &flagsEbx, &flagsEcx, &flagsEdx);
 
+  // BMI1/2 instructions can have a VEX prefix. If the CPU doesn't support AVX,
+  // it may not be able to decode the VEX prefix. So only enable BMI1 when AVX
+  // is also supported.
+  //
+  // NOTE: This doesn't affect real hardware, because if BMI1 is supported by
+  // the CPU, then AVX is also supported. Emulators on the other hand can
+  // disable specific CPU features and emulate a CPU which supports BMI1, but
+  // not AVX.
+  //
+  // Old QEMU versions (before release 7.2) don't support AVX, but appear to
+  // report BMI1 as supported. When using BMI1 instructions with a VEX prefix,
+  // like for example ANDN, QEMU will then abort because it can't decode ANDN.
+  // Therefore we only enable BMI1 when AVX is also reported as supported.
   static constexpr int BMI1Bit = 1 << 3;
   static constexpr int BMI2Bit = 1 << 8;
   static constexpr int AVX2Bit = 1 << 5;
-  bmi1Present = (flagsEbx & BMI1Bit);
+  bmi1Present = avxSupported && (flagsEbx & BMI1Bit);
   bmi2Present = bmi1Present && (flagsEbx & BMI2Bit);
   avx2Present = avxPresent && (flagsEbx & AVX2Bit);
 

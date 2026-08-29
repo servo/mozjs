@@ -14,22 +14,22 @@ from .structuredlog import StructuredLogger, set_default_logger
 log_formatters = {
     "raw": (
         formatters.JSONFormatter,
-        "Raw structured log messages " "(provided by mozlog)",
+        "Raw structured log messages (provided by mozlog)",
     ),
     "unittest": (
         formatters.UnittestFormatter,
-        "Unittest style output " "(provided by mozlog)",
+        "Unittest style output (provided by mozlog)",
     ),
     "xunit": (
         formatters.XUnitFormatter,
-        "xUnit compatible XML " "(provided by mozlog)",
+        "xUnit compatible XML (provided by mozlog)",
     ),
-    "html": (formatters.HTMLFormatter, "HTML report " "(provided by mozlog)"),
-    "mach": (formatters.MachFormatter, "Human-readable output " "(provided by mozlog)"),
-    "tbpl": (formatters.TbplFormatter, "TBPL style log format " "(provided by mozlog)"),
+    "html": (formatters.HTMLFormatter, "HTML report (provided by mozlog)"),
+    "mach": (formatters.MachFormatter, "Human-readable output (provided by mozlog)"),
+    "tbpl": (formatters.TbplFormatter, "TBPL style log format (provided by mozlog)"),
     "grouped": (
         formatters.GroupingFormatter,
-        "Grouped summary of test results " "(provided by mozlog)",
+        "Grouped summary of test results (provided by mozlog)",
     ),
     "errorsummary": (formatters.ErrorSummaryFormatter, argparse.SUPPRESS),
 }
@@ -70,6 +70,10 @@ def screenshot_wrapper(formatter, enable_screenshot):
 
 def valgrind_handler_wrapper(handler):
     return handlers.ValgrindHandler(handler)
+
+
+def unexpected_only_handler_wrapper(handler):
+    return handlers.UnexpectedOnlyHandler(handler)
 
 
 def default_formatter_options(log_type, overrides):
@@ -122,6 +126,12 @@ fmt_options = {
         "Disable logging reftest-analyzer compatible screenshot data.",
         {"mach"},
         "store_false",
+    ),
+    "unexpectedonly": (
+        unexpected_only_handler_wrapper,
+        "Suppress process output for tests with expected results.",
+        {"mach", "raw", "tbpl"},
+        "store_true",
     ),
 }
 
@@ -227,6 +237,8 @@ def setup_handlers(logger, formatters, formatter_options, allow_unused_options=F
             wrapper, wrapper_args = None, ()
             if option == "valgrind":
                 wrapper = valgrind_handler_wrapper
+            elif option == "unexpectedonly":
+                wrapper = unexpected_only_handler_wrapper
             elif option == "buffer":
                 wrapper, wrapper_args = fmt_options[option][0], (value,)
             else:
@@ -337,6 +349,7 @@ def setup_logging(
         for name in formatters:
             formatter_options[name]["valgrind"] = True
     setup_handlers(logger, formatters, formatter_options, allow_unused_options)
+
     set_default_logger(logger)
 
     return logger

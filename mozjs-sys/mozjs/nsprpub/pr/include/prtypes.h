@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -208,22 +207,12 @@ PR_BEGIN_EXTERN_C
 #if PR_BYTES_PER_BYTE == 1
 typedef unsigned char PRUint8;
 /*
-** There are two scenarios that require us to define PRInt8 as type 'char'.
-** (1)
-** Some cfront-based C++ compilers do not like 'signed char' and
-** issue the warning message:
-**     warning: "signed" not implemented (ignored)
-** For these compilers, we have to define PRInt8 as plain 'char'.
-** Make sure that plain 'char' is indeed signed under these compilers.
-** (2)
 ** Mozilla C++ code expects the PRInt{N} and int{N}_t types to match (see bug
 ** 634793). If a platform defines int8_t as 'char', but NSPR defines it as
 ** 'signed char', it results in a type mismatch.
 ** On such platforms we define PRInt8 as 'char' to avoid the mismatch.
 */
-#if (defined(HPUX) && defined(__cplusplus) /* reason 1*/ \
-        && !defined(__GNUC__) && __cplusplus < 199707L) \
-    || (defined(__sun) && defined(__cplusplus)) /* reason 2 */
+#if defined(__sun) && defined(__cplusplus)
 typedef char PRInt8;
 #else
 typedef signed char PRInt8;

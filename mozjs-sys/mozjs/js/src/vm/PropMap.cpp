@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -135,13 +133,6 @@ DictionaryPropMap* SharedPropMap::toDictionaryMap(JSContext* cx,
 static MOZ_ALWAYS_INLINE SharedPropMap* PropMapChildReadBarrier(
     SharedPropMap* parent, SharedPropMap* child) {
   JS::Zone* zone = child->zone();
-  if (zone->needsIncrementalBarrier()) {
-    // We need a read barrier for the map tree, since these are weak
-    // pointers.
-    ReadBarrier(child);
-    return child;
-  }
-
   if (MOZ_UNLIKELY(zone->isGCSweeping() &&
                    IsAboutToBeFinalizedUnbarriered(child))) {
     // The map we've found is unreachable and due to be finalized, so
@@ -151,9 +142,9 @@ static MOZ_ALWAYS_INLINE SharedPropMap* PropMapChildReadBarrier(
     return nullptr;
   }
 
-  // We don't yield to the mutator when the zone is in this state so we don't
-  // need to account for it here.
-  MOZ_ASSERT(!zone->isGCCompacting());
+  // We need a read barrier for the map tree, since these are weak
+  // pointers.
+  ReadBarrier(child);
 
   return child;
 }
@@ -459,50 +450,26 @@ bool SharedPropMap::freezeOrSealProperties(JSContext* cx, IntegrityLevel level,
                                            MutableHandle<SharedPropMap*> map,
                                            uint32_t mapLength,
                                            ObjectFlags* objectFlags) {
-  // Add all maps to a Vector so we can iterate over them in reverse order
-  // (property definition order).
-  JS::RootedVector<SharedPropMap*> maps(cx);
-  {
-    SharedPropMap* curMap = map;
-    while (true) {
-      if (!maps.append(curMap)) {
-        return false;
-      }
-      if (!curMap->hasPrevious()) {
-        break;
-      }
-      curMap = curMap->asNormal()->previous();
-    }
-  }
-
   // Build a new SharedPropMap by adding each property with the changed
   // attributes.
   Rooted<SharedPropMap*> newMap(cx);
   uint32_t newMapLength = 0;
 
   Rooted<PropertyKey> key(cx);
-  Rooted<SharedPropMap*> curMap(cx);
-
-  for (size_t i = maps.length(); i > 0; i--) {
-    curMap = maps[i - 1];
-    uint32_t len = (i == 1) ? mapLength : PropMap::Capacity;
-
-    for (uint32_t j = 0; j < len; j++) {
-      key = curMap->getKey(j);
-      PropertyInfo prop = curMap->getPropertyInfo(j);
-      PropertyFlags flags =
-          ComputeFlagsForSealOrFreeze(key, prop.flags(), level);
-
-      if (prop.isCustomDataProperty()) {
-        if (!addCustomDataProperty(cx, clasp, &newMap, &newMapLength, key,
-                                   flags, objectFlags)) {
-          return false;
-        }
-      } else {
-        if (!addPropertyWithKnownSlot(cx, clasp, &newMap, &newMapLength, key,
-                                      flags, prop.slot(), objectFlags)) {
-          return false;
-        }
+  SharedPropMapAndIndex mapAndIndex(map, mapLength - 1);
+  for (SharedPropMapIter iter(cx, mapAndIndex); !iter.done(); iter.next()) {
+    key = iter.key();
+    PropertyInfo prop = iter.prop();
+    PropertyFlags flags = ComputeFlagsForSealOrFreeze(key, prop.flags(), level);
+    if (prop.isCustomDataProperty()) {
+      if (!addCustomDataProperty(cx, clasp, &newMap, &newMapLength, key, flags,
+                                 objectFlags)) {
+        return false;
+      }
+    } else {
+      if (!addPropertyWithKnownSlot(cx, clasp, &newMap, &newMapLength, key,
+                                    flags, prop.slot(), objectFlags)) {
+        return false;
       }
     }
   }
@@ -861,11 +828,11 @@ void SharedPropMap::fixupAfterMovingGC() {
   }
 
   SharedChildrenSet* set = childrenRef.toChildrenSet();
-  for (SharedChildrenSet::Enum e(*set); !e.empty(); e.popFront()) {
-    SharedPropMapAndIndex child = e.front();
+  for (auto iter = set->modIter(); !iter.done(); iter.next()) {
+    SharedPropMapAndIndex child = iter.get();
     if (IsForwarded(child.map())) {
       child = SharedPropMapAndIndex(Forwarded(child.map()), child.index());
-      e.mutableFront() = child;
+      iter.getMutable() = child;
     }
   }
 }
@@ -901,8 +868,7 @@ void SharedPropMap::removeChild(JS::GCContext* gcx, SharedPropMap* child) {
 
   if (set->count() == 1) {
     // Convert from set form back to single child form.
-    SharedChildrenSet::Range r = set->all();
-    SharedPropMapAndIndex remainingChild = r.front();
+    SharedPropMapAndIndex remainingChild = set->iter().get();
     childrenRef.setSingleChild(remainingChild);
     clearHasChildrenSet();
     gcx->delete_(this, set, MemoryUse::PropMapChildren);
@@ -961,11 +927,11 @@ bool PropMapTable::init(JSContext* cx, LinkedPropMap* map) {
 void PropMapTable::trace(JSTracer* trc) {
   purgeCache();
 
-  for (Set::Enum e(set_); !e.empty(); e.popFront()) {
-    PropMap* map = e.front().map();
+  for (auto iter = set_.modIter(); !iter.done(); iter.next()) {
+    PropMap* map = iter.get().map();
     TraceManuallyBarrieredEdge(trc, &map, "PropMapTable map");
-    if (map != e.front().map()) {
-      e.mutableFront() = PropMapAndIndex(map, e.front().index());
+    if (map != iter.get().map()) {
+      iter.getMutable() = PropMapAndIndex(map, iter.get().index());
     }
   }
 }
@@ -1121,18 +1087,13 @@ void PropMap::forEachPropMapFlag(uintptr_t flags, KnownF known,
 }
 
 const char* PropMapTypeToString(const js::PropMap* map) {
-  if (map->isLinked()) {
-    return "js::LinkedPropMap";
+  if (map->isDictionary()) {
+    return "js::DictionaryPropMap";
   }
-
-  if (map->isShared()) {
-    if (map->isCompact()) {
-      return "js::CompactPropMap";
-    }
-    return "js::NormalPropMap";
+  if (map->isCompact()) {
+    return "js::CompactPropMap";
   }
-
-  return "js::DictionaryPropMap";
+  return "js::NormalPropMap";
 }
 
 void PropMap::dumpFields(js::JSONPrinter& json) const {
@@ -1376,4 +1337,42 @@ JS::ubi::Node::Size JS::ubi::Concrete<PropMap>::size(
   size_t tables = 0;
   get().addSizeOfExcludingThis(mallocSizeOf, &children, &tables);
   return size + children + tables;
+}
+
+SharedPropMapIter::SharedPropMapIter(
+    JSContext* cx, mozilla::Maybe<SharedPropMapAndIndex> start,
+    SharedPropMapAndIndex end)
+    : maps_(cx),
+      propIdx_(start.isSome() ? start->index() : 0),
+      endIdx_(end.index()) {
+  // Add all maps to a Vector so we can iterate over them in reverse order
+  // (property definition order).
+
+  SharedPropMap* curMap = end.map();
+  AutoEnterOOMUnsafeRegion oom;
+  while (true) {
+    if (!maps_.append(curMap)) {
+      oom.crash("SharedPropMapIter constructor");
+    }
+    if (start.isSome() && curMap == start->map()) {
+      break;
+    }
+    if (!curMap->hasPrevious()) {
+      MOZ_ASSERT(start.isNothing());
+      break;
+    }
+    curMap = curMap->asLinked()->previous()->asShared();
+  }
+  mapIdx_ = maps_.length() - 1;
+}
+
+SharedPropMapIter::SharedPropMapIter(JSContext* cx, SharedPropMapAndIndex end)
+    : SharedPropMapIter(cx, mozilla::Nothing(), end) {}
+
+SharedPropMapIter::SharedPropMapIter(JSContext* cx,
+                                     SharedPropMapAndIndex startAfter,
+                                     SharedPropMapAndIndex end)
+    : SharedPropMapIter(cx, mozilla::Some(startAfter), end) {
+  // Skip the first element.
+  next();
 }

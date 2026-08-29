@@ -167,29 +167,18 @@
    match-leak-kinds: definite
    fun:calloc
    ...
-   fun:_ZN3std*thread*local*fast*12Key$LT$T$GT$14try_initialize*
-   ...
-   fun:_ZN5style5bloom19StyleBloom$LT$E$GT$3new*
-   ...
-}
-{
-   Same as above, but for rustc >= 1.80
-   Memcheck:Leak
-   match-leak-kinds: definite
-   fun:calloc
-   ...
-   fun:_ZN3std3sys12thread_local10fast_local4lazy20Storage*10initialize*
-   ...
-   fun:_ZN5style5bloom19StyleBloom$LT$E$GT$3new*
-   ...
-}
-{
-   Same as above, but for rustc >= 1.81
-   Memcheck:Leak
-   match-leak-kinds: definite
-   fun:calloc
-   ...
    fun:_ZN3std3sys12thread_local6native4lazy20Storage*10initialize*
+   ...
+   fun:_ZN5style5bloom19StyleBloom$LT$E$GT$3new*
+   ...
+}
+{
+   Same as above, with rustc >= 1.89
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:calloc
+   ...
+   fun:_ZN3std3sys12thread_local6native4lazy20Storage*16get_or_init_slow*
    ...
    fun:_ZN5style5bloom19StyleBloom$LT$E$GT$3new*
    ...
@@ -200,29 +189,18 @@
    match-leak-kinds: definite
    fun:malloc
    ...
-   fun:_ZN3std*thread*local*fast*12Key$LT$T$GT$14try_initialize*
-   ...
-   fun:_ZN5style7sharing26StyleSharingCache$LT$E$GT$3new*
-   ...
-}
-{
-   Same as above, but for rustc >= 1.80
-   Memcheck:Leak
-   match-leak-kinds: definite
-   fun:malloc
-   ...
-   fun:_ZN3std3sys12thread_local10fast_local4lazy20Storage*10initialize*
-   ...
-   fun:_ZN5style7sharing26StyleSharingCache$LT$E$GT$3new*
-   ...
-}
-{
-   Same as above, but for rustc >= 1.81
-   Memcheck:Leak
-   match-leak-kinds: definite
-   fun:malloc
-   ...
    fun:_ZN3std3sys12thread_local6native4lazy20Storage*10initialize*
+   ...
+   fun:_ZN5style7sharing26StyleSharingCache$LT$E$GT$3new*
+   ...
+}
+{
+   Same as above, with rustc >= 1.89
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   ...
+   fun:_ZN3std3sys12thread_local6native4lazy20Storage*16get_or_init_slow*
    ...
    fun:_ZN5style7sharing26StyleSharingCache$LT$E$GT$3new*
    ...

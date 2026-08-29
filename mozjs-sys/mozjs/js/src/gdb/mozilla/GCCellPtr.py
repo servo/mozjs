@@ -38,26 +38,26 @@ class GCCellPtrTypeCache:
             "Object": "JSObject",
             "BigInt": "JS::BigInt",
             "String": "JSString",
+            "GetterSetter": "js::GetterSetter",
             "Symbol": "JS::Symbol",
             "Shape": "js::Shape",
-            "BaseShape": "js::BaseShape",
             "Null": "std::nullptr_t",
             # Out-of-line types.
+            "BaseShape": "js::BaseShape",
             "JitCode": "js::jit::JitCode",
             "Script": "js::BaseScript",
             "Scope": "js::Scope",
             "RegExpShared": "js::RegExpShared",
-            "GetterSetter": "js::GetterSetter",
             "PropMap": "js::PropMap",
         }
 
         # Map from AllocKind to TraceKind for out-of-line types.
         alloc_map = {
+            "BASE_SHAPE": "BaseShape",
             "JITCODE": "JitCode",
             "SCRIPT": "Script",
             "SCOPE": "Scope",
             "REGEXP_SHARED": "RegExpShared",
-            "GETTER_SETTER": "GetterSetter",
             "COMPACT_PROP_MAP": "PropMap",
             "NORMAL_PROP_MAP": "PropMap",
             "DICT_PROP_MAP": "PropMap",

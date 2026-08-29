@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -34,7 +32,8 @@ WarpSnapshot::WarpSnapshot(JSContext* cx, TempAllocator& alloc,
       globalLexicalEnv_(&cx->global()->lexicalEnvironment()),
       globalLexicalEnvThis_(globalLexicalEnv_->thisObject()),
       bailoutInfo_(bailoutInfo),
-      nurseryObjects_(alloc) {
+      nurseryObjects_(alloc),
+      nurseryValues_(alloc) {
 #ifdef JS_CACHEIR_SPEW
   needsFinalWarmUpCount_ = needsFinalWarmUpCount;
 #endif
@@ -72,9 +71,15 @@ void WarpSnapshot::dump(GenericPrinter& out) const {
   }
   out.printf("\n");
 
-  out.printf("Nursery objects (%u):\n", unsigned(nurseryObjects_.length()));
+  out.printf("Nursery objects (%zu):\n", nurseryObjects_.length());
   for (size_t i = 0; i < nurseryObjects_.length(); i++) {
-    out.printf("  %u: 0x%p\n", unsigned(i), nurseryObjects_[i]);
+    out.printf("  %zu: 0x%p\n", i, nurseryObjects_[i]);
+  }
+  out.printf("\n");
+
+  out.printf("Nursery values (%zu):\n", nurseryValues_.length());
+  for (size_t i = 0; i < nurseryValues_.length(); i++) {
+    out.printf("  %zu: (gc::Cell*)0x%p\n", i, nurseryValues_[i].toGCThing());
   }
   out.printf("\n");
 
@@ -184,7 +189,7 @@ void WarpBailout::dumpData(GenericPrinter& out) const {
   // No fields.
 }
 
-void WarpCacheIR::dumpData(GenericPrinter& out) const {
+void WarpCacheIRBase::dumpData(GenericPrinter& out) const {
   out.printf("    stubCode: 0x%p\n", static_cast<JitCode*>(stubCode_));
   out.printf("    stubInfo: 0x%p\n", stubInfo_);
   out.printf("    stubData: 0x%p\n", stubData_);
@@ -194,6 +199,33 @@ void WarpCacheIR::dumpData(GenericPrinter& out) const {
 #  else
   out.printf("(CacheIR spew unavailable)\n");
 #  endif
+}
+
+void WarpCacheIR::dumpData(GenericPrinter& out) const {
+  WarpCacheIRBase::dumpData(out);
+}
+
+void WarpCacheIRWithShapeList::dumpData(GenericPrinter& out) const {
+  WarpCacheIRBase::dumpData(out);
+  uint32_t index = 0;
+  for (Shape* shape : shapes_.shapes()) {
+    out.printf("    shape %u: 0x%p\n", index, shape);
+    index++;
+  }
+}
+
+void WarpCacheIRWithShapeListAndOffsets::dumpData(GenericPrinter& out) const {
+  WarpCacheIRBase::dumpData(out);
+  uint32_t index = 0;
+  for (Shape* shape : shapes_.shapes()) {
+    out.printf("    shape %u: 0x%p\n", index, shape);
+    index++;
+  }
+  index = 0;
+  for (uint32_t offset : shapes_.offsets()) {
+    out.printf("    offset %u: %u\n", index, offset);
+    index++;
+  }
 }
 
 void WarpInlinedCall::dumpData(GenericPrinter& out) const {
@@ -212,10 +244,14 @@ void WarpPolymorphicTypes::dumpData(GenericPrinter& out) const {
 #endif  // JS_JITSPEW
 
 void WarpSnapshot::trace(JSTracer* trc) {
-  // Nursery objects can be tenured in parallel with Warp compilation.
+  // Nursery objects/values can be tenured in parallel with Warp compilation.
   // Note: don't use TraceOffthreadGCPtr here as that asserts non-moving.
   for (size_t i = 0; i < nurseryObjects_.length(); i++) {
     TraceManuallyBarrieredEdge(trc, &nurseryObjects_[i], "warp-nursery-object");
+  }
+  for (size_t i = 0; i < nurseryValues_.length(); i++) {
+    MOZ_ASSERT(nurseryValues_[i].isGCThing());
+    TraceManuallyBarrieredEdge(trc, &nurseryValues_[i], "warp-nursery-value");
   }
 
   // Other GC things are not in the nursery.
@@ -331,7 +367,7 @@ static void TraceWarpStubPtr(JSTracer* trc, uintptr_t word, const char* name) {
   TraceOffthreadGCPtr(trc, OffthreadGCPtr<T*>(ptr), name);
 }
 
-void WarpCacheIR::traceData(JSTracer* trc) {
+void WarpCacheIRBase::traceData(JSTracer* trc) {
   TraceOffthreadGCPtr(trc, stubCode_, "warp-stub-code");
   if (stubData_) {
     uint32_t field = 0;
@@ -350,13 +386,6 @@ void WarpCacheIR::traceData(JSTracer* trc) {
           // WeakShape pointers are traced strongly in this context.
           uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
           TraceWarpStubPtr<Shape>(trc, word, "warp-cacheir-shape");
-          break;
-        }
-        case StubField::Type::WeakGetterSetter: {
-          // WeakGetterSetter pointers are traced strongly in this context.
-          uintptr_t word = stubInfo_->getStubRawWord(stubData_, offset);
-          TraceWarpStubPtr<GetterSetter>(trc, word,
-                                         "warp-cacheir-getter-setter");
           break;
         }
         case StubField::Type::JSObject:
@@ -397,7 +426,9 @@ void WarpCacheIR::traceData(JSTracer* trc) {
                               "warp-cacheir-jsid");
           break;
         }
-        case StubField::Type::Value: {
+        case StubField::Type::Value:
+        case StubField::Type::WeakValue: {
+          // WeakValues are traced strongly in this context.
           uint64_t data = stubInfo_->getStubRawInt64(stubData_, offset);
           Value val = Value::fromRawBits(data);
           TraceOffthreadGCPtr(trc, OffthreadGCPtr<Value>(val),
@@ -418,6 +449,26 @@ void WarpCacheIR::traceData(JSTracer* trc) {
       offset += StubField::sizeInBytes(fieldType);
     }
   }
+}
+
+void WarpCacheIR::traceData(JSTracer* trc) { WarpCacheIRBase::traceData(trc); }
+
+void ShapeListSnapshot::trace(JSTracer* trc) const {
+  for (auto& shape : shapes_) {
+    if (shape) {
+      TraceOffthreadGCPtr(trc, shape, "warp-shape-list-shape");
+    }
+  }
+}
+
+void WarpCacheIRWithShapeList::traceData(JSTracer* trc) {
+  WarpCacheIRBase::traceData(trc);
+  shapes_.trace(trc);
+}
+
+void WarpCacheIRWithShapeListAndOffsets::traceData(JSTracer* trc) {
+  WarpCacheIRBase::traceData(trc);
+  shapes_.trace(trc);
 }
 
 void WarpInlinedCall::traceData(JSTracer* trc) {

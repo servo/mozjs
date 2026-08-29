@@ -145,9 +145,9 @@ def generate_macro_header(c_out, yaml_path):
         color = category["color"]
         assert isinstance(color, str)
         subcategories = category.get("subcategories", None)
-        assert (
-            isinstance(subcategories, list) and len(subcategories) > 0
-        ), f"At least one subcategory expected as default in {name}."
+        assert isinstance(subcategories, list) and len(subcategories) > 0, (
+            f"At least one subcategory expected as default in {name}."
+        )
 
         category_items.append(
             generate_category_macro(name, label, color, subcategories)
@@ -270,9 +270,9 @@ def generate_rust_enums(c_out, yaml_path):
         # This will be used as our main enum field and sub category enum.
         cat_label = "".join(filter(str.isalnum, cat_label))
         cat_subcategories = category.get("subcategories", None)
-        assert (
-            isinstance(cat_subcategories, list) and len(cat_subcategories) > 0
-        ), f"At least one subcategory expected as default in {cat_name}."
+        assert isinstance(cat_subcategories, list) and len(cat_subcategories) > 0, (
+            f"At least one subcategory expected as default in {cat_name}."
+        )
 
         # Create a new enum for this sub category and append it to the enums list.
         category_enum = RustEnum(cat_label)
@@ -300,9 +300,9 @@ def generate_rust_enums(c_out, yaml_path):
             )
             profiling_category_pair_value += 1
 
-        assert (
-            category_enum.default_category is not None
-        ), "There must be a default subcategory with the same name."
+        assert category_enum.default_category is not None, (
+            "There must be a default subcategory with the same name."
+        )
 
         # Append the main enums.
         profiling_category_pair_enum.append_optional_tuple_field(cat_label)

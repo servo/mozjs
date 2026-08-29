@@ -82,7 +82,7 @@ mach:
     bugs:
       - https://bugzilla.mozilla.org/show_bug.cgi?id=1894154
     data_reviews:
-      - TBD
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1894154
     notification_emails:
       - build-telemetry@mozilla.com
       - ahochheiden@mozilla.com
@@ -215,6 +215,32 @@ mach.system:
     notification_emails:
       - build-telemetry@mozilla.com
       - andi@mozilla.com
+    expires: never
+    send_in_pings:
+      - usage
+  fleet_running:
+    type: boolean
+    description: True if FleetDM endpoint management tool is running.
+    lifetime: application
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1982531
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1982531
+    notification_emails:
+      - build-telemetry@mozilla.com
+    expires: never
+    send_in_pings:
+      - usage
+  crowdstrike_running:
+    type: boolean
+    description: True if CrowdStrike security software is running.
+    lifetime: application
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1982531
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1982531
+    notification_emails:
+      - build-telemetry@mozilla.com
     expires: never
     send_in_pings:
       - usage

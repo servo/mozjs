@@ -58,7 +58,7 @@ class Tag(list):
             self.__dict__.update(kwargs)
 
     def __init__(self, *args, **kwargs):
-        super(Tag, self).__init__(args)
+        super().__init__(args)
         self.attr = self.Attr(**kwargs)
 
     def __unicode__(self):
@@ -100,24 +100,22 @@ class HtmlTag(Tag):
 class html(Namespace):
     __tagclass__ = HtmlTag
     __stickyname__ = True
-    __tagspec__ = dict(
-        [
-            (x, 1)
-            for x in (
-                "a,abbr,acronym,address,applet,area,b,bdo,big,blink,"
-                "blockquote,body,br,button,caption,center,cite,code,col,"
-                "colgroup,comment,dd,del,dfn,dir,div,dl,dt,em,embed,"
-                "fieldset,font,form,frameset,h1,h2,h3,h4,h5,h6,head,html,"
-                "i,iframe,img,input,ins,kbd,label,legend,li,link,listing,"
-                "map,marquee,menu,meta,multicol,nobr,noembed,noframes,"
-                "noscript,object,ol,optgroup,option,p,pre,q,s,script,"
-                "select,small,span,strike,strong,style,sub,sup,table,"
-                "tbody,td,textarea,tfoot,th,thead,title,tr,tt,u,ul,xmp,"
-                "base,basefont,frame,hr,isindex,param,samp,var"
-            ).split(",")
-            if x
-        ]
-    )
+    __tagspec__ = dict([
+        (x, 1)
+        for x in (
+            "a,abbr,acronym,address,applet,area,b,bdo,big,blink,"
+            "blockquote,body,br,button,caption,center,cite,code,col,"
+            "colgroup,comment,dd,del,dfn,dir,div,dl,dt,em,embed,"
+            "fieldset,font,form,frameset,h1,h2,h3,h4,h5,h6,head,html,"
+            "i,iframe,img,input,ins,kbd,label,legend,li,link,listing,"
+            "map,marquee,menu,meta,multicol,nobr,noembed,noframes,"
+            "noscript,object,ol,optgroup,option,p,pre,q,s,script,"
+            "select,small,span,strike,strong,style,sub,sup,table,"
+            "tbody,td,textarea,tfoot,th,thead,title,tr,tt,u,ul,xmp,"
+            "base,basefont,frame,hr,isindex,param,samp,var"
+        ).split(",")
+        if x
+    ])
 
     class Style:
         def __init__(self, **kw):
@@ -245,31 +243,25 @@ class SimpleUnicodeVisitor:
 
 
 class HtmlVisitor(SimpleUnicodeVisitor):
-    single = dict(
-        [
-            (x, 1)
-            for x in ("br,img,area,param,col,hr,meta,link,base," "input,frame").split(
-                ","
-            )
-        ]
-    )
-    inline = dict(
-        [
-            (x, 1)
-            for x in (
-                "a abbr acronym b basefont bdo big br cite code dfn em font "
-                "i img input kbd label q s samp select small span strike "
-                "strong sub sup textarea tt u var".split(" ")
-            )
-        ]
-    )
+    single = dict([
+        (x, 1)
+        for x in ("br,img,area,param,col,hr,meta,link,base,input,frame").split(",")
+    ])
+    inline = dict([
+        (x, 1)
+        for x in (
+            "a abbr acronym b basefont bdo big br cite code dfn em font "
+            "i img input kbd label q s samp select small span strike "
+            "strong sub sup textarea tt u var".split(" ")
+        )
+    ])
 
     def repr_attribute(self, attrs, name):
         if name == "class_":
             value = getattr(attrs, name)
             if value is None:
                 return
-        return super(HtmlVisitor, self).repr_attribute(attrs, name)
+        return super().repr_attribute(attrs, name)
 
     def _issingleton(self, tagname):
         return tagname in self.single

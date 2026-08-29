@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -27,9 +26,6 @@ static void GetPageSize(void) {
 #  if defined AIX || defined LINUX || defined __GNU__ || defined __GLIBC__ || \
       defined FREEBSD || defined NETBSD || defined OPENBSD || defined DARWIN
   _pr_pageSize = getpagesize();
-#  elif defined(HPUX)
-  /* I have no idea. Don't get me started. --Rob */
-  _pr_pageSize = sysconf(_SC_PAGE_SIZE);
 #  else
   _pr_pageSize = sysconf(_SC_PAGESIZE);
 #  endif

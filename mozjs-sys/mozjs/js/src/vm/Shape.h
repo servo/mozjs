@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -204,6 +202,7 @@ class ShapeCachePtr {
   void setShapeSetForAdd(ShapeSetForAdd* hash) {
     MOZ_ASSERT(hash);
     MOZ_ASSERT((uintptr_t(hash) & MASK) == 0);
+    MOZ_ASSERT(!isShapeSetForAdd());  // Don't leak the ShapeSet.
     bits = uintptr_t(hash) | SHAPE_SET_FOR_ADD;
   }
 
@@ -243,11 +242,8 @@ class BaseShape : public gc::TenuredCellWithNonGCPointer<const JSClass> {
   const JSClass* clasp() const { return headerPtr(); }
 
  private:
-  JS::Realm* realm_;
-  GCPtr<TaggedProto> proto_;
-
-  BaseShape(const BaseShape& base) = delete;
-  BaseShape& operator=(const BaseShape& other) = delete;
+  JS::Realm* const realm_;
+  const GCPtr<TaggedProto> proto_;
 
  public:
   BaseShape(JSContext* cx, const JSClass* clasp, JS::Realm* realm,
@@ -255,6 +251,9 @@ class BaseShape : public gc::TenuredCellWithNonGCPointer<const JSClass> {
 
   /* Not defined: BaseShapes must not be stack allocated. */
   ~BaseShape() = delete;
+
+  BaseShape(const BaseShape& base) = delete;
+  BaseShape& operator=(const BaseShape& other) = delete;
 
   JS::Realm* realm() const { return realm_; }
   JS::Compartment* compartment() const {
@@ -322,6 +321,8 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
   friend class gc::RelocationOverlay;
 
  public:
+  Shape(const Shape& other) = delete;
+
   // Base shape, stored in the cell header.
   BaseShape* base() const { return headerPtr(); }
 
@@ -360,8 +361,8 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
     SMALL_SLOTSPAN_MASK = uint32_t(SMALL_SLOTSPAN_MAX << SMALL_SLOTSPAN_SHIFT),
   };
 
-  uint32_t immutableFlags;   // Immutable flags, see above.
-  ObjectFlags objectFlags_;  // Immutable object flags, see ObjectFlags.
+  GCData<uint32_t> immutableFlags;  // Immutable flags, see above.
+  ObjectFlags objectFlags_;         // Immutable object flags, see ObjectFlags.
 
   // Cache used to speed up common operations on shapes.
   ShapeCachePtr cache_;
@@ -410,8 +411,6 @@ class Shape : public gc::CellWithTenuredGCPointer<gc::TenuredCell, BaseShape> {
     MOZ_ASSERT(this->kind() == kind, "kind must fit in KIND_MASK");
     MOZ_ASSERT(isNative() == base->clasp()->isNativeObject());
   }
-
-  Shape(const Shape& other) = delete;
 
  public:
   Kind kind() const { return Kind((immutableFlags >> KIND_SHIFT) & KIND_MASK); }
@@ -676,7 +675,7 @@ class DictionaryShape : public NativeShape {
 // Shape used for a ProxyObject.
 class ProxyShape : public Shape {
   // Needed to maintain the same size as other shapes.
-  uintptr_t padding_;
+  uintptr_t padding_ = 0;
 
   friend class js::gc::CellAllocator;
   ProxyShape(BaseShape* base, ObjectFlags objectFlags)

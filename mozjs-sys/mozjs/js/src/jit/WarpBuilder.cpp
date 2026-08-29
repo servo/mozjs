@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -19,6 +17,7 @@
 #include "jit/WarpCacheIRTranspiler.h"
 #include "jit/WarpSnapshot.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_BAD_CONST_ASSIGN
+#include "vm/ConstantCompareOperand.h"
 #include "vm/GeneratorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Opcodes.h"
@@ -166,7 +165,7 @@ bool WarpBuilder::startNewOsrPreHeaderBlock(BytecodeLocation loopHead) {
     } else {
       // Use an undefined value if the script does not need its environment
       // chain, to match the main entry point.
-      envv = MConstant::New(alloc(), UndefinedValue());
+      envv = MConstant::NewUndefined(alloc());
     }
     osrBlock->add(envv);
     osrBlock->initSlot(slot, envv);
@@ -178,7 +177,7 @@ bool WarpBuilder::startNewOsrPreHeaderBlock(BytecodeLocation loopHead) {
     if (!script_->noScriptRval()) {
       returnValue = MOsrReturnValue::New(alloc(), entry);
     } else {
-      returnValue = MConstant::New(alloc(), UndefinedValue());
+      returnValue = MConstant::NewUndefined(alloc());
     }
     osrBlock->add(returnValue);
     osrBlock->initSlot(info().returnValueSlot(), returnValue);
@@ -673,7 +672,8 @@ bool WarpBuilder::buildBody() {
       return false;
     }
 #endif
-    bool wantPreciseLineNumbers = js::jit::PerfEnabled();
+    bool wantPreciseLineNumbers =
+        js::jit::PerfEnabled() || mirGen().isProfilerInstrumentationEnabled();
     if (wantPreciseLineNumbers && !hasTerminatedBlock()) {
       current->updateTrackedSite(newBytecodeSite(loc));
     }
@@ -1097,8 +1097,7 @@ bool WarpBuilder::buildStrictConstantEqOp(BytecodeLocation loc,
   switch (operand.type()) {
     case ConstantCompareOperand::EncodedType::Int32: {
       if (value->type() == MIRType::Int32) {
-        MConstant* constant =
-            MConstant::New(alloc(), Int32Value(operand.toInt32()));
+        MConstant* constant = MConstant::NewInt32(alloc(), operand.toInt32());
         current->add(constant);
 
         auto* compare = MCompare::New(alloc(), value, constant, compareOp,
@@ -1117,8 +1116,7 @@ bool WarpBuilder::buildStrictConstantEqOp(BytecodeLocation loc,
 
     case ConstantCompareOperand::EncodedType::Boolean: {
       if (value->type() == MIRType::Boolean) {
-        MConstant* constant =
-            MConstant::New(alloc(), Int32Value(operand.toBoolean()));
+        MConstant* constant = MConstant::NewInt32(alloc(), operand.toBoolean());
         current->add(constant);
 
         auto* toBoolToInt32 = MBooleanToInt32::New(alloc(), value);
@@ -1139,7 +1137,7 @@ bool WarpBuilder::buildStrictConstantEqOp(BytecodeLocation loc,
     }
 
     case ConstantCompareOperand::EncodedType::Null: {
-      MConstant* constant = MConstant::New(alloc(), NullValue());
+      MConstant* constant = MConstant::NewNull(alloc());
       current->add(constant);
 
       auto* ins = MCompare::New(alloc(), value, constant, compareOp,
@@ -1150,7 +1148,7 @@ bool WarpBuilder::buildStrictConstantEqOp(BytecodeLocation loc,
     }
 
     case ConstantCompareOperand::EncodedType::Undefined: {
-      MConstant* constant = MConstant::New(alloc(), UndefinedValue());
+      MConstant* constant = MConstant::NewUndefined(alloc());
       current->add(constant);
 
       auto* ins = MCompare::New(alloc(), value, constant, compareOp,
@@ -1195,17 +1193,6 @@ bool WarpBuilder::build_TakeDisposeCapability(BytecodeLocation loc) {
   current->add(ins);
   current->push(ins);
   return resumeAfter(ins, loc);
-}
-
-bool WarpBuilder::build_CreateSuppressedError(BytecodeLocation loc) {
-  MDefinition* suppressed = current->pop();
-  MDefinition* error = current->pop();
-
-  MCreateSuppressedError* ins =
-      MCreateSuppressedError::New(alloc(), error, suppressed);
-  current->add(ins);
-  current->push(ins);
-  return true;
 }
 #endif
 
@@ -1575,9 +1562,10 @@ bool WarpBuilder::build_DebugCheckSelfHosted(BytecodeLocation loc) {
 }
 
 bool WarpBuilder::build_DynamicImport(BytecodeLocation loc) {
+  auto phase = ImportPhase(GET_UINT8(loc.toRawBytecode()));
   MDefinition* options = current->pop();
   MDefinition* specifier = current->pop();
-  MDynamicImport* ins = MDynamicImport::New(alloc(), specifier, options);
+  MDynamicImport* ins = MDynamicImport::New(alloc(), specifier, options, phase);
   current->add(ins);
   current->push(ins);
   return resumeAfter(ins, loc);
@@ -1633,16 +1621,6 @@ bool WarpBuilder::build_GlobalOrEvalDeclInstantiation(BytecodeLocation loc) {
   auto* redeclCheck = MGlobalDeclInstantiation::New(alloc());
   current->add(redeclCheck);
   return resumeAfter(redeclCheck, loc);
-}
-
-bool WarpBuilder::build_BindVar(BytecodeLocation) {
-  MOZ_ASSERT(usesEnvironmentChain());
-
-  MDefinition* env = current->environmentChain();
-  MCallBindVar* ins = MCallBindVar::New(alloc(), env);
-  current->add(ins);
-  current->push(ins);
-  return true;
 }
 
 bool WarpBuilder::build_MutateProto(BytecodeLocation loc) {
@@ -1715,7 +1693,7 @@ bool WarpBuilder::build_TypeofEq(BytecodeLocation loc) {
     typeOf->setObservedTypes(typesSnapshot->list());
     current->add(typeOf);
 
-    auto* typeInt = MConstant::New(alloc(), Int32Value(type));
+    auto* typeInt = MConstant::NewInt32(alloc(), type);
     current->add(typeInt);
 
     auto* ins = MCompare::New(alloc(), typeOf, typeInt, compareOp,
@@ -1866,7 +1844,7 @@ bool WarpBuilder::build_EndIter(BytecodeLocation loc) {
 
 bool WarpBuilder::build_CloseIter(BytecodeLocation loc) {
   MDefinition* iter = current->pop();
-  iter = unboxObjectInfallible(iter, IsMovable::Yes);
+  iter = unboxObjectInfallible(iter, IsMovable::No);
   return buildIC(loc, CacheKind::CloseIter, {iter});
 }
 
@@ -1888,7 +1866,7 @@ bool WarpBuilder::transpileCall(BytecodeLocation loc,
                                 const WarpCacheIR* cacheIRSnapshot,
                                 CallInfo* callInfo) {
   // Synthesize the constant number of arguments for this call op.
-  auto* argc = MConstant::New(alloc(), Int32Value(callInfo->argc()));
+  auto* argc = MConstant::NewInt32(alloc(), callInfo->argc());
   current->add(argc);
 
   return TranspileCacheIRToMIR(this, loc, cacheIRSnapshot, {argc}, callInfo);
@@ -2473,17 +2451,6 @@ bool WarpBuilder::build_AsyncResolve(BytecodeLocation loc) {
   return resumeAfter(resolve, loc);
 }
 
-bool WarpBuilder::build_AsyncReject(BytecodeLocation loc) {
-  MDefinition* generator = current->pop();
-  MDefinition* stack = current->pop();
-  MDefinition* reason = current->pop();
-
-  auto* reject = MAsyncReject::New(alloc(), generator, reason, stack);
-  current->add(reject);
-  current->push(reject);
-  return resumeAfter(reject, loc);
-}
-
 bool WarpBuilder::build_ResumeKind(BytecodeLocation loc) {
   GeneratorResumeKind resumeKind = loc.resumeKind();
 
@@ -2882,7 +2849,7 @@ bool WarpBuilder::build_CheckPrivateField(BytecodeLocation loc) {
 bool WarpBuilder::build_NewPrivateName(BytecodeLocation loc) {
   JSAtom* name = loc.getAtom(script_);
 
-  auto* ins = MNewPrivateName::New(alloc(), name);
+  auto* ins = MNewPrivateName::New(alloc(), &name->asOffThreadAtom());
   current->add(ins);
   current->push(ins);
   return resumeAfter(ins, loc);
@@ -3260,7 +3227,7 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
         return false;
       }
 
-      index = MConstant::New(alloc(), Int32Value(i - numFormals));
+      index = MConstant::NewInt32(alloc(), i - numFormals);
       current->add(index);
 
       MDefinition* arg = inlineCallInfo()->argv()[i];
@@ -3314,6 +3281,16 @@ bool WarpBuilder::build_Exception(BytecodeLocation) {
 }
 
 bool WarpBuilder::build_ExceptionAndStack(BytecodeLocation) {
+  MOZ_CRASH("Unreachable because we skip catch-blocks");
+}
+
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+bool WarpBuilder::build_CreateSuppressedError(BytecodeLocation) {
+  MOZ_CRASH("Unreachable because we skip catch-blocks");
+}
+#endif
+
+bool WarpBuilder::build_AsyncReject(BytecodeLocation) {
   MOZ_CRASH("Unreachable because we skip catch-blocks");
 }
 
@@ -3381,7 +3358,14 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
   mozilla::DebugOnly<size_t> numInputs = inputs.size();
   MOZ_ASSERT(numInputs == NumInputsForCacheKind(kind));
 
-  if (auto* cacheIRSnapshot = getOpSnapshot<WarpCacheIR>(loc)) {
+  const WarpCacheIRBase* cacheIRSnapshot = getOpSnapshot<WarpCacheIR>(loc);
+  if (!cacheIRSnapshot) {
+    cacheIRSnapshot = getOpSnapshot<WarpCacheIRWithShapeList>(loc);
+    if (!cacheIRSnapshot) {
+      cacheIRSnapshot = getOpSnapshot<WarpCacheIRWithShapeListAndOffsets>(loc);
+    }
+  }
+  if (cacheIRSnapshot) {
     return TranspileCacheIRToMIR(this, loc, cacheIRSnapshot, inputs);
   }
 
@@ -3575,7 +3559,7 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
       auto* typeOf = MTypeOf::New(alloc(), getInput(0));
       current->add(typeOf);
 
-      auto* typeInt = MConstant::New(alloc(), Int32Value(type));
+      auto* typeInt = MConstant::NewInt32(alloc(), type);
       current->add(typeInt);
 
       auto* ins = MCompare::New(alloc(), typeOf, typeInt, compareOp,

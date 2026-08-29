@@ -80,7 +80,7 @@ def run_and_wait(
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=text,
-        **kwargs
+        **kwargs,
     )
 
     def reader(fh, queue):

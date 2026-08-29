@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,17 +6,19 @@
 #define gc_GCRuntime_h
 
 #include "mozilla/Atomics.h"
-#include "mozilla/DoublyLinkedList.h"
 #include "mozilla/EnumSet.h"
+#include "mozilla/HashTable.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/TimeStamp.h"
 
 #include "gc/ArenaList.h"
 #include "gc/AtomMarking.h"
+#include "gc/ChunkPool.h"
 #include "gc/GCContext.h"
 #include "gc/GCMarker.h"
 #include "gc/GCParallelTask.h"
 #include "gc/IteratorUtils.h"
+#include "gc/LightLock.h"
 #include "gc/Memory.h"
 #include "gc/Nursery.h"
 #include "gc/Scheduling.h"
@@ -27,7 +27,10 @@
 #include "js/friend/CycleCollector.h"
 #include "js/friend/PerformanceHint.h"
 #include "js/GCAnnotations.h"
+#include "js/Realm.h"
+#include "js/RootingAPI.h"
 #include "js/UniquePtr.h"
+#include "js/Zone.h"
 #include "vm/AtomsTable.h"
 
 namespace js {
@@ -48,11 +51,14 @@ using BlackGrayEdgeVector = Vector<TenuredCell*, 0, SystemAllocPolicy>;
 using ZoneVector = Vector<JS::Zone*, 4, SystemAllocPolicy>;
 
 class AutoCallGCCallbacks;
+class AutoUpdateBarriersForSweeping;
 class AutoGCSession;
 class AutoHeapSession;
+class AutoLockBufferAllocator;
 class AutoTraceSession;
 class BufferAllocator;
 class MarkingValidator;
+class MaybeLockBufferAllocator;
 struct MovingTracer;
 class ParallelMarkTask;
 enum class ShouldCheckThresholds;
@@ -73,92 +79,30 @@ struct SweepAction {
   virtual bool shouldSkip() { return false; }
 };
 
-class ChunkPool {
-  ArenaChunk* head_;
-  size_t count_;
-
- public:
-  ChunkPool() : head_(nullptr), count_(0) {}
-  ChunkPool(const ChunkPool& other) = delete;
-  ChunkPool(ChunkPool&& other) { *this = std::move(other); }
-
-  ~ChunkPool() {
-    MOZ_ASSERT(!head_);
-    MOZ_ASSERT(count_ == 0);
-  }
-
-  ChunkPool& operator=(const ChunkPool& other) = delete;
-  ChunkPool& operator=(ChunkPool&& other) {
-    head_ = other.head_;
-    other.head_ = nullptr;
-    count_ = other.count_;
-    other.count_ = 0;
-    return *this;
-  }
-
-  bool empty() const { return !head_; }
-  size_t count() const { return count_; }
-
-  ArenaChunk* head() {
-    MOZ_ASSERT(head_);
-    return head_;
-  }
-  ArenaChunk* pop();
-  void push(ArenaChunk* chunk);
-  ArenaChunk* remove(ArenaChunk* chunk);
-
-  void sort();
-
-  // Linear time, use with caution.
-  bool contains(ArenaChunk* chunk) const;
-
- private:
-  ArenaChunk* mergeSort(ArenaChunk* list, size_t count);
-  bool isSorted() const;
-
-#ifdef DEBUG
- public:
-  bool verify() const;
-  void verifyChunks() const;
-#endif
-
- public:
-  // Pool mutation does not invalidate an Iter unless the mutation
-  // is of the ArenaChunk currently being visited by the Iter.
-  class Iter {
-   public:
-    explicit Iter(ChunkPool& pool) : current_(pool.head_) {}
-    bool done() const { return !current_; }
-    void next();
-    ArenaChunk* get() const { return current_; }
-    operator ArenaChunk*() const { return get(); }
-    ArenaChunk* operator->() const { return get(); }
-
-   private:
-    ArenaChunk* current_;
-  };
-};
-
 class BackgroundMarkTask : public GCParallelTask {
  public:
   explicit BackgroundMarkTask(GCRuntime* gc);
-  void setBudget(const JS::SliceBudget& budget) { this->budget = budget; }
+  void initialize(bool isConcurrent, const JS::SliceBudget& budget,
+                  AutoLockHelperThreadState& lock);
   void run(AutoLockHelperThreadState& lock) override;
+  void pause();
+  void unpause();
+  bool isOverBudget() { return budget.isOverBudget(); }
 
  private:
+  bool isConcurrent = false;
   JS::SliceBudget budget;
+  JS::SliceBudget::InterruptRequestFlag interruptRequest;
+  friend class GCRuntime;
 };
 
 class BackgroundUnmarkTask : public GCParallelTask {
  public:
   explicit BackgroundUnmarkTask(GCRuntime* gc);
-  void initZones();
   void run(AutoLockHelperThreadState& lock) override;
 
  private:
   void unmark();
-
-  ZoneVector zones;
 };
 
 class BackgroundSweepTask : public GCParallelTask {
@@ -266,10 +210,59 @@ class WeakCacheSweepIterator {
 struct SweepingTracer final : public GenericTracerImpl<SweepingTracer> {
   explicit SweepingTracer(JSRuntime* rt);
 
+  void setAllowSweepingSymbolsEarly(bool value) {
+#ifdef DEBUG
+    allowSweepingSymbolsEarly = value;
+#endif
+  }
+
  private:
   template <typename T>
-  void onEdge(T** thingp, const char* name);
+  bool onEdge(T** thingp, const char* name);
   friend class GenericTracerImpl<SweepingTracer>;
+
+#ifdef DEBUG
+  bool allowSweepingSymbolsEarly = false;
+#endif
+};
+
+class BufferAllocatorRuntime {
+  friend class BufferAllocator;
+
+  using LargeAllocMap =
+      mozilla::HashMap<void*, LargeBuffer*, PointerHasher<void*>>;
+
+  using MaybeLock = MaybeLockBufferAllocator;
+
+  // Lock used by buffer allocators to synchronise data passed back to the main
+  // thread by background sweeping.
+  Mutex lock MOZ_UNANNOTATED;
+  friend class AutoLockBufferAllocator;
+
+  // Map from allocation pointer to buffer metadata for large buffers. Access
+  // may require holding the buffer allocator mutex if we are currently
+  // sweeping.
+  MainThreadOrGCTaskData<LargeAllocMap> largeAllocMap;
+
+  // Atomic count of buffer allocators whose minor state is sweeping plus those
+  // whose major state is sweeping. Used to decide whether the mutex is
+  // required.
+  mozilla::Atomic<size_t, mozilla::ReleaseAcquire> allocatorSweepCount;
+
+ public:
+  BufferAllocatorRuntime();
+
+  void checkGCStateNotInUse();
+
+ private:
+  void incSweepCount();
+  void decSweepCount();
+
+  bool needLockToAccessBufferMap() const;
+
+  // Lookup a large buffer by pointer in the map.
+  LargeBuffer* lookupLargeBuffer(void* alloc);
+  LargeBuffer* lookupLargeBuffer(void* alloc, MaybeLock& lock);
 };
 
 class GCRuntime {
@@ -298,6 +291,14 @@ class GCRuntime {
   bool needZealousGC();
   bool zealModeControlsYieldPoint() const;
 
+  using PersistentRoots =
+      mozilla::EnumeratedArray<JS::RootKind,
+                               mozilla::LinkedList<js::PersistentRootedBase>,
+                               size_t(JS::RootKind::Limit)>;
+  PersistentRoots& persistentRoots() { return persistentRoots_.ref(); }
+  void tracePersistentRoots(JSTracer* trc);
+  void finishPersistentRoots();
+
   [[nodiscard]] bool addRoot(Value* vp, const char* name);
   void removeRoot(Value* vp);
 
@@ -305,6 +306,13 @@ class GCRuntime {
                                   uint32_t value);
   void resetParameter(JSContext* cx, JSGCParamKey key);
   uint32_t getParameter(JSGCParamKey key);
+
+  const mozilla::TimeStamp& lastAnimationTime() const {
+    return lastAnimationTime_.ref();
+  }
+  void setLastAnimationTime(const mozilla::TimeStamp& time) {
+    lastAnimationTime_ = time;
+  }
 
   void setPerformanceHint(PerformanceHint hint);
   bool isInPageLoad() const { return inPageLoadCount != 0; }
@@ -361,7 +369,6 @@ class GCRuntime {
 
   void shrinkBuffers();
   void onOutOfMallocMemory();
-  void onOutOfMallocMemory(const AutoLockGC& lock);
 
   Nursery& nursery() { return nursery_.ref(); }
   gc::StoreBuffer& storeBuffer() { return storeBuffer_.ref(); }
@@ -422,8 +429,12 @@ class GCRuntime {
  public:
   // Internal public interface
   ZoneVector& zones() { return zones_.ref(); }
+
   gcstats::Statistics& stats() { return stats_.ref(); }
   const gcstats::Statistics& stats() const { return stats_.ref(); }
+
+  BufferAllocatorRuntime& bufferRuntime() { return bufferRuntime_.ref(); }
+
   State state() const { return incrementalState; }
   bool isHeapCompacting() const { return state() == State::Compact; }
   bool isForegroundSweeping() const { return state() == State::Sweep; }
@@ -436,19 +447,21 @@ class GCRuntime {
   void waitBackgroundFreeEnd();
   void waitForBackgroundTasks();
   bool isWaitingOnBackgroundTask() const;
+  bool pauseBackgroundMarking();
+  void resumeBackgroundMarking();
 
   void lockGC() { lock.lock(); }
   void unlockGC() { lock.unlock(); }
 
-  void lockStoreBuffer() { storeBufferLock.lock(); }
-  void unlockStoreBuffer() { storeBufferLock.unlock(); }
+  void lockSweepingLock() { sweepingLock.lock(); }
+  void unlockSweepingLock() { sweepingLock.unlock(); }
 
 #ifdef DEBUG
   void assertCurrentThreadHasLockedGC() const {
     lock.assertOwnedByCurrentThread();
   }
-  void assertCurrentThreadHasLockedStoreBuffer() const {
-    storeBufferLock.assertOwnedByCurrentThread();
+  void assertCurrentThreadHasLockedSweepingLock() const {
+    sweepingLock.assertOwnedByCurrentThread();
   }
 #endif  // DEBUG
 
@@ -466,10 +479,18 @@ class GCRuntime {
     return state() != State::NotActive && !isVerifyPreBarriersEnabled();
   }
 
+  bool isConcurrentMarkingEnabled() const {
+#ifndef JS_GC_CONCURRENT_MARKING
+    return false;
+#else
+    return concurrentMarkingEnabled;
+#endif
+  }
+
   bool hasForegroundWork() const;
 
+  bool isNormalGC() const { return gcOptions() == JS::GCOptions::Normal; }
   bool isShrinkingGC() const { return gcOptions() == JS::GCOptions::Shrink; }
-
   bool isShutdownGC() const { return gcOptions() == JS::GCOptions::Shutdown; }
 
 #ifdef DEBUG
@@ -493,7 +514,7 @@ class GCRuntime {
   void setHostCleanupFinalizationRegistryCallback(
       JSHostCleanupFinalizationRegistryCallback callback, void* data);
   void callHostCleanupFinalizationRegistryCallback(JSFunction* doCleanup,
-                                                   JSObject* hostDefinedData);
+                                                   JSObject* incumbentGlobal);
   [[nodiscard]] bool addWeakPointerZonesCallback(
       JSWeakPointerZonesCallback callback, void* data);
   void removeWeakPointerZonesCallback(JSWeakPointerZonesCallback callback);
@@ -511,20 +532,39 @@ class GCRuntime {
   void callNurseryCollectionCallbacks(JS::GCNurseryProgress progress,
                                       JS::GCReason reason);
 
+  void setDestroyZoneCallback(JSDestroyZoneCallback callback);
+  void callDestroyZoneCallback(JS::GCContext* gcx, JS::Zone* zone) const;
+  void setDestroyCompartmentCallback(JSDestroyCompartmentCallback callback);
+  void callDestroyCompartmentCallback(JS::GCContext* gcx,
+                                      JS::Compartment* compartment) const;
+  void setDestroyRealmCallback(JS::DestroyRealmCallback callback);
+  void callDestroyRealmCallback(JS::GCContext* gcx, JS::Realm* realm) const;
+
   bool addFinalizationRegistry(JSContext* cx,
                                Handle<FinalizationRegistryObject*> registry);
-  bool registerWithFinalizationRegistry(JSContext* cx, HandleObject target,
-                                        HandleObject record);
+  bool registerWithFinalizationRegistry(
+      JSContext* cx, HandleValue target,
+      Handle<FinalizationRecordObject*> record);
   void queueFinalizationRegistryForCleanup(FinalizationQueueObject* queue);
 
-  void nukeFinalizationRecordWrapper(JSObject* wrapper,
-                                     FinalizationRecordObject* record);
-  void nukeWeakRefWrapper(JSObject* wrapper, WeakRefObject* weakRef);
+  mozilla::LinkedList<JS::detail::WeakCacheBase>& weakCaches() {
+    return weakCaches_.ref();
+  }
+  void registerWeakCache(JS::detail::WeakCacheBase* cache) {
+    weakCaches().insertBack(cache);
+  }
 
   void setFullCompartmentChecks(bool enable);
 
-  // Get the main marking tracer.
+  // Get the marking tracer used on the main thread.
   GCMarker& marker() { return *markers[0]; }
+  const GCMarker& marker() const { return *markers[0]; }
+
+  // Get the marking tracer used for concurrent marking.
+  GCMarker& concurrentMarker() {
+    MOZ_ASSERT(isConcurrentMarkingEnabled());
+    return *markers[1];
+  }
 
   bool haveAllImplicitEdges() const { return haveAllImplicitEdges_; }
   void clearHaveAllImplicitEdges() { haveAllImplicitEdges_ = false; }
@@ -556,7 +596,7 @@ class GCRuntime {
   bool didCompactZones() const { return isCompacting && zonesCompacted; }
 
   bool areGrayBitsValid() const { return grayBitsValid; }
-  void setGrayBitsInvalid() { grayBitsValid = false; }
+  void setGrayBitsInvalid();
 
   mozilla::TimeStamp lastGCStartTime() const { return lastGCStartTime_; }
   mozilla::TimeStamp lastGCEndTime() const { return lastGCEndTime_; }
@@ -568,47 +608,38 @@ class GCRuntime {
   double computeHeapGrowthFactor(size_t lastBytes);
   size_t computeTriggerBytes(double growthFactor, size_t lastBytes);
 
-  ChunkPool& fullChunks(const AutoLockGC& lock) { return fullChunks_.ref(); }
-  ChunkPool& availableChunks(const AutoLockGC& lock) {
-    return availableChunks_.ref();
-  }
   ChunkPool& emptyChunks(const AutoLockGC& lock) { return emptyChunks_.ref(); }
-  const ChunkPool& fullChunks(const AutoLockGC& lock) const {
-    return fullChunks_.ref();
-  }
-  const ChunkPool& availableChunks(const AutoLockGC& lock) const {
-    return availableChunks_.ref();
-  }
   const ChunkPool& emptyChunks(const AutoLockGC& lock) const {
     return emptyChunks_.ref();
   }
-  using NonEmptyChunksIter = ChainedIterator<ChunkPool::Iter, 2>;
-  NonEmptyChunksIter allNonEmptyChunks(const AutoLockGC& lock) {
-    clearCurrentChunk(lock);
-    return NonEmptyChunksIter(availableChunks(lock), fullChunks(lock));
-  }
+  uint32_t countEmptyChunks(const AutoLockGC& lock) const;
+  uint32_t countTotalChunks(const AutoLockGC& lock) const;
   uint32_t minEmptyChunkCount(const AutoLockGC& lock) const {
     return minEmptyChunkCount_;
   }
-  void setCurrentChunk(ArenaChunk* chunk, const AutoLockGC& lock);
-  void clearCurrentChunk(const AutoLockGC& lock);
+
+  void setCurrentChunk(JS::Zone* zone, ArenaChunk* chunk,
+                       const AutoLockGC& lock);
+  void clearCurrentChunk(JS::Zone* zone, const AutoLockGC& lock);
+
+  // Call a function for each non-empty chunk across all zones. Clears the
+  // current chunk for each zone first.
+  template <typename F>
+  void forEachNonEmptyChunk(const AutoLockGC& lock, F&& func);
+
 #ifdef DEBUG
-  bool isCurrentChunk(ArenaChunk* chunk) const {
-    return chunk == currentChunk_;
-  }
   void verifyAllChunks();
 #endif
 
-  // Get a free chunk or allocate one if needed. The chunk is left in the empty
-  // chunks pool.
+  // Get or allocate a free chunk, removing it from the empty chunks pool.
+  ArenaChunk* getOrAllocChunk(JS::Zone* zone, StallAndRetry stallAndRetry,
+                              AutoLockGCBgAlloc& lock);
   ArenaChunk* getOrAllocChunk(StallAndRetry stallAndRetry,
                               AutoLockGCBgAlloc& lock);
 
-  // Get or allocate a free chunk, removing it from the empty chunks pool.
-  ArenaChunk* takeOrAllocChunk(StallAndRetry stallAndRetry,
-                               AutoLockGCBgAlloc& lock);
-
   void recycleChunk(ArenaChunk* chunk, const AutoLockGC& lock);
+  ArenaChunk* pickChunk(JS::Zone* zone, StallAndRetry stallAndRetry,
+                        AutoLockGCBgAlloc& lock);
 
 #ifdef JS_GC_ZEAL
   void startVerifyPreBarriers();
@@ -653,6 +684,24 @@ class GCRuntime {
   // Allocator internals.
   static void* refillFreeListInGC(Zone* zone, AllocKind thingKind);
 
+  // Deferred WeakMap marking.
+  WeakMapList& deferredMapsList(MarkColor color) {
+    return (color == MarkColor::Black ? blackDeferredMaps : grayDeferredMaps)
+        .ref();
+  }
+  const WeakMapList& deferredMapsList(MarkColor color) const {
+    return (color == MarkColor::Black ? blackDeferredMaps : grayDeferredMaps)
+        .ref();
+  }
+  bool hasAnyDeferredWeakMaps() const {
+    return !blackDeferredMaps.ref().isEmpty() ||
+           !grayDeferredMaps.ref().isEmpty();
+  }
+  bool hasDeferredWeakMaps(MarkColor color) const {
+    return !deferredMapsList(color).isEmpty();
+  }
+  void resetDeferredWeakMaps();
+
   // Delayed marking.
   void delayMarkingChildren(gc::Cell* cell, MarkColor color);
   bool hasDelayedMarking() const;
@@ -682,18 +731,31 @@ class GCRuntime {
   void onParallelTaskEnd(bool wasDispatched,
                          const AutoLockHelperThreadState& lock);
 
-  // Parallel marking.
+  // Parallel and concurrent marking.
   bool setParallelMarkingEnabled(bool enabled);
-  bool initOrDisableParallelMarking();
-  [[nodiscard]] bool updateMarkersVector();
+#ifdef JS_GC_CONCURRENT_MARKING
+  bool setConcurrentMarkingEnabled(bool enabled);
+#endif
+  bool initOrDisableMultiThreadedMarking();
+  [[nodiscard]] bool resizeMarkersVector();
   size_t markingWorkerCount() const;
 
   // WeakRefs
-  bool registerWeakRef(HandleObject target, HandleObject weakRef);
+  bool registerWeakRef(JSContext* cx, HandleValue target,
+                       Handle<WeakRefObject*> weakRef);
   void traceKeptObjects(JSTracer* trc);
 
   void maybeClearWeakRefTargets(JS::ShouldClearWeakRefTargetCallback callback,
                                 void* data);
+
+  static bool isFinalizationObserverTarget(const Value& target);
+
+  bool relocateFinalizationObserverTarget(const Value& oldTarget,
+                                          const Value& newTarget);
+
+  static void clearWeakRefTargets(JS::Compartment* source, const Value& target);
+  static void clearWeakRefTargets(const CompartmentFilter& sourceFilter,
+                                  JS::Realm* targetFilter);
 
   JS::GCReason lastStartReason() const { return initialReason; }
 
@@ -702,6 +764,10 @@ class GCRuntime {
   // Allocator internals
   static void* refillFreeList(JS::Zone* zone, AllocKind thingKind);
   void attemptLastDitchGC();
+
+  // Return whether |sym| is marked at least |color| in the atom marking state
+  // for uncollected zones.
+  bool isSymbolReferencedByUncollectedZone(JS::Symbol* sym, MarkColor color);
 
   // Test mark queue.
 #ifdef DEBUG
@@ -743,7 +809,6 @@ class GCRuntime {
 
   // For ArenaLists::allocateFromArena()
   friend class ArenaLists;
-  ArenaChunk* pickChunk(StallAndRetry stallAndRetry, AutoLockGCBgAlloc& lock);
   Arena* allocateArena(ArenaChunk* chunk, Zone* zone, AllocKind kind,
                        ShouldCheckThresholds checkThresholds);
 
@@ -782,7 +847,7 @@ class GCRuntime {
   // receive a request to do GC work.
   void checkCanCallAPI();
 
-  // Check if the system state is such that GC has been supressed
+  // Check if the system state is such that GC has been suppressed
   // or otherwise delayed.
   [[nodiscard]] bool checkIfGCAllowedInCurrentState(JS::GCReason reason);
 
@@ -818,24 +883,23 @@ class GCRuntime {
   friend class AutoCallGCCallbacks;
   void maybeCallGCCallback(JSGCStatus status, JS::GCReason reason);
 
-  void startCollection(JS::GCReason reason);
+  void startCollection();
 
   void purgeRuntime();
-  [[nodiscard]] bool beginPreparePhase(JS::GCReason reason,
-                                       AutoGCSession& session);
-  bool prepareZonesForCollection(JS::GCReason reason, bool* isFullOut);
-  void unmarkWeakMaps();
-  void endPreparePhase(JS::GCReason reason);
+  [[nodiscard]] bool beginPreparePhase(AutoGCSession& session);
+  bool prepareZonesForCollection(bool* isFullOut);
+  void endPreparePhase();
   void beginMarkPhase(AutoGCSession& session);
   bool shouldPreserveJITCode(JS::Realm* realm,
                              const mozilla::TimeStamp& currentTime,
-                             JS::GCReason reason, bool canAllocateMoreCode,
+                             bool canAllocateMoreCode,
                              bool isActiveCompartment);
   void maybeDiscardJitCodeForGC();
   void startBackgroundFreeAfterMinorGC();
   void relazifyFunctionsForShrinkingGC();
   void purgePropMapTablesForShrinkingGC();
   void purgeSourceURLsForShrinkingGC();
+  void purgePendingWrapperPreservationBuffersForShrinkingGC();
   void traceRuntimeForMajorGC(JSTracer* trc, AutoGCSession& session);
   void traceRuntimeAtoms(JSTracer* trc);
   void traceRuntimeCommon(JSTracer* trc, TraceOrMarkRuntime traceOrMark);
@@ -847,23 +911,32 @@ class GCRuntime {
   void maybeDoCycleCollection();
   void findDeadCompartments();
 
+  std::tuple<JS::SliceBudget, JS::SliceBudget> budgetConcurrentMarking(
+      const JS::SliceBudget& requestedBudget);
+  void maybeStartConcurrentMarking(JS::SliceBudget& budget);
+  void finishAnyConcurrentMarking(JS::SliceBudget& budget);
   friend class BackgroundMarkTask;
   enum ParallelMarking : bool {
-    SingleThreadedMarking = false,
+    NoParallelMarking = false,
     AllowParallelMarking = true
   };
-  IncrementalProgress markUntilBudgetExhausted(
+  enum ConcurrentMarking : bool {
+    NoConcurrentMarking = false,
+    AllowConcurrentMarking = true
+  };
+  IncrementalProgress markPhase(JS::SliceBudget& sliceBudget);
+  IncrementalProgress markSynchronously(
       JS::SliceBudget& sliceBudget,
-      ParallelMarking allowParallelMarking = SingleThreadedMarking,
+      ParallelMarking allowParallelMarking = NoParallelMarking,
       ShouldReportMarkTime reportTime = ReportMarkTime);
   bool canMarkInParallel() const;
-  bool initParallelMarking();
-  void finishParallelMarkers();
+  bool canMarkConcurrently() const;
+  bool initMultiThreadedMarkers();
 
   bool reserveMarkingThreads(size_t count);
   void releaseMarkingThreads();
 
-  bool hasMarkingWork(MarkColor color) const;
+  bool hasMarkingWork() const;
 
   void drainMarkStack();
 
@@ -883,6 +956,7 @@ class GCRuntime {
 
   template <class ZoneIterT>
   IncrementalProgress markWeakReferences(JS::SliceBudget& budget);
+  void markIncomingGraySymbolEdgesFromUncollectedZones();
   IncrementalProgress markWeakReferencesInCurrentGroup(JS::SliceBudget& budget);
   IncrementalProgress markGrayRoots(JS::SliceBudget& budget,
                                     gcstats::PhaseKind phase);
@@ -900,9 +974,9 @@ class GCRuntime {
   MarkQueueProgress processTestMarkQueue();
 
   // GC Sweeping. Implemented in Sweeping.cpp.
-  void beginSweepPhase(JS::GCReason reason, AutoGCSession& session);
+  void beginSweepPhase(AutoGCSession& session);
   void dropStringWrappers();
-  void groupZonesForSweeping(JS::GCReason reason);
+  void groupZonesForSweeping();
   [[nodiscard]] bool findSweepGroupEdges();
   [[nodiscard]] bool addEdgesForMarkQueue();
   void moveToNextSweepGroup();
@@ -932,12 +1006,13 @@ class GCRuntime {
   void sweepObjectsWithWeakPointers();
   void sweepDebuggerOnMainThread(JS::GCContext* gcx);
   void sweepJitDataOnMainThread(JS::GCContext* gcx);
+  void maybeWriteCoverageAndSpew();
   void sweepFinalizationObserversOnMainThread();
   void traceWeakFinalizationObserverEdges(JSTracer* trc, Zone* zone);
   void sweepWeakRefs();
   IncrementalProgress endSweepingSweepGroup(JS::GCContext* gcx,
                                             JS::SliceBudget& budget);
-  IncrementalProgress performSweepActions(JS::SliceBudget& sliceBudget);
+  IncrementalProgress sweepPhase(JS::SliceBudget& sliceBudget);
   void startSweepingAtomsTable();
   IncrementalProgress sweepAtomsTable(JS::GCContext* gcx,
                                       JS::SliceBudget& budget);
@@ -953,7 +1028,9 @@ class GCRuntime {
   void startBackgroundFree();
   void freeFromBackgroundThread(AutoLockHelperThreadState& lock);
   void sweepBackgroundThings(ZoneList& zones);
-  void prepareForSweepSlice(JS::GCReason reason);
+  void prepareForSweepSlice();
+  void disableIncrementalBarriers();
+  void enableIncrementalBarriers();
   void assertBackgroundSweepingFinished();
 #ifdef DEBUG
   bool zoneInCurrentSweepGroup(Zone* zone) const;
@@ -970,40 +1047,38 @@ class GCRuntime {
   // Compacting GC. Implemented in Compacting.cpp.
   bool shouldCompact();
   void beginCompactPhase();
-  IncrementalProgress compactPhase(JS::GCReason reason,
-                                   JS::SliceBudget& sliceBudget,
+  IncrementalProgress compactPhase(JS::SliceBudget& sliceBudget,
                                    AutoGCSession& session);
   void endCompactPhase();
   void sweepZoneAfterCompacting(MovingTracer* trc, Zone* zone);
   bool canRelocateZone(Zone* zone) const;
-  [[nodiscard]] bool relocateArenas(Zone* zone, JS::GCReason reason,
-                                    Arena*& relocatedListOut,
+  [[nodiscard]] bool relocateArenas(Zone* zone, Arena*& relocatedListOut,
                                     JS::SliceBudget& sliceBudget);
   void updateCellPointers(Zone* zone, AllocKinds kinds);
   void updateAllCellPointers(MovingTracer* trc, Zone* zone);
   void updateZonePointersToRelocatedCells(Zone* zone);
   void updateRuntimePointersToRelocatedCells(AutoGCSession& session);
-  void clearRelocatedArenas(Arena* arenaList, JS::GCReason reason);
-  void clearRelocatedArenasWithoutUnlocking(Arena* arenaList,
-                                            JS::GCReason reason,
-                                            const AutoLockGC& lock);
+  void clearRelocatedArenas(Arena* arenaList);
   void releaseRelocatedArenas(Arena* arenaList);
   void releaseRelocatedArenasWithoutUnlocking(Arena* arenaList,
                                               const AutoLockGC& lock);
 #ifdef DEBUG
-  void protectOrReleaseRelocatedArenas(Arena* arenaList, JS::GCReason reason);
+  void protectOrReleaseRelocatedArenas(Arena* arenaList);
   void protectAndHoldArenas(Arena* arenaList);
   void unprotectHeldRelocatedArenas(const AutoLockGC& lock);
   void releaseHeldRelocatedArenas();
   void releaseHeldRelocatedArenasWithoutUnlocking(const AutoLockGC& lock);
 #endif
 
+  bool waitForBackgroundTasksOnAllocFailure();
+  void onOutOfMallocMemory(const AutoLockGC& lock);
+
   IncrementalProgress waitForBackgroundTask(GCParallelTask& task,
                                             const JS::SliceBudget& budget,
                                             bool shouldPauseMutator);
 
   void cancelRequestedGCAfterBackgroundTask();
-  void finishCollection(JS::GCReason reason);
+  void finishCollection();
   void maybeStopPretenuring();
   void checkGCStateNotInUse();
   IncrementalProgress joinBackgroundMarkTask();
@@ -1031,6 +1106,8 @@ class GCRuntime {
   MainThreadData<JS::Zone*> systemZone;
 
   MainThreadData<JS::GCContext> mainThreadContext;
+
+  LightLockRuntime lightLockRuntime;
 
  private:
   // For parent runtimes, a zone containing atoms that is shared by child
@@ -1069,6 +1146,9 @@ class GCRuntime {
   GCSchedulingTunables tunables;
   GCSchedulingState schedulingState;
   MainThreadData<bool> fullGCRequested;
+  // If an enterWeakMarking slice takes too long, suppress yielding during the
+  // next slice.
+  MainThreadData<bool> finishMarkingDuringSweeping;
 
   // Helper thread configuration.
   MainThreadData<double> helperThreadRatio;
@@ -1085,12 +1165,19 @@ class GCRuntime {
 
   // State used for managing atom mark bitmaps in each zone.
   AtomMarkingRuntime atomMarking;
+  MainThreadOrGCTaskData<UniquePtr<DenseBitmap>> atomsUsedByUncollectedZones;
 
   /*
    * Pointer to a callback that, if set, will be used to create a
    * budget for internally-triggered GCs.
    */
   MainThreadData<JS::CreateSliceBudgetCallback> createBudgetCallback;
+
+#ifdef MOZ_TSAN
+  // TSAN doesn't understand use of atomic_thread_fence to synchronize relaxed
+  // atomics so use reads/writes to this atomic instead.
+  mozilla::Atomic<int, mozilla::ReleaseAcquire> tsanFenceAtomic;
+#endif
 
  private:
   // Arenas used for permanent things created at startup and shared by child
@@ -1105,26 +1192,6 @@ class GCRuntime {
   // without syscalls.
   GCLockData<ChunkPool> emptyChunks_;
 
-  // Chunks which have had some, but not all, of their arenas allocated live
-  // in the available chunk lists. When all available arenas in a chunk have
-  // been allocated, the chunk is removed from the available list and moved
-  // to the fullChunks pool. During a GC, if all arenas are free, the chunk
-  // is moved back to the emptyChunks pool and scheduled for eventual
-  // release.
-  GCLockData<ChunkPool> availableChunks_;
-
-  // When all arenas in a chunk are used, it is moved to the fullChunks pool
-  // so as to reduce the cost of operations on the available lists.
-  GCLockData<ChunkPool> fullChunks_;
-
-  // The chunk currently being allocated from. If non-null this is at the head
-  // of the available chunks list and has isCurrentChunk set to true. Can be
-  // accessed without taking the GC lock.
-  MainThreadData<ArenaChunk*> currentChunk_;
-
-  // Bitmap for arenas in the current chunk that have been freed by background
-  // sweeping but not yet merged into the chunk's freeCommittedArenas.
-  GCLockData<ChunkArenaBitmap> pendingFreeCommittedArenas;
   friend class ArenaChunk;
 
   /*
@@ -1137,6 +1204,7 @@ class GCRuntime {
    */
   GCLockData<uint32_t> minEmptyChunkCount_;
 
+  MainThreadData<PersistentRoots> persistentRoots_;
   MainThreadData<RootedValueMap> rootsHash;
 
   // An incrementing id used to assign unique ids to cells that require one.
@@ -1192,11 +1260,17 @@ class GCRuntime {
   /* Whether to use parallel marking. */
   MainThreadData<ParallelMarking> useParallelMarking;
 
+  /* Whether to use concurrent marking. */
+  MainThreadData<ConcurrentMarking> useConcurrentMarking;
+
   /* The invocation kind of the current GC, set at the start of collection. */
   MainThreadOrGCTaskData<mozilla::Maybe<JS::GCOptions>> maybeGcOptions;
 
   /* The initial GC reason, taken from the first slice. */
   MainThreadData<JS::GCReason> initialReason;
+
+  /* The GC reason for the current slice. */
+  MainThreadData<JS::GCReason> sliceReason;
 
   /*
    * The current incremental GC phase. This is also used internally in
@@ -1221,13 +1295,28 @@ class GCRuntime {
   MainThreadData<bool> safeToYield;
 
   // Whether to do any marking caused by barriers on a background thread during
-  // incremental sweeping, while also sweeping zones which have finished
-  // marking.
+  // an incremental sweep slice, in parallel with sweeping zones which have
+  // finished marking.
   MainThreadData<bool> markOnBackgroundThreadDuringSweeping;
 
   // Whether any sweeping and decommitting will run on a separate GC helper
   // thread.
   MainThreadData<bool> useBackgroundThreads;
+
+  /*
+   * We're ready to start sweeping in this slice. Either we just marked roots in
+   * this slice or we called prepareForSweepSlice().
+   */
+  MainThreadData<bool> preparedForSweepInThisSlice;
+
+  MainThreadData<size_t> markSliceCount;
+
+  /* Whether we successfully added all edges to the implicit edges table. */
+  mozilla::Atomic<bool, mozilla::ReleaseAcquire> haveAllImplicitEdges_{false};
+
+#ifdef JS_GC_CONCURRENT_MARKING
+  MainThreadData<size_t> concurrentMarkingFinishedCount;
+#endif
 
 #ifdef DEBUG
   /* Shutdown has started. Further collections must be shutdown collections. */
@@ -1262,6 +1351,12 @@ class GCRuntime {
   /* Index of current sweep group (for stats). */
   MainThreadData<unsigned> sweepGroupIndex;
 
+  // WeakMaps whose children have been deferred until the mark stack is empty
+  // (everything reachable without going through a WeakMap entry has been
+  // marked).
+  MainThreadOrGCTaskData<WeakMapList> blackDeferredMaps;
+  MainThreadOrGCTaskData<WeakMapList> grayDeferredMaps;
+
   /*
    * Incremental sweep state.
    */
@@ -1275,6 +1370,8 @@ class GCRuntime {
       weakCachesToSweep;
   MainThreadData<bool> abortSweepAfterCurrentGroup;
   MainThreadOrGCTaskData<IncrementalProgress> sweepMarkResult;
+  MainThreadData<bool> disableBarriersForSweeping;
+  friend class AutoUpdateBarriersForSweeping;
 
   /*
    * During incremental foreground finalization, we may have a list of arenas of
@@ -1285,35 +1382,6 @@ class GCRuntime {
   MainThreadOrGCTaskData<AllocKind> foregroundFinalizedAllocKind;
   MainThreadData<mozilla::Maybe<SortedArenaList>> foregroundFinalizedArenas;
 
-#ifdef DEBUG
-  /*
-   * List of objects to mark at the beginning of a GC for testing purposes. May
-   * also contain string directives to change mark color or wait until different
-   * phases of the GC.
-   *
-   * This is a WeakCache because not everything in this list is guaranteed to
-   * end up marked (eg if you insert an object from an already-processed sweep
-   * group in the middle of an incremental GC). Also, the mark queue is not
-   * used during shutdown GCs. In either case, unmarked objects may need to be
-   * discarded.
-   */
-  JS::WeakCache<GCVector<HeapPtr<JS::Value>, 0, SystemAllocPolicy>>
-      testMarkQueue;
-
-  /* Position within the test mark queue. */
-  size_t queuePos = 0;
-
-  /* The test marking queue might want to be marking a particular color. */
-  mozilla::Maybe<js::gc::MarkColor> queueMarkColor;
-
-  // During gray marking, delay AssertCellIsNotGray checks by
-  // recording the cell pointers here and checking after marking has
-  // finished.
-  MainThreadData<Vector<const Cell*, 0, SystemAllocPolicy>>
-      cellsToAssertNotGray;
-  friend void js::gc::detail::AssertCellIsNotGray(const Cell*);
-#endif
-
   friend class SweepGroupsIter;
 
   /*
@@ -1322,9 +1390,6 @@ class GCRuntime {
   MainThreadData<bool> startedCompacting;
   MainThreadData<ZoneList> zonesToMaybeCompact;
   MainThreadData<size_t> zonesCompacted;
-  /* Whether we successfully added all edges to the implicit edges table. */
-  mozilla::Atomic<bool, mozilla::ReleaseAcquire> haveAllImplicitEdges_{false};
-
 #ifdef DEBUG
   GCLockData<Arena*> relocatedArenasToRelease;
 #endif
@@ -1365,46 +1430,16 @@ class GCRuntime {
    */
   MainThreadData<bool> parallelMarkingEnabled;
 
-  MainThreadData<bool> rootsRemoved;
-
+#ifdef JS_GC_CONCURRENT_MARKING
   /*
-   * These options control the zealousness of the GC. At every allocation,
-   * nextScheduled is decremented. When it reaches zero we do a full GC.
+   * Whether concurrent marking is enabled globally.
    *
-   * At this point, if zeal_ is one of the types that trigger periodic
-   * collection, then nextScheduled is reset to the value of zealFrequency.
-   * Otherwise, no additional GCs take place.
-   *
-   * You can control these values in several ways:
-   *   - Set the JS_GC_ZEAL environment variable
-   *   - Call gczeal() or schedulegc() from inside shell-executed JS code
-   *     (see the help for details)
-   *
-   * If gcZeal_ == 1 then we perform GCs in select places (during MaybeGC and
-   * whenever we are notified that GC roots have been removed). This option is
-   * mainly useful to embedders.
-   *
-   * We use zeal_ == 4 to enable write barrier verification. See the comment
-   * in gc/Verifier.cpp for more information about this.
-   *
-   * zeal_ values from 8 to 10 periodically run different types of
-   * incremental GC.
-   *
-   * zeal_ value 14 performs periodic shrinking collections.
+   * JSGC_CONCURRENT_MARKING_ENABLED
    */
-#ifdef JS_GC_ZEAL
-  static_assert(size_t(ZealMode::Count) <= 32,
-                "Too many zeal modes to store in a uint32_t");
-  MainThreadData<uint32_t> zealModeBits;
-  MainThreadData<int> zealFrequency;
-  MainThreadData<int> nextScheduled;
-  MainThreadData<bool> deterministicOnly;
-  MainThreadData<int> zealSliceBudget;
-  MainThreadData<size_t> maybeMarkStackLimit;
-
-  MainThreadData<PersistentRooted<GCVector<JSObject*, 0, SystemAllocPolicy>>>
-      selectedForMarking;
+  MainThreadOrGCTaskData<bool> concurrentMarkingEnabled;
 #endif
+
+  MainThreadData<bool> rootsRemoved;
 
   MainThreadData<bool> fullCompartmentChecks;
 
@@ -1423,6 +1458,11 @@ class GCRuntime {
       updateWeakPointerCompartmentCallbacks;
   MainThreadData<CallbackVector<JS::GCNurseryCollectionCallback>>
       nurseryCollectionCallbacks;
+
+  /* Zone compartment and realm destroy callbacks. */
+  MainThreadData<JSDestroyZoneCallback> destroyZoneCallback;
+  MainThreadData<JSDestroyCompartmentCallback> destroyCompartmentCallback;
+  MainThreadData<JS::DestroyRealmCallback> destroyRealmCallback;
 
   /*
    * The trace operations to trace embedding-specific GC roots. One is for
@@ -1450,21 +1490,13 @@ class GCRuntime {
   Mutex lock MOZ_UNANNOTATED;
 
   /*
-   * Lock used to synchronise access to the store buffer during parallel
-   * sweeping.
+   * Lock used to synchronise access to resources that would normally only be
+   * accessed on the main thread during parallel sweeping.
    */
-  Mutex storeBufferLock MOZ_UNANNOTATED;
+  Mutex sweepingLock MOZ_UNANNOTATED;
 
   /* Lock used to synchronise access to delayed marking state. */
   Mutex delayedMarkingLock MOZ_UNANNOTATED;
-
-  /*
-   * Lock used by buffer allocators to synchronise data passed back to the main
-   * thread by background sweeping.
-   */
-  Mutex bufferAllocatorLock MOZ_UNANNOTATED;
-  friend class BufferAllocator;
-  friend class AutoLock;
 
   friend class BackgroundSweepTask;
   friend class BackgroundFreeTask;
@@ -1482,6 +1514,16 @@ class GCRuntime {
   // GC. This is accessed off main thread when sweeping WeakCaches.
   MainThreadOrGCTaskData<gc::StoreBuffer> storeBuffer_;
 
+  // List of non-ephemeron weak containers to sweep during
+  // beginSweepingSweepGroup. Must come before testMarkQueue.
+  MainThreadOrGCTaskData<mozilla::LinkedList<JS::detail::WeakCacheBase>>
+      weakCaches_;
+
+  // Per-runtime buffer allocator data.
+  MainThreadOrGCTaskData<BufferAllocatorRuntime> bufferRuntime_;
+  friend class AutoLockBufferAllocator;
+  friend class BufferAllocator;
+
   mozilla::TimeStamp lastLastDitchTime;
 
   // The last time per-zone allocation rates were updated.
@@ -1489,6 +1531,59 @@ class GCRuntime {
 
   // Total collector time since per-zone allocation rates were last updated.
   MainThreadData<mozilla::TimeDuration> collectorTimeSinceAllocRateUpdate;
+
+  // Last time at which an animation was played for this runtime.
+  MainThreadData<mozilla::TimeStamp> lastAnimationTime_;
+
+#ifdef JS_GC_ZEAL
+  /*
+   * These options control the zealousness of the GC. At every allocation,
+   * nextScheduled is decremented. When it reaches zero we do a full GC.
+   *
+   * At this point, if zeal_ is one of the types that trigger periodic
+   * collection, then nextScheduled is reset to the value of zealFrequency.
+   * Otherwise, no additional GCs take place.
+   *
+   * You can control these values in several ways:
+   *   - Set the JS_GC_ZEAL environment variable
+   *   - Call gczeal() or schedulegc() from inside shell-executed JS code
+   *     (see the help for details)
+   *
+   * See gc::ZealModeHelpText in GC.cpp for details of what the modes do.
+   */
+  static_assert(size_t(ZealMode::Count) <= 32,
+                "Too many zeal modes to store in a uint32_t");
+  MainThreadData<uint32_t> zealModeBits;
+  MainThreadData<int> zealFrequency;
+  MainThreadData<int> nextScheduled;
+  MainThreadData<bool> deterministicOnly;
+  MainThreadData<int> zealSliceBudget;
+  MainThreadData<size_t> maybeMarkStackLimit;
+  MainThreadData<PersistentRooted<GCVector<JSObject*, 0, SystemAllocPolicy>>>
+      selectedForMarking;
+#endif
+
+#ifdef DEBUG
+  /*
+   * List of objects to mark at the beginning of a GC for testing purposes. May
+   * also contain string directives to change mark color or wait until different
+   * phases of the GC.
+   *
+   * This is a WeakCache because not everything in this list is guaranteed to
+   * end up marked (eg if you insert an object from an already-processed sweep
+   * group in the middle of an incremental GC). Also, the mark queue is not
+   * used during shutdown GCs. In either case, unmarked objects may need to be
+   * discarded.
+   */
+  JS::WeakCache<GCVector<HeapPtr<JS::Value>, 0, SystemAllocPolicy>>
+      testMarkQueue;
+
+  /* Position within the test mark queue. */
+  size_t queuePos = 0;
+
+  /* The test marking queue might want to be marking a particular color. */
+  mozilla::Maybe<js::gc::MarkColor> queueMarkColor;
+#endif
 
   friend class MarkingValidator;
   friend class AutoEnterIteration;

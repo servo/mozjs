@@ -70,7 +70,7 @@ class ShellScriptRunner(Layer):
     }
 
     def __init__(self, env, mach_cmd):
-        super(ShellScriptRunner, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.metrics = []
         self.timed_out = False
         self.output_timed_out = False
@@ -91,7 +91,8 @@ class ShellScriptRunner(Layer):
         parsed_metrics = []
         for metrics in self.metrics:
             prepared_metrics = (
-                metrics.replace("perfMetrics:", "")
+                metrics
+                .replace("perfMetrics:", "")
                 .replace("{{", "{")
                 .replace("}}", "}")
                 .strip()
@@ -198,15 +199,14 @@ class ShellScriptRunner(Layer):
                     )
                     self.info(f"Copying testing directory to {output_dir}")
                     shutil.copytree(testing_dir, output_dir)
+                    self.env.set_arg("output", output_dir)
 
-        metadata.add_result(
-            {
-                "name": test["name"],
-                "framework": {"name": "mozperftest"},
-                "transformer": "mozperftest.test.shellscript:ShellScriptData",
-                "shouldAlert": True,
-                "results": self.parse_metrics(),
-            }
-        )
+        metadata.add_result({
+            "name": test["name"],
+            "framework": {"name": "mozperftest"},
+            "transformer": "mozperftest.test.shellscript:ShellScriptData",
+            "shouldAlert": True,
+            "results": self.parse_metrics(),
+        })
 
         return metadata

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -155,7 +153,7 @@ static bool CheckIncrementalLimit(double factor) {
 }
 
 static bool CheckNonZeroUnitRange(double value) {
-  return value > 0.0 && value <= 100.0;
+  return value > 0.0 && value <= 1.0;
 }
 
 GCSchedulingTunables::GCSchedulingTunables() {
@@ -619,17 +617,18 @@ void MemoryTracker::checkEmptyOnDestroy() {
   if (!gcMap.empty()) {
     ok = false;
     fprintf(stderr, "Missing calls to JS::RemoveAssociatedMemory:\n");
-    for (auto r = gcMap.all(); !r.empty(); r.popFront()) {
-      fprintf(stderr, "  %p 0x%zx %s\n", r.front().key().ptr(),
-              r.front().value(), MemoryUseName(r.front().key().use()));
+    for (auto iter = gcMap.iter(); !iter.done(); iter.next()) {
+      fprintf(stderr, "  %p 0x%zx %s\n", iter.get().key().ptr(),
+              iter.get().value(), MemoryUseName(iter.get().key().use()));
     }
   }
 
   if (!nonGCMap.empty()) {
     ok = false;
     fprintf(stderr, "Missing calls to Zone::decNonGCMemory:\n");
-    for (auto r = nonGCMap.all(); !r.empty(); r.popFront()) {
-      fprintf(stderr, "  %p 0x%zx\n", r.front().key().ptr(), r.front().value());
+    for (auto iter = nonGCMap.iter(); !iter.done(); iter.next()) {
+      fprintf(stderr, "  %p 0x%zx\n", iter.get().key().ptr(),
+              iter.get().value());
     }
   }
 
@@ -654,7 +653,7 @@ inline bool MemoryTracker::allowMultipleAssociations(MemoryUse use) {
   // one-to-many relationship only where necessary.
   return isNonGCMemoryUse(use) || use == MemoryUse::RegExpSharedBytecode ||
          use == MemoryUse::BreakpointSite || use == MemoryUse::Breakpoint ||
-         use == MemoryUse::ForOfPICStub || use == MemoryUse::ICUObject;
+         use == MemoryUse::ICUObject;
 }
 
 void MemoryTracker::trackGCMemory(Cell* cell, size_t nbytes, MemoryUse use) {
@@ -844,12 +843,12 @@ void MemoryTracker::decNonGCMemory(void* mem, size_t nbytes, MemoryUse use) {
 void MemoryTracker::fixupAfterMovingGC() {
   // Update the table after we move GC things. We don't use StableCellHasher
   // because that would create a difference between debug and release builds.
-  for (GCMap::Enum e(gcMap); !e.empty(); e.popFront()) {
-    const auto& key = e.front().key();
+  for (auto iter = gcMap.modIter(); !iter.done(); iter.next()) {
+    const auto& key = iter.get().key();
     Cell* cell = key.ptr();
     if (cell->isForwarded()) {
       cell = gc::RelocationOverlay::fromCell(cell)->forwardingAddress();
-      e.rekeyFront(Key<Cell>{cell, key.use()});
+      iter.rekey(Key<Cell>{cell, key.use()});
     }
   }
 }

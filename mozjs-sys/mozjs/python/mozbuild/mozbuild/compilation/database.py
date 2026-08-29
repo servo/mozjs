@@ -8,6 +8,7 @@ import os
 from collections import OrderedDict, defaultdict
 
 import mozpack.path as mozpath
+from mozshellutil import quote as shell_quote
 
 from mozbuild.backend.common import CommonBackend
 from mozbuild.frontend.data import (
@@ -17,7 +18,6 @@ from mozbuild.frontend.data import (
     Sources,
     VariablePassthru,
 )
-from mozbuild.shellutil import quote as shell_quote
 from mozbuild.util import expand_variables
 
 
@@ -108,7 +108,7 @@ class CompileDBBackend(CommonBackend):
                     # Handle that case by checking whether there are an even
                     # number of double-quotes in the word and appending it to
                     # the accumulator if not. Meanwhile, shlex.split() and
-                    # mozbuild.shellutil.split() aren't able to properly handle
+                    # mozshellutil.split() aren't able to properly handle
                     # this and break in various ways, so we can't use something
                     # off-the-shelf.
                     has_quote = bool(word.count('"') % 2)
@@ -129,13 +129,11 @@ class CompileDBBackend(CommonBackend):
             per_source_flags = self._per_source_flags.get(filename)
             if per_source_flags is not None:
                 c.extend(per_source_flags)
-            db.append(
-                {
-                    "directory": directory,
-                    "command": shell_quote(*c),
-                    "file": mozpath.join(directory, filename),
-                }
-            )
+            db.append({
+                "directory": directory,
+                "command": shell_quote(*c),
+                "file": mozpath.join(directory, filename),
+            })
 
         import json
 
@@ -195,6 +193,8 @@ class CompileDBBackend(CommonBackend):
     ):
         for f in unified_source_mapping:
             self._build_db_line(bindings_dir, None, self.environment, f[0], ".cpp")
+        for f in global_define_files:
+            self._build_db_line(bindings_dir, None, self.environment, f, ".cpp")
 
     COMPILERS = {
         ".c": "CC",

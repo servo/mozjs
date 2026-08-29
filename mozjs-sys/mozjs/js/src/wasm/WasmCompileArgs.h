@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +20,7 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/SHA1.h"
 #include "mozilla/TypedEnumBits.h"
+#include "mozilla/Variant.h"
 
 #include "js/Utility.h"
 #include "js/WasmFeatures.h"
@@ -103,28 +102,27 @@ struct BuiltinModuleIds {
 struct FeatureOptions {
   FeatureOptions()
       : disableOptimizingCompiler(false),
+        mozIntGemm(false),
         isBuiltinModule(false),
         jsStringBuiltins(false),
-        jsStringConstants(false),
-        requireExnref(false) {}
+        jsStringConstants(false) {}
 
   // Whether we should try to disable our optimizing compiler. Only available
   // with `IsSimdPrivilegedContext`.
   bool disableOptimizingCompiler;
+  // Whether we enable the mozIntGemm builtin module. Only available with
+  // `IsSimdPrivilegedContext`.
+  bool mozIntGemm;
 
   // Enables builtin module opcodes, only set in WasmBuiltinModule.cpp.
   bool isBuiltinModule;
 
-  // Enable JS String builtins for this module, only available if the feature
-  // is also enabled.
+  // Enable JS String builtins for this module.
   bool jsStringBuiltins;
   // Enable imported string constants for this module, only available if the
   // feature is also enabled.
   bool jsStringConstants;
   SharedChars jsStringConstantsNamespace;
-
-  // Enable exnref support.
-  bool requireExnref;
 
   // Parse the compile options bag.
   [[nodiscard]] bool init(JSContext* cx, HandleValue val);
@@ -189,12 +187,27 @@ MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(FeatureUsage);
 
 // Describes the JS scripted caller of a request to compile a wasm module.
 
-struct ScriptedCaller {
-  UniqueChars filename;  // UTF-8 encoded
-  bool filenameIsURL;
-  uint32_t line;
+enum class ScriptedCallerKind : uint8_t {
+  IntroducedFilename,
+  Url,
+  SelfHosted,
+};
 
-  ScriptedCaller() : filenameIsURL(false), line(0) {}
+struct ScriptedCaller {
+  UniqueChars source;  // UTF-8 encoded filename or URL
+  uint32_t line;
+  ScriptedCallerKind kind;
+
+  ScriptedCaller() : line(0), kind(ScriptedCallerKind::IntroducedFilename) {}
+  ScriptedCaller(UniqueChars&& source, ScriptedCallerKind kind, uint32_t line)
+      : source(std::move(source)), line(line), kind(kind) {}
+
+  // Use a ScriptedCaller that is 'self-hosted'. Frames from this module will
+  // be treated like JS self-hosted frames and hidden from user facing error
+  // stacks.
+  static ScriptedCaller selfHosted(JSContext* cx);
+
+  bool isSelfHosted() const { return kind == ScriptedCallerKind::SelfHosted; }
 };
 
 // Describes the reasons we cannot compute compile args
@@ -495,39 +508,29 @@ class BytecodeBuffer {
 // Utility for passing either a bytecode buffer (which owns the bytecode) or
 // just the source (which does not own the bytecode).
 class BytecodeBufferOrSource {
-  union {
-    const BytecodeBuffer* buffer_;
-    BytecodeSource source_;
-  };
-  bool hasBuffer_;
+  mozilla::Variant<BytecodeBuffer, BytecodeSource> data_;
 
  public:
-  BytecodeBufferOrSource() : source_(BytecodeSource()), hasBuffer_(false) {}
-  explicit BytecodeBufferOrSource(const BytecodeBuffer& buffer)
-      : buffer_(&buffer), hasBuffer_(true) {}
+  BytecodeBufferOrSource() : data_(BytecodeSource()) {}
+  explicit BytecodeBufferOrSource(BytecodeBuffer&& buffer)
+      : data_(std::move(buffer)) {}
   explicit BytecodeBufferOrSource(const BytecodeSource& source)
-      : source_(source), hasBuffer_(false) {}
+      : data_(source) {}
 
-  BytecodeBufferOrSource(const BytecodeBufferOrSource&) = delete;
-  const BytecodeBufferOrSource& operator=(const BytecodeBufferOrSource&) =
-      delete;
+  BytecodeBufferOrSource(const BytecodeBufferOrSource&) = default;
+  BytecodeBufferOrSource& operator=(const BytecodeBufferOrSource&) = default;
 
-  ~BytecodeBufferOrSource() {
-    if (!hasBuffer_) {
-      source_.~BytecodeSource();
-    }
-  }
-
-  bool hasBuffer() const { return hasBuffer_; }
+  bool hasBuffer() const { return data_.is<BytecodeBuffer>(); }
   const BytecodeBuffer& buffer() const {
-    MOZ_ASSERT(hasBuffer());
-    return *buffer_;
+    MOZ_RELEASE_ASSERT(hasBuffer());
+    return data_.as<BytecodeBuffer>();
   }
   const BytecodeSource& source() const {
-    if (hasBuffer_) {
-      return buffer_->source();
+    if (data_.is<BytecodeSource>()) {
+      return data_.as<BytecodeSource>();
     }
-    return source_;
+    MOZ_RELEASE_ASSERT(data_.is<BytecodeBuffer>());
+    return data_.as<BytecodeBuffer>().source();
   }
 
   [[nodiscard]] bool getOrCreateBuffer(BytecodeBuffer* result) const {

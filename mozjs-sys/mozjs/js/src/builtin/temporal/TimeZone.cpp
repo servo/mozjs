@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,21 +8,18 @@
 #include "mozilla/intl/TimeZone.h"
 #include "mozilla/Likely.h"
 #include "mozilla/Maybe.h"
-#include "mozilla/Range.h"
-#include "mozilla/Result.h"
 #include "mozilla/Span.h"
 #include "mozilla/UniquePtr.h"
 
 #include <cmath>
 #include <cstdlib>
-#include <iterator>
 #include <string_view>
 #include <utility>
 
-#include "jsdate.h"
 #include "jstypes.h"
 #include "NamespaceImports.h"
 
+#include "builtin/Date.h"
 #include "builtin/intl/CommonFunctions.h"
 #include "builtin/intl/FormatBuffer.h"
 #include "builtin/intl/SharedIntlData.h"
@@ -64,7 +59,7 @@ using namespace js;
 using namespace js::temporal;
 
 void js::temporal::TimeZoneValue::trace(JSTracer* trc) {
-  TraceNullableRoot(trc, &object_, "TimeZoneValue::object");
+  TraceRoot(trc, &object_, "TimeZoneValue::object");
 }
 
 /**
@@ -98,25 +93,30 @@ static JSLinearString* FormatOffsetTimeZoneIdentifier(JSContext* cx,
   return NewStringCopyN<CanGC>(cx, result, std::size(result));
 }
 
-static TimeZoneObject* CreateTimeZoneObject(
+TimeZoneObject* js::temporal::CreateTimeZoneObject(
     JSContext* cx, Handle<JSLinearString*> identifier,
     Handle<JSLinearString*> primaryIdentifier) {
-  // TODO: Implement a built-in time zone object cache.
-
   auto* object = NewObjectWithGivenProto<TimeZoneObject>(cx, nullptr);
   if (!object) {
     return nullptr;
   }
 
-  object->setFixedSlot(TimeZoneObject::IDENTIFIER_SLOT,
-                       StringValue(identifier));
+  object->initFixedSlot(TimeZoneObject::IDENTIFIER_SLOT,
+                        StringValue(identifier));
 
-  object->setFixedSlot(TimeZoneObject::PRIMARY_IDENTIFIER_SLOT,
-                       StringValue(primaryIdentifier));
+  object->initFixedSlot(TimeZoneObject::PRIMARY_IDENTIFIER_SLOT,
+                        StringValue(primaryIdentifier));
 
-  object->setFixedSlot(TimeZoneObject::OFFSET_MINUTES_SLOT, UndefinedValue());
+  object->initFixedSlot(TimeZoneObject::OFFSET_MINUTES_SLOT, UndefinedValue());
 
   return object;
+}
+
+static TimeZoneObject* GetOrCreateTimeZoneObject(
+    JSContext* cx, Handle<JSLinearString*> identifier,
+    Handle<JSLinearString*> primaryIdentifier) {
+  return cx->global()->globalIntlData().getOrCreateTimeZone(cx, identifier,
+                                                            primaryIdentifier);
 }
 
 static TimeZoneObject* CreateTimeZoneObject(JSContext* cx,
@@ -137,27 +137,31 @@ static TimeZoneObject* CreateTimeZoneObject(JSContext* cx,
     return nullptr;
   }
 
-  object->setFixedSlot(TimeZoneObject::IDENTIFIER_SLOT,
-                       StringValue(identifier));
+  object->initFixedSlot(TimeZoneObject::IDENTIFIER_SLOT,
+                        StringValue(identifier));
 
-  object->setFixedSlot(TimeZoneObject::PRIMARY_IDENTIFIER_SLOT,
-                       UndefinedValue());
+  object->initFixedSlot(TimeZoneObject::PRIMARY_IDENTIFIER_SLOT,
+                        UndefinedValue());
 
-  object->setFixedSlot(TimeZoneObject::OFFSET_MINUTES_SLOT,
-                       Int32Value(offsetMinutes));
+  object->initFixedSlot(TimeZoneObject::OFFSET_MINUTES_SLOT,
+                        Int32Value(offsetMinutes));
 
   return object;
 }
 
 static mozilla::UniquePtr<mozilla::intl::TimeZone> CreateIntlTimeZone(
     JSContext* cx, JSLinearString* identifier) {
-  JS::AutoStableStringChars stableChars(cx);
-  if (!stableChars.initTwoByte(cx, identifier)) {
+  MOZ_ASSERT(StringIsAscii(identifier));
+
+  Vector<char, mozilla::intl::TimeZone::TimeZoneIdentifierLength> chars(cx);
+  if (!chars.resize(identifier->length())) {
     return nullptr;
   }
 
+  js::CopyChars(reinterpret_cast<JS::Latin1Char*>(chars.begin()), *identifier);
+
   auto result = mozilla::intl::TimeZone::TryCreate(
-      mozilla::Some(stableChars.twoByteRange()));
+      mozilla::Some(static_cast<mozilla::Span<const char>>(chars)));
   if (result.isErr()) {
     intl::ReportInternalError(cx, result.unwrapErr());
     return nullptr;
@@ -189,119 +193,21 @@ static mozilla::intl::TimeZone* GetOrCreateIntlTimeZone(
 /**
  * IsValidTimeZoneName ( timeZone )
  * IsAvailableTimeZoneName ( timeZone )
- */
-static bool IsValidTimeZoneName(JSContext* cx, Handle<JSLinearString*> timeZone,
-                                MutableHandle<JSAtom*> validatedTimeZone) {
-  intl::SharedIntlData& sharedIntlData = cx->runtime()->sharedIntlData.ref();
-
-  if (!sharedIntlData.validateTimeZoneName(cx, timeZone, validatedTimeZone)) {
-    return false;
-  }
-
-  if (validatedTimeZone) {
-    cx->markAtom(validatedTimeZone);
-  }
-  return true;
-}
-
-/**
- * 6.5.2 CanonicalizeTimeZoneName ( timeZone )
- *
- * Canonicalizes the given IANA time zone name.
- *
- * ES2024 Intl draft rev 74ca7099f103d143431b2ea422ae640c6f43e3e6
- */
-static JSLinearString* CanonicalizeTimeZoneName(
-    JSContext* cx, Handle<JSLinearString*> timeZone) {
-  // Step 1. (Not applicable, the input is already a valid IANA time zone.)
-#ifdef DEBUG
-  MOZ_ASSERT(!StringEqualsLiteral(timeZone, "Etc/Unknown"),
-             "Invalid time zone");
-
-  Rooted<JSAtom*> checkTimeZone(cx);
-  if (!IsValidTimeZoneName(cx, timeZone, &checkTimeZone)) {
-    return nullptr;
-  }
-  MOZ_ASSERT(EqualStrings(timeZone, checkTimeZone),
-             "Time zone name not normalized");
-#endif
-
-  // Step 2.
-  Rooted<JSLinearString*> ianaTimeZone(cx);
-  do {
-    intl::SharedIntlData& sharedIntlData = cx->runtime()->sharedIntlData.ref();
-
-    // Some time zone names are canonicalized differently by ICU -- handle
-    // those first:
-    Rooted<JSAtom*> canonicalTimeZone(cx);
-    if (!sharedIntlData.tryCanonicalizeTimeZoneConsistentWithIANA(
-            cx, timeZone, &canonicalTimeZone)) {
-      return nullptr;
-    }
-
-    if (canonicalTimeZone) {
-      cx->markAtom(canonicalTimeZone);
-      ianaTimeZone = canonicalTimeZone;
-      break;
-    }
-
-    JS::AutoStableStringChars stableChars(cx);
-    if (!stableChars.initTwoByte(cx, timeZone)) {
-      return nullptr;
-    }
-
-    intl::FormatBuffer<char16_t, intl::INITIAL_CHAR_BUFFER_SIZE> buffer(cx);
-    auto result = mozilla::intl::TimeZone::GetCanonicalTimeZoneID(
-        stableChars.twoByteRange(), buffer);
-    if (result.isErr()) {
-      intl::ReportInternalError(cx, result.unwrapErr());
-      return nullptr;
-    }
-
-    ianaTimeZone = buffer.toString(cx);
-    if (!ianaTimeZone) {
-      return nullptr;
-    }
-  } while (false);
-
-#ifdef DEBUG
-  MOZ_ASSERT(!StringEqualsLiteral(ianaTimeZone, "Etc/Unknown"),
-             "Invalid canonical time zone");
-
-  if (!IsValidTimeZoneName(cx, ianaTimeZone, &checkTimeZone)) {
-    return nullptr;
-  }
-  MOZ_ASSERT(EqualStrings(ianaTimeZone, checkTimeZone),
-             "Unsupported canonical time zone");
-#endif
-
-  // Step 3. (Links to UTC are handled by SharedIntlData.)
-  MOZ_ASSERT(!StringEqualsLiteral(ianaTimeZone, "Etc/UTC"));
-  MOZ_ASSERT(!StringEqualsLiteral(ianaTimeZone, "Etc/GMT"));
-
-  // We don't need to check against "GMT", because ICU uses the tzdata rearguard
-  // format, where "GMT" is a link to "Etc/GMT".
-  MOZ_ASSERT(!StringEqualsLiteral(ianaTimeZone, "GMT"));
-
-  // Step 4.
-  return ianaTimeZone;
-}
-
-/**
- * IsValidTimeZoneName ( timeZone )
- * IsAvailableTimeZoneName ( timeZone )
  * CanonicalizeTimeZoneName ( timeZone )
  */
 static bool ValidateAndCanonicalizeTimeZoneName(
     JSContext* cx, Handle<JSLinearString*> timeZone,
     MutableHandle<JSLinearString*> identifier,
     MutableHandle<JSLinearString*> primaryIdentifier) {
-  Rooted<JSAtom*> validatedTimeZone(cx);
-  if (!IsValidTimeZoneName(cx, timeZone, &validatedTimeZone)) {
+  Rooted<JSAtom*> availableTimeZone(cx);
+  Rooted<JSAtom*> primaryTimeZone(cx);
+  intl::SharedIntlData& sharedIntlData = cx->runtime()->sharedIntlData.ref();
+  if (!sharedIntlData.validateAndCanonicalizeTimeZone(
+          cx, timeZone, &availableTimeZone, &primaryTimeZone)) {
     return false;
   }
 
-  if (!validatedTimeZone) {
+  if (!primaryTimeZone) {
     if (auto chars = QuoteString(cx, timeZone)) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_TEMPORAL_TIMEZONE_INVALID_IDENTIFIER,
@@ -309,20 +215,23 @@ static bool ValidateAndCanonicalizeTimeZoneName(
     }
     return false;
   }
+  MOZ_ASSERT(availableTimeZone);
 
-  auto* canonical = CanonicalizeTimeZoneName(cx, validatedTimeZone);
-  if (!canonical) {
-    return false;
-  }
+  // Links to UTC are handled by SharedIntlData.
+  MOZ_ASSERT(!StringEqualsLiteral(primaryTimeZone, "Etc/UTC"));
+  MOZ_ASSERT(!StringEqualsLiteral(primaryTimeZone, "Etc/GMT"));
 
-  identifier.set(validatedTimeZone);
-  primaryIdentifier.set(canonical);
+  // We don't need to check against "GMT", because ICU uses the tzdata rearguard
+  // format, where "GMT" is a link to "Etc/GMT".
+  MOZ_ASSERT(!StringEqualsLiteral(primaryTimeZone, "GMT"));
+
+  identifier.set(availableTimeZone);
+  primaryIdentifier.set(primaryTimeZone);
   return true;
 }
 
 static bool SystemTimeZoneOffset(JSContext* cx, int32_t* offset) {
-  auto rawOffset =
-      DateTimeInfo::getRawOffsetMs(DateTimeInfo::forceUTC(cx->realm()));
+  auto rawOffset = DateTimeInfo::getRawOffsetMs(cx->realm()->getDateTimeInfo());
   if (rawOffset.isErr()) {
     intl::ReportInternalError(cx);
     return false;
@@ -337,30 +246,24 @@ static bool SystemTimeZoneOffset(JSContext* cx, int32_t* offset) {
  *
  * Returns the IANA time zone name for the host environment's current time zone.
  */
-JSLinearString* js::temporal::SystemTimeZoneIdentifier(JSContext* cx) {
-  intl::FormatBuffer<char16_t, intl::INITIAL_CHAR_BUFFER_SIZE> formatBuffer(cx);
-  auto result = DateTimeInfo::timeZoneId(DateTimeInfo::forceUTC(cx->realm()),
-                                         formatBuffer);
-  if (result.isErr()) {
-    intl::ReportInternalError(cx, result.unwrapErr());
+JSLinearString* js::temporal::ComputeSystemTimeZoneIdentifier(JSContext* cx) {
+  TimeZoneIdentifierVector timeZoneId;
+  if (!DateTimeInfo::timeZoneId(cx->realm()->getDateTimeInfo(), timeZoneId)) {
+    ReportOutOfMemory(cx);
     return nullptr;
   }
 
-  Rooted<JSLinearString*> timeZone(cx, formatBuffer.toString(cx));
-  if (!timeZone) {
+  Rooted<JSAtom*> availableTimeZone(cx);
+  Rooted<JSAtom*> primaryTimeZone(cx);
+  intl::SharedIntlData& sharedIntlData = cx->runtime()->sharedIntlData.ref();
+  if (!sharedIntlData.validateAndCanonicalizeTimeZone(
+          cx, static_cast<mozilla::Span<const char>>(timeZoneId),
+          &availableTimeZone, &primaryTimeZone)) {
     return nullptr;
   }
-
-  Rooted<JSAtom*> validTimeZone(cx);
-  if (!IsValidTimeZoneName(cx, timeZone, &validTimeZone)) {
-    return nullptr;
+  if (primaryTimeZone) {
+    return primaryTimeZone;
   }
-  if (validTimeZone) {
-    return CanonicalizeTimeZoneName(cx, validTimeZone);
-  }
-
-  // See DateTimeFormat.js for the JS implementation.
-  // TODO: Move the JS implementation into C++.
 
   // Before defaulting to "UTC", try to represent the system time zone using
   // the Etc/GMT + offset format. This format only accepts full hour offsets.
@@ -388,17 +291,14 @@ JSLinearString* js::temporal::SystemTimeZoneIdentifier(JSContext* cx) {
 
     MOZ_ASSERT(n == etcGMT.length() + 2 || n == etcGMT.length() + 3);
 
-    timeZone = NewStringCopyN<CanGC>(cx, offsetString, n);
-    if (!timeZone) {
-      return nullptr;
-    }
-
     // Check if the fallback is valid.
-    if (!IsValidTimeZoneName(cx, timeZone, &validTimeZone)) {
+    if (!sharedIntlData.validateAndCanonicalizeTimeZone(
+            cx, mozilla::Span<const char>{offsetString, n}, &availableTimeZone,
+            &primaryTimeZone)) {
       return nullptr;
     }
-    if (validTimeZone) {
-      return CanonicalizeTimeZoneName(cx, validTimeZone);
+    if (primaryTimeZone) {
+      return primaryTimeZone;
     }
   }
 
@@ -408,15 +308,20 @@ JSLinearString* js::temporal::SystemTimeZoneIdentifier(JSContext* cx) {
 
 /**
  * SystemTimeZoneIdentifier ( )
+ *
+ * Returns the IANA time zone name for the host environment's current time zone.
+ */
+JSLinearString* js::temporal::SystemTimeZoneIdentifier(JSContext* cx) {
+  return cx->global()->globalIntlData().defaultTimeZone(cx);
+}
+
+/**
+ * SystemTimeZoneIdentifier ( )
  */
 bool js::temporal::SystemTimeZone(JSContext* cx,
                                   MutableHandle<TimeZoneValue> result) {
-  Rooted<JSLinearString*> identifier(cx, SystemTimeZoneIdentifier(cx));
-  if (!identifier) {
-    return false;
-  }
-
-  auto* timeZone = CreateTimeZoneObject(cx, identifier, identifier);
+  auto* timeZone =
+      cx->global()->globalIntlData().getOrCreateDefaultTimeZone(cx);
   if (!timeZone) {
     return false;
   }
@@ -538,6 +443,30 @@ static bool GetNamedTimeZoneOffsetNanoseconds(
 }
 
 /**
+ * Check if the time zone offset at UTC time |utcMilliseconds1| is the same as
+ * the time zone offset at UTC time |utcMilliseconds2|.
+ */
+static bool EqualTimeZoneOffset(JSContext* cx,
+                                mozilla::intl::TimeZone* timeZone,
+                                int64_t utcMilliseconds1,
+                                int64_t utcMilliseconds2, bool* result) {
+  auto offset1 = timeZone->GetOffsetMs(utcMilliseconds1);
+  if (offset1.isErr()) {
+    intl::ReportInternalError(cx, offset1.unwrapErr());
+    return false;
+  }
+
+  auto offset2 = timeZone->GetOffsetMs(utcMilliseconds2);
+  if (offset2.isErr()) {
+    intl::ReportInternalError(cx, offset2.unwrapErr());
+    return false;
+  }
+
+  *result = offset1.unwrap() == offset2.unwrap();
+  return true;
+}
+
+/**
  * GetNamedTimeZoneNextTransition ( timeZoneIdentifier, epochNanoseconds )
  */
 bool js::temporal::GetNamedTimeZoneNextTransition(
@@ -559,26 +488,50 @@ bool js::temporal::GetNamedTimeZoneNextTransition(
     return false;
   }
 
-  auto next = tz->GetNextTransition(millis);
-  if (next.isErr()) {
-    intl::ReportInternalError(cx, next.unwrapErr());
-    return false;
-  }
+  // Skip over transitions which don't change the time zone offset.
+  //
+  // ICU4C returns all time zone rule changes as transitions, even if the
+  // actual time zone offset didn't change. Temporal requires to ignore these
+  // rule changes and instead only return transitions if the time zone offset
+  // did change.
+  while (true) {
+    auto next = tz->GetNextTransition(millis);
+    if (next.isErr()) {
+      intl::ReportInternalError(cx, next.unwrapErr());
+      return false;
+    }
 
-  auto transition = next.unwrap();
-  if (!transition) {
-    *result = mozilla::Nothing();
+    // If there's no next transition, we're done.
+    auto transition = next.unwrap();
+    if (!transition) {
+      *result = mozilla::Nothing();
+      return true;
+    }
+
+    // Check if the time offset at the next transition is equal to the current
+    // time zone offset.
+    bool equalOffset;
+    if (!EqualTimeZoneOffset(cx, tz, millis, *transition, &equalOffset)) {
+      return false;
+    }
+
+    // If the time zone offset is equal, then search for the next transition
+    // after |transition|.
+    if (equalOffset) {
+      millis = *transition;
+      continue;
+    }
+
+    // Otherwise return |transition| as the next transition.
+    auto transitionInstant = EpochNanoseconds::fromMilliseconds(*transition);
+    if (!IsValidEpochNanoseconds(transitionInstant)) {
+      *result = mozilla::Nothing();
+      return true;
+    }
+
+    *result = mozilla::Some(transitionInstant);
     return true;
   }
-
-  auto transitionInstant = EpochNanoseconds::fromMilliseconds(*transition);
-  if (!IsValidEpochNanoseconds(transitionInstant)) {
-    *result = mozilla::Nothing();
-    return true;
-  }
-
-  *result = mozilla::Some(transitionInstant);
-  return true;
 }
 
 /**
@@ -609,10 +562,47 @@ bool js::temporal::GetNamedTimeZonePreviousTransition(
     return false;
   }
 
+  // If there's no previous transition, we're done.
   auto transition = previous.unwrap();
   if (!transition) {
     *result = mozilla::Nothing();
     return true;
+  }
+
+  // Skip over transitions which don't change the time zone offset.
+  //
+  // ICU4C returns all time zone rule changes as transitions, even if the
+  // actual time zone offset didn't change. Temporal requires to ignore these
+  // rule changes and instead only return transitions if the time zone offset
+  // did change.
+  while (true) {
+    // Request the transition before |transition|.
+    auto beforePrevious = tz->GetPreviousTransition(*transition);
+    if (beforePrevious.isErr()) {
+      intl::ReportInternalError(cx, beforePrevious.unwrapErr());
+      return false;
+    }
+
+    // If there's no before transition, stop searching.
+    auto beforePreviousTransition = beforePrevious.unwrap();
+    if (!beforePreviousTransition) {
+      break;
+    }
+
+    // Check if the time zone offset at both transition points is equal.
+    bool equalOffset;
+    if (!EqualTimeZoneOffset(cx, tz, *transition, *beforePreviousTransition,
+                             &equalOffset)) {
+      return false;
+    }
+
+    // If time zone offset is not equal, then return |transition|.
+    if (!equalOffset) {
+      break;
+    }
+
+    // Otherwise continue searching from |beforePreviousTransition|.
+    transition = beforePreviousTransition;
   }
 
   auto transitionInstant = EpochNanoseconds::fromMilliseconds(*transition);
@@ -699,7 +689,7 @@ bool js::temporal::ToTemporalTimeZone(JSContext* cx,
   }
 
   // Step 9.
-  auto* obj = CreateTimeZoneObject(cx, identifier, primaryIdentifier);
+  auto* obj = GetOrCreateTimeZoneObject(cx, identifier, primaryIdentifier);
   if (!obj) {
     return false;
   }
@@ -741,6 +731,46 @@ bool js::temporal::ToTemporalTimeZone(JSContext* cx,
 
   // Steps 4-9.
   return ToTemporalTimeZone(cx, timeZoneName, result);
+}
+
+JSLinearString* js::temporal::ToValidCanonicalTimeZoneIdentifier(
+    JSContext* cx, Handle<JSString*> timeZone) {
+  Rooted<ParsedTimeZone> parsedTimeZone(cx);
+  if (!ParseTimeZoneIdentifier(cx, timeZone, &parsedTimeZone)) {
+    // TODO: Test262 expects the time zone string is part of the error message,
+    // so we have to overwrite the error message.
+    //
+    // https://github.com/tc39/test262/pull/4463
+    if (!cx->isExceptionPending() || cx->isThrowingOutOfMemory()) {
+      return nullptr;
+    }
+
+    // Clear the previous exception to ensure the error stack is recomputed.
+    cx->clearPendingException();
+
+    if (auto chars = QuoteString(cx, timeZone)) {
+      JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
+                               JSMSG_TEMPORAL_TIMEZONE_INVALID_IDENTIFIER,
+                               chars.get());
+    }
+    return nullptr;
+  }
+
+  auto timeZoneId = parsedTimeZone.name();
+  if (timeZoneId) {
+    Rooted<JSLinearString*> identifier(cx);
+    Rooted<JSLinearString*> primaryIdentifier(cx);
+    if (!ValidateAndCanonicalizeTimeZoneName(cx, timeZoneId, &identifier,
+                                             &primaryIdentifier)) {
+      return nullptr;
+    }
+    return primaryIdentifier;
+  }
+
+  int32_t offsetMinutes = parsedTimeZone.offset();
+  MOZ_ASSERT(std::abs(offsetMinutes) < UnitsPerDay(TemporalUnit::Minute));
+
+  return FormatOffsetTimeZoneIdentifier(cx, offsetMinutes);
 }
 
 /**
@@ -986,9 +1016,9 @@ bool js::temporal::DisambiguatePossibleEpochNanoseconds(
 
   // Step 5.
   if (disambiguation == TemporalDisambiguation::Reject) {
-    // TODO: Improve error message to say the date was skipped.
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_TEMPORAL_TIMEZONE_INSTANT_AMBIGUOUS);
+    JS_ReportErrorNumberASCII(
+        cx, GetErrorMessage, nullptr,
+        JSMSG_TEMPORAL_TIMEZONE_INSTANT_AMBIGUOUS_DATE_SKIPPED);
     return false;
   }
 
@@ -1032,7 +1062,8 @@ bool js::temporal::DisambiguatePossibleEpochNanoseconds(
                "subtracting nanoseconds is at most one day");
 
     // Step 16.c.
-    auto earlierDate = BalanceISODate(isoDateTime.date, earlierTime.days);
+    auto earlierDate = BalanceISODate(isoDateTime.date,
+                                      static_cast<int32_t>(earlierTime.days));
 
     // Step 16.d.
     auto earlierDateTime = ISODateTime{earlierDate, earlierTime.time};
@@ -1062,7 +1093,8 @@ bool js::temporal::DisambiguatePossibleEpochNanoseconds(
              "adding nanoseconds is at most one day");
 
   // Step 20.
-  auto laterDate = BalanceISODate(isoDateTime.date, laterTime.days);
+  auto laterDate =
+      BalanceISODate(isoDateTime.date, static_cast<int32_t>(laterTime.days));
 
   // Step 21.
   auto laterDateTime = ISODateTime{laterDate, laterTime.time};
@@ -1141,7 +1173,7 @@ bool js::temporal::WrapTimeZoneValueObject(
   }
 
   auto* obj =
-      CreateTimeZoneObject(cx, identifierLinear, primaryIdentifierLinear);
+      GetOrCreateTimeZoneObject(cx, identifierLinear, primaryIdentifierLinear);
   if (!obj) {
     return false;
   }
@@ -1160,16 +1192,7 @@ void js::temporal::TimeZoneObject::finalize(JS::GCContext* gcx, JSObject* obj) {
 }
 
 const JSClassOps TimeZoneObject::classOps_ = {
-    nullptr,                   // addProperty
-    nullptr,                   // delProperty
-    nullptr,                   // enumerate
-    nullptr,                   // newEnumerate
-    nullptr,                   // resolve
-    nullptr,                   // mayResolve
-    TimeZoneObject::finalize,  // finalize
-    nullptr,                   // call
-    nullptr,                   // construct
-    nullptr,                   // trace
+    .finalize = TimeZoneObject::finalize,
 };
 
 const JSClass TimeZoneObject::class_ = {

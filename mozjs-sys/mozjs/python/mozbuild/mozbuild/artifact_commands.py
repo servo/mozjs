@@ -8,19 +8,17 @@ import hashlib
 import json
 import logging
 import os
+import pathlib
 import shutil
 from collections import OrderedDict
 
-# As a result of the selective module loading changes, this import has to be
-# done here. It is not explicitly used, but it has an implicit side-effect
-# (bringing in TASKCLUSTER_ROOT_URL) which is necessary.
-import gecko_taskgraph.main  # noqa: F401
 import mozversioncontrol
 from mach.decorators import Command, CommandArgument, SubCommand
 
 from mozbuild.artifact_builds import JOB_CHOICES
 from mozbuild.base import MachCommandConditions as conditions
 from mozbuild.dirutils import ensureParentDir
+from mozbuild.util import get_root_url, get_taskcluster_client
 
 _COULD_NOT_FIND_ARTIFACTS_TEMPLATE = (
     "ERROR!!!!!! Could not find artifacts for a toolchain build named "
@@ -87,10 +85,11 @@ def _make_artifacts(
     skip_cache=False,
     download_tests=True,
     download_symbols=False,
-    download_maven_zip=False,
+    artifact_filters=None,
     no_process=False,
     unfiltered_project_package=False,
 ):
+    artifact_filters = artifact_filters or []
     state_dir = command_context._mach_context.state_dir
     cache_dir = os.path.join(state_dir, "package-frontend")
 
@@ -99,19 +98,23 @@ def _make_artifacts(
         hg = command_context.substs["HG"]
 
     git = None
-    if conditions.is_git(command_context):
+    if conditions.is_git(command_context) or conditions.is_jj(command_context):
         git = command_context.substs["GIT"]
+
+    jj = None
+    if conditions.is_jj(command_context):
+        jj = command_context.substs["JJ"]
 
     # If we're building Thunderbird, we should be checking for comm-central artifacts.
     topsrcdir = command_context.substs.get("commtopsrcdir", command_context.topsrcdir)
 
-    if download_maven_zip:
+    if artifact_filters:
         if download_tests:
-            raise ValueError("--maven-zip requires --no-tests")
+            raise ValueError("--artifact-filter requires --no-tests")
         if download_symbols:
-            raise ValueError("--maven-zip requires no --symbols")
+            raise ValueError("--artifact-filter requires no --symbols")
         if not no_process:
-            raise ValueError("--maven-zip requires --no-process")
+            raise ValueError("--artifact-filter requires --no-process")
 
     from mozbuild.artifacts import Artifacts
 
@@ -125,10 +128,11 @@ def _make_artifacts(
         skip_cache=skip_cache,
         hg=hg,
         git=git,
+        jj=jj,
         topsrcdir=topsrcdir,
         download_tests=download_tests,
         download_symbols=download_symbols,
-        download_maven_zip=download_maven_zip,
+        artifact_filters=artifact_filters,
         no_process=no_process,
         unfiltered_project_package=unfiltered_project_package,
         mozbuild=command_context,
@@ -171,7 +175,11 @@ def _make_artifacts(
     help="Minimally process (only) main project package artifact, unpacking it to the given `--distdir`.",
 )
 @CommandArgument(
-    "--maven-zip", action="store_true", help="Download Maven zip (Android-only)."
+    "--artifact-filter",
+    dest="artifact_filters",
+    default=None,
+    action="append",
+    help="Filter artifacts by full path (e.g., 'public/build/target.maven.zip'). Can specify multiple times.",
 )
 def artifact_install(
     command_context,
@@ -185,8 +193,9 @@ def artifact_install(
     distdir=None,
     no_process=False,
     unfiltered_project_package=False,
-    maven_zip=False,
+    artifact_filters=None,
 ):
+    artifact_filters = artifact_filters or []
     command_context._set_log_level(verbose)
     artifacts = _make_artifacts(
         command_context,
@@ -195,7 +204,7 @@ def artifact_install(
         skip_cache=skip_cache,
         download_tests=not no_tests,
         download_symbols=symbols,
-        download_maven_zip=maven_zip,
+        artifact_filters=artifact_filters,
         no_process=no_process,
         unfiltered_project_package=unfiltered_project_package,
     )
@@ -284,7 +293,6 @@ def artifact_toolchain(
 
     import redo
     import requests
-    from taskgraph.util.taskcluster import get_artifact_url
 
     from mozbuild.action.tooltool import FileRecord, open_manifest, unpack_file
     from mozbuild.artifacts import ArtifactCache
@@ -310,9 +318,8 @@ def artifact_toolchain(
         cache_dir = os.path.join(command_context._mach_context.state_dir, "toolchains")
 
     tooltool_host = os.environ.get("TOOLTOOL_HOST", "tooltool.mozilla-releng.net")
-    taskcluster_proxy_url = os.environ.get("TASKCLUSTER_PROXY_URL")
-    if taskcluster_proxy_url:
-        tooltool_url = f"{taskcluster_proxy_url}/{tooltool_host}"
+    if "TASKCLUSTER_PROXY_URL" in os.environ:
+        tooltool_url = f"{get_root_url()}/{tooltool_host}"
     else:
         tooltool_url = f"https://{tooltool_host}"
 
@@ -322,7 +329,7 @@ def artifact_toolchain(
 
     class DownloadRecord(FileRecord):
         def __init__(self, url, *args, **kwargs):
-            super(DownloadRecord, self).__init__(*args, **kwargs)
+            super().__init__(*args, **kwargs)
             self.url = url
             self.basename = self.filename
 
@@ -333,14 +340,16 @@ def artifact_toolchain(
         def validate(self):
             if self.size is None and self.digest is None:
                 return True
-            return super(DownloadRecord, self).validate()
+            return super().validate()
 
     class ArtifactRecord(DownloadRecord):
         def __init__(self, task_id, artifact_name):
+            queue = get_taskcluster_client("queue")
             for _ in redo.retrier(attempts=retry + 1, sleeptime=60):
-                cot = cache._download_manager.session.get(
-                    get_artifact_url(task_id, "public/chain-of-trust.json")
+                cot_url = queue.buildUrl(
+                    "getLatestArtifact", task_id, "public/chain-of-trust.json"
                 )
+                cot = cache._download_manager.session.get(cot_url)
                 if cot.status_code >= 500:
                     continue
                 cot.raise_for_status()
@@ -356,14 +365,19 @@ def artifact_toolchain(
                 pass
 
             name = os.path.basename(artifact_name)
-            artifact_url = get_artifact_url(
-                task_id,
-                artifact_name,
-                use_proxy=not artifact_name.startswith("public/"),
-            )
-            super(ArtifactRecord, self).__init__(
-                artifact_url, name, None, digest, algorithm, unpack=True
-            )
+            if (
+                not artifact_name.startswith("public/")
+                and "TASKCLUSTER_PROXY_URL" in os.environ
+            ):
+                artifact_url = queue.buildUrl(
+                    "getLatestArtifact", task_id, artifact_name
+                )
+            else:
+                public_queue = get_taskcluster_client("queue", block_proxy=True)
+                artifact_url = public_queue.buildUrl(
+                    "getLatestArtifact", task_id, artifact_name
+                )
+            super().__init__(artifact_url, name, None, digest, algorithm, unpack=True)
 
     records = OrderedDict()
     downloaded = []
@@ -393,19 +407,25 @@ def artifact_toolchain(
                 "should be determined in the decision task.",
             )
             return 1
-        from taskgraph.optimize.strategies import IndexSearch
+
+        # Set TASKCLUSTER_ROOT_URL if not already set, so find_task_from_index can work.
+        if "TASKCLUSTER_ROOT_URL" not in os.environ:
+            from mozbuild.util import TASKCLUSTER_ROOT_URL
+
+            os.environ["TASKCLUSTER_ROOT_URL"] = TASKCLUSTER_ROOT_URL
 
         from mozbuild.toolchains import toolchain_task_definitions
+        from mozbuild.util import find_task_from_index
 
         tasks = toolchain_task_definitions()
 
         for b in from_build:
             user_value = b
 
-            if not b.startswith("toolchain-"):
-                b = f"toolchain-{b}"
-
             task = tasks.get(b)
+            if not task and not b.startswith("toolchain-"):
+                task = tasks.get(f"toolchain-{b}")
+
             if not task:
                 command_context.log(
                     logging.ERROR,
@@ -419,7 +439,7 @@ def artifact_toolchain(
             # `local-toolchain attribute set. Taskgraph ensures that these
             # are built on trunk projects, so the task will be available to
             # install here.
-            if bootstrap and not task.attributes.get("local-toolchain"):
+            if bootstrap and not task["attributes"].get("local-toolchain"):
                 command_context.log(
                     logging.ERROR,
                     "artifact",
@@ -428,21 +448,19 @@ def artifact_toolchain(
                 )
                 return 1
 
-            artifact_name = task.attributes.get("toolchain-artifact")
+            artifact_name = task["attributes"].get(f"{task['kind']}-artifact")
+            optimization = task.get("optimization", {})
             command_context.log(
                 logging.DEBUG,
                 "artifact",
                 {
                     "name": artifact_name,
-                    "index": task.optimization.get("index-search"),
+                    "index": optimization.get("index-search"),
                 },
                 "Searching for {name} in {index}",
             )
-            deadline = None
-            task_id = IndexSearch().should_replace_task(
-                task, {}, deadline, task.optimization.get("index-search", [])
-            )
-            if task_id in (True, False) or not artifact_name:
+            task_id = find_task_from_index(optimization.get("index-search", []))
+            if not task_id or not artifact_name:
                 command_context.log(
                     logging.ERROR,
                     "artifact",
@@ -487,7 +505,7 @@ def artifact_toolchain(
             )
 
             record = ArtifactRecord(task_id, artifact_name)
-            record.unpack = task.attributes.get("toolchain-extract", True)
+            record.unpack = task["attributes"].get("toolchain-extract", True)
             records[record.filename] = record
 
     # Handle the list of files of the form task_id:path from --from-task.
@@ -629,5 +647,10 @@ def artifact_toolchain(
             {"data": json.dumps(perfherder_data)},
             "PERFHERDER_DATA: {data}",
         )
+        upload_dir = pathlib.Path(os.environ.get("UPLOAD_DIR"))
+        upload_dir.mkdir(parents=True, exist_ok=True)
+        upload_path = upload_dir / "perfherder-data-artifact.json"
+        with upload_path.open("w", encoding="utf-8") as f:
+            json.dump(perfherder_data, f)
 
     return 0

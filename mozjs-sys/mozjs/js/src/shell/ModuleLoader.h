@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -26,16 +24,15 @@ class ModuleLoader {
   void clearModules(JSContext* cx);
 
  private:
-  static JSObject* ResolveImportedModule(JSContext* cx,
-                                         HandleValue referencingPrivate,
-                                         HandleObject moduleRequest);
-  static bool GetImportMetaProperties(JSContext* cx, HandleValue privateValue,
+  static bool LoadImportedModule(JSContext* cx, JS::Handle<JSScript*> referrer,
+                                 HandleObject moduleRequest,
+                                 HandleValue hostDefined, HandleValue payload,
+                                 uint32_t lineNumber,
+                                 JS::ColumnNumberOneOrigin columnNumber);
+
+  static bool GetImportMetaProperties(JSContext* cx, HandleObject moduleRecord,
                                       HandleObject metaObject);
   static bool ImportMetaResolve(JSContext* cx, unsigned argc, Value* vp);
-  static bool ImportModuleDynamically(JSContext* cx,
-                                      HandleValue referencingPrivate,
-                                      HandleObject moduleRequest,
-                                      HandleObject promise);
 
   static bool DynamicImportDelayFulfilled(JSContext* cx, unsigned argc,
                                           Value* vp);
@@ -43,30 +40,33 @@ class ModuleLoader {
                                          Value* vp);
 
   bool loadAndExecute(JSContext* cx, HandleString path,
-                      HandleObject moduleRequestArg, MutableHandleValue);
-  JSObject* resolveImportedModule(JSContext* cx, HandleValue referencingPrivate,
-                                  HandleObject moduleRequest);
-  bool populateImportMeta(JSContext* cx, HandleValue privateValue,
+                      HandleObject moduleRequestArg, MutableHandleValue rval);
+  bool loadAndExecute(JSContext* cx, HandleObject module,
+                      MutableHandleValue rval);
+  static bool LoadResolved(JSContext* cx, HandleValue hostDefined);
+  static bool LoadRejected(JSContext* cx, HandleValue hostDefined,
+                           HandleValue error);
+  bool loadImportedModule(JSContext* cx, HandleScript referrer,
+                          HandleObject moduleRequest, HandleValue payload);
+  bool populateImportMeta(JSContext* cx, JS::HandleObject moduleRecord,
                           HandleObject metaObject);
   bool importMetaResolve(JSContext* cx,
                          JS::Handle<JS::Value> referencingPrivate,
                          JS::Handle<JSString*> specifier,
                          JS::MutableHandle<JSString*> urlOut);
-  bool dynamicImport(JSContext* cx, HandleValue referencingPrivate,
-                     HandleObject moduleRequest, HandleObject promise);
-  bool doDynamicImport(JSContext* cx, HandleValue referencingPrivate,
-                       HandleObject moduleRequest, HandleObject promise);
-  bool tryDynamicImport(JSContext* cx, HandleValue referencingPrivate,
-                        HandleObject moduleRequest, HandleObject promise,
-                        MutableHandleValue rval);
+  bool dynamicImport(JSContext* cx, HandleScript referrer,
+                     HandleObject moduleRequest, HandleValue payload);
+  bool doDynamicImport(JSContext* cx, HandleScript referrer,
+                       HandleObject moduleRequest, HandleValue payload);
   JSObject* loadAndParse(JSContext* cx, HandleString path,
                          HandleObject moduleRequestArg);
+  JSObject* getOrCreateTest262ModuleSourceModule(JSContext* cx);
   bool lookupModuleInRegistry(JSContext* cx, JS::ModuleType moduleType,
                               HandleString path, MutableHandleObject moduleOut);
   bool addModuleToRegistry(JSContext* cx, JS::ModuleType moduleType,
                            HandleString path, HandleObject module);
   JSLinearString* resolve(JSContext* cx, HandleObject moduleRequestArg,
-                          HandleValue referencingInfo);
+                          HandleScript referrer);
   JSLinearString* resolve(JSContext* cx, HandleString specifier,
                           HandleValue referencingInfo);
   bool getScriptPath(JSContext* cx, HandleValue privateValue,

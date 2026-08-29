@@ -39,8 +39,7 @@ class FakeDevice:
 
     def get_logcat(self):
         with LOGCAT.open() as f:
-            for line in f:
-                yield line
+            yield from f
 
 
 def fake_version_producer(self, metadata):

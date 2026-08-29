@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -38,7 +37,8 @@ static char* compatible_version[] = {
     "4.16",   "4.17",    "4.18",   "4.19",   "4.20",   "4.21",   "4.22",
     "4.23",   "4.24",    "4.25",   "4,26",   "4.27",   "4.28",   "4.29",
     "4.30",   "4.31",    "4.32",   "4.33",   "4.34",   "4.35",   "4.36",
-    "4.36.1", PR_VERSION};
+    "4.37",   "4.38",
+    PR_VERSION};
 
 /*
  * This release is not backward compatible with the old
@@ -49,8 +49,9 @@ static char* compatible_version[] = {
  */
 static char* incompatible_version[] = {
     "2.1 19980529", "3.0",    "3.0.1", "3.1",   "3.1.1",
-    "3.1.2",        "3.1.3",  "3.5",   "3.5.1", "4.36.3",
-    "4.37",         "4.37.1", "10.0",  "11.1",  "12.14.20"};
+    "3.1.2",        "3.1.3",  "3.5",   "3.5.1",
+    "4.39.1", "4.40", "4.40.1",
+    "10.0",  "11.1",  "12.14.20"};
 
 int main(int argc, char** argv) {
   int idx;

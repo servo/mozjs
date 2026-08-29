@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -46,21 +44,22 @@ class BaselineCompileQueue {
 
   bool isEmpty() const { return numQueued_ == 0; }
 
-  MOZ_ALWAYS_INLINE
-  void assertInvariants() const {
-    // The queue always contains |numQueued| JSScript* pointers,
-    // followed by |Capacity - numQueued| null pointers.
-#ifdef DEBUG
-    MOZ_ASSERT(numQueued_ <= JitOptions.baselineQueueCapacity);
-    MOZ_ASSERT(JitOptions.baselineQueueCapacity <= MaxCapacity);
-    for (uint32_t i = 0; i < numQueued_; i++) {
-      MOZ_ASSERT(queue_[i]);
+  bool enqueue(JSScript* script) {
+    if (numQueued_ >= JitOptions.baselineQueueCapacity) {
+      return false;  // Queue is full
     }
-    for (uint32_t i = numQueued_; i < MaxCapacity; i++) {
-      MOZ_ASSERT(!queue_[i]);
-    }
-#endif
+    queue_[numQueued_] = script;
+    numQueued_++;
+    assertInvariants();
+    return true;
   }
+
+#ifdef DEBUG
+  void assertInvariants() const;
+#else
+  void assertInvariants() const {}
+#endif
+
   void trace(JSTracer* trc);
   void remove(JSScript* script);
 };

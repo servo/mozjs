@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim:set ts=2 sw=2 sts=2 et cindent: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,11 +5,10 @@
 #ifndef SHARED_LIBRARIES_H_
 #define SHARED_LIBRARIES_H_
 
-#include "BaseProfiler.h"
+#include "mozilla/BaseProfiler.h"
 
 #include <algorithm>
 #include <stdint.h>
-#include <stdlib.h>
 #include <string>
 #include <vector>
 #include <tuple>
@@ -102,23 +99,12 @@ static bool CompareAddresses(const SharedLibrary& first,
 
 class SharedLibraryInfo {
  public:
-#ifdef MOZ_GECKO_PROFILER
   MFBT_API static SharedLibraryInfo GetInfoForSelf();
-#  ifdef XP_WIN
+#ifdef XP_WIN
   MFBT_API static SharedLibraryInfo GetInfoFromPath(const wchar_t* aPath);
-#  endif
+#endif
 
   MFBT_API static void Initialize();
-#else
-  static SharedLibraryInfo GetInfoForSelf() { return SharedLibraryInfo(); }
-#  ifdef XP_WIN
-  static SharedLibraryInfo GetInfoFromPath(const wchar_t* aPath) {
-    return SharedLibraryInfo();
-  }
-#  endif
-
-  static void Initialize() {}
-#endif
 
   void AddSharedLibrary(SharedLibrary entry) { mEntries.push_back(entry); }
 

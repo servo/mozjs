@@ -99,8 +99,7 @@ def retrier(attempts=5, sleeptime=10, max_sleeptime=300, sleepscale=1.5, jitter=
 
         sleeptime *= sleepscale
 
-        if sleeptime_real > max_sleeptime:
-            sleeptime_real = max_sleeptime
+        sleeptime_real = min(sleeptime_real, max_sleeptime)
 
         # Don't need to sleep the last time
         if _ < attempts - 1:
@@ -992,23 +991,25 @@ class TarFile(tarfile.TarFile):
 
         extract(member, path, set_attrs, numeric_owner=numeric_owner, **kwargs)
         if deferred_links is not None:
-            for tarinfo, linkpath, numeric_owner in deferred_links.pop(targetpath, []):
+            for tarinfo, linkpath, deferred_numeric_owner in deferred_links.pop(
+                targetpath, []
+            ):
                 shutil.copy(targetpath, linkpath)
-                self.chown(tarinfo, linkpath, numeric_owner)
+                self.chown(tarinfo, linkpath, deferred_numeric_owner)
             self._extracted_members.add(targetpath)
 
     def extract(self, *args, **kwargs):
-        self._tooltool_do_extract(super(TarFile, self).extract, *args, **kwargs)
+        self._tooltool_do_extract(super().extract, *args, **kwargs)
 
     # extractall in versions for cpython that implement PEP 706 call _extract_one
     # instead of extract.
     def _extract_one(self, *args, **kwargs):
-        self._tooltool_do_extract(super(TarFile, self)._extract_one, *args, **kwargs)
+        self._tooltool_do_extract(super()._extract_one, *args, **kwargs)
 
     def extractall(self, *args, **kwargs):
         self._deferred_links = {}
         self._extracted_members = set()
-        super(TarFile, self).extractall(*args, **kwargs)
+        super().extractall(*args, **kwargs)
         for links in self._deferred_links.values():
             for tarinfo, linkpath, numeric_owner in links:
                 log.warn("Cannot create dangling symbolic link: %s", linkpath)

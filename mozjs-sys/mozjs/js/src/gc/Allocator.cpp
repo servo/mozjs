@@ -1,12 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "gc/Allocator.h"
 
-#include "mozilla/DebugOnly.h"
 #include "mozilla/OperatorNewExtensions.h"
 #include "mozilla/TimeStamp.h"
 
@@ -14,6 +11,7 @@
 #include "gc/GCLock.h"
 #include "gc/GCProbes.h"
 #include "gc/Nursery.h"
+#include "gc/PublicIterators.h"
 #include "threading/CpuCount.h"
 #include "util/Poison.h"
 #include "vm/BigIntType.h"
@@ -45,14 +43,16 @@ static Heap MinHeapToTenure(bool allowNurseryAlloc) {
 }
 
 void Zone::setNurseryAllocFlags(bool allocObjects, bool allocStrings,
-                                bool allocBigInts) {
+                                bool allocBigInts, bool allocGetterSetters) {
   allocNurseryObjects_ = allocObjects;
   allocNurseryStrings_ = allocStrings;
   allocNurseryBigInts_ = allocBigInts;
+  allocNurseryGetterSetters_ = allocGetterSetters;
 
   minObjectHeapToTenure_ = MinHeapToTenure(allocNurseryObjects());
   minStringHeapToTenure_ = MinHeapToTenure(allocNurseryStrings());
   minBigintHeapToTenure_ = MinHeapToTenure(allocNurseryBigInts());
+  minGetterSetterHeapToTenure_ = MinHeapToTenure(allocNurseryGetterSetters());
 }
 
 #define INSTANTIATE_ALLOC_NURSERY_CELL(traceKind, allowGc)          \
@@ -65,6 +65,8 @@ INSTANTIATE_ALLOC_NURSERY_CELL(JS::TraceKind::String, NoGC)
 INSTANTIATE_ALLOC_NURSERY_CELL(JS::TraceKind::String, CanGC)
 INSTANTIATE_ALLOC_NURSERY_CELL(JS::TraceKind::BigInt, NoGC)
 INSTANTIATE_ALLOC_NURSERY_CELL(JS::TraceKind::BigInt, CanGC)
+INSTANTIATE_ALLOC_NURSERY_CELL(JS::TraceKind::GetterSetter, NoGC)
+INSTANTIATE_ALLOC_NURSERY_CELL(JS::TraceKind::GetterSetter, CanGC)
 #undef INSTANTIATE_ALLOC_NURSERY_CELL
 
 // Attempt to allocate a new cell in the nursery. If there is not enough room in
@@ -330,10 +332,11 @@ void* js::gc::AllocateTenuredCellInGC(Zone* zone, AllocKind thingKind) {
 
 void GCRuntime::startBackgroundAllocTaskIfIdle() {
   AutoLockHelperThreadState lock;
-  if (!allocTask.wasStarted(lock)) {
-    // Join the previous invocation of the task. This will return immediately
-    // if the thread has never been started.
+  if (allocTask.isFinished(lock)) {
     allocTask.joinWithLockHeld(lock);
+  }
+
+  if (allocTask.isIdle(lock)) {
     allocTask.startWithLockHeld(lock);
   }
 }
@@ -394,23 +397,23 @@ retry_loop:
   }
 
   // Use the current chunk if set.
-  ArenaChunk* chunk = gc->currentChunk_;
-  MOZ_ASSERT_IF(chunk, gc->isCurrentChunk(chunk));
+  ArenaChunk* chunk = zone_->currentChunk_;
+  MOZ_ASSERT_IF(chunk, chunk->info.isCurrentChunk);
 
   if (!chunk) {
     // The chunk lists can be accessed by background sweeping and background
     // chunk allocation. Take the GC lock to synchronize access.
     AutoLockGCBgAlloc lock(gc);
 
-    chunk = gc->pickChunk(stallAndRetry, lock);
+    chunk = gc->pickChunk(zone_, stallAndRetry, lock);
     if (!chunk) {
       return nullptr;
     }
 
-    gc->setCurrentChunk(chunk, lock);
+    gc->setCurrentChunk(zone_, chunk, lock);
   }
 
-  MOZ_ASSERT(gc->isCurrentChunk(chunk));
+  MOZ_ASSERT(chunk->info.isCurrentChunk);
 
   // Although our chunk should definitely have enough space for another arena,
   // there are other valid reasons why ArenaChunk::allocateArena() may fail.
@@ -419,7 +422,7 @@ retry_loop:
     return nullptr;
   }
 
-  arena->init(gc, zone_, thingKind);
+  arena->init(gc, thingKind);
 
   ArenaList& al = arenaList(thingKind);
   MOZ_ASSERT(!al.hasNonFullArenas());
@@ -468,9 +471,12 @@ bool GCRuntime::wantBackgroundAllocation(const AutoLockGC& lock) const {
   // To minimize memory waste, we do not want to run the background chunk
   // allocation if we already have some empty chunks or when the runtime has
   // a small heap size (and therefore likely has a small growth rate).
-  return allocTask.enabled() &&
-         emptyChunks(lock).count() < minEmptyChunkCount(lock) &&
-         (fullChunks(lock).count() + availableChunks(lock).count()) >= 4;
+  if (!allocTask.enabled() ||
+      emptyChunks(lock).count() >= minEmptyChunkCount(lock)) {
+    return false;
+  }
+
+  return heapSize.bytes() >= ChunkSize * 4;
 }
 
 // Allocate a new arena but don't initialize it.
@@ -487,14 +493,7 @@ Arena* GCRuntime::allocateArena(ArenaChunk* chunk, Zone* zone,
 
   Arena* arena = chunk->allocateArena(this, zone, thingKind);
 
-  if (IsBufferAllocKind(thingKind)) {
-    // Try to keep GC scheduling the same to minimize benchmark noise.
-    // Keep this in sync with Arena::release.
-    size_t usableSize = ArenaSize - Arena::firstThingOffset(thingKind);
-    zone->mallocHeapSize.addBytes(usableSize);
-  } else {
-    zone->gcHeapSize.addGCArena(heapSize);
-  }
+  zone->gcHeapSize.addGCArena(heapSize);
 
   // Trigger an incremental slice if needed.
   if (checkThresholds != ShouldCheckThresholds::DontCheckThresholds) {
@@ -518,8 +517,6 @@ Arena* ArenaChunk::allocateArena(GCRuntime* gc, Zone* zone,
   Arena* arena = fetchNextFreeArena(gc);
 
   updateCurrentChunkAfterAlloc(gc);
-
-  verify();
 
   return arena;
 }
@@ -563,14 +560,12 @@ Arena* ArenaChunk::fetchNextFreeArena(GCRuntime* gc) {
 
 // ///////////  System -> ArenaChunk Allocator  ////////////////////////////////
 
-ArenaChunk* GCRuntime::takeOrAllocChunk(StallAndRetry stallAndRetry,
-                                        AutoLockGCBgAlloc& lock) {
+ArenaChunk* GCRuntime::getOrAllocChunk(Zone* zone, StallAndRetry stallAndRetry,
+                                       AutoLockGCBgAlloc& lock) {
   ArenaChunk* chunk = getOrAllocChunk(stallAndRetry, lock);
-  if (!chunk) {
-    return nullptr;
+  if (chunk) {
+    chunk->info.zone = zone;
   }
-
-  emptyChunks(lock).remove(chunk);
   return chunk;
 }
 
@@ -584,21 +579,21 @@ ArenaChunk* GCRuntime::getOrAllocChunk(StallAndRetry stallAndRetry,
     SetMemCheckKind(chunk, sizeof(ChunkBase), MemCheckKind::MakeUndefined);
     chunk->initBaseForArenaChunk(rt);
     MOZ_ASSERT(chunk->isEmpty());
+    emptyChunks(lock).remove(chunk);
   } else {
     void* ptr = ArenaChunk::allocate(this, stallAndRetry);
     if (!ptr) {
       return nullptr;
     }
 
-    chunk = ArenaChunk::emplace(ptr, this, /* allMemoryCommitted = */ true);
-    MOZ_ASSERT(chunk->isEmpty());
-    emptyChunks(lock).push(chunk);
+    chunk = ArenaChunk::init(ptr, this, /* allMemoryCommitted = */ true);
   }
 
   if (wantBackgroundAllocation(lock)) {
     lock.tryToStartBackgroundAllocation();
   }
 
+  MOZ_ASSERT(chunk);
   return chunk;
 }
 
@@ -606,6 +601,7 @@ void GCRuntime::recycleChunk(ArenaChunk* chunk, const AutoLockGC& lock) {
 #ifdef DEBUG
   MOZ_ASSERT(chunk->isEmpty());
   MOZ_ASSERT(!chunk->info.isCurrentChunk);
+  MOZ_ASSERT(!chunk->info.zone);
   chunk->verify();
 #endif
 
@@ -616,15 +612,15 @@ void GCRuntime::recycleChunk(ArenaChunk* chunk, const AutoLockGC& lock) {
   emptyChunks(lock).push(chunk);
 }
 
-ArenaChunk* GCRuntime::pickChunk(StallAndRetry stallAndRetry,
+ArenaChunk* GCRuntime::pickChunk(Zone* zone, StallAndRetry stallAndRetry,
                                  AutoLockGCBgAlloc& lock) {
-  if (availableChunks(lock).count()) {
-    ArenaChunk* chunk = availableChunks(lock).head();
-    availableChunks(lock).remove(chunk);
+  if (zone->availableChunks(lock).count()) {
+    ArenaChunk* chunk = zone->availableChunks(lock).head();
+    zone->availableChunks(lock).remove(chunk);
     return chunk;
   }
 
-  ArenaChunk* chunk = takeOrAllocChunk(stallAndRetry, lock);
+  ArenaChunk* chunk = getOrAllocChunk(zone, stallAndRetry, lock);
   if (!chunk) {
     return nullptr;
   }
@@ -656,7 +652,7 @@ void BackgroundAllocTask::run(AutoLockHelperThreadState& lock) {
       if (!ptr) {
         break;
       }
-      chunk = ArenaChunk::emplace(ptr, gc, /* allMemoryCommitted = */ true);
+      chunk = ArenaChunk::init(ptr, gc, /* allMemoryCommitted = */ true);
     }
     chunkPool_.ref().push(chunk);
   }
@@ -682,8 +678,8 @@ static inline bool ShouldDecommitNewChunk(bool allMemoryCommitted,
   return !allMemoryCommitted || !state.inHighFrequencyGCMode();
 }
 
-ArenaChunk* ArenaChunk::emplace(void* ptr, GCRuntime* gc,
-                                bool allMemoryCommitted) {
+ArenaChunk* ArenaChunk::init(void* ptr, GCRuntime* gc,
+                             bool allMemoryCommitted) {
   /* The chunk may still have some regions marked as no-access. */
   MOZ_MAKE_MEM_UNDEFINED(ptr, ChunkSize);
 

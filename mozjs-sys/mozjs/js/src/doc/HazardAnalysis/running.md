@@ -26,16 +26,23 @@ To run the analysis on SpiderMonkey:
 
         mach hazards analyze --project=js
 
-Output goes to `$srctop/haz-js/hazards.txt`. This will run the analysis on the js/src
-tree only; if you wish to analyze the full browser, use
+   Output goes to `$srctop/haz-js/hazards.txt`. This will run the analysis on the js/src
+   tree only; if you wish to analyze the full browser, use
 
         --project=browser
 
-(or leave it off; `--project=browser` is the default)
+   (or leave it off; `--project=browser` is the default)
 
 6. (optional) View the resulting hazards.
 
         mach hazards view --project=js
+
+7. If you see any bizarre behaviours (compiler crashes, impossible situations) etc,
+   be relatively free with
+
+        mach hazards clobber
+
+   to remove potentially broken files.
 
 After running the analysis once, you can reuse the `*.xdb` database files
 generated, using modified analysis scripts, by running either the `mach hazards
@@ -92,7 +99,7 @@ particularly useful if you are working on the analysis itself.
 If you are on osx, these will not be available. Instead, build sixgill manually
 (these directions are a little stale):
 
-        hg clone https://hg.mozilla.org/users/sfink_mozilla.com/sixgill
+        git clone https://github.com/mozilla-spidermonkey/sixgill
         cd sixgill
         CC=$HOME/.mozbuild/hazard-tools/gcc/bin/gcc ./release.sh --build # This will fail horribly.
         make bin/xdb.so CXX=clang++

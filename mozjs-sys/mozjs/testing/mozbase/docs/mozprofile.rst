@@ -20,7 +20,7 @@ Addons may be installed individually or from a manifest.
 Example::
 
 	from mozprofile import FirefoxProfile
-	
+
 	# create new profile to pass to mozmill/mozrunner
 	profile = FirefoxProfile(addons=["adblock.xpi"])
 

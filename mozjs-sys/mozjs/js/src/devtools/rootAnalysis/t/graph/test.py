@@ -42,13 +42,11 @@ for src, dst in [
     assert callgraph.calleeGraph[node[src]][node[dst]]
 
 funcInfo = test.load_funcInfo()
-rroots = set(
-    [
-        callgraph.mangledToUnmangled[f]
-        for f in funcInfo
-        if funcInfo[f].get("recursive_root")
-    ]
-)
+rroots = set([
+    callgraph.mangledToUnmangled[f]
+    for f in funcInfo
+    if funcInfo[f].get("recursive_root")
+])
 assert len(set([node[1], node[2]]) & rroots) == 1
 assert len(set([node[4], node[5]]) & rroots) == 1
 assert len(rroots) == 4, f"rroots = {rroots}"  # n1, n4, f, self_recursive

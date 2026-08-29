@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -69,9 +67,15 @@ enum class PromiseHandler : uint32_t {
   // AsyncFromSyncIteratorContinuation ( result, promiseCapability )
   // https://tc39.es/ecma262/#sec-asyncfromsynciteratorcontinuation
   //
-  // Steps 7. unwrap Abstract Closure.
+  // Step 9. unwrap Abstract Closure.
   AsyncFromSyncIteratorValueUnwrapDone,
   AsyncFromSyncIteratorValueUnwrapNotDone,
+
+  // AsyncFromSyncIteratorContinuation ( result, promiseCapability )
+  // https://tc39.es/ecma262/#sec-asyncfromsynciteratorcontinuation
+  //
+  // Step 13.a. closeIterator Abstract Closure.
+  AsyncFromSyncIteratorClose,
 
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
   // Explicit Resource Management Proposal
@@ -266,6 +270,15 @@ struct PromiseReactionRecordBuilder {
     JSContext* cx, JS::Handle<PromiseObject*> promise,
     JS::Handle<JS::Value> reason,
     JS::Handle<SavedFrame*> unwrappedRejectionStack = nullptr);
+
+#ifdef NIGHTLY_BUILD
+// Implements the SafePromiseResolve abstract operation from the
+// https://tc39.es/proposal-thenable-curtailment/
+// See the function definition in Promise.cpp for the observable contract.
+[[nodiscard]] bool SafeResolvePromise(JSContext* cx,
+                                      JS::Handle<PromiseObject*> promise,
+                                      JS::Handle<JS::Value> resolution);
+#endif  // NIGHTLY_BUILD
 
 [[nodiscard]] bool InternalAsyncGeneratorAwait(
     JSContext* cx, JS::Handle<AsyncGeneratorObject*> generator,

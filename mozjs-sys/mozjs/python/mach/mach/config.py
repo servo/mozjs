@@ -20,7 +20,7 @@ import sys
 from configparser import NoSectionError, RawConfigParser
 from functools import wraps
 from pathlib import Path
-from typing import List, Union
+from typing import Union
 
 
 class ConfigException(Exception):
@@ -83,6 +83,30 @@ class BooleanType(ConfigType):
         return "true" if value else "false"
 
 
+class NullableBooleanType(ConfigType):
+    """ConfigType for nullable boolean: True, False, or None."""
+
+    @staticmethod
+    def validate(value):
+        if value is not None and not isinstance(value, bool):
+            raise TypeError()
+
+    @staticmethod
+    def from_config(config, section, option):
+        value = config.get(section, option).lower()
+        if value == "true":
+            return True
+        elif value == "false":
+            return False
+        return None
+
+    @staticmethod
+    def to_config(value):
+        if value is None:
+            return "unknown"
+        return "true" if value else "false"
+
+
 class IntegerType(ConfigType):
     @staticmethod
     def validate(value):
@@ -118,6 +142,7 @@ class PathType(StringType):
 TYPE_CLASSES = {
     "string": StringType,
     "boolean": BooleanType,
+    "nullable_boolean": NullableBooleanType,
     "int": IntegerType,
     "pos_int": PositiveIntegerType,
     "path": PathType,
@@ -219,11 +244,15 @@ class ConfigSettings(collections.abc.Mapping):
             meta = self.get_meta(option)
             meta["type_cls"].validate(value)
 
-            if "choices" in meta and value not in meta["choices"]:
-                raise ValueError(
-                    "Value '%s' must be one of: %s"
-                    % (value, ", ".join(sorted(meta["choices"])))
-                )
+            if "choices" in meta:
+                choices = meta["choices"]
+                if callable(choices):
+                    choices = tuple(choices())
+                    meta["choices"] = choices
+                if value not in choices:
+                    raise ValueError(
+                        f"Value '{value}' must be one of: {', '.join(sorted(choices))}"
+                    )
 
         # MutableMapping interface
         def __len__(self):
@@ -288,7 +317,7 @@ class ConfigSettings(collections.abc.Mapping):
     def load_file(self, filename: Union[str, Path]):
         self.load_files([Path(filename)])
 
-    def load_files(self, filenames: List[Path]):
+    def load_files(self, filenames: list[Path]):
         """Load a config from files specified by their paths.
 
         Files are loaded in the order given. Subsequent files will overwrite

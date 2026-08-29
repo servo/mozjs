@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -38,6 +36,8 @@
   _(ArrayShift)                                    \
   _(ArrayPush)                                     \
   _(ArraySlice)                                    \
+                                                   \
+  _(ArrayBufferByteLength)                         \
                                                    \
   _(AtomicsCompareExchange)                        \
   _(AtomicsExchange)                               \
@@ -79,7 +79,10 @@
   _(DataViewSetFloat64)                            \
   _(DataViewSetBigInt64)                           \
   _(DataViewSetBigUint64)                          \
+  _(DataViewByteLength)                            \
+  _(DataViewByteOffset)                            \
                                                    \
+  _(Date)                                          \
   _(DateGetTime)                                   \
   _(DateGetFullYear)                               \
   _(DateGetMonth)                                  \
@@ -88,18 +91,11 @@
   _(DateGetHours)                                  \
   _(DateGetMinutes)                                \
   _(DateGetSeconds)                                \
+  _(DateNow)                                       \
+  _(DateParse)                                     \
                                                    \
   _(FunctionBind)                                  \
                                                    \
-  _(IntlGuardToCollator)                           \
-  _(IntlGuardToDateTimeFormat)                     \
-  _(IntlGuardToDisplayNames)                       \
-  _(IntlGuardToDurationFormat)                     \
-  _(IntlGuardToListFormat)                         \
-  _(IntlGuardToNumberFormat)                       \
-  _(IntlGuardToPluralRules)                        \
-  _(IntlGuardToRelativeTimeFormat)                 \
-  _(IntlGuardToSegmenter)                          \
   _(IntlGuardToSegments)                           \
   _(IntlGuardToSegmentIterator)                    \
                                                    \
@@ -108,6 +104,7 @@
   _(MapGet)                                        \
   _(MapHas)                                        \
   _(MapSet)                                        \
+  _(MapSize)                                       \
                                                    \
   _(MathAbs)                                       \
   _(MathFloor)                                     \
@@ -152,6 +149,14 @@
                                                    \
   _(ReflectGetPrototypeOf)                         \
                                                    \
+  _(RegExpDotAll)                                  \
+  _(RegExpGlobal)                                  \
+  _(RegExpHasIndices)                              \
+  _(RegExpIgnoreCase)                              \
+  _(RegExpMultiline)                               \
+  _(RegExpSticky)                                  \
+  _(RegExpUnicode)                                 \
+  _(RegExpUnicodeSets)                             \
   _(RegExpMatcher)                                 \
   _(RegExpSearcher)                                \
   _(RegExpSearcherLastLimit)                       \
@@ -167,6 +172,8 @@
   _(SetHas)                                        \
   _(SetAdd)                                        \
   _(SetSize)                                       \
+                                                   \
+  _(SharedArrayBufferByteLength)                   \
                                                    \
   _(String)                                        \
   _(StringToString)                                \
@@ -184,6 +191,8 @@
   _(StringEndsWith)                                \
   _(StringToLowerCase)                             \
   _(StringToUpperCase)                             \
+  _(StringToLocaleLowerCase)                       \
+  _(StringToLocaleUpperCase)                       \
   _(StringTrim)                                    \
   _(StringTrimStart)                               \
   _(StringTrimEnd)                                 \
@@ -198,9 +207,20 @@
   _(ObjectKeys)                                    \
   _(ObjectToString)                                \
                                                    \
+  _(TypedArrayFill)                                \
+  _(TypedArraySet)                                 \
+  _(TypedArraySubarray)                            \
+  _(TypedArrayLength)                              \
+  _(TypedArrayByteLength)                          \
+  _(TypedArrayByteOffset)                          \
+                                                   \
   _(TestBailout)                                   \
   _(TestAssertFloat32)                             \
   _(TestAssertRecoveredOnBailout)                  \
+                                                   \
+  _(WeakMapGet)                                    \
+  _(WeakMapHas)                                    \
+  _(WeakSetHas)                                    \
                                                    \
   _(IntrinsicUnsafeSetReservedSlot)                \
   _(IntrinsicUnsafeGetReservedSlot)                \
@@ -214,7 +234,6 @@
   _(IntrinsicIsObject)                             \
   _(IntrinsicIsCrossRealmArrayConstructor)         \
   _(IntrinsicCanOptimizeArraySpecies)              \
-  _(IntrinsicCanOptimizeStringProtoSymbolLookup)   \
   _(IntrinsicToInteger)                            \
   _(IntrinsicToLength)                             \
   _(IntrinsicIsConstructing)                       \
@@ -251,16 +270,11 @@
   _(IntrinsicIsTypedArray)                         \
   _(IntrinsicIsPossiblyWrappedTypedArray)          \
   _(IntrinsicTypedArrayLength)                     \
-  _(IntrinsicTypedArrayLengthZeroOnOutOfBounds)    \
   _(IntrinsicPossiblyWrappedTypedArrayLength)      \
   _(IntrinsicRegExpBuiltinExec)                    \
   _(IntrinsicRegExpBuiltinExecForTest)             \
   _(IntrinsicRegExpExec)                           \
   _(IntrinsicRegExpExecForTest)                    \
-  _(IntrinsicTypedArrayByteOffset)                 \
-  _(IntrinsicTypedArrayElementSize)                \
-                                                   \
-  _(IntrinsicThisTimeValue)                        \
                                                    \
   INLINABLE_EXPLICIT_RESOURCE_MANAGEMENENT_LIST(_) \
   INLINABLE_NATIVE_FUZZILLI_LIST(_)                \

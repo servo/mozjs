@@ -1,23 +1,22 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* A template class for tagged unions. */
 
+#ifndef mozilla_Variant_h
+#define mozilla_Variant_h
+
+#include <algorithm>
 #include <new>
 #include <stdint.h>
 
 #include "mozilla/Assertions.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/OperatorNewExtensions.h"
-#include "mozilla/TemplateLib.h"
+
 #include <type_traits>
 #include <utility>
-
-#ifndef mozilla_Variant_h
-#  define mozilla_Variant_h
 
 namespace IPC {
 template <typename T>
@@ -26,29 +25,48 @@ struct ParamTraits;
 
 namespace mozilla {
 
-namespace ipc {
-template <typename T>
-struct IPDLParamTraits;
-}  // namespace ipc
-
 template <typename... Ts>
 class Variant;
 
 namespace detail {
 
-// Nth<N, types...>::Type is the Nth type (0-based) in the list of types Ts.
+#if defined(__has_builtin)
+#  if __has_builtin(__type_pack_element)
+#    define MOZ_HAS_TYPE_PACK_ELEMENT
+#  endif
+#endif
+
+#ifdef MOZ_HAS_TYPE_PACK_ELEMENT
+
+// Note: not using __type_pack_element directly as a type alias to avoid builtin
+// leaking to the API, see
+// https://github.com/facebook/folly/issues/1991#issuecomment-1524063798
 template <size_t N, typename... Ts>
-struct Nth;
+struct type_pack_element {
+  using type = __type_pack_element<N, Ts...>;
+};
+
+template <size_t N, typename... Ts>
+using Nth = typename type_pack_element<N, Ts...>::type;
+
+#else
+
+template <size_t N, typename... Ts>
+struct NthImpl;
 
 template <typename T, typename... Ts>
-struct Nth<0, T, Ts...> {
+struct NthImpl<0, T, Ts...> {
   using Type = T;
 };
 
 template <size_t N, typename T, typename... Ts>
-struct Nth<N, T, Ts...> {
-  using Type = typename Nth<N - 1, Ts...>::Type;
+struct NthImpl<N, T, Ts...> {
+  using Type = typename NthImpl<N - 1, Ts...>::Type;
 };
+
+template <size_t N, typename... Ts>
+using Nth = typename NthImpl<N, Ts...>::Type;
+#endif
 
 /// SelectVariantTypeHelper is used in the implementation of SelectVariantType.
 template <typename T, typename... Variants>
@@ -372,6 +390,13 @@ struct VariantIndex {
  * its constructor and destructor run on creation and deletion
  * respectively. This is the problem that `mozilla::Variant` solves.
  *
+ * Since C++17, std::variant exists. `mozilla::Variant` differs conceptually
+ * from it by (a.) having a richer `.match` API (compared to `std::visit`) and
+ * (b.) having a different assignment semantic. Assigning to an `std::variant`
+ * assigns to the underlying value, while assigning to a `mozilla::Variant`
+ * deletes the previous value then move-constructs a new value. This makes it
+ * possible to store *and* update const values.
+ *
  * ## Usage
  *
  * A `mozilla::Variant` instance is constructed (via move or copy) from one of
@@ -570,13 +595,12 @@ template <typename... Ts>
 class MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS
 MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
   friend struct IPC::ParamTraits<mozilla::Variant<Ts...>>;
-  friend struct mozilla::ipc::IPDLParamTraits<mozilla::Variant<Ts...>>;
 
   using Tag = typename detail::VariantTag<Ts...>::Type;
   using Impl = detail::VariantImplementation<Tag, 0, Ts...>;
 
-  static constexpr size_t RawDataAlignment = tl::Max<alignof(Ts)...>::value;
-  static constexpr size_t RawDataSize = tl::Max<sizeof(Ts)...>::value;
+  static constexpr size_t RawDataAlignment = std::max({alignof(Ts)...});
+  static constexpr size_t RawDataSize = std::max({sizeof(Ts)...});
 
   // Raw storage for the contained variant value.
   alignas(RawDataAlignment) unsigned char rawData[RawDataSize];
@@ -629,7 +653,7 @@ MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
    */
   template <size_t N, typename... Args>
   MOZ_IMPLICIT Variant(const VariantIndex<N>&, Args&&... aTs) : tag(N) {
-    using T = typename detail::Nth<N, Ts...>::Type;
+    using T = detail::Nth<N, Ts...>;
     ::new (KnownNotNull, ptr()) T(std::forward<Args>(aTs)...);
   }
 
@@ -697,8 +721,8 @@ MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
   }
 
   template <size_t N, typename... Args>
-  typename detail::Nth<N, Ts...>::Type& emplace(Args&&... aTs) {
-    using T = typename detail::Nth<N, Ts...>::Type;
+  detail::Nth<N, Ts...>& emplace(Args&&... aTs) {
+    using T = detail::Nth<N, Ts...>;
     Impl::destroy(*this);
     tag = N;
     ::new (KnownNotNull, ptr()) T(std::forward<Args>(aTs)...);
@@ -749,11 +773,11 @@ MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
   }
 
   template <size_t N>
-      typename detail::Nth<N, Ts...>::Type& as() & MOZ_LIFETIME_BOUND {
+      detail::Nth<N, Ts...>& as() & MOZ_LIFETIME_BOUND {
     static_assert(N < sizeof...(Ts),
                   "provided an index outside of this Variant's type list");
     MOZ_RELEASE_ASSERT(is<N>());
-    return *static_cast<typename detail::Nth<N, Ts...>::Type*>(ptr());
+    return *static_cast<detail::Nth<N, Ts...>*>(ptr());
   }
 
   /** Immutable const lvalue-reference. */
@@ -766,11 +790,11 @@ MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
   }
 
   template <size_t N>
-  const typename detail::Nth<N, Ts...>::Type& as() const& MOZ_LIFETIME_BOUND {
+  const detail::Nth<N, Ts...>& as() const& MOZ_LIFETIME_BOUND {
     static_assert(N < sizeof...(Ts),
                   "provided an index outside of this Variant's type list");
     MOZ_RELEASE_ASSERT(is<N>());
-    return *static_cast<const typename detail::Nth<N, Ts...>::Type*>(ptr());
+    return *static_cast<const detail::Nth<N, Ts...>*>(ptr());
   }
 
   /** Mutable rvalue-reference. */
@@ -784,12 +808,11 @@ MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
   }
 
   template <size_t N>
-      typename detail::Nth<N, Ts...>::Type&& as() && MOZ_LIFETIME_BOUND {
+      detail::Nth<N, Ts...>&& as() && MOZ_LIFETIME_BOUND {
     static_assert(N < sizeof...(Ts),
                   "provided an index outside of this Variant's type list");
     MOZ_RELEASE_ASSERT(is<N>());
-    return std::move(
-        *static_cast<typename detail::Nth<N, Ts...>::Type*>(ptr()));
+    return std::move(*static_cast<detail::Nth<N, Ts...>*>(ptr()));
   }
 
   /** Immutable const rvalue-reference. */
@@ -802,12 +825,11 @@ MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
   }
 
   template <size_t N>
-  const typename detail::Nth<N, Ts...>::Type&& as() const&& MOZ_LIFETIME_BOUND {
+  const detail::Nth<N, Ts...>&& as() const&& MOZ_LIFETIME_BOUND {
     static_assert(N < sizeof...(Ts),
                   "provided an index outside of this Variant's type list");
     MOZ_RELEASE_ASSERT(is<N>());
-    return std::move(
-        *static_cast<const typename detail::Nth<N, Ts...>::Type*>(ptr()));
+    return std::move(*static_cast<const detail::Nth<N, Ts...>*>(ptr()));
   }
 
   /**
@@ -826,11 +848,11 @@ MOZ_NON_PARAM MOZ_GSL_OWNER Variant {
   }
 
   template <size_t N>
-  typename detail::Nth<N, Ts...>::Type extract() {
+  detail::Nth<N, Ts...> extract() {
     static_assert(N < sizeof...(Ts),
                   "provided an index outside of this Variant's type list");
     MOZ_RELEASE_ASSERT(is<N>());
-    return typename detail::Nth<N, Ts...>::Type(std::move(as<N>()));
+    return detail::Nth<N, Ts...>(std::move(as<N>()));
   }
 
   // Exhaustive matching of all variant types on the contained value.

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -21,23 +19,19 @@
 namespace js {
 
 class JS_PUBLIC_API GenericPrinter;
-class PlainObject;
 
 namespace jit {
 
 class MBasicBlock;
-class MCompare;
 class MDefinition;
 class MIRGenerator;
 class MIRGraph;
 class MTest;
 
-[[nodiscard]] bool PruneUnusedBranches(const MIRGenerator* mir,
-                                       MIRGraph& graph);
-
-[[nodiscard]] bool FoldTests(MIRGraph& graph);
-
 [[nodiscard]] bool FoldEmptyBlocks(MIRGraph& graph, bool* changed);
+
+[[nodiscard]] bool SplitCriticalEdgesForBlock(MIRGraph& graph,
+                                              MBasicBlock* block);
 
 [[nodiscard]] bool SplitCriticalEdges(MIRGraph& graph);
 
@@ -67,9 +61,6 @@ void UnmarkLoopBlocks(MIRGraph& graph, const MBasicBlock* header);
 
 [[nodiscard]] bool FoldLoadsWithUnbox(const MIRGenerator* mir, MIRGraph& graph);
 
-[[nodiscard]] bool ApplyTypeInformation(const MIRGenerator* mir,
-                                        MIRGraph& graph);
-
 void RenumberBlocks(MIRGraph& graph);
 
 [[nodiscard]] bool AccountForCFGChanges(const MIRGenerator* mir,
@@ -77,19 +68,7 @@ void RenumberBlocks(MIRGraph& graph);
                                         bool updateAliasAnalysis,
                                         bool underValueNumberer = false);
 
-[[nodiscard]] bool RemoveUnmarkedBlocks(const MIRGenerator* mir,
-                                        MIRGraph& graph,
-                                        uint32_t numMarkedBlocks);
-
 [[nodiscard]] bool BuildPhiReverseMapping(MIRGraph& graph);
-
-void AssertBasicGraphCoherency(MIRGraph& graph, bool force = false);
-
-void AssertGraphCoherency(MIRGraph& graph, bool force = false);
-
-void AssertExtendedGraphCoherency(MIRGraph& graph,
-                                  bool underValueNumberer = false,
-                                  bool force = false);
 
 [[nodiscard]] bool EliminateRedundantChecks(MIRGraph& graph);
 
@@ -100,8 +79,6 @@ void AssertExtendedGraphCoherency(MIRGraph& graph,
 [[nodiscard]] bool AddKeepAliveInstructions(MIRGraph& graph);
 
 [[nodiscard]] bool MarkLoadsUsedAsPropertyKeys(MIRGraph& graph);
-
-[[nodiscard]] bool TrackWasmRefTypes(MIRGraph& graph);
 
 // Simple linear sum of the form 'n' or 'x + n'.
 struct SimpleLinearSum {
@@ -155,13 +132,8 @@ class LinearSum {
   // not be used.
   [[nodiscard]] bool multiply(int32_t scale);
   [[nodiscard]] bool add(const LinearSum& other, int32_t scale = 1);
-  [[nodiscard]] bool add(SimpleLinearSum other, int32_t scale = 1);
   [[nodiscard]] bool add(MDefinition* term, int32_t scale);
   [[nodiscard]] bool add(int32_t constant);
-
-  // Unlike the above function, on failure this leaves the sum unchanged and
-  // it can still be used.
-  [[nodiscard]] bool divide(uint32_t scale);
 
   int32_t constant() const { return constant_; }
   size_t numTerms() const { return terms_.length(); }
@@ -187,38 +159,6 @@ bool DeadIfUnusedAllowEffectful(const MDefinition* def);
 bool IsDiscardable(const MDefinition* def);
 bool IsDiscardableAllowEffectful(const MDefinition* def);
 
-class CompileInfo;
-
-// Debug printing.  For avoidance of ambiguity resulting from use of integer
-// IDs for MBasicBlocks and MDefinitions, these routines can optionally be
-// asked to dump a base-26 hashed version of pointers too.  Be aware these are
-// not guaranteed to be unique, although collisions are very unlikely.
-
-// Dump `p`, hashed, to `out`.
-void DumpHashedPointer(GenericPrinter& out, const void* p);
-
-// Dump the ID and possibly the pointer hash of `def`, to `out`.
-void DumpMIRDefinitionID(GenericPrinter& out, const MDefinition* def,
-                         bool showHashedPointers = false);
-// Dump an MDefinition to `out`.
-void DumpMIRDefinition(GenericPrinter& out, const MDefinition* def,
-                       bool showHashedPointers = false);
-
-// Dump the ID and possibly the pointer hash of `block`, to `out`.
-void DumpMIRBlockID(GenericPrinter& out, const MBasicBlock* block,
-                    bool showHashedPointers = false);
-// Dump an MBasicBlock to `out`.
-void DumpMIRBlock(GenericPrinter& out, MBasicBlock* block,
-                  bool showHashedPointers = false);
-
-// Dump an entire MIRGraph to `out`.
-void DumpMIRGraph(GenericPrinter& out, MIRGraph& graph,
-                  bool showHashedPointers = false);
-
-// Legacy entry point for DumpMIRGraph.
-void DumpMIRExpressions(GenericPrinter& out, MIRGraph& graph,
-                        const CompileInfo& info, const char* phase,
-                        bool showHashedPointers = false);
 }  // namespace jit
 }  // namespace js
 

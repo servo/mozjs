@@ -229,7 +229,8 @@ class JarSubFormatter(PiecemealFormatter):
         basepath = mozpath.split(relpath)[0]
         chromepath = mozpath.join(base, basepath)
         entry = (
-            entry.rebase(chromepath)
+            entry
+            .rebase(chromepath)
             .move(mozpath.join(base, "jar:%s.jar!" % basepath))
             .rebase(base)
         )

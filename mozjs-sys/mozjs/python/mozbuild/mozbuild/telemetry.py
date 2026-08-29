@@ -6,8 +6,10 @@
 This file contains functions used for telemetry.
 """
 
+import functools
 import os
 import platform
+import subprocess
 import sys
 
 import distro
@@ -144,13 +146,12 @@ def filter_args(command, argv, topsrcdir, topobjdir, cwd=None):
 
 def get_distro_and_version():
     if sys.platform.startswith("linux"):
-        dist, version, _ = distro.linux_distribution(full_distribution_name=False)
-        return dist, version
+        return distro.id(), distro.version()
     elif sys.platform.startswith("darwin"):
         return "macos", platform.mac_ver()[0]
     elif sys.platform.startswith("win32") or sys.platform.startswith("msys"):
         ver = sys.getwindowsversion()
-        return "windows", "%s.%s.%s" % (ver.major, ver.minor, ver.build)
+        return "windows", f"{ver.major}.{ver.minor}.{ver.build}"
     else:
         return sys.platform, ""
 
@@ -160,32 +161,112 @@ def get_shell_info():
 
     return (
         True if "vscode" in os.getenv("TERM_PROGRAM", "") else False,
-        bool(os.getenv("SSH_CLIENT", False)),
+        bool(os.getenv("SSH_CLIENT", "")),
     )
 
 
 def get_vscode_running():
     """Return if the vscode is currently running."""
-    try:
-        import psutil
+    return any(
+        _is_process_running(pname)
+        for pname in ("Code.exe", "Code Helper (Renderer)", "code")
+    )
 
-        for proc in psutil.process_iter():
-            try:
-                # On Windows we have "Code.exe"
-                # On MacOS we have "Code Helper (Renderer)"
-                # On Linux we have ""
+
+def _is_process_running(process_name: str) -> bool:
+    """Check if a process is running using psutil."""
+
+    @functools.cache
+    def list_running_processes():
+        running_processes = set()
+        try:
+            import psutil
+
+            for proc in psutil.process_iter():
+                try:
+                    running_processes.add(proc.name())
+                except Exception:
+                    continue
+        except Exception:
+            ...
+        return running_processes
+
+    return process_name in list_running_processes()
+
+
+def get_fleet_running() -> bool:
+    """Try to determine if FleetDM endpoint management tool is running on the machine.
+
+    If we can't make a determination, return False.
+    """
+    system = platform.system()
+    if system == "Darwin":
+        return _is_process_running("osqueryd")
+    elif system == "Windows":
+        try:
+            out = subprocess.check_output(
+                ["sc", "query", "Fleet osquery"], stderr=subprocess.DEVNULL, text=True
+            )
+            for line in out.splitlines():
+                if "STATE" in line and "RUNNING" in line:
+                    return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+    elif system == "Linux":
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "osqueryd"],
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+        return _is_process_running("osqueryd")
+    return False
+
+
+def get_crowdstrike_running() -> bool:
+    """Try to determine if CrowdStrike security software is running on the machine.
+
+    If we can't make a determination, return False.
+    """
+    system = platform.system()
+    if system == "Darwin":
+        try:
+            out = subprocess.check_output(
+                ["systemextensionsctl", "list"], stderr=subprocess.DEVNULL, text=True
+            )
+            for line in out.splitlines():
                 if (
-                    proc.name == "Code.exe"
-                    or proc.name == "Code Helper (Renderer)"
-                    or proc.name == "code"
+                    "com.crowdstrike.falcon.Agent" in line
+                    and "activated enabled" in line.lower()
                 ):
                     return True
-            except Exception:
-                # may not be able to access process info for all processes
-                continue
-    except Exception:
-        # On some platforms, sometimes, the generator throws an
-        # exception preventing us to enumerate.
-        return False
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+    elif system == "Windows":
+        try:
+            out = subprocess.check_output(
+                ["sc", "query", "CSFalconService"], stderr=subprocess.DEVNULL, text=True
+            )
+            for line in out.splitlines():
+                if "STATE" in line and "RUNNING" in line:
+                    return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+    elif system == "Linux":
+        try:
+            result = subprocess.run(
+                ["systemctl", "is-active", "falcon-sensor"],
+                capture_output=True,
+                check=False,
+            )
+            if result.returncode == 0:
+                return True
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            pass
+        return _is_process_running("falcon-sensor")
 
     return False

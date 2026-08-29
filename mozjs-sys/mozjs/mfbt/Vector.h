@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,17 +11,17 @@
 #include <type_traits>
 #include <utility>
 
-#include "mozilla/Alignment.h"
 #include "mozilla/AllocPolicy.h"
 #include "mozilla/ArrayUtils.h"  // for PointerRangeSize
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/CheckedArithmetic.h"
+#include "mozilla/Likely.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/OperatorNewExtensions.h"
 #include "mozilla/ReentrancyGuard.h"
 #include "mozilla/Span.h"
-#include "mozilla/TemplateLib.h"
 
 namespace mozilla {
 
@@ -88,8 +86,8 @@ inline size_t GrowEltsByDoubling(size_t aOldElts, size_t aIncr) {
      *
      * for a Vector doesn't overflow ptrdiff_t (see bug 510319).
      */
-    if (MOZ_UNLIKELY(aOldElts &
-                     mozilla::tl::MulOverflowMask<4 * EltSize>::value)) {
+    [[maybe_unused]] size_t tmp;
+    if (MOZ_UNLIKELY(!mozilla::SafeMul(aOldElts, 4 * EltSize, &tmp))) {
       return 0;
     }
 
@@ -110,8 +108,9 @@ inline size_t GrowEltsByDoubling(size_t aOldElts, size_t aIncr) {
 
   /* Did aOldElts + aIncr overflow?  Will newMinCap * EltSize rounded up to the
    * next power of two overflow PTRDIFF_MAX? */
+  [[maybe_unused]] size_t tmp;
   if (MOZ_UNLIKELY(newMinCap < aOldElts ||
-                   newMinCap & tl::MulOverflowMask<4 * EltSize>::value)) {
+                   !mozilla::SafeMul(newMinCap, 4 * EltSize, &tmp))) {
     return 0;
   }
 
@@ -378,7 +377,7 @@ class MOZ_NON_PARAM MOZ_GSL_OWNER Vector final : private AllocPolicy {
   template <size_t MinimumInlineCapacity, size_t Dummy>
   struct ComputeCapacity {
     static constexpr size_t value =
-        tl::Min<MinimumInlineCapacity, kMaxInlineBytes / sizeof(T)>::value;
+        std::min(MinimumInlineCapacity, kMaxInlineBytes / sizeof(T));
   };
 
   template <size_t Dummy>
@@ -926,6 +925,21 @@ class MOZ_NON_PARAM MOZ_GSL_OWNER Vector final : private AllocPolicy {
 
   void swap(Vector& aOther);
 
+  /**
+   * For internal use by allocation policies that provide garbage collected
+   * memory.
+   *
+   * Trace any allocations owned by this object that were made with AllocPolicy.
+   * Call the supplied closure |aTraceFunc| for each of them, passing a double
+   * pointer to the memory held (e.g. a void** pointer).
+   */
+  template <typename F>
+  void traceOwnedAllocs(F&& aTraceFunc) {
+    if (!usingInlineStorage()) {
+      aTraceFunc(&mBegin);
+    }
+  }
+
  private:
   Vector(const Vector&) = delete;
   void operator=(const Vector&) = delete;
@@ -1056,8 +1070,7 @@ MOZ_NEVER_INLINE bool Vector<T, N, AP>::growStorageBy(size_t aIncr) {
 
   if (aIncr == 1 && usingInlineStorage()) {
     /* This case occurs in ~70--80% of the calls to this function. */
-    constexpr size_t newSize =
-        tl::RoundUpPow2<(kInlineCapacity + 1) * sizeof(T)>::value;
+    constexpr size_t newSize = RoundUpPow2((kInlineCapacity + 1) * sizeof(T));
     static_assert(newSize / sizeof(T) > 0,
                   "overflow when exceeding inline Vector storage");
     newCap = newSize / sizeof(T);
@@ -1636,7 +1649,8 @@ inline size_t Vector<T, N, AP>::sizeOfIncludingThis(
 
 template <typename T, size_t N, class AP>
 inline void Vector<T, N, AP>::swap(Vector& aOther) {
-  static_assert(N == 0, "still need to implement this for N != 0");
+  static_assert(N == 0,
+                "still need to implement this for N != 0 (Bug 1987683)");
 
   // This only works when inline storage is always empty.
   if (!usingInlineStorage() && aOther.usingInlineStorage()) {

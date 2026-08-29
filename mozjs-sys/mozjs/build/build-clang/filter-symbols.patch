@@ -1,0 +1,32 @@
+diff --git a/llvm/utils/extract_symbols.py b/llvm/utils/extract_symbols.py
+index 40a43d365555..7362cc26a203 100755
+--- a/llvm/utils/extract_symbols.py
++++ b/llvm/utils/extract_symbols.py
+@@ -155,6 +155,27 @@ def should_keep_microsoft_symbol(symbol, calling_convention_decoration):
+         # because they are used for debugging only.
+         if symbol.startswith(("?dump@", "?dumpColor@", "?printPretty@")):
+             return None
++        # anchor(): empty virtual functions whose only purpose is to anchor a
++        # class's vtable to a single TU; never called by name from elsewhere.
++        if symbol.startswith("?anchor@"):
++            return None
++        # Profile(): FoldingSetTrait / FoldingSetNode hash methods, used only
++        # by LLVM's internal hash-consing machinery.
++        if symbol.startswith("?Profile@"):
++            return None
++        # cloneImpl(): private virtual on llvm::MDNode subclasses; only the
++        # public clone() entry point needs to be reachable.
++        if symbol.startswith("?cloneImpl@"):
++            return None
++        # getAnalysisUsage()/releaseMemory(): LLVM Pass virtual overrides
++        # dispatched through the legacy pass manager's vtables.
++        if symbol.startswith(("?getAnalysisUsage@", "?releaseMemory@")):
++            return None
++        # Virtual overrides on cl::parser / cl::opt / cl::OptionValue template
++        # instantiations are invoked by the CommandLine library through the
++        # generic_parser_base / Option vtables, never imported by name.
++        if re.search(r"@\?\$(parser|opt|OptionValue)@.+@cl@llvm@@", symbol):
++            return None
+         return symbol
+     # Keep mangled global variables and static class members in llvm:: namespace.
+     # These have a type mangling that looks like (this is derived from

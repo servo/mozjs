@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -97,6 +94,9 @@ bool basic_test(const CharT* chars) {
       cx, JS::InstantiateModuleStencil(cx, instantiateOptions, stencil));
   CHECK(moduleObject);
 
+  CHECK(JS::LoadRequestedModules(cx, moduleObject, JS::UndefinedHandleValue,
+                                 OnResolve, OnReject));
+
   // Link and evaluate the module graph. The link step used to be call
   // "instantiate" but is unrelated to the concept in Stencil with same name.
   JS::RootedValue rval(cx);
@@ -110,6 +110,15 @@ bool basic_test(const CharT* chars) {
 
   return true;
 }
+
+static bool OnResolve(JSContext* cx, JS::HandleValue hostDefined) {
+  return true;
+}
+static bool OnReject(JSContext* cx, JS::HandleValue hostDefined,
+                     JS::HandleValue error) {
+  return true;
+}
+
 END_TEST(testStencil_Module)
 
 BEGIN_TEST(testStencil_NonSyntactic) {

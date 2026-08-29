@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -23,6 +21,21 @@ namespace jit {
 class JitActivation;
 class JSJitProfilingFrameIterator;
 class JitcodeGlobalEntry;
+
+// Information about a single frame in a JIT call stack, returned by
+// JitcodeGlobalEntry::callStackAtAddr.
+struct CallStackFrameInfo {
+  // The function name or label for this frame.
+  const char* label;
+  // The script source ID for this frame. Used to identify which script source
+  // this frame belongs to.
+  uint32_t sourceId;
+  // Line number (1-origin, 0 means no line info available)
+  uint32_t line;
+  // Column number (1-origin, 0 means no column info available)
+  uint32_t column;
+};
+
 }  // namespace jit
 namespace wasm {
 class ProfilingFrameIterator;
@@ -53,7 +66,7 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
   // profiler uses this to skip native frames between the activation and
   // endStackAddress_.
   void* endStackAddress_ = nullptr;
-  Kind kind_;
+  Kind kind_ = Kind::JSJit;
 
   static const unsigned StorageSpace = 9 * sizeof(void*);
   alignas(void*) unsigned char storage_[StorageSpace];
@@ -161,6 +174,9 @@ class MOZ_NON_PARAM JS_PUBLIC_API ProfilingFrameIterator {
     const char* label;
     JSScript* interpreterScript;
     uint64_t realmID;
+    uint32_t sourceId;
+    uint32_t line;
+    uint32_t column;
 
    public:
     void* returnAddress() const {
@@ -236,20 +252,27 @@ class MOZ_STACK_CLASS ProfiledFrameHandle {
   js::jit::JitcodeGlobalEntry& entry_;
   void* addr_;
   void* canonicalAddr_;
-  const char* label_;
+  js::jit::CallStackFrameInfo frameInfo_;
   uint32_t depth_;
 
   ProfiledFrameHandle(JSRuntime* rt, js::jit::JitcodeGlobalEntry& entry,
-                      void* addr, const char* label, uint32_t depth);
+                      void* addr, const js::jit::CallStackFrameInfo& frameInfo,
+                      uint32_t depth);
 
  public:
-  const char* label() const { return label_; }
+  const char* label() const { return frameInfo_.label; }
   uint32_t depth() const { return depth_; }
   void* canonicalAddress() const { return canonicalAddr_; }
 
   JS_PUBLIC_API ProfilingFrameIterator::FrameKind frameKind() const;
 
   JS_PUBLIC_API uint64_t realmID() const;
+
+  JS_PUBLIC_API uint32_t sourceId() const { return frameInfo_.sourceId; }
+
+  JS_PUBLIC_API uint32_t line() const { return frameInfo_.line; }
+
+  JS_PUBLIC_API uint32_t column() const { return frameInfo_.column; }
 };
 
 class ProfiledFrameRange {
@@ -289,8 +312,11 @@ class ProfiledFrameRange {
   JSRuntime* rt_;
   void* addr_;
   js::jit::JitcodeGlobalEntry* entry_;
-  // Assume maximum inlining depth is <64
-  const char* labels_[64];
+  // Maximum inlining depth. This must match InlineScriptTree::MaxDepth.
+  // We can't use InlineScriptTree::MaxDepth directly here because this is a
+  // public header and InlineScriptTree.h is private.
+  static constexpr uint32_t MaxInliningDepth = 8;
+  js::jit::CallStackFrameInfo frames_[MaxInliningDepth];
   uint32_t depth_;
 };
 

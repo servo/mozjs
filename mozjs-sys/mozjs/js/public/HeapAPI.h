@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -34,7 +32,7 @@ static constexpr size_t TypicalCacheLineSize = 64;
 namespace gc {
 
 class Arena;
-struct Cell;
+class Cell;
 class ArenaChunk;
 class StoreBuffer;
 class TenuredCell;
@@ -84,7 +82,7 @@ const size_t ArenaBitmapWords = HowMany(ArenaBitmapBits, JS_BITS_PER_WORD);
 enum class ChunkKind : uint8_t {
   Invalid = 0,
   TenuredArenas,
-  MediumBuffers,
+  Buffers,
   NurseryToSpace,
   NurseryFromSpace
 };
@@ -137,7 +135,7 @@ class ChunkBase {
   }
 
   bool isTenuredChunk() const {
-    return kind == ChunkKind::TenuredArenas || kind == ChunkKind::MediumBuffers;
+    return kind == ChunkKind::TenuredArenas || kind == ChunkKind::Buffers;
   }
 
   // The store buffer for pointers from tenured things to things in this
@@ -155,6 +153,7 @@ class ChunkBase {
 // Information about tenured heap chunks containing arenas.
 struct ArenaChunkInfo {
  private:
+  friend class ArenaChunk;
   friend class ChunkPool;
   ArenaChunk* next = nullptr;
   ArenaChunk* prev = nullptr;
@@ -168,6 +167,9 @@ struct ArenaChunkInfo {
 
   /* Whether this chunk is the chunk currently being allocated from. */
   bool isCurrentChunk = false;
+
+  // The zone this chunk is associated with, or nullptr for empty chunks.
+  JS::Zone* zone = nullptr;
 };
 
 /*
@@ -223,11 +225,57 @@ static_assert(ArenasPerChunk == 252,
 
 const size_t FirstArenaOffset = ChunkSize - ArenasPerChunk * ArenaSize;
 
-// Mark bitmaps are atomic because they can be written by gray unmarking on the
-// main thread while read by sweeping on a background thread. The former does
-// not affect the result of the latter.
-using MarkBitmapWord = mozilla::Atomic<uintptr_t, mozilla::Relaxed>;
-static constexpr size_t MarkBitmapWordBits = sizeof(MarkBitmapWord) * CHAR_BIT;
+using AtomicBitmapWord = mozilla::Atomic<uintptr_t, mozilla::Relaxed>;
+
+// A bitmap backed by atomic storage.
+template <size_t N>
+class AtomicBitmap {
+ public:
+  static constexpr size_t BitCount = N;
+
+  using Word = AtomicBitmapWord;
+  static constexpr size_t BitsPerWord = sizeof(Word) * CHAR_BIT;
+
+  static_assert(N % BitsPerWord == 0);
+  static constexpr size_t WordCount = N / BitsPerWord;
+
+ private:
+  Word bitmap[WordCount];
+
+  static uintptr_t BitMask(size_t bit) {
+    MOZ_ASSERT(bit < N);
+    return uintptr_t(1) << (bit % BitsPerWord);
+  }
+
+ public:
+  bool getBit(size_t bit) const {
+    return getWord(bit / BitsPerWord) & BitMask(bit);
+  }
+
+  void setBit(size_t bit, bool value) {
+    Word& word = wordRef(bit / BitsPerWord);
+    if (value) {
+      word |= BitMask(bit);
+    } else {
+      word &= ~BitMask(bit);
+    }
+  }
+
+  uintptr_t getWord(size_t index) const {
+    MOZ_ASSERT(index < WordCount);
+    return bitmap[index];
+  }
+  Word& wordRef(size_t index) {
+    MOZ_ASSERT(index < WordCount);
+    return bitmap[index];
+  }
+
+  inline bool isEmpty() const;
+  inline void clear();
+  inline void copyFrom(const AtomicBitmap& other);
+
+  class Iter;
+};
 
 /*
  * Live objects are marked black or gray. Everything reachable from a JS root is
@@ -245,42 +293,48 @@ enum class ColorBit : uint32_t { BlackBit = 0, GrayOrBlackBit = 1 };
 // cell is.
 enum class MarkColor : uint8_t { Gray = 1, Black = 2 };
 
+static constexpr size_t ChunkMarkBitCount =
+    (ChunkSize - FirstArenaOffset) / CellBytesPerMarkBit;
+
 // Mark bitmap for a tenured heap chunk.
-template <size_t BytesPerMarkBit, size_t FirstThingOffset>
-class alignas(TypicalCacheLineSize) MarkBitmap {
-  static constexpr size_t ByteCount =
-      (ChunkSize - FirstThingOffset) / BytesPerMarkBit;
-  static constexpr size_t WordCount = HowMany(ByteCount, MarkBitmapWordBits);
-  MarkBitmapWord bitmap[WordCount];
+//
+// Mark bitmaps are atomic because they can be written by gray unmarking on the
+// main thread while read by sweeping on a background thread. The former does
+// not affect the result of the latter.
+class alignas(TypicalCacheLineSize) ChunkMarkBitmap
+    : protected AtomicBitmap<ChunkMarkBitCount> {
+  using Bitmap = AtomicBitmap<ChunkMarkBitCount>;
 
  public:
-  static constexpr size_t FirstThingAdjustmentBits =
-      FirstThingOffset / BytesPerMarkBit;
+  using Bitmap::BitsPerWord;
+  using Bitmap::WordCount;
 
+  static constexpr size_t FirstThingAdjustmentBits =
+      FirstArenaOffset / CellBytesPerMarkBit;
+  static_assert(FirstThingAdjustmentBits % BitsPerWord == 0);
   static constexpr size_t FirstThingAdjustmentWords =
-      FirstThingAdjustmentBits / MarkBitmapWordBits;
+      FirstThingAdjustmentBits / BitsPerWord;
 
   MOZ_ALWAYS_INLINE void getMarkWordAndMask(const void* cell, ColorBit colorBit,
-                                            MarkBitmapWord** wordp,
-                                            uintptr_t* maskp) {
-    // Note: the JIT pre-barrier trampolines inline this code. Update
-    // MacroAssembler::emitPreBarrierFastPath code too when making changes here!
+                                            Word** wordp, uintptr_t* maskp) {
+    // Note: the JIT inlines this code. Update MacroAssembler::loadMarkBits and
+    // its callers when making changes here!
 
     MOZ_ASSERT(size_t(colorBit) < MarkBitsPerCell);
 
     size_t offset = uintptr_t(cell) & ChunkMask;
-    MOZ_ASSERT(offset >= FirstThingOffset);
+    MOZ_ASSERT(offset >= FirstArenaOffset);
 
-    const size_t bit = offset / BytesPerMarkBit + size_t(colorBit);
-    size_t word = bit / MarkBitmapWordBits - FirstThingAdjustmentWords;
+    const size_t bit = offset / CellBytesPerMarkBit + size_t(colorBit);
+    size_t word = bit / BitsPerWord - FirstThingAdjustmentWords;
     MOZ_ASSERT(word < WordCount);
-    *wordp = &bitmap[word];
-    *maskp = uintptr_t(1) << (bit % MarkBitmapWordBits);
+    *wordp = &wordRef(word);
+    *maskp = uintptr_t(1) << (bit % BitsPerWord);
   }
 
   // The following are not exported and are defined in gc/Heap.h:
   MOZ_ALWAYS_INLINE bool markBit(const void* cell, ColorBit colorBit) {
-    MarkBitmapWord* word;
+    Word* word;
     uintptr_t mask;
     getMarkWordAndMask(cell, colorBit, &word, &mask);
     return *word & mask;
@@ -310,13 +364,11 @@ class alignas(TypicalCacheLineSize) MarkBitmap {
                           ColorBit colorBit);
   inline void unmark(const void* cell);
   inline void unmarkOneBit(const void* cell, ColorBit colorBit);
-  inline MarkBitmapWord* arenaBits(Arena* arena);
+  inline AtomicBitmapWord* arenaBits(Arena* arena);
 
-  inline void copyFrom(const MarkBitmap& other);
-  inline void clear();
+  inline void copyFrom(const ChunkMarkBitmap& other);
+  using Bitmap::clear;
 };
-
-using ChunkMarkBitmap = MarkBitmap<CellBytesPerMarkBit, FirstArenaOffset>;
 
 // Bitmap with one bit per page used for decommitted page set.
 using ChunkPageBitmap = mozilla::BitSet<PagesPerChunk, uint32_t>;
@@ -355,10 +407,11 @@ const size_t MaxArenaCellIndex = ArenaSize / CellAlignBytes;
 
 const size_t ChunkStoreBufferOffset = offsetof(ChunkBase, storeBuffer);
 const size_t ChunkMarkBitmapOffset = offsetof(ArenaChunkBase, markBits);
+const size_t ChunkZoneOffset =
+    offsetof(ArenaChunkBase, info) + offsetof(ArenaChunkInfo, zone);
 
 // Hardcoded offsets into Arena class.
-const size_t ArenaZoneOffset = 2 * sizeof(uint32_t);
-const size_t ArenaHeaderSize = ArenaZoneOffset + 2 * sizeof(uintptr_t) +
+const size_t ArenaHeaderSize = 2 * sizeof(uint32_t) + 1 * sizeof(uintptr_t) +
                                sizeof(size_t) + sizeof(uintptr_t);
 
 // The first word of a GC thing has certain requirements from the GC and is used
@@ -614,9 +667,9 @@ static MOZ_ALWAYS_INLINE ArenaChunkBase* GetCellChunkBase(
 static MOZ_ALWAYS_INLINE JS::Zone* GetTenuredGCThingZone(const void* ptr) {
   // This takes a void* because the compiler can't see type relationships in
   // this header. |ptr| must be a pointer to a tenured GC thing.
-  MOZ_ASSERT(ptr);
-  const uintptr_t zone_addr = (uintptr_t(ptr) & ~ArenaMask) | ArenaZoneOffset;
-  return *reinterpret_cast<JS::Zone**>(zone_addr);
+  ChunkBase* chunk = GetGCAddressChunkBase(ptr);
+  MOZ_ASSERT(chunk->kind == ChunkKind::TenuredArenas);
+  return static_cast<ArenaChunkBase*>(chunk)->info.zone;
 }
 
 static MOZ_ALWAYS_INLINE bool TenuredCellIsMarkedBlack(
@@ -690,8 +743,8 @@ MOZ_ALWAYS_INLINE bool InCollectedNurseryRegion(const Cell* cell) {
          ChunkKind::NurseryFromSpace;
 }
 
-// Allow use before the compiler knows the derivation of JSObject, JSString, and
-// JS::BigInt.
+// Allow use before the compiler knows the derivation of JSObject, JSString,
+// JS::BigInt, and js::GetterSetter.
 MOZ_ALWAYS_INLINE bool IsInsideNursery(const JSObject* obj) {
   return IsInsideNursery(reinterpret_cast<const Cell*>(obj));
 }
@@ -701,9 +754,21 @@ MOZ_ALWAYS_INLINE bool IsInsideNursery(const JSString* str) {
 MOZ_ALWAYS_INLINE bool IsInsideNursery(const JS::BigInt* bi) {
   return IsInsideNursery(reinterpret_cast<const Cell*>(bi));
 }
+MOZ_ALWAYS_INLINE bool IsInsideNursery(const js::GetterSetter* gs) {
+  return IsInsideNursery(reinterpret_cast<const Cell*>(gs));
+}
 MOZ_ALWAYS_INLINE bool InCollectedNurseryRegion(const JSObject* obj) {
   return InCollectedNurseryRegion(reinterpret_cast<const Cell*>(obj));
 }
+
+// Helper function to convert GC cell types to the base Cell pointer as
+// consumers can't see the inheritance relationship externally.
+#define EXPAND_TO_CELL(_1, type, _2, _3)        \
+  MOZ_ALWAYS_INLINE Cell* ToCell(type* thing) { \
+    return reinterpret_cast<Cell*>(thing);      \
+  }
+JS_FOR_EACH_TRACEKIND(EXPAND_TO_CELL)
+#undef EXPAND_TO_CELL
 
 MOZ_ALWAYS_INLINE bool IsCellPointerValid(const void* ptr) {
   auto addr = uintptr_t(ptr);
@@ -753,6 +818,8 @@ static MOZ_ALWAYS_INLINE Zone* GetStringZone(JSString* str) {
 
 extern JS_PUBLIC_API Zone* GetObjectZone(JSObject* obj);
 
+// Check whether a GC thing is gray. If the gray marking state is unknown
+// (e.g. due to OOM during gray unmarking) this returns false.
 static MOZ_ALWAYS_INLINE bool GCThingIsMarkedGray(GCCellPtr thing) {
   js::gc::Cell* cell = thing.asCell();
   if (IsInsideNursery(cell)) {
@@ -763,22 +830,19 @@ static MOZ_ALWAYS_INLINE bool GCThingIsMarkedGray(GCCellPtr thing) {
   return js::gc::detail::CellIsMarkedGrayIfKnown(tenuredCell);
 }
 
-// Specialised gray marking check for use by the cycle collector. This is not
+// Specialised gray marking checks for use by the cycle collector. These are not
 // called during incremental GC or when the gray bits are invalid.
-static MOZ_ALWAYS_INLINE bool GCThingIsMarkedGrayInCC(GCCellPtr thing) {
-  js::gc::Cell* cell = thing.asCell();
+static MOZ_ALWAYS_INLINE bool GCThingIsMarkedGrayInCC(js::gc::Cell* cell) {
   if (IsInsideNursery(cell)) {
     return false;
   }
 
   auto* tenuredCell = reinterpret_cast<js::gc::TenuredCell*>(cell);
-  if (!js::gc::detail::TenuredCellIsMarkedGray(tenuredCell)) {
-    return false;
-  }
-
   MOZ_ASSERT(js::gc::detail::CanCheckGrayBits(tenuredCell));
-
-  return true;
+  return js::gc::detail::TenuredCellIsMarkedGray(tenuredCell);
+}
+static MOZ_ALWAYS_INLINE bool GCThingIsMarkedGrayInCC(GCCellPtr thing) {
+  return GCThingIsMarkedGrayInCC(thing.asCell());
 }
 
 extern JS_PUBLIC_API JS::TraceKind GCThingTraceKind(void* thing);
@@ -818,6 +882,10 @@ namespace gc {
 extern JS_PUBLIC_API void PerformIncrementalReadBarrier(JS::GCCellPtr thing);
 
 static MOZ_ALWAYS_INLINE void ExposeGCThingToActiveJS(JS::GCCellPtr thing) {
+  // js::jit::WeakMapValueReadBarrier inlines a specialized version of this
+  // function designed to be called from jitcode. If this code is changed, it
+  // should be kept in sync.
+
   // TODO: I'd like to assert !RuntimeHeapIsBusy() here but this gets
   // called while we are tracing the heap, e.g. during memory reporting
   // (see bug 1313318).
@@ -839,7 +907,7 @@ static MOZ_ALWAYS_INLINE void ExposeGCThingToActiveJS(JS::GCCellPtr thing) {
   MOZ_ASSERT(!thing.mayBeOwnedByOtherRuntime());
 
   auto* zone = JS::shadow::Zone::from(detail::GetTenuredGCThingZone(cell));
-  if (zone->needsIncrementalBarrier()) {
+  if (zone->needsMarkingBarrier()) {
     PerformIncrementalReadBarrier(thing);
   } else if (!zone->isGCPreparing() && detail::NonBlackCellIsMarkedGray(cell)) {
     MOZ_ALWAYS_TRUE(JS::UnmarkGrayGCThingRecursively(thing));
@@ -858,8 +926,7 @@ static MOZ_ALWAYS_INLINE void IncrementalReadBarrier(JS::GCCellPtr thing) {
 
   auto* cell = reinterpret_cast<TenuredCell*>(thing.asCell());
   auto* zone = JS::shadow::Zone::from(detail::GetTenuredGCThingZone(cell));
-  if (zone->needsIncrementalBarrier() &&
-      !detail::TenuredCellIsMarkedBlack(cell)) {
+  if (zone->needsMarkingBarrier() && !detail::TenuredCellIsMarkedBlack(cell)) {
     // GC things owned by other runtimes are always black.
     MOZ_ASSERT(!thing.mayBeOwnedByOtherRuntime());
     PerformIncrementalReadBarrier(thing);

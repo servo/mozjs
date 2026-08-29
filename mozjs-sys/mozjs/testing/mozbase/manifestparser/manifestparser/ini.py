@@ -17,7 +17,7 @@ class IniParseError(Exception):
         else:
             path = getattr(fp, "path", "unknown")
         msg = f"Error parsing manifest file '{path}', line {linenum}: {msg}"
-        super(IniParseError, self).__init__(msg)
+        super().__init__(msg)
 
 
 def read_ini(
@@ -106,9 +106,9 @@ def read_ini(
 
             if strict:
                 # make sure this section doesn't already exist
-                assert (
-                    section not in section_names
-                ), "Section '%s' already found in '%s'" % (section, section_names)
+                assert section not in section_names, (
+                    "Section '%s' already found in '%s'" % (section, section_names)
+                )
 
             section_names.add(section)
             current_section = {}
@@ -121,7 +121,7 @@ def read_ini(
             raise IniParseError(
                 fp,
                 linenum,
-                "Expected a comment or section, " f"instead found '{stripped}'",
+                f"Expected a comment or section, instead found '{stripped}'",
             )
 
         # continuation line ?
@@ -149,9 +149,9 @@ def read_ini(
 
                 # make sure this key isn't already in the section
                 if key:
-                    assert (
-                        key not in current_section
-                    ), f"Found duplicate key {key} in section {section}"
+                    assert key not in current_section, (
+                        f"Found duplicate key {key} in section {section}"
+                    )
 
                 if strict:
                     # make sure this key isn't empty

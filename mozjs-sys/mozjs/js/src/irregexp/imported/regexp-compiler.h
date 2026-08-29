@@ -8,14 +8,20 @@
 #include <bitset>
 
 #include "irregexp/imported/regexp-nodes.h"
+#include "irregexp/RegExpShim.h"
 
 namespace v8 {
 namespace internal {
 
-class DynamicBitSet;
 class Isolate;
 
-namespace regexp_compiler_constants {
+namespace regexp {
+
+class Diagnostics;
+class DynamicBitSet;
+class SpecialLoopState;
+
+namespace compiler_constants {
 
 // The '2' variant is has inclusive from and exclusive to.
 // This covers \s as defined in ECMA-262 5.1, 15.10.2.12,
@@ -45,9 +51,9 @@ constexpr uint32_t kMaxLookaheadForBoyerMoore = 8;
 // at a time, which is not always enough to pay for the extra logic.
 constexpr uint32_t kPatternTooShortForBoyerMoore = 2;
 
-}  // namespace regexp_compiler_constants
+}  // namespace compiler_constants
 
-inline bool NeedsUnicodeCaseEquivalents(RegExpFlags flags) {
+inline bool NeedsUnicodeCaseEquivalents(Flags flags) {
   // Both unicode (or unicode sets) and ignore_case flags are set. We need to
   // use ICU to find the closure over case equivalents.
   return IsEitherUnicode(flags) && IsIgnoreCase(flags);
@@ -57,27 +63,54 @@ inline bool NeedsUnicodeCaseEquivalents(RegExpFlags flags) {
 // input stream.
 class QuickCheckDetails {
  public:
-  QuickCheckDetails()
-      : characters_(0), mask_(0), value_(0), cannot_match_(false) {}
+  QuickCheckDetails() : characters_(0), mask_(0), value_(0) {}
   explicit QuickCheckDetails(int characters)
-      : characters_(characters), mask_(0), value_(0), cannot_match_(false) {}
+      : characters_(characters), mask_(0), value_(0) {
+    DCHECK_LE(characters, kMaxPositions);
+  }
   bool Rationalize(bool one_byte);
   // Merge in the information from another branch of an alternation.
   void Merge(QuickCheckDetails* other, int from_index);
   // Advance the current position by some amount.
   void Advance(int by, bool one_byte);
   void Clear();
-  bool cannot_match() { return cannot_match_; }
-  void set_cannot_match() { cannot_match_ = true; }
+  bool cannot_match() const {
+    for (int i = 0; i < characters(); i++) {
+      if (positions_[i].cannot_match) return true;
+    }
+    return false;
+  }
+  void set_cannot_match_from(int index) {
+    DCHECK_GE(index, 0);
+    for (int i = index; i < characters(); i++) {
+      positions_[i].cannot_match = true;
+    }
+  }
   struct Position {
-    Position() : mask(0), value(0), determines_perfectly(false) {}
+    Position()
+        : mask(0), value(0), determines_perfectly(false), cannot_match(false) {}
+    void Clear() {
+      mask = 0;
+      value = 0;
+      determines_perfectly = false;
+      cannot_match = false;
+    }
     base::uc32 mask;
     base::uc32 value;
     bool determines_perfectly;
+    bool cannot_match;
   };
-  int characters() { return characters_; }
-  void set_characters(int characters) { characters_ = characters; }
+  int characters() const { return characters_; }
+  void set_characters(int characters) {
+    DCHECK(0 <= characters && characters <= kMaxPositions);
+    characters_ = characters;
+  }
   Position* positions(int index) {
+    DCHECK_LE(0, index);
+    DCHECK_GT(characters_, index);
+    return positions_ + index;
+  }
+  const Position* positions(int index) const {
     DCHECK_LE(0, index);
     DCHECK_GT(characters_, index);
     return positions_ + index;
@@ -86,16 +119,14 @@ class QuickCheckDetails {
   uint32_t value() { return value_; }
 
  private:
+  static constexpr int kMaxPositions = 4;
   // How many characters do we have quick check information from.  This is
   // the same for all branches of a choice node.
   int characters_;
-  Position positions_[4];
+  Position positions_[kMaxPositions];
   // These values are the condensate of the above array after Rationalize().
   uint32_t mask_;
   uint32_t value_;
-  // If set to true, there is no way this quick check can match at all.
-  // E.g., if it requires to be at the start of the input, and isn't.
-  bool cannot_match_;
 };
 
 // Improve the speed that we scan for an initial point where a non-anchored
@@ -161,15 +192,16 @@ class BoyerMoorePositionInfo : public ZoneObject {
 
 class BoyerMooreLookahead : public ZoneObject {
  public:
-  BoyerMooreLookahead(int length, RegExpCompiler* compiler, Zone* zone);
+  BoyerMooreLookahead(int length, Compiler* compiler, Zone* zone);
 
-  int length() { return length_; }
+  int length() const { return length_; }
   int max_char() { return max_char_; }
-  RegExpCompiler* compiler() { return compiler_; }
+  Compiler* compiler() { return compiler_; }
 
   int Count(int map_number) { return bitmaps_->at(map_number)->map_count(); }
 
   BoyerMoorePositionInfo* at(int i) { return bitmaps_->at(i); }
+  const BoyerMoorePositionInfo* at(int i) const { return bitmaps_->at(i); }
 
   void Set(int map_number, int character) {
     if (character > max_char_) return;
@@ -200,7 +232,7 @@ class BoyerMooreLookahead : public ZoneObject {
   // Therefore it is OK to read a character this far ahead of the current match
   // point.
   int length_;
-  RegExpCompiler* compiler_;
+  Compiler* compiler_;
   // 0xff for Latin1, 0xffff for UTF-16.
   int max_char_;
   ZoneList<BoyerMoorePositionInfo*>* bitmaps_;
@@ -227,86 +259,63 @@ class BoyerMooreLookahead : public ZoneObject {
 // where baz has been matched.
 class Trace {
  public:
-  // A value for a property that is either known to be true, know to be false,
+  // A value for a property that is either known to be true, known to be false,
   // or not known.
-  enum TriBool { UNKNOWN = -1, FALSE_VALUE = 0, TRUE_VALUE = 1 };
-
-  class DeferredAction {
-   public:
-    DeferredAction(ActionNode::ActionType action_type, int reg)
-        : action_type_(action_type), reg_(reg), next_(nullptr) {}
-    DeferredAction* next() { return next_; }
-    bool Mentions(int reg);
-    int reg() { return reg_; }
-    ActionNode::ActionType action_type() { return action_type_; }
-
-   private:
-    ActionNode::ActionType action_type_;
-    int reg_;
-    DeferredAction* next_;
-    friend class Trace;
-  };
-
-  class DeferredCapture : public DeferredAction {
-   public:
-    DeferredCapture(int reg, bool is_capture, Trace* trace)
-        : DeferredAction(ActionNode::STORE_POSITION, reg),
-          cp_offset_(trace->cp_offset()),
-          is_capture_(is_capture) {}
-    int cp_offset() { return cp_offset_; }
-    bool is_capture() { return is_capture_; }
-
-   private:
-    int cp_offset_;
-    bool is_capture_;
-    void set_cp_offset(int cp_offset) { cp_offset_ = cp_offset; }
-  };
-
-  class DeferredSetRegisterForLoop : public DeferredAction {
-   public:
-    DeferredSetRegisterForLoop(int reg, int value)
-        : DeferredAction(ActionNode::SET_REGISTER_FOR_LOOP, reg),
-          value_(value) {}
-    int value() { return value_; }
-
-   private:
-    int value_;
-  };
-
-  class DeferredClearCaptures : public DeferredAction {
-   public:
-    explicit DeferredClearCaptures(Interval range)
-        : DeferredAction(ActionNode::CLEAR_CAPTURES, -1), range_(range) {}
-    Interval range() { return range_; }
-
-   private:
-    Interval range_;
-  };
-
-  class DeferredIncrementRegister : public DeferredAction {
-   public:
-    explicit DeferredIncrementRegister(int reg)
-        : DeferredAction(ActionNode::INCREMENT_REGISTER, reg) {}
-  };
+  enum TriBool { FALSE_VALUE = 0, TRUE_VALUE = 1, UNKNOWN = 2 };
 
   Trace()
       : cp_offset_(0),
-        actions_(nullptr),
+        flush_budget_(100),  // Note: this is a 16 bit field.
+        flags_(AtStartField::encode(UNKNOWN) |
+               HasAnyActionsField::encode(false)),
+        action_(nullptr),
         backtrack_(nullptr),
-        stop_node_(nullptr),
-        loop_label_(nullptr),
+        special_loop_state_(nullptr),
         characters_preloaded_(0),
         bound_checked_up_to_(0),
-        flush_budget_(100),
-        at_start_(UNKNOWN) {}
+        next_(nullptr) {}
+
+  Trace(const Trace& other) V8_NOEXCEPT
+      : cp_offset_(other.cp_offset_),
+        flush_budget_(other.flush_budget_),
+        flags_(other.flags_),
+        action_(nullptr),
+        backtrack_(other.backtrack_),
+        special_loop_state_(other.special_loop_state_),
+        characters_preloaded_(other.characters_preloaded_),
+        bound_checked_up_to_(other.bound_checked_up_to_),
+        quick_check_performed_(other.quick_check_performed_),
+        next_(&other) {}
 
   // End the trace.  This involves flushing the deferred actions in the trace
   // and pushing a backtrack location onto the backtrack stack.  Once this is
   // done we can start a new trace or go to one that has already been
   // generated.
-  void Flush(RegExpCompiler* compiler, RegExpNode* successor);
-  int cp_offset() { return cp_offset_; }
-  DeferredAction* actions() { return actions_; }
+  enum FlushMode {
+    // Normal flush of the deferred actions, generates code for backtracking.
+    kFlushFull,
+    // Matching has succeeded, so current position and backtrack stack will be
+    // ignored and need not be written.
+    kFlushSuccess
+  };
+  EmitResult Flush(Compiler* compiler, Node* successor,
+                   FlushMode mode = kFlushFull);
+
+  // Some callers add/subtract 1 from cp_offset, assuming that the result is
+  // still valid. That's obviously not the case when our `cp_offset` is only
+  // checked against kMinCPOffset/kMaxCPOffset, so we need to apply the some
+  // slack.
+  // TODO(jgruber): It would be better if all callers checked against limits
+  // themselves when doing so; but unfortunately not all callers have
+  // abort-compilation mechanisms.
+  static constexpr int kCPOffsetSlack = 1;
+  int cp_offset() const { return cp_offset_; }
+
+  // Does any trace in the chain have an action?
+  bool has_any_actions() const { return HasAnyActionsField::decode(flags_); }
+  // Does this particular trace object have an action?
+  bool has_action() const { return action_ != nullptr; }
+  ActionNode* action() const { return action_; }
   // A trivial trace is one that has no deferred actions or other state that
   // affects the assumptions used when generating code.  There is no recorded
   // backtrack location in a trivial trace, so with a trivial trace we will
@@ -317,45 +326,86 @@ class Trace {
   // actions in the trace.  The location of the code generated for a node using
   // a trivial trace is recorded in a label in the node so that gotos can be
   // generated to that code.
-  bool is_trivial() {
-    return backtrack_ == nullptr && actions_ == nullptr && cp_offset_ == 0 &&
+  bool is_trivial() const {
+    return backtrack_ == nullptr && !has_any_actions() && cp_offset_ == 0 &&
            characters_preloaded_ == 0 && bound_checked_up_to_ == 0 &&
-           quick_check_performed_.characters() == 0 && at_start_ == UNKNOWN;
+           quick_check_performed_.characters() == 0 && at_start() == UNKNOWN;
   }
-  TriBool at_start() { return at_start_; }
-  void set_at_start(TriBool at_start) { at_start_ = at_start; }
-  Label* backtrack() { return backtrack_; }
-  Label* loop_label() { return loop_label_; }
-  RegExpNode* stop_node() { return stop_node_; }
-  int characters_preloaded() { return characters_preloaded_; }
-  int bound_checked_up_to() { return bound_checked_up_to_; }
-  int flush_budget() { return flush_budget_; }
+  TriBool at_start() const { return AtStartField::decode(flags_); }
+  void set_at_start(TriBool at_start) {
+    flags_ = AtStartField::update(flags_, at_start);
+  }
+  Label* backtrack() const { return backtrack_; }
+  SpecialLoopState* special_loop_state() const { return special_loop_state_; }
+  int characters_preloaded() const { return characters_preloaded_; }
+  int bound_checked_up_to() const { return bound_checked_up_to_; }
+  int flush_budget() const { return flush_budget_; }
   QuickCheckDetails* quick_check_performed() { return &quick_check_performed_; }
-  bool mentions_reg(int reg);
+  bool mentions_reg(int reg) const;
   // Returns true if a deferred position store exists to the specified
   // register and stores the offset in the out-parameter.  Otherwise
   // returns false.
-  bool GetStoredPosition(int reg, int* cp_offset);
+  bool GetStoredPosition(int reg, int* cp_offset) const;
   // These set methods and AdvanceCurrentPositionInTrace should be used only on
   // new traces - the intention is that traces are immutable after creation.
-  void add_action(DeferredAction* new_action) {
-    DCHECK(new_action->next_ == nullptr);
-    new_action->next_ = actions_;
-    actions_ = new_action;
+  void add_action(ActionNode* new_action) {
+    DCHECK(action_ == nullptr);  // Otherwise we lose an action.
+    action_ = new_action;
+    flags_ = HasAnyActionsField::update(flags_, true);
   }
   void set_backtrack(Label* backtrack) { backtrack_ = backtrack; }
-  void set_stop_node(RegExpNode* node) { stop_node_ = node; }
-  void set_loop_label(Label* label) { loop_label_ = label; }
+  void set_special_loop_state(SpecialLoopState* state) {
+    special_loop_state_ = state;
+  }
   void set_characters_preloaded(int count) { characters_preloaded_ = count; }
   void set_bound_checked_up_to(int to) { bound_checked_up_to_ = to; }
-  void set_flush_budget(int to) { flush_budget_ = to; }
+  void set_flush_budget(int to) {
+    DCHECK(to <= UINT16_MAX);  // Flush-budget is 16 bit.
+    flush_budget_ = to;
+  }
   void set_quick_check_performed(QuickCheckDetails* d) {
     quick_check_performed_ = *d;
   }
   void InvalidateCurrentCharacter();
-  void AdvanceCurrentPositionInTrace(int by, RegExpCompiler* compiler);
+  EmitResult AdvanceCurrentPositionInTrace(int by, Compiler* compiler);
+  const Trace* next() const { return next_; }
+
+  class V8_GSL_POINTER ConstIterator final {
+   public:
+    ConstIterator& operator++() {
+      trace_ = trace_->next();
+      return *this;
+    }
+    bool operator==(const ConstIterator& other) const {
+      return trace_ == other.trace_;
+    }
+    const Trace* operator*() const { return trace_; }
+
+   private:
+    explicit ConstIterator(const Trace* trace) : trace_(trace) {}
+
+    const Trace* trace_;
+
+    friend class Trace;
+  };
+
+  ConstIterator begin() const { return ConstIterator(this); }
+  ConstIterator end() const { return ConstIterator(nullptr); }
 
  private:
+  enum DeferredActionUndoType { IGNORE, RESTORE, CLEAR };
+  static constexpr int kNoStore = kMinInt;
+  // For a given register, records the actions recorded in the trace.
+  // See ScanDeferredActions.
+  struct RegisterFlushInfo {
+    DeferredActionUndoType undo_action = IGNORE;
+    int value = 0;
+    bool absolute = false;  // Set register to value.
+    bool clear = false;     // Clear register (set to zero):
+    int store_position =
+        kNoStore;  // Store current position plus value to register.
+  };
+
   int FindAffectedRegisters(DynamicBitSet* affected_registers, Zone* zone);
   void PerformDeferredActions(RegExpMacroAssembler* macro, int max_register,
                               const DynamicBitSet& affected_registers,
@@ -364,32 +414,49 @@ class Trace {
   void RestoreAffectedRegisters(RegExpMacroAssembler* macro, int max_register,
                                 const DynamicBitSet& registers_to_pop,
                                 const DynamicBitSet& registers_to_clear);
+  void ScanDeferredActions(Trace* top, int reg, RegisterFlushInfo* info);
+
+  // Whether we are at the start of the string.
+  using AtStartField = base::BitField<TriBool, 0, 2>;
+  // Whether any trace in the chain has an action.
+  using HasAnyActionsField = AtStartField::Next<bool, 1>;
+
   int cp_offset_;
-  DeferredAction* actions_;
+  uint16_t flush_budget_;
+  uint32_t flags_;
+  ActionNode* action_;
   Label* backtrack_;
-  RegExpNode* stop_node_;
-  Label* loop_label_;
+  SpecialLoopState* special_loop_state_;
   int characters_preloaded_;
   int bound_checked_up_to_;
   QuickCheckDetails quick_check_performed_;
-  int flush_budget_;
-  TriBool at_start_;
+  const Trace* next_;
 };
 
-class GreedyLoopState {
+// Used for fixed length greedy loops (counted loops like .*) and for
+// omnivorous non-greedy loops (the initial loop ahead of a non-anchored
+// regexp).
+class SpecialLoopState {
  public:
-  explicit GreedyLoopState(bool not_at_start);
+  explicit SpecialLoopState(bool not_at_start, ChoiceNode* loop_choice_node);
 
-  Label* label() { return &label_; }
-  Trace* counter_backtrack_trace() { return &counter_backtrack_trace_; }
+  void BindStepLabel(RegExpMacroAssembler* macro_assembler);
+  void BindLoopTopLabel(RegExpMacroAssembler* macro_assembler);
+  void GoToLoopTopLabel(RegExpMacroAssembler* macro_assembler);
+  ChoiceNode* loop_choice_node() const { return loop_choice_node_; }
+  Trace* backtrack_trace() { return &backtrack_trace_; }
 
  private:
-  Label label_;
-  Trace counter_backtrack_trace_;
+  // Step backwards (fixed length greed loop) or forwards (non-greedy
+  // omnivourous loop.
+  Label step_label_;
+  Label loop_top_label_;
+  ChoiceNode* loop_choice_node_;
+  Trace backtrack_trace_;
 };
 
 struct PreloadState {
-  static const int kEatsAtLeastNotYetInitialized = -1;
+  static constexpr int kEatsAtLeastNotYetInitialized = -1;
   bool preload_is_current_;
   bool preload_has_checked_bounds_;
   int preload_characters_;
@@ -400,8 +467,8 @@ struct PreloadState {
 // Analysis performs assertion propagation and computes eats_at_least_ values.
 // See the comments on AssertionPropagator and EatsAtLeastPropagator for more
 // details.
-RegExpError AnalyzeRegExp(Isolate* isolate, bool is_one_byte, RegExpFlags flags,
-                          RegExpNode* node);
+Error AnalyzeRegExp(Isolate* isolate, bool is_one_byte, Flags flags,
+                    Node* node);
 
 class FrequencyCollator {
  public:
@@ -448,10 +515,10 @@ class FrequencyCollator {
   int total_samples_;
 };
 
-class RegExpCompiler {
+class V8_EXPORT_PRIVATE Compiler {
  public:
-  RegExpCompiler(Isolate* isolate, Zone* zone, int capture_count,
-                 RegExpFlags flags, bool is_one_byte);
+  Compiler(Isolate* isolate, Zone* zone, int capture_count, Flags flags,
+           bool is_one_byte);
 
   int AllocateRegister() {
     if (next_register_ >= RegExpMacroAssembler::kMaxRegister) {
@@ -478,24 +545,24 @@ class RegExpCompiler {
   }
 
   struct CompilationResult final {
-    explicit CompilationResult(RegExpError err) : error(err) {}
+    explicit CompilationResult(Error err) : error(err) {}
     CompilationResult(DirectHandle<Object> code, int registers)
         : code(code), num_registers(registers) {}
 
     static CompilationResult RegExpTooBig() {
-      return CompilationResult(RegExpError::kTooLarge);
+      return CompilationResult(Error::kTooLarge);
     }
 
-    bool Succeeded() const { return error == RegExpError::kNone; }
+    bool Succeeded() const { return error == Error::kNone; }
 
-    const RegExpError error = RegExpError::kNone;
+    const Error error = Error::kNone;
     DirectHandle<Object> code;
     int num_registers = 0;
   };
 
   CompilationResult Assemble(Isolate* isolate, RegExpMacroAssembler* assembler,
-                             RegExpNode* start, int capture_count,
-                             DirectHandle<String> pattern);
+                             Node* start, int capture_count,
+                             DirectHandle<RegExpData> re_data);
 
   // Preprocessing is the final step of node creation before analysis
   // and assembly. It includes:
@@ -503,13 +570,13 @@ class RegExpCompiler {
   // - Inserting the implicit .* before/after the regexp if necessary.
   // - If the input is a one-byte string, filtering out nodes that can't match.
   // - Fixing up regexp matches that start within a surrogate pair.
-  RegExpNode* PreprocessRegExp(RegExpCompileData* data, bool is_one_byte);
+  Node* PreprocessRegExp(CompileData* data, bool is_one_byte);
 
   // If the regexp matching starts within a surrogate pair, step back to the
   // lead surrogate and start matching from there.
-  RegExpNode* OptionallyStepBackToLeadSurrogate(RegExpNode* on_success);
+  Node* OptionallyStepBackToLeadSurrogate(Node* on_success);
 
-  inline void AddWork(RegExpNode* node) {
+  inline void AddWork(Node* node) {
     if (!node->on_work_list() && !node->label()->is_bound()) {
       node->set_on_work_list(true);
       work_list_->push_back(node);
@@ -523,15 +590,23 @@ class RegExpCompiler {
   RegExpMacroAssembler* macro_assembler() { return macro_assembler_; }
   EndNode* accept() { return accept_; }
 
-  static const int kMaxRecursion = 100;
+#if defined(V8_TARGET_OS_MACOS)
+  // Looks like MacOS needs a lower recursion limit since "secondary threads"
+  // get a smaller stack by default (512kB vs. 8MB).
+  // See https://crbug.com/408820921.
+  static constexpr int kMaxRecursion = 50;
+#else
+  static constexpr int kMaxRecursion = 100;
+#endif
   inline int recursion_depth() { return recursion_depth_; }
   inline void IncrementRecursionDepth() { recursion_depth_++; }
   inline void DecrementRecursionDepth() { recursion_depth_--; }
 
-  inline RegExpFlags flags() const { return flags_; }
-  inline void set_flags(RegExpFlags flags) { flags_ = flags; }
+  inline Flags flags() const { return flags_; }
+  inline void set_flags(Flags flags) { flags_ = flags; }
 
   void SetRegExpTooBig() { reg_exp_too_big_ = true; }
+  bool IsRegExpTooBig() const { return reg_exp_too_big_; }
 
   inline bool one_byte() { return one_byte_; }
   inline bool optimize() { return optimize_; }
@@ -555,12 +630,16 @@ class RegExpCompiler {
   // TODO(jgruber): This is super hacky and should be replaced by an abort
   // mechanism or iterative node generation.
   void ToNodeMaybeCheckForStackOverflow() {
-    if ((to_node_overflow_check_ticks_++ % 16 == 0)) {
+    if ((to_node_overflow_check_ticks_++ % 64 == 0)) {
       ToNodeCheckForStackOverflow();
     }
   }
   void ToNodeCheckForStackOverflow();
 
+#ifdef V8_ENABLE_REGEXP_DIAGNOSTICS
+  Diagnostics* diagnostics() { return diagnostics_.get(); }
+  void set_diagnostics(std::unique_ptr<Diagnostics> diagnostics);
+#endif
   Isolate* isolate() const { return isolate_; }
   Zone* zone() const { return zone_; }
 
@@ -571,9 +650,9 @@ class RegExpCompiler {
   int next_register_;
   int unicode_lookaround_stack_register_;
   int unicode_lookaround_position_register_;
-  ZoneVector<RegExpNode*>* work_list_;
+  ZoneVector<Node*>* work_list_;
   int recursion_depth_;
-  RegExpFlags flags_;
+  Flags flags_;
   RegExpMacroAssembler* macro_assembler_;
   bool one_byte_;
   bool reg_exp_too_big_;
@@ -583,6 +662,9 @@ class RegExpCompiler {
   bool read_backward_;
   int current_expansion_factor_;
   FrequencyCollator frequency_collator_;
+#ifdef V8_ENABLE_REGEXP_DIAGNOSTICS
+  std::unique_ptr<Diagnostics> diagnostics_;
+#endif
   Isolate* isolate_;
   Zone* zone_;
 };
@@ -617,6 +699,7 @@ class UnicodeRangeSplitter {
 // TODO(jgruber): Move to CharacterRange.
 bool RangeContainsLatin1Equivalents(CharacterRange range);
 
+}  // namespace regexp
 }  // namespace internal
 }  // namespace v8
 

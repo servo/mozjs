@@ -2,7 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import mozbuild.shellutil
+import mozshellutil
 
 
 class ConfVarsSyntaxError(SyntaxError):
@@ -11,7 +11,7 @@ class ConfVarsSyntaxError(SyntaxError):
 
 
 def parse(path):
-    with open(path) as confvars:
+    with open(path, encoding="utf-8") as confvars:
         keyvals = {}
         for lineno, rawline in enumerate(confvars, start=1):
             line = rawline.rstrip()
@@ -55,8 +55,8 @@ def parse(path):
 
             # Parse value.
             try:
-                values = mozbuild.shellutil.split(tail)
-            except mozbuild.shellutil.MetaCharacterException as e:
+                values = mozshellutil.split(tail)
+            except mozshellutil.MetaCharacterException as e:
                 raise ConfVarsSyntaxError(
                     f"Unquoted, non-escaped special character '{e.char}'",
                     path,

@@ -6,7 +6,7 @@ on:
       rust_version:
         required: false
         # Keep the default in sync with `rust-toolchain.toml` and servo's MSRV!
-        default: "1.85.0"
+        default: "1.88.0"
         type: string
       verify_artifacts:
         required: false
@@ -30,7 +30,7 @@ jobs:
       matrix:
         features: ["debugmozjs", ""]
         platform:
-          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: aarch64-apple-darwin, os: macos-15 }
           - { target: x86_64-apple-darwin, os: macos-15-intel }
     runs-on: ${{ matrix.platform.os }}
     env:
@@ -98,10 +98,13 @@ jobs:
         with:
           toolchain: ${{ inputs.rust_version }}
           components: "rustfmt"
-      - run: sudo apt update && sudo apt install -y llvm
-        # needed to work around bindgen bug. The version here should match the default clang version on ubuntu-22.04
-      - name: Set LIBCLANG_PATH env
-        run: echo "LIBCLANG_PATH=/usr/lib/llvm-14/lib" >> $GITHUB_ENV
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20.1"
+          directory: ${{ runner.temp }}/llvm
+      - name: Set LIBCLANG_PATH
+        run: echo "LIBCLANG_PATH=${LLVM_PATH}/lib" >> $GITHUB_ENV
       - name: Run sccache-cache
         uses: mozilla-actions/sccache-action@v0.0.9
       - name: Build
@@ -111,7 +114,7 @@ jobs:
         run: |
           cargo +${{ steps.toolchain.outputs.name }} build --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
           cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
-          cargo +${{ steps.toolchain.outputs.name }} test --doc -p mozjs --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
+          cargo +${{ steps.toolchain.outputs.name }} test -p mozjs --doc --verbose --features "${{ matrix.features }}" ${{ env.DEBUGMOZJS_OPT }}
       - name: Check wrappers integrity
         # we generate wrappers only without debugmozjs
         if: ${{ matrix.features != 'debugmozjs' }}
@@ -194,11 +197,16 @@ jobs:
           ]
     steps:
       - uses: actions/checkout@v6
+      # host compiler needs to be new enough
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20.1"
       - name: Install NDK
         uses: nttld/setup-ndk@v1
         id: setup-ndk
         with:
-          ndk-version: r28b
+          ndk-version: r29
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
@@ -248,7 +256,7 @@ jobs:
           # since the SDK clang is too old.
           CARGO_OHOS_DOWNLOAD_PREBUILT: "19"
         run: |
-          cargo +${{ steps.toolchain.outputs.name }} ohos build --target="${{ matrix.target }}" ${{ matrix.features }}
+          cargo +${{ steps.toolchain.outputs.name }} ohos build  --target="${{ matrix.target }}" ${{ matrix.features }}
       - name: Upload artifact
         uses: actions/upload-artifact@v7
         if: ${{ env.NEW_RUST_CHECK == 'false' && matrix.features == '' }}
@@ -270,11 +278,16 @@ jobs:
           - wasip2
     steps:
       - uses: actions/checkout@v6
+      # host compiler needs to be new enough
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "20.1"
       - name: Install Rust
         uses: dtolnay/rust-toolchain@master
         id: toolchain
         with:
-          toolchain: "1.85.0"
+          toolchain: "1.88.0"
           targets: "wasm32-${{ matrix.target }}"
           components: "rustfmt"
       - uses: bytecodealliance/actions/wasmtime/setup@v1
@@ -303,26 +316,6 @@ jobs:
           path: ./target/libmozjs-wasm32-${{ matrix.target }}.tar.gz
           name: libmozjs-wasm32-${{ matrix.target }}.tar.gz
 
-  linux-cross-compile:
-    name: linux (${{ matrix.target }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target:
-          - armv7-unknown-linux-gnueabihf
-    container: ghcr.io/servo/cross-${{ matrix.target }}:main
-    steps:
-      - uses: actions/checkout@v6
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@master
-        id: toolchain
-        with:
-          toolchain: ${{ inputs.rust_version }}
-          targets: ${{ matrix.target }}
-          components: "rustfmt"
-      - run: cargo +${{ steps.toolchain.outputs.name }} test --tests --examples --target ${{ matrix.target }}
-
   integrity:
     runs-on: ubuntu-latest
     steps:
@@ -339,7 +332,7 @@ jobs:
       - name: Check C++ formatting
         uses: jidicula/clang-format-action@v4.11.0
         with:
-          clang-format-version: "18"
+          clang-format-version: "20"
           exclude-regex: mozjs-sys\/mozjs
       - name: Get mozjs
         run: |
@@ -349,7 +342,7 @@ jobs:
           python3 ./mozjs-sys/etc/update.py --no-commit mozjs.tar.xz
           # Run `git add` here to force CRLF converted into LF
           # so that we can check diff properly in next run
-          git add --all mozjs-sys
+          git add --all mozjs-sys mozjs-extracted-crates
       - name: Check patch integrity
         working-directory: ./mozjs-sys
         # Because we've added files in previous run, we need to
@@ -410,7 +403,6 @@ jobs:
       [
         "android",
         "linux",
-        "linux-cross-compile",
         "mac",
         "ohos",
         "windows",

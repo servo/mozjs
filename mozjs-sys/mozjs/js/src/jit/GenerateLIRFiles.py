@@ -230,7 +230,7 @@ def gen_arguments(arguments):
     return (members, params, initializers, getters)
 
 
-def gen_temps(num_temps, num_temps64, defer_init):
+def gen_temps(num_temps, num_temps64, num_temp_boxes, defer_init):
     # Parameters for the class constructor.
     params = []
 
@@ -271,10 +271,30 @@ def gen_temps(num_temps, num_temps64, defer_init):
             f"LInt64Definition temp{temp}() {{ return getInt64Temp({temp_index}); }}"
         )
 
+    for box_temp in range(num_temp_boxes):
+        temp = num_temps + num_temps64 + box_temp
+        temp_index = (
+            f"{num_temps} + {num_temps64} * INT64_PIECES + {box_temp} * BOX_PIECES"
+        )
+        param_decl = f"const LBoxDefinition& temp{temp}"
+        init_expr = f"setBoxTemp({temp_index}, temp{temp});"
+
+        if not defer_init:
+            params.append(param_decl)
+            initializers.append(init_expr)
+        else:
+            initializers.append(f"setTemp({temp}, LBoxDefinition::BogusTemp());")
+            setters.append(f"void setTemp{temp}({param_decl}) {{ {init_expr} }}")
+        getters.append(
+            f"LBoxDefinition temp{temp}() {{ return getBoxTemp({temp_index}); }}"
+        )
+
     # Total number of temps.
     num_temps_total = f"{num_temps}"
     if num_temps64:
         num_temps_total += f" + {num_temps64} * INT64_PIECES"
+    if num_temp_boxes:
+        num_temps_total += f" + {num_temp_boxes} * BOX_PIECES"
 
     return (num_temps_total, params, initializers, getters, setters)
 
@@ -307,6 +327,7 @@ def gen_lir_class(
     arguments,
     num_temps,
     num_temps64,
+    num_temp_boxes,
     call_instruction,
     mir_op,
     extra_name,
@@ -329,7 +350,7 @@ def gen_lir_class(
     )
 
     num_temps_total, temp_params, temp_initializers, temp_getters, temp_setters = (
-        gen_temps(num_temps, num_temps64, defer_init)
+        gen_temps(num_temps, num_temps64, num_temp_boxes, defer_init)
     )
 
     succ_params, succ_initializers, succ_getters = gen_successors(successors)
@@ -392,7 +413,9 @@ class {class_name} : public {parent_class}<{num_defs}, {num_operands}, {num_temp
 
 
 def mir_type_to_lir_type(mir_type):
-    if mir_type == "Value":
+    assert mir_type and mir_type != "None"
+
+    if mir_type in ("Value", "any"):
         return "BoxedValue"
 
     if mir_type == "Int64":
@@ -435,6 +458,9 @@ def generate_lir_header(c_out, yaml_path, mir_yaml_path):
             num_temps64 = op.get("num_temps64", 0)
             assert isinstance(num_temps64, int)
 
+            num_temp_boxes = op.get("num_temp_boxes", 0)
+            assert isinstance(num_temp_boxes, int)
+
             gen_boilerplate = op.get("gen_boilerplate", True)
             assert isinstance(gen_boilerplate, bool)
 
@@ -459,6 +485,7 @@ def generate_lir_header(c_out, yaml_path, mir_yaml_path):
                     arguments,
                     num_temps,
                     num_temps64,
+                    num_temp_boxes,
                     call_instruction,
                     mir_op,
                     extra_name,
@@ -478,12 +505,22 @@ def generate_lir_header(c_out, yaml_path, mir_yaml_path):
         assert isinstance(generate_lir, bool)
 
         if generate_lir:
+            # If the instruction has a `lir_result_type`, use it. If not, derive
+            # the LIR result type from the MIR `result_type`.
+            lir_result_type = op.get("lir_result_type", None)
+            assert isinstance(lir_result_type, (type(None), str))
+
             result_type = op.get("result_type", None)
             assert isinstance(result_type, (type(None), str))
 
-            if result_type:
-                result_type = mir_type_to_lir_type(result_type)
-                assert result_type in result_types
+            if lir_result_type is not None:
+                if lir_result_type == "none":
+                    lir_result_type = None
+                else:
+                    assert lir_result_type in result_types
+            elif result_type and result_type != "None":
+                lir_result_type = mir_type_to_lir_type(result_type)
+                assert lir_result_type in result_types
 
             successors = None
 
@@ -500,6 +537,9 @@ def generate_lir_header(c_out, yaml_path, mir_yaml_path):
             num_temps64 = op.get("lir_temps64", 0)
             assert isinstance(num_temps64, int)
 
+            num_temp_boxes = op.get("lir_temp_boxes", 0)
+            assert isinstance(num_temps64, int)
+
             call_instruction = op.get("possibly_calls", None)
             assert isinstance(call_instruction, (type(None), bool))
 
@@ -512,12 +552,13 @@ def generate_lir_header(c_out, yaml_path, mir_yaml_path):
             lir_op_classes.append(
                 gen_lir_class(
                     name,
-                    result_type,
+                    lir_result_type,
                     successors,
                     operands,
                     arguments,
                     num_temps,
                     num_temps64,
+                    num_temp_boxes,
                     call_instruction,
                     mir_op,
                     extra_name,

@@ -36,10 +36,6 @@ class ICU4XChineseCalendar : public ICU4XChineseBasedCalendar {
  protected:
   std::string_view eraName(int32_t extendedYear) const override;
 
-  int32_t relatedYearDifference() const override {
-    return chineseRelatedYearDiff;
-  }
-
  public:
   UClassID getDynamicClassID() const override;
   static UClassID U_EXPORT2 getStaticClassID();

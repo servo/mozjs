@@ -5,7 +5,7 @@
 import contextlib
 import os
 from pathlib import Path
-from typing import Dict, Union
+from typing import Callable, Optional, Union
 
 from mozpack.files import FileListFinder
 
@@ -17,7 +17,7 @@ class SrcRepository(Repository):
     """An implementation of `Repository` for Git repositories."""
 
     def __init__(self, path: Path, src="src"):
-        super(SrcRepository, self).__init__(path, tool=None)
+        super().__init__(path, tool=None)
 
     @property
     def name(self):
@@ -25,6 +25,10 @@ class SrcRepository(Repository):
 
     @property
     def head_ref(self):
+        pass
+
+    @property
+    def head_rev(self):
         pass
 
     def is_cinnabar_repo(self) -> bool:
@@ -59,6 +63,9 @@ class SrcRepository(Repository):
 
     def get_upstream(self):
         pass
+
+    def get_remote_url(self, remote=None, push=False):
+        return None
 
     def get_changed_files(self, diff_filter="ADM", mode="unstaged", rev=None):
         return []
@@ -140,12 +147,22 @@ class SrcRepository(Repository):
     def update(self, ref):
         pass
 
-    def push_to_try(
+    def push(
         self,
-        message: str,
-        changed_files: Dict[str, str] = {},
-        allow_log_capture: bool = False,
+        remote: Optional[str] = None,
+        ref: Optional[str] = None,
+        dest_branch: Optional[str] = None,
+        force: bool = False,
     ):
+        pass
+
+    def _resolve_try_branch(self):
+        pass
+
+    def _push_to_git_try(self, *args, **kwargs):
+        pass
+
+    def _push_to_hg_try(self, *args, **kwargs):
         pass
 
     def set_config(self, name, value):
@@ -160,6 +177,14 @@ class SrcRepository(Repository):
     def try_commit(self, commit_message: str, changed_files=None):
         return contextlib.nullcontext()
 
+    def prepare_try_push(
+        self, commit_message: str, changed_files: Optional[dict[str, str]] = None
+    ) -> tuple[Optional[str], Callable]:
+        return "", lambda: None
+
     def get_last_modified_time_for_file(self, path: Path):
         """Return last modified in VCS time for the specified file."""
         raise MissingVCSTool
+
+    def configure(self, state_dir: Path, update_only: bool = False):
+        pass

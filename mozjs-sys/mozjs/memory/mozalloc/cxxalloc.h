@@ -45,7 +45,7 @@ MOZALLOC_EXPORT_NEW void* operator new[](size_t size) noexcept(false) {
 // Inlining `new` like this is technically against C++ spec, but we crave perf.
 MOZALLOC_EXPORT_NEW void* operator new[](size_t size,
                                          const std::nothrow_t&) noexcept(true) {
-#ifdef __GNUC__
+#if defined(__GNUC__) && !defined(__clang__)
 // GCC-14 codegen at -O2 causes false positive due to converting
 // `new A[n]` to `malloc(-1)` when `n > PTRDIFF_MAX/sizeof(A)`.
 // (See https://gcc.gnu.org/bugzilla/show_bug.cgi?id=85783, WONTFIX'd)
@@ -55,7 +55,7 @@ MOZALLOC_EXPORT_NEW void* operator new[](size_t size,
 
   return malloc_impl(size);
 
-#ifdef __GNUC__
+#if defined(__GNUC__) && !defined(__clang__)
 #  pragma GCC diagnostic pop
 #endif
 }

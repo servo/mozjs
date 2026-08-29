@@ -43,7 +43,7 @@ class OptionValue(tuple):
     """
 
     def __new__(cls, values=(), origin="unknown"):
-        return super(OptionValue, cls).__new__(cls, values)
+        return super().__new__(cls, values)
 
     def __init__(self, values=(), origin="unknown"):
         self.origin = origin
@@ -96,13 +96,13 @@ class OptionValue(tuple):
         elif type(other) is not type(self):
             return False
         else:
-            return super(OptionValue, self).__eq__(other)
+            return super().__eq__(other)
 
     def __ne__(self, other):
         return not self.__eq__(other)
 
     def __repr__(self):
-        return "%s%s" % (self.__class__.__name__, super(OptionValue, self).__repr__())
+        return "%s%s" % (self.__class__.__name__, super().__repr__())
 
     @staticmethod
     def from_(value):
@@ -140,10 +140,10 @@ class NegativeOptionValue(OptionValue):
     """
 
     def __new__(cls, origin="unknown"):
-        return super(NegativeOptionValue, cls).__new__(cls, origin=origin)
+        return super().__new__(cls, origin=origin)
 
     def __init__(self, origin="unknown"):
-        super(NegativeOptionValue, self).__init__(origin=origin)
+        super().__init__(origin=origin)
 
 
 class InvalidOptionError(Exception):
@@ -154,7 +154,7 @@ class ConflictingOptionError(InvalidOptionError):
     def __init__(self, message, **format_data):
         if format_data:
             message = message.format(**format_data)
-        super(ConflictingOptionError, self).__init__(message)
+        super().__init__(message)
         for k, v in format_data.items():
             setattr(self, k, v)
 
@@ -220,8 +220,7 @@ class Option:
     ):
         if not name and not env:
             raise InvalidOptionError(
-                "At least an option name or an environment variable name must "
-                "be given"
+                "At least an option name or an environment variable name must be given"
             )
         if name:
             if not isinstance(name, str):

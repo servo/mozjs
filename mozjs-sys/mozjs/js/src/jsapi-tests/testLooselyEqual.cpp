@@ -11,7 +11,7 @@
 
 using namespace std;
 
-struct LooseEqualityFixture : public JSAPIRuntimeTest {
+struct LooseEqualityFixture : public jsapitest::RuntimeTest {
   virtual ~LooseEqualityFixture() {}
 
   bool leq(JS::HandleValue x, JS::HandleValue y) {

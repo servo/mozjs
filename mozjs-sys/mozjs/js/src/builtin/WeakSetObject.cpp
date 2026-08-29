@@ -1,12 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "builtin/WeakSetObject.h"
 
 #include "builtin/MapObject.h"
+#include "jit/InlinableNatives.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
 #include "js/PropertySpec.h"
 #include "vm/GlobalObject.h"
@@ -26,7 +25,7 @@ using namespace js;
 
 static bool AddWeakSetEntryImpl(JSContext* cx, Handle<WeakSetObject*> setObj,
                                 Handle<Value> keyVal) {
-  if (MOZ_UNLIKELY(!CanBeHeldWeakly(cx, keyVal))) {
+  if (MOZ_UNLIKELY(!CanBeHeldWeakly(keyVal))) {
     unsigned errorNum = GetErrorNumber(false);
     ReportValueError(cx, errorNum, JSDVG_IGNORE_STACK, keyVal, nullptr);
     return false;
@@ -68,16 +67,15 @@ bool WeakSetObject::add(JSContext* cx, unsigned argc, Value* vp) {
   MOZ_ASSERT(is(args.thisv()));
 
   // Step 4.
-  if (!CanBeHeldWeakly(cx, args.get(0))) {
+  if (!CanBeHeldWeakly(args.get(0))) {
     args.rval().setBoolean(false);
     return true;
   }
 
   // Steps 5-6.
-  if (ValueValueWeakMap* map =
-          args.thisv().toObject().as<WeakSetObject>().getMap()) {
+  if (Map* map = args.thisv().toObject().as<WeakSetObject>().getMap()) {
     Value value = args[0];
-    if (ValueValueWeakMap::Ptr ptr = map->lookup(value)) {
+    if (Map::Ptr ptr = map->lookup(value)) {
       map->remove(ptr);
       args.rval().setBoolean(true);
       return true;
@@ -104,14 +102,13 @@ bool WeakSetObject::delete_(JSContext* cx, unsigned argc, Value* vp) {
   MOZ_ASSERT(is(args.thisv()));
 
   // Step 5.
-  if (!CanBeHeldWeakly(cx, args.get(0))) {
+  if (!CanBeHeldWeakly(args.get(0))) {
     args.rval().setBoolean(false);
     return true;
   }
 
   // Steps 4, 6.
-  if (ValueValueWeakMap* map =
-          args.thisv().toObject().as<WeakSetObject>().getMap()) {
+  if (Map* map = args.thisv().toObject().as<WeakSetObject>().getMap()) {
     Value value = args[0];
     if (map->has(value)) {
       args.rval().setBoolean(true);
@@ -132,6 +129,13 @@ bool WeakSetObject::has(JSContext* cx, unsigned argc, Value* vp) {
                                                                           args);
 }
 
+// static
+bool WeakSetObject::hasObject(WeakSetObject* weakSet, JSObject* obj) {
+  AutoUnsafeCallWithABI unsafe;
+  Map* map = weakSet->getMap();
+  return map && map->has(ObjectValue(*obj));
+}
+
 const ClassSpec WeakSetObject::classSpec_ = {
     GenericCreateConstructor<WeakSetObject::construct, 0,
                              gc::AllocKind::FUNCTION>,
@@ -140,13 +144,13 @@ const ClassSpec WeakSetObject::classSpec_ = {
     nullptr,
     WeakSetObject::methods,
     WeakSetObject::properties,
-    GenericFinishInit<WhichHasFuseProperty::Proto>,
+    GenericFinishInit<WhichHasRealmFuseProperty::Proto>,
 };
 
 const JSClass WeakSetObject::class_ = {
     "WeakSet",
     JSCLASS_HAS_RESERVED_SLOTS(SlotCount) |
-        JSCLASS_HAS_CACHED_PROTO(JSProto_WeakSet) | JSCLASS_BACKGROUND_FINALIZE,
+        JSCLASS_HAS_CACHED_PROTO(JSProto_WeakSet),
     &WeakCollectionObject::classOps_,
     &WeakSetObject::classSpec_,
 };
@@ -166,13 +170,14 @@ const JSPropertySpec WeakSetObject::properties[] = {
 const JSFunctionSpec WeakSetObject::methods[] = {
     JS_FN("add", add, 1, 0),
     JS_FN("delete", delete_, 1, 0),
-    JS_FN("has", has, 1, 0),
+    JS_INLINABLE_FN("has", has, 1, 0, WeakSetHas),
     JS_FS_END,
 };
 
 WeakSetObject* WeakSetObject::create(JSContext* cx,
                                      HandleObject proto /* = nullptr */) {
-  return NewObjectWithClassProto<WeakSetObject>(cx, proto);
+  return NewObjectWithClassProtoAndKind<WeakSetObject>(cx, proto,
+                                                       TenuredObject);
 }
 
 // static

@@ -1,13 +1,11 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "vm/Xdr.h"
 
 #include "mozilla/Assertions.h"   // MOZ_ASSERT, MOZ_ASSERT_IF
-#include "mozilla/EndianUtils.h"  // mozilla::NativeEndian, MOZ_LITTLE_ENDIAN
+#include "mozilla/EndianUtils.h"  // mozilla::NativeEndian
 #include "mozilla/Result.h"       // mozilla::{Result, Ok, Err}, MOZ_TRY
 #include "mozilla/Utf8.h"         // mozilla::Utf8Unit
 

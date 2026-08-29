@@ -8,7 +8,6 @@
 #include "mozilla/intl/calendar/ISODate.h"
 #include "mozilla/intl/calendar/MonthCode.h"
 
-#include <memory>
 #include <mutex>
 #include <stdint.h>
 #include <string_view>
@@ -18,7 +17,7 @@
 #include "unicode/timezone.h"
 #include "unicode/utypes.h"
 
-#include "ICU4XAnyCalendarKind.h"
+#include "icu4x/CalendarKind.hpp"
 
 namespace mozilla::intl::calendar {
 
@@ -27,25 +26,19 @@ namespace mozilla::intl::calendar {
  */
 class ICU4XCalendar : public icu::Calendar {
   mutable UniqueICU4XCalendar calendar_{};
-  mutable std::unique_ptr<icu::Calendar> fallback_{};
-  capi::ICU4XAnyCalendarKind kind_;
+  icu4x::capi::CalendarKind kind_;
 
  protected:
-  ICU4XCalendar(capi::ICU4XAnyCalendarKind kind, const icu::Locale& locale,
+  ICU4XCalendar(icu4x::capi::CalendarKind kind, const icu::Locale& locale,
                 UErrorCode& success);
-  ICU4XCalendar(capi::ICU4XAnyCalendarKind kind, const icu::TimeZone& timeZone,
+  ICU4XCalendar(icu4x::capi::CalendarKind kind, const icu::TimeZone& timeZone,
                 const icu::Locale& locale, UErrorCode& success);
   ICU4XCalendar(const ICU4XCalendar& other);
 
   /**
    * Get or create the underlying ICU4X calendar.
    */
-  capi::ICU4XCalendar* getICU4XCalendar(UErrorCode& status) const;
-
-  /**
-   * Get or create the ICU4C fallback calendar implementation.
-   */
-  icu::Calendar* getFallbackCalendar(UErrorCode& status) const;
+  icu4x::capi::Calendar* getICU4XCalendar(UErrorCode& status) const;
 
  protected:
   /**
@@ -63,15 +56,6 @@ class ICU4XCalendar : public icu::Calendar {
    */
   virtual bool hasMonthCode(MonthCode monthCode) const = 0;
 
-  /**
-   * Subclasses can request to use the ICU4C fallback calendar.
-   *
-   * Can be removed when <https://github.com/unicode-org/icu4x/issues/4917> is
-   * fixed.
-   */
-  virtual bool requiresFallbackForExtendedYear(int32_t year) const = 0;
-  virtual bool requiresFallbackForGregorianYear(int32_t year) const = 0;
-
  protected:
   static constexpr int32_t kEpochStartAsJulianDay =
       2440588;  // January 1, 1970 (Gregorian)
@@ -79,19 +63,12 @@ class ICU4XCalendar : public icu::Calendar {
   /**
    * Return the month code of |date|.
    */
-  static MonthCode monthCodeFrom(const capi::ICU4XDate* date,
-                                 UErrorCode& status);
+  static MonthCode monthCodeFrom(const icu4x::capi::Date* date);
 
   /**
    * Create a new ICU4X date object from an ISO date.
    */
   UniqueICU4XDate createICU4XDate(const ISODate& date,
-                                  UErrorCode& status) const;
-
-  /**
-   * Create a new ICU4X date object from a calendar date.
-   */
-  UniqueICU4XDate createICU4XDate(const CalendarDate& date,
                                   UErrorCode& status) const;
 
  public:
@@ -122,12 +99,6 @@ class ICU4XCalendar : public icu::Calendar {
                               UErrorCode& status) const override;
 
   int32_t handleGetExtendedYear(UErrorCode& status) override;
-
- protected:
-  /**
-   * handleComputeFields implementation using the ICU4C fallback calendar.
-   */
-  void handleComputeFieldsFromFallback(int32_t julianDay, UErrorCode& status);
 };
 
 /**

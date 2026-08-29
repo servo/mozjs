@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -144,9 +142,9 @@ class SharedImmutableStringsCache {
     n += locked->set.shallowSizeOfExcludingThis(mallocSizeOf);
 
     // Sizes of the strings and their boxes.
-    for (auto r = locked->set.all(); !r.empty(); r.popFront()) {
-      n += mallocSizeOf(r.front().get());
-      if (const char* chars = r.front()->chars()) {
+    for (auto iter = locked->set.iter(); !iter.done(); iter.next()) {
+      n += mallocSizeOf(iter.get().get());
+      if (const char* chars = iter.get()->chars()) {
         n += mallocSizeOf(chars);
       }
     }
@@ -187,14 +185,14 @@ class SharedImmutableStringsCache {
   void purge() {
     auto locked = inner_->lock();
 
-    for (Inner::Set::Enum e(locked->set); !e.empty(); e.popFront()) {
-      if (e.front()->refcount == 0) {
+    for (auto iter = locked->set.modIter(); !iter.done(); iter.next()) {
+      if (iter.get()->refcount == 0) {
         // The chars should be eagerly freed when refcount reaches zero.
-        MOZ_ASSERT(!e.front()->chars());
-        e.removeFront();
+        MOZ_ASSERT(!iter.get()->chars());
+        iter.remove();
       } else {
         // The chars should exist as long as the refcount is non-zero.
-        MOZ_ASSERT(e.front()->chars());
+        MOZ_ASSERT(iter.get()->chars());
       }
     }
   }

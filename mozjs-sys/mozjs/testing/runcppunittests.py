@@ -55,7 +55,7 @@ class CPPUnitTests:
 
         def timeout_handler(proc):
             CPPUnitTests.run_one_test.timed_out = True
-            message = "timed out after %d seconds" % CPPUnitTests.TEST_PROC_TIMEOUT
+            message = f"timed out after {CPPUnitTests.TEST_PROC_TIMEOUT} seconds"
             self.log.test_end(
                 basename, status="TIMEOUT", expected="PASS", message=message
             )
@@ -63,10 +63,7 @@ class CPPUnitTests:
 
         def output_timeout_handler(proc):
             CPPUnitTests.run_one_test.timed_out = True
-            message = (
-                "timed out after %d seconds without output"
-                % CPPUnitTests.TEST_PROC_NO_OUTPUT_TIMEOUT
-            )
+            message = f"timed out after {CPPUnitTests.TEST_PROC_NO_OUTPUT_TIMEOUT} seconds without output"
             self.log.test_end(
                 basename, status="TIMEOUT", expected="PASS", message=message
             )
@@ -95,7 +92,7 @@ class CPPUnitTests:
             )
 
             if output:
-                output = "\n%s" % "\n".join(output)
+                output = "\n" + "\n".join(output)
                 self.log.process_output(proc.pid, output, command=[prog])
             if CPPUnitTests.run_one_test.timed_out:
                 return False
@@ -108,7 +105,7 @@ class CPPUnitTests:
                     basename,
                     status="FAIL",
                     expected="PASS",
-                    message=("test failed with return code %d" % proc.returncode),
+                    message=(f"test failed with return code {proc.returncode}"),
                 )
             else:
                 self.log.test_end(basename, status="PASS", expected="PASS")
@@ -151,7 +148,7 @@ class CPPUnitTests:
             pathvar = "PATH"
         if pathvar:
             if pathvar in env:
-                env[pathvar] = "%s%s%s" % (libpath, os.pathsep, env[pathvar])
+                env[pathvar] = f"{libpath}{os.pathsep}{env[pathvar]}"
             else:
                 env[pathvar] = libpath
 
@@ -171,9 +168,9 @@ class CPPUnitTests:
                 )
             if os.path.isfile(llvmsym):
                 env[symbolizer_path] = llvmsym
-                self.log.info("Using LLVM symbolizer at %s" % llvmsym)
+                self.log.info(f"Using LLVM symbolizer at {llvmsym}")
             else:
-                self.log.info("Failed to find LLVM symbolizer at %s" % llvmsym)
+                self.log.info(f"Failed to find LLVM symbolizer at {llvmsym}")
 
         return env
 
@@ -223,8 +220,8 @@ class CPPUnitTests:
 
         # Mozharness-parseable summary formatting.
         self.log.info("Result summary:")
-        self.log.info("cppunittests INFO | Passed: %d" % pass_count)
-        self.log.info("cppunittests INFO | Failed: %d" % fail_count)
+        self.log.info(f"cppunittests INFO | Passed: {pass_count}")
+        self.log.info(f"cppunittests INFO | Failed: {fail_count}")
         return fail_count == 0
 
 
@@ -293,22 +290,18 @@ def extract_unittests_from_args(args, environ, manifest_path):
     active_tests = mp.active_tests(exists=False, disabled=False, **environ)
     suffix = ".exe" if mozinfo.isWin else ""
     if binary_path:
-        tests.extend(
-            [
-                (
-                    os.path.join(binary_path, test["relpath"] + suffix),
-                    int(test.get("requesttimeoutfactor", 1)),
-                )
-                for test in active_tests
-            ]
-        )
+        tests.extend([
+            (
+                os.path.join(binary_path, test["relpath"] + suffix),
+                int(test.get("requesttimeoutfactor", 1)),
+            )
+            for test in active_tests
+        ])
     else:
-        tests.extend(
-            [
-                (test["path"] + suffix, int(test.get("requesttimeoutfactor", 1)))
-                for test in active_tests
-            ]
-        )
+        tests.extend([
+            (test["path"] + suffix, int(test.get("requesttimeoutfactor", 1)))
+            for test in active_tests
+        ])
 
     # Manually confirm that all tests named in the manifest exist.
     errors = False
@@ -316,7 +309,7 @@ def extract_unittests_from_args(args, environ, manifest_path):
     for test in tests:
         if not os.path.isfile(test[0]):
             errors = True
-            log.error("test file not found: %s" % test[0])
+            log.error(f"test file not found: {test[0]}")
 
     if errors:
         raise RuntimeError("One or more cppunittests not found; aborting.")
@@ -334,6 +327,11 @@ def update_mozinfo():
         dirs.add(path)
         path = os.path.split(path)[0]
     mozinfo.find_and_update_from_json(*dirs)
+    print(
+        "These variables are available in the mozinfo environment and can be used to skip tests conditionally:"
+    )
+    for k in sorted(mozinfo.info.keys()):
+        print(f"  {k}: {mozinfo.info[k]}")
 
 
 def run_test_harness(options, args):
@@ -358,7 +356,7 @@ def main():
     options, args = parser.parse_args()
     if not args:
         print(
-            """Usage: %s <test binary> [<test binary>...]""" % sys.argv[0],
+            f"Usage: {sys.argv[0]} <test binary> [<test binary>...]",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -371,9 +369,7 @@ def main():
             file=sys.stderr,
         )
         sys.exit(1)
-    log = mozlog.commandline.setup_logging(
-        "cppunittests", options, {"tbpl": sys.stdout}
-    )
+    log = mozlog.commandline.setup_logging("cppunittests", options, {"raw": sys.stdout})
     try:
         result = run_test_harness(options, args)
     except Exception as e:

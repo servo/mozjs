@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -75,7 +74,6 @@ int main(int argc, char** argv) {
   PRIntn i, j;
 
   PR_Init(PR_USER_THREAD, PR_PRIORITY_NORMAL, 0);
-  PR_STDIO_INIT();
 
   printf("This program tests PR_Poll with sockets.\n");
   printf("Timeout, error reporting, and normal operation are tested.\n\n");

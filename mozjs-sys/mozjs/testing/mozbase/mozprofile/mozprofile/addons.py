@@ -14,7 +14,6 @@ from xml.dom import minidom
 
 import mozfile
 from mozlog.unstructured import getLogger
-from six import string_types
 
 _SALT = binascii.hexlify(os.urandom(32))
 _TEMPORARY_ADDON_SUFFIX = "@temporary-addon"
@@ -198,7 +197,7 @@ class AddonManager:
             return
 
         # install addon paths
-        if isinstance(addons, string_types):
+        if isinstance(addons, str):
             addons = [addons]
         for addon in set(addons):
             self._install_addon(addon, **kwargs)
@@ -218,10 +217,12 @@ class AddonManager:
 
         Returns::
 
-            {'id':      u'rainbow@colors.org', # id of the addon
-             'version': u'1.4',                # version of the addon
-             'name':    u'Rainbow',            # name of the addon
-             'unpack':  False }                # whether to unpack the addon
+            {
+                "id": "rainbow@colors.org",  # id of the addon
+                "version": "1.4",  # version of the addon
+                "name": "Rainbow",  # name of the addon
+                "unpack": False,
+            }  # whether to unpack the addon
         """
 
         details = {"id": None, "unpack": False, "name": None, "version": None}
@@ -336,7 +337,7 @@ class AddonManager:
                 raise AddonFormatError(str(e)).with_traceback(sys.exc_info()[2])
 
         # turn unpack into a true/false value
-        if isinstance(details["unpack"], string_types):
+        if isinstance(details["unpack"], str):
             details["unpack"] = details["unpack"].lower() == "true"
 
         # If no ID is set, the add-on is invalid

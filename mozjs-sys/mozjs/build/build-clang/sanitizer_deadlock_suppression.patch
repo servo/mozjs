@@ -1,0 +1,86 @@
+Add support for suppressing corner cases of recursive locking that TSAN
+normally doesn't allow.
+
+diff --git a/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector1.cpp b/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector1.cpp
+index ccb7065b07ae..58cfc5e1a1fb 100644
+--- a/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector1.cpp
++++ b/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector1.cpp
+@@ -15,6 +15,7 @@
+ #include "sanitizer_allocator_internal.h"
+ #include "sanitizer_placement_new.h"
+ #include "sanitizer_mutex.h"
++#include "sanitizer_stackdepot.h"
+ 
+ #if SANITIZER_DEADLOCK_DETECTOR_VERSION == 1
+ 
+@@ -162,8 +163,19 @@ void DD::MutexAfterLock(DDCallback *cb, DDMutex *m, bool wlock, bool trylock) {
+ 
+   SpinMutexLock lk(&mtx);
+   MutexEnsureID(lt, m);
+-  if (wlock)  // Only a recursive rlock may be held.
+-    CHECK(!dd.isHeld(&lt->dd, m->id));
++  // Only a recursive rlock may be held.
++  if (wlock && dd.isHeld(&lt->dd, m->id)) {
++    // Get stack traces from where the lock is already held.
++    u32 held_stk = dd.findLockContext(&lt->dd, m->id);
++    if (!cb->IsDeadlockSuppressed(held_stk)) {
++      stk = stk ? stk : cb->Unwind();
++      if (!cb->IsDeadlockSuppressed(stk)) {
++        // We could avoid calling this twice, by storing the result above, but
++        // we do want the error message to be unchanged.
++        CHECK(!dd.isHeld(&lt->dd, m->id));
++      }
++    }
++  }
+   if (!trylock)
+     dd.addEdges(&lt->dd, m->id, stk ? stk : cb->Unwind(), cb->UniqueTid());
+   dd.onLockAfter(&lt->dd, m->id, stk);
+diff --git a/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector_interface.h b/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector_interface.h
+index 7f461c98bade..252e62e05622 100644
+--- a/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector_interface.h
++++ b/compiler-rt/lib/sanitizer_common/sanitizer_deadlock_detector_interface.h
+@@ -66,6 +66,7 @@ struct DDCallback {
+ 
+   virtual u32 Unwind() { return 0; }
+   virtual int UniqueTid() { return 0; }
++  virtual bool IsDeadlockSuppressed(u32 stk) { return false; }
+ 
+  protected:
+   ~DDCallback() {}
+diff --git a/compiler-rt/lib/tsan/rtl/tsan_rtl_mutex.cpp b/compiler-rt/lib/tsan/rtl/tsan_rtl_mutex.cpp
+index 2a8aa1915c9a..1df8acfd7fd0 100644
+--- a/compiler-rt/lib/tsan/rtl/tsan_rtl_mutex.cpp
++++ b/compiler-rt/lib/tsan/rtl/tsan_rtl_mutex.cpp
+@@ -15,8 +15,10 @@
+ 
+ #include "tsan_rtl.h"
+ #include "tsan_flags.h"
++#include "tsan_mman.h"
+ #include "tsan_sync.h"
+ #include "tsan_report.h"
++#include "tsan_suppressions.h"
+ #include "tsan_symbolize.h"
+ #include "tsan_platform.h"
+ 
+@@ -39,6 +41,21 @@ struct Callback final : public DDCallback {
+ 
+   StackID Unwind() override { return CurrentStackId(thr, pc); }
+   int UniqueTid() override { return thr->tid; }
++
++  bool IsDeadlockSuppressed(u32 stk) override {
++    bool result = false;
++    if (stk) {
++      Suppression *supp = nullptr;
++      ReportStack *rs = SymbolizeStackId(stk);
++      rs->suppressable = true;
++      result = IsSuppressed(ReportTypeDeadlock, rs, &supp);
++      if (rs->frames) {
++        rs->frames->ClearAll();
++      }
++      DestroyAndFree(rs);
++    }
++    return result;
++  }
+ };
+ 
+ void DDMutexInit(ThreadState *thr, uptr pc, SyncVar *s) {

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -52,9 +50,10 @@ struct TypeDefInstanceData {
       : typeDef(nullptr),
         superTypeVector(nullptr),
         shape(nullptr),
-        clasp(nullptr),
-        allocKind(gc::AllocKind::LIMIT),
-        unused(0) {}
+        clasp(nullptr) {
+    memset(&cached, 0, sizeof(cached));
+    cached.strukt.allocKind = gc::AllocKind::INVALID;
+  }
 
   // The canonicalized pointer to this type definition. This is kept alive by
   // the type context associated with the instance.
@@ -62,32 +61,34 @@ struct TypeDefInstanceData {
 
   // The supertype vector for this type definition.  This is also kept alive
   // by the type context associated with the instance.
-  //
   const wasm::SuperTypeVector* superTypeVector;
 
-  // The next four fields are only meaningful for, and used by, structs and
+  // The next three fields are only meaningful for, and used by, structs and
   // arrays.
   GCPtr<Shape*> shape;
   const JSClass* clasp;
-  // Only valid for structs.
-  gc::AllocKind allocKind;
 
-  // This union is only meaningful for structs and arrays, and should
-  // otherwise be set to zero:
-  //
-  // * if `typeDef` refers to a struct type, then it caches the value of
-  //   `typeDef->structType().size_` (a size in bytes)
-  //
-  // * if `typeDef` refers to an array type, then it caches the value of
-  //   `typeDef->arrayType().elementType_.size()` (also a size in bytes)
-  //
-  // This is so that allocators of structs and arrays don't need to chase from
-  // this TypeDefInstanceData through `typeDef` to find the value.
+  // This union is only meaningful for structs and arrays, and should otherwise
+  // be zeroed out.  It exists so that allocators of structs and arrays don't
+  // need to chase through `typeDef` to find this info.
   union {
-    uint32_t structTypeSize;
-    uint32_t arrayElemSize;
-    uint32_t unused;
-  };
+    struct {
+      // When `typeDef` refers to a struct type, these are copied unchanged
+      // from fields of the same name in StructType.
+      uint32_t payloadOffsetIL;
+      uint32_t totalSizeIL;
+      uint32_t totalSizeOOL;
+      uint32_t oolPointerOffset;
+      // Copied from StructType, and updated by GetFinalizedAllocKindForClass
+      // (see comment on StructType::allocKind_).
+      gc::AllocKind allocKind;
+    } strukt;
+    struct {
+      // When `typeDef` refers to an array type, this caches the value of
+      // `typeDef->arrayType().fieldType_.size()` (a size in bytes).
+      uint32_t elemSize;
+    } array;
+  } cached;
 
   static constexpr size_t offsetOfShape() {
     return offsetof(TypeDefInstanceData, shape);
@@ -96,7 +97,7 @@ struct TypeDefInstanceData {
     return offsetof(TypeDefInstanceData, superTypeVector);
   }
   static constexpr size_t offsetOfArrayElemSize() {
-    return offsetof(TypeDefInstanceData, arrayElemSize);
+    return offsetof(TypeDefInstanceData, cached.array.elemSize);
   }
 };
 
@@ -137,6 +138,10 @@ struct FuncImportInstanceData {
   // values for lazy table initialization.
   GCPtr<JSObject*> callable;
   static_assert(sizeof(GCPtr<JSObject*>) == sizeof(void*), "for JIT access");
+
+  // See "Wasm Function.prototype.call.bind optimization" in WasmInstance.cpp
+  // for more information.
+  bool isFunctionCallBind;
 };
 
 struct MemoryInstanceData {
@@ -146,15 +151,29 @@ struct MemoryInstanceData {
   // Pointer to the base of the memory.
   uint8_t* base;
 
-  // Bounds check limit in bytes (or zero if there is no memory).  This is
-  // 64-bits on 64-bit systems so as to allow for heap lengths up to and beyond
-  // 4GB, and 32-bits on 32-bit systems, where heaps are limited to 2GB.
+  // Bounds check limit in bytes. This is 64 bits on 64-bit systems so as to
+  // allow for heap lengths up to and beyond 4GB, and 32 bits on 32-bit systems,
+  // where heaps are limited to 2GB.
   //
   // See "Linear memory addresses and bounds checking" in WasmMemory.cpp.
   uintptr_t boundsCheckLimit;
 
+  // The default boundsCheckLimit is used for standard page sizes and also 8-bit
+  // memory accesses on custom page sizes. These other limits are only used for
+  // accesses on memories with custom page sizes.
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+  uintptr_t boundsCheckLimit16;
+  uintptr_t boundsCheckLimit32;
+  uintptr_t boundsCheckLimit64;
+  uintptr_t boundsCheckLimit128;
+#endif
+
   // Whether this memory is shared or not.
   bool isShared;
+
+  // Total mapped size of the memory buffer, including guard pages. Stored
+  // here to avoid touching GC objects from signal handlers.
+  size_t mappedSize;
 };
 
 // TableInstanceData describes the region of wasm global memory allocated in the
@@ -162,8 +181,10 @@ struct MemoryInstanceData {
 // to bounds-check and index the table.
 
 struct TableInstanceData {
-  // Length of the table in number of elements (not bytes).
-  uint32_t length;
+  // Length of the table in number of elements (not bytes). Although the type is
+  // uint64_t, the maximum value fits in 32 bits -- this value can safely be
+  // loaded as either a 32-bit value or a 64-bit value.
+  uint64_t length;
 
   // Pointer to the array of elements (which can have various representations).
   // For tables of anyref this is null.

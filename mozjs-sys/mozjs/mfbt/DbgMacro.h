@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,7 +10,8 @@
 #include "mozilla/MacroForEach.h"
 #include "mozilla/Span.h"
 
-#include <stdio.h>
+#include <fmt/format.h>
+#include <cstdio>
 #include <sstream>
 
 template <typename T>
@@ -32,63 +31,47 @@ namespace mozilla {
 namespace detail {
 
 // Predicate to check whether T can be inserted into an ostream.
-template <typename T, typename = decltype(std::declval<std::ostream&>()
-                                          << std::declval<T>())>
-std::true_type supports_os_test(const T&);
-std::false_type supports_os_test(...);
+template <typename T, typename = void>
+struct supports_os : std::false_type {};
 
 template <typename T>
-using supports_os = decltype(supports_os_test(std::declval<T>()));
+struct supports_os<T, std::void_t<decltype(std::declval<std::ostream&>()
+                                           << std::declval<T&>())>>
+    : std::true_type {};
 
 }  // namespace detail
 
 // Helper function to write a value to an ostream.
 //
-// This handles pointer values where the type being pointed to supports being
-// inserted into an ostream, and we write out the value being pointed to in
-// addition to the pointer value.
+// This handles both pointer values where the type being pointed to supports
+// being inserted into an ostream (in which case we write out the value being
+// pointed to in addition to the pointer value), and pointer types that cannot
+// be dereferenced (in which cases we just write the pointer value).
 template <typename T>
-auto DebugValue(std::ostream& aOut, T* aValue)
-    -> std::enable_if_t<mozilla::detail::supports_os<T>::value, std::ostream&> {
-  if (aValue) {
-    aOut << *aValue << " @ " << aValue;
-  } else {
-    aOut << "null";
+std::ostream& DebugValue(std::ostream& aOut, T* aValue) {
+  if (!aValue) {
+    return aOut << "null";
   }
-  return aOut;
+  if constexpr (fmt::is_formattable<T>::value) {
+    return aOut << fmt::format("{}", *aValue) << " @ " << aValue;
+  } else if constexpr (detail::supports_os<T>::value) {
+    return aOut << *aValue << " @ " << aValue;
+  } else {
+    return aOut << aValue;
+  }
 }
 
 // Helper function to write a value to an ostream.
 //
-// This handles all pointer types that cannot be dereferenced and inserted into
-// an ostream.
+// This handle all non-pointer types, with a specialization for XPCOM types.
 template <typename T>
-auto DebugValue(std::ostream& aOut, T* aValue)
-    -> std::enable_if_t<!mozilla::detail::supports_os<T>::value,
-                        std::ostream&> {
-  return aOut << aValue;
-}
-
-// Helper function to write a value to an ostream.
-//
-// This handles XPCOM string types.
-template <typename T>
-auto DebugValue(std::ostream& aOut, const T& aValue)
-    -> std::enable_if_t<std::is_base_of<nsTSubstring<char>, T>::value ||
-                            std::is_base_of<nsTSubstring<char16_t>, T>::value,
-                        std::ostream&> {
-  return aOut << '"' << aValue << '"';
-}
-
-// Helper function to write a value to an ostream.
-//
-// This handles all other types.
-template <typename T>
-auto DebugValue(std::ostream& aOut, const T& aValue)
-    -> std::enable_if_t<!std::is_base_of<nsTSubstring<char>, T>::value &&
-                            !std::is_base_of<nsTSubstring<char16_t>, T>::value,
-                        std::ostream&> {
-  return aOut << aValue;
+std::ostream& DebugValue(std::ostream& aOut, const T& aValue) {
+  if constexpr (std::is_base_of<nsTSubstring<char>, T>::value ||
+                std::is_base_of<nsTSubstring<char16_t>, T>::value) {
+    return aOut << '"' << aValue << '"';
+  } else {
+    return aOut << aValue;
+  }
 }
 
 namespace detail {
@@ -99,12 +82,11 @@ auto&& MozDbg(const char* aFile, int aLine, const char* aExpression,
               T&& aValue) {
   std::ostringstream s;
   s << "[MozDbg] [" << aFile << ':' << aLine << "] " << aExpression << " = ";
-  mozilla::DebugValue(s, std::forward<T>(aValue));
-  s << '\n';
+  mozilla::DebugValue(s, std::forward<T>(aValue)) << '\n';
 #if defined(ANDROID)
   __android_log_print(ANDROID_LOG_INFO, "Gecko", "%s", s.str().c_str());
 #elif defined(XP_OHOS)
-    (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko", "%{public}s\n", s.str().c_str());
+  (void) OH_LOG_Print(0 /* LOG_APP */, 4 /* LOG_INFO */, OHOS_LOG_DOMAIN, "Gecko", "%{public}s\n", s.str().c_str());
 #else
   fputs(s.str().c_str(), stderr);
 #endif

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,6 +9,7 @@
 #include "mozilla/Maybe.h"
 
 #include "jit/BaselineCodeGen.h"
+#include "jit/JitScript.h"
 #include "jit/OffthreadSnapshot.h"
 #include "vm/HelperThreadTask.h"
 
@@ -20,6 +19,9 @@ class BaselineSnapshot {
   OffthreadGCPtr<JSScript*> script_;
   OffthreadGCPtr<GlobalLexicalEnvironmentObject*> globalLexical_;
   OffthreadGCPtr<JSObject*> globalThis_;
+  OffthreadGCPtr<CallObject*> callObjectTemplate_;
+  OffthreadGCPtr<NamedLambdaObject*> namedLambdaTemplate_;
+  size_t nargs_;
   uint32_t baseWarmUpThreshold_;
   bool isIonCompileable_;
   bool compileDebugInstrumentation_;
@@ -32,15 +34,30 @@ class BaselineSnapshot {
       : script_(script),
         globalLexical_(globalLexical),
         globalThis_(globalThis),
+        callObjectTemplate_(nullptr),
+        namedLambdaTemplate_(nullptr),
+        nargs_(script->function() ? script->function()->nargs() : 0),
         baseWarmUpThreshold_(baseWarmUpThreshold),
         isIonCompileable_(isIonCompileable),
-        compileDebugInstrumentation_(compileDebugInstrumentation) {}
+        compileDebugInstrumentation_(compileDebugInstrumentation) {
+    if (script->needsFunctionEnvironmentObjects()) {
+      auto [callObjectTemplate, namedLambdaTemplate] =
+          script->jitScript()->functionEnvironmentTemplates(script->function());
+      callObjectTemplate_.init(callObjectTemplate);
+      namedLambdaTemplate_.init(namedLambdaTemplate);
+    }
+  }
 
   JSScript* script() const { return script_; }
   GlobalLexicalEnvironmentObject* globalLexical() const {
     return globalLexical_;
   }
   JSObject* globalThis() const { return globalThis_; }
+  CallObject* callObjectTemplate() const { return callObjectTemplate_; }
+  NamedLambdaObject* namedLambdaTemplate() const {
+    return namedLambdaTemplate_;
+  }
+  size_t nargs() const { return nargs_; }
   uint32_t baseWarmUpThreshold() const { return baseWarmUpThreshold_; }
   bool isIonCompileable() const { return isIonCompileable_; }
   bool compileDebugInstrumentation() const {
@@ -85,6 +102,10 @@ class BaselineCompileTask final : public HelperThreadTask {
     }
 #endif
   }
+
+  static bool OffThreadBaselineCompilationAvailable(JSContext* cx,
+                                                    JSScript* script,
+                                                    bool isEager = false);
 
   ThreadType threadType() override { return THREAD_TYPE_BASELINE; }
   void runTask();

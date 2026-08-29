@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,11 +6,10 @@
 
 #include "mozilla/Casting.h"
 
-#include "jsmath.h"
-
 #include "jit/JitFrames.h"
 #include "jit/MacroAssembler.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
+#include "util/PortableMath.h"
 
 #include "jit/MacroAssembler-inl.h"
 
@@ -82,7 +79,7 @@ void MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output) {
 }
 
 bool MacroAssemblerX86Shared::buildOOLFakeExitFrame(void* fakeReturnAddr) {
-  asMasm().PushFrameDescriptor(FrameType::IonJS);
+  asMasm().Push(FrameDescriptor(FrameType::IonJS));
   asMasm().Push(ImmPtr(fakeReturnAddr));
   asMasm().Push(FramePointer);
   return true;
@@ -352,10 +349,10 @@ void MacroAssembler::flush() {}
 void MacroAssembler::comment(const char* msg) { masm.comment(msg); }
 
 // This operation really consists of five phases, in order to enforce the
-// restriction that on x86_shared, srcDest must be eax and edx will be
-// clobbered.
+// restriction that on x86_shared, the dividend must be eax and both eax and edx
+// will be clobbered.
 //
-//     Input: { rhs, lhsOutput }
+//     Input: { lhs, rhs }
 //
 //  [PUSH] Preserve registers
 //  [MOVE] Generate moves to specific registers
@@ -363,20 +360,26 @@ void MacroAssembler::comment(const char* msg) { masm.comment(msg); }
 //  [DIV] Input: { regForRhs, EAX }
 //  [DIV] extend EAX into EDX
 //  [DIV] x86 Division operator
-//  [DIV] Ouptut: { EAX, EDX }
+//  [DIV] Output: { EAX, EDX }
 //
 //  [MOVE] Move specific registers to outputs
 //  [POP] Restore registers
 //
-//    Output: { lhsOutput, remainderOutput }
-void MacroAssembler::flexibleDivMod32(Register rhs, Register lhsOutput,
-                                      Register remOutput, bool isUnsigned,
-                                      const LiveRegisterSet&) {
-  // Currently this helper can't handle this situation.
-  MOZ_ASSERT(lhsOutput != rhs);
-  MOZ_ASSERT(lhsOutput != remOutput);
+//    Output: { quotientOutput, remainderOutput }
+static void EmitDivMod32(MacroAssembler& masm, Register lhs, Register rhs,
+                         Register divOutput, Register remOutput,
+                         bool isUnsigned) {
+  if (lhs == rhs) {
+    if (divOutput != Register::Invalid()) {
+      masm.movl(Imm32(1), divOutput);
+    }
+    if (remOutput != Register::Invalid()) {
+      masm.movl(Imm32(0), remOutput);
+    }
+    return;
+  }
 
-  // Choose a register that is not edx, or eax to hold the rhs;
+  // Choose a register that is not edx or eax to hold the rhs;
   // ebx is chosen arbitrarily, and will be preserved if necessary.
   Register regForRhs = (rhs == eax || rhs == edx) ? ebx : rhs;
 
@@ -385,61 +388,64 @@ void MacroAssembler::flexibleDivMod32(Register rhs, Register lhsOutput,
   LiveRegisterSet preserve;
   preserve.add(edx);
   preserve.add(eax);
-  preserve.add(regForRhs);
+  if (rhs != regForRhs) {
+    preserve.add(regForRhs);
+  }
 
-  preserve.takeUnchecked(lhsOutput);
-  preserve.takeUnchecked(remOutput);
+  if (divOutput != Register::Invalid()) {
+    preserve.takeUnchecked(divOutput);
+  }
+  if (remOutput != Register::Invalid()) {
+    preserve.takeUnchecked(remOutput);
+  }
 
-  PushRegsInMask(preserve);
+  masm.PushRegsInMask(preserve);
 
   // Shuffle input into place.
-  moveRegPair(lhsOutput, rhs, eax, regForRhs);
+  masm.moveRegPair(lhs, rhs, eax, regForRhs);
 
   // Sign extend eax into edx to make (edx:eax): idiv/udiv are 64-bit.
   if (isUnsigned) {
-    mov(ImmWord(0), edx);
-    udiv(regForRhs);
+    masm.mov(ImmWord(0), edx);
+    masm.udiv(regForRhs);
   } else {
-    cdq();
-    idiv(regForRhs);
+    masm.cdq();
+    masm.idiv(regForRhs);
   }
 
-  moveRegPair(eax, edx, lhsOutput, remOutput);
+  if (divOutput != Register::Invalid() && remOutput != Register::Invalid()) {
+    masm.moveRegPair(eax, edx, divOutput, remOutput);
+  } else {
+    if (divOutput != Register::Invalid() && divOutput != eax) {
+      masm.mov(eax, divOutput);
+    }
+    if (remOutput != Register::Invalid() && remOutput != edx) {
+      masm.mov(edx, remOutput);
+    }
+  }
 
-  PopRegsInMask(preserve);
+  masm.PopRegsInMask(preserve);
+}
+
+void MacroAssembler::flexibleDivMod32(Register lhs, Register rhs,
+                                      Register divOutput, Register remOutput,
+                                      bool isUnsigned, const LiveRegisterSet&) {
+  MOZ_ASSERT(lhs != divOutput && lhs != remOutput, "lhs is preserved");
+  MOZ_ASSERT(rhs != divOutput && rhs != remOutput, "rhs is preserved");
+
+  EmitDivMod32(*this, lhs, rhs, divOutput, remOutput, isUnsigned);
 }
 
 void MacroAssembler::flexibleQuotient32(
-    Register rhs, Register srcDest, bool isUnsigned,
+    Register lhs, Register rhs, Register dest, bool isUnsigned,
     const LiveRegisterSet& volatileLiveRegs) {
-  // Choose an arbitrary register that isn't eax, edx, rhs or srcDest;
-  AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
-  regs.takeUnchecked(eax);
-  regs.takeUnchecked(edx);
-  regs.takeUnchecked(rhs);
-  regs.takeUnchecked(srcDest);
-
-  Register remOut = regs.takeAny();
-  push(remOut);
-  flexibleDivMod32(rhs, srcDest, remOut, isUnsigned, volatileLiveRegs);
-  pop(remOut);
+  EmitDivMod32(*this, lhs, rhs, dest, Register::Invalid(), isUnsigned);
 }
 
 void MacroAssembler::flexibleRemainder32(
-    Register rhs, Register srcDest, bool isUnsigned,
+    Register lhs, Register rhs, Register dest, bool isUnsigned,
     const LiveRegisterSet& volatileLiveRegs) {
-  // Choose an arbitrary register that isn't eax, edx, rhs or srcDest
-  AllocatableGeneralRegisterSet regs(GeneralRegisterSet::All());
-  regs.takeUnchecked(eax);
-  regs.takeUnchecked(edx);
-  regs.takeUnchecked(rhs);
-  regs.takeUnchecked(srcDest);
-
-  Register remOut = regs.takeAny();
-  push(remOut);
-  flexibleDivMod32(rhs, srcDest, remOut, isUnsigned, volatileLiveRegs);
-  mov(remOut, srcDest);
-  pop(remOut);
+  EmitDivMod32(*this, lhs, rhs, Register::Invalid(), dest, isUnsigned);
 }
 
 // ===============================================================
@@ -645,6 +651,7 @@ void MacroAssembler::Push(const ImmGCPtr ptr) {
 
 void MacroAssembler::Push(FloatRegister t) {
   push(t);
+  // See Assembler::push(FloatRegister) for why we use sizeof(double).
   adjustFrame(sizeof(double));
 }
 
@@ -665,6 +672,7 @@ void MacroAssembler::Pop(Register reg) {
 
 void MacroAssembler::Pop(FloatRegister reg) {
   pop(reg);
+  // See Assembler::pop(FloatRegister) for why we use sizeof(double).
   implicitPop(sizeof(double));
 }
 
@@ -693,8 +701,9 @@ CodeOffset MacroAssembler::call(Register reg) { return Assembler::call(reg); }
 
 CodeOffset MacroAssembler::call(Label* label) { return Assembler::call(label); }
 
-void MacroAssembler::call(const Address& addr) {
+CodeOffset MacroAssembler::call(const Address& addr) {
   Assembler::call(Operand(addr.base, addr.offset));
+  return CodeOffset(currentOffset());
 }
 
 CodeOffset MacroAssembler::call(wasm::SymbolicAddress target) {
@@ -779,18 +788,19 @@ FaultingCodeOffset MacroAssembler::wasmTrapInstruction() {
 }
 
 void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
-                                       Register boundsCheckLimit, Label* ok) {
+                                       Register boundsCheckLimit,
+                                       Label* label) {
   cmp32(index, boundsCheckLimit);
-  j(cond, ok);
+  j(cond, label);
   if (JitOptions.spectreIndexMasking) {
     cmovCCl(cond, Operand(boundsCheckLimit), index);
   }
 }
 
 void MacroAssembler::wasmBoundsCheck32(Condition cond, Register index,
-                                       Address boundsCheckLimit, Label* ok) {
+                                       Address boundsCheckLimit, Label* label) {
   cmp32(index, Operand(boundsCheckLimit));
-  j(cond, ok);
+  j(cond, label);
   if (JitOptions.spectreIndexMasking) {
     cmovCCl(cond, Operand(boundsCheckLimit), index);
   }
@@ -2216,24 +2226,33 @@ void MacroAssembler::copySignDouble(FloatRegister lhs, FloatRegister rhs,
                                     FloatRegister output) {
   ScratchDoubleScope scratch(*this);
 
-  // TODO Support AVX2
-  if (rhs == output) {
-    MOZ_ASSERT(lhs != rhs);
-    double keepSignMask = mozilla::BitwiseCast<double>(INT64_MIN);
-    loadConstantDouble(keepSignMask, scratch);
-    vandpd(scratch, rhs, output);
+  double keepSignMask = mozilla::BitwiseCast<double>(INT64_MIN);
+  double clearSignMask = mozilla::BitwiseCast<double>(INT64_MAX);
 
-    double clearSignMask = mozilla::BitwiseCast<double>(INT64_MAX);
-    loadConstantDouble(clearSignMask, scratch);
-    vandpd(lhs, scratch, scratch);
+  if (HasAVX()) {
+    if (rhs == output) {
+      MOZ_ASSERT(lhs != rhs);
+      vandpdSimd128(SimdConstant::SplatX2(keepSignMask), rhs, output);
+      vandpdSimd128(SimdConstant::SplatX2(clearSignMask), lhs, scratch);
+    } else {
+      vandpdSimd128(SimdConstant::SplatX2(clearSignMask), lhs, output);
+      vandpdSimd128(SimdConstant::SplatX2(keepSignMask), rhs, scratch);
+    }
   } else {
-    double clearSignMask = mozilla::BitwiseCast<double>(INT64_MAX);
-    loadConstantDouble(clearSignMask, scratch);
-    vandpd(scratch, lhs, output);
+    if (rhs == output) {
+      MOZ_ASSERT(lhs != rhs);
+      loadConstantDouble(keepSignMask, scratch);
+      vandpd(scratch, rhs, output);
 
-    double keepSignMask = mozilla::BitwiseCast<double>(INT64_MIN);
-    loadConstantDouble(keepSignMask, scratch);
-    vandpd(rhs, scratch, scratch);
+      loadConstantDouble(clearSignMask, scratch);
+      vandpd(lhs, scratch, scratch);
+    } else {
+      loadConstantDouble(clearSignMask, scratch);
+      vandpd(scratch, lhs, output);
+
+      loadConstantDouble(keepSignMask, scratch);
+      vandpd(rhs, scratch, scratch);
+    }
   }
 
   vorpd(scratch, output, output);
@@ -2243,24 +2262,33 @@ void MacroAssembler::copySignFloat32(FloatRegister lhs, FloatRegister rhs,
                                      FloatRegister output) {
   ScratchFloat32Scope scratch(*this);
 
-  // TODO Support AVX2
-  if (rhs == output) {
-    MOZ_ASSERT(lhs != rhs);
-    float keepSignMask = mozilla::BitwiseCast<float>(INT32_MIN);
-    loadConstantFloat32(keepSignMask, scratch);
-    vandps(scratch, output, output);
+  float keepSignMask = mozilla::BitwiseCast<float>(INT32_MIN);
+  float clearSignMask = mozilla::BitwiseCast<float>(INT32_MAX);
 
-    float clearSignMask = mozilla::BitwiseCast<float>(INT32_MAX);
-    loadConstantFloat32(clearSignMask, scratch);
-    vandps(lhs, scratch, scratch);
+  if (HasAVX()) {
+    if (rhs == output) {
+      MOZ_ASSERT(lhs != rhs);
+      vandpsSimd128(SimdConstant::SplatX4(keepSignMask), rhs, output);
+      vandpsSimd128(SimdConstant::SplatX4(clearSignMask), lhs, scratch);
+    } else {
+      vandpsSimd128(SimdConstant::SplatX4(clearSignMask), lhs, output);
+      vandpsSimd128(SimdConstant::SplatX4(keepSignMask), rhs, scratch);
+    }
   } else {
-    float clearSignMask = mozilla::BitwiseCast<float>(INT32_MAX);
-    loadConstantFloat32(clearSignMask, scratch);
-    vandps(scratch, lhs, output);
+    if (rhs == output) {
+      MOZ_ASSERT(lhs != rhs);
+      loadConstantFloat32(keepSignMask, scratch);
+      vandps(scratch, output, output);
 
-    float keepSignMask = mozilla::BitwiseCast<float>(INT32_MIN);
-    loadConstantFloat32(keepSignMask, scratch);
-    vandps(rhs, scratch, scratch);
+      loadConstantFloat32(clearSignMask, scratch);
+      vandps(lhs, scratch, scratch);
+    } else {
+      loadConstantFloat32(clearSignMask, scratch);
+      vandps(scratch, lhs, output);
+
+      loadConstantFloat32(keepSignMask, scratch);
+      vandps(rhs, scratch, scratch);
+    }
   }
 
   vorps(scratch, output, output);

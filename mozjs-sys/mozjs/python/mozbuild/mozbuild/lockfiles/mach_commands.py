@@ -9,7 +9,7 @@ from mach.decorators import Command, CommandArgument
     "generate-python-lockfiles",
     category="misc",
     description="Vendor third-party dependencies into the source repository.",
-    virtualenv_name="vendor",
+    virtualenv_name="uv",
 )
 @CommandArgument(
     "--sites",

@@ -3,12 +3,23 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
+import platform
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
-from typing import List
 
 import pytest
+
+
+def setup_hg_default_path(working_dir):
+    """Set up default hg path to remoterepo."""
+    hgrc_path = Path(working_dir) / ".hg" / "hgrc"
+    hgrc_path.parent.mkdir(parents=True, exist_ok=True)  # Ensure .hg directory exists
+    with open(hgrc_path, "w") as f:
+        f.write("[paths]\n")
+        f.write("default = ../remoterepo\n")
+
 
 # Execute the first element in each list of steps within a `repo` directory,
 # then copy the whole directory to a `remoterepo`, and finally execute the
@@ -23,18 +34,15 @@ SETUP = {
         hg commit -m "Initial commit"
         hg phase --public .
         """,
-        """
-        echo [paths] > .hg/hgrc
-        echo "default = ../remoterepo" >> .hg/hgrc
-        """,
+        setup_hg_default_path,
     ],
     "git": [
         """
         echo "foo" > foo
         echo "bar" > bar
-        git init
+        git init -b master
         git config user.name "Testing McTesterson"
-        git config user.email "<test@example.org>"
+        git config user.email "test@example.org"
         git add *
         git commit -am "Initial commit"
         """,
@@ -48,18 +56,18 @@ SETUP = {
         """
         echo "foo" > foo
         echo "bar" > bar
-        git init
+        git init -b master
         git config user.name "Testing McTesterson"
-        git config user.email "<test@example.org>"
+        git config user.email "test@example.org"
         git add *
         git commit -am "Initial commit"
-        """,
-        """
-        # Pass in user name/email via env vars because the initial commit
-        # will use them before we have a chance to configure them.
-        JJ_USER="Testing McTesterson" JJ_EMAIL="test@example.org" jj git init --colocate
+        jj git init --colocate
         jj config set --repo user.name "Testing McTesterson"
         jj config set --repo user.email "test@example.org"
+        jj describe --reset-author --no-edit
+        jj abandon
+        """,
+        """
         jj git remote add upstream ../remoterepo
         jj git fetch --remote upstream
         jj bookmark track master@upstream
@@ -78,7 +86,7 @@ SETUP = {
 
 
 class RepoTestFixture:
-    def __init__(self, repo_dir: Path, vcs: str, steps: List[str]):
+    def __init__(self, repo_dir: Path, vcs: str, steps: list[str]):
         self.dir = repo_dir
         self.vcs = vcs
 
@@ -91,13 +99,29 @@ class RepoTestFixture:
 
 
 def shell(cmd, working_dir):
-    for step in cmd.split(os.linesep):
-        subprocess.check_call(step, shell=True, cwd=working_dir)
+    if callable(cmd):
+        # If it's a callable, execute it with the working directory
+        # Convert Path to string for consistency
+        cmd(str(working_dir))
+    else:
+        # Otherwise, treat it as shell commands
+        for step in cmd.split(os.linesep):
+            if step.strip():  # Skip empty lines
+                subprocess.check_call(step, shell=True, cwd=working_dir)
 
 
 @pytest.fixture(params=["git", "hg", "jj", "src"])
-def repo(tmpdir, request):
+def repo(request):
     if request.param == "jj":
+        if os.getenv("MOZ_AUTOMATION") == "1":
+            fetches_dir = os.environ.get("MOZ_FETCHES_DIR", "")
+            jj_dir = Path(fetches_dir) / "jj"
+            if jj_dir.is_dir():
+                os.environ["PATH"] = os.pathsep.join([str(jj_dir), os.environ["PATH"]])
+            if platform.system() == "Darwin":
+                pytest.skip(
+                    "jj tests disabled for MacOS CI due to incompatible git on workers"
+                )
         if os.getenv("MOZ_AVOID_JJ_VCS") not in (None, "0", ""):
             pytest.skip("jj support disabled")
         try:
@@ -105,9 +129,25 @@ def repo(tmpdir, request):
         except OSError:
             pytest.skip("jj unavailable")
 
-    tmpdir = Path(tmpdir)
+        # Isolate jj tests from user's local config
+        os.environ["JJ_CONFIG"] = ""
+
+    if request.param == "hg":
+        try:
+            subprocess.call(
+                ["hg", "--version"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError:
+            if not os.environ.get("MOZ_AUTOMATION"):
+                pytest.skip("hg unavailable")
+
     vcs = request.param
-    steps = SETUP[vcs]
+    # Use tempfile since pytest's tempdir is too long for jj on Windows
+    td = tempfile.TemporaryDirectory(prefix=f"{vcs}-repo")
+    tmpdir = Path(td.name)
+    steps = list(SETUP[vcs])  # Create a copy of the list
 
     if hasattr(request.module, "STEPS"):
         if vcs == "src" and vcs not in request.module.STEPS:
@@ -125,6 +165,12 @@ def repo(tmpdir, request):
     repo_test_fixture.execute_next_step()
 
     shutil.copytree(str(repo_dir), str(tmpdir / "remoterepo"))
+
+    if vcs in ("git", "jj"):
+        subprocess.check_call(
+            ["git", "config", "receive.denyCurrentBranch", "updateInstead"],
+            cwd=str(tmpdir / "remoterepo"),
+        )
 
     repo_test_fixture.execute_next_step()
 

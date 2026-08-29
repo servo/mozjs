@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -31,6 +29,8 @@
 
 namespace js {
 namespace wasm {
+
+struct StackMap;
 
 // Container for a piece of out-of-line code, the slow path that supports an
 // operation.
@@ -141,19 +141,37 @@ struct AccessCheck {
 
 // Encapsulate all the information about a function call.
 struct FunctionCall {
-  FunctionCall()
-      : restoreRegisterStateAndRealm(false),
-        usesSystemAbi(false),
+  FunctionCall(ABIKind abiKind, RestoreState restoreState)
+      : abi(abiKind),
+        restoreState(restoreState),
+        abiKind(abiKind),
 #ifdef JS_CODEGEN_ARM
         hardFP(true),
 #endif
         frameAlignAdjustment(0),
         stackArgAreaSize(0) {
+    // The system ABI preserves the instance register (as it's in a
+    // non-volatile register) and realm. We just need to reload the HeapReg in
+    // case the memory has been moved.
+    MOZ_ASSERT_IF(abiKind == ABIKind::System,
+                  restoreState == RestoreState::None ||
+                      restoreState == RestoreState::PinnedRegs);
+    if (abiKind == ABIKind::System) {
+      // Builtin calls use the system hardFP setting on ARM32.
+#if defined(JS_CODEGEN_ARM)
+      hardFP = ARMFlags::UseHardFpABI();
+      abi.setUseHardFp(hardFP);
+#endif
+    } else {
+#if defined(JS_CODEGEN_ARM)
+      MOZ_ASSERT(hardFP, "The WASM ABI passes FP arguments in registers");
+#endif
+    }
   }
 
-  WasmABIArgGenerator abi;
-  bool restoreRegisterStateAndRealm;
-  bool usesSystemAbi;
+  ABIArgGenerator abi;
+  RestoreState restoreState;
+  ABIKind abiKind;
 #ifdef JS_CODEGEN_ARM
   bool hardFP;
 #endif
@@ -170,6 +188,8 @@ enum class PreBarrierKind {
 };
 
 enum class PostBarrierKind {
+  // No post barrier.
+  None,
   // Add a store buffer entry if the new value requires it, but do not attempt
   // to remove a pre-existing entry.
   Imprecise,
@@ -286,6 +306,9 @@ struct BaseCompiler final {
   // emitted at the end of compilation.
   Vector<OutOfLineCode*, 8, SystemAllocPolicy> outOfLine_;
 
+  // The stack maps for this compilation.
+  StackMaps* stackMaps_;
+
   // Stack map state.  This keeps track of live pointer slots and allows precise
   // stack maps to be generated at safe points.
   StackMapGenerator stackMapGenerator_;
@@ -368,7 +391,8 @@ struct BaseCompiler final {
   inline bool isMem64(uint32_t memoryIndex) const;
   inline bool hugeMemoryEnabled(uint32_t memoryIndex) const;
   inline uint32_t instanceOffsetOfMemoryBase(uint32_t memoryIndex) const;
-  inline uint32_t instanceOffsetOfBoundsCheckLimit(uint32_t memoryIndex) const;
+  inline uint32_t instanceOffsetOfBoundsCheckLimit(uint32_t memoryIndex,
+                                                   unsigned byteSize) const;
 
   // The casts are used by some of the ScratchRegister implementations.
   operator MacroAssembler&() const { return masm; }
@@ -621,6 +645,9 @@ struct BaseCompiler final {
 
   // Count the number of memory references on the value stack.
   inline size_t countMemRefsOnStk();
+
+  // Check if there are any live registers on the value stack.
+  inline bool hasLiveRegsOnStk();
 
   // Print the stack to stderr.
   void showStack(const char* who) const;
@@ -930,11 +957,9 @@ struct BaseCompiler final {
   [[nodiscard]] bool createStackMap(
       const char* who, HasDebugFrameWithLiveRefs debugFrameWithLiveRefs);
 
-  // The most general stackmap construction.
-  [[nodiscard]] bool createStackMap(
-      const char* who, const ExitStubMapVector& extras,
-      uint32_t assemblerOffset,
-      HasDebugFrameWithLiveRefs debugFrameWithLiveRefs);
+  // Creates a stack map for an aborting trap instruction that will be emitted
+  // OOL.
+  [[nodiscard]] bool createAbortingOutOfLineTrapStackMap(StackMap** result);
 
   ////////////////////////////////////////////////////////////
   //
@@ -977,17 +1002,45 @@ struct BaseCompiler final {
   //
   // Calls.
 
-  void beginCall(FunctionCall& call, UseABI useABI,
-                 RestoreRegisterStateAndRealm restoreRegisterStateAndRealm);
+  void beginCall(FunctionCall& call);
   void endCall(FunctionCall& call, size_t stackSpace);
+
   void startCallArgs(size_t stackArgAreaSizeUnaligned, FunctionCall* call);
   ABIArg reservePointerArgument(FunctionCall* call);
   void passArg(ValType type, const Stk& arg, FunctionCall* call);
-  CodeOffset callDefinition(uint32_t funcIndex, const FunctionCall& call);
-  CodeOffset callSymbolic(SymbolicAddress callee, const FunctionCall& call);
+
+  // A flag passed to emitCallArgs, describing how the value stack is laid out.
+  enum class CalleeOnStack {
+    // After the arguments to the call, there is a callee pushed onto value
+    // stack.  This is only the case for callIndirect.  To get the arguments to
+    // the call, emitCallArgs has to reach one element deeper into the value
+    // stack, to skip the callee.
+    True,
+
+    // No callee on the stack.
+    False
+  };
+  // The typename T for emitCallArgs can be one of the following:
+  // NormalCallResults, TailCallResults, or NoCallResults.
+  template <typename T>
+  [[nodiscard]] bool emitCallArgs(const ValTypeVector& argTypes, T results,
+                                  FunctionCall* baselineCall,
+                                  CalleeOnStack calleeOnStack);
+
+  [[nodiscard]] bool pushStackResultsForWasmCall(const ResultType& type,
+                                                 RegPtr temp,
+                                                 StackResultsLoc* loc);
+  void popStackResultsAfterWasmCall(const StackResultsLoc& results,
+                                    uint32_t stackArgBytes);
+
+  void pushBuiltinCallResult(const FunctionCall& call, MIRType type);
+  [[nodiscard]] bool pushWasmCallResults(const FunctionCall& call,
+                                         ResultType type,
+                                         const StackResultsLoc& loc);
 
   // Precondition for the call*() methods: sync()
-
+  CodeOffset callDefinition(uint32_t funcIndex, const FunctionCall& call);
+  CodeOffset callSymbolic(SymbolicAddress callee, const FunctionCall& call);
   bool callIndirect(uint32_t funcTypeIndex, uint32_t tableIndex,
                     const Stk& indexVal, const FunctionCall& call,
                     bool tailCall, CodeOffset* fastCallOffset,
@@ -1000,11 +1053,11 @@ struct BaseCompiler final {
   void returnCallRef(const Stk& calleeRef, const FunctionCall& call,
                      const FuncType& funcType);
   CodeOffset builtinCall(SymbolicAddress builtin, const FunctionCall& call);
-  CodeOffset builtinInstanceMethodCall(const SymbolicAddressSignature& builtin,
-                                       const ABIArg& instanceArg,
-                                       const FunctionCall& call);
-  [[nodiscard]] bool pushCallResults(const FunctionCall& call, ResultType type,
-                                     const StackResultsLoc& loc);
+  void builtinInstanceMethodCall(const SymbolicAddressSignature& builtin,
+                                 const ABIArg& instanceArg,
+                                 const FunctionCall& call,
+                                 CodeOffset* callStackMapKey,
+                                 CodeOffset* trapStackMapKey);
 
   // Helpers to pick up the returned value from the return register.
   inline RegI32 captureReturnedI32();
@@ -1189,17 +1242,17 @@ struct BaseCompiler final {
 
   void branchAddNoOverflow(uint64_t offset, RegI32 ptr, Label* ok);
   void branchTestLowZero(RegI32 ptr, Imm32 mask, Label* ok);
-  void boundsCheck4GBOrLargerAccess(uint32_t memoryIndex, RegPtr instance,
-                                    RegI32 ptr, Label* ok);
-  void boundsCheckBelow4GBAccess(uint32_t memoryIndex, RegPtr instance,
-                                 RegI32 ptr, Label* ok);
+  void boundsCheck4GBOrLargerAccess(uint32_t memoryIndex, unsigned byteSize,
+                                    RegPtr instance, RegI32 ptr, Label* ok);
+  void boundsCheckBelow4GBAccess(uint32_t memoryIndex, unsigned byteSize,
+                                 RegPtr instance, RegI32 ptr, Label* ok);
 
   void branchAddNoOverflow(uint64_t offset, RegI64 ptr, Label* ok);
   void branchTestLowZero(RegI64 ptr, Imm32 mask, Label* ok);
-  void boundsCheck4GBOrLargerAccess(uint32_t memoryIndex, RegPtr instance,
-                                    RegI64 ptr, Label* ok);
-  void boundsCheckBelow4GBAccess(uint32_t memoryIndex, RegPtr instance,
-                                 RegI64 ptr, Label* ok);
+  void boundsCheck4GBOrLargerAccess(uint32_t memoryIndex, unsigned byteSize,
+                                    RegPtr instance, RegI64 ptr, Label* ok);
+  void boundsCheckBelow4GBAccess(uint32_t memoryIndex, unsigned byteSize,
+                                 RegPtr instance, RegI64 ptr, Label* ok);
 
   // Some consumers depend on the returned Address not incorporating instance,
   // as instance may be the scratch register.
@@ -1221,10 +1274,8 @@ struct BaseCompiler final {
                    RegI32 temp);
   void load(MemoryAccessDesc* access, AccessCheck* check, RegPtr instance,
             RegPtr memoryBase, RegI32 ptr, AnyReg dest, RegI32 temp);
-#ifdef ENABLE_WASM_MEMORY64
   void load(MemoryAccessDesc* access, AccessCheck* check, RegPtr instance,
             RegPtr memoryBase, RegI64 ptr, AnyReg dest, RegI64 temp);
-#endif
 
   template <typename RegType>
   void doLoadCommon(MemoryAccessDesc* access, AccessCheck check, ValType type);
@@ -1238,10 +1289,8 @@ struct BaseCompiler final {
                     RegI32 temp);
   void store(MemoryAccessDesc* access, AccessCheck* check, RegPtr instance,
              RegPtr memoryBase, RegI32 ptr, AnyReg src, RegI32 temp);
-#ifdef ENABLE_WASM_MEMORY64
   void store(MemoryAccessDesc* access, AccessCheck* check, RegPtr instance,
              RegPtr memoryBase, RegI64 ptr, AnyReg src, RegI64 temp);
-#endif
 
   template <typename RegType>
   void doStoreCommon(MemoryAccessDesc* access, AccessCheck check,
@@ -1319,7 +1368,10 @@ struct BaseCompiler final {
   inline TrapSiteDesc trapSiteDesc() const;
 
   // Generate a trap instruction for the current bytecodeOffset.
-  inline void trap(Trap t) const;
+  inline void trap(Trap t);
+
+  // Generate a trap instruction for given location and stack map.
+  inline void trap(Trap t, const TrapSiteDesc& trapSite, StackMap* stackMap);
 
   // Abstracted helper for throwing, used for throw, rethrow, and rethrowing
   // at the end of a series of catch blocks (if none matched the exception).
@@ -1368,7 +1420,7 @@ struct BaseCompiler final {
   //   register is preserved by this function.
   // - `value` is the value that was stored in the field. This register is
   //   preserved by this function.
-  // - `temp` is clobbered by this function.
+  // - `temp` is consumed by this function.
   [[nodiscard]] bool emitPostBarrierWholeCell(RegRef object, RegRef value,
                                               RegPtr temp);
 
@@ -1468,26 +1520,6 @@ struct BaseCompiler final {
   [[nodiscard]] bool emitBrTable();
   [[nodiscard]] bool emitDrop();
   [[nodiscard]] bool emitReturn();
-
-  // A flag passed to emitCallArgs, describing how the value stack is laid out.
-  enum class CalleeOnStack {
-    // After the arguments to the call, there is a callee pushed onto value
-    // stack.  This is only the case for callIndirect.  To get the arguments to
-    // the call, emitCallArgs has to reach one element deeper into the value
-    // stack, to skip the callee.
-    True,
-
-    // No callee on the stack.
-    False
-  };
-
-  // The typename T for emitCallArgs can be one of the following:
-  // NormalCallResults, TailCallResults, or NoCallResults.
-  template <typename T>
-  [[nodiscard]] bool emitCallArgs(const ValTypeVector& argTypes, T results,
-                                  FunctionCall* baselineCall,
-                                  CalleeOnStack calleeOnStack);
-
   [[nodiscard]] bool emitCall();
   [[nodiscard]] bool emitReturnCall();
   [[nodiscard]] bool emitCallIndirect();
@@ -1520,12 +1552,6 @@ struct BaseCompiler final {
   [[nodiscard]] bool endTryTable(ResultType type);
 
   void doReturn(ContinuationKind kind);
-  void pushReturnValueOfCall(const FunctionCall& call, MIRType type);
-
-  [[nodiscard]] bool pushStackResultsForCall(const ResultType& type,
-                                             RegPtr temp, StackResultsLoc* loc);
-  void popStackResultsAfterCall(const StackResultsLoc& results,
-                                uint32_t stackArgBytes);
 
   void emitCompareI32(Assembler::Condition compareOp, ValType compareType);
   void emitCompareI64(Assembler::Condition compareOp, ValType compareType);
@@ -1726,6 +1752,8 @@ struct BaseCompiler final {
   [[nodiscard]] bool emitTableGrow();
   [[nodiscard]] bool emitTableSet();
   [[nodiscard]] bool emitTableSize();
+  [[nodiscard]] bool emitI64AddSub128(bool isAdd);
+  [[nodiscard]] bool emitI64MulWide(bool isSigned);
 
   void emitTableBoundsCheck(uint32_t tableIndex, RegI32 address,
                             RegPtr instance);
@@ -1828,7 +1856,8 @@ struct BaseCompiler final {
 
   [[nodiscard]] bool emitGcArraySet(RegRef object, RegPtr data, RegI32 index,
                                     const ArrayType& array, AnyReg value,
-                                    PreBarrierKind preBarrierKind);
+                                    PreBarrierKind preBarrierKind,
+                                    PostBarrierKind postBarrierKind);
 
 #ifdef ENABLE_WASM_SIMD
   void emitVectorAndNot();

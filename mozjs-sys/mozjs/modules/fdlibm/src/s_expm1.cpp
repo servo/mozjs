@@ -197,10 +197,7 @@ expm1(double x)
 	    }
 	    if (k <= -2 || k>56) {   /* suffice to return exp(x)-1 */
 	        y = one-(e-x);
-		if (k == 1024) {
-		    double const_0x1p1023 = pow(2, 1023);
-		    y = y*2.0*const_0x1p1023;
-		}
+		if (k == 1024) y = y*2.0*0x1p1023;
 		else y = y*twopk;
 	        return y-one;
 	    }

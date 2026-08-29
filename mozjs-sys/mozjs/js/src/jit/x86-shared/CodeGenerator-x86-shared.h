@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -35,7 +33,6 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared {
 
   Operand ToOperand(const LAllocation& a);
   Operand ToOperand(const LAllocation* a);
-  Operand ToOperand(const LDefinition* def);
 
 #ifdef JS_PUNBOX64
   Operand ToOperandOrRegister64(const LInt64Allocation& input);
@@ -54,11 +51,6 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared {
   void bailoutCmpPtr(Assembler::Condition c, T1 lhs, T2 rhs,
                      LSnapshot* snapshot) {
     masm.cmpPtr(lhs, rhs);
-    bailoutIf(c, snapshot);
-  }
-  void bailoutTestPtr(Assembler::Condition c, Register lhs, Register rhs,
-                      LSnapshot* snapshot) {
-    masm.testPtr(lhs, rhs);
     bailoutIf(c, snapshot);
   }
   template <typename T1, typename T2>
@@ -89,6 +81,11 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared {
 
   void emitTableSwitchDispatch(MTableSwitch* mir, Register index,
                                Register base);
+
+  // Emit out-of-line code to zero |output| if |rhs| is zero. Used for truncated
+  // division and modulus instructions.
+  OutOfLineCode* emitOutOfLineZeroForDivideByZero(Register rhs,
+                                                  Register output);
 
   void generateInvalidateEpilogue();
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,6 +8,7 @@
 #  include <elf.h>
 #endif
 
+#include <bit>
 #include <fcntl.h>
 #include <string_view>
 #ifdef XP_UNIX
@@ -21,9 +20,9 @@
 #endif
 
 #include "jit/arm/Assembler-arm.h"
-#include "jit/arm/Simulator-arm.h"
 #include "jit/FlushICache.h"  // js::jit::FlushICache
 #include "jit/RegisterSets.h"
+#include "jit/Simulator.h"
 
 #if !defined(__linux__) || defined(ANDROID) || defined(JS_SIMULATOR_ARM)
 // The Android NDK and B2G do not include the hwcap.h kernel header, and it is
@@ -420,17 +419,13 @@ FloatRegisterSet VFPRegister::ReduceSetForPush(const FloatRegisterSet& s) {
 
   LiveFloatRegisterSet mod;
   for (FloatRegisterIterator iter(s); iter.more(); ++iter) {
-    if ((*iter).isSingle()) {
-      // Add in just this float.
-      mod.addUnchecked(*iter);
-    } else if ((*iter).id() < 16) {
-      // A double with an overlay, add in both floats.
-      mod.addUnchecked((*iter).singleOverlay(0));
-      mod.addUnchecked((*iter).singleOverlay(1));
-    } else {
-      // Add in the lone double in the range 16-31.
-      mod.addUnchecked(*iter);
+    FloatRegister reg = *iter;
+    if (reg.isSingle() && s.hasRegisterIndex(reg.doubleOverlay())) {
+      // If a single register overlays a double, we don't have to push the
+      // single register separately.
+      continue;
     }
+    mod.addUnchecked(*iter);
   }
   return mod.set();
 }
@@ -442,8 +437,8 @@ uint32_t VFPRegister::GetPushSizeInBytes(const FloatRegisterSet& s) {
 
   FloatRegisterSet ss = s.reduceSetForPush();
   uint64_t bits = ss.bits();
-  uint32_t ret = mozilla::CountPopulation32(bits & 0xffffffff) * sizeof(float);
-  ret += mozilla::CountPopulation32(bits >> 32) * sizeof(double);
+  uint32_t ret = std::popcount(bits & 0xffffffff) * sizeof(float);
+  ret += std::popcount(bits >> 32) * sizeof(double);
   return ret;
 }
 uint32_t VFPRegister::getRegisterDumpOffsetInBytes() {

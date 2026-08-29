@@ -5,5 +5,5 @@ src = [
     "mozbuild/test",
 ]
 
-[isort]
+[lint.isort]
 known-first-party = ["mozbuild"]

@@ -152,7 +152,7 @@ module Glean
         {
           'category' => '{{ event.category }}',
           'name' => '{{ event.name }}',
-          'timestamp' => (Time.now.utc.to_f * 1000).to_i,
+          'timestamp' => 0,
           'extra' => [
             {% for extra, metadata in event.extra_keys.items() %}
             ['{{ extra }}', {{ extra }}.to_s],

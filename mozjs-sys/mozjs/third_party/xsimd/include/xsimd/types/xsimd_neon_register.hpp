@@ -12,11 +12,17 @@
 #ifndef XSIMD_NEON_REGISTER_HPP
 #define XSIMD_NEON_REGISTER_HPP
 
-#include "xsimd_generic_arch.hpp"
-#include "xsimd_register.hpp"
+#include "../config/xsimd_config.hpp"
+#include "../utils/xsimd_type_traits.hpp"
+#include "./xsimd_common_arch.hpp"
+#include "./xsimd_register.hpp"
 
 #if XSIMD_WITH_NEON
+#if defined(_MSC_VER) && !defined(__clang__) && XSIMD_WITH_NEON64
+#include <arm64_neon.h>
+#else
 #include <arm_neon.h>
+#endif
 #endif
 
 namespace xsimd
@@ -26,7 +32,7 @@ namespace xsimd
      *
      * NEON instructions for arm32
      */
-    struct neon : generic
+    struct neon : common
     {
         static constexpr bool supported() noexcept { return XSIMD_WITH_NEON; }
         static constexpr bool available() noexcept { return true; }
@@ -78,13 +84,13 @@ namespace xsimd
             using unsigned_neon_vector_type = typename neon_vector_type_impl<8 * sizeof(T)>::unsigned_type;
 
             template <class T>
-            using neon_vector_type = typename std::conditional<std::is_signed<T>::value,
-                                                               signed_neon_vector_type<T>,
-                                                               unsigned_neon_vector_type<T>>::type;
+            using neon_vector_type = std::conditional_t<std::is_signed<T>::value,
+                                                        signed_neon_vector_type<T>,
+                                                        unsigned_neon_vector_type<T>>;
 
-            using char_neon_vector_type = typename std::conditional<std::is_signed<char>::value,
-                                                                    signed_neon_vector_type<char>,
-                                                                    unsigned_neon_vector_type<char>>::type;
+            using char_neon_vector_type = std::conditional_t<std::is_signed<char>::value,
+                                                             signed_neon_vector_type<char>,
+                                                             unsigned_neon_vector_type<char>>;
         }
 
         XSIMD_DECLARE_SIMD_REGISTER(signed char, neon, detail::neon_vector_type<signed char>);
@@ -103,40 +109,10 @@ namespace xsimd
 
         namespace detail
         {
-            template <size_t S>
-            struct get_unsigned_type;
-
-            template <>
-            struct get_unsigned_type<1>
-            {
-                using type = uint8_t;
-            };
-
-            template <>
-            struct get_unsigned_type<2>
-            {
-                using type = uint16_t;
-            };
-
-            template <>
-            struct get_unsigned_type<4>
-            {
-                using type = uint32_t;
-            };
-
-            template <>
-            struct get_unsigned_type<8>
-            {
-                using type = uint64_t;
-            };
-
-            template <size_t S>
-            using get_unsigned_type_t = typename get_unsigned_type<S>::type;
-
             template <class T, class A>
             struct neon_bool_simd_register
             {
-                using type = simd_register<get_unsigned_type_t<sizeof(T)>, A>;
+                using type = simd_register<xsimd::sized_uint_t<sizeof(T)>, A>;
             };
         }
 

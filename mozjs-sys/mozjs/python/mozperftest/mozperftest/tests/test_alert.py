@@ -45,9 +45,7 @@ def test_alert_basic_command(alert_json, expected_command):
         "mozperftest.test.alert.requests.get"
     ) as mocked_request, mock.patch(
         "mozperftest.test.alert.mozprocess"
-    ) as mocked_mozprocess, (
-        MOCK_DATA_DIR / alert_json
-    ).open() as f:
+    ) as mocked_mozprocess, (MOCK_DATA_DIR / alert_json).open() as f:
         mocked_response = mock.MagicMock()
         mocked_response.configure_mock(status_code=200)
         mocked_response.json.return_value = json.load(f)
@@ -94,9 +92,7 @@ def test_alert_basic_command_test_specification(alert_json, tests, expected_comm
         "mozperftest.test.alert.requests.get"
     ) as mocked_request, mock.patch(
         "mozperftest.test.alert.mozprocess"
-    ) as mocked_mozprocess, (
-        MOCK_DATA_DIR / alert_json
-    ).open() as f:
+    ) as mocked_mozprocess, (MOCK_DATA_DIR / alert_json).open() as f:
         mocked_response = mock.MagicMock()
         mocked_response.configure_mock(status_code=200)
         mocked_response.json.return_value = json.load(f)
@@ -144,10 +140,6 @@ def test_alert_basic_command_test_specification(alert_json, tests, expected_comm
                     "talos-test",
                     "-a",
                     "canvas2dvideo",
-                    "--setpref",
-                    "webgl.out-of-process=true",
-                    "--setpref",
-                    "security.sandbox.content.headless=true",
                     "--setpref",
                     "media.peerconnection.mtransport_process=false",
                     "--setpref",
@@ -302,9 +294,7 @@ def test_alert_exact_command(
         "mozperftest.test.alert.requests.get"
     ) as mocked_request, mock.patch(
         "mozperftest.test.alert.mozprocess"
-    ) as mocked_mozprocess, (
-        MOCK_DATA_DIR / alert_json
-    ).open() as alert_file, (
+    ) as mocked_mozprocess, (MOCK_DATA_DIR / alert_json).open() as alert_file, (
         MOCK_DATA_DIR / task_info_json
     ).open() as task_file:
         mocked_alert_response = mock.MagicMock()
@@ -341,9 +331,7 @@ def test_alert_basic_command_failed():
         "mozperftest.test.alert.requests.get"
     ) as mocked_request, mock.patch(
         "mozperftest.test.alert.mozprocess"
-    ) as mocked_mozprocess, (
-        MOCK_DATA_DIR / alert_json
-    ).open() as f:
+    ) as mocked_mozprocess, (MOCK_DATA_DIR / alert_json).open() as f:
         mocked_response = mock.MagicMock()
         mocked_response.configure_mock(status_code=200)
         mocked_response.json.return_value = json.load(f)

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -478,6 +476,10 @@ class BoxExceptPolicy final : public TypePolicy {
   }
 };
 
+// Like BoxPolicy, but don't box Object inputs.
+template <unsigned Op>
+using BoxExceptObjectPolicy = BoxExceptPolicy<Op, MIRType::Object>;
+
 // Box if not a typical property id (string, symbol, int32).
 template <unsigned Op>
 class CacheIdPolicy final : public TypePolicy {
@@ -529,6 +531,7 @@ class StoreUnboxedScalarPolicy : public TypePolicy {
 
   friend class StoreDataViewElementPolicy;
   friend class StoreTypedArrayHolePolicy;
+  friend class TypedArrayFillPolicy;
 
  public:
   EMPTY_DATA_;
@@ -547,6 +550,14 @@ class StoreDataViewElementPolicy final : public StoreUnboxedScalarPolicy {
 class StoreTypedArrayHolePolicy final : public StoreUnboxedScalarPolicy {
  public:
   constexpr StoreTypedArrayHolePolicy() = default;
+  EMPTY_DATA_;
+  [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
+                                  MInstruction* ins) const override;
+};
+
+class TypedArrayFillPolicy final : public StoreUnboxedScalarPolicy {
+ public:
+  constexpr TypedArrayFillPolicy() = default;
   EMPTY_DATA_;
   [[nodiscard]] bool adjustInputs(TempAllocator& alloc,
                                   MInstruction* ins) const override;

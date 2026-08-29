@@ -1,0 +1,401 @@
+[
+  {
+    "bugs": {
+      "all_others": [],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1814775,
+          "internal_id": 1814775,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent dom/midi/tests/test_midi_device_sysex.html | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 1,
+    "failure_new_in_rev": false,
+    "line_number": 2545,
+    "path_end": "dom/midi/tests/test_midi_device_sysex.html",
+    "search": "TEST-UNEXPECTED-FAIL | dom/midi/tests/test_midi_device_sysex.html | Test timed out. -",
+    "search_terms": ["test_midi_device_sysex.html"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": 1800035,
+          "id": 1838357,
+          "internal_id": 1958303,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1964589,
+          "internal_id": 1956877,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 137",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1931816,
+          "internal_id": 1931816,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent perftest [taskcluster:error] exit status 1",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1800035,
+          "id": 1839987,
+          "internal_id": 1958686,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent marionette [taskcluster:error] exit status 1",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1825562,
+          "internal_id": 1825562,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 - 1st fxrecord",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1933822,
+          "internal_id": 1933822,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | Error: No objdir path",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1966429,
+          "internal_id": 1959480,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Perma esr115 [taskcluster:error] exit status 1 | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1800035,
+          "id": 1830534,
+          "internal_id": 1958298,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | Assertion failure",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1973629,
+          "id": 1973539,
+          "internal_id": 1961280,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Perma [mozilla-beta] mpu [taskcluster:error] exit status 1 | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1884112,
+          "internal_id": 1957149,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent Marionette [taskcluster:error] exit status 1 | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1888377,
+          "internal_id": 1888377,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent python try [taskcluster:error] exit status 1 | tools/tryselect/test/test_release.py::test_release ERROR",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1905092,
+          "internal_id": 1905092,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Perma [Tier 2] mozlint ERROR at setup of test_lint_codespell_fix[codespell] | [taskcluster:error] exit status 1",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1901903,
+          "internal_id": 1901903,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent py3 try [taskcluster:error] exit status 1 | in log: ModuleNotFoundError: No module named 'appdirs'",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1881423,
+          "internal_id": 1881423,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent python try [taskcluster:error] exit status 1 | tools/tryselect/test/test_scriptworker.py::test_release ERROR",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1962983,
+          "internal_id": 1956575,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 (AssertionError in python/mozperftest/mozperftest/tests/test_shellscript.py)",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1896800,
+          "internal_id": 1896800,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Intermittent [Sel] error: snap \"firefox\" has \"auto-refresh\" change in progress | [taskcluster:error] exit status 10",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1604486,
+          "id": 1619487,
+          "internal_id": 1959650,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | pickle.UnpicklingError: pickle data was truncated after mercurial.error.SignalInterrupt",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1952425,
+          "internal_id": 1952327,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Perma mpu macOS 14.70 [taskcluster:error] exit status 1 | FAILED python/mozperftest/mozperftest/tests/test_shellscript.py::test_shell_script[on_try_setting0]",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1924539,
+          "internal_id": 1924539,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | leakcheck large BackstagePass | comm/mail/test/browser/folder-display/browser.ini",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1857381,
+          "internal_id": 1857381,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent 1st error: a remote error occurred: timed out waiting for CPU and disk to become idle | [taskcluster:error] exit status 1",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1924543,
+          "internal_id": 1924543,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "WORKSFORME",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | PROCESS-CRASH | application crashed [None] | comm/mail/components/addrbook/test/browser/browser_cardDAV_init.js",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1975782,
+          "internal_id": 1962065,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Perma mpu [taskcluster:error] exit status 1 | FAILED python/mozperftest/mozperftest/tests/test_alert.py::test_alert_exact_command[alert-summary-talos.json-task-info-talos.json-expected_commands1-1] | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1973857,
+          "id": 1979505,
+          "internal_id": 1963455,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Perma [Tier 2] mozlint [taskcluster:error] exit status 1 | monkeypatch issues with multiprocessing on Windows | signal.CTRL_C_EVENT isn't causing a KeyboardInterrupt on Windows | single tracking bug",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1912980,
+          "internal_id": 1912980,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent py3 [taskcluster:error] exit status 1 | after tools/tryselect/test/test_release.py::test_release ERROR | ERROR at setup of test_release | FileNotFoundError: [WinError 2] The system cannot find the file specified: 'C:\\\\Users\\\\task_172355900",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1924547,
+          "internal_id": 1924547,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | after OSError: [WinError 145] The directory is not empty: 'C:\\\\Users\\\\task_172867298287704\\\\.mozbuild\\\\srcdirs\\\\src-47516bc87bc0\\\\_virtualenvs\\\\common'",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1896259,
+          "internal_id": 1896259,
+          "keywords": "",
+          "occurrences": null,
+          "resolution": "FIXED",
+          "status": "RESOLVED",
+          "summary": "Perma fxrecord 1st job [taskcluster:error] exit status 1 | after error: A connection attempt failed because the connected party did not properly respond after a period of time or established connection failed because connected host has failed to respond.",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1924489,
+          "internal_id": 1924489,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "INCOMPLETE",
+          "status": "RESOLVED",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | after FileExistsError: [WinError 183] Cannot create a file when that file already exists: 'C:\\\\Users\\\\task_172670864431210\\\\.mozbuild\\\\srcdirs\\\\src-ca673f75774b\\\\_virtualenvs\\\\common' <- check in log",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1891449,
+          "internal_id": 1891449,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent [taskcluster:error] exit status 120",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1965998,
+          "internal_id": 1957150,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Intermittent [taskcluster:error] exit status 1 | single tracking bug",
+          "whiteboard": "[stockwell unknown]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1973857,
+          "internal_id": 1961430,
+          "keywords": "intermittent-failure,regression",
+          "occurrences": null,
+          "resolution": "",
+          "status": "NEW",
+          "summary": "Perma [tier 2] mozlint [taskcluster:error] exit status 1 | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 31054,
+    "failure_new_in_rev": false,
+    "line_number": 5127,
+    "path_end": null,
+    "search": "[taskcluster:error] exit status 1",
+    "search_terms": ["[taskcluster:error] exit status 1"]
+  }
+]

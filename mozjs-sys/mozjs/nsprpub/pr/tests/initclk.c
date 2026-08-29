@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -55,8 +54,8 @@ int main(int argc, char** argv) {
   PR_JoinThread(thread);
   end = PR_IntervalNow();
   elapsed_ms = PR_IntervalToMilliseconds((PRIntervalTime)(end - start));
-  /* Allow 100ms imprecision */
-  if (elapsed_ms < LONG_TIMEOUT - 100 || elapsed_ms > LONG_TIMEOUT + 100) {
+  /* Allow -100ms/+200ms imprecision */
+  if (elapsed_ms < LONG_TIMEOUT - 100 || elapsed_ms > LONG_TIMEOUT + 200) {
     printf("Elapsed time should be %u ms but is %u ms\n", LONG_TIMEOUT,
            elapsed_ms);
     printf("FAIL\n");

@@ -1,17 +1,16 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/RangeAnalysis.h"
 
+#include "mozilla/CheckedArithmetic.h"
 #include "mozilla/MathAlgorithms.h"
 
 #include <algorithm>
+#include <bit>
 
-#include "jsmath.h"
-
+#include "builtin/Math.h"
 #include "jit/CompileInfo.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitSpewer.h"
@@ -21,7 +20,6 @@
 #include "jit/MIRGraph.h"
 #include "js/Conversions.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
-#include "util/CheckedArithmetic.h"
 #include "util/Unicode.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/Float16.h"
@@ -36,7 +34,6 @@ using namespace js::jit;
 using JS::GenericNaN;
 using JS::ToInt32;
 using mozilla::Abs;
-using mozilla::CountLeadingZeroes32;
 using mozilla::ExponentComponent;
 using mozilla::FloorLog2;
 using mozilla::IsNegativeZero;
@@ -120,13 +117,10 @@ static inline void SpewRange(const MDefinition* def) {
 #ifdef JS_JITSPEW
   if (JitSpewEnabled(JitSpew_Range) && def->type() != MIRType::None &&
       def->range()) {
-    JitSpewHeader(JitSpew_Range);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("  ");
-    def->printName(out);
-    out.printf(" has range ");
-    def->range()->dump(out);
-    out.printf("\n");
+    AutoJitSpewMessage msg(JitSpew_Range, "  ");
+    def->printName(msg.printer());
+    msg.append(" has range ");
+    def->range()->dump(msg.printer());
   }
 #endif
 }
@@ -150,13 +144,9 @@ static const char* TruncateKindString(TruncateKind kind) {
 static inline void SpewTruncate(const MDefinition* def, TruncateKind kind,
                                 bool shouldClone) {
   if (JitSpewEnabled(JitSpew_Range)) {
-    JitSpewHeader(JitSpew_Range);
-    Fprinter& out = JitSpewPrinter();
-    out.printf("  ");
-    out.printf("truncating ");
-    def->printName(out);
-    out.printf(" (kind: %s, clone: %d)\n", TruncateKindString(kind),
-               shouldClone);
+    AutoJitSpewMessage msg(JitSpew_Range, "  truncating ");
+    def->printName(msg.printer());
+    msg.append(" (kind: %s, clone: %d)", TruncateKindString(kind), shouldClone);
   }
 }
 #else
@@ -284,7 +274,7 @@ bool RangeAnalysis::addBetaNodes() {
         if (val->type() == MIRType::Int32) {
           int32_t intbound;
           if (NumberEqualsInt32(bound, &intbound) &&
-              SafeSub(intbound, 1, &intbound)) {
+              mozilla::SafeSub(intbound, 1, &intbound)) {
             bound = intbound;
           }
         }
@@ -303,7 +293,7 @@ bool RangeAnalysis::addBetaNodes() {
         if (val->type() == MIRType::Int32) {
           int32_t intbound;
           if (NumberEqualsInt32(bound, &intbound) &&
-              SafeAdd(intbound, 1, &intbound)) {
+              mozilla::SafeAdd(intbound, 1, &intbound)) {
             bound = intbound;
           }
         }
@@ -333,11 +323,9 @@ bool RangeAnalysis::addBetaNodes() {
     }
 
     if (JitSpewEnabled(JitSpew_Range)) {
-      JitSpewHeader(JitSpew_Range);
-      Fprinter& out = JitSpewPrinter();
-      out.printf("  Adding beta node for %u with range ", val->id());
-      comp.dump(out);
-      out.printf("\n");
+      AutoJitSpewMessage msg(
+          JitSpew_Range, "  Adding beta node for %u with range ", val->id());
+      comp.dump(msg.printer());
     }
 
     if (!alloc().ensureBallast()) {
@@ -547,8 +535,12 @@ Range* Range::intersect(TempAllocator& alloc, const Range* lhs,
 
   FractionalPartFlag newCanHaveFractionalPart = FractionalPartFlag(
       lhs->canHaveFractionalPart_ && rhs->canHaveFractionalPart_);
+
+  // As 0.0 == -0.0, the intersection should include negative zero if any of the
+  // operands can be negative zero.
   NegativeZeroFlag newMayIncludeNegativeZero =
-      NegativeZeroFlag(lhs->canBeNegativeZero_ && rhs->canBeNegativeZero_);
+      NegativeZeroFlag((lhs->canBeNegativeZero_ && rhs->canBeZero()) ||
+                       (rhs->canBeNegativeZero_ && lhs->canBeZero()));
 
   uint16_t newExponent = std::min(lhs->max_exponent_, rhs->max_exponent_);
 
@@ -726,21 +718,36 @@ void Range::setDouble(double l, double h) {
   canHaveFractionalPart_ = ExcludesFractionalParts;
   canBeNegativeZero_ = ExcludesNegativeZero;
 
+  // If denormals are disabled, any denormal value will be immediately flushed
+  // to 0, so any bit pattern in the denormal range compares equal to zero.
+  //
+  // Check whether the range [l .. h] can cross any of these zeros. We have to
+  // be conservative as the main thread might not interpret floating point
+  // values the same way as the compiler thread.
+  //
+  // This Range may describe a Float32 value, whose denormal range begins at
+  // the smallest normal binary32 (2**-126) rather than the smallest normal
+  // binary64 (2**-1022). Use the (wider) binary32 threshold so we stay
+  // conservative for both float32 and double values.
+  const double doubleMin = double(mozilla::BitwiseCast<float>(
+      mozilla::SpecificFloatingPointBits<float, 0, 1, 0>::value));
+  bool includesNegative = std::isnan(l) || l < doubleMin;
+  bool includesPositive = std::isnan(h) || h > -doubleMin;
+  bool crossesZero = includesNegative && includesPositive;
+
   // Infer the canHaveFractionalPart_ setting. We can have a
   // fractional part if the range crosses through the neighborhood of zero. We
   // won't have a fractional value if the value is always beyond the point at
   // which double precision can't represent fractional values.
   uint16_t minExp = std::min(lExp, hExp);
-  bool includesNegative = std::isnan(l) || l < 0;
-  bool includesPositive = std::isnan(h) || h > 0;
-  bool crossesZero = includesNegative && includesPositive;
   if (crossesZero || minExp < MaxTruncatableExponent) {
     canHaveFractionalPart_ = IncludesFractionalParts;
   }
 
-  // Infer the canBeNegativeZero_ setting. We can have a negative zero if
-  // either bound is zero.
-  if (!(l > 0) && !(h < 0)) {
+  // Infer a conservative value for canBeNegativeZero_ setting. We can have a
+  // negative zero value if the range crosses through the neighborhood of zero
+  // and the lower bound can have a sign bit.
+  if (crossesZero && (std::isnan(l) || mozilla::IsNegative(l))) {
     canBeNegativeZero_ = IncludesNegativeZero;
   }
 
@@ -749,14 +756,6 @@ void Range::setDouble(double l, double h) {
 
 void Range::setDoubleSingleton(double d) {
   setDouble(d, d);
-
-  // The above setDouble call is for comparisons, and treats negative zero
-  // as equal to zero. We're aiming for a minimum range, so we can clear the
-  // negative zero flag if the value isn't actually negative zero.
-  if (!IsNegativeZero(d)) {
-    canBeNegativeZero_ = ExcludesNegativeZero;
-  }
-
   assertInvariants();
 }
 
@@ -787,12 +786,23 @@ Range* Range::add(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     e = Range::IncludesInfinityAndNaN;
   }
 
-  return new (alloc) Range(
-      l, h,
-      FractionalPartFlag(lhs->canHaveFractionalPart() ||
-                         rhs->canHaveFractionalPart()),
-      NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeNegativeZero()),
-      e);
+  FractionalPartFlag canHaveFractionalPart = FractionalPartFlag(
+      lhs->canHaveFractionalPart() || rhs->canHaveFractionalPart());
+
+  // Handle the case where -0 + -0 == -0.
+  NegativeZeroFlag canBeNegativeZero =
+      NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeNegativeZero());
+
+  // Except for operands which have a fractional part, in the corner case where
+  // denormals are disabled on the execution thread but not on the compiling
+  // thread.
+  //
+  // Example -0 + -1.11e-308 == -0 (denormals disabled)
+  if (l <= 0 && h >= 0 && canHaveFractionalPart) {
+    canBeNegativeZero = IncludesNegativeZero;
+  }
+
+  return new (alloc) Range(l, h, canHaveFractionalPart, canBeNegativeZero, e);
 }
 
 Range* Range::sub(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
@@ -818,11 +828,21 @@ Range* Range::sub(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     e = Range::IncludesInfinityAndNaN;
   }
 
-  return new (alloc)
-      Range(l, h,
-            FractionalPartFlag(lhs->canHaveFractionalPart() ||
-                               rhs->canHaveFractionalPart()),
-            NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeZero()), e);
+  FractionalPartFlag canHaveFractionalPart = FractionalPartFlag(
+      lhs->canHaveFractionalPart() || rhs->canHaveFractionalPart());
+
+  // Handle the case where -0 - 0 == -0.
+  NegativeZeroFlag canBeNegativeZero =
+      NegativeZeroFlag(lhs->canBeNegativeZero() && rhs->canBeZero());
+
+  // Except for operands which have a fractional part, in the corner case where
+  // denormals are disabled on the execution thread but not on the compiling
+  // thread.
+  if (l <= 0 && h >= 0 && canHaveFractionalPart) {
+    canBeNegativeZero = IncludesNegativeZero;
+  }
+
+  return new (alloc) Range(l, h, canHaveFractionalPart, canBeNegativeZero, e);
 }
 
 Range* Range::and_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
@@ -858,9 +878,8 @@ Range* Range::or_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
   MOZ_ASSERT(lhs->isInt32());
   MOZ_ASSERT(rhs->isInt32());
   // When one operand is always 0 or always -1, it's a special case where we
-  // can compute a fully precise result. Handling these up front also
-  // protects the code below from calling CountLeadingZeroes32 with a zero
-  // operand or from shifting an int32_t by 32.
+  // can compute a fully precise result. Handling these up front also protects
+  // the code below from shifting an int32_t by 32.
   if (lhs->lower() == lhs->upper()) {
     if (lhs->lower() == 0) {
       return new (alloc) Range(*rhs);
@@ -878,8 +897,8 @@ Range* Range::or_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     }
   }
 
-  // The code below uses CountLeadingZeroes32, which has undefined behavior
-  // if its operand is 0. We rely on the code above to protect it.
+  // The code below uses std::countl_zero, which returns 32 if its operand is 0.
+  // We rely on the code above to protect it.
   MOZ_ASSERT_IF(lhs->lower() >= 0, lhs->upper() != 0);
   MOZ_ASSERT_IF(rhs->lower() >= 0, rhs->upper() != 0);
   MOZ_ASSERT_IF(lhs->upper() < 0, lhs->lower() != -1);
@@ -892,19 +911,20 @@ Range* Range::or_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     // Both operands are non-negative, so the result won't be less than either.
     lower = std::max(lhs->lower(), rhs->lower());
     // The result will have leading zeros where both operands have leading
-    // zeros. CountLeadingZeroes32 of a non-negative int32 will at least be 1 to
+    // zeros. std::countl_zero of a non-negative int32 will at least be 1 to
     // account for the bit of sign.
-    upper = int32_t(UINT32_MAX >> std::min(CountLeadingZeroes32(lhs->upper()),
-                                           CountLeadingZeroes32(rhs->upper())));
+    upper = int32_t(UINT32_MAX >>
+                    std::min(std::countl_zero(uint32_t(lhs->upper())),
+                             std::countl_zero(uint32_t(rhs->upper()))));
   } else {
     // The result will have leading ones where either operand has leading ones.
     if (lhs->upper() < 0) {
-      unsigned leadingOnes = CountLeadingZeroes32(~lhs->lower());
+      unsigned leadingOnes = std::countl_one(uint32_t(lhs->lower()));
       lower = std::max(lower, ~int32_t(UINT32_MAX >> leadingOnes));
       upper = -1;
     }
     if (rhs->upper() < 0) {
-      unsigned leadingOnes = CountLeadingZeroes32(~rhs->lower());
+      unsigned leadingOnes = std::countl_one(uint32_t(rhs->lower()));
       lower = std::max(lower, ~int32_t(UINT32_MAX >> leadingOnes));
       upper = -1;
     }
@@ -941,8 +961,8 @@ Range* Range::xor_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
 
   // Handle cases where lhs or rhs is always zero specially, because they're
   // easy cases where we can be perfectly precise, and because it protects the
-  // CountLeadingZeroes32 calls below from seeing 0 operands, which would be
-  // undefined behavior.
+  // std::countl_zero calls below from returning 32, which would be undefined
+  // behavior when used as the shift amount.
   int32_t lower = INT32_MIN;
   int32_t upper = INT32_MAX;
   if (lhsLower == 0 && lhsUpper == 0) {
@@ -958,8 +978,8 @@ Range* Range::xor_(TempAllocator& alloc, const Range* lhs, const Range* rhs) {
     // set all bits that don't correspond to leading zero bits in the
     // other to one. For each one, this gives an upper bound for the
     // result, so we can take the minimum between the two.
-    unsigned lhsLeadingZeros = CountLeadingZeroes32(lhsUpper);
-    unsigned rhsLeadingZeros = CountLeadingZeroes32(rhsUpper);
+    unsigned lhsLeadingZeros = std::countl_zero(uint32_t(lhsUpper));
+    unsigned rhsLeadingZeros = std::countl_zero(uint32_t(rhsUpper));
     upper = std::min(rhsUpper | int32_t(UINT32_MAX >> lhsLeadingZeros),
                      lhsUpper | int32_t(UINT32_MAX >> rhsLeadingZeros));
   }
@@ -1809,13 +1829,6 @@ void MArrayBufferViewByteOffset::computeRange(TempAllocator& alloc) {
   }
 }
 
-void MResizableTypedArrayByteOffsetMaybeOutOfBounds::computeRange(
-    TempAllocator& alloc) {
-  if constexpr (ArrayBufferObject::ByteLengthLimit <= INT32_MAX) {
-    setRange(Range::NewUInt32Range(alloc, 0, INT32_MAX));
-  }
-}
-
 void MResizableTypedArrayLength::computeRange(TempAllocator& alloc) {
   if constexpr (ArrayBufferObject::ByteLengthLimit <= INT32_MAX) {
     setRange(Range::NewUInt32Range(alloc, 0, INT32_MAX));
@@ -2080,7 +2093,7 @@ LoopIterationBound* RangeAnalysis::analyzeLoopIterationCount(
     MDefinition* temp = lhs.term;
     lhs.term = rhs;
     rhs = temp;
-    if (!SafeSub(0, lhs.constant, &lhs.constant)) {
+    if (!mozilla::SafeSub(0, lhs.constant, &lhs.constant)) {
       return nullptr;
     }
     lessEqual = !lessEqual;
@@ -2161,7 +2174,7 @@ LoopIterationBound* RangeAnalysis::analyzeLoopIterationCount(
     }
 
     int32_t lhsConstant;
-    if (!SafeSub(0, lhs.constant, &lhsConstant)) {
+    if (!mozilla::SafeSub(0, lhs.constant, &lhsConstant)) {
       return nullptr;
     }
     if (!iterationBound.add(lhsConstant)) {
@@ -2246,7 +2259,7 @@ void RangeAnalysis::analyzeLoopPhi(const LoopIterationBound* loopBound,
   }
 
   int32_t negativeConstant;
-  if (!SafeSub(0, modified.constant, &negativeConstant) ||
+  if (!mozilla::SafeSub(0, modified.constant, &negativeConstant) ||
       !limitSum.add(negativeConstant)) {
     return;
   }
@@ -2344,10 +2357,10 @@ bool RangeAnalysis::tryHoistBoundsCheck(const MBasicBlock* header,
   // lowerTerm >= -lowerConstant - indexConstant
 
   int32_t lowerConstant = 0;
-  if (!SafeSub(lowerConstant, index.constant, &lowerConstant)) {
+  if (!mozilla::SafeSub(lowerConstant, index.constant, &lowerConstant)) {
     return false;
   }
-  if (!SafeSub(lowerConstant, lower->sum.constant(), &lowerConstant)) {
+  if (!mozilla::SafeSub(lowerConstant, lower->sum.constant(), &lowerConstant)) {
     return false;
   }
 
@@ -2357,7 +2370,7 @@ bool RangeAnalysis::tryHoistBoundsCheck(const MBasicBlock* header,
   // upperTerm + upperConstant < boundsLength
 
   int32_t upperConstant = index.constant;
-  if (!SafeAdd(upper->sum.constant(), upperConstant, &upperConstant)) {
+  if (!mozilla::SafeAdd(upper->sum.constant(), upperConstant, &upperConstant)) {
     return false;
   }
 
@@ -2494,15 +2507,17 @@ bool RangeAnalysis::addRangeAssertions() {
 
       // Perform range checking for all numeric and numeric-like types.
       if (!IsNumberType(ins->type()) && ins->type() != MIRType::Boolean &&
-          ins->type() != MIRType::Value && ins->type() != MIRType::IntPtr) {
+          ins->type() != MIRType::Value) {
         continue;
       }
 
       // MIsNoIter is fused with the MTest that follows it and emitted as
       // LIsNoIterAndBranch. Similarly, MIteratorHasIndices is fused to
-      // become LIteratorHasIndicesAndBranch. Skip them to avoid complicating
-      // lowering.
-      if (ins->isIsNoIter() || ins->isIteratorHasIndices()) {
+      // become LIteratorHasIndicesAndBranch and IteratorsMatchAndHaveIndices
+      // becomes LIteratorsMatchAndHaveIndicesAndBranch. Skip them to avoid
+      // complicating lowering.
+      if (ins->isIsNoIter() || ins->isIteratorHasIndices() ||
+          ins->isIteratorsMatchAndHaveIndices()) {
         MOZ_ASSERT(ins->hasOneUse());
         continue;
       }
@@ -2839,6 +2854,12 @@ TruncateKind MStoreTypedArrayElementHole::operandTruncateKind(
                                           : TruncateKind::NoTruncate;
 }
 
+TruncateKind MTypedArrayFill::operandTruncateKind(size_t index) const {
+  // An integer store truncates the stored value.
+  return (index == 1 && isIntegerWrite()) ? TruncateKind::Truncate
+                                          : TruncateKind::NoTruncate;
+}
+
 TruncateKind MDiv::operandTruncateKind(size_t index) const {
   return std::min(truncateKind(), TruncateKind::TruncateAfterBailouts);
 }
@@ -3106,7 +3127,7 @@ static void RemoveTruncatesOnOutput(MDefinition* truncated) {
 
   for (MUseDefIterator use(truncated); use; use++) {
     MDefinition* def = use.def();
-    if (!def->isTruncateToInt32() || !def->isToNumberInt32()) {
+    if (!def->isTruncateToInt32() && !def->isToNumberInt32()) {
       continue;
     }
 
@@ -3564,7 +3585,7 @@ static bool DoesMaskMatchRange(int32_t mask, const Range& range) {
     // Note that the upper bound does not have to be exactly the mask value. For
     // example, consider `x & 0xfff` where `x` is a uint8. That expression can
     // still be optimized to `x`.
-    int bits = 1 + FloorLog2(range.upper());
+    int bits = 1 + FloorLog2(uint32_t(range.upper()));
     uint32_t maskNeeded = (bits == 32) ? 0xffffffff : (uint32_t(1) << bits) - 1;
     if ((mask & maskNeeded) == maskNeeded) {
       return true;

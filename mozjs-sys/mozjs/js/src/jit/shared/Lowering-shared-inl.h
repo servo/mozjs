@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -54,7 +52,7 @@ void LIRGeneratorShared::define(
   lir->getDef(0)->setVirtualRegister(vreg);
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t X, size_t Y>
@@ -95,7 +93,7 @@ void LIRGeneratorShared::defineInt64Fixed(
 
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Ops, size_t Temps>
@@ -149,7 +147,7 @@ void LIRGeneratorShared::defineInt64ReuseInput(
 
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Ops, size_t Temps>
@@ -191,7 +189,7 @@ void LIRGeneratorShared::defineBoxReuseInput(
 
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Temps>
@@ -216,7 +214,7 @@ void LIRGeneratorShared::defineBox(
   lir->setMir(mir);
 
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Ops, size_t Temps>
@@ -246,7 +244,7 @@ void LIRGeneratorShared::defineInt64(
   lir->setMir(mir);
 
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 void LIRGeneratorShared::defineReturn(LInstruction* lir, MDefinition* mir) {
@@ -323,7 +321,7 @@ void LIRGeneratorShared::defineReturn(LInstruction* lir, MDefinition* mir) {
   }
 
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 #ifdef DEBUG
@@ -376,10 +374,10 @@ void LIRGeneratorShared::redefine(MDefinition* def, MDefinition* as) {
     if (def->type() != as->type()) {
       if (as->type() == MIRType::Int32) {
         replacement =
-            MConstant::New(alloc(), BooleanValue(as->toConstant()->toInt32()));
+            MConstant::NewBoolean(alloc(), as->toConstant()->toInt32());
       } else {
         replacement =
-            MConstant::New(alloc(), Int32Value(as->toConstant()->toBoolean()));
+            MConstant::NewInt32(alloc(), as->toConstant()->toBoolean());
       }
       def->block()->insertBefore(def->toInstruction(), replacement);
       emitAtUses(replacement->toInstruction());
@@ -611,6 +609,16 @@ LInt64Definition LIRGeneratorShared::tempInt64(LDefinition::Policy policy) {
 #endif
 }
 
+LBoxDefinition LIRGeneratorShared::tempBox() {
+#ifdef JS_NUNBOX32
+  LDefinition type = temp(LDefinition::GENERAL);
+  LDefinition payload = temp(LDefinition::GENERAL);
+  return LBoxDefinition(type, payload);
+#else
+  return LBoxDefinition(temp(LDefinition::GENERAL));
+#endif
+}
+
 LDefinition LIRGeneratorShared::tempFixed(Register reg) {
   LDefinition t = temp(LDefinition::GENERAL);
   t.setOutput(LGeneralReg(reg));
@@ -660,13 +668,11 @@ LDefinition LIRGeneratorShared::tempCopy(MDefinition* input,
   return t;
 }
 
-template <typename T>
-void LIRGeneratorShared::annotate(T* ins) {
+void LIRGeneratorShared::annotate(LNode* ins) {
   ins->setId(lirGraph_.getInstructionId());
 }
 
-template <typename T>
-void LIRGeneratorShared::add(T* ins, MInstruction* mir) {
+void LIRGeneratorShared::addUnchecked(LInstruction* ins, MInstruction* mir) {
   MOZ_ASSERT(!ins->isPhi());
   current->add(ins);
   if (mir) {

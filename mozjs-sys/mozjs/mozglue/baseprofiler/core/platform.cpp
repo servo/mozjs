@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -31,23 +29,23 @@
 #include <algorithm>
 #include <errno.h>
 #include <fstream>
-#include <ostream>
 #include <set>
-#include <sstream>
 #include <string_view>
 
 // #include "memory_hooks.h"
-#include "mozilla/ArrayUtils.h"
-#include "mozilla/AutoProfilerLabel.h"
 #include "mozilla/BaseAndGeckoProfilerDetail.h"
+#include "mozilla/BaseProfiler.h"
 #include "mozilla/BaseProfilerDetail.h"
+#include "mozilla/BaseProfilingCategory.h"
 #include "mozilla/DoubleConversion.h"
+#include "mozilla/PodOperations.h"
 #include "mozilla/Printf.h"
-#include "mozilla/ProfilerBufferSize.h"
 #include "mozilla/ProfileBufferChunkManagerSingle.h"
 #include "mozilla/ProfileBufferChunkManagerWithLocalLimit.h"
 #include "mozilla/ProfileChunkedBuffer.h"
+#include "mozilla/ProfilerBufferSize.h"
 #include "mozilla/Services.h"
+#include "mozilla/SharedLibraries.h"
 #include "mozilla/Span.h"
 #include "mozilla/StackWalk.h"
 #ifdef XP_WIN
@@ -63,14 +61,11 @@
 #include "prdtoa.h"
 #include "prtime.h"
 
-#include "BaseProfiler.h"
-#include "BaseProfilingCategory.h"
 #include "PageInformation.h"
 #include "ProfiledThreadData.h"
 #include "ProfilerBacktrace.h"
 #include "ProfileBuffer.h"
 #include "RegisteredThread.h"
-#include "SharedLibraries.h"
 #include "ThreadInfo.h"
 #include "VTuneProfiler.h"
 
@@ -119,6 +114,7 @@
 #endif
 
 #if defined(GP_OS_linux) || defined(GP_OS_android) || defined(GP_OS_freebsd)
+#  include <signal.h>
 #  include <ucontext.h>
 #endif
 
@@ -290,7 +286,7 @@ class CorePS {
  private:
   CorePS() : mProcessStartTime(TimeStamp::ProcessCreation()) {}
 
-  ~CorePS() {}
+  ~CorePS() = default;
 
  public:
   static void Create(PSLockRef aLock) {
@@ -1150,56 +1146,36 @@ static const char* const kMainThreadName = "GeckoMain";
 // The ctor does nothing; users are responsible for filling in the fields.
 class Registers {
  public:
-  Registers()
-      : mPC{nullptr},
-        mSP{nullptr},
-        mFP{nullptr}
-#if defined(UNWINDING_REGS_HAVE_ECX_EDX)
-        ,
-        mEcx{nullptr},
-        mEdx{nullptr}
-#elif defined(UNWINDING_REGS_HAVE_R10_R12)
-        ,
-        mR10{nullptr},
-        mR12{nullptr}
-#elif defined(UNWINDING_REGS_HAVE_LR_R7)
-        ,
-        mLR{nullptr},
-        mR7{nullptr}
-#elif defined(UNWINDING_REGS_HAVE_LR_R11)
-        ,
-        mLR{nullptr},
-        mR11{nullptr}
-#endif
-  {
-  }
+  Registers() = default;
 
   void Clear() { memset(this, 0, sizeof(*this)); }
 
   // These fields are filled in by
   // Sampler::SuspendAndSampleAndResumeThread() for periodic and backtrace
   // samples, and by REGISTERS_SYNC_POPULATE for synchronous samples.
-  Address mPC;  // Instruction pointer.
-  Address mSP;  // Stack pointer.
-  Address mFP;  // Frame pointer.
+  Address mPC{nullptr};  // Instruction pointer.
+  Address mSP{nullptr};  // Stack pointer.
+  Address mFP{nullptr};  // Frame pointer.
 #if defined(UNWINDING_REGS_HAVE_ECX_EDX)
-  Address mEcx;  // Temp for return address.
-  Address mEdx;  // Temp for frame pointer.
+  Address mEcx{nullptr};  // Temp for return address.
+  Address mEdx{nullptr};  // Temp for frame pointer.
 #elif defined(UNWINDING_REGS_HAVE_R10_R12)
-  Address mR10;  // Temp for return address.
-  Address mR12;  // Temp for frame pointer.
+  Address mR10{nullptr};  // Temp for return address.
+  Address mR12{nullptr};  // Temp for frame pointer.
 #elif defined(UNWINDING_REGS_HAVE_LR_R7)
-  Address mLR;  // ARM link register, or temp for return address.
-  Address mR7;  // Temp for frame pointer.
+  Address mLR{nullptr};  // ARM link register, or temp for return address.
+  Address mR7{nullptr};  // Temp for frame pointer.
 #elif defined(UNWINDING_REGS_HAVE_LR_R11)
-  Address mLR;   // ARM link register, or temp for return address.
-  Address mR11;  // Temp for frame pointer.
+  Address mLR{nullptr};   // ARM link register, or temp for return address.
+  Address mR11{nullptr};  // Temp for frame pointer.
 #endif
 
 #if defined(GP_OS_linux) || defined(GP_OS_android) || defined(GP_OS_freebsd)
   // This contains all the registers, which means it duplicates the four fields
   // above. This is ok.
-  ucontext_t* mContext;  // The context from the signal handler.
+
+  // The context from the signal handler.
+  ucontext_t* mContext{nullptr};
 #endif
 };
 
@@ -1618,10 +1594,9 @@ static void MaybeWriteRawStartTimeValue(SpliceableJSONWriter& aWriter,
 #endif
 
 #ifdef XP_WIN
-  Maybe<uint64_t> startTimeQPC = aStartTime.RawQueryPerformanceCounterValue();
-  if (startTimeQPC)
-    aWriter.DoubleProperty("startTimeAsQueryPerformanceCounterValue",
-                           static_cast<double>(*startTimeQPC));
+  uint64_t startTimeQPC = aStartTime.RawQueryPerformanceCounterValue();
+  aWriter.DoubleProperty("startTimeAsQueryPerformanceCounterValue",
+                         static_cast<double>(startTimeQPC));
 #endif
 }
 
@@ -2029,6 +2004,9 @@ class SamplerThread {
   // This runs on the main thread.
   void Stop(PSLockRef aLock);
 
+  SamplerThread(const SamplerThread&) = delete;
+  void operator=(const SamplerThread&) = delete;
+
  private:
   // This suspends the calling thread for the given number of microseconds.
   // Best effort timing.
@@ -2053,10 +2031,8 @@ class SamplerThread {
 
 #if defined(GP_OS_windows)
   bool mNoTimerResolutionChange = true;
+  HANDLE mHiResTimer;
 #endif
-
-  SamplerThread(const SamplerThread&) = delete;
-  void operator=(const SamplerThread&) = delete;
 };
 
 // This function is required because we need to create a SamplerThread within
@@ -2275,7 +2251,7 @@ void SamplerThread::Run() {
 #elif defined(GP_OS_linux) || defined(GP_OS_android) || defined(GP_OS_freebsd)
 #  include "platform-linux-android.cpp"
 #else
-#  error "bad platform"
+#  include "platform-noop.cpp"
 #endif
 
 namespace mozilla {
@@ -2451,7 +2427,7 @@ void profiler_init(void* aStackTop) {
     // indicates that the profiler has initialized successfully.
     CorePS::Create(lock);
 
-    Unused << locked_register_thread(lock, kMainThreadName, aStackTop);
+    (void)locked_register_thread(lock, kMainThreadName, aStackTop);
 
     // Platform-specific initialization.
     PlatformInit(lock);
@@ -2866,24 +2842,6 @@ Maybe<ProfilerBufferInfo> profiler_get_buffer_info() {
   return Some(ActivePS::Buffer(lock).GetProfilerBufferInfo());
 }
 
-// This basically duplicates AutoProfilerLabel's constructor.
-static void* MozGlueBaseLabelEnter(const char* aLabel,
-                                   const char* aDynamicString, void* aSp) {
-  ProfilingStack* profilingStack = AutoProfilerLabel::sProfilingStack.get();
-  if (profilingStack) {
-    profilingStack->pushLabelFrame(aLabel, aDynamicString, aSp,
-                                   ProfilingCategoryPair::OTHER);
-  }
-  return profilingStack;
-}
-
-// This basically duplicates AutoProfilerLabel's destructor.
-static void MozGlueBaseLabelExit(void* sProfilingStack) {
-  if (sProfilingStack) {
-    reinterpret_cast<ProfilingStack*>(sProfilingStack)->pop();
-  }
-}
-
 static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
                                   double aInterval, uint32_t aFeatures,
                                   const char** aFilters, uint32_t aFilterCount,
@@ -2949,9 +2907,6 @@ static void locked_profiler_start(PSLockRef aLock, PowerOfTwo32 aCapacity,
       registeredThread->RacyRegisteredThread().ReinitializeOnResume();
     }
   }
-
-  // Setup support for pushing/popping labels in mozglue.
-  RegisterProfilerLabelEnterExit(MozGlueBaseLabelEnter, MozGlueBaseLabelExit);
 
   // At the very end, set up RacyFeatures.
   RacyFeatures::SetActive(ActivePS::Features(aLock));
@@ -3056,9 +3011,6 @@ void profiler_ensure_started(PowerOfTwo32 aCapacity, double aInterval,
   // #if defined(MOZ_REPLACE_MALLOC) && defined(MOZ_PROFILER_MEMORY)
   //   mozilla::profiler::install_memory_counter(false);
   // #endif
-
-  // Remove support for pushing/popping labels in mozglue.
-  RegisterProfilerLabelEnterExit(nullptr, nullptr);
 
   // Stop sampling live threads.
   const Vector<LiveProfiledThreadData>& liveProfiledThreads =
@@ -3208,8 +3160,6 @@ void profiler_resume_sampling() {
 
 bool profiler_feature_active(uint32_t aFeature) {
   // This function runs both on and off the main thread.
-
-  MOZ_RELEASE_ASSERT(CorePS::Exists());
 
   // This function is hot enough that we use RacyFeatures, not ActivePS.
   return RacyFeatures::IsActiveWithFeature(aFeature);

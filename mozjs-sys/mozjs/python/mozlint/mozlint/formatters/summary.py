@@ -12,7 +12,7 @@ from ..util.string import pluralize
 
 class SummaryFormatter:
     def __init__(self, depth=None):
-        self.depth = depth or int(os.environ.get("MOZLINT_SUMMARY_DEPTH", 1))
+        self.depth = depth or int(os.environ.get("MOZLINT_SUMMARY_DEPTH", "1"))
 
     def __call__(self, result):
         paths = set(
@@ -33,12 +33,12 @@ class SummaryFormatter:
                 ]
                 abspath = mozpath.join(commonprefix, *parts)
 
-            summary[abspath][0] += len(
-                [r for r in result.issues[path] if r.level == "error"]
-            )
-            summary[abspath][1] += len(
-                [r for r in result.issues[path] if r.level == "warning"]
-            )
+            summary[abspath][0] += len([
+                r for r in result.issues[path] if r.level == "error"
+            ])
+            summary[abspath][1] += len([
+                r for r in result.issues[path] if r.level == "warning"
+            ])
             summary[abspath][1] += result.suppressed_warnings[path]
 
         msg = []

@@ -59,7 +59,7 @@ def log_copy_result(log, elapsed, destdir, result):
 _MSIX_ARCH = {"x86": "x86", "x86_64": "x64", "aarch64": "arm64"}
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def sdk_tool_search_path():
     from mozbuild.configure import ConfigureSandbox
 
@@ -411,7 +411,7 @@ def repackage_msix(
 
     first = next(values)
     if not displayname:
-        displayname = f"Mozilla {first}"
+        displayname = first
 
         # Release (official) and Beta share branding.  Differentiate Beta a little bit.
         if channel == "beta":
@@ -657,9 +657,9 @@ def repackage_msix(
 
     # Windows MSIX packages support a finite set of locales: see
     # https://docs.microsoft.com/en-us/windows/uwp/publish/supported-languages, which is encoded in
-    # https://searchfox.org/mozilla-central/source/browser/installer/windows/msix/msix-all-locales.
+    # https://searchfox.org/firefox-main/source/browser/installer/windows/msix/msix-all-locales.
     # We distribute all of the langpacks supported by the release channel in our MSIX, which is
-    # encoded in https://searchfox.org/mozilla-central/source/browser/locales/all-locales.  But we
+    # encoded in https://searchfox.org/firefox-main/source/browser/locales/all-locales.  But we
     # only advertise support in the App manifest for the intersection of that set and the set of
     # supported locales.
     #
@@ -737,9 +737,7 @@ def repackage_msix(
     if not makeappx:
         makeappx = find_sdk_tool("makeappx.exe", log=log)
     if not makeappx:
-        raise ValueError(
-            "makeappx is required; " "set MAKEAPPX or WINDOWSSDKDIR or PATH"
-        )
+        raise ValueError("makeappx is required; set MAKEAPPX or WINDOWSSDKDIR or PATH")
 
     # `makeappx.exe` supports both slash and hyphen style arguments; `makemsix`
     # supports only hyphen style.  `makeappx.exe` allows to overwrite and to
@@ -776,7 +774,7 @@ def repackage_msix(
 def _sign_msix_win(output, force, log, verbose):
     powershell_exe = find_sdk_tool("powershell.exe", log=log)
     if not powershell_exe:
-        raise ValueError("powershell is required; " "set POWERSHELL or PATH")
+        raise ValueError("powershell is required; set POWERSHELL or PATH")
 
     def powershell(argstring, check=True):
         "Invoke `powershell.exe`.  Arguments are given as a string to allow consumer to quote."
@@ -789,9 +787,7 @@ def _sign_msix_win(output, force, log, verbose):
 
     signtool = find_sdk_tool("signtool.exe", log=log)
     if not signtool:
-        raise ValueError(
-            "signtool is required; " "set SIGNTOOL or WINDOWSSDKDIR or PATH"
-        )
+        raise ValueError("signtool is required; set SIGNTOOL or WINDOWSSDKDIR or PATH")
 
     # Our first order of business is to find, or generate, a (self-signed)
     # certificate.
@@ -979,16 +975,16 @@ def _sign_msix_posix(output, force, log, verbose):
     makeappx = find_sdk_tool("makeappx", log=log)
 
     if not makeappx:
-        raise ValueError("makeappx is required; " "set MAKEAPPX or PATH")
+        raise ValueError("makeappx is required; set MAKEAPPX or PATH")
 
     openssl = find_sdk_tool("openssl", log=log)
 
     if not openssl:
-        raise ValueError("openssl is required; " "set OPENSSL or PATH")
+        raise ValueError("openssl is required; set OPENSSL or PATH")
 
-    if "sign" not in subprocess.run(makeappx, capture_output=True).stdout.decode(
-        "utf-8"
-    ):
+    if "sign" not in subprocess.run(
+        makeappx, check=False, capture_output=True
+    ).stdout.decode("utf-8"):
         raise ValueError(
             "makeappx must support 'sign' operation. ",
             "You probably need to build Mozilla's version of it: ",

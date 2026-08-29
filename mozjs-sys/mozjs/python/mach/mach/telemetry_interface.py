@@ -55,6 +55,7 @@ class GleanTelemetry:
         self,
         upload_enabled: bool,
         data_dir: Path,
+        configuration=None,
     ):
         from glean import Glean, load_pings
 
@@ -68,6 +69,7 @@ class GleanTelemetry:
             application_version="Unknown",
             upload_enabled=upload_enabled,
             data_dir=data_dir,
+            configuration=configuration,
         )
 
     def metrics(self, metrics_path: Union[str, Path]):

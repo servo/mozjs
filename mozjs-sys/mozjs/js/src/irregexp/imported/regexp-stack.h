@@ -9,34 +9,39 @@
 
 namespace v8 {
 namespace internal {
+namespace regexp {
 
-class RegExpStack;
+class Stack;
 
 // Maintains a per-v8thread stack area that can be used by irregexp
 // implementation for its backtracking stack.
-class V8_NODISCARD RegExpStackScope final {
+class V8_NODISCARD StackScope final {
  public:
   // Create and delete an instance to control the life-time of a growing stack.
 
   // Initializes the stack memory area if necessary.
-  explicit RegExpStackScope(Isolate* isolate);
-  ~RegExpStackScope();  // Releases the stack if it has grown.
-  RegExpStackScope(const RegExpStackScope&) = delete;
-  RegExpStackScope& operator=(const RegExpStackScope&) = delete;
+  explicit StackScope(Isolate* isolate);
+  ~StackScope();  // Releases the stack if it has grown.
+  StackScope(const StackScope&) = delete;
+  StackScope& operator=(const StackScope&) = delete;
 
-  RegExpStack* stack() const { return regexp_stack_; }
+  Stack* stack() const { return regexp_stack_; }
 
  private:
-  RegExpStack* const regexp_stack_;
+  Stack* const regexp_stack_;
   const ptrdiff_t old_sp_top_delta_;
 };
 
-class RegExpStack final {
+// TODO(426514762): Currently this entire object is sandbox-accessible as some
+// fields of it are being written to. This is unsafe though and we'll need to
+// fix this. See the addition TODOs related to https://crbug.com/426514762.
+class Stack final {
  public:
-  RegExpStack();
-  ~RegExpStack();
-  RegExpStack(const RegExpStack&) = delete;
-  RegExpStack& operator=(const RegExpStack&) = delete;
+  Stack(const Stack&) = delete;
+  Stack& operator=(const Stack&) = delete;
+
+  static Stack* New();
+  static void Delete(Stack* instance);
 
 #if defined(V8_TARGET_ARCH_PPC64) || defined(V8_TARGET_ARCH_S390X)
   static constexpr int kSlotSize = kSystemPointerSize;
@@ -75,7 +80,7 @@ class RegExpStack final {
 
   // Ensures that there is a memory area with at least the specified size.
   // If passing zero, the default/minimum size buffer is allocated.
-  Address EnsureCapacity(size_t size);
+  V8_EXPORT_PRIVATE Address EnsureCapacity(size_t size);
 
   // Thread local archiving.
   static constexpr int ArchiveSpacePerThread() {
@@ -87,6 +92,9 @@ class RegExpStack final {
 
   // Maximal size of allocated stack area.
   static constexpr size_t kMaximumStackSize = 64 * MB;
+
+  Stack();
+  ~Stack();
 
  private:
   // Artificial limit used when the thread-local state has been destroyed.
@@ -103,6 +111,9 @@ class RegExpStack final {
   // called.
   static_assert(kStaticStackSize >= 2 * kStackLimitSlackSize);
   static_assert(kStaticStackSize <= kMaximumStackSize);
+  // TODO(426514762): this buffer is being written to from generated code.
+  // We could probably just allocate dedicated OS pages for it like we do for
+  // dynamically-sized stack buffers though (see EnsureCapacity).
   uint8_t static_stack_[kStaticStackSize] = {0};
 
   // Minimal size of dynamically-allocated stack area.
@@ -112,7 +123,7 @@ class RegExpStack final {
   // Structure holding the allocated memory, size and limit. Thread switching
   // archives and restores this struct.
   struct ThreadLocal {
-    explicit ThreadLocal(RegExpStack* regexp_stack) {
+    explicit ThreadLocal(Stack* regexp_stack) {
       ResetToStaticStack(regexp_stack);
     }
 
@@ -123,15 +134,23 @@ class RegExpStack final {
     uint8_t* memory_ = nullptr;
     uint8_t* memory_top_ = nullptr;
     size_t memory_size_ = 0;
+    // TODO(426514762): this field is currently written to from generated code.
+    // Either we find a way to avoid that, or we have to move this field to
+    // it's own sandbox-accessible memory page.
     uint8_t* stack_pointer_ = nullptr;
     Address limit_ = kNullAddress;
     bool owns_memory_ = false;  // Whether memory_ is owned and must be freed.
 
-    void ResetToStaticStack(RegExpStack* regexp_stack);
-    void ResetToStaticStackIfEmpty(RegExpStack* regexp_stack) {
+    void ResetToStaticStack(Stack* regexp_stack);
+    void ResetToStaticStackIfEmpty(Stack* regexp_stack) {
       if (stack_pointer_ == memory_top_) ResetToStaticStack(regexp_stack);
     }
     void FreeAndInvalidate();
+
+    // Allocates and returns new memory for a dynamic stack.
+    static uint8_t* NewDynamicStack(size_t size);
+    // If a dynamic stack is used, delete its memory.
+    void DeleteDynamicStack();
   };
   static constexpr size_t kThreadLocalSize = sizeof(ThreadLocal);
 
@@ -161,10 +180,11 @@ class RegExpStack final {
 
   ThreadLocal thread_local_;
 
-  friend class ExternalReference;
-  friend class RegExpStackScope;
+  friend class internal::ExternalReference;
+  friend class StackScope;
 };
 
+}  // namespace regexp
 }  // namespace internal
 }  // namespace v8
 

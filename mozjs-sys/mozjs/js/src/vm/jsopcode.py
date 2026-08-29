@@ -149,12 +149,12 @@ def find_by_name(list, name):
 def add_to_index(index, opcode):
     types = find_by_name(index, opcode.category_name)
     if types is None:
-        raise Exception("Category is not listed in index: " f"{opcode.category_name}")
+        raise Exception(f"Category is not listed in index: {opcode.category_name}")
     opcodes = find_by_name(types, opcode.type_name)
     if opcodes is None:
         if opcode.type_name:
             raise Exception(
-                f"Type is not listed in {opcode.category_name}: " f"{opcode.type_name}"
+                f"Type is not listed in {opcode.category_name}: {opcode.type_name}"
             )
         types.append((opcode.type_name, [opcode]))
         return
@@ -302,7 +302,7 @@ def get_opcodes(dir):
 
                 opcode.sort_key = opcode.op
                 if opcode.category_name == "":
-                    raise Exception("Category is not specified for " f"{opcode.op}")
+                    raise Exception(f"Category is not specified for {opcode.op}")
                 add_to_index(index, opcode)
             else:
                 if group_head.length != opcode.length:
@@ -341,13 +341,13 @@ def get_opcodes(dir):
             stack_nuses = get_stack_count(opcode.stack_uses)
             stack_ndefs = get_stack_count(opcode.stack_defs)
 
-            if nuses != -1 and stack_nuses != -1 and nuses != stack_nuses:
+            if (nuses != -1 and stack_nuses != -1) and nuses != stack_nuses:
                 raise Exception(
                     f"nuses should match stack notation: {op}: "
                     f"{nuses} != {stack_nuses} "
                     "(stack_nuses)"
                 )
-            if ndefs != -1 and stack_ndefs != -1 and ndefs != stack_ndefs:
+            if (ndefs != -1 and stack_ndefs != -1) and ndefs != stack_ndefs:
                 raise Exception(
                     f"ndefs should match stack notation: {op}: "
                     f"{ndefs} != {stack_ndefs} "

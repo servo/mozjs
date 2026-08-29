@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -123,10 +121,16 @@ def RustLibrary(name, features=None, output_category=None, is_gkrust=False):
 
 
 @template
-def RustProgram(name):
+def RustProgram(name, features=None, output_category=None):
     """Template for Rust programs."""
     RUST_PROGRAMS += [name]
     DisableWarningsForRust()
+
+    if features:
+        RUST_PROGRAM_FEATURES = features
+
+    if output_category:
+        RUST_PROGRAM_OUTPUT_CATEGORY = output_category
 
 
 @template
@@ -202,6 +206,19 @@ def HostRustLibrary(name, features=None):
 
 
 @template
+def HostRustProgram(name, features=None, output_category=None):
+    """Template for host Rust programs."""
+    HOST_RUST_PROGRAMS += [name]
+    DisableWarningsForRust()
+
+    if features:
+        HOST_RUST_PROGRAM_FEATURES = features
+
+    if output_category:
+        HOST_RUST_PROGRAM_OUTPUT_CATEGORY = output_category
+
+
+@template
 def DisableStlWrapping():
     COMPILE_FLAGS["STL"] = []
 
@@ -231,6 +248,7 @@ def GeneratedFile(name, *names, **kwargs):
     script = kwargs.pop("script", None)
     entry_point = kwargs.pop("entry_point", None)
     inputs = kwargs.pop("inputs", [])
+    extra_deps = kwargs.pop("extra_deps", [])
     flags = kwargs.pop("flags", [])
     force = kwargs.pop("force", False)
     if kwargs:
@@ -252,8 +270,22 @@ def GeneratedFile(name, *names, **kwargs):
     if script and entry_point:
         generated_file.script = script + ":" + entry_point
     generated_file.inputs = inputs
+    generated_file.extra_deps = extra_deps
     generated_file.flags = flags
     generated_file.force = force
+
+
+@template
+def LegacyTest(*args, **kwargs):
+    """Add one test to LEGACY_RUN_TESTS with the given attributes."""
+
+    LEGACY_RUN_TESTS += [{"args": args}]
+    test = LEGACY_RUN_TESTS[-1]
+    test["env"] = kwargs.pop("env", None)
+    test["description"] = kwargs.pop("description", None)
+    test["depends"] = kwargs.pop("depends", ())
+    if kwargs:
+        error("Unrecognized argument(s) to LegacyTest: %s" % ", ".join(kwargs))
 
 
 @template

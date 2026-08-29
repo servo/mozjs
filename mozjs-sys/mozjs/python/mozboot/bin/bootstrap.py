@@ -13,11 +13,13 @@
 
 import sys
 
+MINIMUM_MINOR_VERSION = 9
+
 major, minor = sys.version_info[:2]
-if (major < 3) or (major == 3 and minor < 8):
+if (major < 3) or (major == 3 and minor < MINIMUM_MINOR_VERSION):
     print(
-        "Bootstrap currently only runs on Python 3.8+."
-        "Please try re-running with python3.8+."
+        f"Bootstrap currently only runs on Python 3.{MINIMUM_MINOR_VERSION}+."
+        f"Please try re-running with python3.{MINIMUM_MINOR_VERSION}+."
     )
     sys.exit(1)
 
@@ -68,6 +70,26 @@ def which(name):
 
 def validate_clone_dest(dest: Path):
     dest = dest.resolve()
+
+    if WINDOWS:
+        # Keep in sync with the path length checks in configure.py.
+        WIN32_MAX_PATH = 260
+        LONGEST_KNOWN_OBJDIR_RELATIVE_PATH = 100
+        DEFAULT_OBJDIR_NAME_LEN = 28  # /obj-x86_64-pc-windows-msvc/
+        max_srcdir_len = (
+            WIN32_MAX_PATH
+            - LONGEST_KNOWN_OBJDIR_RELATIVE_PATH
+            - DEFAULT_OBJDIR_NAME_LEN
+        )
+        dest_len = len(str(dest))
+        if dest_len > max_srcdir_len:
+            print(
+                f"ERROR! Destination path ({dest}) is {dest_len} characters, "
+                f"which exceeds the Windows limit of {max_srcdir_len}. "
+                f"This will cause build failures due to path length restrictions.\n"
+                f"Please choose a shorter path (e.g. D:\\mozilla-source\\firefox)."
+            )
+            return None
 
     if not dest.exists():
         return dest
@@ -442,7 +464,7 @@ def main(args):
         "--no-system-changes",
         dest="no_system_changes",
         action="store_true",
-        help="Only executes actions that leave the system " "configuration alone.",
+        help="Only executes actions that leave the system configuration alone.",
     )
 
     options, leftover = parser.parse_args(args)

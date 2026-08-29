@@ -24,7 +24,7 @@
 // With these semanatics we can derive a flow from a pointer by xoring it with
 // gProcessUUID and using a terminating-flow when we're done with
 // that pointer e.g. destructor. This doesn't ensure that the flow is globally
-// unique but makes colluisions unlikely enough that it mostly works.
+// unique but makes collisions unlikely enough that it mostly works.
 
 // The following code for Flow is derived from Perfetto
 

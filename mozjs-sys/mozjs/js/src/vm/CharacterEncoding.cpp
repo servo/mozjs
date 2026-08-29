@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -16,6 +14,7 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/Utf8.h"
 
+#include <bit>
 #ifndef XP_LINUX
 // We still support libstd++ versions without codecvt support on Linux.
 //
@@ -228,9 +227,11 @@ char32_t JS::Utf8ToOneUcs4Char(const uint8_t* utf8Buffer, int utf8Length) {
   return Utf8ToOneUcs4CharImpl(utf8Buffer, utf8Length);
 }
 
-static void ReportInvalidCharacter(JSContext* cx, uint32_t offset) {
-  char buffer[10];
-  SprintfLiteral(buffer, "%u", offset);
+static void ReportInvalidCharacter(JSContext* cx, size_t offset) {
+  // Max roundtrip digits, +1 to include largest numbers, +1 for null terminator
+  constexpr size_t BUFFER_LENGTH = std::numeric_limits<size_t>::digits10 + 2;
+  char buffer[BUFFER_LENGTH];
+  SprintfLiteral(buffer, "%zu", offset);
   JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                             JSMSG_MALFORMED_UTF8_CHAR, buffer);
 }
@@ -278,7 +279,7 @@ template <OnUTF8Error ErrorAction, typename OutputFn>
 static bool InflateUTF8ToUTF16(JSContext* cx, const UTF8Chars& src,
                                OutputFn dst) {
   size_t srclen = src.length();
-  for (uint32_t i = 0; i < srclen; i++) {
+  for (size_t i = 0; i < srclen; i++) {
     uint32_t v = uint32_t(src[i]);
     if (!(v & 0x80)) {
       // ASCII code unit.  Simple copy.
@@ -310,12 +311,7 @@ static bool InflateUTF8ToUTF16(JSContext* cx, const UTF8Chars& src,
   } while (0)
 
       // Non-ASCII code unit. Determine its length in bytes (n).
-      //
-      // Avoid undefined behavior from passing in 0
-      // (https://gcc.gnu.org/onlinedocs/gcc/Other-Builtins.html#index-_005f_005fbuiltin_005fclz)
-      // by turning on the low bit so that 0xff will set n=31-24=7, which will
-      // be detected as an invalid character.
-      uint32_t n = mozilla::CountLeadingZeroes32(~int8_t(src[i]) | 0x1) - 24;
+      uint32_t n = std::countl_one(src[i]);
 
       // Check the leading byte.
       if (n < 2 || n > 4) {
@@ -400,7 +396,7 @@ static void CopyAndInflateUTF8IntoBuffer(JSContext* cx, const UTF8Chars& src,
   if (allASCII) {
     size_t srclen = src.length();
     MOZ_ASSERT(outlen == srclen);
-    for (uint32_t i = 0; i < srclen; i++) {
+    for (size_t i = 0; i < srclen; i++) {
       dst[i] = CharT(src[i]);
     }
   } else {
@@ -414,6 +410,79 @@ static void CopyAndInflateUTF8IntoBuffer(JSContext* cx, const UTF8Chars& src,
   }
 }
 
+// Fast UTF-8 -> UTF-16 inflation backed by encoding_rs: a single SIMD pass
+// over the input, no separate counting pass. Allocates srclen + 1 char16_t
+// code units, which is the upper bound for UTF-16 output (each UTF-8 byte
+// produces at most one code unit), plus a slot for the trailing NUL.
+template <OnUTF8Error ErrorAction>
+static TwoByteCharsZ InflateUTF8ToNewTwoByteCharsZ(JSContext* cx,
+                                                   const UTF8Chars& src,
+                                                   size_t* outlen,
+                                                   arena_id_t destArenaId) {
+  static_assert(ErrorAction == OnUTF8Error::Throw ||
+                    ErrorAction == OnUTF8Error::InsertReplacementCharacter,
+                "only Throw and InsertReplacementCharacter are supported");
+
+  *outlen = 0;
+
+  mozilla::CheckedInt<size_t> capacity = src.length();
+  capacity += 1;
+  if (!capacity.isValid()) {
+    ReportAllocationOverflow(cx);
+    return TwoByteCharsZ();
+  }
+  char16_t* dst = cx->pod_arena_malloc<char16_t>(destArenaId, capacity.value());
+  if (!dst) {
+    ReportOutOfMemory(cx);
+    return TwoByteCharsZ();
+  }
+
+  Span<const char> srcSpan(reinterpret_cast<const char*>(src.begin().get()),
+                           src.length());
+  Span<char16_t> dstSpan(dst, capacity.value());
+
+  size_t len;
+  if constexpr (ErrorAction == OnUTF8Error::Throw) {
+    mozilla::Maybe<size_t> written =
+        mozilla::ConvertUtf8toUtf16WithoutReplacement(srcSpan, dstSpan);
+    if (MOZ_UNLIKELY(written.isNothing())) {
+      // Invalid UTF-8. Run the slow validator just to report the offset of
+      // the first bad byte; it will set a pending exception and return false.
+      js_free(dst);
+      auto discard = [](char16_t) -> LoopDisposition {
+        return LoopDisposition::Continue;
+      };
+      mozilla::DebugOnly<bool> ok =
+          InflateUTF8ToUTF16<OnUTF8Error::Throw>(cx, src, discard);
+      MOZ_ASSERT(!ok,
+                 "encoding_rs and the JS validator disagreed about UTF-8 "
+                 "validity");
+      return TwoByteCharsZ();
+    }
+    len = *written;
+  } else {
+    len = mozilla::ConvertUtf8toUtf16(srcSpan, dstSpan);
+  }
+
+  // Multi-byte UTF-8 sequences collapse to fewer UTF-16 code units, so the
+  // upper-bound allocation above can leave a lot of slack that adopting
+  // JSStrings would retain. Shrink when the waste is large.
+  size_t usedCapacity = len + 1;
+  size_t unusedCapacity = capacity.value() - usedCapacity;
+  constexpr size_t MinShrinkCodeUnits = 512;
+  if (unusedCapacity >= MinShrinkCodeUnits &&
+      unusedCapacity > usedCapacity / 2) {
+    if (char16_t* shrunk = cx->maybe_pod_arena_realloc<char16_t>(
+            destArenaId, dst, capacity.value(), usedCapacity)) {
+      dst = shrunk;
+    }
+  }
+
+  dst[len] = char16_t('\0');
+  *outlen = len;
+  return TwoByteCharsZ(dst, len);
+}
+
 template <OnUTF8Error ErrorAction, typename CharsT>
 static CharsT InflateUTF8StringHelper(JSContext* cx, const UTF8Chars& src,
                                       size_t* outlen, arena_id_t destArenaId) {
@@ -421,6 +490,11 @@ static CharsT InflateUTF8StringHelper(JSContext* cx, const UTF8Chars& src,
   static_assert(
       std::is_same_v<CharT, char16_t> || std::is_same_v<CharT, Latin1Char>,
       "bad CharT");
+
+  if constexpr (std::is_same_v<CharT, char16_t>) {
+    return InflateUTF8ToNewTwoByteCharsZ<ErrorAction>(cx, src, outlen,
+                                                      destArenaId);
+  }
 
   *outlen = 0;
 
@@ -444,11 +518,8 @@ static CharsT InflateUTF8StringHelper(JSContext* cx, const UTF8Chars& src,
     return CharsT();
   }
 
-  constexpr OnUTF8Error errorMode =
-      std::is_same_v<CharT, Latin1Char>
-          ? OnUTF8Error::InsertQuestionMark
-          : OnUTF8Error::InsertReplacementCharacter;
-  CopyAndInflateUTF8IntoBuffer<errorMode>(cx, src, dst, *outlen, allASCII);
+  CopyAndInflateUTF8IntoBuffer<OnUTF8Error::InsertQuestionMark>(
+      cx, src, dst, *outlen, allASCII);
   dst[*outlen] = CharT('\0');
 
   return CharsT(dst, *outlen);

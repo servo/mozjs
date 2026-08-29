@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -19,7 +17,7 @@ class BaseAssemblerX86 : public BaseAssembler {
   // Arithmetic operations:
 
   void adcl_ir(int32_t imm, RegisterID dst) {
-    spew("adcl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "adcl       $%d, %s", imm, GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_ADC);
       m_formatter.immediate8s(imm);
@@ -30,7 +28,7 @@ class BaseAssemblerX86 : public BaseAssembler {
   }
 
   void adcl_im(int32_t imm, const void* addr) {
-    spew("adcl       %d, %p", imm, addr);
+    spew(currentOffset(), "adcl       %d, %p", imm, addr);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_ADC);
       m_formatter.immediate8s(imm);
@@ -41,24 +39,26 @@ class BaseAssemblerX86 : public BaseAssembler {
   }
 
   void adcl_rr(RegisterID src, RegisterID dst) {
-    spew("adcl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "adcl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_ADC_GvEv, src, dst);
   }
 
   void adcl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("adcl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "adcl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_ADC_GvEv, offset, base, dst);
   }
 
   void adcl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                RegisterID dst) {
-    spew("adcl       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "adcl       " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.oneByteOp(OP_ADC_GvEv, offset, base, index, scale, dst);
   }
 
   void sbbl_ir(int32_t imm, RegisterID dst) {
-    spew("sbbl       $%d, %s", imm, GPReg32Name(dst));
+    spew(currentOffset(), "sbbl       $%d, %s", imm, GPReg32Name(dst));
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, dst, GROUP1_OP_SBB);
       m_formatter.immediate8s(imm);
@@ -69,25 +69,27 @@ class BaseAssemblerX86 : public BaseAssembler {
   }
 
   void sbbl_rr(RegisterID src, RegisterID dst) {
-    spew("sbbl       %s, %s", GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "sbbl       %s, %s", GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_SBB_GvEv, src, dst);
   }
 
   void sbbl_mr(int32_t offset, RegisterID base, RegisterID dst) {
-    spew("sbbl       " MEM_ob ", %s", ADDR_ob(offset, base), GPReg32Name(dst));
+    spew(currentOffset(), "sbbl       " MEM_ob ", %s", ADDR_ob(offset, base),
+         GPReg32Name(dst));
     m_formatter.oneByteOp(OP_SBB_GvEv, offset, base, dst);
   }
 
   void sbbl_mr(int32_t offset, RegisterID base, RegisterID index, int scale,
                RegisterID dst) {
-    spew("sbbl       " MEM_obs ", %s", ADDR_obs(offset, base, index, scale),
-         GPReg32Name(dst));
+    spew(currentOffset(), "sbbl       " MEM_obs ", %s",
+         ADDR_obs(offset, base, index, scale), GPReg32Name(dst));
     m_formatter.oneByteOp(OP_SBB_GvEv, offset, base, index, scale, dst);
   }
 
   using BaseAssembler::andl_im;
   void andl_im(int32_t imm, const void* addr) {
-    spew("andl       $0x%x, %p", imm, addr);
+    spew(currentOffset(), "andl       $0x%x, %p", imm, addr);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_AND);
       m_formatter.immediate8s(imm);
@@ -99,7 +101,7 @@ class BaseAssemblerX86 : public BaseAssembler {
 
   using BaseAssembler::orl_im;
   void orl_im(int32_t imm, const void* addr) {
-    spew("orl        $0x%x, %p", imm, addr);
+    spew(currentOffset(), "orl        $0x%x, %p", imm, addr);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_OR);
       m_formatter.immediate8s(imm);
@@ -111,7 +113,7 @@ class BaseAssemblerX86 : public BaseAssembler {
 
   using BaseAssembler::subl_im;
   void subl_im(int32_t imm, const void* addr) {
-    spew("subl       $%d, %p", imm, addr);
+    spew(currentOffset(), "subl       $%d, %p", imm, addr);
     if (CAN_SIGN_EXTEND_8_32(imm)) {
       m_formatter.oneByteOp(OP_GROUP1_EvIb, addr, GROUP1_OP_SUB);
       m_formatter.immediate8s(imm);
@@ -123,14 +125,16 @@ class BaseAssemblerX86 : public BaseAssembler {
 
   void shldl_irr(int32_t imm, RegisterID src, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("shldl      $%d, %s, %s", imm, GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "shldl      $%d, %s, %s", imm, GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp8(OP2_SHLD, dst, src);
     m_formatter.immediate8u(imm);
   }
 
   void shrdl_irr(int32_t imm, RegisterID src, RegisterID dst) {
     MOZ_ASSERT(imm < 32);
-    spew("shrdl      $%d, %s, %s", imm, GPReg32Name(src), GPReg32Name(dst));
+    spew(currentOffset(), "shrdl      $%d, %s, %s", imm, GPReg32Name(src),
+         GPReg32Name(dst));
     m_formatter.twoByteOp8(OP2_SHRD, dst, src);
     m_formatter.immediate8u(imm);
   }
@@ -170,12 +174,12 @@ class BaseAssemblerX86 : public BaseAssembler {
   // Misc instructions:
 
   void pusha() {
-    spew("pusha");
+    spew(currentOffset(), "pusha");
     m_formatter.oneByteOp(OP_PUSHA);
   }
 
   void popa() {
-    spew("popa");
+    spew(currentOffset(), "popa");
     m_formatter.oneByteOp(OP_POPA);
   }
 };

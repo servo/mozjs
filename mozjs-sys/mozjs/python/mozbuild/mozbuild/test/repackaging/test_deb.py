@@ -5,6 +5,7 @@
 import json
 import logging
 import os
+import subprocess
 import tempfile
 import zipfile
 from contextlib import nullcontext as does_not_raise
@@ -44,7 +45,7 @@ ZH_TW_FTL = """\
 # The entry name is the label on the desktop icon, among other things.
 desktop-entry-name = { -brand-shortcut-name }
 # The comment usually appears as a tooltip when hovering over application menu entry.
-desktop-entry-comment = 瀏覽全球資訊網
+desktop-entry-comment-1 = 瀏覽全球資訊網
 desktop-entry-generic-name = 網頁瀏覽器
 # Keywords are search terms used to find this application.
 # The string is a list of keywords separated by semicolons:
@@ -74,14 +75,14 @@ StartupNotify=true
 Actions=new-window;new-private-window;open-profile-manager;
 Name=en-US-desktop-entry-name
 Name[zh_TW]=zh-TW-desktop-entry-name
-Comment=en-US-desktop-entry-comment
-Comment[zh_TW]=zh-TW-desktop-entry-comment
+Comment=en-US-desktop-entry-comment-1
+Comment[zh_TW]=zh-TW-desktop-entry-comment-1
 GenericName=en-US-desktop-entry-generic-name
 GenericName[zh_TW]=zh-TW-desktop-entry-generic-name
 Keywords=en-US-desktop-entry-keywords
 Keywords[zh_TW]=zh-TW-desktop-entry-keywords
-X-GNOME-FullName=en-US-desktop-entry-x-gnome-full-name
-X-GNOME-FullName[zh_TW]=zh-TW-desktop-entry-x-gnome-full-name
+X-GNOME-FullName=en-US-desktop-entry-x-gnome-full-name-1
+X-GNOME-FullName[zh_TW]=zh-TW-desktop-entry-x-gnome-full-name-1
 
 [Desktop Action new-window]
 Exec=firefox-nightly --new-window %u
@@ -107,21 +108,21 @@ Exec=firefox-devedition %u
 Terminal=false
 X-MultipleArgs=false
 Icon=firefox-devedition
-StartupWMClass=firefox-aurora
+StartupWMClass=firefox-dev
 Categories=GNOME;GTK;Network;WebBrowser;
 MimeType=application/json;application/pdf;application/rdf+xml;application/rss+xml;application/x-xpinstall;application/xhtml+xml;application/xml;audio/flac;audio/ogg;audio/webm;image/avif;image/gif;image/jpeg;image/png;image/svg+xml;image/webp;text/html;text/xml;video/ogg;video/webm;x-scheme-handler/chrome;x-scheme-handler/http;x-scheme-handler/https;x-scheme-handler/mailto;
 StartupNotify=true
 Actions=new-window;new-private-window;open-profile-manager;
 Name=en-US-desktop-entry-name
 Name[zh_TW]=zh-TW-desktop-entry-name
-Comment=en-US-desktop-entry-comment
-Comment[zh_TW]=zh-TW-desktop-entry-comment
+Comment=en-US-desktop-entry-comment-1
+Comment[zh_TW]=zh-TW-desktop-entry-comment-1
 GenericName=en-US-desktop-entry-generic-name
 GenericName[zh_TW]=zh-TW-desktop-entry-generic-name
 Keywords=en-US-desktop-entry-keywords
 Keywords[zh_TW]=zh-TW-desktop-entry-keywords
-X-GNOME-FullName=en-US-desktop-entry-x-gnome-full-name
-X-GNOME-FullName[zh_TW]=zh-TW-desktop-entry-x-gnome-full-name
+X-GNOME-FullName=en-US-desktop-entry-x-gnome-full-name-1
+X-GNOME-FullName[zh_TW]=zh-TW-desktop-entry-x-gnome-full-name-1
 
 [Desktop Action new-window]
 Exec=firefox-devedition --new-window %u
@@ -141,16 +142,42 @@ Name[zh_TW]=zh-TW-desktop-action-open-profile-manager
 
 
 def test_generate_deb_desktop_entry_file_text(monkeypatch):
-    def responsive(url):
-        assert "zh-TW" in url
-        return Mock(
-            **{
-                "status_code": 200,
-                "text": ZH_TW_FTL,
-            }
-        )
 
-    monkeypatch.setattr(desktop_file.requests, "get", responsive)
+    def check_call(cmd=[], cwd=None):
+        assert len(cmd) > 1
+        assert cmd[0] == "git"
+        assert cmd[1] in ["init", "remote", "fetch", "reset"]
+
+        if cmd[1] == "init":
+            assert cwd is None
+            test_generate_deb_desktop_entry_file_text.l10n_repo_clone = cmd[2]
+
+        if cmd[1] == "remote":
+            assert cwd is not None
+            assert cmd[2] == "add"
+            assert cmd[3] == "origin"
+            assert cmd[4] == "https://github.com/mozilla-l10n/firefox-l10n"
+
+        if cmd[1] == "fetch":
+            assert cwd is not None
+            assert cmd[2] == "--no-progress"
+            assert cmd[3] == "--depth=1"
+            assert cmd[4] == "origin"
+            assert cmd[5] == "default"
+
+        if cmd[1] == "reset":
+            assert cwd is not None
+            assert cmd[2] == "--hard"
+            assert cmd[3] == "FETCH_HEAD"
+
+            desktop_zhTW_file = os.path.join(
+                cwd, "zh-TW", "browser", "browser", "linuxDesktopEntry.ftl"
+            )
+            os.makedirs(os.path.dirname(desktop_zhTW_file))
+            with open(desktop_zhTW_file, "w", encoding="utf-8") as zhTW:
+                zhTW.write(ZH_TW_FTL)
+
+    monkeypatch.setattr(desktop_file.subprocess, "check_call", check_call)
 
     output_stream = StringIO()
     logger = logging.getLogger("mozbuild:test:repackaging")
@@ -182,9 +209,57 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
     build_variables = {
         "PKG_NAME": "firefox-nightly",
         "Icon": "firefox-nightly",
+        "REMOTING_NAME": "firefox-nightly",
     }
     release_product = "firefox"
     release_type = "nightly"
+
+    def mock_copy(source_path, destination_path):
+        assert source_path in [
+            os.path.join(
+                "browser", "locales", "en-US", "browser", "linuxDesktopEntry.ftl"
+            ),
+            os.path.join(
+                "browser", "branding", "nightly", "locales", "en-US", "brand.ftl"
+            ),
+            os.path.join(
+                "browser", "branding", "aurora", "locales", "en-US", "brand.ftl"
+            ),
+            os.path.join(
+                test_generate_deb_desktop_entry_file_text.l10n_repo_clone,
+                "zh-TW",
+                "browser",
+                "browser",
+                "linuxDesktopEntry.ftl",
+            ),
+        ]
+
+        if source_path == os.path.join(
+            "browser", "locales", "en-US", "browser", "linuxDesktopEntry.ftl"
+        ):
+            assert os.path.join("en-US", "linuxDesktopEntry.ftl") in destination_path
+
+        if source_path in [
+            os.path.join(
+                "browser", "branding", "nightly", "locales", "en-US", "brand.ftl"
+            ),
+            os.path.join(
+                "browser", "branding", "aurora", "locales", "en-US", "brand.ftl"
+            ),
+        ]:
+            destination_path_subdir = os.path.sep.join(
+                destination_path.split(os.path.sep)[-2:]
+            )
+            assert destination_path_subdir in [
+                os.path.join("en-US", "brand.ftl"),
+                os.path.join("zh-TW", "brand.ftl"),
+            ]
+
+        with open(source_path, encoding="utf-8") as src:
+            with open(destination_path, "w", encoding="utf-8") as dest:
+                dest.write(src.read())
+
+    monkeypatch.setattr(desktop_file.shutil, "copyfile", mock_copy)
 
     desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
         log,
@@ -195,11 +270,14 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
         fluent_resource_loader,
     )
 
+    assert test_generate_deb_desktop_entry_file_text.l10n_repo_clone is not None
+
     assert desktop_entry_file_text == NIGHTLY_DESKTOP_ENTRY_FILE_TEXT
 
     build_variables = {
         "PKG_NAME": "firefox-devedition",
         "Icon": "firefox-devedition",
+        "REMOTING_NAME": "firefox-dev",
     }
     release_product = "devedition"
     release_type = "beta"
@@ -215,12 +293,12 @@ def test_generate_deb_desktop_entry_file_text(monkeypatch):
 
     assert desktop_entry_file_text == DEVEDITION_DESKTOP_ENTRY_FILE_TEXT
 
-    def outage(url):
-        return Mock(**{"status_code": 500})
+    def outage(cmd=[], cwd=None):
+        raise subprocess.CalledProcessError(cmd=cmd, returncode=42)
 
-    monkeypatch.setattr(desktop_file.requests, "get", outage)
+    monkeypatch.setattr(desktop_file.subprocess, "check_call", outage)
 
-    with pytest.raises(desktop_file.RemoteVCSError):
+    with pytest.raises(subprocess.CalledProcessError):
         desktop_entry_file_text = desktop_file.generate_browser_desktop_entry_file_text(
             log,
             build_variables,

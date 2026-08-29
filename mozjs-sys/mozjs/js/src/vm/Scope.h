@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -21,6 +19,7 @@
 
 #include "builtin/ModuleObject.h"  // ModuleObject, Handle<ModuleObject*>
 #include "frontend/ParserAtom.h"   // frontend::TaggedParserAtomIndex
+#include "gc/Allocator.h"          // HandleBuffer
 #include "gc/Barrier.h"            // GCPtr
 #include "gc/Cell.h"               // TenuredCellWithNonGCPointer
 #include "js/GCPolicyAPI.h"        // GCPolicy, IgnoreGCPolicy
@@ -29,7 +28,6 @@
 #include "js/TraceKind.h"          // JS::TraceKind
 #include "js/TypeDecls.h"          // HandleFunction
 #include "js/UbiNode.h"            // ubi::*
-#include "js/UniquePtr.h"          // UniquePtr
 #include "util/Poison.h"  // AlwaysPoison, JS_SCOPE_DATA_TRAILING_NAMES_PATTERN, MemCheckKind
 #include "vm/JSFunction.h"  // JSFunction
 #include "vm/ScopeKind.h"   // ScopeKind
@@ -44,6 +42,11 @@ struct JSContext;
 namespace js {
 
 class JS_PUBLIC_API GenericPrinter;
+
+namespace gc {
+template <uint32_t>
+class MarkingTracerT;
+}  // namespace gc
 
 namespace frontend {
 class ScopeStencil;
@@ -316,7 +319,8 @@ class WrappedPtrOperations<Scope*, Wrapper> {
 // The base class of all Scopes.
 //
 class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class frontend::ScopeStencil;
   friend class js::AbstractBindingIter<JSAtom>;
   friend class js::frontend::RuntimeScopeBindingCache;
@@ -335,7 +339,7 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
   const GCPtr<SharedShape*> environmentShape_;
 
   // The enclosing scope or nullptr.
-  GCPtr<Scope*> enclosingScope_;
+  const GCPtr<Scope*> enclosingScope_;
 
   Scope(ScopeKind kind, Scope* enclosing, SharedShape* environmentShape)
       : TenuredCellWithNonGCPointer(nullptr),
@@ -347,8 +351,7 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
                        Handle<SharedShape*> envShape);
 
   template <typename ConcreteScope>
-  void initData(
-      MutableHandle<UniquePtr<typename ConcreteScope::RuntimeData>> data);
+  void initData(HandleBuffer<typename ConcreteScope::RuntimeData> data);
 
   template <typename F>
   void applyScopeDataTyped(F&& f);
@@ -361,7 +364,7 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
   static ConcreteScope* create(
       JSContext* cx, ScopeKind kind, Handle<Scope*> enclosing,
       Handle<SharedShape*> envShape,
-      MutableHandle<UniquePtr<typename ConcreteScope::RuntimeData>> data);
+      HandleBuffer<typename ConcreteScope::RuntimeData> data);
 
   static const JS::TraceKind TraceKind = JS::TraceKind::Scope;
 
@@ -434,9 +437,8 @@ class Scope : public gc::TenuredCellWithNonGCPointer<BaseScopeData> {
   }
 
   void traceChildren(JSTracer* trc);
-  void finalize(JS::GCContext* gcx);
 
-  size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
+  size_t sizeOfExcludingThis() const;
 
   void dump();
 #if defined(DEBUG) || defined(JS_JITSPEW)
@@ -511,7 +513,8 @@ struct alignas(ScopeDataAlignBytes) RuntimeScopeData
 class LexicalScope : public Scope {
   friend class Scope;
   friend class AbstractBindingIter<JSAtom>;
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class frontend::ScopeStencil;
 
  public:
@@ -588,7 +591,8 @@ inline bool Scope::is<LexicalScope>() const {
 class ClassBodyScope : public Scope {
   friend class Scope;
   friend class AbstractBindingIter<JSAtom>;
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class frontend::ScopeStencil;
   friend class AbstractScopePtr;
 
@@ -654,7 +658,8 @@ class ClassBodyScope : public Scope {
 // Corresponds to CallObject on environment chain.
 //
 class FunctionScope : public Scope {
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class AbstractBindingIter<JSAtom>;
   friend class AbstractPositionalFormalParameterIter<JSAtom>;
   friend class Scope;
@@ -720,7 +725,7 @@ class FunctionScope : public Scope {
     explicit RuntimeData(size_t length) { PoisonNames(this, length); }
     RuntimeData() = delete;
 
-    void trace(JSTracer* trc);
+    inline void trace(JSTracer* trc);
   };
 
   using ParserData = ParserScopeData<SlotInfo>;
@@ -771,7 +776,8 @@ class FunctionScope : public Scope {
 // Corresponds to VarEnvironmentObject on environment chain.
 //
 class VarScope : public Scope {
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class AbstractBindingIter<JSAtom>;
   friend class Scope;
   friend class frontend::ScopeStencil;
@@ -839,7 +845,8 @@ inline bool Scope::is<VarScope>() const {
 class GlobalScope : public Scope {
   friend class Scope;
   friend class AbstractBindingIter<JSAtom>;
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
 
  public:
   struct SlotInfo {
@@ -865,9 +872,8 @@ class GlobalScope : public Scope {
   static GlobalScope* createEmpty(JSContext* cx, ScopeKind kind);
 
  private:
-  static GlobalScope* createWithData(
-      JSContext* cx, ScopeKind kind,
-      MutableHandle<UniquePtr<RuntimeData>> data);
+  static GlobalScope* createWithData(JSContext* cx, ScopeKind kind,
+                                     HandleBuffer<RuntimeData> data);
 
   RuntimeData& data() { return *static_cast<RuntimeData*>(rawData()); }
 
@@ -914,7 +920,8 @@ class WithScope : public Scope {
 class EvalScope : public Scope {
   friend class Scope;
   friend class AbstractBindingIter<JSAtom>;
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class frontend::ScopeStencil;
 
  public:
@@ -952,22 +959,11 @@ class EvalScope : public Scope {
   }
 
  public:
-  // Starting a scope, the nearest var scope that a direct eval can
-  // introduce vars on.
-  static Scope* nearestVarScopeForDirectEval(Scope* scope);
-
   uint32_t nextFrameSlot() const { return data().slotInfo.nextFrameSlot; }
 
   bool strict() const { return kind() == ScopeKind::StrictEval; }
 
   bool hasBindings() const { return data().length > 0; }
-
-  bool isNonGlobal() const {
-    if (strict()) {
-      return true;
-    }
-    return !nearestVarScopeForDirectEval(enclosing())->is<GlobalScope>();
-  }
 };
 
 template <>
@@ -984,7 +980,8 @@ inline bool Scope::is<EvalScope>() const {
 // Corresponds to a ModuleEnvironmentObject on the environment chain.
 //
 class ModuleScope : public Scope {
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class AbstractBindingIter<JSAtom>;
   friend class Scope;
   friend class AbstractScopePtr;
@@ -1022,7 +1019,7 @@ class ModuleScope : public Scope {
     explicit RuntimeData(size_t length);
     RuntimeData() = delete;
 
-    void trace(JSTracer* trc);
+    inline void trace(JSTracer* trc);
   };
 
   using ParserData = ParserScopeData<SlotInfo>;
@@ -1056,7 +1053,8 @@ class ModuleScope : public Scope {
 class WasmInstanceScope : public Scope {
   friend class AbstractBindingIter<JSAtom>;
   friend class Scope;
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class AbstractScopePtr;
   static const ScopeKind classScopeKind_ = ScopeKind::WasmInstance;
 
@@ -1083,7 +1081,7 @@ class WasmInstanceScope : public Scope {
     explicit RuntimeData(size_t length);
     RuntimeData() = delete;
 
-    void trace(JSTracer* trc);
+    inline void trace(JSTracer* trc);
   };
 
   using ParserData = ParserScopeData<SlotInfo>;
@@ -1093,7 +1091,8 @@ class WasmInstanceScope : public Scope {
       typename std::conditional_t<std::is_same<NameT, JSAtom>::value,
                                   RuntimeData, ParserData>;
 
-  static WasmInstanceScope* create(JSContext* cx, WasmInstanceObject* instance);
+  static WasmInstanceScope* create(JSContext* cx,
+                                   Handle<WasmInstanceObject*> instance);
 
  private:
   RuntimeData& data() { return *static_cast<RuntimeData*>(rawData()); }
@@ -1118,7 +1117,8 @@ class WasmInstanceScope : public Scope {
 class WasmFunctionScope : public Scope {
   friend class AbstractBindingIter<JSAtom>;
   friend class Scope;
-  friend class GCMarker;
+  template <uint32_t>
+  friend class gc::MarkingTracerT;
   friend class AbstractScopePtr;
   static const ScopeKind classScopeKind_ = ScopeKind::WasmFunction;
 
@@ -1883,7 +1883,7 @@ template <>
 struct GCPolicy<js::ScopeKind> : public IgnoreGCPolicy<js::ScopeKind> {};
 
 template <typename T>
-struct ScopeDataGCPolicy : public NonGCPointerPolicy<T> {};
+using ScopeDataGCPolicy = NonGCPointerPolicy<T>;
 
 #define DEFINE_SCOPE_DATA_GCPOLICY(Data)              \
   template <>                                         \
@@ -1901,6 +1901,7 @@ DEFINE_SCOPE_DATA_GCPOLICY(js::GlobalScope::RuntimeData);
 DEFINE_SCOPE_DATA_GCPOLICY(js::EvalScope::RuntimeData);
 DEFINE_SCOPE_DATA_GCPOLICY(js::ModuleScope::RuntimeData);
 DEFINE_SCOPE_DATA_GCPOLICY(js::WasmFunctionScope::RuntimeData);
+DEFINE_SCOPE_DATA_GCPOLICY(js::WasmInstanceScope::RuntimeData);
 
 #undef DEFINE_SCOPE_DATA_GCPOLICY
 

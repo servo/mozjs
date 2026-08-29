@@ -50,7 +50,7 @@ class MockConfig:
                 "DLL_PREFIX": "lib",
                 "DLL_SUFFIX": ".so",
             },
-            **extra_substs
+            **extra_substs,
         )
 
         self.defines = self.substs

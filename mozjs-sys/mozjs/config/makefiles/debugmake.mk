@@ -1,5 +1,3 @@
-# -*- makefile -*-
-# vim:set ts=8 sw=8 sts=8 noet:
 #
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
@@ -104,7 +102,6 @@ showhost:
 		HOST_LDFLAGS \
 		HOST_LIBS \
 		HOST_EXTRA_LIBS \
-		HOST_EXTRA_DEPS \
 		HOST_PROGRAM \
 		HOST_OBJS \
 		HOST_PROGOBJS \

@@ -5,7 +5,6 @@
 #include "NumberFormatFields.h"
 #include "ScopedICUObject.h"
 
-#include "mozilla/FloatingPoint.h"
 #include "unicode/uformattedvalue.h"
 #include "unicode/unum.h"
 #include "unicode/unumberformatter.h"

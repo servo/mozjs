@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=4 sw=2 et tw=80 ft=cpp:
- *
+/*
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -19,7 +17,7 @@
 
 namespace js {
 namespace gc {
-struct Cell;
+class Cell;
 }  // namespace gc
 }  // namespace js
 
@@ -36,6 +34,12 @@ inline void js::Nursery::addMallocedBufferBytes(size_t nbytes) {
   if (MOZ_UNLIKELY(toSpace.mallocedBufferBytes > capacity() * 8)) {
     requestMinorGC(JS::GCReason::NURSERY_MALLOC_BUFFERS);
   }
+}
+
+inline void js::Nursery::removeMallocedBufferBytes(size_t nbytes) {
+  MOZ_ASSERT(nbytes > 0);
+  MOZ_ASSERT(toSpace.mallocedBufferBytes >= nbytes);
+  toSpace.mallocedBufferBytes -= nbytes;
 }
 
 inline bool js::Nursery::addStringBuffer(JSLinearString* s) {
@@ -75,9 +79,8 @@ inline void js::Nursery::removeMallocedBuffer(void* buffer, size_t nbytes) {
   MOZ_ASSERT(!JS::RuntimeHeapIsMinorCollecting());
   MOZ_ASSERT(toSpace.mallocedBuffers.has(buffer));
   MOZ_ASSERT(nbytes > 0);
-  MOZ_ASSERT(toSpace.mallocedBufferBytes >= nbytes);
+  removeMallocedBufferBytes(nbytes);
   toSpace.mallocedBuffers.remove(buffer);
-  toSpace.mallocedBufferBytes -= nbytes;
 }
 
 void js::Nursery::removeMallocedBufferDuringMinorGC(void* buffer) {
@@ -93,8 +96,7 @@ inline void js::Nursery::removeExtensibleStringBuffer(JSLinearString* s,
 
   if (updateMallocBytes) {
     size_t nbytes = s->stringBuffer()->AllocationSize();
-    MOZ_ASSERT(toSpace.mallocedBufferBytes >= nbytes);
-    toSpace.mallocedBufferBytes -= nbytes;
+    removeMallocedBufferBytes(nbytes);
   }
 }
 
@@ -266,35 +268,26 @@ inline void* js::Nursery::tryAllocate(size_t size) {
   return ptr;
 }
 
-inline bool js::Nursery::registerTrailer(PointerAndUint7 blockAndListID,
-                                         size_t nBytes) {
-  MOZ_ASSERT(toSpace.trailersAdded_.length() ==
-             toSpace.trailersRemoved_.length());
-  MOZ_ASSERT(nBytes > 0);
-  if (MOZ_UNLIKELY(!toSpace.trailersAdded_.append(blockAndListID))) {
-    return false;
-  }
-  if (MOZ_UNLIKELY(!toSpace.trailersRemoved_.append(nullptr))) {
-    toSpace.trailersAdded_.popBack();
-    return false;
+inline void* js::Nursery::allocateBuffer(Zone* zone, js::gc::Cell* owner,
+                                         size_t nbytes, size_t maxNurserySize) {
+  MOZ_ASSERT(owner);
+  MOZ_ASSERT(zone == owner->zone());
+  MOZ_ASSERT(nbytes > 0);
+  MOZ_ASSERT(nbytes <= SIZE_MAX - gc::CellAlignBytes);
+  nbytes = RoundUp(nbytes, gc::CellAlignBytes);
+
+  if (!IsInsideNursery(owner)) {
+    return gc::AllocBuffer(zone, nbytes, false);
   }
 
-  // This is a clone of the logic in ::registerMallocedBuffer.  It may be
-  // that some other heuristic is better, once we know more about the
-  // typical behaviour of wasm-GC applications.
-  toSpace.trailerBytes_ += nBytes;
-  if (MOZ_UNLIKELY(toSpace.trailerBytes_ > capacity() * 8)) {
-    requestMinorGC(JS::GCReason::NURSERY_TRAILERS);
+  if (nbytes <= maxNurserySize) {
+    void* buffer = allocateInternalBuffer(zone, nbytes);
+    if (buffer) {
+      return buffer;
+    }
   }
-  return true;
-}
 
-inline void js::Nursery::unregisterTrailer(void* block) {
-  // Unlike removeMallocedBuffer this is only called during minor GC.
-  MOZ_ASSERT(fromSpace.trailersRemovedUsed_ <
-             fromSpace.trailersRemoved_.length());
-  fromSpace.trailersRemoved_[fromSpace.trailersRemovedUsed_] = block;
-  fromSpace.trailersRemovedUsed_++;
+  return gc::AllocBuffer(zone, nbytes, true);
 }
 
 namespace js {
@@ -324,18 +317,22 @@ static inline T* AllocNurseryOrMallocBuffer(JSContext* cx, gc::Cell* cell,
 }
 
 template <typename T>
-static inline T* AllocateCellBuffer(Nursery& nursery, JS::Zone* zone,
-                                    gc::Cell* cell, uint32_t count) {
+static inline T* AllocateCellBuffer(
+    Nursery& nursery, JS::Zone* zone, gc::Cell* cell, uint32_t count,
+    size_t maxNurserySize = Nursery::MaxNurseryBufferSize) {
   MOZ_ASSERT(zone == cell->zone());
 
   size_t nbytes = RoundUp(count * sizeof(T), sizeof(Value));
-  return static_cast<T*>(nursery.allocateBuffer(zone, cell, nbytes));
+  return static_cast<T*>(
+      nursery.allocateBuffer(zone, cell, nbytes, maxNurserySize));
 }
 
 template <typename T>
-static inline T* AllocateCellBuffer(JSContext* cx, gc::Cell* cell,
-                                    uint32_t count) {
-  T* buffer = AllocateCellBuffer<T>(cx->nursery(), cx->zone(), cell, count);
+static inline T* AllocateCellBuffer(
+    JSContext* cx, gc::Cell* cell, uint32_t count,
+    size_t maxNurserySize = Nursery::MaxNurseryBufferSize) {
+  T* buffer = AllocateCellBuffer<T>(cx->nursery(), cx->zone(), cell, count,
+                                    maxNurserySize);
   if (!buffer) {
     ReportOutOfMemory(cx);
     return nullptr;
@@ -364,30 +361,48 @@ static inline T* ReallocNurseryOrMallocBuffer(JSContext* cx, gc::Cell* cell,
 
 // If this returns null then the old buffer will be left alone.
 template <typename T>
-static inline T* ReallocateCellBuffer(Nursery& nursery, JS::Zone* zone,
-                                      gc::Cell* cell, T* oldBuffer,
-                                      uint32_t oldCount, uint32_t newCount) {
+static inline T* ReallocateCellBuffer(
+    Nursery& nursery, JS::Zone* zone, gc::Cell* cell, T* oldBuffer,
+    uint32_t oldCount, uint32_t newCount,
+    size_t maxNurserySize = Nursery::MaxNurseryBufferSize) {
   MOZ_ASSERT(zone == cell->zone());
 
   size_t oldBytes = RoundUp(oldCount * sizeof(T), sizeof(Value));
   size_t newBytes = RoundUp(newCount * sizeof(T), sizeof(Value));
 
-  return static_cast<T*>(
-      nursery.reallocateBuffer(zone, cell, oldBuffer, oldBytes, newBytes));
+  return static_cast<T*>(nursery.reallocateBuffer(
+      zone, cell, oldBuffer, oldBytes, newBytes, maxNurserySize));
 }
 
 // If this returns null then the old buffer will be left alone.
 template <typename T>
-static inline T* ReallocateCellBuffer(JSContext* cx, gc::Cell* cell,
-                                      T* oldBuffer, uint32_t oldCount,
-                                      uint32_t newCount) {
-  T* buffer = ReallocateCellBuffer<T>(cx->nursery(), cx->zone(), cell,
-                                      oldBuffer, oldCount, newCount);
+static inline T* ReallocateCellBuffer(
+    JSContext* cx, gc::Cell* cell, T* oldBuffer, uint32_t oldCount,
+    uint32_t newCount, size_t maxNurserySize = Nursery::MaxNurseryBufferSize) {
+  T* buffer =
+      ReallocateCellBuffer<T>(cx->nursery(), cx->zone(), cell, oldBuffer,
+                              oldCount, newCount, maxNurserySize);
   if (!buffer) {
     ReportOutOfMemory(cx);
   }
 
   return buffer;
+}
+
+template <typename T>
+static inline void FreeCellBuffer(Nursery& nursery, JS::Zone* zone,
+                                  gc::Cell* cell, T* buffer, uint32_t count) {
+  MOZ_ASSERT(zone == cell->zone());
+
+  size_t bytes = RoundUp(count * sizeof(T), sizeof(Value));
+
+  nursery.freeBuffer(zone, cell, buffer, bytes);
+}
+
+template <typename T>
+static inline void FreeCellBuffer(JSContext* cx, gc::Cell* cell, T* buffer,
+                                  uint32_t count) {
+  FreeCellBuffer<T>(cx->nursery(), cx->zone(), cell, buffer, count);
 }
 
 }  // namespace js

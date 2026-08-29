@@ -1,76 +1,90 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_CompilationDependencyTracker_h
 #define jit_CompilationDependencyTracker_h
 
-#include "mozilla/Vector.h"
-
 #include "jstypes.h"
 #include "NamespaceImports.h"
+
+#include "ds/InlineTable.h"
+#include "jit/JitAllocPolicy.h"
 
 struct JSContext;
 
 namespace js::jit {
+
+class IonScriptKey;
 class MIRGenerator;
 
-struct CompilationDependency {
+struct CompilationDependency : public TempObject {
   enum class Type {
-    GetIterator,
+    GetIteratorBytecode,
     ArraySpecies,
+    TypedArraySpecies,
     RegExpPrototype,
-    StringPrototypeSymbols,
     EmulatesUndefined,
     ArrayExceedsInt32Length,
+    ObjectFuseProperty,
+    DefaultCaseMapping,
     Limit
   };
 
   Type type;
 
   CompilationDependency(Type type) : type(type) {}
+
+  virtual HashNumber hash() const = 0;
   virtual bool operator==(const CompilationDependency& other) const = 0;
 
   // Return true iff this dependency still holds. May only be called on main
   // thread.
-  virtual bool checkDependency(JSContext* cx) = 0;
-  [[nodiscard]] virtual bool registerDependency(JSContext* cx,
-                                                HandleScript script) = 0;
+  virtual bool checkDependency(JSContext* cx) const = 0;
+  [[nodiscard]] virtual bool registerDependency(
+      JSContext* cx, const IonScriptKey& ionScript) = 0;
 
-  virtual UniquePtr<CompilationDependency> clone() const = 0;
+  virtual CompilationDependency* clone(TempAllocator& alloc) const = 0;
   virtual ~CompilationDependency() = default;
+
+  struct Hasher {
+    using Lookup = const CompilationDependency*;
+    static HashNumber hash(const CompilationDependency* dep) {
+      return dep->hash();
+    }
+    static bool match(const CompilationDependency* k,
+                      const CompilationDependency* l) {
+      return *k == *l;
+    }
+  };
 };
 
 // For a given Warp compilation keep track of the dependencies this compilation
 // is depending on. These dependencies will be checked on main thread during
 // link time, causing abandonment of a compilation if they no longer hold.
 struct CompilationDependencyTracker {
-  mozilla::Vector<UniquePtr<CompilationDependency>, 8, SystemAllocPolicy>
-      dependencies;
+  using SetType = InlineSet<CompilationDependency*, 8,
+                            CompilationDependency::Hasher, SystemAllocPolicy>;
+  SetType dependencies;
 
-  [[nodiscard]] bool addDependency(const CompilationDependency& dep) {
-    // Ensure we don't add duplicates. We expect this list to be short,
-    // and so iteration is preferred over a more costly hashset.
-    MOZ_ASSERT(dependencies.length() <= 32);
-    for (auto& existingDep : dependencies) {
-      if (dep == *existingDep) {
-        return true;
-      }
+  [[nodiscard]] bool addDependency(TempAllocator& alloc,
+                                   const CompilationDependency& dep) {
+    // Ensure we don't add duplicates.
+    auto p = dependencies.lookupForAdd(&dep);
+    if (p) {
+      return true;
     }
-
-    auto clone = dep.clone();
+    auto* clone = dep.clone(alloc);
     if (!clone) {
       return false;
     }
-
-    return dependencies.append(std::move(clone));
+    return dependencies.add(p, clone);
   }
 
   // Check all dependencies. May only be checked on main thread.
   bool checkDependencies(JSContext* cx) {
-    for (auto& dep : dependencies) {
+    for (auto iter = dependencies.iter(); !iter.done(); iter.next()) {
+      const CompilationDependency* dep = iter.get();
       if (!dep->checkDependency(cx)) {
         return false;
       }
@@ -78,7 +92,7 @@ struct CompilationDependencyTracker {
     return true;
   }
 
-  void reset() { dependencies.clearAndFree(); }
+  void reset() { dependencies.clearAndCompact(); }
 };
 
 }  // namespace js::jit

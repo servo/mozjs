@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -18,6 +16,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/MaybeStorageBase.h"
 #include "mozilla/ThreadSafety.h"
 
 #if defined(XP_DARWIN)
@@ -36,23 +35,47 @@ OS_EXPORT OS_NOTHROW OS_NONNULL_ALL void os_unfair_lock_lock_with_options(
 }
 #endif  // defined(XP_DARWIN)
 
-// Mutexes based on spinlocks.  We can't use normal pthread spinlocks in all
+// Mutexes are based on spinlocks.  We can't use normal pthread spinlocks in all
 // places, because they require malloc()ed memory, which causes bootstrapping
-// issues in some cases.  We also can't use constructors, because for statics,
-// they would fire after the first use of malloc, resetting the locks.
+// issues in some cases.  We also can't use non-constexpr constructors, because
+// for statics, they would fire after the first use of malloc, resetting the
+// locks.
+//
+// A constexpr constructor is provided so that Mutex can be part of something
+// that is constinit, but the mutex won't be initialised, you must still
+// call Init() before the mutex can be used.
 struct MOZ_CAPABILITY("mutex") Mutex {
 #if defined(XP_WIN)
-  CRITICAL_SECTION mMutex;
+  // MaybeStorageBase provides a constexpr constructor.
+  mozilla::detail::MaybeStorageBase<CRITICAL_SECTION> mMutex;
 #elif defined(XP_DARWIN)
-  os_unfair_lock mMutex;
+  os_unfair_lock mMutex = OS_UNFAIR_LOCK_INIT;
+#elif defined(XP_LINUX) && !defined(ANDROID)
+  pthread_mutex_t mMutex = PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP;
 #else
-  pthread_mutex_t mMutex;
+  pthread_mutex_t mMutex = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-  // Initializes a mutex. Returns whether initialization succeeded.
+#ifdef MOZ_DEBUG
+  bool mInitialised = false;
+
+  // Called by StaticMutex
+  explicit constexpr Mutex(bool aInitialised) : mInitialised(aInitialised) {}
+#else
+  explicit constexpr Mutex(bool aIgnored) {}
+#endif
+
+  // Although a constexpr constructor is provided, it will not initialise the
+  // mutex and calling Init() is required.
+  constexpr Mutex() = default;
+
+  // (Re-)initializes a mutex. Returns whether initialization succeeded.
   inline bool Init() {
+#ifdef MOZ_DEBUG
+    mInitialised = true;
+#endif
 #if defined(XP_WIN)
-    if (!InitializeCriticalSectionAndSpinCount(&mMutex, 5000)) {
+    if (!InitializeCriticalSectionAndSpinCount(mMutex.addr(), 5000)) {
       return false;
     }
 #elif defined(XP_DARWIN)
@@ -77,8 +100,10 @@ struct MOZ_CAPABILITY("mutex") Mutex {
   }
 
   inline void Lock() MOZ_CAPABILITY_ACQUIRE() {
+    MOZ_ASSERT(mInitialised);
+
 #if defined(XP_WIN)
-    EnterCriticalSection(&mMutex);
+    EnterCriticalSection(mMutex.addr());
 #elif defined(XP_DARWIN)
     // We rely on a non-public function to improve performance here.
     // The OS_UNFAIR_LOCK_DATA_SYNCHRONIZATION flag informs the kernel that
@@ -98,8 +123,10 @@ struct MOZ_CAPABILITY("mutex") Mutex {
   [[nodiscard]] bool TryLock() MOZ_TRY_ACQUIRE(true);
 
   inline void Unlock() MOZ_CAPABILITY_RELEASE() {
+    MOZ_ASSERT(mInitialised);
+
 #if defined(XP_WIN)
-    LeaveCriticalSection(&mMutex);
+    LeaveCriticalSection(mMutex.addr());
 #elif defined(XP_DARWIN)
     os_unfair_lock_unlock(&mMutex);
 #else
@@ -124,6 +151,8 @@ struct MOZ_CAPABILITY("mutex") Mutex {
 struct MOZ_CAPABILITY("mutex") StaticMutex {
   SRWLOCK mMutex;
 
+  constexpr StaticMutex() : mMutex(SRWLOCK_INIT) {}
+
   inline void Lock() MOZ_CAPABILITY_ACQUIRE() {
     AcquireSRWLockExclusive(&mMutex);
   }
@@ -133,21 +162,10 @@ struct MOZ_CAPABILITY("mutex") StaticMutex {
   }
 };
 
-// Normally, we'd use a constexpr constructor, but MSVC likes to create
-// static initializers anyways.
-#  define STATIC_MUTEX_INIT SRWLOCK_INIT
-
 #else
-typedef Mutex StaticMutex;
-
-#  if defined(XP_DARWIN)
-#    define STATIC_MUTEX_INIT OS_UNFAIR_LOCK_INIT
-#  elif defined(XP_LINUX) && !defined(ANDROID)
-#    define STATIC_MUTEX_INIT PTHREAD_ADAPTIVE_MUTEX_INITIALIZER_NP
-#  else
-#    define STATIC_MUTEX_INIT PTHREAD_MUTEX_INITIALIZER
-#  endif
-
+struct MOZ_CAPABILITY("mutex") StaticMutex : public Mutex {
+  constexpr StaticMutex() : Mutex(true) {}
+};
 #endif
 
 #ifdef XP_WIN
@@ -263,5 +281,7 @@ struct MOZ_SCOPED_CAPABILITY MOZ_RAII AutoLock {
 using MutexAutoLock = AutoLock<Mutex>;
 
 using MaybeMutexAutoLock = AutoLock<MaybeMutex>;
+
+extern StaticMutex gInitLock MOZ_UNANNOTATED;
 
 #endif

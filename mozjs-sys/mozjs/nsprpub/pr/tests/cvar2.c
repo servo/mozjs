@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -773,7 +772,6 @@ This test is run with %d, %d, %d, and %d threads of each type.\n\n",
 int main(int argc, char** argv) {
   PRIntn rv;
 
-  PR_STDIO_INIT();
   rv = PR_Initialize(RealMain, argc, argv, 0);
   return rv;
 } /* main */

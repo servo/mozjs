@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,6 +6,10 @@
 #define jit_ProcessExecutableMemory_h
 
 #include "util/Poison.h"
+
+#ifdef XP_IOS
+#  include <BrowserEngineCore/BEMemory.h>
+#endif
 
 namespace js {
 namespace jit {
@@ -115,19 +117,29 @@ class MOZ_RAII AutoMarkJitCodeWritableForThread {
   void checkDestructor() {}
 #endif
 
-#ifdef JS_USE_APPLE_FAST_WX
+#if defined(JS_USE_APPLE_FAST_WX) && !defined(XP_IOS)
   void markExecutable(bool executable);
-#else
-  void markExecutable(bool executable) {}
 #endif
 
  public:
-  AutoMarkJitCodeWritableForThread() {
+  MOZ_ALWAYS_INLINE_EVEN_DEBUG AutoMarkJitCodeWritableForThread() {
+#if defined(JS_USE_APPLE_FAST_WX)
+#  if defined(XP_IOS)
+    be_memory_inline_jit_restrict_rwx_to_rw_with_witness();
+#  else
     markExecutable(false);
+#  endif
+#endif
     checkConstructor();
   }
-  ~AutoMarkJitCodeWritableForThread() {
+  MOZ_ALWAYS_INLINE_EVEN_DEBUG ~AutoMarkJitCodeWritableForThread() {
+#if defined(JS_USE_APPLE_FAST_WX)
+#  if defined(XP_IOS)
+    be_memory_inline_jit_restrict_rwx_to_rx_with_witness();
+#  else
     markExecutable(true);
+#  endif
+#endif
     checkDestructor();
   }
 };

@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -134,13 +132,13 @@ set_define("ENABLE_DECORATORS", enable_decorators)
 # Enable explicit resource management
 # ===================================================
 option(
-    "--enable-explicit-resource-management",
-    default=milestone.is_nightly,
+    "--disable-explicit-resource-management",
+    default=True,
     help="{Enable|Disable} explicit resource management",
 )
 
 
-@depends("--enable-explicit-resource-management")
+@depends("--disable-explicit-resource-management")
 def enable_explicit_resource_management(value):
     if value:
         return True
@@ -148,7 +146,6 @@ def enable_explicit_resource_management(value):
 
 set_config("ENABLE_EXPLICIT_RESOURCE_MANAGEMENT", enable_explicit_resource_management)
 set_define("ENABLE_EXPLICIT_RESOURCE_MANAGEMENT", enable_explicit_resource_management)
-
 
 # Portable Baseline Intepreter
 # =======================================================
@@ -244,6 +241,7 @@ def jit_default(target, enable_portable_baseline_interp):
         "aarch64",
         "mips64",
         "loongarch64",
+        "riscv64",
     ):
         return True
     return False
@@ -707,9 +705,17 @@ def default_wasm_jspi(
         return
 
     if simulator:
-        return simulator[0] == "arm64" or simulator[0] == "arm"
+        return simulator[0] in ("arm64", "arm", "loong64", "mips64", "riscv64")
 
-    if target.cpu in ("x86_64", "x86", "aarch64", "arm", "loongarch64"):
+    if target.cpu in (
+        "x86_64",
+        "x86",
+        "aarch64",
+        "arm",
+        "loongarch64",
+        "mips64",
+        "riscv64",
+    ):
         return True
 
 
@@ -734,41 +740,35 @@ def wasm_jspi(value, jit_enabled, simulator, no_experimental, target):
     if not jit_enabled:
         die("--enable-wasm-jspi requires --enable-jit")
 
-    if simulator and not (simulator[0] == "arm64" or simulator[0] == "arm"):
-        die("--enable-wasm-jspi is only supported for arm64/arm simulators")
+    if simulator and simulator[0] not in (
+        "arm64",
+        "arm",
+        "loong64",
+        "mips64",
+        "riscv64",
+    ):
+        die(
+            "--enable-wasm-jspi is only supported for arm64/arm/loong64/mips64/riscv64 simulators"
+        )
 
-    if target.cpu in ("x86_64", "x86", "aarch64", "arm", "loongarch64"):
+    if target.cpu in (
+        "x86_64",
+        "x86",
+        "aarch64",
+        "arm",
+        "loongarch64",
+        "mips64",
+        "riscv64",
+    ):
         return True
 
     die(
-        "--enable-wasm-jspi only possible when targeting the x86_64/x86/arm64/arm/loongarch64 jits"
+        "--enable-wasm-jspi only possible when targeting the x86_64/x86/arm64/arm/loongarch64/mips64/riscv64 jits"
     )
 
 
 set_config("ENABLE_WASM_JSPI", wasm_jspi)
 set_define("ENABLE_WASM_JSPI", wasm_jspi)
-
-# Support for WebAssembly JS String Builtins
-# ==========================================
-
-
-option(
-    "--disable-wasm-js-string-builtins",
-    default=True,
-    help="{Enable|Disable} WebAssembly JS String Builtins",
-)
-
-
-@depends("--disable-wasm-js-string-builtins")
-def wasm_js_string_builtins(value):
-    if not value:
-        return
-
-    return True
-
-
-set_config("ENABLE_WASM_JS_STRING_BUILTINS", wasm_js_string_builtins)
-set_define("ENABLE_WASM_JS_STRING_BUILTINS", wasm_js_string_builtins)
 
 # Support for WebAssembly shared memory and atomics.
 #
@@ -928,9 +928,9 @@ set_define("ENABLE_WASM_AVX", wasm_avx)
 # =====================================================
 
 
-@depends(milestone.is_nightly, "--enable-wasm-simd")
-def default_wasm_relaxed_simd(is_nightly, wasm_simd):
-    if is_nightly and wasm_simd:
+@depends("--enable-wasm-simd")
+def default_wasm_relaxed_simd(wasm_simd):
+    if wasm_simd:
         return True
 
 
@@ -941,9 +941,9 @@ option(
 )
 
 
-@depends("--enable-wasm-relaxed-simd", "--enable-wasm-simd", "--wasm-no-experimental")
-def wasm_relaxed_simd(value, wasm_simd, no_experimental):
-    if no_experimental or not value:
+@depends("--enable-wasm-relaxed-simd", "--enable-wasm-simd")
+def wasm_relaxed_simd(value, wasm_simd):
+    if not value:
         return
 
     if not wasm_simd:
@@ -983,39 +983,6 @@ def wasm_moz_intgemm(value, no_experimental):
 set_config("ENABLE_WASM_MOZ_INTGEMM", wasm_moz_intgemm)
 set_define("ENABLE_WASM_MOZ_INTGEMM", wasm_moz_intgemm)
 
-# Support for WebAssembly Memory64.
-# ===========================
-
-
-@depends(target)
-def default_wasm_memory64(target):
-    if target.cpu == "mips32":
-        return
-
-    return True
-
-
-option(
-    "--enable-wasm-memory64",
-    default=default_wasm_memory64,
-    help="{Enable|Disable} WebAssembly Memory64",
-)
-
-
-@depends("--enable-wasm-memory64", target)
-def wasm_memory64(value, target):
-    if not value:
-        return
-
-    if target.cpu == "mips32":
-        die("Memory64 is incompatible with MIPS32 target")
-
-    return True
-
-
-set_config("ENABLE_WASM_MEMORY64", wasm_memory64)
-set_define("ENABLE_WASM_MEMORY64", wasm_memory64)
-
 
 # Support for WebAssembly memory control.
 # ===========================
@@ -1046,83 +1013,152 @@ set_config("ENABLE_WASM_MEMORY_CONTROL", wasm_memory_control)
 set_define("ENABLE_WASM_MEMORY_CONTROL", wasm_memory_control)
 
 
-# Support for WebAssembly Multi Memory.
-# =====================================
-
-
-option(
-    "--disable-wasm-multi-memory",
-    help="{Enable|Disable} WebAssembly multi-memory",
-)
-
-
-@depends("--disable-wasm-multi-memory")
-def wasm_multi_memory(value):
-    if value:
-        return True
-
-
-set_config("ENABLE_WASM_MULTI_MEMORY", wasm_multi_memory)
-set_define("ENABLE_WASM_MULTI_MEMORY", wasm_multi_memory)
-
-
 # Support for WebAssembly Branch-hinting.
 # ===========================
 
 
+option(
+    "--disable-wasm-branch-hinting",
+    default=True,
+    help="{Enable|Disable} WebAssembly branch hinting",
+)
+
+set_config(
+    "ENABLE_WASM_BRANCH_HINTING",
+    depends_if("--enable-wasm-branch-hinting")(lambda x: True),
+)
+set_define(
+    "ENABLE_WASM_BRANCH_HINTING",
+    depends_if("--enable-wasm-branch-hinting")(lambda x: True),
+)
+
+
+# Support for WebAssembly Custom Page Sizes
+# =====================================================
+
+
+@depends(milestone.is_nightly, "--enable-simulator", target)
+def default_wasm_custom_page_sizes(is_nightly, simulator, target):
+    if simulator and (simulator[0] != "arm64"):
+        return
+
+    if is_nightly and target.cpu in ("x86_64", "x86", "aarch64"):
+        return True
+
+
+option(
+    "--enable-wasm-custom-page-sizes",
+    default=default_wasm_custom_page_sizes,
+    help="{Enable|Disable} WebAssembly Custom Page Sizes",
+)
+
+
+@depends(
+    "--enable-wasm-custom-page-sizes",
+    "--enable-simulator",
+    target,
+    "--wasm-no-experimental",
+)
+def wasm_custom_page_sizes(value, simulator, target, no_experimental):
+    if no_experimental or not value:
+        return
+
+    if simulator and (simulator[0] != "arm64"):
+        return
+
+    if target.cpu in ("x86_64", "x86", "aarch64"):
+        return True
+
+    die(
+        "--enable-wasm-custom-page-sizes only possible when targeting the x86_64/x86/arm64 jits"
+    )
+
+
+set_config("ENABLE_WASM_CUSTOM_PAGE_SIZES", wasm_custom_page_sizes)
+set_define("ENABLE_WASM_CUSTOM_PAGE_SIZES", wasm_custom_page_sizes)
+
+# Experimental support for GC concurrent marking
+# ==============================================
+
+
+option(
+    "--enable-gc-concurrent-marking",
+    default=False,
+    help="{Enable|Disable} experimental support for GC concurrent marking",
+)
+
+
+@depends("--enable-gc-concurrent-marking", target)
+def gc_concurrent_marking(value, target):
+    if not value:
+        return
+
+    if target.cpu != "x86_64":
+        die("Concurrent marking is only supported on 64 bit x86 platforms")
+
+    return True
+
+
+set_config("JS_GC_CONCURRENT_MARKING", gc_concurrent_marking)
+set_define("JS_GC_CONCURRENT_MARKING", gc_concurrent_marking)
+
+
+# Support for WebAssembly compact imports.
+# ===========================
+
+
 @depends(milestone.is_nightly)
-def default_wasm_branch_hinting(is_nightly):
+def default_wasm_compact_imports(is_nightly):
     if is_nightly:
         return True
 
 
 option(
-    "--enable-wasm-branch-hinting",
-    default=default_wasm_branch_hinting,
-    help="{Enable|Disable} WebAssembly Branch hints",
+    "--enable-wasm-compact-imports",
+    default=default_wasm_compact_imports,
+    help="{Enable|Disable} WebAssembly compact import section support",
 )
 
 
-@depends("--enable-wasm-branch-hinting", "--wasm-no-experimental")
-def wasm_branch_hinting(value, no_experimental):
+@depends("--enable-wasm-compact-imports", "--wasm-no-experimental")
+def wasm_compact_imports(value, no_experimental):
     if no_experimental or not value:
         return
 
     return True
 
 
-set_config("ENABLE_WASM_BRANCH_HINTING", wasm_branch_hinting)
-set_define("ENABLE_WASM_BRANCH_HINTING", wasm_branch_hinting)
+set_config("ENABLE_WASM_COMPACT_IMPORTS", wasm_compact_imports)
+set_define("ENABLE_WASM_COMPACT_IMPORTS", wasm_compact_imports)
 
-# Options for generating the shell as a script
-# ============================================
-option("--with-qemu-exe", nargs=1, help="Use path as an arm emulator on host platforms")
-set_config("QEMU_EXE", depends_if("--with-qemu-exe")(lambda x: x))
+
+# Support for the WebAssembly component model.
+# ===========================
+
+
+@depends(milestone.is_nightly)
+def default_wasm_components(is_nightly):
+    if is_nightly:
+        return True
+
 
 option(
-    "--with-cross-lib",
-    nargs=1,
-    default=depends(target.alias)(lambda x: "/usr/%s" % x),
-    help="Use dir as the location for arm libraries",
+    "--enable-wasm-components",
+    default=default_wasm_components,
+    help="{Enable|Disable} WebAssembly component model support",
 )
-set_config("CROSS_LIB", depends_if("--with-cross-lib")(lambda x: x))
-
-# Enable static checking using sixgill
-# ====================================
-
-option("--with-sixgill", nargs=1, help="Enable static checking of code using sixgill")
 
 
-@depends_if("--with-sixgill")
-@imports("os")
-def sixgill(value):
-    for f in ("bin/xdbfind", "gcc/xgill.so", "scripts/wrap_gcc/g++"):
-        if not os.path.exists(os.path.join(value[0], f)):
-            die("The sixgill plugin and binaries are not at the specified path")
-    return value[0]
+@depends("--enable-wasm-components", "--wasm-no-experimental")
+def wasm_components(value, no_experimental):
+    if no_experimental or not value:
+        return
+
+    return True
 
 
-set_config("SIXGILL_PATH", sixgill)
+set_config("ENABLE_WASM_COMPONENTS", wasm_components)
+set_define("ENABLE_WASM_COMPONENTS", wasm_components)
 
 
 # Support for readline
@@ -1191,7 +1227,7 @@ def enable_system_icu_option(enable_system_icu):
 
 
 system_icu = pkg_check_modules(
-    "MOZ_ICU", "icu-uc icu-i18n >= 76.1", when="--with-system-icu"
+    "MOZ_ICU", "icu-uc icu-i18n >= 78.1", when="--with-system-icu"
 )
 
 
@@ -1289,14 +1325,9 @@ set_define(
 # =========================================
 
 
-@depends(milestone.is_nightly)
-def default_wasm_resizable_arraybuffer(is_nightly):
-    return is_nightly
-
-
 option(
-    "--enable-wasm-resizable-arraybuffer",
-    default=default_wasm_resizable_arraybuffer,
+    "--disable-wasm-resizable-arraybuffer",
+    default=True,
     help="{Enable|Disable} resizable ArrayBuffer in WASM",
 )
 
@@ -1378,7 +1409,7 @@ with only_when(compile_environment):
     configured_moz_optimize_flags,
     when="--enable-compile-environment",
 )
-@imports(_from="mozbuild.shellutil", _import="split")
+@imports(_from="mozshellutil", _import="split")
 def moz_js_optimize_flags(target, compiler, configured_moz_optimize_flags):
     if configured_moz_optimize_flags:
         return configured_moz_optimize_flags
@@ -1463,7 +1494,6 @@ with only_when(compile_environment & depends(target.os)(lambda os: os != "WINNT"
     set_define("HAVE_GETC_UNLOCKED", check_symbol("getc_unlocked"))
     set_define("HAVE_PTHREAD_GETNAME_NP", check_symbol("pthread_getname_np"))
     set_define("HAVE_PTHREAD_GET_NAME_NP", check_symbol("pthread_get_name_np"))
-    set_define("HAVE_STRERROR", check_symbol("strerror"))
 
     set_config(
         "HAVE_LANGINFO_CODESET",

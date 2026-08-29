@@ -96,6 +96,15 @@ def test_cli_run_with_setup(run, capfd):
     assert ret == 1
 
 
+def test_cli_run_with_all_skipped(run, capfd):
+    # implicitly call setup
+    ret = run(["-l", "setupskipped"])
+    out, err = capfd.readouterr()
+    assert "setup skipped" in out
+    assert "ERROR" in err
+    assert ret == 1
+
+
 def test_cli_for_exclude_list(run, monkeypatch, capfd):
     ret = run(["-l", "excludes", "--check-exclude-list"])
     out, err = capfd.readouterr()
@@ -147,15 +156,13 @@ def test_cli_run_with_stdin_filename(run, filedir, capfd, monkeypatch, tmp_path)
 
     monkeypatch.setattr("sys.stdin", io.TextIOWrapper(io.BytesIO(b"foobar\n")))
     tmpfile = tmp_path / "temp"
-    run(
-        [
-            "-l",
-            "string",
-            f"--stdin-filename={filedir}/foobar.py",
-            "--dump-stdin-file",
-            str(tmpfile),
-        ]
-    )
+    run([
+        "-l",
+        "string",
+        f"--stdin-filename={filedir}/foobar.py",
+        "--dump-stdin-file",
+        str(tmpfile),
+    ])
     out, err = capfd.readouterr()
     assert out == ""
     assert tmpfile.read_text() == "foobar\n"

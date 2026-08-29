@@ -6,7 +6,7 @@ import tarfile
 import requests
 from urllib.request import urlretrieve
 
-ESR = 140
+ESR = 153
 REPO = f"mozilla-esr{ESR}"
 HEADERS = {"User-Agent": "mozjs-sys/1.0 (https://github.com/servo/mozjs)"}
 
@@ -61,9 +61,7 @@ def read_milestone_from_tarball(tarball_path: str) -> str:
                 milestone_member = member
                 break
         if milestone_member is None:
-            raise RuntimeError(
-                f"config/milestone.txt not found in {tarball_path}"
-            )
+            raise RuntimeError(f"config/milestone.txt not found in {tarball_path}")
         f = tar.extractfile(milestone_member)
         if f is None:
             raise RuntimeError(
@@ -83,7 +81,7 @@ def read_milestone_from_tarball(tarball_path: str) -> str:
 def verify_tarball_version(tarball_path: str, expected_version: str) -> None:
     """Verify the tarball's milestone matches the expected tag version."""
     milestone = read_milestone_from_tarball(tarball_path)
-    if milestone != expected_version:
+    if not (milestone == expected_version or f"{milestone}.0" == expected_version):
         raise RuntimeError(
             f"SpiderMonkey version mismatch: tarball milestone is {milestone} "
             f"but the resolved tag implies {expected_version}."
@@ -91,7 +89,40 @@ def verify_tarball_version(tarball_path: str, expected_version: str) -> None:
     print(f"Milestone verified: tarball is SpiderMonkey {milestone}")
 
 
+def extract_and_repack_zst_to_gz(zst_path: str, file: str, gz_path: str) -> None:
+    print(f"Extracting {file} from {zst_path} and repacking into {gz_path}")
+    if sys.version_info >= (3, 14):
+        import tarfile
+        from compression import zstd
+    else:
+        from backports import zstd
+        from backports.zstd import tarfile
+
+    import gzip
+
+    f = None
+    if ".tar" in zst_path:
+        tar = tarfile.open(zst_path, "r:*")
+        target_member = None
+        for member in tar:
+            if member.isfile() and member.name.endswith(f"{file}"):
+                target_member = member
+                break
+        if target_member is None:
+            raise RuntimeError(f"{file} not found in {zst_path}")
+        f = tar.extractfile(target_member)
+    else:
+        f = zstd.open(zst_path, "rb")
+    if f is None:
+        raise RuntimeError(f"Could not read {file} from {zst_path}")
+    content = f.read()
+    with gzip.open(gz_path, "wb") as out_file:
+        out_file.write(content)
+
+
 def download_hazard_artifacts_from_taskcluster(commit: str) -> None:
+    import os
+
     response = requests.get(
         f"https://treeherder.mozilla.org/api/project/{REPO}/push/?revision={commit}",
         headers=HEADERS,
@@ -112,5 +143,23 @@ def download_hazard_artifacts_from_taskcluster(commit: str) -> None:
         )
         sys.exit(1)
     print(f"Hazard task id {hazard_task_id}")
-    download_artifact(hazard_task_id, "allFunctions.txt.gz", "allFunctions.txt.gz")
-    download_artifact(hazard_task_id, "gcFunctions.txt.gz", "gcFunctions.txt.gz")
+    download_artifact(
+        hazard_task_id, "hazardIntermediates.tar.zst", "hazardIntermediates.tar.zst"
+    )
+    extract_and_repack_zst_to_gz(
+        "hazardIntermediates.tar.zst", "allFunctions.txt", "allFunctions.txt.gz"
+    )
+    os.remove("hazardIntermediates.tar.zst")
+    download_artifact(hazard_task_id, "gcFunctions.txt.zst", "gcFunctions.txt.zst")
+    extract_and_repack_zst_to_gz(
+        "gcFunctions.txt.zst", "gcFunctions.txt", "gcFunctions.txt.gz"
+    )
+    os.remove("gcFunctions.txt.zst")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        print("Usage: get_taskcluster_mozjs.py <commit>")
+        sys.exit(1)
+    commit = sys.argv[1]
+    download_hazard_artifacts_from_taskcluster(commit)

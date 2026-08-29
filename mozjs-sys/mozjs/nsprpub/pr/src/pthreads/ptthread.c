@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -820,11 +819,6 @@ static void _pt_thread_death_internal(void* arg, PRBool callDestructors) {
   if (NULL != thred->syspoll_list) {
     PR_Free(thred->syspoll_list);
   }
-#  if defined(_PR_POLL_WITH_SELECT)
-  if (NULL != thred->selectfd_list) {
-    PR_Free(thred->selectfd_list);
-  }
-#  endif
 #  if defined(DEBUG)
   memset(thred, 0xaf, sizeof(PRThread));
 #  endif /* defined(DEBUG) */
@@ -957,41 +951,6 @@ static void _PR_Fini(void) __attribute__((destructor));
  */
 #    pragma fini(_PR_Fini)
 static void _PR_Fini(void);
-#  elif defined(HPUX)
-/*
- * Current versions of HP C compiler define __HP_cc.
- * HP C compiler A.11.01.20 doesn't define __HP_cc.
- */
-#    if defined(__ia64) || defined(_LP64)
-#      pragma FINI "_PR_Fini"
-static void _PR_Fini(void);
-#    else
-/*
- * Only HP-UX 10.x style initializers are supported in 32-bit links.
- * Need to use the +I PR_HPUX10xInit linker option.
- */
-#      include <dl.h>
-
-static void _PR_Fini(void);
-
-void PR_HPUX10xInit(shl_t handle, int loading) {
-  /*
-   * This function is called when a shared library is loaded as well
-   * as when the shared library is unloaded.  Note that it may not
-   * be called when the user's program terminates.
-   *
-   * handle is the shl_load API handle for the shared library being
-   * initialized.
-   *
-   * loading is non-zero at startup and zero at termination.
-   */
-  if (loading) {
-    /* ... do some initializations ... */
-  } else {
-    _PR_Fini();
-  }
-}
-#    endif
 #  elif defined(AIX)
 /* Need to use the -binitfini::_PR_Fini linker option. */
 #  endif

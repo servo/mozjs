@@ -339,6 +339,31 @@ BEGIN_TEST(testSimpleStringToBigInt_AllPossibleDigits) {
 }
 END_TEST(testSimpleStringToBigInt_AllPossibleDigits)
 
+BEGIN_TEST(testSimpleStringToBigInt_RoundTripAllRadices) {
+  for (size_t radix = 2; radix <= 36; radix++) {
+    CHECK(RoundTripRadix(radix));
+  }
+  return true;
+}
+
+bool RoundTripRadix(size_t radix) {
+  std::string input = "1" + std::string(128, '0');
+  JS::Rooted<JS::BigInt*> bi(
+      cx,
+      JS::SimpleStringToBigInt(
+          cx, mozilla::Span<const char>{input.data(), input.length()}, radix));
+  CHECK(bi);
+
+  JS::Rooted<JSString*> str(cx, JS::BigIntToString(cx, bi, radix));
+  CHECK(str);
+
+  bool match;
+  CHECK(JS_StringEqualsAscii(cx, str, input.c_str(), input.length(), &match));
+  CHECK(match);
+  return true;
+}
+END_TEST(testSimpleStringToBigInt_RoundTripAllRadices)
+
 BEGIN_TEST(testSimpleStringToBigInt_RadixOutOfRange) {
   CHECK(RadixOutOfRange(1));
   CHECK(RadixOutOfRange(37));

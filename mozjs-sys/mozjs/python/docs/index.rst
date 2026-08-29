@@ -51,7 +51,17 @@ To add a ``pip install``-d package dependency, add it to your site's
 
     ...
     pypi:new-package==<version>
-    ...
+
+If you'd like to lock dependencies and validate hashes, you can alternatively specify a path
+to a ``requirements.txt`` file:
+
+.. code:: text
+
+   ...
+   requirements-txt:path/to/requirements.txt
+
+The ``requirements.txt`` file can be generated using any tool you like, but it must include
+hashes for all listed packages.
 
 .. note::
 

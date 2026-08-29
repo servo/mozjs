@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,8 +22,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "jsmath.h"
-
+#include "builtin/Math.h"
 #include "builtin/String.h"
 #include "gc/Barrier.h"
 #include "gc/Marking.h"
@@ -34,7 +31,6 @@
 #include "jit/JitCommon.h"
 #include "jit/JitRuntime.h"
 #include "jit/Registers.h"
-#include "js/ForOfIterator.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/Stack.h"                 // JS::NativeStackLimitMin
 #include "util/StringBuilder.h"
@@ -42,12 +38,14 @@
 #include "util/Unicode.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/BigIntType.h"
+#include "vm/BoundFunctionObject.h"
 #include "vm/Compartment.h"
 #include "vm/ErrorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
 #include "vm/JitActivation.h"
 #include "vm/JSFunction.h"
+#include "vm/JSObject.h"
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "wasm/WasmBuiltins.h"
 #include "wasm/WasmCode.h"
@@ -61,6 +59,7 @@
 #include "wasm/WasmModule.h"
 #include "wasm/WasmModuleTypes.h"
 #include "wasm/WasmPI.h"
+#include "wasm/WasmStacks.h"
 #include "wasm/WasmStubs.h"
 #include "wasm/WasmTypeDef.h"
 #include "wasm/WasmValType.h"
@@ -177,8 +176,8 @@ static bool UnpackResults(JSContext* cx, const ValTypeVector& resultTypes,
   }
 
   MOZ_ASSERT(stackResultsArea.isSome());
-  Rooted<ArrayObject*> array(cx);
-  if (!IterableToArray(cx, rval, &array)) {
+  Rooted<ArrayObject*> array(cx, IterableToArray(cx, rval));
+  if (!array) {
     return false;
   }
 
@@ -248,18 +247,37 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
                           unsigned argc, uint64_t* argv) {
   AssertRealmUnchanged aru(cx);
 
-  const FuncImport& fi = code().funcImport(funcImportIndex);
-  const FuncType& funcType = codeMeta().getFuncType(funcImportIndex);
+#ifdef ENABLE_WASM_JSPI
+  // We should not be on a cont stack.
+  MOZ_ASSERT(!cx->wasm().onContStack());
+#endif
 
-  ArgTypeVector argTypes(funcType);
-  InvokeArgs args(cx);
-  if (!args.init(cx, argTypes.lengthWithoutStackResults())) {
-    return false;
-  }
+  FuncImportInstanceData& instanceFuncImport =
+      funcImportInstanceData(funcImportIndex);
+  const FuncType& funcType = codeMeta().getFuncType(funcImportIndex);
 
   if (funcType.hasUnexposableArgOrRet()) {
     JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                              JSMSG_WASM_BAD_VAL_TYPE);
+    return false;
+  }
+
+  ArgTypeVector argTypes(funcType);
+  size_t invokeArgsLength = argTypes.lengthWithoutStackResults();
+
+  // If we're applying the Function.prototype.call.bind optimization, the
+  // number of arguments to the target function is decreased by one to account
+  // for the 'this' parameter we're passing
+  bool isFunctionCallBind = instanceFuncImport.isFunctionCallBind;
+  if (isFunctionCallBind) {
+    // Guarded against in MaybeOptimizeFunctionCallBind.
+    MOZ_ASSERT(invokeArgsLength != 0);
+    invokeArgsLength -= 1;
+  }
+
+  RootedValue thisv(cx, UndefinedValue());
+  InvokeArgs invokeArgs(cx);
+  if (!invokeArgs.init(cx, invokeArgsLength)) {
     return false;
   }
 
@@ -270,18 +288,26 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     JS::AutoAssertNoGC nogc;
     for (size_t i = 0; i < argc; i++) {
       const void* rawArgLoc = &argv[i];
+
       if (argTypes.isSyntheticStackResultPointerArg(i)) {
         stackResultPointer = Some(*(char**)rawArgLoc);
         continue;
       }
+
       size_t naturalIndex = argTypes.naturalIndex(i);
       ValType type = funcType.args()[naturalIndex];
-      // Avoid boxes creation not to trigger GC.
+
+      // Skip JS value conversion that may GC (as the argument array is not
+      // rooted), and do that in a follow up loop.
       if (ToJSValueMayGC(type)) {
         lastBoxIndexPlusOne = i + 1;
         continue;
       }
-      MutableHandleValue argValue = args[naturalIndex];
+
+      MutableHandleValue argValue =
+          isFunctionCallBind
+              ? ((naturalIndex == 0) ? &thisv : invokeArgs[naturalIndex - 1])
+              : invokeArgs[naturalIndex];
       if (!ToJSValue(cx, rawArgLoc, type, argValue)) {
         return false;
       }
@@ -294,29 +320,37 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     if (argTypes.isSyntheticStackResultPointerArg(i)) {
       continue;
     }
-    const void* rawArgLoc = &argv[i];
+
     size_t naturalIndex = argTypes.naturalIndex(i);
     ValType type = funcType.args()[naturalIndex];
+
+    // Visit the arguments that could trigger a GC now.
     if (!ToJSValueMayGC(type)) {
       continue;
     }
+    // All value types that require boxing when converted to a JS value are not
+    // references.
     MOZ_ASSERT(!type.isRefRepr());
+
     // The conversions are safe here because source values are not references
-    // and will not be moved.
-    MutableHandleValue argValue = args[naturalIndex];
+    // and will not be moved. This may move the unrooted arguments in the array
+    // but that's okay because those were handled in the above loop.
+    const void* rawArgLoc = &argv[i];
+    MutableHandleValue argValue =
+        isFunctionCallBind
+            ? ((naturalIndex == 0) ? &thisv : invokeArgs[naturalIndex - 1])
+            : invokeArgs[naturalIndex];
     if (!ToJSValue(cx, rawArgLoc, type, argValue)) {
       return false;
     }
   }
 
-  FuncImportInstanceData& import = funcImportInstanceData(funcImportIndex);
-  Rooted<JSObject*> importCallable(cx, import.callable);
+  Rooted<JSObject*> importCallable(cx, instanceFuncImport.callable);
   MOZ_ASSERT(cx->realm() == importCallable->nonCCWRealm());
 
   RootedValue fval(cx, ObjectValue(*importCallable));
-  RootedValue thisv(cx, UndefinedValue());
   RootedValue rval(cx);
-  if (!Call(cx, fval, thisv, args, &rval)) {
+  if (!Call(cx, fval, thisv, invokeArgs, &rval)) {
     return false;
   }
 
@@ -328,9 +362,17 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     return true;
   }
 
+  // JIT exits have not been updated to support the Function.prototype.call.bind
+  // optimization.
+  if (instanceFuncImport.isFunctionCallBind) {
+    return true;
+  }
+
   // The import may already have become optimized.
-  void* jitExitCode = code().sharedStubs().base() + fi.jitExitCodeOffset();
-  if (import.code == jitExitCode) {
+  const FuncImport& funcImport = code().funcImport(funcImportIndex);
+  void* jitExitCode =
+      code().sharedStubs().base() + funcImport.jitExitCodeOffset();
+  if (instanceFuncImport.code == jitExitCode) {
     return true;
   }
 
@@ -348,6 +390,11 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
     return true;
   }
 
+  // Skip if pushing arguments would require stack probes.
+  if (importCallable->as<JSFunction>().nargs() > JIT_ARGS_LENGTH_MAX) {
+    return true;
+  }
+
   // Skip if the function does not have a signature that allows for a JIT exit.
   if (!funcType.canHaveJitExit()) {
     return true;
@@ -355,7 +402,7 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
 
   // Let's optimize it!
 
-  import.code = jitExitCode;
+  instanceFuncImport.code = jitExitCode;
   return true;
 }
 
@@ -363,24 +410,6 @@ bool Instance::callImport(JSContext* cx, uint32_t funcImportIndex,
 Instance::callImport_general(Instance* instance, int32_t funcImportIndex,
                              int32_t argc, uint64_t* argv) {
   JSContext* cx = instance->cx();
-#ifdef ENABLE_WASM_JSPI
-  if (IsSuspendableStackActive(cx)) {
-    struct ImportCallData {
-      Instance* instance;
-      int32_t funcImportIndex;
-      int32_t argc;
-      uint64_t* argv;
-      static bool Call(ImportCallData* data) {
-        Instance* instance = data->instance;
-        JSContext* cx = instance->cx();
-        return instance->callImport(cx, data->funcImportIndex, data->argc,
-                                    data->argv);
-      }
-    } data = {instance, funcImportIndex, argc, argv};
-    return CallOnMainStack(
-        cx, reinterpret_cast<CallOnMainStackFn>(ImportCallData::Call), &data);
-  }
-#endif
   return instance->callImport(cx, funcImportIndex, argc, argv);
 }
 
@@ -567,9 +596,12 @@ static int32_t PerformWake(Instance* instance, PtrT byteOffset, int32_t count,
   Pages pages = instance->memory(memoryIndex)->volatilePages();
 #ifdef JS_64BIT
   // Ensure that the memory size is no more than 4GiB.
-  MOZ_ASSERT(pages <= Pages(MaxMemory32PagesValidation));
+  MOZ_ASSERT(pages <=
+             Pages::fromPageCount(
+                 MaxMemoryPagesValidation(AddressType::I32, pages.pageSize()),
+                 pages.pageSize()));
 #endif
-  return uint32_t(pages.value());
+  return uint32_t(pages.pageCount());
 }
 
 /* static */ uint64_t Instance::memorySize_m64(Instance* instance,
@@ -583,9 +615,10 @@ static int32_t PerformWake(Instance* instance, PtrT byteOffset, int32_t count,
 
   Pages pages = instance->memory(memoryIndex)->volatilePages();
 #ifdef JS_64BIT
-  MOZ_ASSERT(pages <= Pages(MaxMemory64PagesValidation));
+  MOZ_ASSERT(pages <= Pages::fromPageCount(MaxMemory64StandardPagesValidation,
+                                           pages.pageSize()));
 #endif
-  return pages.value();
+  return pages.pageCount();
 }
 
 template <typename PointerT, typename CopyFuncT, typename IndexT>
@@ -794,19 +827,7 @@ template <typename I>
 static int32_t MemoryInit(JSContext* cx, Instance* instance,
                           uint32_t memoryIndex, I dstOffset, uint32_t srcOffset,
                           uint32_t len, const DataSegment* maybeSeg) {
-  if (!maybeSeg) {
-    if (len == 0 && srcOffset == 0) {
-      return 0;
-    }
-
-    ReportTrapError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
-    return -1;
-  }
-
-  const DataSegment& seg = *maybeSeg;
-  MOZ_RELEASE_ASSERT(!seg.active());
-
-  const uint32_t segLen = seg.bytes.length();
+  const uint32_t segLen = maybeSeg ? maybeSeg->bytes.length() : 0;
   WasmMemoryObject* mem = instance->memory(memoryIndex);
   const size_t memLen = mem->volatileMemoryLength();
 
@@ -820,6 +841,17 @@ static int32_t MemoryInit(JSContext* cx, Instance* instance,
     ReportTrapError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
     return -1;
   }
+
+  // Besides the obvious, this condition also handles dropped data segments,
+  // because any nonzero init length on a dropped segment will fail the above
+  // bounds check.
+  if (len == 0) {
+    return 0;
+  }
+
+  MOZ_RELEASE_ASSERT(maybeSeg);
+  const DataSegment& seg = *maybeSeg;
+  MOZ_RELEASE_ASSERT(!seg.active());
 
   // The required read/write direction is upward, but that is not currently
   // observable as there are no fences nor any read/write protect operation.
@@ -890,30 +922,20 @@ static int32_t MemoryInit(JSContext* cx, Instance* instance,
     return -1;
   }
 
-  bool isOOM = false;
-
-  if (&srcTable == &dstTable && dstOffset > srcOffset) {
-    for (uint32_t i = len; i > 0; i--) {
-      if (!dstTable->copy(cx, *srcTable, dstOffset + (i - 1),
-                          srcOffset + (i - 1))) {
-        isOOM = true;
-        break;
-      }
-    }
-  } else if (&srcTable == &dstTable && dstOffset == srcOffset) {
+  if (srcTable.get() == dstTable.get() && dstOffset == srcOffset) {
     // No-op
+  } else if (dstOffset > srcOffset) {
+    // Copy backwards
+    for (uint32_t i = len; i > 0; i--) {
+      dstTable->copy(*srcTable, dstOffset + (i - 1), srcOffset + (i - 1));
+    }
   } else {
+    // Copy forwards
     for (uint32_t i = 0; i < len; i++) {
-      if (!dstTable->copy(cx, *srcTable, dstOffset + i, srcOffset + i)) {
-        isOOM = true;
-        break;
-      }
+      dstTable->copy(*srcTable, dstOffset + i, srcOffset + i);
     }
   }
 
-  if (isOOM) {
-    return -1;
-  }
   return 0;
 }
 
@@ -1053,6 +1075,10 @@ bool Instance::iterElemsFunctions(const ModuleElemSegment& seg,
       if (import.callable->is<JSFunction>()) {
         JSFunction* fun = &import.callable->as<JSFunction>();
         if (!codeMeta().funcImportsAreJS && fun->isWasm()) {
+          // Unwrapped Function.prototype.call.bind imports should not be used
+          // when the unwrapped function is a wasm function.
+          MOZ_ASSERT(!import.isFunctionCallBind);
+
           // This element is a wasm function imported from another
           // instance. To preserve the === function identity required by
           // the JS embedding spec, we must get the imported function's
@@ -1203,7 +1229,8 @@ static bool WasmDiscardCheck(Instance* instance, I byteOffset, I byteLen,
                              size_t memLen, bool shared) {
   JSContext* cx = instance->cx();
 
-  if (byteOffset % wasm::PageSize != 0 || byteLen % wasm::PageSize != 0) {
+  if (byteOffset % wasm::StandardPageSizeBytes != 0 ||
+      byteLen % wasm::StandardPageSizeBytes != 0) {
     ReportTrapError(cx, JSMSG_WASM_UNALIGNED_ACCESS);
     return false;
   }
@@ -1499,10 +1526,10 @@ template void* Instance::arrayNew<false>(Instance* instance,
                                          uint32_t typeDefIndex,
                                          gc::AllocSite* allocSite);
 
-// Copies from a data segment into a wasm GC array. Performs the necessary
-// bounds checks, accounting for the array's element size. If this function
-// returns false, it has already reported a trap error. Null arrays should
-// be handled in the caller.
+// Copies from a (possibly dropped) data segment into a wasm GC array. Performs
+// the necessary bounds checks, accounting for the array's element size. If this
+// function returns false, it has already reported a trap error. Null arrays
+// should be handled in the caller.
 static bool ArrayCopyFromData(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
                               uint32_t arrayIndex, const DataSegment* seg,
                               uint32_t segByteOffset, uint32_t numElements) {
@@ -1512,7 +1539,8 @@ static bool ArrayCopyFromData(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
   CheckedUint32 numBytesToCopy =
       CheckedUint32(numElements) * CheckedUint32(elemSize);
   if (!numBytesToCopy.isValid()) {
-    // Because the request implies that 2^32 or more bytes are to be copied.
+    // If 2^32 or more bytes are to be copied, this is necessarily out of bounds
+    // on the data segment.
     ReportTrapError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
     return false;
   }
@@ -1524,7 +1552,7 @@ static bool ArrayCopyFromData(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
   CheckedUint32 lastByteOffsetPlus1 =
       CheckedUint32(segByteOffset) + numBytesToCopy;
 
-  CheckedUint32 numBytesAvailable(seg->bytes.length());
+  CheckedUint32 numBytesAvailable(seg ? seg->bytes.length() : 0);
   if (!lastByteOffsetPlus1.isValid() || !numBytesAvailable.isValid() ||
       lastByteOffsetPlus1.value() > numBytesAvailable.value()) {
     // Because the last byte to copy doesn't exist inside `seg->bytes`.
@@ -1547,6 +1575,7 @@ static bool ArrayCopyFromData(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
   // Because `numBytesToCopy` is an in-range `CheckedUint32`, the cast to
   // `size_t` is safe even on a 32-bit target.
   if (numElements != 0) {
+    MOZ_RELEASE_ASSERT(seg);
     memcpy(&arrayObj->data_[dstByteOffset], &seg->bytes[segByteOffset],
            size_t(numBytesToCopy.value()));
   }
@@ -1580,11 +1609,9 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
     return false;
   }
 
-  GCPtr<AnyRef>* dst = reinterpret_cast<GCPtr<AnyRef>*>(arrayObj->data_);
-  for (uint32_t i = 0; i < numElements; i++) {
-    dst[arrayIndex + i] = seg[segOffset + i];
-  }
-
+  AnyRef* dst = reinterpret_cast<AnyRef*>(arrayObj->data_) + arrayIndex;
+  AnyRef* src = seg.begin()->unbarrieredAddress() + segOffset;
+  BarrieredCopyRange(arrayObj, dst, src, numElements);
   return true;
 }
 
@@ -1606,17 +1633,6 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
                      "ensured by validation");
   const DataSegment* seg = instance->passiveDataSegments_[segIndex];
 
-  // `seg` will be nullptr if the segment has already been 'data.drop'ed
-  // (either implicitly in the case of 'active' segments during instantiation,
-  // or explicitly by the data.drop instruction.)  In that case we can
-  // continue only if there's no need to copy any data out of it.
-  if (!seg && (numElements != 0 || segByteOffset != 0)) {
-    ReportTrapError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
-    return nullptr;
-  }
-  // At this point, if `seg` is null then `numElements` and `segByteOffset`
-  // are both zero.
-
   Rooted<WasmArrayObject*> arrayObj(
       cx,
       WasmArrayObject::createArray<true>(
@@ -1626,11 +1642,6 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
     return nullptr;
   }
   MOZ_RELEASE_ASSERT(arrayObj->is<WasmArrayObject>());
-
-  if (!seg) {
-    // A zero-length array was requested and has been created, so we're done.
-    return arrayObj;
-  }
 
   if (!ArrayCopyFromData(cx, arrayObj, 0, seg, segByteOffset, numElements)) {
     // Trap errors will be reported by ArrayCopyFromData.
@@ -1706,27 +1717,10 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
                      "ensured by validation");
   const DataSegment* seg = instance->passiveDataSegments_[segIndex];
 
-  // `seg` will be nullptr if the segment has already been 'data.drop'ed
-  // (either implicitly in the case of 'active' segments during instantiation,
-  // or explicitly by the data.drop instruction.)  In that case we can
-  // continue only if there's no need to copy any data out of it.
-  if (!seg && (numElements != 0 || segByteOffset != 0)) {
-    ReportTrapError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
-    return -1;
-  }
-  // At this point, if `seg` is null then `numElements` and `segByteOffset`
-  // are both zero.
-
   // Trap if the array is null.
   if (!array) {
     ReportTrapError(cx, JSMSG_WASM_DEREF_NULL);
     return -1;
-  }
-
-  if (!seg) {
-    // The segment was dropped, therefore a zero-length init was requested, so
-    // we're done.
-    return 0;
   }
 
   // Get hold of the array.
@@ -1867,16 +1861,45 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
     return 0;
   }
 
-  GCPtr<AnyRef>* dst = (GCPtr<AnyRef>*)dstBase;
   AnyRef* src = (AnyRef*)srcBase;
-  // The std::copy performs GCPtr::set() operation under the hood.
-  if (uintptr_t(dstBase) < uintptr_t(srcBase)) {
-    std::copy(src, src + numElements, dst);
-  } else {
-    std::copy_backward(src, src + numElements, dst + numElements);
-  }
+  BarrieredMoveRange(dstArrayObj, dstBase, src, numElements);
+
   return 0;
 }
+
+#ifdef ENABLE_WASM_JSPI
+
+/* static */ void* Instance::contNew(Instance* instance, void* funcRef) {
+  MOZ_ASSERT(SASigContNew.failureMode == FailureMode::FailOnNullPtr);
+  JSContext* cx = instance->cx();
+  Rooted<JSFunction*> target(cx, static_cast<JSFunction*>(funcRef));
+  if (!target) {
+    ReportTrapError(cx, JSMSG_WASM_DEREF_NULL);
+    return nullptr;
+  }
+  MOZ_ASSERT(target->isWasm());
+
+  const Code& creatorCode = instance->code();
+  void* stub =
+      creatorCode.sharedStubs().codeBase + creatorCode.contBaseFrameOffset();
+  ContObject* cont = ContObject::create(cx, target, stub, &creatorCode);
+  return AnyRef::fromJSObjectOrNull(cont).forCompiledCode();
+}
+
+/* static */ void* Instance::contNewEmpty(Instance* instance) {
+  MOZ_ASSERT(SASigContNewEmpty.failureMode == FailureMode::FailOnNullPtr);
+  JSContext* cx = instance->cx();
+  ContObject* cont = ContObject::createEmpty(cx);
+  return AnyRef::fromJSObjectOrNull(cont).forCompiledCode();
+}
+
+/* static */ void Instance::contUnwind(Instance* instance,
+                                       wasm::Handlers* handlers) {
+  MOZ_ASSERT(SASigContUnwind.failureMode == FailureMode::Infallible);
+  ContStack::unwind(handlers);
+}
+
+#endif  // ENABLE_WASM_JSPI
 
 /* static */ void* Instance::exceptionNew(Instance* instance, void* tagArg) {
   MOZ_ASSERT(SASigExceptionNew.failureMode == FailureMode::FailOnNullPtr);
@@ -1885,6 +1908,15 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
   Rooted<WasmTagObject*> tagObj(cx, &tag.toJSObject().as<WasmTagObject>());
   RootedObject proto(cx, &cx->global()->getPrototype(JSProto_WasmException));
   RootedObject stack(cx, nullptr);
+
+  // We don't create the .stack property by default, unless the pref is set for
+  // debugging.
+  if (JS::Prefs::wasm_exception_force_stack_trace() &&
+      !CaptureStack(cx, &stack, MAX_REPORTED_STACK_DEPTH)) {
+    ReportOutOfMemory(cx);
+    return nullptr;
+  }
+
   // An OOM will result in null which will be caught on the wasm side.
   return AnyRef::fromJSObjectOrNull(
              WasmExceptionObject::create(cx, tagObj, stack, proto))
@@ -1909,8 +1941,9 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
                                             uint32_t src1, uint32_t src2,
                                             uint32_t len, uint8_t* memBase) {
   MOZ_ASSERT(SASigIntrI8VecMul.failureMode == FailureMode::FailOnNegI32);
+  MOZ_ASSERT(SASigIntrI8VecMul.failureTrap == Trap::OutOfBounds);
+  AutoUnsafeCallWithABI unsafe;
 
-  JSContext* cx = instance->cx();
   const WasmArrayRawBuffer* rawBuf = WasmArrayRawBuffer::fromDataPtr(memBase);
   size_t memLen = rawBuf->byteLength();
 
@@ -1919,7 +1952,6 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
   uint64_t src1Limit = uint64_t(src1) + uint64_t(len);
   uint64_t src2Limit = uint64_t(src2) + uint64_t(len);
   if (destLimit > memLen || src1Limit > memLen || src2Limit > memLen) {
-    ReportTrapError(cx, JSMSG_WASM_OUT_OF_BOUNDS);
     return -1;
   }
 
@@ -1935,11 +1967,9 @@ static bool ArrayCopyFromElem(JSContext* cx, Handle<WasmArrayObject*> arrayObj,
     src2Ptr++;
     len--;
   }
-
   return 0;
 }
 
-#ifdef ENABLE_WASM_JS_STRING_BUILTINS
 template <bool isMutable>
 static WasmArrayObject* UncheckedCastToArrayI16(HandleAnyRef ref) {
   JSObject& object = ref.toJSObject();
@@ -1991,21 +2021,18 @@ void* Instance::stringFromCharCodeArray(Instance* instance, void* arrayArg,
   }
   uint32_t arrayCount = arrayEnd - arrayStart;
 
-  // GC is disabled on this call since it can cause the array to move,
-  // invalidating the data pointer we pass as a parameter
-  JSLinearString* string = NewStringCopyN<NoGC, char16_t>(
-      cx, (char16_t*)array->data_ + arrayStart, arrayCount);
+  JSStringBuilder builder(cx);
+  if (!builder.ensureTwoByteChars() || !builder.reserve(arrayCount)) {
+    return nullptr;
+  }
+  for (uint32_t i = 0; i < arrayCount; i++) {
+    char16_t c = array->get<char16_t>(arrayStart + i);
+    builder.infallibleAppend(c);
+  }
+  JSLinearString* string = builder.finishString();
   if (!string) {
-    // If the first attempt failed, we need to try again with a potential GC.
-    // Acquire a stable version of the array that we can use. This may copy
-    // inline data to the stack, so we avoid doing it unless we must.
-    StableWasmArrayObjectElements<uint16_t> stableElements(cx, array);
-    string = NewStringCopyN<CanGC, char16_t>(
-        cx, (char16_t*)stableElements.elements() + arrayStart, arrayCount);
-    if (!string) {
-      MOZ_ASSERT(cx->isThrowingOutOfMemory());
-      return nullptr;
-    }
+    MOZ_ASSERT(cx->isThrowingOutOfMemory());
+    return nullptr;
   }
   return AnyRef::fromJSString(string).forCompiledCode();
 }
@@ -2100,7 +2127,7 @@ int32_t Instance::stringCharCodeAt(Instance* instance, void* stringArg,
   char16_t c;
   if (!string->getChar(cx, index, &c)) {
     MOZ_ASSERT(cx->isThrowingOutOfMemory());
-    return false;
+    return -1;
   }
   return c;
 }
@@ -2124,7 +2151,7 @@ int32_t Instance::stringCodePointAt(Instance* instance, void* stringArg,
   char32_t c;
   if (!string->getCodePoint(cx, index, &c)) {
     MOZ_ASSERT(cx->isThrowingOutOfMemory());
-    return false;
+    return -1;
   }
   return c;
 }
@@ -2203,15 +2230,14 @@ int32_t Instance::stringEquals(Instance* instance, void* firstStringArg,
   AnyRef firstStringRef = AnyRef::fromCompiledCode(firstStringArg);
   AnyRef secondStringRef = AnyRef::fromCompiledCode(secondStringArg);
 
-  // Null strings are considered equals
-  if (firstStringRef.isNull() || secondStringRef.isNull()) {
-    return firstStringRef.isNull() == secondStringRef.isNull();
-  }
-
-  // Otherwise, rule out any other kind of reference value
-  if (!firstStringRef.isJSString() || !secondStringRef.isJSString()) {
+  if ((!firstStringRef.isNull() && !firstStringRef.isJSString()) ||
+      (!secondStringRef.isNull() && !secondStringRef.isJSString())) {
     ReportTrapError(cx, JSMSG_WASM_BAD_CAST);
     return -1;
+  }
+
+  if (firstStringRef.isNull() || secondStringRef.isNull()) {
+    return firstStringRef.isNull() == secondStringRef.isNull() ? 1 : 0;
   }
 
   bool equals;
@@ -2250,7 +2276,186 @@ int32_t Instance::stringCompare(Instance* instance, void* firstStringArg,
   }
   return result;
 }
-#endif  // ENABLE_WASM_JS_STRING_BUILTINS
+
+void Instance::addSubI128(Instance* instance, uint32_t isAdd) {
+#ifndef JS_64BIT
+  static_assert(sizeof(instance->baselineScratchWords_[0]) == sizeof(uint32_t));
+  static_assert(N_BASELINE_SCRATCH_WORDS >= 8);
+  // Compute
+  //
+  //   baselineScratchWords_[3:0] += baselineScratchWords_[7:4] (isAdd[0] == 1)
+  // or
+  //   baselineScratchWords_[3:0] -= baselineScratchWords_[7:4] (isAdd[0] == 0)
+  //
+  // where entries [3:0] contain a 128-bit integer stored as 32-bit chunks,
+  // with [0] holding the least significant chunk and [3] holding the most
+  // significant, and the same for [7:4].  That is to say, from a 32-bit chunk
+  // perspective, they are stored in baselineScratchWords_ little-endianly.
+  // (Each chunk is itself stored in the endianness of the host; that does not
+  // concern us here.)
+  if (isAdd & 1) {
+    uint32_t carryIn = 0;
+    for (int i = 0; i < 4; i++) {
+      uint32_t argL = instance->baselineScratchWords_[i + 0];
+      uint32_t argR = instance->baselineScratchWords_[i + 4];
+      uint32_t sum = argL + argR + carryIn;
+      instance->baselineScratchWords_[i + 0] = sum;
+      uint32_t carryOut = carryIn ? (sum <= argL) : (sum < argL);
+      carryIn = carryOut;
+    }
+  } else {
+    uint32_t borrowIn = 0;
+    for (int i = 0; i < 4; i++) {
+      uint32_t argL = instance->baselineScratchWords_[i + 0];
+      uint32_t argR = instance->baselineScratchWords_[i + 4];
+      uint32_t diff = argL - argR - borrowIn;
+      instance->baselineScratchWords_[i + 0] = diff;
+      uint32_t borrowOut = borrowIn ? (argL <= argR) : (argL < argR);
+      borrowIn = borrowOut;
+    }
+  }
+#else
+  // This helper should only be called on 32-bit targets.
+  MOZ_CRASH();
+#endif  // JS_64BIT
+}
+
+void Instance::mulI64Wide(Instance* instance, uint32_t isSigned) {
+#ifndef JS_64BIT
+  static_assert(sizeof(instance->baselineScratchWords_[0]) == sizeof(uint32_t));
+  static_assert(N_BASELINE_SCRATCH_WORDS >= 4);
+  // Compute
+  //
+  //   baselineScratchWords_[3:0]
+  //     = baselineScratchWords_[1:0] *widen baselineScratchWords_[3:2]
+  //
+  // using the same storage conventions as add128/sub128 above.
+  // If `isSigned[0]` is 1, the operands are (conceptually) signedly-widened
+  // before multiplication, otherwise they are unsignedly widened.  This scheme
+  // is feasible on 32-bit targets because gcc and clang both support 64-bit
+  // arithmetic even on 32-bit targets.
+  uint64_t x = (uint64_t(instance->baselineScratchWords_[1]) << 32) |
+               uint64_t(instance->baselineScratchWords_[0]);
+  uint64_t y = (uint64_t(instance->baselineScratchWords_[3]) << 32) |
+               uint64_t(instance->baselineScratchWords_[2]);
+
+  // Compute zHi:zLo = x *widen y.  First, calculate and store zLo.
+  uint64_t zLo = x * y;
+  instance->baselineScratchWords_[0] = uint32_t(zLo >> 0);
+  instance->baselineScratchWords_[1] = uint32_t(zLo >> 32);
+
+  // Now compute and store zHi, which is much more complex.
+  uint64_t temp1 = x & 0xFFFFFFFFULL;
+  uint64_t temp2 = y & 0xFFFFFFFFULL;
+  uint64_t temp3 = temp1 * temp2;
+
+  // See Henry S. Warren, Jr's "Hackers Delight", Chapter 8 (Multiplication).
+  if (isSigned & 1) {
+    x = int64_t(x) >> 32;
+    y = int64_t(y) >> 32;
+    temp2 *= x;
+    temp1 *= y;
+    temp3 = uint64_t(temp3) >> 32;  // yes, really an unsigned shift
+    x *= y;
+    temp3 += temp2;
+    temp2 = temp3 & 0xFFFFFFFFULL;
+    temp3 = int64_t(temp3) >> 32;
+    temp1 += temp2;
+    temp3 += x;
+    temp1 = int64_t(temp1) >> 32;
+  } else {
+    // Exactly the same thing, except with unsigned instead of signed shifts.
+    x = uint64_t(x) >> 32;
+    y = uint64_t(y) >> 32;
+    temp2 *= x;
+    temp1 *= y;
+    temp3 = uint64_t(temp3) >> 32;
+    x *= y;
+    temp3 += temp2;
+    temp2 = temp3 & 0xFFFFFFFFULL;
+    temp3 = uint64_t(temp3) >> 32;
+    temp1 += temp2;
+    temp3 += x;
+    temp1 = uint64_t(temp1) >> 32;
+  }
+
+  temp3 += temp1;  // temp3 now holds zHi
+  instance->baselineScratchWords_[2] = uint32_t(temp3 >> 0);
+  instance->baselineScratchWords_[3] = uint32_t(temp3 >> 32);
+#else
+  // This helper should only be called on 32-bit targets.
+  MOZ_CRASH();
+#endif  // JS_64BIT
+}
+
+// [SMDOC] Wasm Function.prototype.call.bind optimization
+//
+// Check if our import is of the form `Function.prototype.call.bind(targetFunc)`
+// and optimize it so that we call `targetFunc` directly and pass the
+// first wasm function parameter as the 'this' value.
+//
+// Breaking it down:
+//   1. `Function.prototype.call` invokes the function given by `this`
+//       and passes the first argument as the `this` value, then the
+//       remaining arguments as the natural arguments.
+//   2. `Function.prototype.bind` creates a new bound function that will
+//      always pass a chosen value as the `this` value.
+//   3. Binding 'targetFunc' to `Function.prototype.call` is equivalent to
+//      `(thisValue, ...args) => targetFunc.call(thisValue, ...args)`;
+//      but in a form the VM can pattern match on easily.
+//
+// When all of these conditions match, we set the `isFunctionCallBind` flag on
+// FuncImportInstanceData and set callable to `targetFunc`. Then
+// Instance::callImport reads the flag to figure out if the first parameter
+// should be stored in invokeArgs.thisv() or in normal arguments.
+//
+// JIT exits do not support this flag yet, and so we don't use them on the
+// targetFunc. This is okay because we couldn't use them on BoundFunctionObject
+// anyways, and so this is strictly faster. Eventually we can add JIT exit
+// support here.
+JSObject* MaybeOptimizeFunctionCallBind(const wasm::FuncType& funcType,
+                                        JSObject* f) {
+  // Skip this for functions with no args. This is useless as it would result
+  // in `this` always being undefined. Skipping this simplifies the logic in
+  // Instance::callImport.
+  if (funcType.args().length() == 0) {
+    return nullptr;
+  }
+
+  if (!f->is<BoundFunctionObject>()) {
+    return nullptr;
+  }
+
+  BoundFunctionObject* boundFun = &f->as<BoundFunctionObject>();
+  JSObject* boundTarget = boundFun->getTarget();
+  Value boundThis = boundFun->getBoundThis();
+
+  // There cannot be any extra bound args in addition to the 'this'.
+  if (boundFun->numBoundArgs() != 0) {
+    return nullptr;
+  }
+
+  // The bound `target` must be the Function.prototype.call builtin
+  if (!IsNativeFunction(boundTarget, fun_call)) {
+    return nullptr;
+  }
+
+  // The bound `this` must be a callable object
+  if (!boundThis.isObject() || !boundThis.toObject().isCallable() ||
+      IsCrossCompartmentWrapper(boundThis.toObjectOrNull())) {
+    return nullptr;
+  }
+
+  // The bound `this` must not be a wasm function, or else we'll need to update
+  // all the users of FuncImportInstanceData::callable so they don't mistake
+  // the unwrapped import for originally being a wasm function.
+  if (boundThis.toObject().is<JSFunction>() &&
+      boundThis.toObject().as<JSFunction>().isWasm()) {
+    return nullptr;
+  }
+
+  return boundThis.toObjectOrNull();
+}
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -2260,10 +2465,7 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
                    const SharedCode& code, SharedTableVector&& tables,
                    UniqueDebugState maybeDebug)
     : realm_(cx->realm()),
-      onSuspendableStack_(false),
       allocSites_(nullptr),
-      jsJitArgsRectifier_(
-          cx->runtime()->jitRuntime()->getArgumentsRectifier().value),
       jsJitExceptionHandler_(
           cx->runtime()->jitRuntime()->getExceptionTail().value),
       preBarrierCode_(
@@ -2276,11 +2478,11 @@ Instance::Instance(JSContext* cx, Handle<WasmInstanceObject*> object,
       debugFilter_(nullptr),
       callRefMetrics_(nullptr),
       maxInitializedGlobalsIndexPlus1_(0),
+      allocationMetadataBuilder_(nullptr),
       addressOfLastBufferedWholeCell_(
           cx->runtime()->gc.addressOfLastBufferedWholeCell()) {
-  for (size_t i = 0; i < N_BASELINE_SCRATCH_WORDS; i++) {
-    baselineScratchWords_[i] = 0;
-  }
+  std::fill(std::begin(baselineScratchWords_), std::end(baselineScratchWords_),
+            0);
 }
 
 Instance* Instance::create(JSContext* cx, Handle<WasmInstanceObject*> object,
@@ -2320,12 +2522,12 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
 
   cx_ = cx;
   valueBoxClass_ = AnyRef::valueBoxClass();
-  resetInterrupt(cx);
+  interrupt_ = false;
   jumpTable_ = code_->tieringJumpTable();
   debugFilter_ = nullptr;
   callRefMetrics_ = nullptr;
-  addressOfNeedsIncrementalBarrier_ =
-      cx->compartment()->zone()->addressOfNeedsIncrementalBarrier();
+  addressOfNeedsMarkingBarrier_ =
+      cx->compartment()->zone()->addressOfNeedsMarkingBarrier();
   addressOfNurseryPosition_ = cx->nursery().addressOfPosition();
 #ifdef JS_GC_ZEAL
   addressOfGCZealModeBits_ = cx->runtime()->gc.addressOfZealModeBits();
@@ -2369,51 +2571,64 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
 
     if (typeDef.kind() == TypeDefKind::Struct ||
         typeDef.kind() == TypeDefKind::Array) {
-      // Compute the parameters that allocation will use.  First, the class
-      // and alloc kind for the type definition.
-      const JSClass* clasp;
-      gc::AllocKind allocKind;
-
+      // Compute the parameters that allocation will use.  First, the class for
+      // the type definition.
       if (typeDef.kind() == TypeDefKind::Struct) {
-        clasp = WasmStructObject::classForTypeDef(&typeDef);
-        allocKind = WasmStructObject::allocKindForTypeDef(&typeDef);
-        allocKind = gc::GetFinalizedAllocKindForClass(allocKind, clasp);
+        const StructType& structType = typeDef.structType();
+        bool needsOOLstorage = structType.hasOOL();
+        typeDefData->clasp =
+            WasmStructObject::classFromOOLness(needsOOLstorage);
       } else {
-        clasp = &WasmArrayObject::class_;
-        allocKind = gc::AllocKind::INVALID;
+        typeDefData->clasp = &WasmArrayObject::class_;
       }
 
       // Find the shape using the class and recursion group
       const ObjectFlags objectFlags = {ObjectFlag::NotExtensible};
-      typeDefData->shape =
-          WasmGCShape::getShape(cx, clasp, cx->realm(), TaggedProto(),
-                                &typeDef.recGroup(), objectFlags);
+      typeDefData->shape = WasmGCShape::getShape(
+          cx, typeDefData->clasp, cx->realm(), TaggedProto(),
+          &typeDef.recGroup(), objectFlags);
       if (!typeDefData->shape) {
         return false;
       }
 
-      typeDefData->clasp = clasp;
-      typeDefData->allocKind = allocKind;
-
-      // If `typeDef` is a struct, cache its size here, so that allocators
-      // don't have to chase back through `typeDef` to determine that.
-      // Similarly, if `typeDef` is an array, cache its array element size
-      // here.
-      MOZ_ASSERT(typeDefData->unused == 0);
+      // If `typeDef` is a struct, cache some layout info here, so that
+      // allocators don't have to chase back through `typeDef` to determine
+      // that.  Similarly, if `typeDef` is an array, cache its array element
+      // size here.
       if (typeDef.kind() == TypeDefKind::Struct) {
-        typeDefData->structTypeSize = typeDef.structType().size_;
-        // StructLayout::close ensures this is an integral number of words.
-        MOZ_ASSERT((typeDefData->structTypeSize % sizeof(uintptr_t)) == 0);
+        const StructType& structType = typeDef.structType();
+        typeDefData->cached.strukt.payloadOffsetIL =
+            structType.payloadOffsetIL_;
+        typeDefData->cached.strukt.totalSizeIL = structType.totalSizeIL_;
+        typeDefData->cached.strukt.totalSizeOOL = structType.totalSizeOOL_;
+        typeDefData->cached.strukt.oolPointerOffset =
+            structType.oolPointerOffset_;
+        typeDefData->cached.strukt.allocKind =
+            gc::GetFinalizedAllocKindForClass(structType.allocKind_,
+                                              typeDefData->clasp);
+        MOZ_ASSERT(!IsFinalizedKind(typeDefData->cached.strukt.allocKind));
+        // StructLayout::totalSizeIL/OOL() ensures these are an integral number
+        // of words.
+        MOZ_ASSERT(
+            (typeDefData->cached.strukt.totalSizeIL % sizeof(uintptr_t)) == 0);
+        MOZ_ASSERT(
+            (typeDefData->cached.strukt.totalSizeOOL % sizeof(uintptr_t)) == 0);
       } else {
         uint32_t arrayElemSize = typeDef.arrayType().elementType().size();
-        typeDefData->arrayElemSize = arrayElemSize;
+        typeDefData->cached.array.elemSize = arrayElemSize;
         MOZ_ASSERT(arrayElemSize == 16 || arrayElemSize == 8 ||
                    arrayElemSize == 4 || arrayElemSize == 2 ||
                    arrayElemSize == 1);
       }
     } else if (typeDef.kind() == TypeDefKind::Func) {
       // Nothing to do; the default values are OK.
-    } else {
+    }
+#ifdef ENABLE_WASM_JSPI
+    else if (typeDef.kind() == TypeDefKind::Cont) {
+      // Nothing to do; the default values are OK.
+    }
+#endif
+    else {
       MOZ_ASSERT(typeDef.kind() == TypeDefKind::None);
       MOZ_CRASH();
     }
@@ -2447,14 +2662,20 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
 #ifdef ENABLE_WASM_JSPI
     if (JSObject* suspendingObject = MaybeUnwrapSuspendingObject(f)) {
       // Compile suspending function Wasm wrapper.
-      const FuncType& funcType = codeMeta().getFuncType(i);
+      uint32_t funcTypeIndex = codeMeta().funcs[i].typeIndex;
       RootedObject wrapped(cx, suspendingObject);
       RootedFunction wrapper(
-          cx, WasmSuspendingFunctionCreate(cx, wrapped, funcType));
+          cx, WasmSuspendingFunctionCreate(cx, wrapped, funcTypeIndex,
+                                           codeMeta().types));
       if (!wrapper) {
         return false;
       }
-      MOZ_ASSERT(wrapper->isWasm());
+      // The wrapper must expose exactly the import's declared type so that
+      // ref.test/ref.cast/call_indirect against that type behave correctly.
+      MOZ_RELEASE_ASSERT(wrapper->isWasm());
+      MOZ_RELEASE_ASSERT(&wrapper->wasmInstance().codeMeta().getFuncTypeDef(
+                             wrapper->wasmFuncIndex()) ==
+                         &codeMeta().getFuncTypeDef(i));
       f = wrapper;
     }
 #endif
@@ -2464,13 +2685,14 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
     const FuncType& funcType = codeMeta().getFuncType(i);
     FuncImportInstanceData& import = funcImportInstanceData(i);
     import.callable = f;
+    import.isFunctionCallBind = false;
     if (f->is<JSFunction>()) {
       JSFunction* fun = &f->as<JSFunction>();
       if (!isAsmJS() && !codeMeta().funcImportsAreJS && fun->isWasm()) {
         import.instance = &fun->wasmInstance();
         import.realm = fun->realm();
         import.code = fun->wasmUncheckedCallEntry();
-      } else if (void* thunk = MaybeGetBuiltinThunk(fun, funcType)) {
+      } else if (void* thunk = MaybeGetTypedNative(fun, funcType)) {
         import.instance = this;
         import.realm = fun->realm();
         import.code = thunk;
@@ -2479,9 +2701,16 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
         import.realm = fun->realm();
         import.code = code().sharedStubs().base() + fi.interpExitCodeOffset();
       }
+    } else if (JSObject* callable =
+                   MaybeOptimizeFunctionCallBind(funcType, f)) {
+      import.instance = this;
+      import.callable = callable;
+      import.realm = import.callable->nonCCWRealm();
+      import.code = code().sharedStubs().base() + fi.interpExitCodeOffset();
+      import.isFunctionCallBind = true;
     } else {
       import.instance = this;
-      import.realm = f->nonCCWRealm();
+      import.realm = import.callable->nonCCWRealm();
       import.code = code().sharedStubs().base() + fi.interpExitCodeOffset();
     }
   }
@@ -2491,6 +2720,11 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
     MOZ_ASSERT(!funcExportInstanceData(i).func);
   }
 #endif
+
+  // We use writeToTenuredHeapLocation below as WasmInstanceObject is always
+  // tenured.
+  Rooted<WasmInstanceObject*> instanceObj(cx, object());
+  MOZ_ASSERT(instanceObj->isTenured());
 
   // Initialize globals in the instance data.
   //
@@ -2519,14 +2753,13 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
           *(void**)globalAddr =
               (void*)&globalObjs[imported]->val().get().cell();
         } else {
-          globalImportValues[imported].writeToHeapLocation(globalAddr);
+          globalImportValues[imported].writeToTenuredHeapLocation(globalAddr);
         }
         break;
       }
       case GlobalKind::Variable: {
         RootedVal val(cx);
         const InitExpr& init = global.initExpr();
-        Rooted<WasmInstanceObject*> instanceObj(cx, object());
         if (!init.evaluate(cx, instanceObj, &val)) {
           return false;
         }
@@ -2538,7 +2771,7 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
           // Link to the cell
           *(void**)globalAddr = globalObjs[i]->addressOfCell();
         } else {
-          val.get().writeToHeapLocation(globalAddr);
+          val.get().writeToTenuredHeapLocation(globalAddr);
         }
         break;
       }
@@ -2565,7 +2798,14 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
     MOZ_ASSERT(limit <= UINT32_MAX);
 #endif
     data.boundsCheckLimit = limit;
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+    data.boundsCheckLimit16 = limit > 1 ? limit - 1 : 0;
+    data.boundsCheckLimit32 = limit > 3 ? limit - 3 : 0;
+    data.boundsCheckLimit64 = limit > 7 ? limit - 7 : 0;
+    data.boundsCheckLimit128 = limit > 15 ? limit - 15 : 0;
+#endif
     data.isShared = md.isShared();
+    data.mappedSize = memory->buffer().wasmMappedSize();
 
     // Add observer if our memory base may grow
     if (memory && memory->movingGrowable() &&
@@ -2607,7 +2847,7 @@ bool Instance::init(JSContext* cx, const JSObjectVector& funcImports,
   // All (linked) tables with non-nullable types must be initialized.
   for (size_t i = 0; i < tables_.length(); i++) {
     const TableDesc& td = codeMeta().tables[i];
-    if (!td.elemType.isNullable()) {
+    if (!td.elemType().isNullable()) {
       tables_[i]->assertRangeNotNull(0, tables_[i]->length());
     }
   }
@@ -2711,39 +2951,11 @@ Instance::~Instance() {
   MOZ_ASSERT(pendingException_.isNull());
 }
 
-void Instance::setInterrupt() {
-  interrupt_ = true;
-  stackLimit_ = JS::NativeStackLimitMin;
-}
+void Instance::setInterrupt() { interrupt_ = true; }
 
-bool Instance::isInterrupted() const {
-  return interrupt_ || stackLimit_ == JS::NativeStackLimitMin;
-}
+bool Instance::isInterrupted() const { return interrupt_; }
 
-void Instance::resetInterrupt(JSContext* cx) {
-  interrupt_ = false;
-#ifdef ENABLE_WASM_JSPI
-  if (cx->wasm().suspendableStackLimit != JS::NativeStackLimitMin) {
-    stackLimit_ = cx->wasm().suspendableStackLimit;
-    return;
-  }
-#endif
-  stackLimit_ = cx->stackLimitForJitCode(JS::StackForUntrustedScript);
-}
-
-void Instance::setTemporaryStackLimit(JS::NativeStackLimit limit) {
-  if (!isInterrupted()) {
-    stackLimit_ = limit;
-  }
-  onSuspendableStack_ = true;
-}
-
-void Instance::resetTemporaryStackLimit(JSContext* cx) {
-  if (!isInterrupted()) {
-    stackLimit_ = cx->stackLimitForJitCode(JS::StackForUntrustedScript);
-  }
-  onSuspendableStack_ = false;
-}
+void Instance::resetInterrupt() { interrupt_ = false; }
 
 int32_t Instance::computeInitialHotnessCounter(uint32_t funcIndex,
                                                size_t codeSectionSize) {
@@ -2939,9 +3151,8 @@ void Instance::submitCallRefHints(uint32_t funcIndex) {
     }
 
     JS::UniqueChars countsStr;
-    for (size_t i = 0; i < CallRefMetrics::NUM_SLOTS; i++) {
-      countsStr =
-          JS_sprintf_append(std::move(countsStr), "%u ", metrics.counts[i]);
+    for (const auto& count : metrics.counts) {
+      countsStr = JS_sprintf_append(std::move(countsStr), "%u ", count);
     }
     JS::UniqueChars targetStr;
     if (skipReason) {
@@ -2994,6 +3205,24 @@ bool Instance::memoryAccessInGuardRegion(const uint8_t* addr,
   return false;
 }
 
+bool Instance::memoryAccessInMappedRegion(const uint8_t* addr,
+                                          uint32_t* memoryIndex,
+                                          uint64_t* offset) const {
+  for (uint32_t i = 0; i < codeMeta().memories.length(); i++) {
+    const MemoryInstanceData& md = memoryInstanceData(i);
+    if (addr >= md.base && addr < md.base + md.mappedSize) {
+      *memoryIndex = i;
+      *offset = addr - md.base;
+      return true;
+    }
+  }
+  return false;
+}
+
+size_t Instance::memoryMappedSize(uint32_t memoryIndex) const {
+  return memoryInstanceData(memoryIndex).mappedSize;
+}
+
 void Instance::tracePrivate(JSTracer* trc) {
   // This method is only called from WasmInstanceObject so the only reason why
   // TraceEdge is called is so that the pointer can be updated during a moving
@@ -3005,20 +3234,19 @@ void Instance::tracePrivate(JSTracer* trc) {
   // tables, they share the instance object.
   for (uint32_t funcIndex = 0; funcIndex < codeMeta().numFuncImports;
        funcIndex++) {
-    TraceNullableEdge(trc, &funcImportInstanceData(funcIndex).callable,
-                      "wasm import");
+    TraceEdge(trc, &funcImportInstanceData(funcIndex).callable, "wasm import");
   }
 
   for (uint32_t funcExportIndex = 0;
        funcExportIndex < codeMeta().numExportedFuncs(); funcExportIndex++) {
-    TraceNullableEdge(trc, &funcExportInstanceData(funcExportIndex).func,
-                      "wasm func export");
+    TraceEdge(trc, &funcExportInstanceData(funcExportIndex).func,
+              "wasm func export");
   }
 
   for (uint32_t memoryIndex = 0;
        memoryIndex < code().codeMeta().memories.length(); memoryIndex++) {
     MemoryInstanceData& memoryData = memoryInstanceData(memoryIndex);
-    TraceNullableEdge(trc, &memoryData.memory, "wasm memory object");
+    TraceEdge(trc, &memoryData.memory, "wasm memory object");
   }
 
   for (const SharedTable& table : tables_) {
@@ -3032,32 +3260,32 @@ void Instance::tracePrivate(JSTracer* trc) {
       continue;
     }
     GCPtr<AnyRef>* obj = (GCPtr<AnyRef>*)(data() + global.offset());
-    TraceNullableEdge(trc, obj, "wasm reference-typed global");
+    TraceEdge(trc, obj, "wasm reference-typed global");
   }
 
   for (uint32_t tagIndex = 0; tagIndex < code().codeMeta().tags.length();
        tagIndex++) {
-    TraceNullableEdge(trc, &tagInstanceData(tagIndex).object, "wasm tag");
+    TraceEdge(trc, &tagInstanceData(tagIndex).object, "wasm tag");
   }
 
   const SharedTypeContext& types = codeMeta().types;
   for (uint32_t typeIndex = 0; typeIndex < types->length(); typeIndex++) {
     TypeDefInstanceData* typeDefData = typeDefInstanceData(typeIndex);
-    TraceNullableEdge(trc, &typeDefData->shape, "wasm shape");
+    TraceEdge(trc, &typeDefData->shape, "wasm shape");
   }
 
   if (callRefMetrics_) {
     for (uint32_t i = 0; i < codeTailMeta().numCallRefMetrics; i++) {
       CallRefMetrics* metrics = &callRefMetrics_[i];
       MOZ_ASSERT(metrics->checkInvariants());
-      for (size_t j = 0; j < CallRefMetrics::NUM_SLOTS; j++) {
-        TraceNullableEdge(trc, &metrics->targets[j], "indirect call target");
+      for (auto& target : metrics->targets) {
+        TraceEdge(trc, &target, "indirect call target");
       }
     }
   }
 
-  TraceNullableEdge(trc, &pendingException_, "wasm pending exception value");
-  TraceNullableEdge(trc, &pendingExceptionTag_, "wasm pending exception tag");
+  TraceEdge(trc, &pendingException_, "wasm pending exception value");
+  TraceEdge(trc, &pendingExceptionTag_, "wasm pending exception tag");
 
   passiveElemSegments_.trace(trc);
 
@@ -3142,8 +3370,8 @@ uintptr_t Instance::traceFrame(JSTracer* trc, const wasm::WasmFrameIter& wfi,
       continue;
     }
 
-    TraceManuallyBarrieredNullableEdge(trc, (AnyRef*)&stackWords[i],
-                                       "Instance::traceWasmFrame: normal word");
+    TraceManuallyBarrieredEdge(trc, (AnyRef*)&stackWords[i],
+                               "Instance::traceWasmFrame: normal word");
   }
 
   // Deal with any GC-managed fields in the DebugFrame, if it is
@@ -3155,7 +3383,7 @@ uintptr_t Instance::traceFrame(JSTracer* trc, const wasm::WasmFrameIter& wfi,
     for (size_t i = 0; i < MaxRegisterResults; i++) {
       if (debugFrame->hasSpilledRegisterRefResult(i)) {
         char* resultRefP = debugFrameP + DebugFrame::offsetOfRegisterResult(i);
-        TraceManuallyBarrieredNullableEdge(
+        TraceManuallyBarrieredEdge(
             trc, (AnyRef*)resultRefP,
             "Instance::traceWasmFrame: DebugFrame::resultResults_");
       }
@@ -3174,7 +3402,7 @@ uintptr_t Instance::traceFrame(JSTracer* trc, const wasm::WasmFrameIter& wfi,
 }
 
 void Instance::updateFrameForMovingGC(const wasm::WasmFrameIter& wfi,
-                                      uint8_t* nextPC) {
+                                      uint8_t* nextPC, Nursery& nursery) {
   const StackMap* map = code().lookupStackMap(nextPC);
   if (!map) {
     return;
@@ -3182,21 +3410,71 @@ void Instance::updateFrameForMovingGC(const wasm::WasmFrameIter& wfi,
   Frame* frame = wfi.frame();
   uintptr_t* stackWords = GetFrameScanStartForStackMap(frame, map, nullptr);
 
-  // Update interior array data pointers for any inline-storage arrays that
-  // moved.
-  for (uint32_t i = 0; i < map->header.numMappedWords; i++) {
-    if (map->get(i) != StackMap::Kind::ArrayDataPointer) {
-      continue;
-    }
+  // Update array data pointers, both IL and OOL, and struct data pointers,
+  // which are only OOL, for any such data areas that moved.  Note, the
+  // remapping info consulted by the calls to Nursery::forwardBufferPointer is
+  // what previous calls to Nursery::setForwardingPointerWhileTenuring in
+  // Wasm{Struct,Array}Object::obj_moved set up.
 
-    uint8_t** addressOfArrayDataPointer = (uint8_t**)&stackWords[i];
-    if (WasmArrayObject::isDataInline(*addressOfArrayDataPointer)) {
-      WasmArrayObject* oldArray =
-          WasmArrayObject::fromInlineDataPointer(*addressOfArrayDataPointer);
-      WasmArrayObject* newArray =
-          (WasmArrayObject*)gc::MaybeForwarded(oldArray);
-      *addressOfArrayDataPointer =
-          WasmArrayObject::addressOfInlineData(newArray);
+  for (uint32_t i = 0; i < map->header.numMappedWords; i++) {
+    StackMap::Kind kind = map->get(i);
+
+    switch (kind) {
+      case StackMap::Kind::ArrayDataPointer: {
+        // The following makes more sense if you look at the pictures in the
+        // SMDOC at the definition of WasmArrayData, and also read-along in
+        // WasmArrayObject::obj_moved, which sets up the forwarding information
+        // which we now will consult.
+
+        // Make oldDataPointer point at the storage array in the old object.
+        uint8_t* oldDataPointer = (uint8_t*)stackWords[i];
+        if (WasmArrayObject::isDataInline(oldDataPointer)) {
+          // It's a pointer into the object itself.  Figure out where the old
+          // object is, ask where it got moved to, and fish out the updated
+          // value from the new object.
+          WasmArrayObject* oldArray =
+              WasmArrayObject::fromInlineDataPointer(oldDataPointer);
+          WasmArrayObject* newArray =
+              (WasmArrayObject*)gc::MaybeForwarded(oldArray);
+          if (newArray != oldArray) {
+            stackWords[i] =
+                uintptr_t(WasmArrayObject::addressOfInlineArrayData(newArray));
+            MOZ_ASSERT(WasmArrayObject::isDataInline((uint8_t*)stackWords[i]));
+          }
+        } else {
+          // It's a pointer managed by BufferAllocator.  The forwarded location
+          // is stored in the OOLHeader::word field of the old block, with its
+          // bit zero set to 1.
+          WasmArrayObject::OOLDataHeader* oldHeader =
+              WasmArrayObject::oolDataHeaderFromDataPointer(oldDataPointer);
+          if (nursery.isInside((const void*)oldHeader)) {
+            // If the old header word is OOLDataHeader_Magic it means there's
+            // no forwarding pointer stored there, so don't update the stack
+            // slot.
+            if (oldHeader->word != WasmArrayObject::OOLDataHeader_Magic) {
+              MOZ_ASSERT(oldHeader->word & 1);
+              WasmArrayObject::OOLDataHeader* newHeader =
+                  (WasmArrayObject::OOLDataHeader*)(oldHeader->word &
+                                                    ~uintptr_t(1));
+              MOZ_ASSERT(newHeader != oldHeader);
+              stackWords[i] = uintptr_t(
+                  WasmArrayObject::oolDataHeaderToDataPointer(newHeader));
+              newHeader->word = WasmArrayObject::OOLDataHeader_Magic;
+            }
+          }
+        }
+        break;
+      }
+
+      case StackMap::Kind::StructDataPointer: {
+        // It's an unmodified pointer from BufferAllocator, so this is simple.
+        nursery.forwardBufferPointer(&stackWords[i]);
+        break;
+      }
+
+      default: {
+        break;
+      }
     }
   }
 }
@@ -3338,7 +3616,7 @@ class MOZ_RAII ReturnToJSResultCollector {
         if (result.onStack() && result.type().isRefRepr()) {
           char* loc = collector_.stackResultsArea_.get() + result.stackOffset();
           AnyRef* refLoc = reinterpret_cast<AnyRef*>(loc);
-          TraceNullableRoot(trc, refLoc, "StackResultsRooter::trace");
+          TraceRoot(trc, refLoc, "StackResultsRooter::trace");
         }
       }
     }
@@ -3647,6 +3925,9 @@ bool Instance::getExportedFunction(JSContext* cx, uint32_t funcIndex,
     if (import.callable->is<JSFunction>()) {
       JSFunction* fun = &import.callable->as<JSFunction>();
       if (!codeMeta().funcImportsAreJS && fun->isWasm()) {
+        // Unwrapped Function.prototype.call.bind imports should not be used
+        // when the unwrapped function is a wasm function.
+        MOZ_ASSERT(!import.isFunctionCallBind);
         instanceData.func = fun;
         result.set(fun);
         return true;
@@ -3900,9 +4181,8 @@ WasmStructObject* Instance::constantStructNewDefault(JSContext* cx,
   TypeDefInstanceData* typeDefData = typeDefInstanceData(typeIndex);
   const wasm::TypeDef* typeDef = typeDefData->typeDef;
   MOZ_ASSERT(typeDef->kind() == wasm::TypeDefKind::Struct);
-  uint32_t totalBytes = typeDef->structType().size_;
 
-  bool needsOOL = WasmStructObject::requiresOutlineBytes(totalBytes);
+  bool needsOOL = typeDef->structType().hasOOL();
   return needsOOL ? WasmStructObject::createStructOOL<true>(
                         cx, typeDefData, nullptr, gc::Heap::Tenured)
                   : WasmStructObject::createStructIL<true>(
@@ -3954,12 +4234,19 @@ void Instance::onMovingGrowMemory(const WasmMemoryObject* memory) {
     ArrayBufferObject& buffer = md.memory->buffer().as<ArrayBufferObject>();
 
     md.base = buffer.dataPointer();
+    md.mappedSize = buffer.wasmMappedSize();
     size_t limit = md.memory->boundsCheckLimit();
 #if !defined(JS_64BIT)
     // We assume that the limit is a 32-bit quantity
     MOZ_ASSERT(limit <= UINT32_MAX);
 #endif
     md.boundsCheckLimit = limit;
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+    md.boundsCheckLimit16 = limit > 1 ? limit - 1 : 0;
+    md.boundsCheckLimit32 = limit > 3 ? limit - 3 : 0;
+    md.boundsCheckLimit64 = limit > 7 ? limit - 7 : 0;
+    md.boundsCheckLimit128 = limit > 15 ? limit - 15 : 0;
+#endif
 
     if (i == 0) {
       memory0Base_ = md.base;
@@ -3998,8 +4285,8 @@ JSString* Instance::createDisplayURL(JSContext* cx) {
   // In the best case, we simply have a URL, from a streaming compilation of a
   // fetched Response.
 
-  if (codeMeta().scriptedCaller().filenameIsURL) {
-    const char* filename = codeMeta().scriptedCaller().filename.get();
+  if (codeMeta().scriptedCaller().kind == ScriptedCallerKind::Url) {
+    const char* filename = codeMeta().scriptedCaller().source.get();
     return NewStringCopyUTF8N(cx, JS::UTF8Chars(filename, strlen(filename)));
   }
 
@@ -4013,7 +4300,7 @@ JSString* Instance::createDisplayURL(JSContext* cx) {
     return nullptr;
   }
 
-  if (const char* filename = codeMeta().scriptedCaller().filename.get()) {
+  if (const char* filename = codeMeta().scriptedCaller().source.get()) {
     // EncodeURI returns false due to invalid chars or OOM -- fail only
     // during OOM.
     JSString* filenamePrefix = EncodeURI(cx, filename, strlen(filename));

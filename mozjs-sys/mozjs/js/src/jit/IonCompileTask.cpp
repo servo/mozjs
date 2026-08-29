@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -156,7 +154,7 @@ void jit::AttachFinishedCompilations(JSContext* cx) {
 static UniquePtr<LifoAlloc> FreeIonCompileTask(IonCompileTask* task) {
   // To correctly free compilation dependencies, which may have virtual
   // destructors we need to explicitly empty the MIRGenerator's list here.
-  task->mirGen().tracker.reset();
+  task->mirGen().cleanup();
 
   // The task is allocated into its LifoAlloc, so destroying that will
   // destroy the task and all other data accumulated during compilation,

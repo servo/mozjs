@@ -27,7 +27,7 @@ class MacosDevice(Layer):
     activated = platform.system() == "Darwin"
 
     def __init__(self, env, mach_cmd):
-        super(MacosDevice, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self._tmp_dirs = []
 
     def _run_process(self, args):

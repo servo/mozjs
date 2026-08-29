@@ -14,7 +14,7 @@ class VersionProducer(Layer):
     arguments = {}
 
     def __init__(self, env, mach_cmd):
-        super(VersionProducer, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.env = env
         self.mach_cmd = mach_cmd
 

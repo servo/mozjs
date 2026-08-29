@@ -1,12 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/mips64/CodeGenerator-mips64.h"
-
-#include "mozilla/MathAlgorithms.h"
 
 #include "jit/CodeGenerator.h"
 #include "jit/MIR-wasm.h"
@@ -337,11 +333,9 @@ void CodeGenerator::visitWasmWrapU32Index(LWasmWrapU32Index* lir) {
 }
 
 void CodeGenerator::visitBitNotI64(LBitNotI64* ins) {
-  LInt64Allocation input = ins->input();
-  MOZ_ASSERT(!IsConstant(input));
-  Register64 inputReg = ToRegister64(input);
-  MOZ_ASSERT(inputReg == ToOutRegister64(ins));
-  masm.ma_not(inputReg.reg, inputReg.reg);
+  Register input = ToRegister64(ins->input()).reg;
+  Register output = ToOutRegister64(ins).reg;
+  masm.ma_not(output, input);
 }
 
 void CodeGenerator::visitWasmTruncateToInt64(LWasmTruncateToInt64* lir) {
@@ -404,21 +398,14 @@ void CodeGenerator::visitInt64ToFloatingPoint(LInt64ToFloatingPoint* lir) {
 void CodeGenerator::visitAtomicLoad64(LAtomicLoad64* lir) {
   Register elements = ToRegister(lir->elements());
   Register64 out = ToOutRegister64(lir);
-  const MLoadUnboxedScalar* mir = lir->mir();
 
-  Scalar::Type storageType = mir->storageType();
+  Scalar::Type storageType = lir->mir()->storageType();
+
+  auto source = ToAddressOrBaseIndex(elements, lir->index(), storageType);
 
   auto sync = Synchronization::Load();
   masm.memoryBarrierBefore(sync);
-  if (lir->index()->isConstant()) {
-    Address source =
-        ToAddress(elements, lir->index(), storageType, mir->offsetAdjustment());
-    masm.load64(source, out);
-  } else {
-    BaseIndex source(elements, ToRegister(lir->index()),
-                     ScaleFromScalarType(storageType), mir->offsetAdjustment());
-    masm.load64(source, out);
-  }
+  source.match([&](const auto& source) { masm.load64(source, out); });
   masm.memoryBarrierAfter(sync);
 }
 
@@ -428,16 +415,11 @@ void CodeGenerator::visitAtomicStore64(LAtomicStore64* lir) {
 
   Scalar::Type writeType = lir->mir()->writeType();
 
+  auto dest = ToAddressOrBaseIndex(elements, lir->index(), writeType);
+
   auto sync = Synchronization::Store();
   masm.memoryBarrierBefore(sync);
-  if (lir->index()->isConstant()) {
-    Address dest = ToAddress(elements, lir->index(), writeType);
-    masm.store64(value, dest);
-  } else {
-    BaseIndex dest(elements, ToRegister(lir->index()),
-                   ScaleFromScalarType(writeType));
-    masm.store64(value, dest);
-  }
+  dest.match([&](const auto& dest) { masm.store64(value, dest); });
   masm.memoryBarrierAfter(sync);
 }
 
@@ -463,4 +445,13 @@ void CodeGeneratorMIPS64::emitBigIntPtrMod(LBigIntPtrMod* ins,
   masm.as_ddiv(dividend, divisor);
   masm.as_mfhi(/* result= */ output);
 #endif
+}
+
+void CodeGenerator::visitWasmMulI64WideHI64(LWasmMulI64WideHI64* ins) {
+  Register lhs = ToRegister(ins->lhs());
+  Register rhs = ToRegister(ins->rhs());
+  Register output = ToRegister(ins->output());
+  // This holds because both operands are non-AtStart variants.
+  MOZ_ASSERT(output != lhs && output != rhs);
+  masm.wasmMulI64WideHI64(lhs, rhs, output, ins->isSigned());
 }

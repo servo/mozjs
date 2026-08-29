@@ -46,11 +46,11 @@ STEPS = {
 
 def test_update(repo):
     vcs = get_repository_object(repo.dir)
-    rev0 = vcs.head_ref
+    rev0 = vcs.head_rev
 
     # Create a commit with modified `foo` and `bar`.
     repo.execute_next_step()
-    rev1 = vcs.head_ref
+    rev1 = vcs.head_rev
     assert rev0 != rev1
 
     if repo.vcs == "hg":
@@ -58,22 +58,18 @@ def test_update(repo):
     elif repo.vcs == "git":
         vcs.update("HEAD~1")
     elif repo.vcs == "jj":
-        vcs.edit("@-")
-    assert vcs.head_ref == rev0
+        vcs.update("@--")
+    assert vcs.head_rev == rev0
 
-    if repo.vcs != "jj":
-        vcs.update(rev1)
-    else:
-        vcs.update(rev0)
-        rev1 = vcs.head_ref
-    assert vcs.head_ref == rev1
+    vcs.update(rev1)
+    assert vcs.head_rev == rev1
 
     # Modify `foo` and update. Should fail with dirty working directory.
     repo.execute_next_step()
     if repo.vcs != "jj":
         with pytest.raises(CalledProcessError):
             vcs.update(rev0)
-        assert vcs.head_ref == rev1
+        assert vcs.head_rev == rev1
     else:
         # jj doesn't have a "dirty working directory".
         pass

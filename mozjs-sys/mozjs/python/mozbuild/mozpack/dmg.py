@@ -7,7 +7,6 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List
 
 import mozfile
 
@@ -53,15 +52,13 @@ def generate_hfs_file(
     size = int(output.split()[0]) / 1000  # Get in MB
     size = int(size * 1.02)  # Bump the used size slightly larger.
     # Setup a proper file sized out with zero's
-    subprocess.check_call(
-        [
-            "dd",
-            "if=/dev/zero",
-            f"of={hfs}",
-            "bs=1M",
-            f"count={size}",
-        ]
-    )
+    subprocess.check_call([
+        "dd",
+        "if=/dev/zero",
+        f"of={hfs}",
+        "bs=1M",
+        f"count={size}",
+    ])
     subprocess.check_call([mkfshfs_tool, "-v", volume_name, hfs])
 
 
@@ -107,23 +104,26 @@ def create_dmg_from_staged(
         if attribution_sentinel:
             while len(attribution_sentinel) < 1024:
                 attribution_sentinel += "\t"
-            subprocess.check_call(
-                [
-                    hfs_tool,
-                    hfs,
-                    "setattr",
-                    f"{volume_name}.app",
-                    "com.apple.application-instance",
-                    attribution_sentinel,
-                ]
-            )
+            subprocess.check_call([
+                hfs_tool,
+                hfs,
+                "setattr",
+                f"{volume_name}.app",
+                "com.apple.application-instance",
+                attribution_sentinel,
+            ])
             subprocess.check_call(["cp", hfs, str(Path(output_dmg).parent)])
             dmg_cmd.append(attribution_sentinel)
 
         if compression == "lzma":
-            dmg_cmd.extend(
-                ["--compression", "lzma", "--level", "5", "--run-sectors", "2048"]
-            )
+            dmg_cmd.extend([
+                "--compression",
+                "lzma",
+                "--level",
+                "5",
+                "--run-sectors",
+                "2048",
+            ])
 
         subprocess.check_call(
             dmg_cmd,
@@ -136,42 +136,38 @@ def create_dmg_from_staged(
             format = "ULMO"
 
         hybrid = tmpdir / "hybrid.dmg"
-        subprocess.check_call(
-            [
-                "hdiutil",
-                "makehybrid",
-                "-hfs",
-                "-hfs-volume-name",
-                volume_name,
-                "-hfs-openfolder",
-                stagedir,
-                "-ov",
-                stagedir,
-                "-o",
-                hybrid,
-            ]
-        )
-        subprocess.check_call(
-            [
-                "hdiutil",
-                "convert",
-                "-format",
-                format,
-                "-imagekey",
-                "bzip2-level=9",
-                "-ov",
-                hybrid,
-                "-o",
-                output_dmg,
-            ]
-        )
+        subprocess.check_call([
+            "hdiutil",
+            "makehybrid",
+            "-hfs",
+            "-hfs-volume-name",
+            volume_name,
+            "-hfs-openfolder",
+            stagedir,
+            "-ov",
+            stagedir,
+            "-o",
+            hybrid,
+        ])
+        subprocess.check_call([
+            "hdiutil",
+            "convert",
+            "-format",
+            format,
+            "-imagekey",
+            "bzip2-level=9",
+            "-ov",
+            hybrid,
+            "-o",
+            output_dmg,
+        ])
 
 
 def create_dmg(
     source_directory: Path,
     output_dmg: Path,
     volume_name: str,
-    extra_files: List[tuple],
+    extra_files: list[tuple],
     dmg_tool: Path,
     hfs_tool: Path,
     mkfshfs_tool: Path,

@@ -113,6 +113,7 @@ pub trait Rootable: crate::trace::Traceable + Sized {
 impl<T: Rootable> Rootable for Option<T> {}
 impl<T: crate::trace::Traceable> Rootable for Vec<T> {}
 impl<T: crate::trace::Traceable> Rootable for VecDeque<T> {}
+impl<T: crate::trace::Traceable> Rootable for Box<T> {}
 
 // The C++ representation of Rooted<T> inherits from StackRootedBase, which
 // contains the actual pointers that get manipulated. The Rust representation

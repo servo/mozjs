@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -792,12 +791,7 @@ PR_OpenSemaphore(const char* name, PRIntn flags, PRIntn mode, PRUintn value) {
     }
     sem->sem = sem_open(osname, oflag, mode, value);
   } else {
-#    ifdef HPUX
-    /* Pass 0 as the mode and value arguments to work around a bug. */
-    sem->sem = sem_open(osname, 0, 0, 0);
-#    else
     sem->sem = sem_open(osname, 0);
-#    endif
   }
   if ((sem_t*)-1 == sem->sem) {
     _PR_MD_MAP_DEFAULT_ERROR(errno);

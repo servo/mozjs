@@ -42,9 +42,12 @@ def run_settings(command_context, short=None):
                 option = "<option>"
 
             if "choices" in meta:
-                value = "{%s}" % ", ".join(meta["choices"])
+                choices = meta["choices"]
+                if callable(choices):
+                    choices = tuple(choices())
+                value = f"{{{', '.join(choices)}}}"
             else:
-                value = "<%s>" % types[meta["type_cls"]]
+                value = f"<{types[meta['type_cls']]}>"
 
             print(wrapper.fill(desc))
             print(f";{option}={value}")

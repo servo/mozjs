@@ -12,16 +12,16 @@ from mozperftest.utils import temporary_env
 @mock.patch("mozperftest.test.browsertime.visualtools.which", new=lambda name: "Xvfb")
 def test_xvfb(*mocked):
     with temporary_env(DISPLAY="ME"):
-        with mock.patch("subprocess.Popen") as mocked, xvfb():
-            mocked.assert_called()
+        with mock.patch("subprocess.Popen") as popen_mock, xvfb():
+            popen_mock.assert_called()
         assert os.environ["DISPLAY"] == "ME"
 
 
 @mock.patch("mozperftest.test.browsertime.visualtools.which", new=lambda name: "Xvfb")
 def test_xvfb_env(*mocked):
     with temporary_env(DISPLAY=None):
-        with mock.patch("subprocess.Popen") as mocked, xvfb():
-            mocked.assert_called()
+        with mock.patch("subprocess.Popen") as popen_mock, xvfb():
+            popen_mock.assert_called()
         assert "DISPLAY" not in os.environ
 
 

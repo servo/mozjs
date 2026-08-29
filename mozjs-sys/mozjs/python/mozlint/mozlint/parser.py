@@ -39,7 +39,7 @@ class Parser:
         if missing_attrs:
             raise LinterParseError(
                 relpath,
-                "Missing required attribute(s): " "{}".format(",".join(missing_attrs)),
+                "Missing required attribute(s): {}".format(",".join(missing_attrs)),
             )
 
         if linter["type"] not in supported_types:
@@ -54,7 +54,7 @@ class Parser:
             ):
                 raise LinterParseError(
                     relpath,
-                    f"The {attr} directive must be a " "list of strings!",
+                    f"The {attr} directive must be a list of strings!",
                 )
             invalid_paths = set()
             for path in linter[attr]:

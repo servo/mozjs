@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,16 +5,17 @@
 #ifndef mozilla_BufferList_h
 #define mozilla_BufferList_h
 
+#include "mozilla/Assertions.h"
+#include "mozilla/MemoryReporting.h"
+#include "mozilla/Vector.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
-#include <numeric>
-
-#include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
-#include "mozilla/Maybe.h"
-#include "mozilla/MemoryReporting.h"
-#include "mozilla/Vector.h"
+#include <utility>
+#ifdef DEBUG
+#  include <type_traits>
+#endif
 
 // BufferList represents a sequence of buffers of data. A BufferList can choose
 // to own its buffers or not. The class handles writing to the buffers,
@@ -370,7 +369,7 @@ class BufferList : private AllocPolicy {
   [[nodiscard]] bool WriteBytesZeroCopy(char* aData, size_t aSize,
                                         size_t aCapacity) {
     MOZ_ASSERT(mOwning);
-    MOZ_RELEASE_ASSERT(aSize <= aCapacity);
+    MOZ_ASSERT(aSize <= aCapacity);
 
     // Don't create zero-length segments; that can cause problems for
     // consumers of the data (bug 1595453).
@@ -459,7 +458,6 @@ char* BufferList<AllocPolicy>::AllocateBytes(size_t aMaxSize, size_t* aSize) {
   if (!mSegments.empty()) {
     Segment& lastSegment = mSegments.back();
 
-    MOZ_RELEASE_ASSERT(lastSegment.mCapacity >= lastSegment.mSize);
     size_t capacity = lastSegment.mCapacity - lastSegment.mSize;
     if (capacity) {
       size_t size = std::min(aMaxSize, capacity);

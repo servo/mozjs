@@ -1,7 +1,12 @@
 diff --git a/testing/moz.build b/testing/moz.build
---- a/testing/moz.build	(revision 60271caa713296c479a4b2fd66a8dd4a07143303)
-+++ b/testing/moz.build	(date 1755799762170)
-@@ -1,19 +1,0 @@
+index 3e5da08a2..e69de29bb 100644
+--- a/testing/moz.build
++++ b/testing/moz.build
+@@ -1,30 +0,0 @@
+-# This Source Code Form is subject to the terms of the Mozilla Public
+-# License, v. 2.0. If a copy of the MPL was not distributed with this
+-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+-
 -with Files("**"):
 -    BUG_COMPONENT = ("Testing", "General")
 -
@@ -12,11 +17,18 @@ diff --git a/testing/moz.build b/testing/moz.build
 -with Files("remote*"):
 -    BUG_COMPONENT = ("GeckoView", "General")
 -
--PYTHON_UNITTEST_MANIFESTS += ["test/python.toml"]
+-PYTHON_UNITTEST_MANIFESTS += [
+-    "test/python.toml",
+-]
+-
+-if not CONFIG["JS_STANDALONE"]:
+-    PYTHON_UNITTEST_MANIFESTS += [
+-        "android-test/tests/python.toml",
+-    ]
 -
 -SPHINX_TREES["/testing"] = "docs"
 -
--DIRS += ["mozbase", "mozharness"]
+-DIRS += ["manifest", "mozbase", "mozharness"]
 -
 -PERFTESTS_MANIFESTS += [
 -    "performance/perftest.toml",

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,21 +7,23 @@
 #include "builtin/intl/Segmenter.h"
 
 #include "mozilla/Assertions.h"
-#include "mozilla/IntegerTypeTraits.h"
-#include "mozilla/intl/ICU4XGeckoDataProvider.h"
-#include "mozilla/Range.h"
 #include "mozilla/UniquePtr.h"
+#include "mozilla/UsingEnum.h"
 
-#include "ICU4XGraphemeClusterSegmenter.h"
-#include "ICU4XSentenceSegmenter.h"
-#include "ICU4XWordSegmenter.h"
 #include "jspubtd.h"
 #include "NamespaceImports.h"
 
 #include "builtin/Array.h"
 #include "builtin/intl/CommonFunctions.h"
+#include "builtin/intl/LocaleNegotiation.h"
+#include "builtin/intl/ParameterNegotiation.h"
+#include "builtin/intl/StringAsciiChars.h"
 #include "gc/AllocKind.h"
 #include "gc/GCContext.h"
+#include "icu4x/GraphemeClusterSegmenter.hpp"
+#include "icu4x/Locale.hpp"
+#include "icu4x/SentenceSegmenter.hpp"
+#include "icu4x/WordSegmenter.hpp"
 #include "js/CallArgs.h"
 #include "js/PropertyDescriptor.h"
 #include "js/PropertySpec.h"
@@ -42,18 +42,10 @@
 #include "vm/NativeObject-inl.h"
 
 using namespace js;
+using namespace js::intl;
 
 const JSClassOps SegmenterObject::classOps_ = {
-    nullptr,                    // addProperty
-    nullptr,                    // delProperty
-    nullptr,                    // enumerate
-    nullptr,                    // newEnumerate
-    nullptr,                    // resolve
-    nullptr,                    // mayResolve
-    SegmenterObject::finalize,  // finalize
-    nullptr,                    // call
-    nullptr,                    // construct
-    nullptr,                    // trace
+    .finalize = SegmenterObject::finalize,
 };
 
 const JSClass SegmenterObject::class_ = {
@@ -67,6 +59,13 @@ const JSClass SegmenterObject::class_ = {
 
 const JSClass& SegmenterObject::protoClass_ = PlainObject::class_;
 
+static bool segmenter_supportedLocalesOf(JSContext* cx, unsigned argc,
+                                         Value* vp);
+
+static bool segmenter_segment(JSContext* cx, unsigned argc, Value* vp);
+
+static bool segmenter_resolvedOptions(JSContext* cx, unsigned argc, Value* vp);
+
 static bool segmenter_toSource(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   args.rval().setString(cx->names().Segmenter);
@@ -74,15 +73,13 @@ static bool segmenter_toSource(JSContext* cx, unsigned argc, Value* vp) {
 }
 
 static const JSFunctionSpec segmenter_static_methods[] = {
-    JS_SELF_HOSTED_FN("supportedLocalesOf", "Intl_Segmenter_supportedLocalesOf",
-                      1, 0),
+    JS_FN("supportedLocalesOf", segmenter_supportedLocalesOf, 1, 0),
     JS_FS_END,
 };
 
 static const JSFunctionSpec segmenter_methods[] = {
-    JS_SELF_HOSTED_FN("resolvedOptions", "Intl_Segmenter_resolvedOptions", 0,
-                      0),
-    JS_SELF_HOSTED_FN("segment", "Intl_Segmenter_segment", 1, 0),
+    JS_FN("resolvedOptions", segmenter_resolvedOptions, 0, 0),
+    JS_FN("segment", segmenter_segment, 1, 0),
     JS_FN("toSource", segmenter_toSource, 0, 0),
     JS_FS_END,
 };
@@ -104,6 +101,20 @@ const ClassSpec SegmenterObject::classSpec_ = {
     nullptr,
     ClassSpec::DontDefineConstructor,
 };
+
+static constexpr std::string_view GranularityToString(
+    SegmenterGranularity granularity) {
+  MOZ_USING_ENUM(SegmenterGranularity, Grapheme, Word, Sentence);
+  switch (granularity) {
+    case Grapheme:
+      return "grapheme";
+    case Word:
+      return "word";
+    case Sentence:
+      return "sentence";
+  }
+  MOZ_CRASH("invalid segmenter granularity");
+}
 
 /**
  * Intl.Segmenter ([ locales [ , options ]])
@@ -129,31 +140,69 @@ static bool Segmenter(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
 
-  HandleValue locales = args.get(0);
-  HandleValue options = args.get(1);
+  // Step 4. (Inlined ResolveOptions)
 
-  // Steps 4-13.
-  if (!intl::InitializeObject(cx, segmenter, cx->names().InitializeSegmenter,
-                              locales, options)) {
+  // ResolveOptions, step 1.
+  auto* requestedLocales = CanonicalizeLocaleList(cx, args.get(0));
+  if (!requestedLocales) {
     return false;
   }
+  segmenter->setRequestedLocales(requestedLocales);
 
-  // Step 14.
+  auto granularity = SegmenterGranularity::Grapheme;
+  if (args.hasDefined(1)) {
+    // ResolveOptions, steps 2-3.
+    Rooted<JSObject*> options(
+        cx, RequireObjectArg(cx, "options", "Intl.Segmenter", args[1]));
+    if (!options) {
+      return false;
+    }
+
+    // ResolveOptions, step 4.
+    LocaleMatcher matcher;
+    if (!GetLocaleMatcherOption(cx, options, &matcher)) {
+      return false;
+    }
+
+    // ResolveOptions, step 5.
+    //
+    // This implementation only supports the "lookup" locale matcher, therefore
+    // the "localeMatcher" option doesn't need to be stored.
+
+    // ResolveOptions, step 6.
+    //
+    // Intl.Segmenter doesn't support any Unicode extension keys.
+
+    // ResolveOptions, step 7. (Not applicable)
+
+    // ResolveOptions, step 8. (Performed in ResolveLocale)
+
+    // ResolveOptions, step 9. (Return)
+
+    // Step 5. (Not applicable when ResolveOptions is inlined.)
+
+    // Steps 6-7. (Performed in ResolveLocale)
+
+    // Step 8.
+    static constexpr auto granularities = MapOptions<GranularityToString>(
+        SegmenterGranularity::Grapheme, SegmenterGranularity::Word,
+        SegmenterGranularity::Sentence);
+    if (!GetStringOption(cx, options, cx->names().granularity, granularities,
+                         SegmenterGranularity::Grapheme, &granularity)) {
+      return false;
+    }
+  }
+
+  // Step 9.
+  segmenter->setGranularity(granularity);
+
+  // Step 10.
   args.rval().setObject(*segmenter);
   return true;
 }
 
 const JSClassOps SegmentsObject::classOps_ = {
-    nullptr,                   // addProperty
-    nullptr,                   // delProperty
-    nullptr,                   // enumerate
-    nullptr,                   // newEnumerate
-    nullptr,                   // resolve
-    nullptr,                   // mayResolve
-    SegmentsObject::finalize,  // finalize
-    nullptr,                   // call
-    nullptr,                   // construct
-    nullptr,                   // trace
+    .finalize = SegmentsObject::finalize,
 };
 
 const JSClass SegmentsObject::class_ = {
@@ -186,16 +235,7 @@ bool GlobalObject::initSegmentsProto(JSContext* cx,
 }
 
 const JSClassOps SegmentIteratorObject::classOps_ = {
-    nullptr,                          // addProperty
-    nullptr,                          // delProperty
-    nullptr,                          // enumerate
-    nullptr,                          // newEnumerate
-    nullptr,                          // resolve
-    nullptr,                          // mayResolve
-    SegmentIteratorObject::finalize,  // finalize
-    nullptr,                          // call
-    nullptr,                          // construct
-    nullptr,                          // trace
+    .finalize = SegmentIteratorObject::finalize,
 };
 
 const JSClass SegmentIteratorObject::class_ = {
@@ -317,173 +357,219 @@ class SegmenterBreakIteratorType {
 // - destroy: Static method to destroy an instance of `Segmenter`.
 
 struct GraphemeClusterSegmenterBreakIteratorLatin1 {
-  using BreakIterator = capi::ICU4XGraphemeClusterBreakIteratorLatin1;
-  using Segmenter = capi::ICU4XGraphemeClusterSegmenter;
+  using BreakIterator = icu4x::capi::GraphemeClusterBreakIteratorLatin1;
+  using Segmenter = icu4x::capi::GraphemeClusterSegmenter;
   using Char = JS::Latin1Char;
+  using StringView = icu4x::diplomat::capi::DiplomatU8View;
 
   static constexpr auto& create =
-      capi::ICU4XGraphemeClusterSegmenter_segment_latin1;
+      icu4x::capi::icu4x_GraphemeClusterSegmenter_segment_latin1_mv1;
   static constexpr auto& destroy =
-      capi::ICU4XGraphemeClusterBreakIteratorLatin1_destroy;
+      icu4x::capi::icu4x_GraphemeClusterBreakIteratorLatin1_destroy_mv1;
   static constexpr auto& next =
-      capi::ICU4XGraphemeClusterBreakIteratorLatin1_next;
+      icu4x::capi::icu4x_GraphemeClusterBreakIteratorLatin1_next_mv1;
 
   static bool isWordLike(const BreakIterator*) { return false; }
 };
 
 struct GraphemeClusterSegmenterBreakIteratorTwoByte {
-  using BreakIterator = capi::ICU4XGraphemeClusterBreakIteratorUtf16;
-  using Segmenter = capi::ICU4XGraphemeClusterSegmenter;
+  using BreakIterator = icu4x::capi::GraphemeClusterBreakIteratorUtf16;
+  using Segmenter = icu4x::capi::GraphemeClusterSegmenter;
   using Char = char16_t;
+  using StringView = icu4x::diplomat::capi::DiplomatString16View;
 
   static constexpr auto& create =
-      capi::ICU4XGraphemeClusterSegmenter_segment_utf16;
+      icu4x::capi::icu4x_GraphemeClusterSegmenter_segment_utf16_mv1;
   static constexpr auto& destroy =
-      capi::ICU4XGraphemeClusterBreakIteratorUtf16_destroy;
+      icu4x::capi::icu4x_GraphemeClusterBreakIteratorUtf16_destroy_mv1;
   static constexpr auto& next =
-      capi::ICU4XGraphemeClusterBreakIteratorUtf16_next;
+      icu4x::capi::icu4x_GraphemeClusterBreakIteratorUtf16_next_mv1;
 
   static bool isWordLike(const BreakIterator*) { return false; }
 };
 
 struct GraphemeClusterSegmenter {
-  using Segmenter = capi::ICU4XGraphemeClusterSegmenter;
+  using Segmenter = icu4x::capi::GraphemeClusterSegmenter;
   using BreakIteratorLatin1 =
       SegmenterBreakIteratorType<GraphemeClusterSegmenterBreakIteratorLatin1>;
   using BreakIteratorTwoByte =
       SegmenterBreakIteratorType<GraphemeClusterSegmenterBreakIteratorTwoByte>;
 
-  static constexpr auto& create = capi::ICU4XGraphemeClusterSegmenter_create;
-  static constexpr auto& destroy = capi::ICU4XGraphemeClusterSegmenter_destroy;
+  static constexpr auto& create =
+      icu4x::capi::icu4x_GraphemeClusterSegmenter_create_mv1;
+  static constexpr auto& destroy =
+      icu4x::capi::icu4x_GraphemeClusterSegmenter_destroy_mv1;
 };
 
 struct WordSegmenterBreakIteratorLatin1 {
-  using BreakIterator = capi::ICU4XWordBreakIteratorLatin1;
-  using Segmenter = capi::ICU4XWordSegmenter;
+  using BreakIterator = icu4x::capi::WordBreakIteratorLatin1;
+  using Segmenter = icu4x::capi::WordSegmenter;
   using Char = JS::Latin1Char;
+  using StringView = icu4x::diplomat::capi::DiplomatU8View;
 
-  static constexpr auto& create = capi::ICU4XWordSegmenter_segment_latin1;
-  static constexpr auto& destroy = capi::ICU4XWordBreakIteratorLatin1_destroy;
-  static constexpr auto& next = capi::ICU4XWordBreakIteratorLatin1_next;
+  static constexpr auto& create =
+      icu4x::capi::icu4x_WordSegmenter_segment_latin1_mv1;
+  static constexpr auto& destroy =
+      icu4x::capi::icu4x_WordBreakIteratorLatin1_destroy_mv1;
+  static constexpr auto& next =
+      icu4x::capi::icu4x_WordBreakIteratorLatin1_next_mv1;
   static constexpr auto& isWordLike =
-      capi::ICU4XWordBreakIteratorLatin1_is_word_like;
+      icu4x::capi::icu4x_WordBreakIteratorLatin1_is_word_like_mv1;
 };
 
 struct WordSegmenterBreakIteratorTwoByte {
-  using BreakIterator = capi::ICU4XWordBreakIteratorUtf16;
-  using Segmenter = capi::ICU4XWordSegmenter;
+  using BreakIterator = icu4x::capi::WordBreakIteratorUtf16;
+  using Segmenter = icu4x::capi::WordSegmenter;
   using Char = char16_t;
+  using StringView = icu4x::diplomat::capi::DiplomatString16View;
 
-  static constexpr auto& create = capi::ICU4XWordSegmenter_segment_utf16;
-  static constexpr auto& destroy = capi::ICU4XWordBreakIteratorUtf16_destroy;
-  static constexpr auto& next = capi::ICU4XWordBreakIteratorUtf16_next;
+  static constexpr auto& create =
+      icu4x::capi::icu4x_WordSegmenter_segment_utf16_mv1;
+  static constexpr auto& destroy =
+      icu4x::capi::icu4x_WordBreakIteratorUtf16_destroy_mv1;
+  static constexpr auto& next =
+      icu4x::capi::icu4x_WordBreakIteratorUtf16_next_mv1;
   static constexpr auto& isWordLike =
-      capi::ICU4XWordBreakIteratorUtf16_is_word_like;
+      icu4x::capi::icu4x_WordBreakIteratorUtf16_is_word_like_mv1;
 };
 
 struct WordSegmenter {
-  using Segmenter = capi::ICU4XWordSegmenter;
+  using Segmenter = icu4x::capi::WordSegmenter;
   using BreakIteratorLatin1 =
       SegmenterBreakIteratorType<WordSegmenterBreakIteratorLatin1>;
   using BreakIteratorTwoByte =
       SegmenterBreakIteratorType<WordSegmenterBreakIteratorTwoByte>;
 
-  static constexpr auto& create = capi::ICU4XWordSegmenter_create_auto;
-  static constexpr auto& destroy = capi::ICU4XWordSegmenter_destroy;
+  static constexpr auto& create =
+      icu4x::capi::icu4x_WordSegmenter_create_auto_with_content_locale_mv1;
+  static constexpr auto& destroy = icu4x::capi::icu4x_WordSegmenter_destroy_mv1;
 };
 
 struct SentenceSegmenterBreakIteratorLatin1 {
-  using BreakIterator = capi::ICU4XSentenceBreakIteratorLatin1;
-  using Segmenter = capi::ICU4XSentenceSegmenter;
+  using BreakIterator = icu4x::capi::SentenceBreakIteratorLatin1;
+  using Segmenter = icu4x::capi::SentenceSegmenter;
   using Char = JS::Latin1Char;
+  using StringView = icu4x::diplomat::capi::DiplomatU8View;
 
-  static constexpr auto& create = capi::ICU4XSentenceSegmenter_segment_latin1;
+  static constexpr auto& create =
+      icu4x::capi::icu4x_SentenceSegmenter_segment_latin1_mv1;
   static constexpr auto& destroy =
-      capi::ICU4XSentenceBreakIteratorLatin1_destroy;
-  static constexpr auto& next = capi::ICU4XSentenceBreakIteratorLatin1_next;
+      icu4x::capi::icu4x_SentenceBreakIteratorLatin1_destroy_mv1;
+  static constexpr auto& next =
+      icu4x::capi::icu4x_SentenceBreakIteratorLatin1_next_mv1;
 
   static bool isWordLike(const BreakIterator*) { return false; }
 };
 
 struct SentenceSegmenterBreakIteratorTwoByte {
-  using BreakIterator = capi::ICU4XSentenceBreakIteratorUtf16;
-  using Segmenter = capi::ICU4XSentenceSegmenter;
+  using BreakIterator = icu4x::capi::SentenceBreakIteratorUtf16;
+  using Segmenter = icu4x::capi::SentenceSegmenter;
   using Char = char16_t;
+  using StringView = icu4x::diplomat::capi::DiplomatString16View;
 
-  static constexpr auto& create = capi::ICU4XSentenceSegmenter_segment_utf16;
+  static constexpr auto& create =
+      icu4x::capi::icu4x_SentenceSegmenter_segment_utf16_mv1;
   static constexpr auto& destroy =
-      capi::ICU4XSentenceBreakIteratorUtf16_destroy;
-  static constexpr auto& next = capi::ICU4XSentenceBreakIteratorUtf16_next;
+      icu4x::capi::icu4x_SentenceBreakIteratorUtf16_destroy_mv1;
+  static constexpr auto& next =
+      icu4x::capi::icu4x_SentenceBreakIteratorUtf16_next_mv1;
 
   static bool isWordLike(const BreakIterator*) { return false; }
 };
 
 struct SentenceSegmenter {
-  using Segmenter = capi::ICU4XSentenceSegmenter;
+  using Segmenter = icu4x::capi::SentenceSegmenter;
   using BreakIteratorLatin1 =
       SegmenterBreakIteratorType<SentenceSegmenterBreakIteratorLatin1>;
   using BreakIteratorTwoByte =
       SegmenterBreakIteratorType<SentenceSegmenterBreakIteratorTwoByte>;
 
-  static constexpr auto& create = capi::ICU4XSentenceSegmenter_create;
-  static constexpr auto& destroy = capi::ICU4XSentenceSegmenter_destroy;
+  static constexpr auto& create =
+      icu4x::capi::icu4x_SentenceSegmenter_create_with_content_locale_mv1;
+  static constexpr auto& destroy =
+      icu4x::capi::icu4x_SentenceSegmenter_destroy_mv1;
 };
 
+class ICU4XLocaleDeleter {
+ public:
+  void operator()(icu4x::capi::Locale* ptr) {
+    icu4x::capi::icu4x_Locale_destroy_mv1(ptr);
+  }
+};
+
+using UniqueICU4XLocale =
+    mozilla::UniquePtr<icu4x::capi::Locale, ICU4XLocaleDeleter>;
+
+static UniqueICU4XLocale CreateICU4XLocale(JSContext* cx, LanguageId locale) {
+  auto str = locale.toString();
+  auto result =
+      icu4x::capi::icu4x_Locale_from_string_mv1({str.data(), str.length()});
+  if (!result.is_ok) {
+    ReportInternalError(cx);
+    return nullptr;
+  }
+  return UniqueICU4XLocale{result.ok};
+}
+
 /**
- * Create a new ICU4X segmenter instance.
+ * Create a new, locale-invariant ICU4X segmenter instance.
  */
 template <typename Interface>
-static typename Interface::Segmenter* CreateSegmenter(JSContext* cx) {
-  auto result = Interface::create(mozilla::intl::GetDataProvider());
+static typename Interface::Segmenter* CreateSegmenter() {
+  return Interface::create();
+}
+
+/**
+ * Create a new ICU4X segmenter instance, tailored for |locale|.
+ */
+template <typename Interface>
+static typename Interface::Segmenter* CreateSegmenter(JSContext* cx,
+                                                      LanguageId locale) {
+  auto loc = CreateICU4XLocale(cx, locale);
+  if (!loc) {
+    return nullptr;
+  }
+
+  auto result = Interface::create(loc.get());
   if (!result.is_ok) {
-    intl::ReportInternalError(cx);
+    ReportInternalError(cx);
     return nullptr;
   }
   return result.ok;
 }
 
-static bool EnsureInternalsResolved(JSContext* cx,
-                                    Handle<SegmenterObject*> segmenter) {
-  if (segmenter->getLocale()) {
+/**
+ * Resolve the actual locale to finish initialization of the Segmenter.
+ */
+static bool ResolveLocale(JSContext* cx, Handle<SegmenterObject*> segmenter) {
+  // Return if the locale was already resolved.
+  if (segmenter->isLocaleResolved()) {
     return true;
   }
 
-  Rooted<JS::Value> value(cx);
+  Rooted<ArrayObject*> requestedLocales(
+      cx, &segmenter->getRequestedLocales()->as<ArrayObject>());
 
-  Rooted<JSObject*> internals(cx, intl::GetInternalsObject(cx, segmenter));
-  if (!internals) {
+  // %Intl.Segmenter%.[[RelevantExtensionKeys]] is « ».
+  mozilla::EnumSet<UnicodeExtensionKey> relevantExtensionKeys{};
+
+  // Initialize locale options from constructor arguments.
+  Rooted<LocaleOptions> localeOptions(cx);
+
+  // Use the default locale data.
+  auto localeData = LocaleData::Default;
+
+  // Resolve the actual locale.
+  Rooted<ResolvedLocale> resolved(cx);
+  if (!ResolveLocale(cx, AvailableLocaleKind::Segmenter, requestedLocales,
+                     localeOptions, relevantExtensionKeys, localeData,
+                     &resolved)) {
     return false;
   }
 
-  if (!GetProperty(cx, internals, internals, cx->names().locale, &value)) {
-    return false;
-  }
-  Rooted<JSString*> locale(cx, value.toString());
-
-  if (!GetProperty(cx, internals, internals, cx->names().granularity, &value)) {
-    return false;
-  }
-
-  SegmenterGranularity granularity;
-  {
-    JSLinearString* linear = value.toString()->ensureLinear(cx);
-    if (!linear) {
-      return false;
-    }
-
-    if (StringEqualsLiteral(linear, "grapheme")) {
-      granularity = SegmenterGranularity::Grapheme;
-    } else if (StringEqualsLiteral(linear, "word")) {
-      granularity = SegmenterGranularity::Word;
-    } else {
-      MOZ_ASSERT(StringEqualsLiteral(linear, "sentence"));
-      granularity = SegmenterGranularity::Sentence;
-    }
-  }
-
-  switch (granularity) {
+  switch (segmenter->getGranularity()) {
     case SegmenterGranularity::Grapheme: {
-      auto* seg = CreateSegmenter<GraphemeClusterSegmenter>(cx);
+      auto* seg = CreateSegmenter<GraphemeClusterSegmenter>();
       if (!seg) {
         return false;
       }
@@ -491,7 +577,7 @@ static bool EnsureInternalsResolved(JSContext* cx,
       break;
     }
     case SegmenterGranularity::Word: {
-      auto* seg = CreateSegmenter<WordSegmenter>(cx);
+      auto* seg = CreateSegmenter<WordSegmenter>(cx, resolved.dataLocale());
       if (!seg) {
         return false;
       }
@@ -499,7 +585,7 @@ static bool EnsureInternalsResolved(JSContext* cx,
       break;
     }
     case SegmenterGranularity::Sentence: {
-      auto* seg = CreateSegmenter<SentenceSegmenter>(cx);
+      auto* seg = CreateSegmenter<SentenceSegmenter>(cx, resolved.dataLocale());
       if (!seg) {
         return false;
       }
@@ -508,9 +594,14 @@ static bool EnsureInternalsResolved(JSContext* cx,
     }
   }
 
+  // Finish initialization by setting the actual locale.
+  auto* locale = resolved.toLocale(cx);
+  if (!locale) {
+    return false;
+  }
   segmenter->setLocale(locale);
-  segmenter->setGranularity(granularity);
 
+  MOZ_ASSERT(segmenter->isLocaleResolved(), "locale successfully resolved");
   return true;
 }
 
@@ -600,10 +691,10 @@ void SegmentsObject::finalize(JS::GCContext* gcx, JSObject* obj) {
   if (auto chars = segments->getStringChars()) {
     size_t length = segments->getString()->length();
     if (chars.has<JS::Latin1Char>()) {
-      intl::RemoveICUCellMemory(gcx, segments, length * sizeof(JS::Latin1Char));
+      RemoveICUCellMemory(gcx, segments, length * sizeof(JS::Latin1Char));
       js_free(chars.data<JS::Latin1Char>());
     } else {
-      intl::RemoveICUCellMemory(gcx, segments, length * sizeof(char16_t));
+      RemoveICUCellMemory(gcx, segments, length * sizeof(char16_t));
       js_free(chars.data<char16_t>());
     }
   }
@@ -621,10 +712,10 @@ void SegmentIteratorObject::finalize(JS::GCContext* gcx, JSObject* obj) {
   if (auto chars = iterator->getStringChars()) {
     size_t length = iterator->getString()->length();
     if (chars.has<JS::Latin1Char>()) {
-      intl::RemoveICUCellMemory(gcx, iterator, length * sizeof(JS::Latin1Char));
+      RemoveICUCellMemory(gcx, iterator, length * sizeof(JS::Latin1Char));
       js_free(chars.data<JS::Latin1Char>());
     } else {
-      intl::RemoveICUCellMemory(gcx, iterator, length * sizeof(char16_t));
+      RemoveICUCellMemory(gcx, iterator, length * sizeof(char16_t));
       js_free(chars.data<char16_t>());
     }
   }
@@ -696,7 +787,7 @@ static bool EnsureStringChars(JSContext* cx, Handle<T*> segments) {
     }
     segments->setStringChars(SegmentsStringChars{chars.release()});
 
-    intl::AddICUCellMemory(segments, length * sizeof(JS::Latin1Char));
+    AddICUCellMemory(segments, length * sizeof(JS::Latin1Char));
   } else {
     auto chars = DuplicateString(cx, string->twoByteChars(nogc), length);
     if (!chars) {
@@ -704,7 +795,7 @@ static bool EnsureStringChars(JSContext* cx, Handle<T*> segments) {
     }
     segments->setStringChars(SegmentsStringChars{chars.release()});
 
-    intl::AddICUCellMemory(segments, length * sizeof(char16_t));
+    AddICUCellMemory(segments, length * sizeof(char16_t));
   }
   return true;
 }
@@ -724,7 +815,8 @@ static auto* CreateBreakIterator(Handle<T*> segments) {
 
   auto* seg = static_cast<const typename Interface::Segmenter*>(segmenter);
   auto* ch = chars.template data<typename Interface::Char>();
-  return Interface::create(seg, ch, length);
+  typename Interface::StringView view{ch, length};
+  return Interface::create(seg, view);
 }
 
 /**
@@ -747,6 +839,14 @@ static bool EnsureBreakIterator(JSContext* cx, Handle<T*> segments,
     // Reset internal state.
     segments->setBreakIterator(nullptr);
     segments->setIndex(0);
+  }
+
+  // Ensure the locale is resolved.
+  if (!segments->getSegmenter()->isLocaleResolved()) {
+    Rooted<SegmenterObject*> segmenter(cx, segments->getSegmenter());
+    if (!ResolveLocale(cx, segmenter)) {
+      return false;
+    }
   }
 
   // Ensure the string characters can be passed to ICU4X.
@@ -850,28 +950,21 @@ static ArrayObject* FindSegmentBoundaries(JSContext* cx, Handle<T*> segments,
   return CreateBoundaries(cx, boundaries, segments->getGranularity());
 }
 
-bool js::intl_CreateSegmentsObject(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 2);
-
-  Rooted<SegmenterObject*> segmenter(cx,
-                                     &args[0].toObject().as<SegmenterObject>());
-  Rooted<JSString*> string(cx, args[1].toString());
-
-  // Ensure the internal properties are resolved.
-  if (!EnsureInternalsResolved(cx, segmenter)) {
-    return false;
-  }
-
+/**
+ * Create a new Segments object.
+ */
+static SegmentsObject* CreateSegmentsObject(JSContext* cx,
+                                            Handle<SegmenterObject*> segmenter,
+                                            Handle<JSString*> string) {
   Rooted<JSObject*> proto(
       cx, GlobalObject::getOrCreateSegmentsPrototype(cx, cx->global()));
   if (!proto) {
-    return false;
+    return nullptr;
   }
 
   auto* segments = NewObjectWithGivenProto<SegmentsObject>(cx, proto);
   if (!segments) {
-    return false;
+    return nullptr;
   }
 
   segments->setSegmenter(segmenter);
@@ -879,8 +972,7 @@ bool js::intl_CreateSegmentsObject(JSContext* cx, unsigned argc, Value* vp) {
   segments->setString(string);
   segments->setIndex(0);
 
-  args.rval().setObject(*segments);
-  return true;
+  return segments;
 }
 
 bool js::intl_CreateSegmentIterator(JSContext* cx, unsigned argc, Value* vp) {
@@ -950,5 +1042,105 @@ bool js::intl_FindNextSegmentBoundaries(JSContext* cx, unsigned argc,
   }
 
   args.rval().setObject(*result);
+  return true;
+}
+
+static bool IsSegmenter(Handle<JS::Value> v) {
+  return v.isObject() && v.toObject().is<SegmenterObject>();
+}
+
+/**
+ * Intl.Segmenter.prototype.segment ( string )
+ */
+static bool segmenter_segment(JSContext* cx, const CallArgs& args) {
+  Rooted<SegmenterObject*> segmenter(
+      cx, &args.thisv().toObject().as<SegmenterObject>());
+
+  // Step 3.
+  Rooted<JSString*> string(cx, JS::ToString(cx, args.get(0)));
+  if (!string) {
+    return false;
+  }
+
+  // Step 4.
+  auto* result = CreateSegmentsObject(cx, segmenter, string);
+  if (!result) {
+    return false;
+  }
+  args.rval().setObject(*result);
+  return true;
+}
+
+/**
+ * Intl.Segmenter.prototype.segment ( string )
+ */
+static bool segmenter_segment(JSContext* cx, unsigned argc, Value* vp) {
+  // Steps 1-2.
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<IsSegmenter, segmenter_segment>(cx, args);
+}
+
+/**
+ * Intl.Segmenter.prototype.resolvedOptions ( )
+ */
+static bool segmenter_resolvedOptions(JSContext* cx, const CallArgs& args) {
+  Rooted<SegmenterObject*> segmenter(
+      cx, &args.thisv().toObject().as<SegmenterObject>());
+
+  if (!ResolveLocale(cx, segmenter)) {
+    return false;
+  }
+
+  // Step 3.
+  Rooted<IdValueVector> options(cx, cx);
+
+  // Step 4.
+  if (!options.emplaceBack(NameToId(cx->names().locale),
+                           StringValue(segmenter->getLocale()))) {
+    return false;
+  }
+
+  auto* granularity = NewStringCopy<CanGC>(
+      cx, GranularityToString(segmenter->getGranularity()));
+  if (!granularity) {
+    return false;
+  }
+  if (!options.emplaceBack(NameToId(cx->names().granularity),
+                           StringValue(granularity))) {
+    return false;
+  }
+
+  // Step 5.
+  auto* result = NewPlainObjectWithUniqueNames(cx, options);
+  if (!result) {
+    return false;
+  }
+  args.rval().setObject(*result);
+  return true;
+}
+
+/**
+ * Intl.Segmenter.prototype.resolvedOptions ( )
+ */
+static bool segmenter_resolvedOptions(JSContext* cx, unsigned argc, Value* vp) {
+  // Steps 1-2.
+  CallArgs args = CallArgsFromVp(argc, vp);
+  return CallNonGenericMethod<IsSegmenter, segmenter_resolvedOptions>(cx, args);
+}
+
+/**
+ * Intl.Segmenter.supportedLocalesOf ( locales [ , options ] )
+ */
+static bool segmenter_supportedLocalesOf(JSContext* cx, unsigned argc,
+                                         Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+
+  // Steps 1-3.
+  auto* array = SupportedLocalesOf(cx, AvailableLocaleKind::Segmenter,
+                                   args.get(0), args.get(1));
+  if (!array) {
+    return false;
+  }
+  args.rval().setObject(*array);
   return true;
 }

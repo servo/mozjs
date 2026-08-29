@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -178,6 +176,16 @@ using UsePositionIterator = InlineForwardListIterator<UsePosition>;
 
 class LiveBundle;
 class VirtualRegister;
+
+} /* namespace jit */
+
+// A VirtualRegister may contain malloced memory but can still be LifoAlloc'ed
+// because it is always owned by a BacktrackingAllocator with a destructor that
+// destroys it.
+template <>
+struct CanLifoAlloc<js::jit::VirtualRegister> : std::true_type {};
+
+namespace jit {
 
 class LiveRange : public TempObject, public InlineForwardListNode<LiveRange> {
  public:
@@ -527,9 +535,6 @@ class VirtualRegister {
   // If true, the |ranges_| vector is guaranteed to be sorted.
   bool rangesSorted_ = true;
 
-  void operator=(const VirtualRegister&) = delete;
-  VirtualRegister(const VirtualRegister&) = delete;
-
 #ifdef DEBUG
   void assertRangesSorted() const;
 #else
@@ -543,6 +548,9 @@ class VirtualRegister {
 
  public:
   VirtualRegister() = default;
+
+  void operator=(const VirtualRegister&) = delete;
+  VirtualRegister(const VirtualRegister&) = delete;
 
   void init(LNode* ins, LDefinition* def, bool isTemp) {
     MOZ_ASSERT(!ins_);
@@ -664,15 +672,22 @@ class VirtualRegister {
 using SplitPositionVector =
     js::Vector<CodePosition, 4, BackgroundSystemAllocPolicy>;
 
-class BacktrackingAllocator : protected RegisterAllocator {
-  friend class JSONSpewer;
+class MOZ_STACK_CLASS BacktrackingAllocator : protected RegisterAllocator {
+ public:
+  using IsStackAllocated = std::true_type;
+
+ private:
+  friend class GraphSpewer;
 
   // Computed data
   InstructionDataMap insData;
   Vector<CodePosition, 12, SystemAllocPolicy> entryPositions;
   Vector<CodePosition, 12, SystemAllocPolicy> exitPositions;
 
-  using VirtualRegBitSet = SparseBitSet<BackgroundSystemAllocPolicy>;
+  // ~BacktrackingAllocator will call ~VirtualRegBitSet and ~VirtualRegister for
+  // everything in these collections.
+  using VirtualRegBitSet =
+      SparseBitSet<BackgroundSystemAllocPolicy, BacktrackingAllocator>;
   Vector<VirtualRegBitSet, 0, JitAllocPolicy> liveIn;
   Vector<VirtualRegister, 0, JitAllocPolicy> vregs;
 

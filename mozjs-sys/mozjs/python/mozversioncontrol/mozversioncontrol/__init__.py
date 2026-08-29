@@ -8,7 +8,7 @@ from mozversioncontrol.factory import (  # noqa
     get_repository_from_env,
     get_repository_object,
 )
-from mozversioncontrol.repo.base import Repository  # noqa
+from mozversioncontrol.repo.base import HG_TRY_URL, Repository  # noqa
 from mozversioncontrol.repo.git import GitRepository  # noqa
 from mozversioncontrol.repo.jj import JujutsuRepository  # noqa
 from mozversioncontrol.repo.mercurial import HgRepository  # noqa

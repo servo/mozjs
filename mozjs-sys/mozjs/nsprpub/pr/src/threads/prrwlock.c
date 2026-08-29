@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,18 +6,7 @@
 
 #include <string.h>
 
-#if defined(HPUX) && defined(_PR_PTHREADS)
-
-#  include <pthread.h>
-#  define HAVE_UNIX98_RWLOCK
-#  define RWLOCK_T pthread_rwlock_t
-#  define RWLOCK_INIT(lock) pthread_rwlock_init(lock, NULL)
-#  define RWLOCK_DESTROY(lock) pthread_rwlock_destroy(lock)
-#  define RWLOCK_RDLOCK(lock) pthread_rwlock_rdlock(lock)
-#  define RWLOCK_WRLOCK(lock) pthread_rwlock_wrlock(lock)
-#  define RWLOCK_UNLOCK(lock) pthread_rwlock_unlock(lock)
-
-#elif defined(SOLARIS) && \
+#if defined(SOLARIS) && \
     (defined(_PR_PTHREADS) || defined(_PR_GLOBAL_THREADS_ONLY))
 
 #  include <synch.h>

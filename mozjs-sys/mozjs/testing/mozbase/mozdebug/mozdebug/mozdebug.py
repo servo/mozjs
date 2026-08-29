@@ -12,6 +12,7 @@ from collections import namedtuple
 from subprocess import check_output
 
 import mozinfo
+import mozshellutil
 
 __all__ = [
     "get_debugger_info",
@@ -19,6 +20,7 @@ __all__ = [
     "DebuggerSearch",
     "get_default_valgrind_args",
     "DebuggerInfo",
+    "prepend_debugger_args",
 ]
 
 """
@@ -139,8 +141,10 @@ def get_debugger_info(debugger, debuggerArgs=None, debuggerInteractive=False):
 
     :param debugger: The name of the debugger.
     :param debuggerArgs: If specified, it's the arguments to pass to the debugger,
-       as a string. Any debugger-specific separator arguments are appended after
-       these arguments.
+       as a string. This string will get split using shell-like syntax so that
+       arguments can contain spaces, e.g. passing "-ex 'show args'" really means a
+       first argument of "-ex" followed by a second argument of "show args". Any
+       debugger-specific separator arguments are appended after these arguments.
     :param debuggerInteractive: If specified, forces the debugger to be interactive.
     """
 
@@ -164,18 +168,17 @@ def get_debugger_info(debugger, debuggerArgs=None, debuggerInteractive=False):
                 if os.path.exists(candidate):
                     debuggerPath = candidate
                     break
-        else:
-            if os.path.exists(debugger):
-                debuggerPath = debugger
+        elif os.path.exists(debugger):
+            debuggerPath = debugger
 
     if not debuggerPath:
-        print("Error: Could not find debugger %s." % debugger)
+        print(f"Error: Could not find debugger {debugger!s}.")
         print("Is it installed? Is it in your PATH?")
         return None
 
     debuggerName = os.path.basename(debuggerPath).lower()
 
-    def get_debugger_info(type, default):
+    def _get_debugger_info(type, default):
         if debuggerName in _DEBUGGER_INFO and type in _DEBUGGER_INFO[debuggerName]:
             return _DEBUGGER_INFO[debuggerName][type]
         return default
@@ -184,13 +187,20 @@ def get_debugger_info(debugger, debuggerArgs=None, debuggerInteractive=False):
     debugger_arguments = []
 
     if debuggerArgs:
-        # Append the provided debugger arguments at the end of the arguments list.
-        debugger_arguments += debuggerArgs.split()
+        try:
+            # Append the provided debugger arguments at the start of the arguments list.
+            debugger_arguments += mozshellutil.split(debuggerArgs)
+        except mozshellutil.MetaCharacterException as e:
+            print(
+                "Error: The --debugger-args you passed require a real shell to parse them."
+            )
+            print(f"(We can't handle the {e.char!r} character.)")
+            return None
 
-    debugger_arguments += get_debugger_info("args", [])
+    debugger_arguments += _get_debugger_info("args", [])
 
     # Override the default debugger interactive mode if needed.
-    debugger_interactive = get_debugger_info("interactive", False)
+    debugger_interactive = _get_debugger_info("interactive", False)
     if debuggerInteractive:
         debugger_interactive = debuggerInteractive
 
@@ -198,7 +208,7 @@ def get_debugger_info(debugger, debuggerArgs=None, debuggerInteractive=False):
         debuggerPath,
         debugger_interactive,
         debugger_arguments,
-        get_debugger_info("requiresEscapedArgs", False),
+        _get_debugger_info("requiresEscapedArgs", False),
     )
 
     return d
@@ -313,3 +323,28 @@ def get_default_valgrind_tool_specific_args():
         "--show-possibly-lost=no",
         "--show-mismatched-frees=no",
     ]
+
+
+def prepend_debugger_args(args, debugger, debugger_args):
+    """
+    Given an array with program arguments, prepend arguments to run it under a
+    debugger.
+
+    :param args: The executable and arguments used to run the process normally.
+    :param debugger: The debugger to use, or empty to use the default debugger.
+    :param debugger_args: Any additional parameters to pass to the debugger, as
+     a string using shell-like syntax.
+    """
+    if not debugger:
+        # No debugger name was provided. Look for the default ones on
+        # current OS.
+        debugger = get_default_debugger_name(DebuggerSearch.KeepLooking)
+
+    if debugger:
+        debuggerInfo = get_debugger_info(debugger, debugger_args)
+
+    if not debugger or not debuggerInfo:
+        print("Could not find a suitable debugger in your PATH.")
+        return None
+
+    return [debuggerInfo.path] + debuggerInfo.args + args

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +20,8 @@
 #ifndef wasm_wasm_baseline_stk_mgmt_inl_h
 #define wasm_wasm_baseline_stk_mgmt_inl_h
 
+#include <bit>
+
 namespace js {
 namespace wasm {
 
@@ -34,6 +34,15 @@ size_t BaseCompiler::countMemRefsOnStk() {
     }
   }
   return nRefs;
+}
+
+bool BaseCompiler::hasLiveRegsOnStk() {
+  for (Stk& v : stk_) {
+    if (v.isReg()) {
+      return true;
+    }
+  }
+  return false;
 }
 #endif
 
@@ -726,9 +735,15 @@ void BaseCompiler::popI32(const Stk& v, RegI32 dest) {
       break;
     case Stk::LocalI32:
       loadLocalI32(v, dest);
+#if defined(DEBUG) && defined(JS_64BIT)
+      masm.debugAssertCanonicalInt32(dest);
+#endif
       break;
     case Stk::MemI32:
       fr.popGPR(dest);
+#if defined(DEBUG) && defined(JS_64BIT)
+      masm.debugAssertCanonicalInt32(dest);
+#endif
       break;
     case Stk::RegisterI32:
       loadRegisterI32(v, dest);
@@ -1134,10 +1149,10 @@ bool BaseCompiler::popConstPositivePowerOfTwo(int32_t* c, uint_fast8_t* power,
     return false;
   }
   *c = v.i32val();
-  if (*c <= cutoff || !mozilla::IsPowerOfTwo(static_cast<uint32_t>(*c))) {
+  if (*c <= cutoff || !std::has_single_bit(static_cast<uint32_t>(*c))) {
     return false;
   }
-  *power = mozilla::FloorLog2(*c);
+  *power = mozilla::FloorLog2(uint32_t(*c));
   stk_.popBack();
   return true;
 }
@@ -1149,10 +1164,10 @@ bool BaseCompiler::popConstPositivePowerOfTwo(int64_t* c, uint_fast8_t* power,
     return false;
   }
   *c = v.i64val();
-  if (*c <= cutoff || !mozilla::IsPowerOfTwo(static_cast<uint64_t>(*c))) {
+  if (*c <= cutoff || !std::has_single_bit(static_cast<uint64_t>(*c))) {
     return false;
   }
-  *power = mozilla::FloorLog2(*c);
+  *power = mozilla::FloorLog2(uint64_t(*c));
   stk_.popBack();
   return true;
 }
@@ -1221,15 +1236,11 @@ RegI32 BaseCompiler::popTableAddressToClampedInt32(AddressType addressType) {
     return popI32();
   }
 
-#ifdef ENABLE_WASM_MEMORY64
   MOZ_ASSERT(addressType == AddressType::I64);
   RegI64 val = popI64();
   RegI32 clamped = narrowI64(val);
   masm.wasmClampTable64Address(val, clamped);
   return clamped;
-#else
-  MOZ_CRASH("got i64 table address without memory64 enabled");
-#endif
 }
 
 void BaseCompiler::replaceTableAddressWithClampedInt32(

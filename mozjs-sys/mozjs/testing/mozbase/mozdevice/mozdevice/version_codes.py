@@ -7,6 +7,7 @@ VERSION CODES of the android releases.
 
 See https://developer.android.com/reference/android/os/Build.VERSION_CODES.html.
 """
+
 # Magic version number for a current development build, which has
 # not yet turned into an official release.
 CUR_DEVELOPMENT = 10000
@@ -77,3 +78,5 @@ TIRAMISU = 33
 UPSIDE_DOWN_CAKE = 34
 # 15 (Vanilla Ice Cream)
 VANILLA_ICE_CREAM = 35
+# 16 (Baklava)
+BAKLAVA = 36

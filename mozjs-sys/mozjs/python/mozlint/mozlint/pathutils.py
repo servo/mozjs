@@ -196,7 +196,6 @@ def filterpaths(
         # First handle include/exclude directives
         # that exist (i.e don't have globs)
         for inc in include:
-
             # If the include directive is a file and we're specifically linting
             # it, keep it.
             if inc.isfile and path.path == inc.path:
@@ -273,11 +272,11 @@ def get_ancestors_by_name(name, path, root):
     relevant configuration files.
     """
     configs = []
-    for path in ancestors(path):
-        config = os.path.join(path, name)
+    for ancestor_path in ancestors(path):
+        config = os.path.join(ancestor_path, name)
         if os.path.isfile(config):
             configs.append(config)
-        if path == root:
+        if ancestor_path == root:
             break
     return configs
 

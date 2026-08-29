@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: sw=2 ts=4 et :
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -65,8 +62,9 @@ void fillAbortMessage(char (&msg)[N], uintptr_t retAddress) {
 }
 #endif
 
-#if defined(XP_UNIX) && !defined(MOZ_ASAN) && !defined(MOZ_TSAN) && \
-    !defined(MOZ_UBSAN)
+#if defined(XP_UNIX) && !defined(MOZ_ASAN) && !defined(MOZ_TSAN) &&    \
+    !defined(MOZ_UBSAN) && !defined(LIBFUZZER) && !defined(AFLFUZZ) && \
+    !defined(FUZZING_JS_FUZZILLI)
 // Define abort() here, so that it is used instead of the system abort(). This
 // lets us control the behavior when aborting, in order to get better results
 // on *NIX platforms. See mozalloc_abort for details.
@@ -96,7 +94,7 @@ extern "C" void abort(void) {
 
   mozalloc_abort(msg);
 
-  // We won't reach here because mozalloc_abort() is MOZ_NORETURN. But that
+  // We won't reach here because mozalloc_abort() is [[noreturn]]. But that
   // annotation isn't used on ARM (see mozalloc_abort.h for why) so we add a
   // unreachable marker here to avoid a "'noreturn' function does return"
   // warning.

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -163,6 +161,8 @@ class MOZ_RAII AutoCheckRecursionLimit {
       FrontendContext* fc) const;
   [[nodiscard]] MOZ_ALWAYS_INLINE bool checkWithExtra(JSContext* cx,
                                                       size_t extra) const;
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool checkWithExtraDontReport(
+      JSContext* cx, size_t extra) const;
   [[nodiscard]] MOZ_ALWAYS_INLINE bool checkWithStackPointerDontReport(
       JSContext* cx, void* sp) const;
   [[nodiscard]] MOZ_ALWAYS_INLINE bool checkWithStackPointerDontReport(
@@ -199,20 +199,9 @@ MOZ_ALWAYS_INLINE bool AutoCheckRecursionLimit::checkLimitImpl(
 #endif
 }
 
-#ifdef ENABLE_WASM_JSPI
-bool IsSuspendableStackActive(JSContext* cx);
-JS::NativeStackLimit GetSuspendableStackLimit(JSContext* cx);
-#endif
-
 MOZ_ALWAYS_INLINE JS::NativeStackLimit
 AutoCheckRecursionLimit::getStackLimitSlow(JSContext* cx) const {
   JS::StackKind kind = stackKindForCurrentPrincipal(cx);
-#ifdef ENABLE_WASM_JSPI
-  if (IsSuspendableStackActive(cx)) {
-    MOZ_RELEASE_ASSERT(kind == JS::StackForUntrustedScript);
-    return GetSuspendableStackLimit(cx);
-  }
-#endif
   return getStackLimitHelper(cx, kind, 0);
 }
 
@@ -285,17 +274,22 @@ MOZ_ALWAYS_INLINE bool AutoCheckRecursionLimit::checkWithStackPointerDontReport(
 
 MOZ_ALWAYS_INLINE bool AutoCheckRecursionLimit::checkWithExtra(
     JSContext* cx, size_t extra) const {
+  if (MOZ_UNLIKELY(!checkWithExtraDontReport(cx, extra))) {
+    ReportOverRecursed(cx);
+    return false;
+  }
+  return true;
+}
+
+MOZ_ALWAYS_INLINE bool AutoCheckRecursionLimit::checkWithExtraDontReport(
+    JSContext* cx, size_t extra) const {
   char* sp = reinterpret_cast<char*>(__builtin_frame_address(0));
 #if JS_STACK_GROWTH_DIRECTION > 0
   sp += extra;
 #else
   sp -= extra;
 #endif
-  if (MOZ_UNLIKELY(!checkWithStackPointerDontReport(cx, sp))) {
-    ReportOverRecursed(cx);
-    return false;
-  }
-  return true;
+  return checkWithStackPointerDontReport(cx, sp);
 }
 
 MOZ_ALWAYS_INLINE bool AutoCheckRecursionLimit::checkSystem(

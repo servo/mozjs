@@ -3,42 +3,65 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
-from typing import Any, Dict, Optional
+from pathlib import Path
+
+# ruff linter deprecates Dict required for Python 3.8 compatibility
+from typing import Any, Dict, Optional  # noqa UP035
 
 import yaml
 
+DictAny = Dict[str, Any]  # noqa UP006
+DictStr = Dict[str, str]  # noqa UP006
+OptTestSettings = Optional[DictAny]
+
+# Loaded from the YAML file that is the single source of truth shared with
+# tools/lint/mozcheck (Rust, via include_str!). See the YAML file's header
+# for the documentation links.
+with (Path(__file__).parent / "android_os_to_api_map.yaml").open(
+    encoding="utf-8"
+) as _f:
+    android_os_to_api_map: DictStr = yaml.safe_load(_f)["android_os_to_api_map"]
+
+
+def android_os_to_api_version(os_version: str):
+    api_version = android_os_to_api_map.get(os_version)
+    if api_version is None:
+        raise Exception(
+            f"Unknown Android OS version '{os_version}'. Supported versions are {(android_os_to_api_map.keys())}."
+        )
+    return api_version
+
+
+def android_api_to_os_version(api_version: str):
+    if not isinstance(api_version, str):
+        api_version = str(api_version)
+    os_version = None
+    for k in android_os_to_api_map.keys():
+        if android_os_to_api_map[k] == api_version:
+            os_version = k
+            break
+    if os_version is None:
+        raise Exception(
+            f"Unknown Android API version '{api_version}'. Supported versions are {android_os_to_api_map.values()}."
+        )
+    return os_version
+
 
 class PlatformInfo:
-
     variant_data = {}
 
-    # From https://developer.android.com/tools/releases/platforms
-    android_os_to_sdk_map = {
-        "7.0": "24",
-        "7.1": "25",
-        "8.0": "26",
-        "8.1": "27",
-        "9.0": "28",
-        "10.0": "29",
-        "11.0": "30",
-        "12.0": "31",
-        "12L": "32",
-        "13.0": "33",
-        "14.0": "34",
-    }
-
     buildmap = {
-        "debug-isolated-process": "isolated-process",
+        "debug-isolated-process": "isolated_process",
     }
 
-    def __init__(self, test_settings: Optional[Dict[str, Any]] = None) -> None:
-        if test_settings is None:
+    def __init__(self, test_settings: OptTestSettings = None) -> None:
+        if not test_settings:
             return
 
-        self._platform: Dict[str, Any] = test_settings["platform"]
-        self._platform_os: Dict[str, str] = self._platform["os"]
-        self._build: Dict[str, str] = test_settings["build"]
-        self._runtime: Dict[str, str] = test_settings.get("runtime", {})
+        self._platform: DictAny = test_settings["platform"]
+        self._platform_os: DictStr = self._platform["os"]
+        self._build: DictStr = test_settings["build"]
+        self._runtime: DictStr = test_settings.get("runtime", {})
 
         self.build = self._platform_os.get("build")
         self.display = self._platform.get("display")
@@ -71,28 +94,35 @@ class PlatformInfo:
         return pretty
 
     def _clean_os_version(self) -> str:
-        cleaned_name = self.os
         version = self._platform_os["version"]
         if version is None:
             raise Exception("Could not find platform version")
 
-        if cleaned_name in ["mac", "linux"]:
+        if self.os in ["mac", "linux"]:
             # Hack for macosx 11.20 reported as 11.00
-            if cleaned_name == "mac" and version == "1100":
-                return "11.20"
+            if self.os == "mac":
+                if version == "1100":
+                    return "11.20"
+                elif version == "1500":
+                    return "15.30"
+            if len(version) == 5 and version[2] == ".":
+                return version  # already has a dot
             return version[0:2] + "." + version[2:4]
-        if cleaned_name == "android":
-            android_version = self.android_os_to_sdk_map.get(version)
+        if self.os == "android":
+            if version not in android_os_to_api_map and version.endswith(".0"):
+                version = version[:-2]
+            android_version = android_os_to_api_map.get(version)
             if android_version is None:
                 raise Exception(
-                    f"Unknown android OS version {version}. Supported versions are {list(self.android_os_to_sdk_map.keys())}."
+                    f"Unknown android OS version {version}. Supported versions are {list(android_os_to_api_map.keys())}."
                 )
-            return android_version
 
         build = self.build
-        if build is not None and cleaned_name == "win":
+        if build is not None and self.os == "win":
             if build == "24h2":
                 version += ".26100"
+            elif build == "25h2":
+                version += ".26200"
             else:
                 version += "." + build
         return version
@@ -136,13 +166,16 @@ class PlatformInfo:
         return build_type
 
     def get_variant_data(self):
+        import yaml
+
         if PlatformInfo.variant_data:
             return PlatformInfo.variant_data
 
         # if running locally via `./mach ...`, assuming running from root of repo
         filename = (
-            os.environ.get("GECKO_PATH", ".") + "/taskcluster/kinds/test/variants.yml"
+            os.environ.get("GECKO_PATH", ".") + "/taskcluster/test_configs/variants.yml"
         )
+
         with open(filename) as f:
             PlatformInfo.variant_data = yaml.safe_load(f.read())
 
@@ -165,15 +198,15 @@ class PlatformInfo:
     def _clean_test_variant(self) -> str:
         # TODO: consider adding display here
         runtimes = list(self._runtime.keys())
-        test_variant = "+".join(
-            [v for v in [self.get_variant_condition(x) for x in runtimes] if v]
-        )
+        variants = [v for v in [self.get_variant_condition(x) for x in runtimes] if v]
+        variants.sort()  # keep variants in consistent order
+        test_variant = "+".join(variants)
         if not runtimes or not test_variant:
             test_variant = "no_variant"
         return test_variant
 
     # Used for test data
-    def from_dict(self, data: Dict[str, Any]):
+    def from_dict(self, data: DictAny):
         self.os = data["os"]
         self.os_version = data["os_version"]
         self.arch = data["arch"]

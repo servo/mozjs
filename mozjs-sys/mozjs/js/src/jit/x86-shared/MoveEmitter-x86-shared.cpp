@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -75,6 +73,8 @@ bool MoveEmitterX86::maybeEmitOptimizedCycle(const MoveResolver& moves,
                                              size_t i, bool allGeneralRegs,
                                              bool allFloatRegs,
                                              size_t swapCount) {
+  MOZ_ASSERT(swapCount > 0);
+
   if (allGeneralRegs && swapCount <= 2) {
     // Use x86's swap-integer-registers instruction if we only have a few
     // swaps. (x86 also has a swap between registers and memory but it's
@@ -86,14 +86,38 @@ bool MoveEmitterX86::maybeEmitOptimizedCycle(const MoveResolver& moves,
     return true;
   }
 
-  if (allFloatRegs && swapCount == 1) {
-    // There's no xchg for xmm registers, but if we only need a single swap,
-    // it's cheap to do an XOR swap.
-    FloatRegister a = moves.getMove(i).to().floatReg();
-    FloatRegister b = moves.getMove(i + 1).to().floatReg();
-    masm.vxorpd(a, b, b);
-    masm.vxorpd(b, a, a);
-    masm.vxorpd(a, b, b);
+  if (allFloatRegs) {
+    // There's no xchg for xmm registers, but we can use the scratch register.
+    // |characterizeCycle| ensures this is a simple cycle where each move's
+    // source is the next move's target (wrapping around for the last move):
+    //
+    //   A => B
+    //   C => A
+    //   B => C
+    //
+    // We break the cycle by using the scratch register:
+    //
+    //   B => scratch
+    //   A => B
+    //   C => A
+    //   scratch => C
+    ScratchSimd128Scope scratch(masm);
+    for (size_t k = 0; k <= swapCount; k++) {
+      FloatRegister from = moves.getMove(i + k).from().floatReg();
+      FloatRegister to = moves.getMove(i + k).to().floatReg();
+      MOZ_ASSERT(from != scratch && to != scratch);
+      if (k == 0) {
+        MOZ_ASSERT(from == moves.getMove(i + 1).to().floatReg());
+        masm.vmovapd(to, scratch);
+        masm.vmovapd(from, to);
+      } else if (k == swapCount) {
+        MOZ_ASSERT(from == moves.getMove(i).to().floatReg());
+        masm.vmovapd(scratch, to);
+      } else {
+        MOZ_ASSERT(from == moves.getMove(i + k + 1).to().floatReg());
+        masm.vmovapd(from, to);
+      }
+    }
     return true;
   }
 

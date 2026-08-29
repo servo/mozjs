@@ -1,15 +1,17 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "vm/RealmFuses.h"
+
+#include <array>
 
 #include "builtin/MapObject.h"
 #include "builtin/Promise.h"
 #include "builtin/RegExp.h"
 #include "builtin/WeakMapObject.h"
 #include "builtin/WeakSetObject.h"
+#include "debugger/DebugScript.h"
+#include "js/experimental/TypedData.h"
 #include "vm/GlobalObject.h"
 #include "vm/NativeObject.h"
 #include "vm/ObjectOperations.h"
@@ -21,6 +23,11 @@
 using namespace js;
 
 void js::InvalidatingRealmFuse::popFuse(JSContext* cx, RealmFuses& realmFuses) {
+  // Return early if the fuse is already popped.
+  if (!intact()) {
+    return;
+  }
+
   InvalidatingFuse::popFuse(cx);
 
   for (auto& fd : realmFuses.fuseDependencies) {
@@ -28,17 +35,17 @@ void js::InvalidatingRealmFuse::popFuse(JSContext* cx, RealmFuses& realmFuses) {
   }
 }
 
-bool js::InvalidatingRealmFuse::addFuseDependency(JSContext* cx,
-                                                  Handle<JSScript*> script) {
-  MOZ_ASSERT(script->realm() == cx->realm());
-  auto* dss =
+bool js::InvalidatingRealmFuse::addFuseDependency(
+    JSContext* cx, const jit::IonScriptKey& ionScript) {
+  MOZ_ASSERT(ionScript.script()->realm() == cx->realm());
+  auto* scriptSet =
       cx->realm()->realmFuses.fuseDependencies.getOrCreateDependentScriptSet(
           cx, this);
-  if (!dss) {
+  if (!scriptSet) {
     return false;
   }
 
-  return dss->addScriptForFuse(this, script);
+  return scriptSet->addScriptForFuse(this, ionScript);
 }
 
 void js::PopsOptimizedGetIteratorFuse::popFuse(JSContext* cx,
@@ -105,10 +112,29 @@ bool js::OptimizeGetIteratorFuse::checkInvariant(JSContext* cx) {
 
 void js::OptimizeGetIteratorFuse::popFuse(JSContext* cx,
                                           RealmFuses& realmFuses) {
-  InvalidatingRealmFuse::popFuse(cx, realmFuses);
+  RealmFuse::popFuse(cx, realmFuses);
+  realmFuses.optimizeGetIteratorBytecodeFuse.popFuse(cx, realmFuses);
   MOZ_ASSERT(cx->global());
   cx->runtime()->setUseCounter(cx->global(),
                                JSUseCounter::OPTIMIZE_GET_ITERATOR_FUSE);
+}
+
+bool js::OptimizeGetIteratorBytecodeFuse::checkInvariant(JSContext* cx) {
+  auto& realmFuses = cx->realm()->realmFuses;
+  if (!realmFuses.optimizeGetIteratorFuse.intact()) {
+    return false;
+  }
+  // If there's a DebugScript for a script in this realm, this fuse should have
+  // been popped.
+  if (DebugScriptMap* map = cx->zone()->debugScriptMap) {
+    for (auto iter = map->iter(); !iter.done(); iter.next()) {
+      JSScript* script = iter.get().key();
+      if (script->realm() == cx->realm()) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 bool js::OptimizeArrayIteratorPrototypeFuse::checkInvariant(JSContext* cx) {
@@ -375,6 +401,52 @@ bool js::OptimizeSharedArrayBufferSpeciesFuse::checkInvariant(JSContext* cx) {
       cx->names().dollar_SharedArrayBufferSpecies_);
 }
 
+bool js::OptimizeTypedArraySpeciesFuse::checkInvariant(JSContext* cx) {
+  // Check `constructor` and `@@species` on %TypedArray%.
+  if (!SpeciesFuseCheckInvariant(cx, JSProto_TypedArray,
+                                 cx->names().dollar_TypedArraySpecies_)) {
+    return false;
+  }
+
+  auto typedArrayProtoKeys = std::array{
+#define PROTO_KEY(_, T, N) JSProto_##N##Array,
+      JS_FOR_EACH_TYPED_ARRAY(PROTO_KEY)
+#undef PROTO_KEY
+  };
+
+  auto* typedArrayproto =
+      cx->global()->maybeGetPrototype<NativeObject>(JSProto_TypedArray);
+
+  // Check all concrete TypedArray prototypes.
+  for (auto protoKey : typedArrayProtoKeys) {
+    // Prototype must be initialized.
+    auto* proto = cx->global()->maybeGetPrototype<NativeObject>(protoKey);
+    if (!proto) {
+      // No proto, invariant still holds
+      continue;
+    }
+    MOZ_ASSERT(typedArrayproto,
+               "%TypedArray%.prototype must be initialized when TypedArray "
+               "subclass is initialized");
+
+    // Ensure the prototype's prototype is %TypedArray%.prototype.
+    if (proto->staticPrototype() != typedArrayproto) {
+      return false;
+    }
+
+    auto* ctor = cx->global()->maybeGetConstructor<NativeObject>(protoKey);
+    MOZ_ASSERT(ctor);
+
+    // Ensure the prototype's `constructor` slot is the original constructor.
+    if (!ObjectHasDataPropertyValue(proto, NameToId(cx->names().constructor),
+                                    ObjectValue(*ctor))) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 void js::OptimizePromiseLookupFuse::popFuse(JSContext* cx,
                                             RealmFuses& realmFuses) {
   RealmFuse::popFuse(cx, realmFuses);
@@ -494,35 +566,6 @@ bool js::OptimizeRegExpPrototypeFuse::checkInvariant(JSContext* cx) {
   if (!ObjectHasDataPropertyFunction(
           proto, PropertyKey::Symbol(cx->wellKnownSymbols().split),
           cx->names().RegExpSplit)) {
-    return false;
-  }
-
-  return true;
-}
-
-bool js::OptimizeStringPrototypeSymbolsFuse::checkInvariant(JSContext* cx) {
-  auto* stringProto =
-      cx->global()->maybeGetPrototype<NativeObject>(JSProto_String);
-  if (!stringProto) {
-    // No proto, invariant still holds.
-    return true;
-  }
-
-  // String.prototype must have Object.prototype as proto.
-  auto* objectProto = &cx->global()->getObjectPrototype().as<NativeObject>();
-  if (stringProto->staticPrototype() != objectProto) {
-    return false;
-  }
-
-  // The objects must not have a @@match, @@replace, @@search, @@split property.
-  auto hasSymbolProp = [&](JS::Symbol* symbol) {
-    PropertyKey key = PropertyKey::Symbol(symbol);
-    return stringProto->containsPure(key) || objectProto->containsPure(key);
-  };
-  if (hasSymbolProp(cx->wellKnownSymbols().match) ||
-      hasSymbolProp(cx->wellKnownSymbols().replace) ||
-      hasSymbolProp(cx->wellKnownSymbols().search) ||
-      hasSymbolProp(cx->wellKnownSymbols().split)) {
     return false;
   }
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -148,6 +146,14 @@ void BaselineSnapshot::trace(JSTracer* trc) {
   TraceOffthreadGCPtr(trc, script_, "baseline-snapshot-script");
   TraceOffthreadGCPtr(trc, globalLexical_, "baseline-snapshot-lexical");
   TraceOffthreadGCPtr(trc, globalThis_, "baseline-snapshot-this");
+  if (callObjectTemplate_) {
+    TraceOffthreadGCPtr(trc, callObjectTemplate_,
+                        "baseline-snapshot-call-object-template");
+  }
+  if (namedLambdaTemplate_) {
+    TraceOffthreadGCPtr(trc, namedLambdaTemplate_,
+                        "baseline-snapshot-named-lambda-template");
+  }
 }
 
 void BaselineCompileTask::trace(JSTracer* trc) {

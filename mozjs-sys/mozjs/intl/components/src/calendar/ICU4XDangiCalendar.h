@@ -36,12 +36,6 @@ class ICU4XDangiCalendar : public ICU4XChineseBasedCalendar {
  protected:
   std::string_view eraName(int32_t extendedYear) const override;
 
-  static constexpr int32_t dangiRelatedYearDiff = -2333;
-
-  int32_t relatedYearDifference() const override {
-    return dangiRelatedYearDiff;
-  }
-
  public:
   UClassID getDynamicClassID() const override;
   static UClassID U_EXPORT2 getStaticClassID();

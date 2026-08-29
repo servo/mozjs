@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -294,8 +293,6 @@ int select(int width, fd_set* rd, fd_set* wr, fd_set* ex, struct timeval* tv)
 int wrap_poll(void* listptr, unsigned long nfds, long timeout)
 #    elif (defined(AIX) && !defined(AIX_RENAME_SELECT))
 int poll(void* listptr, unsigned long nfds, long timeout)
-#    elif defined(HPUX)
-int poll(struct pollfd filedes[], unsigned int nfds, int timeout)
 #    elif defined(NETBSD)
 int poll(struct pollfd* filedes, nfds_t nfds, int timeout)
 #    elif defined(OPENBSD)

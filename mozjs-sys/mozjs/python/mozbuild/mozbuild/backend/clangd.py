@@ -15,7 +15,10 @@ import mozpack.path as mozpath
 from mozbuild.compilation.database import CompileDBBackend
 
 
-def find_vscode_cmd():
+def find_vscode_or_vscodium_cmd(ide):
+    if ide not in {"vscode", "vscodium"}:
+        return None
+
     import shutil
     import sys
 
@@ -31,51 +34,80 @@ def find_vscode_cmd():
     # If the binary wasn't on $PATH, try to find it in a variety of other
     # well-known install locations based on the current platform.
     if sys.platform.startswith("darwin"):
-        cmd_and_path = [
-            {"path": "/usr/local/bin/code", "cmd": ["/usr/local/bin/code"]},
-            {
-                "path": "/Applications/Visual Studio Code.app",
-                "cmd": ["open", "/Applications/Visual Studio Code.app", "--args"],
-            },
-            {
-                "path": "/Applications/Visual Studio Code - Insiders.app",
-                "cmd": [
-                    "open",
-                    "/Applications/Visual Studio Code - Insiders.app",
-                    "--args",
-                ],
-            },
-        ]
+        if ide == "vscode":
+            cmd_and_path = [
+                {"path": "/usr/local/bin/code", "cmd": ["/usr/local/bin/code"]},
+                {
+                    "path": "/Applications/Visual Studio Code.app",
+                    "cmd": ["open", "/Applications/Visual Studio Code.app", "--args"],
+                },
+                {
+                    "path": "/Applications/Visual Studio Code - Insiders.app",
+                    "cmd": [
+                        "open",
+                        "/Applications/Visual Studio Code - Insiders.app",
+                        "--args",
+                    ],
+                },
+            ]
+        else:
+            cmd_and_path = [
+                {
+                    "path": "/opt/homebrew/bin/codium",
+                    "cmd": ["/opt/homebrew/bin/codium"],
+                },
+                {
+                    "path": "/Applications/VSCodium.app",
+                    "cmd": ["open", "/Applications/VSCodium.app", "--args"],
+                },
+            ]
     elif sys.platform.startswith("win"):
         from pathlib import Path
 
-        vscode_path = mozpath.join(
-            str(Path.home()),
-            "AppData",
-            "Local",
-            "Programs",
-            "Microsoft VS Code",
-            "Code.exe",
-        )
-        vscode_insiders_path = mozpath.join(
-            str(Path.home()),
-            "AppData",
-            "Local",
-            "Programs",
-            "Microsoft VS Code Insiders",
-            "Code - Insiders.exe",
-        )
-        cmd_and_path = [
-            {"path": vscode_path, "cmd": [vscode_path]},
-            {"path": vscode_insiders_path, "cmd": [vscode_insiders_path]},
-        ]
+        if ide == "vscode":
+            vscode_path = mozpath.join(
+                str(Path.home()),
+                "AppData",
+                "Local",
+                "Programs",
+                "Microsoft VS Code",
+                "Code.exe",
+            )
+            vscode_insiders_path = mozpath.join(
+                str(Path.home()),
+                "AppData",
+                "Local",
+                "Programs",
+                "Microsoft VS Code Insiders",
+                "Code - Insiders.exe",
+            )
+            cmd_and_path = [
+                {"path": vscode_path, "cmd": [vscode_path]},
+                {"path": vscode_insiders_path, "cmd": [vscode_insiders_path]},
+            ]
+        else:
+            vscodium_path = mozpath.join(
+                str(Path.home()),
+                "AppData",
+                "Local",
+                "Programs",
+                "VSCodium",
+                "VSCodium.exe",
+            )
+            cmd_and_path = [{"path": vscodium_path, "cmd": [vscodium_path]}]
     elif sys.platform.startswith("linux"):
-        cmd_and_path = [
-            {"path": "/usr/local/bin/code", "cmd": ["/usr/local/bin/code"]},
-            {"path": "/snap/bin/code", "cmd": ["/snap/bin/code"]},
-            {"path": "/usr/bin/code", "cmd": ["/usr/bin/code"]},
-            {"path": "/usr/bin/code-insiders", "cmd": ["/usr/bin/code-insiders"]},
-        ]
+        if ide == "vscode":
+            cmd_and_path = [
+                {"path": "/usr/local/bin/code", "cmd": ["/usr/local/bin/code"]},
+                {"path": "/snap/bin/code", "cmd": ["/snap/bin/code"]},
+                {"path": "/usr/bin/code", "cmd": ["/usr/bin/code"]},
+                {"path": "/usr/bin/code-insiders", "cmd": ["/usr/bin/code-insiders"]},
+            ]
+        else:
+            cmd_and_path = [
+                {"path": "/usr/local/bin/codium", "cmd": ["/usr/local/bin/codium"]},
+                {"path": "/usr/bin/codium", "cmd": ["/usr/bin/codium"]},
+            ]
 
     # Did we guess the path?
     for element in cmd_and_path:
@@ -96,13 +128,12 @@ class ClangdBackend(CompileDBBackend):
         CompileDBBackend._init(self)
 
     def _get_compiler_args(self, cenv, canonical_suffix):
-        compiler_args = super(ClangdBackend, self)._get_compiler_args(
-            cenv, canonical_suffix
-        )
+        compiler_args = super()._get_compiler_args(cenv, canonical_suffix)
         if compiler_args is None:
             return None
 
-        if len(compiler_args) and compiler_args[0].endswith("ccache"):
+        ccache = self.environment.substs.get("CCACHE")
+        if len(compiler_args) and compiler_args[0] == ccache:
             compiler_args.pop(0)
         return compiler_args
 

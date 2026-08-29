@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,8 +79,23 @@ struct CacheableName {
     return mozilla::Span<const char>(bytes_);
   }
 
+  [[nodiscard]] bool clone(CacheableName* name) const {
+    UTF8Bytes bytesCopy;
+    if (!bytesCopy.appendAll(bytes_)) {
+      return false;
+    }
+    *name = CacheableName(std::move(bytesCopy));
+    return true;
+  }
+
+  bool operator==(const CacheableName& other) const {
+    return utf8Bytes() == other.utf8Bytes();
+  }
+
   static CacheableName fromUTF8Chars(UniqueChars&& utf8Chars);
   [[nodiscard]] static bool fromUTF8Chars(const char* utf8Chars,
+                                          CacheableName* name);
+  [[nodiscard]] static bool fromUTF8Bytes(mozilla::Span<const char> utf8Bytes,
                                           CacheableName* name);
 
   [[nodiscard]] JSString* toJSString(JSContext* cx) const;
@@ -238,7 +251,7 @@ WASM_DECLARE_CACHEABLE_POD(FuncDesc);
 using FuncDescVector = Vector<FuncDesc, 0, SystemAllocPolicy>;
 
 struct CallRefMetricsRange {
-  explicit CallRefMetricsRange() {}
+  explicit CallRefMetricsRange() = default;
   explicit CallRefMetricsRange(uint32_t begin, uint32_t length)
       : begin(begin), length(length) {}
 
@@ -251,7 +264,7 @@ struct CallRefMetricsRange {
 };
 
 struct AllocSitesRange {
-  explicit AllocSitesRange() {}
+  explicit AllocSitesRange() = default;
   explicit AllocSitesRange(uint32_t begin, uint32_t length)
       : begin(begin), length(length) {}
 
@@ -325,12 +338,12 @@ class CallRefHint {
   bool full() const { return length() == 3; }
 
   uint32_t get(uint32_t index) const {
-    MOZ_ASSERT(index < length());
+    MOZ_RELEASE_ASSERT(index < length());
     uint64_t res = (state_ >> (index * ElemBits + LengthBits)) & Mask;
     return uint32_t(res);
   }
   void set(uint32_t index, uint32_t funcIndex) {
-    MOZ_ASSERT(index < length());
+    MOZ_RELEASE_ASSERT(index < length());
     MOZ_ASSERT(funcIndex <= Mask);
     uint32_t shift = index * ElemBits + LengthBits;
     uint64_t c = uint64_t(Mask) << shift;
@@ -430,6 +443,14 @@ struct BranchHintCollection {
 
 enum class GlobalKind { Import, Constant, Variable };
 
+struct GlobalType {
+  ValType type;
+  bool isMutable = false;
+
+  GlobalType() = default;
+  GlobalType(ValType type, bool isMutable) : type(type), isMutable(isMutable) {}
+};
+
 // A GlobalDesc describes a single global variable.
 //
 // wasm can import and export mutable and immutable globals.
@@ -438,17 +459,17 @@ enum class GlobalKind { Import, Constant, Variable };
 // location that is private to the module, and its initial value is copied into
 // that cell from the environment.  asm.js cannot export globals.
 class GlobalDesc {
-  GlobalKind kind_;
+  GlobalKind kind_ = GlobalKind::Constant;
   // Stores the value type of this global for all kinds, and the initializer
   // expression when `constant` or `variable`.
   InitExpr initial_;
   // Metadata for the global when `variable` or `import`.
-  unsigned offset_;
-  bool isMutable_;
-  bool isWasm_;
-  bool isExport_;
+  unsigned offset_ = 0;
+  bool isMutable_ = false;
+  bool isWasm_ = false;
+  bool isExport_ = false;
   // Metadata for the global when `import`.
-  uint32_t importIndex_;
+  uint32_t importIndex_ = 0;
 
   // Private, as they have unusual semantics.
 
@@ -471,12 +492,12 @@ class GlobalDesc {
     }
   }
 
-  explicit GlobalDesc(ValType type, bool isMutable, uint32_t importIndex,
+  explicit GlobalDesc(const GlobalType& type, uint32_t importIndex,
                       ModuleKind kind = ModuleKind::Wasm)
       : kind_(GlobalKind::Import) {
-    initial_ = InitExpr(LitVal(type));
+    initial_ = InitExpr(LitVal(type.type));
     importIndex_ = importIndex;
-    isMutable_ = isMutable;
+    isMutable_ = type.isMutable;
     isWasm_ = kind == Wasm;
     isExport_ = false;
     offset_ = UINT32_MAX;
@@ -548,7 +569,7 @@ using TagOffsetVector = Vector<uint32_t, 2, SystemAllocPolicy>;
 
 class TagType : public AtomicRefCounted<TagType> {
   SharedTypeDef type_;
-  TagOffsetVector argOffsets_;
+  TagOffsetVector exceptionArgOffsets_;
   uint32_t size_;
 
  public:
@@ -558,8 +579,17 @@ class TagType : public AtomicRefCounted<TagType> {
 
   const TypeDef& type() const { return *type_; }
   const ValTypeVector& argTypes() const { return type_->funcType().args(); }
-  const TagOffsetVector& argOffsets() const { return argOffsets_; }
-  ResultType resultType() const { return ResultType::Vector(argTypes()); }
+  const ValTypeVector& resultTypes() const {
+    return type_->funcType().results();
+  }
+
+  // When this tag is used for WasmExceptionObject, what offset does each
+  // argument reside in.
+  const TagOffsetVector& exceptionArgOffsets() const {
+    return exceptionArgOffsets_;
+  }
+
+  ResultType argResultType() const { return ResultType::Vector(argTypes()); }
 
   uint32_t tagSize() const { return size_; }
 
@@ -576,7 +606,7 @@ using MutableTagType = RefPtr<TagType>;
 using SharedTagType = RefPtr<const TagType>;
 
 struct TagDesc {
-  TagKind kind;
+  TagKind kind = TagKind::Exception;
   SharedTagType type;
   bool isExport;
 
@@ -588,7 +618,36 @@ struct TagDesc {
 };
 
 using TagDescVector = Vector<TagDesc, 0, SystemAllocPolicy>;
-using ElemExprOffsetVector = Vector<size_t, 0, SystemAllocPolicy>;
+
+#ifdef ENABLE_WASM_JSPI
+
+class HandlerExpr {
+  uint32_t tagIndex_;
+  uint32_t labelDepth_;
+
+  static constexpr uint32_t IsSwitch = UINT32_MAX;
+
+ public:
+  explicit HandlerExpr(uint32_t tagIndex)
+      : tagIndex_(tagIndex), labelDepth_(IsSwitch) {
+    MOZ_ASSERT(isSwitch());
+  }
+  HandlerExpr(uint32_t tagIndex, uint32_t labelDepth)
+      : tagIndex_(tagIndex), labelDepth_(labelDepth) {
+    MOZ_ASSERT(!isSwitch());
+  }
+
+  uint32_t tagIndex() const { return tagIndex_; }
+  bool isSwitch() const { return labelDepth_ == IsSwitch; }
+  uint32_t labelDepth() const {
+    MOZ_ASSERT(!isSwitch());
+    return labelDepth_;
+  }
+};
+
+using HandlerExprVector = Vector<HandlerExpr, 2, SystemAllocPolicy>;
+
+#endif  // ENABLE_WASM_JSPI
 
 // This holds info about elem segments that is needed for instantiation.  It
 // can be dropped when the associated wasm::Module is dropped.
@@ -787,16 +846,20 @@ struct Limits {
   // memories.
   Shareable shared;
 
-  WASM_CHECK_CACHEABLE_POD(addressType, initial, maximum, shared);
+  // `pageSize` is used only for memories. Defaults to the standard page size
+  // but may be set to other values with the custom page size proposal.
+  PageSize pageSize = PageSize::Standard;
+
+  WASM_CHECK_CACHEABLE_POD(addressType, initial, maximum, shared, pageSize);
 
   Limits() = default;
-  explicit Limits(uint64_t initial,
-                  const mozilla::Maybe<uint64_t>& maximum = mozilla::Nothing(),
-                  Shareable shared = Shareable::False)
+  Limits(uint64_t initial, const mozilla::Maybe<uint64_t>& maximum,
+         Shareable shared, PageSize pageSize)
       : addressType(AddressType::I32),
         initial(initial),
         maximum(maximum),
-        shared(shared) {}
+        shared(shared),
+        pageSize(pageSize) {}
 };
 
 WASM_DECLARE_CACHEABLE_POD(Limits);
@@ -804,81 +867,98 @@ WASM_DECLARE_CACHEABLE_POD(Limits);
 // MemoryDesc describes a memory.
 
 struct MemoryDesc {
+  // The limits of this memory
   Limits limits;
+  // The index of the import if this memory is imported
+  mozilla::Maybe<uint32_t> importIndex;
 
-  WASM_CHECK_CACHEABLE_POD(limits);
+  WASM_CHECK_CACHEABLE_POD(limits, importIndex);
 
   bool isShared() const { return limits.shared == Shareable::True; }
 
   // Whether a backing store for this memory may move when grown.
   bool canMovingGrow() const { return limits.maximum.isNothing(); }
 
-  // Whether the bounds check limit (see the doc comment in
-  // ArrayBufferObject.cpp regarding linear memory structure) can ever be
-  // larger than 32-bits.
-  bool boundsCheckLimitIs32Bits() const {
+  // Whether the boundsCheckLimit will always fit within 32 bits. See the SMDOC
+  // for "WASM Linear Memory structure".
+  bool boundsCheckLimitIsAlways32Bits() const {
     return limits.maximum.isSome() &&
-           limits.maximum.value() < (0x100000000 / PageSize);
+           limits.maximum.value() < (0x100000000 / PageSizeInBytes(pageSize()));
   }
 
   AddressType addressType() const { return limits.addressType; }
 
+  PageSize pageSize() const { return limits.pageSize; }
+
   // The initial length of this memory in pages.
-  Pages initialPages() const { return Pages(limits.initial); }
+  Pages initialPages() const {
+    return Pages::fromPageCount(limits.initial, pageSize());
+  }
 
   // The maximum length of this memory in pages.
   mozilla::Maybe<Pages> maximumPages() const {
-    return limits.maximum.map([](uint64_t x) { return Pages(x); });
+    return limits.maximum.map(
+        [&](uint64_t x) { return Pages::fromPageCount(x, pageSize()); });
   }
 
-  // The initial length of this memory in bytes. Only valid for memory32.
-  uint64_t initialLength32() const {
-    MOZ_ASSERT(addressType() == AddressType::I32);
-    // See static_assert after MemoryDesc for why this is safe.
-    return limits.initial * PageSize;
+  uint64_t initialLength() const {
+    // See static_assert after MemoryDesc for why this is safe for memory32.
+    MOZ_ASSERT_IF(addressType() == AddressType::I64,
+                  limits.initial <= UINT64_MAX / PageSizeInBytes(pageSize()));
+    return addressType() == AddressType::I64 ? initialPages().byteLength64()
+                                             : initialPages().byteLength();
   }
 
-  uint64_t initialLength64() const {
-    MOZ_ASSERT(addressType() == AddressType::I64);
-    return limits.initial * PageSize;
-  }
-
-  MemoryDesc() {}
-  explicit MemoryDesc(Limits limits) : limits(limits) {}
+  MemoryDesc() = default;
+  explicit MemoryDesc(Limits limits)
+      : limits(limits), importIndex(mozilla::Nothing()) {}
 };
 
 WASM_DECLARE_CACHEABLE_POD(MemoryDesc);
 
 using MemoryDescVector = Vector<MemoryDesc, 1, SystemAllocPolicy>;
 
-// We don't need to worry about overflow with a Memory32 field when
+// We never need to worry about overflow with a Memory32 field when
 // using a uint64_t.
-static_assert(MaxMemory32PagesValidation <= UINT64_MAX / PageSize);
+static_assert(MaxMemory32StandardPagesValidation <=
+              UINT64_MAX / StandardPageSizeBytes);
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+static_assert(MaxMemory32TinyPagesValidation <= UINT64_MAX);
+#endif
 
-struct TableDesc {
+struct TableType {
   Limits limits;
   RefType elemType;
-  bool isImported;
-  bool isExported;
-  bool isAsmJS;
+
+  TableType() = default;
+  TableType(Limits limits, RefType elemType)
+      : limits(limits), elemType(elemType) {}
+};
+
+struct TableDesc {
+  TableType type;
+
+  bool isImported = false;
+  bool isExported = false;
+  bool isAsmJS = false;
   mozilla::Maybe<InitExpr> initExpr;
 
   TableDesc() = default;
-  TableDesc(Limits limits, RefType elemType,
-            mozilla::Maybe<InitExpr>&& initExpr, bool isAsmJS,
-            bool isImported = false, bool isExported = false)
-      : limits(limits),
-        elemType(elemType),
+  TableDesc(const TableType& type, mozilla::Maybe<InitExpr>&& initExpr,
+            bool isAsmJS, bool isImported = false, bool isExported = false)
+      : type(type),
         isImported(isImported),
         isExported(isExported),
         isAsmJS(isAsmJS),
         initExpr(std::move(initExpr)) {}
 
-  AddressType addressType() const { return limits.addressType; }
+  AddressType addressType() const { return type.limits.addressType; }
 
-  uint64_t initialLength() const { return limits.initial; }
+  uint64_t initialLength() const { return type.limits.initial; }
 
-  mozilla::Maybe<uint64_t> maximumLength() const { return limits.maximum; }
+  mozilla::Maybe<uint64_t> maximumLength() const { return type.limits.maximum; }
+
+  RefType elemType() const { return type.elemType; }
 };
 
 using TableDescVector = Vector<TableDesc, 0, SystemAllocPolicy>;

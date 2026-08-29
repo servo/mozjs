@@ -3,6 +3,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 from mozperftest.layers import Layers
 from mozperftest.metrics.consoleoutput import ConsoleOutput
+from mozperftest.metrics.eval import EvalMetrics
 from mozperftest.metrics.notebookupload import Notebook
 from mozperftest.metrics.perfboard.influx import Influx
 from mozperftest.metrics.perfherder import Perfherder
@@ -16,6 +17,10 @@ def get_layers():
 def pick_metrics(env, flavor, mach_cmd):
     if flavor in ("desktop-browser", "mobile-browser"):
         layers = get_layers()
+    elif flavor == "eval-mochitest":
+        # EvalMetrics must come before Perfherder so that eval results
+        # are added to metadata before Perfherder processes them.
+        layers = EvalMetrics, Perfherder, ConsoleOutput
     elif flavor == "alert":
         # We get data that is already in a perfherder
         # data format so there's no need to use any metric

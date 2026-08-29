@@ -59,8 +59,7 @@ def buglist(command_context, version, product, revision, repo):
     required=True,
     action="append",
     dest="addresses",
-    help="The email address to send the bug list to "
-    "(may be specified more than once.",
+    help="The email address to send the bug list to (may be specified more than once.",
 )
 @CommandArgument(
     "--version",
@@ -84,6 +83,7 @@ def buglist_email(command_context, **options):
     "release",
     "push-scriptworker-canary",
     description="Push tasks to try, to test new scriptworker deployments.",
+    virtualenv_name="taskgraph",
 )
 @CommandArgument(
     "--address",

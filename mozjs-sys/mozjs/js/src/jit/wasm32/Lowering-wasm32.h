@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -82,11 +80,11 @@ class LIRGeneratorWasm32 : public LIRGeneratorShared {
   void lowerWasmBuiltinDivI64(MWasmBuiltinDivI64* div) { MOZ_CRASH(); }
   void lowerModI64(MMod*) { MOZ_CRASH(); }
   void lowerWasmBuiltinModI64(MWasmBuiltinModI64* mod) { MOZ_CRASH(); }
-  void lowerNegI(MInstruction*, MDefinition*) { MOZ_CRASH(); }
-  void lowerNegI64(MInstruction*, MDefinition*) { MOZ_CRASH(); }
   void lowerMulI(MMul*, MDefinition*, MDefinition*) { MOZ_CRASH(); }
   void lowerUDiv(MDiv*) { MOZ_CRASH(); }
   void lowerUMod(MMod*) { MOZ_CRASH(); }
+  void lowerUDivI64(MDiv*) { MOZ_CRASH(); }
+  void lowerUModI64(MMod*) { MOZ_CRASH(); }
   void lowerWasmSelectI(MWasmSelect* select) { MOZ_CRASH(); }
   void lowerWasmSelectI64(MWasmSelect* select) { MOZ_CRASH(); }
   void lowerWasmCompareAndSelect(MWasmSelect* ins, MDefinition* lhs,

@@ -148,11 +148,11 @@ class _TreeDiff(dircmp):
     """Helper to report rich results on difference between two directories."""
 
     def _fillDiff(self, dc, rv, basepath="{0}"):
-        rv["right_only"] += map(lambda l: basepath.format(l), dc.right_only)
-        rv["left_only"] += map(lambda l: basepath.format(l), dc.left_only)
-        rv["diff_files"] += map(lambda l: basepath.format(l), dc.diff_files)
-        rv["funny"] += map(lambda l: basepath.format(l), dc.common_funny)
-        rv["funny"] += map(lambda l: basepath.format(l), dc.funny_files)
+        rv["right_only"] += map(basepath.format, dc.right_only)
+        rv["left_only"] += map(basepath.format, dc.left_only)
+        rv["diff_files"] += map(basepath.format, dc.diff_files)
+        rv["funny"] += map(basepath.format, dc.common_funny)
+        rv["funny"] += map(basepath.format, dc.funny_files)
         for subdir, _dc in dc.subdirs.items():
             self._fillDiff(_dc, rv, basepath.format(subdir + "/{0}"))
 
@@ -161,13 +161,13 @@ class _TreeDiff(dircmp):
         self._fillDiff(self, rv)
         chunks = []
         if rv["right_only"]:
-            chunks.append("{0} only in {1}".format(", ".join(rv["right_only"]), right))
+            chunks.append("{} only in {}".format(", ".join(rv["right_only"]), right))
         if rv["left_only"]:
-            chunks.append("{0} only in {1}".format(", ".join(rv["left_only"]), left))
+            chunks.append("{} only in {}".format(", ".join(rv["left_only"]), left))
         if rv["diff_files"]:
-            chunks.append("{0} differ".format(", ".join(rv["diff_files"])))
+            chunks.append("{} differ".format(", ".join(rv["diff_files"])))
         if rv["funny"]:
-            chunks.append("{0} don't compare".format(", ".join(rv["funny"])))
+            chunks.append("{} don't compare".format(", ".join(rv["funny"])))
         return "; ".join(chunks)
 
 

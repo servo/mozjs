@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -80,7 +78,7 @@ void LIRGenerator::visitBox(MBox* box) {
   lir->setDef(0, LDefinition(vreg, LDefinition::GENERAL));
   lir->setDef(1, LDefinition::BogusTemp());
   box->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 void LIRGenerator::visitUnbox(MUnbox* unbox) {
@@ -204,7 +202,7 @@ void LIRGeneratorX86::lowerForMulInt64(LMulI64* ins, MMul* mir,
 
   if (rhs->isConstant()) {
     int64_t constant = rhs->toConstant()->toInt64();
-    int32_t shift = mozilla::FloorLog2(constant);
+    int32_t shift = mozilla::FloorLog2(uint64_t(constant));
     // See special cases in CodeGeneratorX86Shared::visitMulI64.
     if (constant >= -1 && constant <= 2) {
       needsTemp = false;
@@ -225,6 +223,40 @@ void LIRGeneratorX86::lowerForMulInt64(LMulI64* ins, MMul* mir,
                    LInt64Allocation(LAllocation(AnyRegister(edx)),
                                     LAllocation(AnyRegister(eax))));
 }
+
+template <class LInstr>
+void LIRGeneratorX86::lowerForShiftInt64(LInstr* ins, MDefinition* mir,
+                                         MDefinition* lhs, MDefinition* rhs) {
+  LAllocation rhsAlloc;
+  if (rhs->isConstant()) {
+    rhsAlloc = useOrConstantAtStart(rhs);
+  } else {
+    // The operands are int64, but we only care about the lower 32 bits of the
+    // RHS. The code below will load that part in ecx and will discard the upper
+    // half.
+    rhsAlloc = useLowWordFixed(rhs, ecx);
+  }
+
+  if constexpr (std::is_same_v<LInstr, LShiftI64>) {
+    ins->setLhs(useInt64RegisterAtStart(lhs));
+    ins->setRhs(rhsAlloc);
+    defineInt64ReuseInput(ins, mir, LShiftI64::LhsIndex);
+  } else {
+    ins->setInput(useInt64RegisterAtStart(lhs));
+    ins->setCount(rhsAlloc);
+    ins->setTemp0(temp());
+    defineInt64ReuseInput(ins, mir, LRotateI64::InputIndex);
+  }
+}
+
+template void LIRGeneratorX86::lowerForShiftInt64(LShiftI64* ins,
+                                                  MDefinition* mir,
+                                                  MDefinition* lhs,
+                                                  MDefinition* rhs);
+template void LIRGeneratorX86::lowerForShiftInt64(LRotateI64* ins,
+                                                  MDefinition* mir,
+                                                  MDefinition* lhs,
+                                                  MDefinition* rhs);
 
 void LIRGenerator::visitCompareExchangeTypedArrayElement(
     MCompareExchangeTypedArrayElement* ins) {
@@ -702,7 +734,6 @@ void LIRGeneratorX86::lowerWasmBuiltinModI64(MWasmBuiltinModI64* mod) {
   MOZ_ASSERT(lhs->type() == rhs->type());
   MOZ_ASSERT(IsNumberType(mod->type()));
 
-  MOZ_ASSERT(mod->type() == MIRType::Int64);
   MOZ_ASSERT(mod->type() == MIRType::Int64);
 
   if (mod->isUnsigned()) {

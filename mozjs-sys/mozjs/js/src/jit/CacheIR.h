@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -81,6 +79,8 @@ class ValOperandId : public OperandId {
  public:
   ValOperandId() = default;
   explicit ValOperandId(uint16_t id) : OperandId(id) {}
+
+  bool operator==(const ValOperandId& other) const { return id_ == other.id_; }
 };
 
 class ValueTagOperandId : public OperandId {
@@ -242,7 +242,6 @@ class StubField {
     ICScript,
     Shape,
     WeakShape,
-    WeakGetterSetter,
     JSObject,
     WeakObject,
     Symbol,
@@ -257,6 +256,7 @@ class StubField {
     RawInt64,
     First64BitType = RawInt64,
     Value,
+    WeakValue,
     Double,
 
     Limit
@@ -319,8 +319,6 @@ inline const char* StubFieldTypeName(StubField::Type ty) {
       return "Shape";
     case StubField::Type::WeakShape:
       return "WeakShape";
-    case StubField::Type::WeakGetterSetter:
-      return "WeakGetterSetter";
     case StubField::Type::JSObject:
       return "JSObject";
     case StubField::Type::WeakObject:
@@ -341,6 +339,8 @@ inline const char* StubFieldTypeName(StubField::Type ty) {
       return "RawInt64";
     case StubField::Type::Value:
       return "Value";
+    case StubField::Type::WeakValue:
+      return "WeakValue";
     case StubField::Type::Double:
       return "Double";
     case StubField::Type::Limit:
@@ -568,10 +568,12 @@ enum class GuardClassKind : uint8_t {
   Array,
   PlainObject,
   FixedLengthArrayBuffer,
+  ImmutableArrayBuffer,
   ResizableArrayBuffer,
   FixedLengthSharedArrayBuffer,
   GrowableSharedArrayBuffer,
   FixedLengthDataView,
+  ImmutableDataView,
   ResizableDataView,
   MappedArguments,
   UnmappedArguments,
@@ -581,12 +583,15 @@ enum class GuardClassKind : uint8_t {
   Set,
   Map,
   Date,
+  WeakMap,
+  WeakSet,
 };
 
 const JSClass* ClassFor(GuardClassKind kind);
 
 enum class ArrayBufferViewKind : uint8_t {
   FixedLength,
+  Immutable,
   Resizable,
 };
 
@@ -598,6 +603,8 @@ inline const char* GuardClassKindEnumName(GuardClassKind kind) {
       return "PlainObject";
     case GuardClassKind::FixedLengthArrayBuffer:
       return "FixedLengthArrayBuffer";
+    case GuardClassKind::ImmutableArrayBuffer:
+      return "ImmutableArrayBuffer";
     case GuardClassKind::ResizableArrayBuffer:
       return "ResizableArrayBuffer";
     case GuardClassKind::FixedLengthSharedArrayBuffer:
@@ -606,6 +613,8 @@ inline const char* GuardClassKindEnumName(GuardClassKind kind) {
       return "GrowableSharedArrayBuffer";
     case GuardClassKind::FixedLengthDataView:
       return "FixedLengthDataView";
+    case GuardClassKind::ImmutableDataView:
+      return "ImmutableDataView";
     case GuardClassKind::ResizableDataView:
       return "ResizableDataView";
     case GuardClassKind::MappedArguments:
@@ -624,6 +633,10 @@ inline const char* GuardClassKindEnumName(GuardClassKind kind) {
       return "Map";
     case GuardClassKind::Date:
       return "Date";
+    case GuardClassKind::WeakMap:
+      return "WeakMap";
+    case GuardClassKind::WeakSet:
+      return "WeakSet";
   }
   MOZ_CRASH("Unknown GuardClassKind");
 }

@@ -1,9 +1,7 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Attributes.h"
 #include "mozilla/Types.h"
 
 //
@@ -67,6 +65,7 @@ extern "C" MOZ_EXPORT const char* __tsan_default_suppressions() {
          "called_from_lib:libEGL_nvidia\n"
          "called_from_lib:libfontconfig.so\n"
          "called_from_lib:libfontconfig1\n"
+         "called_from_lib:libfreetype.so.6\n"
          "called_from_lib:libgdk-3\n"
          "called_from_lib:libgdk_pixbuf\n"
          "called_from_lib:libgdk-x11\n"
@@ -79,6 +78,7 @@ extern "C" MOZ_EXPORT const char* __tsan_default_suppressions() {
          "called_from_lib:libgvfscommon\n"
          "called_from_lib:libgvfsdbus\n"
          "called_from_lib:libibus-1\n"
+         "called_from_lib:libnvidia-egl-wayland\n"
          "called_from_lib:libnvidia-eglcore\n"
          "called_from_lib:libnvidia-glsi\n"
          "called_from_lib:libogg.so\n"
@@ -93,7 +93,9 @@ extern "C" MOZ_EXPORT const char* __tsan_default_suppressions() {
          "called_from_lib:libunity-gtk3-parser\n"
          "called_from_lib:libvorbis.so\n"
          "called_from_lib:libvorbisfile\n"
+         "called_from_lib:libvulkan_intel.so\n"
          "called_from_lib:libwayland-client\n"
+         "called_from_lib:libwidevinecdm.so\n"
          "called_from_lib:libX11.so\n"
          "called_from_lib:libX11-xcb\n"
          "called_from_lib:libXau\n"
@@ -168,6 +170,8 @@ extern "C" MOZ_EXPORT const char* __tsan_default_suppressions() {
          // Bug 1825171
          "race:libffi.so\n"
          "race:mozilla::widget::WaylandBuffer::BufferReleaseCallbackHandler\n"
+          // Bug 1953677
+         "race:i965_dri.so\n"
 
 
 
@@ -198,6 +202,12 @@ extern "C" MOZ_EXPORT const char* __tsan_default_suppressions() {
          "deadlock:EncryptedClientHelloServer\n"
          // Bug 1682861 - permanent
          "deadlock:nsDOMWindowUtils::CompareCanvases\n"
+         // Bug 1984952 - not technically necessarily a deadlock, but a weird case of
+         // recursive locking that tsan normally doesn't allow, that is not clear yet
+         // how it happens and whether it's actually problematic, but it's originating
+         // from a system library so we can't do much about fixing it (except if it's
+         // actually a tsan bug).
+         "deadlock:libgallium-*.so\n"
 
 
 
@@ -271,6 +281,7 @@ extern "C" MOZ_EXPORT const char* __tsan_default_suppressions() {
          // parking_lot using incorrect atomic orderings in RwLock, upstream
          // fix already up for review.
          "race:StrongRuleNode::ensure_child\n"
+         "race:StrongRuleNode>::ensure_child\n"
          // No Bug - permanent
          // Upstream Bugs:
          //

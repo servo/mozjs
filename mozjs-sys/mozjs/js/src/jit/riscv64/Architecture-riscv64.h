@@ -1,18 +1,14 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_riscv64_Architecture_riscv64_h
 #define jit_riscv64_Architecture_riscv64_h
 
-// JitSpewer.h is included through MacroAssembler implementations for other
-// platforms, so include it here to avoid inadvertent build bustage.
-#include "mozilla/MathAlgorithms.h"
+#include "mozilla/EnumSet.h"
 
 #include <algorithm>
-#include <iterator>
+#include <bit>
 
 #include "jit/JitSpewer.h"
 #include "jit/shared/Architecture-shared.h"
@@ -127,15 +123,14 @@ class Registers {
 
   typedef uint32_t SetType;
 
-  static uint32_t SetSize(SetType x) {
-    static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
-    return mozilla::CountPopulation32(x);
-  }
+  static uint32_t SetSize(SetType x) { return std::popcount(x); }
   static uint32_t FirstBit(SetType x) {
-    return mozilla::CountTrailingZeroes32(x);
+    MOZ_ASSERT(x);
+    return std::countr_zero(x);
   }
   static uint32_t LastBit(SetType x) {
-    return 31 - mozilla::CountLeadingZeroes32(x);
+    MOZ_ASSERT(x);
+    return std::bit_width(x) - 1;
   }
   static const char* GetName(uint32_t code) {
     static const char* const Names[] = {
@@ -270,56 +265,72 @@ class FloatRegisters {
     ft11 = f31
   };
 
-  enum Kind : uint8_t { Double, NumTypes, Single };
+  enum Kind : uint8_t { Double, Single, NumTypes };
 
-  typedef FPRegisterID Code;
-  typedef FPRegisterID Encoding;
+  // (invalid << 7) | (kind << 5) | encoding
+  using Code = uint8_t;
+  using Encoding = FPRegisterID;
+
   union RegisterContent {
     float s;
     double d;
   };
 
-  static const char* GetName(uint32_t code) {
+  static const char* GetName(Code code) {
     static const char* const Names[] = {
         "ft0", "ft1", "ft2",  "ft3",  "ft4", "ft5", "ft6",  "ft7",
-        "fs0", "fs2", "fa0",  "fa1",  "fa2", "fa3", "fa4",  "fa5",
+        "fs0", "fs1", "fa0",  "fa1",  "fa2", "fa3", "fa4",  "fa5",
         "fa6", "fa7", "fs2",  "fs3",  "fs4", "fs5", "fs6",  "fs7",
         "fs8", "fs9", "fs10", "fs11", "ft8", "ft9", "ft10", "ft11"};
     static_assert(TotalPhys == std::size(Names), "Table is the correct size");
     if (code >= Total) {
       return "invalid";
     }
-    return Names[code];
+    return Names[code & 0x1f];
   }
 
   static Code FromName(const char* name);
 
-  typedef uint32_t SetType;
+  using SetType = uint64_t;
 
-  static const Code Invalid = invalid_reg;
-  static const uint32_t Total = 32;
+  static const Code Invalid = Code(0b10000000);
   static const uint32_t TotalPhys = 32;
+  static const uint32_t Total = TotalPhys * NumTypes;
   static const uint32_t Allocatable = 23;
-  static const SetType AllPhysMask = 0xFFFFFFFF;
-  static const SetType AllMask = 0xFFFFFFFF;
-  static const SetType AllDoubleMask = AllMask;
-  // Single values are stored as 64 bits values (NaN-boxed) when pushing them to
-  // the stack, we do not require making distinctions between the 2 types, and
-  // therefore the masks are overlapping.See The RISC-V Instruction Set Manual
-  // for 14.2 NaN Boxing of Narrower Values.
-  static const SetType AllSingleMask = AllMask;
+
+  static_assert(sizeof(SetType) * 8 >= Total,
+                "SetType should be large enough to enumerate all registers.");
+
+  // Magic values which are used to duplicate a mask of physical register for
+  // a specific type of register. A multiplication is used to copy and shift
+  // the bits of the physical register mask.
+  static const SetType SpreadSingle = SetType(1)
+                                      << (uint32_t(Kind::Single) * TotalPhys);
+  static const SetType SpreadDouble = SetType(1)
+                                      << (uint32_t(Kind::Double) * TotalPhys);
+  static const SetType Spread = SpreadSingle | SpreadDouble;
+
+  static const SetType AllPhysMask = ((SetType(1) << TotalPhys) - 1);
+  static const SetType AllMask = AllPhysMask * Spread;
+  static const SetType AllSingleMask = AllPhysMask * SpreadSingle;
+  static const SetType AllDoubleMask = AllPhysMask * SpreadDouble;
+  static const SetType NoneMask = SetType(0);
+
   static const SetType NonVolatileMask =
       SetType((1 << FloatRegisters::fs0) | (1 << FloatRegisters::fs1) |
               (1 << FloatRegisters::fs2) | (1 << FloatRegisters::fs3) |
               (1 << FloatRegisters::fs4) | (1 << FloatRegisters::fs5) |
               (1 << FloatRegisters::fs6) | (1 << FloatRegisters::fs7) |
               (1 << FloatRegisters::fs8) | (1 << FloatRegisters::fs9) |
-              (1 << FloatRegisters::fs10) | (1 << FloatRegisters::fs11));
+              (1 << FloatRegisters::fs10) | (1 << FloatRegisters::fs11)) *
+      Spread;
   static const SetType VolatileMask = AllMask & ~NonVolatileMask;
 
   // fs11/ft10 is the scratch register.
   static const SetType NonAllocatableMask =
-      SetType((1 << FloatRegisters::fs11) | (1 << FloatRegisters::ft10));
+      ((SetType(1) << FloatRegisters::fs11) |
+       (SetType(1) << FloatRegisters::ft10)) *
+      Spread;
 
   static const SetType AllocatableMask = AllMask & ~NonAllocatableMask;
 };
@@ -329,29 +340,31 @@ class TypedRegisterSet;
 
 struct FloatRegister {
  public:
-  typedef FloatRegisters Codes;
-  typedef Codes::Code Code;
-  typedef Codes::Encoding Encoding;
-  typedef Codes::SetType SetType;
+  using Codes = FloatRegisters;
+  using Code = Codes::Code;
+  using Encoding = Codes::Encoding;
+  using SetType = Codes::SetType;
 
   static uint32_t SetSize(SetType x) {
-    static_assert(sizeof(SetType) == 4, "SetType must be 32 bits");
+    x |= x >> FloatRegisters::TotalPhys;
     x &= FloatRegisters::AllPhysMask;
-    return mozilla::CountPopulation32(x);
+    return std::popcount(x);
   }
 
   static uint32_t FirstBit(SetType x) {
-    static_assert(sizeof(SetType) == 4, "SetType");
-    return mozilla::CountTrailingZeroes64(x);
+    MOZ_ASSERT(x);
+    return std::countr_zero(x);
   }
   static uint32_t LastBit(SetType x) {
-    static_assert(sizeof(SetType) == 4, "SetType");
-    return 31 - mozilla::CountLeadingZeroes64(x);
+    MOZ_ASSERT(x);
+    return std::bit_width(x) - 1;
   }
 
-  static FloatRegister FromCode(uint32_t i) {
-    uint32_t code = i & 0x1f;
-    return FloatRegister(Code(code));
+  static FloatRegister FromCode(Code code) {
+    MOZ_ASSERT(code < Codes::Total);
+    const Encoding encoding = Encoding(code & 0x1f);
+    const Kind kind = Kind((code >> 5) & 0x3);
+    return FloatRegister(encoding, kind);
   }
   bool isSimd128() const { return false; }
   bool isInvalid() const { return invalid_; }
@@ -366,10 +379,11 @@ struct FloatRegister {
   FloatRegister asSimd128() const { MOZ_CRASH(); }
   constexpr Code code() const {
     MOZ_ASSERT(!invalid_);
-    return encoding_;
+    return Code((invalid_ << 7) | ((static_cast<uint8_t>(kind_) & 0x3) << 5) |
+                (static_cast<uint8_t>(encoding_) & 0x1f));
   }
-  Encoding encoding() const { return encoding_; }
-  const char* name() const { return FloatRegisters::GetName(code()); }
+  constexpr Encoding encoding() const { return encoding_; }
+  const char* name() const { return FloatRegisters::GetName(encoding()); }
   bool volatile_() const {
     MOZ_ASSERT(!invalid_);
     return !!((SetType(1) << code()) & FloatRegisters::VolatileMask);
@@ -379,10 +393,12 @@ struct FloatRegister {
   bool aliases(FloatRegister other) const {
     return other.encoding_ == encoding_;
   }
-  uint32_t numAliased() const { return 1; }
+  uint32_t numAliased() const { return FloatRegisters::NumTypes; }
   FloatRegister aliased(uint32_t aliasIdx) const {
-    MOZ_ASSERT(aliasIdx == 0);
-    return *this;
+    MOZ_ASSERT(!invalid_);
+    MOZ_ASSERT(aliasIdx < numAliased());
+    return FloatRegister(Encoding(encoding_),
+                         Kind((aliasIdx + kind_) % numAliased()));
   }
   // Ensure that two floating point registers' types are equivalent.
   bool equiv(FloatRegister other) const {
@@ -402,7 +418,9 @@ struct FloatRegister {
     MOZ_ASSERT(aliasIdx < numAliased());
     return aliased(aliasIdx);
   }
-  SetType alignedOrDominatedAliasedSet() const { return SetType(1) << code(); }
+  SetType alignedOrDominatedAliasedSet() const {
+    return Codes::Spread << encoding_;
+  }
   static constexpr RegTypeName DefaultType = RegTypeName::Float64;
 
   template <RegTypeName Name = DefaultType>
@@ -427,7 +445,7 @@ struct FloatRegister {
 #  error "Needs more careful logic if SIMD is enabled"
 #endif
 
-    return code() * sizeof(double);
+    return encoding() * sizeof(double);
   }
   static Code FromName(const char* name);
 
@@ -436,7 +454,7 @@ struct FloatRegister {
   static uint32_t GetPushSizeInBytes(const TypedRegisterSet<FloatRegister>& s);
 
  private:
-  typedef Codes::Kind Kind;
+  using Kind = Codes::Kind;
   // These fields only hold valid values: an invalid register is always
   // represented as a valid encoding and kind with the invalid_ bit set.
   Encoding encoding_;  // 32 encodings
@@ -449,7 +467,7 @@ struct FloatRegister {
     MOZ_ASSERT(uint32_t(encoding) < Codes::Total);
   }
 
-  constexpr FloatRegister(Encoding encoding)
+  constexpr explicit FloatRegister(Encoding encoding)
       : encoding_(encoding), kind_(FloatRegisters::Double), invalid_(false) {
     MOZ_ASSERT(uint32_t(encoding) < Codes::Total);
   }
@@ -461,16 +479,13 @@ struct FloatRegister {
 
   bool isSingle() const {
     MOZ_ASSERT(!invalid_);
-    // On riscv64 arch, float register and double register using the same
-    // register file.
-    return kind_ == FloatRegisters::Single || kind_ == FloatRegisters::Double;
+    return kind_ == FloatRegisters::Single;
   }
+
   bool isDouble() const {
     MOZ_ASSERT(!invalid_);
     return kind_ == FloatRegisters::Double;
   }
-
-  Encoding code() { return encoding_; }
 };
 
 template <>
@@ -497,16 +512,90 @@ inline bool hasMultiAlias() { return false; }
 static constexpr uint32_t ShadowStackSpace = 0;
 static const uint32_t JumpImmediateRange = INT32_MAX;
 
-#ifdef JS_NUNBOX32
-static const int32_t NUNBOX32_TYPE_OFFSET = 4;
-static const int32_t NUNBOX32_PAYLOAD_OFFSET = 0;
-#endif
-
 static const uint32_t SpillSlotSize =
     std::max(sizeof(Registers::RegisterContent),
              sizeof(FloatRegisters::RegisterContent));
 
-inline uint32_t GetRISCV64Flags() { return 0; }
+enum class RVExtension : uint32_t {
+  // Flag when the extensions are initialized, so they can be atomically set.
+  Initialized,
+
+  // Extension for Address Generation
+  Zba,
+
+  // Extension for Basic Bit Manipulation
+  Zbb,
+
+  // Extension for Single-Bit Manipulation
+  Zbs,
+
+  // Extension for Half-Precision Floating-Point Conversions
+  Zfhmin,
+
+  // Extension for Additional Floating-Point Instructions
+  Zfa,
+
+  // Extension for Integer Conditional Operations
+  Zicond,
+};
+
+using RVExtensions = mozilla::EnumSet<RVExtension>;
+
+class RVFlags final {
+  // The override flags parsed from environment variables or from the
+  // --riscv-ext js shell argument. They are stable after startup: there is no
+  // programmatic way of setting these from JS.
+  static inline RVExtensions extensions{};
+
+ public:
+  RVFlags() = delete;
+
+  // RVFlags::Init is called from the JitContext constructor to read the
+  // hardware flags. This method must only be called once.
+  static void Init();
+
+  static bool IsInitialized() {
+    return extensions.contains(RVExtension::Initialized);
+  }
+
+  static uint32_t GetFlags() {
+    MOZ_ASSERT(IsInitialized());
+    return extensions.serialize();
+  }
+
+  static bool HasZbaExtension() {
+    return extensions.contains(RVExtension::Zba);
+  }
+
+  static bool HasZbbExtension() {
+    return extensions.contains(RVExtension::Zbb);
+  }
+
+  static bool HasZbsExtension() {
+    return extensions.contains(RVExtension::Zbs);
+  }
+
+  static bool HasZfhminExtension() {
+    return extensions.contains(RVExtension::Zfhmin);
+  }
+
+  static bool HasZfaExtension() {
+    return extensions.contains(RVExtension::Zfa);
+  }
+
+  static bool HasZicondExtension() {
+    return extensions.contains(RVExtension::Zicond);
+  }
+};
+
+// Register a string denoting RISCV extensions. During engine initialization,
+// these flags will then be used instead of the actual hardware capabilities.
+// This must be called before JS_Init and the passed string's buffer must
+// outlive the JS_Init call.
+void SetRISCV64ExtensionsString(const char* extensions);
+
+// Retrieve the RISCV extensions as a bitmask. They must have been set.
+inline uint32_t GetRISCV64Flags() { return RVFlags::GetFlags(); }
 
 }  // namespace jit
 }  // namespace js

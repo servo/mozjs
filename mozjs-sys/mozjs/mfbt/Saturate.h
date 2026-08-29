@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -15,6 +13,7 @@
 #include <utility>
 
 #include "mozilla/Attributes.h"
+#include "mozilla/CheckedArithmetic.h"
 
 namespace mozilla {
 namespace detail {
@@ -53,27 +52,20 @@ class SaturateOp {
   T operator-(const T& aRhs) const { return T(mValue) -= aRhs; }
 
   // Compound operators
-
   const T& operator+=(const T& aRhs) const {
-    const T min = std::numeric_limits<T>::min();
-    const T max = std::numeric_limits<T>::max();
-
-    if (aRhs > static_cast<T>(0)) {
-      mValue = (max - aRhs) < mValue ? max : mValue + aRhs;
-    } else {
-      mValue = (min - aRhs) > mValue ? min : mValue + aRhs;
+    constexpr T min = std::numeric_limits<T>::min();
+    constexpr T max = std::numeric_limits<T>::max();
+    if (!mozilla::SafeAdd(mValue, aRhs, &mValue)) {
+      return mValue = (aRhs > 0 ? max : min);
     }
     return mValue;
   }
 
   const T& operator-=(const T& aRhs) const {
-    const T min = std::numeric_limits<T>::min();
-    const T max = std::numeric_limits<T>::max();
-
-    if (aRhs > static_cast<T>(0)) {
-      mValue = (min + aRhs) > mValue ? min : mValue - aRhs;
-    } else {
-      mValue = (max + aRhs) < mValue ? max : mValue - aRhs;
+    constexpr T min = std::numeric_limits<T>::min();
+    constexpr T max = std::numeric_limits<T>::max();
+    if (!mozilla::SafeSub(mValue, aRhs, &mValue)) {
+      return mValue = (aRhs > 0 ? min : max);
     }
     return mValue;
   }
@@ -232,6 +224,10 @@ typedef detail::Saturate<int32_t> SaturateInt32;
 typedef detail::Saturate<uint8_t> SaturateUint8;
 typedef detail::Saturate<uint16_t> SaturateUint16;
 typedef detail::Saturate<uint32_t> SaturateUint32;
+typedef detail::Saturate<intptr_t> SaturateIntPtr;
+typedef detail::Saturate<uintptr_t> SaturateUintPtr;
+
+using detail::Saturate;
 
 }  // namespace mozilla
 

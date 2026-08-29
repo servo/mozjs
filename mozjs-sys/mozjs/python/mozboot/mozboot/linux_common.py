@@ -56,18 +56,15 @@ class LinuxBootstrapper(MobileAndroidBootstrapper):
         pass
 
     def install_system_packages(self):
-        self.install_packages(
-            [
-                "bash",
-                "findutils",  # contains xargs
-                "gzip",
-                "libxml2",  # used by bootstrapped clang
-                "make",
-                "perl",
-                "tar",
-                "unzip",
-            ]
-        )
+        self.install_packages([
+            "bash",
+            "findutils",  # contains xargs
+            "gzip",
+            "make",
+            "perl",
+            "tar",
+            "unzip",
+        ])
         # Optional packages
         try:
             self.install_packages(["watchman"])

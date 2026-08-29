@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2023 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +22,10 @@ using namespace js;
 using namespace js::wasm;
 
 const TypeDef* StaticTypeDefs::arrayMutI16 = nullptr;
-const TypeDef* StaticTypeDefs::jsTag = nullptr;
+const TypeDef* StaticTypeDefs::jsExceptionTag = nullptr;
+#ifdef ENABLE_WASM_JSPI
+const TypeDef* StaticTypeDefs::jsPromiseTag = nullptr;
+#endif
 
 bool StaticTypeDefs::init() {
   RefPtr<TypeContext> types = js_new<TypeContext>();
@@ -38,15 +39,29 @@ bool StaticTypeDefs::init() {
   }
   arrayMutI16->recGroup().AddRef();
 
-  ValTypeVector params;
-  if (!params.append(ValType(RefType::extern_()))) {
+  ValTypeVector exceptionParams;
+  if (!exceptionParams.append(ValType(RefType::extern_()))) {
     return false;
   }
-  jsTag = types->addType(FuncType(std::move(params), ValTypeVector()));
-  if (!jsTag) {
+  jsExceptionTag =
+      types->addType(FuncType(std::move(exceptionParams), ValTypeVector()));
+  if (!jsExceptionTag) {
     return false;
   }
-  jsTag->recGroup().AddRef();
+  jsExceptionTag->recGroup().AddRef();
+
+#ifdef ENABLE_WASM_JSPI
+  ValTypeVector promiseParams;
+  if (!promiseParams.append(ValType(RefType::extern_()))) {
+    return false;
+  }
+  jsPromiseTag =
+      types->addType(FuncType(std::move(promiseParams), ValTypeVector()));
+  if (!jsPromiseTag) {
+    return false;
+  }
+  jsPromiseTag->recGroup().AddRef();
+#endif
 
   return true;
 }
@@ -56,14 +71,26 @@ void StaticTypeDefs::destroy() {
     arrayMutI16->recGroup().Release();
     arrayMutI16 = nullptr;
   }
-  if (jsTag) {
-    jsTag->recGroup().Release();
-    jsTag = nullptr;
+  if (jsExceptionTag) {
+    jsExceptionTag->recGroup().Release();
+    jsExceptionTag = nullptr;
   }
+#ifdef ENABLE_WASM_JSPI
+  if (jsPromiseTag) {
+    jsPromiseTag->recGroup().Release();
+    jsPromiseTag = nullptr;
+  }
+#endif
 }
 
 bool StaticTypeDefs::addAllToTypeContext(TypeContext* types) {
-  for (const TypeDef* type : {arrayMutI16, jsTag}) {
+  const TypeDef* staticTypes[]{arrayMutI16, jsExceptionTag,
+#ifdef ENABLE_WASM_JSPI
+                               jsPromiseTag
+#endif
+  };
+
+  for (const TypeDef* type : staticTypes) {
     MOZ_ASSERT(type, "static TypeDef was not initialized");
     SharedRecGroup recGroup = &type->recGroup();
     MOZ_ASSERT(recGroup->numTypes() == 1);

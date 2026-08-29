@@ -3,13 +3,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #ifndef intl_components_NumberFormatterSkeleton_h_
 #define intl_components_NumberFormatterSkeleton_h_
+
+#include <stddef.h>
+#include <stdint.h>
 #include <string_view>
+
+#include "mozilla/Assertions.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/intl/NumberFormat.h"
 #include "mozilla/intl/NumberRangeFormat.h"
 #include "mozilla/Vector.h"
-#include "unicode/unumberformatter.h"
-#include "unicode/utypes.h"
 
+struct UNumberFormatter;
 struct UNumberRangeFormatter;
 
 namespace mozilla::intl {
@@ -98,6 +103,8 @@ class MOZ_STACK_CLASS NumberFormatterSkeleton final {
   [[nodiscard]] bool notation(NumberFormatOptions::Notation style);
 
   [[nodiscard]] bool signDisplay(NumberFormatOptions::SignDisplay display);
+  [[nodiscard]] bool accountingSignDisplay(
+      NumberFormatOptions::SignDisplay display);
 
   [[nodiscard]] bool roundingIncrement(uint32_t increment, uint32_t mnfd,
                                        uint32_t mxfd, bool stripTrailingZero);

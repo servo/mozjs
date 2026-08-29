@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -293,8 +291,7 @@ namespace pbl {
 // Trampoline invoked by EnterJit that sets up PBL state and invokes
 // the main interpreter loop.
 bool PortableBaselineTrampoline(JSContext* cx, size_t argc, Value* argv,
-                                size_t numActuals, size_t numFormals,
-                                jit::CalleeToken calleeToken,
+                                size_t numFormals, jit::CalleeToken calleeToken,
                                 JSObject* envChain, Value* result);
 
 // Predicate: are all conditions satisfied to allow execution within

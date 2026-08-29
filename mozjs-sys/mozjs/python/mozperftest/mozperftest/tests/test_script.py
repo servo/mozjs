@@ -2,6 +2,9 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+import shutil
+from unittest import mock
+
 import mozunit
 import pytest
 
@@ -13,6 +16,7 @@ from mozperftest.script import (
     ScriptType,
 )
 from mozperftest.tests.support import (
+    EXAMPLE_DYNAMIC_TEST,
     EXAMPLE_MOCHITEST_TEST,
     EXAMPLE_MOCHITEST_TEST2,
     EXAMPLE_SHELL_TEST,
@@ -68,7 +72,7 @@ def test_scriptinfo_mochitest_missing_perfmetadata():
     with temp_file(name="sample.html", content="<html></html>") as temp:
         with pytest.raises(ParseError) as exc_info:
             ScriptInfo(temp)
-        assert "MissingPerfMetadata" in str(exc_info.value)
+        assert "Missing `perfMetadata`, `evalMetadata` variable" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("script", [EXAMPLE_XPCSHELL_TEST, EXAMPLE_XPCSHELL_TEST2])
@@ -138,6 +142,38 @@ def test_update_args_metrics_json_failure():
 
     with pytest.raises(BadOptionTypeError):
         info.update_args(**args)
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="requires Node.js")
+def test_scriptinfo_dynamic_metadata_parsing():
+    info = ScriptInfo(EXAMPLE_DYNAMIC_TEST)
+
+    assert info["owner"] == "Performance Testing Team"
+    assert info["name"] == "Example"
+    assert info["supportedBrowsers"] == [
+        "Fenix nightly",
+        "Geckoview_example",
+        "Fennec",
+        "Firefox",
+    ]
+    assert info["options"]["default"]["perfherder"] is True
+    assert info["options"]["linux"]["perfherder_metrics"] == [
+        {"name": "speed", "unit": "bps_lin"}
+    ]
+
+
+@mock.patch("mozperftest.script.ScriptInfo._get_node_builtins", return_value=set())
+@mock.patch("mozperftest.script.subprocess.run")
+def test_scriptinfo_fallback_on_node_failure(mock_run, mock_builtins):
+    mock_proc = mock.Mock()
+    mock_proc.returncode = 1
+    mock_proc.stderr = "Node error"
+    mock_run.return_value = mock_proc
+
+    info = ScriptInfo(EXAMPLE_TEST)
+
+    assert info["owner"] == "Performance Testing Team"
+    assert info["name"] == "Example"
 
 
 if __name__ == "__main__":

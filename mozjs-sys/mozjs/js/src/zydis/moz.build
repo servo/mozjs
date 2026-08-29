@@ -6,6 +6,7 @@ LOCAL_INCLUDES += [
     '..'
 ]
 
+include("../js-compileflags.mozbuild")
 include('../js-config.mozbuild')
 include('../js-cxxflags.mozbuild')
 

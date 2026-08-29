@@ -107,6 +107,16 @@ def generate_prefs_header(c_out, yaml_path):
 
         is_startup_pref = pref["set_spidermonkey_pref"] == "startup"
 
+        fuzzing_safe = pref.get("fuzzing_safe", True)
+        if not isinstance(fuzzing_safe, bool):
+            raise Exception(f"fuzzing_safe must be a boolean for {pref['name']}")
+
+        # Prefs that are enabled by default must be fuzzing-safe.
+        if pref["value"] is True and not fuzzing_safe:
+            raise Exception(
+                f"Pref {pref['name']} is enabled by default and must be fuzzing_safe"
+            )
+
         cpp_name = name.replace(".", "_").replace("-", "_")
         type = get_cpp_type(pref["type"])
         init_value = get_cpp_init_value(pref["value"])
@@ -124,11 +134,13 @@ def generate_prefs_header(c_out, yaml_path):
         )
 
         is_startup_pref_bool = "true" if is_startup_pref else "false"
+        fuzzing_safe_bool = "true" if fuzzing_safe else "false"
 
         # Generate a MACRO invocation like this:
-        #   MACRO("arraybuffer_transfer", arraybuffer_transfer, bool, setAtStartup_arraybuffer_transfer, true)
+        #   MACRO("arraybuffer_transfer", arraybuffer_transfer, bool, setAtStartup_arraybuffer_transfer, true, true)
         macro_entries.append(
-            f'MACRO("{name}", {cpp_name}, {type}, {setter_name}, {is_startup_pref_bool})'
+            f'MACRO("{name}", {cpp_name}, {type}, {setter_name}, '
+            f"{is_startup_pref_bool}, {fuzzing_safe_bool})"
         )
 
         # Generate a C++ statement to set the JS pref based on Gecko's StaticPrefs:

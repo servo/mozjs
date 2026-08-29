@@ -14,14 +14,10 @@ function String_match(regexp) {
   }
 
   // Step 2.
-  var isPatternString = typeof regexp === "string";
-  if (
-    !(isPatternString && CanOptimizeStringProtoSymbolLookup()) &&
-    !IsNullOrUndefined(regexp)
-  ) {
+  if (IsObject(regexp)) {
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@match] function.
-    if (IsObject(regexp) && IsOptimizableRegExpObject(regexp)) {
+    if (IsOptimizableRegExpObject(regexp)) {
       return callFunction(RegExpMatch, regexp, this);
     }
 
@@ -30,9 +26,6 @@ function String_match(regexp) {
 
     // Step 2.b.
     if (matcher !== undefined) {
-      if (!IsObject(regexp)) {
-        RegExpSymbolProtocolOnPrimitiveCounter();
-      }
       return callContentFunction(matcher, regexp, this);
     }
   }
@@ -40,7 +33,7 @@ function String_match(regexp) {
   // Step 3.
   var S = ToString(this);
 
-  if (isPatternString && IsRegExpPrototypeOptimizable()) {
+  if (typeof regexp === "string" && IsRegExpPrototypeOptimizable()) {
     var flatResult = FlatStringMatch(S, regexp);
     if (flatResult !== undefined) {
       return flatResult;
@@ -69,7 +62,7 @@ function String_matchAll(regexp) {
   }
 
   // Step 2.
-  if (!IsNullOrUndefined(regexp)) {
+  if (IsObject(regexp)) {
     // Steps 2.a-b.
     if (IsRegExp(regexp)) {
       // Step 2.b.i.
@@ -88,7 +81,7 @@ function String_matchAll(regexp) {
 
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@matchAll] function.
-    if (IsObject(regexp) && IsOptimizableRegExpObject(regexp)) {
+    if (IsOptimizableRegExpObject(regexp)) {
       return callFunction(RegExpMatchAll, regexp, this);
     }
 
@@ -97,9 +90,6 @@ function String_matchAll(regexp) {
 
     // Step 2.d.
     if (matcher !== undefined) {
-      if (!IsObject(regexp)) {
-        RegExpSymbolProtocolOnPrimitiveCounter();
-      }
       return callContentFunction(matcher, regexp, this);
     }
   }
@@ -212,13 +202,10 @@ function String_replace(searchValue, replaceValue) {
   }
 
   // Step 2.
-  if (
-    !(typeof searchValue === "string" && CanOptimizeStringProtoSymbolLookup()) &&
-    !IsNullOrUndefined(searchValue)
-  ) {
+  if (IsObject(searchValue)) {
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@replace] function.
-    if (IsObject(searchValue) && IsOptimizableRegExpObject(searchValue)) {
+    if (IsOptimizableRegExpObject(searchValue)) {
       return callFunction(RegExpReplace, searchValue, this, replaceValue);
     }
 
@@ -227,9 +214,6 @@ function String_replace(searchValue, replaceValue) {
 
     // Step 2.b.
     if (replacer !== undefined) {
-      if (!IsObject(searchValue)) {
-        RegExpSymbolProtocolOnPrimitiveCounter();
-      }
       return callContentFunction(replacer, searchValue, this, replaceValue);
     }
   }
@@ -294,7 +278,7 @@ function String_replaceAll(searchValue, replaceValue) {
   }
 
   // Step 2.
-  if (!IsNullOrUndefined(searchValue)) {
+  if (IsObject(searchValue)) {
     // Steps 2.a-b.
     if (IsRegExp(searchValue)) {
       // Step 2.b.i.
@@ -313,7 +297,7 @@ function String_replaceAll(searchValue, replaceValue) {
 
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@replace] function.
-    if (IsObject(searchValue) && IsOptimizableRegExpObject(searchValue)) {
+    if (IsOptimizableRegExpObject(searchValue)) {
       return callFunction(RegExpReplace, searchValue, this, replaceValue);
     }
 
@@ -322,9 +306,6 @@ function String_replaceAll(searchValue, replaceValue) {
 
     // Step 2.b.
     if (replacer !== undefined) {
-      if (!IsObject(searchValue)) {
-        RegExpSymbolProtocolOnPrimitiveCounter();
-      }
       return callContentFunction(replacer, searchValue, this, replaceValue);
     }
   }
@@ -425,13 +406,10 @@ function String_search(regexp) {
 
   // Step 2.
   var isPatternString = typeof regexp === "string";
-  if (
-    !(isPatternString && CanOptimizeStringProtoSymbolLookup()) &&
-    !IsNullOrUndefined(regexp)
-  ) {
+  if (IsObject(regexp)) {
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@search] function.
-    if (IsObject(regexp) && IsOptimizableRegExpObject(regexp)) {
+    if (IsOptimizableRegExpObject(regexp)) {
       return callFunction(RegExpSearch, regexp, this);
     }
 
@@ -440,9 +418,6 @@ function String_search(regexp) {
 
     // Step 2.b.
     if (searcher !== undefined) {
-      if (!IsObject(regexp)) {
-        RegExpSymbolProtocolOnPrimitiveCounter();
-      }
       return callContentFunction(searcher, regexp, this);
     }
   }
@@ -479,25 +454,20 @@ function String_split(separator, limit) {
   // are constants.  Following sequence of if's cannot be put together in
   // order that IonMonkey sees the constant if present (bug 1246141).
   if (typeof this === "string") {
-    if (CanOptimizeStringProtoSymbolLookup()) {
-      if (typeof separator === "string") {
-        if (limit === undefined) {
-          // inlineConstantStringSplitString needs both arguments to
-          // be MConstant, so pass them directly.
-          return StringSplitString(this, separator);
-        }
+    if (typeof separator === "string") {
+      if (limit === undefined) {
+        // inlineConstantStringSplitString needs both arguments to
+        // be MConstant, so pass them directly.
+        return StringSplitString(this, separator);
       }
     }
   }
 
   // Step 2.
-  if (
-    !(typeof separator === "string" && CanOptimizeStringProtoSymbolLookup()) &&
-    !IsNullOrUndefined(separator)
-  ) {
+  if (IsObject(separator)) {
     // Fast path for regular expressions with the original
     // RegExp.prototype[@@split] function.
-    if (IsObject(separator) && IsOptimizableRegExpObject(separator)) {
+    if (IsOptimizableRegExpObject(separator)) {
       return callFunction(RegExpSplit, separator, this, limit);
     }
 
@@ -506,9 +476,6 @@ function String_split(separator, limit) {
 
     // Step 2.b.
     if (splitter !== undefined) {
-      if (!IsObject(separator)) {
-        RegExpSymbolProtocolOnPrimitiveCounter();
-      }
       return callContentFunction(splitter, separator, this, limit);
     }
   }
@@ -553,6 +520,11 @@ function String_split(separator, limit) {
 
 // ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
 // 21.1.3.22 String.prototype.substring ( start, end )
+//
+// NOTE: When changing this method, make sure that GVN can still optimize common
+// substring patterns. See MSubstr::foldsTo and MMinMax::foldsTo.
+//
+// See also: bug 1782771, bug 1782959, bug 1861983, bug 1873042, bug 1969270.
 function String_substring(start, end) {
   // Step 1.
   if (IsNullOrUndefined(this)) {
@@ -593,6 +565,11 @@ SetIsInlinableLargeFunction(String_substring);
 
 // ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
 // B.2.3.1 String.prototype.substr ( start, length )
+//
+// NOTE: When changing this method, make sure that GVN can still optimize common
+// substring patterns. See MSubstr::foldsTo and MMinMax::foldsTo.
+//
+// See also: bug 1782771, bug 1782959, bug 1861983, bug 1873042, bug 1969270.
 function String_substr(start, length) {
   // Steps 1.
   if (IsNullOrUndefined(this)) {
@@ -677,6 +654,11 @@ function String_concat(arg1) {
 
 // ES2020 draft rev dc1e21c454bd316810be1c0e7af0131a2d7f38e9
 // 21.1.3.19 String.prototype.slice ( start, end )
+//
+// NOTE: When changing this method, make sure that GVN can still optimize common
+// substring patterns. See MSubstr::foldsTo and MMinMax::foldsTo.
+//
+// See also: bug 1782771, bug 1782959, bug 1861983, bug 1873042, bug 1969270.
 function String_slice(start, end) {
   // Step 1.
   if (IsNullOrUndefined(this)) {
@@ -825,138 +807,6 @@ function StringIteratorNext() {
   return result;
 }
 SetIsInlinableLargeFunction(StringIteratorNext);
-
-#if JS_HAS_INTL_API
-var collatorCache = new_Record();
-
-/**
- * Compare this String against that String, using the locale and collation
- * options provided.
- *
- * Spec: ECMAScript Internationalization API Specification, 13.1.1.
- */
-function String_localeCompare(that) {
-  // Step 1.
-  if (IsNullOrUndefined(this)) {
-    ThrowIncompatibleMethod("localeCompare", this);
-  }
-
-  // Steps 2-3.
-  var S = ToString(this);
-  var That = ToString(that);
-
-  // Steps 4-5.
-  var locales = ArgumentsLength() > 1 ? GetArgument(1) : undefined;
-  var options = ArgumentsLength() > 2 ? GetArgument(2) : undefined;
-
-  // Step 6.
-  var collator;
-  if (locales === undefined && options === undefined) {
-    // This cache only optimizes for the old ES5 localeCompare without
-    // locales and options.
-    if (!intl_IsRuntimeDefaultLocale(collatorCache.runtimeDefaultLocale)) {
-      collatorCache.collator = intl_Collator(locales, options);
-      collatorCache.runtimeDefaultLocale = intl_RuntimeDefaultLocale();
-    }
-    collator = collatorCache.collator;
-  } else {
-    collator = intl_Collator(locales, options);
-  }
-
-  // Step 7.
-  return intl_CompareStrings(collator, S, That);
-}
-
-/**
- * 13.1.2 String.prototype.toLocaleLowerCase ( [ locales ] )
- *
- * ES2017 Intl draft rev 94045d234762ad107a3d09bb6f7381a65f1a2f9b
- */
-function String_toLocaleLowerCase() {
-  // Step 1.
-  if (IsNullOrUndefined(this)) {
-    ThrowIncompatibleMethod("toLocaleLowerCase", this);
-  }
-
-  // Step 2.
-  var string = ToString(this);
-
-  // Handle the common cases (no locales argument or a single string
-  // argument) first.
-  var locales = ArgumentsLength() ? GetArgument(0) : undefined;
-  var requestedLocale;
-  if (locales === undefined) {
-    // Steps 3, 6.
-    requestedLocale = undefined;
-  } else if (typeof locales === "string") {
-    // Steps 3, 5.
-    requestedLocale = intl_ValidateAndCanonicalizeLanguageTag(locales, false);
-  } else {
-    // Step 3.
-    var requestedLocales = CanonicalizeLocaleList(locales);
-
-    // Steps 4-6.
-    requestedLocale = requestedLocales.length ? requestedLocales[0] : undefined;
-  }
-
-  // Trivial case: When the input is empty, directly return the empty string.
-  if (string.length === 0) {
-    return "";
-  }
-
-  if (requestedLocale === undefined) {
-    requestedLocale = DefaultLocale();
-  }
-
-  // Steps 7-16.
-  return intl_toLocaleLowerCase(string, requestedLocale);
-}
-
-/**
- * 13.1.3 String.prototype.toLocaleUpperCase ( [ locales ] )
- *
- * ES2017 Intl draft rev 94045d234762ad107a3d09bb6f7381a65f1a2f9b
- */
-function String_toLocaleUpperCase() {
-  // Step 1.
-  if (IsNullOrUndefined(this)) {
-    ThrowIncompatibleMethod("toLocaleUpperCase", this);
-  }
-
-  // Step 2.
-  var string = ToString(this);
-
-  // Handle the common cases (no locales argument or a single string
-  // argument) first.
-  var locales = ArgumentsLength() ? GetArgument(0) : undefined;
-  var requestedLocale;
-  if (locales === undefined) {
-    // Steps 3, 6.
-    requestedLocale = undefined;
-  } else if (typeof locales === "string") {
-    // Steps 3, 5.
-    requestedLocale = intl_ValidateAndCanonicalizeLanguageTag(locales, false);
-  } else {
-    // Step 3.
-    var requestedLocales = CanonicalizeLocaleList(locales);
-
-    // Steps 4-6.
-    requestedLocale = requestedLocales.length ? requestedLocales[0] : undefined;
-  }
-
-  // Trivial case: When the input is empty, directly return the empty string.
-  if (string.length === 0) {
-    return "";
-  }
-
-  if (requestedLocale === undefined) {
-    requestedLocale = DefaultLocale();
-  }
-
-  // Steps 7-16.
-  return intl_toLocaleUpperCase(string, requestedLocale);
-}
-#endif  // JS_HAS_INTL_API
 
 // ES2018 draft rev 8fadde42cf6a9879b4ab0cb6142b31c4ee501667
 // 21.1.2.4 String.raw ( template, ...substitutions )

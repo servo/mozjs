@@ -14,8 +14,9 @@ from mozperftest.utils import NoPerfMetricsError, temp_dir
 def copy_tree_update(src_path, dst_path):
     for src_file in src_path.rglob("*"):
         dst_file = dst_path / src_file.relative_to(src_path)
-        if src_file.is_dir() and not dst_file.exists():
-            dst_file.mkdir(parents=True)
+        if src_file.is_dir():
+            if not dst_file.exists():
+                dst_file.mkdir(parents=True)
         elif not dst_file.exists() or not filecmp.cmp(
             src_file, dst_file, shallow=False
         ):
@@ -72,7 +73,7 @@ class XPCShell(Layer):
     }
 
     def __init__(self, env, mach_cmd):
-        super(XPCShell, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.topsrcdir = mach_cmd.topsrcdir
         self._mach_context = mach_cmd._mach_context
         self.python_path = mach_cmd.virtualenv_manager.python_path
@@ -102,11 +103,11 @@ class XPCShell(Layer):
 
         import runxpcshelltests
 
-        verbose = self.get_arg("verbose")
         xpcshell = runxpcshelltests.XPCShellTests(log=self)
         kwargs = {}
         kwargs["testPaths"] = test.name
-        kwargs["verbose"] = verbose
+        # Enable verbose mode to capture structured log output (required for perfMetrics)
+        kwargs["verbose"] = True
         binary = self.get_arg("xpcshell_binary")
         if binary is None:
             binary = self.mach_cmd.get_binary_path("xpcshell")
@@ -147,10 +148,10 @@ class XPCShell(Layer):
             kwargs["http3server"] = str(http3server)
 
         cycles = self.get_arg("cycles", 1)
-        self.info("Running %d cycles" % cycles)
+        self.info(f"Running {cycles} cycles")
 
         for cycle in range(cycles):
-            self.info("Cycle %d" % (cycle + 1))
+            self.info(f"Cycle {cycle + 1}")
             with temp_dir() as tmp:
                 kwargs["tempDir"] = tmp
                 if not xpcshell.runTests(kwargs):
@@ -166,17 +167,15 @@ class XPCShell(Layer):
         if len(results.items()) == 0:
             raise NoPerfMetricsError("xpcshell")
 
-        metadata.add_result(
-            {
-                "name": test.name,
-                "framework": {"name": "mozperftest"},
-                "transformer": "mozperftest.test.xpcshell:XPCShellData",
-                "results": [
-                    {"values": measures, "name": subtest}
-                    for subtest, measures in results.items()
-                ],
-            }
-        )
+        metadata.add_result({
+            "name": test.name,
+            "framework": {"name": "mozperftest"},
+            "transformer": "mozperftest.test.xpcshell:XPCShellData",
+            "results": [
+                {"values": measures, "name": subtest}
+                for subtest, measures in results.items()
+            ],
+        })
 
         return metadata
 
@@ -188,7 +187,7 @@ class XPCShell(Layer):
             return
         self.metrics.append(data["extra"])
 
-    def process_output(self, procid, line, command):
+    def process_output(self, procid, line, command, **kwargs):
         self.info(line)
 
     def dummy(self, *args, **kw):

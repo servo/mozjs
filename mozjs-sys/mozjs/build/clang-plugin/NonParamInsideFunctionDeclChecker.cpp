@@ -101,7 +101,7 @@ protected:
     // non-win32 platforms, but should not be linted against. Clear any
     // annotations on those types.
     if (!D->getASTContext().getTargetInfo().getCXXABI().isMicrosoft() &&
-        getDeclarationNamespace(D) == "std") {
+        D->isInStdNamespace()) {
       StringRef Name = getNameChecked(D);
       if (Name == "function") {
         ToVisit = VISIT_NONE;
@@ -145,11 +145,11 @@ NonParamAnnotation NonParam;
 void NonParamInsideFunctionDeclChecker::registerMatchers(
     MatchFinder *AstMatcher) {
   AstMatcher->addMatcher(
-      functionDecl(
-          anyOf(allOf(isDefinition(),
-                      hasAncestor(
-                          classTemplateSpecializationDecl().bind("spec"))),
-                isDefinition()))
+      functionDecl(isDefinition(),
+                   isFirstParty(),
+                   optionally(hasAncestor(
+                       classTemplateSpecializationDecl().bind("spec"))),
+                   unless(isDeleted()))
           .bind("func"),
       this);
   AstMatcher->addMatcher(lambdaExpr().bind("lambda"), this);
@@ -161,29 +161,7 @@ void NonParamInsideFunctionDeclChecker::check(
 
   const FunctionDecl *func = Result.Nodes.getNodeAs<FunctionDecl>("func");
   if (!func) {
-    const LambdaExpr *lambda = Result.Nodes.getNodeAs<LambdaExpr>("lambda");
-    if (lambda) {
-      func = lambda->getCallOperator();
-    }
-  }
-
-  if (!func) {
-    return;
-  }
-
-  if (func->isDeleted()) {
-    return;
-  }
-
-  // We need to skip decls which have these types as parameters in system
-  // headers, because presumably those headers act like an assertion that the
-  // alignment will be preserved in that situation.
-  if (getDeclarationNamespace(func) == "std") {
-    return;
-  }
-
-  if (inThirdPartyPath(func)) {
-    return;
+    func = Result.Nodes.getNodeAs<LambdaExpr>("lambda")->getCallOperator();
   }
 
   // Don't report errors on the same declarations more than once.

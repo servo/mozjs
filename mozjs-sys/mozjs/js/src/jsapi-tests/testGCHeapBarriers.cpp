@@ -1,12 +1,6 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-#include "mozilla/Maybe.h"
-#include "mozilla/UniquePtr.h"
 
 #include "gc/AllocKind.h"
 #include "gc/Cell.h"
@@ -30,10 +24,10 @@ static js::gc::CellColor GetColor(const JS::ArrayBufferOrView& view) {
   return view.asObjectUnbarriered()->color();
 }
 
-static MOZ_MAYBE_UNUSED bool IsInsideNursery(gc::Cell* cell) {
+[[maybe_unused]] static bool IsInsideNursery(gc::Cell* cell) {
   return !cell->isTenured();
 }
-static MOZ_MAYBE_UNUSED bool IsInsideNursery(
+[[maybe_unused]] static bool IsInsideNursery(
     const JS::ArrayBufferOrView& view) {
   return IsInsideNursery(view.asObjectUnbarriered());
 }
@@ -44,9 +38,7 @@ template <typename W, typename T>
 struct TestStruct {
   W wrapper;
 
-  void trace(JSTracer* trc) {
-    TraceNullableEdge(trc, &wrapper, "TestStruct::wrapper");
-  }
+  void trace(JSTracer* trc) { TraceEdge(trc, &wrapper, "TestStruct::wrapper"); }
 
   TestStruct() {}
   explicit TestStruct(T init) : wrapper(init) {}
@@ -184,6 +176,9 @@ BEGIN_TEST(testGCHeapPostBarriers) {
   CHECK(TestHeapPostBarriersForType<JSObject*>());
   CHECK(TestHeapPostBarriersForType<JSFunction*>());
   CHECK(TestHeapPostBarriersForType<JS::Uint8Array>());
+  CHECK((TestHeapPostBarriersForWrapper<js::GCPtr, JSObject*>()));
+  CHECK((TestHeapPostBarriersForWrapper<js::GCPtr, JSFunction*>()));
+
   // Bug 1599378: Add string tests.
 
   return true;
@@ -203,7 +198,7 @@ BEGIN_TEST(testGCHeapPostBarriers) {
 
 template <typename T>
 [[nodiscard]] bool TestHeapPostBarriersForType() {
-  CHECK((TestHeapPostBarriersForWrapper<js::GCPtr, T>()));
+  // GCPtr not supported for JS::ArrayBufferOrView subclasses.
   CHECK((TestHeapPostBarriersForMovableWrapper<JS::Heap, T>()));
   CHECK((TestHeapPostBarriersForMovableWrapper<js::HeapPtr, T>()));
   CHECK((TestHeapPostBarriersForMovableWrapper<js::WeakHeapPtr, T>()));
@@ -622,7 +617,7 @@ BEGIN_TEST(testGCHeapPreBarriers) {
   while (gc->state() != gc::State::Mark) {
     gc->debugGCSlice(budget);
   }
-  MOZ_ASSERT(cx->zone()->needsIncrementalBarrier());
+  MOZ_ASSERT(cx->zone()->needsMarkingBarrier());
 
   CHECK(TestWrapper<HeapPtr<JSObject*>>(testObjects));
   CHECK(TestWrapper<PreBarriered<JSObject*>>(testObjects));

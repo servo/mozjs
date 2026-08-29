@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -199,13 +198,6 @@ extern JS_PUBLIC_API JSFunction* CompileFunctionUtf8(
     JSContext* cx, const JS::EnvironmentChain& envChain,
     const ReadOnlyCompileOptions& options, const char* name, unsigned nargs,
     const char* const* argnames, const char* utf8, size_t length);
-
-/*
- * For a script compiled with the hideScriptFromDebugger option, expose the
- * script to the debugger by calling the debugger's onNewScript hook.
- */
-extern JS_PUBLIC_API void ExposeScriptToDebugger(JSContext* cx,
-                                                 Handle<JSScript*> script);
 
 /*
  * JSScripts have associated with them (via their ScriptSourceObjects) some

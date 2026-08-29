@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -39,11 +37,6 @@ class CodeGeneratorARM : public CodeGeneratorShared {
   void bailoutCmpPtr(Assembler::Condition c, T1 lhs, T2 rhs,
                      LSnapshot* snapshot) {
     masm.cmpPtr(lhs, rhs);
-    bailoutIf(c, snapshot);
-  }
-  void bailoutTestPtr(Assembler::Condition c, Register lhs, Register rhs,
-                      LSnapshot* snapshot) {
-    masm.testPtr(lhs, rhs);
     bailoutIf(c, snapshot);
   }
   template <typename T1, typename T2>
@@ -90,8 +83,6 @@ class CodeGeneratorARM : public CodeGeneratorShared {
   void emitWasmStore(T* ins);
   template <typename T>
   void emitWasmUnalignedStore(T* ins);
-
-  Register64 ToOperandOrRegister64(const LInt64Allocation& input);
 
   void divICommon(MDiv* mir, Register lhs, Register rhs, Register output,
                   LSnapshot* snapshot, Label& done);

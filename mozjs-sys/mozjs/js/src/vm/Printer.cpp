@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,7 +6,6 @@
 
 #include "mozilla/PodOperations.h"
 #include "mozilla/Printf.h"
-#include "mozilla/RangedPtr.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -475,11 +472,6 @@ void Fprinter::put(const char* s, size_t len) {
 LSprinter::LSprinter(LifoAlloc* lifoAlloc)
     : alloc_(lifoAlloc), head_(nullptr), tail_(nullptr), unused_(0) {}
 
-LSprinter::~LSprinter() {
-  // This LSprinter might be allocated as part of the same LifoAlloc, so we
-  // should not expect the destructor to be called.
-}
-
 void LSprinter::exportInto(GenericPrinter& out) const {
   if (!head_) {
     return;
@@ -496,6 +488,14 @@ void LSprinter::clear() {
   tail_ = nullptr;
   unused_ = 0;
   hadOOM_ = false;
+}
+
+void FixedBufferPrinter::put(const char* s, size_t len) {
+  snprintf(buffer_, size_, "%.*s", int(len), s);
+  size_t written = std::min(len, size_);
+  MOZ_ASSERT(size_ >= written);
+  size_ -= written;
+  buffer_ += written;
 }
 
 void LSprinter::put(const char* s, size_t len) {

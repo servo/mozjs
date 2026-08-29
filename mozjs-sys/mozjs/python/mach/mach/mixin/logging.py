@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import copy
 import logging
 
 
@@ -46,7 +47,22 @@ class LoggingMixin:
 
         .. code-block:: python
 
-            self.log(logging.DEBUG, 'login', {'username': 'johndoe'},
-                'User login: {username}')
+            self.log(
+                logging.DEBUG,
+                "login",
+                {"username": "johndoe"},
+                "User login: {username}",
+            )
         """
         self._logger.log(level, format_str, extra={"action": action, "params": params})
+
+    def log_record(self, action, record):
+        """Log a LogRecord as a structured log event.
+
+        The action string is as defined for `log`.
+        """
+        record = copy.copy(record)
+        record.action = action
+        record.params = {"msg": record.getMessage()}
+        record.msg = "{msg}"
+        self._logger.handle(record)

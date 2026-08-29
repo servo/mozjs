@@ -74,9 +74,9 @@ class LcovRecord:
             for fn_name, count in self.function_exec_counts.items()
             if fn_name in self.functions.values()
         }
-        self.covered_function_count = len(
-            [c for c in self.function_exec_counts.values() if c]
-        )
+        self.covered_function_count = len([
+            c for c in self.function_exec_counts.values() if c
+        ])
         self.line_count = len(self.lines)
         self.covered_line_count = len([c for c, _ in self.lines.values() if c])
         self.branch_count = len(self.branches)
@@ -177,9 +177,9 @@ class RecordRewriter:
     def rewrite_record(self, record, pp_info):
         # Rewrite the lines in the given record according to preprocessor info
         # and split to additional records when pp_info has included file info.
-        self._current_pp_info = dict(
-            [(tuple([int(l) for l in k.split(",")]), v) for k, v in pp_info.items()]
-        )
+        self._current_pp_info = dict([
+            (tuple([int(l) for l in k.split(",")]), v) for k, v in pp_info.items()
+        ])
         self._ranges = sorted(self._current_pp_info.keys())
         self._additions = {}
         self._rewrite_lines(record)

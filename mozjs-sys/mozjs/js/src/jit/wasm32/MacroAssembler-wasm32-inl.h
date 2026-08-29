@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -136,6 +134,7 @@ void MacroAssembler::sub64(Register64 src, Register64 dest) { MOZ_CRASH(); }
 void MacroAssembler::sub64(Imm64 imm, Register64 dest) { MOZ_CRASH(); }
 
 void MacroAssembler::mulPtr(Register rhs, Register srcDest) { MOZ_CRASH(); }
+void MacroAssembler::mulPtr(ImmWord rhs, Register srcDest) { MOZ_CRASH(); }
 
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest) { MOZ_CRASH(); }
 
@@ -287,6 +286,8 @@ void MacroAssembler::add32(Imm32 imm, Register src, Register dest) {
 }
 
 void MacroAssembler::add32(Imm32 imm, const Address& dest) { MOZ_CRASH(); }
+
+void MacroAssembler::add32(const Address& src, Register dest) { MOZ_CRASH(); }
 
 void MacroAssembler::addFloat32(FloatRegister src, FloatRegister dest) {
   MOZ_CRASH();
@@ -634,6 +635,11 @@ void MacroAssembler::branchTestMagic(Condition cond, const Address& valaddr,
   MOZ_CRASH();
 }
 
+void MacroAssembler::branchTestMagic(Condition cond, const BaseIndex& valaddr,
+                                     JSWhyMagic why, Label* label) {
+  MOZ_CRASH();
+}
+
 template <typename T>
 void MacroAssembler::branchTestValue(Condition cond, const T& lhs,
                                      const ValueOperand& rhs, Label* label) {
@@ -735,12 +741,12 @@ void MacroAssembler::branch16(Condition cond, const Address& lhs, Imm32 rhs,
 }
 
 void MacroAssembler::branch32(Condition cond, Register lhs, Register rhs,
-                              Label* label, LhsHighBitsAreClean) {
+                              Label* label) {
   MOZ_CRASH();
 }
 
 void MacroAssembler::branch32(Condition cond, Register lhs, Imm32 rhs,
-                              Label* label, LhsHighBitsAreClean) {
+                              Label* label) {
   MOZ_CRASH();
 }
 
@@ -1127,12 +1133,12 @@ void MacroAssembler::branchAdd64(Condition cond, Imm64 imm, Register64 dest,
   MOZ_CRASH();
 }
 
-void MacroAssembler::quotient32(Register rhs, Register srcDest,
+void MacroAssembler::quotient32(Register lhs, Register rhs, Register dest,
                                 bool isUnsigned) {
   MOZ_CRASH();
 }
 
-void MacroAssembler::remainder32(Register rhs, Register srcDest,
+void MacroAssembler::remainder32(Register lhs, Register rhs, Register dest,
                                  bool isUnsigned) {
   MOZ_CRASH();
 }
@@ -1160,6 +1166,38 @@ void MacroAssembler::branch64(Condition cond, const Address& lhs,
 void MacroAssembler::branch64(Condition cond, const Address& lhs,
                               const Address& rhs, Register scratch,
                               Label* label) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::min32(Register lhs, Register rhs, Register dest) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::min32(Register lhs, Imm32 rhs, Register dest) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::max32(Register lhs, Register rhs, Register dest) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::max32(Register lhs, Imm32 rhs, Register dest) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::minPtr(Register lhs, Register rhs, Register dest) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::minPtr(Register lhs, ImmWord rhs, Register dest) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::maxPtr(Register lhs, Register rhs, Register dest) {
+  MOZ_CRASH();
+}
+
+void MacroAssembler::maxPtr(Register lhs, ImmWord rhs, Register dest) {
   MOZ_CRASH();
 }
 

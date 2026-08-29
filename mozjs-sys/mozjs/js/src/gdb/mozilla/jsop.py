@@ -39,7 +39,7 @@ class JSOp:
         #
         # https://sourceware.org/bugzilla/show_bug.cgi?id=25325
         idx = int(self.value.cast(self.jotc.tJSOp.target()))
-        assert 0 <= idx and idx <= 255
+        assert 0 <= idx <= 255
         fields = self.jotc.tJSOp.fields()
         if idx < len(fields):
             return fields[idx].name
@@ -49,7 +49,7 @@ class JSOp:
 @ptr_pretty_printer("jsbytecode")
 class JSBytecodePtr(mozilla.prettyprinters.Pointer):
     def __init__(self, value, cache):
-        super(JSBytecodePtr, self).__init__(value, cache)
+        super().__init__(value, cache)
         self.jotc = JSOpTypeCache.get_or_create(cache)
 
     def to_string(self):

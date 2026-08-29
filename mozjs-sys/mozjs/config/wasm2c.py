@@ -10,5 +10,6 @@ def wasm2c(output, wasm2c_bin, wasm_lib, *flags):
     output.close()
     module_name = os.path.basename(os.path.splitext(wasm_lib)[0])
     return subprocess.run(
-        [wasm2c_bin, "-n", module_name] + list(flags) + ["-o", output.name, wasm_lib]
+        [wasm2c_bin, "-n", module_name] + list(flags) + ["-o", output.name, wasm_lib],
+        check=False,
     ).returncode

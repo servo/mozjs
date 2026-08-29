@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -42,18 +40,29 @@ enum class ModuleType : uint32_t {
   Unknown = 0,
   JavaScript,
   JSON,
+  CSS,
+  Bytes,
+  Text,
 
-  Limit = JSON,
+  // The specification has renamed the "javascript" module type to
+  // "javascript-or-wasm". For now, we'll add JavaScriptOrWasm as
+  // an alias of JavaScript. Code that's been updated to handle
+  // wasm modules will use JavaScriptOrWasm, other code will continue
+  // to use JavaScript. Once everything has been updated to use
+  // JavaScriptOrWasm, we'll can just rename JavaScript to JavaScriptOrWasm.
+  JavaScriptOrWasm = JavaScript,
+
+  Limit = Text,
 };
 
 /**
- * The HostResolveImportedModule hook.
+ * The HostLoadImportedModule hook.
  *
- * See: https://tc39.es/ecma262/#sec-hostresolveimportedmodule
+ * See: https://tc39.es/ecma262/#sec-HostLoadImportedModule
  *
  * This embedding-defined hook is used to implement module loading. It is called
  * to get or create a module object corresponding to |moduleRequest| occurring
- * in the context of the script or module with private value
+ * in the context of the script or module |referrer| with private value
  * |referencingPrivate|.
  *
  * The module specifier string for the request can be obtained by calling
@@ -63,28 +72,57 @@ enum class ModuleType : uint32_t {
  * JS::SetModulePrivate. It's assumed that the embedding can handle receiving
  * either here.
  *
- * This hook must obey the restrictions defined in the spec:
- *  - Each time the hook is called with the same arguemnts, the same module must
- *    be returned.
- *  - If a module cannot be created for the given arguments, an exception must
- *    be thrown.
+ * If this call succeeds then the embedding must call
+ * FinishLoadingImportedModule or one of the FinishLoadingImportedModuleFailed
+ * APIs at some point in the future. This is handled by the engine if the call
+ * returns false.
  *
- * This is a synchronous operation.
+ * This hook must obey the restrictions defined in the spec:
+ *  - Each time the hook is called with the same (referrer, referencingPrivate)
+ *    pair, then it must call FinishLoadingImportedModule with the same result
+ *    each time.
+ *  - The operation must treat the |payload| argument as an opaque
+ *    value to be passed through to FinishLoadingImportedModule.
  */
-using ModuleResolveHook = JSObject* (*)(JSContext* cx,
-                                        Handle<Value> referencingPrivate,
-                                        Handle<JSObject*> moduleRequest);
+using ModuleLoadHook = bool (*)(JSContext* cx, Handle<JSScript*> referrer,
+                                Handle<JSObject*> moduleRequest,
+                                Handle<Value> hostDefined,
+                                Handle<Value> payload, uint32_t lineNumber,
+                                JS::ColumnNumberOneOrigin columnNumber);
 
 /**
- * Get the HostResolveImportedModule hook for the runtime.
+ * Get the HostLoadImportedModule hook for the runtime.
  */
-extern JS_PUBLIC_API ModuleResolveHook GetModuleResolveHook(JSRuntime* rt);
+extern JS_PUBLIC_API ModuleLoadHook GetModuleLoadHook(JSRuntime* rt);
 
 /**
- * Set the HostResolveImportedModule hook for the runtime to the given function.
+ * Set the HostLoadImportedModule hook for the runtime to the given function.
  */
-extern JS_PUBLIC_API void SetModuleResolveHook(JSRuntime* rt,
-                                               ModuleResolveHook func);
+extern JS_PUBLIC_API void SetModuleLoadHook(JSRuntime* rt, ModuleLoadHook func);
+
+using LoadModuleResolvedCallback = bool (*)(JSContext* cx,
+                                            JS::Handle<JS::Value>);
+using LoadModuleRejectedCallback = bool (*)(JSContext* cx,
+                                            JS::Handle<JS::Value> hostDefined,
+                                            Handle<JS::Value> error);
+
+/**
+ * https://tc39.es/ecma262/#sec-LoadRequestedModules
+ *
+ * Load the dependency module graph of the parameter 'module'.
+ *
+ * The spec defines using 'promise objects' to notify the result.
+ * To address the synchronous loading behavior from mozJSModuleLoader, an
+ * overloaded version that takes function callbacks to notify the result is also
+ * provided.
+ */
+extern JS_PUBLIC_API bool LoadRequestedModules(
+    JSContext* cx, Handle<JSObject*> module, Handle<Value> hostDefined,
+    LoadModuleResolvedCallback resolved, LoadModuleRejectedCallback rejected);
+
+extern JS_PUBLIC_API bool LoadRequestedModules(
+    JSContext* cx, Handle<JSObject*> module, Handle<Value> hostDefined,
+    MutableHandle<JSObject*> promiseOut);
 
 /**
  * The module metadata hook.
@@ -97,7 +135,8 @@ extern JS_PUBLIC_API void SetModuleResolveHook(JSRuntime* rt,
  * This is based on the spec's HostGetImportMetaProperties hook but defines
  * properties on the meta object directly rather than returning a list.
  */
-using ModuleMetadataHook = bool (*)(JSContext* cx, Handle<Value> privateValue,
+using ModuleMetadataHook = bool (*)(JSContext* cx,
+                                    Handle<JSObject*> moduleRecord,
                                     Handle<JSObject*> metaObject);
 
 /**
@@ -113,54 +152,33 @@ extern JS_PUBLIC_API void SetModuleMetadataHook(JSRuntime* rt,
                                                 ModuleMetadataHook func);
 
 /**
- * The HostImportModuleDynamically hook.
+ * A function callback called by the host layer to indicate the call of
+ * HostLoadImportedModule has finished.
  *
- * See https://tc39.es/ecma262/#sec-hostimportmoduledynamically
- *
- * Used to implement dynamic module import. Called when evaluating import()
- * expressions.
- *
- * This starts an asynchronous operation. Some time after this hook is called
- * the embedding must call JS::FinishDynamicModuleImport() passing the
- * |referencingPrivate|, |moduleRequest| and |promise| arguments from the
- * call. This must happen for both success and failure cases.
- *
- * In the meantime the embedding can take whatever steps it needs to make the
- * module available. If successful, after calling FinishDynamicModuleImport()
- * the module should be returned by the resolve hook when passed
- * |referencingPrivate| and |moduleRequest|.
+ * See https://tc39.es/ecma262/#sec-FinishLoadingImportedModule
  */
-using ModuleDynamicImportHook = bool (*)(JSContext* cx,
-                                         Handle<Value> referencingPrivate,
-                                         Handle<JSObject*> moduleRequest,
-                                         Handle<JSObject*> promise);
+extern JS_PUBLIC_API bool FinishLoadingImportedModule(
+    JSContext* cx, Handle<JSScript*> referrer, Handle<JSObject*> moduleRequest,
+    Handle<Value> payload, Handle<JSObject*> result, bool usePromise);
 
 /**
- * Get the HostImportModuleDynamically hook for the runtime.
+ * Overloaded version of FinishLoadingImportedModule for error handling.
  */
-extern JS_PUBLIC_API ModuleDynamicImportHook
-GetModuleDynamicImportHook(JSRuntime* rt);
+extern JS_PUBLIC_API bool FinishLoadingImportedModuleFailed(
+    JSContext* cx, Handle<Value> payload, Handle<Value> error);
+
+extern JS_PUBLIC_API bool FinishLoadingImportedModuleFailedWithPendingException(
+    JSContext* cx, Handle<Value> payload);
 
 /**
- * Set the HostImportModuleDynamically hook for the runtime to the given
- * function.
+ * Servo-only. Allows a custom `ContinueDynamicImport` implementation to handle 
+ * dynamic import descendant loading, bypassing SpiderMonkey's outdated implementation.
  *
- * If this hook is not set (or set to nullptr) then the JS engine will throw an
- * exception if dynamic module import is attempted.
+ * See https://bugzilla.mozilla.org/show_bug.cgi?id=1990416
  */
-extern JS_PUBLIC_API void SetModuleDynamicImportHook(
-    JSRuntime* rt, ModuleDynamicImportHook func);
-
-/**
- * This must be called after a dynamic import operation is complete.
- *
- * If |evaluationPromise| is rejected, the rejection reason will be used to
- * complete the user's promise.
- */
-extern JS_PUBLIC_API bool FinishDynamicModuleImport(
-    JSContext* cx, Handle<JSObject*> evaluationPromise,
-    Handle<Value> referencingPrivate, Handle<JSObject*> moduleRequest,
-    Handle<JSObject*> promise);
+extern JS_PUBLIC_API bool FinishLoadingDynamicImportedModule(
+    JSContext* cx, Handle<JSScript*> referrer, Handle<JSObject*> moduleRequest,
+    Handle<Value> payload, Handle<JSObject*> result);
 
 /**
  * Parse the given source buffer as a module in the scope of the current global
@@ -197,6 +215,31 @@ extern JS_PUBLIC_API JSObject* CompileJsonModule(
     SourceText<mozilla::Utf8Unit>& srcBuf);
 
 /**
+ * Create a synthetic module record that exports a single value as its default
+ * export. The caller is responsible for providing the already-constructed
+ * value to export.
+ *
+ * This matches the ECMAScript specification's definition:
+ * https://tc39.es/ecma262/#sec-create-default-export-synthetic-module
+ */
+extern JS_PUBLIC_API JSObject* CreateDefaultExportSyntheticModule(
+    JSContext* cx, Handle<Value> defaultExport);
+
+/**
+ * Compile the given wasm source buffer as an evaluation phase module record.
+ */
+extern JS_PUBLIC_API JSObject* CompileWasmModule(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    js::Vector<uint8_t, 0, js::MallocAllocPolicy>& srcBuf);
+
+/**
+ * Compile the given wasm source buffer as a source phase module record.
+ */
+extern JS_PUBLIC_API JSObject* CompileWasmModuleAsSource(
+    JSContext* cx, const ReadOnlyCompileOptions& options,
+    js::Vector<uint8_t, 0, js::MallocAllocPolicy>& srcBuf);
+
+/**
  * Set a private value associated with a source text module record.
  */
 extern JS_PUBLIC_API void SetModulePrivate(JSObject* module,
@@ -218,6 +261,22 @@ extern JS_PUBLIC_API Value GetModulePrivate(JSObject* module);
  * Checks if the given module is a cyclic module.
  */
 extern JS_PUBLIC_API bool IsCyclicModule(JSObject* module);
+
+#ifdef DEBUG
+/**
+ * A helper function to set the isPreload flag on the ModuleObject.
+ * The flag will be verified later when ResetPreloadedModule is called.
+ */
+extern JS_PUBLIC_API void SetModulePreload(JSObject* module, bool isPreload);
+#endif
+
+/**
+ * Set module status to New and clear the [[LoadedModules]] slot and in a Cycloc
+ * Module.
+ * Used to reset modules that were preloaded earlier, in case the resolution of
+ * their specifiers may have changed.
+ */
+extern JS_PUBLIC_API void ResetPreloadedModule(JSObject* module);
 
 /*
  * Perform the ModuleLink operation on the given source text module record.
@@ -269,27 +328,6 @@ extern JS_PUBLIC_API bool ThrowOnModuleEvaluationFailure(
     ModuleErrorBehaviour errorBehaviour = ReportModuleErrorsAsync);
 
 /*
- * Functions to access the module specifiers of a source text module record used
- * to request module imports.
- *
- * Clients can use GetRequestedModulesCount() to get the number of specifiers
- * and GetRequestedModuleSpecifier() / GetRequestedModuleSourcePos() to get the
- * individual elements.
- */
-extern JS_PUBLIC_API uint32_t
-GetRequestedModulesCount(JSContext* cx, Handle<JSObject*> moduleRecord);
-
-extern JS_PUBLIC_API JSString* GetRequestedModuleSpecifier(
-    JSContext* cx, Handle<JSObject*> moduleRecord, uint32_t index);
-
-/*
- * Get the position of a requested module's name in the source.
- */
-extern JS_PUBLIC_API void GetRequestedModuleSourcePos(
-    JSContext* cx, Handle<JSObject*> moduleRecord, uint32_t index,
-    uint32_t* lineNumber, JS::ColumnNumberOneOrigin* columnNumber);
-
-/*
  * Get the module type of a requested module.
  */
 extern JS_PUBLIC_API ModuleType GetRequestedModuleType(
@@ -300,8 +338,6 @@ extern JS_PUBLIC_API ModuleType GetRequestedModuleType(
  */
 extern JS_PUBLIC_API JSScript* GetModuleScript(Handle<JSObject*> moduleRecord);
 
-extern JS_PUBLIC_API JSObject* CreateModuleRequest(
-    JSContext* cx, Handle<JSString*> specifierArg, ModuleType moduleType);
 extern JS_PUBLIC_API JSString* GetModuleRequestSpecifier(
     JSContext* cx, Handle<JSObject*> moduleRequestArg);
 
@@ -310,6 +346,12 @@ extern JS_PUBLIC_API JSString* GetModuleRequestSpecifier(
  */
 extern JS_PUBLIC_API ModuleType
 GetModuleRequestType(JSContext* cx, Handle<JSObject*> moduleRequestArg);
+
+/*
+ * Return true if the specified module request is a source phase import.
+ */
+extern JS_PUBLIC_API bool ModuleRequestIsSourcePhase(
+    JSContext* cx, Handle<JSObject*> moduleRequestArg);
 
 /*
  * Get the module record for a module script.

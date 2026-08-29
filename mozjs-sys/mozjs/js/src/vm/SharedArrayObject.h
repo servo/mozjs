@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -127,6 +125,8 @@ class WasmSharedArrayRawBuffer : public SharedArrayRawBuffer {
   Mutex growLock_ MOZ_UNANNOTATED;
   // The address type of this buffer.
   wasm::AddressType addressType_;
+  // The size of each wasm page in this buffer.
+  wasm::PageSize pageSize_;
   // The maximum size of this buffer in wasm pages.
   wasm::Pages clampedMaxPages_;
   wasm::Pages sourceMaxPages_;
@@ -141,11 +141,12 @@ class WasmSharedArrayRawBuffer : public SharedArrayRawBuffer {
  protected:
   WasmSharedArrayRawBuffer(uint8_t* buffer, size_t length,
                            wasm::AddressType addressType,
-                           wasm::Pages clampedMaxPages,
+                           wasm::PageSize pageSize, wasm::Pages clampedMaxPages,
                            wasm::Pages sourceMaxPages, size_t mappedSize)
       : SharedArrayRawBuffer(WasmBuffer{}, buffer, length),
         growLock_(mutexid::SharedArrayGrow),
         addressType_(addressType),
+        pageSize_(pageSize),
         clampedMaxPages_(clampedMaxPages),
         sourceMaxPages_(sourceMaxPages),
         mappedSize_(mappedSize) {}
@@ -167,8 +168,8 @@ class WasmSharedArrayRawBuffer : public SharedArrayRawBuffer {
   };
 
   static WasmSharedArrayRawBuffer* AllocateWasm(
-      wasm::AddressType addressType, wasm::Pages initialPages,
-      wasm::Pages clampedMaxPages,
+      wasm::AddressType addressType, wasm::PageSize pageSize,
+      wasm::Pages initialPages, wasm::Pages clampedMaxPages,
       const mozilla::Maybe<wasm::Pages>& sourceMaxPages,
       const mozilla::Maybe<size_t>& mappedSize);
 
@@ -183,9 +184,10 @@ class WasmSharedArrayRawBuffer : public SharedArrayRawBuffer {
   }
 
   wasm::AddressType wasmAddressType() const { return addressType_; }
+  wasm::PageSize wasmPageSize() const { return pageSize_; }
 
   wasm::Pages volatileWasmPages() const {
-    return wasm::Pages::fromByteLengthExact(length_);
+    return wasm::Pages::fromByteLengthExact(length_, wasmPageSize());
   }
 
   wasm::Pages wasmClampedMaxPages() const { return clampedMaxPages_; }
@@ -283,10 +285,6 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   static bool slice(JSContext* cx, unsigned argc, Value* vp);
 
-  static bool isOriginalByteLengthGetter(Native native) {
-    return native == byteLengthGetter;
-  }
-
  private:
   template <class SharedArrayBufferType>
   static SharedArrayBufferType* NewWith(JSContext* cx,
@@ -373,6 +371,10 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   wasm::AddressType wasmAddressType() const {
     return rawWasmBufferObject()->wasmAddressType();
+  }
+
+  wasm::PageSize wasmPageSize() const {
+    return rawWasmBufferObject()->wasmPageSize();
   }
 
   bool isWasm() const { return rawBufferObject()->isWasm(); }

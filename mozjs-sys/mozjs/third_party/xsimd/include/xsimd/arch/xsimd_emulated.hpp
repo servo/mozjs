@@ -12,15 +12,13 @@
 #ifndef XSIMD_EMULATED_HPP
 #define XSIMD_EMULATED_HPP
 
-#include <complex>
-#include <limits>
-#include <numeric>
-#include <type_traits>
-
 #include "../arch/xsimd_scalar.hpp"
-
 #include "../types/xsimd_emulated_register.hpp"
 #include "../types/xsimd_utils.hpp"
+
+#include <complex>
+#include <numeric>
+#include <type_traits>
 
 namespace xsimd
 {
@@ -39,28 +37,28 @@ namespace xsimd
 
         // fwd
         template <class A, class T, size_t I>
-        XSIMD_INLINE batch<T, A> insert(batch<T, A> const& self, T val, index<I>, requires_arch<generic>) noexcept;
+        XSIMD_INLINE batch<T, A> insert(batch<T, A> const& self, T val, index<I>, requires_arch<common>) noexcept;
         template <class A, typename T, typename ITy, ITy... Indices>
-        XSIMD_INLINE batch<T, A> shuffle(batch<T, A> const& x, batch<T, A> const& y, batch_constant<ITy, A, Indices...>, requires_arch<generic>) noexcept;
+        XSIMD_INLINE batch<T, A> shuffle(batch<T, A> const& x, batch<T, A> const& y, batch_constant<ITy, A, Indices...>, requires_arch<common>) noexcept;
 
         namespace detail
         {
             template <size_t I, class F, class... Bs>
-            auto emulated_apply(F func, Bs const&... bs) -> decltype(func(bs.data[I]...))
+            auto emulated_apply(F func, Bs const&... bs)
             {
                 return func(bs.data[I]...);
             }
 
             template <class F, class B, class... Bs, size_t... Is>
-            auto emulated_apply(F func, ::xsimd::detail::index_sequence<Is...>, B const& b, Bs const&... bs) -> std::array<decltype(func(b.data[0], bs.data[0]...)), B::size>
+            auto emulated_apply(F func, std::index_sequence<Is...>, B const& b, Bs const&... bs) -> std::array<decltype(func(b.data[0], bs.data[0]...)), B::size>
             {
                 return { emulated_apply<Is>(func, b, bs...)... };
             }
 
             template <class B, class F, class... Bs>
-            auto emulated_apply(F func, B const& b, Bs const&... bs) -> std::array<decltype(func(b.data[0], bs.data[0]...)), B::size>
+            auto emulated_apply(F func, B const& b, Bs const&... bs)
             {
-                return emulated_apply(func, ::xsimd::detail::make_index_sequence<B::size>(), b, bs...);
+                return emulated_apply(func, std::make_index_sequence<B::size>(), b, bs...);
             }
         }
 
@@ -228,6 +226,13 @@ namespace xsimd
             std::array<T, size> r;
             std::fill(r.begin(), r.end(), val);
             return r;
+        }
+
+        // first
+        template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
+        T XSIMD_INLINE first(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        {
+            return self.data[0];
         }
 
 #if 0
@@ -426,7 +431,7 @@ namespace xsimd
         }
 
         // isnan
-        template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size, class = typename std::enable_if<std::is_floating_point<T>::value, void>::type>
+        template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size, class = std::enable_if_t<std::is_floating_point<T>::value>>
         XSIMD_INLINE batch_bool<T, A> isnan(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
@@ -501,7 +506,7 @@ namespace xsimd
             constexpr size_t size = batch<T, A>::size;
             uint64_t res = 0;
             for (size_t i = 0; i < size; ++i)
-                res |= (self.data[i] ? 1u : 0u) << i;
+                res |= (uint64_t)(self.data[i] ? 1u : 0u) << i;
             return res;
         }
 
@@ -592,6 +597,16 @@ namespace xsimd
         {
             return std::accumulate(self.data.begin() + 1, self.data.end(), *self.data.begin(), [](T const& x, T const& y)
                                    { return xsimd::min(x, y); });
+        }
+
+        // reduce_mul
+        template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
+        XSIMD_INLINE T reduce_mul(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        {
+            constexpr size_t size = batch<T, A>::size;
+            std::array<T, size> buffer;
+            self.store_unaligned(buffer.data());
+            return std::accumulate(buffer.begin() + 1, buffer.end(), *buffer.begin(), std::multiplies<T>());
         }
 
         // rsqrt

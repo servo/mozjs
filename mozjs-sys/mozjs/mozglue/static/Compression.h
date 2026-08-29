@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,10 +8,8 @@
 #define mozilla_Compression_h_
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Types.h"
 #include "mozilla/ResultVariant.h"
 #include "mozilla/Span.h"
-#include "mozilla/UniquePtr.h"
 
 struct LZ4F_cctx_s;  // compression context
 struct LZ4F_dctx_s;  // decompression context
@@ -118,7 +114,7 @@ class LZ4 {
    */
   static inline size_t maxCompressedSize(size_t aInputSize) {
     size_t max = (aInputSize + (aInputSize / 255) + 16);
-    MOZ_ASSERT(max > aInputSize);
+    MOZ_RELEASE_ASSERT(max > aInputSize);
     return max;
   }
 };

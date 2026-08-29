@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2015 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -244,8 +242,8 @@ class ABIResultIter {
 
 extern bool GenerateBuiltinThunk(jit::MacroAssembler& masm,
                                  jit::ABIFunctionType abiType,
-                                 ExitReason exitReason, void* funcPtr,
-                                 CallableOffsets* offsets);
+                                 bool switchToMainStack, ExitReason exitReason,
+                                 void* funcPtr, CallableOffsets* offsets);
 
 extern bool GenerateStubs(const CodeMetadata& codeMeta,
                           const FuncImportVector& imports,
@@ -360,10 +358,35 @@ extern void GenerateDirectCallFromJit(jit::MacroAssembler& masm,
                                       jit::Register scratch,
                                       uint32_t* callOffset);
 
+#ifdef ENABLE_WASM_JSPI
+// Generates a stub that is the frame at the base of a continuation stack.
+//
+// A continuation is always entered through the `resume` instruction. `resume`
+// will need to pass all arguments via the stack (not the call ABI that uses
+// registers), because the arguments to a continuation can be partially applied
+// using `cont.bind`. So this stub translates from the `resume` ABI to perform
+// a `call_ref` to the `funcref` that was passed to `cont.new`.
+//
+// When the callee returns, the results are converted again to the `resume`
+// stack arguments ABI and the stub performs a stack switch to the enclosing
+// handler.
+//
+// There will need to be a unique stub for each function type passed to
+// `cont.new`. Right now we only support `[] -> []`, so we take no func type.
+extern bool GenerateContBaseFrameStub(jit::MacroAssembler& masm,
+                                      Offsets* offsets);
+#endif
+
+// Clobber all wasm registers before doing a long jmp. This leaves InstanceReg,
+// and jumpReg.
+extern void ClobberWasmRegsForLongJmp(jit::MacroAssembler& masm,
+                                      jit::Register jumpReg);
+
 extern void GenerateJumpToCatchHandler(jit::MacroAssembler& masm,
                                        jit::Register rfe,
                                        jit::Register scratch1,
-                                       jit::Register scratch2);
+                                       jit::Register scratch2,
+                                       jit::Register scratch3);
 
 }  // namespace wasm
 }  // namespace js

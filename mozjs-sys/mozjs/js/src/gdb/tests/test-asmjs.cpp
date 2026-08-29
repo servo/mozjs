@@ -7,8 +7,6 @@
 #include "mozilla/Utf8.h"
 #include "util/Text.h"
 
-#include <string.h>
-
 FRAGMENT(asmjs, segfault) {
   constexpr unsigned line0 = __LINE__;
   static const char chars[] =

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,6 +20,7 @@ class TrampolineNativeFrameLayout;
 }
 
 class ArrayObject;
+class IteratorProperty;
 
 MOZ_ALWAYS_INLINE bool IdIsIndex(jsid id, uint32_t* indexp) {
   if (id.isInt()) {
@@ -77,10 +76,10 @@ extern ArrayObject* NewDenseCopiedArray(JSContext* cx, uint32_t length,
                                         const Value* values,
                                         NewObjectKind newKind = GenericObject);
 
-// Create a dense array from the given (linear)string values, which must be
-// rooted
+// Create a dense array from the given IteratorProperty values, which must be
+// rooted.
 extern ArrayObject* NewDenseCopiedArray(JSContext* cx, uint32_t length,
-                                        JSLinearString** values,
+                                        IteratorProperty* props,
                                         NewObjectKind newKind = GenericObject);
 
 // Like NewDenseCopiedArray, but the array will have |proto| as prototype (or
@@ -112,13 +111,19 @@ extern bool SetLengthProperty(JSContext* cx, HandleObject obj, uint32_t length);
 extern bool GetElements(JSContext* cx, HandleObject aobj, uint32_t length,
                         js::Value* vp);
 
+/*
+ * If the property at the given index exists, get its value into |vp| and set
+ * |*hole| to false. Otherwise set |*hole| to true and |vp| to Undefined.
+ */
+extern bool HasAndGetElement(JSContext* cx, HandleObject obj, uint64_t index,
+                             bool* hole, MutableHandleValue vp);
+
 /* Natives exposed for optimization by the interpreter and JITs. */
 
-extern bool array_includes(JSContext* cx, unsigned argc, js::Value* vp);
-extern bool array_indexOf(JSContext* cx, unsigned argc, js::Value* vp);
-extern bool array_lastIndexOf(JSContext* cx, unsigned argc, js::Value* vp);
 extern bool array_pop(JSContext* cx, unsigned argc, js::Value* vp);
 extern bool array_join(JSContext* cx, unsigned argc, js::Value* vp);
+extern bool array_slice(JSContext* cx, unsigned argc, js::Value* vp);
+extern bool array_shift(JSContext* cx, unsigned argc, js::Value* vp);
 extern bool array_sort(JSContext* cx, unsigned argc, js::Value* vp);
 
 extern void ArrayShiftMoveElements(ArrayObject* arr);

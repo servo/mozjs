@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,6 +7,7 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/MaybeOneOf.h"
 
 #include <cstdlib>
 #include <stdint.h>
@@ -44,13 +43,18 @@ struct MOZ_STACK_CLASS ParsedTimeZone final {
   }
 };
 
+struct UTCTimeZone final {};
+
+struct OffsetTimeZone final {
+  int64_t offset = 0;
+  bool hasSubMinutePrecision = false;
+};
+
 struct MOZ_STACK_CLASS ParsedZonedDateTime final {
   ISODateTime dateTime = {};
   JSLinearString* calendar = nullptr;
   ParsedTimeZone timeZoneAnnotation{};
-  int64_t timeZoneOffset = 0;
-  bool isUTC = false;
-  bool hasOffset = false;
+  mozilla::MaybeOneOf<UTCTimeZone, OffsetTimeZone> timeZone;
   bool isStartOfDay = false;
 
   void trace(JSTracer* trc);
@@ -171,11 +175,10 @@ class WrappedPtrOperations<temporal::ParsedZonedDateTime, Wrapper> {
         &object().timeZoneAnnotation);
   }
 
-  int64_t timeZoneOffset() const { return object().timeZoneOffset; }
-
-  bool isUTC() const { return object().isUTC; }
-
-  bool hasOffset() const { return object().hasOffset; }
+  const mozilla::MaybeOneOf<temporal::UTCTimeZone, temporal::OffsetTimeZone>&
+  timeZone() const {
+    return object().timeZone;
+  }
 
   bool isStartOfDay() const { return object().isStartOfDay; }
 };

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -27,6 +25,7 @@ void CodeGenerator::visitBitNotI64(LBitNotI64* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitBitOpI(LBitOpI* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitBitOpI64(LBitOpI64* lir) { MOZ_CRASH(); }
 void CodeGenerator::visitShiftI(LShiftI* ins) { MOZ_CRASH(); }
+void CodeGenerator::visitShiftIntPtr(LShiftIntPtr* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitShiftI64(LShiftI64* lir) { MOZ_CRASH(); }
 void CodeGenerator::visitSignExtendInt64(LSignExtendInt64* lir) { MOZ_CRASH(); }
 void CodeGenerator::visitUrshD(LUrshD* ins) { MOZ_CRASH(); }
@@ -36,13 +35,12 @@ void CodeGenerator::visitNegI(LNegI* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitNegI64(LNegI64* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitNegD(LNegD* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitNegF(LNegF* ins) { MOZ_CRASH(); }
-void CodeGenerator::visitCopySignD(LCopySignD* ins) { MOZ_CRASH(); }
-void CodeGenerator::visitCopySignF(LCopySignF* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitAddI(LAddI* ins) { MOZ_CRASH(); }
+void CodeGenerator::visitAddIntPtr(LAddIntPtr* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitAddI64(LAddI64* lir) { MOZ_CRASH(); }
 void CodeGenerator::visitSubI(LSubI* ins) { MOZ_CRASH(); }
+void CodeGenerator::visitSubIntPtr(LSubIntPtr* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitSubI64(LSubI64* lir) { MOZ_CRASH(); }
-void CodeGenerator::visitMulI64(LMulI64* lir) { MOZ_CRASH(); }
 void CodeGenerator::visitMathD(LMathD* math) { MOZ_CRASH(); }
 void CodeGenerator::visitMathF(LMathF* math) { MOZ_CRASH(); }
 void CodeGenerator::visitTruncateDToInt32(LTruncateDToInt32* ins) {
@@ -98,8 +96,6 @@ void CodeGenerator::visitAtomicExchangeTypedArrayElement64(
 void CodeGenerator::visitEffectiveAddress(LEffectiveAddress* ins) {
   MOZ_CRASH();
 }
-void CodeGenerator::visitNearbyInt(LNearbyInt*) { MOZ_CRASH(); }
-void CodeGenerator::visitNearbyIntF(LNearbyIntF*) { MOZ_CRASH(); }
 void CodeGenerator::visitWasmSelectI64(LWasmSelectI64* lir) { MOZ_CRASH(); }
 void CodeGenerator::visitWasmCompareAndSelect(LWasmCompareAndSelect* ins) {
   MOZ_CRASH();
@@ -217,4 +213,6 @@ void CodeGenerator::visitModI(LModI* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitDivPowTwoI(LDivPowTwoI* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitModPowTwoI(LModPowTwoI* ins) { MOZ_CRASH(); }
 void CodeGenerator::visitMulI(LMulI* ins) { MOZ_CRASH(); }
+void CodeGenerator::visitMulIntPtr(LMulIntPtr* ins) { MOZ_CRASH(); }
+void CodeGenerator::visitMulI64(LMulI64* lir) { MOZ_CRASH(); }
 void CodeGenerator::visitBox(LBox* box) { MOZ_CRASH(); }

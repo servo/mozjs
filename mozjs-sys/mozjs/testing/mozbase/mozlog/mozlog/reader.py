@@ -62,7 +62,7 @@ class LogHandler:
 
       class StartIdHandler(LogHandler):
           def test_start(data):
-              #For simplicity in the example pretend the id is always a string
+              # For simplicity in the example pretend the id is always a string
               return data["test"]
     """
 

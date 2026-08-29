@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,14 +7,13 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/CheckedArithmetic.h"
 #include "mozilla/Likely.h"
 #include "mozilla/OperatorNewExtensions.h"
-#include "mozilla/TemplateLib.h"
 
 #include <algorithm>
 #include <stddef.h>
 #include <string.h>
-#include <type_traits>
 #include <utility>
 
 #include "ds/LifoAlloc.h"
@@ -75,13 +72,13 @@ class TempAllocator {
   }
 };
 
-class JitAllocPolicy {
+class JitAllocPolicy : public AllocPolicyBase {
   TempAllocator& alloc_;
 
  public:
   MOZ_IMPLICIT JitAllocPolicy(TempAllocator& alloc) : alloc_(alloc) {}
   template <typename T>
-  T* maybe_pod_malloc(size_t numElems) {
+  js::lifo_alloc_pointer<T*> maybe_pod_malloc(size_t numElems) {
     size_t bytes;
     if (MOZ_UNLIKELY(!CalculateAllocSize<T>(numElems, &bytes))) {
       return nullptr;
@@ -89,7 +86,7 @@ class JitAllocPolicy {
     return static_cast<T*>(alloc_.allocate(bytes));
   }
   template <typename T>
-  T* maybe_pod_calloc(size_t numElems) {
+  js::lifo_alloc_pointer<T*> maybe_pod_calloc(size_t numElems) {
     T* p = maybe_pod_malloc<T>(numElems);
     if (MOZ_LIKELY(p)) {
       memset(p, 0, numElems * sizeof(T));
@@ -97,33 +94,34 @@ class JitAllocPolicy {
     return p;
   }
   template <typename T>
-  T* maybe_pod_realloc(T* p, size_t oldSize, size_t newSize) {
+  js::lifo_alloc_pointer<T*> maybe_pod_realloc(T* p, size_t oldSize,
+                                               size_t newSize) {
     T* n = pod_malloc<T>(newSize);
     if (MOZ_UNLIKELY(!n)) {
       return n;
     }
-    MOZ_ASSERT(!(oldSize & mozilla::tl::MulOverflowMask<sizeof(T)>::value));
-    memcpy(n, p, std::min(oldSize * sizeof(T), newSize * sizeof(T)));
+    size_t oldLength;
+    [[maybe_unused]] bool nooverflow =
+        mozilla::SafeMul(oldSize, sizeof(T), &oldLength);
+    MOZ_ASSERT(nooverflow);
+    memcpy(n, p, std::min(oldLength, newSize * sizeof(T)));
     return n;
   }
   template <typename T>
-  T* pod_malloc(size_t numElems) {
+  js::lifo_alloc_pointer<T*> pod_malloc(size_t numElems) {
     return maybe_pod_malloc<T>(numElems);
   }
   template <typename T>
-  T* pod_calloc(size_t numElems) {
+  js::lifo_alloc_pointer<T*> pod_calloc(size_t numElems) {
     return maybe_pod_calloc<T>(numElems);
   }
   template <typename T>
-  T* pod_realloc(T* ptr, size_t oldSize, size_t newSize) {
+  js::lifo_alloc_pointer<T*> pod_realloc(T* ptr, size_t oldSize,
+                                         size_t newSize) {
     return maybe_pod_realloc<T>(ptr, oldSize, newSize);
   }
   template <typename T>
   void free_(T* p, size_t numElems = 0) {}
-  void reportAllocOverflow() const {}
-  [[nodiscard]] bool checkSimulatedOOM() const {
-    return !js::oom::ShouldFailWithOOM();
-  }
 };
 
 struct TempObject {
@@ -174,6 +172,13 @@ class TempObjectPool {
 };
 
 }  // namespace jit
+
+// A Vector using JitAllocPolicy can discard its own buffer, which is safe as
+// long as the contained items can also be dropped.
+template <typename T, size_t N>
+struct CanLifoAlloc<mozilla::Vector<T, N, js::jit::JitAllocPolicy>>
+    : CanLifoAlloc<T>::type {};
+
 }  // namespace js
 
 #endif /* jit_JitAllocPolicy_h */

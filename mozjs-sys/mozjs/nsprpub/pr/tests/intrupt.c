@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -315,7 +314,6 @@ int main(int argc, char** argv) {
     }
   }
   PL_DestroyOptState(opt);
-  PR_STDIO_INIT();
   intrupt = PR_CreateThread(PR_USER_THREAD, Intrupt, NULL, PR_PRIORITY_NORMAL,
                             thread_scope, PR_JOINABLE_THREAD, 0);
   if (intrupt == NULL) {

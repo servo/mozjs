@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,16 +8,28 @@
 
 #include "util/DoubleToString.h"
 
-#include "mozilla/EndianUtils.h"
-
 #include "js/Utility.h"
 
 using namespace js;
 
-#if MOZ_LITTLE_ENDIAN()
-#  define IEEE_8087
+/*
+ * Define either IEEE_8087 or IEEE_MC68k, depending on the native endianess, for
+ * "dtoa.c", which is included further below.
+ *
+ * Our supported compilers provide architecture-independent macros for this.
+ * Yes, there are more than two values for __BYTE_ORDER__.
+ */
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && \
+    defined(__ORDER_BIG_ENDIAN__)
+#  if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#    define IEEE_8087
+#  elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#    define IEEE_MC68k
+#  else
+#    error "Can't handle mixed-endian architectures"
+#  endif
 #else
-#  define IEEE_MC68k
+#  error "Don't know how to determine endianness"
 #endif
 
 #ifndef Long

@@ -46,7 +46,7 @@ class Profile(Layer):
     }
 
     def __init__(self, env, mach_cmd):
-        super(Profile, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self._created_dirs = []
 
     def setup(self):
@@ -106,12 +106,12 @@ class Profile(Layer):
         # apply custom user prefs if any
         user_js = self.get_arg("user-js")
         if user_js is not None:
-            self.info("Applying use prefs from %s" % user_js)
+            self.info(f"Applying use prefs from {user_js}")
             default_prefs = dict(Preferences.read_prefs(user_js))
             prefs.update(default_prefs)
 
         profile.set_preferences(prefs)
-        self.info("Created profile at %s" % profile.profile)
+        self.info(f"Created profile at {profile.profile}")
         self._created_dirs.append(profile.profile)
         self.set_arg("profile-directory", profile.profile)
         return metadata

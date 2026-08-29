@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,8 +12,6 @@
 #include "mozilla/RangedPtr.h"
 
 #include <charconv>
-#include <iterator>
-#include <string.h>
 
 #include "jstypes.h"
 
@@ -292,13 +288,13 @@ void js::TraceAtoms(JSTracer* trc) {
 }
 
 void AtomsTable::traceWeak(JSTracer* trc) {
-  for (AtomSet::Enum e(atoms); !e.empty(); e.popFront()) {
-    JSAtom* atom = e.front().unbarrieredGet();
+  for (auto iter = atoms.modIter(); !iter.done(); iter.next()) {
+    JSAtom* atom = iter.get().unbarrieredGet();
     MOZ_DIAGNOSTIC_ASSERT(atom);
     if (!TraceManuallyBarrieredWeakEdge(trc, &atom, "AtomsTable::atoms")) {
-      e.removeFront();
+      iter.remove();
     } else {
-      MOZ_ASSERT(atom == e.front().unbarrieredGet());
+      MOZ_ASSERT(atom == iter.get().unbarrieredGet());
     }
   }
 }
@@ -313,7 +309,7 @@ bool AtomsTable::startIncrementalSweep(Maybe<SweepIterator>& atomsToSweepOut) {
     return false;
   }
 
-  atomsToSweepOut.emplace(atoms);
+  atomsToSweepOut.emplace(atoms.modIter());
 
   return true;
 }
@@ -327,9 +323,9 @@ void AtomsTable::mergeAtomsAddedWhileSweeping() {
   auto newAtoms = atomsAddedWhileSweeping;
   atomsAddedWhileSweeping = nullptr;
 
-  for (auto r = newAtoms->all(); !r.empty(); r.popFront()) {
-    if (!atoms.putNew(AtomHasher::Lookup(r.front().unbarrieredGet()),
-                      r.front())) {
+  for (auto iter = newAtoms->iter(); !iter.done(); iter.next()) {
+    if (!atoms.putNew(AtomHasher::Lookup(iter.get().unbarrieredGet()),
+                      iter.get())) {
       oomUnsafe.crash("Adding atom from secondary table after sweep");
     }
   }
@@ -340,21 +336,21 @@ void AtomsTable::mergeAtomsAddedWhileSweeping() {
 bool AtomsTable::sweepIncrementally(SweepIterator& atomsToSweep,
                                     JS::SliceBudget& budget) {
   // Sweep the table incrementally until we run out of work or budget.
-  while (!atomsToSweep.empty()) {
+  while (!atomsToSweep.done()) {
     budget.step();
     if (budget.isOverBudget()) {
       return false;
     }
 
-    JSAtom* atom = atomsToSweep.front().unbarrieredGet();
+    JSAtom* atom = atomsToSweep.get().unbarrieredGet();
     MOZ_DIAGNOSTIC_ASSERT(atom);
     if (IsAboutToBeFinalizedUnbarriered(atom)) {
       MOZ_ASSERT(!atom->isPinned());
-      atomsToSweep.removeFront();
+      atomsToSweep.remove();
     } else {
-      MOZ_ASSERT(atom == atomsToSweep.front().unbarrieredGet());
+      MOZ_ASSERT(atom == atomsToSweep.get().unbarrieredGet());
     }
-    atomsToSweep.popFront();
+    atomsToSweep.next();
   }
 
   mergeAtomsAddedWhileSweeping();
@@ -411,7 +407,8 @@ AtomizeAndCopyCharsNonStaticValidLengthFromLookup(
     return nullptr;
   }
 
-  if (MOZ_UNLIKELY(!cx->atomMarking().inlinedMarkAtomFallible(cx, atom))) {
+  if (MOZ_UNLIKELY(
+          !cx->atomMarking().inlinedMarkAtomFallible(cx->zone(), atom))) {
     ReportOutOfMemory(cx);
     return nullptr;
   }
@@ -902,6 +899,28 @@ bool js::IndexToIdSlow(JSContext* cx, uint32_t index, MutableHandleId idp) {
   MOZ_ASSERT(index > JS::PropertyKey::IntMax);
 
   char buf[UINT32_CHAR_BUFFER_LENGTH];
+
+  auto result = std::to_chars(buf, buf + std::size(buf), index, 10);
+  MOZ_ASSERT(result.ec == std::errc());
+
+  size_t length = result.ptr - buf;
+  JSAtom* atom = Atomize(cx, buf, length);
+  if (!atom) {
+    return false;
+  }
+
+  idp.set(JS::PropertyKey::NonIntAtom(atom));
+  return true;
+}
+
+bool js::IndexToIdSlow(JSContext* cx, uint64_t index, MutableHandleId idp) {
+  MOZ_ASSERT(index > JS::PropertyKey::IntMax);
+
+  // Plus one to include the largest number.
+  constexpr size_t UINT64_CHAR_BUFFER_LENGTH =
+      std::numeric_limits<uint64_t>::digits10 + 1;
+
+  char buf[UINT64_CHAR_BUFFER_LENGTH];
 
   auto result = std::to_chars(buf, buf + std::size(buf), index, 10);
   MOZ_ASSERT(result.ec == std::errc());

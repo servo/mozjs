@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -13,7 +11,12 @@
 
 inline void* js::detail::OrderedHashTableObject::allocateCellBuffer(
     JSContext* cx, size_t numBytes) {
-  return AllocNurseryOrMallocBuffer<uint8_t>(cx, this, numBytes);
+  return AllocateCellBuffer<uint8_t>(cx, this, numBytes);
+}
+
+inline void js::detail::OrderedHashTableObject::freeCellBuffer(
+    JSContext* cx, void* data, size_t numBytes) {
+  FreeCellBuffer<uint8_t>(cx, this, reinterpret_cast<uint8_t*>(data), numBytes);
 }
 
 #endif /* builtin_OrderedHashTableObject_inl_h */

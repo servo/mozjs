@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,7 +22,14 @@ namespace mozilla {
 class ProfileBufferChunkManagerWithLocalLimit;
 
 // Centrally defines the version of the gecko profiler JSON format.
-const int GECKO_PROFILER_FORMAT_VERSION = 31;
+// NOTE: when this value is updated, the revision of the Firefox Profiler
+// toolchain in-tree
+// (https://github.com/mozilla-firefox/firefox/blob/main/taskcluster/kinds/fetch/toolchains.yml#L817)
+// should also be updated to ensure symbolication is kept up to date. It should
+// be updated with a stable commit from Firefox Profiler's production branch
+// (https://github.com/firefox-devtools/profiler/tree/production) that contains
+// the version bump.
+const int GECKO_PROFILER_FORMAT_VERSION = 34;
 
 namespace baseprofiler::detail {
 

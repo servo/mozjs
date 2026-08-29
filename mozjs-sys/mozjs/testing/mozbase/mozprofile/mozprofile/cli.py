@@ -10,6 +10,7 @@ The profile can be modified by passing in addons to install or preferences to se
 If no profile is specified, a new profile is created and the path of the
 resulting profile is printed.
 """
+
 import sys
 from optparse import OptionParser
 
@@ -111,7 +112,7 @@ class MozProfileCLI:
             dest="prefs",
             action="append",
             default=[],
-            help="A preference to set. " "Must be a key-value pair separated by a ':'",
+            help="A preference to set. Must be a key-value pair separated by a ':'",
         )
         parser.add_option(
             "--preferences",

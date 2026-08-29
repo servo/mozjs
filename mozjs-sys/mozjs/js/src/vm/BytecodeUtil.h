@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -16,6 +14,7 @@
 #include "mozilla/EndianUtils.h"
 
 #include <algorithm>
+#include <bit>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -75,27 +74,27 @@ static const int32_t JUMP_OFFSET_MIN = INT32_MIN;
 static const int32_t JUMP_OFFSET_MAX = INT32_MAX;
 
 static MOZ_ALWAYS_INLINE uint32_t GET_UINT24(const jsbytecode* pc) {
-#if MOZ_LITTLE_ENDIAN()
-  // Do a single 32-bit load (for opcode and operand), then shift off the
-  // opcode.
-  uint32_t result;
-  memcpy(&result, pc, 4);
-  return result >> 8;
-#else
-  return uint32_t((pc[3] << 16) | (pc[2] << 8) | pc[1]);
-#endif
+  if constexpr (std::endian::native == std::endian::little) {
+    // Do a single 32-bit load (for opcode and operand), then shift off the
+    // opcode.
+    uint32_t result;
+    memcpy(&result, pc, 4);
+    return result >> 8;
+  } else {
+    return uint32_t((pc[3] << 16) | (pc[2] << 8) | pc[1]);
+  }
 }
 
 static MOZ_ALWAYS_INLINE void SET_UINT24(jsbytecode* pc, uint32_t i) {
   MOZ_ASSERT(i < (1 << 24));
 
-#if MOZ_LITTLE_ENDIAN()
-  memcpy(pc + 1, &i, 3);
-#else
-  pc[1] = jsbytecode(i);
-  pc[2] = jsbytecode(i >> 8);
-  pc[3] = jsbytecode(i >> 16);
-#endif
+  if constexpr (std::endian::native == std::endian::little) {
+    memcpy(pc + 1, &i, 3);
+  } else {
+    pc[1] = jsbytecode(i);
+    pc[2] = jsbytecode(i >> 8);
+    pc[3] = jsbytecode(i >> 16);
+  }
 }
 
 static MOZ_ALWAYS_INLINE int8_t GET_INT8(const jsbytecode* pc) {
@@ -235,23 +234,23 @@ static inline bool IsBackedgeForLoopHead(jsbytecode* pc, jsbytecode* loopHead) {
 /*
  * Describes the 'hops' component of a JOF_ENVCOORD opcode.
  *
- * Note: this component is only 8 bits wide, limiting the maximum number of
- * scopes between a use and def to roughly 255. This is a pretty small limit but
- * note that SpiderMonkey's recursive descent parser can only parse about this
- * many functions before hitting the C-stack recursion limit so this shouldn't
+ * Note: this component is only 16 bits wide, limiting the maximum number of
+ * scopes between a use and def to roughly 65535. This is a pretty small limit
+ * but note that SpiderMonkey's recursive descent parser can't parse too many
+ * functions before hitting the C-stack recursion limit so this shouldn't
  * be a significant limitation in practice.
  */
 
-static inline uint8_t GET_ENVCOORD_HOPS(jsbytecode* pc) {
-  return GET_UINT8(pc);
+static inline uint16_t GET_ENVCOORD_HOPS(jsbytecode* pc) {
+  return GET_UINT16(pc);
 }
 
-static inline void SET_ENVCOORD_HOPS(jsbytecode* pc, uint8_t hops) {
-  SET_UINT8(pc, hops);
+static inline void SET_ENVCOORD_HOPS(jsbytecode* pc, uint16_t hops) {
+  SET_UINT16(pc, hops);
 }
 
-static const unsigned ENVCOORD_HOPS_LEN = 1;
-static const unsigned ENVCOORD_HOPS_BITS = 8;
+static const unsigned ENVCOORD_HOPS_LEN = 2;
+static const unsigned ENVCOORD_HOPS_BITS = 16;
 static const unsigned ENVCOORD_HOPS_LIMIT = 1 << ENVCOORD_HOPS_BITS;
 
 /* Describes the 'slot' component of a JOF_ENVCOORD opcode. */

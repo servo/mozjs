@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import builtins
 import json
 import os
 import platform
@@ -12,16 +13,6 @@ from abc import ABCMeta, abstractmethod, abstractproperty
 from shutil import copytree
 
 import mozfile
-import six
-from six import python_2_unicode_compatible, string_types
-
-if six.PY3:
-
-    def unicode(input):
-        return input
-
-
-import builtins
 
 from .addons import AddonManager
 from .permissions import Permissions
@@ -38,8 +29,7 @@ __all__ = [
 ]
 
 
-@six.add_metaclass(ABCMeta)
-class BaseProfile:
+class BaseProfile(metaclass=ABCMeta):
     def __init__(self, profile=None, addons=None, preferences=None, restore=True):
         """Create a new Profile.
 
@@ -162,7 +152,6 @@ class BaseProfile:
         return os.path.exists(self.profile)
 
 
-@python_2_unicode_compatible
 class Profile(BaseProfile):
     """Handles all operations regarding profile.
 
@@ -210,7 +199,7 @@ class Profile(BaseProfile):
         :param allowlistpaths: List of paths to pass to Firefox to allow read
             access to from the content process sandbox.
         """
-        super(Profile, self).__init__(
+        super().__init__(
             profile=profile,
             addons=addons,
             preferences=preferences,
@@ -248,36 +237,31 @@ class Profile(BaseProfile):
         self.set_preferences(self._preferences)
 
         self.permissions = Permissions(self._locations)
-        prefs_js, user_js = self.permissions.network_prefs(self._proxy)
 
         if self._allowlistpaths:
+            prefs_js = []
             # On macOS we don't want to support a generalized read whitelist,
             # and the macOS sandbox policy language doesn't have support for
             # lists, so we handle these specially.
             if platform.system() == "Darwin":
                 assert len(self._allowlistpaths) <= 2
                 if len(self._allowlistpaths) == 2:
-                    prefs_js.append(
-                        (
-                            "security.sandbox.content.mac.testing_read_path2",
-                            self._allowlistpaths[1],
-                        )
-                    )
-                prefs_js.append(
-                    (
-                        "security.sandbox.content.mac.testing_read_path1",
-                        self._allowlistpaths[0],
-                    )
-                )
+                    prefs_js.append((
+                        "security.sandbox.content.mac.testing_read_path2",
+                        self._allowlistpaths[1],
+                    ))
+                prefs_js.append((
+                    "security.sandbox.content.mac.testing_read_path1",
+                    self._allowlistpaths[0],
+                ))
             else:
-                prefs_js.append(
-                    (
-                        "security.sandbox.content.read_path_whitelist",
-                        ",".join(self._allowlistpaths),
-                    )
-                )
-        self.set_preferences(prefs_js, "prefs.js")
-        self.set_preferences(user_js)
+                prefs_js.append((
+                    "security.sandbox.content.read_path_whitelist",
+                    ",".join(self._allowlistpaths),
+                ))
+            self.set_preferences(prefs_js, "prefs.js")
+
+        self.set_proxy(self._proxy)
 
         # handle add-on installation
         self.addons = AddonManager(self.profile, restore=self.restore)
@@ -292,7 +276,7 @@ class Profile(BaseProfile):
             self.clean_preferences()
             if getattr(self, "addons", None) is not None:
                 self.addons.clean()
-        super(Profile, self).cleanup()
+        super().cleanup()
 
     def clean_preferences(self):
         """Removed preferences added by mozrunner."""
@@ -303,6 +287,12 @@ class Profile(BaseProfile):
             while True:
                 if not self.pop_preferences(filename):
                     break
+
+    def set_proxy(self, proxy):
+        """Write proxy auto-config preferences into the profile."""
+        prefs_js, user_js = self.permissions.network_prefs(proxy)
+        self.set_preferences(prefs_js, "prefs.js")
+        self.set_preferences(user_js)
 
     # methods for preferences
 
@@ -317,12 +307,12 @@ class Profile(BaseProfile):
             self.written_prefs.add(filename)
 
             # opening delimeter
-            f.write(unicode("\n%s\n" % self.delimeters[0]))
+            f.write("\n%s\n" % self.delimeters[0])
 
             Preferences.write(f, preferences)
 
             # closing delimeter
-            f.write(unicode("%s\n" % self.delimeters[1]))
+            f.write("%s\n" % self.delimeters[1])
 
     def set_persistent_preferences(self, preferences):
         """
@@ -432,20 +422,16 @@ class Profile(BaseProfile):
                 prefs = Preferences.read_prefs(path)
                 if prefs:
                     prefs = dict(prefs)
-                    parts.append(
-                        (
-                            prefs_file,
-                            "\n%s"
-                            % (
-                                "\n".join(
-                                    [
-                                        "%s: %s" % (key, format_value(key, prefs[key]))
-                                        for key in sorted(prefs.keys())
-                                    ]
-                                )
-                            ),
-                        )
-                    )
+                    parts.append((
+                        prefs_file,
+                        "\n%s"
+                        % (
+                            "\n".join([
+                                "%s: %s" % (key, format_value(key, prefs[key]))
+                                for key in sorted(prefs.keys())
+                            ])
+                        ),
+                    ))
 
                     # Currently hardcorded to 'network.proxy.autoconfig_url'
                     # but could be generalized, possibly with a generalized (simple)
@@ -473,12 +459,10 @@ class Profile(BaseProfile):
                             )
                             splitline.append(lines[0][end:])
                             lines[0:1] = [i.strip() for i in splitline]
-                        parts.append(
-                            (
-                                "Network Proxy Autoconfig, %s" % (prefs_file),
-                                "\n%s" % "\n".join(lines),
-                            )
-                        )
+                        parts.append((
+                            "Network Proxy Autoconfig, %s" % (prefs_file),
+                            "\n%s" % "\n".join(lines),
+                        ))
 
         if return_parts:
             return parts
@@ -518,7 +502,7 @@ class ChromiumProfile(BaseProfile):
 
     class AddonManager(list):
         def install(self, addons):
-            if isinstance(addons, string_types):
+            if isinstance(addons, str):
                 addons = [addons]
             self.extend(addons)
 
@@ -528,7 +512,7 @@ class ChromiumProfile(BaseProfile):
             return False
 
     def __init__(self, **kwargs):
-        super(ChromiumProfile, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
         if self.create_new:
             self.profile = os.path.join(self.profile, "Default")
@@ -557,10 +541,7 @@ class ChromiumProfile(BaseProfile):
         with builtins.open(pref_file, "w") as fh:
             prefstr = json.dumps(prefs)
             prefstr % values  # interpolate prefs with values
-            if six.PY2:
-                fh.write(unicode(prefstr))
-            else:
-                fh.write(prefstr)
+            fh.write(prefstr)
 
 
 class ChromeProfile(ChromiumProfile):

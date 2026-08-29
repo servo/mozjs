@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,12 +6,13 @@
 #define jit_SparseBitSet_h
 
 #include "mozilla/Assertions.h"
-#include "mozilla/MathAlgorithms.h"
 
+#include <bit>
 #include <stddef.h>
 #include <stdint.h>
 
 #include "ds/InlineTable.h"
+#include "ds/LifoAlloc.h"
 
 namespace js::jit {
 
@@ -35,7 +34,7 @@ namespace js::jit {
 //   5 => 0x11110000
 //
 // SparseBitSet ensures words in the map are never 0.
-template <typename AllocPolicy>
+template <typename AllocPolicy, typename Owner>
 class SparseBitSet {
   // Note: use uint32_t (instead of uintptr_t or uint64_t) to not waste space in
   // InlineMap's array of inline entries. It uses a struct for each key/value
@@ -49,10 +48,9 @@ class SparseBitSet {
   static constexpr size_t NumEntries = 8;
   using Map = InlineMap<uint32_t, WordType, NumEntries, DefaultHasher<uint32_t>,
                         AllocPolicy>;
-  using Range = typename Map::Range;
   Map map_;
 
-  static_assert(mozilla::IsPowerOfTwo(BitsPerWord),
+  static_assert(std::has_single_bit(BitsPerWord),
                 "Must be power-of-two for fast division/modulo");
   static_assert((sizeof(uint32_t) + sizeof(WordType)) * NumEntries ==
                     Map::SizeOfInlineEntries,
@@ -99,9 +97,9 @@ class SparseBitSet {
   bool empty() const { return map_.empty(); }
 
   [[nodiscard]] bool insertAll(const SparseBitSet& other) {
-    for (Range r(other.map_.all()); !r.empty(); r.popFront()) {
-      auto index = r.front().key();
-      WordType bits = r.front().value();
+    for (auto iter = other.map_.iter(); !iter.done(); iter.next()) {
+      auto index = iter.get().key();
+      WordType bits = iter.get().value();
       MOZ_ASSERT(bits);
       auto p = map_.lookupForAdd(index);
       if (p) {
@@ -124,23 +122,23 @@ class SparseBitSet {
 //   for (Set::Iterator iter(set); iter; ++iter) {
 //     MOZ_ASSERT(set.contains(*iter));
 //   }
-template <typename AllocPolicy>
-class SparseBitSet<AllocPolicy>::Iterator {
+template <typename AllocPolicy, typename Owner>
+class SparseBitSet<AllocPolicy, Owner>::Iterator {
 #ifdef DEBUG
   SparseBitSet& bitSet_;
 #endif
-  SparseBitSet::Range range_;
+  typename SparseBitSet::Map::Iterator iter_;
   WordType currentWord_ = 0;
   // Index of a 1-bit in the SparseBitSet. This is the value returned by
   // |*iter|.
   size_t index_ = 0;
 
-  bool done() const { return range_.empty(); }
+  bool done() const { return iter_.done(); }
 
   void skipZeroBits() {
     MOZ_ASSERT(!done());
     MOZ_ASSERT(currentWord_ != 0);
-    auto numZeroes = mozilla::CountTrailingZeroes32(currentWord_);
+    auto numZeroes = std::countr_zero(currentWord_);
     index_ += numZeroes;
     currentWord_ >>= numZeroes;
   }
@@ -151,10 +149,10 @@ class SparseBitSet<AllocPolicy>::Iterator {
 #ifdef DEBUG
         bitSet_(bitSet),
 #endif
-        range_(bitSet.map_.all()) {
-    if (!range_.empty()) {
-      index_ = range_.front().key() * BitsPerWord;
-      currentWord_ = range_.front().value();
+        iter_(bitSet.map_.iter()) {
+    if (!iter_.done()) {
+      index_ = iter_.get().key() * BitsPerWord;
+      currentWord_ = iter_.get().value();
       skipZeroBits();
     }
   }
@@ -171,13 +169,13 @@ class SparseBitSet<AllocPolicy>::Iterator {
     MOZ_ASSERT(!done());
     currentWord_ >>= 1;
     if (currentWord_ == 0) {
-      range_.popFront();
-      if (range_.empty()) {
+      iter_.next();
+      if (iter_.done()) {
         // Done iterating.
         return;
       }
-      index_ = range_.front().key() * BitsPerWord;
-      currentWord_ = range_.front().value();
+      index_ = iter_.get().key() * BitsPerWord;
+      currentWord_ = iter_.get().value();
     } else {
       index_++;
     }
@@ -186,5 +184,16 @@ class SparseBitSet<AllocPolicy>::Iterator {
 };
 
 }  // namespace js::jit
+
+namespace js {
+
+// A SparseBitSet may be LifoAllocated only if it is owned by a stack-allocated
+// class, since that will cause it to be destroyed when the owner's scope ends.
+// Otherwise, this could leak memory.
+template <typename T, typename Owner>
+struct CanLifoAlloc<js::jit::SparseBitSet<T, Owner>> : Owner::IsStackAllocated {
+};
+
+}  // namespace js
 
 #endif /* jit_SparseBitSet_h */

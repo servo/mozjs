@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,7 +9,7 @@
  * ======================
  *
  * See also GC scheduling from Firefox's perspective here:
- * https://searchfox.org/mozilla-central/source/dom/base/CCGCScheduler.cpp
+ * https://searchfox.org/firefox-main/source/dom/base/CCGCScheduler.cpp
  *
  * Scheduling GC's in SpiderMonkey/Firefox is tremendously complicated because
  * of the large number of subtle, cross-cutting, and widely dispersed factors
@@ -507,7 +505,16 @@
    */                                                                          \
   _(JSGC_NURSERY_MAX_TIME_GOAL_MS, mozilla::TimeDuration,                      \
     nurseryMaxTimeGoalMS, ConvertMillis, NoCheck,                              \
-    mozilla::TimeDuration::FromMilliseconds(4))
+    mozilla::TimeDuration::FromMilliseconds(4))                                \
+                                                                               \
+  /*                                                                           \
+   * JSGC_STORE_BUFFER_ENTRIES                                                 \
+   * JSGC_STORE_BUFFER_SCALING                                                 \
+   */                                                                          \
+  _(JSGC_STORE_BUFFER_ENTRIES, size_t, storeBufferEntries, ConvertSize,        \
+    CheckNonZero, 16384)                                                       \
+  _(JSGC_STORE_BUFFER_SCALING, double, storeBufferScaling, ConvertTimes100,    \
+    CheckNonZeroUnitRange, 0.25)
 
 namespace js {
 
@@ -515,7 +522,7 @@ class ZoneAllocator;
 
 namespace gc {
 
-struct Cell;
+class Cell;
 
 /*
  * Default settings for tuning the GC.  Some of these can be set at runtime,
@@ -547,6 +554,9 @@ static const bool NurseryEnabled = true;
 
 /* JSGC_PARALLEL_MARKING_ENABLED */
 static const bool ParallelMarkingEnabled = false;
+
+/* JSGC_CONCURRENT_MARKING_ENABLED */
+static const bool ConcurrentMarkingEnabled = false;
 
 /* JSGC_INCREMENTAL_WEAKMAP_ENABLED */
 static const bool IncrementalWeakMapMarkingEnabled = true;

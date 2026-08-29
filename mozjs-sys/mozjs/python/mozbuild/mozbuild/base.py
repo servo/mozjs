@@ -3,10 +3,12 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import errno
+import functools
 import io
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -30,12 +32,18 @@ from .backend.configenvironment import ConfigEnvironment, ConfigStatusFailure
 from .configure import ConfigureSandbox
 from .controller.clobber import Clobberer
 from .mozconfig import MozconfigLoader, MozconfigLoadException
-from .util import cpu_count, memoize, memoized_property
+from .util import (
+    construct_log_filename,
+    cpu_count,
+    is_running_under_coding_agent,
+)
 
 try:
     import psutil
 except Exception:
     psutil = None
+
+BUILD_LOG_SUBDIR = os.path.join("logs", "build")
 
 
 class BadEnvironmentException(Exception):
@@ -200,10 +208,20 @@ class MozbuildObject(ProcessExecutionMixin):
 
     def build_out_of_date(self, output, dep_file):
         if not os.path.isfile(output):
-            print(" Output reference file not found: %s" % output)
+            self.log(
+                logging.INFO,
+                "build_output",
+                {"output": output},
+                "Output reference file not found: {output}",
+            )
             return True
         if not os.path.isfile(dep_file):
-            print(" Dependency file not found: %s" % dep_file)
+            self.log(
+                logging.INFO,
+                "build_output",
+                {"dep_file": dep_file},
+                "Dependency file not found: {dep_file}",
+            )
             return True
 
         deps = []
@@ -216,11 +234,21 @@ class MozbuildObject(ProcessExecutionMixin):
                 dep_mtime = os.path.getmtime(f)
             except OSError as e:
                 if e.errno == errno.ENOENT:
-                    print(" Input not found: %s" % f)
+                    self.log(
+                        logging.INFO,
+                        "build_output",
+                        {"input": f},
+                        "Input not found: {input}",
+                    )
                     return True
                 raise
             if dep_mtime > mtime:
-                print(" %s is out of date with respect to %s" % (output, f))
+                self.log(
+                    logging.INFO,
+                    "build_output",
+                    {"output": output, "dep": f},
+                    "{output} is out of date with respect to {dep}",
+                )
                 return True
         return False
 
@@ -272,7 +300,7 @@ class MozbuildObject(ProcessExecutionMixin):
         self._virtualenv_manager = command_site_manager
 
     @staticmethod
-    @memoize
+    @functools.cache
     def get_base_mozconfig_info(topsrcdir, path, env_mozconfig):
         # env_mozconfig is only useful for unittests, which change the value of
         # the environment variable, which has an impact on autodetection (when
@@ -301,9 +329,7 @@ class MozbuildObject(ProcessExecutionMixin):
                     )
                     for a in args
                 )
-                return super(ReducedConfigureSandbox, self).depends_impl(
-                    *args, **kwargs
-                )
+                return super().depends_impl(*args, **kwargs)
 
         # This may be called recursively from configure itself for $reasons,
         # so avoid logging to the same logger (configure uses "moz.configure")
@@ -418,7 +444,7 @@ class MozbuildObject(ProcessExecutionMixin):
 
         return platform_name, bits + "bit"
 
-    @memoized_property
+    @functools.cached_property
     def repository(self):
         """Get a `mozversioncontrol.Repository` object for the
         top source directory."""
@@ -677,6 +703,51 @@ class MozbuildObject(ProcessExecutionMixin):
 
         return os.path.join(path, filename)
 
+    def _build_log_dir(self):
+        return os.path.join(self.statedir, BUILD_LOG_SUBDIR)
+
+    def _get_build_log_filename(self, filename):
+        return os.path.join(self._build_log_dir(), filename)
+
+    def _ensure_build_log_dir_exists(self):
+        self._ensure_state_subdir_exists(BUILD_LOG_SUBDIR)
+
+    @property
+    def log_file_path(self):
+        """Return the path to the current command's log file, or None if not logging."""
+        return getattr(self, "logfile", None)
+
+    def _cleanup_old_logs(self, subdir, max_logs=5):
+        """Remove old log files, keeping only the most recent max_logs files per type."""
+        log_dir = Path(self.statedir) / subdir
+        try:
+            files = list(log_dir.iterdir())
+        except OSError:
+            return
+
+        groups = {}
+        for f in files:
+            file_type = re.split(r"[._]", f.name)[0]
+            groups.setdefault(file_type, []).append(f)
+
+        # There are multiple types of build logs, and we want
+        # to keep the most recent ones of each type.
+        for log_files in groups.values():
+            if len(log_files) <= max_logs:
+                continue
+            for old_log in sorted(
+                log_files, key=lambda f: f.stat().st_mtime, reverse=True
+            )[max_logs:]:
+                try:
+                    old_log.unlink()
+                except OSError as e:
+                    self.log(
+                        logging.WARNING,
+                        "mach",
+                        {"file": str(old_log), "error": str(e)},
+                        "Failed to remove old log file {file}: {error}",
+                    )
+
     def _wrap_path_argument(self, arg):
         return PathArgument(arg, self.topsrcdir, self.topobjdir)
 
@@ -688,6 +759,7 @@ class MozbuildObject(ProcessExecutionMixin):
         log=True,
         srcdir=False,
         line_handler=None,
+        stderr_line_handler=None,
         append_env=None,
         explicit_env=None,
         ignore_errors=False,
@@ -701,15 +773,16 @@ class MozbuildObject(ProcessExecutionMixin):
     ):
         """Invoke make.
 
-        directory -- Relative directory to look for Makefile in.
-        filename -- Explicit makefile to run.
-        target -- Makefile target(s) to make. Can be a string or iterable of
-            strings.
-        srcdir -- If True, invoke make from the source directory tree.
-            Otherwise, make will be invoked from the object directory.
-        silent -- If True (the default), run make in silent mode.
-        print_directory -- If True (the default), have make print directories
-        while doing traversal.
+        Args:
+            directory: Relative directory to look for Makefile in.
+            filename: Explicit makefile to run.
+            target: Makefile target(s) to make. Can be a string or iterable of
+                strings.
+            srcdir: If True, invoke make from the source directory tree.
+                Otherwise, make will be invoked from the object directory.
+            silent: If True (the default), run make in silent mode.
+            print_directory: If True (the default), have make print directories
+                while doing traversal.
         """
         self._ensure_objdir_exists()
 
@@ -752,10 +825,17 @@ class MozbuildObject(ProcessExecutionMixin):
                 mem_gb = psutil.virtual_memory().total / 1024**3
                 from_mem = round(mem_gb / job_size)
                 num_jobs = max(1, min(cpus, from_mem))
-                print(
-                    "  Parallelism determined by memory: using %d jobs for %d cores "
-                    "based on %.1f GiB RAM and estimated job size of %.1f GiB"
-                    % (num_jobs, cpus, mem_gb, job_size)
+                self.log(
+                    logging.INFO,
+                    "parallelism",
+                    {
+                        "jobs": num_jobs,
+                        "cores": cpus,
+                        "mem_gb": f"{mem_gb:.1f}",
+                        "job_size": f"{job_size:.1f}",
+                    },
+                    "Parallelism determined by memory: using {jobs} jobs for {cores} cores "
+                    "based on {mem_gb} GiB RAM and estimated job size of {job_size} GiB",
                 )
 
         args.append("-j%d" % num_jobs)
@@ -774,7 +854,7 @@ class MozbuildObject(ProcessExecutionMixin):
         if keep_going:
             args.append("-k")
 
-        if isinstance(target, list):
+        if isinstance(target, (tuple, list)):
             args.extend(target)
         elif target:
             args.append(target)
@@ -790,6 +870,7 @@ class MozbuildObject(ProcessExecutionMixin):
         params = {
             "args": args,
             "line_handler": line_handler,
+            "stderr_line_handler": stderr_line_handler,
             "append_env": append_env,
             "explicit_env": explicit_env,
             "log_level": logging.INFO,
@@ -856,7 +937,9 @@ class MachCommandBase(MozbuildObject):
     without having to change everything that inherits from it.
     """
 
-    def __init__(self, context, virtualenv_name=None, metrics=None, no_auto_log=False):
+    def __init__(
+        self, context, virtualenv_name=None, metrics_path=None, no_auto_log=False
+    ):
         # Attempt to discover topobjdir through environment detection, as it is
         # more reliable than mozconfig when cwd is inside an objdir.
         topsrcdir = context.topdir
@@ -909,7 +992,8 @@ class MachCommandBase(MozbuildObject):
         )
 
         self._mach_context = context
-        self.metrics = metrics
+        self._metrics_path = metrics_path
+        self._metrics = None
 
         # Incur mozconfig processing so we have unified error handling for
         # errors. Otherwise, the exceptions could bubble back to mach's error
@@ -925,19 +1009,33 @@ class MachCommandBase(MozbuildObject):
             print(e)
             sys.exit(1)
 
-        # Always keep a log of the last command, but don't do that for mach
-        # invokations from scripts (especially not the ones done by the build
-        # system itself).
+        # Keep a per-command log in logs/{command}/, and track the latest command
+        # in latest-command. Don't do that for mach invocations from scripts
+        # (especially not the ones done by the build system itself).
         try:
             fileno = getattr(sys.stdout, "fileno", lambda: None)()
         except io.UnsupportedOperation:
             fileno = None
-        if fileno and os.isatty(fileno) and not no_auto_log:
-            self._ensure_state_subdir_exists(".")
-            logfile = self._get_state_filename("last_log.json")
+        handler = getattr(context, "handler", None)
+        if fileno and os.isatty(fileno) and not no_auto_log and handler:
+            command_name = handler.name
+            subdir = os.path.join("logs", command_name)
+            self._ensure_state_subdir_exists(subdir)
+            use_text_log = is_running_under_coding_agent()
+            suffix = ".log" if use_text_log else ".json"
+            self.logfile = self._get_state_filename(
+                construct_log_filename(command_name, suffix=suffix), subdir=subdir
+            )
             try:
-                fd = open(logfile, "w")
-                self.log_manager.add_json_handler(fd)
+                fd = open(self.logfile, "w")
+                if use_text_log:
+                    self.log_manager.add_text_handler(fd)
+                else:
+                    self.log_manager.add_json_handler(fd)
+                latest_file = self._get_state_filename("latest-command")
+                with open(latest_file, "w") as f:
+                    f.write(command_name)
+                self._cleanup_old_logs(subdir)
             except Exception as e:
                 self.log(
                     logging.WARNING,
@@ -945,6 +1043,15 @@ class MachCommandBase(MozbuildObject):
                     {"error": str(e)},
                     "Log will not be kept for this command: {error}.",
                 )
+                self.logfile = None
+
+    @property
+    def metrics(self):
+        if self._metrics is None and self._metrics_path:
+            if self._mach_context._telemetry_init_done is not None:
+                self._mach_context._telemetry_init_done.wait()
+            self._metrics = self._mach_context.telemetry.metrics(self._metrics_path)
+        return self._metrics
 
     def _sub_mach(self, argv):
         return subprocess.call(
@@ -958,119 +1065,133 @@ class MachCommandConditions:
     """
 
     @staticmethod
-    def is_firefox(cls):
+    def is_firefox(build_obj):
         """Must have a Firefox build."""
-        if hasattr(cls, "substs"):
-            return cls.substs.get("MOZ_BUILD_APP") == "browser"
+        if hasattr(build_obj, "substs"):
+            return build_obj.substs.get("MOZ_BUILD_APP") == "browser"
         return False
 
     @staticmethod
-    def is_jsshell(cls):
+    def is_jsshell(build_obj):
         """Must have a jsshell build."""
-        if hasattr(cls, "substs"):
-            return cls.substs.get("MOZ_BUILD_APP") == "js"
+        if hasattr(build_obj, "substs"):
+            return build_obj.substs.get("MOZ_BUILD_APP") == "js"
         return False
 
     @staticmethod
-    def is_thunderbird(cls):
+    def is_thunderbird(build_obj):
         """Must have a Thunderbird build."""
-        if hasattr(cls, "substs"):
-            return cls.substs.get("MOZ_BUILD_APP") == "comm/mail"
+        if hasattr(build_obj, "substs"):
+            return build_obj.substs.get("MOZ_BUILD_APP") == "comm/mail"
         return False
 
     @staticmethod
-    def is_firefox_or_thunderbird(cls):
+    def is_firefox_or_thunderbird(build_obj):
         """Must have a Firefox or Thunderbird build."""
         return MachCommandConditions.is_firefox(
-            cls
-        ) or MachCommandConditions.is_thunderbird(cls)
+            build_obj
+        ) or MachCommandConditions.is_thunderbird(build_obj)
 
     @staticmethod
-    def is_android(cls):
+    def is_android(build_obj):
         """Must have an Android build."""
-        if hasattr(cls, "substs"):
-            return cls.substs.get("MOZ_WIDGET_TOOLKIT") == "android"
+        if hasattr(build_obj, "substs"):
+            return build_obj.substs.get("MOZ_WIDGET_TOOLKIT") == "android"
         return False
 
     @staticmethod
-    def is_not_android(cls):
+    def is_not_android(build_obj):
         """Must not have an Android build."""
-        if hasattr(cls, "substs"):
-            return cls.substs.get("MOZ_WIDGET_TOOLKIT") != "android"
+        if hasattr(build_obj, "substs"):
+            return build_obj.substs.get("MOZ_WIDGET_TOOLKIT") != "android"
         return False
 
     @staticmethod
-    def is_android_cpu(cls):
+    def is_ios(build_obj):
+        """Must have an iOS build."""
+        if hasattr(build_obj, "substs"):
+            return build_obj.substs.get("TARGET_OS") == "iOS"
+        return False
+
+    @staticmethod
+    def is_ios_simulator(build_obj):
+        """Must have an iOS simulator build."""
+        if hasattr(build_obj, "substs"):
+            return build_obj.substs.get("IPHONEOS_IS_SIMULATOR", False)
+        return False
+
+    @staticmethod
+    def is_android_cpu(build_obj):
         """Targeting Android CPU."""
-        if hasattr(cls, "substs"):
-            return "ANDROID_CPU_ARCH" in cls.substs
+        if hasattr(build_obj, "substs"):
+            return "ANDROID_CPU_ARCH" in build_obj.substs
         return False
 
     @staticmethod
-    def is_firefox_or_android(cls):
+    def is_firefox_or_android(build_obj):
         """Must have a Firefox or Android build."""
         return MachCommandConditions.is_firefox(
-            cls
-        ) or MachCommandConditions.is_android(cls)
+            build_obj
+        ) or MachCommandConditions.is_android(build_obj)
 
     @staticmethod
-    def has_build(cls):
+    def has_build(build_obj):
         """Must have a build."""
         return MachCommandConditions.is_firefox_or_android(
-            cls
-        ) or MachCommandConditions.is_thunderbird(cls)
+            build_obj
+        ) or MachCommandConditions.is_thunderbird(build_obj)
 
     @staticmethod
-    def has_build_or_shell(cls):
+    def has_build_or_shell(build_obj):
         """Must have a build or a shell build."""
-        return MachCommandConditions.has_build(cls) or MachCommandConditions.is_jsshell(
-            cls
-        )
+        return MachCommandConditions.has_build(
+            build_obj
+        ) or MachCommandConditions.is_jsshell(build_obj)
 
     @staticmethod
-    def is_hg(cls):
+    def is_hg(build_obj):
         """Must have a mercurial source checkout."""
         try:
-            return isinstance(cls.repository, HgRepository)
+            return isinstance(build_obj.repository, HgRepository)
         except InvalidRepoPath:
             return False
 
     @staticmethod
-    def is_git(cls):
+    def is_git(build_obj):
         """Must have a git source checkout."""
         try:
-            return isinstance(cls.repository, GitRepository)
+            return isinstance(build_obj.repository, GitRepository)
         except InvalidRepoPath:
             return False
 
     @staticmethod
-    def is_jj(cls):
+    def is_jj(build_obj):
         """Must have a jj source checkout."""
         try:
-            return isinstance(cls.repository, JujutsuRepository)
+            return isinstance(build_obj.repository, JujutsuRepository)
         except InvalidRepoPath:
             return False
 
     @staticmethod
-    def is_artifact_build(cls):
+    def is_artifact_build(build_obj):
         """Must be an artifact build."""
-        if hasattr(cls, "substs"):
-            return getattr(cls, "substs", {}).get("MOZ_ARTIFACT_BUILDS")
+        if hasattr(build_obj, "substs"):
+            return getattr(build_obj, "substs", {}).get("MOZ_ARTIFACT_BUILDS")
         return False
 
     @staticmethod
-    def is_non_artifact_build(cls):
+    def is_non_artifact_build(build_obj):
         """Must not be an artifact build."""
-        if hasattr(cls, "substs"):
-            return not MachCommandConditions.is_artifact_build(cls)
+        if hasattr(build_obj, "substs"):
+            return not MachCommandConditions.is_artifact_build(build_obj)
         return False
 
     @staticmethod
-    def is_buildapp_in(cls, apps):
+    def is_buildapp_in(build_obj, apps):
         """Must have a build for one of the given app"""
         for app in apps:
             attr = getattr(MachCommandConditions, f"is_{app}", None)
-            if attr and attr(cls):
+            if attr and attr(build_obj):
                 return True
         return False
 

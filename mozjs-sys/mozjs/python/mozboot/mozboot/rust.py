@@ -171,12 +171,12 @@ if __name__ == "__main__":
     if version == RUSTUP_VERSION:
         print("We're up to date. Validating checksums.")
         make_checksums(version, validate=True)
-        exit()
+        sys.exit()
 
     if not update:
         print("Out of date. We use %s. Validating checksums." % RUSTUP_VERSION)
         make_checksums(RUSTUP_VERSION, validate=True)
-        exit()
+        sys.exit()
 
     print("Out of date. We use %s. Calculating checksums." % RUSTUP_VERSION)
     hashes = make_checksums(version)

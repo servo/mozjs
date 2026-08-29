@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,6 +8,7 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/EnumSet.h"
 
+#include <compare>
 #include <initializer_list>
 #include <stddef.h>
 #include <stdint.h>
@@ -19,7 +18,6 @@
 #include "jstypes.h"
 
 #include "builtin/temporal/Calendar.h"
-#include "builtin/temporal/Crash.h"
 
 namespace js::temporal {
 
@@ -90,32 +88,14 @@ class MonthCode final {
 
   constexpr bool isLeapMonth() const { return code_ >= Code::M01L; }
 
-  constexpr bool operator==(const MonthCode& other) const {
-    return other.code_ == code_;
-  }
-
-  constexpr bool operator!=(const MonthCode& other) const {
-    return !(*this == other);
-  }
-
-  constexpr bool operator<(const MonthCode& other) const {
+  constexpr auto operator<=>(const MonthCode& other) const {
     if (ordinal() != other.ordinal()) {
-      return ordinal() < other.ordinal();
+      return ordinal() <=> other.ordinal();
     }
-    return code_ < other.code_;
+    return code_ <=> other.code_;
   }
 
-  constexpr bool operator>(const MonthCode& other) const {
-    return other < *this;
-  }
-
-  constexpr bool operator<=(const MonthCode& other) const {
-    return !(other < *this);
-  }
-
-  constexpr bool operator>=(const MonthCode& other) const {
-    return !(*this < other);
-  }
+  constexpr bool operator==(const MonthCode&) const = default;
 
   constexpr explicit operator std::string_view() const {
     constexpr const char* name =
@@ -149,6 +129,9 @@ class MonthCode final {
 };
 
 class MonthCodes final {
+  // Common month codes supported by all calendars.
+  //
+  // See IsValidMonthCodeForCalendar, step 1.
   mozilla::EnumSet<MonthCode::Code> monthCodes_{
       MonthCode::Code::M01, MonthCode::Code::M02, MonthCode::Code::M03,
       MonthCode::Code::M04, MonthCode::Code::M05, MonthCode::Code::M06,
@@ -163,11 +146,11 @@ class MonthCodes final {
     }
   }
 
-  bool contains(MonthCode monthCode) const {
+  constexpr bool contains(MonthCode monthCode) const {
     return monthCodes_.contains(monthCode.code());
   }
 
-  bool contains(const MonthCodes& monthCodes) const {
+  constexpr bool contains(const MonthCodes& monthCodes) const {
     return monthCodes_.contains(monthCodes.monthCodes_);
   }
 };
@@ -177,26 +160,24 @@ class MonthCodes final {
 //
 // https://tc39.es/proposal-intl-era-monthcode/#table-additional-month-codes
 //
-// https://docs.rs/icu/latest/icu/calendar/buddhist/struct.Buddhist.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/indian/struct.Indian.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/islamic/struct.IslamicCivil.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/islamic/struct.IslamicObservational.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/islamic/struct.IslamicTabular.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/islamic/struct.IslamicUmmAlQura.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/japanese/struct.Japanese.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/persian/struct.Persian.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/roc/struct.Roc.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Buddhist.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Indian.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Hijri.html#months-and-days
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Japanese.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Persian.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Roc.html#month-codes
 //
-// https://docs.rs/icu/latest/icu/calendar/chinese/struct.Chinese.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/dangi/struct.Dangi.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/east_asian_traditional/struct.EastAsianTraditional.html#months-and-days
 //
-// https://docs.rs/icu/latest/icu/calendar/coptic/struct.Coptic.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Coptic.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Ethiopian.html#month-codes
 //
-// https://docs.rs/icu/latest/icu/calendar/ethiopian/struct.Ethiopian.html#month-codes
-// https://docs.rs/icu/latest/icu/calendar/hebrew/struct.Hebrew.html#month-codes
+// https://docs.rs/icu/latest/icu/calendar/cal/struct.Hebrew.html#month-codes
 namespace monthcodes {
+// The ISO8601 calendar doesn't have any additional month codes.
 inline constexpr MonthCodes ISO8601 = {};
 
+// The Chinese/Dangi calendars can have a leap month inserted after every month.
 inline constexpr MonthCodes ChineseOrDangi = {
     // Leap months.
     MonthCode{1, /* isLeapMonth = */ true},
@@ -213,11 +194,13 @@ inline constexpr MonthCodes ChineseOrDangi = {
     MonthCode{12, /* isLeapMonth = */ true},
 };
 
+// The Coptic/Ethiopian calendars has a thirteenth month.
 inline constexpr MonthCodes CopticOrEthiopian = {
     // Short epagomenal month.
     MonthCode{13},
 };
 
+// The Hebrew calendar has a single leap month.
 inline constexpr MonthCodes Hebrew = {
     // Leap month Adar I.
     MonthCode{5, /* isLeapMonth = */ true},
@@ -230,9 +213,7 @@ constexpr auto& CalendarMonthCodes(CalendarId id) {
     case CalendarId::Buddhist:
     case CalendarId::Gregorian:
     case CalendarId::Indian:
-    case CalendarId::Islamic:
     case CalendarId::IslamicCivil:
-    case CalendarId::IslamicRGSA:
     case CalendarId::IslamicTabular:
     case CalendarId::IslamicUmmAlQura:
     case CalendarId::Persian:
@@ -252,7 +233,14 @@ constexpr auto& CalendarMonthCodes(CalendarId id) {
     case CalendarId::Hebrew:
       return monthcodes::Hebrew;
   }
-  JS_CONSTEXPR_CRASH("invalid calendar id");
+  MOZ_CRASH("invalid calendar id");
+}
+
+/**
+ * IsValidMonthCodeForCalendar ( calendar, monthCode )
+ */
+constexpr bool IsValidMonthCodeForCalendar(CalendarId id, MonthCode monthCode) {
+  return CalendarMonthCodes(id).contains(monthCode);
 }
 
 constexpr bool CalendarHasLeapMonths(CalendarId id) {
@@ -264,9 +252,7 @@ constexpr bool CalendarHasLeapMonths(CalendarId id) {
     case CalendarId::EthiopianAmeteAlem:
     case CalendarId::Gregorian:
     case CalendarId::Indian:
-    case CalendarId::Islamic:
     case CalendarId::IslamicCivil:
-    case CalendarId::IslamicRGSA:
     case CalendarId::IslamicTabular:
     case CalendarId::IslamicUmmAlQura:
     case CalendarId::Japanese:
@@ -279,7 +265,7 @@ constexpr bool CalendarHasLeapMonths(CalendarId id) {
     case CalendarId::Hebrew:
       return true;
   }
-  JS_CONSTEXPR_CRASH("invalid calendar id");
+  MOZ_CRASH("invalid calendar id");
 }
 
 constexpr bool CalendarHasEpagomenalMonths(CalendarId id) {
@@ -291,9 +277,7 @@ constexpr bool CalendarHasEpagomenalMonths(CalendarId id) {
     case CalendarId::Gregorian:
     case CalendarId::Hebrew:
     case CalendarId::Indian:
-    case CalendarId::Islamic:
     case CalendarId::IslamicCivil:
-    case CalendarId::IslamicRGSA:
     case CalendarId::IslamicTabular:
     case CalendarId::IslamicUmmAlQura:
     case CalendarId::Japanese:
@@ -306,7 +290,7 @@ constexpr bool CalendarHasEpagomenalMonths(CalendarId id) {
     case CalendarId::EthiopianAmeteAlem:
       return true;
   }
-  JS_CONSTEXPR_CRASH("invalid calendar id");
+  MOZ_CRASH("invalid calendar id");
 }
 
 constexpr int32_t CalendarMonthsPerYear(CalendarId id) {
@@ -346,9 +330,7 @@ constexpr std::pair<int32_t, int32_t> CalendarDaysInMonth(CalendarId id) {
     case CalendarId::Chinese:
     case CalendarId::Dangi:
     case CalendarId::Hebrew:
-    case CalendarId::Islamic:
     case CalendarId::IslamicCivil:
-    case CalendarId::IslamicRGSA:
     case CalendarId::IslamicTabular:
     case CalendarId::IslamicUmmAlQura:
       return {29, 30};
@@ -375,7 +357,7 @@ constexpr std::pair<int32_t, int32_t> CalendarDaysInMonth(CalendarId id) {
     case CalendarId::Persian:
       return {29, 31};
   }
-  JS_CONSTEXPR_CRASH("invalid calendar id");
+  MOZ_CRASH("invalid calendar id");
 }
 
 // ISO8601 calendar.
@@ -451,9 +433,7 @@ constexpr std::pair<int32_t, int32_t> CalendarDaysInMonth(CalendarId id,
       return {30, 30};
     }
 
-    // Islamic calendars have 29-30 days per month.
-    case CalendarId::Islamic:
-    case CalendarId::IslamicRGSA:
+    // IslamicUmmAlQura calendar has 29-30 days per month.
     case CalendarId::IslamicUmmAlQura:
       return {29, 30};
 
@@ -488,7 +468,7 @@ constexpr std::pair<int32_t, int32_t> CalendarDaysInMonth(CalendarId id,
       return {29, 30};
     }
   }
-  JS_CONSTEXPR_CRASH("invalid calendar id");
+  MOZ_CRASH("invalid calendar id");
 }
 
 }  // namespace js::temporal

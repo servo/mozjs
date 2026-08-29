@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,30 +20,20 @@
 #  include <stdlib.h> /* for _set_invalid_parameter_handler */
 #endif
 
-#ifdef XP_UNIX
-
-#  ifdef _SVID_GETTOD /* Defined only on Solaris, see Solaris <sys/types.h> */
-extern int gettimeofday(struct timeval* tv);
-#  endif
-
-#  include <sys/time.h>
-
-#endif /* XP_UNIX */
-
 #if defined(XP_UNIX)
-int64_t PRMJ_Now() {
-  struct timeval tv;
+int64_t js::PRMJ_Now() {
+  // `std::timespec_get(..., TIME_UTC)` is available since C++17, but it's
+  // slightly slower than `clock_gettime(CLOCK_REALTIME, ...)`, so prefer the
+  // latter.
 
-#  ifdef _SVID_GETTOD /* Defined only on Solaris, see Solaris <sys/types.h> */
-  gettimeofday(&tv);
-#  else
-  gettimeofday(&tv, 0);
-#  endif /* _SVID_GETTOD */
+  timespec ts;
+  MOZ_ALWAYS_TRUE(clock_gettime(CLOCK_REALTIME, &ts) == 0);
 
-  return int64_t(tv.tv_sec) * PRMJ_USEC_PER_SEC + int64_t(tv.tv_usec);
+  return int64_t(ts.tv_sec) * PRMJ_USEC_PER_SEC +
+         int64_t(ts.tv_nsec / PRMJ_NSEC_PER_USEC);
 }
 
-#else
+#elif defined(XP_WIN)
 
 // Returns the number of microseconds since the Unix epoch.
 static int64_t FileTimeToUnixMicroseconds(const FILETIME& ft) {
@@ -61,7 +49,7 @@ static int64_t FileTimeToUnixMicroseconds(const FILETIME& ft) {
   return t / 10;
 }
 
-int64_t PRMJ_Now() {
+int64_t js::PRMJ_Now() {
   FILETIME ft;
   GetSystemTimePreciseAsFileTime(&ft);
   return FileTimeToUnixMicroseconds(ft);
@@ -79,9 +67,9 @@ static void PRMJ_InvalidParameterHandler(const wchar_t* expression,
 #  endif
 
 /* Format a time value into a buffer. Same semantics as strftime() */
-size_t PRMJ_FormatTime(char* buf, size_t buflen, const char* fmt,
-                       const PRMJTime* prtm, int timeZoneYear,
-                       int offsetInSeconds) {
+size_t js::PRMJ_FormatTime(char* buf, size_t buflen, const char* fmt,
+                           const PRMJTime* prtm, int timeZoneYear,
+                           int offsetInSeconds) {
   size_t result = 0;
 #  if defined(XP_UNIX) || defined(XP_WIN)
   struct tm a;

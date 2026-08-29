@@ -11,6 +11,7 @@
         "llvmorg-20-init-4204-g5013cf682cf0.patch",
         "llvmorg-20-init-7208-g631bcbe9de13.patch",
         "llvmorg-21-init-2651-gbac417107339.patch",
+        "llvmorg-22-init-4745-gbe179d069664.patch",
         "win64-ret-null-on-commitment-limit_clang_14.patch",
         "android-hardware-buffer-header-workaround.patch",
         "arm64e-hack.patch",

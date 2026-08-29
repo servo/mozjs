@@ -106,17 +106,15 @@ def config_status(
     """
 
     if "CONFIG_FILES" in os.environ:
-        raise Exception(
-            "Using the CONFIG_FILES environment variable is not " "supported."
-        )
+        raise Exception("Using the CONFIG_FILES environment variable is not supported.")
     if "CONFIG_HEADERS" in os.environ:
         raise Exception(
-            "Using the CONFIG_HEADERS environment variable is not " "supported."
+            "Using the CONFIG_HEADERS environment variable is not supported."
         )
 
     if not os.path.isabs(topsrcdir):
         raise Exception(
-            "topsrcdir must be defined as an absolute directory: " "%s" % topsrcdir
+            "topsrcdir must be defined as an absolute directory: %s" % topsrcdir
         )
 
     default_backends = ["RecursiveMake"]

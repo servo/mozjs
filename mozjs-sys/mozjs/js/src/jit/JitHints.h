@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,11 +8,15 @@
 #include "mozilla/BloomFilter.h"
 #include "mozilla/HashTable.h"
 #include "mozilla/LinkedList.h"
+#include "jit/ICState.h"
 #include "jit/JitOptions.h"
 #include "vm/BytecodeLocation.h"
 #include "vm/JSScript.h"
 
 namespace js::jit {
+
+class ICFallbackStub;
+class ICScript;
 
 /*
  *
@@ -34,6 +36,8 @@ class JitHintsMap {
   using ScriptKey = HashNumber;
   ScriptKey getScriptKey(JSScript* script) const;
 
+  static constexpr uint32_t ICModeHintMaxEntries = 128;
+
   /* Ion Hints
    * -------------------------------------------------------------------------
    * This implementation uses a combination of a HashMap and PriorityQueue
@@ -51,8 +55,14 @@ class JitHintsMap {
    * Each IonHint object also contains a list of bytecode offsets for locations
    * of monomorphic inline calls that is used as a hint for future compilations.
    *
+   * Each IonHint also stores a bitmap of IC sites that reached Megamorphic
+   * mode, allowing those ICs to skip directly to Megamorphic on the next
+   * compilation.
+   *
    */
   class IonHint : public mozilla::LinkedListElement<IonHint> {
+    friend class JitHintsMap;
+
     ScriptKey key_ = 0;
 
     // We use a value of 0 to indicate that the script has not entered Ion
@@ -64,10 +74,20 @@ class JitHintsMap {
     // a state of monomorphic inline.
     Vector<uint32_t, 0, SystemAllocPolicy> monomorphicInlineOffsets;
 
-   public:
-    explicit IonHint(ScriptKey key) { key_ = key; }
+    // Bitmap of IC sites that reached Megamorphic mode, one bit per IC.
+    static_assert(ICModeHintMaxEntries % 32 == 0);
+    uint32_t icModeHints_[ICModeHintMaxEntries / 32];
+    uint32_t numICModeHints_ = 0;
 
-    void initThreshold(uint32_t threshold) { threshold_ = threshold; }
+    void resetICHints() {
+      memset(icModeHints_, 0, sizeof(icModeHints_));
+      numICModeHints_ = 0;
+    }
+
+   public:
+    explicit IonHint(ScriptKey key) : key_(key) { resetICHints(); }
+
+    void setThreshold(uint32_t threshold) { threshold_ = threshold; }
 
     uint32_t threshold() { return threshold_; }
 
@@ -100,6 +120,19 @@ class JitHintsMap {
       return monomorphicInlineOffsets.append(newOffset);
     }
 
+    bool hasICModeHints() const { return numICModeHints_ > 0; }
+    uint32_t numICModeHints() const { return numICModeHints_; }
+
+    bool isMegamorphicHint(uint32_t index) const {
+      MOZ_ASSERT(index < numICModeHints_);
+      return (icModeHints_[index / 32] >> (index % 32)) & 1;
+    }
+
+    void setMegamorphicHint(uint32_t index) {
+      MOZ_ASSERT(index < ICModeHintMaxEntries);
+      icModeHints_[index / 32] |= 1u << (index % 32);
+    }
+
     ScriptKey key() {
       MOZ_ASSERT(key_ != 0, "Should have valid key.");
       return key_;
@@ -111,7 +144,7 @@ class JitHintsMap {
               js::SystemAllocPolicy>;
   using IonHintPriorityQueue = mozilla::LinkedList<IonHint>;
 
-  static constexpr uint32_t InvalidationThresholdIncrement = 500;
+  static constexpr uint32_t InvalidationThresholdIncrement = 200;
   static constexpr uint32_t IonHintMaxEntries = 5000;
   static constexpr uint32_t MonomorphicInlineMaxEntries = 16;
 
@@ -165,6 +198,9 @@ class JitHintsMap {
 
   bool addMonomorphicInlineLocation(JSScript* script, BytecodeLocation loc);
   bool hasMonomorphicInlineHintAtOffset(JSScript* script, uint32_t offset);
+
+  bool shouldTransitionMegamorphic(JSScript* script, ICScript* icScript,
+                                   ICFallbackStub* stub);
 
   void recordInvalidation(JSScript* script);
 };

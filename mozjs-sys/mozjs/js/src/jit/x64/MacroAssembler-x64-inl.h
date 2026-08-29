@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -84,18 +82,28 @@ void MacroAssembler::notPtr(Register reg) { notq(reg); }
 
 void MacroAssembler::andPtr(Register src, Register dest) { andq(src, dest); }
 
-void MacroAssembler::andPtr(Imm32 imm, Register dest) { andq(imm, dest); }
+void MacroAssembler::andPtr(Imm32 imm, Register dest) {
+  if (imm.value >= 0) {
+    andl(imm, dest);
+  } else {
+    andq(imm, dest);
+  }
+}
 
 void MacroAssembler::andPtr(Imm32 imm, Register src, Register dest) {
   if (src != dest) {
     movq(src, dest);
   }
-  andq(imm, dest);
+  andPtr(imm, dest);
 }
 
 void MacroAssembler::and64(Imm64 imm, Register64 dest) {
   if (INT32_MIN <= int64_t(imm.value) && int64_t(imm.value) <= INT32_MAX) {
-    andq(Imm32(imm.value), dest.reg);
+    if (int32_t(imm.value) >= 0) {
+      andl(Imm32(imm.value), dest.reg);
+    } else {
+      andq(Imm32(imm.value), dest.reg);
+    }
   } else {
     ScratchRegisterScope scratch(*this);
     movq(ImmWord(uintptr_t(imm.value)), scratch);
@@ -288,6 +296,14 @@ void MacroAssembler::mulHighUnsigned32(Imm32 imm, Register src, Register dest) {
 
 void MacroAssembler::mulPtr(Register rhs, Register srcDest) {
   imulq(rhs, srcDest);
+}
+
+void MacroAssembler::mul64(const Register64& rhs, const Register64& srcDest) {
+  imulq(rhs.reg, srcDest.reg);
+}
+
+void MacroAssembler::mulPtr(ImmWord rhs, Register srcDest) {
+  mul64(Imm64(rhs.value), Register64(srcDest));
 }
 
 void MacroAssembler::mul64(Imm64 imm, const Register64& dest,
@@ -637,7 +653,7 @@ void MacroAssembler::popcnt64(Register64 src64, Register64 dest64,
 
   ScratchRegisterScope scratch(*this);
 
-  // Equivalent to mozilla::CountPopulation32, adapted for 64 bits.
+  // Equivalent to popcnt32, adapted for 64 bits.
   // x -= (x >> 1) & m1;
   movq(src, tmp);
   movq(ImmWord(0x5555555555555555), scratch);
@@ -930,6 +946,13 @@ void MacroAssembler::branchTestMagic(Condition cond, const Address& valaddr,
   j(cond, label);
 }
 
+void MacroAssembler::branchTestMagic(Condition cond, const BaseIndex& valaddr,
+                                     JSWhyMagic why, Label* label) {
+  uint64_t magic = MagicValue(why).asRawBits();
+  cmpPtr(Operand(valaddr), ImmWord(magic));
+  j(cond, label);
+}
+
 template <typename T>
 void MacroAssembler::branchTestValue(Condition cond, const T& lhs,
                                      const ValueOperand& rhs, Label* label) {
@@ -1090,6 +1113,88 @@ void MacroAssembler::spectreBoundsCheckPtr(Register index,
   }
 }
 
+// ===============================================================
+// 128-bit arithmetic
+
+void MacroAssembler::wasmAddSubI128HI64(Register lhsLo, Register lhsHi,
+                                        Register rhsLo, Register rhsHi,
+                                        Register output, bool isAdd) {
+  // Require (all targets): the output is not the same as any of the inputs.
+  MOZ_ASSERT(output != lhsLo && output != lhsHi && output != rhsLo &&
+             output != rhsHi);
+  // Set the carry flag (indicating carry or borrow, respectively) from the
+  // low-half operation, but ignore the actual result.
+  movq(lhsLo, output);
+  if (isAdd) {
+    addq(rhsLo, output);
+  } else {
+    subq(rhsLo, output);
+  }
+  // Then compute the high half result and roll the carry flag into it.
+  movq(lhsHi, output);
+  if (isAdd) {
+    adcq(rhsHi, output);
+  } else {
+    sbbq(rhsHi, output);
+  }
+}
+
+void MacroAssembler::wasmMulI64WideHI64(Register lhs, Register rhs,
+                                        Register temp0, Register temp1,
+                                        Register output, bool isSigned) {
+  // Require: lhs, rhs, temp0, temp1 and output are distinct
+  const Register regs[5] = {lhs, rhs, temp0, temp1, output};
+  for (uint32_t i = 0; i < 5; i++) {
+    for (uint32_t j = 0; j < i; j++) {
+      MOZ_RELEASE_ASSERT(regs[i] != regs[j]);
+    }
+  }
+  // Require: lhs is in RAX and rhs is in RDX.
+  MOZ_RELEASE_ASSERT(lhs == rax);
+  MOZ_RELEASE_ASSERT(rhs == rdx);
+  // Hence we are also assured that output != RDX and output != RAX.
+
+  // Generate absurd hoop-jumping as required by x86_64:
+  //   movq rax, temp0
+  //       temp0   holds  original RAX
+  //   movq rdx, temp1
+  //       temp0   holds  original RAX
+  //       temp1   holds  original RDX
+  //   {i}mulq rdx
+  //       temp0   holds  original RAX
+  //       temp1   holds  original RDX
+  //       rdx     holds  resultHI
+  //       rax     holds  resultLO
+  //   movq rdx, output
+  //       temp0   holds  original RAX
+  //       temp1   holds  original RDX
+  //       rdx     holds  resultHI
+  //       rax     holds  resultLO
+  //       output  holds  resultHI
+  //   movq temp0, rax
+  //       temp0   holds  original RAX
+  //       temp1   holds  original RDX
+  //       rdx     holds  resultHI
+  //       rax     holds  original RAX
+  //       output  holds  resultHI
+  //   movq temp1, rdx
+  //       temp0   holds  original RAX
+  //       temp1   holds  original RDX
+  //       rdx     holds  original RDX
+  //       rax     holds  original RAX
+  //       output  holds  resultHI
+  movq(rax, temp0);
+  movq(rdx, temp1);
+  if (isSigned) {
+    imulq(rdx);
+  } else {
+    umulq(rdx);
+  }
+  movq(rdx, output);
+  movq(temp0, rax);
+  movq(temp1, rdx);
+}
+
 // ========================================================================
 // SIMD.
 
@@ -1216,6 +1321,38 @@ void MacroAssembler::fallibleUnboxPtr(const Address& src, Register dest,
 void MacroAssembler::fallibleUnboxPtr(const BaseIndex& src, Register dest,
                                       JSValueType type, Label* fail) {
   fallibleUnboxPtrImpl(Operand(src), dest, type, fail);
+}
+
+void MacroAssembler::min32(Register lhs, Register rhs, Register dest) {
+  minMax32(lhs, rhs, dest, /* isMax = */ false);
+}
+
+void MacroAssembler::min32(Register lhs, Imm32 rhs, Register dest) {
+  minMax32(lhs, rhs, dest, /* isMax = */ false);
+}
+
+void MacroAssembler::max32(Register lhs, Register rhs, Register dest) {
+  minMax32(lhs, rhs, dest, /* isMax = */ true);
+}
+
+void MacroAssembler::max32(Register lhs, Imm32 rhs, Register dest) {
+  minMax32(lhs, rhs, dest, /* isMax = */ true);
+}
+
+void MacroAssembler::minPtr(Register lhs, Register rhs, Register dest) {
+  minMaxPtr(lhs, rhs, dest, /* isMax = */ false);
+}
+
+void MacroAssembler::minPtr(Register lhs, ImmWord rhs, Register dest) {
+  minMaxPtr(lhs, rhs, dest, /* isMax = */ false);
+}
+
+void MacroAssembler::maxPtr(Register lhs, Register rhs, Register dest) {
+  minMaxPtr(lhs, rhs, dest, /* isMax = */ true);
+}
+
+void MacroAssembler::maxPtr(Register lhs, ImmWord rhs, Register dest) {
+  minMaxPtr(lhs, rhs, dest, /* isMax = */ true);
 }
 
 //}}} check_macroassembler_style

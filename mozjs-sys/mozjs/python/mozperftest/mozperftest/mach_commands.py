@@ -77,6 +77,8 @@ def run_perftest(command_context, **kwargs):
             kwargs["flavor"] = script_info.script_type.name
         elif script_info.script_type == ScriptType.alert:
             kwargs["flavor"] = script_info.script_type.name
+        elif script_info.script_type == ScriptType.eval_mochitest:
+            kwargs["flavor"] = "eval-mochitest"
         elif "flavor" not in kwargs:
             # we set the value only if not provided (so "mobile-browser"
             # can be picked)
@@ -197,6 +199,143 @@ def _run_tests(command_context, **kwargs):
         venv, "coverage", ["report"], display=True
     ):
         raise ValueError("Coverage is too low!")
+
+
+@Command(
+    "perfdocs",
+    category="testing",
+    description="Generate performance testing documentation",
+    virtualenv_name="lint",
+)
+@CommandArgument(
+    "--generate",
+    action="store_true",
+    default=False,
+    help="Regenerate the documentation",
+)
+@CommandArgument(
+    "--regen-variants",
+    action="store_true",
+    default=False,
+    help="Regenerate the variants in the documentation.",
+)
+@CommandArgument(
+    "--output-file",
+    default=None,
+    help="Path to write lint errors as JSON (same format as mach lint --format json)",
+)
+@CommandArgument(
+    "paths",
+    nargs="*",
+    default=None,
+    help="Paths to include (default: all perfdocs locations)",
+)
+def perfdocs(
+    command_context,
+    generate=False,
+    regen_variants=False,
+    output_file=None,
+    paths=None,
+    **kwargs,
+):
+    import json
+    import logging
+    import pathlib
+    from collections import defaultdict
+
+    from mozperftest.perfdocs.perfdocs import run_perfdocs
+
+    topsrcdir = pathlib.Path(command_context.topsrcdir)
+
+    class ReviewbotLogger:
+        def __init__(self, log):
+            self._log = log
+            self.issues = defaultdict(list)
+
+        def info(self, msg):
+            self._log(logging.INFO, "perfdocs", {}, msg)
+
+        def lint_error(
+            self, message, lineno=0, column=None, path=None, linter=None, rule=None
+        ):
+            location = f"{path}:{lineno}" if path else "unknown"
+            self._log(
+                logging.ERROR,
+                "perfdocs",
+                {},
+                f"TEST-UNEXPECTED-ERROR: {message} ({location})",
+            )
+
+            # Path from PerfDocLogger is relative, sometimes with a leading slash
+            if path:
+                p = pathlib.Path(path)
+                relpath = p.relative_to("/") if p.is_absolute() else p
+                abs_path = topsrcdir / relpath
+            else:
+                relpath = ""
+                abs_path = ""
+            self.issues.setdefault(str(relpath), []).append({
+                "linter": linter,
+                "path": str(abs_path),
+                "lineno": lineno or 0,
+                "column": column,
+                "message": message,
+                "hint": None,
+                "source": None,
+                "level": "error",
+                "rule": rule,
+                "lineoffset": None,
+                "diff": None,
+                "relpath": str(relpath),
+            })
+
+        def critical(self, msg):
+            self._log(logging.ERROR, "perfdocs", {}, msg)
+
+    logger = ReviewbotLogger(command_context.log)
+
+    if not paths:
+        try:
+            from mozversioncontrol import get_repository_object
+
+            vcs = get_repository_object(str(topsrcdir))
+            changed = set(vcs.get_changed_files("AM", mode="all"))
+            changed.update(vcs.get_outgoing_files("AM"))
+            # The "AM" filter is applied per commit, so a file modified in
+            # one commit and deleted in a later one is still captured. Keep
+            # only the paths that still exist, otherwise run_perfdocs errors
+            # trying to lint a deleted file.
+            paths = [str(topsrcdir / p) for p in changed if (topsrcdir / p).exists()]
+        except Exception as e:
+            logger.info(f"Failed to get modified files: {e}")
+
+        if not paths:
+            # TODO: Bug 2036346 - Rework how paths are handled for perfdocs
+            paths = [
+                str(topsrcdir / "python" / "mozperftest"),
+                str(topsrcdir / "testing" / "awsy"),
+                str(topsrcdir / "testing" / "raptor"),
+                str(topsrcdir / "testing" / "talos"),
+                str(topsrcdir / "testing" / "performance" / "mach-try-perf"),
+                str(topsrcdir / "dom" / "indexedDB" / "test"),
+            ]
+
+    failed = run_perfdocs(
+        config=None,
+        logger=logger,
+        paths=paths,
+        generate=generate,
+        regen_variants=regen_variants,
+    )
+
+    if output_file:
+        with open(output_file, "w", encoding="utf-8") as fh:
+            json.dump(dict(logger.issues) or {}, fh)
+
+    if failed:
+        logger.critical("[TEST-UNEXPECTED-ERROR] Perfdocs need to be regenerated.")
+        return 1
+    return 0
 
 
 @Command(

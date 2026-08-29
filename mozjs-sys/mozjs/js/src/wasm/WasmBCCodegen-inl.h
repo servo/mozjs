@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -156,8 +154,16 @@ RegF32 BaseCompiler::captureReturnedF32(const FunctionCall& call) {
   MOZ_ASSERT(isAvailableF32(r));
   needF32(r);
 #if defined(JS_CODEGEN_ARM)
-  if (call.usesSystemAbi && !call.hardFP) {
+  if ((call.abiKind == ABIKind::System) && !call.hardFP) {
     masm.ma_vxfer(ReturnReg, r);
+  }
+#elif defined(JS_CODEGEN_X86)
+  if (call.abiKind == ABIKind::System) {
+    masm.reserveStack(sizeof(float));
+    Operand op(esp, 0);
+    masm.fstp32(op);
+    masm.loadFloat32(op, ReturnFloat32Reg);
+    masm.freeStack(sizeof(float));
   }
 #endif
   return r;
@@ -168,8 +174,16 @@ RegF64 BaseCompiler::captureReturnedF64(const FunctionCall& call) {
   MOZ_ASSERT(isAvailableF64(r));
   needF64(r);
 #if defined(JS_CODEGEN_ARM)
-  if (call.usesSystemAbi && !call.hardFP) {
+  if ((call.abiKind == ABIKind::System) && !call.hardFP) {
     masm.ma_vxfer(ReturnReg64.low, ReturnReg64.high, r);
+  }
+#elif defined(JS_CODEGEN_X86)
+  if (call.abiKind == ABIKind::System) {
+    masm.reserveStack(sizeof(double));
+    Operand op(esp, 0);
+    masm.fstp(op);
+    masm.loadDouble(op, ReturnDoubleReg);
+    masm.freeStack(sizeof(double));
   }
 #endif
   return r;
@@ -195,7 +209,25 @@ RegRef BaseCompiler::captureReturnedRef() {
 //
 // Miscellaneous.
 
-void BaseCompiler::trap(Trap t) const { masm.wasmTrap(t, trapSiteDesc()); }
+void BaseCompiler::trap(Trap t) {
+  masm.wasmTrap(t, trapSiteDesc());
+
+  if (MOZ_LIKELY(!compilerEnv_.debugEnabled())) {
+    return;
+  }
+
+  masm.propagateOOM(
+      createStackMap("BaseCompiler::trap", HasDebugFrameWithLiveRefs::Maybe));
+}
+
+void BaseCompiler::trap(Trap t, const TrapSiteDesc& trapSite,
+                        StackMap* stackMap) {
+  masm.wasmTrap(t, trapSite);
+
+  if (stackMap && !stackMaps_->add(masm.currentOffset(), stackMap)) {
+    masm.setOOM();
+  }
+}
 
 void BaseCompiler::cmp64Set(Assembler::Condition cond, RegI64 lhs, RegI64 rhs,
                             RegI32 dest) {

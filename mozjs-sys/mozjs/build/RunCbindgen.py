@@ -71,19 +71,17 @@ def generate_metadata(output, cargo_config):
 
 
 def generate(output, metadata_path, cbindgen_crate_path, *in_tree_dependencies):
-    stdout, returncode = _run_process(
-        [
-            buildconfig.substs["CBINDGEN"],
-            buildconfig.topsrcdir,
-            "--lockfile",
-            CARGO_LOCK,
-            "--crate",
-            _get_crate_name(cbindgen_crate_path),
-            "--metadata",
-            metadata_path,
-            "--cpp-compat",
-        ]
-    )
+    stdout, returncode = _run_process([
+        buildconfig.substs["CBINDGEN"],
+        buildconfig.topsrcdir,
+        "--lockfile",
+        CARGO_LOCK,
+        "--crate",
+        _get_crate_name(cbindgen_crate_path),
+        "--metadata",
+        metadata_path,
+        "--cpp-compat",
+    ])
 
     if returncode != 0:
         return returncode

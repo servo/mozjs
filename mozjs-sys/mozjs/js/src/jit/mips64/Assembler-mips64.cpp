@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,14 +8,12 @@
 #include "mozilla/Maybe.h"
 
 #include "jit/AutoWritableJitCode.h"
+#include "wasm/WasmFrame.h"
 
 using mozilla::DebugOnly;
 
 using namespace js;
 using namespace js::jit;
-
-ABIArgGenerator::ABIArgGenerator()
-    : regIndex_(0), stackOffset_(0), current_() {}
 
 ABIArg ABIArgGenerator::next(MIRType type) {
   static_assert(NumIntArgRegs == NumFloatArgRegs);
@@ -163,6 +159,8 @@ void Assembler::Bind(uint8_t* rawCode, const CodeLabel& label) {
 }
 
 void Assembler::bind(InstImm* inst, uintptr_t branch, uintptr_t target) {
+  UseScratchRegisterScope temps(*this);
+
   int64_t offset = target - branch;
   InstImm inst_bgezal = InstImm(op_regimm, zero, rt_bgezal, BOffImm16(0));
   InstImm inst_beq = InstImm(op_beq, zero, zero, BOffImm16(0));
@@ -179,9 +177,10 @@ void Assembler::bind(InstImm* inst, uintptr_t branch, uintptr_t target) {
   // address after the reserved block.
   if (inst[0].encode() == inst_bgezal.encode()) {
     addLongJump(BufferOffset(branch), BufferOffset(target));
-    Assembler::WriteLoad64Instructions(inst, ScratchRegister,
+    Register scratch = temps.Acquire();
+    Assembler::WriteLoad64Instructions(inst, scratch,
                                        LabelBase::INVALID_OFFSET);
-    inst[4] = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr).encode();
+    inst[4] = InstReg(op_special, scratch, zero, ra, ff_jalr).encode();
     // There is 1 nop after this.
     return;
   }
@@ -205,16 +204,16 @@ void Assembler::bind(InstImm* inst, uintptr_t branch, uintptr_t target) {
     return;
   }
 
+  Register scratch = temps.Acquire();
   if (inst[0].encode() == inst_beq.encode()) {
     // Handle long unconditional jump.
     addLongJump(BufferOffset(branch), BufferOffset(target));
-    Assembler::WriteLoad64Instructions(inst, ScratchRegister,
+    Assembler::WriteLoad64Instructions(inst, scratch,
                                        LabelBase::INVALID_OFFSET);
 #ifdef MIPSR6
-    inst[4] =
-        InstReg(op_special, ScratchRegister, zero, zero, ff_jalr).encode();
+    inst[4] = InstReg(op_special, scratch, zero, zero, ff_jalr).encode();
 #else
-    inst[4] = InstReg(op_special, ScratchRegister, zero, zero, ff_jr).encode();
+    inst[4] = InstReg(op_special, scratch, zero, zero, ff_jr).encode();
 #endif
     // There is 1 nop after this.
   } else {
@@ -222,13 +221,12 @@ void Assembler::bind(InstImm* inst, uintptr_t branch, uintptr_t target) {
     inst[0] = invertBranch(inst[0], BOffImm16(7 * sizeof(uint32_t)));
     // No need for a "nop" here because we can clobber scratch.
     addLongJump(BufferOffset(branch + sizeof(uint32_t)), BufferOffset(target));
-    Assembler::WriteLoad64Instructions(&inst[1], ScratchRegister,
+    Assembler::WriteLoad64Instructions(&inst[1], scratch,
                                        LabelBase::INVALID_OFFSET);
 #ifdef MIPSR6
-    inst[5] =
-        InstReg(op_special, ScratchRegister, zero, zero, ff_jalr).encode();
+    inst[5] = InstReg(op_special, scratch, zero, zero, ff_jalr).encode();
 #else
-    inst[5] = InstReg(op_special, ScratchRegister, zero, zero, ff_jr).encode();
+    inst[5] = InstReg(op_special, scratch, zero, zero, ff_jr).encode();
 #endif
     // There is 1 nop after this.
   }
@@ -268,11 +266,11 @@ uint64_t Assembler::ExtractLoad64Value(Instruction* inst0) {
   InstImm* i5 = (InstImm*)i3->next()->next();
 
   MOZ_ASSERT(i0->extractOpcode() == ((uint32_t)op_lui >> OpcodeShift));
-  MOZ_ASSERT(i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
+  MOZ_ASSERT(i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift) ||
+             i1->extractOpcode() == ((uint32_t)op_daddiu >> OpcodeShift));
   MOZ_ASSERT(i3->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
 
-  if ((i2->extractOpcode() == ((uint32_t)op_special >> OpcodeShift)) &&
-      (i2->extractFunctionField() == ff_dsrl32)) {
+  if (i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift)) {
     uint64_t value = (uint64_t(i0->extractImm16Value()) << 32) |
                      (uint64_t(i1->extractImm16Value()) << 16) |
                      uint64_t(i3->extractImm16Value());
@@ -280,8 +278,8 @@ uint64_t Assembler::ExtractLoad64Value(Instruction* inst0) {
   }
 
   MOZ_ASSERT(i5->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
-  uint64_t value = (uint64_t(i0->extractImm16Value()) << 48) |
-                   (uint64_t(i1->extractImm16Value()) << 32) |
+  uint64_t value = ((uint64_t(i0->extractImm16Value()) << 48) +
+                    ((int64_t(i1->extractImm16Value()) << 48) >> 16)) |
                    (uint64_t(i3->extractImm16Value()) << 16) |
                    uint64_t(i5->extractImm16Value());
   return value;
@@ -295,11 +293,11 @@ void Assembler::UpdateLoad64Value(Instruction* inst0, uint64_t value) {
   InstImm* i5 = (InstImm*)i3->next()->next();
 
   MOZ_ASSERT(i0->extractOpcode() == ((uint32_t)op_lui >> OpcodeShift));
-  MOZ_ASSERT(i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
+  MOZ_ASSERT(i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift) ||
+             i1->extractOpcode() == ((uint32_t)op_daddiu >> OpcodeShift));
   MOZ_ASSERT(i3->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
 
-  if ((i2->extractOpcode() == ((uint32_t)op_special >> OpcodeShift)) &&
-      (i2->extractFunctionField() == ff_dsrl32)) {
+  if (i1->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift)) {
     i0->setImm16(Imm16::Lower(Imm32(value >> 32)));
     i1->setImm16(Imm16::Upper(Imm32(value)));
     i3->setImm16(Imm16::Lower(Imm32(value)));
@@ -308,7 +306,7 @@ void Assembler::UpdateLoad64Value(Instruction* inst0, uint64_t value) {
 
   MOZ_ASSERT(i5->extractOpcode() == ((uint32_t)op_ori >> OpcodeShift));
 
-  i0->setImm16(Imm16::Upper(Imm32(value >> 32)));
+  i0->setImm16(Imm16::Upper(Imm32((value >> 32) + 0x8000)));
   i1->setImm16(Imm16::Lower(Imm32(value >> 32)));
   i3->setImm16(Imm16::Upper(Imm32(value)));
   i5->setImm16(Imm16::Lower(Imm32(value)));
@@ -322,7 +320,7 @@ void Assembler::WriteLoad64Instructions(Instruction* inst0, Register reg,
 
   *inst0 = InstImm(op_lui, zero, reg, Imm16::Lower(Imm32(value >> 32)));
   *inst1 = InstImm(op_ori, reg, reg, Imm16::Upper(Imm32(value)));
-  *inst2 = InstReg(op_special, rs_one, reg, reg, 48 - 32, ff_dsrl32);
+  *inst2 = InstReg(op_special, rs_zero, reg, reg, 16, ff_dsll);
   *inst3 = InstImm(op_ori, reg, reg, Imm16::Lower(Imm32(value)));
 }
 
@@ -363,7 +361,8 @@ void Assembler::ToggleCall(CodeLocationLabel inst_, bool enabled) {
 
   if (enabled) {
     MOZ_ASSERT(i4->extractOpcode() != ((uint32_t)op_lui >> OpcodeShift));
-    InstReg jalr = InstReg(op_special, ScratchRegister, zero, ra, ff_jalr);
+    InstReg jalr = InstReg(op_special, Register::FromCode(i3->extractRT()),
+                           zero, ra, ff_jalr);
     *i4 = jalr;
   } else {
     InstNOP nop;
