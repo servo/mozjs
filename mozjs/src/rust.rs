@@ -1483,7 +1483,6 @@ pub mod wrappers2 {
     use crate::jsapi::BigInt;
     use crate::jsapi::CallArgs;
     use crate::jsapi::CloneDataPolicy;
-    use crate::jsapi::ColumnNumberOneOrigin;
     use crate::jsapi::CompartmentTransplantCallback;
     use crate::jsapi::ESClass;
     use crate::jsapi::EnvironmentChain;
@@ -1526,7 +1525,6 @@ pub mod wrappers2 {
     use crate::jsapi::Symbol;
     use crate::jsapi::SymbolCode;
     use crate::jsapi::TaggedColumnNumberOneOrigin;
-    use crate::jsapi::TranscodeBuffer;
     use crate::jsapi::TwoByteChars;
     use crate::jsapi::UniqueChars;
     use crate::jsapi::Value;
