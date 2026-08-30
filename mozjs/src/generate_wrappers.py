@@ -43,49 +43,6 @@ def grep_functions(file_path: Path) -> list[tuple[str, str | None]]:
     ]
 
 
-def grep_heur(file_path: Path) -> list[str]:
-    def no_link_name(fn: tuple[str, str | None]) -> str:
-        sig, _ = fn
-        return sig
-
-    def filter_pre(line: str) -> bool:
-        return (
-            "Handle" in line
-            and "roxyHandler" not in line
-            and "JS::IdVector" not in line
-            and "pub fn Unbox" not in line
-            and "CopyAsyncStack" not in line
-            and "MutableHandleObjectVector" not in line
-            # macro cannot handle *const Handle
-            and "fn SetPropertyIgnoringNamedGetter" not in line
-        )
-
-    def replace_in_line(line: str) -> str:
-        return (
-            line.replace("root::", "")
-            .replace("JS::", "")
-            .replace("js::", "")
-            .replace("mozilla::", "")
-            .replace("Handle<*mut JSObject>", "HandleObject")
-        )
-
-    def filter_post(line: str) -> bool:
-        return (
-            # We are only wrapping handles in args not in results
-            "-> Handle" not in line and "-> MutableHandle" not in line
-        )
-
-    return list(
-        filter(
-            filter_post,
-            map(
-                replace_in_line,
-                filter(filter_pre, map(no_link_name, grep_functions(file_path))),
-            ),
-        )
-    )
-
-
 # print(grep_functions(Path("./target/wrap_jsapi.rs")))
 # exit(0)
 
@@ -175,7 +132,5 @@ def find_latest_version_of_file_and_parse(
     write_file(out_file, wrapped_lines)
 
 
-find_latest_version_of_file_and_parse("jsapi.rs", "jsapi", grep_heur)
-find_latest_version_of_file_and_parse("gluebindings.rs", "glue", grep_heur)
 find_latest_version_of_file_and_parse("jsapi.rs", "jsapi", grep_heur2, "2")
 find_latest_version_of_file_and_parse("gluebindings.rs", "glue", grep_heur2, "2")
