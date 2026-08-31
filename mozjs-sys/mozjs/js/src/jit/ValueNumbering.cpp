@@ -1,11 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/ValueNumbering.h"
 
+#include "jit/BranchPruning.h"
 #include "jit/IonAnalysis.h"
 #include "jit/JitSpewer.h"
 #include "jit/MIRGenerator.h"
@@ -118,9 +117,53 @@ bool ValueNumberer::VisibleValues::has(const MDefinition* def) const {
 // Call MDefinition::justReplaceAllUsesWith, and add some GVN-specific asserts.
 static void ReplaceAllUsesWith(MDefinition* from, MDefinition* to) {
   MOZ_ASSERT(from != to, "GVN shouldn't try to replace a value with itself");
-  MOZ_ASSERT(from->type() == to->type(), "Def replacement has different type");
+  MOZ_ASSERT(from->type() == to->type(),
+             "Def replacement has different MIR type");
   MOZ_ASSERT(!to->isDiscarded(),
              "GVN replaces an instruction by a removed instruction");
+
+  // Update the node's wasm ref type to the GLB of the two nodes being combined.
+  // This ensures that any type-based optimizations downstream remain correct.
+  //
+  // We use the GLB instead of the LUB because if two nodes have different ref
+  // types, but are determined to represent the same value, then it is safe to
+  // choose the most precise type available, which is the GLB.
+  //
+  // By comparison, consider MPhi::computeWasmRefType, which takes the LUB of
+  // all operands. This is necessary because each operand is a different value,
+  // and we must conservatively choose a type that can represent all values.
+  // However, this case is different: when two nodes are congruentTo each other,
+  // they are the *same value*, and anything we know to be true of one is true
+  // of the other. Therefore, we can safely choose the GLB.
+  //
+  // For example, if we had two WasmNullConstants with types (ref null i31) and
+  // (ref null struct), it would still be valid to mark these nulls as
+  // congruent. The type of the resulting null constant could safely be (ref
+  // null none), the GLB, rather than (ref null eq), the LUB. (This example is
+  // somewhat moot because we directly set WasmNullConstants to have type (ref
+  // null none) anyway, but it demonstrates the principle.)
+  //
+  // However, nulls can also trigger strange GVN situations downstream. For
+  // example, consider this test case that we exercise in wasm/gc/ref-gvn.js:
+  //
+  // ```
+  // ref.null $s1
+  // struct.get $s1 0
+  // ref.null $s2
+  // struct.get $s2 0
+  // ```
+  //
+  // The nulls may be combined by GVN, and then the struct.gets may also be
+  // combined because they have the same input and offset. GVN needs some kind
+  // of type for the new struct.get, and the input types may be anything
+  // depending on the struct's field types, so a general GLB is the natural
+  // solution. Does it make sense to find the common ref type between `(field
+  // i31ref)` and `(field structref)`, potentially? Not really, but since
+  // struct.get will trap on a null input anyway, it doesn't really matter.
+  wasm::MaybeRefType glb = wasm::MaybeRefType::greatestLowerBound(
+      from->wasmRefType(), to->wasmRefType());
+  MOZ_RELEASE_ASSERT(glb.isNothing() || glb.value().isInhabitable());
+  to->setWasmRefType(glb);
 
   // We don't need the extra setting of ImplicitlyUsed flags that the regular
   // replaceAllUsesWith does because we do it ourselves.
@@ -174,7 +217,7 @@ static bool BlockHasInterestingDefs(MBasicBlock* block) {
 // which look potentially interesting to GVN.
 static bool ScanDominatorsForDefs(MBasicBlock* block) {
   for (MBasicBlock* i = block;;) {
-    if (BlockHasInterestingDefs(block)) {
+    if (BlockHasInterestingDefs(i)) {
       return true;
     }
 
@@ -751,20 +794,19 @@ bool ValueNumberer::visitDefinition(MDefinition* def) {
       return false;
     }
 
+    wasm::MaybeRefType glb = wasm::MaybeRefType::greatestLowerBound(
+        def->wasmRefType(), sim->wasmRefType());
+    if (glb.isSome() && !glb.value().isInhabitable()) {
+      return true;
+    }
+
     bool isNewInstruction = sim->block() == nullptr;
 
     // If |sim| doesn't belong to a block, insert it next to |def|.
     if (isNewInstruction) {
 #ifdef DEBUG
-      if (sim->isObjectKeysLength() && def->isArrayLength()) {
-        // /!\ Exception: MArrayLength::foldsTo replaces a sequence of
-        // instructions containing an effectful instruction by an effectful
-        // instruction.
-      } else {
-        // Otherwise, a new |sim| node mustn't be effectful when |def| wasn't
-        // effectful.
-        MOZ_ASSERT_IF(sim->isEffectful(), def->isEffectful());
-      }
+      // A new |sim| node mustn't be effectful when |def| wasn't effectful.
+      MOZ_ASSERT_IF(sim->isEffectful(), def->isEffectful());
 #endif
 
       // If both instructions are effectful, |sim| must have stolen the resume
@@ -776,6 +818,18 @@ bool ValueNumberer::visitDefinition(MDefinition* def) {
       def->block()->insertAfter(def->toInstruction(), sim->toInstruction());
     }
 
+    // Get rid of flags that are meaningless for wasm and that hinder dead code
+    // removal below.  Do this separately for |def| and |sim| to guard against
+    // future scenarios where they come from different (JS-vs-wasm) worlds.
+    // See bug 1969987.  This is an interim fix to a larger problem, as
+    // described in bug 1973635.
+    if (def->isGuardRangeBailouts() && def->block()->info().compilingWasm()) {
+      def->setNotGuardRangeBailoutsUnchecked();
+    }
+    if (sim->isGuardRangeBailouts() && sim->block()->info().compilingWasm()) {
+      sim->setNotGuardRangeBailoutsUnchecked();
+    }
+
 #ifdef JS_JITSPEW
     JitSpew(JitSpew_GVN, "      Folded %s%u to %s%u", def->opName(), def->id(),
             sim->opName(), sim->id());
@@ -783,8 +837,8 @@ bool ValueNumberer::visitDefinition(MDefinition* def) {
     MOZ_ASSERT(!sim->isDiscarded());
     ReplaceAllUsesWith(def, sim);
 
-    // The node's foldsTo said |def| can be replaced by |rep|. If |def| is a
-    // guard, then either |rep| is also a guard, or a guard isn't actually
+    // The node's foldsTo said |def| can be replaced by |sim|. If |def| is a
+    // guard, then either |sim| is also a guard, or a guard isn't actually
     // needed, so we can clear |def|'s guard flag and let it be discarded.
     def->setNotGuardUnchecked();
 
@@ -840,6 +894,12 @@ bool ValueNumberer::visitDefinition(MDefinition* def) {
   if (rep != def) {
     if (rep == nullptr) {
       return false;
+    }
+
+    wasm::MaybeRefType glb = wasm::MaybeRefType::greatestLowerBound(
+        def->wasmRefType(), rep->wasmRefType());
+    if (glb.isSome() && !glb.value().isInhabitable()) {
+      return true;
     }
 
     if (rep->isPhi()) {
@@ -1239,7 +1299,7 @@ bool ValueNumberer::cleanupOSRFixups() {
   return RemoveUnmarkedBlocks(mir_, graph_, numMarked);
 }
 
-ValueNumberer::ValueNumberer(MIRGenerator* mir, MIRGraph& graph)
+ValueNumberer::ValueNumberer(const MIRGenerator* mir, MIRGraph& graph)
     : mir_(mir),
       graph_(graph),
       // Initialize the value set. It's tempting to pass in a length that is a

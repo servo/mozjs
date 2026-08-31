@@ -1,10 +1,7 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/EnumeratedArray.h"
 #include "mozilla/EnumTypeTraits.h"
 
@@ -22,7 +19,7 @@ using TestArray = EnumeratedArray<AnimalSpecies, int>;
 void TestInitialValueByConstructor() {
   // Style 1
   TestArray headCount(1, 2, 3);
-  MOZ_RELEASE_ASSERT(mozilla::ArrayLength(headCount) == 3);
+  MOZ_RELEASE_ASSERT(std::size(headCount) == 3);
   MOZ_RELEASE_ASSERT(headCount[AnimalSpecies::Cow] == 1);
   MOZ_RELEASE_ASSERT(headCount[AnimalSpecies::Sheep] == 2);
   MOZ_RELEASE_ASSERT(headCount[AnimalSpecies::Pig] == 3);

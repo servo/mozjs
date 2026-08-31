@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -261,9 +259,9 @@ class SharedContext {
   bool hasExplicitUseStrict() const { return hasExplicitUseStrict_; }
   void setExplicitUseStrict() { hasExplicitUseStrict_ = true; }
 
-  ImmutableScriptFlags immutableFlags() { return immutableFlags_; }
+  ImmutableScriptFlags immutableFlags() const { return immutableFlags_; }
 
-  bool allBindingsClosedOver() { return bindingsAccessedDynamically(); }
+  bool allBindingsClosedOver() const { return bindingsAccessedDynamically(); }
 
   // The ImmutableFlag tracks if the entire script is strict, while the
   // localStrict flag indicates the current region (such as class body) should
@@ -277,7 +275,7 @@ class SharedContext {
     return retVal;
   }
 
-  bool isEligibleForArgumentsLength() {
+  bool isEligibleForArgumentsLength() const {
     return eligibleForArgumentsLength && !bindingsAccessedDynamically();
   }
   void setIneligibleForArgumentsLength() { eligibleForArgumentsLength = false; }
@@ -490,6 +488,7 @@ class FunctionBox : public SuspendableContext {
     }
   }
 
+  [[nodiscard]] bool setUseAsm();
   [[nodiscard]] bool setAsmJSModule(const JS::WasmModule* module);
   bool isAsmJSModule() const { return flags_.isAsmJSNative(); }
 
@@ -564,7 +563,7 @@ class FunctionBox : public SuspendableContext {
 
   bool isInterpreted() const { return flags_.hasBaseScript(); }
 
-  FunctionFlags::FunctionKind kind() { return flags_.kind(); }
+  FunctionFlags::FunctionKind kind() const { return flags_.kind(); }
 
   bool hasInferredName() const { return flags_.hasInferredName(); }
   bool hasGuessedAtom() const { return flags_.hasGuessedAtom(); }
@@ -681,7 +680,7 @@ class FunctionBox : public SuspendableContext {
     }
   }
 
-  uint16_t length() { return length_; }
+  uint16_t length() const { return length_; }
   void setLength(uint16_t length) { length_ = length; }
 
   void setArgCount(uint16_t args) {
@@ -689,7 +688,7 @@ class FunctionBox : public SuspendableContext {
     nargs_ = args;
   }
 
-  size_t nargs() { return nargs_; }
+  size_t nargs() const { return nargs_; }
 
   const MemberInitializers& memberInitializers() const {
     MOZ_ASSERT(useMemberInitializers());
@@ -704,7 +703,7 @@ class FunctionBox : public SuspendableContext {
     }
   }
 
-  ScriptIndex index() { return funcDataIndex_; }
+  ScriptIndex index() const { return funcDataIndex_; }
 
   void finishScriptFlags();
   void copyFunctionFields(ScriptStencil& script);

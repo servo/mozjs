@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,28 +13,6 @@
 #define _PR_MD_DISABLE_CLOCK_INTERRUPTS()
 #define _PR_MD_ENABLE_CLOCK_INTERRUPTS()
 
-#if defined(BSDI)
-/*
- * Mutex and condition attributes are not supported.  The attr
- * argument to pthread_mutex_init() and pthread_cond_init() must
- * be passed as NULL.
- *
- * The memset calls in _PT_PTHREAD_MUTEX_INIT and _PT_PTHREAD_COND_INIT
- * are to work around BSDI's using a single bit to indicate a mutex
- * or condition variable is initialized.  This entire BSDI section
- * will go away when BSDI releases updated threads libraries for
- * BSD/OS 3.1 and 4.0.
- */
-#define _PT_PTHREAD_MUTEXATTR_INIT(x)     0
-#define _PT_PTHREAD_MUTEXATTR_DESTROY(x)  /* */
-#define _PT_PTHREAD_MUTEX_INIT(m, a)      (memset(&(m), 0, sizeof(m)), \
-                                      pthread_mutex_init(&(m), NULL))
-#define _PT_PTHREAD_MUTEX_IS_LOCKED(m)    (EBUSY == pthread_mutex_trylock(&(m)))
-#define _PT_PTHREAD_CONDATTR_INIT(x)      0
-#define _PT_PTHREAD_CONDATTR_DESTROY(x)   /* */
-#define _PT_PTHREAD_COND_INIT(m, a)       (memset(&(m), 0, sizeof(m)), \
-                                      pthread_cond_init(&(m), NULL))
-#else
 #define _PT_PTHREAD_MUTEXATTR_INIT        pthread_mutexattr_init
 #define _PT_PTHREAD_MUTEXATTR_DESTROY     pthread_mutexattr_destroy
 #define _PT_PTHREAD_MUTEX_INIT(m, a)      pthread_mutex_init(&(m), &(a))
@@ -53,7 +30,6 @@
 #define _PT_PTHREAD_CONDATTR_DESTROY      pthread_condattr_destroy
 #endif
 #define _PT_PTHREAD_COND_INIT(m, a)       pthread_cond_init(&(m), &(a))
-#endif
 
 /* The pthreads standard does not specify an invalid value for the
  * pthread_t handle.  (0 is usually an invalid pthread identifier
@@ -86,10 +62,9 @@
  */
 #if defined(AIX) || defined(SOLARIS) \
     || defined(LINUX) || defined(__GNU__) || defined(__GLIBC__) \
-    || defined(HPUX) || defined(FREEBSD) \
-    || defined(NETBSD) || defined(OPENBSD) || defined(BSDI) \
+    || defined(FREEBSD) || defined(NETBSD) || defined(OPENBSD) \
     || defined(NTO) || defined(DARWIN) \
-    || defined(UNIXWARE) || defined(RISCOS)
+    || defined(RISCOS)
 #define _PT_PTHREAD_INVALIDATE_THR_HANDLE(t)  (t) = 0
 #define _PT_PTHREAD_THR_HANDLE_IS_INVALID(t)  (t) == 0
 #define _PT_PTHREAD_COPY_THR_HANDLE(st, dt)   (dt) = (st)
@@ -115,7 +90,6 @@
 #if (defined(AIX) && !defined(AIX4_3_PLUS)) \
     || defined(LINUX) || defined(__GNU__)|| defined(__GLIBC__) \
     || defined(FREEBSD) || defined(NETBSD) || defined(OPENBSD) \
-    || defined(BSDI) || defined(UNIXWARE) \
     || defined(DARWIN)
 #define PT_NO_SIGTIMEDWAIT
 #endif
@@ -128,10 +102,6 @@
 #endif
 #define PT_PRIO_MIN            DEFAULT_PRIO
 #define PT_PRIO_MAX            DEFAULT_PRIO
-#elif defined(HPUX)
-#include <sys/sched.h>
-#define PT_PRIO_MIN            sched_get_priority_min(SCHED_OTHER)
-#define PT_PRIO_MAX            sched_get_priority_max(SCHED_OTHER)
 #elif defined(LINUX) || defined(__GNU__) || defined(__GLIBC__) \
     || defined(FREEBSD)
 #define PT_PRIO_MIN            sched_get_priority_min(SCHED_OTHER)
@@ -157,7 +127,7 @@
 #define PT_PRIO_MIN            0
 #define PT_PRIO_MAX            31
 #elif defined(NETBSD) \
-    || defined(BSDI) || defined(DARWIN) || defined(UNIXWARE) \
+    || defined(DARWIN) \
     || defined(RISCOS) /* XXX */
 #define PT_PRIO_MIN            0
 #define PT_PRIO_MAX            126
@@ -173,11 +143,11 @@
 #if defined(AIX)
 extern int (*_PT_aix_yield_fcn)();
 #define _PT_PTHREAD_YIELD()         (*_PT_aix_yield_fcn)()
-#elif defined(HPUX) || defined(SOLARIS) \
+#elif defined(SOLARIS) \
     || defined(LINUX) || defined(__GNU__) || defined(__GLIBC__) \
     || defined(FREEBSD) || defined(NETBSD) || defined(OPENBSD) \
-    || defined(BSDI) || defined(NTO) || defined(DARWIN) \
-    || defined(UNIXWARE) || defined(RISCOS)
+    || defined(NTO) || defined(DARWIN) \
+    || defined(RISCOS)
 #define _PT_PTHREAD_YIELD()             sched_yield()
 #else
 #error "Need to define _PT_PTHREAD_YIELD for this platform"

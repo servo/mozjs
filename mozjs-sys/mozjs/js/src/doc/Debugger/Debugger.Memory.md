@@ -296,7 +296,6 @@ which produces a result like this:
       "other": {
         "js::Shape":        { "count": 450, "bytes": 0 },
         "js::BaseShape":    { "count": 21,  "bytes": 0 },
-        "js::ObjectGroup":  { "count": 17,  "bytes": 0 }
       },
       "domNode": {
         "#text":            { "count": 1,   "bytes": 12 }
@@ -434,7 +433,6 @@ In general, a `breakdown` value has one of the following forms:
         "js::Shape":       { "count": 450, "bytes": 0 },
         "JSObject":        { "count": 426, "bytes": 44160 },
         "js::BaseShape":   { "count": 21,  "bytes": 0 },
-        "js::ObjectGroup": { "count": 17,  "bytes": 0 },
         "JSScript":        { "count": 1,   "bytes": 0 }
       }
 

@@ -11,7 +11,7 @@ import time
 from subprocess import PIPE, Popen
 
 
-class TaskPool(object):
+class TaskPool:
     # Run a series of subprocesses. Try to keep up to a certain number going in
     # parallel at any given time. Enforce time limits.
     #
@@ -25,7 +25,7 @@ class TaskPool(object):
 
     # A task we should run in a subprocess. Users should subclass this and
     # fill in the methods as given.
-    class Task(object):
+    class Task:
         def __init__(self):
             self.pipe = None
             self.start_time = None
@@ -78,7 +78,7 @@ class TaskPool(object):
     def run_all(self):
         # The currently running tasks: a set of Task instances.
         running = set()
-        with open(os.devnull, "r") as devnull:
+        with open(os.devnull) as devnull:
             while True:
                 while len(running) < self.job_limit and self.next_pending:
                     task = self.next_pending
@@ -169,7 +169,6 @@ class TaskPool(object):
                 # Remove the finished tasks from the running set. (Do this here
                 # to avoid mutating the set while iterating over it.)
                 running -= finished
-        return None
 
 
 def get_cpu_count():
@@ -211,11 +210,11 @@ if __name__ == "__main__":
 
         class SortableTask(TaskPool.Task):
             def __init__(self, n):
-                super(SortableTask, self).__init__()
+                super().__init__()
                 self.n = n
 
             def start(self, pipe, deadline):
-                super(SortableTask, self).start(pipe, deadline)
+                super().start(pipe, deadline)
 
             def cmd(self):
                 return ["sh", "-c", "echo out; sleep %d; echo err>&2" % (self.n,)]

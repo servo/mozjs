@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -57,7 +55,6 @@ static MOZ_ALWAYS_INLINE void PodSet(T* aDst, const T& aSrc, size_t aNElem) {
 const uint8_t JS_FRESH_NURSERY_PATTERN = 0x2F;
 const uint8_t JS_SWEPT_NURSERY_PATTERN = 0x2B;
 const uint8_t JS_ALLOCATED_NURSERY_PATTERN = 0x2D;
-const uint8_t JS_NOTINUSE_TRAILER_PATTERN = 0x43;
 const uint8_t JS_FRESH_TENURED_PATTERN = 0x4F;
 const uint8_t JS_MOVED_TENURED_PATTERN = 0x49;
 const uint8_t JS_SWEPT_TENURED_PATTERN = 0x4B;
@@ -66,11 +63,14 @@ const uint8_t JS_FREED_HEAP_PTR_PATTERN = 0x6B;
 const uint8_t JS_FREED_CHUNK_PATTERN = 0x8B;
 const uint8_t JS_FREED_ARENA_PATTERN = 0x9B;
 const uint8_t JS_FRESH_MARK_STACK_PATTERN = 0x9F;
+const uint8_t JS_FREED_BUFFER_PATTERN = 0xAB;
+const uint8_t JS_ALLOCATED_BUFFER_PATTERN = 0xAD;
 const uint8_t JS_RESET_VALUE_PATTERN = 0xBB;
 const uint8_t JS_POISONED_JSSCRIPT_DATA_PATTERN = 0xDB;
 const uint8_t JS_OOB_PARSE_NODE_PATTERN = 0xFF;
 const uint8_t JS_LIFO_UNDEFINED_PATTERN = 0xcd;
 const uint8_t JS_LIFO_UNINITIALIZED_PATTERN = 0xce;
+const uint8_t JS_SWEPT_CONT_STACK_PATTERN = 0x5B;
 
 // Even ones
 const uint8_t JS_SCOPE_DATA_TRAILING_NAMES_PATTERN = 0xCC;
@@ -85,7 +85,7 @@ const uint8_t JS_SCOPE_DATA_TRAILING_NAMES_PATTERN = 0xCC;
 #  define JS_SWEPT_CODE_PATTERN 0xED  // IN instruction, crashes in user mode.
 #elif defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)
 #  define JS_SWEPT_CODE_PATTERN 0xA3  // undefined instruction
-#elif defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)
+#elif defined(JS_CODEGEN_MIPS64)
 #  define JS_SWEPT_CODE_PATTERN 0x01  // undefined instruction
 #elif defined(JS_CODEGEN_LOONG64)
 #  define JS_SWEPT_CODE_PATTERN 0x01  // undefined instruction

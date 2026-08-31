@@ -8,7 +8,7 @@ from ..result import Issue
 from ..util.string import pluralize
 
 
-class StylishFormatter(object):
+class StylishFormatter:
     """Formatter based on the eslint default."""
 
     _indent_ = "  "
@@ -17,19 +17,19 @@ class StylishFormatter(object):
     # doesn't support colors earlier in the list.
     # See http://www.calmar.ws/vim/256-xterm-24bit-rgb-color-chart.html
     _colors = {
-        "grey": [247, 8, 7],
-        "red": [1],
-        "green": [2],
-        "yellow": [3],
+        "blue": [4],
         "brightred": [9, 1],
         "brightyellow": [11, 3],
+        "darkgrey": [247, 8],
+        "green": [2],
+        "grey": [7],
+        "red": [1],
+        "yellow": [3],
     }
 
     fmt = """
-  {c1}{lineno}{column}  {c2}{level}{normal}  {message}  {c1}{rule}({linter}){normal}
-{diff}""".lstrip(
-        "\n"
-    )
+  {c1}{lineno}{column}  {c2}{level}{normal}  {message}  {c1}{rule}({linter}){source}{normal}
+{diff}""".lstrip("\n")
     fmt_summary = (
         "{t.bold}{c}\u2716 {problem} ({error}, {warning}{failure}, {fixed}){t.normal}"
     )
@@ -73,6 +73,27 @@ class StylishFormatter(object):
             new_diff += self._indent_ + line + "\n"
         return new_diff
 
+    def _get_colored_source(self, source):
+        if not source:
+            return ""
+
+        new_source = "\n"
+        for line in source.split("\n"):
+            divpos = 0
+            new_source += self._indent_ * 2
+            if "|" in line:
+                new_source += self.color("blue")
+                divpos = line.index("|") + 1
+                new_source += line[:divpos]
+
+            if line[divpos:].strip().startswith("^"):
+                new_source += self.color("red")
+            else:
+                new_source += self.color("grey")
+
+            new_source += line[divpos:] + "\n"
+        return new_source.rstrip("\n")
+
     def __call__(self, result):
         message = []
         failed = result.failed
@@ -103,17 +124,20 @@ class StylishFormatter(object):
 
                 args = {
                     "normal": self.term.normal,
-                    "c1": self.color("grey"),
-                    "c2": self.color("red")
-                    if err.level == "error"
-                    else self.color("yellow"),
+                    "c1": self.color("darkgrey"),
+                    "c2": (
+                        self.color("red")
+                        if err.level == "error"
+                        else self.color("yellow")
+                    ),
                     "lineno": str(err.lineno).rjust(self.max_lineno),
                     "column": col,
                     "level": err.level.ljust(self.max_level),
-                    "rule": "{} ".format(err.rule) if err.rule else "",
+                    "rule": f"{err.rule} " if err.rule else "",
                     "linter": err.linter.lower(),
                     "message": err.message.ljust(self.max_message),
-                    "diff": self._get_colored_diff(err.diff).ljust(self.max_message),
+                    "diff": self._get_colored_diff(err.diff),
+                    "source": self._get_colored_source(err.source),
                 }
                 message.append(self.fmt.format(**args).rstrip().rstrip("\n"))
 
@@ -131,25 +155,27 @@ class StylishFormatter(object):
         message.append(
             self.fmt_summary.format(
                 t=self.term,
-                c=self.color("brightred")
-                if num_errors or failed
-                else self.color("brightyellow"),
+                c=(
+                    self.color("brightred")
+                    if num_errors or failed
+                    else self.color("brightyellow")
+                ),
                 problem=pluralize("problem", num_errors + num_warnings + len(failed)),
                 error=pluralize("error", num_errors),
                 warning=pluralize(
                     "warning", num_warnings or result.total_suppressed_warnings
                 ),
-                failure=", {}".format(pluralize("failure", len(failed)))
-                if failed
-                else "",
-                fixed="{} fixed".format(num_fixed),
+                failure=(
+                    ", {}".format(pluralize("failure", len(failed))) if failed else ""
+                ),
+                fixed=f"{num_fixed} fixed",
             )
         )
 
         if result.total_suppressed_warnings > 0 and num_errors == 0:
             message.append(
                 "(pass {c1}-W/--warnings{c2} to see warnings.)".format(
-                    c1=self.color("grey"), c2=self.term.normal
+                    c1=self.color("darkgrey"), c2=self.term.normal
                 )
             )
 

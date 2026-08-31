@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,10 +5,8 @@
 #ifndef threading_Thread_h
 #define threading_Thread_h
 
-#include "mozilla/Atomics.h"
 #include "mozilla/TimeStamp.h"
 
-#include <stdint.h>
 #include <type_traits>
 #include <utility>
 
@@ -127,12 +123,11 @@ class Thread {
   // Allow threads to be moved so that they can be stored in containers.
   Thread(Thread&& aOther);
   Thread& operator=(Thread&& aOther);
-
- private:
   // Disallow copy as that's not sensible for unique resources.
   Thread(const Thread&) = delete;
   void operator=(const Thread&) = delete;
 
+ private:
   // Provide a process global ID to each thread.
   ThreadId id_;
 
@@ -216,7 +211,7 @@ class ThreadTrampoline {
     auto* pack = static_cast<ThreadTrampoline<F, Args...>*>(aPack);
     pack->callMain(std::index_sequence_for<Args...>{});
     js_delete(pack);
-    return 0;
+    return {};
   }
 
   template <size_t... Indices>

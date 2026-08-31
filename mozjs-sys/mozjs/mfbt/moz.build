@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -23,15 +21,16 @@ EXPORTS.mozilla = [
     "BinarySearch.h",
     "BitSet.h",
     "BloomFilter.h",
+    "BoundedMPSCQueue.h",
     "Buffer.h",
     "BufferList.h",
     "Casting.h",
     "ChaosMode.h",
     "Char16.h",
+    "CheckedArithmetic.h",
     "CheckedInt.h",
     "CompactPair.h",
     "Compiler.h",
-    "Compression.h",
     "DbgMacro.h",
     "DebugOnly.h",
     "DefineEnum.h",
@@ -69,7 +68,6 @@ EXPORTS.mozilla = [
     "MemoryChecking.h",
     "MemoryReporting.h",
     "MoveOnlyFunction.h",
-    "MPSCQueue.h",
     "MruCache.h",
     "NeverDestroyed.h",
     "NonDereferenceable.h",
@@ -96,6 +94,7 @@ EXPORTS.mozilla = [
     "Saturate.h",
     "ScopeExit.h",
     "SegmentedVector.h",
+    "SEH.h",
     "SHA1.h",
     "SharedLibrary.h",
     "SmallPointerArray.h",
@@ -106,7 +105,6 @@ EXPORTS.mozilla = [
     "StringBuffer.h",
     "TaggedAnonymousMemory.h",
     "Tainting.h",
-    "TemplateLib.h",
     "TextUtils.h",
     "ThreadLocal.h",
     "ThreadSafety.h",
@@ -117,7 +115,7 @@ EXPORTS.mozilla = [
     "Types.h",
     "UniquePtr.h",
     "UniquePtrExtensions.h",
-    "Unused.h",
+    "UsingEnum.h",
     "Utf8.h",
     "Variant.h",
     "Vector.h",
@@ -151,15 +149,9 @@ if CONFIG["OS_ARCH"] == "WASI":
         "WasiAtomic.h",
     ]
 
-if CONFIG["MOZ_TSAN"]:
-    EXPORTS.mozilla += [
-        "TsanOptions.h",
-    ]
-
 UNIFIED_SOURCES += [
     "Assertions.cpp",
     "ChaosMode.cpp",
-    "Compression.cpp",
     "double-conversion/double-conversion/bignum-dtoa.cc",
     "double-conversion/double-conversion/bignum.cc",
     "double-conversion/double-conversion/cached-powers.cc",
@@ -170,13 +162,12 @@ UNIFIED_SOURCES += [
     "double-conversion/double-conversion/strtod.cc",
     "FloatingPoint.cpp",
     "HashFunctions.cpp",
-    "JSONWriter.cpp",
     "Poison.cpp",
     "RandomNum.cpp",
+    "RefCounted.cpp",
     "SHA1.cpp",
     "TaggedAnonymousMemory.cpp",
     "UniquePtrExtensions.cpp",
-    "Unused.cpp",
     "Utf8.cpp",
 ]
 
@@ -189,23 +180,17 @@ if CONFIG["MOZ_BUILD_APP"] not in (
 
 DEFINES["IMPL_MFBT"] = True
 
-SOURCES += [
-    "lz4/lz4.c",
-    "lz4/lz4file.c",
-    "lz4/lz4frame.c",
-    "lz4/lz4hc.c",
-    "lz4/xxhash.c",
-]
-
-SOURCES["lz4/xxhash.c"].flags += ["-Wno-unused-function"]
-
 DisableStlWrapping()
 
 OS_LIBS += CONFIG["LIBATOMIC_LIBS"]
 
-DEFINES["LZ4LIB_VISIBILITY"] = ""
+# For RefCounted.cpp
+DEFINES["MOZ_SUPPORT_LEAKCHECKING"] = True
 
 # This is kind of gross because this is not a subdirectory,
 # but pure_virtual requires mfbt to build and some projects
 # don't use mfbt.
 DIRS += ["../build/pure_virtual"]
+
+if CONFIG["MOZ_BUILD_APP"] != "memory":
+    FINAL_LIBRARY = "mozglue"

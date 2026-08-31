@@ -6,7 +6,7 @@
 #include "jit/riscv64/extension/extension-riscv-v.h"
 
 #ifdef CAN_USE_RVV
-#  include "src/codegen/assembler.h"
+#  include "jit/riscv64/base/Integer.h"
 #  include "jit/riscv64/constant/Constant-riscv64.h"
 #  include "jit/riscv64/extension/register-riscv.h"
 
@@ -495,7 +495,7 @@ void AssemblerRISCVV::GenInstrV(uint8_t funct6, OpcodeRISCVV opcode,
                                 MaskType mask) {
   MOZ_ASSERT(opcode == OP_FVV);
   Instr instr = (funct6 << kRvvFunct6Shift) | opcode | (mask << kRvvVmShift) |
-                ((fd.code() & 0x1F) << kRvvVdShift) |
+                ((fd.encoding() & 0x1F) << kRvvVdShift) |
                 ((vs1.code() & 0x1F) << kRvvVs1Shift) |
                 ((vs2.code() & 0x1F) << kRvvVs2Shift);
   emit(instr);
@@ -520,7 +520,7 @@ void AssemblerRISCVV::GenInstrV(uint8_t funct6, OpcodeRISCVV opcode,
   MOZ_ASSERT(opcode == OP_FVF);
   Instr instr = (funct6 << kRvvFunct6Shift) | opcode | (mask << kRvvVmShift) |
                 ((vd.code() & 0x1F) << kRvvVdShift) |
-                ((fs1.code() & 0x1F) << kRvvRs1Shift) |
+                ((fs1.encoding() & 0x1F) << kRvvRs1Shift) |
                 ((vs2.code() & 0x1F) << kRvvVs2Shift);
   emit(instr);
 }

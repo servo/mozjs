@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 // Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -29,18 +28,20 @@
 #ifndef jit_arm_Simulator_arm_h
 #define jit_arm_Simulator_arm_h
 
-#ifdef JS_SIMULATOR_ARM
+#ifndef JS_SIMULATOR_ARM
+#  error "simulator disabled"
+#endif
 
-#  include "mozilla/Atomics.h"
+#include "mozilla/Atomics.h"
 
-#  include "jit/arm/Architecture-arm.h"
-#  include "jit/arm/disasm/Disasm-arm.h"
-#  include "jit/IonTypes.h"
-#  include "js/AllocPolicy.h"
-#  include "js/ProfilingFrameIterator.h"
-#  include "threading/Thread.h"
-#  include "vm/MutexIDs.h"
-#  include "wasm/WasmSignalHandlers.h"
+#include "jit/arm/Architecture-arm.h"
+#include "jit/arm/disasm/Disasm-arm.h"
+#include "jit/IonTypes.h"
+#include "js/AllocPolicy.h"
+#include "js/ProfilingFrameIterator.h"
+#include "threading/Thread.h"
+#include "vm/MutexIDs.h"
+#include "wasm/WasmSignalHandlers.h"
 
 namespace js {
 namespace jit {
@@ -54,7 +55,7 @@ class AutoLockSimulator;
 // When the SingleStepCallback is called, the simulator is about to execute
 // sim->get_pc() and the current machine state represents the completed
 // execution of the previous pc.
-typedef void (*SingleStepCallback)(void* arg, Simulator* sim, void* pc);
+using SingleStepCallback = void (*)(void* arg, Simulator* sim, void* pc);
 
 // VFP rounding modes. See ARM DDI 0406B Page A2-29.
 enum VFPRoundingMode {
@@ -72,7 +73,7 @@ enum VFPRoundingMode {
 
 const uint32_t kVFPRoundingModeMask = 3 << 22;
 
-typedef int32_t Instr;
+using Instr = int32_t;
 class SimInstruction;
 
 // Per thread simulator state.
@@ -319,8 +320,8 @@ class Simulator {
   //
   // AllowUnaligned means "allow the unaligned access if other conditions are
   // met".  The "other conditions" vary with the instruction: For all
-  // instructions the base condition is !HasAlignmentFault(), ie, the chip is
-  // configured to allow unaligned accesses.  For instructions like VLD1
+  // instructions the base condition is !ARMFlags::HasAlignmentFault(), ie, the
+  // chip is configured to allow unaligned accesses.  For instructions like VLD1
   // there is an additional constraint that the alignment attribute in the
   // instruction must be set to "default alignment".
 
@@ -444,6 +445,7 @@ class Simulator {
   void decodeVCVTBetweenDoubleAndSingle(SimInstruction* instr);
   void decodeVCVTBetweenFloatingPointAndInteger(SimInstruction* instr);
   void decodeVCVTBetweenFloatingPointAndIntegerFrac(SimInstruction* instr);
+  void decodeVCVTBetweenFloatingPointAndHalf(SimInstruction* instr);
 
   // Support for some system functions.
   void decodeType7CoprocessorIns(SimInstruction* instr);
@@ -566,14 +568,14 @@ class SimulatorProcess {
  private:
   // ICache checking.
   struct ICacheHasher {
-    typedef void* Key;
-    typedef void* Lookup;
+    using Key = void*;
+    using Lookup = void*;
     static HashNumber hash(const Lookup& l);
     static bool match(const Key& k, const Lookup& l);
   };
 
  public:
-  typedef HashMap<void*, CachePage*, ICacheHasher, SystemAllocPolicy> ICacheMap;
+  using ICacheMap = HashMap<void*, CachePage*, ICacheHasher, SystemAllocPolicy>;
 
   static mozilla::Atomic<size_t, mozilla::ReleaseAcquire>
       ICacheCheckingDisableCount;
@@ -626,7 +628,5 @@ class SimulatorProcess {
 
 }  // namespace jit
 }  // namespace js
-
-#endif /* JS_SIMULATOR_ARM */
 
 #endif /* jit_arm_Simulator_arm_h */

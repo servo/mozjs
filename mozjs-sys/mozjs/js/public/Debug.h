@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,16 +8,16 @@
 #define js_Debug_h
 
 #include "mozilla/Assertions.h"
-#include "mozilla/Attributes.h"
+#include "mozilla/BaseProfilerUtils.h"
 #include "mozilla/MemoryReporting.h"
-
-#include <utility>
+#include "mozilla/Vector.h"
 
 #include "jstypes.h"
 
 #include "js/GCAPI.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
+#include "js/Value.h"
 
 namespace js {
 class Debugger;
@@ -28,6 +26,489 @@ class Debugger;
 /* Defined in vm/Debugger.cpp. */
 extern JS_PUBLIC_API bool JS_DefineDebuggerObject(JSContext* cx,
                                                   JS::HandleObject obj);
+
+extern JS_PUBLIC_API const char* JS_GetLastOOMStackTrace(JSContext* cx);
+
+// If the JS execution tracer is running, this will generate a
+// ENTRY_KIND_LABEL_ENTER entry with the specified label.
+// The consumer of the trace can then, for instance, correlate all code running
+// after this entry and before the corresponding ENTRY_KIND_LABEL_LEAVE with the
+// provided label.
+// If the tracer is not running, this does nothing.
+extern JS_PUBLIC_API void JS_TracerEnterLabelLatin1(JSContext* cx,
+                                                    const char* label);
+extern JS_PUBLIC_API void JS_TracerEnterLabelTwoByte(JSContext* cx,
+                                                     const char16_t* label);
+
+extern JS_PUBLIC_API bool JS_TracerIsTracing(JSContext* cx);
+
+// If the JS execution tracer is running, this will generate a
+// ENTRY_KIND_LABEL_LEAVE entry with the specified label.
+// It is up to the consumer to decide what to do with a ENTRY_KIND_LABEL_LEAVE
+// entry is encountered without a corresponding ENTRY_KIND_LABEL_ENTER.
+// If the tracer is not running, this does nothing.
+extern JS_PUBLIC_API void JS_TracerLeaveLabelLatin1(JSContext* cx,
+                                                    const char* label);
+extern JS_PUBLIC_API void JS_TracerLeaveLabelTwoByte(JSContext* cx,
+                                                     const char16_t* label);
+
+#ifdef MOZ_EXECUTION_TRACING
+
+// This will begin execution tracing for the JSContext, i.e., this will begin
+// recording every entrance into / exit from a function for the given context.
+// The trace can be read via JS_TracerSnapshotTrace, and populates the
+// ExecutionTrace struct defined below.
+//
+// This throws if the code coverage is active for any realm in the context.
+extern JS_PUBLIC_API bool JS_TracerBeginTracing(JSContext* cx);
+
+// This ends execution tracing for the JSContext, discards the tracing
+// buffers, and clears some caches used for tracing. JS_TracerSnapshotTrace
+// should be called *before* JS_TracerEndTracing if you want to read the trace
+// data for this JSContext.
+extern JS_PUBLIC_API bool JS_TracerEndTracing(JSContext* cx);
+
+namespace JS {
+
+// Encoding values used for strings recorded via the tracer.
+enum class TracerStringEncoding {
+  Latin1,
+  TwoByte,
+  UTF8,
+};
+
+// Value Summary
+//
+// Value summaries are intended as a best effort, minimal representation of
+// values, for the purpose of understanding/debugging an application from a
+// recorded trace. At present, we record value summaries for the first
+// MAX_ARGUMENTS_TO_RECORD arguments of every function call we record when
+// tracing is enabled via JS_TracerBeginTracing above. Value summaries are
+// surfaced as a contiguous buffer which is intended to be read as needed
+// by looking up values as needed via the index in the `values` field of
+// FunctionEnter events in the recorded trace. There is a reader in the
+// Firefox Profiler frontend which unpacks the binary representation into
+// more easily understandable objects.
+//
+// Value Summary Types
+//
+// (NOTE: All values listed below use little-endian byte ordering)
+//
+// - List<T> - A list of at most MAX_COLLECTION_VALUES items and structured as
+//   follows:
+//      length:   uint32_t
+//      values:   T[min(length, MAX_COLLECTION_VALUES)]
+//
+// - NestedList<T> - If this is a field of ValueSummary which is not itself
+//   nested inside another ValueSummary, this will be the same as a List<T>.
+//   However, if it *is* nested, it will contain only the length:
+//      length:     uint32_t
+//      if not inside another ValueSummary ->
+//        values:   T[min(length, MAX_COLLECTION_VALUES)]
+//
+// - SmallString - a string limited to a length of SMALL_STRING_LENGTH_LIMIT,
+//   with the following structure:
+//      encodingAndLength:  uint16_t (encoding << 14 | length)
+//      payload:            CharT[length]
+//   The encoding is one of the values in TracerStringEncoding, and CharT is
+//   a char for Latin1 and UTF8, and a char16_t for TwoByte. It should be
+//   noted that the original string length before truncation to
+//   SMALL_STRING_LENGTH_LIMIT is not written, so it is not possible to
+//   distinguish between cases where a string had a true length of
+//   SMALL_STRING_LENGTH_LIMIT vs cases where a string was truncated.
+//
+// - Pair<T,U> - A pairing of a T followed immediately by a U
+//      first: T
+//      second: U
+//
+// Value Summary Structure
+//
+// (NOTE: Here and below, see Value Summary Types for more on what
+// the type annotations mean.)
+//
+//    typeAndFlags:   uint8_t (type << 4 | flags)
+//    payload:        see below
+//
+// The value payload's structure depends on the type and the flags:
+//
+//    JS::ValueType::Undefined ->       nothing
+//    JS::ValueType::Null ->            nothing
+//    JS::ValueType::Magic ->           nothing
+//      NOTE: JS::ValueType::Magic is only used for dense element holes.
+//    JS::ValueType::Boolean ->         nothing
+//      NOTE: For a JS::ValueType::Boolean, `flags` will hold `1` for `true`,
+//      and `0` for `false`.
+//    JS::ValueType::PrivateGCThing ->  unused
+//    JS::ValueType::BigInt ->          SmallString
+//    JS::ValueType::BigInt ->          SmallString
+//
+//    JS::ValueType::Int32:
+//      if flags != NUMBER_IS_OUT_OF_LINE_MAGIC -> nothing (see MIN_INLINE_INT)
+//      else ->                                    int32_t
+//
+//    JS::ValueType::Double:
+//      if flags != NUMBER_IS_OUT_OF_LINE_MAGIC -> nothing (value is +0)
+//      else ->                                    double
+//
+//    JS::ValueType::Symbol:
+//      if flags != SYMBOL_NO_DESCRIPTION ->       nothing
+//      else ->                                    SmallString
+//
+//    JS::ValueType::Object:
+//      See ObjectSummary
+struct ValueSummary {
+  enum Flags : uint8_t {
+    // If this is set, the object has an array of dense elements right
+    // after the shape summary id, which are implicitly keyed as the
+    // indices within the array.
+    GENERIC_OBJECT_HAS_DENSE_ELEMENTS = 1,
+
+    // If a symbol does not have a description, this is set.
+    SYMBOL_NO_DESCRIPTION = 1,
+
+    // If the type is numeric and the flags are equal to this, the value is
+    // stored immediately after the header. Otherwise, the value is stored
+    // directly in the flags. (See MIN_INLINE_INT)
+    NUMBER_IS_OUT_OF_LINE_MAGIC = 0xf,
+  };
+
+  // This value is written to the start of the value summaries buffer (see
+  // TracedJSContext::valueBuffer), and should be bumped every time the format
+  // is changed.
+  //
+  // Keep in mind to update
+  // js/src/jit-test/tests/debug/ExecutionTracer-traced-values.js
+  // VALUE_SUMMARY_VERSION value.
+  static const uint32_t VERSION = 2;
+
+  // If the type is an int and flags != Flags::NUMBER_IS_OUT_OF_LINE_MAGIC,
+  // the value is MIN_INLINE_INT + flags.
+  static const int32_t MIN_INLINE_INT = -1;
+  static const int32_t MAX_INLINE_INT = 13;
+
+  // Limit on the length of strings in traced value summaries.
+  static const size_t SMALL_STRING_LENGTH_LIMIT = 512;
+
+  // The max number of entries to record for general collection objects, such
+  // as arrays, sets, and maps. Additionally limits the number of indexed
+  // properties recorded for objects. This also limits the number of parameter
+  // names to record for Function objects.
+  static const size_t MAX_COLLECTION_VALUES = 16;
+
+  // The actual JS Value type.
+  JS::ValueType type : 4;
+
+  // See the Flags enum.
+  uint8_t flags : 4;
+
+  // A variable length payload may trail the type and flags. See the comment
+  // above this class.
+};
+
+// An ObjectSummary has the following structure:
+//
+//    kind:     uint8_t
+//    payload:  see below
+//
+// a structure determined by that kind and by the flags on the ValueSummary
+// The structure is as follows:
+//
+//    Kind::NotImplemented ->
+//      shapeSummaryId:     uint32_t (summary will only contain class name)
+//        NOTE - above, and where noted below, `shapeSummaryId` is included for
+//        the class name, but no property values corresponding to the
+//        shapeSummary's property names are present in `values`.
+//    Kind::ArrayLike ->
+//      shapeSummaryId:     uint32_t (summary will only contain class name)
+//      values:             NestedList<ValueSummary>
+//        NOTE - at present, ArrayObjects as well as SetObjects are serialized
+//        using the ArrayLike structure.
+//    Kind::MapLike ->
+//      shapeSummaryId:     uint32_t (summary will only contain class name)
+//      values:             NestedList<Pair<SmallString, ValueSummary>>
+//        NOTE - similar to ArrayLike, the property values noted by the shape
+//        are not present here.
+//    Kind::Function ->
+//      functionName:       SmallString
+//      parameterNames:
+//        values:           List<SmallString>
+//        NOTE - destructuring parameters become an empty string
+//    Kind::WrappedPrimitiveObject ->
+//      wrappedValue:       ValueSummary
+//      object:             same as GenericObject (shapeSummaryId, props, etc.)
+//    Kind::GenericObject ->
+//      shapeSummaryId:     uint32_t
+//      props:              NestedList<PropertySummary> (see below)
+//      if flags & GENERIC_OBJECT_HAS_DENSE_ELEMENTS ->
+//        denseElements:    NestedList<Pair<SmallString, ValueSummary>>
+//    Kind::External ->
+//      shapeSummaryId:     uint32_t (summary will only contain class name)
+//      externalSize:       uint32_t
+//      payload:            (defined by embeddings)
+//      The structure for Kind::External entries is defined by embeddings.
+//      Embedders can use the JS_SetCustomObjectSummaryCallback, which will
+//      define a callback for the tracer to call when tracing objects whose
+//      classes have the JSCLASS_IS_DOMJSCLASS flag. From within this callback
+//      the embedder should use the JS_TracerSummaryWriter interface to write
+//      the data however they see fit. SpiderMonkey will then populate the
+//      externalSize field with the amount written.
+//      NOTE: it is the embedders' responsibility to manage the versioning of
+//      their format.
+//    Kind::Error ->
+//      shapeSummaryId:     uint32_t (summary will only contain class name)
+//      name:               SmallString
+//      message:            SmallString
+//      stack:              SmallString
+//      filename:           SmallString
+//      lineNumber:         uint32_t
+//      columnNumber        uint32_t
+//
+// WrappedPrimitiveObjects and GenericObjects make use of a PropertySummary
+// type, defined here:
+//
+// - PropertySummary - A union of either a ValueSummary or the value
+//   GETTER_SETTER_MAGIC followed by two value summaries. I.e.:
+//      if the current byte in the stream is GETTER_SETTER_MAGIC ->
+//        magic:  uint8_t  (GETTER_SETTER_MAGIC)
+//        getter: ValueSummary
+//        setter: ValueSummary
+//      else ->
+//        value:  ValueSummary
+struct ObjectSummary {
+  // This is a special value for ValueSummary::typeAndFlags. It should be noted
+  // that this only works as long as 0xf is not a valid JS::ValueType.
+  static const uint8_t GETTER_SETTER_MAGIC = 0x0f;
+
+  enum class Kind : uint8_t {
+    NotImplemented,
+    ArrayLike,
+    MapLike,
+    Function,
+    WrappedPrimitiveObject,
+    GenericObject,
+    ProxyObject,
+    External,
+    Error,
+  };
+
+  Kind kind;
+
+  // A variable length payload may trail the kind. See the comment above this
+  // class.
+};
+
+// This is populated by JS_TracerSnapshotTrace and just represent a minimal
+// structure for natively representing an execution trace across a range of
+// JSContexts (see below). The core of the trace is an array of events, each of
+// which is a tagged union with data corresponding to that event. Events can
+// also point into various tables, and store all of their string data in a
+// contiguous UTF-8 stringBuffer (each string is null-terminated within the
+// buffer.)
+struct ExecutionTrace {
+  enum class EventKind : uint8_t {
+    FunctionEnter = 0,
+    FunctionLeave = 1,
+    LabelEnter = 2,
+    LabelLeave = 3,
+
+    // NOTE: the `Error` event has no TracedEvent payload, and will always
+    // represent the end of the trace when encountered.
+    Error = 4,
+  };
+
+  enum class ImplementationType : uint8_t {
+    Interpreter = 0,
+    Baseline = 1,
+    Ion = 2,
+    Wasm = 3,
+  };
+
+  // See the comment above the `values` field of TracedEvent::functionEvent
+  // for an explanation of how these constants apply.
+  static const uint32_t MAX_ARGUMENTS_TO_RECORD = 4;
+  static const int32_t ZERO_ARGUMENTS_MAGIC = -2;
+  static const int32_t EXPIRED_VALUES_MAGIC = -1;
+  static const int32_t FUNCTION_LEAVE_VALUES = -1;
+
+  struct TracedEvent {
+    EventKind kind;
+    union {
+      // For FunctionEnter / FunctionLeave
+      struct {
+        ImplementationType implementation;
+
+        // 1-origin line number of the function
+        uint32_t lineNumber;
+
+        // 1-origin column of the function
+        uint32_t column;
+
+        // Keys into the thread's scriptUrls HashMap. This key can be missing
+        // from the HashMap, although ideally that situation is rare (it is
+        // more likely in long running traces with *many* unique functions
+        // and/or scripts)
+        uint32_t scriptId;
+
+        // ID to the realm that the frame was in. It's used for finding which
+        // frame comes from which window/page.
+        uint64_t realmID;
+
+        // Keys into the thread's atoms HashMap. This key can be missing from
+        // the HashMap as well (see comment above scriptId)
+        uint32_t functionNameId;
+
+        // If this value is negative,
+        //    ZERO_ARGUMENTS_MAGIC indicates the function call had no arguments
+        //    EXPIRED_VALUES_MAGIC indicates the argument values have been
+        //      overwritten in the ring buffer.
+        //    FUNCTION_LEAVE_VALUES is simply a placeholder value for if this
+        //      functionEvent is a FunctionLeave
+        //      (TODO: we leave this here because we want to record return
+        //      values here, but this is not implemented yet.)
+        //
+        // If this value is non-negative, this is an index into the
+        // TracedJSContext::valueBuffer.
+        // At the specified index, if kind == EventKind::FunctionEnter, the
+        // call's arguments will be listed in the following format:
+        //      argc:     uint32_t
+        //      values:   ValueSummary[min(argc, MAX_ARGUMENTS_TO_RECORD)]
+        //
+        // Additionally, immediately preceding argc will be a uint16_t header
+        // containing the size of all of the serialized arguments plus
+        // the size of argc and the size of the uint16_t header itself.
+        int32_t values;
+      } functionEvent;
+
+      // For LabelEnter / LabelLeave
+      struct {
+        size_t label;  // Indexes directly into the trace's stringBuffer
+      } labelEvent;
+    };
+    // Milliseconds since process creation
+    double time;
+  };
+
+  // Represents the shape of a traced native object. Essentially this lets us
+  // deduplicate the property key array to one location and only store the
+  // dense array of property values for each object instance.
+  struct ShapeSummary {
+    // An identifier for the shape summary, which is referenced by object
+    // summaries recorded in the TracedJSContext::valueBuffer.
+    uint32_t id;
+
+    // This is the total number of properties for the shape excluding any
+    // dense elements on the object.
+    uint32_t numProperties;
+
+    // An index into the stringBuffer containing an array, beginning with the
+    // class name followed by the array of properties, which will have a length
+    // of min(numProperties, MAX_COLLECTION_VALUES). The property keys are for
+    // best effort end user comprehension, so for simplicity's sake we just
+    // represent all keys as strings, with symbols becoming
+    // "Symbol(<description>)". Note that this can result in duplicate keys in
+    // the array, when the keys are not actually duplicated on the underlying
+    // objects.
+    size_t stringBufferOffset;
+
+    // Consider the following example object:
+    //
+    // {
+    //    "0": 0,
+    //    "1": 0,
+    //    "2": 0,
+    //    [Symbol.for("prop1")]: 0,
+    //    "prop2": 0,
+    //    ...
+    //    "prop19": 0,
+    //    "prop20": 0,
+    // }
+    //
+    // This will result in a ShapeSummary with numProperties of 20, since "0",
+    // "1", and "2" are dense elements, and an array at `stringBufferOffset`
+    // looking something like:
+    //
+    // [
+    //    "Object", // The class name
+    //    "Symbol(prop1)",
+    //    "prop2",
+    //    ...
+    //    "prop15",
+    //    "prop16", // The sequence ends at MAX_COLLECTION_VALUES (16)
+    // ]
+  };
+
+  struct TracedJSContext {
+    mozilla::baseprofiler::BaseProfilerThreadId id;
+
+    // Maps ids to indices into the trace's stringBuffer
+    mozilla::HashMap<uint32_t, size_t> scriptUrls;
+
+    // Similar to scriptUrls
+    mozilla::HashMap<uint32_t, size_t> atoms;
+
+    // Holds any traced values, in the format defined above (See the
+    // ValueSummary type). The first 4 bytes of this buffer will contain
+    // the VERSION constant defined above.
+    mozilla::Vector<uint8_t> valueBuffer;
+
+    // Holds shape information for objects traced in the valueBuffer
+    mozilla::Vector<ShapeSummary> shapeSummaries;
+
+    mozilla::Vector<TracedEvent> events;
+  };
+
+  mozilla::Vector<char> stringBuffer;
+
+  // This will be populated with an entry for each context which had tracing
+  // enabled via JS_TracerBeginTracing.
+  mozilla::Vector<TracedJSContext> contexts;
+};
+}  // namespace JS
+
+// Captures the trace for all JSContexts in the process which are currently
+// tracing.
+extern JS_PUBLIC_API bool JS_TracerSnapshotTrace(JS::ExecutionTrace& trace);
+
+// Given that embeddings may want to add support for serializing their own
+// types, we expose here a means of registering a callback for serializing
+// them. The JS_TracerSummaryWriter exposes a means of writing common types
+// to the tracer's value ring buffer, and JS_SetCustomObjectSummaryCallback
+// sets a callback on the JSContext
+struct JS_TracerSummaryWriterImpl;
+
+struct JS_PUBLIC_API JS_TracerSummaryWriter {
+  JS_TracerSummaryWriterImpl* impl;
+
+  void writeUint8(uint8_t val);
+  void writeUint16(uint16_t val);
+  void writeUint32(uint32_t val);
+  void writeUint64(uint64_t val);
+
+  void writeInt8(int8_t val);
+  void writeInt16(int16_t val);
+  void writeInt32(int32_t val);
+  void writeInt64(int64_t val);
+
+  void writeUTF8String(const char* val);
+  void writeTwoByteString(const char16_t* val);
+
+  bool writeValue(JSContext* cx, JS::Handle<JS::Value> val);
+};
+
+// - `obj` is the object intended to be summarized.
+// - `nested` is true if this object is a nested property of another
+//   JS::ValueSummary being written.
+// - `writer` is an interface which should be used to write the serialized
+//   summary.
+using CustomObjectSummaryCallback = bool (*)(JSContext*,
+                                             JS::Handle<JSObject*> obj,
+                                             bool nested,
+                                             JS_TracerSummaryWriter* writer);
+
+extern JS_PUBLIC_API void JS_SetCustomObjectSummaryCallback(
+    JSContext* cx, CustomObjectSummaryCallback callback);
+
+#endif /* MOZ_EXECUTION_TRACING */
 
 namespace JS {
 namespace dbg {
@@ -301,52 +782,6 @@ JS_PUBLIC_API bool IsDebugger(JSObject& obj);
 // |dbgObj| to |vector|. Returns true on success, false on failure.
 JS_PUBLIC_API bool GetDebuggeeGlobals(JSContext* cx, JSObject& dbgObj,
                                       MutableHandleObjectVector vector);
-
-// Hooks for reporting where JavaScript execution began.
-//
-// Our performance tools would like to be able to label blocks of JavaScript
-// execution with the function name and source location where execution began:
-// the event handler, the callback, etc.
-//
-// Construct an instance of this class on the stack, providing a JSContext
-// belonging to the runtime in which execution will occur. Each time we enter
-// JavaScript --- specifically, each time we push a JavaScript stack frame that
-// has no older JS frames younger than this AutoEntryMonitor --- we will
-// call the appropriate |Entry| member function to indicate where we've begun
-// execution.
-
-class MOZ_STACK_CLASS JS_PUBLIC_API AutoEntryMonitor {
-  JSContext* cx_;
-  AutoEntryMonitor* savedMonitor_;
-
- public:
-  explicit AutoEntryMonitor(JSContext* cx);
-  ~AutoEntryMonitor();
-
-  // SpiderMonkey reports the JavaScript entry points occuring within this
-  // AutoEntryMonitor's scope to the following member functions, which the
-  // embedding is expected to override.
-  //
-  // It is important to note that |asyncCause| is owned by the caller and its
-  // lifetime must outlive the lifetime of the AutoEntryMonitor object. It is
-  // strongly encouraged that |asyncCause| be a string constant or similar
-  // statically allocated string.
-
-  // We have begun executing |function|. Note that |function| may not be the
-  // actual closure we are running, but only the canonical function object to
-  // which the script refers.
-  virtual void Entry(JSContext* cx, JSFunction* function,
-                     HandleValue asyncStack, const char* asyncCause) = 0;
-
-  // Execution has begun at the entry point of |script|, which is not a
-  // function body. (This is probably being executed by 'eval' or some
-  // JSAPI equivalent.)
-  virtual void Entry(JSContext* cx, JSScript* script, HandleValue asyncStack,
-                     const char* asyncCause) = 0;
-
-  // Execution of the function or script has ended.
-  virtual void Exit(JSContext* cx) {}
-};
 
 // Returns true if there's any debugger attached to the given context where
 // the debugger's "shouldAvoidSideEffects" property is true.

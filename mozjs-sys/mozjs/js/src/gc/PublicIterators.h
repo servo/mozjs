@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -35,9 +33,13 @@ class ZonesIter {
  public:
   ZonesIter(gc::GCRuntime* gc, ZoneSelector selector)
       : iterMarker(gc), it(gc->zones().begin()), end(gc->zones().end()) {
-    if (selector == SkipAtoms && !done()) {
-      MOZ_ASSERT(get()->isAtomsZone());
-      next();
+    // Don't use this off the main thread while sweeping zones.
+    MOZ_ASSERT(CurrentThreadCanAccessRuntime(gc->rt) ||
+               gc->state() != gc::State::Finalize);
+    if (selector == SkipAtoms) {
+      while (!done() && get()->isAtomsZone()) {
+        next();
+      }
     }
   }
   ZonesIter(JSRuntime* rt, ZoneSelector selector)

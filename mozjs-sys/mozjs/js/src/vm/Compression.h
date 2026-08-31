@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -31,15 +29,20 @@ class Compressor {
   static constexpr size_t MAX_INPUT_SIZE = 2 * 1024;
 
   z_stream zs;
-  const unsigned char* inp;
-  size_t inplen;
-  size_t outbytes;
-  bool initialized;
-  bool finished;
+  const unsigned char* inp = nullptr;
+  size_t inplen = 0;
+  size_t outbytes = 0;
+  bool finished = false;
+
+  // True if |zs| has been initialized by |init|.
+  bool initialized = false;
+
+  // Flag set to |false| after the first call to |setInput|.
+  bool isFirstInput = true;
 
   // The number of uncompressed bytes written for the current chunk. When this
   // reaches CHUNK_SIZE, we finish the current chunk and start a new chunk.
-  uint32_t currentChunkSize;
+  uint32_t currentChunkSize = 0;
 
   // At the end of each chunk (and the end of the uncompressed data if it's
   // not a chunk boundary), we record the offset in the compressed data.
@@ -48,9 +51,19 @@ class Compressor {
  public:
   enum Status { MOREOUTPUT, DONE, CONTINUE, OOM };
 
-  Compressor(const unsigned char* inp, size_t inplen);
+  Compressor();
   ~Compressor();
-  bool init();
+
+  Compressor(const Compressor&) = delete;
+  void operator=(const Compressor&) = delete;
+
+  // This should be called once per Compressor, before calling setInput.
+  [[nodiscard]] bool init();
+
+  // setInput can be called more than once, to compress multiple strings with
+  // minimal overhead. This will reset the compressor's state.
+  [[nodiscard]] bool setInput(const unsigned char* input, size_t inputLength);
+
   void setOutput(unsigned char* out, size_t outlen);
   /* Compress some of the input. Return true if it should be called again. */
   Status compressMore();

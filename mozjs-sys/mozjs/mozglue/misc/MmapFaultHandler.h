@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -78,23 +77,23 @@ inline bool ValidFD(T fd) {
   return !!fd;
 }
 
-#  define MMAP_FAULT_HANDLER_BEGIN_HANDLE(fd)                  \
-    {                                                          \
-      void* mmapScopeBuf = nullptr;                            \
-      nsCString mmapScopeFilename;                             \
-      uint32_t mmapScopeBufLen = 0;                            \
-      if (ValidFD(fd) && fd->mMap) {                           \
-        mmapScopeBuf = (void*)fd->mFileStart;                  \
-        mmapScopeBufLen = fd->mTotalLen;                       \
-      }                                                        \
-      if (ValidFD(fd) && fd->mFile) {                          \
-        nsCOMPtr<nsIFile> file = fd->mFile.GetBaseFile();      \
-        if (file) {                                            \
-          file->GetNativeLeafName(mmapScopeFilename);          \
-        }                                                      \
-      }                                                        \
-      MmapAccessScope mmapScope(mmapScopeBuf, mmapScopeBufLen, \
-                                mmapScopeFilename.get());      \
+#  define MMAP_FAULT_HANDLER_BEGIN_HANDLE(fd)                   \
+    {                                                           \
+      void* mmapScopeBuf = nullptr;                             \
+      nsCString mmapScopeFilename;                              \
+      uint32_t mmapScopeBufLen = 0;                             \
+      if (ValidFD(fd) && fd->mFileStart && fd->mTotalLen > 0) { \
+        mmapScopeBuf = (void*)fd->mFileStart;                   \
+        mmapScopeBufLen = fd->mTotalLen;                        \
+      }                                                         \
+      if (ValidFD(fd) && fd->mFile) {                           \
+        nsCOMPtr<nsIFile> file = fd->mFile.GetBaseFile();       \
+        if (file) {                                             \
+          file->GetNativeLeafName(mmapScopeFilename);           \
+        }                                                       \
+      }                                                         \
+      MmapAccessScope mmapScope(mmapScopeBuf, mmapScopeBufLen,  \
+                                mmapScopeFilename.get());       \
       if (sigsetjmp(mmapScope.mJmpBuf, 0) == 0) {
 #  define MMAP_FAULT_HANDLER_BEGIN_BUFFER(buf, bufLen)   \
     {                                                    \

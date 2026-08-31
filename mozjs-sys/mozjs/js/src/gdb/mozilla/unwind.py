@@ -49,7 +49,6 @@ SizeOfFramePrefix = {
     "FrameType::BaselineStub": "BaselineStubFrameLayout",
     "FrameType::CppToJSJit": "JitFrameLayout",
     "FrameType::WasmToJSJit": "JitFrameLayout",
-    "FrameType::JSJitToWasm": "JitFrameLayout",
     "FrameType::Rectifier": "RectifierFrameLayout",
     "FrameType::IonAccessorIC": "IonAccessorICFrameLayout",
     "FrameType::IonICCall": "IonICCallFrameLayout",
@@ -60,7 +59,7 @@ SizeOfFramePrefix = {
 
 # We cannot have semi-colon as identifier names, so use a colon instead,
 # and forward the name resolution to the type cache class.
-class UnwinderTypeCacheFrameType(object):
+class UnwinderTypeCacheFrameType:
     def __init__(self, tc):
         self.tc = tc
 
@@ -76,7 +75,7 @@ class UnwinderTypeCache(TypeCache):
         self.d = None
         self.frame_enum_names = {}
         self.frame_class_types = {}
-        super(UnwinderTypeCache, self).__init__(None)
+        super().__init__(None)
 
     # We take this bizarre approach to defer trying to look up any
     # symbols until absolutely needed.  Without this, the loading
@@ -98,7 +97,7 @@ class UnwinderTypeCache(TypeCache):
 
     def initialize(self):
         self.d = {}
-        self.d["FRAMETYPE_MASK"] = (1 << self.jit_value("FRAMETYPE_BITS")) - 1
+        self.d["FRAMETYPE_MASK"] = self.jit_value("FrameDescriptor::TypeMask")
         self.d["FRAMESIZE_SHIFT"] = self.jit_value("FRAMESIZE_SHIFT")
         self.d["FRAME_HEADER_SIZE_SHIFT"] = self.jit_value("FRAME_HEADER_SIZE_SHIFT")
         self.d["FRAME_HEADER_SIZE_MASK"] = self.jit_value("FRAME_HEADER_SIZE_MASK")
@@ -145,7 +144,7 @@ class UnwinderTypeCache(TypeCache):
             self.frame_class_types[enumval] = class_type.pointer()
 
 
-class FrameSymbol(object):
+class FrameSymbol:
     "A symbol/value pair as expected from gdb frame decorators."
 
     def __init__(self, sym, val):
@@ -165,7 +164,7 @@ class JitFrameDecorator(FrameDecorator):
     JIT frame in the stack."""
 
     def __init__(self, base, info, cache):
-        super(JitFrameDecorator, self).__init__(base)
+        super().__init__(base)
         self.info = info
         self.cache = cache
 
@@ -175,10 +174,10 @@ class JitFrameDecorator(FrameDecorator):
         calleetoken = calleetoken ^ tag
         function = None
         script = None
-        if (
-            tag == self.cache.CalleeToken_Function
-            or tag == self.cache.CalleeToken_FunctionConstructing
-        ):
+        if tag in {
+            self.cache.CalleeToken_Function,
+            self.cache.CalleeToken_FunctionConstructing,
+        }:
             value = gdb.Value(calleetoken)
             function = get_function_name(value, self.cache)
             script = get_function_script(value, self.cache)
@@ -240,8 +239,7 @@ class JitFrameDecorator(FrameDecorator):
         num_args = long(this_frame["numActualArgs_"])
         # Sometimes we see very large values here, so truncate it to
         # bypass the damage.
-        if num_args > 10:
-            num_args = 10
+        num_args = min(num_args, 10)
         args_ptr = (this_frame + 1).cast(self.cache.Value.pointer())
         for i in range(num_args + 1):
             # Synthesize names, since there doesn't seem to be
@@ -254,7 +252,7 @@ class JitFrameDecorator(FrameDecorator):
         return result
 
 
-class SpiderMonkeyFrameFilter(object):
+class SpiderMonkeyFrameFilter:
     "A frame filter for SpiderMonkey."
 
     # |state_holder| is either None, or an instance of
@@ -281,7 +279,7 @@ class SpiderMonkeyFrameFilter(object):
         return imap(self.maybe_wrap_frame, frame_iter)
 
 
-class SpiderMonkeyFrameId(object):
+class SpiderMonkeyFrameId:
     "A frame id class, as specified by the gdb unwinder API."
 
     def __init__(self, sp, pc):
@@ -289,7 +287,7 @@ class SpiderMonkeyFrameId(object):
         self.pc = pc
 
 
-class UnwinderState(object):
+class UnwinderState:
     """This holds all the state needed during a given unwind.  Each time a
     new unwind is done, a new instance of this class is created.  It
     keeps track of all the state needed to unwind JIT frames.  Note that
@@ -342,7 +340,7 @@ class UnwinderState(object):
             return False
 
         # If allocated, then we allocated MaxCodeBytesPerProcess.
-        return base <= pc and pc < base + length
+        return base <= pc < base + length
 
     # Check whether |self| is valid for the selected thread.
     def check(self):
@@ -518,7 +516,7 @@ class SpiderMonkeyUnwinder(Unwinder):
     UNWINDERS = [x64UnwinderState]
 
     def __init__(self, typecache):
-        super(SpiderMonkeyUnwinder, self).__init__("SpiderMonkey")
+        super().__init__("SpiderMonkey")
         self.typecache = typecache
         self.unwinder_state = None
 

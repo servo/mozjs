@@ -20,16 +20,14 @@ None of the instances (or the underlying caches) are safe for concurrent use.
 A future need, perhaps.
 """
 
-
 import binascii
 import hashlib
 import logging
 import os
+import urllib.parse as urlparse
 
 import dlmanager
 import mozpack.path as mozpath
-import six
-import six.moves.urllib.parse as urlparse
 
 from mozbuild.dirutils import mkdir
 
@@ -78,7 +76,7 @@ class ArtifactPersistLimit(dlmanager.PersistLimit):
     """
 
     def __init__(self, log=None):
-        super(ArtifactPersistLimit, self).__init__(
+        super().__init__(
             size_limit=MAX_CACHED_ARTIFACTS_SIZE, file_limit=MIN_CACHED_ARTIFACTS
         )
         self._log = log
@@ -106,11 +104,11 @@ class ArtifactPersistLimit(dlmanager.PersistLimit):
             except OSError:
                 pass
             self._downloaded_now.add(path)
-        super(ArtifactPersistLimit, self).register_file(path)
+        super().register_file(path)
 
     def register_dir_content(self, directory, pattern="*"):
         self._registering_dir = True
-        super(ArtifactPersistLimit, self).register_dir_content(directory, pattern)
+        super().register_dir_content(directory, pattern)
         self._registering_dir = False
 
     def remove_old_files(self):
@@ -125,7 +123,7 @@ class ArtifactPersistLimit(dlmanager.PersistLimit):
                 continue
             try:
                 fs.remove(f.path)
-            except WindowsError:
+            except OSError:
                 # For some reason, on automation, we can't remove those files.
                 # So for now, ignore the error.
                 kept.append(f)
@@ -148,7 +146,7 @@ class ArtifactPersistLimit(dlmanager.PersistLimit):
         self.files = []
 
 
-class ArtifactCache(object):
+class ArtifactCache:
     """Fetch artifacts from URLS and purge least recently used artifacts from disk."""
 
     def __init__(self, cache_dir, log=None, skip_cache=False):
@@ -179,7 +177,7 @@ class ArtifactCache(object):
             # extract the build ID from the downloaded artifact and use it to make a
             # human readable unique name, but extracting build IDs is time consuming
             # (especially on Mac OS X, where we must mount a large DMG file).
-            hash = hashlib.sha256(six.ensure_binary(url)).hexdigest()[:16]
+            hash = hashlib.sha256(url.encode()).hexdigest()[:16]
             # Strip query string and fragments.
             basename = os.path.basename(urlparse.urlparse(url).path)
             fname = hash + "-" + basename

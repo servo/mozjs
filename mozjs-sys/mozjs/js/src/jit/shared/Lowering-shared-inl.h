@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,6 +7,7 @@
 
 #include "jit/shared/Lowering-shared.h"
 
+#include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 
@@ -23,12 +22,8 @@ void LIRGeneratorShared::emitAtUses(MInstruction* mir) {
 
 LUse LIRGeneratorShared::use(MDefinition* mir, LUse policy) {
   // It is illegal to call use() on an instruction with two defs.
-#if BOX_PIECES > 1
-  MOZ_ASSERT(mir->type() != MIRType::Value);
-#endif
-#if INT64_PIECES > 1
-  MOZ_ASSERT(mir->type() != MIRType::Int64);
-#endif
+  MOZ_ASSERT_IF(BOX_PIECES > 1, mir->type() != MIRType::Value);
+  MOZ_ASSERT_IF(INT64_PIECES > 1, mir->type() != MIRType::Int64);
   ensureDefined(mir);
   policy.setVirtualRegister(mir->virtualRegister());
   return policy;
@@ -57,7 +52,7 @@ void LIRGeneratorShared::define(
   lir->getDef(0)->setVirtualRegister(vreg);
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t X, size_t Y>
@@ -98,7 +93,7 @@ void LIRGeneratorShared::defineInt64Fixed(
 
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Ops, size_t Temps>
@@ -152,7 +147,7 @@ void LIRGeneratorShared::defineInt64ReuseInput(
 
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Ops, size_t Temps>
@@ -194,7 +189,7 @@ void LIRGeneratorShared::defineBoxReuseInput(
 
   lir->setMir(mir);
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Temps>
@@ -219,7 +214,7 @@ void LIRGeneratorShared::defineBox(
   lir->setMir(mir);
 
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 template <size_t Ops, size_t Temps>
@@ -249,7 +244,7 @@ void LIRGeneratorShared::defineInt64(
   lir->setMir(mir);
 
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 void LIRGeneratorShared::defineReturn(LInstruction* lir, MDefinition* mir) {
@@ -312,6 +307,7 @@ void LIRGeneratorShared::defineReturn(LInstruction* lir, MDefinition* mir) {
         case LDefinition::OBJECT:
         case LDefinition::SLOTS:
         case LDefinition::STACKRESULTS:
+        case LDefinition::WASM_ANYREF:
           lir->setDef(0, LDefinition(vreg, type, LGeneralReg(ReturnReg)));
           break;
         case LDefinition::DOUBLE:
@@ -325,7 +321,7 @@ void LIRGeneratorShared::defineReturn(LInstruction* lir, MDefinition* mir) {
   }
 
   mir->setVirtualRegister(vreg);
-  add(lir);
+  addUnchecked(lir);
 }
 
 #ifdef DEBUG
@@ -351,6 +347,14 @@ static inline bool IsCompatibleLIRCoercion(MIRType to, MIRType from) {
     return true;
   }
 #  endif
+
+#  ifdef JS_64BIT
+  // On 64-bit platforms IntPtr and Int64 are both 64-bit integers.
+  if ((to == MIRType::IntPtr || to == MIRType::Int64) &&
+      (from == MIRType::IntPtr || from == MIRType::Int64)) {
+    return true;
+  }
+#  endif
   return false;
 }
 #endif
@@ -370,10 +374,10 @@ void LIRGeneratorShared::redefine(MDefinition* def, MDefinition* as) {
     if (def->type() != as->type()) {
       if (as->type() == MIRType::Int32) {
         replacement =
-            MConstant::New(alloc(), BooleanValue(as->toConstant()->toInt32()));
+            MConstant::NewBoolean(alloc(), as->toConstant()->toInt32());
       } else {
         replacement =
-            MConstant::New(alloc(), Int32Value(as->toConstant()->toBoolean()));
+            MConstant::NewInt32(alloc(), as->toConstant()->toBoolean());
       }
       def->block()->insertBefore(def->toInstruction(), replacement);
       emitAtUses(replacement->toInstruction());
@@ -605,6 +609,16 @@ LInt64Definition LIRGeneratorShared::tempInt64(LDefinition::Policy policy) {
 #endif
 }
 
+LBoxDefinition LIRGeneratorShared::tempBox() {
+#ifdef JS_NUNBOX32
+  LDefinition type = temp(LDefinition::GENERAL);
+  LDefinition payload = temp(LDefinition::GENERAL);
+  return LBoxDefinition(type, payload);
+#else
+  return LBoxDefinition(temp(LDefinition::GENERAL));
+#endif
+}
+
 LDefinition LIRGeneratorShared::tempFixed(Register reg) {
   LDefinition t = temp(LDefinition::GENERAL);
   t.setOutput(LGeneralReg(reg));
@@ -654,13 +668,11 @@ LDefinition LIRGeneratorShared::tempCopy(MDefinition* input,
   return t;
 }
 
-template <typename T>
-void LIRGeneratorShared::annotate(T* ins) {
+void LIRGeneratorShared::annotate(LNode* ins) {
   ins->setId(lirGraph_.getInstructionId());
 }
 
-template <typename T>
-void LIRGeneratorShared::add(T* ins, MInstruction* mir) {
+void LIRGeneratorShared::addUnchecked(LInstruction* ins, MInstruction* mir) {
   MOZ_ASSERT(!ins->isPhi());
   current->add(ins);
   if (mir) {
@@ -669,6 +681,7 @@ void LIRGeneratorShared::add(T* ins, MInstruction* mir) {
   }
   annotate(ins);
   if (ins->isCall()) {
+    lirGraph_.incNumCallInstructions();
     gen->setNeedsOverrecursedCheck();
     gen->setNeedsStaticStackAlignment();
   }
@@ -880,6 +893,29 @@ LInt64Allocation LIRGeneratorShared::useInt64OrConstantAtStart(
     MDefinition* mir) {
   return useInt64OrConstant(mir, /* useAtStart = */ true);
 }
+
+#ifdef JS_NUNBOX32
+LUse LIRGeneratorShared::useLowWord(MDefinition* mir, LUse policy) {
+  MOZ_ASSERT(mir->type() == MIRType::Int64);
+
+  // This returns the low word of the Int64 input.
+  ensureDefined(mir);
+  policy.setVirtualRegister(mir->virtualRegister() + INT64LOW_INDEX);
+  return policy;
+}
+
+LUse LIRGeneratorShared::useLowWordRegister(MDefinition* mir) {
+  return useLowWord(mir, LUse(LUse::REGISTER));
+}
+
+LUse LIRGeneratorShared::useLowWordRegisterAtStart(MDefinition* mir) {
+  return useLowWord(mir, LUse(LUse::REGISTER, true));
+}
+
+LUse LIRGeneratorShared::useLowWordFixed(MDefinition* mir, Register reg) {
+  return useLowWord(mir, LUse(reg));
+}
+#endif
 
 void LIRGeneratorShared::lowerConstantDouble(double d, MInstruction* mir) {
   define(new (alloc()) LDouble(d), mir);

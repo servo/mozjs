@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,7 +7,9 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/BufferList.h"
+#include "mozilla/CheckedInt.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/StringBuffer.h"
 
 #include <stdint.h>
 #include <utility>
@@ -153,6 +153,13 @@ enum class StructuredCloneScope : uint32_t {
    * When reading, this means: Do not accept pointers.
    */
   DifferentProcess,
+
+  /**
+   * Values greater than this are temporary markers used when the actual scope
+   * is not yet known. The allowed scope will be resolved by the time
+   * readHeader() is complete.
+   */
+  LastResolvedScope = DifferentProcess,
 
   /**
    * Handle a backwards-compatibility case with IndexedDB (bug 1434308): when
@@ -311,6 +318,11 @@ typedef void (*StructuredCloneErrorOp)(JSContext* cx, uint32_t errorid,
  * If this readTransfer() hook is called and produces an object, then the
  * read() hook will *not* be called for the same object, since the main data
  * will only contain a backreference to the already-read object.
+ *
+ * The clone buffer will relinquish ownership of this Transferable if and only
+ * if this hook returns true -- as in, the freeTransfer hook will not be called
+ * on this entry if this hook returns true, but it will still be called if it
+ * returns false.
  */
 typedef bool (*ReadTransferStructuredCloneOp)(
     JSContext* cx, JSStructuredCloneReader* r,
@@ -351,11 +363,13 @@ typedef bool (*TransferStructuredCloneOp)(JSContext* cx,
  *    encountered later and the incomplete serialization is discarded.
  *
  * 2. During deserialization: before an object is Transferred to, an error
- *    is encountered and the incompletely deserialized clone is discarded.
+ *    is encountered and the incompletely deserialized clone is discarded. This
+ *    will happen with internally-implemented Transferables as well as those
+ *    where the readTransfer hook returns false.
  *
  * 3. Serialized data that includes Transferring is never deserialized (eg when
  *    the receiver disappears before reading in the message), and the clone data
- * is destroyed.
+ *    is destroyed.
  *
  */
 typedef void (*FreeTransferStructuredCloneOp)(
@@ -468,6 +482,10 @@ class MOZ_NON_MEMMOVABLE JS_PUBLIC_API JSStructuredCloneData {
   OwnTransferablePolicy ownTransferables_ =
       OwnTransferablePolicy::NoTransferables;
   js::SharedArrayRawBufferRefs refsHeld_;
+
+  using StringBuffers =
+      js::Vector<RefPtr<mozilla::StringBuffer>, 4, js::SystemAllocPolicy>;
+  StringBuffers stringBufferRefsHeld_;
 
   friend struct JSStructuredCloneWriter;
   friend class JS_PUBLIC_API JSAutoStructuredCloneBuffer;
@@ -685,6 +703,8 @@ class JS_PUBLIC_API JSAutoStructuredCloneBuffer {
 
   JS::StructuredCloneScope scope() const { return data_.scope(); }
 
+  uint32_t version() const { return version_; }
+
   /**
    * Adopt some memory. It will be automatically freed by the destructor.
    * data must have been allocated by the JS engine (e.g., extracted via
@@ -761,8 +781,29 @@ JS_PUBLIC_API bool JS_ReadDouble(JSStructuredCloneReader* r, double* v);
 JS_PUBLIC_API bool JS_ReadTypedArray(JSStructuredCloneReader* r,
                                      JS::MutableHandleValue vp);
 
-JS_PUBLIC_API bool JS_WriteUint32Pair(JSStructuredCloneWriter* w, uint32_t tag,
-                                      uint32_t data);
+/**
+ * Same as JS_WriteUint32Pair but let implicit conversions from integers of a
+ * wider range happen without performing bounds checks.
+ * Using this function directly is not recommended: it is here mainly to allow
+ * compiler optimizations in JS_WriteUint32Pair for cases where integer values
+ * are known at compile time (in which case .isValid() calls can be elided)
+ */
+JS_PUBLIC_API bool JS_WriteUint32PairUnchecked(JSStructuredCloneWriter* w,
+                                               uint32_t tag, uint32_t data);
+/**
+ * Write a pair of integers. Returns false if either argument is invalid or if
+ * the underlying write fails.
+ * Note that the arguments are CheckedUint32 so any implicit conversion from a
+ * wider type is bounds-checked
+ */
+JS_PUBLIC_API inline bool JS_WriteUint32Pair(JSStructuredCloneWriter* w,
+                                             mozilla::CheckedUint32 tag,
+                                             mozilla::CheckedUint32 data) {
+  if (!tag.isValid() || !data.isValid()) [[unlikely]] {
+    return false;
+  }
+  return JS_WriteUint32PairUnchecked(w, tag.value(), data.value());
+}
 
 JS_PUBLIC_API bool JS_WriteBytes(JSStructuredCloneWriter* w, const void* p,
                                  size_t len);

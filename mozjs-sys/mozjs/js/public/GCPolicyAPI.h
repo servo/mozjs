@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -26,36 +24,24 @@
 //
 //   static bool traceWeak(T* tp)
 //
-//     Update any GC edges if their target has been moved. Remove or clear any
-//     edges to GC things that are going to be collected by an incremental
-//     GC. Return false if this edge itself should be removed.
+//     Update any GC edges if their target has been moved. Return false if the
+//     target of the edge should be be removed.
 //
-//     For GC thing pointers, this will clear the edge and return false if the
-//     target is going to be collected. In general, for structures this should
-//     call |traceWeak| on internal GC edges and return whether the result was
-//     true for all of them.
+//     For edges to GC things, this will return false if the target will be
+//     collected in the current GC. In general, for structures this should call
+//     |traceWeak| on internal GC edges and return whether the result was true
+//     for all of them.
 //
 //     Containers can use this to remove entries containing GC things that are
 //     going to be collected (e.g. GCVector).
+//
+//     For non-GC thing edges (including nullptr edges) this will return true.
 //
 //   static bool isValid(const T& t)
 //
 //     Check that |t| is valid and is not corrupt in some way. The built-in GC
 //     types do some memory layout checks. This is for assertions only; it is ok
 //     to always return true.
-//
-// The GCPolicy may also provide:
-//
-//   static bool needsSweep(const T* tp)
-//
-//     Return whether this edge should be removed, like a version of |traceWeak|
-//     with the sense of the return value reversed.
-//
-//     The argument is const and this does not update any moved GC pointers, so
-//     should not be called when this is a possibility.
-//
-//     This is used internally for incremental barriers on WeakCache hash
-//     tables.
 //
 // The default GCPolicy<T> assumes that T has a default constructor and |trace|
 // and |traceWeak| methods, and forwards to them. GCPolicy has appropriate
@@ -81,23 +67,35 @@
 
 namespace JS {
 
+// Base class for GCPolicy<T> that provides some defaults.
+template <typename T>
+struct GCPolicyBase {
+  static bool isValid(const T& tp) { return true; /* Unchecked. */ }
+  static constexpr bool mightBeInNursery() { return true; /* Unknown. */ }
+};
+
 // Defines a policy for container types with non-GC, i.e. C storage. This
 // policy dispatches to the underlying struct for GC interactions. Note that
 // currently a type can define only the subset of the methods (trace and/or
 // traceWeak) if it is never used in a context that requires the other.
 template <typename T>
-struct StructGCPolicy {
-  static_assert(!std::is_pointer_v<T>,
-                "Pointer type not allowed for StructGCPolicy");
+struct StructGCPolicy : public GCPolicyBase<T> {
+  static_assert(
+      !std::is_pointer_v<T>,
+      "Pointer types must have a GCPolicy<> specialization.\n"
+      "  - Public GC pointer types (eg JSObject*, JSString*) use "
+      "GCPointerPolicy.\n"
+      "  - Internal GC pointer types are handled by InternalGCPointerPolicy "
+      "from gc/Policy.h; make sure you are including that file.\n"
+      "  - Other pointer types (eg Realm*) must define their own "
+      "specialization.\n"
+      "The most likely cause of this error is attempting to root a non-GC "
+      "pointer that should not be rooted. Only pointers on the stack that "
+      "point to GC pointers should be or need to be rooted.");
 
   static void trace(JSTracer* trc, T* tp, const char* name) { tp->trace(trc); }
 
   static bool traceWeak(JSTracer* trc, T* tp) { return tp->traceWeak(trc); }
-  static bool needsSweep(JSTracer* trc, const T* tp) {
-    return tp->needsSweep(trc);
-  }
-
-  static bool isValid(const T& tp) { return true; }
 };
 
 // The default GC policy attempts to defer to methods on the underlying type.
@@ -109,12 +107,12 @@ struct GCPolicy : public StructGCPolicy<T> {};
 
 // This policy ignores any GC interaction, e.g. for non-GC types.
 template <typename T>
-struct IgnoreGCPolicy {
+struct IgnoreGCPolicy : public GCPolicyBase<T> {
   static void trace(JSTracer* trc, T* t, const char* name) {}
   static bool traceWeak(JSTracer*, T* v) { return true; }
-  static bool needsSweep(JSTracer* trc, const T* v) { return false; }
-  static bool isValid(const T& v) { return true; }
 };
+template <>
+struct GCPolicy<uint8_t> : public IgnoreGCPolicy<uint8_t> {};
 template <>
 struct GCPolicy<uint32_t> : public IgnoreGCPolicy<uint32_t> {};
 template <>
@@ -123,7 +121,7 @@ template <>
 struct GCPolicy<bool> : public IgnoreGCPolicy<bool> {};
 
 template <typename T>
-struct GCPointerPolicy {
+struct GCPointerPolicy : public GCPolicyBase<T> {
   static_assert(std::is_pointer_v<T>,
                 "Non-pointer type not allowed for GCPointerPolicy");
 
@@ -145,7 +143,7 @@ JS_FOR_EACH_PUBLIC_GC_POINTER_TYPE(EXPAND_SPECIALIZE_GCPOLICY)
 #undef EXPAND_SPECIALIZE_GCPOLICY
 
 template <typename T>
-struct NonGCPointerPolicy {
+struct NonGCPointerPolicy : public GCPolicyBase<T> {
   static void trace(JSTracer* trc, T* vp, const char* name) {
     if (*vp) {
       (*vp)->trace(trc);
@@ -154,11 +152,10 @@ struct NonGCPointerPolicy {
   static bool traceWeak(JSTracer* trc, T* vp) {
     return !*vp || (*vp)->traceWeak(trc);
   }
-  static bool isValid(T v) { return true; }
 };
 
 template <typename T>
-struct GCPolicy<JS::Heap<T>> {
+struct GCPolicy<JS::Heap<T>> : public GCPolicyBase<JS::Heap<T>> {
   static void trace(JSTracer* trc, JS::Heap<T>* thingp, const char* name) {
     TraceEdge(trc, thingp, name);
   }
@@ -169,7 +166,8 @@ struct GCPolicy<JS::Heap<T>> {
 
 // GCPolicy<UniquePtr<T>> forwards the contained pointer to GCPolicy<T>.
 template <typename T, typename D>
-struct GCPolicy<mozilla::UniquePtr<T, D>> {
+struct GCPolicy<mozilla::UniquePtr<T, D>>
+    : public GCPolicyBase<mozilla::UniquePtr<T, D>> {
   static void trace(JSTracer* trc, mozilla::UniquePtr<T, D>* tp,
                     const char* name) {
     if (tp->get()) {
@@ -179,13 +177,13 @@ struct GCPolicy<mozilla::UniquePtr<T, D>> {
   static bool traceWeak(JSTracer* trc, mozilla::UniquePtr<T, D>* tp) {
     return !tp->get() || GCPolicy<T>::traceWeak(trc, tp->get());
   }
-  static bool needsSweep(JSTracer* trc, const mozilla::UniquePtr<T, D>* tp) {
-    return tp->get() && GCPolicy<T>::needsSweep(trc, tp->get());
-  }
   static bool isValid(const mozilla::UniquePtr<T, D>& t) {
     return !t.get() || GCPolicy<T>::isValid(*t.get());
   }
 };
+
+template <>
+struct GCPolicy<UniqueChars> : public IgnoreGCPolicy<UniqueChars> {};
 
 template <>
 struct GCPolicy<mozilla::Nothing> : public IgnoreGCPolicy<mozilla::Nothing> {};
@@ -193,7 +191,7 @@ struct GCPolicy<mozilla::Nothing> : public IgnoreGCPolicy<mozilla::Nothing> {};
 // GCPolicy<Maybe<T>> forwards tracing/sweeping to GCPolicy<T*> if
 // the Maybe<T> is filled and T* can be traced via GCPolicy<T*>.
 template <typename T>
-struct GCPolicy<mozilla::Maybe<T>> {
+struct GCPolicy<mozilla::Maybe<T>> : public GCPolicyBase<mozilla::Maybe<T>> {
   static void trace(JSTracer* trc, mozilla::Maybe<T>* tp, const char* name) {
     if (tp->isSome()) {
       GCPolicy<T>::trace(trc, tp->ptr(), name);
@@ -202,16 +200,13 @@ struct GCPolicy<mozilla::Maybe<T>> {
   static bool traceWeak(JSTracer* trc, mozilla::Maybe<T>* tp) {
     return tp->isNothing() || GCPolicy<T>::traceWeak(trc, tp->ptr());
   }
-  static bool needsSweep(JSTracer* trc, const mozilla::Maybe<T>* tp) {
-    return tp->isSome() && GCPolicy<T>::needsSweep(trc, tp->ptr());
-  }
   static bool isValid(const mozilla::Maybe<T>& t) {
     return t.isNothing() || GCPolicy<T>::isValid(t.ref());
   }
 };
 
 template <typename T1, typename T2>
-struct GCPolicy<std::pair<T1, T2>> {
+struct GCPolicy<std::pair<T1, T2>> : public GCPolicyBase<std::pair<T1, T2>> {
   static void trace(JSTracer* trc, std::pair<T1, T2>* tp, const char* name) {
     GCPolicy<T1>::trace(trc, &tp->first, name);
     GCPolicy<T2>::trace(trc, &tp->second, name);
@@ -219,10 +214,6 @@ struct GCPolicy<std::pair<T1, T2>> {
   static bool traceWeak(JSTracer* trc, std::pair<T1, T2>* tp) {
     return GCPolicy<T1>::traceWeak(trc, &tp->first) &&
            GCPolicy<T2>::traceWeak(trc, &tp->second);
-  }
-  static bool needsSweep(JSTracer* trc, const std::pair<T1, T2>* tp) {
-    return GCPolicy<T1>::needsSweep(trc, &tp->first) ||
-           GCPolicy<T2>::needsSweep(trc, &tp->second);
   }
   static bool isValid(const std::pair<T1, T2>& t) {
     return GCPolicy<T1>::isValid(t.first) && GCPolicy<T2>::isValid(t.second);
@@ -236,7 +227,8 @@ template <>
 struct GCPolicy<mozilla::Ok> : public IgnoreGCPolicy<mozilla::Ok> {};
 
 template <typename V, typename E>
-struct GCPolicy<mozilla::Result<V, E>> {
+struct GCPolicy<mozilla::Result<V, E>>
+    : public GCPolicyBase<mozilla::Result<V, E>> {
   static void trace(JSTracer* trc, mozilla::Result<V, E>* tp,
                     const char* name) {
     if (tp->isOk()) {
@@ -253,6 +245,36 @@ struct GCPolicy<mozilla::Result<V, E>> {
   }
 
   static bool isValid(const mozilla::Result<V, E>& t) { return true; }
+};
+
+template <typename... Fs>
+struct GCPolicy<std::tuple<Fs...>> : public GCPolicyBase<std::tuple<Fs...>> {
+  using T = std::tuple<Fs...>;
+  static void trace(JSTracer* trc, T* tp, const char* name) {
+    traceFieldsFrom<0>(trc, *tp, name);
+  }
+  static bool isValid(const T& t) { return areFieldsValidFrom<0>(t); }
+
+ private:
+  template <size_t N>
+  static void traceFieldsFrom(JSTracer* trc, T& tuple, const char* name) {
+    if constexpr (N != std::tuple_size_v<T>) {
+      using F = std::tuple_element_t<N, T>;
+      GCPolicy<F>::trace(trc, &std::get<N>(tuple), name);
+      traceFieldsFrom<N + 1>(trc, tuple, name);
+    }
+  }
+
+  template <size_t N>
+  static bool areFieldsValidFrom(const T& tuple) {
+    if constexpr (N != std::tuple_size_v<T>) {
+      using F = std::tuple_element_t<N, T>;
+      return GCPolicy<F>::isValid(std::get<N>(tuple)) &&
+             areFieldsValidFrom<N + 1>(tuple);
+    }
+
+    return true;
+  }
 };
 
 }  // namespace JS

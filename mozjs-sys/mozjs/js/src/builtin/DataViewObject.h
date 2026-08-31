@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -79,14 +77,6 @@ class DataViewObject : public ArrayBufferViewObject {
     mozilla::CheckedInt<uint64_t> endOffset(offset);
     endOffset += byteSize;
     return endOffset.isValid() && endOffset.value() <= byteLength;
-  }
-
-  static bool isOriginalByteOffsetGetter(Native native) {
-    return native == byteOffsetGetter;
-  }
-
-  static bool isOriginalByteLengthGetter(Native native) {
-    return native == byteLengthGetter;
   }
 
   static bool construct(JSContext* cx, unsigned argc, Value* vp);
@@ -178,12 +168,6 @@ class DataViewObject : public ArrayBufferViewObject {
 class FixedLengthDataViewObject : public DataViewObject {
  public:
   static const JSClass class_;
-
-  size_t byteOffset() const {
-    return ArrayBufferViewObject::byteOffsetSlotValue();
-  }
-
-  size_t byteLength() const { return ArrayBufferViewObject::lengthSlotValue(); }
 };
 
 /**
@@ -203,6 +187,20 @@ class ResizableDataViewObject : public DataViewObject {
   static const JSClass class_;
 };
 
+/**
+ * DataView whose buffer is an immutable ArrayBuffer object.
+ */
+class ImmutableDataViewObject : public DataViewObject {
+  friend class DataViewObject;
+
+  static ImmutableDataViewObject* create(
+      JSContext* cx, size_t byteOffset, size_t byteLength,
+      Handle<ArrayBufferObjectMaybeShared*> arrayBuffer, HandleObject proto);
+
+ public:
+  static const JSClass class_;
+};
+
 // For structured cloning.
 JSObject* NewDataView(JSContext* cx, HandleObject buffer, size_t byteOffset);
 
@@ -211,7 +209,7 @@ JSObject* NewDataView(JSContext* cx, HandleObject buffer, size_t byteOffset);
 template <>
 inline bool JSObject::is<js::DataViewObject>() const {
   return is<js::FixedLengthDataViewObject>() ||
-         is<js::ResizableDataViewObject>();
+         is<js::ResizableDataViewObject>() || is<js::ImmutableDataViewObject>();
 }
 
 #endif /* vm_DataViewObject_h */

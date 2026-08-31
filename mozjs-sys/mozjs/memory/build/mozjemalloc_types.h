@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -33,8 +31,8 @@
 // OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
 // EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-#ifndef _JEMALLOC_TYPES_H_
-#define _JEMALLOC_TYPES_H_
+#ifndef JEMALLOC_TYPES_H_
+#define JEMALLOC_TYPES_H_
 
 #include <stdint.h>
 
@@ -57,6 +55,32 @@ extern "C" {
 typedef MALLOC_USABLE_SIZE_CONST_PTR void* usable_ptr_t;
 
 typedef size_t arena_id_t;
+
+// A chunk allocator provides an abstraction for mapping, unmapping, committing
+// and decommitting chunks of pages. This allows for greater control over the
+// memory used to back an arena's allocations.
+//
+// The current primary use case for this is to restrict all of an arena's
+// allocations to a specific memory region as is required for
+// SpiderMonkey's sandbox.
+typedef struct chunk_allocator_s {
+  // Map aSize bytes of memory with alignment aAligment.
+  // The returned pages are expected to be committed with read-write
+  // permissions.
+  void* (*map)(size_t aSize, size_t aAlignment);
+
+  // Unmap aSize bytes of previously mapped memory starting at aAddr.
+  // The pages are returned to the allocator.
+  void (*unmap)(void* aAddr, size_t aSize);
+
+  // Commit aSize bytes of previously mapped decommitted memory starting at
+  // aAddr.
+  bool (*commit)(void* aAddr, size_t aSize);
+
+  // Decommit aSize bytes of previously mapped memory starting at aAddr.
+  // These pages need to be re-committed before they can be used again.
+  void (*decommit)(void* aAddr, size_t aSize);
+} chunk_allocator_t;
 
 #define ARENA_FLAG_RANDOMIZE_SMALL_MASK 0x3
 #define ARENA_FLAG_RANDOMIZE_SMALL_DEFAULT 0
@@ -82,32 +106,45 @@ typedef struct arena_params_s {
 
   uint32_t mFlags;
 
+  // The label will be copied into fixed-size storage (currently 128 bytes)
+  // within the arena.  It may be null for unamed arenas
+  const char* mLabel;
+
+  // Chunk allocator to be used by the Arena.
+  // If this is not set, the default system allocator will be used.
+  chunk_allocator_t* mChunkAllocator;
+
 #ifdef __cplusplus
   arena_params_s()
       : mMaxDirty(0),
         mMaxDirtyIncreaseOverride(0),
         mMaxDirtyDecreaseOverride(0),
-        mFlags(0) {}
+        mFlags(0),
+        mLabel(nullptr),
+        mChunkAllocator(nullptr) {}
 #endif
 } arena_params_t;
 
 // jemalloc_stats() is not a stable interface.  When using jemalloc_stats_t, be
-// sure that the compiled results of jemalloc.c are in sync with this header
-// file.
+// sure that the compiled results of mozjemalloc.cpp are in sync with this
+// header file.
 typedef struct {
   // Run-time configuration settings.
-  bool opt_junk;            // Fill allocated memory with kAllocJunk?
-  bool opt_zero;            // Fill allocated memory with 0x0?
-  size_t narenas;           // Number of arenas.
-  size_t quantum;           // Allocation quantum.
-  size_t quantum_max;       // Max quantum-spaced allocation size.
-  size_t quantum_wide;      // Allocation quantum (QuantuWide).
-  size_t quantum_wide_max;  // Max quantum-wide-spaced allocation size.
-  size_t subpage_max;       // Max subpage allocation size.
-  size_t large_max;         // Max sub-chunksize allocation size.
-  size_t chunksize;         // Size of each virtual memory mapping.
-  size_t page_size;         // Size of pages.
-  size_t dirty_max;         // Max dirty pages per arena.
+  bool opt_junk;             // Fill allocated memory with kAllocJunk?
+  bool opt_randomize_small;  // Randomization of small allocations?
+  bool opt_zero;             // Fill allocated memory with 0x0?
+  size_t narenas;            // Number of arenas.
+  size_t quantum;            // Allocation quantum.
+  size_t quantum_max;        // Max quantum-spaced allocation size.
+  size_t quantum_wide;       // Allocation quantum (QuantuWide).
+  size_t quantum_wide_max;   // Max quantum-wide-spaced allocation size.
+  size_t subpage_max;        // Max subpage allocation size.
+  size_t large_max;          // Max sub-chunksize allocation size.
+  size_t chunksize;          // Size of each virtual memory mapping.
+  size_t page_size;          // Size of pages in mozjemalloc internal
+                             // structures.
+  size_t real_page_size;     // Size of OS/hardware pages.
+  size_t dirty_max;          // Max dirty pages per arena.
 
   // Current memory usage statistics.
   size_t mapped;          // Bytes mapped (not necessarily committed).
@@ -121,6 +158,14 @@ typedef struct {
   size_t bookkeeping;     // Committed bytes used internally by the
                           // allocator.
   size_t bin_unused;      // Bytes committed to a bin but currently unused.
+
+  size_t num_operations;  // The number of malloc()+free() calls.  Note that
+                          // realloc calls
+                          // count as 0, 1 or 2 operations depending on internal
+                          // operations.  Which internal operations (eg in place
+                          // or move, or different size classes) require
+                          // different internal operations is unspecified.
+  size_t arena_run_header;
 } jemalloc_stats_t;
 
 typedef struct {
@@ -131,7 +176,20 @@ typedef struct {
   size_t bytes_unused;       // The unallocated bytes across all these bins
   size_t bytes_total;        // The total storage area for runs in this bin,
   size_t bytes_per_run;      // The number of bytes per run, including headers.
+  size_t regions_per_run;    // The number of regions (aka cells) per run.
 } jemalloc_bin_stats_t;
+
+// jemalloc_stats_lite() is not a stable interface.  When using
+// jemalloc_stats_lite_t, be sure that the compiled results of mozjemalloc.cpp
+// are in sync with this header file.
+typedef struct {
+  size_t allocated_bytes;
+
+  // The number of malloc()+free() calls.  realloc calls count as 0, 1 or 2
+  // operations depending on whether they do nothing, resize in-place, or move
+  // the memory.
+  uint64_t num_operations;
+} jemalloc_stats_lite_t;
 
 enum PtrInfoTag {
   // The pointer is not currently known to the allocator.
@@ -194,8 +252,38 @@ static inline bool jemalloc_ptr_is_freed_page(jemalloc_ptr_info_t* info) {
   return info->tag == TagFreedPage;
 }
 
+// The result of purging memory from a sigle arena
+enum ArenaPurgeResult {
+  // The stop threshold of dirty pages was reached or all the remaining chunks
+  // that may have dirty pages are busy.  The allocator can't always tell the
+  // difference between these conditions.
+  ReachedThresholdOrBusy,
+
+  // There's more chunks in this arena that could be purged.
+  NotDone,
+
+  // The arena needs to be destroyed by the caller.
+  Dying,
+};
+
+// The result of calling moz_may_purge_now().
+enum may_purge_now_result_t {
+  // Done: No more purge requests are pending.
+  Done,
+
+  // There may be one or more arenas whose reuse grace period expired and
+  // needs purging asap.
+  NeedsMore,
+
+  // There is at least one arena that waits either for its reuse grace to
+  // expire or for significant reuse to happen. As we cannot foresee the
+  // future, whatever schedules the purges should come back later to check
+  // if we need a purge.
+  WantsLater,
+};
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif
 
-#endif  // _JEMALLOC_TYPES_H_
+#endif  // JEMALLOC_TYPES_H_

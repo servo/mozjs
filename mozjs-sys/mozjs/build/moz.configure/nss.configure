@@ -1,8 +1,27 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+
+@imports(_from="__builtin__", _import="open")
+@imports("os")
+def get_nss_version():
+    nss_version = [0, 0]
+    topsrcdir = os.path.realpath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    with open(
+        os.path.join(topsrcdir, "security", "nss", "lib", "nss", "nss.h"), "r"
+    ) as f:
+        for line in f:
+            if "NSS_VMAJOR" in line:
+                nss_version[0] = line.split()[-1]
+            if "NSS_VMINOR" in line:
+                nss_version[1] = line.split()[-1]
+            if "NSS_VPATCH" in line:
+                patch = line.split()[-1]
+                if patch != "0":
+                    nss_version.append(line.split()[-1])
+    return ".".join(nss_version)
+
 
 system_lib_option(
     "--with-system-nss",
@@ -13,7 +32,7 @@ system_lib_option(
 imply_option("--with-system-nspr", True, when="--with-system-nss")
 
 nss_pkg = pkg_check_modules(
-    "NSS", "nss >= 3.101", when="--with-system-nss", config=False
+    "NSS", "nss >= " + get_nss_version(), when="--with-system-nss", config=False
 )
 
 set_config("MOZ_SYSTEM_NSS", True, when="--with-system-nss")
@@ -31,3 +50,10 @@ def nss_config(nss_pkg, build_env):
 
 set_config("NSS_CFLAGS", nss_config.cflags)
 set_config("NSS_LIBS", nss_config.libs)
+
+# Used specifically by Thunderbird
+project_flag(
+    env="NSS_EXTRA_SYMBOLS_FILE",
+    nargs=1,
+    help="Path to a file containing extra symbols to export from NSS",
+)

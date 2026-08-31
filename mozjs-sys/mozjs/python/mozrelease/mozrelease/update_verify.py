@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -13,7 +12,7 @@ class UpdateVerifyError(Exception):
     pass
 
 
-class UpdateVerifyConfig(object):
+class UpdateVerifyConfig:
     comment_regex = re.compile("^#")
     key_write_order = (
         "release",
@@ -119,7 +118,7 @@ class UpdateVerifyConfig(object):
         releaseKeys = {}
         for k, v in entry.items():
             if k in self.global_keys:
-                setattr(self, k, entry[k])
+                setattr(self, k, v)
             elif k in self.release_keys:
                 # "from" is reserved in Python
                 if k == "from":
@@ -189,20 +188,18 @@ class UpdateVerifyConfig(object):
             locales = sorted(list(locales.split()))
         if isinstance(patch_types, str):
             patch_types = list(patch_types.split())
-        self.releases.append(
-            {
-                "release": release,
-                "build_id": build_id,
-                "locales": locales,
-                "patch_types": patch_types,
-                "from": from_path,
-                "ftp_server_from": ftp_server_from,
-                "ftp_server_to": ftp_server_to,
-                "mar_channel_IDs": mar_channel_IDs,
-                "platform": platform,
-                "updater_package": updater_package,
-            }
-        )
+        self.releases.append({
+            "release": release,
+            "build_id": build_id,
+            "locales": locales,
+            "patch_types": patch_types,
+            "from": from_path,
+            "ftp_server_from": ftp_server_from,
+            "ftp_server_to": ftp_server_to,
+            "mar_channel_IDs": mar_channel_IDs,
+            "platform": platform,
+            "updater_package": updater_package,
+        })
 
     def addLocaleToRelease(self, build_id, locale, from_path=None):
         r = self.getRelease(build_id, from_path)

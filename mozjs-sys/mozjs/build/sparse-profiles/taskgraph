@@ -31,10 +31,29 @@ path:taskcluster/
 # them all in.
 path:testing/config/tooltool-manifests/
 path:testing/mozharness/
+
+# for ESLint toolchains
+path:package.json
+path:package-lock.json
 path:tools/lint/
+
+# for other node toolchain packaging
+path:browser/extensions/newtab/package.json
+path:browser/extensions/newtab/package-lock.json
+path:browser/components/aboutwelcome/package.json
+path:browser/components/aboutwelcome/package-lock.json
+path:browser/components/asrouter/package.json
+path:browser/components/asrouter/package-lock.json
+path:tools/terser/package.json
+path:tools/terser/package-lock.json
+path:remote/test/puppeteer/
 
 # for new-style try pushes
 path:try_task_config.json
+
+# app-services tooling.
+path:services/app-services-tools/embedded-uniffi-bindgen
+path:services/app-services-tools/nimbus-fml
 
 # Moz.build files are read in filesystem mode
 glob:**/moz.build
@@ -52,14 +71,17 @@ glob:**/*.ini
 glob:**/*.list
 glob:**/*.toml
 path:testing/mozbase/manifestparser
-path:testing/runtimes
 path:testing/web-platform/tests/
 path:testing/web-platform/mozilla/tests/
 glob:testing/web-platform/*.py
 
 # For scheduling android-gradle-dependencies.
+path:config/milestone.txt
+path:gradle/
 path:mobile/android/config/
 glob:**/*.gradle
+glob:**/*.gradle.kts
+glob:**/gradle.properties
 
 # for action-task building
 path:.taskcluster.yml
@@ -75,6 +97,16 @@ path:modules/libmar/
 path:other-licenses/bsdiff/
 path:other-licenses/nsis/Contrib/CityHash/cityhash/
 path:toolkit/mozapps/update/updater
+path:tools/update-packaging/
+
+# for the zucchini toolchain task
+path:third_party/abseil-cpp/
+path:third_party/googletest/
+path:third_party/zucchini/
+path:tools/zucchini/
+
+# for the marannon toolchain task + update-verify docker image
+path:tools/update-verify/
 
 # for the minidump-stackwalk toolchain task
 path:toolkit/crashreporter
@@ -102,6 +134,4 @@ path:mobile/android/focus-android/gradle/wrapper/gradle-wrapper.properties
 path:mobile/android/fenix/gradle/wrapper/gradle-wrapper.properties
 path:mobile/android/android-components/plugins/dependencies/src/main/java/DependenciesPlugin.kt
 path:mobile/android/android-components/plugins/dependencies/src/main/java/ApplicationServices.kt
-path:mobile/android/focus-android/plugins/focusdependencies/src/main/java/FocusDependenciesPlugin.kt
-path:mobile/android/fenix/plugins/fenixdependencies/src/main/java/FenixDependenciesPlugin.kt
 path:mobile/android/version.txt

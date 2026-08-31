@@ -6,10 +6,9 @@ import os
 import unittest
 
 import mozpack.path as mozpath
-import six
 from mozunit import main
 
-from mozbuild.frontend.context import ObjDirPath, Path
+from mozbuild.frontend.context import ObjDirPath, Path, SourcePath
 from mozbuild.frontend.data import (
     ComputedFlags,
     ConfigFileSubstitution,
@@ -27,6 +26,7 @@ from mozbuild.frontend.data import (
     LocalInclude,
     LocalizedFiles,
     LocalizedPreprocessedFiles,
+    MozSrcFiles,
     Program,
     RustLibrary,
     RustProgram,
@@ -214,8 +214,8 @@ class TestEmitterBasic(unittest.TestCase):
             flags.flags["VISIBILITY"], reader.config.substs["VISIBILITY_FLAGS"]
         )
         self.assertEqual(flags.flags["WARNINGS_AS_ERRORS"], ["-Werror"])
-        self.assertEqual(flags.flags["MOZBUILD_CFLAGS"], ["-Wall", "-funroll-loops"])
-        self.assertEqual(flags.flags["MOZBUILD_CXXFLAGS"], ["-funroll-loops", "-Wall"])
+        self.assertEqual(flags.flags["MOZBUILD_CFLAGS"], ["-Os", "-funroll-loops"])
+        self.assertEqual(flags.flags["MOZBUILD_CXXFLAGS"], ["-funroll-loops", "-Os"])
 
     def test_asflags(self):
         reader = self.reader("asflags", extra_substs={"ASFLAGS": ["-safeseh"]})
@@ -313,42 +313,53 @@ class TestEmitterBasic(unittest.TestCase):
             extra_substs={
                 "HOST_CXXFLAGS": ["-Wall", "-Werror"],
                 "HOST_CFLAGS": ["-Werror", "-Wall"],
+                "HOST_LDFLAGS": ["-Wl,--nostdlib"],
             },
         )
-        sources, ldflags, flags, lib, target_flags = self.read_topsrcdir(reader)
-        self.assertIsInstance(flags, ComputedFlags)
+        sources, ldflags, host_flags, host_ldflags, lib, target_flags = (
+            self.read_topsrcdir(reader)
+        )
+        self.assertIsInstance(host_flags, ComputedFlags)
         self.assertEqual(
-            flags.flags["HOST_CXXFLAGS"], reader.config.substs["HOST_CXXFLAGS"]
+            host_flags.flags["HOST_CXXFLAGS"], reader.config.substs["HOST_CXXFLAGS"]
         )
         self.assertEqual(
-            flags.flags["HOST_CFLAGS"], reader.config.substs["HOST_CFLAGS"]
+            host_flags.flags["HOST_CFLAGS"], reader.config.substs["HOST_CFLAGS"]
         )
         self.assertEqual(
-            set(flags.flags["HOST_DEFINES"]),
+            host_ldflags.flags["HOST_LDFLAGS"], reader.config.substs["HOST_LDFLAGS"]
+        )
+        self.assertEqual(
+            set(host_flags.flags["HOST_DEFINES"]),
             set(["-DFOO", '-DBAZ="abcd"', "-UQUX", "-DBAR=7", "-DVALUE=xyz"]),
         )
         self.assertEqual(
-            flags.flags["MOZBUILD_HOST_CFLAGS"], ["-funroll-loops", "-host-arg"]
+            host_flags.flags["MOZBUILD_HOST_CFLAGS"], ["-funroll-loops", "-host-arg"]
         )
-        self.assertEqual(flags.flags["MOZBUILD_HOST_CXXFLAGS"], [])
+        self.assertEqual(host_flags.flags["MOZBUILD_HOST_CXXFLAGS"], [])
+        self.assertEqual(host_ldflags.flags["MOZBUILD"], ["-Wl,--gc-sections"])
 
     def test_host_no_optimize_flags(self):
         reader = self.reader(
             "host-compile-flags",
             extra_substs={"MOZ_OPTIMIZE": "1", "MOZ_OPTIMIZE_FLAGS": ["-O2"]},
         )
-        sources, ldflags, flags, lib, target_flags = self.read_topsrcdir(reader)
-        self.assertIsInstance(flags, ComputedFlags)
-        self.assertEqual(flags.flags["HOST_OPTIMIZE"], [])
+        sources, ldflags, host_flags, host_ldflags, lib, target_flags = (
+            self.read_topsrcdir(reader)
+        )
+        self.assertIsInstance(host_flags, ComputedFlags)
+        self.assertEqual(host_flags.flags["HOST_OPTIMIZE"], [])
 
     def test_host_optimize_flags(self):
         reader = self.reader(
             "host-compile-flags",
             extra_substs={"HOST_OPTIMIZE_FLAGS": ["-O2"]},
         )
-        sources, ldflags, flags, lib, target_flags = self.read_topsrcdir(reader)
-        self.assertIsInstance(flags, ComputedFlags)
-        self.assertEqual(flags.flags["HOST_OPTIMIZE"], ["-O2"])
+        sources, ldflags, host_flags, host_ldflags, lib, target_flags = (
+            self.read_topsrcdir(reader)
+        )
+        self.assertIsInstance(host_flags, ComputedFlags)
+        self.assertEqual(host_flags.flags["HOST_OPTIMIZE"], ["-O2"])
 
     def test_cross_optimize_flags(self):
         reader = self.reader(
@@ -360,9 +371,11 @@ class TestEmitterBasic(unittest.TestCase):
                 "CROSS_COMPILE": "1",
             },
         )
-        sources, ldflags, flags, lib, target_flags = self.read_topsrcdir(reader)
-        self.assertIsInstance(flags, ComputedFlags)
-        self.assertEqual(flags.flags["HOST_OPTIMIZE"], ["-O3"])
+        sources, ldflags, host_flags, host_ldflags, lib, target_flags = (
+            self.read_topsrcdir(reader)
+        )
+        self.assertIsInstance(host_flags, ComputedFlags)
+        self.assertEqual(host_flags.flags["HOST_OPTIMIZE"], ["-O3"])
 
     def test_host_rtl_flag(self):
         reader = self.reader(
@@ -373,19 +386,21 @@ class TestEmitterBasic(unittest.TestCase):
                 "CC_TYPE": "clang-cl",
             },
         )
-        sources, ldflags, flags, lib, target_flags = self.read_topsrcdir(reader)
-        self.assertIsInstance(flags, ComputedFlags)
-        self.assertEqual(flags.flags["RTL"], ["-MDd"])
+        sources, ldflags, host_flags, host_ldflags, lib, target_flags = (
+            self.read_topsrcdir(reader)
+        )
+        self.assertIsInstance(host_flags, ComputedFlags)
+        self.assertEqual(host_flags.flags["RTL"], ["-MDd"])
 
     def test_compile_flags_validation(self):
         reader = self.reader("compile-flags-field-validation")
 
-        with six.assertRaisesRegex(self, BuildReaderError, "Invalid value."):
+        with self.assertRaisesRegex(BuildReaderError, "Invalid value."):
             self.read_topsrcdir(reader)
 
         reader = self.reader("compile-flags-type-validation")
-        with six.assertRaisesRegex(
-            self, BuildReaderError, "A list of strings must be provided"
+        with self.assertRaisesRegex(
+            BuildReaderError, "A list of strings must be provided"
         ):
             self.read_topsrcdir(reader)
 
@@ -440,10 +455,8 @@ class TestEmitterBasic(unittest.TestCase):
 
     def test_resolved_flags_error(self):
         reader = self.reader("resolved-flags-error")
-        with six.assertRaisesRegex(
-            self,
-            BuildReaderError,
-            "`DEFINES` may not be set in COMPILE_FLAGS from moz.build",
+        with self.assertRaisesRegex(
+            BuildReaderError, "`DEFINES` may not be set in COMPILE_FLAGS from moz.build"
         ):
             self.read_topsrcdir(reader)
 
@@ -480,9 +493,7 @@ class TestEmitterBasic(unittest.TestCase):
     def test_use_nasm(self):
         # When nasm is not available, this should raise.
         reader = self.reader("use-nasm")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "nasm is not available"
-        ):
+        with self.assertRaisesRegex(SandboxValidationError, "nasm is not available"):
             self.read_topsrcdir(reader)
 
         # When nasm is available, this should work.
@@ -577,8 +588,7 @@ class TestEmitterBasic(unittest.TestCase):
         LOCALIZED_FILES as an objdir path produces an error.
         """
         reader = self.reader("localized-files-not-localized-generated")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
             "Objdir file listed in LOCALIZED_FILES not in LOCALIZED_GENERATED_FILES:",
         ):
@@ -589,8 +599,7 @@ class TestEmitterBasic(unittest.TestCase):
         FINAL_TARGET_FILES as an objdir path produces an error.
         """
         reader = self.reader("localized-generated-files-final-target-files")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
             "Outputs of LOCALIZED_GENERATED_FILES cannot be used in FINAL_TARGET_FILES:",
         ):
@@ -628,24 +637,45 @@ class TestEmitterBasic(unittest.TestCase):
 
     def test_generated_files_no_script(self):
         reader = self.reader("generated-files-no-script")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "Script for generating bar.c does not exist"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Script for generating bar.c does not exist"
         ):
             self.read_topsrcdir(reader)
 
     def test_generated_files_no_inputs(self):
         reader = self.reader("generated-files-no-inputs")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "Input for generating foo.c does not exist"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Input for generating foo.c does not exist"
         ):
             self.read_topsrcdir(reader)
 
     def test_generated_files_no_python_script(self):
         reader = self.reader("generated-files-no-python-script")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Script for generating bar.c does not end in .py"
+        ):
+            self.read_topsrcdir(reader)
+
+    def test_generated_files_extra_deps(self):
+        """Test that GENERATED_FILES extra_deps is properly parsed."""
+        reader = self.reader("generated-files-extra-deps")
+        objs = self.read_topsrcdir(reader)
+
+        self.assertEqual(len(objs), 1)
+        o = objs[0]
+        self.assertIsInstance(o, GeneratedFile)
+        self.assertEqual(o.outputs, ("foo.c",))
+        self.assertEqual(o.inputs, [])
+        self.assertEqual(len(o.extra_deps), 1)
+        self.assertIsInstance(o.extra_deps[0], ObjDirPath)
+        self.assertEqual(o.extra_deps[0], "!/generated-header.h")
+
+    def test_generated_files_extra_deps_missing(self):
+        """Test that a missing extra_deps source is an error."""
+        reader = self.reader("generated-files-extra-deps-missing")
+        with self.assertRaisesRegex(
             SandboxValidationError,
-            "Script for generating bar.c does not end in .py",
+            "extra_dep for generating foo.c does not exist",
         ):
             self.read_topsrcdir(reader)
 
@@ -675,8 +705,8 @@ class TestEmitterBasic(unittest.TestCase):
         Missing files in EXPORTS is an error.
         """
         reader = self.reader("exports-missing")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "File listed in EXPORTS does not exist:"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "File listed in EXPORTS does not exist:"
         ):
             self.read_topsrcdir(reader)
 
@@ -685,8 +715,7 @@ class TestEmitterBasic(unittest.TestCase):
         An objdir file in EXPORTS that is not in GENERATED_FILES is an error.
         """
         reader = self.reader("exports-missing-generated")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
             "Objdir file listed in EXPORTS not in GENERATED_FILES:",
         ):
@@ -725,8 +754,7 @@ class TestEmitterBasic(unittest.TestCase):
 
     def test_test_harness_files_root(self):
         reader = self.reader("test-harness-files-root")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
             "Cannot install files to the root of TEST_HARNESS_FILES",
         ):
@@ -822,21 +850,21 @@ class TestEmitterBasic(unittest.TestCase):
         """A missing manifest file should result in an error."""
         reader = self.reader("test-manifest-missing-manifest")
 
-        with six.assertRaisesRegex(self, BuildReaderError, "Missing files"):
+        with self.assertRaisesRegex(BuildReaderError, "Missing files"):
             self.read_topsrcdir(reader)
 
     def test_empty_test_manifest_rejected(self):
         """A test manifest without any entries is rejected."""
         reader = self.reader("test-manifest-empty")
 
-        with six.assertRaisesRegex(self, SandboxValidationError, "Empty test manifest"):
+        with self.assertRaisesRegex(SandboxValidationError, "Empty test manifest"):
             self.read_topsrcdir(reader)
 
     def test_test_manifest_just_support_files(self):
         """A test manifest with no tests but support-files is not supported."""
         reader = self.reader("test-manifest-just-support")
 
-        with six.assertRaisesRegex(self, SandboxValidationError, "Empty test manifest"):
+        with self.assertRaisesRegex(SandboxValidationError, "Empty test manifest"):
             self.read_topsrcdir(reader)
 
     def test_test_manifest_dupe_support_files(self):
@@ -845,11 +873,9 @@ class TestEmitterBasic(unittest.TestCase):
         """
         reader = self.reader("test-manifest-dupes")
 
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
-            "bar.js appears multiple times "
-            "in a test manifest under a support-files field, please omit the duplicate entry.",
+            "bar.js appears multiple times in a test manifest under a support-files field, please omit the duplicate entry.",
         ):
             self.read_topsrcdir(reader)
 
@@ -892,10 +918,8 @@ class TestEmitterBasic(unittest.TestCase):
         """A non-existent shared support file reference produces an error."""
         reader = self.reader("test-manifest-shared-missing")
 
-        with six.assertRaisesRegex(
-            self,
-            SandboxValidationError,
-            "entry in support-files not present in the srcdir",
+        with self.assertRaisesRegex(
+            SandboxValidationError, "entry in support-files not present in the srcdir"
         ):
             self.read_topsrcdir(reader)
 
@@ -1004,12 +1028,10 @@ class TestEmitterBasic(unittest.TestCase):
     def test_test_manifest_unmatched_generated(self):
         reader = self.reader("test-manifest-unmatched-generated")
 
-        with six.assertRaisesRegex(
-            self,
-            SandboxValidationError,
-            "entry in generated-files not present elsewhere",
+        with self.assertRaisesRegex(
+            SandboxValidationError, "entry in generated-files not present elsewhere"
         ):
-            self.read_topsrcdir(reader),
+            (self.read_topsrcdir(reader),)
 
     def test_test_manifest_parent_support_files_dir(self):
         """support-files referencing a file in a parent directory works."""
@@ -1032,10 +1054,8 @@ class TestEmitterBasic(unittest.TestCase):
         """Missing test files should result in error."""
         reader = self.reader("test-manifest-missing-test-file")
 
-        with six.assertRaisesRegex(
-            self,
-            SandboxValidationError,
-            "lists test that does not exist: test_missing.html",
+        with self.assertRaisesRegex(
+            SandboxValidationError, "lists test that does not exist: test_missing.html"
         ):
             self.read_topsrcdir(reader)
 
@@ -1043,8 +1063,8 @@ class TestEmitterBasic(unittest.TestCase):
         """Missing test files should result in error, even when the test list is not filtered."""
         reader = self.reader("test-manifest-missing-test-file-unfiltered")
 
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "lists test that does not exist: missing.js"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "lists test that does not exist: missing.js"
         ):
             self.read_topsrcdir(reader)
 
@@ -1061,9 +1081,12 @@ class TestEmitterBasic(unittest.TestCase):
             mozpath.relpath(p, ipdl_collection.topsrcdir)
             for p in ipdl_collection.all_regular_sources()
         )
-        expected = set(
-            ["bar/bar.ipdl", "bar/bar2.ipdlh", "foo/foo.ipdl", "foo/foo2.ipdlh"]
-        )
+        expected = set([
+            "bar/bar.ipdl",
+            "bar/bar2.ipdlh",
+            "foo/foo.ipdl",
+            "foo/foo2.ipdlh",
+        ])
 
         self.assertEqual(ipdls, expected)
 
@@ -1096,21 +1119,17 @@ class TestEmitterBasic(unittest.TestCase):
         """Test that invalid LOCAL_INCLUDES are properly detected."""
         reader = self.reader("local_includes-invalid/srcdir")
 
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
-            "Path specified in LOCAL_INCLUDES.*resolves to the "
-            "topsrcdir or topobjdir",
+            "Path specified in LOCAL_INCLUDES.*resolves to the topsrcdir or topobjdir",
         ):
             self.read_topsrcdir(reader)
 
         reader = self.reader("local_includes-invalid/objdir")
 
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
-            "Path specified in LOCAL_INCLUDES.*resolves to the "
-            "topsrcdir or topobjdir",
+            "Path specified in LOCAL_INCLUDES.*resolves to the topsrcdir or topobjdir",
         ):
             self.read_topsrcdir(reader)
 
@@ -1118,10 +1137,8 @@ class TestEmitterBasic(unittest.TestCase):
         """Test that a filename can't be used in LOCAL_INCLUDES."""
         reader = self.reader("local_includes-filename")
 
-        with six.assertRaisesRegex(
-            self,
-            SandboxValidationError,
-            "Path specified in LOCAL_INCLUDES is a filename",
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Path specified in LOCAL_INCLUDES is a filename"
         ):
             self.read_topsrcdir(reader)
 
@@ -1174,34 +1191,30 @@ class TestEmitterBasic(unittest.TestCase):
             self.assertIsInstance(obj.path, Path)
 
     def test_jar_manifests_multiple_files(self):
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "limited to one value"
-        ):
+        with self.assertRaisesRegex(SandboxValidationError, "limited to one value"):
             reader = self.reader("jar-manifests-multiple-files")
             self.read_topsrcdir(reader)
 
     def test_xpidl_module_no_sources(self):
         """XPIDL_MODULE without XPIDL_SOURCES should be rejected."""
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "XPIDL_MODULE " "cannot be defined"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "XPIDL_MODULE cannot be defined"
         ):
             reader = self.reader("xpidl-module-no-sources")
             self.read_topsrcdir(reader)
 
     def test_xpidl_module_missing_sources(self):
         """Missing XPIDL_SOURCES should be rejected."""
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "File .* " "from XPIDL_SOURCES does not exist"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "File .* from XPIDL_SOURCES does not exist"
         ):
             reader = self.reader("missing-xpidl")
             self.read_topsrcdir(reader)
 
     def test_missing_local_includes(self):
         """LOCAL_INCLUDES containing non-existent directories should be rejected."""
-        with six.assertRaisesRegex(
-            self,
-            SandboxValidationError,
-            "Path specified in " "LOCAL_INCLUDES does not exist",
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Path specified in LOCAL_INCLUDES does not exist"
         ):
             reader = self.reader("missing-local-includes")
             self.read_topsrcdir(reader)
@@ -1316,6 +1329,35 @@ class TestEmitterBasic(unittest.TestCase):
                     got_results += 1
         self.assertEqual(got_results, 2)
 
+    def test_extra_link_deps(self):
+        """Test that EXTRA_LINK_DEPS is properly parsed."""
+        reader = self.reader("extra-link-deps")
+        objs = self.read_topsrcdir(reader)
+        programs = [o for o in objs if isinstance(o, Program)]
+        self.assertEqual(len(programs), 1)
+        deps = programs[0].extra_link_deps
+        self.assertEqual([str(d) for d in deps], ["!generated.txt", "bar.txt"])
+        self.assertIsInstance(deps[0], ObjDirPath)
+        self.assertIsInstance(deps[1], SourcePath)
+
+    def test_extra_link_deps_no_linkable(self):
+        """Test that EXTRA_LINK_DEPS without a linkable is an error."""
+        reader = self.reader("extra-link-deps-no-linkable")
+        with self.assertRaisesRegex(
+            SandboxValidationError,
+            "EXTRA_LINK_DEPS is set but no program or shared library",
+        ):
+            self.read_topsrcdir(reader)
+
+    def test_extra_link_deps_missing(self):
+        """Test that EXTRA_LINK_DEPS srcdir entries must exist."""
+        reader = self.reader("extra-link-deps-missing")
+        with self.assertRaisesRegex(
+            SandboxValidationError,
+            "Path specified in EXTRA_LINK_DEPS does not exist",
+        ):
+            self.read_topsrcdir(reader)
+
     def test_generated_sources(self):
         """Test that GENERATED_SOURCES works properly."""
         reader = self.reader("generated-sources")
@@ -1379,20 +1421,22 @@ class TestEmitterBasic(unittest.TestCase):
         # This objdir will also generate host flags.
         host_flags = objs.pop()
         self.assertIsInstance(host_flags, ComputedFlags)
+        # and host ldflags,
+        host_ldflags = objs.pop()
+        self.assertIsInstance(host_ldflags, ComputedFlags)
         # ...and ldflags.
         ldflags = objs.pop()
         self.assertIsInstance(ldflags, ComputedFlags)
-        self.assertEqual(len(objs), 3)
+        self.assertEqual(len(objs), 2)
         for o in objs:
             self.assertIsInstance(o, HostSources)
 
         suffix_map = {obj.canonical_suffix: obj for obj in objs}
-        self.assertEqual(len(suffix_map), 3)
+        self.assertEqual(len(suffix_map), 2)
 
         expected = {
             ".cpp": ["a.cpp", "b.cc", "c.cxx"],
             ".c": ["d.c"],
-            ".mm": ["e.mm", "f.mm"],
         }
         for suffix, files in expected.items():
             sources = suffix_map[suffix]
@@ -1565,14 +1609,13 @@ class TestEmitterBasic(unittest.TestCase):
 
             expected = {"install.rdf", "main.js"}
             for f in files:
-                self.assertTrue(six.text_type(f) in expected)
+                self.assertTrue(str(f) in expected)
 
     def test_missing_final_target_pp_files(self):
         """Test that FINAL_TARGET_PP_FILES with missing files throws errors."""
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
-            "File listed in " "FINAL_TARGET_PP_FILES does not exist",
+            "File listed in FINAL_TARGET_PP_FILES does not exist",
         ):
             reader = self.reader("dist-files-missing")
             self.read_topsrcdir(reader)
@@ -1580,10 +1623,18 @@ class TestEmitterBasic(unittest.TestCase):
     def test_final_target_pp_files_non_srcdir(self):
         """Test that non-srcdir paths in FINAL_TARGET_PP_FILES throws errors."""
         reader = self.reader("final-target-pp-files-non-srcdir")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
             "Only source directory paths allowed in FINAL_TARGET_PP_FILES:",
+        ):
+            self.read_topsrcdir(reader)
+
+    def test_pp_files_extra_deps_without_pp_files(self):
+        """PP_FILES_EXTRA_DEPS without any preprocessed files is an error."""
+        reader = self.reader("pp-files-extra-deps-no-pp-files")
+        with self.assertRaisesRegex(
+            SandboxValidationError,
+            "PP_FILES_EXTRA_DEPS is set but no preprocessed files",
         ):
             self.read_topsrcdir(reader)
 
@@ -1601,17 +1652,15 @@ class TestEmitterBasic(unittest.TestCase):
 
             expected = {"en-US/bar.ini", "en-US/code/*.js", "en-US/foo.js"}
             for f in files:
-                self.assertTrue(six.text_type(f) in expected)
+                self.assertTrue(str(f) in expected)
 
     def test_localized_files_no_en_us(self):
         """Test that LOCALIZED_FILES errors if a path does not start with
         `en-US/` or contain `locales/en-US/`."""
         reader = self.reader("localized-files-no-en-us")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
-            "LOCALIZED_FILES paths must start with `en-US/` or contain `locales/en-US/`: "
-            "foo.js",
+            "LOCALIZED_FILES paths must start with `en-US/` or contain `locales/en-US/`: foo.js",
         ):
             self.read_topsrcdir(reader)
 
@@ -1629,39 +1678,52 @@ class TestEmitterBasic(unittest.TestCase):
 
             expected = {"en-US/bar.ini", "en-US/foo.js"}
             for f in files:
-                self.assertTrue(six.text_type(f) in expected)
+                self.assertTrue(str(f) in expected)
+
+    def test_mozsrc_files(self):
+        """Test that MOZ_SRC_FILES automatically match objdir folders with the
+        provided SourcePath."""
+        reader = self.reader("moz-src-files")
+        objs = self.read_topsrcdir(reader)
+        self.assertIsInstance(objs[0], MozSrcFiles)
+
+        map = {path: [str(f) for f in files] for path, files in objs[0].files.walk()}
+        self.assertDictEqual(
+            map,
+            {
+                "": ["file.txt"],
+                "dir": ["dir/file1.txt", "dir/file2.txt"],
+                "dir/subdir": ["dir/subdir/otherfile.txt"],
+            },
+        )
 
     def test_rust_library_no_cargo_toml(self):
         """Test that defining a RustLibrary without a Cargo.toml fails."""
         reader = self.reader("rust-library-no-cargo-toml")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "No Cargo.toml file found"
-        ):
+        with self.assertRaisesRegex(SandboxValidationError, "No Cargo.toml file found"):
             self.read_topsrcdir(reader)
 
     def test_rust_library_name_mismatch(self):
         """Test that defining a RustLibrary that doesn't match Cargo.toml fails."""
         reader = self.reader("rust-library-name-mismatch")
-        with six.assertRaisesRegex(
-            self,
-            SandboxValidationError,
-            "library.*does not match Cargo.toml-defined package",
+        with self.assertRaisesRegex(
+            SandboxValidationError, "library.*does not match Cargo.toml-defined package"
         ):
             self.read_topsrcdir(reader)
 
     def test_rust_library_no_lib_section(self):
         """Test that a RustLibrary Cargo.toml with no [lib] section fails."""
         reader = self.reader("rust-library-no-lib-section")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "Cargo.toml for.* has no \\[lib\\] section"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Cargo.toml for.* has no \\[lib\\] section"
         ):
             self.read_topsrcdir(reader)
 
     def test_rust_library_invalid_crate_type(self):
         """Test that a RustLibrary Cargo.toml has a permitted crate-type."""
         reader = self.reader("rust-library-invalid-crate-type")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "crate-type.* is not permitted"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "crate-type.* is not permitted"
         ):
             self.read_topsrcdir(reader)
 
@@ -1673,11 +1735,12 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 4)
-        ldflags, host_cflags, lib, cflags = objs
+        self.assertEqual(len(objs), 5)
+        ldflags, host_cflags, host_ldflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
         self.assertIsInstance(host_cflags, ComputedFlags)
+        self.assertIsInstance(host_ldflags, ComputedFlags)
         self.assertIsInstance(lib, RustLibrary)
         self.assertRegex(lib.lib_name, "random_crate")
         self.assertRegex(lib.import_name, "random_crate")
@@ -1689,8 +1752,8 @@ class TestEmitterBasic(unittest.TestCase):
             "multiple-rust-libraries",
             extra_substs=dict(RUST_TARGET="i686-pc-windows-msvc"),
         )
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "Cannot link the following Rust libraries"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Cannot link the following Rust libraries"
         ):
             self.read_topsrcdir(reader)
 
@@ -1702,46 +1765,66 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 4)
-        ldflags, host_cflags, lib, cflags = objs
+        self.assertEqual(len(objs), 5)
+        ldflags, host_cflags, host_ldflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
         self.assertIsInstance(host_cflags, ComputedFlags)
+        self.assertIsInstance(host_ldflags, ComputedFlags)
         self.assertIsInstance(lib, RustLibrary)
         self.assertEqual(lib.features, ["musthave", "cantlivewithout"])
 
     def test_rust_library_duplicate_features(self):
         """Test that duplicate RustLibrary features are rejected."""
         reader = self.reader("rust-library-duplicate-features")
-        with six.assertRaisesRegex(
-            self,
-            SandboxValidationError,
-            "features for .* should not contain duplicates",
+        with self.assertRaisesRegex(
+            SandboxValidationError, "features for .* should not contain duplicates"
+        ):
+            self.read_topsrcdir(reader)
+
+    def test_rust_program_features(self):
+        """Test that RustProgram features are correctly emitted."""
+        reader = self.reader(
+            "rust-program-features",
+            extra_substs=dict(RUST_TARGET="i686-pc-windows-msvc", BIN_SUFFIX=".exe"),
+        )
+        objs = self.read_topsrcdir(reader)
+
+        self.assertEqual(len(objs), 5)
+        ldflags, host_cflags, host_ldflags, cflags, prog = objs
+        self.assertIsInstance(ldflags, ComputedFlags)
+        self.assertIsInstance(cflags, ComputedFlags)
+        self.assertIsInstance(host_cflags, ComputedFlags)
+        self.assertIsInstance(host_ldflags, ComputedFlags)
+        self.assertIsInstance(prog, RustProgram)
+        self.assertEqual(prog.features, ["musthave", "cantlivewithout"])
+
+    def test_rust_program_duplicate_features(self):
+        """Test that duplicate RustProgram features are rejected."""
+        reader = self.reader("rust-program-duplicate-features")
+        with self.assertRaisesRegex(
+            SandboxValidationError, "features for .* should not contain duplicates"
         ):
             self.read_topsrcdir(reader)
 
     def test_rust_program_no_cargo_toml(self):
         """Test that specifying RUST_PROGRAMS without a Cargo.toml fails."""
         reader = self.reader("rust-program-no-cargo-toml")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "No Cargo.toml file found"
-        ):
+        with self.assertRaisesRegex(SandboxValidationError, "No Cargo.toml file found"):
             self.read_topsrcdir(reader)
 
     def test_host_rust_program_no_cargo_toml(self):
         """Test that specifying HOST_RUST_PROGRAMS without a Cargo.toml fails."""
         reader = self.reader("host-rust-program-no-cargo-toml")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "No Cargo.toml file found"
-        ):
+        with self.assertRaisesRegex(SandboxValidationError, "No Cargo.toml file found"):
             self.read_topsrcdir(reader)
 
     def test_rust_program_nonexistent_name(self):
         """Test that specifying RUST_PROGRAMS that don't exist in Cargo.toml
         correctly throws an error."""
         reader = self.reader("rust-program-nonexistent-name")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "Cannot find Cargo.toml definition for"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Cannot find Cargo.toml definition for"
         ):
             self.read_topsrcdir(reader)
 
@@ -1749,8 +1832,8 @@ class TestEmitterBasic(unittest.TestCase):
         """Test that specifying HOST_RUST_PROGRAMS that don't exist in
         Cargo.toml correctly throws an error."""
         reader = self.reader("host-rust-program-nonexistent-name")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "Cannot find Cargo.toml definition for"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "Cannot find Cargo.toml definition for"
         ):
             self.read_topsrcdir(reader)
 
@@ -1762,11 +1845,12 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 4)
-        ldflags, host_cflags, cflags, prog = objs
+        self.assertEqual(len(objs), 5)
+        ldflags, host_cflags, host_ldflags, cflags, prog = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
         self.assertIsInstance(host_cflags, ComputedFlags)
+        self.assertIsInstance(host_ldflags, ComputedFlags)
         self.assertIsInstance(prog, RustProgram)
         self.assertEqual(prog.name, "some")
 
@@ -1780,12 +1864,13 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 4)
+        self.assertEqual(len(objs), 5)
         print(objs)
-        ldflags, cflags, hostflags, prog = objs
+        ldflags, cflags, host_cflags, host_ldflags, prog = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
-        self.assertIsInstance(hostflags, ComputedFlags)
+        self.assertIsInstance(host_cflags, ComputedFlags)
+        self.assertIsInstance(host_ldflags, ComputedFlags)
         self.assertIsInstance(prog, HostRustProgram)
         self.assertEqual(prog.name, "some")
 
@@ -1799,11 +1884,12 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 4)
-        ldflags, host_cflags, lib, cflags = objs
+        self.assertEqual(len(objs), 5)
+        ldflags, host_cflags, host_ldflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
         self.assertIsInstance(host_cflags, ComputedFlags)
+        self.assertIsInstance(host_ldflags, ComputedFlags)
         self.assertIsInstance(lib, HostRustLibrary)
         self.assertRegex(lib.lib_name, "host_lib")
         self.assertRegex(lib.import_name, "host_lib")
@@ -1816,26 +1902,26 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 4)
-        ldflags, host_cflags, lib, cflags = objs
+        self.assertEqual(len(objs), 5)
+        ldflags, host_cflags, host_ldflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
+        self.assertIsInstance(host_ldflags, ComputedFlags)
         self.assertIsInstance(host_cflags, ComputedFlags)
         self.assertIsInstance(lib, RustLibrary)
 
     def test_missing_workspace_hack(self):
         """Test detection of a missing workspace hack."""
         reader = self.reader("rust-no-workspace-hack")
-        with six.assertRaisesRegex(
-            self, SandboxValidationError, "doesn't contain the workspace hack"
+        with self.assertRaisesRegex(
+            SandboxValidationError, "doesn't contain the workspace hack"
         ):
             self.read_topsrcdir(reader)
 
     def test_old_workspace_hack(self):
         """Test detection of an old workspace hack."""
         reader = self.reader("rust-old-workspace-hack")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
             "needs an update to its mozilla-central-workspace-hack dependency",
         ):
@@ -1885,8 +1971,7 @@ class TestEmitterBasic(unittest.TestCase):
         from GENERATED_FILES is an error.
         """
         reader = self.reader("test-symbols-file-objdir-missing-generated")
-        with six.assertRaisesRegex(
-            self,
+        with self.assertRaisesRegex(
             SandboxValidationError,
             "Objdir file specified in SYMBOLS_FILE not in GENERATED_FILES:",
         ):

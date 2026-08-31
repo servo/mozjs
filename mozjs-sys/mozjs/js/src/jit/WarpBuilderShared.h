@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -320,12 +318,14 @@ class MOZ_STACK_CLASS CallInfo {
 
 template <typename Undef>
 MCall* MakeCall(TempAllocator& alloc, Undef addUndefined, CallInfo& callInfo,
-                bool needsThisCheck, WrappedFunction* target, bool isDOMCall) {
+                bool needsThisCheck, WrappedFunction* target, bool isDOMCall,
+                gc::Heap initialHeap = gc::Heap::Default) {
   MOZ_ASSERT(callInfo.argFormat() == CallInfo::ArgFormat::Standard);
   MOZ_ASSERT_IF(needsThisCheck, !target);
   MOZ_ASSERT_IF(isDOMCall, target->jitInfo()->type() == JSJitInfo::Method);
 
   mozilla::Maybe<DOMObjectKind> objKind;
+  mozilla::Maybe<gc::Heap> heap;
   if (isDOMCall) {
     const Shape* shape = callInfo.thisArg()->toGuardShape()->shape();
     MOZ_ASSERT(shape->getObjectClass()->isDOMClass());
@@ -335,6 +335,8 @@ MCall* MakeCall(TempAllocator& alloc, Undef addUndefined, CallInfo& callInfo,
       MOZ_ASSERT(shape->isProxy());
       objKind.emplace(DOMObjectKind::Proxy);
     }
+
+    heap.emplace(initialHeap);
   }
 
   uint32_t targetArgs = callInfo.argc();
@@ -348,7 +350,7 @@ MCall* MakeCall(TempAllocator& alloc, Undef addUndefined, CallInfo& callInfo,
   MCall* call =
       MCall::New(alloc, target, targetArgs + 1 + callInfo.constructing(),
                  callInfo.argc(), callInfo.constructing(),
-                 callInfo.ignoresReturnValue(), isDOMCall, objKind);
+                 callInfo.ignoresReturnValue(), isDOMCall, objKind, heap);
   if (!call) {
     return nullptr;
   }
@@ -364,7 +366,6 @@ MCall* MakeCall(TempAllocator& alloc, Undef addUndefined, CallInfo& callInfo,
   }
 
   // Explicitly pad any missing arguments with |undefined|.
-  // This permits skipping the argumentsRectifier.
   MOZ_ASSERT_IF(target && targetArgs > callInfo.argc(), target->hasJitEntry());
 
   MConstant* undef = nullptr;
@@ -428,7 +429,8 @@ class WarpBuilderShared {
                                      IsMovable movable = IsMovable::No);
 
   MCall* makeCall(CallInfo& callInfo, bool needsThisCheck,
-                  WrappedFunction* target = nullptr, bool isDOMCall = false);
+                  WrappedFunction* target = nullptr, bool isDOMCall = false,
+                  gc::Heap initialHeap = gc::Heap::Default);
   MInstruction* makeSpreadCall(CallInfo& callInfo, bool needsThisCheck,
                                bool isSameRealm = false,
                                WrappedFunction* target = nullptr);

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,13 +19,6 @@
 
 #ifndef wasm_wasm_baseline_defs_h
 #define wasm_wasm_baseline_defs_h
-
-#include "mozilla/MathAlgorithms.h"
-#include "mozilla/Maybe.h"
-#include "mozilla/ScopeExit.h"
-
-#include <algorithm>
-#include <utility>
 
 #include "jit/AtomicOp.h"
 #include "jit/IonTypes.h"
@@ -66,13 +57,6 @@
 #include "wasm/WasmStubs.h"
 #include "wasm/WasmValidate.h"
 
-using mozilla::DebugOnly;
-using mozilla::FloorLog2;
-using mozilla::IsPowerOfTwo;
-using mozilla::Maybe;
-using mozilla::Nothing;
-using mozilla::Some;
-
 namespace js {
 namespace wasm {
 
@@ -87,32 +71,14 @@ using ZeroOnOverflow = bool;
 
 class BaseStackFrame;
 
-// Two flags, useABI and restoreRegisterStateAndRealm, control how calls are
-// made.
-//
-// UseABI::Wasm implies that the Instance/Heap/Global registers are nonvolatile,
-// except when RestoreRegisterStateAndRealm::True is also set, when they are
-// volatile.
-//
-// UseABI::Builtin implies that the Instance/Heap/Global registers are volatile.
-// In this case, we require RestoreRegisterStateAndRealm::False.  The calling
-// convention is otherwise like UseABI::Wasm.
-//
-// UseABI::System implies that the Instance/Heap/Global registers are volatile.
-// Additionally, the parameter passing mechanism may be slightly different from
-// the UseABI::Wasm convention.
-//
-// When the Instance/Heap/Global registers are not volatile, the baseline
-// compiler will restore the Instance register from its save slot before the
-// call, since the baseline compiler uses the Instance register for other
-// things.
-//
-// When those registers are volatile, the baseline compiler will reload them
-// after the call (it will restore the Instance register from the save slot and
-// load the other two from the Instance data).
-
-enum class UseABI { Wasm, Builtin, System };
-enum class RestoreRegisterStateAndRealm { False = false, True = true };
+enum class RestoreState {
+  // Don't reload anything
+  None,
+  // Reload just the pinned registers, assuming the instance is still valid
+  PinnedRegs,
+  // Reload the instance register, pinned registers, and perform a realm switch
+  All,
+};
 enum class RhsDestOp { True = true };
 
 // Compiler configuration.

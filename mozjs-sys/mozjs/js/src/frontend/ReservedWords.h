@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -63,7 +61,6 @@
                                                                           \
   /* Contextual keywords. */                                              \
   MACRO(as, as, TokenKind::As)                                            \
-  MACRO(assert, assert_, TokenKind::Assert)                               \
   MACRO(async, async, TokenKind::Async)                                   \
   MACRO(await, await, TokenKind::Await)                                   \
   MACRO(from, from, TokenKind::From)                                      \
@@ -73,6 +70,7 @@
   MACRO(of, of, TokenKind::Of)                                            \
   MACRO(set, set, TokenKind::Set)                                         \
   MACRO(static, static_, TokenKind::Static)                               \
+  MACRO(source, source, TokenKind::Source)                                \
   MACRO(target, target, TokenKind::Target)                                \
   MACRO(yield, yield, TokenKind::Yield)
 

@@ -1,4 +1,3 @@
-/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -73,8 +72,7 @@ static int mkdirs(char* path, mode_t mode) {
   if (l > 1 && path[l - 1] == '.' && path[l - 2] == '/') path[l - 2] = 0;
 
   while (*path == '/' && path[1] == '/') path++;
-  for (cp = strrchr(path, '/'); cp && cp != path && *(cp - 1) == '/'; cp--)
-    ;
+  for (cp = strrchr(path, '/'); cp && cp != path && *(cp - 1) == '/'; cp--);
   if (cp && cp != path) {
     *cp = '\0';
     if ((lstat(path, &sb) < 0 || !S_ISDIR(sb.st_mode)) &&

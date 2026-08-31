@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 // Copyright (c) 2006-2011 The Chromium Authors. All rights reserved.
 //
 // Redistribution and use in source and binary forms, with or without
@@ -60,14 +58,9 @@
 #endif                   // def __GLIBC__
 #include <strings.h>     // index
 #include <errno.h>
-#include <stdarg.h>
 
 #include "prenv.h"
 #include "mozilla/PodOperations.h"
-#include "mozilla/DebugOnly.h"
-
-#include <string.h>
-#include <list>
 
 using namespace mozilla;
 
@@ -401,27 +394,6 @@ SamplerThread::SamplerThread(PSLockRef aLock, uint32_t aActivityGeneration,
       mActivityGeneration(aActivityGeneration),
       mIntervalMicroseconds(
           std::max(1, int(floor(aIntervalMilliseconds * 1000 + 0.5)))) {
-#if defined(USE_LUL_STACKWALK)
-  lul::LUL* lul = CorePS::Lul(aLock);
-  if (!lul && ProfilerFeature::HasStackWalkEnabled(aFeatures)) {
-    CorePS::SetLul(aLock, MakeUnique<lul::LUL>(logging_sink_for_LUL));
-    // Read all the unwind info currently available.
-    lul = CorePS::Lul(aLock);
-    read_procmaps(lul);
-
-    // Switch into unwind mode. After this point, we can't add or remove any
-    // unwind info to/from this LUL instance. The only thing we can do with
-    // it is Unwind() calls.
-    lul->EnableUnwinding();
-
-    // Has a test been requested?
-    if (getenv("MOZ_PROFILER_LUL_TEST")) {
-      int nTests = 0, nTestsPassed = 0;
-      RunLulUnitTests(&nTests, &nTestsPassed, lul);
-    }
-  }
-#endif
-
   // Start the sampling thread. It repeatedly sends a SIGPROF signal. Sending
   // the signal ourselves instead of relying on itimer provides much better
   // accuracy.

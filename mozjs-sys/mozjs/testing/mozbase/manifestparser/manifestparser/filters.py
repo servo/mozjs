@@ -8,6 +8,7 @@ dictionary of values, and returns a new iterable of test objects. It is
 possible to define custom filters if the built-in ones are not enough.
 """
 
+import functools
 import itertools
 import os
 from collections import defaultdict
@@ -15,54 +16,60 @@ from collections.abc import MutableSequence
 
 from .expression import ParseError, parse
 from .logger import Logger
-from .util import normsep
+from .util import norm_needed, normsep
 
 # built-in filters
 
 
-def _match(exprs, **values):
-    if any(parse(e, **values) for e in exprs.splitlines() if e):
-        return True
-    return False
+@functools.cache
+def _match(exprs, strict, **values):
+    """Return the first matching expression, or None if no match."""
+    for e in exprs.splitlines():
+        if e and parse(e, strict=strict, **values):
+            return e
+    return None
 
 
-def skip_if(tests, values):
+def skip_if(tests, values, strict=False):
     """
     Sets disabled on all tests containing the `skip-if` tag and whose condition
     is True. This filter is added by default.
     """
-    tag = "skip-if"
     for test in tests:
-        if tag in test and _match(test[tag], **values):
-            test.setdefault("disabled", "{}: {}".format(tag, test[tag]))
+        test_tag = test.get("skip-if")
+        if test_tag:
+            matching_expr = _match(test_tag, strict, **values)
+            if matching_expr:
+                test.setdefault("disabled", f"skip-if: {matching_expr}")
         yield test
 
 
-def run_if(tests, values):
+def run_if(tests, values, strict=False):
     """
     Sets disabled on all tests containing the `run-if` tag and whose condition
     is False. This filter is added by default.
     """
     tag = "run-if"
     for test in tests:
-        if tag in test and not _match(test[tag], **values):
-            test.setdefault("disabled", "{}: {}".format(tag, test[tag]))
+        if tag in test and not _match(test[tag], strict, **values):
+            # For run-if, show all conditions since none of them matched
+            test.setdefault("disabled", f"{tag}: {test[tag]}")
         yield test
 
 
-def fail_if(tests, values):
+def fail_if(tests, values, strict=False):
     """
     Sets expected to 'fail' on all tests containing the `fail-if` tag and whose
     condition is True. This filter is added by default.
     """
     tag = "fail-if"
     for test in tests:
-        if tag in test and _match(test[tag], **values):
+        if tag in test and _match(test[tag], strict, **values):
             test["expected"] = "fail"
         yield test
 
 
-def enabled(tests, values):
+def enabled(tests, values, strict=False):
     """
     Removes all tests containing the `disabled` key. This filter can be
     added by passing `disabled=False` into `active_tests`.
@@ -72,7 +79,7 @@ def enabled(tests, values):
             yield test
 
 
-def exists(tests, values):
+def exists(tests, values, strict=False):
     """
     Removes all tests that do not exist on the file system. This filter is
     added by default, but can be removed by passing `exists=False` into
@@ -86,7 +93,7 @@ def exists(tests, values):
 # built-in instance filters
 
 
-class InstanceFilter(object):
+class InstanceFilter:
     """
     Generally only one instance of a class filter should be applied at a time.
     Two instances of `InstanceFilter` are considered equal if they have the
@@ -103,7 +110,7 @@ class InstanceFilter(object):
         self.fmt_args = ", ".join(
             itertools.chain(
                 [str(a) for a in args],
-                ["{}={}".format(k, v) for k, v in kwargs.items()],
+                [f"{k}={v}" for k, v in kwargs.items()],
             )
         )
 
@@ -113,7 +120,7 @@ class InstanceFilter(object):
         return self.__hash__() == other.__hash__()
 
     def __str__(self):
-        return "{}({})".format(self.__class__.__name__, self.fmt_args)
+        return f"{self.__class__.__name__}({self.fmt_args})"
 
 
 class subsuite(InstanceFilter):
@@ -135,7 +142,7 @@ class subsuite(InstanceFilter):
         InstanceFilter.__init__(self, name=name)
         self.name = name
 
-    def __call__(self, tests, values):
+    def __call__(self, tests, values, strict=False):
         # Look for conditional subsuites, and replace them with the subsuite
         # itself (if the condition is true), or nothing.
         for test in tests:
@@ -145,7 +152,7 @@ class subsuite(InstanceFilter):
                     subsuite, cond = subsuite.split(",")
                 except ValueError:
                     raise ParseError("subsuite condition can't contain commas")
-                matched = parse(cond, **values)
+                matched = parse(cond, strict, **values)
                 if matched:
                     test["subsuite"] = subsuite
                 else:
@@ -157,53 +164,6 @@ class subsuite(InstanceFilter):
                     yield test
             elif test.get("subsuite", "") == self.name:
                 yield test
-
-
-class chunk_by_slice(InstanceFilter):
-    """
-    Basic chunking algorithm that splits tests evenly across total chunks.
-
-    :param this_chunk: the current chunk, 1 <= this_chunk <= total_chunks
-    :param total_chunks: the total number of chunks
-    :param disabled: Whether to include disabled tests in the chunking
-                     algorithm. If False, each chunk contains an equal number
-                     of non-disabled tests. If True, each chunk contains an
-                     equal number of tests (default False)
-    """
-
-    def __init__(self, this_chunk, total_chunks, disabled=False):
-        assert 1 <= this_chunk <= total_chunks
-        InstanceFilter.__init__(self, this_chunk, total_chunks, disabled=disabled)
-        self.this_chunk = this_chunk
-        self.total_chunks = total_chunks
-        self.disabled = disabled
-
-    def __call__(self, tests, values):
-        tests = list(tests)
-        if self.disabled:
-            chunk_tests = tests[:]
-        else:
-            chunk_tests = [t for t in tests if "disabled" not in t]
-
-        tests_per_chunk = float(len(chunk_tests)) / self.total_chunks
-        # pylint: disable=W1633
-        start = int(round((self.this_chunk - 1) * tests_per_chunk))
-        end = int(round(self.this_chunk * tests_per_chunk))
-
-        if not self.disabled:
-            # map start and end back onto original list of tests. Disabled
-            # tests will still be included in the returned list, but each
-            # chunk will contain an equal number of enabled tests.
-            if self.this_chunk == 1:
-                start = 0
-            elif start < len(chunk_tests):
-                start = tests.index(chunk_tests[start])
-
-            if self.this_chunk == self.total_chunks:
-                end = len(tests)
-            elif end < len(chunk_tests):
-                end = tests.index(chunk_tests[end])
-        return (t for t in tests[start:end])
 
 
 class chunk_by_dir(InstanceFilter):
@@ -230,7 +190,7 @@ class chunk_by_dir(InstanceFilter):
         self.total_chunks = total_chunks
         self.depth = depth
 
-    def __call__(self, tests, values):
+    def __call__(self, tests, values, strict=False):
         tests_by_dir = defaultdict(list)
         ordered_dirs = []
         for test in tests:
@@ -265,8 +225,7 @@ class chunk_by_dir(InstanceFilter):
             disabled_dirs = [
                 v for k, v in tests_by_dir.items() if k not in ordered_dirs
             ]
-            for disabled_test in itertools.chain(*disabled_dirs):
-                yield disabled_test
+            yield from itertools.chain(*disabled_dirs)
 
 
 class chunk_by_manifest(InstanceFilter):
@@ -283,7 +242,7 @@ class chunk_by_manifest(InstanceFilter):
         self.this_chunk = this_chunk
         self.total_chunks = total_chunks
 
-    def __call__(self, tests, values):
+    def __call__(self, tests, values, strict=False):
         tests = list(tests)
         manifests = set(t["manifest"] for t in tests)
 
@@ -327,17 +286,30 @@ class chunk_by_runtime(InstanceFilter):
         self.runtimes = {normsep(m): r for m, r in runtimes.items()}
         self.logger = Logger()
 
-    @classmethod
-    def get_manifest(cls, test):
-        manifest = normsep(test.get("ancestor_manifest", ""))
+    # NOTE: get_manifest is called a lot, so we 'inline' normsep when it's
+    # profitable.
+    if norm_needed:
 
-        # Ignore ancestor_manifests that live at the root (e.g, don't have a
-        # path separator). The only time this should happen is when they are
-        # generated by the build system and we shouldn't count generated
-        # manifests for chunking purposes.
-        if not manifest or "/" not in manifest:
-            manifest = normsep(test["manifest_relpath"])
-        return manifest
+        @staticmethod
+        def get_manifest(test):
+            manifest = normsep(test.get("ancestor_manifest", ""))
+
+            # Ignore ancestor_manifests that live at the root (e.g, don't have a
+            # path separator). The only time this should happen is when they are
+            # generated by the build system and we shouldn't count generated
+            # manifests for chunking purposes.
+            if not manifest or "/" not in manifest:
+                manifest = normsep(test["manifest_relpath"])
+            return manifest
+
+    else:
+
+        @staticmethod
+        def get_manifest(test):
+            manifest = test.get("ancestor_manifest")
+            return (
+                manifest if manifest and "/" in manifest else test["manifest_relpath"]
+            )
 
     def get_chunked_manifests(self, manifests):
         # Find runtimes for all relevant manifests.
@@ -372,7 +344,7 @@ class chunk_by_runtime(InstanceFilter):
         chunks.sort(key=lambda x: (x[0], len(x[1])))
         return chunks
 
-    def __call__(self, tests, values):
+    def __call__(self, tests, values, strict=False):
         tests = list(tests)
         manifests = set(self.get_manifest(t) for t in tests)
         chunks = self.get_chunked_manifests(manifests)
@@ -380,10 +352,7 @@ class chunk_by_runtime(InstanceFilter):
         # pylint --py3k W1619
         # pylint: disable=W1633
         self.logger.debug(
-            "Cumulative test runtime is around {} minutes (average is {} minutes)".format(
-                round(runtime / 60),
-                round(sum([c[0] for c in chunks]) / (60 * len(chunks))),
-            )
+            f"Cumulative test runtime is around {round(runtime / 60)} minutes (average is {round(sum([c[0] for c in chunks]) / (60 * len(chunks)))} minutes)"
         )
         return (t for t in tests if self.get_manifest(t) in this_manifests)
 
@@ -414,7 +383,7 @@ class tags(InstanceFilter):
             tags = [tags]
         self.tags = tags
 
-    def __call__(self, tests, values):
+    def __call__(self, tests, values, strict=False):
         for test in tests:
             if "tags" not in test:
                 continue
@@ -440,14 +409,14 @@ class failures(InstanceFilter):
         InstanceFilter.__init__(self, keyword)
         self.keyword = keyword.strip('"')
 
-    def __call__(self, tests, values):
+    def __call__(self, tests, values, strict=False):
         for test in tests:
             for key in ["skip-if", "fail-if"]:
                 if key not in test:
                     continue
 
                 matched = [
-                    self.keyword in e and parse(e, **values)
+                    self.keyword in e and parse(e, strict, **values)
                     for e in test[key].splitlines()
                     if e
                 ]
@@ -470,7 +439,7 @@ class pathprefix(InstanceFilter):
         self.paths = paths
         self.missing = set()
 
-    def __call__(self, tests, values):
+    def __call__(self, tests, values, strict=False):
         seen = set()
         for test in tests:
             for testpath in self.paths:
@@ -502,7 +471,7 @@ class pathprefix(InstanceFilter):
                 if "disabled" in test and os.path.normpath(test["relpath"]) == tp:
                     del test["disabled"]
 
-                seen.add(tp)
+                seen.add(testpath)
                 yield test
                 break
 
@@ -537,7 +506,7 @@ class filterlist(MutableSequence):
         if not callable(item):
             raise TypeError("Filters must be callable!")
         if item in self:
-            raise ValueError("Filter {} is already applied!".format(item))
+            raise ValueError(f"Filter {item} is already applied!")
 
     def __getitem__(self, key):
         return self.items[key]

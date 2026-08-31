@@ -1,14 +1,12 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ProfiledThreadData.h"
 
-#include "BaseProfiler.h"
 #include "ProfileBuffer.h"
 
+#include "mozilla/BaseProfiler.h"
 #include "mozilla/BaseProfileJSONWriter.h"
 
 #if defined(GP_OS_darwin)
@@ -21,7 +19,7 @@ namespace baseprofiler {
 ProfiledThreadData::ProfiledThreadData(ThreadInfo* aThreadInfo)
     : mThreadInfo(aThreadInfo) {}
 
-ProfiledThreadData::~ProfiledThreadData() {}
+ProfiledThreadData::~ProfiledThreadData() = default;
 
 void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
                                     SpliceableJSONWriter& aWriter,
@@ -49,7 +47,9 @@ void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
       }
 
       aWriter.StartArrayProperty("data");
-      { uniqueStacks.SpliceStackTableElements(aWriter); }
+      {
+        uniqueStacks.SpliceStackTableElements(aWriter);
+      }
       aWriter.EndArray();
     }
     aWriter.EndObject();
@@ -69,7 +69,9 @@ void ProfiledThreadData::StreamJSON(const ProfileBuffer& aBuffer,
       }
 
       aWriter.StartArrayProperty("data");
-      { uniqueStacks.SpliceFrameTableElements(aWriter); }
+      {
+        uniqueStacks.SpliceFrameTableElements(aWriter);
+      }
       aWriter.EndArray();
     }
     aWriter.EndObject();

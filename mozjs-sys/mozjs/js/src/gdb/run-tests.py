@@ -58,10 +58,10 @@ def make_shell_cmd(l):
 
 # An instance of this class collects the lists of passing, failing, and
 # timing-out tests, runs the progress bar, and prints a summary at the end.
-class Summary(object):
+class Summary:
     class SummaryBar(progressbar.ProgressBar):
         def __init__(self, limit):
-            super(Summary.SummaryBar, self).__init__("", limit, 24)
+            super().__init__("", limit, 24)
 
         def start(self):
             self.label = "[starting           ]"
@@ -123,7 +123,7 @@ class Summary(object):
                     with open(OPTIONS.worklist) as out:
                         for test in self.failures:
                             out.write(test.name + "\n")
-                except IOError as err:
+                except OSError as err:
                     sys.stderr.write(
                         "Error writing worklist file '%s': %s" % (OPTIONS.worklist, err)
                     )
@@ -134,7 +134,7 @@ class Summary(object):
                     with open(OPTIONS.write_failures, "w") as out:
                         for test in self.failures:
                             test.show(out)
-                except IOError as err:
+                except OSError as err:
                     sys.stderr.write(
                         "Error writing worklist file '%s': %s"
                         % (OPTIONS.write_failures, err)
@@ -152,7 +152,7 @@ class Summary(object):
 
 class Test(TaskPool.Task):
     def __init__(self, path, summary):
-        super(Test, self).__init__()
+        super().__init__()
         self.test_path = path  # path to .py test file
         self.summary = summary
 
@@ -188,7 +188,7 @@ class Test(TaskPool.Task):
         ]
 
     def start(self, pipe, deadline):
-        super(Test, self).start(pipe, deadline)
+        super().start(pipe, deadline)
         if OPTIONS.show_cmd:
             self.summary.interleave_output(lambda: self.show_cmd(sys.stdout))
 
@@ -252,14 +252,13 @@ def run_tests(tests, summary):
     # python 3.3 fixed a bug with concurrently writing .pyc files.
     # https://bugs.python.org/issue13146
     embedded_version = (
-        subprocess.check_output(
-            [
-                OPTIONS.gdb_executable,
-                "--batch",
-                "--ex",
-                "python import sys; print(sys.hexversion)",
-            ]
-        )
+        subprocess
+        .check_output([
+            OPTIONS.gdb_executable,
+            "--batch",
+            "--ex",
+            "python import sys; print(sys.hexversion)",
+        ])
         .decode("ascii")
         .strip()
     )
@@ -407,7 +406,7 @@ def main(argv):
             with open(OPTIONS.worklist) as f:
                 for line in f:
                     test_set.update(os.path.join(OPTIONS.testdir, line.strip("\n")))
-        except IOError:
+        except OSError:
             # With worklist, a missing file means to start the process with
             # the complete list of tests.
             sys.stderr.write(
@@ -420,7 +419,7 @@ def main(argv):
             with open(OPTIONS.read_tests) as f:
                 for line in f:
                     test_set.update(os.path.join(OPTIONS.testdir, line.strip("\n")))
-        except IOError as err:
+        except OSError as err:
             sys.stderr.write(
                 "Error trying to read test file '%s': %s\n" % (OPTIONS.read_tests, err)
             )

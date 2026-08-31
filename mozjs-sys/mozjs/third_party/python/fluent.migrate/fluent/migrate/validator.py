@@ -5,7 +5,6 @@ from itertools import zip_longest
 from fluent.migrate import transforms
 from fluent.migrate.errors import MigrationError
 from fluent.migrate.helpers import transforms_from
-from fluent.syntax import ast as FTL
 from fluent.syntax.visitor import Visitor
 from compare_locales import mozpath
 
@@ -319,5 +318,6 @@ def cli():
     args = parser.parse_args()
     issues = Validator.validate(args.migration)["issues"]
     for issue in issues:
-        print(issue["msg"], "at line", issue["line"])
+        # bright red fg
+        print(f"\x1b[1;31m{issue['msg']} at line {issue['line']}\x1b[0m")
     return 1 if issues else 0

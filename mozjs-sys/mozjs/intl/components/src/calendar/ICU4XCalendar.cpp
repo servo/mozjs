@@ -1,0 +1,501 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "mozilla/intl/calendar/ICU4XCalendar.h"
+
+#include "mozilla/Assertions.h"
+#include "mozilla/TextUtils.h"
+
+#include <cstring>
+#include <stdint.h>
+#include <type_traits>
+
+#include "unicode/timezone.h"
+
+#include "icu4x/diplomat_runtime.hpp"
+#include "icu4x/CalendarError.hpp"
+
+namespace mozilla::intl::calendar {
+
+// Copied from js/src/util/Text.h
+template <typename CharT>
+static constexpr uint8_t AsciiDigitToNumber(CharT c) {
+  using UnsignedCharT = std::make_unsigned_t<CharT>;
+  auto uc = static_cast<UnsignedCharT>(c);
+  return uc - '0';
+}
+
+static UniqueICU4XCalendar CreateICU4XCalendar(icu4x::capi::CalendarKind kind) {
+  auto* result = icu4x::capi::icu4x_Calendar_create_mv1(kind);
+  return UniqueICU4XCalendar{result};
+}
+
+static UniqueICU4XDate CreateICU4XDate(const ISODate& date,
+                                       const icu4x::capi::Calendar* calendar) {
+  auto result = icu4x::capi::icu4x_Date_from_iso_in_calendar_mv1(
+      date.year, date.month, date.day, calendar);
+  if (!result.is_ok) {
+    return nullptr;
+  }
+  return UniqueICU4XDate{result.ok};
+}
+
+static UniqueICU4XDate CreateDateFromCodes(
+    const icu4x::capi::Calendar* calendar, std::string_view era,
+    int32_t eraYear, MonthCode monthCode, int32_t day) {
+  auto monthCodeView = std::string_view{monthCode};
+  auto date = icu4x::capi::icu4x_Date_from_codes_in_calendar_mv1(
+      icu4x::diplomat::capi::DiplomatStringView{era.data(), era.length()},
+      eraYear,
+      icu4x::diplomat::capi::DiplomatStringView{monthCodeView.data(),
+                                                monthCodeView.length()},
+      day, calendar);
+  if (date.is_ok) {
+    return UniqueICU4XDate{date.ok};
+  }
+  return nullptr;
+}
+
+// Copied from js/src/builtin/temporal/Calendar.cpp
+static UniqueICU4XDate CreateDateFrom(const icu4x::capi::Calendar* calendar,
+                                      std::string_view era, int32_t eraYear,
+                                      int32_t month, int32_t day) {
+  MOZ_ASSERT(1 <= month && month <= 13);
+
+  // Create date with month number replaced by month-code.
+  auto monthCode = MonthCode{std::min(month, 12)};
+  auto date = CreateDateFromCodes(calendar, era, eraYear, monthCode, day);
+  if (!date) {
+    return nullptr;
+  }
+
+  // If the ordinal month of |date| matches the input month, no additional
+  // changes are necessary and we can directly return |date|.
+  int32_t ordinal = icu4x::capi::icu4x_Date_ordinal_month_mv1(date.get());
+  if (ordinal == month) {
+    return date;
+  }
+
+  // Otherwise we need to handle three cases:
+  // 1. The input year contains a leap month and we need to adjust the
+  //    month-code.
+  // 2. The thirteenth month of a year without leap months was requested.
+  // 3. The thirteenth month of a year with leap months was requested.
+  if (ordinal > month) {
+    MOZ_ASSERT(1 < month && month <= 12);
+
+    // This case can only happen in leap years.
+    MOZ_ASSERT(icu4x::capi::icu4x_Date_months_in_year_mv1(date.get()) == 13);
+
+    // Leap months can occur after any month in the Chinese calendar.
+    //
+    // Example when the fourth month is a leap month between M03 and M04.
+    //
+    // Month code:     M01  M02  M03  M03L  M04  M05  M06 ...
+    // Ordinal month:  1    2    3    4     5    6    7
+
+    // The month can be off by exactly one.
+    MOZ_ASSERT((ordinal - month) == 1);
+
+    // First try the case when the previous month isn't a leap month. This
+    // case can only occur when |month > 2|, because otherwise we know that
+    // "M01L" is the correct answer.
+    if (month > 2) {
+      auto previousMonthCode = MonthCode{month - 1};
+      date =
+          CreateDateFromCodes(calendar, era, eraYear, previousMonthCode, day);
+      if (!date) {
+        return nullptr;
+      }
+      int32_t ordinal = icu4x::capi::icu4x_Date_ordinal_month_mv1(date.get());
+      if (ordinal == month) {
+        return date;
+      }
+    }
+
+    // Fall-through when the previous month is a leap month.
+  } else {
+    MOZ_ASSERT(month == 13);
+    MOZ_ASSERT(ordinal == 12);
+
+    // Years with leap months contain thirteen months.
+    if (icu4x::capi::icu4x_Date_months_in_year_mv1(date.get()) != 13) {
+      return nullptr;
+    }
+
+    // Fall-through to return leap month "M12L" at the end of the year.
+  }
+
+  // Finally handle the case when the previous month is a leap month.
+  auto leapMonthCode = MonthCode{month - 1, /* isLeapMonth= */ true};
+  return CreateDateFromCodes(calendar, era, eraYear, leapMonthCode, day);
+}
+
+static ISODate ToISODate(const icu4x::capi::Date* date) {
+  UniqueICU4XIsoDate isoDate{icu4x::capi::icu4x_Date_to_iso_mv1(date)};
+
+  int32_t isoYear = icu4x::capi::icu4x_IsoDate_year_mv1(isoDate.get());
+  int32_t isoMonth = icu4x::capi::icu4x_IsoDate_month_mv1(isoDate.get());
+  int32_t isoDay = icu4x::capi::icu4x_IsoDate_day_of_month_mv1(isoDate.get());
+
+  return {isoYear, isoMonth, isoDay};
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+ICU4XCalendar::ICU4XCalendar(icu4x::capi::CalendarKind kind,
+                             const icu::Locale& locale, UErrorCode& success)
+    : icu::Calendar(icu::TimeZone::forLocaleOrDefault(locale), locale, success),
+      kind_(kind) {}
+
+ICU4XCalendar::ICU4XCalendar(icu4x::capi::CalendarKind kind,
+                             const icu::TimeZone& timeZone,
+                             const icu::Locale& locale, UErrorCode& success)
+    : icu::Calendar(timeZone, locale, success), kind_(kind) {}
+
+ICU4XCalendar::ICU4XCalendar(const ICU4XCalendar& other)
+    : icu::Calendar(other), kind_(other.kind_) {}
+
+ICU4XCalendar::~ICU4XCalendar() = default;
+
+/**
+ * Get or create the underlying ICU4X calendar.
+ */
+icu4x::capi::Calendar* ICU4XCalendar::getICU4XCalendar(
+    UErrorCode& status) const {
+  if (U_FAILURE(status)) {
+    return nullptr;
+  }
+  if (!calendar_) {
+    auto result = CreateICU4XCalendar(kind_);
+    if (!result) {
+      status = U_INTERNAL_PROGRAM_ERROR;
+      return nullptr;
+    }
+    calendar_ = std::move(result);
+  }
+  return calendar_.get();
+}
+
+UniqueICU4XDate ICU4XCalendar::createICU4XDate(const ISODate& date,
+                                               UErrorCode& status) const {
+  MOZ_ASSERT(U_SUCCESS(status));
+
+  auto* calendar = getICU4XCalendar(status);
+  if (U_FAILURE(status)) {
+    return nullptr;
+  }
+
+  auto dt = CreateICU4XDate(date, calendar);
+  if (!dt) {
+    status = U_INTERNAL_PROGRAM_ERROR;
+  }
+  return dt;
+}
+
+MonthCode ICU4XCalendar::monthCodeFrom(const icu4x::capi::Date* date) {
+  // Storage for the largest valid month code and the terminating NUL-character.
+  // DiplomatWrite doesn't have std::span version.
+  // https://github.com/rust-diplomat/diplomat/issues/866
+  std::string buf;
+  auto writable = icu4x::diplomat::WriteFromString(buf);
+
+  icu4x::capi::icu4x_Date_month_code_mv1(date, &writable);
+
+  MOZ_ASSERT(buf.length() >= 3);
+  MOZ_ASSERT(buf[0] == 'M');
+  MOZ_ASSERT(mozilla::IsAsciiDigit(buf[1]));
+  MOZ_ASSERT(mozilla::IsAsciiDigit(buf[2]));
+  MOZ_ASSERT_IF(buf.length() > 3, buf[3] == 'L');
+
+  int32_t ordinal =
+      AsciiDigitToNumber(buf[1]) * 10 + AsciiDigitToNumber(buf[2]);
+  bool isLeapMonth = buf.length() > 3;
+
+  return MonthCode{ordinal, isLeapMonth};
+}
+
+////////////////////////////////////////////
+// icu::Calendar implementation overrides //
+////////////////////////////////////////////
+
+const char* ICU4XCalendar::getTemporalMonthCode(UErrorCode& status) const {
+  int32_t month = get(UCAL_MONTH, status);
+  int32_t isLeapMonth = get(UCAL_IS_LEAP_MONTH, status);
+  if (U_FAILURE(status)) {
+    return nullptr;
+  }
+
+  static const char* MonthCodes[] = {
+      // Non-leap months.
+      "M01",
+      "M02",
+      "M03",
+      "M04",
+      "M05",
+      "M06",
+      "M07",
+      "M08",
+      "M09",
+      "M10",
+      "M11",
+      "M12",
+      "M13",
+
+      // Leap months. (Note: There's no thirteenth leap month.)
+      "M01L",
+      "M02L",
+      "M03L",
+      "M04L",
+      "M05L",
+      "M06L",
+      "M07L",
+      "M08L",
+      "M09L",
+      "M10L",
+      "M11L",
+      "M12L",
+  };
+
+  size_t index = month + (isLeapMonth ? 12 : 0);
+  if (index >= std::size(MonthCodes)) {
+    status = U_ILLEGAL_ARGUMENT_ERROR;
+    return nullptr;
+  }
+  return MonthCodes[index];
+}
+
+void ICU4XCalendar::setTemporalMonthCode(const char* code, UErrorCode& status) {
+  if (U_FAILURE(status)) {
+    return;
+  }
+
+  size_t len = std::strlen(code);
+  if (len < 3 || len > 4 || code[0] != 'M' || !IsAsciiDigit(code[1]) ||
+      !IsAsciiDigit(code[2]) || (len == 4 && code[3] != 'L')) {
+    status = U_ILLEGAL_ARGUMENT_ERROR;
+    return;
+  }
+
+  int32_t month =
+      AsciiDigitToNumber(code[1]) * 10 + AsciiDigitToNumber(code[2]);
+  bool isLeapMonth = len == 4;
+
+  if (month < 1 || month > 13 || (month == 13 && isLeapMonth)) {
+    status = U_ILLEGAL_ARGUMENT_ERROR;
+    return;
+  }
+
+  // Check if this calendar supports the requested month code.
+  auto monthCode = MonthCode{month, isLeapMonth};
+  if (!hasMonthCode(monthCode)) {
+    status = U_ILLEGAL_ARGUMENT_ERROR;
+    return;
+  }
+
+  set(UCAL_MONTH, monthCode.ordinal() - 1);
+  set(UCAL_IS_LEAP_MONTH, int32_t(monthCode.isLeapMonth()));
+}
+
+int32_t ICU4XCalendar::internalGetMonth(int32_t defaultValue,
+                                        UErrorCode& status) const {
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+  if (resolveFields(kMonthPrecedence) == UCAL_MONTH) {
+    return internalGet(UCAL_MONTH, defaultValue);
+  }
+  if (!hasLeapMonths()) {
+    return internalGet(UCAL_ORDINAL_MONTH);
+  }
+  return internalGetMonth(status);
+}
+
+/**
+ * Return the current month, possibly by computing it from |UCAL_ORDINAL_MONTH|.
+ */
+int32_t ICU4XCalendar::internalGetMonth(UErrorCode& status) const {
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+  if (resolveFields(kMonthPrecedence) == UCAL_MONTH) {
+    return internalGet(UCAL_MONTH);
+  }
+  if (!hasLeapMonths()) {
+    return internalGet(UCAL_ORDINAL_MONTH);
+  }
+
+  int32_t extendedYear = internalGet(UCAL_EXTENDED_YEAR);
+  int32_t ordinalMonth = internalGet(UCAL_ORDINAL_MONTH);
+
+  auto* cal = getICU4XCalendar(status);
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+
+  UniqueICU4XDate date = CreateDateFrom(cal, eraName(extendedYear),
+                                        extendedYear, ordinalMonth + 1, 1);
+  if (!date) {
+    status = U_INTERNAL_PROGRAM_ERROR;
+    return 0;
+  }
+
+  MonthCode monthCode = monthCodeFrom(date.get());
+  int32_t month = monthCode.ordinal() - 1;
+  int32_t isLeapMonth = monthCode.isLeapMonth();
+
+  auto* nonConstThis = const_cast<ICU4XCalendar*>(this);
+  nonConstThis->internalSet(UCAL_IS_LEAP_MONTH, isLeapMonth);
+  nonConstThis->internalSet(UCAL_MONTH, month);
+
+  return month;
+}
+
+void ICU4XCalendar::add(UCalendarDateFields field, int32_t amount,
+                        UErrorCode& status) {
+  switch (field) {
+    case UCAL_MONTH:
+    case UCAL_ORDINAL_MONTH:
+      if (amount != 0) {
+        // Our implementation doesn't yet support this action.
+        status = U_ILLEGAL_ARGUMENT_ERROR;
+        break;
+      }
+      break;
+    default:
+      Calendar::add(field, amount, status);
+      break;
+  }
+}
+
+void ICU4XCalendar::add(EDateFields field, int32_t amount, UErrorCode& status) {
+  add(static_cast<UCalendarDateFields>(field), amount, status);
+}
+
+void ICU4XCalendar::roll(UCalendarDateFields field, int32_t amount,
+                         UErrorCode& status) {
+  switch (field) {
+    case UCAL_MONTH:
+    case UCAL_ORDINAL_MONTH:
+      if (amount != 0) {
+        // Our implementation doesn't yet support this action.
+        status = U_ILLEGAL_ARGUMENT_ERROR;
+        break;
+      }
+      break;
+    default:
+      Calendar::roll(field, amount, status);
+      break;
+  }
+}
+
+void ICU4XCalendar::roll(EDateFields field, int32_t amount,
+                         UErrorCode& status) {
+  roll(static_cast<UCalendarDateFields>(field), amount, status);
+}
+
+int32_t ICU4XCalendar::handleGetExtendedYear(UErrorCode& status) {
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+  if (newerField(UCAL_EXTENDED_YEAR, UCAL_YEAR) == UCAL_EXTENDED_YEAR) {
+    return internalGet(UCAL_EXTENDED_YEAR, 1);
+  }
+
+  // We don't yet support the case when UCAL_YEAR is newer.
+  status = U_UNSUPPORTED_ERROR;
+  return 0;
+}
+
+int32_t ICU4XCalendar::handleGetYearLength(int32_t extendedYear,
+                                           UErrorCode& status) const {
+  auto* cal = getICU4XCalendar(status);
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+
+  UniqueICU4XDate date =
+      CreateDateFrom(cal, eraName(extendedYear), extendedYear, 1, 1);
+  if (!date) {
+    status = U_INTERNAL_PROGRAM_ERROR;
+    return 0;
+  }
+  return icu4x::capi::icu4x_Date_days_in_year_mv1(date.get());
+}
+
+/**
+ * Return the number of days in a month.
+ */
+int32_t ICU4XCalendar::handleGetMonthLength(int32_t extendedYear, int32_t month,
+                                            UErrorCode& status) const {
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+
+  // ICU4C supports wrap around. We don't support this case.
+  if (month < 0 || month > 11) {
+    status = U_ILLEGAL_ARGUMENT_ERROR;
+    return 0;
+  }
+
+  auto* cal = getICU4XCalendar(status);
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+
+  bool isLeapMonth = internalGet(UCAL_IS_LEAP_MONTH) != 0;
+  auto monthCode = MonthCode{month + 1, isLeapMonth};
+  UniqueICU4XDate date = CreateDateFromCodes(cal, eraName(extendedYear),
+                                             extendedYear, monthCode, 1);
+  if (!date) {
+    status = U_INTERNAL_PROGRAM_ERROR;
+    return 0;
+  }
+
+  return icu4x::capi::icu4x_Date_days_in_month_mv1(date.get());
+}
+
+/**
+ * Return the start of the month as a Julian date.
+ */
+int64_t ICU4XCalendar::handleComputeMonthStart(int32_t extendedYear,
+                                               int32_t month, UBool useMonth,
+                                               UErrorCode& status) const {
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+
+  // ICU4C supports wrap around. We don't support this case.
+  if (month < 0 || month > 11) {
+    status = U_ILLEGAL_ARGUMENT_ERROR;
+    return 0;
+  }
+
+  auto* cal = getICU4XCalendar(status);
+  if (U_FAILURE(status)) {
+    return 0;
+  }
+
+  UniqueICU4XDate date{};
+  if (useMonth) {
+    bool isLeapMonth = internalGet(UCAL_IS_LEAP_MONTH) != 0;
+    auto monthCode = MonthCode{month + 1, isLeapMonth};
+    date = CreateDateFromCodes(cal, eraName(extendedYear), extendedYear,
+                               monthCode, 1);
+  } else {
+    date =
+        CreateDateFrom(cal, eraName(extendedYear), extendedYear, month + 1, 1);
+  }
+  if (!date) {
+    status = U_INTERNAL_PROGRAM_ERROR;
+    return 0;
+  }
+
+  auto isoDate = ToISODate(date.get());
+  int32_t newMoon = MakeDay(isoDate);
+
+  return (newMoon - 1) + kEpochStartAsJulianDay;
+}
+
+}  // namespace mozilla::intl::calendar

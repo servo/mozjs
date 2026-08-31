@@ -18,9 +18,14 @@ setup(
     description="Library to get system information for use in Mozilla testing",
     long_description="see https://firefox-source-docs.mozilla.org/mozbase/index.html",
     classifiers=[
-        "Programming Language :: Python :: 2.7",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.5",
+        "Programming Language :: Python",
+        "Programming Language :: Python :: 3 :: Only",
+        "Programming Language :: Python :: 3.8",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Development Status :: 5 - Production/Stable",
     ],
     # Get strings from http://pypi.python.org/pypi?%3Aaction=list_classifiers
@@ -30,6 +35,7 @@ setup(
     url="https://wiki.mozilla.org/Auto-tools/Projects/Mozbase",
     license="MPL",
     packages=["mozinfo"],
+    package_data={"mozinfo": ["android_os_to_api_map.yaml"]},
     include_package_data=True,
     zip_safe=False,
     install_requires=deps,
@@ -38,4 +44,5 @@ setup(
       [console_scripts]
       mozinfo = mozinfo:main
       """,
+    python_requires=">=3.8",
 )

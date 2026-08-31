@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
@@ -8,13 +6,13 @@
 #define PreXULSkeletonUI_h_
 
 #include <windows.h>
-#include "mozilla/EnumSet.h"
-#include "mozilla/Maybe.h"
 #include "mozilla/Result.h"
 #include "mozilla/Types.h"
 #include "mozilla/Vector.h"
 
 namespace mozilla {
+
+#define DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1 19
 
 // These unfortunately need to be kept in sync with the window style and
 // extended window style computations in nsWindow. Luckily those styles seem
@@ -50,6 +48,7 @@ struct SkeletonUISettings {
   bool menubarShown;
   bool bookmarksToolbarShown;
   bool rtlEnabled;
+  bool verticalTabs;
   SkeletonUIDensity uiDensity;
 };
 
@@ -61,12 +60,13 @@ enum class SkeletonUIFlag : uint8_t {
   RtlEnabled,
   TouchDensity,
   CompactDensity,
+  VerticalTabs
 };
 
 struct ThemeColors {
   uint32_t backgroundColor;
   uint32_t toolbarForegroundColor;
-  uint32_t tabBarColor;
+  uint32_t titlebarColor;
   uint32_t tabColor;
   uint32_t tabOutlineColor;
   uint32_t chromeContentDividerColor;
@@ -101,61 +101,6 @@ enum class PreXULSkeletonUIError : uint32_t {
   Unknown,
 };
 
-inline const wchar_t* GetPreXULSkeletonUIErrorString(
-    PreXULSkeletonUIError error) {
-  switch (error) {
-    case PreXULSkeletonUIError::None:
-      return L"None";
-    case PreXULSkeletonUIError::Disabled:
-      return L"Disabled";
-    case PreXULSkeletonUIError::OOM:
-      return L"OOM";
-    case PreXULSkeletonUIError::Cmdline:
-      return L"Cmdline";
-    case PreXULSkeletonUIError::EnvVars:
-      return L"EnvVars";
-    case PreXULSkeletonUIError::FailedToOpenRegistryKey:
-      return L"FailedToOpenRegistryKey";
-    case PreXULSkeletonUIError::RegistryError:
-      return L"RegistryError";
-    case PreXULSkeletonUIError::FailedLoadingDynamicProcs:
-      return L"FailedLoadingDynamicProcs";
-    case PreXULSkeletonUIError::FailedGettingLock:
-      return L"FailedGettingLock";
-    case PreXULSkeletonUIError::FilesystemFailure:
-      return L"FilesystemFailure";
-    case PreXULSkeletonUIError::NoStartWithLastProfile:
-      return L"NoStartWithLastProfile";
-    case PreXULSkeletonUIError::FailedRegisteringWindowClass:
-      return L"FailedRegisteringWindowClass";
-    case PreXULSkeletonUIError::CorruptData:
-      return L"CorruptData";
-    case PreXULSkeletonUIError::BadWindowDimensions:
-      return L"BadWindowDimensions";
-    case PreXULSkeletonUIError::FailedGettingMonitorInfo:
-      return L"FailedGettingMonitorInfo";
-    case PreXULSkeletonUIError::EnabledKeyDoesNotExist:
-      return L"EnabledKeyDoesNotExist";
-    case PreXULSkeletonUIError::CreateWindowFailed:
-      return L"CreateWindowFailed";
-    case PreXULSkeletonUIError::FailedGettingDC:
-      return L"FailedGettingDC";
-    case PreXULSkeletonUIError::FailedBlitting:
-      return L"FailedBlitting";
-    case PreXULSkeletonUIError::FailedFillingBottomRect:
-      return L"FailedFillingBottomRect";
-    case PreXULSkeletonUIError::CrashedOnce:
-      return L"CrashedOnce";
-    case PreXULSkeletonUIError::BadUIDensity:
-      return L"BadUIDensity";
-    case PreXULSkeletonUIError::Unknown:
-      return L"Unknown";
-  }
-
-  MOZ_ASSERT_UNREACHABLE();
-  return L"Unknown";
-}
-
 enum class PreXULSkeletonUIProgress : uint32_t {
   Started,
   Completed,
@@ -166,7 +111,6 @@ MFBT_API void CreateAndStorePreXULSkeletonUI(HINSTANCE hInstance, int argc,
 MFBT_API void CleanupProcessRuntime();
 MFBT_API bool GetPreXULSkeletonUIWasShown();
 MFBT_API HWND ConsumePreXULSkeletonUIHandle();
-MFBT_API Maybe<PreXULSkeletonUIError> GetPreXULSkeletonUIErrorReason();
 MFBT_API bool WasPreXULSkeletonUIMaximized();
 MFBT_API Result<Ok, PreXULSkeletonUIError> PersistPreXULSkeletonUIValues(
     const SkeletonUISettings& settings);

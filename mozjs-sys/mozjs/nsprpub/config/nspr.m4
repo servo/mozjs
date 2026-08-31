@@ -1,4 +1,3 @@
-# -*- tab-width: 4; -*-
 # Configure paths for NSPR
 # Public domain - Chris Seawood <cls@seawood.org> 2001-04-05
 # Based upon gtk.m4 (also PD) by Owen Taylor

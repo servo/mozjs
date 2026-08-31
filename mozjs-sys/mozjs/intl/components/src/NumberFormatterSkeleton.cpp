@@ -4,31 +4,46 @@
 #include "NumberFormatterSkeleton.h"
 #include "NumberFormat.h"
 
-#include "MeasureUnitGenerated.h"
-
 #include "mozilla/RangedPtr.h"
 
-#include <algorithm>
 #include <limits>
+#include <tuple>
+#include <utility>
 
+#include "unicode/unumberformatter.h"
 #include "unicode/unumberrangeformatter.h"
+#include "unicode/utypes.h"
 
 namespace mozilla::intl {
 
 NumberFormatterSkeleton::NumberFormatterSkeleton(
     const NumberFormatOptions& options) {
-  if (options.mCurrency.isSome()) {
-    if (!currency(options.mCurrency->first) ||
-        !currencyDisplay(options.mCurrency->second)) {
-      return;
+  switch (options.mStyle) {
+    case NumberFormatOptions::Style::Decimal:
+      break;
+    case NumberFormatOptions::Style::Percent: {
+      if (!percent()) {
+        return;
+      }
+      break;
     }
-  } else if (options.mUnit.isSome()) {
-    if (!unit(options.mUnit->first) || !unitDisplay(options.mUnit->second)) {
-      return;
+    case NumberFormatOptions::Style::Currency: {
+      MOZ_ASSERT(options.mCurrency);
+
+      if (!currency(std::get<std::string_view>(*options.mCurrency)) ||
+          !currencyDisplay(std::get<NumberFormatOptions::CurrencyDisplay>(
+              *options.mCurrency))) {
+        return;
+      }
+      break;
     }
-  } else if (options.mPercent) {
-    if (!percent()) {
-      return;
+    case NumberFormatOptions::Style::Unit: {
+      MOZ_ASSERT(options.mUnit);
+
+      if (!unit(options.mUnit->first) || !unitDisplay(options.mUnit->second)) {
+        return;
+      }
+      break;
     }
   }
 
@@ -84,8 +99,16 @@ NumberFormatterSkeleton::NumberFormatterSkeleton(
     return;
   }
 
-  if (!signDisplay(options.mSignDisplay)) {
-    return;
+  if (options.mStyle == NumberFormatOptions::Style::Currency &&
+      std::get<NumberFormatOptions::CurrencySign>(*options.mCurrency) ==
+          NumberFormatOptions::CurrencySign::Accounting) {
+    if (!accountingSignDisplay(options.mSignDisplay)) {
+      return;
+    }
+  } else {
+    if (!signDisplay(options.mSignDisplay)) {
+      return;
+    }
   }
 
   if (!roundingMode(options.mRoundingMode)) {
@@ -122,51 +145,8 @@ bool NumberFormatterSkeleton::currencyDisplay(
   return false;
 }
 
-static const SimpleMeasureUnit& FindSimpleMeasureUnit(std::string_view name) {
-  const auto* measureUnit = std::lower_bound(
-      std::begin(simpleMeasureUnits), std::end(simpleMeasureUnits), name,
-      [](const auto& measureUnit, std::string_view name) {
-        return name.compare(measureUnit.name) > 0;
-      });
-  MOZ_ASSERT(measureUnit != std::end(simpleMeasureUnits),
-             "unexpected unit identifier: unit not found");
-  MOZ_ASSERT(measureUnit->name == name,
-             "unexpected unit identifier: wrong unit found");
-  return *measureUnit;
-}
-
-static constexpr size_t MaxUnitLength() {
-  size_t length = 0;
-  for (const auto& unit : simpleMeasureUnits) {
-    length = std::max(length, std::char_traits<char>::length(unit.name));
-  }
-  return length * 2 + std::char_traits<char>::length("-per-");
-}
-
 bool NumberFormatterSkeleton::unit(std::string_view unit) {
-  MOZ_RELEASE_ASSERT(unit.length() <= MaxUnitLength());
-
-  auto appendUnit = [this](const SimpleMeasureUnit& unit) {
-    return append(unit.type, strlen(unit.type)) && append('-') &&
-           append(unit.name, strlen(unit.name));
-  };
-
-  // |unit| can be a compound unit identifier, separated by "-per-".
-  static constexpr char separator[] = "-per-";
-  size_t separator_len = strlen(separator);
-  size_t offset = unit.find(separator);
-  if (offset != std::string_view::npos) {
-    const auto& numerator = FindSimpleMeasureUnit(unit.substr(0, offset));
-    const auto& denominator = FindSimpleMeasureUnit(
-        std::string_view(unit.data() + offset + separator_len,
-                         unit.length() - offset - separator_len));
-    return append(u"measure-unit/") && appendUnit(numerator) && append(' ') &&
-           append(u"per-measure-unit/") && appendUnit(denominator) &&
-           append(' ');
-  }
-
-  const auto& simple = FindSimpleMeasureUnit(unit);
-  return append(u"measure-unit/") && appendUnit(simple) && append(' ');
+  return append(u"unit/") && append(unit.data(), unit.length()) && append(' ');
 }
 
 bool NumberFormatterSkeleton::unitDisplay(
@@ -295,13 +275,23 @@ bool NumberFormatterSkeleton::signDisplay(
       return appendToken(u"sign-except-zero");
     case NumberFormatOptions::SignDisplay::Negative:
       return appendToken(u"sign-negative");
-    case NumberFormatOptions::SignDisplay::Accounting:
+  }
+  MOZ_ASSERT_UNREACHABLE("unexpected sign display type");
+  return false;
+}
+
+bool NumberFormatterSkeleton::accountingSignDisplay(
+    NumberFormatOptions::SignDisplay display) {
+  switch (display) {
+    case NumberFormatOptions::SignDisplay::Auto:
       return appendToken(u"sign-accounting");
-    case NumberFormatOptions::SignDisplay::AccountingAlways:
+    case NumberFormatOptions::SignDisplay::Always:
       return appendToken(u"sign-accounting-always");
-    case NumberFormatOptions::SignDisplay::AccountingExceptZero:
+    case NumberFormatOptions::SignDisplay::Never:
+      return appendToken(u"sign-never");
+    case NumberFormatOptions::SignDisplay::ExceptZero:
       return appendToken(u"sign-accounting-except-zero");
-    case NumberFormatOptions::SignDisplay::AccountingNegative:
+    case NumberFormatOptions::SignDisplay::Negative:
       return appendToken(u"sign-accounting-negative");
   }
   MOZ_ASSERT_UNREACHABLE("unexpected sign display type");

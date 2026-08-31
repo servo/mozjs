@@ -7,12 +7,12 @@
 //===----------------------------------------------------------------------===//
 // IO functions implementation using Posix API.
 //===----------------------------------------------------------------------===//
-#include "mozilla/Unused.h"
 #include "FuzzerPlatform.h"
 #if LIBFUZZER_POSIX || LIBFUZZER_FUCHSIA
 
 #include "FuzzerExtFunctions.h"
 #include "FuzzerIO.h"
+#include <cerrno>
 #include <cstdarg>
 #include <cstdio>
 #include <dirent.h>
@@ -32,7 +32,7 @@ bool IsFile(const std::string &Path) {
   return S_ISREG(St.st_mode);
 }
 
-static bool IsDirectory(const std::string &Path) {
+bool IsDirectory(const std::string &Path) {
   struct stat St;
   if (stat(Path.c_str(), &St))
     return false;
@@ -53,16 +53,16 @@ std::string Basename(const std::string &Path) {
   return Path.substr(Pos + 1);
 }
 
-int ListFilesInDirRecursive(const std::string &Dir, long *Epoch,
-                             Vector<std::string> *V, bool TopDir) {
+void ListFilesInDirRecursive(const std::string &Dir, long *Epoch,
+                             std::vector<std::string> *V, bool TopDir) {
   auto E = GetEpoch(Dir);
   if (Epoch)
-    if (E && *Epoch >= E) return 0;
+    if (E && *Epoch >= E) return;
 
   DIR *D = opendir(Dir.c_str());
   if (!D) {
     Printf("%s: %s; exiting\n", strerror(errno), Dir.c_str());
-    return 1;
+    exit(1);
   }
   while (auto E = readdir(D)) {
     std::string Path = DirPlusFile(Dir, E->d_name);
@@ -71,18 +71,13 @@ int ListFilesInDirRecursive(const std::string &Dir, long *Epoch,
       V->push_back(Path);
     else if ((E->d_type == DT_DIR ||
              (E->d_type == DT_UNKNOWN && IsDirectory(Path))) &&
-             *E->d_name != '.') {
-      int Res = ListFilesInDirRecursive(Path, Epoch, V, false);
-      if (Res != 0)
-        return Res;
-    }
+             *E->d_name != '.')
+      ListFilesInDirRecursive(Path, Epoch, V, false);
   }
   closedir(D);
   if (Epoch && TopDir)
     *Epoch = E;
-  return 0;
 }
-
 
 void IterateDirRecursive(const std::string &Dir,
                          void (*DirPreCallback)(const std::string &Dir),
@@ -107,6 +102,10 @@ void IterateDirRecursive(const std::string &Dir,
 
 char GetSeparator() {
   return '/';
+}
+
+bool IsSeparator(char C) {
+  return C == '/';
 }
 
 FILE* OpenFile(int Fd, const char* Mode) {
@@ -160,7 +159,7 @@ bool IsInterestingCoverageFile(const std::string &FileName) {
 }
 
 void RawPrint(const char *Str) {
-  mozilla::Unused << write(2, Str, strlen(Str));
+  (void)write(2, Str, strlen(Str));
 }
 
 void MkDir(const std::string &Path) {

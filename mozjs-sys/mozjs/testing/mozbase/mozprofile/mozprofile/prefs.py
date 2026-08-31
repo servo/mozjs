@@ -5,28 +5,23 @@
 """
 user preferences
 """
+
 import json
 import os
 import tokenize
+from io import StringIO
 
 import mozfile
-import six
-from six import StringIO, string_types
 
 try:
-    from six.moves.configparser import SafeConfigParser as ConfigParser
+    from configparser import SafeConfigParser as ConfigParser
 except ImportError:  # SafeConfigParser was removed in 3.12
     from configparser import ConfigParser
+
 try:
     ConfigParser.read_file
 except AttributeError:  # read_file was added in 3.2, readfp removed in 3.12
     ConfigParser.read_file = ConfigParser.readfp
-
-if six.PY3:
-
-    def unicode(input):
-        return input
-
 
 __all__ = ("PreferencesReadError", "Preferences")
 
@@ -35,7 +30,7 @@ class PreferencesReadError(Exception):
     """read error for preferences files"""
 
 
-class Preferences(object):
+class Preferences:
     """assembly of preferences from various sources"""
 
     def __init__(self, prefs=None):
@@ -78,7 +73,7 @@ class Preferences(object):
           with the ''s removed from both sides
         """
 
-        if not isinstance(value, string_types):
+        if not isinstance(value, str):
             return value  # no op
         quote = "'"
         if value == "true":
@@ -153,14 +148,14 @@ class Preferences(object):
         if type(prefs) not in [list, dict]:
             raise PreferencesReadError("Malformed preferences: %s" % path)
         if isinstance(prefs, list):
-            if [i for i in prefs if type(i) != list or len(i) != 2]:
+            if [i for i in prefs if type(i) is not list or len(i) != 2]:
                 raise PreferencesReadError("Malformed preferences: %s" % path)
             values = [i[1] for i in prefs]
         elif isinstance(prefs, dict):
             values = prefs.values()
         else:
             raise PreferencesReadError("Malformed preferences: %s" % path)
-        types = (bool, string_types, int)
+        types = (bool, str, int)
         if [i for i in values if not any([isinstance(i, j) for j in types])]:
             raise PreferencesReadError("Only bool, string, and int values allowed")
         return prefs
@@ -224,7 +219,7 @@ class Preferences(object):
         retval = []
 
         def pref(a, b):
-            if interpolation and isinstance(b, string_types):
+            if interpolation and isinstance(b, str):
                 b = b.format(**interpolation)
             retval.append((a, b))
 
@@ -241,7 +236,7 @@ class Preferences(object):
 
         # de-magic the marker
         for index, (key, value) in enumerate(retval):
-            if isinstance(value, string_types) and marker in value:
+            if isinstance(value, str) and marker in value:
                 retval[index] = (key, value.replace(marker, "//"))
 
         return retval
@@ -250,7 +245,7 @@ class Preferences(object):
     def write(cls, _file, prefs, pref_string="user_pref(%s, %s);"):
         """write preferences to a file"""
 
-        if isinstance(_file, string_types):
+        if isinstance(_file, str):
             f = open(_file, "a")
         else:
             f = _file
@@ -264,8 +259,8 @@ class Preferences(object):
 
         # write the preferences
         for _pref in _prefs:
-            print(unicode(pref_string % _pref), file=f)
+            print(pref_string % _pref, file=f)
 
         # close the file if opened internally
-        if isinstance(_file, string_types):
+        if isinstance(_file, str):
             f.close()

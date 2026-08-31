@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -31,10 +29,8 @@ class BigIntObject : public NativeObject {
   static bool valueOf(JSContext* cx, unsigned argc, JS::Value* vp);
   static bool toString_impl(JSContext* cx, const CallArgs& args);
   static bool toString(JSContext* cx, unsigned argc, JS::Value* vp);
-#ifndef JS_HAS_INTL_API
   static bool toLocaleString_impl(JSContext* cx, const CallArgs& args);
   static bool toLocaleString(JSContext* cx, unsigned argc, JS::Value* vp);
-#endif
   static bool asUintN(JSContext* cx, unsigned argc, JS::Value* vp);
   static bool asIntN(JSContext* cx, unsigned argc, JS::Value* vp);
 
@@ -45,8 +41,6 @@ class BigIntObject : public NativeObject {
   static const JSFunctionSpec methods[];
   static const JSFunctionSpec staticMethods[];
 };
-
-extern JSObject* InitBigIntClass(JSContext* cx, Handle<GlobalObject*> global);
 
 }  // namespace js
 

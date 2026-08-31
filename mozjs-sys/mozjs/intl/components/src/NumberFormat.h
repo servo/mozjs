@@ -4,16 +4,13 @@
 #ifndef intl_components_NumberFormat_h_
 #define intl_components_NumberFormat_h_
 #include <string_view>
+#include <tuple>
 #include <utility>
-#include <vector>
 
-#include "mozilla/FloatingPoint.h"
 #include "mozilla/intl/ICU4CGlue.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/Result.h"
-#include "mozilla/Utf8.h"
-#include "mozilla/Vector.h"
 #include "mozilla/intl/ICUError.h"
 #include "mozilla/intl/NumberPart.h"
 
@@ -29,18 +26,38 @@ struct PluralRulesOptions;
 
 /**
  * Configure NumberFormat options.
- * The supported display styles are:
- *   * Decimal (default)
- *   * Currency (controlled by mCurrency)
- *   * Unit (controlled by mUnit)
- *   * Percent (controlled by mPercent)
- *
- * Only one of mCurrency, mUnit or mPercent should be set. If none are set,
- * the number will formatted as a decimal.
  *
  * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
  */
 struct MOZ_STACK_CLASS NumberFormatOptions {
+  /**
+   * Display style.
+   *
+   * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
+   * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#scale
+   */
+  enum class Style {
+    /**
+     * Display a decimal number.
+     */
+    Decimal,
+
+    /**
+     * Display a percent number.
+     */
+    Percent,
+
+    /**
+     * Display a currency amount.
+     */
+    Currency,
+
+    /**
+     * Display a unit amount.
+     */
+    Unit,
+  } mStyle = Style::Decimal;
+
   /**
    * Display a currency amount. |currency| must be a three-letter currency code.
    *
@@ -53,7 +70,11 @@ struct MOZ_STACK_CLASS NumberFormatOptions {
     Name,
     NarrowSymbol,
   };
-  Maybe<std::pair<std::string_view, CurrencyDisplay>> mCurrency;
+  enum class CurrencySign {
+    Standard,
+    Accounting,
+  };
+  Maybe<std::tuple<std::string_view, CurrencyDisplay, CurrencySign>> mCurrency;
 
   /**
    * Set the fraction digits settings. |min| can be zero, |max| must be
@@ -88,14 +109,6 @@ struct MOZ_STACK_CLASS NumberFormatOptions {
    */
   enum class UnitDisplay { Short, Narrow, Long };
   Maybe<std::pair<std::string_view, UnitDisplay>> mUnit;
-
-  /**
-   * Display a percent number.
-   *
-   * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#unit
-   * https://github.com/unicode-org/icu/blob/master/docs/userguide/format_parse/numbers/skeletons.md#scale
-   */
-  bool mPercent = false;
 
   /**
    * Set to true to strip trailing zeros after the decimal point for integer
@@ -141,10 +154,6 @@ struct MOZ_STACK_CLASS NumberFormatOptions {
     Always,
     ExceptZero,
     Negative,
-    Accounting,
-    AccountingAlways,
-    AccountingExceptZero,
-    AccountingNegative,
   } mSignDisplay = SignDisplay::Auto;
 
   /**
@@ -363,6 +372,17 @@ class NumberFormat final {
    * solely from PluralRules.
    */
   Result<int32_t, ICUError> selectFormatted(double number, char16_t* keyword,
+                                            int32_t keywordSize,
+                                            UPluralRules* pluralRules) const;
+
+  /**
+   * Formats the decimal number and selects the keyword by using a provided
+   * UPluralRules object.
+   *
+   * https://tc39.es/ecma402/#sec-intl.pluralrules.prototype.select
+   */
+  Result<int32_t, ICUError> selectFormatted(std::string_view number,
+                                            char16_t* keyword,
                                             int32_t keywordSize,
                                             UPluralRules* pluralRules) const;
 

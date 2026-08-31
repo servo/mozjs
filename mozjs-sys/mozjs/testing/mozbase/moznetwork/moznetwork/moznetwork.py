@@ -12,7 +12,6 @@ import sys
 
 import mozinfo
 import mozlog
-import six
 
 if mozinfo.isLinux:
     import fcntl
@@ -52,19 +51,16 @@ def _get_interface_list():
                 struct.pack("iL", bytes, names.buffer_info()[0]),
             ),
         )[0]
-        if six.PY3:
-            namestr = names.tobytes()
-        else:
-            namestr = names.tostring()
+        namestr = names.tobytes()
         return [
             (
-                six.ensure_str(namestr[i : i + 32].split(b"\0", 1)[0]),
+                namestr[i : i + 32].split(b"\0", 1)[0].decode(),
                 socket.inet_ntoa(namestr[i + 20 : i + 24]),
             )
             for i in range(0, outbytes, struct_size)
         ]
 
-    except IOError:
+    except OSError:
         raise NetworkError("Unable to call ioctl with SIOCGIFCONF")
 
 
@@ -131,12 +127,10 @@ def _parse_powershell():
             "v1.0",
             "powershell.exe",
         )
-        output = subprocess.check_output(
-            [
-                cmd,
-                "(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred | Format-List -Property IPAddress)",
-            ]
-        ).decode("ascii")
+        output = subprocess.check_output([
+            cmd,
+            "(Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred | Format-List -Property IPAddress)",
+        ]).decode("ascii")
         ips = re.findall(r"IPAddress : (\d+.\d+.\d+.\d+)", output)
         for ip in ips:
             logger.debug("IPAddress: %s" % ip)

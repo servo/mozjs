@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,12 +5,12 @@
 #ifndef mozilla_MruCache_h
 #define mozilla_MruCache_h
 
-#include <cstdint>
+#include <cstddef>
 #include <type_traits>
 #include <utility>
 
 #include "mozilla/Attributes.h"
-#include "mozilla/HashFunctions.h"
+#include "mozilla/Assertions.h"
 
 namespace mozilla {
 
@@ -22,15 +20,14 @@ namespace detail {
 //
 // `IsNotEmpty` will return true if `Value` is not a pointer type or if the
 // pointer value is not null.
-template <typename Value, bool IsPtr = std::is_pointer<Value>::value>
-struct EmptyChecker {
-  static bool IsNotEmpty(const Value&) { return true; }
-};
-// Template specialization for the `IsPtr == true` case.
 template <typename Value>
-struct EmptyChecker<Value, true> {
-  static bool IsNotEmpty(const Value& aVal) { return aVal != nullptr; }
-};
+constexpr bool IsNotEmpty(const Value& aVal) {
+  if constexpr (!std::is_pointer_v<Value>) {
+    return true;
+  } else {
+    return aVal != nullptr;
+  }
+}
 
 }  // namespace detail
 
@@ -145,10 +142,8 @@ class MruCache {
   // present, update the entry to a new value, or remove the entry if one was
   // matched.
   Entry Lookup(const KeyType& aKey) {
-    using EmptyChecker = detail::EmptyChecker<ValueType>;
-
     auto entry = RawEntry(aKey);
-    bool match = EmptyChecker::IsNotEmpty(*entry) && Cache::Match(aKey, *entry);
+    bool match = detail::IsNotEmpty(*entry) && Cache::Match(aKey, *entry);
     return Entry(entry, match);
   }
 

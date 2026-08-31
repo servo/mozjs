@@ -18,3 +18,4 @@ correctly handling the case where the system crashes.
    mozrunner
    mozcrash
    mozdebug
+   mozshellutil

@@ -1,13 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef js_GlobalObject_h
 #define js_GlobalObject_h
-
-#include "mozilla/Attributes.h"
 
 #include "jstypes.h"
 
@@ -28,6 +24,12 @@ class JS_PUBLIC_API RealmOptions;
  * entered.
  */
 extern JS_PUBLIC_API JSObject* CurrentGlobalOrNull(JSContext* cx);
+
+/**
+ * Get the current realm's global. Returns nullptr if no realm has been
+ * entered.
+ */
+extern JS_PUBLIC_API JSObject *const * CurrentGlobal(JSContext* cx);
 
 /**
  * Get the global object associated with an object's realm. The object must not

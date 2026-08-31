@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -24,11 +22,11 @@ option(
     "--enable-artifact-build-symbols",
     nargs="?",
     choices=("full",),
-    help="Download symbols when artifact builds are enabled.",
+    help="Download symbols when artifact builds are enabled",
 )
 
 
-@depends("--enable-artifact-build-symbols", "MOZ_AUTOMATION", target)
+@depends("--enable-artifact-build-symbols", moz_automation, target)
 def enable_artifact_build_symbols(value, automation, target):
     if len(value):
         return value[0]
@@ -42,17 +40,17 @@ def enable_artifact_build_symbols(value, automation, target):
 set_config("MOZ_ARTIFACT_BUILD_SYMBOLS", enable_artifact_build_symbols)
 
 
-@depends("--enable-artifact-builds")
-def imply_disable_compile_environment(value):
-    if value:
+@depends("--enable-artifact-builds", build_project)
+def imply_disable_compile_environment(value, build_project):
+    if value or build_project == "browser/extensions":
         return False
 
 
 option(
     env="MOZ_BUILD_HOOK",
     nargs=1,
-    help="moz.build file that will be executed as if it were appended to"
-    " every moz.build in the tree.",
+    help="Path to the moz.build file that will be executed as if it were "
+    "appended to every moz.build in the tree",
 )
 
 
@@ -70,12 +68,14 @@ set_config("MOZ_BUILD_HOOK", moz_build_hook)
 option(
     env="MOZ_COPY_PDBS",
     help="For builds that do not support symbols in the normal fashion,"
-    " generate and copy them into the resulting build archive.",
+    " generate and copy them into the resulting build archive",
 )
 
 set_config("MOZ_COPY_PDBS", depends_if("MOZ_COPY_PDBS")(lambda _: True))
 
-imply_option("--enable-compile-environment", imply_disable_compile_environment)
+imply_option(
+    "--enable-compile-environment", imply_disable_compile_environment, reason="default"
+)
 
 option("--disable-compile-environment", help="Disable compiler/library checks")
 
@@ -87,7 +87,6 @@ def compile_environment(compile_env):
 
 
 set_config("COMPILE_ENVIRONMENT", compile_environment)
-add_old_configure_assignment("COMPILE_ENVIRONMENT", compile_environment)
 
 option("--disable-tests", help="Do not build test libraries & programs")
 
@@ -121,11 +120,16 @@ set_define("GTEST_OS_LINUX_ANDROID", linux_gtest_defines.os_linux_android)
 set_define("GTEST_USE_OWN_TR1_TUPLE", linux_gtest_defines.use_own_tr1_tuple)
 set_define("GTEST_HAS_CLONE", linux_gtest_defines.has_clone)
 
+set_define("FMT_API", "MFBT_API")
+set_define("FMT_ENFORCE_COMPILE_STRING", 1)
+set_define("FMT_USE_EXCEPTIONS", 0)
+set_define("FMT_USE_WRITE_CONSOLE", 1)
+set_define("FMT_USE_LOCALE", 0)
+
 option(
     "--enable-debug",
     nargs="?",
-    help="Enable building with developer debug info "
-    "(using the given compiler flags).",
+    help="Enable building with developer debug info (using the given compiler flags)",
 )
 
 
@@ -137,9 +141,7 @@ def moz_debug(debug):
 
 set_config("MOZ_DEBUG", moz_debug)
 set_define("MOZ_DEBUG", moz_debug)
-# Override any value MOZ_DEBUG may have from the environment when passing it
-# down to old-configure.
-add_old_configure_assignment("MOZ_DEBUG", depends("--enable-debug")(lambda x: bool(x)))
+
 
 set_config(
     "MOZ_DIAGNOSTIC_ASSERT_ENABLED",
@@ -170,7 +172,7 @@ set_config("MOZ_DEBUG_DEFINES", debug_defines)
 
 option(env="MOZ_PGO", help="Build with profile guided optimizations")
 
-set_config("MOZ_PGO", depends("MOZ_PGO")(lambda x: bool(x)))
+set_config("MOZ_PGO", depends("MOZ_PGO")(lambda x: bool(x)))  # noqa: PLW0108
 
 
 # Imply --enable-release when MOZILLA_OFFICIAL is set rather than adjusting the
@@ -179,7 +181,7 @@ imply_option("--enable-release", mozilla_official)
 
 option(
     "--enable-release",
-    default=milestone.is_release_or_beta | depends("MOZ_AUTOMATION")(lambda x: bool(x)),
+    default=milestone.is_release_or_beta | moz_automation,
     help="{Build|Do not build} with more conservative, release "
     "engineering-oriented options.{ This may slow down builds.|}",
 )
@@ -191,7 +193,6 @@ def developer_options(value):
         return True
 
 
-add_old_configure_assignment("DEVELOPER_OPTIONS", developer_options)
 set_config("DEVELOPER_OPTIONS", developer_options)
 
 
@@ -221,9 +222,6 @@ def check_prog(*args, **kwargs):
     return check_prog(*args, **kwargs)
 
 
-check_prog("WGET", ("wget",), allow_missing=True)
-
-
 include("build/moz.configure/toolchain.configure", when="--enable-compile-environment")
 
 include("build/moz.configure/pkg.configure")
@@ -232,6 +230,7 @@ include("build/moz.configure/headers.configure", when="--enable-compile-environm
 include("build/moz.configure/libraries.configure", when="--enable-compile-environment")
 include("build/moz.configure/warnings.configure", when="--enable-compile-environment")
 include("build/moz.configure/flags.configure", when="--enable-compile-environment")
+include("build/moz.configure/default-flags.configure", when=~compile_environment)
 include("build/moz.configure/lto-pgo.configure", when="--enable-compile-environment")
 # rust.configure is included by js/moz.configure.
 
@@ -276,8 +275,8 @@ def so_version(value):
 def library_name_info_template(host_or_target):
     assert host_or_target in {host, target}
     windows_abi = {
-        host: host_windows_abi,
-        target: target_windows_abi,
+        host: host.abi,
+        target: target.abi,
     }[host_or_target]
 
     @depends(host_or_target, host_or_target.abi | windows_abi, so_version)
@@ -332,8 +331,6 @@ set_config("HOST_DLL_SUFFIX", host_library_name_info.dll.suffix)
 set_config("LIB_PREFIX", library_name_info.lib.prefix)
 set_config("LIB_SUFFIX", library_name_info.lib.suffix)
 set_config("OBJ_SUFFIX", library_name_info.obj.suffix)
-# Lots of compilation tests depend on this variable being present.
-add_old_configure_assignment("OBJ_SUFFIX", library_name_info.obj.suffix)
 set_config("IMPORT_LIB_SUFFIX", library_name_info.import_lib.suffix)
 set_define(
     "MOZ_DLL_PREFIX", depends(library_name_info.dll.prefix)(lambda s: '"%s"' % s)
@@ -347,30 +344,14 @@ set_config("WASM_OBJ_SUFFIX", "wasm")
 
 
 @template
-def llvm_tool(name):
-    @depends(host_c_compiler, c_compiler, bindgen_config_paths)
-    def llvm_tool(host_c_compiler, c_compiler, bindgen_config_paths):
-        clang = None
-        for compiler in (host_c_compiler, c_compiler):
-            if compiler and compiler.type == "clang":
-                clang = compiler.compiler
-                break
-            elif compiler and compiler.type == "clang-cl":
-                clang = os.path.join(os.path.dirname(compiler.compiler), "clang")
-                break
+def bin_suffix(host_or_target):
+    return depends(host_or_target)(
+        lambda host_or_target: ".exe" if host_or_target.os == "WINNT" else ""
+    )
 
-        if not clang and bindgen_config_paths:
-            clang = bindgen_config_paths.clang_path
-        tool = name
-        if clang:
-            out = check_cmd_output(
-                clang, "--print-prog-name=%s" % tool, onerror=lambda: None
-            )
-            if out:
-                tool = out.rstrip()
-        return (tool,)
 
-    return llvm_tool
+set_config("BIN_SUFFIX", bin_suffix(target))
+set_config("HOST_BIN_SUFFIX", bin_suffix(host))
 
 
 @template
@@ -380,7 +361,7 @@ def plain_llvm_or_prefixed(name, llvm_name=None):
     # 2. ${toolchain_prefix}${name}
     # 3. ${name}
 
-    @depends(llvm_tool("llvm-{}".format(llvm_name or name)), toolchain_prefix)
+    @depends(llvm_tool(f"llvm-{llvm_name or name}"), toolchain_prefix)
     def plain_llvm_or_prefixed(llvm_tool, toolchain_prefix):
         commands = [llvm_tool[0], name]
         for prefix in toolchain_prefix or ():
@@ -388,17 +369,6 @@ def plain_llvm_or_prefixed(name, llvm_name=None):
         return tuple(commands)
 
     return plain_llvm_or_prefixed
-
-
-llvm_objdump = check_prog(
-    "LLVM_OBJDUMP",
-    llvm_tool("llvm-objdump"),
-    what="llvm-objdump",
-    when="--enable-compile-environment",
-    paths=clang_search_path,
-)
-
-add_old_configure_assignment("LLVM_OBJDUMP", llvm_objdump)
 
 
 def validate_readelf(path):
@@ -452,14 +422,58 @@ check_prog(
 profiling = dependable(False)
 # Same for js_standalone
 js_standalone = dependable(False)
-js_shared = dependable(False)
-moz_linker = dependable(False)
 # Same for fold_libs
 fold_libs = dependable(False)
 # And dmd
 dmd = dependable(False)
 
+# Only available when toolkit/moz.configure is included
+pack_relative_relocs_flags = dependable(False)
+real_branding_directory = dependable(None)
+
 include(include_project_configure)
+
+
+@template
+def load_keyvalue_file(location, filename):
+
+    @depends(build_environment, location, "--help", when=location)
+    @checking(f"if configuration file {filename} exists")
+    # This gives access to the sandbox. Don't copy this blindly.
+    @imports("__sandbox__")
+    @imports(_from="mozbuild.configure", _import="confvars")
+    @imports("os.path")
+    def load_keyvalue_file_impl(build_env, location, help):
+        file_path = os.path.join(build_env.topsrcdir, location, filename)
+        if os.path.exists(file_path):
+            helper = __sandbox__._helper
+            # parse confvars
+            try:
+                keyvals = confvars.parse(file_path)
+            except confvars.ConfVarsSyntaxError as e:
+                die(str(e))
+            for key, value in keyvals.items():
+                # FIXME: remove test once we no longer load confvars from old-configure.
+                if key in __sandbox__._options:
+                    # ~= imply_option, but with an accurate origin
+                    helper.add(f"{key}={value}", origin="confvars", args=helper._args)
+            return file_path
+
+    return load_keyvalue_file_impl
+
+
+load_confvars = load_keyvalue_file(build_project, "confvars.sh")
+load_brandvars = load_keyvalue_file(real_branding_directory, "configure.sh")
+
+
+# Final flags validation and gathering
+# -------------------------------------------------
+
+include(
+    "build/moz.configure/finalize-flags.configure", when="--enable-compile-environment"
+)
+
+# -------------------------------------------------
 
 
 @depends("--help")
@@ -541,7 +555,7 @@ set_config("BUILD_BACKENDS", build_backends)
 @depends(
     build_project,
     target,
-    "MOZ_AUTOMATION",
+    moz_automation,
     enable_tests,
     when="--enable-compile-environment",
 )
@@ -557,7 +571,7 @@ def build_gtest(build_project, target, automation, enable_tests):
 option(
     "--enable-gtest-in-build",
     default=build_gtest,
-    help="{Enable|Force disable} building the gtest libxul during the build.",
+    help="{Enable|Force disable} building the gtest libxul during the build",
     when="--enable-compile-environment",
 )
 
@@ -567,77 +581,66 @@ set_config("LINK_GTEST_DURING_COMPILE", True, when="--enable-gtest-in-build")
 # ==============================================================
 option(
     "--enable-ui-locale",
+    env="MOZ_UI_LOCALE",
     default="en-US",
     help="Select the user interface locale (default: en-US)",
 )
 
-set_config("MOZ_UI_LOCALE", depends("--enable-ui-locale")(lambda x: x))
 
-option(
-    "--disable-icu4x",
-    help="Disable using ICU4X",
-)
+@depends("--enable-ui-locale")
+def moz_ui_locale(value):
+    return value[0]
 
-set_config("MOZ_ICU4X", True, when="--enable-icu4x")
-set_define("MOZ_ICU4X", True, when="--enable-icu4x")
+
+set_config("MOZ_UI_LOCALE", moz_ui_locale)
+
 
 # clang-plugin location
 # ==============================================================
-
-
-@depends(host_library_name_info, build_environment, when="--enable-clang-plugin")
-def clang_plugin_path(library_name_info, build_env):
-    topobjdir = build_env.topobjdir
-    if topobjdir.endswith("/js/src"):
-        topobjdir = topobjdir[:-7]
-    return os.path.abspath(
-        os.path.join(
-            topobjdir,
-            "build",
-            "clang-plugin",
-            "%sclang-plugin%s"
-            % (library_name_info.dll.prefix, library_name_info.dll.suffix),
-        )
-    )
-
-
-set_config("CLANG_PLUGIN", clang_plugin_path)
-add_old_configure_assignment("CLANG_PLUGIN", clang_plugin_path)
-
-
-# Awk detection
-# ==============================================================
-awk = check_prog("AWK", ("gawk", "mawk", "nawk", "awk"), paths=prefer_mozillabuild_path)
-
-# Until the AWK variable is not necessary in old-configure
-
-
-@depends(awk)
-def awk_for_old_configure(value):
-    return value
-
-
-add_old_configure_assignment("AWK", awk_for_old_configure)
+include(
+    "build/moz.configure/clang_plugin.configure", when="--enable-compile-environment"
+)
 
 
 # GNU make detection
 # ==============================================================
-option(env="MAKE", nargs=1, help="Path to GNU make")
+option(env="GMAKE", nargs=1, help="Path to GNU Make")
+
+option(env="MAKE", nargs=1, help="Path to GNU Make")
 
 
-@depends("MAKE", host)
-def possible_makes(make, host):
-    candidates = []
-    if make:
-        candidates.append(make[0])
+@depends(host)
+def possible_makes(host):
+    candidates = ["gmake", "make"]
     if host.kernel == "WINNT":
-        candidates.extend(("mozmake", "mingw32-make", "make", "gmake"))
-    else:
-        candidates.extend(("gmake", "make"))
+        candidates = ["mozmake", "mingw32-make"] + candidates
     return candidates
 
 
-check_prog("GMAKE", possible_makes, bootstrap="mozmake")
+gmake = check_prog(
+    "GMAKE",
+    possible_makes,
+    input=depends("GMAKE", "MAKE")(lambda g, m: g or m),
+    bootstrap="mozmake",
+)
+
+
+@depends(gmake)
+@checking("for gmake version")
+def gmake_version(prog):
+    out = check_cmd_output(prog, "--version")
+    version_line = out.splitlines()[0]
+    if not version_line.startswith("GNU Make"):
+        die("GNU Make is required")
+    return Version(version_line[8:].strip())
+
+
+@depends(gmake_version)
+def check_gmake_version(version):
+    make_min_ver = Version("3.81")
+    if version < make_min_ver:
+        die(f"GNU Make {make_min_ver} or higher is required")
+
 
 # watchman detection
 # ==============================================================
@@ -714,13 +717,10 @@ def extra_programs(target):
             MKFSHFS=("newfs_hfs", "mkfs.hfsplus"),
             HFS_TOOL=("hfsplus",),
         )
-    if target.os == "GNU" and target.kernel == "Linux":
-        return namespace(RPMBUILD=("rpmbuild",))
 
 
 check_prog("MKFSHFS", extra_programs.MKFSHFS, allow_missing=True)
 check_prog("HFS_TOOL", extra_programs.HFS_TOOL, allow_missing=True)
-check_prog("RPMBUILD", extra_programs.RPMBUILD, allow_missing=True)
 
 
 nsis = check_prog(
@@ -783,8 +783,18 @@ def nsis_flags(host):
 
 set_config("MAKENSISU_FLAGS", nsis_flags)
 
-check_prog("7Z", ("7z", "7za"), allow_missing=True, when=target_is_windows)
-check_prog("UPX", ("upx",), allow_missing=True, when=target_is_windows)
+check_prog("7Z", ("7zz",), allow_missing=True, bootstrap="7zz", when=target_is_windows)
+
+
+# UPX is used for compressing the Windows installer SFX stub.
+# UPX currently does not support ARM64 PE binaries
+# https://github.com/upx/upx/issues/650
+@depends(target)
+def need_upx(target):
+    return target.os == "WINNT" and target.cpu != "aarch64"
+
+
+check_prog("UPX", ("upx",), allow_missing=True, bootstrap="upx/bin", when=need_upx)
 
 
 check_prog(
@@ -808,13 +818,6 @@ check_prog(
     when=compile_environment & target_is_darwin & js_standalone,
     paths=clang_search_path,
 )
-
-option("--disable-icf", help="Disable Identical Code Folding")
-
-add_old_configure_assignment(
-    "MOZ_DISABLE_ICF", "1", when=depends("--enable-icf")(lambda x: not x)
-)
-
 
 option(
     "--enable-strip",
@@ -905,20 +908,53 @@ check_prog(
     validate=validate_strip,
 )
 
-pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_pkg_config)
+option(
+    "--enable-libz-rs",
+    help="Use libz-rs instead of system libz",
+)
 
-set_config("MOZ_SYSTEM_ZLIB", True)
-# This is not in upstream anymore
-set_config("ZLIB_IN_MOZGLUE", False)
+@depends("--enable-libz-rs")
+def use_libz_rs(enabled):
+    return enabled
 
+@depends(use_libz_rs)
+def use_system_zlib(libz_rs):
+    return not libz_rs
+
+pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_system_zlib)
+
+set_config("MOZ_SYSTEM_ZLIB", True, when=use_system_zlib)
+set_config("USE_LIBZ_RS", True, when=use_libz_rs)
+
+with only_when(cross_compiling):
+    option(
+        env="JS_BINARY",
+        nargs=1,
+        help="Host JavaScript runtime, if any, to use during cross compiles",
+    )
+    set_config("JS_BINARY", depends_if("JS_BINARY")(lambda value: value[0]))
 
 # Please do not add configure checks from here on.
 
-# Fallthrough to autoconf-based configure
-include("build/moz.configure/old.configure")
 
-# JS Subconfigure.
-include("js/sub.configure", when=compile_environment & toolkit)
+# Assuming no other option is declared after this function, handle the
+# env options that were injected by mozconfig_options by creating dummy
+# Option instances and having the sandbox's CommandLineHelper handle
+# them. We only do so for options that haven't been declared so far,
+# which should be a proxy for the options that old-configure handles
+# and that we don't know anything about.
+@depends("--help")
+@imports("__sandbox__")
+@imports(_from="mozbuild.configure.options", _import="Option")
+def remaining_mozconfig_options(_):
+    helper = __sandbox__._helper
+    for arg in list(helper):
+        if helper._origins[arg] != "mozconfig":
+            continue
+        name = arg.split("=", 1)[0]
+        if name.isupper() and name not in __sandbox__._options:
+            option = Option(env=name, nargs="*", help=name)
+            helper.handle(option)
 
 
 @depends(build_environment, configure_cache)
@@ -933,7 +969,6 @@ def save_cache(build_environment, configure_cache):
 
 @depends(build_environment, build_project)
 @imports("__sandbox__")
-@imports("glob")
 @imports(_from="os.path", _import="exists")
 def config_status_deps(build_env, build_project):
     topsrcdir = build_env.topsrcdir
@@ -964,12 +999,7 @@ def config_status_deps(build_env, build_project):
             os.path.join(topsrcdir, "python", "sites", "common.txt"),
             os.path.join(topsrcdir, "python", "sites", "mach.txt"),
             os.path.join(topsrcdir, "python", "mach", "mach", "site.py"),
-            os.path.join(topsrcdir, "aclocal.m4"),
-            os.path.join(topsrcdir, "old-configure.in"),
-            os.path.join(topsrcdir, "js", "src", "aclocal.m4"),
-            os.path.join(topsrcdir, "js", "src", "old-configure.in"),
         ]
-        + glob.glob(os.path.join(topsrcdir, "build", "autoconf", "*.m4"))
     )
 
 

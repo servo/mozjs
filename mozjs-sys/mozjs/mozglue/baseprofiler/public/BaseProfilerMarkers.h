@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -34,15 +32,12 @@
 #include "mozilla/BaseProfilerMarkersDetail.h"
 #include "mozilla/BaseProfilerLabels.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/Unused.h"
 
-#include <functional>
 #include <string>
 #include <utility>
 
 namespace mozilla::baseprofiler {
 
-#ifdef MOZ_GECKO_PROFILER
 // Forward-declaration. TODO: Move to more common header, see bug 1681416.
 MFBT_API bool profiler_capture_backtrace_into(
     ProfileChunkedBuffer& aChunkedBuffer, StackCaptureOptions aCaptureOptions);
@@ -56,7 +51,7 @@ ProfileBufferBlockIndex AddMarkerToBuffer(
     ProfileChunkedBuffer& aBuffer, const ProfilerString8View& aName,
     const MarkerCategory& aCategory, MarkerOptions&& aOptions,
     MarkerType aMarkerType, const PayloadArguments&... aPayloadArguments) {
-  Unused << aMarkerType;  // Only the empty object type is useful.
+  (void)aMarkerType;  // Only the empty object type is useful.
   AUTO_BASE_PROFILER_LABEL("baseprofiler::AddMarkerToBuffer", PROFILER);
   return base_profiler_markers_detail::AddMarkerToBuffer<MarkerType>(
       aBuffer, aName, aCategory, std::move(aOptions),
@@ -74,7 +69,6 @@ inline ProfileBufferBlockIndex AddMarkerToBuffer(
   return AddMarkerToBuffer(aBuffer, aName, aCategory, std::move(aOptions),
                            markers::NoPayload{});
 }
-#endif  // MOZ_GECKO_PROFILER
 
 // Add a marker to the Base Profiler buffer.
 // - aName: Main name of this marker.
@@ -89,9 +83,6 @@ ProfileBufferBlockIndex AddMarker(
     const ProfilerString8View& aName, const MarkerCategory& aCategory,
     MarkerOptions&& aOptions, MarkerType aMarkerType,
     const PayloadArguments&... aPayloadArguments) {
-#ifndef MOZ_GECKO_PROFILER
-  return {};
-#else
   // Record base markers whenever the core buffer is in session.
   // TODO: When profiler_thread_is_being_profiled becomes available from
   // mozglue, use it instead.
@@ -103,7 +94,6 @@ ProfileBufferBlockIndex AddMarker(
   return ::mozilla::baseprofiler::AddMarkerToBuffer(
       coreBuffer, aName, aCategory, std::move(aOptions), aMarkerType,
       aPayloadArguments...);
-#endif
 }
 
 // Add a marker (without payload) to the Base Profiler buffer.
@@ -115,8 +105,7 @@ inline ProfileBufferBlockIndex AddMarker(const ProfilerString8View& aName,
 
 }  // namespace mozilla::baseprofiler
 
-// Same as `AddMarker()` (without payload). This macro is safe to use even if
-// MOZ_GECKO_PROFILER is not #defined.
+// Same as `AddMarker()` (without payload).
 #define BASE_PROFILER_MARKER_UNTYPED(markerName, categoryName, ...)  \
   do {                                                               \
     AUTO_PROFILER_STATS(BASE_PROFILER_MARKER_UNTYPED);               \
@@ -125,8 +114,7 @@ inline ProfileBufferBlockIndex AddMarker(const ProfilerString8View& aName,
         ##__VA_ARGS__);                                              \
   } while (false)
 
-// Same as `AddMarker()` (with payload). This macro is safe to use even if
-// MOZ_GECKO_PROFILER is not #defined.
+// Same as `AddMarker()` (with payload).
 #define BASE_PROFILER_MARKER(markerName, categoryName, options, MarkerType,   \
                              ...)                                             \
   do {                                                                        \
@@ -140,18 +128,57 @@ namespace mozilla::baseprofiler::markers {
 // Most common marker type. Others are in BaseProfilerMarkerTypes.h.
 struct TextMarker : public BaseMarkerType<TextMarker> {
   static constexpr const char* Name = "Text";
-  static constexpr const char* Description = "Generic text marker";
+  // It's not possible to add a single meaningful description to this marker
+  // type since it can be used by various different markers.
+  static constexpr const char* Description = nullptr;
 
   static constexpr bool StoreName = true;
 
   using MS = MarkerSchema;
   static constexpr MS::PayloadField PayloadFields[] =
       // XXX - This is confusingly labeled 'name'. We probably want to fix that.
-      {{"name", MS::InputType::CString, "Details", MS::Format::String,
-        MS::PayloadFlags::Searchable}};
+      {{
+          "name",
+          MS::InputType::CString,
+          "Details",
+          MS::Format::String,
+      }};
 
   static constexpr MS::Location Locations[] = {MS::Location::MarkerChart,
                                                MS::Location::MarkerTable};
+
+  static constexpr const char* ChartLabel = "{marker.data.name}";
+  static constexpr const char* TableLabel =
+      "{marker.name} - {marker.data.name}";
+
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   const ProfilerString8View& aText) {
+    aWriter.StringProperty("name", aText);
+  }
+};
+
+struct TextStackMarker : public BaseMarkerType<TextStackMarker> {
+  static constexpr const char* Name = "TextStack";
+  // It's not possible to add a single meaningful description to this marker
+  // type since it can be used by various different markers.
+  static constexpr const char* Description = nullptr;
+
+  static constexpr bool StoreName = true;
+
+  using MS = MarkerSchema;
+  static constexpr MS::PayloadField PayloadFields[] =
+      // XXX - This is confusingly labeled 'name'. We probably want to fix that.
+      {{
+          "name",
+          MS::InputType::CString,
+          "Details",
+          MS::Format::String,
+      }};
+
+  static constexpr MS::Location Locations[] = {MS::Location::MarkerChart,
+                                               MS::Location::MarkerTable};
+
+  static constexpr bool IsStackBased = true;
 
   static constexpr const char* ChartLabel = "{marker.data.name}";
   static constexpr const char* TableLabel =
@@ -167,14 +194,19 @@ struct TextMarker : public BaseMarkerType<TextMarker> {
 // counterpart.
 struct Tracing : public BaseMarkerType<Tracing> {
   static constexpr const char* Name = "tracing";
-  static constexpr const char* Description = "Generic tracing marker";
+  // It's not possible to add a single meaningful description to this marker
+  // type since it can be used by various different markers.
+  static constexpr const char* Description = nullptr;
 
   static constexpr bool StoreName = true;
 
   using MS = MarkerSchema;
-  static constexpr MS::PayloadField PayloadFields[] = {
-      {"category", MS::InputType::CString, "Type", MS::Format::String,
-       MS::PayloadFlags::Searchable}};
+  static constexpr MS::PayloadField PayloadFields[] = {{
+      "category",
+      MS::InputType::CString,
+      "Type",
+      MS::Format::String,
+  }};
 
   static constexpr MS::Location Locations[] = {MS::Location::MarkerChart,
                                                MS::Location::MarkerTable,
@@ -187,10 +219,31 @@ struct Tracing : public BaseMarkerType<Tracing> {
     }
   }
 };
+
+// This is the simplest stack based marker
+struct StackMarker : public BaseMarkerType<StackMarker> {
+  static constexpr const char* Name = "StackMarker";
+  // It's not possible to add a single meaningful description to this marker
+  // type since it can be used by various different markers.
+  static constexpr const char* Description = nullptr;
+
+  static constexpr bool StoreName = true;
+
+  using MS = MarkerSchema;
+  static constexpr MS::PayloadField PayloadFields[0] = {};
+
+  static constexpr MS::Location Locations[] = {MS::Location::MarkerChart,
+                                               MS::Location::MarkerTable,
+                                               MS::Location::TimelineOverview};
+
+  static constexpr bool IsStackBased = true;
+
+  static void StreamJSONMarkerData(SpliceableJSONWriter& aWriter) {}
+};
+
 }  // namespace mozilla::baseprofiler::markers
 
-// Add a text marker. This macro is safe to use even if MOZ_GECKO_PROFILER is
-// not #defined.
+// Add a text marker.
 #define BASE_PROFILER_MARKER_TEXT(markerName, categoryName, options, text)    \
   do {                                                                        \
     AUTO_PROFILER_STATS(BASE_PROFILER_MARKER_TEXT);                           \
@@ -211,13 +264,14 @@ class MOZ_RAII AutoProfilerTextMarker {
                          MarkerOptions&& aOptions, const std::string& aText)
       : mMarkerName(aMarkerName),
         mCategory(aCategory),
-        mOptions(std::move(aOptions)),
-        mText(aText) {
+        mOptions(std::move(aOptions)) {
     MOZ_ASSERT(mOptions.Timing().EndTime().IsNull(),
                "AutoProfilerTextMarker options shouldn't have an end time");
-    if (profiler_is_active_and_unpaused() &&
-        mOptions.Timing().StartTime().IsNull()) {
-      mOptions.Set(MarkerTiming::InstantNow());
+    if (profiler_is_active_and_unpaused()) {
+      mText = aText;
+      if (mOptions.Timing().StartTime().IsNull()) {
+        mOptions.Set(MarkerTiming::InstantNow());
+      }
     }
   }
 
@@ -226,7 +280,8 @@ class MOZ_RAII AutoProfilerTextMarker {
       mOptions.TimingRef().SetIntervalEnd();
       AUTO_PROFILER_STATS(AUTO_BASE_PROFILER_MARKER_TEXT);
       AddMarker(ProfilerString8View::WrapNullTerminatedString(mMarkerName),
-                mCategory, std::move(mOptions), markers::TextMarker{}, mText);
+                mCategory, std::move(mOptions), markers::TextStackMarker{},
+                mText);
     }
   }
 
@@ -237,7 +292,6 @@ class MOZ_RAII AutoProfilerTextMarker {
   std::string mText;
 };
 
-#ifdef MOZ_GECKO_PROFILER
 extern template MFBT_API ProfileBufferBlockIndex
 AddMarker(const ProfilerString8View&, const MarkerCategory&, MarkerOptions&&,
           markers::TextMarker, const std::string&);
@@ -249,12 +303,10 @@ AddMarkerToBuffer(ProfileChunkedBuffer&, const ProfilerString8View&,
 extern template MFBT_API ProfileBufferBlockIndex AddMarkerToBuffer(
     ProfileChunkedBuffer&, const ProfilerString8View&, const MarkerCategory&,
     MarkerOptions&&, markers::TextMarker, const std::string&);
-#endif  // MOZ_GECKO_PROFILER
 
 }  // namespace mozilla::baseprofiler
 
-// Creates an AutoProfilerTextMarker RAII object.  This macro is safe to use
-// even if MOZ_GECKO_PROFILER is not #defined.
+// Creates an AutoProfilerTextMarker RAII object.
 #define AUTO_BASE_PROFILER_MARKER_TEXT(markerName, categoryName, options,   \
                                        text)                                \
   ::mozilla::baseprofiler::AutoProfilerTextMarker PROFILER_RAII(            \

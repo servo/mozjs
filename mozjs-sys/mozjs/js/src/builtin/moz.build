@@ -1,0 +1,109 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+FINAL_LIBRARY = "js"
+
+# Includes should be relative to parent path
+LOCAL_INCLUDES += ["!..", ".."]
+
+include("../js-compileflags.mozbuild")
+include("../js-config.mozbuild")
+include("../js-cxxflags.mozbuild")
+
+UNIFIED_SOURCES += [
+    "Array.cpp",
+    "AtomicsObject.cpp",
+    "BigInt.cpp",
+    "Boolean.cpp",
+    "DataViewObject.cpp",
+    "Date.cpp",
+    "Eval.cpp",
+    "FinalizationRegistryObject.cpp",
+    "JSON.cpp",
+    "MapObject.cpp",
+    "Math.cpp",
+    "ModuleObject.cpp",
+    "Number.cpp",
+    "Object.cpp",
+    "ParseRecordObject.cpp",
+    "Profilers.cpp",
+    "Promise.cpp",
+    "RawJSONObject.cpp",
+    "Reflect.cpp",
+    "ReflectParse.cpp",
+    "String.cpp",
+    "Symbol.cpp",
+    "TestingFunctions.cpp",
+    "TestingUtility.cpp",
+    "WeakMapObject.cpp",
+    "WeakRefObject.cpp",
+    "WeakSetObject.cpp",
+]
+
+if CONFIG["ENABLE_EXPLICIT_RESOURCE_MANAGEMENT"]:
+    UNIFIED_SOURCES += [
+        "AsyncDisposableStackObject.cpp",
+        "DisposableStackObject.cpp",
+        "DisposableStackObjectBase.cpp",
+    ]
+
+# builtin/RegExp.cpp cannot be built in unified mode because it causes huge
+#   win32 test slowdowns
+SOURCES += [
+    "RegExp.cpp",
+]
+
+selfhosted_inputs = [
+    "../../public/friend/ErrorNumbers.msg",
+    # ProfilingCategoryList.h is being indirectly included, and it must be passed
+    # here as an input, so it's generated before this self-hosted JS code
+    # generation. Otherwise, it will intermittently fail to build.
+    "!/mozglue/baseprofiler/public/ProfilingCategoryList.h",
+    "TypedArrayConstants.h",
+    "SelfHostingDefines.h",
+    "Utilities.js",
+    "Array.js",
+    "AsyncFunction.js",
+    "AsyncIteration.js",
+    "Error.js",
+    "Generator.js",
+    "Iterator.js",
+    "Map.js",
+    "Number.js",
+    "Object.js",
+    "Promise.js",
+    "Reflect.js",
+    "RegExp.js",
+    "RegExpGlobalReplaceOpt.h.js",
+    "RegExpLocalReplaceOpt.h.js",
+    "String.js",
+    "Set.js",
+    "TypedArray.js",
+    "WeakMap.js",
+    "WeakSet.js",
+] + (
+    [
+        "intl/Segmenter.js",
+    ]
+    if CONFIG["JS_HAS_INTL_API"]
+    else []
+)
+
+if CONFIG["ENABLE_EXPLICIT_RESOURCE_MANAGEMENT"]:
+    selfhosted_inputs += [
+        "AsyncDisposableStack.js",
+        "DisposableStack.js",
+    ]
+
+# Prepare self-hosted JS code for embedding
+GeneratedFile(
+    "../selfhosted.out.h",
+    "../selfhosted.js",
+    script="embedjs.py",
+    entry_point="generate_selfhosted",
+    inputs=selfhosted_inputs,
+)
+
+if CONFIG["FUZZING_JS_FUZZILLI"]:
+    include("/tools/fuzzing/libfuzzer-config.mozbuild")

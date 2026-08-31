@@ -26,13 +26,11 @@ def summarize_nscolor(valobj, internal_dict):
     if value == 0:
         return "transparent"
     if value & 0xFF000000 != 0xFF000000:
-        return "rgba(%d, %d, %d, %f)" % (
-            value & 0xFF,
-            (value >> 8) & 0xFF,
-            (value >> 16) & 0xFF,
-            ((value >> 24) & 0xFF) / 255.0,
+        return (
+            f"rgba({value & 0xFF}, {(value >> 8) & 0xFF}, "
+            f"{(value >> 16) & 0xFF}, {((value >> 24) & 0xFF) / 255.0:f})"
         )
-    color = "#%02x%02x%02x" % (value & 0xFF, (value >> 8) & 0xFF, (value >> 16) & 0xFF)
+    color = f"#{value & 0xFF:02x}{(value >> 8) & 0xFF:02x}{(value >> 16) & 0xFF:02x}"
     if color in colors:
         return colors[color]
     return color
@@ -43,7 +41,7 @@ def summarize_rect(valobj, internal_dict):
     y = valobj.GetChildMemberWithName("y").GetValue()
     width = valobj.GetChildMemberWithName("width").GetValue()
     height = valobj.GetChildMemberWithName("height").GetValue()
-    return "%s, %s, %s, %s" % (x, y, width, height)
+    return f"{x}, {y}, {width}, {height}"
 
 
 def rect_is_empty(valobj):

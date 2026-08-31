@@ -179,7 +179,7 @@ class EnvironmentBlock:
                     k = k.decode(fs_encoding, "replace")
                 if isinstance(v, bytes):
                     v = v.decode(fs_encoding, "replace")
-                values.append("{}={}".format(k, v))
+                values.append(f"{k}={v}")
 
             # The lpEnvironment parameter of the 'CreateProcess' function expects a series
             # of null terminated strings followed by a final null terminator. We write this
@@ -362,6 +362,28 @@ CreateIoCompletionPort = CreateIoCompletionPortProto(
 )
 CreateIoCompletionPort.errcheck = ErrCheckHandle
 
+# PostQueuedCompletionStatus
+# http://msdn.microsoft.com/en-us/library/aa365458%28v=vs.85%29.aspx
+# Note: dwCompletionKey is ULONG_PTR (a value, not a pointer), unlike
+# GetQueuedCompletionStatus where lpCompletionKey is PULONG_PTR (output pointer).
+PostQueuedCompletionStatusProto = WINFUNCTYPE(
+    BOOL,  # Return Type
+    HANDLE,  # Completion Port
+    DWORD,  # Number of bytes transferred
+    LPVOID,  # Completion Key (ULONG_PTR value)
+    LPVOID,  # lpOverlapped (may be null)
+)
+PostQueuedCompletionStatusFlags = (
+    (1, "CompletionPort", INVALID_HANDLE_VALUE),
+    (1, "dwNumberOfBytesTransferred", c_ulong(0)),
+    (1, "dwCompletionKey", LPVOID(0)),
+    (1, "lpOverlapped", LPVOID()),
+)
+PostQueuedCompletionStatus = PostQueuedCompletionStatusProto(
+    ("PostQueuedCompletionStatus", windll.kernel32),
+    PostQueuedCompletionStatusFlags,
+)
+
 # SetInformationJobObject
 SetInformationJobObjectProto = WINFUNCTYPE(
     BOOL,  # Return Type
@@ -384,7 +406,9 @@ SetInformationJobObject.errcheck = ErrCheckBool
 
 # CreateJobObject()
 CreateJobObjectProto = WINFUNCTYPE(
-    HANDLE, LPVOID, LPCWSTR  # Return type  # lpJobAttributes  # lpName
+    HANDLE,
+    LPVOID,
+    LPCWSTR,  # Return type  # lpJobAttributes  # lpName
 )
 
 CreateJobObjectFlags = ((1, "lpJobAttributes", None), (1, "lpName", None))
@@ -397,7 +421,9 @@ CreateJobObject.errcheck = ErrCheckHandle
 # AssignProcessToJobObject()
 
 AssignProcessToJobObjectProto = WINFUNCTYPE(
-    BOOL, HANDLE, HANDLE  # Return type  # hJob  # hProcess
+    BOOL,
+    HANDLE,
+    HANDLE,  # Return type  # hJob  # hProcess
 )
 AssignProcessToJobObjectFlags = ((1, "hJob"), (1, "hProcess"))
 AssignProcessToJobObject = AssignProcessToJobObjectProto(
@@ -455,7 +481,9 @@ ResumeThread.errcheck = ErrCheckResumeThread
 # TerminateProcess()
 
 TerminateProcessProto = WINFUNCTYPE(
-    BOOL, HANDLE, UINT  # Return type  # hProcess  # uExitCode
+    BOOL,
+    HANDLE,
+    UINT,  # Return type  # hProcess  # uExitCode
 )
 TerminateProcessFlags = ((1, "hProcess"), (1, "uExitCode", 127))
 TerminateProcess = TerminateProcessProto(
@@ -466,7 +494,9 @@ TerminateProcess.errcheck = ErrCheckBool
 # TerminateJobObject()
 
 TerminateJobObjectProto = WINFUNCTYPE(
-    BOOL, HANDLE, UINT  # Return type  # hJob  # uExitCode
+    BOOL,
+    HANDLE,
+    UINT,  # Return type  # hJob  # uExitCode
 )
 TerminateJobObjectFlags = ((1, "hJob"), (1, "uExitCode", 127))
 TerminateJobObject = TerminateJobObjectProto(

@@ -4,15 +4,13 @@
 
 from xml.etree import ElementTree
 
-import six
-
 from . import base
 
 
 def format_test_id(test_id):
     """Take a test id and return something that looks a bit like
     a class path"""
-    if not isinstance(test_id, six.string_types):
+    if not isinstance(test_id, str):
         # Not sure how to deal with reftests yet
         raise NotImplementedError
 
@@ -99,15 +97,13 @@ class XUnitFormatter(base.BaseFormatter):
         self._create_result(data)
 
     def suite_end(self, data):
-        self.root.attrib.update(
-            {
-                "tests": str(self.tests_run),
-                "errors": str(self.errors),
-                "failures": str(self.failures),
-                "skips": str(self.skips),
-                "time": "%.2f" % ((data["time"] - self.suite_start_time) / 1000.0),
-            }
-        )
+        self.root.attrib.update({
+            "tests": str(self.tests_run),
+            "errors": str(self.errors),
+            "failures": str(self.failures),
+            "skips": str(self.skips),
+            "time": "%.2f" % ((data["time"] - self.suite_start_time) / 1000.0),
+        })
         xml_string = ElementTree.tostring(self.root, encoding="utf8")
         # pretty printing can not be done from xml.etree
         from xml.dom import minidom

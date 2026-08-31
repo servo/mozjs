@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -141,6 +139,8 @@ class JS_PUBLIC_API __attribute__ ((__packed__)) Wrapper : public ForwardingProx
 
   virtual bool finalizeInBackground(const JS::Value& priv) const override;
 
+  bool mayBeSwapped() const override { return true; }
+
   /**
    * A hook subclasses can override to implement CheckedUnwrapDynamic
    * behavior.  The JSContext represents the "who is trying to unwrap?" Realm.
@@ -255,6 +255,9 @@ class JS_PUBLIC_API CrossCompartmentWrapper : public Wrapper {
 
   // Allocate CrossCompartmentWrappers in the nursery.
   virtual bool canNurseryAllocate() const override { return true; }
+  void finalize(JS::GCContext* gcx, JSObject* proxy) const final {
+    Wrapper::finalize(gcx, proxy);
+  }
 
   static const CrossCompartmentWrapper singleton;
   static const CrossCompartmentWrapper singletonWithPrototype;
@@ -476,19 +479,7 @@ JS_PUBLIC_API JSObject* UnwrapOneCheckedDynamic(JS::HandleObject obj,
 // the GC or off the main thread.
 JS_PUBLIC_API JSObject* UncheckedUnwrapWithoutExpose(JSObject* obj);
 
-void ReportAccessDenied(JSContext* cx);
-
-JS_PUBLIC_API void NukeCrossCompartmentWrapper(JSContext* cx,
-                                               JSObject* wrapper);
-
-// If a cross-compartment wrapper source => target exists, nuke it.
-JS_PUBLIC_API void NukeCrossCompartmentWrapperIfExists(JSContext* cx,
-                                                       JS::Compartment* source,
-                                                       JSObject* target);
-
-void RemapWrapper(JSContext* cx, JSObject* wobj, JSObject* newTarget);
-void RemapDeadWrapper(JSContext* cx, JS::HandleObject wobj,
-                      JS::HandleObject newTarget);
+JS_PUBLIC_API void ReportAccessDenied(JSContext* cx);
 
 JS_PUBLIC_API bool RemapAllWrappersForObject(JSContext* cx,
                                              JS::HandleObject oldTarget,

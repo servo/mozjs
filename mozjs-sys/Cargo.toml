@@ -2,18 +2,11 @@
 name = "mozjs_sys"
 description = "System crate for the Mozilla SpiderMonkey JavaScript engine."
 repository.workspace = true
-version = "0.128.3-1"
-authors = ["Mozilla"]
+version = "153.0.0-1"
+authors = ["Mozilla", "The Servo Project Developers"]
 links = "mozjs"
-build = "build.rs"
 license.workspace = true
-exclude = [
-  "mozjs/js/src/tests/**",
-  "mozjs/js/src/octane/**",
-  "mozjs/js/src/jit-test/**",
-  "mozjs/js/src/jsapi-tests/**",
-  "mozjs/js/src/doc/**",
-]
+exclude = ["__pycache__", "/etc/", "/mozjs/.cargo/"]
 edition.workspace = true
 
 [lib]
@@ -25,17 +18,50 @@ doctest = false
 [features]
 debugmozjs = []
 profilemozjs = []
+jit = []
 jitspew = []
-streams = []
+libz-sys = ["dep:libz-sys"]
+libz-rs = ["dep:libz-rs-sys"]
+intl = [
+  "dep:icu_capi",
+  "dep:mozjs_unicode_bidi_ffi",
+  "dep:mozjs_properties_glue",
+  "dep:mozjs_collator_glue",
+  "dep:mozjs_locale_glue",
+]
+crown = []
+oom_with_hook = []
 
 [dependencies]
 libc.workspace = true
-# SM depends on them and we provide them using cargo
-libz-sys = "1.1.19"
+
+# In SM these dependencies provided via jsrust_shared crate
+# https://github.com/mozilla-firefox/firefox/blob/main/js/src/rust/shared/Cargo.toml
+# which links to SM.
+# Cargo does not allow recursive invocations so we link to them from here.
+
 encoding_c = "0.9.8"
 encoding_c_mem = "0.2.6"
-# unicode-bidi-ffi = { path = "./mozjs/intl/bidi/rust/unicode-bidi-ffi" }
-icu_capi = "1.4.0" # keep in sync with intl/icu_capi/Cargo.toml
+# keep in sync with intl/icu_capi/Cargo.toml
+icu_capi = { version = "=2.1.2", default-features = false, features = [
+  "any_provider",
+  "compiled_data",
+  "segmenter",
+  "calendar",
+], optional = true }
+mozjs_unicode_bidi_ffi = { version = "=153.0.0", path = "../mozjs-extracted-crates/unicode_bidi_ffi", optional = true }
+mozjs_normalizer_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/normalizer_glue" }
+mozjs_properties_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/properties_glue", optional = true }
+mozjs_collator_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/collator_glue", optional = true }
+mozjs_locale_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/locale_glue", optional = true }
+
+libz-rs-sys = { version = "0.6", features = [
+  "export-symbols",
+], optional = true }
+libz-sys = { version = "1.1.19", default-features = false, features = [
+  "libc",
+  "stock-zlib",
+], optional = true }
 
 [build-dependencies]
 bindgen.workspace = true

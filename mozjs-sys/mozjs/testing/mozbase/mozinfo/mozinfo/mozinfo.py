@@ -11,6 +11,7 @@
 import os
 import platform
 import re
+import subprocess
 import sys
 from ctypes.util import find_library
 
@@ -20,7 +21,7 @@ from .string_version import StringVersion
 _os = os
 
 
-class unknown(object):
+class unknown:
     """marker class for unknown information"""
 
     # pylint: disable=W1629
@@ -46,7 +47,7 @@ info = {
     "bits": unknown,
     "has_sandbox": unknown,
     "display": None,
-    "automation": bool(os.environ.get("MOZ_AUTOMATION", False)),
+    "automation": bool(os.environ.get("MOZ_AUTOMATION")),
 }
 (system, node, release, version, machine, processor) = platform.uname()
 (bits, linkage) = platform.architecture()
@@ -54,40 +55,30 @@ info = {
 # get os information and related data
 if system in ["Microsoft", "Windows"]:
     info["os"] = "win"
-    # There is a Python bug on Windows to determine platform values
-    # http://bugs.python.org/issue7860
-    if "PROCESSOR_ARCHITEW6432" in os.environ:
-        processor = os.environ.get("PROCESSOR_ARCHITEW6432", processor)
-    else:
-        processor = os.environ.get("PROCESSOR_ARCHITECTURE", processor)
+    # uname().processor on Windows gives the full CPU name but
+    # mozinfo.processor is only about CPU architecture
+    processor = machine
     system = os.environ.get("OS", system).replace("_", " ")
     (major, minor, build_number, _, _) = os.sys.getwindowsversion()
-    version = "%d.%d.%d" % (major, minor, build_number)
+    version = f"{major}.{minor}.{build_number}"
     if major == 10 and minor == 0 and build_number >= 22000:
         major = 11
 
     # 2009 == 22H2 software update.  These are the build numbers
     # we use 2009 as the "build" which maps to what taskcluster tasks see
-    if build_number == 22621 or build_number == 19045:
+    if build_number in {22621, 19045}:
         build_number = 2009
 
-    os_version = "%d.%d" % (major, build_number)
+    os_version = f"{major}.{build_number}"
 elif system.startswith(("MINGW", "MSYS_NT")):
     # windows/mingw python build (msys)
     info["os"] = "win"
     os_version = version = unknown
 elif system == "Linux":
-    # Attempt to use distro package to determine Linux distribution first.
-    # Failing that, fall back to use the platform method.
-    # Note that platform.linux_distribution() will be deprecated as of 3.8
-    # and this block will be removed once support for 2.7/3.5 is dropped.
-    try:
-        from distro import linux_distribution
-    except ImportError:
-        from platform import linux_distribution
+    import distro
 
-    output = linux_distribution()
-    (distribution, os_version, codename) = tuple(str(item.title()) for item in output)
+    distribution = distro.name().title()
+    os_version = distro.version().title()
 
     if not processor:
         processor = machine
@@ -95,9 +86,7 @@ elif system == "Linux":
         distribution = "lfs"
     if not os_version:
         os_version = release
-    if not codename:
-        codename = "unknown"
-    version = "%s %s" % (distribution, os_version)
+    version = f"{distribution} {os_version}"
 
     if os.environ.get("WAYLAND_DISPLAY"):
         info["display"] = "wayland"
@@ -107,16 +96,16 @@ elif system == "Linux":
     info["os"] = "linux"
     info["linux_distro"] = distribution
 elif system in ["DragonFly", "FreeBSD", "NetBSD", "OpenBSD"]:
-    info["os"] = "bsd"
+    info["os"] = "bsd"  # community builds
     version = os_version = sys.platform
 elif system == "Darwin":
     (release, versioninfo, machine) = platform.mac_ver()
-    version = "OS X %s" % release
+    version = f"OS X {release}"
     versionNums = release.split(".")[:2]
-    os_version = "%s.%s" % (versionNums[0], versionNums[1].ljust(2, "0"))
+    os_version = f"{versionNums[0]}.{versionNums[1].ljust(2, '0')}"
     info["os"] = "mac"
 elif sys.platform in ("solaris", "sunos5"):
-    info["os"] = "unix"
+    info["os"] = "unix"  # community builds
     os_version = version = sys.platform
 else:
     os_version = version = unknown
@@ -134,6 +123,23 @@ info["apple_catalina"] = False
 if info["os"] == "mac" and float(os_version) == 10.15:
     info["apple_catalina"] = True
 
+info["macos_vm"] = False
+if info["os"] == "mac":
+    try:
+        _hw_model = subprocess.run(
+            ["sysctl", "-n", "hw.model"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        if _hw_model.returncode == 0 and _hw_model.stdout.strip().startswith(
+            "VirtualMac"
+        ):
+            info["macos_vm"] = True
+    except Exception:
+        pass
+
 info["win10_2009"] = False
 if info["os"] == "win" and version == "10.0.19045":
     info["win10_2009"] = True
@@ -145,7 +151,6 @@ if info["os"] == "win" and version == "10.0.22621":
 info["version"] = version
 info["os_version"] = StringVersion(os_version)
 info["is_ubuntu"] = "Ubuntu" in version
-
 
 # processor type and bits
 if processor in ["i386", "i686"]:
@@ -159,21 +164,17 @@ elif processor.upper() == "AMD64":
 elif processor.upper() == "ARM64":
     bits = "64bit"
     processor = "aarch64"
-elif processor == "Power Macintosh":
-    processor = "ppc"
 elif processor == "arm" and bits == "64bit":
     processor = "aarch64"
 
 bits = re.search(r"(\d+)bit", bits).group(1)
-info.update(
-    {
-        "processor": processor,
-        "bits": int(bits),
-    }
-)
+info.update({
+    "processor": processor,
+    "bits": int(bits),
+})
 
-# we want to transition to this instead of using `!debug`, etc.
-info["arch"] = info["processor"]
+if info.get("arch", "") != "aarch64":
+    info["arch"] = info["processor"]
 
 
 if info["os"] == "linux":
@@ -191,9 +192,9 @@ else:
 
 # standard value of choices, for easy inspection
 choices = {
-    "os": ["linux", "bsd", "win", "mac", "unix"],
+    "os": ["android", "linux", "mac", "win"],
     "bits": [32, 64],
-    "processor": ["x86", "x86_64", "ppc"],
+    "processor": ["x86", "x86_64", "aarch64"],
 }
 
 
@@ -209,6 +210,9 @@ def sanitize(info):
             info["processor"] = "x86"
             info["bits"] = 32
 
+    if info.get("arch", "") != "aarch64":
+        info["arch"] = info["processor"]
+
 
 # method for updating information
 
@@ -220,9 +224,7 @@ def update(new_info):
     :param new_info: Either a dict containing the new info or a path/url
                      to a json file containing the new info.
     """
-    from six import string_types
-
-    if isinstance(new_info, string_types):
+    if isinstance(new_info, str):
         # lazy import
         import json
 
@@ -239,9 +241,6 @@ def update(new_info):
     # convenience data for os access
     for os_name in choices["os"]:
         globals()["is" + os_name.title()] = info["os"] == os_name
-    # unix is special
-    if isLinux or isBsd:  # noqa
-        globals()["isUnix"] = True
 
 
 def find_and_update_from_json(*dirs, **kwargs):
@@ -293,7 +292,7 @@ def find_and_update_from_json(*dirs, **kwargs):
     # by default, exceptions are suppressed. Set this to True if otherwise
     # desired.
     if kwargs.get("raise_exception", False):
-        raise IOError("mozinfo.json could not be found.")
+        raise OSError("mozinfo.json could not be found.")
     return None
 
 
@@ -328,11 +327,11 @@ def main(args=None):
     parser = OptionParser(description=__doc__)
     for key in choices:
         parser.add_option(
-            "--%s" % key,
+            f"--{key}",
             dest=key,
             action="store_true",
             default=False,
-            help="display choices for %s" % key,
+            help=f"display choices for {key}",
         )
     options, args = parser.parse_args()
 
@@ -353,8 +352,7 @@ def main(args=None):
     for key, value in options.__dict__.items():
         if value is True:
             print(
-                "%s choices: %s"
-                % (key, " ".join([str(choice) for choice in choices[key]]))
+                f"{key} choices: {' '.join([str(choice) for choice in choices[key]])}"
             )
             flag = True
     if flag:
@@ -362,7 +360,7 @@ def main(args=None):
 
     # otherwise, print out all info
     for key, value in info.items():
-        print("%s: %s" % (key, value))
+        print(f"{key}: {value}")
 
 
 if __name__ == "__main__":

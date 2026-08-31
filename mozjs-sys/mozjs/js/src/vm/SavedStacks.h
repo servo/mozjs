@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -167,7 +165,8 @@ class SavedStacks {
 
   [[nodiscard]] bool saveCurrentStack(
       JSContext* cx, MutableHandle<SavedFrame*> frame,
-      JS::StackCapture&& capture = JS::StackCapture(JS::AllFrames()));
+      JS::StackCapture&& capture = JS::StackCapture(JS::AllFrames()),
+      HandleObject startAt = nullptr);
   [[nodiscard]] bool copyAsyncStack(
       JSContext* cx, HandleObject asyncStack, HandleString asyncCause,
       MutableHandle<SavedFrame*> adoptedStack,
@@ -218,7 +217,8 @@ class SavedStacks {
 
   [[nodiscard]] bool insertFrames(JSContext* cx,
                                   MutableHandle<SavedFrame*> frame,
-                                  JS::StackCapture&& capture);
+                                  JS::StackCapture&& capture,
+                                  HandleObject startAt);
   [[nodiscard]] bool adoptAsyncStack(
       JSContext* cx, MutableHandle<SavedFrame*> asyncStack,
       Handle<JSAtom*> asyncCause, const mozilla::Maybe<size_t>& maxFrameCount);
@@ -238,8 +238,7 @@ class SavedStacks {
     WeakHeapPtr<JSScript*> script;
     jsbytecode* pc;
 
-    void trace(JSTracer* trc) { /* PCKey is weak. */
-    }
+    void trace(JSTracer* trc) { /* PCKey is weak. */ }
     bool traceWeak(JSTracer* trc) {
       return TraceWeakEdge(trc, &script, "traceWeak");
     }
@@ -253,7 +252,7 @@ class SavedStacks {
         : source(source), sourceId(sourceId), line(line), column(column) {}
 
     void trace(JSTracer* trc) {
-      TraceNullableEdge(trc, &source, "SavedStacks::LocationValue::source");
+      TraceEdge(trc, &source, "SavedStacks::LocationValue::source");
     }
 
     bool traceWeak(JSTracer* trc) {

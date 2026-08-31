@@ -8,8 +8,7 @@
 --no-blinterp
 --blinterp-eager
 --cache-ir-stubs=off
---cache-ir-stubs=on
---enable-json-parse-with-source
+--cache-ir-stubs=on 
 --ion-check-range-analysis
 --ion-eager
 --ion-edgecase-analysis=off
@@ -37,6 +36,7 @@
 --ion-range-analysis=off
 --ion-range-analysis=on
 --ion-regalloc=testbed
+--ion-regalloc=simple
 --ion-scalar-replacement=off
 --ion-scalar-replacement=on
 --ion-iterator-indices=off
@@ -59,6 +59,9 @@
 --monomorphic-inlining=default
 --monomorphic-inlining=always
 --monomorphic-inlining=never
+--disable-main-thread-denormals
+--object-keys-scalar-replacement=off
+--object-keys-scalar-replacement=on
 
 # GC-related
 # These 2 flags can cause the shell to slow down
@@ -81,6 +84,7 @@
 --no-ssse3
 --no-sse41
 --no-sse42
+--no-fjcvtzs
 
 # arm specific, no-ops on other platforms.
 --arm-sim-icache-checks
@@ -91,11 +95,8 @@
 # --dump-bytecode option implies --code-coverage
 --dump-bytecode
 
-# Shadow Realms
---enable-shadow-realms
-
 # Well-Formed Unicode Strings
 --enable-well-formed-unicode-strings
 
-# Resizable ArrayBuffers and Growable SharedArrayBuffers
---enable-arraybuffer-resizable
+# Atomics.waitAsync
+--set-pref=atomics_wait_async=true

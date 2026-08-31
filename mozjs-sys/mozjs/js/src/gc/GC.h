@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -13,10 +11,12 @@
 
 #include "gc/AllocKind.h"
 #include "gc/GCEnum.h"
+#include "js/Context.h"
 #include "js/GCAPI.h"
 #include "js/HeapAPI.h"
 #include "js/RealmIterators.h"
 #include "js/TraceKind.h"
+#include "vm/GeckoProfiler.h"
 
 class JSTracer;
 
@@ -31,7 +31,7 @@ class Nursery;
 namespace gc {
 
 class Arena;
-class TenuredChunk;
+class ArenaChunk;
 
 } /* namespace gc */
 
@@ -65,9 +65,10 @@ class TenuredChunk;
   _("smallHeapIncrementalLimit", JSGC_SMALL_HEAP_INCREMENTAL_LIMIT, true)   \
   _("largeHeapIncrementalLimit", JSGC_LARGE_HEAP_INCREMENTAL_LIMIT, true)   \
   _("minEmptyChunkCount", JSGC_MIN_EMPTY_CHUNK_COUNT, true)                 \
-  _("maxEmptyChunkCount", JSGC_MAX_EMPTY_CHUNK_COUNT, true)                 \
   _("compactingEnabled", JSGC_COMPACTING_ENABLED, true)                     \
+  _("nurseryEnabled", JSGC_NURSERY_ENABLED, true)                           \
   _("parallelMarkingEnabled", JSGC_PARALLEL_MARKING_ENABLED, true)          \
+  _("concurrentMarkingEnabled", JSGC_CONCURRENT_MARKING_ENABLED, true)      \
   _("parallelMarkingThresholdMB", JSGC_PARALLEL_MARKING_THRESHOLD_MB, true) \
   _("minLastDitchGCPeriod", JSGC_MIN_LAST_DITCH_GC_PERIOD, true)            \
   _("nurseryEagerCollectionThresholdKB",                                    \
@@ -76,6 +77,7 @@ class TenuredChunk;
     JSGC_NURSERY_EAGER_COLLECTION_THRESHOLD_PERCENT, true)                  \
   _("nurseryEagerCollectionTimeoutMS",                                      \
     JSGC_NURSERY_EAGER_COLLECTION_TIMEOUT_MS, true)                         \
+  _("nurseryMaxTimeGoalMS", JSGC_NURSERY_MAX_TIME_GOAL_MS, true)            \
   _("zoneAllocDelayKB", JSGC_ZONE_ALLOC_DELAY_KB, true)                     \
   _("mallocThresholdBase", JSGC_MALLOC_THRESHOLD_BASE, true)                \
   _("urgentThreshold", JSGC_URGENT_THRESHOLD_MB, true)                      \
@@ -87,11 +89,59 @@ class TenuredChunk;
   _("markingThreadCount", JSGC_MARKING_THREAD_COUNT, false)                 \
   _("systemPageSizeKB", JSGC_SYSTEM_PAGE_SIZE_KB, false)                    \
   _("semispaceNurseryEnabled", JSGC_SEMISPACE_NURSERY_ENABLED, true)        \
-  _("generateMissingAllocSites", JSGC_GENERATE_MISSING_ALLOC_SITES, true)
+  _("generateMissingAllocSites", JSGC_GENERATE_MISSING_ALLOC_SITES, true)   \
+  _("highFrequencyMode", JSGC_HIGH_FREQUENCY_MODE, false)                   \
+  _("storeBufferEntries", JSGC_STORE_BUFFER_ENTRIES, true)                  \
+  _("storeBufferScaling", JSGC_STORE_BUFFER_SCALING, true)                  \
+  _("incrementalWeakMapMarkingEnabled", JSGC_INCREMENTAL_WEAKMAP_ENABLED, true)
 
 // Get the key and writability give a GC parameter name.
 extern bool GetGCParameterInfo(const char* name, JSGCParamKey* keyOut,
                                bool* writableOut);
+
+namespace gc {
+
+void FinishGC(JSContext* cx, JS::GCReason = JS::GCReason::FINISH_GC);
+
+// Abstract base class for exclusive heap access for tracing or GC.
+class MOZ_RAII AutoHeapSession {
+ public:
+  ~AutoHeapSession();
+  AutoHeapSession(const AutoHeapSession&) = delete;
+  void operator=(const AutoHeapSession&) = delete;
+
+ protected:
+  AutoHeapSession(GCRuntime* gc, JS::HeapState state);
+
+ private:
+  GCRuntime* gc;
+  JS::HeapState prevState;
+  mozilla::Maybe<AutoGeckoProfilerEntry> profilingStackFrame;
+};
+
+class MOZ_RAII AutoTraceSession : public AutoHeapSession,
+                                  public JS::AutoCheckCannotGC {
+ public:
+  explicit AutoTraceSession(JSRuntime* rt);
+};
+
+struct MOZ_RAII AutoFinishGC {
+  explicit AutoFinishGC(JSContext* cx, JS::GCReason reason) {
+    FinishGC(cx, reason);
+  }
+};
+
+// This class should be used by any code that needs exclusive access to the heap
+// in order to trace through it.
+class MOZ_RAII AutoPrepareForTracing : private AutoFinishGC,
+                                       public AutoTraceSession {
+ public:
+  explicit AutoPrepareForTracing(JSContext* cx)
+      : AutoFinishGC(cx, JS::GCReason::PREPARE_FOR_TRACING),
+        AutoTraceSession(JS_GetRuntime(cx)) {}
+};
+
+}  // namespace gc
 
 extern void TraceRuntime(JSTracer* trc);
 
@@ -110,7 +160,7 @@ extern unsigned NotifyGCPreSwap(JSObject* a, JSObject* b);
 
 extern void NotifyGCPostSwap(JSObject* a, JSObject* b, unsigned removedFlags);
 
-using IterateChunkCallback = void (*)(JSRuntime*, void*, gc::TenuredChunk*,
+using IterateChunkCallback = void (*)(JSRuntime*, void*, gc::ArenaChunk*,
                                       const JS::AutoRequireNoGC&);
 using IterateZoneCallback = void (*)(JSRuntime*, void*, JS::Zone*,
                                      const JS::AutoRequireNoGC&);
@@ -132,7 +182,8 @@ extern void IterateHeapUnbarriered(JSContext* cx, void* data,
                                    IterateZoneCallback zoneCallback,
                                    JS::IterateRealmCallback realmCallback,
                                    IterateArenaCallback arenaCallback,
-                                   IterateCellCallback cellCallback);
+                                   IterateCellCallback cellCallback,
+                                   const js::gc::AutoTraceSession& session);
 
 /*
  * This function is like IterateHeapUnbarriered, but does it for a single zone.
@@ -140,13 +191,14 @@ extern void IterateHeapUnbarriered(JSContext* cx, void* data,
 extern void IterateHeapUnbarrieredForZone(
     JSContext* cx, JS::Zone* zone, void* data, IterateZoneCallback zoneCallback,
     JS::IterateRealmCallback realmCallback, IterateArenaCallback arenaCallback,
-    IterateCellCallback cellCallback);
+    IterateCellCallback cellCallback, const js::gc::AutoTraceSession& session);
 
 /*
  * Invoke chunkCallback on every in-use chunk.
  */
 extern void IterateChunks(JSContext* cx, void* data,
-                          IterateChunkCallback chunkCallback);
+                          IterateChunkCallback chunkCallback,
+                          const js::gc::AutoTraceSession& session);
 
 using IterateScriptCallback = void (*)(JSRuntime*, void*, BaseScript*,
                                        const JS::AutoRequireNoGC&);
@@ -163,11 +215,9 @@ JS::Realm* NewRealm(JSContext* cx, JSPrincipals* principals,
 
 namespace gc {
 
-void FinishGC(JSContext* cx, JS::GCReason = JS::GCReason::FINISH_GC);
-
 void WaitForBackgroundTasks(JSContext* cx);
 
-enum VerifierType { PreBarrierVerifier };
+enum VerifierType { PreBarrierVerifier, PostBarrierVerifier };
 
 #ifdef JS_GC_ZEAL
 
@@ -203,7 +253,7 @@ static inline void MaybeVerifyBarriers(JSContext* cx, bool always = false) {}
  *
  *  - error reporting
  *  - JIT bailout handling
- *  - brain transplants (JSObject::swap)
+ *  - brain transplants (ProxyObject::swap)
  *  - debugging utilities not exposed to the browser
  *
  * This works by updating the |JSContext::suppressGC| counter which is checked

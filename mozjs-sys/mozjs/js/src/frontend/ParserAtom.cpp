@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,14 +8,13 @@
 
 #include <memory>  // std::uninitialized_fill_n
 
-#include "jsnum.h"  // CharsToNumber
-
+#include "builtin/Number.h"  // CharsToNumber
 #include "frontend/CompilationStencil.h"
-#include "js/GCAPI.h"           // JS::AutoSuppressGCAnalysis
-#include "js/Printer.h"         // Sprinter, QuoteString
-#include "util/Identifier.h"    // IsIdentifier
-#include "util/StringBuffer.h"  // StringBuffer
-#include "util/Text.h"          // AsciiDigitToNumber
+#include "js/GCAPI.h"            // JS::AutoSuppressGCAnalysis
+#include "js/Printer.h"          // Sprinter, QuoteString
+#include "util/Identifier.h"     // IsIdentifier
+#include "util/StringBuilder.h"  // StringBuilder
+#include "util/Text.h"           // AsciiDigitToNumber
 #include "util/Unicode.h"
 #include "vm/JSContext.h"
 #include "vm/Runtime.h"
@@ -108,6 +105,11 @@ template <typename CharT, typename SeqCharT>
 /* static */ ParserAtom* ParserAtom::allocate(
     FrontendContext* fc, LifoAlloc& alloc, InflatedChar16Sequence<SeqCharT> seq,
     uint32_t length, HashNumber hash) {
+  if (length > JSString::MAX_LENGTH) {
+    ReportAllocationOverflow(fc);
+    return nullptr;
+  }
+
   constexpr size_t HeaderSize = sizeof(ParserAtom);
   void* raw = alloc.alloc(HeaderSize + (sizeof(CharT) * length));
   if (!raw) {
@@ -705,8 +707,7 @@ bool ParserAtomsTable::isIdentifier(TaggedParserAtomIndex index) const {
 #ifdef DEBUG
   char content[3];
   getLength3Content(index.toLength3StaticParserString(), content);
-  MOZ_ASSERT(!reinterpret_cast<const Latin1Char*>(
-      IsIdentifier(reinterpret_cast<const Latin1Char*>(content), 3)));
+  MOZ_ASSERT(!IsIdentifier(reinterpret_cast<const Latin1Char*>(content), 3));
 #endif
   return false;
 }
@@ -737,7 +738,9 @@ bool ParserAtomsTable::isExtendedUnclonedSelfHostedFunctionName(
       case WellKnownAtomId::dollar_ArraySpecies_:
       case WellKnownAtomId::dollar_ArrayValues_:
       case WellKnownAtomId::dollar_RegExpFlagsGetter_:
-      case WellKnownAtomId::dollar_RegExpToString_: {
+      case WellKnownAtomId::dollar_RegExpToString_:
+      case WellKnownAtomId::dollar_SharedArrayBufferSpecies_:
+      case WellKnownAtomId::dollar_TypedArraySpecies_: {
 #ifdef DEBUG
         const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
         MOZ_ASSERT(info.content[0] ==
@@ -1121,36 +1124,36 @@ JSAtom* ParserAtomsTable::toJSAtom(JSContext* cx, FrontendContext* fc,
   return cx->staticStrings().getUint(s);
 }
 
-bool ParserAtomsTable::appendTo(StringBuffer& buffer,
+bool ParserAtomsTable::appendTo(StringBuilder& sb,
                                 TaggedParserAtomIndex index) const {
   if (index.isParserAtomIndex()) {
     const auto* atom = getParserAtom(index.toParserAtomIndex());
     size_t length = atom->length();
-    return atom->hasLatin1Chars() ? buffer.append(atom->latin1Chars(), length)
-                                  : buffer.append(atom->twoByteChars(), length);
+    return atom->hasLatin1Chars() ? sb.append(atom->latin1Chars(), length)
+                                  : sb.append(atom->twoByteChars(), length);
   }
 
   if (index.isWellKnownAtomId()) {
     const auto& info = GetWellKnownAtomInfo(index.toWellKnownAtomId());
-    return buffer.append(info.content, info.length);
+    return sb.append(info.content, info.length);
   }
 
   if (index.isLength1StaticParserString()) {
     Latin1Char content[1];
     getLength1Content(index.toLength1StaticParserString(), content);
-    return buffer.append(content[0]);
+    return sb.append(content[0]);
   }
 
   if (index.isLength2StaticParserString()) {
     char content[2];
     getLength2Content(index.toLength2StaticParserString(), content);
-    return buffer.append(content, 2);
+    return sb.append(content, 2);
   }
 
   MOZ_ASSERT(index.isLength3StaticParserString());
   char content[3];
   getLength3Content(index.toLength3StaticParserString(), content);
-  return buffer.append(content, 3);
+  return sb.append(content, 3);
 }
 
 bool InstantiateMarkedAtoms(JSContext* cx, FrontendContext* fc,
@@ -1214,7 +1217,7 @@ bool InstantiateMarkedAtomsAsPermanent(JSContext* cx, FrontendContext* fc,
 }
 
 /* static */
-WellKnownParserAtoms WellKnownParserAtoms::singleton_;
+constinit WellKnownParserAtoms WellKnownParserAtoms::singleton_;
 
 template <typename CharT>
 TaggedParserAtomIndex WellKnownParserAtoms::lookupChar16Seq(

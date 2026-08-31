@@ -1,5 +1,5 @@
-commit 5861e1fd52f1d7673eee38bc3c965aa18b336062
+commit 21d1eb0f306e1141c10931e914dfc038c06121da
 Author: Peter Edberg <pedberg@unicode.org>
-Date:   Tue Apr 11 10:32:35 2023 -0700
+Date:   Mon Mar 16 15:41:53 2026 -0700
 
-    ICU-22221 update cldr-icu instructions, and ICU tag for integration
+    ICU-23316 Integrate CLDR 48.2 (final) to ICU maint-78; updates one tool

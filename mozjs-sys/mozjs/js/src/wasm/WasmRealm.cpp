@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -42,22 +40,7 @@ struct InstanceComparator {
     if (instance == &target) {
       return 0;
     }
-
-    // Instances can share code, so the segments can be equal (though they
-    // can't partially overlap).  If the codeBases are equal, we sort by
-    // Instance address.  Thus a Code may map to many instances.
-
-    // Compare by the first tier, always.
-
-    Tier instanceTier = instance->code().stableTier();
-    Tier targetTier = target.code().stableTier();
-
-    if (instance->codeBase(instanceTier) == target.codeBase(targetTier)) {
-      return instance < &target ? -1 : 1;
-    }
-
-    return target.codeBase(targetTier) < instance->codeBase(instanceTier) ? -1
-                                                                          : 1;
+    return instance < &target ? -1 : 1;
   }
 };
 
@@ -107,7 +90,9 @@ bool wasm::Realm::registerInstance(JSContext* cx,
   }
 
   // Notify the debugger after wasmInstances is unlocked.
-  DebugAPI::onNewWasmInstance(cx, instanceObj);
+  if (!instance.codeMeta().isSelfHostedModule()) {
+    DebugAPI::onNewWasmInstance(cx, instanceObj);
+  }
   return true;
 }
 
@@ -132,7 +117,7 @@ void wasm::Realm::ensureProfilingLabels(bool profilingEnabled) {
   }
 }
 
-void wasm::Realm::addSizeOfExcludingThis(MallocSizeOf mallocSizeOf,
+void wasm::Realm::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,
                                          size_t* realmTables) {
   *realmTables += instances_.sizeOfExcludingThis(mallocSizeOf);
 }
@@ -147,25 +132,6 @@ void wasm::InterruptRunningCode(JSContext* cx) {
 void wasm::ResetInterruptState(JSContext* cx) {
   auto runtimeInstances = cx->runtime()->wasmInstances.lock();
   for (Instance* instance : runtimeInstances.get()) {
-    instance->resetInterrupt(cx);
+    instance->resetInterrupt();
   }
 }
-
-#ifdef ENABLE_WASM_JSPI
-void wasm::UpdateInstanceStackLimitsForSuspendableStack(
-    JSContext* cx, JS::NativeStackLimit limit) {
-  auto runtimeInstances = cx->runtime()->wasmInstances.lock();
-  cx->wasm().suspendableStackLimit = limit;
-  for (Instance* instance : runtimeInstances.get()) {
-    instance->setTemporaryStackLimit(limit);
-  }
-}
-
-void wasm::ResetInstanceStackLimits(JSContext* cx) {
-  auto runtimeInstances = cx->runtime()->wasmInstances.lock();
-  cx->wasm().suspendableStackLimit = JS::NativeStackLimitMin;
-  for (Instance* instance : runtimeInstances.get()) {
-    instance->resetTemporaryStackLimit(cx);
-  }
-}
-#endif  // ENABLE_WASM_JSPI

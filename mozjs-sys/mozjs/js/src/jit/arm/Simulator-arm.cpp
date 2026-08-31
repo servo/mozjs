@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 // Copyright 2012 the V8 project authors. All rights reserved.
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are
@@ -31,9 +30,9 @@
 #include "mozilla/Casting.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/EndianUtils.h"
-#include "mozilla/FloatingPoint.h"
 #include "mozilla/Likely.h"
-#include "mozilla/MathAlgorithms.h"
+
+#include <bit>
 
 #include "jit/arm/Assembler-arm.h"
 #include "jit/arm/disasm/Constants-arm.h"
@@ -41,6 +40,7 @@
 #include "js/UniquePtr.h"
 #include "js/Utility.h"
 #include "threading/LockGuard.h"
+#include "vm/Float16.h"
 #include "vm/JSContext.h"
 #include "vm/Runtime.h"
 #include "vm/SharedMem.h"
@@ -136,7 +136,7 @@ const uint32_t kMaxStopCode = kStopCode - 1;
 
 // The class Instruction enables access to individual fields defined in the ARM
 // architecture instruction set encoding as described in figure A3-1.
-// Note that the Assembler uses typedef int32_t Instr.
+// Note that the Assembler uses using Instr = int32_t.
 //
 // Example: Test whether the instruction at ptr does set the condition code
 // bits.
@@ -290,6 +290,9 @@ class SimInstruction {
 
   // Test for a nop instruction, which falls under type 1.
   inline bool isNopType1() const { return bits(24, 0) == 0x0120F000; }
+
+  // Test for a yield instruction, which falls under type 1.
+  inline bool isYieldType1() const { return bits(24, 0) == 0x0120F001; }
 
   // Test for a nop instruction, which falls under type 1.
   inline bool isCsdbType1() const { return bits(24, 0) == 0x0120F014; }
@@ -1090,7 +1093,7 @@ void Simulator::setLastDebuggerInput(char* input) {
 
 /* static */
 void SimulatorProcess::FlushICache(void* start_addr, size_t size) {
-  JitSpewCont(JitSpew_CacheFlush, "[%p %zx]", start_addr, size);
+  JitSpew(JitSpew_CacheFlush, "[%p %zx]", start_addr, size);
   if (!ICacheCheckingDisableCount) {
     AutoLockSimulatorCache als;
     js::jit::FlushICacheLocked(icache(), start_addr, size);
@@ -1402,7 +1405,7 @@ template void Simulator::setVFPRegister<float, 1>(int reg_index,
                                                   const float& value);
 
 void Simulator::getFpArgs(double* x, double* y, int32_t* z) {
-  if (UseHardFpABI()) {
+  if (ARMFlags::UseHardFpABI()) {
     get_double_from_d_register(0, x);
     get_double_from_d_register(1, y);
     *z = get_register(0);
@@ -1422,7 +1425,7 @@ void Simulator::getFpFromStack(int32_t* stack, double* x) {
 
 void Simulator::setCallResultDouble(double result) {
   // The return value is either in r0/r1 or d0.
-  if (UseHardFpABI()) {
+  if (ARMFlags::UseHardFpABI()) {
     char buffer[2 * sizeof(vfp_registers_[0])];
     memcpy(buffer, &result, sizeof(buffer));
     // Copy result to d0.
@@ -1436,7 +1439,7 @@ void Simulator::setCallResultDouble(double result) {
 }
 
 void Simulator::setCallResultFloat(float result) {
-  if (UseHardFpABI()) {
+  if (ARMFlags::UseHardFpABI()) {
     char buffer[sizeof(registers_[0])];
     memcpy(buffer, &result, sizeof(buffer));
     // Copy result to s0.
@@ -1482,13 +1485,15 @@ uint64_t Simulator::readQ(int32_t addr, SimInstruction* instr,
     return UINT64_MAX;
   }
 
-  if ((addr & 3) == 0 || (f == AllowUnaligned && !HasAlignmentFault())) {
+  if ((addr & 3) == 0 ||
+      (f == AllowUnaligned && !ARMFlags::HasAlignmentFault())) {
     uint64_t* ptr = reinterpret_cast<uint64_t*>(addr);
     return *ptr;
   }
 
   // See the comments below in readW.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     uint64_t value;
     memcpy(&value, ptr, sizeof(value));
@@ -1505,14 +1510,16 @@ void Simulator::writeQ(int32_t addr, uint64_t value, SimInstruction* instr,
     return;
   }
 
-  if ((addr & 3) == 0 || (f == AllowUnaligned && !HasAlignmentFault())) {
+  if ((addr & 3) == 0 ||
+      (f == AllowUnaligned && !ARMFlags::HasAlignmentFault())) {
     uint64_t* ptr = reinterpret_cast<uint64_t*>(addr);
     *ptr = value;
     return;
   }
 
   // See the comments below in readW.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     memcpy(ptr, &value, sizeof(value));
     return;
@@ -1527,7 +1534,8 @@ int Simulator::readW(int32_t addr, SimInstruction* instr, UnalignedPolicy f) {
     return -1;
   }
 
-  if ((addr & 3) == 0 || (f == AllowUnaligned && !HasAlignmentFault())) {
+  if ((addr & 3) == 0 ||
+      (f == AllowUnaligned && !ARMFlags::HasAlignmentFault())) {
     intptr_t* ptr = reinterpret_cast<intptr_t*>(addr);
     return *ptr;
   }
@@ -1536,7 +1544,8 @@ int Simulator::readW(int32_t addr, SimInstruction* instr, UnalignedPolicy f) {
   // do the right thing. Making this simulator properly emulate the behavior
   // of raising a signal is complex, so as a special-case, when in wasm code,
   // we just do the right thing.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     int value;
     memcpy(&value, ptr, sizeof(value));
@@ -1553,14 +1562,16 @@ void Simulator::writeW(int32_t addr, int value, SimInstruction* instr,
     return;
   }
 
-  if ((addr & 3) == 0 || (f == AllowUnaligned && !HasAlignmentFault())) {
+  if ((addr & 3) == 0 ||
+      (f == AllowUnaligned && !ARMFlags::HasAlignmentFault())) {
     intptr_t* ptr = reinterpret_cast<intptr_t*>(addr);
     *ptr = value;
     return;
   }
 
   // See the comments above in readW.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     memcpy(ptr, &value, sizeof(value));
     return;
@@ -1628,13 +1639,14 @@ uint16_t Simulator::readHU(int32_t addr, SimInstruction* instr) {
 
   // The regexp engine emits unaligned loads, so we don't check for them here
   // like most of the other methods do.
-  if ((addr & 1) == 0 || !HasAlignmentFault()) {
+  if ((addr & 1) == 0 || !ARMFlags::HasAlignmentFault()) {
     uint16_t* ptr = reinterpret_cast<uint16_t*>(addr);
     return *ptr;
   }
 
   // See comments above in readW.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     uint16_t value;
     memcpy(&value, ptr, sizeof(value));
@@ -1651,13 +1663,14 @@ int16_t Simulator::readH(int32_t addr, SimInstruction* instr) {
     return -1;
   }
 
-  if ((addr & 1) == 0 || !HasAlignmentFault()) {
+  if ((addr & 1) == 0 || !ARMFlags::HasAlignmentFault()) {
     int16_t* ptr = reinterpret_cast<int16_t*>(addr);
     return *ptr;
   }
 
   // See comments above in readW.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     int16_t value;
     memcpy(&value, ptr, sizeof(value));
@@ -1674,14 +1687,15 @@ void Simulator::writeH(int32_t addr, uint16_t value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & 1) == 0 || !HasAlignmentFault()) {
+  if ((addr & 1) == 0 || !ARMFlags::HasAlignmentFault()) {
     uint16_t* ptr = reinterpret_cast<uint16_t*>(addr);
     *ptr = value;
     return;
   }
 
   // See the comments above in readW.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     memcpy(ptr, &value, sizeof(value));
     return;
@@ -1696,14 +1710,15 @@ void Simulator::writeH(int32_t addr, int16_t value, SimInstruction* instr) {
     return;
   }
 
-  if ((addr & 1) == 0 || !HasAlignmentFault()) {
+  if ((addr & 1) == 0 || !ARMFlags::HasAlignmentFault()) {
     int16_t* ptr = reinterpret_cast<int16_t*>(addr);
     *ptr = value;
     return;
   }
 
   // See the comments above in readW.
-  if (FixupFault() && wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
+  if (ARMFlags::FixupFault() &&
+      wasm::InCompiledCode(reinterpret_cast<void*>(get_pc()))) {
     char* ptr = reinterpret_cast<char*>(addr);
     memcpy(ptr, &value, sizeof(value));
     return;
@@ -2223,7 +2238,7 @@ int32_t Simulator::processPU(SimInstruction* instr, int num_regs, int reg_size,
 // Addressing Mode 4 - Load and Store Multiple
 void Simulator::handleRList(SimInstruction* instr, bool load) {
   int rlist = instr->rlistValue();
-  int num_regs = mozilla::CountPopulation32(rlist);
+  int num_regs = std::popcount(unsigned(rlist));
 
   intptr_t start_address = 0;
   intptr_t end_address = 0;
@@ -2432,14 +2447,14 @@ void Simulator::softwareInterrupt(SimInstruction* instr) {
 }
 
 void Simulator::canonicalizeNaN(double* value) {
-  if (!wasm::CodeExists && !wasm::LookupCodeSegment(get_pc_as<void*>()) &&
+  if (!wasm::CodeExists && !wasm::LookupCodeBlock(get_pc_as<void*>()) &&
       FPSCR_default_NaN_mode_) {
     *value = JS::CanonicalizeNaN(*value);
   }
 }
 
 void Simulator::canonicalizeNaN(float* value) {
-  if (!wasm::CodeExists && !wasm::LookupCodeSegment(get_pc_as<void*>()) &&
+  if (!wasm::CodeExists && !wasm::LookupCodeBlock(get_pc_as<void*>()) &&
       FPSCR_default_NaN_mode_) {
     *value = JS::CanonicalizeNaN(*value);
   }
@@ -2829,12 +2844,7 @@ void Simulator::decodeType01(SimInstruction* instr) {
       switch (instr->bits(7, 4)) {
         case 1: {  // CLZ
           uint32_t bits = get_register(rm);
-          int leading_zeros = 0;
-          if (bits == 0) {
-            leading_zeros = 32;
-          } else {
-            leading_zeros = mozilla::CountLeadingZeroes32(bits);
-          }
+          int leading_zeros = std::countl_zero(bits);
           set_register(rd, leading_zeros);
           break;
         }
@@ -2848,13 +2858,18 @@ void Simulator::decodeType01(SimInstruction* instr) {
     }
   } else if ((type == 1) && instr->isNopType1()) {
     // NOP.
+  } else if ((type == 1) && instr->isYieldType1()) {
+    AtomicOperations::pause();
   } else if ((type == 1) && instr->isCsdbType1()) {
     // Speculation barrier. (No-op for the simulator)
   } else {
     int rd = instr->rdValue();
     int rn = instr->rnValue();
-    int32_t rn_val = get_register(rn);
-    int32_t shifter_operand = 0;
+    // Use uint32_t here for integer overflow in operations below not to be
+    // undefined behavior, leading to our own calculations of overflow being
+    // messed up by the compiler.
+    uint32_t rn_val = get_register(rn);
+    uint32_t shifter_operand = 0;
     bool shifter_carry_out = 0;
     if (type == 0) {
       shifter_operand = getShiftRm(instr, &shifter_carry_out);
@@ -3184,7 +3199,7 @@ void Simulator::decodeType3(SimInstruction* instr) {
                 // Rev
                 uint32_t rm_val = get_register(instr->rmValue());
 
-                static_assert(MOZ_LITTLE_ENDIAN());
+                static_assert(std::endian::native == std::endian::little);
                 set_register(rd,
                              mozilla::NativeEndian::swapToBigEndian(rm_val));
               } else if (instr->bits(20, 16) == 0b1'1111 &&
@@ -3192,7 +3207,7 @@ void Simulator::decodeType3(SimInstruction* instr) {
                 // Rev16
                 uint32_t rm_val = get_register(instr->rmValue());
 
-                static_assert(MOZ_LITTLE_ENDIAN());
+                static_assert(std::endian::native == std::endian::little);
                 uint32_t hi = mozilla::NativeEndian::swapToBigEndian(
                     uint16_t(rm_val >> 16));
                 uint32_t lo =
@@ -3248,7 +3263,7 @@ void Simulator::decodeType3(SimInstruction* instr) {
                 // Revsh
                 uint32_t rm_val = get_register(instr->rmValue());
 
-                static_assert(MOZ_LITTLE_ENDIAN());
+                static_assert(std::endian::native == std::endian::little);
                 set_register(
                     rd, int32_t(int16_t(mozilla::NativeEndian::swapToBigEndian(
                             uint16_t(rm_val)))));
@@ -3542,6 +3557,9 @@ void Simulator::decodeTypeVFP(SimInstruction* instr) {
           // vmov.f32 immediate.
           set_s_register_from_float(vd, instr->float32ImmedVmov());
         }
+      } else if ((instr->opc2Value() & ~0x1) == 0x2 &&
+                 (instr->opc3Value() & 0x1)) {
+        decodeVCVTBetweenFloatingPointAndHalf(instr);
       } else {
         decodeVCVTBetweenFloatingPointAndIntegerFrac(instr);
       }
@@ -4037,6 +4055,71 @@ void Simulator::decodeVCVTBetweenFloatingPointAndIntegerFrac(
     }
   } else {
     MOZ_CRASH();  // Not implemented, fixed to float.
+  }
+}
+
+void Simulator::decodeVCVTBetweenFloatingPointAndHalf(SimInstruction* instr) {
+  MOZ_ASSERT(instr->bit(4) == 0 && instr->opc1Value() == 0x7);
+  MOZ_ASSERT((instr->opc2Value() & ~0x1) == 0x2 && (instr->opc3Value() & 0x1));
+
+  bool top_half = (instr->bit(7) == 1);
+  bool to_half = (instr->bit(16) == 1);
+
+  VFPRegPrecision dst_precision = kSinglePrecision;
+  VFPRegPrecision src_precision = kSinglePrecision;
+  if (instr->szValue() == 1) {
+    if (to_half) {
+      src_precision = kDoublePrecision;
+    } else {
+      dst_precision = kDoublePrecision;
+    }
+  }
+
+  int dst = instr->VFPDRegValue(dst_precision);
+  int src = instr->VFPMRegValue(src_precision);
+
+  if (to_half) {
+    uint32_t f16bits;
+    if (src_precision == kSinglePrecision) {
+      float val;
+      get_float_from_s_register(src, &val);
+      f16bits = js::float16{val}.toRawBits();
+    } else {
+      double val;
+      get_double_from_d_register(src, &val);
+      f16bits = js::float16{val}.toRawBits();
+    }
+
+    float val;
+    get_float_from_s_register(dst, &val);
+    uint32_t f32bits = mozilla::BitwiseCast<uint32_t>(val);
+
+    if (top_half) {
+      f32bits = (f16bits << 16) | (f32bits & 0xffff);
+    } else {
+      f32bits = (f32bits & 0xffff'0000) | f16bits;
+    }
+
+    float rval;
+    mozilla::BitwiseCast(f32bits, &rval);
+
+    set_s_register_from_float(dst, rval);
+  } else {
+    float val;
+    get_float_from_s_register(src, &val);
+    uint32_t f32bits = mozilla::BitwiseCast<uint32_t>(val);
+
+    if (top_half) {
+      f32bits >>= 16;
+    }
+
+    auto rval = js::float16::fromRawBits(uint16_t(f32bits));
+
+    if (dst_precision == kSinglePrecision) {
+      set_s_register_from_float(dst, static_cast<float>(rval));
+    } else {
+      set_d_register_from_double(dst, static_cast<double>(rval));
+    }
   }
 }
 

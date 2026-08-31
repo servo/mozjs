@@ -84,9 +84,11 @@ if not cfg.sixgill_plugin:
         cfg.sixgill, "usr", "libexec", "sixgill", "gcc", "xgill.so"
     )
 
-subprocess.check_call(
-    [cfg.js, "-e", 'if (!getBuildConfiguration("has-ctypes")) quit(1)']
-)
+subprocess.check_call([
+    cfg.js,
+    "-e",
+    'if (!getBuildConfiguration("has-ctypes")) quit(1)',
+])
 
 
 def binpath(prog):
@@ -131,7 +133,7 @@ for path in tests:
     os.chdir(outdir)
     for xdb in glob("*.xdb"):
         os.unlink(xdb)
-    print("START TEST {}".format(name), flush=True)
+    print(f"START TEST {name}", flush=True)
     testpath = os.path.join(indir, "test.py")
     testscript = open(testpath).read()
     testcode = compile(testscript, testpath, "exec")

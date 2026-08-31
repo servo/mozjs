@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -7,19 +6,14 @@ import base64
 import json
 import os
 from collections import defaultdict
-from datetime import datetime
-
-import six
+from datetime import datetime, timezone
 
 from .. import base
 
 html = None
 raw = None
 
-if six.PY2:
-    from cgi import escape
-else:
-    from html import escape
+from html import escape
 
 base_path = os.path.split(__file__)[0]
 
@@ -89,12 +83,10 @@ class HTMLFormatter(base.BaseFormatter):
                 if version_info.get("application_repository"):
                     self.env["Gecko revision"] = html.a(
                         version_info.get("application_changeset"),
-                        href="/rev/".join(
-                            [
-                                version_info.get("application_repository"),
-                                version_info.get("application_changeset"),
-                            ]
-                        ),
+                        href="/rev/".join([
+                            version_info.get("application_repository"),
+                            version_info.get("application_changeset"),
+                        ]),
                         target="_blank",
                     )
 
@@ -185,17 +177,17 @@ class HTMLFormatter(base.BaseFormatter):
                     else:
                         href = content
                 else:
-                    if not isinstance(content, (six.text_type, six.binary_type)):
+                    if not isinstance(content, (str, bytes)):
                         # All types must be json serializable
                         content = json.dumps(content)
                         # Decode to text type if JSON output is byte string
-                        if not isinstance(content, six.text_type):
+                        if not isinstance(content, str):
                             content = content.decode("utf-8")
                     # Encode base64 to avoid that some browsers (such as Firefox, Opera)
                     # treats '#' as the start of another link if it is contained in the data URL.
-                    if isinstance(content, six.text_type):
+                    if isinstance(content, str):
                         is_known_utf8 = True
-                        content_bytes = six.text_type(content).encode(
+                        content_bytes = str(content).encode(
                             "utf-8", "xmlcharrefreplace"
                         )
                     else:
@@ -223,14 +215,13 @@ class HTMLFormatter(base.BaseFormatter):
                 separator = line.startswith(" " * 10)
                 if separator:
                     log.append(line[:80])
+                elif (
+                    line.lower().find("error") != -1
+                    or line.lower().find("exception") != -1
+                ):
+                    log.append(html.span(raw(escape(line)), class_="error"))
                 else:
-                    if (
-                        line.lower().find("error") != -1
-                        or line.lower().find("exception") != -1
-                    ):
-                        log.append(html.span(raw(escape(line)), class_="error"))
-                    else:
-                        log.append(raw(escape(line)))
+                    log.append(raw(escape(line)))
                 log.append(html.br())
             additional_html.append(log)
 
@@ -248,7 +239,7 @@ class HTMLFormatter(base.BaseFormatter):
         )
 
     def generate_html(self):
-        generated = datetime.utcnow()
+        generated = datetime.now(timezone.utc)
         with open(os.path.join(base_path, "main.js")) as main_f:
             doc = html.html(
                 self.head,
@@ -274,7 +265,7 @@ class HTMLFormatter(base.BaseFormatter):
                     html.p(
                         "%i tests ran in %.1f seconds."
                         % (
-                            sum(six.itervalues(self.test_count)),
+                            sum(self.test_count.values()),
                             (self.suite_times["end"] - self.suite_times["start"])
                             / 1000.0,
                         ),
@@ -317,20 +308,16 @@ class HTMLFormatter(base.BaseFormatter):
                     html.table(
                         [
                             html.thead(
-                                html.tr(
-                                    [
-                                        html.th(
-                                            "Result", class_="sortable", col="result"
-                                        ),
-                                        html.th("Test", class_="sortable", col="name"),
-                                        html.th(
-                                            "Duration",
-                                            class_="sortable numeric",
-                                            col="duration",
-                                        ),
-                                        html.th("Links"),
-                                    ]
-                                ),
+                                html.tr([
+                                    html.th("Result", class_="sortable", col="result"),
+                                    html.th("Test", class_="sortable", col="name"),
+                                    html.th(
+                                        "Duration",
+                                        class_="sortable numeric",
+                                        col="duration",
+                                    ),
+                                    html.th("Links"),
+                                ]),
                                 id="results-table-head",
                             ),
                             html.tbody(self.result_rows, id="results-table-body"),

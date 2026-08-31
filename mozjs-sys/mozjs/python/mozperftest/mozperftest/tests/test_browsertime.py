@@ -232,13 +232,6 @@ def test_browser_desktop(*mocked):
 
     try:
         with sys as s, browser as b, silence():
-            # just checking that the setup_helper property gets
-            # correctly initialized
-            browsertime = browser.layers[-1]
-            assert browsertime.setup_helper is not None
-            helper = browsertime.setup_helper
-            assert browsertime.setup_helper is helper
-
             b(s(metadata))
     finally:
         shutil.rmtree(mach_cmd._mach_context.state_dir)
@@ -268,13 +261,6 @@ def test_existing_results(*mocked):
 
     try:
         with sys as s, browser as b, silence():
-            # just checking that the setup_helper property gets
-            # correctly initialized
-            browsertime = browser.layers[-1]
-            assert browsertime.setup_helper is not None
-            helper = browsertime.setup_helper
-            assert browsertime.setup_helper is helper
-
             m = b(s(metadata))
             results = m.get_results()
             assert len(results) == 1
@@ -300,11 +286,13 @@ def test_add_options():
     "mozperftest.test.noderunner.NodeRunner.verify_node_install", new=lambda x: True
 )
 @mock.patch("mozbuild.artifact_cache.ArtifactCache.fetch", new=fetch)
-@mock.patch("mozperftest.test.browsertime.runner.BrowsertimeRunner.setup_helper")
+@mock.patch(
+    "mozperftest.test.browsertime.runner.BrowsertimeRunner._setup_node_packages"
+)
 def test_install_url(*mocked):
-    url = "https://here/tarball/" + "".join(
-        [random.choice(string.hexdigits[:-6]) for c in range(40)]
-    )
+    url = "https://here/tarball/" + "".join([
+        random.choice(string.hexdigits[:-6]) for c in range(40)
+    ])
     mach, metadata, env = get_running_env(
         browsertime_install_url=url,
         tests=[EXAMPLE_TEST],
@@ -353,6 +341,85 @@ def test_matches():
 
     assert matches(args, "arg1")
     assert not matches(args, "arg3")
+
+
+@mock.patch("mozbuild.nodeutil.package_setup")
+@mock.patch("mozbuild.nodeutil.check_node_executables_valid", return_value=True)
+def test_setup_node_packages(*mocked):
+    from mozperftest.test.browsertime.runner import BrowsertimeRunner
+
+    mach_cmd, metadata, env = get_running_env(
+        browsertime_iterations=1,
+        tests=[EXAMPLE_TEST],
+    )
+
+    browser = BrowsertimeRunner(env, mach_cmd)
+    browser._setup_node_packages(pathlib.Path("/fake/package.json"))
+
+    # Verify check_node_executables_valid was called
+    check_node_mock = mocked[0]
+    assert check_node_mock.called
+
+    # Verify package_setup was called
+    package_setup_mock = mocked[1]
+    assert package_setup_mock.called
+
+
+@mock.patch("mozbuild.nodeutil.package_setup")
+@mock.patch("mozbuild.nodeutil.check_node_executables_valid", return_value=False)
+def test_setup_node_packages_node_not_valid(*mocked):
+    from mozperftest.test.browsertime.runner import BrowsertimeRunner
+
+    mach_cmd, metadata, env = get_running_env(
+        browsertime_iterations=1,
+        tests=[EXAMPLE_TEST],
+    )
+
+    browser = BrowsertimeRunner(env, mach_cmd)
+    browser._setup_node_packages(pathlib.Path("/fake/package.json"))
+
+    # Verify check_node_executables_valid was called
+    check_node_mock = mocked[0]
+    assert check_node_mock.called
+
+    # Verify package_setup was NOT called when node is invalid
+    package_setup_mock = mocked[1]
+    assert not package_setup_mock.called
+
+
+@mock.patch(
+    "mozbuild.nodeutil.find_node_executable", return_value=("/usr/bin/node", "18.0.0")
+)
+@mock.patch("mozbuild.nodeutil.check_node_executables_valid", return_value=True)
+def test_verify_node_install_valid(*mocked):
+    from mozperftest.test.noderunner import NodeRunner
+
+    mach_cmd, metadata, env = get_running_env(
+        browsertime_iterations=1,
+        tests=[EXAMPLE_TEST],
+    )
+
+    runner = NodeRunner(env, mach_cmd)
+    result = runner.verify_node_install()
+    assert result is True
+
+
+@mock.patch(
+    "mozbuild.nodeutil.find_node_executable", return_value=("/usr/bin/node", "18.0.0")
+)
+@mock.patch("mozbuild.nodeutil.check_node_executables_valid", return_value=False)
+def test_verify_node_install_invalid(*mocked):
+    from mozperftest.test.noderunner import NodeRunner
+
+    mach_cmd, metadata, env = get_running_env(
+        browsertime_iterations=1,
+        tests=[EXAMPLE_TEST],
+    )
+
+    runner = NodeRunner(env, mach_cmd)
+    with pytest.raises(ValueError) as exc_info:
+        runner.verify_node_install()
+    assert "Can't find Node" in str(exc_info.value)
 
 
 def test_extract_browser_name():

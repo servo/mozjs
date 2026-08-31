@@ -107,9 +107,7 @@ def load_yaml(yaml_path):
 
 
 def generate_category_macro(name, label, color, subcategories):
-    contents = '  BEGIN_CATEGORY({name}, "{label}", "{color}") \\\n'.format(
-        name=name, label=label, color=color
-    )
+    contents = f'  BEGIN_CATEGORY({name}, "{label}", "{color}") \\\n'
 
     subcategory_items = []
 
@@ -120,9 +118,7 @@ def generate_category_macro(name, label, color, subcategories):
         assert isinstance(subcat_label, str)
 
         subcategory_items.append(
-            '    SUBCATEGORY({parent_cat}, {name}, "{label}") \\\n'.format(
-                parent_cat=name, name=subcat_name, label=subcat_label
-            )
+            f'    SUBCATEGORY({name}, {subcat_name}, "{subcat_label}") \\\n'
         )
 
     contents += "".join(subcategory_items)
@@ -149,9 +145,9 @@ def generate_macro_header(c_out, yaml_path):
         color = category["color"]
         assert isinstance(color, str)
         subcategories = category.get("subcategories", None)
-        assert (
-            isinstance(subcategories, list) and len(subcategories) > 0
-        ), "At least one subcategory expected as default in {}.".format(name)
+        assert isinstance(subcategories, list) and len(subcategories) > 0, (
+            f"At least one subcategory expected as default in {name}."
+        )
 
         category_items.append(
             generate_category_macro(name, label, color, subcategories)
@@ -213,14 +209,14 @@ class RustEnum:
 
     def append_optional_tuple_field(self, field_name):
         """Append the enum fields list with an optional tuple field."""
-        field = (field_name, "  {name}(Option<{name}>),".format(name=field_name))
+        field = (field_name, f"  {field_name}(Option<{field_name}>),")
         self.fields.append(field)
 
     def append_discriminant_field(self, field_name, field_value):
         """Append the enum fields list with a discriminant field."""
         field = (
             field_name,
-            "  {name} = {value},".format(name=field_name, value=field_value),
+            f"  {field_name} = {field_value},",
         )
         self.fields.append(field)
 
@@ -231,9 +227,7 @@ class RustEnum:
         self.impls.append(
             RUST_DEFAULT_IMPL_TEMPLATE.format(
                 name=self.name,
-                content="      {category}::{subcategory}".format(
-                    category=self.name, subcategory=self.default_category
-                ),
+                content=f"      {self.name}::{self.default_category}",
             )
         )
 
@@ -276,9 +270,9 @@ def generate_rust_enums(c_out, yaml_path):
         # This will be used as our main enum field and sub category enum.
         cat_label = "".join(filter(str.isalnum, cat_label))
         cat_subcategories = category.get("subcategories", None)
-        assert (
-            isinstance(cat_subcategories, list) and len(cat_subcategories) > 0
-        ), "At least one subcategory expected as default in {}.".format(cat_name)
+        assert isinstance(cat_subcategories, list) and len(cat_subcategories) > 0, (
+            f"At least one subcategory expected as default in {cat_name}."
+        )
 
         # Create a new enum for this sub category and append it to the enums list.
         category_enum = RustEnum(cat_label)
@@ -306,9 +300,9 @@ def generate_rust_enums(c_out, yaml_path):
             )
             profiling_category_pair_value += 1
 
-        assert (
-            category_enum.default_category is not None
-        ), "There must be a default subcategory with the same name."
+        assert category_enum.default_category is not None, (
+            "There must be a default subcategory with the same name."
+        )
 
         # Append the main enums.
         profiling_category_pair_enum.append_optional_tuple_field(cat_label)

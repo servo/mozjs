@@ -1,0 +1,35 @@
+diff --git a/js/public/GlobalObject.h b/js/public/GlobalObject.h
+index 22da1fc28..2d5562d33 100644
+--- a/js/public/GlobalObject.h
++++ b/js/public/GlobalObject.h
+@@ -29,6 +29,12 @@ class JS_PUBLIC_API RealmOptions;
+  */
+ extern JS_PUBLIC_API JSObject* CurrentGlobalOrNull(JSContext* cx);
+ 
++/**
++ * Get the current realm's global. Returns nullptr if no realm has been
++ * entered.
++ */
++extern JS_PUBLIC_API JSObject *const * CurrentGlobal(JSContext* cx);
++
+ /**
+  * Get the global object associated with an object's realm. The object must not
+  * be a cross-compartment wrapper (because CCWs are shared by all realms in the
+diff --git a/js/src/jsapi.cpp b/js/src/jsapi.cpp
+index 5a884a2a6..2d49fc416 100644
+--- a/js/src/jsapi.cpp
++++ b/js/src/jsapi.cpp
+@@ -1187,6 +1187,13 @@ JS_PUBLIC_API JSObject* JS::CurrentGlobalOrNull(JSContext* cx) {
+   return cx->global();
+ }
+ 
++JS_PUBLIC_API JSObject *const * JS::CurrentGlobal(JSContext* cx) {
++  AssertHeapIsIdleOrIterating();
++  CHECK_THREAD(cx);
++  MOZ_ASSERT(cx->realm());
++  return reinterpret_cast<JSObject *const *>(cx->global().address());
++}
++
+ JS_PUBLIC_API JSObject* JS::GetNonCCWObjectGlobal(JSObject* obj) {
+   AssertHeapIsIdleOrIterating();
+   MOZ_DIAGNOSTIC_ASSERT(!IsCrossCompartmentWrapper(obj));

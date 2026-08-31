@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,10 +7,12 @@
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/MaybeOneOf.h"
 
 #include <cstdlib>
 #include <stdint.h>
 
+#include "builtin/temporal/TemporalTypes.h"
 #include "builtin/temporal/TemporalUnit.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
@@ -21,11 +21,6 @@ class JSLinearString;
 class JS_PUBLIC_API JSTracer;
 
 namespace js::temporal {
-
-struct Duration;
-struct PlainDate;
-struct PlainDateTime;
-struct PlainTime;
 
 struct MOZ_STACK_CLASS ParsedTimeZone final {
   JSLinearString* name = nullptr;
@@ -48,11 +43,28 @@ struct MOZ_STACK_CLASS ParsedTimeZone final {
   }
 };
 
+struct UTCTimeZone final {};
+
+struct OffsetTimeZone final {
+  int64_t offset = 0;
+  bool hasSubMinutePrecision = false;
+};
+
+struct MOZ_STACK_CLASS ParsedZonedDateTime final {
+  ISODateTime dateTime = {};
+  JSLinearString* calendar = nullptr;
+  ParsedTimeZone timeZoneAnnotation{};
+  mozilla::MaybeOneOf<UTCTimeZone, OffsetTimeZone> timeZone;
+  bool isStartOfDay = false;
+
+  void trace(JSTracer* trc);
+};
+
 /**
  * ParseTemporalInstantString ( isoString )
  */
 bool ParseTemporalInstantString(JSContext* cx, JS::Handle<JSString*> str,
-                                PlainDateTime* result, int64_t* offset);
+                                ISODateTime* result, int64_t* offset);
 
 /**
  * ParseTemporalTimeZoneString ( timeZoneString )
@@ -65,12 +77,6 @@ bool ParseTemporalTimeZoneString(JSContext* cx, JS::Handle<JSString*> str,
  */
 bool ParseTimeZoneIdentifier(JSContext* cx, JS::Handle<JSString*> str,
                              JS::MutableHandle<ParsedTimeZone> result);
-
-/**
- * ParseTimeZoneOffsetString ( isoString )
- */
-bool ParseTimeZoneOffsetString(JSContext* cx, JS::Handle<JSString*> str,
-                               int32_t* result);
 
 /**
  * ParseDateTimeUTCOffset ( offsetString )
@@ -94,53 +100,42 @@ JSLinearString* ParseTemporalCalendarString(JSContext* cx,
  * ParseTemporalTimeString ( isoString )
  */
 bool ParseTemporalTimeString(JSContext* cx, JS::Handle<JSString*> str,
-                             PlainTime* result);
-
-/**
- * ParseTemporalDateString ( isoString )
- */
-bool ParseTemporalDateString(JSContext* cx, JS::Handle<JSString*> str,
-                             PlainDate* result,
-                             JS::MutableHandle<JSString*> calendar);
+                             Time* result);
 
 /**
  * ParseTemporalMonthDayString ( isoString )
  */
 bool ParseTemporalMonthDayString(JSContext* cx, JS::Handle<JSString*> str,
-                                 PlainDate* result, bool* hasYear,
+                                 ISODate* result, bool* hasYear,
                                  JS::MutableHandle<JSString*> calendar);
 
 /**
  * ParseTemporalYearMonthString ( isoString )
  */
 bool ParseTemporalYearMonthString(JSContext* cx, JS::Handle<JSString*> str,
-                                  PlainDate* result,
+                                  ISODate* result,
                                   JS::MutableHandle<JSString*> calendar);
 
 /**
  * ParseTemporalDateTimeString ( isoString )
  */
 bool ParseTemporalDateTimeString(JSContext* cx, JS::Handle<JSString*> str,
-                                 PlainDateTime* result,
+                                 ISODateTime* result,
                                  JS::MutableHandle<JSString*> calendar);
 
 /**
  * ParseTemporalZonedDateTimeString ( isoString )
  */
 bool ParseTemporalZonedDateTimeString(
-    JSContext* cx, JS::Handle<JSString*> str, PlainDateTime* dateTime,
-    bool* isUTC, bool* hasOffset, int64_t* timeZoneOffset,
-    JS::MutableHandle<ParsedTimeZone> timeZoneAnnotation,
-    JS::MutableHandle<JSString*> calendar);
+    JSContext* cx, JS::Handle<JSString*> str,
+    JS::MutableHandle<ParsedZonedDateTime> result);
 
 /**
  * ParseTemporalRelativeToString ( isoString )
  */
 bool ParseTemporalRelativeToString(
-    JSContext* cx, JS::Handle<JSString*> str, PlainDateTime* dateTime,
-    bool* isUTC, bool* hasOffset, int64_t* timeZoneOffset,
-    JS::MutableHandle<ParsedTimeZone> timeZoneAnnotation,
-    JS::MutableHandle<JSString*> calendar);
+    JSContext* cx, JS::Handle<JSString*> str,
+    JS::MutableHandle<ParsedZonedDateTime> result);
 
 } /* namespace js::temporal */
 
@@ -160,6 +155,32 @@ class WrappedPtrOperations<temporal::ParsedTimeZone, Wrapper> {
   int32_t offset() const { return object().offset; }
 
   explicit operator bool() const { return bool(object()); }
+};
+
+template <typename Wrapper>
+class WrappedPtrOperations<temporal::ParsedZonedDateTime, Wrapper> {
+  const auto& object() const {
+    return static_cast<const Wrapper*>(this)->get();
+  }
+
+ public:
+  const temporal::ISODateTime& dateTime() const { return object().dateTime; }
+
+  JS::Handle<JSLinearString*> calendar() const {
+    return JS::Handle<JSLinearString*>::fromMarkedLocation(&object().calendar);
+  }
+
+  JS::Handle<temporal::ParsedTimeZone> timeZoneAnnotation() const {
+    return JS::Handle<temporal::ParsedTimeZone>::fromMarkedLocation(
+        &object().timeZoneAnnotation);
+  }
+
+  const mozilla::MaybeOneOf<temporal::UTCTimeZone, temporal::OffsetTimeZone>&
+  timeZone() const {
+    return object().timeZone;
+  }
+
+  bool isStartOfDay() const { return object().isStartOfDay; }
 };
 
 } /* namespace js */

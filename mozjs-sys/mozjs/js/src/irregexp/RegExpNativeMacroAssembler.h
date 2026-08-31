@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -20,6 +18,7 @@
 
 namespace v8 {
 namespace internal {
+namespace regexp {
 
 struct FrameData {
   // Character position at the start of the input, stored as a
@@ -41,7 +40,7 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
                          Zone* zone, Mode mode, uint32_t num_capture_registers);
   virtual ~SMRegExpMacroAssembler() = default;
 
-  virtual int stack_limit_slack();
+  virtual int stack_limit_slack_slot_count();
   virtual IrregexpImplementation Implementation();
 
   virtual bool Succeed();
@@ -68,7 +67,7 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
   virtual void CheckNotCharacterAfterMinusAnd(base::uc16 c, base::uc16 minus,
                                               base::uc16 mask,
                                               Label* on_not_equal);
-  virtual void CheckGreedyLoop(Label* on_tos_equals_current_position);
+  virtual void CheckFixedLengthLoop(Label* on_tos_equals_current_position);
   virtual void CheckCharacterInRange(base::uc16 from, base::uc16 to,
                                      Label* on_in_range);
   virtual void CheckCharacterNotInRange(base::uc16 from, base::uc16 to,
@@ -81,8 +80,13 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
   virtual void CheckNotAtStart(int cp_offset, Label* on_not_at_start);
   virtual void CheckPosition(int cp_offset, Label* on_outside_input);
   virtual void CheckBitInTable(Handle<ByteArray> table, Label* on_bit_set);
-  virtual bool CheckSpecialCharacterClass(StandardCharacterSet type,
-                                          Label* on_no_match);
+  virtual void SkipUntilBitInTable(int cp_offset, Handle<ByteArray> table,
+                                   Handle<ByteArray> nibble_table,
+                                   int advance_by, Label* on_match,
+                                   Label* on_no_match);
+  virtual bool SkipUntilBitInTableUseSimd(int advance_by);
+  virtual void CheckSpecialClassRanges(StandardCharacterSet type,
+                                       Label* on_no_match);
   virtual void CheckNotBackReference(int start_reg, bool read_backward,
                                      Label* on_no_match);
   virtual void CheckNotBackReferenceIgnoreCase(int start_reg,
@@ -107,7 +111,10 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
   virtual void SetRegister(int register_index, int to);
   virtual void ClearRegisters(int reg_from, int reg_to);
 
-  virtual Handle<HeapObject> GetCode(Handle<String> source);
+  virtual void RecordComment(std::string_view comment) {}
+  virtual MacroAssembler* masm() { return &masm_; }
+
+  virtual Handle<HeapObject> GetCode(Handle<RegExpData> data, Flags flags);
 
   virtual bool CanReadUnaligned() const;
 
@@ -155,7 +162,7 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
   void CheckBacktrackStackLimit();
 
  public:
-  static bool GrowBacktrackStack(RegExpStack* regexp_stack);
+  static bool GrowBacktrackStack(Stack* regexp_stack);
 
   static uint32_t CaseInsensitiveCompareNonUnicode(const char16_t* substring1,
                                                    const char16_t* substring2,
@@ -265,6 +272,9 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
   //
   // 3. While linking the code, we walk the list of label patches
   //    and patch the code accordingly.
+  //
+  // 4. Finally, we patch in the code base address that is added to the
+  //    label offset to calculate the actual address to jump to.
   class LabelPatch {
    public:
     LabelPatch(js::jit::CodeOffset patchOffset, size_t labelOffset)
@@ -279,6 +289,15 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
     js::AutoEnterOOMUnsafeRegion oomUnsafe;
     if (!labelPatches_.emplaceBack(patchOffset, labelOffset)) {
       oomUnsafe.crash("Irregexp label patch");
+    }
+  }
+
+  js::Vector<js::jit::CodeOffset, 4, js::SystemAllocPolicy>
+      backtrackCodeOffsetPatches_;
+  void PushBacktrackCodeOffsetPatch(js::jit::CodeOffset offset) {
+    js::AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (!backtrackCodeOffsetPatches_.append(offset)) {
+      oomUnsafe.crash("Irregexp backtrack code offset patch");
     }
   }
 
@@ -302,6 +321,7 @@ class SMRegExpMacroAssembler final : public NativeRegExpMacroAssembler {
   }
 };
 
+}  // namespace regexp
 }  // namespace internal
 }  // namespace v8
 

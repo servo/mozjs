@@ -6,12 +6,11 @@ import copy
 import re
 import unittest
 from fnmatch import fnmatch
+from io import StringIO
 from textwrap import dedent
 
-import six
 from mozpack import path as mozpath
 from mozunit import MockedOpen, main
-from six import StringIO
 
 from mozbuild.preprocessor import Preprocessor
 from mozbuild.util import ReadOnlyNamespace
@@ -40,7 +39,7 @@ class CompilerPreprocessor(Preprocessor):
         context = self.context
 
         def normalize_numbers(value):
-            if isinstance(value, six.string_types):
+            if isinstance(value, str):
                 if value[-1:] == "L" and value[:-1].isdigit():
                     value = int(value[:-1])
             return value
@@ -50,14 +49,15 @@ class CompilerPreprocessor(Preprocessor):
 
         def normalize_has_feature_or_builtin(expr):
             return (
-                self.HAS_FEATURE_OR_BUILTIN.sub(r"\1\2", expr)
+                self.HAS_FEATURE_OR_BUILTIN
+                .sub(r"\1\2", expr)
                 .replace("-", "_")
                 .replace("+", "_")
             )
 
         self.context = self.Context(
             (normalize_has_feature_or_builtin(k), normalize_numbers(v))
-            for k, v in six.iteritems(context)
+            for k, v in context.items()
         )
         try:
             return Preprocessor.do_if(
@@ -74,7 +74,7 @@ class CompilerPreprocessor(Preprocessor):
         def repl(matchobj):
             varname = matchobj.group("VAR")
             if varname in self.context:
-                result = six.text_type(self.context[varname])
+                result = str(self.context[varname])
                 # The C preprocessor inserts whitespaces around expanded
                 # symbols.
                 start, end = matchobj.span("VAR")
@@ -99,9 +99,10 @@ class TestCompilerPreprocessor(unittest.TestCase):
         self.assertEqual(pp.out.getvalue(), '1 . 2 . c "D"')
 
     def test_normalization(self):
-        pp = CompilerPreprocessor(
-            {"__has_attribute(bar)": 1, '__has_warning("-Wc++98-foo")': 1}
-        )
+        pp = CompilerPreprocessor({
+            "__has_attribute(bar)": 1,
+            '__has_warning("-Wc++98-foo")': 1,
+        })
         pp.out = StringIO()
         input = StringIO(
             dedent(
@@ -200,9 +201,9 @@ class FakeCompiler(dict):
 
     def __init__(self, *definitions):
         for definition in definitions:
-            if all(not isinstance(d, dict) for d in six.itervalues(definition)):
+            if all(not isinstance(d, dict) for d in definition.values()):
                 definition = {None: definition}
-            for key, value in six.iteritems(definition):
+            for key, value in definition.items():
                 self.setdefault(key, {}).update(value)
 
     def __call__(self, stdin, args):
@@ -228,19 +229,26 @@ class FakeCompiler(dict):
             pp = CompilerPreprocessor(self[None])
 
             def apply_defn(defn):
-                for k, v in six.iteritems(defn):
+                for k, v in defn.items():
                     if v is False:
                         if k in pp.context:
                             del pp.context[k]
                     else:
                         pp.context[k] = v
 
-            for glob, defn in six.iteritems(self):
+            for glob, defn in self.items():
                 if glob and not glob.startswith("-") and fnmatch(file, glob):
                     apply_defn(defn)
 
             for flag in flags:
-                apply_defn(self.get(flag, {}))
+                if flag.startswith("-D"):
+                    name, val = flag[2:].split("=")
+                    apply_defn({name: val})
+                elif flag.startswith("-U"):
+                    name = flag[2:]
+                    apply_defn({name: False})
+                else:
+                    apply_defn(self.get(flag, {}))
 
             pp.out = StringIO()
             pp.do_include(file)
@@ -262,15 +270,13 @@ class TestFakeCompiler(unittest.TestCase):
             compiler = FakeCompiler({"A": "1", "B": "2"})
             self.assertEqual(compiler(None, ["-E", "file"]), (0, "1 2 C", ""))
 
-            compiler = FakeCompiler(
-                {
-                    None: {"A": "1", "B": "2"},
-                    "-foo": {"C": "foo"},
-                    "-bar": {"B": "bar", "C": "bar"},
-                    "-qux": {"B": False},
-                    "*.c": {"B": "42"},
-                }
-            )
+            compiler = FakeCompiler({
+                None: {"A": "1", "B": "2"},
+                "-foo": {"C": "foo"},
+                "-bar": {"B": "bar", "C": "bar"},
+                "-qux": {"B": False},
+                "*.c": {"B": "42"},
+            })
             self.assertEqual(compiler(None, ["-E", "file"]), (0, "1 2 C", ""))
             self.assertEqual(compiler(None, ["-E", "-foo", "file"]), (0, "1 2 foo", ""))
             self.assertEqual(
@@ -338,7 +344,7 @@ class CompilerResult(ReadOnlyNamespace):
             flags = []
         if wrapper is None:
             wrapper = []
-        super(CompilerResult, self).__init__(
+        super().__init__(
             flags=flags,
             version=version,
             type=type,
@@ -350,7 +356,7 @@ class CompilerResult(ReadOnlyNamespace):
     def __add__(self, other):
         assert isinstance(other, dict)
         result = copy.deepcopy(self.__dict__)
-        for k, v in six.iteritems(other):
+        for k, v in other.items():
             if k == "flags":
                 flags = result.setdefault(k, [])
                 if isinstance(v, PrependFlags):

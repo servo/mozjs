@@ -6,6 +6,7 @@
 # it finds before adding them to the zip.
 
 import argparse
+import os
 import sys
 
 import mozpack.path as mozpath
@@ -14,6 +15,9 @@ from mozpack.errors import errors
 from mozpack.files import FileFinder
 from mozpack.path import match
 
+from mozbuild.makeutil import Makefile
+from mozbuild.util import FileAvoidWrite
+
 
 def main(args):
     parser = argparse.ArgumentParser()
@@ -21,7 +25,7 @@ def main(args):
         "-C",
         metavar="DIR",
         default=".",
-        help="Change to given directory before considering " "other paths",
+        help="Change to given directory before considering other paths",
     )
     parser.add_argument("--strip", action="store_true", help="Strip executables")
     parser.add_argument(
@@ -32,18 +36,65 @@ def main(args):
         help="Exclude files that match the pattern",
     )
     parser.add_argument("zip", help="Path to zip file to write")
-    parser.add_argument("input", nargs="+", help="Path to files to add to zip")
+    parser.add_argument("input", nargs="*", help="Path to files to add to zip")
+    parser.add_argument(
+        "--files-from",
+        metavar="PATH",
+        help="Read additional input paths from the given file, one per line. "
+        "Blank lines and lines starting with '#' are ignored.",
+    )
+    parser.add_argument(
+        "--dep-file",
+        help="File to write any additional make dependencies to",
+    )
+    parser.add_argument(
+        "--dep-target",
+        help="Make target to use in the dependencies file",
+    )
+    parser.add_argument(
+        "--error-if-empty",
+        action="store_true",
+        help="Exit with an error if no files are added",
+    )
     args = parser.parse_args(args)
+
+    if args.files_from:
+        with open(args.files_from, encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#"):
+                    continue
+                args.input.append(stripped)
+
+    if not args.input:
+        parser.error(
+            "at least one input path is required (via positional args or --files-from)"
+        )
 
     jarrer = Jarrer()
 
+    deps = []
+    file_count = 0
     with errors.accumulate():
         finder = FileFinder(args.C, find_executables=args.strip)
         for path in args.input:
             for p, f in finder.find(path):
                 if not any([match(p, exclude) for exclude in args.x]):
                     jarrer.add(p, f)
+                    deps.append(f.path)
+                    file_count += 1
+        if args.error_if_empty and file_count == 0:
+            errors.fatal(f"No files added to {args.zip}")
         jarrer.copy(mozpath.join(args.C, args.zip))
+
+    if args.dep_target and args.dep_file:
+        mk = Makefile()
+        mk.create_rule([args.dep_target]).add_dependencies(deps)
+        mk.create_rule(deps)  # empty rule to avoid error if a file gets removed
+
+        os.makedirs(mozpath.dirname(args.dep_file), exist_ok=True)
+        with FileAvoidWrite(args.dep_file) as dep_file:
+            mk.dump(dep_file)
 
 
 if __name__ == "__main__":

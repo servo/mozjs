@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -35,9 +33,9 @@ JitCode* Linker::newCode(JSContext* cx, CodeKind kind) {
   // ExecutableAllocator requires bytesNeeded to be aligned.
   bytesNeeded = AlignBytes(bytesNeeded, ExecutableAllocatorAlignment);
 
-  JitZone* jitZone = cx->zone()->getJitZone(cx);
+  JitZone* jitZone = cx->zone()->getOrCreateJitZone(cx);
   if (!jitZone) {
-    // Note: don't call fail(cx) here, getJitZone reports OOM.
+    // Note: don't call fail(cx) here, getOrCreateJitZone reports OOM.
     return nullptr;
   }
 
@@ -63,7 +61,7 @@ JitCode* Linker::newCode(JSContext* cx, CodeKind kind) {
   if (masm.oom()) {
     return fail(cx);
   }
-  awjcf.emplace(result, bytesNeeded);
+  awjcf.emplace(code);
   if (!awjcf->makeWritable()) {
     return fail(cx);
   }

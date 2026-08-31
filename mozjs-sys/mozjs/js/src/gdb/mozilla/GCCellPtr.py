@@ -15,7 +15,7 @@ mozilla.prettyprinters.clear_module_printers(__name__)
 # Cache information about the types for this objfile.
 
 
-class GCCellPtrTypeCache(object):
+class GCCellPtrTypeCache:
     def __init__(self, cache):
         self.TraceKind_t = gdb.lookup_type("JS::TraceKind")
         self.AllocKind_t = gdb.lookup_type("js::gc::AllocKind")
@@ -38,26 +38,26 @@ class GCCellPtrTypeCache(object):
             "Object": "JSObject",
             "BigInt": "JS::BigInt",
             "String": "JSString",
+            "GetterSetter": "js::GetterSetter",
             "Symbol": "JS::Symbol",
             "Shape": "js::Shape",
-            "BaseShape": "js::BaseShape",
             "Null": "std::nullptr_t",
             # Out-of-line types.
+            "BaseShape": "js::BaseShape",
             "JitCode": "js::jit::JitCode",
             "Script": "js::BaseScript",
             "Scope": "js::Scope",
             "RegExpShared": "js::RegExpShared",
-            "GetterSetter": "js::GetterSetter",
             "PropMap": "js::PropMap",
         }
 
         # Map from AllocKind to TraceKind for out-of-line types.
         alloc_map = {
+            "BASE_SHAPE": "BaseShape",
             "JITCODE": "JitCode",
             "SCRIPT": "Script",
             "SCOPE": "Scope",
             "REGEXP_SHARED": "RegExpShared",
-            "GETTER_SETTER": "GetterSetter",
             "COMPACT_PROP_MAP": "PropMap",
             "NORMAL_PROP_MAP": "PropMap",
             "DICT_PROP_MAP": "PropMap",
@@ -76,7 +76,7 @@ class GCCellPtrTypeCache(object):
 
 
 @pretty_printer("JS::GCCellPtr")
-class GCCellPtr(object):
+class GCCellPtr:
     def __init__(self, value, cache):
         self.value = value
         if not cache.mod_GCCellPtr:
@@ -120,6 +120,4 @@ class GCCellPtr(object):
             # Map the AllocKind to a TraceKind.
             kind = self.cache.mod_GCCellPtr.alloc_kind_to_trace_kind[alloc_idx]
         type_name = self.cache.mod_GCCellPtr.trace_kind_to_type[int(kind)]
-        return "JS::GCCellPtr(({}*) {})".format(
-            type_name, ptr.cast(self.cache.void_ptr_t)
-        )
+        return f"JS::GCCellPtr(({type_name}*) {ptr.cast(self.cache.void_ptr_t)})"

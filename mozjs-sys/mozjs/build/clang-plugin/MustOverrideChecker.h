@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef MustOverrideChecker_h__
-#define MustOverrideChecker_h__
+#ifndef MustOverrideChecker_h_
+#define MustOverrideChecker_h_
 
 #include "plugin.h"
 
@@ -14,6 +14,9 @@ public:
   void registerMatchers(MatchFinder *AstMatcher) override;
   void registerPPCallbacks(CompilerInstance &CI) override;
   void check(const MatchFinder::MatchResult &Result) override;
+  bool isLanguageVersionSupported(const LangOptions &LangOpts) const override {
+    return LangOpts.CPlusPlus;
+  }
 
 private:
   const CompilerInstance *CI;

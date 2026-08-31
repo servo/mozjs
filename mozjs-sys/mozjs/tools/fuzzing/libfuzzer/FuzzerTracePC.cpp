@@ -69,6 +69,9 @@ void TracePC::HandleInline8bitCountersInit(uint8_t *Start, uint8_t *Stop) {
 }
 
 void TracePC::HandlePCsInit(const uintptr_t *Start, const uintptr_t *Stop) {
+  if (Start == Stop) {
+    return;
+  }
   const PCTableEntry *B = reinterpret_cast<const PCTableEntry *>(Start);
   const PCTableEntry *E = reinterpret_cast<const PCTableEntry *>(Stop);
   if (NumPCTables && ModulePCTable[NumPCTables - 1].Start == B) return;
@@ -106,6 +109,15 @@ void TracePC::PrintModuleInfo() {
   }
   if (size_t NumExtraCounters = ExtraCountersEnd() - ExtraCountersBegin())
     Printf("INFO: %zd Extra Counters\n", NumExtraCounters);
+
+  size_t MaxFeatures = CollectFeatures([](uint32_t) {});
+  if (MaxFeatures > std::numeric_limits<uint32_t>::max())
+    Printf("WARNING: The coverage PC tables may produce up to %zu features.\n"
+           "This exceeds the maximum 32-bit value. Some features may be\n"
+           "ignored, and fuzzing may become less precise. If possible,\n"
+           "consider refactoring the fuzzer into several smaller fuzzers\n"
+           "linked against only a portion of the current target.\n",
+           MaxFeatures);
 }
 
 ATTRIBUTE_NO_SANITIZE_ALL
@@ -124,13 +136,14 @@ inline ALWAYS_INLINE uintptr_t GetPreviousInstructionPc(uintptr_t PC) {
   // so we return (pc-2) in that case in order to be safe.
   // For A32 mode we return (pc-4) because all instructions are 32 bit long.
   return (PC - 3) & (~1);
-#elif defined(__powerpc__) || defined(__powerpc64__) || defined(__aarch64__)
-  // PCs are always 4 byte aligned.
-  return PC - 4;
 #elif defined(__sparc__) || defined(__mips__)
   return PC - 8;
-#else
+#elif defined(__riscv__)
+  return PC - 2;
+#elif defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)
   return PC - 1;
+#else
+  return PC - 4;
 #endif
 }
 
@@ -139,8 +152,8 @@ inline ALWAYS_INLINE uintptr_t GetPreviousInstructionPc(uintptr_t PC) {
 ALWAYS_INLINE uintptr_t TracePC::GetNextInstructionPc(uintptr_t PC) {
 #if defined(__mips__)
   return PC + 8;
-#elif defined(__powerpc__) || defined(__sparc__) || defined(__arm__) || \
-    defined(__aarch64__)
+#elif defined(__powerpc__) || defined(__sparc__) || defined(__arm__) ||        \
+    defined(__aarch64__) || defined(__loongarch__)
   return PC + 4;
 #else
   return PC + 1;
@@ -148,7 +161,7 @@ ALWAYS_INLINE uintptr_t TracePC::GetNextInstructionPc(uintptr_t PC) {
 }
 
 void TracePC::UpdateObservedPCs() {
-  Vector<uintptr_t> CoveredFuncs;
+  std::vector<uintptr_t> CoveredFuncs;
   auto ObservePC = [&](const PCTableEntry *TE) {
     if (ObservedPCs.insert(TE).second && DoPrintNewPCs) {
       PrintPC("\tNEW_PC: %p %F %L", "\tNEW_PC: %p",
@@ -238,13 +251,13 @@ void TracePC::IterateCoveredFunctions(CallBack CB) {
   }
 }
 
-int TracePC::SetFocusFunction(const std::string &FuncName) {
+void TracePC::SetFocusFunction(const std::string &FuncName) {
   // This function should be called once.
   assert(!FocusFunctionCounterPtr);
   // "auto" is not a valid function name. If this function is called with "auto"
   // that means the auto focus functionality failed.
   if (FuncName.empty() || FuncName == "auto")
-    return 0;
+    return;
   for (size_t M = 0; M < NumModules; M++) {
     auto &PCTE = ModulePCTable[M];
     size_t N = PCTE.Stop - PCTE.Start;
@@ -256,20 +269,20 @@ int TracePC::SetFocusFunction(const std::string &FuncName) {
       if (FuncName != Name) continue;
       Printf("INFO: Focus function is set to '%s'\n", Name.c_str());
       FocusFunctionCounterPtr = Modules[M].Start() + I;
-      return 0;
+      return;
     }
   }
 
   Printf("ERROR: Failed to set focus function. Make sure the function name is "
          "valid (%s) and symbolization is enabled.\n", FuncName.c_str());
-  return 1;
+  exit(1);
 }
 
 bool TracePC::ObservedFocusFunction() {
   return FocusFunctionCounterPtr && *FocusFunctionCounterPtr;
 }
 
-void TracePC::PrintCoverage() {
+void TracePC::PrintCoverage(bool PrintAllCounters) {
   if (!EF->__sanitizer_symbolize_pc ||
       !EF->__sanitizer_get_module_and_offset_for_pc) {
     Printf("INFO: __sanitizer_symbolize_pc or "
@@ -277,7 +290,7 @@ void TracePC::PrintCoverage() {
            " not printing coverage\n");
     return;
   }
-  Printf("COVERAGE:\n");
+  Printf(PrintAllCounters ? "FULL COVERAGE:\n" : "COVERAGE:\n");
   auto CoveredFunctionCallback = [&](const PCTableEntry *First,
                                      const PCTableEntry *Last,
                                      uintptr_t Counter) {
@@ -291,18 +304,34 @@ void TracePC::PrintCoverage() {
       FunctionStr = FunctionStr.substr(3);
     std::string LineStr = DescribePC("%l", VisualizePC);
     size_t NumEdges = Last - First;
-    Vector<uintptr_t> UncoveredPCs;
+    std::vector<uintptr_t> UncoveredPCs;
+    std::vector<uintptr_t> CoveredPCs;
     for (auto TE = First; TE < Last; TE++)
       if (!ObservedPCs.count(TE))
         UncoveredPCs.push_back(TE->PC);
-    Printf("%sCOVERED_FUNC: hits: %zd", Counter ? "" : "UN", Counter);
-    Printf(" edges: %zd/%zd", NumEdges - UncoveredPCs.size(), NumEdges);
-    Printf(" %s %s:%s\n", FunctionStr.c_str(), FileStr.c_str(),
-           LineStr.c_str());
-    if (Counter)
+      else
+        CoveredPCs.push_back(TE->PC);
+
+    if (PrintAllCounters) {
+      Printf("U");
       for (auto PC : UncoveredPCs)
-        Printf("  UNCOVERED_PC: %s\n",
-               DescribePC("%s:%l", GetNextInstructionPc(PC)).c_str());
+        Printf(DescribePC(" %l", GetNextInstructionPc(PC)).c_str());
+      Printf("\n");
+
+      Printf("C");
+      for (auto PC : CoveredPCs)
+        Printf(DescribePC(" %l", GetNextInstructionPc(PC)).c_str());
+      Printf("\n");
+    } else {
+      Printf("%sCOVERED_FUNC: hits: %zd", Counter ? "" : "UN", Counter);
+      Printf(" edges: %zd/%zd", NumEdges - UncoveredPCs.size(), NumEdges);
+      Printf(" %s %s:%s\n", FunctionStr.c_str(), FileStr.c_str(),
+             LineStr.c_str());
+      if (Counter)
+        for (auto PC : UncoveredPCs)
+          Printf("  UNCOVERED_PC: %s\n",
+                 DescribePC("%s:%l", GetNextInstructionPc(PC)).c_str());
+    }
   };
 
   IterateCoveredFunctions(CoveredFunctionCallback);
@@ -340,7 +369,7 @@ void TracePC::AddValueForMemcmp(void *caller_pc, const void *s1, const void *s2,
   uint8_t HammingDistance = 0;
   for (; I < Len; I++) {
     if (B1[I] != B2[I] || (StopAtZero && B1[I] == 0)) {
-      HammingDistance = Popcountll(B1[I] ^ B2[I]);
+      HammingDistance = static_cast<uint8_t>(Popcountll(B1[I] ^ B2[I]));
       break;
     }
   }
@@ -366,6 +395,7 @@ void TracePC::HandleCmp(uintptr_t PC, T Arg1, T Arg2) {
   ValueProfileMap.AddValue(PC * 128 + 64 + AbsoluteDistance);
 }
 
+ATTRIBUTE_NO_SANITIZE_MEMORY
 static size_t InternalStrnlen(const char *S, size_t MaxLen) {
   size_t Len = 0;
   for (; Len < MaxLen && S[Len]; Len++) {}
@@ -373,7 +403,8 @@ static size_t InternalStrnlen(const char *S, size_t MaxLen) {
 }
 
 // Finds min of (strlen(S1), strlen(S2)).
-// Needed bacause one of these strings may actually be non-zero terminated.
+// Needed because one of these strings may actually be non-zero terminated.
+ATTRIBUTE_NO_SANITIZE_MEMORY
 static size_t InternalStrnlen2(const char *S1, const char *S2) {
   size_t Len = 0;
   for (; S1[Len] && S2[Len]; Len++)  {}

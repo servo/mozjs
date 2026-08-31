@@ -22,14 +22,14 @@ diff --git a/fdlibm.h b/fdlibm.h
  double	fdlibm_sin(double);
  double	fdlibm_tan(double);
  
-@@ -74,9 +76,13 @@ float	fdlibm_sqrtf(float);
- float	fdlibm_fabsf(float);
- float	fdlibm_floorf(float);
+@@ -57,9 +61,13 @@ float	fdlibm_tanf(float);
+ float	fdlibm_exp2f(float);
+ float	fdlibm_expf(float);
+ float	fdlibm_log10f(float);
+ float	fdlibm_logf(float);
+ float	fdlibm_powf(float, float);
+ 
  float	fdlibm_hypotf(float, float);
- float	fdlibm_nearbyintf(float);
- float	fdlibm_rintf(float);
- float	fdlibm_scalbnf(float, int);
- float	fdlibm_truncf(float);
  
 +#ifdef __cplusplus
 +}  // extern "C"

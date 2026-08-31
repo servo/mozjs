@@ -5,15 +5,16 @@
 use std::ptr;
 
 use mozjs::conversions::{ConversionBehavior, ConversionResult, FromJSValConvertible};
-use mozjs::jsapi::JSAutoRealm;
-use mozjs::jsapi::{Heap, JSObject, JS_NewGlobalObject, OnNewGlobalHookOption};
-use mozjs::jsapi::{JS_ClearPendingException, JS_IsExceptionPending};
+use mozjs::jsapi::{Heap, JSObject, OnNewGlobalHookOption};
 use mozjs::jsval::UndefinedValue;
+use mozjs::realm::AutoRealm;
 use mozjs::rooted;
+use mozjs::rust::wrappers2::{JS_ClearPendingException, JS_IsExceptionPending, JS_NewGlobalObject};
+use mozjs::rust::{evaluate_script, CompileOptionsWrapper};
 use mozjs::rust::{HandleObject, JSEngine, RealmOptions, Runtime, SIMPLE_GLOBAL_CLASS};
 
 struct SM {
-    _ac: JSAutoRealm,
+    _realm: AutoRealm<'static>,
     global: Box<Heap<*mut JSObject>>,
     rt: Runtime,
     _engine: JSEngine,
@@ -22,43 +23,48 @@ struct SM {
 impl SM {
     fn new() -> Self {
         let engine = JSEngine::init().unwrap();
-        let rt = Runtime::new(engine.handle());
+        let mut rt = Runtime::new(engine.handle());
         let cx = rt.cx();
+        #[cfg(feature = "debugmozjs")]
+        unsafe {
+            mozjs::jsapi::SetGCZeal(cx.raw_cx(), 2, 1);
+        }
         let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
         let c_option = RealmOptions::default();
-        rooted!(in(cx) let global = unsafe {JS_NewGlobalObject(
+        rooted!(&in(cx) let global = unsafe {JS_NewGlobalObject(
             cx,
             &SIMPLE_GLOBAL_CLASS,
             ptr::null_mut(),
             h_option,
             &*c_option,
         )});
-        let _ac = JSAutoRealm::new(cx, global.get());
+        let realm = AutoRealm::new_from_handle(cx, global.handle());
         Self {
             _engine: engine,
+            // SAFETY: This is safe because the lifetime of the realm is tied to the Runtime.
+            _realm: unsafe { realm.erase_lifetime() },
             rt,
             global: Heap::boxed(global.get()),
-            _ac,
         }
     }
 
     /// Returns value or (Type)Error
     fn obtain<T: FromJSValConvertible<Config = ConversionBehavior>>(
-        &self,
+        &mut self,
         js: &str,
     ) -> Result<T, ()> {
         let cx = self.rt.cx();
-        rooted!(in(cx) let mut rval = UndefinedValue());
+        rooted!(&in(cx) let mut rval = UndefinedValue());
         unsafe {
-            self.rt
-                .evaluate_script(
-                    HandleObject::from_raw(self.global.handle()),
-                    js,
-                    "test",
-                    1,
-                    rval.handle_mut(),
-                )
-                .unwrap();
+            let options = CompileOptionsWrapper::new(&cx, c"test".to_owned(), 1);
+            evaluate_script(
+                cx,
+                HandleObject::from_raw(self.global.handle()),
+                js,
+                rval.handle_mut(),
+                options,
+            )
+            .unwrap();
             assert!(!JS_IsExceptionPending(cx));
             match <T as FromJSValConvertible>::from_jsval(
                 cx,
@@ -66,7 +72,7 @@ impl SM {
                 ConversionBehavior::EnforceRange,
             ) {
                 Ok(ConversionResult::Success(t)) => Ok(t),
-                Ok(ConversionResult::Failure(e)) => panic!("{e}"),
+                Ok(ConversionResult::Failure(e)) => panic!("{}", e.to_string_lossy()),
                 Err(()) => {
                     assert!(JS_IsExceptionPending(cx));
                     JS_ClearPendingException(cx);
@@ -79,7 +85,7 @@ impl SM {
 
 #[test]
 fn conversion() {
-    let sm = SM::new();
+    let mut sm = SM::new();
 
     // u64 = unsigned long long
     // use `AbortSignal.timeout(u64)` to test for TypeError in browser

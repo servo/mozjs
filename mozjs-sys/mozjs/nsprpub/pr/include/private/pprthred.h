@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,13 +10,6 @@
 ** developers only.
 */
 #include "nspr.h"
-
-#if defined(XP_OS2)
-#define INCL_DOS
-#define INCL_DOSERRORS
-#define INCL_WIN
-#include <os2.h>
-#endif
 
 PR_BEGIN_EXTERN_C
 
@@ -283,15 +275,6 @@ NSPR_API(PRMonitor*) PR_CTestAndEnterMonitor(void *address);
 /*---------------------------------------------------------------------------
 ** PLATFORM-SPECIFIC INITIALIZATION FUNCTIONS
 ---------------------------------------------------------------------------*/
-#if defined(XP_OS2)
-/*
-** These functions need to be called at the start and end of a thread.
-** An EXCEPTIONREGISTRATIONRECORD must be declared on the stack and its
-** address passed to the two functions.
-*/
-NSPR_API(void) PR_OS2_SetFloatExcpHandler(EXCEPTIONREGISTRATIONRECORD* e);
-NSPR_API(void) PR_OS2_UnsetFloatExcpHandler(EXCEPTIONREGISTRATIONRECORD* e);
-#endif /* XP_OS2 */
 
 /* I think PR_GetMonitorEntryCount is useless. All you really want is this... */
 #define PR_InMonitor(m)     (PR_GetMonitorEntryCount(m) > 0)

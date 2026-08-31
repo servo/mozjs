@@ -1,0 +1,49 @@
+From fbcd82aab5ff4b762bd476618857a26e576c76f0 Mon Sep 17 00:00:00 2001
+From: zond <zondolfin@gmail.com>
+Date: Tue, 21 Oct 2025 14:20:26 +0200
+Subject: [PATCH] [Windows] Fix Registry static data members not exported by
+ extract_symbols.py in static builds with plugin support (#163391)
+
+When building LLVM statically (without BUILD_SHARED_LIBS) on Windows with
+LLVM_EXPORT_SYMBOLS_FOR_PLUGINS=ON, external plugins cannot register through
+llvm::Registry<clang::PluginASTAction> because:
+
+Static data members (Head, Tail) are filtered out during symbol export by
+extract_symbols.py because they don't match the function signature patterns
+that the script looks for.
+
+This patch fixes the issue by adding pattern matching to extract_symbols.py
+to recognize and export Registry static data members.
+
+Note: When LLVM is built with /Zc:dllexportInlines-, inlined functions
+aren't exported as symbols, and the plugin must also compile with
+/Zc:dllexportInlines- to inline them instead of referencing non-exported
+symbols.
+
+Fixes #163367
+---
+ llvm/utils/extract_symbols.py | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/llvm/utils/extract_symbols.py b/llvm/utils/extract_symbols.py
+index 388723421d66..0cbfd2e2910e 100755
+--- a/llvm/utils/extract_symbols.py
++++ b/llvm/utils/extract_symbols.py
+@@ -105,6 +105,14 @@ def should_keep_microsoft_symbol(symbol, calling_convention_decoration):
+     # Skip X86GenMnemonicTables functions, they are not exposed from llvm/include/.
+     elif re.match(r"\?is[A-Z0-9]*@X86@llvm", symbol):
+         return None
++    # Keep Registry<T>::Head and Registry<T>::Tail static members for plugin support.
++    # Pattern matches: ?Head@?$Registry@<template_args>@llvm@@ or ?Tail@?$Registry@...
++    elif (
++        "?$Registry@" in symbol
++        and "@llvm@@" in symbol
++        and (symbol.startswith("?Head@") or symbol.startswith("?Tail@"))
++    ):
++        return symbol
+     # Keep mangled llvm:: and clang:: function symbols. How we detect these is a
+     # bit of a mess and imprecise, but that avoids having to completely demangle
+     # the symbol name. The outermost namespace is at the end of the identifier
+-- 
+2.51.0.1.g7a422dac74
+

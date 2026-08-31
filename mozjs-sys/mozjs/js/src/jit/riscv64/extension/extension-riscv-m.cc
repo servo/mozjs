@@ -41,7 +41,6 @@ void AssemblerRISCVM::remu(Register rd, Register rs1, Register rs2) {
   GenInstrALU_rr(0b0000001, 0b111, rd, rs1, rs2);
 }
 
-#ifdef JS_CODEGEN_RISCV64
 // RV64M Standard Extension (in addition to RV32M)
 
 void AssemblerRISCVM::mulw(Register rd, Register rs1, Register rs2) {
@@ -63,6 +62,6 @@ void AssemblerRISCVM::remw(Register rd, Register rs1, Register rs2) {
 void AssemblerRISCVM::remuw(Register rd, Register rs1, Register rs2) {
   GenInstrALUW_rr(0b0000001, 0b111, rd, rs1, rs2);
 }
-#endif
+
 }  // namespace jit
 }  // namespace js

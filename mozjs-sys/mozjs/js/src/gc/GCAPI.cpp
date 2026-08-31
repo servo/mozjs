@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -94,14 +92,16 @@ void PreventGCDuringInteractiveDebug() { TlsContext.get()->suppressGC++; }
 #endif
 
 void js::ReleaseAllJITCode(JS::GCContext* gcx) {
-  js::CancelOffThreadIonCompile(gcx->runtime());
+  js::CancelOffThreadCompile(gcx->runtime());
 
-  for (ZonesIter zone(gcx->runtime(), SkipAtoms); !zone.done(); zone.next()) {
+  for (ZonesIter zone(gcx->gcRuntime(), SkipAtoms); !zone.done(); zone.next()) {
     zone->forceDiscardJitCode(gcx);
     if (jit::JitZone* jitZone = zone->jitZone()) {
       jitZone->discardStubs();
     }
   }
+
+  gcx->runtime()->clearSelfHostedJitCache();
 }
 
 AutoSuppressGC::AutoSuppressGC(JSContext* cx)
@@ -127,7 +127,7 @@ JS_PUBLIC_API void JS::AssertGCThingMustBeTenured(JSObject* obj) {
 JS_PUBLIC_API void JS::AssertGCThingIsNotNurseryAllocable(Cell* cell) {
   MOZ_ASSERT(cell);
   MOZ_ASSERT(!cell->is<JSObject>() && !cell->is<JSString>() &&
-             !cell->is<JS::BigInt>());
+             !cell->is<JS::BigInt>() && !cell->is<GetterSetter>());
 }
 
 JS_PUBLIC_API void js::gc::AssertGCThingHasType(js::gc::Cell* cell,
@@ -302,7 +302,7 @@ JS_PUBLIC_API void JS::NonIncrementalGC(JSContext* cx, JS::GCOptions options,
 
 JS_PUBLIC_API void JS::StartIncrementalGC(JSContext* cx, JS::GCOptions options,
                                           GCReason reason,
-                                          const js::SliceBudget& budget) {
+                                          const JS::SliceBudget& budget) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
   CheckGCOptions(options);
@@ -311,7 +311,7 @@ JS_PUBLIC_API void JS::StartIncrementalGC(JSContext* cx, JS::GCOptions options,
 }
 
 JS_PUBLIC_API void JS::IncrementalGCSlice(JSContext* cx, GCReason reason,
-                                          const js::SliceBudget& budget) {
+                                          const JS::SliceBudget& budget) {
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
@@ -431,13 +431,8 @@ JS_PUBLIC_API void JS::SetLowMemoryState(JSContext* cx, bool newState) {
   return cx->runtime()->gc.setLowMemoryState(newState);
 }
 
-JS_PUBLIC_API void JS::DisableIncrementalGC(JSContext* cx) {
-  cx->runtime()->gc.disallowIncrementalGC();
-}
-
 JS_PUBLIC_API bool JS::IsIncrementalGCEnabled(JSContext* cx) {
-  GCRuntime& gc = cx->runtime()->gc;
-  return gc.isIncrementalGCEnabled() && gc.isIncrementalGCAllowed();
+  return cx->runtime()->gc.isIncrementalGCEnabled();
 }
 
 JS_PUBLIC_API bool JS::IsIncrementalGCInProgress(JSContext* cx) {
@@ -840,14 +835,14 @@ void AutoSelectGCHeap::onNurseryCollectionEnd() {
   heap_ = gc::Heap::Tenured;
 }
 
-JS_PUBLIC_API void js::gc::LockStoreBuffer(JSRuntime* runtime) {
+JS_PUBLIC_API void js::gc::LockSweepingLock(JSRuntime* runtime) {
   MOZ_ASSERT(runtime);
-  runtime->gc.lockStoreBuffer();
+  runtime->gc.lockSweepingLock();
 }
 
-JS_PUBLIC_API void js::gc::UnlockStoreBuffer(JSRuntime* runtime) {
+JS_PUBLIC_API void js::gc::UnlockSweepingLock(JSRuntime* runtime) {
   MOZ_ASSERT(runtime);
-  runtime->gc.unlockStoreBuffer();
+  runtime->gc.unlockSweepingLock();
 }
 
 #ifdef JS_GC_ZEAL

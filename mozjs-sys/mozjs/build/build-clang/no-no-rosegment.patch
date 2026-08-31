@@ -1,0 +1,18 @@
+Avoid adding the --no-rosegment flag when using BFD ld on Android, because versions
+prior to binutils 2.43 don't support it.
+
+diff --git a/clang/lib/Driver/ToolChains/Linux.cpp b/clang/lib/Driver/ToolChains/Linux.cpp
+index 0767fe6c5879..ced4fbf072a4 100644
+--- a/clang/lib/Driver/ToolChains/Linux.cpp
++++ b/clang/lib/Driver/ToolChains/Linux.cpp
+@@ -247,7 +247,9 @@ Linux::Linux(const Driver &D, const llvm::Triple &Triple, const ArgList &Args)
+       ExtraOpts.push_back("-z");
+       ExtraOpts.push_back("max-page-size=16384");
+     }
+-    if (Triple.isAndroidVersionLT(29)) {
++    if (Triple.isAndroidVersionLT(29) &&
++        !Args.getLastArgValue(options::OPT_fuse_ld_EQ)
++             .starts_with_insensitive("bfd")) {
+       // https://github.com/android/ndk/issues/1196
+       // The unwinder used by the crash handler on versions of Android prior to
+       // API 29 did not correctly handle binaries built with rosegment, which is

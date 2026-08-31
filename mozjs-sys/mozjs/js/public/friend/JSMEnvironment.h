@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -45,6 +43,8 @@
 
 namespace JS {
 
+class JS_PUBLIC_API EnvironmentChain;
+
 /**
  * Allocate a new environment in the current compartment that is compatible with
  * JSM shared loading.
@@ -68,7 +68,7 @@ extern JS_PUBLIC_API bool ExecuteInJSMEnvironment(JSContext* cx,
 // temporarily placed on the environment chain.
 extern JS_PUBLIC_API bool ExecuteInJSMEnvironment(
     JSContext* cx, Handle<JSScript*> script, Handle<JSObject*> jsmEnv,
-    Handle<StackGCVector<JSObject*>> targetObj);
+    const EnvironmentChain& targetObj);
 
 // Used by native methods to determine the JSMEnvironment of caller if possible
 // by looking at stack frames. Returns nullptr if top frame isn't a scripted

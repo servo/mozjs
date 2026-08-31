@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -32,13 +31,10 @@
 #ifndef prinet_h__
 #define prinet_h__
 
-#if defined(XP_UNIX) || defined(XP_OS2)
+#if defined(XP_UNIX)
 #include <sys/types.h>
 #include <sys/socket.h>     /* AF_INET */
 #include <netinet/in.h>         /* INADDR_ANY, ..., ntohl(), ... */
-#ifdef XP_OS2
-#include <sys/ioctl.h>
-#endif
 #ifdef XP_UNIX
 #ifdef AIX
 /*
@@ -54,7 +50,7 @@ struct sockaddr_dl;
 #endif /* XP_UNIX */
 #include <netdb.h>
 
-#if defined(BSDI) || defined(QNX)
+#if defined(QNX)
 #include <rpc/types.h> /* the only place that defines INADDR_LOOPBACK */
 #endif
 
@@ -62,16 +58,8 @@ struct sockaddr_dl;
  * OS/2 hack.  For some reason INADDR_LOOPBACK is not defined in the
  * socket headers.
  */
-#if defined(OS2) && !defined(INADDR_LOOPBACK)
+#if !defined(INADDR_LOOPBACK)
 #define INADDR_LOOPBACK 0x7f000001
-#endif
-
-/*
- * Prototypes of ntohl() etc. are declared in <machine/endian.h>
- * on these platforms.
- */
-#if defined(BSDI)
-#include <machine/endian.h>
 #endif
 
 /* On Android, ntohl() etc. are declared in <sys/endian.h>. */

@@ -1,6 +1,6 @@
-This directory contains SpiderMonkey 128.
+This directory contains SpiderMonkey 153.
 
-This release is based on a revision of Mozilla 128:
+This release is based on a revision of Mozilla 153:
   https://hg.mozilla.org/releases/
 The changes in the patches/ directory were applied.
 

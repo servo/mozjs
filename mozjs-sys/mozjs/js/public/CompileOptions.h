@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -62,6 +61,7 @@
 
 #include "js/CharacterEncoding.h"  // JS::ConstUTF8CharsZ
 #include "js/ColumnNumber.h"       // JS::ColumnNumberOneOrigin
+#include "js/Prefs.h"              // JS::Prefs::*
 #include "js/TypeDecls.h"          // JS::MutableHandle (fwd)
 
 namespace js {
@@ -115,29 +115,38 @@ enum class DelazificationOption : uint8_t {
 #undef _ENUM_ENTRY
 };
 
+enum class EagerBaselineOption : uint8_t { None, JitHints, Aggressive };
+
 class JS_PUBLIC_API InstantiateOptions;
 class JS_PUBLIC_API ReadOnlyDecodeOptions;
 
 // Compilation-specific part of JS::ContextOptions which is supposed to be
 // configured by user prefs.
-class JS_PUBLIC_API PrefableCompileOptions {
+class JS_PUBLIC_API __attribute__((__packed__)) PrefableCompileOptions {
  public:
   PrefableCompileOptions()
-      : importAttributes_(false),
-        importAttributesAssertSyntax_(false),
-        sourcePragmas_(true),
-        throwOnAsmJSValidationFailure_(false) {}
+      : sourcePragmas_(true),
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+        explicitResourceManagement_(
+            JS::Prefs::experimental_explicit_resource_management()),
+#endif
+        sourcePhaseImports_(JS::Prefs::experimental_source_phase_imports()),
+        throwOnAsmJSValidationFailure_(false) {
+  }
 
-  bool importAttributes() const { return importAttributes_; }
-  PrefableCompileOptions& setImportAttributes(bool enabled) {
-    importAttributes_ = enabled;
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+  bool explicitResourceManagement() const {
+    return explicitResourceManagement_;
+  }
+  PrefableCompileOptions& setExplicitResourceManagement(bool enabled) {
+    explicitResourceManagement_ = enabled;
     return *this;
   }
-  bool importAttributesAssertSyntax() const {
-    return importAttributesAssertSyntax_;
-  }
-  PrefableCompileOptions& setImportAttributesAssertSyntax(bool enabled) {
-    importAttributesAssertSyntax_ = enabled;
+#endif
+
+  bool sourcePhaseImports() const { return sourcePhaseImports_; }
+  PrefableCompileOptions& setSourcePhaseImports(bool enabled) {
+    sourcePhaseImports_ = enabled;
     return *this;
   }
 
@@ -175,10 +184,12 @@ class JS_PUBLIC_API PrefableCompileOptions {
   template <typename Printer>
   void dumpWith(Printer& print) const {
 #  define PrintFields_(Name) print(#Name, Name)
-    PrintFields_(importAttributes_);
-    PrintFields_(importAttributesAssertSyntax_);
     PrintFields_(sourcePragmas_);
     PrintFields_(throwOnAsmJSValidationFailure_);
+#  ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+    PrintFields_(explicitResourceManagement_);
+#  endif
+    PrintFields_(sourcePhaseImports_);
 #  undef PrintFields_
 
     switch (asmJSOption_) {
@@ -203,11 +214,17 @@ class JS_PUBLIC_API PrefableCompileOptions {
 
  private:
   // ==== Syntax-related options. ====
-  bool importAttributes_ : 1;
-  bool importAttributesAssertSyntax_ : 1;
 
   // The context has specified that source pragmas should be parsed.
   bool sourcePragmas_ : 1;
+
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+  // The context has specified that explicit resource management syntax
+  // should be parsed.
+  bool explicitResourceManagement_ : 1;
+#endif
+
+  bool sourcePhaseImports_ : 1;
 
   // ==== asm.js options. ====
   bool throwOnAsmJSValidationFailure_ : 1;
@@ -278,6 +295,13 @@ class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
   DelazificationOption eagerDelazificationStrategy_ =
       DelazificationOption::OnDemandOnly;
 
+  // The eager baseline strategy option indicates whether functions should be
+  // OMT baseline compiled eagerly whenever bytecode is available and whether
+  // JitHints should be used or not.  Eager baseline compilations are not
+  // currently enabled for delazifications, and explicitly set to None for
+  // delazifications.
+  EagerBaselineOption eagerBaselineStrategy_ = EagerBaselineOption::None;
+
   friend class JS_PUBLIC_API InstantiateOptions;
 
  public:
@@ -314,16 +338,6 @@ class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
   // NOTE: When using this mode, the XDR buffer must live until JS_Shutdown is
   // called. There is currently no mechanism to release the data sooner.
   bool usePinnedBytecode = false;
-
-  // De-optimize ES module's top-level `var`s, in order to define all of them
-  // on the ModuleEnvironmentObject, instead of local slot.
-  //
-  // This is used for providing all global variables in Cu.import return value
-  // (see bug 1766761 for more details), and this is temporary solution until
-  // ESM-ification finishes.
-  //
-  // WARNING: This option will eventually be removed.
-  bool deoptimizeModuleGlobalVars = false;
 
   PrefableCompileOptions prefableOptions_;
 
@@ -388,12 +402,19 @@ class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
   DelazificationOption eagerDelazificationStrategy() const {
     return eagerDelazificationStrategy_;
   }
-
-  bool importAttributes() const { return prefableOptions_.importAttributes(); }
-  bool importAttributesAssertSyntax() const {
-    return prefableOptions_.importAttributesAssertSyntax();
+  EagerBaselineOption eagerBaselineStrategy() const {
+    return eagerBaselineStrategy_;
   }
+
   bool sourcePragmas() const { return prefableOptions_.sourcePragmas(); }
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+  bool explicitResourceManagement() const {
+    return prefableOptions_.explicitResourceManagement();
+  }
+#endif
+  bool sourcePhaseImports() const {
+    return prefableOptions_.sourcePhaseImports();
+  }
   bool throwOnAsmJSValidationFailure() const {
     return prefableOptions_.throwOnAsmJSValidationFailure();
   }
@@ -427,6 +448,7 @@ class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
     PrintFields_(hideScriptFromDebugger_);
     PrintFields_(deferDebugMetadata_);
     PrintFields_(eagerDelazificationStrategy_);
+    PrintFields_(eagerBaselineStrategy_);
     PrintFields_(selfHostingMode);
     PrintFields_(discardSource);
     PrintFields_(sourceIsLazy);
@@ -435,7 +457,6 @@ class JS_PUBLIC_API __attribute__((__packed__)) TransitiveCompileOptions {
     PrintFields_(topLevelAwait);
     PrintFields_(borrowBuffer);
     PrintFields_(usePinnedBytecode);
-    PrintFields_(deoptimizeModuleGlobalVars);
     PrintFields_(introductionType);
     PrintFields_(introductionLineno);
     PrintFields_(introductionOffset);
@@ -710,14 +731,22 @@ class MOZ_STACK_CLASS JS_PUBLIC_API CompileOptions final
     return *this;
   }
 
+  void warnAboutConflictingDelazification() const;
   CompileOptions& setEagerDelazificationStrategy(
       DelazificationOption strategy) {
-    // forceFullParse is at the moment considered as a non-overridable strategy.
-    MOZ_RELEASE_ASSERT(eagerDelazificationStrategy_ !=
-                           DelazificationOption::ParseEverythingEagerly ||
-                       strategy ==
-                           DelazificationOption::ParseEverythingEagerly);
+    const auto PEE = DelazificationOption::ParseEverythingEagerly;
+    if (eagerDelazificationStrategy_ == PEE && strategy != PEE) {
+      // Parse Everything Eagerly cannot be replaced, do noting.
+      warnAboutConflictingDelazification();
+      return *this;
+    }
+
     eagerDelazificationStrategy_ = strategy;
+    return *this;
+  }
+
+  CompileOptions& setEagerBaselineStrategy(EagerBaselineOption strategy) {
+    eagerBaselineStrategy_ = strategy;
     return *this;
   }
 
@@ -746,18 +775,26 @@ class JS_PUBLIC_API InstantiateOptions {
   bool skipFilenameValidation = false;
   bool hideScriptFromDebugger = false;
   bool deferDebugMetadata = false;
+  DelazificationOption eagerDelazificationStrategy_ =
+      DelazificationOption::OnDemandOnly;
 
-  InstantiateOptions() = default;
+  EagerBaselineOption eagerBaselineStrategy_ = EagerBaselineOption::None;
+
+  InstantiateOptions();
 
   explicit InstantiateOptions(const ReadOnlyCompileOptions& options)
       : skipFilenameValidation(options.skipFilenameValidation_),
         hideScriptFromDebugger(options.hideScriptFromDebugger_),
-        deferDebugMetadata(options.deferDebugMetadata_) {}
+        deferDebugMetadata(options.deferDebugMetadata_),
+        eagerDelazificationStrategy_(options.eagerDelazificationStrategy()),
+        eagerBaselineStrategy_(options.eagerBaselineStrategy_) {}
 
   void copyTo(CompileOptions& options) const {
     options.skipFilenameValidation_ = skipFilenameValidation;
     options.hideScriptFromDebugger_ = hideScriptFromDebugger;
     options.deferDebugMetadata_ = deferDebugMetadata;
+    options.setEagerDelazificationStrategy(eagerDelazificationStrategy_);
+    options.setEagerBaselineStrategy(eagerBaselineStrategy_);
   }
 
   bool hideFromNewScriptInitial() const {
@@ -769,10 +806,29 @@ class JS_PUBLIC_API InstantiateOptions {
   //
   // This can be used when instantiation is performed as separate step than
   // compile-to-stencil, and CompileOptions isn't available there.
-  void assertDefault() const {
+  void assertDefault() const;
+
+  // Assert that all fields have values compatible with the default value.
+  //
+  // This can be used in the same way as assertDefault, in case the
+  // setForceFullParse() is used on the original compile options.
+  void assertCompatibleWithDefault() const {
     MOZ_ASSERT(skipFilenameValidation == false);
     MOZ_ASSERT(hideScriptFromDebugger == false);
     MOZ_ASSERT(deferDebugMetadata == false);
+
+    // The instantiation step uses the eagerDelazificationStrategy_ field
+    // only for TransitiveCompileOptions::populateDelazificationCache().
+    //
+    // Both the default OnDemandOnly and
+    // the ParseEverythingEagerly from setForceFullParse() returns
+    // false, and they're are compatible.
+    MOZ_ASSERT(eagerDelazificationStrategy_ ==
+                   DelazificationOption::OnDemandOnly ||
+               eagerDelazificationStrategy_ ==
+                   DelazificationOption::ParseEverythingEagerly);
+
+    MOZ_ASSERT(eagerBaselineStrategy_ == EagerBaselineOption::None);
   }
 #endif
 };

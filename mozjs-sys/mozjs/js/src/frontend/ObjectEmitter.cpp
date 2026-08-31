@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -412,7 +410,8 @@ bool ObjectEmitter::emitObject(size_t propertyCount) {
   // Emit code for {p:a, '%q':b, 2:c} that is equivalent to constructing
   // a new object and defining (in source order) each property on the object
   // (or mutating the object's [[Prototype]], in the case of __proto__).
-  if (!bce_->emit1(JSOp::NewInit)) {
+  uint8_t propCount = (propertyCount > 255) ? 255 : uint8_t(propertyCount);
+  if (!bce_->emit2(JSOp::NewInit, propCount)) {
     //              [stack] OBJ
     return false;
   }
@@ -505,7 +504,7 @@ bool ClassEmitter::emitBodyScope(ClassBodyScope::ParserData* scopeBindings) {
 
 bool ClassEmitter::emitClass(TaggedParserAtomIndex name,
                              TaggedParserAtomIndex nameForAnonymousClass,
-                             bool hasNameOnStack) {
+                             bool hasNameOnStack, uint8_t membersCount) {
   MOZ_ASSERT(propertyState_ == PropertyState::Start);
   MOZ_ASSERT(classState_ == ClassState::Start ||
              classState_ == ClassState::Scope ||
@@ -520,7 +519,7 @@ bool ClassEmitter::emitClass(TaggedParserAtomIndex name,
   hasNameOnStack_ = hasNameOnStack;
   isDerived_ = false;
 
-  if (!bce_->emit1(JSOp::NewInit)) {
+  if (!bce_->emit2(JSOp::NewInit, membersCount)) {
     //              [stack] HOMEOBJ
     return false;
   }

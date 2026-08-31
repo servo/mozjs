@@ -26,9 +26,9 @@ class Grafana:
 
     def get_dashboard(self, title):
         existing = self.client.search.search_dashboards(tag="component")
-        existing = dict(
-            [(dashboard["title"].lower(), dashboard["uid"]) for dashboard in existing]
-        )
+        existing = dict([
+            (dashboard["title"].lower(), dashboard["uid"]) for dashboard in existing
+        ])
         if title in existing:
             return self.client.dashboard.get_dashboard(existing[title])
         self.layer.debug(f"Creating dashboard {title}")

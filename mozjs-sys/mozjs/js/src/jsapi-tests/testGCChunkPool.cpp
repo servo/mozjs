@@ -1,11 +1,6 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-
-#include <utility>
 
 #include "gc/GCLock.h"
 #include "gc/GCRuntime.h"
@@ -19,9 +14,9 @@ BEGIN_TEST(testGCChunkPool) {
 
   // Create.
   for (int i = 0; i < N; ++i) {
-    void* ptr = TenuredChunk::allocate(&cx->runtime()->gc);
+    void* ptr = ArenaChunk::allocate(&cx->runtime()->gc, StallAndRetry::No);
     CHECK(ptr);
-    TenuredChunk* chunk = TenuredChunk::emplace(ptr, &cx->runtime()->gc, true);
+    ArenaChunk* chunk = ArenaChunk::init(ptr, &cx->runtime()->gc, true);
     CHECK(chunk);
     pool.push(chunk);
   }
@@ -37,9 +32,9 @@ BEGIN_TEST(testGCChunkPool) {
 
   // Push/Pop.
   for (int i = 0; i < N; ++i) {
-    TenuredChunk* chunkA = pool.pop();
-    TenuredChunk* chunkB = pool.pop();
-    TenuredChunk* chunkC = pool.pop();
+    ArenaChunk* chunkA = pool.pop();
+    ArenaChunk* chunkB = pool.pop();
+    ArenaChunk* chunkC = pool.pop();
     pool.push(chunkA);
     pool.push(chunkB);
     pool.push(chunkC);
@@ -47,7 +42,7 @@ BEGIN_TEST(testGCChunkPool) {
   MOZ_ASSERT(pool.verify());
 
   // Remove.
-  TenuredChunk* chunk = nullptr;
+  ArenaChunk* chunk = nullptr;
   int offset = N / 2;
   for (ChunkPool::Iter iter(pool); !iter.done(); iter.next(), --offset) {
     if (offset == 0) {
@@ -63,7 +58,7 @@ BEGIN_TEST(testGCChunkPool) {
   // Destruct.
   js::AutoLockGC lock(cx->runtime());
   for (ChunkPool::Iter iter(pool); !iter.done();) {
-    TenuredChunk* chunk = iter.get();
+    ArenaChunk* chunk = iter.get();
     iter.next();
     pool.remove(chunk);
     UnmapPages(chunk, ChunkSize);

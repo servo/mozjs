@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,10 +5,12 @@
 #include "PreXULSkeletonUI.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
+#include <dwmapi.h>
 #include <math.h>
 #include <limits.h>
 #include <cmath>
-#include <locale>
 #include <string>
 #include <objbase.h>
 #include <shlobj.h>
@@ -19,10 +19,10 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/BaseProfilerMarkers.h"
 #include "mozilla/CacheNtDllThunk.h"
+#include "mozilla/EnumSet.h"
 #include "mozilla/FStream.h"
 #include "mozilla/GetKnownFolderPath.h"
 #include "mozilla/HashFunctions.h"
-#include "mozilla/HelperMacros.h"
 #include "mozilla/glue/Debug.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/mscom/ProcessRuntime.h"
@@ -31,11 +31,28 @@
 #include "mozilla/Try.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
-#include "mozilla/Unused.h"
 #include "mozilla/WindowsDpiAwareness.h"
 #include "mozilla/WindowsProcessMitigations.h"
 
 namespace mozilla {
+
+static bool ShouldLogSkeleton() {
+  static Maybe<bool> sEnabled;
+  if (sEnabled.isNothing()) {
+    // We can't use proper Gecko logging since we're in mozglue,
+    // but this is close enough.
+    const char* env = getenv("MOZ_LOG");
+    sEnabled = Some(env && strstr(env, "PreXULSkeletonUI"));
+  }
+  return sEnabled.value();
+}
+
+#define SKELETON_LOG(str, ...)                                     \
+  do {                                                             \
+    if (ShouldLogSkeleton()) [[unlikely]] {                        \
+      printf_stderr("PreXULSkeletonUI: " str "\n", ##__VA_ARGS__); \
+    }                                                              \
+  } while (0)
 
 // ColorRect defines an optionally-rounded, optionally-bordered rectangle of a
 // particular color that we will draw.
@@ -96,6 +113,13 @@ NormalizedRGB Lerp(const NormalizedRGB& a, const NormalizedRGB& b, double x) {
 // Produces a smooth curve in [0,1] based on a linear input in [0,1]
 double SmoothStep3(double x) { return x * x * (3.0 - 2.0 * x); }
 
+struct Margin {
+  int top = 0;
+  int right = 0;
+  int bottom = 0;
+  int left = 0;
+};
+
 static const wchar_t kPreXULSkeletonUIKeyPath[] =
     L"SOFTWARE"
     L"\\" MOZ_APP_VENDOR L"\\" MOZ_APP_BASENAME L"\\PreXULSkeletonUISettings";
@@ -114,9 +138,20 @@ static Vector<ColorRect>* sAnimatedRects = nullptr;
 static int sTotalChromeHeight = 0;
 static volatile LONG sAnimationControlFlag = 0;
 static bool sMaximized = false;
-static int sNonClientVerticalMargins = 0;
-static int sNonClientHorizontalMargins = 0;
 static uint32_t sDpi = 0;
+// See nsWindow::mNonClientOffset
+static Margin sNonClientOffset;
+static int sCaptionHeight = 0;
+static int sHorizontalResizeMargin = 0;
+static int sVerticalResizeMargin = 0;
+
+// See nsWindow::NonClientSizeMargin()
+static Margin NonClientSizeMargin() {
+  return Margin{sCaptionHeight + sVerticalResizeMargin - sNonClientOffset.top,
+                sHorizontalResizeMargin - sNonClientOffset.right,
+                sVerticalResizeMargin - sNonClientOffset.bottom,
+                sHorizontalResizeMargin - sNonClientOffset.left};
+}
 
 // Color values needed by the animation loop
 static uint32_t sAnimationColor;
@@ -124,46 +159,31 @@ static uint32_t sToolbarForegroundColor;
 
 static ThemeMode sTheme = ThemeMode::Invalid;
 
-typedef BOOL(WINAPI* EnableNonClientDpiScalingProc)(HWND);
-static EnableNonClientDpiScalingProc sEnableNonClientDpiScaling = NULL;
-typedef int(WINAPI* GetSystemMetricsForDpiProc)(int, UINT);
-GetSystemMetricsForDpiProc sGetSystemMetricsForDpi = NULL;
-typedef UINT(WINAPI* GetDpiForWindowProc)(HWND);
-GetDpiForWindowProc sGetDpiForWindow = NULL;
-typedef ATOM(WINAPI* RegisterClassWProc)(const WNDCLASSW*);
-RegisterClassWProc sRegisterClassW = NULL;
-typedef HICON(WINAPI* LoadIconWProc)(HINSTANCE, LPCWSTR);
-LoadIconWProc sLoadIconW = NULL;
-typedef HICON(WINAPI* LoadCursorWProc)(HINSTANCE, LPCWSTR);
-LoadCursorWProc sLoadCursorW = NULL;
-typedef HWND(WINAPI* CreateWindowExWProc)(DWORD, LPCWSTR, LPCWSTR, DWORD, int,
-                                          int, int, int, HWND, HMENU, HINSTANCE,
-                                          LPVOID);
-CreateWindowExWProc sCreateWindowExW = NULL;
-typedef BOOL(WINAPI* ShowWindowProc)(HWND, int);
-ShowWindowProc sShowWindow = NULL;
-typedef BOOL(WINAPI* SetWindowPosProc)(HWND, HWND, int, int, int, int, UINT);
-SetWindowPosProc sSetWindowPos = NULL;
-typedef HDC(WINAPI* GetWindowDCProc)(HWND);
-GetWindowDCProc sGetWindowDC = NULL;
-typedef int(WINAPI* FillRectProc)(HDC, const RECT*, HBRUSH);
-FillRectProc sFillRect = NULL;
-typedef BOOL(WINAPI* DeleteObjectProc)(HGDIOBJ);
-DeleteObjectProc sDeleteObject = NULL;
-typedef int(WINAPI* ReleaseDCProc)(HWND, HDC);
-ReleaseDCProc sReleaseDC = NULL;
-typedef HMONITOR(WINAPI* MonitorFromWindowProc)(HWND, DWORD);
-MonitorFromWindowProc sMonitorFromWindow = NULL;
-typedef BOOL(WINAPI* GetMonitorInfoWProc)(HMONITOR, LPMONITORINFO);
-GetMonitorInfoWProc sGetMonitorInfoW = NULL;
-typedef LONG_PTR(WINAPI* SetWindowLongPtrWProc)(HWND, int, LONG_PTR);
-SetWindowLongPtrWProc sSetWindowLongPtrW = NULL;
-typedef int(WINAPI* StretchDIBitsProc)(HDC, int, int, int, int, int, int, int,
-                                       int, const VOID*, const BITMAPINFO*,
-                                       UINT, DWORD);
-StretchDIBitsProc sStretchDIBits = NULL;
-typedef HBRUSH(WINAPI* CreateSolidBrushProc)(COLORREF);
-CreateSolidBrushProc sCreateSolidBrush = NULL;
+#define MOZ_DECL_IMPORTED_WIN32_FN(name) \
+  static decltype(&::name) s##name = nullptr
+MOZ_DECL_IMPORTED_WIN32_FN(EnableNonClientDpiScaling);
+MOZ_DECL_IMPORTED_WIN32_FN(GetSystemMetricsForDpi);
+MOZ_DECL_IMPORTED_WIN32_FN(GetDpiForWindow);
+MOZ_DECL_IMPORTED_WIN32_FN(RegisterClassW);
+MOZ_DECL_IMPORTED_WIN32_FN(LoadIconW);
+MOZ_DECL_IMPORTED_WIN32_FN(LoadCursorW);
+MOZ_DECL_IMPORTED_WIN32_FN(CreateWindowExW);
+MOZ_DECL_IMPORTED_WIN32_FN(ShowWindow);
+MOZ_DECL_IMPORTED_WIN32_FN(SetWindowPos);
+MOZ_DECL_IMPORTED_WIN32_FN(GetWindowDC);
+MOZ_DECL_IMPORTED_WIN32_FN(GetWindowRect);
+MOZ_DECL_IMPORTED_WIN32_FN(MapWindowPoints);
+MOZ_DECL_IMPORTED_WIN32_FN(FillRect);
+MOZ_DECL_IMPORTED_WIN32_FN(DeleteObject);
+MOZ_DECL_IMPORTED_WIN32_FN(ReleaseDC);
+MOZ_DECL_IMPORTED_WIN32_FN(MonitorFromWindow);
+MOZ_DECL_IMPORTED_WIN32_FN(GetMonitorInfoW);
+MOZ_DECL_IMPORTED_WIN32_FN(SetWindowLongPtrW);
+MOZ_DECL_IMPORTED_WIN32_FN(StretchDIBits);
+MOZ_DECL_IMPORTED_WIN32_FN(CreateSolidBrush);
+MOZ_DECL_IMPORTED_WIN32_FN(DwmGetWindowAttribute);
+MOZ_DECL_IMPORTED_WIN32_FN(DwmSetWindowAttribute);
+#undef MOZ_DECL_IMPORTED_WIN32_FN
 
 static int sWindowWidth;
 static int sWindowHeight;
@@ -269,8 +289,7 @@ static Result<Ok, PreXULSkeletonUIError> GetSkeletonUILock() {
   // get quite the same robustness that `GetInstallHash` might provide, but
   // we already don't have that with how we key our registry values, so it
   // probably makes sense to just match those.
-  UniquePtr<wchar_t[]> binPath;
-  MOZ_TRY_VAR(binPath, GetBinaryPath());
+  UniquePtr<wchar_t[]> binPath = MOZ_TRY(GetBinaryPath());
 
   // Lowercase the binpath to match how we look for remote instances.
   MutateStringToLowercase(binPath.get());
@@ -518,7 +537,7 @@ void RasterizeColorRect(const ColorRect& colorRect) {
   // have a border, we draw a stroke-only rect first, and then draw the smaller
   // inner rect on top of it.
   Vector<DrawRect, 2> drawRects;
-  Unused << drawRects.reserve(2);
+  (void)drawRects.reserve(2);
   if (colorRect.borderWidth == 0) {
     DrawRect rect = {};
     rect.color = colorRect.color;
@@ -670,6 +689,17 @@ bool RasterizeAnimatedRect(const ColorRect& colorRect,
   return true;
 }
 
+bool FillRectWithColor(HDC hdc, LPCRECT rect, uint32_t mozColor) {
+  HBRUSH brush = sCreateSolidBrush(RGB((mozColor & 0xff0000) >> 16,
+                                       (mozColor & 0x00ff00) >> 8,
+                                       (mozColor & 0x0000ff) >> 0));
+  int fillRectResult = sFillRect(hdc, rect, brush);
+
+  sDeleteObject(brush);
+
+  return !!fillRectResult;
+}
+
 Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
     HWND hWnd, CSSPixelSpan urlbarCSSSpan, CSSPixelSpan searchbarCSSSpan,
     Vector<CSSPixelSpan>& springs, const ThemeColors& currentTheme,
@@ -699,17 +729,19 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
   sToolbarForegroundColor = currentTheme.toolbarForegroundColor;
 
   bool menubarShown = flags.contains(SkeletonUIFlag::MenubarShown);
+  bool verticalTabs = flags.contains(SkeletonUIFlag::VerticalTabs);
   bool bookmarksToolbarShown =
       flags.contains(SkeletonUIFlag::BookmarksToolbarShown);
   bool rtlEnabled = flags.contains(SkeletonUIFlag::RtlEnabled);
 
   int chromeHorMargin = CSSToDevPixels(2, sCSSToDevPixelScaling);
-  int verticalOffset = sMaximized ? sNonClientVerticalMargins : 0;
+  int verticalOffset = sMaximized ? sVerticalResizeMargin : 0;
   int horizontalOffset =
-      sNonClientHorizontalMargins - (sMaximized ? 0 : chromeHorMargin);
+      sHorizontalResizeMargin - (sMaximized ? 0 : chromeHorMargin);
 
   // found in tabs.inc.css, "--tab-min-height" + 2 * "--tab-block-margin"
-  int tabBarHeight = CSSToDevPixels(44, sCSSToDevPixelScaling);
+  int tabBarHeight =
+      verticalTabs ? 0 : CSSToDevPixels(44, sCSSToDevPixelScaling);
   int selectedTabBorderWidth = CSSToDevPixels(2, sCSSToDevPixelScaling);
   // found in tabs.inc.css, "--tab-block-margin"
   int titlebarSpacerWidth = horizontalOffset +
@@ -756,7 +788,7 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
   int menubarHeightDevPixels =
       menubarShown ? CSSToDevPixels(28, sCSSToDevPixelScaling) : 0;
 
-  // defined in urlbar-searchbar.inc.css as --urlbar-margin-inline: 5px
+  // defined in browser/themes/shared/urlbar as --urlbar-margin-inline: 5px
   int urlbarMargin =
       CSSToDevPixels(5, sCSSToDevPixelScaling) + horizontalOffset;
 
@@ -779,7 +811,7 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
   Vector<ColorRect> rects;
 
   ColorRect menubar = {};
-  menubar.color = currentTheme.tabBarColor;
+  menubar.color = currentTheme.titlebarColor;
   menubar.x = 0;
   menubar.y = verticalOffset;
   menubar.width = sWindowWidth;
@@ -790,12 +822,12 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
   }
 
   int placeholderBorderRadius = CSSToDevPixels(4, sCSSToDevPixelScaling);
-  // found in browser.css "--toolbarbutton-border-radius"
-  int urlbarBorderRadius = CSSToDevPixels(4, sCSSToDevPixelScaling);
+  // found in browser/themes/shared/urlbar "--urlbar-border-radius"
+  int urlbarBorderRadius = CSSToDevPixels(8, sCSSToDevPixelScaling);
 
   // The (traditionally dark blue on Windows) background of the tab bar.
   ColorRect tabBar = {};
-  tabBar.color = currentTheme.tabBarColor;
+  tabBar.color = currentTheme.titlebarColor;
   tabBar.x = 0;
   tabBar.y = menubar.y + menubar.height;
   tabBar.width = sWindowWidth;
@@ -805,38 +837,47 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
     return Err(PreXULSkeletonUIError::OOM);
   }
 
-  // The initial selected tab
-  ColorRect selectedTab = {};
-  selectedTab.color = currentTheme.tabColor;
-  selectedTab.x = titlebarSpacerWidth;
-  selectedTab.y = menubar.y + menubar.height + selectedTabMarginTop;
-  selectedTab.width = selectedTabWidth;
-  selectedTab.height =
-      tabBar.y + tabBar.height - selectedTab.y - selectedTabMarginBottom;
-  selectedTab.borderColor = currentTheme.tabOutlineColor;
-  selectedTab.borderWidth = selectedTabBorderWidth;
-  selectedTab.borderRadius = selectedTabBorderRadius;
-  selectedTab.flipIfRTL = true;
-  if (!rects.append(selectedTab)) {
-    return Err(PreXULSkeletonUIError::OOM);
-  }
+  if (!verticalTabs) {
+    // The initial selected tab
+    ColorRect selectedTab = {};
+    selectedTab.color = currentTheme.tabColor;
+    selectedTab.x = titlebarSpacerWidth;
+    selectedTab.y = menubar.y + menubar.height + selectedTabMarginTop;
+    selectedTab.width = selectedTabWidth;
+    selectedTab.height =
+        tabBar.y + tabBar.height - selectedTab.y - selectedTabMarginBottom;
+    selectedTab.borderColor = currentTheme.tabOutlineColor;
+    selectedTab.borderWidth = selectedTabBorderWidth;
+    selectedTab.borderRadius = selectedTabBorderRadius;
+    selectedTab.flipIfRTL = true;
+    if (!rects.append(selectedTab)) {
+      return Err(PreXULSkeletonUIError::OOM);
+    }
 
-  // A placeholder rect representing text that will fill the selected tab title
-  ColorRect tabTextPlaceholder = {};
-  tabTextPlaceholder.color = currentTheme.toolbarForegroundColor;
-  tabTextPlaceholder.x = selectedTab.x + tabPlaceholderBarMarginLeft;
-  tabTextPlaceholder.y = selectedTab.y + tabPlaceholderBarMarginTop;
-  tabTextPlaceholder.width = tabPlaceholderBarWidth;
-  tabTextPlaceholder.height = tabPlaceholderBarHeight;
-  tabTextPlaceholder.borderRadius = placeholderBorderRadius;
-  tabTextPlaceholder.flipIfRTL = true;
-  if (!rects.append(tabTextPlaceholder)) {
-    return Err(PreXULSkeletonUIError::OOM);
+    // A placeholder rect representing text that will fill the selected tab
+    // title
+    ColorRect tabTextPlaceholder = {};
+    tabTextPlaceholder.color = currentTheme.toolbarForegroundColor;
+    tabTextPlaceholder.x = selectedTab.x + tabPlaceholderBarMarginLeft;
+    tabTextPlaceholder.y = selectedTab.y + tabPlaceholderBarMarginTop;
+    tabTextPlaceholder.width = tabPlaceholderBarWidth;
+    tabTextPlaceholder.height = tabPlaceholderBarHeight;
+    tabTextPlaceholder.borderRadius = placeholderBorderRadius;
+    tabTextPlaceholder.flipIfRTL = true;
+    if (!rects.append(tabTextPlaceholder)) {
+      return Err(PreXULSkeletonUIError::OOM);
+    }
+
+    if (!sAnimatedRects->append(tabTextPlaceholder)) {
+      return Err(PreXULSkeletonUIError::OOM);
+    }
   }
 
   // The toolbar background
   ColorRect toolbar = {};
-  toolbar.color = currentTheme.backgroundColor;
+  // In the vertical tabs case the main toolbar is in the titlebar:
+  toolbar.color =
+      verticalTabs ? currentTheme.titlebarColor : currentTheme.backgroundColor;
   toolbar.x = 0;
   toolbar.y = tabBar.y + tabBarHeight;
   toolbar.width = sWindowWidth;
@@ -983,7 +1024,7 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
   }
 
   Vector<DevPixelSpan, 2> spansToAdd;
-  Unused << spansToAdd.reserve(2);
+  (void)spansToAdd.reserve(2);
   spansToAdd.infallibleAppend(urlbarSpan);
   if (hasSearchbar) {
     spansToAdd.infallibleAppend(searchbarSpan);
@@ -1027,8 +1068,7 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
     return Err(PreXULSkeletonUIError::BadWindowDimensions);
   }
 
-  if (!sAnimatedRects->append(tabTextPlaceholder) ||
-      !sAnimatedRects->append(urlbarTextPlaceholder)) {
+  if (!sAnimatedRects->append(urlbarTextPlaceholder)) {
     return Err(PreXULSkeletonUIError::OOM);
   }
 
@@ -1080,15 +1120,10 @@ Result<Ok, PreXULSkeletonUIError> DrawSkeletonUI(
 
   // Then, we just fill the rest with FillRect
   RECT rect = {0, sTotalChromeHeight, sWindowWidth, sWindowHeight};
-  HBRUSH brush =
-      sCreateSolidBrush(RGB((currentTheme.backgroundColor & 0xff0000) >> 16,
-                            (currentTheme.backgroundColor & 0x00ff00) >> 8,
-                            (currentTheme.backgroundColor & 0x0000ff) >> 0));
-  int fillRectResult = sFillRect(hdc, &rect, brush);
+  bool const fillRectOk =
+      FillRectWithColor(hdc, &rect, currentTheme.backgroundColor);
 
-  sDeleteObject(brush);
-
-  if (fillRectResult == 0) {
+  if (!fillRectOk) {
     return Err(PreXULSkeletonUIError::FailedFillingBottomRect);
   }
 
@@ -1282,19 +1317,12 @@ LRESULT WINAPI PreXULSkeletonUIProc(HWND hWnd, UINT msg, WPARAM wParam,
         wParam ? &(reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam))->rgrc[0]
                : (reinterpret_cast<RECT*>(lParam));
 
-    // These match the margins set in browser-tabsintitlebar.js with
-    // default prefs on Windows. Bug 1673092 tracks lining this up with
-    // that more correctly instead of hard-coding it.
-    int horizontalOffset =
-        sNonClientHorizontalMargins -
-        (sMaximized ? 0 : CSSToDevPixels(2, sCSSToDevPixelScaling));
-    int verticalOffset =
-        sNonClientHorizontalMargins -
-        (sMaximized ? 0 : CSSToDevPixels(2, sCSSToDevPixelScaling));
-    clientRect->top = clientRect->top;
-    clientRect->left += horizontalOffset;
-    clientRect->right -= horizontalOffset;
-    clientRect->bottom -= verticalOffset;
+    Margin margin = NonClientSizeMargin();
+    clientRect->top += margin.top;
+    clientRect->left += margin.left;
+    clientRect->right -= margin.right;
+    clientRect->bottom -= margin.bottom;
+
     return 0;
   }
 
@@ -1330,14 +1358,14 @@ ThemeColors GetTheme(ThemeMode themeId) {
     case ThemeMode::Dark:
       // Dark theme or default theme when in dark mode
 
-      // controlled by css variable --toolbar-bgcolor
+      // controlled by design token --toolbar-background-color
       theme.backgroundColor = 0x2b2a33;
       theme.tabColor = 0x42414d;
       theme.toolbarForegroundColor = 0x6a6a6d;
       theme.tabOutlineColor = 0x1c1b22;
       // controlled by css variable --lwt-accent-color
-      theme.tabBarColor = 0x1c1b22;
-      // controlled by --toolbar-non-lwt-textcolor in browser.css
+      theme.titlebarColor = 0x1c1b22;
+      // controlled by design token --toolbar-text-color
       theme.chromeContentDividerColor = 0x0c0c0d;
       // controlled by css variable --toolbar-field-background-color
       theme.urlbarColor = 0x42414d;
@@ -1347,17 +1375,15 @@ ThemeColors GetTheme(ThemeMode themeId) {
     case ThemeMode::Light:
     case ThemeMode::Default:
     default:
-      // --toolbar-non-lwt-bgcolor in browser.css
+      // --toolbar-background-color
       theme.backgroundColor = 0xf9f9fb;
       theme.tabColor = 0xf9f9fb;
       theme.toolbarForegroundColor = 0xdddde1;
       theme.tabOutlineColor = 0xdddde1;
-      // found in browser-aero.css ":root[tabsintitlebar]:not(:-moz-lwtheme)"
-      // (set to "hsl(235,33%,19%)")
-      theme.tabBarColor = 0xf0f0f4;
+      theme.titlebarColor = 0xeaeaed;
       // --chrome-content-separator-color in browser.css
       theme.chromeContentDividerColor = 0xe1e1e2;
-      // controlled by css variable --toolbar-color
+      // controlled by design token --toolbar-text-color
       theme.urlbarColor = 0xffffff;
       theme.urlbarBorderColor = 0xdddde1;
       theme.animationColor = theme.backgroundColor;
@@ -1368,19 +1394,23 @@ ThemeColors GetTheme(ThemeMode themeId) {
 Result<HKEY, PreXULSkeletonUIError> OpenPreXULSkeletonUIRegKey() {
   HKEY key;
   DWORD disposition;
+  SKELETON_LOG("Opening reg key");
   LSTATUS result =
       ::RegCreateKeyExW(HKEY_CURRENT_USER, kPreXULSkeletonUIKeyPath, 0, nullptr,
                         0, KEY_ALL_ACCESS, nullptr, &key, &disposition);
 
   if (result != ERROR_SUCCESS) {
+    SKELETON_LOG("Could not open reg key - result %ld", result);
     return Err(PreXULSkeletonUIError::FailedToOpenRegistryKey);
   }
 
   if (disposition == REG_CREATED_NEW_KEY ||
       disposition == REG_OPENED_EXISTING_KEY) {
+    SKELETON_LOG("Opened/created reg key (disposition %lu)", disposition);
     return key;
   }
 
+  SKELETON_LOG("Reg key does not exist (disposition %lu)", disposition);
   ::RegCloseKey(key);
   return Err(PreXULSkeletonUIError::FailedToOpenRegistryKey);
 }
@@ -1388,10 +1418,19 @@ Result<HKEY, PreXULSkeletonUIError> OpenPreXULSkeletonUIRegKey() {
 Result<Ok, PreXULSkeletonUIError> LoadGdi32AndUser32Procedures() {
   HMODULE user32Dll = ::LoadLibraryW(L"user32");
   HMODULE gdi32Dll = ::LoadLibraryW(L"gdi32");
+  HMODULE dwmapiDll = ::LoadLibraryW(L"dwmapi.dll");
 
-  if (!user32Dll || !gdi32Dll) {
+  if (!user32Dll || !gdi32Dll || !dwmapiDll) {
     return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
   }
+
+#define MOZ_LOAD_OR_FAIL(dll_handle, name)                            \
+  do {                                                                \
+    s##name = (decltype(&::name))::GetProcAddress(dll_handle, #name); \
+    if (!s##name) {                                                   \
+      return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);   \
+    }                                                                 \
+  } while (0)
 
   auto getThreadDpiAwarenessContext =
       (decltype(GetThreadDpiAwarenessContext)*)::GetProcAddress(
@@ -1402,89 +1441,38 @@ Result<Ok, PreXULSkeletonUIError> LoadGdi32AndUser32Procedures() {
   if (getThreadDpiAwarenessContext && areDpiAwarenessContextsEqual &&
       areDpiAwarenessContextsEqual(getThreadDpiAwarenessContext(),
                                    DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE)) {
-    // EnableNonClientDpiScaling is optional - we can handle not having it.
-    sEnableNonClientDpiScaling =
-        (EnableNonClientDpiScalingProc)::GetProcAddress(
-            user32Dll, "EnableNonClientDpiScaling");
+    // EnableNonClientDpiScaling is first available in Win10 Build 1607, but
+    // it's optional - we can handle not having it.
+    (void)[&]()->Result<Ok, PreXULSkeletonUIError> {
+      MOZ_LOAD_OR_FAIL(user32Dll, EnableNonClientDpiScaling);
+      return Ok{};
+    }
+    ();
   }
 
-  sGetSystemMetricsForDpi = (GetSystemMetricsForDpiProc)::GetProcAddress(
-      user32Dll, "GetSystemMetricsForDpi");
-  if (!sGetSystemMetricsForDpi) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sGetDpiForWindow =
-      (GetDpiForWindowProc)::GetProcAddress(user32Dll, "GetDpiForWindow");
-  if (!sGetDpiForWindow) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sRegisterClassW =
-      (RegisterClassWProc)::GetProcAddress(user32Dll, "RegisterClassW");
-  if (!sRegisterClassW) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sCreateWindowExW =
-      (CreateWindowExWProc)::GetProcAddress(user32Dll, "CreateWindowExW");
-  if (!sCreateWindowExW) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sShowWindow = (ShowWindowProc)::GetProcAddress(user32Dll, "ShowWindow");
-  if (!sShowWindow) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sSetWindowPos = (SetWindowPosProc)::GetProcAddress(user32Dll, "SetWindowPos");
-  if (!sSetWindowPos) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sGetWindowDC = (GetWindowDCProc)::GetProcAddress(user32Dll, "GetWindowDC");
-  if (!sGetWindowDC) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sFillRect = (FillRectProc)::GetProcAddress(user32Dll, "FillRect");
-  if (!sFillRect) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sReleaseDC = (ReleaseDCProc)::GetProcAddress(user32Dll, "ReleaseDC");
-  if (!sReleaseDC) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sLoadIconW = (LoadIconWProc)::GetProcAddress(user32Dll, "LoadIconW");
-  if (!sLoadIconW) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sLoadCursorW = (LoadCursorWProc)::GetProcAddress(user32Dll, "LoadCursorW");
-  if (!sLoadCursorW) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sMonitorFromWindow =
-      (MonitorFromWindowProc)::GetProcAddress(user32Dll, "MonitorFromWindow");
-  if (!sMonitorFromWindow) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sGetMonitorInfoW =
-      (GetMonitorInfoWProc)::GetProcAddress(user32Dll, "GetMonitorInfoW");
-  if (!sGetMonitorInfoW) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sSetWindowLongPtrW =
-      (SetWindowLongPtrWProc)::GetProcAddress(user32Dll, "SetWindowLongPtrW");
-  if (!sSetWindowLongPtrW) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sStretchDIBits =
-      (StretchDIBitsProc)::GetProcAddress(gdi32Dll, "StretchDIBits");
-  if (!sStretchDIBits) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sCreateSolidBrush =
-      (CreateSolidBrushProc)::GetProcAddress(gdi32Dll, "CreateSolidBrush");
-  if (!sCreateSolidBrush) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
-  sDeleteObject = (DeleteObjectProc)::GetProcAddress(gdi32Dll, "DeleteObject");
-  if (!sDeleteObject) {
-    return Err(PreXULSkeletonUIError::FailedLoadingDynamicProcs);
-  }
+  MOZ_LOAD_OR_FAIL(user32Dll, GetSystemMetricsForDpi);
+  MOZ_LOAD_OR_FAIL(user32Dll, GetDpiForWindow);
+  MOZ_LOAD_OR_FAIL(user32Dll, RegisterClassW);
+  MOZ_LOAD_OR_FAIL(user32Dll, CreateWindowExW);
+  MOZ_LOAD_OR_FAIL(user32Dll, ShowWindow);
+  MOZ_LOAD_OR_FAIL(user32Dll, SetWindowPos);
+  MOZ_LOAD_OR_FAIL(user32Dll, GetWindowDC);
+  MOZ_LOAD_OR_FAIL(user32Dll, GetWindowRect);
+  MOZ_LOAD_OR_FAIL(user32Dll, MapWindowPoints);
+  MOZ_LOAD_OR_FAIL(user32Dll, FillRect);
+  MOZ_LOAD_OR_FAIL(user32Dll, ReleaseDC);
+  MOZ_LOAD_OR_FAIL(user32Dll, LoadIconW);
+  MOZ_LOAD_OR_FAIL(user32Dll, LoadCursorW);
+  MOZ_LOAD_OR_FAIL(user32Dll, MonitorFromWindow);
+  MOZ_LOAD_OR_FAIL(user32Dll, GetMonitorInfoW);
+  MOZ_LOAD_OR_FAIL(user32Dll, SetWindowLongPtrW);
+  MOZ_LOAD_OR_FAIL(gdi32Dll, StretchDIBits);
+  MOZ_LOAD_OR_FAIL(gdi32Dll, CreateSolidBrush);
+  MOZ_LOAD_OR_FAIL(gdi32Dll, DeleteObject);
+  MOZ_LOAD_OR_FAIL(dwmapiDll, DwmGetWindowAttribute);
+  MOZ_LOAD_OR_FAIL(dwmapiDll, DwmSetWindowAttribute);
+
+#undef MOZ_LOAD_OR_FAIL
 
   return Ok();
 }
@@ -1565,9 +1553,9 @@ static Result<Ok, PreXULSkeletonUIError> ValidateCmdlineArguments(
       // correct enough.
       "new-tab", "new-window",
 
-      // To the extent possible, we want to ensure that existing tests cover
-      // the skeleton UI, so we need to allow marionette
-      "marionette",
+      // To the extent possible, we want to ensure that existing tests cover the
+      // skeleton UI, so we need to allow marionette and its required arguments
+      "marionette", "remote-allow-system-access",
 
       // These will cause the content area to appear different, but won't
       // meaningfully affect the chrome
@@ -1747,8 +1735,7 @@ static Result<uint32_t, PreXULSkeletonUIError> ReadRegUint(
 
 static Result<bool, PreXULSkeletonUIError> ReadRegBool(
     HKEY regKey, const std::wstring& valueName) {
-  uint32_t value;
-  MOZ_TRY_VAR(value, ReadRegUint(regKey, valueName));
+  uint32_t value = MOZ_TRY(ReadRegUint(regKey, valueName));
   return !!value;
 }
 
@@ -1831,12 +1818,10 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
 
   const TimeStamp skeletonStart = TimeStamp::Now();
 
-  HKEY regKey;
-  MOZ_TRY_VAR(regKey, OpenPreXULSkeletonUIRegKey());
+  HKEY regKey = MOZ_TRY(OpenPreXULSkeletonUIRegKey());
   AutoCloseRegKey closeKey(regKey);
 
-  UniquePtr<wchar_t[]> binPath;
-  MOZ_TRY_VAR(binPath, GetBinaryPath());
+  UniquePtr<wchar_t[]> binPath = MOZ_TRY(GetBinaryPath());
 
   std::wstring regProgressName =
       GetRegValueName(binPath.get(), sProgressSuffix);
@@ -1851,7 +1836,7 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
       WriteRegUint(regKey, regProgressName,
                    static_cast<uint32_t>(PreXULSkeletonUIProgress::Started)));
   auto writeCompletion = MakeScopeExit([&] {
-    Unused << WriteRegUint(
+    (void)WriteRegUint(
         regKey, regProgressName,
         static_cast<uint32_t>(PreXULSkeletonUIProgress::Completed));
   });
@@ -1862,11 +1847,15 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
   MOZ_TRY(ValidateCmdlineArguments(argc, argv, &explicitProfile));
   MOZ_TRY(ValidateEnvVars());
 
+  SKELETON_LOG("Reading enabled reg key");
   auto enabledResult =
       ReadRegBool(regKey, GetRegValueName(binPath.get(), sEnabledRegSuffix));
   if (enabledResult.isErr()) {
+    SKELETON_LOG("Enabled reg key does not exist");
     return Err(PreXULSkeletonUIError::EnabledKeyDoesNotExist);
   }
+  SKELETON_LOG("Enabled reg key exists, value is %d",
+               enabledResult.unwrap() ? 1 : 0);
   if (!enabledResult.unwrap()) {
     return Err(PreXULSkeletonUIError::Disabled);
   }
@@ -1899,48 +1888,32 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
     return Err(PreXULSkeletonUIError::FailedRegisteringWindowClass);
   }
 
-  uint32_t screenX;
-  MOZ_TRY_VAR(screenX, ReadRegUint(regKey, GetRegValueName(binPath.get(),
-                                                           sScreenXRegSuffix)));
-  uint32_t screenY;
-  MOZ_TRY_VAR(screenY, ReadRegUint(regKey, GetRegValueName(binPath.get(),
-                                                           sScreenYRegSuffix)));
-  uint32_t windowWidth;
-  MOZ_TRY_VAR(
-      windowWidth,
+  uint32_t screenX = MOZ_TRY(
+      ReadRegUint(regKey, GetRegValueName(binPath.get(), sScreenXRegSuffix)));
+  uint32_t screenY = MOZ_TRY(
+      ReadRegUint(regKey, GetRegValueName(binPath.get(), sScreenYRegSuffix)));
+  uint32_t windowWidth = MOZ_TRY(
       ReadRegUint(regKey, GetRegValueName(binPath.get(), sWidthRegSuffix)));
-  uint32_t windowHeight;
-  MOZ_TRY_VAR(
-      windowHeight,
+  uint32_t windowHeight = MOZ_TRY(
       ReadRegUint(regKey, GetRegValueName(binPath.get(), sHeightRegSuffix)));
-  MOZ_TRY_VAR(
-      sMaximized,
+  sMaximized = MOZ_TRY(
       ReadRegBool(regKey, GetRegValueName(binPath.get(), sMaximizedRegSuffix)));
-  MOZ_TRY_VAR(
-      sCSSToDevPixelScaling,
-      ReadRegDouble(regKey, GetRegValueName(binPath.get(),
-                                            sCssToDevPixelScalingRegSuffix)));
-  Vector<CSSPixelSpan> urlbar;
-  MOZ_TRY_VAR(urlbar,
-              ReadRegCSSPixelSpans(
-                  regKey, GetRegValueName(binPath.get(), sUrlbarCSSRegSuffix)));
-  Vector<CSSPixelSpan> searchbar;
-  MOZ_TRY_VAR(searchbar,
-              ReadRegCSSPixelSpans(
-                  regKey, GetRegValueName(binPath.get(), sSearchbarRegSuffix)));
-  Vector<CSSPixelSpan> springs;
-  MOZ_TRY_VAR(springs, ReadRegCSSPixelSpans(
-                           regKey, GetRegValueName(binPath.get(),
-                                                   sSpringsCSSRegSuffix)));
+  sCSSToDevPixelScaling = MOZ_TRY(ReadRegDouble(
+      regKey, GetRegValueName(binPath.get(), sCssToDevPixelScalingRegSuffix)));
+  Vector<CSSPixelSpan> urlbar = MOZ_TRY(ReadRegCSSPixelSpans(
+      regKey, GetRegValueName(binPath.get(), sUrlbarCSSRegSuffix)));
+  Vector<CSSPixelSpan> searchbar = MOZ_TRY(ReadRegCSSPixelSpans(
+      regKey, GetRegValueName(binPath.get(), sSearchbarRegSuffix)));
+  Vector<CSSPixelSpan> springs = MOZ_TRY(ReadRegCSSPixelSpans(
+      regKey, GetRegValueName(binPath.get(), sSpringsCSSRegSuffix)));
 
   if (urlbar.empty() || searchbar.empty()) {
     return Err(PreXULSkeletonUIError::CorruptData);
   }
 
   EnumSet<SkeletonUIFlag, uint32_t> flags;
-  uint32_t flagsUint;
-  MOZ_TRY_VAR(flagsUint, ReadRegUint(regKey, GetRegValueName(binPath.get(),
-                                                             sFlagsRegSuffix)));
+  uint32_t flagsUint = MOZ_TRY(
+      ReadRegUint(regKey, GetRegValueName(binPath.get(), sFlagsRegSuffix)));
   flags.deserialize(flagsUint);
 
   if (flags.contains(SkeletonUIFlag::TouchDensity) ||
@@ -1948,12 +1921,11 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
     return Err(PreXULSkeletonUIError::BadUIDensity);
   }
 
-  uint32_t theme;
-  MOZ_TRY_VAR(theme, ReadRegUint(regKey, GetRegValueName(binPath.get(),
-                                                         sThemeRegSuffix)));
+  uint32_t theme = MOZ_TRY(
+      ReadRegUint(regKey, GetRegValueName(binPath.get(), sThemeRegSuffix)));
   ThemeMode themeMode = static_cast<ThemeMode>(theme);
   if (themeMode == ThemeMode::Default) {
-    if (IsSystemDarkThemeEnabled() == true) {
+    if (IsSystemDarkThemeEnabled()) {
       themeMode = ThemeMode::Dark;
     }
   }
@@ -1978,14 +1950,71 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
     return Err(PreXULSkeletonUIError::CreateWindowFailed);
   }
 
-  sShowWindow(sPreXULSkeletonUIWindow, showCmd);
+  // Set dark mode on the titlebar if dark theme is enabled to avoid
+  // a white flash (bug 2010949)
+  if (themeMode == ThemeMode::Dark) {
+    BOOL dark = TRUE;
+    sDwmSetWindowAttribute(sPreXULSkeletonUIWindow,
+                           DWMWA_USE_IMMERSIVE_DARK_MODE_BEFORE_20H1, &dark,
+                           sizeof(dark));
+    sDwmSetWindowAttribute(sPreXULSkeletonUIWindow,
+                           DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+  }
+
+  // DWM displays garbage immediately on Show(), and that garbage is usually
+  // mostly #FFFFFF. To avoid a bright flash when the window is first created,
+  // cloak the window while showing it, and fill it with the appropriate
+  // background color before uncloaking it.
+  {
+    constexpr static auto const CloakWindow = [](HWND hwnd, BOOL state) {
+      sDwmSetWindowAttribute(sPreXULSkeletonUIWindow, DWMWA_CLOAK, &state,
+                             sizeof(state));
+    };
+    // Equivalent to ::OffsetRect, with no dynamic-symbol resolution needed.
+    constexpr static auto const OffsetRect = [](LPRECT rect, int dx, int dy) {
+      rect->left += dx;
+      rect->top += dy;
+      rect->right += dx;
+      rect->bottom += dy;
+    };
+
+    CloakWindow(sPreXULSkeletonUIWindow, TRUE);
+    auto const _uncloak =
+        MakeScopeExit([&]() { CloakWindow(sPreXULSkeletonUIWindow, FALSE); });
+    sShowWindow(sPreXULSkeletonUIWindow, showCmd);
+
+    HDC hdc = sGetWindowDC(sPreXULSkeletonUIWindow);
+    if (!hdc) {
+      return Err(PreXULSkeletonUIError::FailedGettingDC);
+    }
+    auto const _cleanupDC =
+        MakeScopeExit([&] { sReleaseDC(sPreXULSkeletonUIWindow, hdc); });
+
+    // This should match the related code in nsWindow::Show.
+    RECT rect;
+    sGetWindowRect(sPreXULSkeletonUIWindow, &rect);  // includes non-client area
+    // screen-to-client (handling RTL if necessary)
+    sMapWindowPoints(HWND_DESKTOP, sPreXULSkeletonUIWindow, (LPPOINT)&rect, 2);
+    // client-to-window (no RTL handling needed)
+    OffsetRect(&rect, -rect.left, -rect.top);
+    FillRectWithColor(hdc, &rect, currentTheme.backgroundColor);
+  }
 
   sDpi = sGetDpiForWindow(sPreXULSkeletonUIWindow);
-  sNonClientHorizontalMargins =
-      sGetSystemMetricsForDpi(SM_CXFRAME, sDpi) +
-      sGetSystemMetricsForDpi(SM_CXPADDEDBORDER, sDpi);
-  sNonClientVerticalMargins = sGetSystemMetricsForDpi(SM_CYFRAME, sDpi) +
-                              sGetSystemMetricsForDpi(SM_CXPADDEDBORDER, sDpi);
+  sHorizontalResizeMargin = sGetSystemMetricsForDpi(SM_CXFRAME, sDpi) +
+                            sGetSystemMetricsForDpi(SM_CXPADDEDBORDER, sDpi);
+  sVerticalResizeMargin = sGetSystemMetricsForDpi(SM_CYFRAME, sDpi) +
+                          sGetSystemMetricsForDpi(SM_CXPADDEDBORDER, sDpi);
+  sCaptionHeight = sGetSystemMetricsForDpi(SM_CYCAPTION, sDpi);
+
+  // These match the offsets that we get with default prefs. We don't use the
+  // skeleton ui if tabsInTitlebar is disabled, see bug 1673092.
+  if (sMaximized) {
+    sNonClientOffset = Margin{sCaptionHeight, 0, 0, 0};
+  } else {
+    // See nsWindow::NormalWindowNonClientOffset()
+    sNonClientOffset = Margin{sCaptionHeight + sVerticalResizeMargin, 0, 0, 0};
+  }
 
   if (sMaximized) {
     HMONITOR monitor =
@@ -2003,9 +2032,9 @@ static Result<Ok, PreXULSkeletonUIError> CreateAndStorePreXULSkeletonUIImpl(
     }
 
     sWindowWidth =
-        mi.rcWork.right - mi.rcWork.left + sNonClientHorizontalMargins * 2;
+        mi.rcWork.right - mi.rcWork.left + sHorizontalResizeMargin * 2;
     sWindowHeight =
-        mi.rcWork.bottom - mi.rcWork.top + sNonClientVerticalMargins * 2;
+        mi.rcWork.bottom - mi.rcWork.top + sVerticalResizeMargin * 2;
   } else {
     sWindowWidth = static_cast<int>(windowWidth);
     sWindowHeight = static_cast<int>(windowHeight);
@@ -2075,22 +2104,16 @@ HWND ConsumePreXULSkeletonUIHandle() {
   return result;
 }
 
-Maybe<PreXULSkeletonUIError> GetPreXULSkeletonUIErrorReason() {
-  return sErrorReason;
-}
-
 Result<Ok, PreXULSkeletonUIError> PersistPreXULSkeletonUIValues(
     const SkeletonUISettings& settings) {
   if (!sPreXULSkeletonUIEnabled) {
     return Err(PreXULSkeletonUIError::Disabled);
   }
 
-  HKEY regKey;
-  MOZ_TRY_VAR(regKey, OpenPreXULSkeletonUIRegKey());
+  HKEY regKey = MOZ_TRY(OpenPreXULSkeletonUIRegKey());
   AutoCloseRegKey closeKey(regKey);
 
-  UniquePtr<wchar_t[]> binPath;
-  MOZ_TRY_VAR(binPath, GetBinaryPath());
+  UniquePtr<wchar_t[]> binPath = MOZ_TRY(GetBinaryPath());
 
   MOZ_TRY(WriteRegUint(regKey,
                        GetRegValueName(binPath.get(), sScreenXRegSuffix),
@@ -2122,6 +2145,9 @@ Result<Ok, PreXULSkeletonUIError> PersistPreXULSkeletonUIValues(
   }
   if (settings.uiDensity == SkeletonUIDensity::Compact) {
     flags += SkeletonUIFlag::CompactDensity;
+  }
+  if (settings.verticalTabs) {
+    flags += SkeletonUIFlag::VerticalTabs;
   }
 
   uint32_t flagsUint = flags.serialize();
@@ -2159,24 +2185,27 @@ MFBT_API Result<Ok, PreXULSkeletonUIError> SetPreXULSkeletonUIEnabledIfAllowed(
   // across profiles. However, whatever ill effects we observe should be
   // correct themselves after one session.
   if (PreXULSkeletonUIDisallowed()) {
+    SKELETON_LOG(
+        "Can't set enabled reg key to %d because disallowed with error %d",
+        value ? 1 : 0, static_cast<int>(*sErrorReason));
     return Err(PreXULSkeletonUIError::Disabled);
   }
 
-  HKEY regKey;
-  MOZ_TRY_VAR(regKey, OpenPreXULSkeletonUIRegKey());
+  HKEY regKey = MOZ_TRY(OpenPreXULSkeletonUIRegKey());
   AutoCloseRegKey closeKey(regKey);
 
-  UniquePtr<wchar_t[]> binPath;
-  MOZ_TRY_VAR(binPath, GetBinaryPath());
+  UniquePtr<wchar_t[]> binPath = MOZ_TRY(GetBinaryPath());
+  SKELETON_LOG("Writing enabled reg key to %d", value ? 1 : 0);
   MOZ_TRY(WriteRegBool(
       regKey, GetRegValueName(binPath.get(), sEnabledRegSuffix), value));
+  SKELETON_LOG("Writing enabled reg key to %d succeeded", value ? 1 : 0);
 
   if (!sPreXULSkeletonUIEnabled && value) {
     // We specifically don't care if we fail to get this lock. We just want to
     // do our best effort to lock it so that future instances don't create
     // skeleton UIs while we're still running, since they will immediately exit
     // and tell us to open a new window.
-    Unused << GetSkeletonUILock();
+    (void)GetSkeletonUILock();
   }
 
   sPreXULSkeletonUIEnabled = value;
@@ -2194,12 +2223,10 @@ MFBT_API Result<Ok, PreXULSkeletonUIError> SetPreXULSkeletonUIThemeId(
   // If we fail below, invalidate sTheme
   auto invalidateTheme = MakeScopeExit([] { sTheme = ThemeMode::Invalid; });
 
-  HKEY regKey;
-  MOZ_TRY_VAR(regKey, OpenPreXULSkeletonUIRegKey());
+  HKEY regKey = MOZ_TRY(OpenPreXULSkeletonUIRegKey());
   AutoCloseRegKey closeKey(regKey);
 
-  UniquePtr<wchar_t[]> binPath;
-  MOZ_TRY_VAR(binPath, GetBinaryPath());
+  UniquePtr<wchar_t[]> binPath = MOZ_TRY(GetBinaryPath());
   MOZ_TRY(WriteRegUint(regKey, GetRegValueName(binPath.get(), sThemeRegSuffix),
                        static_cast<uint32_t>(theme)));
 
@@ -2231,4 +2258,5 @@ Result<Ok, PreXULSkeletonUIError> NotePreXULSkeletonUIRestarting() {
   return Ok();
 }
 
+#undef SKELETON_LOG
 }  // namespace mozilla

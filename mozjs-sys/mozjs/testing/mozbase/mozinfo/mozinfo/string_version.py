@@ -4,10 +4,8 @@
 
 import re
 
-import six
 
-
-class StringVersion(six.text_type):
+class StringVersion(str):
     """
     A string version that can be compared with comparison operators.
     """
@@ -16,7 +14,7 @@ class StringVersion(six.text_type):
     pat = re.compile(r"(\d+)|([^\d.]+)")
 
     def __init__(self, vstring):
-        super(StringVersion, self).__init__()
+        super().__init__()
 
         # We'll use unicode internally.
         # This check is mainly for python2 strings (which are bytes).
@@ -54,7 +52,7 @@ class StringVersion(six.text_type):
 
     def __hash__(self):
         # pylint --py3k: W1641
-        return hash(self.version)
+        return hash("".join(self.version))
 
     # operator overloads
     def __eq__(self, other):

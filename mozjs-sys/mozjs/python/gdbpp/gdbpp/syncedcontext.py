@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -14,7 +12,7 @@ from gdbpp import GeckoPrettyPrinter
 @GeckoPrettyPrinter(
     "syncedcontext::FieldValues", "^mozilla::dom::syncedcontext::FieldValues<.*>$"
 )
-class synced_context_field_printer(object):
+class synced_context_field_printer:
     def __init__(self, value):
         self.type = gdb.types.get_basic_type(value.type).template_argument(0)
         self.value = value.cast(self.type)

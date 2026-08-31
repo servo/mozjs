@@ -2,15 +2,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from functools import cached_property
+
 from mozunit import main
 
 from common import BaseConfigureTest, ConfigureTestSandbox
-from mozbuild.util import ReadOnlyNamespace, memoized_property
+from mozbuild.util import ReadOnlyNamespace
 
 
 def sandbox_class(platform):
     class ConfigureTestSandboxOverridingPlatform(ConfigureTestSandbox):
-        @memoized_property
+        @cached_property
         def _wrapped_sys(self):
             sys = {}
             exec("from sys import *", sys)
@@ -31,7 +33,7 @@ class TargetTest(BaseConfigureTest):
         elif "apple-darwin" in self.HOST:
             platform = "darwin"
         else:
-            raise Exception("Missing platform for HOST {}".format(self.HOST))
+            raise Exception(f"Missing platform for HOST {self.HOST}")
         sandbox = self.get_sandbox({}, {}, args, env, cls=sandbox_class(platform))
         return sandbox._value_for(sandbox["target"]).alias
 
@@ -102,9 +104,6 @@ class TestTargetWindows(TargetTest):
         self.assertEqual(
             self.get_target(["--host=x86_64-pc-windows-gnu"]), "x86_64-pc-windows-gnu"
         )
-        self.assertEqual(
-            self.get_target(["--host=x86_64-pc-mingw32"]), "x86_64-pc-mingw32"
-        )
 
 
 class TestTargetAndroid(TargetTest):
@@ -154,14 +153,14 @@ class TestTargetOpenBSD(TargetTest):
     def config_sub(self, stdin, args):
         if args[0] == "amd64-unknown-openbsd6.4":
             return 0, "x86_64-unknown-openbsd6.4", ""
-        return super(TestTargetOpenBSD, self).config_sub(stdin, args)
+        return super().config_sub(stdin, args)
 
 
 class TestMozConfigure(BaseConfigureTest):
     def test_nsis_version(self):
         this = self
 
-        class FakeNSIS(object):
+        class FakeNSIS:
             def __init__(self, version):
                 self.version = version
 
@@ -191,6 +190,21 @@ class TestMozConfigure(BaseConfigureTest):
         self.assertEqual(check_nsis_version("v3.0-2"), "3.0")
         self.assertEqual(check_nsis_version("v3.0.1"), "3.0")
         self.assertEqual(check_nsis_version("v3.1"), "3.1")
+
+
+class TestConfVars(BaseConfigureTest):
+    def test_loading(self):
+        sandbox = self.get_sandbox(
+            paths={},
+            config={},
+            args=[
+                "--enable-project=python/mozbuild/mozbuild/test/configure/data/confvars"
+            ],
+        )
+        self.assertEqual(
+            list(sandbox._helper),
+            ["CONFVAR= a b c", "OTHER_CONFVAR=d"],
+        )
 
 
 if __name__ == "__main__":

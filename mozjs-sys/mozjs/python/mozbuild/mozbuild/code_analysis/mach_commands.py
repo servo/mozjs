@@ -2,42 +2,33 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 import concurrent.futures
+import functools
+import glob
+import itertools
 import json
 import logging
-import multiprocessing
-import ntpath
 import os
-import pathlib
-import posixpath
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
-import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 
 import mozpack.path as mozpath
-import six
-import yaml
 from mach.decorators import Command, CommandArgument, SubCommand
 from mach.main import Mach
 from mozversioncontrol import get_repository_object
-from six.moves import input
 
 from mozbuild import build_commands
 from mozbuild.controller.clobber import Clobberer
-from mozbuild.nodeutil import find_node_executable
-from mozbuild.util import memoize
+from mozbuild.util import cpu_count
 
 
-# Function used to run clang-format on a batch of files. It is a helper function
-# in order to integrate into the futures ecosystem clang-format.
-def run_one_clang_format_batch(args):
-    try:
-        subprocess.check_output(args)
-    except subprocess.CalledProcessError as e:
-        return e
+# FIXME: use itertools.batched when moving to python 3.12
+def batched(iterable, n):
+    for ndx in range(0, len(iterable), n):
+        yield iterable[ndx : ndx + n]
 
 
 def build_repo_relative_path(abs_path, repo_path):
@@ -77,7 +68,7 @@ class StaticAnalysisSubCommand(SubCommand):
         return after
 
 
-class StaticAnalysisMonitor(object):
+class StaticAnalysisMonitor:
     def __init__(self, srcdir, objdir, checks, total):
         self._total = total
         self._processed = 0
@@ -136,9 +127,9 @@ class StaticAnalysisMonitor(object):
             filename = line.split(" ")[-1]
             if os.path.isfile(filename):
                 self._current = build_repo_relative_path(filename, self._srcdir)
+                self._processed = self._processed + 1
             else:
                 self._current = None
-            self._processed = self._processed + 1
             return (warning, False)
         if warning is not None:
 
@@ -153,7 +144,9 @@ class StaticAnalysisMonitor(object):
                     if matcher is not None and matcher.group(0) == checker_name:
                         return item
 
-            check_config = get_check_config(warning["flag"])
+            check_config = get_check_config(
+                warning["flag"].removesuffix(",-warnings-as-errors")
+            )
             if check_config is not None:
                 warning["reliability"] = check_config.get("reliability", "low")
                 warning["reason"] = check_config.get("reason")
@@ -162,7 +155,6 @@ class StaticAnalysisMonitor(object):
                 # For a "warning" that is flagged as "clang-diagnostic-error"
                 # set it as "publish"
                 warning["publish"] = True
-
         return (warning, True)
 
 
@@ -231,10 +223,10 @@ def static_analysis(command_context):
     "static-analysis", "check", "Run the checks using the helper tool"
 )
 @CommandArgument(
-    "source",
+    "patterns",
     nargs="*",
-    default=[".*"],
-    help="Source files to be analyzed (regex on path). "
+    default=["**"],
+    help="Source files to be analyzed (glob on path). "
     "Can be omitted, in which case the entire code base "
     "is analyzed.  The source argument is ignored if "
     "there is anything fed through stdin, in which case "
@@ -299,16 +291,16 @@ def static_analysis(command_context):
 )
 def check(
     command_context,
-    source=None,
-    jobs=2,
-    strip=1,
-    verbose=False,
-    checks="-*",
-    fix=False,
-    header_filter="",
-    output=None,
-    format="text",
-    outgoing=False,
+    patterns,
+    jobs,
+    strip,
+    verbose,
+    checks,
+    fix,
+    header_filter,
+    output,
+    format,
+    outgoing,
 ):
     from mozbuild.controller.building import (
         StaticAnalysisFooter,
@@ -333,42 +325,51 @@ def check(
     if rc != 0:
         return rc
 
-    # Use outgoing files instead of source files
+    # Split in several chunks to avoid hitting Python's limit of 100 groups in re
+    compile_db = json.loads(open(_compile_db).read())
+
     if outgoing:
+        # Use outgoing files instead of source files
         repo = get_repository_object(command_context.topsrcdir)
         files = repo.get_outgoing_files()
-        source = get_abspath_files(command_context, files)
+    else:
+        # Or resolve pattern
+        files = itertools.chain(*[
+            glob.glob(pattern, recursive=True) for pattern in patterns
+        ])
 
-    # Split in several chunks to avoid hitting Python's limit of 100 groups in re
-    compile_db = json.loads(open(_compile_db, "r").read())
-    total = 0
-    import re
+    abs_files = get_abspath_files(command_context, files)
 
-    chunk_size = 50
-    for offset in range(0, len(source), chunk_size):
-        source_chunks = [
-            re.escape(f) for f in source[offset : offset + chunk_size].copy()
-        ]
-        name_re = re.compile("(" + ")|(".join(source_chunks) + ")")
-        for f in compile_db:
-            if name_re.search(f["file"]):
-                total = total + 1
+    def to_source(filename):
+        basename, ext = os.path.splitext(filename)
+        if ext != ".h":
+            return filename
+        for src_ext in [".cpp", ".c", ".mm", ".cc", ".cxx"]:
+            if os.path.exists(basename + src_ext):
+                return basename + src_ext
+        return filename
+
+    sources = {}
+    header_sources = {}
+    compile_db_files = {f["file"] for f in compile_db}
+    for candidate in abs_files:
+        associated_entry = to_source(candidate)
+        if associated_entry in compile_db_files:
+            if candidate != associated_entry:
+                header_sources[associated_entry] = candidate
+            # Check we're not erasing an existing entry
+            elif associated_entry not in sources:
+                sources[associated_entry] = None
 
     # Filter source to remove excluded files
-    source = _generate_path_list(command_context, source, verbose=verbose)
+    header_sources = _generate_path_list(
+        command_context, header_sources, verbose=verbose
+    )
+    sources = _generate_path_list(command_context, sources, verbose=verbose)
 
-    if not total or not source:
-        command_context.log(
-            logging.INFO,
-            "static-analysis",
-            {},
-            "There are no files eligible for analysis. Please note that 'header' files "
-            "cannot be used for analysis since they do not consist compilation units.",
-        )
-        return 0
-
-    # Escape the files from source
-    source = [re.escape(f) for f in source]
+    # Do not process files already in header_sources again in sources
+    for header_src in header_sources:
+        sources.pop(header_src, None)
 
     cwd = command_context.topobjdir
 
@@ -376,34 +377,67 @@ def check(
         command_context.topsrcdir,
         command_context.topobjdir,
         get_clang_tidy_config(command_context).checks_with_data,
-        total,
+        len(sources) + len(header_sources),
     )
 
-    footer = StaticAnalysisFooter(command_context.log_manager.terminal, monitor)
+    footer = StaticAnalysisFooter(monitor)
 
     with StaticAnalysisOutputManager(
         command_context.log_manager, monitor, footer
     ) as output_manager:
-        import math
-
-        batch_size = int(math.ceil(float(len(source)) / multiprocessing.cpu_count()))
-        for i in range(0, len(source), batch_size):
+        rc = 0
+        arg_max = 512  # The actual shell limit is way above
+        for batch in batched(list(sources.items()), arg_max):
             args = _get_clang_tidy_command(
                 command_context,
                 clang_paths,
                 compilation_commands_path,
                 checks=checks,
                 header_filter=header_filter,
-                sources=source[i : (i + batch_size)],
+                sources=dict(batch),
                 jobs=jobs,
                 fix=fix,
+                warnings_as_errors=True,
+                verbose=verbose,
             )
-            rc = command_context.run_process(
+            rc |= command_context.run_process(
                 args=args,
                 ensure_exit_code=False,
                 line_handler=output_manager.on_line,
                 cwd=cwd,
             )
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=jobs or cpu_count()
+        ) as executor:
+            futures = []
+            # process header independently, because we need per-instance
+            # header-filter for it to work
+            for header_src, header_hdr in header_sources.items():
+                args = _get_clang_tidy_command(
+                    command_context,
+                    clang_paths,
+                    compilation_commands_path,
+                    checks=checks,
+                    header_filter=header_filter,
+                    sources={header_src: header_hdr},
+                    jobs=1,
+                    fix=fix,
+                    warnings_as_errors=True,
+                    verbose=verbose,
+                )
+                futures.append(
+                    executor.submit(
+                        command_context.run_process,
+                        args=args,
+                        ensure_exit_code=False,
+                        line_handler=output_manager.on_line,
+                        cwd=cwd,
+                    )
+                )
+            for future in concurrent.futures.as_completed(futures):
+                # Wait for every task to finish
+                rc |= future.result()
 
         command_context.log(
             logging.WARNING,
@@ -416,6 +450,16 @@ def check(
         if output is not None:
             output_manager.write(output, format)
 
+    if not sources and not header_sources:
+        command_context.log(
+            logging.WARNING,
+            "static-analysis",
+            {},
+            "There are no files eligible for analysis. Please note that 'header' files "
+            "cannot be used for analysis since they do not consist compilation units.",
+        )
+        return 0
+
     return rc
 
 
@@ -423,25 +467,23 @@ def get_abspath_files(command_context, files):
     return [mozpath.join(command_context.topsrcdir, f) for f in files]
 
 
-def get_files_with_commands(command_context, compile_db, source):
+def get_files_with_commands(command_context, compile_db, sources):
     """
     Returns an array of dictionaries having file_path with build command
     """
 
-    compile_db = json.load(open(compile_db, "r"))
+    compile_db = json.load(open(compile_db))
 
     commands_list = []
 
-    for f in source:
+    for src in sources:
         # It must be a C/C++ file
-        _, ext = os.path.splitext(f)
+        _, ext = os.path.splitext(src)
 
         if ext.lower() not in _format_include_extensions:
-            command_context.log(
-                logging.INFO, "static-analysis", {}, "Skipping {}".format(f)
-            )
+            command_context.log(logging.INFO, "static-analysis", {}, f"Skipping {src}")
             continue
-        file_with_abspath = os.path.join(command_context.topsrcdir, f)
+        file_with_abspath = os.path.join(command_context.topsrcdir, src)
         for f in compile_db:
             # Found for a file that we are looking
             if file_with_abspath == f["file"]:
@@ -450,7 +492,7 @@ def get_files_with_commands(command_context, compile_db, source):
     return commands_list
 
 
-@memoize
+@functools.cache
 def get_clang_tidy_config(command_context):
     from mozbuild.code_analysis.utils import ClangTidyConfig
 
@@ -470,15 +512,12 @@ def _get_required_version(command_context):
 
 
 def _get_current_version(command_context, clang_paths):
-    # Because the fact that we ship together clang-tidy and clang-format
-    # we are sure that these two will always share the same version.
-    # Thus in order to determine that the version is compatible we only
-    # need to check one of them, going with clang-format
-    cmd = [clang_paths._clang_format_path, "--version"]
+    cmd = [clang_paths._clang_tidy_path, "--version"]
     version_info = None
     try:
         version_info = (
-            subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+            subprocess
+            .check_output(cmd, stderr=subprocess.STDOUT)
             .decode("utf-8")
             .strip()
         )
@@ -489,7 +528,7 @@ def _get_current_version(command_context, clang_paths):
                 logging.INFO,
                 "static-analysis",
                 {},
-                "{} Version = {} ".format(clang_paths._clang_format_path, version_info),
+                f"{clang_paths._clang_tidy_path} Version = {version_info} ",
             )
 
     except subprocess.CalledProcessError as e:
@@ -497,8 +536,8 @@ def _get_current_version(command_context, clang_paths):
             logging.ERROR,
             "static-analysis",
             {},
-            "Error determining the version clang-tidy/format binary, please see the "
-            "attached exception: \n{}".format(e.output),
+            "Error determining the version clang-tidy binary, please see the "
+            f"attached exception: \n{e.output}",
         )
     return version_info
 
@@ -511,7 +550,7 @@ def _is_version_eligible(command_context, clang_paths, log_error=True):
     current_version = _get_current_version(command_context, clang_paths)
     if current_version is None:
         return False
-    version = "clang-format version " + version
+    version = "version " + version
     if version in current_version:
         return True
 
@@ -520,12 +559,9 @@ def _is_version_eligible(command_context, clang_paths, log_error=True):
             logging.ERROR,
             "static-analysis",
             {},
-            "ERROR: You're using an old or incorrect version ({}) of clang-format binary. "
-            "Please update to a more recent one (at least > {}) "
-            "by running: './mach bootstrap' ".format(
-                _get_current_version(command_context, clang_paths),
-                _get_required_version(command_context),
-            ),
+            f"ERROR: You're using an old or incorrect version ({_get_current_version(command_context, clang_paths)}) of clang-tidy binary. "
+            f"Please update to a more recent one (at least > {_get_required_version(command_context)}) "
+            "by running: './mach bootstrap' ",
         )
 
     return False
@@ -540,6 +576,8 @@ def _get_clang_tidy_command(
     sources,
     jobs,
     fix,
+    warnings_as_errors=False,
+    verbose=True,
 ):
     if checks == "-*":
         checks = ",".join(get_clang_tidy_config(command_context).checks)
@@ -552,6 +590,8 @@ def _get_clang_tidy_command(
         "-checks=%s" % checks,
         "-extra-arg=-DMOZ_CLANG_PLUGIN",
     ]
+    if warnings_as_errors:
+        common_args.append("-warnings-as-errors=*")
 
     # Flag header-filter is passed in order to limit the diagnostic messages only
     # to the specified header files. When no value is specified the default value
@@ -559,18 +599,29 @@ def _get_clang_tidy_command(
     # the source files or folders.
     common_args += [
         "-header-filter=%s"
-        % (header_filter if len(header_filter) else "|".join(sources))
+        % (
+            header_filter
+            if header_filter
+            else "|".join(v or k for k, v in sources.items())
+        )
     ]
+
+    # headers we do not want to scan
+    if header_skiplist := get_clang_tidy_config(command_context).header_skiplist:
+        common_args += ["-exclude-header-filter={}".format("|".join(header_skiplist))]
 
     # From our configuration file, config.yaml, we build the configuration list, for
     # the checkers that are used. These configuration options are used to better fit
     # the checkers to our code.
     cfg = get_clang_tidy_config(command_context).checks_config
     if cfg:
-        common_args += ["-config=%s" % yaml.dump(cfg)]
+        common_args += [f"-config={json.dumps(cfg)}"]
 
     if fix:
         common_args += ["-fix"]
+
+    if not verbose:
+        common_args += ["-quiet"]
 
     return (
         [
@@ -582,15 +633,16 @@ def _get_clang_tidy_command(
             compilation_commands_path,
         ]
         + common_args
-        + sources
+        # run-clang-tidy expects regexps, not paths, so we need to escape
+        # backslashes.
+        + [re.escape(os.path.normpath(s)) for s in sources]
     )
 
 
 @StaticAnalysisSubCommand(
     "static-analysis",
     "autotest",
-    "Run the auto-test suite in order to determine that"
-    " the analysis did not regress.",
+    "Run the auto-test suite in order to determine that the analysis did not regress.",
 )
 @CommandArgument(
     "--dump-results",
@@ -626,7 +678,6 @@ def autotest(
     # do this on a local trusted clang-tidy package.
     command_context._set_log_level(verbose)
     command_context.activate_virtualenv()
-    dump_results = dump_results
 
     force_download = not dump_results
 
@@ -705,21 +756,17 @@ def autotest(
             logging.ERROR,
             "static-analysis",
             {},
-            "ERROR: RUNNING: clang-tidy autotest for platform {} not supported.".format(
-                platform
-            ),
+            f"ERROR: RUNNING: clang-tidy autotest for platform {platform} not supported.",
         )
         return TOOLS_UNSUPORTED_PLATFORM
 
-    max_workers = multiprocessing.cpu_count()
+    max_workers = cpu_count()
 
     command_context.log(
         logging.INFO,
         "static-analysis",
         {},
-        "RUNNING: clang-tidy autotest for platform {0} with {1} workers.".format(
-            platform, max_workers
-        ),
+        f"RUNNING: clang-tidy autotest for platform {platform} with {max_workers} workers.",
     )
 
     # List all available checkers
@@ -801,31 +848,27 @@ def autotest(
                 if checker_error == TOOLS_CHECKER_NOT_FOUND:
                     message_to_log = (
                         "\tChecker "
-                        "{} not present in this clang-tidy version.".format(
-                            checker_name
-                        )
+                        f"{checker_name} not present in this clang-tidy version."
                     )
                 elif checker_error == TOOLS_CHECKER_NO_TEST_FILE:
                     message_to_log = (
                         "\tChecker "
-                        "{0} does not have a test file - {0}.cpp".format(checker_name)
+                        f"{checker_name} does not have a test file - {checker_name}.cpp"
                     )
                 elif checker_error == TOOLS_CHECKER_RETURNED_NO_ISSUES:
                     message_to_log = (
-                        "\tChecker {0} did not find any issues in its test file, "
-                        "clang-tidy output for the run is:\n{1}"
-                    ).format(checker_name, info1)
+                        f"\tChecker {checker_name} did not find any issues in its test file, "
+                        f"clang-tidy output for the run is:\n{info1}"
+                    )
                 elif checker_error == TOOLS_CHECKER_RESULT_FILE_NOT_FOUND:
-                    message_to_log = (
-                        "\tChecker {0} does not have a result file - {0}.json"
-                    ).format(checker_name)
+                    message_to_log = f"\tChecker {checker_name} does not have a result file - {checker_name}.json"
                 elif checker_error == TOOLS_CHECKER_DIFF_FAILED:
                     message_to_log = (
-                        "\tChecker {0}\nExpected: {1}\n"
-                        "Got: {2}\n"
+                        f"\tChecker {checker_name}\nExpected: {info1}\n"
+                        f"Got: {info2}\n"
                         "clang-tidy output for the run is:\n"
-                        "{3}"
-                    ).format(checker_name, info1, info2, info3)
+                        f"{info3}"
+                    )
 
                 print("\n" + message_to_log)
 
@@ -906,10 +949,11 @@ def _run_analysis_batch(command_context, clang_paths, compilation_commands_path,
         compilation_commands_path,
         checks="-*," + ",".join(items),
         header_filter="",
-        sources=[
-            mozpath.join(clang_paths._clang_tidy_base_path, "test", checker) + ".cpp"
+        sources={
+            mozpath.join(clang_paths._clang_tidy_base_path, "test", checker)
+            + ".cpp": None
             for checker in items
-        ],
+        },
         print_out=True,
     )
 
@@ -947,15 +991,11 @@ def _run_analysis_batch(command_context, clang_paths, compilation_commands_path,
 
         for failed_check, baseline_issue in zip(failed_checks, failed_checks_baseline):
             print(
-                "\tChecker {0} expect following results: \n\t\t{1}".format(
-                    failed_check, baseline_issue
-                )
+                f"\tChecker {failed_check} expect following results: \n\t\t{baseline_issue}"
             )
 
         print(
-            "This is the output generated by clang-tidy for the bulk build:\n{}".format(
-                clang_output
-            )
+            f"This is the output generated by clang-tidy for the bulk build:\n{clang_output}"
         )
         return TOOLS_CHECKER_DIFF_FAILED
 
@@ -1066,196 +1106,28 @@ def print_checks(command_context, verbose=False):
     args = [
         clang_paths._clang_tidy_path,
         "-list-checks",
-        "-checks=%s" % get_clang_tidy_config(command_context).checks,
+        f"-checks={','.join(get_clang_tidy_config(command_context).checks)}",
     ]
 
     return command_context.run_process(args=args, pass_thru=True)
 
 
-@Command(
-    "prettier-format",
-    category="misc",
-    description="Run prettier on current changes",
-)
-@CommandArgument(
-    "--path",
-    "-p",
-    nargs=1,
-    required=True,
-    help="Specify the path to reformat to stdout.",
-)
-@CommandArgument(
-    "--assume-filename",
-    "-a",
-    nargs=1,
-    required=True,
-    help="This option is usually used in the context of hg-formatsource."
-    "When reading from stdin, Prettier assumes this "
-    "filename to decide which style and parser to use.",
-)
-def prettier_format(command_context, path, assume_filename):
-    # With assume_filename we want to have stdout clean since the result of the
-    # format will be redirected to stdout.
-
-    binary, _ = find_node_executable()
-    prettier = os.path.join(
-        command_context.topsrcdir, "node_modules", "prettier", "bin-prettier.js"
-    )
-    path = os.path.join(command_context.topsrcdir, path[0])
-
-    # Bug 1564824. Prettier fails on patches with moved files where the
-    # original directory also does not exist.
-    assume_dir = os.path.dirname(
-        os.path.join(command_context.topsrcdir, assume_filename[0])
-    )
-    assume_filename = assume_filename[0] if os.path.isdir(assume_dir) else path
-
-    # We use --stdin-filepath in order to better determine the path for
-    # the prettier formatter when it is ran outside of the repo, for example
-    # by the extension hg-formatsource.
-    args = [binary, prettier, "--stdin-filepath", assume_filename]
-
-    process = subprocess.Popen(args, stdin=subprocess.PIPE)
-    with open(path, "rb") as fin:
-        process.stdin.write(fin.read())
-        process.stdin.close()
-        process.wait()
-        return process.returncode
+def removed(cls):
+    """Use `mach lint -l clang-format` or `mach format` instead."""
+    return False
 
 
 @Command(
     "clang-format",
     category="misc",
     description="Run clang-format on current changes",
-)
-@CommandArgument(
-    "--show",
-    "-s",
-    action="store_const",
-    const="stdout",
-    dest="output_path",
-    help="Show diff output on stdout instead of applying changes",
-)
-@CommandArgument(
-    "--assume-filename",
-    "-a",
-    nargs=1,
-    default=None,
-    help="This option is usually used in the context of hg-formatsource."
-    "When reading from stdin, clang-format assumes this "
-    "filename to look for a style config file (with "
-    "-style=file) and to determine the language. When "
-    "specifying this option only one file should be used "
-    "as an input and the output will be forwarded to stdin. "
-    "This option also impairs the download of the clang-tools "
-    "and assumes the package is already located in it's default "
-    "location",
+    conditions=[removed],
 )
 @CommandArgument(
     "--path", "-p", nargs="+", default=None, help="Specify the path(s) to reformat"
 )
-@CommandArgument(
-    "--commit",
-    "-c",
-    default=None,
-    help="Specify a commit to reformat from. "
-    "For git you can also pass a range of commits (foo..bar) "
-    "to format all of them at the same time.",
-)
-@CommandArgument(
-    "--output",
-    "-o",
-    default=None,
-    dest="output_path",
-    help="Specify a file handle to write clang-format raw output instead of "
-    "applying changes. This can be stdout or a file path.",
-)
-@CommandArgument(
-    "--format",
-    "-f",
-    choices=("diff", "json"),
-    default="diff",
-    dest="output_format",
-    help="Specify the output format used: diff is the raw patch provided by "
-    "clang-format, json is a list of atomic changes to process.",
-)
-@CommandArgument(
-    "--outgoing",
-    default=False,
-    action="store_true",
-    help="Run clang-format on outgoing files from mercurial repository.",
-)
-def clang_format(
-    command_context,
-    assume_filename,
-    path,
-    commit,
-    output_path=None,
-    output_format="diff",
-    verbose=False,
-    outgoing=False,
-):
-    # Run clang-format or clang-format-diff on the local changes
-    # or files/directories
-    if path is None and outgoing:
-        repo = get_repository_object(command_context.topsrcdir)
-        path = repo.get_outgoing_files()
-
-    if path:
-        # Create the full path list
-        def path_maker(f_name):
-            return os.path.join(command_context.topsrcdir, f_name)
-
-        path = map(path_maker, path)
-
-    os.chdir(command_context.topsrcdir)
-
-    # Load output file handle, either stdout or a file handle in write mode
-    output = None
-    if output_path is not None:
-        output = sys.stdout if output_path == "stdout" else open(output_path, "w")
-
-    # With assume_filename we want to have stdout clean since the result of the
-    # format will be redirected to stdout. Only in case of errror we
-    # write something to stdout.
-    # We don't actually want to get the clang-tools here since we want in some
-    # scenarios to do this in parallel so we relay on the fact that the tools
-    # have already been downloaded via './mach bootstrap' or directly via
-    # './mach static-analysis install'
-    if assume_filename:
-        rc, clang_paths = _set_clang_tools_paths(command_context)
-        if rc != 0:
-            print("clang-format: Unable to set path to clang-format tools.")
-            return rc
-
-        if not _do_clang_tools_exist(clang_paths):
-            print("clang-format: Unable to set locate clang-format tools.")
-            return 1
-
-        if not _is_version_eligible(command_context, clang_paths):
-            return 1
-    else:
-        rc, clang_paths = get_clang_tools(command_context, verbose=verbose)
-        if rc != 0:
-            return rc
-
-    if path is None:
-        return _run_clang_format_diff(
-            command_context,
-            clang_paths._clang_format_diff,
-            clang_paths._clang_format_path,
-            commit,
-            output,
-        )
-
-    if assume_filename:
-        return _run_clang_format_in_console(
-            command_context, clang_paths._clang_format_path, path, assume_filename
-        )
-
-    return _run_clang_format_path(
-        command_context, clang_paths._clang_format_path, path, output, output_format
-    )
+def clang_format(command_context, path, **kwargs):
+    pass
 
 
 def _verify_checker(
@@ -1276,7 +1148,7 @@ def _verify_checker(
         logging.INFO,
         "static-analysis",
         {},
-        "RUNNING: clang-tidy checker {}.".format(check),
+        f"RUNNING: clang-tidy checker {check}.",
     )
 
     # Structured information in case a checker fails
@@ -1306,7 +1178,7 @@ def _verify_checker(
         compilation_commands_path,
         checks="-*," + check,
         header_filter="",
-        sources=[test_file_path_cpp],
+        sources={test_file_path_cpp: None},
     )
     if issues is None:
         return TOOLS_CHECKER_FAILED_FILE
@@ -1369,7 +1241,7 @@ def _parse_issues(command_context, clang_output):
     re_strip_colors = re.compile(r"\x1b\[[\d;]+m", re.MULTILINE)
     filtered = re_strip_colors.sub("", clang_output)
     # Starting with clang 8, for the diagnostic messages we have multiple `LF CR`
-    # in order to be compatiable with msvc compiler format, and for this
+    # in order to be compatible with msvc compiler format, and for this
     # we are not interested to match the end of line.
     regex_string = r"(.+):(\d+):(\d+): (warning|error): ([^\[\]\n]+)(?: \[([\.\w-]+)\])"
 
@@ -1470,28 +1342,20 @@ def _build_export(command_context, jobs, verbose=False):
         command_context.log(logging.INFO, "build_output", {"line": line}, "{line}")
 
     # First install what we can through install manifests.
-    rc = command_context._run_make(
-        directory=command_context.topobjdir,
-        target="pre-export",
-        line_handler=None,
-        silent=not verbose,
-    )
-    if rc != 0:
-        return rc
-
     # Then build the rest of the build dependencies by running the full
     # export target, because we can't do anything better.
-    for target in ("export", "pre-compile"):
+    for target in ("pre-export", "export", "pre-compile"):
         rc = command_context._run_make(
             directory=command_context.topobjdir,
             target=target,
             line_handler=None,
+            print_directory=verbose,
+            log=verbose,
             silent=not verbose,
             num_jobs=jobs,
         )
         if rc != 0:
             return rc
-
     return 0
 
 
@@ -1512,12 +1376,6 @@ def _set_clang_tools_paths(command_context):
         "bin",
         "clang-tidy" + config.substs.get("HOST_BIN_SUFFIX", ""),
     )
-    clang_paths._clang_format_path = mozpath.join(
-        clang_paths._clang_tools_path,
-        "clang-tidy",
-        "bin",
-        "clang-format" + config.substs.get("HOST_BIN_SUFFIX", ""),
-    )
     clang_paths._clang_apply_replacements = mozpath.join(
         clang_paths._clang_tools_path,
         "clang-tidy",
@@ -1530,20 +1388,12 @@ def _set_clang_tools_paths(command_context):
         "bin",
         "run-clang-tidy",
     )
-    clang_paths._clang_format_diff = mozpath.join(
-        clang_paths._clang_tools_path,
-        "clang-tidy",
-        "share",
-        "clang",
-        "clang-format-diff.py",
-    )
     return 0, clang_paths
 
 
 def _do_clang_tools_exist(clang_paths):
     return (
         os.path.exists(clang_paths._clang_tidy_path)
-        and os.path.exists(clang_paths._clang_format_path)
         and os.path.exists(clang_paths._clang_apply_replacements)
         and os.path.exists(clang_paths._run_clang_tidy_path)
     )
@@ -1593,7 +1443,9 @@ def get_clang_tools(
 
     from mozbuild.bootstrap import bootstrap_toolchain
 
-    bootstrap_toolchain("clang-tools/clang-tidy")
+    clang_tidy = bootstrap_toolchain("clang-tools/clang-tidy")
+    if not clang_tidy:
+        raise Exception("clang-tidy not found")
 
     return 0 if _is_version_eligible(command_context, clang_paths) else 1, clang_paths
 
@@ -1619,73 +1471,9 @@ def _get_clang_tools_from_source(command_context, clang_paths, filename):
         raise Exception("Extracted the archive but didn't find the expected output")
 
     assert os.path.exists(clang_paths._clang_tidy_path)
-    assert os.path.exists(clang_paths._clang_format_path)
     assert os.path.exists(clang_paths._clang_apply_replacements)
     assert os.path.exists(clang_paths._run_clang_tidy_path)
     return 0, clang_paths
-
-
-def _get_clang_format_diff_command(command_context, commit):
-    if command_context.repository.name == "hg":
-        args = ["hg", "diff", "-U0"]
-        if commit:
-            args += ["-c", commit]
-        else:
-            args += ["-r", ".^"]
-        for dot_extension in _format_include_extensions:
-            args += ["--include", "glob:**{0}".format(dot_extension)]
-        args += ["--exclude", "listfile:{0}".format(_format_ignore_file)]
-    else:
-        commit_range = "HEAD"  # All uncommitted changes.
-        if commit:
-            commit_range = (
-                commit if ".." in commit else "{}~..{}".format(commit, commit)
-            )
-        args = ["git", "diff", "--no-color", "-U0", commit_range, "--"]
-        for dot_extension in _format_include_extensions:
-            args += ["*{0}".format(dot_extension)]
-        # git-diff doesn't support an 'exclude-from-files' param, but
-        # allow to add individual exclude pattern since v1.9, see
-        # https://git-scm.com/docs/gitglossary#gitglossary-aiddefpathspecapathspec
-        with open(_format_ignore_file, "rb") as exclude_pattern_file:
-            for pattern in exclude_pattern_file.readlines():
-                pattern = six.ensure_str(pattern.rstrip())
-                pattern = pattern.replace(".*", "**")
-                if not pattern or pattern.startswith("#"):
-                    continue  # empty or comment
-                magics = ["exclude"]
-                if pattern.startswith("^"):
-                    magics += ["top"]
-                    pattern = pattern[1:]
-                args += [":({0}){1}".format(",".join(magics), pattern)]
-    return args
-
-
-def _run_clang_format_diff(
-    command_context, clang_format_diff, clang_format, commit, output_file
-):
-    # Run clang-format on the diff
-    # Note that this will potentially miss a lot things
-    from subprocess import PIPE, CalledProcessError, Popen, check_output
-
-    diff_process = Popen(
-        _get_clang_format_diff_command(command_context, commit), stdout=PIPE
-    )
-    args = [sys.executable, clang_format_diff, "-p1", "-binary=%s" % clang_format]
-
-    if not output_file:
-        args.append("-i")
-    try:
-        output = check_output(args, stdin=diff_process.stdout)
-        if output_file:
-            # We want to print the diffs
-            print(output, file=output_file)
-
-        return 0
-    except CalledProcessError as e:
-        # Something wrong happend
-        print("clang-format: An error occured while running clang-format-diff.")
-        return e.returncode
 
 
 def _is_ignored_path(command_context, ignored_dir_re, f):
@@ -1700,7 +1488,7 @@ def _is_ignored_path(command_context, ignored_dir_re, f):
 def _generate_path_list(command_context, paths, verbose=True):
     path_to_third_party = os.path.join(command_context.topsrcdir, _format_ignore_file)
     ignored_dir = []
-    with open(path_to_third_party, "r") as fh:
+    with open(path_to_third_party) as fh:
         for line in fh:
             # Remove comments and empty lines
             if line.startswith("#") or len(line.strip()) == 0:
@@ -1712,260 +1500,85 @@ def _generate_path_list(command_context, paths, verbose=True):
     ignored_dir_re = "(%s)" % "|".join(ignored_dir)
     extensions = _format_include_extensions
 
-    path_list = []
-    for f in paths:
+    path_entries = {}
+    for f, h in paths.items():
         if _is_ignored_path(command_context, ignored_dir_re, f):
             # Early exit if we have provided an ignored directory
             if verbose:
-                print("static-analysis: Ignored third party code '{0}'".format(f))
+                print(f"static-analysis: Ignored third party code '{f}'")
             continue
+        # Make sure that the file exists and it has a supported extension
+        elif os.path.isfile(f) and f.endswith(extensions):
+            path_entries[f] = h
 
-        if os.path.isdir(f):
-            # Processing a directory, generate the file list
-            for folder, subs, files in os.walk(f):
-                subs.sort()
-                for filename in sorted(files):
-                    f_in_dir = posixpath.join(pathlib.Path(folder).as_posix(), filename)
-                    if f_in_dir.endswith(extensions) and not _is_ignored_path(
-                        command_context, ignored_dir_re, f_in_dir
-                    ):
-                        # Supported extension and accepted path
-                        path_list.append(f_in_dir)
-        else:
-            # Make sure that the file exists and it has a supported extension
-            if os.path.isfile(f) and f.endswith(extensions):
-                path_list.append(f)
-
-    return path_list
+    return path_entries
 
 
-def _run_clang_format_in_console(command_context, clang_format, paths, assume_filename):
-    path_list = _generate_path_list(command_context, assume_filename, False)
+@StaticAnalysisSubCommand("static-analysis", "unittest", "Run unittest")
+def unittest(command_context, verbose=True):
+    moz_objdir = tempfile.mkdtemp(prefix="obj-code_analysis-unittest")
+    env = os.environ.copy()
+    env["MOZ_OBJDIR"] = moz_objdir
 
-    if path_list == []:
-        return 0
+    try:
+        # Check when everything is fine
+        result = subprocess.run(
+            [
+                sys.executable,
+                "mach",
+                "static-analysis",
+                "check",
+                "js/src/builtin/RegExp.cpp",
+            ],
+            check=False,
+            env=env,
+            cwd=command_context.topsrcdir,
+        )
+        assert result.returncode == 0, "in-tree files should pass the linter"
 
-    # We use -assume-filename in order to better determine the path for
-    # the .clang-format when it is ran outside of the repo, for example
-    # by the extension hg-formatsource
-    args = [clang_format, "-assume-filename={}".format(assume_filename[0])]
-
-    process = subprocess.Popen(args, stdin=subprocess.PIPE)
-    with open(paths[0], "r") as fin:
-        process.stdin.write(fin.read())
-        process.stdin.close()
-        process.wait()
-        return process.returncode
-
-
-def _get_clang_format_cfg(command_context, current_dir):
-    clang_format_cfg_path = mozpath.join(current_dir, ".clang-format")
-
-    if os.path.exists(clang_format_cfg_path):
-        # Return found path for .clang-format
-        return clang_format_cfg_path
-
-    if current_dir != command_context.topsrcdir:
-        # Go to parent directory
-        return _get_clang_format_cfg(command_context, os.path.split(current_dir)[0])
-    # We have reached command_context.topsrcdir so return None
-    return None
-
-
-def _copy_clang_format_for_show_diff(
-    command_context, current_dir, cached_clang_format_cfg, tmpdir
-):
-    # Lookup for .clang-format first in cache
-    clang_format_cfg = cached_clang_format_cfg.get(current_dir, None)
-
-    if clang_format_cfg is None:
-        # Go through top directories
-        clang_format_cfg = _get_clang_format_cfg(command_context, current_dir)
-
-        # This is unlikely to happen since we must have .clang-format from
-        # command_context.topsrcdir but in any case we should handle a potential error
-        if clang_format_cfg is None:
-            print("Cannot find corresponding .clang-format.")
-            return 1
-
-        # Cache clang_format_cfg for potential later usage
-        cached_clang_format_cfg[current_dir] = clang_format_cfg
-
-    # Copy .clang-format to the tmp dir where the formatted file is copied
-    shutil.copy(clang_format_cfg, tmpdir)
-    return 0
-
-
-def _run_clang_format_path(
-    command_context, clang_format, paths, output_file, output_format
-):
-    # Run clang-format on files or directories directly
-    from subprocess import CalledProcessError, check_output
-
-    if output_format == "json":
-        # Get replacements in xml, then process to json
-        args = [clang_format, "-output-replacements-xml"]
-    else:
-        args = [clang_format, "-i"]
-
-    if output_file:
-        # We just want to show the diff, we create the directory to copy it
-        tmpdir = os.path.join(command_context.topobjdir, "tmp")
-        if not os.path.exists(tmpdir):
-            os.makedirs(tmpdir)
-
-    path_list = _generate_path_list(command_context, paths)
-
-    if path_list == []:
-        return
-
-    print("Processing %d file(s)..." % len(path_list))
-
-    if output_file:
-        patches = {}
-        cached_clang_format_cfg = {}
-        for i in range(0, len(path_list)):
-            l = path_list[i : (i + 1)]
-
-            # Copy the files into a temp directory
-            # and run clang-format on the temp directory
-            # and show the diff
-            original_path = l[0]
-            local_path = ntpath.basename(original_path)
-            current_dir = ntpath.dirname(original_path)
-            target_file = os.path.join(tmpdir, local_path)
-            faketmpdir = os.path.dirname(target_file)
-            if not os.path.isdir(faketmpdir):
-                os.makedirs(faketmpdir)
-            shutil.copy(l[0], faketmpdir)
-            l[0] = target_file
-
-            ret = _copy_clang_format_for_show_diff(
-                command_context, current_dir, cached_clang_format_cfg, faketmpdir
-            )
-            if ret != 0:
-                return ret
-
-            # Run clang-format on the list
-            try:
-                output = check_output(args + l)
-                if output and output_format == "json":
-                    # Output a relative path in json patch list
-                    relative_path = os.path.relpath(
-                        original_path, command_context.topsrcdir
-                    )
-                    patches[relative_path] = _parse_xml_output(original_path, output)
-            except CalledProcessError as e:
-                # Something wrong happend
-                print("clang-format: An error occured while running clang-format.")
-                return e.returncode
-
-            # show the diff
-            if output_format == "diff":
-                diff_command = ["diff", "-u", original_path, target_file]
+        # And when errors are emitted, both for headers and sources
+        faulty_srcs = (
+            "js/src/builtin/TestingFunctions.cpp",
+            "js/src/builtin/TestingFunctions.h",
+        )
+        for src in faulty_srcs:
+            with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as fd:
                 try:
-                    output = check_output(diff_command)
-                except CalledProcessError as e:
-                    # diff -u returns 0 when no change
-                    # here, we expect changes. if we are here, this means that
-                    # there is a diff to show
-                    if e.output:
-                        # Replace the temp path by the path relative to the repository to
-                        # display a valid patch
-                        relative_path = os.path.relpath(
-                            original_path, command_context.topsrcdir
-                        )
-                        # We must modify the paths in order to be compatible with the
-                        # `diff` format.
-                        original_path_diff = os.path.join("a", relative_path)
-                        target_path_diff = os.path.join("b", relative_path)
-                        e.output = e.output.decode("utf-8")
-                        patch = e.output.replace(
-                            "+++ {}".format(target_file),
-                            "+++ {}".format(target_path_diff),
-                        ).replace(
-                            "-- {}".format(original_path),
-                            "-- {}".format(original_path_diff),
-                        )
-                        patches[original_path] = patch
+                    fd.close()
 
-        if output_format == "json":
-            output = json.dumps(patches, indent=4)
-        else:
-            # Display all the patches at once
-            output = "\n".join(patches.values())
+                    # modernize-use-auto is an unsupported check, and it generates
+                    # plenty of warnings on js/src/builtin/TestingFunctions.cpp
+                    failing_flag = "modernize-use-auto"
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            "mach",
+                            "static-analysis",
+                            "check",
+                            f"--checks=-*,{failing_flag}",
+                            f"--output={fd.name}",
+                            "--format=json",
+                            "js/src/builtin/TestingFunctions.cpp",
+                        ],
+                        check=False,
+                        env=env,
+                        cwd=command_context.topsrcdir,
+                    )
+                    with open(fd.name) as json_fd:
+                        errors = json.load(json_fd)
+                finally:
+                    # FIXME: use delete_on_close=False once we move to 3.12
+                    os.remove(fd.name)
 
-        # Output to specified file or stdout
-        print(output, file=output_file)
+            assert result.returncode != 0, f"{failing_flag} check should find warnings"
+            assert len(errors["files"]) > 0, (
+                "warnings should be present in the log file"
+            )
 
-        shutil.rmtree(tmpdir)
-        return 0
-
-    # Run clang-format in parallel trying to saturate all of the available cores.
-    import math
-
-    max_workers = multiprocessing.cpu_count()
-
-    # To maximize CPU usage when there are few items to handle,
-    # underestimate the number of items per batch, then dispatch
-    # outstanding items across workers. Per definition, each worker will
-    # handle at most one outstanding item.
-    batch_size = int(math.floor(float(len(path_list)) / max_workers))
-    outstanding_items = len(path_list) - batch_size * max_workers
-
-    batches = []
-
-    i = 0
-    while i < len(path_list):
-        num_items = batch_size + (1 if outstanding_items > 0 else 0)
-        batches.append(args + path_list[i : (i + num_items)])
-
-        outstanding_items -= 1
-        i += num_items
-
-    error_code = None
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        for batch in batches:
-            futures.append(executor.submit(run_one_clang_format_batch, batch))
-
-        for future in concurrent.futures.as_completed(futures):
-            # Wait for every task to finish
-            ret_val = future.result()
-            if ret_val is not None:
-                error_code = ret_val
-
-        if error_code is not None:
-            return error_code
-    return 0
-
-
-def _parse_xml_output(path, clang_output):
-    """
-    Parse the clang-format XML output to convert it in a JSON compatible
-    list of patches, and calculates line level informations from the
-    character level provided changes.
-    """
-    content = six.ensure_str(open(path, "r").read())
-
-    def _nb_of_lines(start, end):
-        return len(content[start:end].splitlines())
-
-    def _build(replacement):
-        offset = int(replacement.attrib["offset"])
-        length = int(replacement.attrib["length"])
-        last_line = content.rfind("\n", 0, offset)
-        return {
-            "replacement": replacement.text,
-            "char_offset": offset,
-            "char_length": length,
-            "line": _nb_of_lines(0, offset),
-            "line_offset": last_line != -1 and (offset - last_line) or 0,
-            "lines_modified": _nb_of_lines(offset, offset + length),
-        }
-
-    return [
-        _build(replacement)
-        for replacement in ET.fromstring(clang_output).findall("replacement")
-    ]
+            file_with_warning = next(iter(errors["files"].values()))
+            assert (
+                file_with_warning["warnings"][0]["flag"]
+                == f"{failing_flag},-warnings-as-errors"
+            ), f"warnings should mention {failing_flag}"
+    finally:
+        shutil.rmtree(moz_objdir)

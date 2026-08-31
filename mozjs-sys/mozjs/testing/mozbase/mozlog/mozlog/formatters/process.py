@@ -5,8 +5,6 @@
 import os
 import signal
 
-from six.moves import range
-
 # a dict cache of signal number -> signal name
 _SIG_NAME = None
 
@@ -24,8 +22,7 @@ def strsig(n):
             if (
                 k.startswith("SIG")
                 and not k.startswith("SIG_")
-                and k != "SIGCLD"
-                and k != "SIGPOLL"
+                and k not in {"SIGCLD", "SIGPOLL"}
             ):
                 _SIG_NAME[getattr(signal, k)] = k
 

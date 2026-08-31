@@ -18,11 +18,11 @@ def process_define_file(output, input):
     taking the corresponding source file and replacing some *#define/#undef*
     occurences:
 
-      - "#undef NAME" is turned into "#define NAME VALUE"
-      - "#define NAME" is unchanged
-      - "#define NAME ORIGINAL_VALUE" is turned into "#define NAME VALUE"
-      - "#undef UNKNOWN_NAME" is turned into "/* #undef UNKNOWN_NAME */"
-      -  Whitespaces are preserved.
+      - ``#undef NAME`` is turned into ``#define NAME VALUE``
+      - ``#define NAME`` is unchanged
+      - ``#define NAME ORIGINAL_VALUE`` is turned into ``#define NAME VALUE``
+      - ``#undef UNKNOWN_NAME`` is turned into ``/* #undef UNKNOWN_NAME */``
+      - Whitespaces are preserved.
 
     As a special rule, "#undef ALLDEFINES" is turned into "#define NAME
     VALUE" for all the defined variables.
@@ -37,11 +37,11 @@ def process_define_file(output, input):
     ) and not config.substs.get("JS_STANDALONE"):
         config = PartialConfigEnvironment(mozpath.join(topobjdir, "js", "src"))
 
-    with open(path, "r") as input:
+    with open(path) as input_file:
         r = re.compile(
             r"^\s*#\s*(?P<cmd>[a-z]+)(?:\s+(?P<name>\S+)(?:\s+(?P<value>\S+))?)?", re.U
         )
-        for l in input:
+        for l in input_file:
             m = r.match(l)
             if m:
                 cmd = m.group("cmd")
@@ -60,11 +60,9 @@ def process_define_file(output, input):
                             via the command line, which raises a mass of macro
                             redefinition warnings.  Just handle those macros
                             specially here."""
-                            define = "#define {name} {val}".format(name=name, val=val)
+                            define = f"#define {name} {val}"
                             if name in ("_WIN32_IE", "_WIN32_WINNT", "WIN32", "WINVER"):
-                                return "#if !defined({name})\n{define}\n#endif".format(
-                                    name=name, define=define
-                                )
+                                return f"#if !defined({name})\n{define}\n#endif"
                             return define
 
                         defines = "\n".join(

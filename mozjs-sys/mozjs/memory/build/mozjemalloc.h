@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -10,6 +8,7 @@
 #include <errno.h>
 
 #include "mozjemalloc_types.h"
+#include "malloc_decls.h"
 #include "mozilla/MacroArgs.h"
 
 // Macro helpers
@@ -108,6 +107,8 @@ struct MozJemallocPHC : public MozJemalloc {
 
   static void jemalloc_stats_internal(jemalloc_stats_t*, jemalloc_bin_stats_t*);
 
+  static void jemalloc_stats_lite(jemalloc_stats_lite_t*);
+
   static void jemalloc_ptr_info(const void*, jemalloc_ptr_info_t*);
 
 #    define MALLOC_DECL(name, return_type, ...) \
@@ -155,6 +156,14 @@ struct DummyArenaAllocator {
   static void moz_dispose_arena(arena_id_t) {}
 
   static void moz_set_max_dirty_page_modifier(int32_t) {}
+
+  static bool moz_enable_deferred_purge(bool aEnable) { return false; }
+
+  static may_purge_now_result_t moz_may_purge_now(
+      bool aPeekOnly, uint32_t aReuseGraceMS,
+      const mozilla::Maybe<std::function<bool()>>& aKeepGoing) {
+    return may_purge_now_result_t::Done;
+  }
 
 #define MALLOC_DECL(name, return_type, ...)                 \
   static return_type moz_arena_##name(                      \

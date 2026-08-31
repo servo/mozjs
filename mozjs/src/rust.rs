@@ -7,70 +7,70 @@
 use std::cell::Cell;
 use std::char;
 use std::default::Default;
-use std::ffi;
-use std::ffi::CStr;
+use std::ffi::{c_char, c_void, CStr, CString};
 use std::marker::PhantomData;
+use std::mem;
 use std::mem::MaybeUninit;
-use std::ops::{Deref, DerefMut};
-use std::ptr;
+use std::ops::{ControlFlow, Deref, DerefMut};
+use std::ptr::{self, NonNull};
 use std::slice;
 use std::str;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use self::wrappers2::{
+    BuildStackString, CaptureCurrentStack, CreateRootedIdVector, CreateRootedObjectVector,
+    JS_DefineFunctions, JS_DefineProperties, JS_WrapObject, JS_WrapValue,
+    StackGCVectorStringAtIndex, StackGCVectorStringLength, StackGCVectorValueAtIndex,
+    StackGCVectorValueLength, ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow,
+    ToUint32Slow, ToUint64Slow,
+};
 use crate::consts::{JSCLASS_GLOBAL_SLOT_COUNT, JSCLASS_RESERVED_SLOTS_MASK};
 use crate::consts::{JSCLASS_IS_DOMJSCLASS, JSCLASS_IS_GLOBAL};
-use crate::conversions::jsstr_to_string;
 use crate::default_heapsize;
-pub use crate::gc::Traceable as Trace;
 pub use crate::gc::*;
 use crate::glue::AppendToRootedObjectVector;
-use crate::glue::{CreateRootedIdVector, CreateRootedObjectVector};
-use crate::glue::{
-    DeleteCompileOptions, DeleteRootedObjectVector, DescribeScriptedCaller, DestroyRootedIdVector,
-};
-use crate::glue::{
-    GetIdVectorAddress, GetObjectVectorAddress, NewCompileOptions, SliceRootedIdVector,
-};
+use crate::glue::{DeleteCompileOptions, DeleteRootedObjectVector, DestroyRootedIdVector};
+use crate::glue::{DeleteJSAutoStructuredCloneBuffer, NewJSAutoStructuredCloneBuffer};
+use crate::glue::{GetIdVectorAddress, GetObjectVectorAddress, SliceRootedIdVector};
 use crate::jsapi;
 use crate::jsapi::glue::{DeleteRealmOptions, JS_Init, JS_NewRealmOptions};
-use crate::jsapi::js::frontend::CompilationStencil;
+use crate::jsapi::js;
+use crate::jsapi::js::frontend::InitialStencilAndDelazifications;
 use crate::jsapi::mozilla::Utf8Unit;
 use crate::jsapi::shadow::BaseShape;
 use crate::jsapi::HandleObjectVector as RawHandleObjectVector;
-use crate::jsapi::HandleValue as RawHandleValue;
 use crate::jsapi::JS_AddExtraGCRootsTracer;
 use crate::jsapi::MutableHandleIdVector as RawMutableHandleIdVector;
 use crate::jsapi::OwningCompileOptions_for_fc;
+use crate::jsapi::StackFormat;
 use crate::jsapi::{already_AddRefed, jsid};
-use crate::jsapi::{BuildStackString, CaptureCurrentStack, StackFormat};
-use crate::jsapi::{
-    DeleteOwningCompileOptions, OwningCompileOptions, PersistentRootedObjectVector,
-    ReadOnlyCompileOptions, RootingContext,
-};
-use crate::jsapi::{Evaluate2, HandleValueArray, StencilRelease};
+use crate::jsapi::{BorrowedErrorReport, Rooted};
+use crate::jsapi::{DeleteOwningCompileOptions, OwningCompileOptions};
+use crate::jsapi::{HandleValueArray, StencilRelease};
 use crate::jsapi::{InitSelfHostedCode, IsWindowSlow};
-use crate::jsapi::{
-    JSAutoRealm, JS_SetGCParameter, JS_SetNativeStackQuota, JS_WrapObject, JS_WrapValue,
-};
+use crate::jsapi::{JSAutoStructuredCloneBuffer, JSStructuredCloneCallbacks, StructuredCloneScope};
 use crate::jsapi::{JSClass, JSClassOps, JSContext, Realm, JSCLASS_RESERVED_SLOTS_SHIFT};
 use crate::jsapi::{JSErrorReport, JSFunctionSpec, JSGCParamKey};
 use crate::jsapi::{JSObject, JSPropertySpec, JSRuntime};
 use crate::jsapi::{JSString, Object, PersistentRootedIdVector};
-use crate::jsapi::{JS_DefineFunctions, JS_DefineProperties, JS_DestroyContext, JS_ShutDown};
-use crate::jsapi::{JS_EnumerateStandardClasses, JS_GetRuntime, JS_GlobalObjectTraceHook};
+use crate::jsapi::{JS_DestroyContext, JS_ShutDown};
+use crate::jsapi::{JS_EnumerateStandardClasses, JS_GlobalObjectTraceHook};
 use crate::jsapi::{JS_MayResolveStandardClass, JS_NewContext, JS_ResolveStandardClass};
 use crate::jsapi::{JS_RequestInterruptCallback, JS_RequestInterruptCallbackCanWait};
+use crate::jsapi::{JS_SetGCParameter, JS_SetNativeStackQuota};
 use crate::jsapi::{JS_StackCapture_AllFrames, JS_StackCapture_MaxFrames};
+use crate::jsapi::{PersistentRootedObjectVector, ReadOnlyCompileOptions, RootingContext};
+use crate::jsapi::{RootedObject, RootedValue, ToWindowProxyIfWindowSlow};
 use crate::jsapi::{SetWarningReporter, SourceText, ToBooleanSlow};
-use crate::jsapi::{ToInt32Slow, ToInt64Slow, ToNumberSlow, ToStringSlow, ToUint16Slow};
-use crate::jsapi::{ToUint32Slow, ToUint64Slow, ToWindowProxyIfWindowSlow};
-use crate::jsval::ObjectValue;
+use crate::jsval::{JSVal, ObjectValue, UndefinedValue};
 use crate::offthread::FrontendContext;
 use crate::panic::maybe_resume_unwind;
-use lazy_static::lazy_static;
+use crate::realm::AutoRealm;
 use log::{debug, warn};
+use mozjs_sys::jsapi::JS::SavedFrameResult;
 pub use mozjs_sys::jsgc::{GCMethods, IntoHandle, IntoMutableHandle};
+pub use mozjs_sys::trace::Traceable as Trace;
 
 use crate::rooted;
 
@@ -153,7 +153,7 @@ impl Drop for RealmOptions {
     }
 }
 
-thread_local!(static CONTEXT: Cell<*mut JSContext> = Cell::new(ptr::null_mut()));
+thread_local!(static CONTEXT: Cell<Option<NonNull<JSContext>>> = Cell::new(None));
 
 #[derive(PartialEq)]
 enum EngineState {
@@ -163,9 +163,7 @@ enum EngineState {
     ShutDown,
 }
 
-lazy_static! {
-    static ref ENGINE_STATE: Mutex<EngineState> = Mutex::new(EngineState::Uninitialized);
-}
+static ENGINE_STATE: Mutex<EngineState> = Mutex::new(EngineState::Uninitialized);
 
 #[derive(Debug)]
 pub enum JSEngineError {
@@ -284,8 +282,8 @@ unsafe impl Send for ParentRuntime {}
 
 /// A wrapper for the `JSContext` structure in SpiderMonkey.
 pub struct Runtime {
-    /// Raw pointer to the underlying SpiderMonkey context.
-    cx: *mut JSContext,
+    /// Safe SpiderMonkey context.
+    cx: crate::context::JSContext,
     /// The engine that this runtime is associated with.
     engine: JSEngineHandle,
     /// If this Runtime was created with a parent, this member exists to ensure
@@ -302,19 +300,21 @@ pub struct Runtime {
     /// An `Option` that holds the same pointer as `cx`.
     /// This is shared with all [`ThreadSafeJSContext`]s, so
     /// they can detect when it's destroyed on the main thread.
-    thread_safe_handle: Arc<RwLock<Option<*mut JSContext>>>,
+    thread_safe_handle: Arc<RwLock<Option<NonNull<JSContext>>>>,
 }
 
 impl Runtime {
     /// Get the `JSContext` for this thread.
-    pub fn get() -> *mut JSContext {
-        let cx = CONTEXT.with(|context| context.get());
-        assert!(!cx.is_null());
-        cx
+    ///
+    /// This will eventually be removed for in favour of [crate::context::JSContext]
+    pub fn get() -> Option<NonNull<JSContext>> {
+        CONTEXT.with(|context| context.get())
     }
 
     /// Create a [`ThreadSafeJSContext`] that can detect when this `Runtime` is destroyed.
     pub fn thread_safe_js_context(&self) -> ThreadSafeJSContext {
+        // Existence of `ThreadSafeJSContext` does not actually break invariant of
+        // JSContext, because it can be used for limited subset of methods and they do not trigger GC
         ThreadSafeJSContext(self.thread_safe_handle.clone())
     }
 
@@ -349,41 +349,46 @@ impl Runtime {
 
     unsafe fn create(engine: JSEngineHandle, parent: Option<ParentRuntime>) -> Runtime {
         let parent_runtime = parent.as_ref().map_or(ptr::null_mut(), |r| r.parent);
-        let js_context = JS_NewContext(default_heapsize + (ChunkSize as u32), parent_runtime);
-        assert!(!js_context.is_null());
+        let js_context = NonNull::new(JS_NewContext(
+            default_heapsize + (ChunkSize as u32),
+            parent_runtime,
+        ))
+        .unwrap();
 
         // Unconstrain the runtime's threshold on nominal heap size, to avoid
         // triggering GC too often if operating continuously near an arbitrary
         // finite threshold. This leaves the maximum-JS_malloc-bytes threshold
         // still in effect to cause periodical, and we hope hygienic,
         // last-ditch GCs from within the GC's allocator.
-        JS_SetGCParameter(js_context, JSGCParamKey::JSGC_MAX_BYTES, u32::MAX);
+        JS_SetGCParameter(js_context.as_ptr(), JSGCParamKey::JSGC_MAX_BYTES, u32::MAX);
 
-        JS_AddExtraGCRootsTracer(js_context, Some(trace_traceables), ptr::null_mut());
+        JS_AddExtraGCRootsTracer(js_context.as_ptr(), Some(trace_traceables), ptr::null_mut());
 
         JS_SetNativeStackQuota(
-            js_context,
+            js_context.as_ptr(),
             STACK_QUOTA,
             STACK_QUOTA - SYSTEM_CODE_BUFFER,
             STACK_QUOTA - SYSTEM_CODE_BUFFER - TRUSTED_SCRIPT_BUFFER,
         );
 
         CONTEXT.with(|context| {
-            assert!(context.get().is_null());
-            context.set(js_context);
+            assert!(context.get().is_none());
+            context.set(Some(js_context));
         });
 
         #[cfg(target_pointer_width = "64")]
-        InitSelfHostedCode(js_context, [0u64; 2], None);
+        let cache = crate::jsapi::__BindgenOpaqueArray::<u64, 2>::default();
         #[cfg(target_pointer_width = "32")]
-        InitSelfHostedCode(js_context, [0u32; 2], None);
+        let cache = crate::jsapi::__BindgenOpaqueArray::<u32, 2>::default();
 
-        SetWarningReporter(js_context, Some(report_warning));
+        InitSelfHostedCode(js_context.as_ptr(), cache, None);
+
+        SetWarningReporter(js_context.as_ptr(), Some(report_warning));
 
         Runtime {
             engine,
             _parent_child_count: parent.map(|p| p.children_of_parent),
-            cx: js_context,
+            cx: crate::context::JSContext::from_ptr(js_context),
             outstanding_children: Arc::new(()),
             thread_safe_handle: Arc::new(RwLock::new(Some(js_context))),
         }
@@ -391,42 +396,46 @@ impl Runtime {
 
     /// Returns the `JSRuntime` object.
     pub fn rt(&self) -> *mut JSRuntime {
-        unsafe { JS_GetRuntime(self.cx) }
+        unsafe { wrappers2::JS_GetRuntime(self.cx_no_gc()) }
     }
 
     /// Returns the `JSContext` object.
-    pub fn cx(&self) -> *mut JSContext {
-        self.cx
+    pub fn cx<'rt>(&'rt mut self) -> &'rt mut crate::context::JSContext {
+        &mut self.cx
     }
 
-    pub fn evaluate_script(
-        &self,
-        glob: HandleObject,
-        script: &str,
-        filename: &str,
-        line_num: u32,
-        rval: MutableHandleValue,
-    ) -> Result<(), ()> {
-        debug!(
-            "Evaluating script from {} with content {}",
-            filename, script
-        );
+    /// Returns the `JSContext` object.
+    pub fn cx_no_gc<'rt>(&'rt self) -> &'rt crate::context::JSContext {
+        &self.cx
+    }
+}
 
-        let _ac = JSAutoRealm::new(self.cx(), glob.get());
-        let options = unsafe { CompileOptionsWrapper::new(self.cx(), filename, line_num) };
+pub fn evaluate_script(
+    cx: &mut crate::context::JSContext,
+    glob: HandleObject,
+    script: &str,
+    rval: MutableHandleValue,
+    options: CompileOptionsWrapper,
+) -> Result<(), ()> {
+    debug!(
+        "Evaluating script from {} with content {}",
+        options.filename(),
+        script
+    );
 
-        unsafe {
-            let mut source = transform_str_to_source_text(&script);
-            if !Evaluate2(self.cx(), options.ptr, &mut source, rval.into()) {
-                debug!("...err!");
-                maybe_resume_unwind();
-                Err(())
-            } else {
-                // we could return the script result but then we'd have
-                // to root it and so forth and, really, who cares?
-                debug!("...ok!");
-                Ok(())
-            }
+    let mut realm = AutoRealm::new_from_handle(cx, glob);
+
+    unsafe {
+        let mut source = transform_str_to_source_text(&script);
+        if !wrappers2::Evaluate2(&mut realm, options.ptr, &mut source, rval.into()) {
+            debug!("...err!");
+            maybe_resume_unwind();
+            Err(())
+        } else {
+            // we could return the script result but then we'd have
+            // to root it and so forth and, really, who cares?
+            debug!("...ok!");
+            Ok(())
         }
     }
 }
@@ -434,17 +443,15 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         self.thread_safe_handle.write().unwrap().take();
-        assert_eq!(
-            Arc::strong_count(&self.outstanding_children),
-            1,
+        assert!(
+            Arc::get_mut(&mut self.outstanding_children).is_some(),
             "This runtime still has live children."
         );
         unsafe {
-            JS_DestroyContext(self.cx);
+            JS_DestroyContext(self.cx.raw_cx());
 
             CONTEXT.with(|context| {
-                assert_eq!(context.get(), self.cx);
-                context.set(ptr::null_mut());
+                assert!(context.take().is_some());
             });
         }
     }
@@ -454,7 +461,7 @@ impl Drop for Runtime {
 /// `Send` and `Sync`. This should only ever expose operations that are marked as
 /// thread-safe by the SpiderMonkey API, ie ones that only atomic fields in JSContext.
 #[derive(Clone)]
-pub struct ThreadSafeJSContext(Arc<RwLock<Option<*mut JSContext>>>);
+pub struct ThreadSafeJSContext(Arc<RwLock<Option<NonNull<JSContext>>>>);
 
 unsafe impl Send for ThreadSafeJSContext {}
 unsafe impl Sync for ThreadSafeJSContext {}
@@ -464,9 +471,9 @@ impl ThreadSafeJSContext {
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback(&self) {
-        if let Some(&cx) = self.0.read().unwrap().as_ref() {
+        if let Some(cx) = self.0.read().unwrap().as_ref() {
             unsafe {
-                JS_RequestInterruptCallback(cx);
+                JS_RequestInterruptCallback(cx.as_ptr());
             }
         }
     }
@@ -475,9 +482,9 @@ impl ThreadSafeJSContext {
     /// This is thread-safe according to
     /// <https://searchfox.org/mozilla-central/rev/7a85a111b5f42cdc07f438e36f9597c4c6dc1d48/js/public/Interrupt.h#19>
     pub fn request_interrupt_callback_can_wait(&self) {
-        if let Some(&cx) = self.0.read().unwrap().as_ref() {
+        if let Some(cx) = self.0.read().unwrap().as_ref() {
             unsafe {
-                JS_RequestInterruptCallbackCanWait(cx);
+                JS_RequestInterruptCallbackCanWait(cx.as_ptr());
             }
         }
     }
@@ -497,7 +504,7 @@ pub struct RootedObjectVectorWrapper {
 }
 
 impl RootedObjectVectorWrapper {
-    pub fn new(cx: *mut JSContext) -> RootedObjectVectorWrapper {
+    pub fn new(cx: &mut crate::context::JSContext) -> RootedObjectVectorWrapper {
         RootedObjectVectorWrapper {
             ptr: unsafe { CreateRootedObjectVector(cx) },
         }
@@ -546,14 +553,42 @@ impl Drop for OwningCompileOptionsWrapper {
 
 pub struct CompileOptionsWrapper {
     pub ptr: *mut ReadOnlyCompileOptions,
+    filename: CString,
 }
 
 impl CompileOptionsWrapper {
-    pub unsafe fn new(cx: *mut JSContext, filename: &str, line: u32) -> Self {
-        let filename_cstr = ffi::CString::new(filename.as_bytes()).unwrap();
-        let ptr = NewCompileOptions(cx, filename_cstr.as_ptr(), line);
+    pub fn new(cx: &crate::context::JSContext, filename: CString, line: u32) -> Self {
+        let ptr = unsafe { wrappers2::NewCompileOptions(cx, filename.as_ptr(), line) };
         assert!(!ptr.is_null());
-        Self { ptr }
+        Self { ptr, filename }
+    }
+
+    pub fn filename(&self) -> &str {
+        self.filename.to_str().expect("Guaranteed by new")
+    }
+
+    pub fn set_introduction_type(&mut self, introduction_type: &'static CStr) {
+        unsafe {
+            (*self.ptr)._base.introductionType = introduction_type.as_ptr();
+        }
+    }
+
+    pub fn set_muted_errors(&mut self, muted_errors: bool) {
+        unsafe {
+            (*self.ptr)._base.mutedErrors_ = muted_errors;
+        }
+    }
+
+    pub fn set_is_run_once(&mut self, is_run_once: bool) {
+        unsafe {
+            (*self.ptr).isRunOnce = is_run_once;
+        }
+    }
+
+    pub fn set_no_script_rval(&mut self, no_script_rval: bool) {
+        unsafe {
+            (*self.ptr).noScriptRval = no_script_rval;
+        }
     }
 }
 
@@ -563,8 +598,36 @@ impl Drop for CompileOptionsWrapper {
     }
 }
 
+pub struct JSAutoStructuredCloneBufferWrapper {
+    ptr: NonNull<JSAutoStructuredCloneBuffer>,
+}
+
+impl JSAutoStructuredCloneBufferWrapper {
+    pub unsafe fn new(
+        scope: StructuredCloneScope,
+        callbacks: *const JSStructuredCloneCallbacks,
+    ) -> Self {
+        let raw_ptr = NewJSAutoStructuredCloneBuffer(scope, callbacks);
+        Self {
+            ptr: NonNull::new(raw_ptr).unwrap(),
+        }
+    }
+
+    pub fn as_raw_ptr(&self) -> *mut JSAutoStructuredCloneBuffer {
+        self.ptr.as_ptr()
+    }
+}
+
+impl Drop for JSAutoStructuredCloneBufferWrapper {
+    fn drop(&mut self) {
+        unsafe {
+            DeleteJSAutoStructuredCloneBuffer(self.ptr.as_ptr());
+        }
+    }
+}
+
 pub struct Stencil {
-    inner: already_AddRefed<CompilationStencil>,
+    inner: already_AddRefed<InitialStencilAndDelazifications>,
 }
 
 unsafe impl Send for Stencil {}
@@ -581,7 +644,7 @@ impl Drop for Stencil {
 }
 
 impl Deref for Stencil {
-    type Target = *mut CompilationStencil;
+    type Target = *mut InitialStencilAndDelazifications;
 
     fn deref(&self) -> &Self::Target {
         &self.inner.mRawPtr
@@ -593,7 +656,7 @@ impl Stencil {
         self.inner.mRawPtr.is_null()
     }
 
-    pub unsafe fn from_raw(inner: already_AddRefed<CompilationStencil>) -> Self {
+    pub unsafe fn from_raw(inner: already_AddRefed<InitialStencilAndDelazifications>) -> Self {
         Self { inner }
     }
 }
@@ -603,7 +666,7 @@ impl Stencil {
 
 #[inline]
 pub unsafe fn ToBoolean(v: HandleValue) -> bool {
-    let val = *v.ptr;
+    let val = *v.ptr.as_ptr();
 
     if val.is_boolean() {
         return val.to_boolean();
@@ -630,14 +693,14 @@ pub unsafe fn ToBoolean(v: HandleValue) -> bool {
 }
 
 #[inline]
-pub unsafe fn ToNumber(cx: *mut JSContext, v: HandleValue) -> Result<f64, ()> {
-    let val = *v.ptr;
+pub unsafe fn ToNumber(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<f64, ()> {
+    let val = *v.ptr.as_ptr();
     if val.is_number() {
         return Ok(val.to_number());
     }
 
     let mut out = Default::default();
-    if ToNumberSlow(cx, v.into_handle(), &mut out) {
+    if ToNumberSlow(cx, v, &mut out) {
         Ok(out)
     } else {
         Err(())
@@ -646,11 +709,11 @@ pub unsafe fn ToNumber(cx: *mut JSContext, v: HandleValue) -> Result<f64, ()> {
 
 #[inline]
 unsafe fn convert_from_int32<T: Default + Copy>(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     v: HandleValue,
-    conv_fn: unsafe extern "C" fn(*mut JSContext, RawHandleValue, *mut T) -> bool,
+    conv_fn: unsafe fn(&mut crate::context::JSContext, HandleValue, *mut T) -> bool,
 ) -> Result<T, ()> {
-    let val = *v.ptr;
+    let val = *v.ptr.as_ptr();
     if val.is_int32() {
         let intval: i64 = val.to_int32() as i64;
         // TODO: do something better here that works on big endian
@@ -659,7 +722,7 @@ unsafe fn convert_from_int32<T: Default + Copy>(
     }
 
     let mut out = Default::default();
-    if conv_fn(cx, v.into(), &mut out) {
+    if conv_fn(cx, v, &mut out) {
         Ok(out)
     } else {
         Err(())
@@ -667,33 +730,33 @@ unsafe fn convert_from_int32<T: Default + Copy>(
 }
 
 #[inline]
-pub unsafe fn ToInt32(cx: *mut JSContext, v: HandleValue) -> Result<i32, ()> {
+pub unsafe fn ToInt32(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<i32, ()> {
     convert_from_int32::<i32>(cx, v, ToInt32Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint32(cx: *mut JSContext, v: HandleValue) -> Result<u32, ()> {
+pub unsafe fn ToUint32(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u32, ()> {
     convert_from_int32::<u32>(cx, v, ToUint32Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint16(cx: *mut JSContext, v: HandleValue) -> Result<u16, ()> {
+pub unsafe fn ToUint16(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u16, ()> {
     convert_from_int32::<u16>(cx, v, ToUint16Slow)
 }
 
 #[inline]
-pub unsafe fn ToInt64(cx: *mut JSContext, v: HandleValue) -> Result<i64, ()> {
+pub unsafe fn ToInt64(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<i64, ()> {
     convert_from_int32::<i64>(cx, v, ToInt64Slow)
 }
 
 #[inline]
-pub unsafe fn ToUint64(cx: *mut JSContext, v: HandleValue) -> Result<u64, ()> {
+pub unsafe fn ToUint64(cx: &mut crate::context::JSContext, v: HandleValue) -> Result<u64, ()> {
     convert_from_int32::<u64>(cx, v, ToUint64Slow)
 }
 
 #[inline]
-pub unsafe fn ToString(cx: *mut JSContext, v: HandleValue) -> *mut JSString {
-    let val = *v.ptr;
+pub unsafe fn ToString(cx: &mut crate::context::JSContext, v: HandleValue) -> *mut JSString {
+    let val = *v.ptr.as_ptr();
     if val.is_string() {
         return val.to_string();
     }
@@ -741,8 +804,8 @@ pub unsafe extern "C" fn report_warning(_cx: *mut JSContext, report: *mut JSErro
 pub struct IdVector(*mut PersistentRootedIdVector);
 
 impl IdVector {
-    pub unsafe fn new(cx: *mut JSContext) -> IdVector {
-        let vector = CreateRootedIdVector(cx);
+    pub fn new(cx: &mut crate::context::JSContext) -> IdVector {
+        let vector = unsafe { CreateRootedIdVector(cx) };
         assert!(!vector.is_null());
         IdVector(vector)
     }
@@ -785,10 +848,9 @@ impl Deref for IdVector {
 ///
 /// # Safety
 ///
-/// - `cx` must be valid.
 /// - This function calls into unaudited C++ code.
 pub unsafe fn define_methods(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     obj: HandleObject,
     methods: &'static [JSFunctionSpec],
 ) -> Result<(), ()> {
@@ -811,7 +873,7 @@ pub unsafe fn define_methods(
         }
     });
 
-    JS_DefineFunctions(cx, obj.into(), methods.as_ptr()).to_result()
+    JS_DefineFunctions(cx, obj, methods.as_ptr()).to_result()
 }
 
 /// Defines attributes on `obj`. The last entry of `properties` must contain
@@ -827,10 +889,9 @@ pub unsafe fn define_methods(
 ///
 /// # Safety
 ///
-/// - `cx` must be valid.
 /// - This function calls into unaudited C++ code.
 pub unsafe fn define_properties(
-    cx: *mut JSContext,
+    cx: &mut crate::context::JSContext,
     obj: HandleObject,
     properties: &'static [JSPropertySpec],
 ) -> Result<(), ()> {
@@ -841,7 +902,7 @@ pub unsafe fn define_properties(
         }
     });
 
-    JS_DefineProperties(cx, obj.into(), properties.as_ptr()).to_result()
+    JS_DefineProperties(cx, obj, properties.as_ptr()).to_result()
 }
 
 static SIMPLE_GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
@@ -859,7 +920,7 @@ static SIMPLE_GLOBAL_CLASS_OPS: JSClassOps = JSClassOps {
 
 /// This is a simple `JSClass` for global objects, primarily intended for tests.
 pub static SIMPLE_GLOBAL_CLASS: JSClass = JSClass {
-    name: b"Global\0" as *const u8 as *const _,
+    name: c"Global".as_ptr(),
     flags: JSCLASS_IS_GLOBAL
         | ((JSCLASS_GLOBAL_SLOT_COUNT & JSCLASS_RESERVED_SLOTS_MASK)
             << JSCLASS_RESERVED_SLOTS_SHIFT),
@@ -927,38 +988,44 @@ pub unsafe fn try_to_outerize_object(mut rval: MutableHandleObject) {
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object(cx: *mut JSContext, obj: MutableHandleObject) {
-    if get_object_realm(*obj) != get_context_realm(cx) {
-        assert!(JS_WrapObject(cx, obj.into()));
+pub unsafe fn maybe_wrap_object(cx: &mut crate::context::JSContext, mut obj: MutableHandleObject) {
+    if get_object_realm(*obj) != get_context_realm(cx.raw_cx()) {
+        assert!(JS_WrapObject(cx, obj.reborrow()));
     }
     try_to_outerize_object(obj);
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub unsafe fn maybe_wrap_object_value(
+    cx: &mut crate::context::JSContext,
+    rval: MutableHandleValue,
+) {
     assert!(rval.is_object());
     let obj = rval.to_object();
-    if get_object_realm(obj) != get_context_realm(cx) {
-        assert!(JS_WrapValue(cx, rval.into()));
+    if get_object_realm(obj) != get_context_realm(cx.raw_cx()) {
+        assert!(JS_WrapValue(cx, rval));
     } else if is_dom_object(obj) {
         try_to_outerize(rval);
     }
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_object_or_null_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub fn maybe_wrap_object_or_null_value(
+    cx: &mut crate::context::JSContext,
+    rval: MutableHandleValue,
+) {
     assert!(rval.is_object_or_null());
     if !rval.is_null() {
-        maybe_wrap_object_value(cx, rval);
+        unsafe { maybe_wrap_object_value(cx, rval) };
     }
 }
 
 #[inline]
-pub unsafe fn maybe_wrap_value(cx: *mut JSContext, rval: MutableHandleValue) {
+pub fn maybe_wrap_value(cx: &mut crate::context::JSContext, rval: MutableHandleValue) {
     if rval.is_string() {
-        assert!(JS_WrapValue(cx, rval.into()));
+        assert!(unsafe { JS_WrapValue(cx, rval) });
     } else if rval.is_object() {
-        maybe_wrap_object_value(cx, rval);
+        unsafe { maybe_wrap_object_value(cx, rval) };
     }
 }
 
@@ -997,14 +1064,16 @@ pub struct ScriptedCaller {
     pub col: u32,
 }
 
-pub unsafe fn describe_scripted_caller(cx: *mut JSContext) -> Result<ScriptedCaller, ()> {
+pub fn describe_scripted_caller(cx: &crate::context::JSContext) -> Result<ScriptedCaller, ()> {
     let mut buf = [0; 1024];
     let mut line = 0;
     let mut col = 0;
-    if !DescribeScriptedCaller(cx, buf.as_mut_ptr(), buf.len(), &mut line, &mut col) {
+    if unsafe {
+        !wrappers2::DescribeScriptedCaller(cx, buf.as_mut_ptr(), buf.len(), &mut line, &mut col)
+    } {
         return Err(());
     }
-    let filename = CStr::from_ptr((&buf) as *const _ as *const _);
+    let filename = unsafe { CStr::from_ptr(buf.as_ptr()) };
     Ok(ScriptedCaller {
         filename: String::from_utf8_lossy(filename.to_bytes()).into_owned(),
         line,
@@ -1012,14 +1081,63 @@ pub unsafe fn describe_scripted_caller(cx: *mut JSContext) -> Result<ScriptedCal
     })
 }
 
+pub struct ErrorInfo {
+    pub message: String,
+    pub filename: String,
+    pub line: u32,
+    pub col: u32,
+}
+
+unsafe extern "C" fn fill_string_callback(ptr: *const c_char, len: usize, target: *mut c_void) {
+    assert!(!ptr.is_null());
+    let target = &mut *(target as *mut String);
+
+    let slice = slice::from_raw_parts(ptr as *const u8, len);
+    target.push_str(str::from_utf8_unchecked(slice));
+}
+
+/// Retrieve error info from the pending exception stack, by clearing it.
+/// Return None if there isn't one or if it is a warning.
+pub fn error_info_from_exception_stack(
+    cx: &mut crate::context::JSContext,
+    rval: MutableHandleValue,
+) -> Option<ErrorInfo> {
+    let mut message = String::new();
+    let mut filename = String::new();
+
+    let mut line = 0;
+    let mut col = 0;
+
+    unsafe {
+        if !wrappers2::PendingExceptionStackInfo(
+            cx,
+            Some(fill_string_callback),
+            &raw mut message as *mut c_void,
+            &raw mut filename as *mut c_void,
+            &mut line,
+            &mut col,
+            rval,
+        ) {
+            return None;
+        }
+    }
+
+    Some(ErrorInfo {
+        message,
+        filename,
+        line,
+        col,
+    })
+}
+
 pub struct CapturedJSStack<'a> {
-    cx: *mut JSContext,
+    cx: &'a mut crate::context::JSContext,
     stack: RootedGuard<'a, *mut JSObject>,
 }
 
 impl<'a> CapturedJSStack<'a> {
     pub unsafe fn new(
-        cx: *mut JSContext,
+        cx: &'a mut crate::context::JSContext,
         mut guard: RootedGuard<'a, *mut JSObject>,
         max_frame_count: Option<u32>,
     ) -> Option<Self> {
@@ -1030,125 +1148,349 @@ impl<'a> CapturedJSStack<'a> {
         };
         let ref mut stack_capture = stack_capture.assume_init();
 
-        if !CaptureCurrentStack(cx, guard.handle_mut().raw(), stack_capture) {
+        if !CaptureCurrentStack(cx, guard.handle_mut(), stack_capture, HandleObject::null()) {
             None
         } else {
             Some(CapturedJSStack { cx, stack: guard })
         }
     }
 
-    pub fn as_string(&self, indent: Option<usize>, format: StackFormat) -> Option<String> {
-        unsafe {
-            let stack_handle = self.stack.handle();
-            rooted!(in(self.cx) let mut js_string = ptr::null_mut::<JSString>());
-            let mut string_handle = js_string.handle_mut();
+    pub fn as_string(&mut self, indent: Option<usize>, format: StackFormat) -> Option<String> {
+        let stack_handle = self.stack.handle();
+        rooted!(&in(self.cx) let mut js_string = ptr::null_mut::<JSString>());
 
+        unsafe {
             if !BuildStackString(
                 self.cx,
                 ptr::null_mut(),
-                stack_handle.into(),
-                string_handle.raw(),
+                stack_handle,
+                js_string.handle_mut(),
                 indent.unwrap_or(0),
                 format,
             ) {
                 return None;
             }
 
-            Some(jsstr_to_string(self.cx, string_handle.get()))
+            Some(crate::conversions::jsstr_to_string(
+                self.cx,
+                NonNull::new(js_string.get())?,
+            ))
+        }
+    }
+
+    /// Executes the provided closure for each frame on the js stack
+    pub fn for_each_stack_frame<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut crate::context::JSContext, Handle<*mut JSObject>),
+    {
+        rooted!(&in(self.cx) let mut current_element = self.stack.clone());
+        rooted!(&in(self.cx) let mut next_element = ptr::null_mut::<JSObject>());
+
+        loop {
+            f(self.cx, current_element.handle());
+
+            unsafe {
+                let result = wrappers2::GetSavedFrameParent(
+                    self.cx,
+                    ptr::null_mut(),
+                    current_element.handle(),
+                    next_element.handle_mut(),
+                    jsapi::SavedFrameSelfHosted::Include,
+                );
+
+                if result != SavedFrameResult::Ok || next_element.is_null() {
+                    return;
+                }
+            }
+            current_element.set(next_element.get());
         }
     }
 }
 
 #[macro_export]
 macro_rules! capture_stack {
-    (in($cx:expr) let $name:ident = with max depth($max_frame_count:expr)) => {
-        rooted!(in($cx) let mut __obj = ::std::ptr::null_mut());
+    (&in($cx:expr) let $name:ident = with max depth($max_frame_count:expr)) => {
+        rooted!(&in($cx) let mut __obj = ::std::ptr::null_mut());
         let $name = $crate::rust::CapturedJSStack::new($cx, __obj, Some($max_frame_count));
     };
-    (in($cx:expr) let $name:ident ) => {
-        rooted!(in($cx) let mut __obj = ::std::ptr::null_mut());
+    (&in($cx:expr) let $name:ident ) => {
+        rooted!(&in($cx) let mut __obj = ::std::ptr::null_mut());
         let $name = $crate::rust::CapturedJSStack::new($cx, __obj, None);
     }
 }
 
-/** Wrappers for JSAPI methods that should NOT be used.
- *
- * The wrapped methods are identical except that they accept Handle and MutableHandle arguments
- * that include lifetimes instead.
- *
- * They require MutableHandles to implement Copy. All code should migrate to jsapi_wrapped instead.
- * */
-pub mod wrappers {
+pub struct EnvironmentChain {
+    chain: *mut crate::jsapi::JS::EnvironmentChain,
+}
+
+impl EnvironmentChain {
+    pub fn new(
+        cx: &mut crate::context::JSContext,
+        support_unscopeables: crate::jsapi::JS::SupportUnscopables,
+    ) -> Self {
+        Self {
+            chain: unsafe { wrappers2::NewEnvironmentChain(cx, support_unscopeables) },
+        }
+    }
+
+    pub fn append(&self, obj: *mut JSObject) {
+        unsafe {
+            assert!(crate::jsapi::glue::AppendToEnvironmentChain(
+                self.chain, obj
+            ));
+        }
+    }
+
+    pub fn get(&self) -> *mut crate::jsapi::JS::EnvironmentChain {
+        self.chain
+    }
+}
+
+impl Drop for EnvironmentChain {
+    fn drop(&mut self) {
+        unsafe {
+            crate::jsapi::glue::DeleteEnvironmentChain(self.chain);
+        }
+    }
+}
+
+impl<'a> Handle<'a, StackGCVector<JSVal, js::TempAllocPolicy>> {
+    pub fn at(&'a self, index: u32) -> Option<Handle<'a, JSVal>> {
+        if index >= self.len() {
+            return None;
+        }
+        let handle =
+            unsafe { Handle::from_marked_location(StackGCVectorValueAtIndex(*self, index)) };
+        Some(handle)
+    }
+
+    pub fn len(&self) -> u32 {
+        unsafe { StackGCVectorValueLength(*self) }
+    }
+}
+
+impl<'a> Handle<'a, StackGCVector<*mut JSString, js::TempAllocPolicy>> {
+    pub fn at(&'a self, index: u32) -> Option<Handle<'a, *mut JSString>> {
+        if index >= self.len() {
+            return None;
+        }
+        let handle =
+            unsafe { Handle::from_marked_location(StackGCVectorStringAtIndex(*self, index)) };
+        Some(handle)
+    }
+
+    pub fn len(&self) -> u32 {
+        unsafe { StackGCVectorStringLength(*self) }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum ForOfIterationFailure<OtherError> {
+    ValueIsNotIterable,
+    /// There is a pending exception
+    JSFailed,
+    Other(OtherError),
+}
+
+impl<OtherError> From<OtherError> for ForOfIterationFailure<OtherError> {
+    fn from(value: OtherError) -> Self {
+        Self::Other(value)
+    }
+}
+
+/// Helper for running `for .. of` iteration from rust.
+///
+/// If `Ok()` is returned then the iteration completed without unexpected failures.
+///
+/// The callback returns `Err()` to indicate a pending exception or `Ok()` containing a boolean
+/// value that is `true` if the iterator should continue iterating.
+pub fn for_of<Context, Callback, OtherError>(
+    cx: &mut Context,
+    iterable: HandleValue<'_>,
+    mut callback: Callback,
+) -> Result<(), ForOfIterationFailure<OtherError>>
+where
+    Context: AsMut<crate::context::JSContext>,
+    Callback: FnMut(
+        &mut Context,
+        HandleValue<'_>,
+    ) -> Result<ControlFlow<()>, ForOfIterationFailure<OtherError>>,
+{
+    let raw_cx = unsafe { cx.as_mut().raw_cx() };
+
+    // Depending on the version of LLVM in use, bindgen can end up including
+    // a padding field in the ForOfIterator. To support multiple versions of
+    // LLVM that may not have the same fields as a result, we create an empty
+    // iterator instance and initialize a non-empty instance using the empty
+    // instance as a base value.
+    #[allow(unused_variables)]
+    let zero = unsafe { mem::zeroed() };
+    let mut iterator = jsapi::ForOfIterator {
+        cx_: raw_cx,
+        iterator: RootedObject::new_unrooted(ptr::null_mut()),
+        nextMethod: RootedValue::new_unrooted(JSVal { asBits_: 0 }),
+        index: ::std::u32::MAX, // NOT_ARRAY
+        ..zero
+    };
+
+    // This code would benefit from https://github.com/rust-lang/rust/issues/144426
+    struct IteratorRootGuard<'a> {
+        inner: &'a mut jsapi::ForOfIterator,
+    }
+
+    impl<'a> Drop for IteratorRootGuard<'a> {
+        fn drop(&mut self) {
+            // SAFETY: These values won't be used anymore
+            unsafe {
+                self.inner.iterator.remove_from_root_stack();
+                self.inner.nextMethod.remove_from_root_stack();
+            }
+        }
+    }
+    let guard = IteratorRootGuard {
+        inner: &mut iterator,
+    };
+    let iterator = &mut *guard.inner;
+
+    unsafe {
+        RootedObject::add_to_root_stack(&raw mut iterator.iterator, raw_cx);
+        RootedValue::add_to_root_stack(&raw mut iterator.nextMethod, raw_cx);
+    }
+
+    let success = unsafe {
+        iterator.init(
+            iterable.into_handle(),
+            jsapi::ForOfIterator_NonIterableBehavior::AllowNonIterable,
+        )
+    };
+    if !success {
+        return Err(ForOfIterationFailure::JSFailed);
+    }
+    if !iterator.is_iterable() {
+        return Err(ForOfIterationFailure::ValueIsNotIterable);
+    }
+
+    let mut done = false;
+    rooted!(&in(cx.as_mut()) let mut value = UndefinedValue());
+    loop {
+        if !unsafe { iterator.next(value.handle_mut().into(), &mut done) } {
+            return Err(ForOfIterationFailure::JSFailed);
+        }
+
+        if done {
+            break;
+        }
+
+        if callback(cx, value.handle())?.is_break() {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
+/// Helper for creating a `BorrowedErrorReport`
+///
+/// `BorrowedErrorReport` needs to be pinned and rooted.
+pub fn borrowed_error_report<F, R>(cx: &crate::context::JSContext, f: F) -> R
+where
+    F: FnOnce(&crate::context::JSContext, &mut BorrowedErrorReport) -> R,
+{
+    let mut report = BorrowedErrorReport {
+        owner_: Rooted::new_unrooted(ptr::null_mut()),
+        report_: ptr::null_mut(),
+    };
+    unsafe {
+        Rooted::add_to_root_stack(&mut report.owner_, cx.raw_cx_no_gc());
+    }
+    let result = f(cx, &mut report);
+    unsafe {
+        report.owner_.remove_from_root_stack();
+    }
+    result
+}
+
+/// Wrappers for JSAPI/glue methods that accept lifetimed [crate::rust::Handle] and [crate::rust::MutableHandle] arguments and [crate::context::JSContext]
+pub mod wrappers2 {
     macro_rules! wrap {
         // The invocation of @inner has the following form:
-        // @inner (input args) <> (accumulator) <> unparsed tokens
+        // @inner (input args) <> (arg signture accumulator) <> (arg expr accumulator) <> unparsed tokens
         // when `unparsed tokens == \eps`, accumulator contains the final result
-
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: Handle<$gentype>) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandle<$gentype:ty>, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandle<$gentype>) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: Handle, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: Handle, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: Handle) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandle, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandle, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandle) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleFunction , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleFunction , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleFunction) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleId , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleId) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleObject , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleObject) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleScript , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleScript , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleScript) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleString , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleString) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleSymbol , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleSymbol , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleSymbol) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: HandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: HandleValue , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: HandleValue) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleFunction , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleFunction , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleFunction) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleId , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleId) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleObject , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleObject) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleScript , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleScript , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleScript) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleString , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleString) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleSymbol , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleSymbol , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleSymbol) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg.into(),) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: MutableHandleValue) <> ($($arg_expr_acc,)* $arg.into(),) <> $($rest)*);
         };
-        (@inner $saved:tt <> ($($acc:expr,)*) <> $arg:ident: $type:ty, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($acc,)* $arg,) <> $($rest)*);
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: &mut JSContext , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: &mut JSContext) <> ($($arg_expr_acc,)* $arg.raw_cx(),) <> $($rest)*);
         };
-        (@inner ($module:tt: $func_name:ident ($($args:tt)*) -> $outtype:ty) <> ($($argexprs:expr,)*) <> ) => {
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: &JSContext , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: &JSContext) <> ($($arg_expr_acc,)* $arg.raw_cx_no_gc(),) <> $($rest)*);
+        };
+        // functions that take *const AutoRequireNoGC already have &JSContext, so we can remove this mareker argument
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: *const AutoRequireNoGC , $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)*) <> ($($arg_expr_acc,)* ::std::ptr::null(),) <> $($rest)*);
+        };
+        (@inner $saved:tt <> ($($arg_sig_acc:tt)*) <> ($($arg_expr_acc:expr,)*) <> $arg:ident: $type:ty, $($rest:tt)*) => {
+            wrap!(@inner $saved <> ($($arg_sig_acc)* , $arg: $type) <> ($($arg_expr_acc,)* $arg,) <> $($rest)*);
+        };
+        (@inner ($module:tt: $func_name:ident -> $outtype:ty) <> (, $($args:tt)*) <> ($($argexprs:expr,)*) <> ) => {
             #[inline]
             pub unsafe fn $func_name($($args)*) -> $outtype {
                 $module::$func_name($($argexprs),*)
             }
         };
         ($module:tt: pub fn $func_name:ident($($args:tt)*) -> $outtype:ty) => {
-            wrap!(@inner ($module: $func_name ($($args)*) -> $outtype) <> () <> $($args)* ,);
+            wrap!(@inner ($module: $func_name -> $outtype) <> () <> () <> $($args)* ,);
         };
         ($module:tt: pub fn $func_name:ident($($args:tt)*)) => {
             wrap!($module: pub fn $func_name($($args)*) -> ());
@@ -1156,168 +1498,24 @@ pub mod wrappers {
     }
 
     use super::*;
-    use crate::glue;
-    use crate::glue::EncodedStringCallback;
-    use crate::jsapi;
-    use crate::jsapi::jsid;
-    use crate::jsapi::mozilla::Utf8Unit;
-    use crate::jsapi::BigInt;
-    use crate::jsapi::CallArgs;
-    use crate::jsapi::CloneDataPolicy;
-    use crate::jsapi::ColumnNumberOneOrigin;
-    use crate::jsapi::CompartmentTransplantCallback;
-    use crate::jsapi::JSONParseHandler;
-    use crate::jsapi::Latin1Char;
-    use crate::jsapi::PropertyKey;
-    use crate::jsapi::TaggedColumnNumberOneOrigin;
-    //use jsapi::DynamicImportStatus;
-    use crate::jsapi::ESClass;
-    use crate::jsapi::ExceptionStackBehavior;
-    use crate::jsapi::ForOfIterator;
-    use crate::jsapi::ForOfIterator_NonIterableBehavior;
-    use crate::jsapi::HandleObjectVector;
-    use crate::jsapi::InstantiateOptions;
-    use crate::jsapi::JSClass;
-    use crate::jsapi::JSErrorReport;
-    use crate::jsapi::JSExnType;
-    use crate::jsapi::JSFunctionSpecWithHelp;
-    use crate::jsapi::JSJitInfo;
-    use crate::jsapi::JSONWriteCallback;
-    use crate::jsapi::JSPrincipals;
-    use crate::jsapi::JSPropertySpec;
-    use crate::jsapi::JSPropertySpec_Name;
-    use crate::jsapi::JSProtoKey;
-    use crate::jsapi::JSScript;
-    use crate::jsapi::JSStructuredCloneData;
-    use crate::jsapi::JSType;
-    use crate::jsapi::ModuleErrorBehaviour;
-    use crate::jsapi::MutableHandleIdVector;
-    use crate::jsapi::PromiseState;
-    use crate::jsapi::PromiseUserInputEventHandlingState;
-    use crate::jsapi::ReadOnlyCompileOptions;
-    use crate::jsapi::ReadableStreamMode;
-    use crate::jsapi::ReadableStreamReaderMode;
-    use crate::jsapi::ReadableStreamUnderlyingSource;
-    use crate::jsapi::Realm;
-    use crate::jsapi::RefPtr;
-    use crate::jsapi::RegExpFlags;
-    use crate::jsapi::ScriptEnvironmentPreparer_Closure;
-    use crate::jsapi::SourceText;
-    use crate::jsapi::StackCapture;
-    use crate::jsapi::StructuredCloneScope;
-    use crate::jsapi::Symbol;
-    use crate::jsapi::SymbolCode;
-    use crate::jsapi::TwoByteChars;
-    use crate::jsapi::UniqueChars;
-    use crate::jsapi::Value;
-    use crate::jsapi::WasmModule;
-    use crate::jsapi::{ElementAdder, IsArrayAnswer, PropertyDescriptor};
-    use crate::jsapi::{JSContext, JSFunction, JSNative, JSObject, JSString};
-    use crate::jsapi::{
-        JSStructuredCloneCallbacks, JSStructuredCloneReader, JSStructuredCloneWriter,
+    use super::{
+        Handle, HandleFunction, HandleId, HandleObject, HandleScript, HandleString, HandleValue,
+        HandleValueArray, MutableHandle, MutableHandleId, MutableHandleObject, MutableHandleString,
+        MutableHandleValue, StackGCVector,
     };
-    use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
-    use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    include!("jsapi_wrappers.in");
-    include!("glue_wrappers.in");
-}
-
-/** Wrappers for JSAPI methods that accept lifetimed Handle and MutableHandle arguments.
- *
- * The wrapped methods are identical except that they accept Handle and MutableHandle arguments
- * that include lifetimes instead. Besides, they mutably borrow the mutable handles
- * instead of consuming/copying them.
- *
- * These wrappers are preferred, js::rust::wrappers should NOT be used.
- * */
-pub mod jsapi_wrapped {
-    macro_rules! wrap {
-        // The invocation of @inner has the following form:
-        // @inner (input args) <> (argument accumulator) <> (invocation accumulator) <> unparsed tokens
-        // when `unparsed tokens == \eps`, accumulator contains the final result
-
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: Handle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: Handle<$gentype> , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandle<$gentype:ty>, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandle<$gentype> , )  <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: Handle, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: Handle , )  <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandle, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandle , )  <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleFunction , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: HandleFunction , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: HandleId , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: HandleObject , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleScript , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: HandleScript , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: HandleString , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleSymbol , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: HandleSymbol , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: HandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: HandleValue , ) <> ($($acc,)* $arg.into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleFunction , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleFunction , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleId , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleId , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleObject , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleObject , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleScript , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleScript , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleString , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleString , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleSymbol , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleSymbol , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <> ($($acc:expr,)*) <> $arg:ident: MutableHandleValue , $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: &mut MutableHandleValue , ) <> ($($acc,)* (*$arg).into(),) <> $($rest)*);
-        };
-        (@inner $saved:tt <> ($($declargs:tt)*) <>  ($($acc:expr,)*) <> $arg:ident: $type:ty, $($rest:tt)*) => {
-            wrap!(@inner $saved <> ($($declargs)* $arg: $type,) <> ($($acc,)* $arg,) <> $($rest)*);
-        };
-        (@inner ($module:tt: $func_name:ident ($($args:tt)*) -> $outtype:ty) <> ($($declargs:tt)*) <> ($($argexprs:expr,)*) <> ) => {
-            #[inline]
-            pub unsafe fn $func_name($($declargs)*) -> $outtype {
-                $module::$func_name($($argexprs),*)
-            }
-        };
-        ($module:tt: pub fn $func_name:ident($($args:tt)*) -> $outtype:ty) => {
-            wrap!(@inner ($module: $func_name ($($args)*) -> $outtype) <> () <> () <> $($args)* ,);
-        };
-        ($module:tt: pub fn $func_name:ident($($args:tt)*)) => {
-            wrap!($module: pub fn $func_name($($args)*) -> ());
-        }
-    }
-
-    use super::*;
+    use crate::context::JSContext;
     use crate::glue;
-    use crate::glue::EncodedStringCallback;
+    use crate::glue::*;
     use crate::jsapi;
+    use crate::jsapi::js::TempAllocPolicy;
     use crate::jsapi::mozilla::Utf8Unit;
+    use crate::jsapi::mozilla::*;
     use crate::jsapi::BigInt;
     use crate::jsapi::CallArgs;
     use crate::jsapi::CloneDataPolicy;
-    use crate::jsapi::ColumnNumberOneOrigin;
     use crate::jsapi::CompartmentTransplantCallback;
     use crate::jsapi::ESClass;
+    use crate::jsapi::EnvironmentChain;
     use crate::jsapi::ExceptionStackBehavior;
     use crate::jsapi::ForOfIterator;
     use crate::jsapi::ForOfIterator_NonIterableBehavior;
@@ -1326,7 +1524,6 @@ pub mod jsapi_wrapped {
     use crate::jsapi::JSClass;
     use crate::jsapi::JSErrorReport;
     use crate::jsapi::JSExnType;
-    use crate::jsapi::JSFunctionSpec;
     use crate::jsapi::JSFunctionSpecWithHelp;
     use crate::jsapi::JSJitInfo;
     use crate::jsapi::JSONParseHandler;
@@ -1340,20 +1537,20 @@ pub mod jsapi_wrapped {
     use crate::jsapi::JSType;
     use crate::jsapi::Latin1Char;
     use crate::jsapi::ModuleErrorBehaviour;
+    use crate::jsapi::ModuleType;
     use crate::jsapi::MutableHandleIdVector;
     use crate::jsapi::PromiseState;
     use crate::jsapi::PromiseUserInputEventHandlingState;
     use crate::jsapi::PropertyKey;
     use crate::jsapi::ReadOnlyCompileOptions;
-    use crate::jsapi::ReadableStreamMode;
-    use crate::jsapi::ReadableStreamReaderMode;
-    use crate::jsapi::ReadableStreamUnderlyingSource;
     use crate::jsapi::Realm;
+    use crate::jsapi::RealmOptions;
     use crate::jsapi::RefPtr;
     use crate::jsapi::RegExpFlags;
     use crate::jsapi::ScriptEnvironmentPreparer_Closure;
     use crate::jsapi::SourceText;
     use crate::jsapi::StackCapture;
+    use crate::jsapi::Stencil;
     use crate::jsapi::StructuredCloneScope;
     use crate::jsapi::Symbol;
     use crate::jsapi::SymbolCode;
@@ -1362,13 +1559,48 @@ pub mod jsapi_wrapped {
     use crate::jsapi::UniqueChars;
     use crate::jsapi::Value;
     use crate::jsapi::WasmModule;
+    use crate::jsapi::*;
     use crate::jsapi::{ElementAdder, IsArrayAnswer, PropertyDescriptor};
-    use crate::jsapi::{JSContext, JSFunction, JSNative, JSObject, JSString};
+    use crate::jsapi::{JSFunction, JSNative, JSObject, JSString};
     use crate::jsapi::{
         JSStructuredCloneCallbacks, JSStructuredCloneReader, JSStructuredCloneWriter,
     };
     use crate::jsapi::{MallocSizeOf, ObjectOpResult, ObjectPrivateVisitor, TabSizes};
     use crate::jsapi::{SavedFrameResult, SavedFrameSelfHosted};
-    include!("jsapi_wrappers.in");
-    include!("glue_wrappers.in");
+    include!("jsapi2_wrappers.in.rs");
+    include!("glue2_wrappers.in.rs");
+
+    #[inline]
+    pub unsafe fn SetPropertyIgnoringNamedGetter(
+        cx: &mut JSContext,
+        obj: HandleObject,
+        id: HandleId,
+        v: HandleValue,
+        receiver: HandleValue,
+        ownDesc: Option<Handle<PropertyDescriptor>>,
+        result: *mut ObjectOpResult,
+    ) -> bool {
+        if let Some(ownDesc) = ownDesc {
+            let ownDesc = ownDesc.into();
+            jsapi::SetPropertyIgnoringNamedGetter(
+                cx.raw_cx(),
+                obj.into(),
+                id.into(),
+                v.into(),
+                receiver.into(),
+                &raw const ownDesc,
+                result,
+            )
+        } else {
+            jsapi::SetPropertyIgnoringNamedGetter(
+                cx.raw_cx(),
+                obj.into(),
+                id.into(),
+                v.into(),
+                receiver.into(),
+                ptr::null(),
+                result,
+            )
+        }
+    }
 }

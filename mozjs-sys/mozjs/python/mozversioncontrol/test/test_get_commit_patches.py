@@ -13,7 +13,7 @@ STEPS = {
         hg commit -m "FIRST PATCH"
         """,
         """
-        echo baz > baz
+        printf "baz\\r\\nqux" > baz
         hg add baz
         hg commit -m "SECOND PATCH"
         """,
@@ -25,10 +25,22 @@ STEPS = {
         git commit -m "FIRST PATCH"
         """,
         """
-        echo baz > baz
-        git add baz
+        printf "baz\\r\\nqux" > baz
+        git -c core.autocrlf=false add baz
         git commit -m "SECOND PATCH"
         """,
+    ],
+    "jj": [
+        """
+        jj new -m "FIRST PATCH"
+        echo bar >> bar
+        """,
+        # snapshot, since bug 1962245 suppresses automatic ones
+        """
+        jj new -m "SECOND PATCH"
+        printf "baz\\r\\nqux" > baz
+        jj log -n0
+       """,
     ],
 }
 
@@ -39,10 +51,10 @@ def test_get_commit_patches(repo):
 
     # Create some commits and note the SHAs.
     repo.execute_next_step()
-    nodes.append(vcs.head_ref)
+    nodes.append(vcs.head_rev)
 
     repo.execute_next_step()
-    nodes.append(vcs.head_ref)
+    nodes.append(vcs.head_rev)
 
     patches = vcs.get_commit_patches(nodes)
 
@@ -50,6 +62,8 @@ def test_get_commit_patches(repo):
     # Assert the patches are returned in the correct order.
     assert b"FIRST PATCH" in patches[0]
     assert b"SECOND PATCH" in patches[1]
+    # Assert the CRLF are correctly preserved.
+    assert b"baz\r\n" in patches[1]
 
 
 if __name__ == "__main__":

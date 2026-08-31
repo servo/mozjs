@@ -11,11 +11,8 @@ be called more than once.
 This module provides several pre-defined writers and writer factories for
 common cases.
 """
-import functools
-import six
 
-if six.PY2:
-    raise ImportError("download is only supported in Python 3")
+import functools
 
 from .aio import download as aio_download
 from .aio.asyncutils import ensureCoro, runAsync
@@ -80,11 +77,14 @@ def downloadArtifact(*, writerFactory, **kwargs):
     download.  Returns the content-type.
     """
     wrappedWriterFactory = _wrapSyncWriterFactory(writerFactory)
-    return runAsync(aio_download.downloadArtifact(writerFactory=wrappedWriterFactory, **kwargs))
+    return runAsync(
+        aio_download.downloadArtifact(writerFactory=wrappedWriterFactory, **kwargs)
+    )
 
 
 def _wrapSyncWriterFactory(writerFactory):
     """Modify the reader returned by readerFactory to have an async read."""
+
     @functools.wraps(writerFactory)
     async def wrappedFactory():
         writer = writerFactory()

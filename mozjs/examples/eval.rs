@@ -15,36 +15,40 @@
 
 use ::std::ptr;
 
-use mozjs::jsapi::*;
+use mozjs::jsapi::OnNewGlobalHookOption;
 use mozjs::jsval::UndefinedValue;
 use mozjs::rooted;
+use mozjs::rust::evaluate_script;
+use mozjs::rust::wrappers2::*;
+use mozjs::rust::CompileOptionsWrapper;
 use mozjs::rust::SIMPLE_GLOBAL_CLASS;
 use mozjs::rust::{JSEngine, RealmOptions, Runtime};
 
-fn run(rt: Runtime) {
+fn run(mut rt: Runtime) {
     let options = RealmOptions::default();
-    rooted!(in(rt.cx()) let global = unsafe {
+    rooted!(&in(rt.cx()) let global = unsafe {
         JS_NewGlobalObject(rt.cx(), &SIMPLE_GLOBAL_CLASS, ptr::null_mut(),
                            OnNewGlobalHookOption::FireOnNewGlobalHook,
                            &*options)
     });
 
     /* These should indicate source location for diagnostics. */
-    let filename: &'static str = "inline.js";
+    let filename = c"inline.js".to_owned();
     let lineno: u32 = 1;
 
     /*
      * The return value comes back here. If it could be a GC thing, you must add it to the
      * GC's "root set" with the rooted! macro.
      */
-    rooted!(in(rt.cx()) let mut rval = UndefinedValue());
+    rooted!(&in(rt.cx()) let mut rval = UndefinedValue());
 
     /*
      * Some example source in a string. This is equivalent to JS_EvaluateScript in C++.
      */
     let source: &'static str = "40 + 2";
 
-    let res = rt.evaluate_script(global.handle(), source, filename, lineno, rval.handle_mut());
+    let options = CompileOptionsWrapper::new(rt.cx_no_gc(), filename, lineno);
+    let res = evaluate_script(rt.cx(), global.handle(), source, rval.handle_mut(), options);
 
     if res.is_ok() {
         /* Should get a number back from the example source. */
@@ -56,7 +60,6 @@ fn run(rt: Runtime) {
 fn main() {
     let engine = JSEngine::init().expect("failed to initalize JS engine");
     let runtime = Runtime::new(engine.handle());
-    assert!(!runtime.cx().is_null(), "failed to create JSContext");
     run(runtime);
 }
 

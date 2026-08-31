@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2014 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +21,9 @@
 #include "js/ProfilingFrameIterator.h"
 #include "js/TypeDecls.h"
 
+#include "wasm/WasmCode.h"          // For CodeBlockKind
+#include "wasm/WasmCodegenTypes.h"  // for BytecodeOffsetSpan
+
 namespace js {
 
 namespace jit {
@@ -42,10 +43,13 @@ class Instance;
 class Instance;
 
 struct CallableOffsets;
+struct ImportOffsets;
 struct FuncOffsets;
 struct Offsets;
 class Frame;
 class FrameWithInstances;
+struct Handlers;
+class ContStack;
 
 using RegisterState = JS::ProfilingFrameIterator::RegisterState;
 
@@ -57,35 +61,92 @@ using RegisterState = JS::ProfilingFrameIterator::RegisterState;
 // JitFrameIter.
 
 class WasmFrameIter {
- public:
-  enum class Unwind { True, False };
+  //
+  // State that is constant for the entire wasm activation
+  //
 
- private:
-  jit::JitActivation* activation_;
-  const Code* code_;
-  const CodeRange* codeRange_;
-  unsigned lineOrBytecode_;
-  Frame* fp_;
-  Instance* instance_;
-  uint8_t* unwoundCallerFP_;
-  mozilla::Maybe<jit::FrameType> unwoundJitFrameType_;
-  Unwind unwind_;
-  void** unwoundAddressOfReturnAddress_;
-  uint8_t* resumePCinCurrentFrame_;
+  JSContext* cx_ = nullptr;
+  jit::JitActivation* activation_ = nullptr;
+  bool isLeavingFrames_ = false;
+  bool enableInlinedFrames_ = false;
+
+  //
+  // State that is updated for every frame
+  //
+
+  const Code* code_ = nullptr;
+  uint32_t funcIndex_ = UINT32_MAX;
+  uint32_t lineOrBytecode_ = UINT32_MAX;
+  BytecodeOffsetSpan inlinedCallerOffsets_;
+  Frame* fp_ = nullptr;
+  Instance* instance_ = nullptr;
+  // The address of the next instruction that will execute in this frame, once
+  // control returns to this frame.
+  uint8_t* resumePCinCurrentFrame_ = nullptr;
   // See wasm::TrapData for more information.
-  bool failedUnwindSignatureMismatch_;
-  bool stackSwitched_;
+  bool failedUnwindSignatureMismatch_ = false;
+  // Whether the current frame is on a different stack from the previous stack.
+  bool currentFrameStackSwitched_ = false;
+#ifdef ENABLE_WASM_JSPI
+  ContStack* contStack_ = nullptr;
+#endif
 
-  void popFrame();
+  //
+  // State that is found after we've unwound the entire wasm activation
+  //
+
+  // The address of the final wasm::Frame::returnAddress_. Only found once
+  // we've iterated over all wasm frames.
+  void** unwoundAddressOfReturnAddress_ = nullptr;
+  // The value of the final wasm::Frame::callerFP_. Only found once we've
+  // iterated over all wasm frames.
+  uint8_t* unwoundCallerFP_ = nullptr;
+  // Whether unwoundCallerFP_ is a JS JIT exit frame.
+  bool unwoundCallerFPIsJSJit_ = false;
+
+  // Pop the frame. `isLeavingFrame` indicates if we should update the
+  // JitActivation so that any other frame iteration doesn't see the frame we
+  // just popped. This is normally equal to `isLeavingFrames_`, but is
+  // different for the very first `popFrame` of a wasm exit frame.
+  void popFrame(bool isLeavingFrame);
 
  public:
   // See comment above this class definition.
   explicit WasmFrameIter(jit::JitActivation* activation, Frame* fp = nullptr);
-  WasmFrameIter(FrameWithInstances* fp, void* returnAddress);
-  const jit::JitActivation* activation() const { return activation_; }
-  void setUnwind(Unwind unwind) { unwind_ = unwind; }
+
+  // Iterate over frames from a known starting (instance, fp, ra).
+  WasmFrameIter(Instance* instance, Frame* fp, void* returnAddress);
+
+  // Cause this WasmFrameIter to remove every popped from its JitActivation so
+  // that any other frame iteration will not see it.
+  //
+  // This is a method instead of a parameter to the constructor because it
+  // needs to be enabled after FrameIter has already created the WasmFrameIter.
+  void setIsLeavingFrames() {
+    MOZ_ASSERT(activation_);
+    MOZ_ASSERT(!isLeavingFrames_);
+    isLeavingFrames_ = true;
+  }
+
+  // Visit inlined frames instead of only 'physical' frames. This is required
+  // to access source information.
+  void enableInlinedFrames() { enableInlinedFrames_ = true; }
+
+  // The JSContext all frames will be under.
+  JSContext* cx() const { return cx_; }
+
+  //
+  // Iteration methods
+  //
+
   void operator++();
   bool done() const;
+
+  //
+  // Source information about the current frame
+  //
+
+  bool hasSourceInfo() const;
   const char* filename() const;
   const char16_t* displayURL() const;
   bool mutedErrors() const;
@@ -93,20 +154,81 @@ class WasmFrameIter {
   unsigned lineOrBytecode() const;
   uint32_t funcIndex() const;
   unsigned computeLine(JS::TaggedColumnNumberOneOrigin* column) const;
-  const CodeRange* codeRange() const { return codeRange_; }
-  void** unwoundAddressOfReturnAddress() const;
-  bool debugEnabled() const;
-  DebugFrame* debugFrame() const;
-  jit::FrameType unwoundJitFrameType() const;
-  bool hasUnwoundJitFrame() const;
-  uint8_t* unwoundCallerFP() const { return unwoundCallerFP_; }
-  Frame* frame() const { return fp_; }
-  Instance* instance() const { return instance_; }
-  bool stackSwitched() const { return stackSwitched_; }
+
+  //
+  // Physical information about the current (not inlined) frame
+  //
+
+  // The instance that the function for this wasm frame is from.
+  Instance* instance() const {
+    MOZ_ASSERT(!done());
+    // Getting the instance always works even with inlining because we never
+    // inline across instances.
+    return instance_;
+  }
+
+  // The wasm function frame pointer.
+  Frame* frame() const {
+    MOZ_ASSERT(!done());
+    MOZ_ASSERT(!enableInlinedFrames_);
+    return fp_;
+  }
 
   // Returns the address of the next instruction that will execute in this
   // frame, once control returns to this frame.
-  uint8_t* resumePCinCurrentFrame() const;
+  uint8_t* resumePCinCurrentFrame() const {
+    MOZ_ASSERT(!done());
+    MOZ_ASSERT(!enableInlinedFrames_);
+    return resumePCinCurrentFrame_;
+  }
+
+  // Whether the current frame is on a different stack from the previous frame.
+  bool currentFrameStackSwitched() const {
+    MOZ_ASSERT(!done());
+    return currentFrameStackSwitched_;
+  }
+
+#ifdef ENABLE_WASM_JSPI
+  ContStack* contStack() const {
+    MOZ_ASSERT(!done());
+    return contStack_;
+  }
+#endif
+
+  //
+  // Debug information about the current frame
+  //
+
+  // Whether this frame has a debuggable wasm frame.
+  bool debugEnabled() const;
+
+  // The debuggable wasm frame, if any.
+  DebugFrame* debugFrame() const;
+
+  //
+  // Information for after we've unwound the entire wasm activation
+  //
+
+  // The address of the final wasm::Frame::returnAddress_.
+  void** unwoundAddressOfReturnAddress() const {
+    MOZ_ASSERT(done());
+    MOZ_ASSERT(unwoundAddressOfReturnAddress_);
+    return unwoundAddressOfReturnAddress_;
+  }
+
+  // The value of the final wasm::Frame::callerFP_.
+  uint8_t* unwoundCallerFP() const {
+    MOZ_ASSERT(done());
+    MOZ_ASSERT(unwoundCallerFP_);
+    return unwoundCallerFP_;
+  }
+
+  // Whether 'unwoundCallerFP' is for a JS JIT frame or not.
+  bool unwoundCallerFPIsJSJit() const {
+    MOZ_ASSERT(done());
+    MOZ_ASSERT_IF(unwoundCallerFPIsJSJit_, unwoundCallerFP_);
+    return unwoundCallerFPIsJSJit_;
+  }
 };
 
 enum class SymbolicAddress;
@@ -123,7 +245,8 @@ class ExitReason {
     ImportInterp,   // slow-path call into C++ Invoke()
     BuiltinNative,  // fast-path call directly into native C++ code
     Trap,           // call to trap handler
-    DebugTrap       // call to debug trap handler
+    DebugStub,      // call to debug stub
+    RequestTierUp   // call to request tier-2 compilation
   };
 
  private:
@@ -172,8 +295,17 @@ class ExitReason {
 // Iterates over the frames of a single wasm JitActivation, given an
 // asynchronously-profiled thread's state.
 class ProfilingFrameIterator {
+ public:
+  enum class Category {
+    Baseline,
+    Ion,
+    Other,
+  };
+
+ private:
   const Code* code_;
   const CodeRange* codeRange_;
+  Category category_;
   uint8_t* callerFP_;
   void* callerPC_;
   void* stackAddress_;
@@ -200,12 +332,6 @@ class ProfilingFrameIterator {
   ProfilingFrameIterator(const jit::JitActivation& activation,
                          const RegisterState& state);
 
-  enum Category {
-    Baseline,
-    Ion,
-    Other,
-  };
-
   void operator++();
 
   bool done() const {
@@ -226,22 +352,149 @@ class ProfilingFrameIterator {
   Category category() const;
 
   void* endStackAddress() const { return endStackAddress_; }
+
+  // Convert a CodeBlockKind to a Category.
+  static ProfilingFrameIterator::Category categoryFromCodeBlock(
+      CodeBlockKind kind) {
+    if (kind == CodeBlockKind::BaselineTier) {
+      return ProfilingFrameIterator::Category::Baseline;
+    }
+    if (kind == CodeBlockKind::OptimizedTier) {
+      return ProfilingFrameIterator::Category::Ion;
+    }
+    return ProfilingFrameIterator::Category::Other;
+  }
 };
+
+const char* ThunkedNativeToDescription(SymbolicAddress func);
 
 // Prologue/epilogue code generation
 
+void LoadActivation(jit::MacroAssembler& masm, jit::Register instance,
+                    jit::Register dest);
 void SetExitFP(jit::MacroAssembler& masm, ExitReason reason,
-               jit::Register scratch);
-void ClearExitFP(jit::MacroAssembler& masm, jit::Register scratch);
+               jit::Register activation, jit::Register scratch);
+void ClearExitFP(jit::MacroAssembler& masm, jit::Register activation);
 
-void GenerateExitPrologue(jit::MacroAssembler& masm, unsigned framePushed,
-                          ExitReason reason, CallableOffsets* offsets);
-void GenerateExitEpilogue(jit::MacroAssembler& masm, unsigned framePushed,
-                          ExitReason reason, CallableOffsets* offsets);
+#ifdef ENABLE_WASM_JSPI
+// [SMDOC] Wasm dynamic stack switches on 'exit'
+//
+// The SpiderMonkey codebase and embedders, shouldn't run on wasm continuation
+// stacks. Some code theoretically could work okay on an alternative stack, but
+// we want to be conservative and not assume that. This gives us flexibility to
+// use smaller stacks than the main stack and not worry about stack overflow.
+//
+// To ensure this, all wasm 'exits' from JIT to the VM are instrumented to
+// perform a dynamic check and switch to the main stack if they are currently
+// running on a wasm stack.
+//
+// This is done in the prologue of the exit, and reversed in the epilogue.
+//
+// If we're running on a cont stack, we switch SP to the main stack's SP,
+// but keep the FP pointing at the original FP on the incoming stack:
+//
+//   cont stack
+//  ┌────────────────┐
+//  │ Caller Args    │
+//  ├────────────────┤
+//  │ wasm::Frame    │
+//  └────────────────┘◄───── FP
+//
+//                           SP
+//   Main Stack               │
+//  ┌────────────────┐        │
+//  │ Previous       │        │
+//  │ Frames         │        │
+//  ├────────────────┤        │
+//  │                │        │
+//  │ framePushed()  │        │
+//  │ for Exit Stub  │        │
+//  │                │        │
+//  └────────────────┘◄───────┘
+//
+// If we're not running on a cont stack, nothing is done at all and
+// SP/FP are unchanged:
+//
+//   Main Stack
+//  ┌────────────────┐
+//  │ Caller Args    │
+//  ├────────────────┤
+//  │ wasm::Frame    │
+//  ├────────────────┤◄───── FP
+//  │                │       SP
+//  │ framePushed()  │        │
+//  │ for exit stub  │        │
+//  │                │        │
+//  └────────────────┘◄───────┘
+//
+// This 'split' function body lets the function still address all the incoming
+// arguments through FP, and it's own 'framePushed' through SP.
+//
+// However this means the SP/FP are no longer guaranteed to be contiguous (they
+// are in the main stack case, but we don't know that statically). So the
+// function body must not access the original frame or incoming arguments
+// through SP, or the 'framePushed' area through FP.
+void GenerateExitPrologueMainStackSwitch(jit::MacroAssembler& masm,
+                                         jit::Address savedStackSlots,
+                                         jit::Register instance,
+                                         jit::Register scratch1,
+                                         jit::Register scratch2,
+                                         jit::Register scratch3);
 
-void GenerateJitExitPrologue(jit::MacroAssembler& masm, unsigned framePushed,
-                             CallableOffsets* offsets);
-void GenerateJitExitEpilogue(jit::MacroAssembler& masm, unsigned framePushed,
+// Generate the dynamic switch back to the wasm cont stack we originally
+// were on. See "Wasm dynamic stack switches on 'exit'" for more information.
+//
+// NOTE: this doesn't actually switch SP back to the original SP. The caller
+// must do that through some method, such as setting SP := FP.
+void GenerateExitEpilogueMainStackReturn(jit::MacroAssembler& masm,
+                                         jit::Address savedStackSlots,
+                                         jit::Register instance,
+                                         jit::Register scratch1,
+                                         jit::Register scratch2);
+#endif
+
+enum class ExitFrameAlignment {
+  // Assume the stack was aligned to ABIStackAlignment when the call
+  // instruction happened.
+  Static,
+  // Assume the stack was word aligned, but not necessarily at
+  // ABIStackAlignment when the call instruction happened.
+  Dynamic,
+};
+
+// Generate an 'exit' prologue.
+//
+// This will exit the JitActivation, allowing arbitrary code to run. The
+// `reason` will be noted on the JitActivation for any future stack iteration.
+//
+// If `switchToMainStack` is true, the prologue will check if a suspendable
+// stack is active, and if so switch the stack to the main stack.
+//
+// In this case, the body of the exit function will have a 'split' sp/fp where
+// the fp points at the wasm::Frame on the cont stack and the sp points
+// to the main stack. See "Wasm dynamic stack switches on 'exit'" above for more
+// information and a diagram.
+//
+// `alignment` is used to perform static or dynamic alignment of the stack, and
+// `frameSized` will be reserved on the final stack (either the
+//  original stack, or the main stack if there is a switch).
+void GenerateExitPrologue(jit::MacroAssembler& masm, ExitReason reason,
+                          bool switchToMainStack, ExitFrameAlignment alignment,
+                          unsigned frameSize, CallableOffsets* offsets);
+// Generate an 'exit' epilogue that is the inverse of
+// wasm::GenerateExitPrologue.
+void GenerateExitEpilogue(jit::MacroAssembler& masm, ExitReason reason,
+                          bool switchToMainStack, ExitFrameAlignment alignment,
+                          CallableOffsets* offsets);
+
+// Generate the most minimal possible prologue/epilogue: `push FP; FP := SP`
+// and `pop FP; return` respectively.
+void GenerateMinimalPrologue(jit::MacroAssembler& masm, uint32_t* entry);
+void GenerateMinimalEpilogue(jit::MacroAssembler& masm, uint32_t* ret);
+
+void GenerateJitExitPrologue(jit::MacroAssembler& masm, uint32_t fallbackOffset,
+                             ImportOffsets* offsets);
+void GenerateJitExitEpilogue(jit::MacroAssembler& masm,
                              CallableOffsets* offsets);
 
 void GenerateJitEntryPrologue(jit::MacroAssembler& masm,

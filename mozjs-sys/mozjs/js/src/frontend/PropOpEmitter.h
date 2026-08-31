@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,6 +6,8 @@
 #define frontend_PropOpEmitter_h
 
 #include "mozilla/Attributes.h"
+
+#include <stddef.h>
 
 #include "vm/SharedStencil.h"  // GCThingIndex
 
@@ -128,39 +128,37 @@ class MOZ_STACK_CLASS PropOpEmitter {
 #ifdef DEBUG
   // The state of this emitter.
   //
-  //             skipObjAndRhs
-  //           +----------------------------+
-  //           |                            |
-  // +-------+ | prepareForObj +-----+      |
-  // | Start |-+-------------->| Obj |-+    |
-  // +-------+                 +-----+ |    |
-  //                                   |    |
-  // +---------------------------------+    |
-  // |                                      |
-  // |                                      |
-  // | [Get]                                |
-  // | [Call]                               |
-  // |   emitGet +-----+                    |
-  // +---------->| Get |                    |
-  // |           +-----+                    |
-  // |                                      |
-  // | [Delete]                             |
-  // |   emitDelete +--------+              |
-  // +------------->| Delete |              |
-  // |              +--------+              |
-  // |                                      |
-  // | [PostIncrement]                      |
-  // | [PreIncrement]                       |
-  // | [PostDecrement]                      |
-  // | [PreDecrement]                       |
-  // |   emitIncDec +--------+              |
-  // +------------->| IncDec |              |
-  // |              +--------+              |
-  // |                                      |
-  // | [SimpleAssignment]                   |
-  // | [PropInit]                           |
-  // |                        prepareForRhs |  +-----+
-  // +--------------------->+-------------->+->| Rhs |-+
+  //
+  // +-------+   prepareForObj +-----+
+  // | Start |---------------->| Obj |-+
+  // +-------+                 +-----+ |
+  //                                   |
+  // +---------------------------------+
+  // |
+  // |
+  // | [Get]
+  // | [Call]
+  // |   emitGet +-----+
+  // +---------->| Get |
+  // |           +-----+
+  // |
+  // | [Delete]
+  // |   emitDelete +--------+
+  // +------------->| Delete |
+  // |              +--------+
+  // |
+  // | [PostIncrement]
+  // | [PreIncrement]
+  // | [PostDecrement]
+  // | [PreDecrement]
+  // |   emitIncDec +--------+
+  // +------------->| IncDec |
+  // |              +--------+
+  // |
+  // | [SimpleAssignment]
+  // | [PropInit]
+  // |                        prepareForRhs    +-----+
+  // +--------------------->+----------------->| Rhs |-+
   // |                      ^                  +-----+ |
   // |                      |                          |
   // |                      |                +---------+
@@ -184,7 +182,7 @@ class MOZ_STACK_CLASS PropOpEmitter {
     // After calling emitIncDec.
     IncDec,
 
-    // After calling prepareForRhs or skipObjAndRhs.
+    // After calling prepareForRhs.
     Rhs,
 
     // After calling emitAssignment.
@@ -237,7 +235,6 @@ class MOZ_STACK_CLASS PropOpEmitter {
   [[nodiscard]] bool emitGet(TaggedParserAtomIndex prop);
 
   [[nodiscard]] bool prepareForRhs();
-  [[nodiscard]] bool skipObjAndRhs();
 
   [[nodiscard]] bool emitDelete(TaggedParserAtomIndex prop);
 
@@ -246,6 +243,8 @@ class MOZ_STACK_CLASS PropOpEmitter {
 
   [[nodiscard]] bool emitIncDec(TaggedParserAtomIndex prop,
                                 ValueUsage valueUsage);
+
+  size_t numReferenceSlots() const { return 1 + isSuper(); }
 };
 
 } /* namespace frontend */

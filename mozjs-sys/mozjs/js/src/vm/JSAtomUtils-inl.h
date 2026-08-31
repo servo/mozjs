@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,10 +7,7 @@
 
 #include "vm/JSAtomUtils.h"
 
-#include "mozilla/RangedPtr.h"
-
-#include "jsnum.h"
-
+#include "builtin/Number.h"
 #include "gc/MaybeRooted.h"
 #include "vm/JSAtomState.h"
 #include "vm/JSContext.h"
@@ -47,17 +42,12 @@ inline bool PrimitiveValueToId(
   MOZ_ASSERT(v.isPrimitive());
 
   if (v.isString()) {
-    JSAtom* atom;
-    if (v.toString()->isAtom()) {
-      atom = &v.toString()->asAtom();
-    } else {
-      atom = AtomizeString(cx, v.toString());
-      if (!atom) {
-        if constexpr (!allowGC) {
-          cx->recoverFromOutOfMemory();
-        }
-        return false;
+    JSAtom* atom = AtomizeString(cx, v.toString());
+    if (!atom) {
+      if constexpr (!allowGC) {
+        cx->recoverFromOutOfMemory();
       }
+      return false;
     }
     idp.set(AtomToId(atom));
     return true;
@@ -76,37 +66,22 @@ inline bool PrimitiveValueToId(
   return PrimitiveValueToIdSlow<allowGC>(cx, v, idp);
 }
 
-/*
- * Write out character representing |index| to the memory just before |end|.
- * Thus |*end| is not touched, but |end[-1]| and earlier are modified as
- * appropriate.  There must be at least js::UINT32_CHAR_BUFFER_LENGTH elements
- * before |end| to avoid buffer underflow.  The start of the characters written
- * is returned and is necessarily before |end|.
- */
-template <typename T>
-inline mozilla::RangedPtr<T> BackfillIndexInCharBuffer(
-    uint32_t index, mozilla::RangedPtr<T> end) {
-#ifdef DEBUG
-  /*
-   * Assert that the buffer we're filling will hold as many characters as we
-   * could write out, by dereferencing the index that would hold the most
-   * significant digit.
-   */
-  (void)*(end - UINT32_CHAR_BUFFER_LENGTH);
-#endif
-
-  do {
-    uint32_t next = index / 10, digit = index % 10;
-    *--end = '0' + digit;
-    index = next;
-  } while (index > 0);
-
-  return end;
-}
-
 bool IndexToIdSlow(JSContext* cx, uint32_t index, MutableHandleId idp);
 
 inline bool IndexToId(JSContext* cx, uint32_t index, MutableHandleId idp) {
+  if (index <= PropertyKey::IntMax) {
+    idp.set(PropertyKey::Int(index));
+    return true;
+  }
+
+  return IndexToIdSlow(cx, index, idp);
+}
+
+bool IndexToIdSlow(JSContext* cx, uint64_t index, MutableHandleId idp);
+
+inline bool IndexToId(JSContext* cx, uint64_t index, MutableHandleId idp) {
+  MOZ_ASSERT(index < uint64_t(DOUBLE_INTEGRAL_PRECISION_LIMIT));
+
   if (index <= PropertyKey::IntMax) {
     idp.set(PropertyKey::Int(index));
     return true;

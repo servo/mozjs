@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,10 +7,10 @@
 #ifndef AlreadyAddRefed_h
 #define AlreadyAddRefed_h
 
-#include <utility>
-
-#include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
+#ifdef DEBUG
+#  include "mozilla/Assertions.h"
+#endif
 
 namespace mozilla {
 
@@ -139,21 +137,19 @@ struct
       = default;
 #endif
 
-  // Specialize the unused operator<< for already_AddRefed, to allow
-  // nsCOMPtr<nsIFoo> foo;
-  // Unused << foo.forget();
-  // Note that nsCOMPtr is the XPCOM reference counting smart pointer class.
-  friend void operator<<(const mozilla::unused_t& aUnused,
-                         const already_AddRefed<T>& aRhs) {
-    auto mutableAlreadyAddRefed = const_cast<already_AddRefed<T>*>(&aRhs);
-    aUnused << mutableAlreadyAddRefed->take();
-  }
-
   [[nodiscard]] T* take() {
     T* rawPtr = mRawPtr;
     mRawPtr = nullptr;
     return rawPtr;
   }
+
+  /**
+   * Once this method is called, we no longer hold any reference to the memory,
+   * thus leaking it.
+   * It's equivalent to calling take() and discarding the result, but at least
+   * it clearly conveys the intent.
+   */
+  void leak() { mRawPtr = nullptr; }
 
   /**
    * This helper provides a static_cast replacement for already_AddRefed, so

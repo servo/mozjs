@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -34,7 +32,7 @@ using namespace js::wasm;
 
 /* static */
 DebugFrame* DebugFrame::from(Frame* fp) {
-  MOZ_ASSERT(GetNearestEffectiveInstance(fp)->code().metadata().debugEnabled);
+  MOZ_ASSERT(GetNearestEffectiveInstance(fp)->code().debugEnabled());
   auto* df =
       reinterpret_cast<DebugFrame*>((uint8_t*)fp - DebugFrame::offsetOfFrame());
   MOZ_ASSERT(GetNearestEffectiveInstance(fp) == df->instance());
@@ -111,10 +109,10 @@ bool DebugFrame::getLocal(uint32_t localIndex, MutableHandleValue vp) {
       vp.set(NumberValue((double)*static_cast<int64_t*>(dataPtr)));
       break;
     case jit::MIRType::Float32:
-      vp.set(NumberValue(JS::CanonicalizeNaN(*static_cast<float*>(dataPtr))));
+      vp.set(NumberValue(*static_cast<float*>(dataPtr)));
       break;
     case jit::MIRType::Double:
-      vp.set(NumberValue(JS::CanonicalizeNaN(*static_cast<double*>(dataPtr))));
+      vp.set(NumberValue(*static_cast<double*>(dataPtr)));
       break;
     case jit::MIRType::WasmAnyRef:
       vp.set(((AnyRef*)dataPtr)->toJSValue());
@@ -136,10 +134,10 @@ bool DebugFrame::updateReturnJSValue(JSContext* cx) {
   rval.setUndefined();
   flags_.hasCachedReturnJSValue = true;
   ResultType resultType = ResultType::Vector(
-      instance()->metadata().debugFuncType(funcIndex()).results());
-  Maybe<char*> stackResultsLoc;
+      instance()->codeMeta().getFuncType(funcIndex()).results());
+  mozilla::Maybe<char*> stackResultsLoc;
   if (ABIResultIter::HasStackResults(resultType)) {
-    stackResultsLoc = Some(static_cast<char*>(stackResultsPointer_));
+    stackResultsLoc = mozilla::Some(static_cast<char*>(stackResultsPointer_));
   }
   DebugCodegen(DebugChannel::Function,
                "wasm-function[%d] updateReturnJSValue [", funcIndex());

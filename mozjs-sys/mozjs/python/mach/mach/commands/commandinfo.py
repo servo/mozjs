@@ -3,6 +3,7 @@
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import argparse
+import functools
 import re
 import subprocess
 import sys
@@ -10,7 +11,6 @@ from itertools import chain
 from pathlib import Path
 
 import attr
-from mozbuild.util import memoize
 
 from mach.decorators import Command, CommandArgument, SubCommand
 
@@ -18,7 +18,7 @@ COMPLETION_TEMPLATES_DIR = Path(__file__).resolve().parent / "completion_templat
 
 
 @attr.s
-class CommandInfo(object):
+class CommandInfo:
     name = attr.ib(type=str)
     description = attr.ib(type=str)
     subcommands = attr.ib(type=list)
@@ -27,19 +27,19 @@ class CommandInfo(object):
 
 
 def render_template(shell, context):
-    filename = "{}.template".format(shell)
+    filename = f"{shell}.template"
     with open(COMPLETION_TEMPLATES_DIR / filename) as fh:
         template = fh.read()
     return template % context
 
 
-@memoize
+@functools.cache
 def command_handlers(command_context):
     """A dictionary of command handlers keyed by command name."""
     return command_context._mach_context.commands.command_handlers
 
 
-@memoize
+@functools.cache
 def commands(command_context):
     """A sorted list of all command names."""
     return sorted(command_handlers(command_context))
@@ -60,7 +60,7 @@ def _get_parser_options(parser):
     return options
 
 
-@memoize
+@functools.cache
 def global_options(command_context):
     """Return a dict of global options.
 
@@ -71,7 +71,7 @@ def global_options(command_context):
             return _get_parser_options(group)
 
 
-@memoize
+@functools.cache
 def _get_handler_options(handler):
     """Return a dict of options for the given handler.
 
@@ -112,7 +112,7 @@ def _get_handler_info(handler):
     )
 
 
-@memoize
+@functools.cache
 def commands_info(command_context):
     """Return a list of CommandInfo objects for each command."""
     commands_info = []
@@ -203,14 +203,14 @@ def run_completion(command_context, args):
 def _zsh_describe(value, description=None):
     value = '"' + value.replace(":", "\\:")
     if description:
-        description = subprocess.list2cmdline(
-            [re.sub(r'(["\'#&;`|*?~<>^()\[\]{}$\\\x0A\xFF])', r"\\\1", description)]
-        ).lstrip('"')
+        description = subprocess.list2cmdline([
+            re.sub(r'(["\'#&;`|*?~<>^()\[\]{}$\\\x0A\xFF])', r"\\\1", description)
+        ]).lstrip('"')
 
         if description.endswith('"') and not description.endswith(r"\""):
             description = description[:-1]
 
-        value += ":{}".format(description)
+        value += f":{description}"
 
     value += '"'
 
@@ -230,7 +230,12 @@ def _zsh_describe(value, description=None):
     help="File path to save completion script.",
 )
 def completion_bash(command_context, outfile):
-    commands_subcommands = []
+    # Note: Make sure to generate a Bash 3-compatible script, because macOS
+    # ships with Bash 3 by default. One of the consequences is that Bash 4
+    # features such as associative arrays ("declare -A") cannot be used.
+    # For example, while completion_zsh uses the associative array syntax for
+    # commands_subcommands, here we use case/esac instead.
+    case_commands_subcommands = []
     case_options = []
     case_subcommands = []
     for i, cmd in enumerate(commands_info(command_context)):
@@ -242,14 +247,12 @@ def completion_bash(command_context, outfile):
 
         if options:
             case_options.append(
-                "\n".join(
-                    [
-                        "            ({})".format(cmd.name),
-                        '            opts="${{opts}} {}"'.format(" ".join(options)),
-                        "            ;;",
-                        "",
-                    ]
-                )
+                "\n".join([
+                    f"            ({cmd.name})",
+                    '            opts="${{opts}} {}"'.format(" ".join(options)),
+                    "            ;;",
+                    "",
+                ])
             )
 
         # Build case statement for subcommand options.
@@ -261,44 +264,44 @@ def completion_bash(command_context, outfile):
 
             if options:
                 case_options.append(
-                    "\n".join(
-                        [
-                            '            ("{} {}")'.format(sub.name, sub.subcommand),
-                            '            opts="${{opts}} {}"'.format(" ".join(options)),
-                            "            ;;",
-                            "",
-                        ]
-                    )
+                    "\n".join([
+                        f'            ("{sub.name} {sub.subcommand}")',
+                        '            opts="${{opts}} {}"'.format(" ".join(options)),
+                        "            ;;",
+                        "",
+                    ])
                 )
 
         # Build case statement for subcommands.
         subcommands = [_zsh_describe(s.subcommand, None) for s in cmd.subcommands]
         if subcommands:
-            commands_subcommands.append(
-                '[{}]=" {} "'.format(
-                    cmd.name, " ".join([h.subcommand for h in cmd.subcommands])
-                )
+            comsubs = " ".join([h.subcommand for h in cmd.subcommands])
+            case_commands_subcommands.append(
+                "\n".join([
+                    f"            ({cmd.name})",
+                    f'            comsubs=" {comsubs} "',
+                    "            ;;",
+                    "",
+                ])
             )
 
             case_subcommands.append(
-                "\n".join(
-                    [
-                        "            ({})".format(cmd.name),
-                        '            subs="${{subs}} {}"'.format(" ".join(subcommands)),
-                        "            ;;",
-                        "",
-                    ]
-                )
+                "\n".join([
+                    f"            ({cmd.name})",
+                    '            subs="${{subs}} {}"'.format(" ".join(subcommands)),
+                    "            ;;",
+                    "",
+                ])
             )
 
     globalopts = [
         opt for opt_strs in global_options(command_context) for opt in opt_strs
     ]
     context = {
+        "case_commands_subcommands": "\n".join(sorted(case_commands_subcommands)),
         "case_options": "\n".join(case_options),
         "case_subcommands": "\n".join(case_subcommands),
         "commands": " ".join(commands(command_context)),
-        "commands_subcommands": " ".join(sorted(commands_subcommands)),
         "globalopts": " ".join(sorted(globalopts)),
     }
 
@@ -334,14 +337,12 @@ def completion_zsh(command_context, outfile):
 
         if options:
             case_options.append(
-                "\n".join(
-                    [
-                        "            ({})".format(cmd.name),
-                        "            opts+=({})".format(" ".join(options)),
-                        "            ;;",
-                        "",
-                    ]
-                )
+                "\n".join([
+                    f"            ({cmd.name})",
+                    "            opts+=({})".format(" ".join(options)),
+                    "            ;;",
+                    "",
+                ])
             )
 
         # Build case statement for subcommand options.
@@ -353,14 +354,12 @@ def completion_zsh(command_context, outfile):
 
             if options:
                 case_options.append(
-                    "\n".join(
-                        [
-                            "            ({} {})".format(sub.name, sub.subcommand),
-                            "            opts+=({})".format(" ".join(options)),
-                            "            ;;",
-                            "",
-                        ]
-                    )
+                    "\n".join([
+                        f"            ({sub.name} {sub.subcommand})",
+                        "            opts+=({})".format(" ".join(options)),
+                        "            ;;",
+                        "",
+                    ])
                 )
 
         # Build case statement for subcommands.
@@ -375,14 +374,12 @@ def completion_zsh(command_context, outfile):
             )
 
             case_subcommands.append(
-                "\n".join(
-                    [
-                        "            ({})".format(cmd.name),
-                        "            subs+=({})".format(" ".join(subcommands)),
-                        "            ;;",
-                        "",
-                    ]
-                )
+                "\n".join([
+                    f"            ({cmd.name})",
+                    "            subs+=({})".format(" ".join(subcommands)),
+                    "            ;;",
+                    "",
+                ])
             )
 
     globalopts = []
@@ -418,16 +415,15 @@ def completion_fish(command_context, outfile):
     def _append_opt_strs(comp, opt_strs):
         for opt in opt_strs:
             if opt.startswith("--"):
-                comp += " -l {}".format(opt[2:])
+                comp += f" -l {opt[2:]}"
             elif opt.startswith("-"):
-                comp += " -s {}".format(opt[1:])
+                comp += f" -s {opt[1:]}"
         return comp
 
     globalopts = []
     for opt_strs, description in global_options(command_context).items():
-        comp = (
-            "complete -c mach -n '__fish_mach_complete_no_command' "
-            "-d '{}'".format(description.replace("'", "\\'"))
+        comp = "complete -c mach -n '__fish_mach_complete_no_command' -d '{}'".format(
+            description.replace("'", "\\'")
         )
         comp = _append_opt_strs(comp, opt_strs)
         globalopts.append(comp)
@@ -440,7 +436,7 @@ def completion_fish(command_context, outfile):
             "-a {} -d '{}'".format(cmd.name, cmd.description.replace("'", "\\'"))
         )
 
-        cmds_opts += ["# {}".format(cmd.name)]
+        cmds_opts += [f"# {cmd.name}"]
 
         subcommands = " ".join([s.subcommand for s in cmd.subcommands])
         for opt_strs, description in cmd.options.items():
@@ -465,10 +461,8 @@ def completion_fish(command_context, outfile):
             description = sub.description or ""
             description = description.replace("'", "\\'")
             comp = (
-                "complete -c mach -A -n '__fish_mach_complete_command {} {}' "
-                "-d '{}' -a {}".format(
-                    cmd.name, subcommands, description, sub.subcommand
-                )
+                f"complete -c mach -A -n '__fish_mach_complete_command {cmd.name} {subcommands}' "
+                f"-d '{description}' -a {sub.subcommand}"
             )
             cmds_opts.append(comp)
 

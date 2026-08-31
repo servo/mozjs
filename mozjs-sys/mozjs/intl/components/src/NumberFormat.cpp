@@ -107,6 +107,24 @@ Result<int32_t, ICUError> NumberFormat::selectFormatted(
   return utf16KeywordLength;
 }
 
+Result<int32_t, ICUError> NumberFormat::selectFormatted(
+    std::string_view number, char16_t* keyword, int32_t keywordSize,
+    UPluralRules* pluralRules) const {
+  MOZ_ASSERT(keyword && pluralRules);
+  UErrorCode status = U_ZERO_ERROR;
+
+  MOZ_TRY(format(number));
+
+  int32_t utf16KeywordLength = uplrules_selectFormatted(
+      pluralRules, mFormattedNumber, keyword, keywordSize, &status);
+
+  if (U_FAILURE(status)) {
+    return Err(ToICUError(status));
+  }
+
+  return utf16KeywordLength;
+}
+
 bool NumberFormat::formatInternal(double number) const {
   // ICU incorrectly formats NaN values with the sign bit set, as if they
   // were negative.  Replace all NaNs with a single pattern with sign bit

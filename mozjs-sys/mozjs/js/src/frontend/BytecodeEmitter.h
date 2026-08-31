@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -49,12 +47,14 @@
 namespace js {
 
 class FrontendContext;
+struct ConstantCompareOperand;
 
 namespace frontend {
 
 class BytecodeOffset;
 class CallOrNewEmitter;
 class ClassEmitter;
+class DestructuringLHSRef;
 class ElemOpEmitter;
 class EmitterScope;
 class ErrorReporter;
@@ -385,6 +385,9 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
         name, innermostEmitterScope());
   }
 
+  mozilla::Maybe<ConstantCompareOperand> parseNodeToConstantCompareOperand(
+      ParseNode* constant);
+
   void setVarEmitterScope(EmitterScope* emitterScope) {
     MOZ_ASSERT(emitterScope);
     MOZ_ASSERT(!varEmitterScope);
@@ -424,12 +427,12 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
     return true;
   }
 
-  bool isInLoop();
-  [[nodiscard]] bool checkSingletonContext();
+  bool isInLoop() const;
+  [[nodiscard]] bool checkSingletonContext() const;
 
-  bool needsImplicitThis();
+  bool needsImplicitThis() const;
 
-  size_t countThisEnvironmentHops();
+  size_t countThisEnvironmentHops() const;
   [[nodiscard]] bool emitThisEnvironmentCallee();
   [[nodiscard]] bool emitSuperBase();
 
@@ -452,8 +455,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
     }
   }
 
-  void reportError(ParseNode* pn, unsigned errorNumber, ...);
-  void reportError(uint32_t offset, unsigned errorNumber, ...);
+  void reportError(ParseNode* pn, unsigned errorNumber, ...) const;
+  void reportError(uint32_t offset, unsigned errorNumber, ...) const;
 
   // Fill in a ScriptStencil using this BCE data.
   bool intoScriptStencil(ScriptIndex scriptIndex);
@@ -468,10 +471,10 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // statement, we define useless code as code with no side effects, because
   // the main effect, the value left on the stack after the code executes,
   // will be discarded by a pop bytecode.
-  [[nodiscard]] bool checkSideEffects(ParseNode* pn, bool* answer);
+  [[nodiscard]] bool checkSideEffects(ParseNode* pn, bool* answer) const;
 
 #ifdef DEBUG
-  [[nodiscard]] bool checkStrictOrSloppy(JSOp op);
+  [[nodiscard]] bool checkStrictOrSloppy(JSOp op) const;
 #endif
 
   // Add TryNote to the tryNoteList array. The start and end offset are
@@ -521,7 +524,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   // Calculate the `nslots` value for ImmutableScriptData constructor parameter.
   // Fails if it overflows.
-  [[nodiscard]] bool getNslots(uint32_t* nslots);
+  [[nodiscard]] bool getNslots(uint32_t* nslots) const;
 
   // Emit function code for the tree rooted at body.
   [[nodiscard]] bool emitFunctionScript(FunctionNode* funNode);
@@ -531,8 +534,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool updateLineNumberNotes(uint32_t offset);
   [[nodiscard]] bool updateSourceCoordNotes(uint32_t offset);
   [[nodiscard]] bool updateSourceCoordNotesIfNonLiteral(ParseNode* node);
-
-  JSOp strictifySetNameOp(JSOp op);
 
   [[nodiscard]] bool emitCheck(JSOp op, ptrdiff_t delta,
                                BytecodeOffset* offset);
@@ -610,7 +611,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitCall(JSOp op, uint16_t argc, ParseNode* pn = nullptr);
   [[nodiscard]] bool emitCallIncDec(UnaryNode* incDec);
 
-  uint32_t getOffsetForLoop(ParseNode* nextpn);
+  uint32_t getOffsetForLoop(ParseNode* nextpn) const;
 
   enum class GotoKind { Break, Continue };
   [[nodiscard]] bool emitGoto(NestableControl* target, GotoKind kind);
@@ -641,8 +642,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // values) or in template mode (field names only, no values) for the property
   // list?
   void isPropertyListObjLiteralCompatible(ListNode* obj, bool* withValues,
-                                          bool* withoutValues);
-  bool isArrayObjLiteralCompatible(ListNode* array);
+                                          bool* withoutValues) const;
+  bool isArrayObjLiteralCompatible(ListNode* array) const;
 
   [[nodiscard]] bool emitPropertyList(ListNode* obj, PropertyEmitter& pe,
                                       PropListType type);
@@ -656,13 +657,13 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitObjLiteralArray(ListNode* array);
 
   // Is a field value JSOp::Object-compatible?
-  [[nodiscard]] bool isRHSObjLiteralCompatible(ParseNode* value);
+  [[nodiscard]] bool isRHSObjLiteralCompatible(ParseNode* value) const;
 
   [[nodiscard]] bool emitObjLiteralValue(ObjLiteralWriter& writer,
                                          ParseNode* value);
 
   mozilla::Maybe<MemberInitializers> setupMemberInitializers(
-      ListNode* classMembers, FieldPlacement placement);
+      ListNode* classMembers, FieldPlacement placement) const;
   [[nodiscard]] bool emitCreateFieldKeys(ListNode* obj,
                                          FieldPlacement placement);
   [[nodiscard]] bool emitCreateMemberInitializers(ClassEmitter& ce,
@@ -673,7 +674,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
                                                   bool hasHeritage
 #endif
   );
-  const MemberInitializers& findMemberInitializersForCall();
+  const MemberInitializers& findMemberInitializersForCall() const;
   [[nodiscard]] bool emitInitializeInstanceMembers(
       bool isDerivedClassConstructor);
   [[nodiscard]] bool emitInitializeStaticFields(ListNode* classMembers);
@@ -749,10 +750,12 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitPropLHS(PropertyAccess* prop);
   [[nodiscard]] bool emitPropIncDec(UnaryNode* incDec, ValueUsage valueUsage);
 
-  [[nodiscard]] bool emitComputedPropertyName(UnaryNode* computedPropName);
+  // Emit an ArgumentsLength node, leaving the value of |arguments.length| on
+  // the stack. Uses the JSOp::ArgumentsLength fast path when the optimization
+  // is still eligible, otherwise falls back to reading the |arguments| binding.
+  [[nodiscard]] bool emitArgumentsLength();
 
-  [[nodiscard]] bool emitObjAndKey(ParseNode* exprOrSuper, ParseNode* key,
-                                   ElemOpEmitter& eoe);
+  [[nodiscard]] bool emitComputedPropertyName(UnaryNode* computedPropName);
 
   // Emit bytecode to put operands for a JSOp::GetElem/CallElem/SetElem/DelElem
   // opcode onto the stack in the right order. In the case of SetElem, the
@@ -761,7 +764,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitElemOperands(PropertyByValue* elem,
                                       EmitElemOption opts);
 
-  [[nodiscard]] bool emitElemObjAndKey(PropertyByValue* elem, bool isSuper,
+  [[nodiscard]] bool emitElemObjAndKey(PropertyByValue* elem,
                                        ElemOpEmitter& eoe);
   [[nodiscard]] bool emitElemOpBase(JSOp op);
 
@@ -790,28 +793,31 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // If the lhs expression is object property |OBJ.prop|, it emits |OBJ|.
   // If it's object element |OBJ[ELEM]|, it emits |OBJ| and |ELEM|.
   // If there's nothing to evaluate for the reference, it emits nothing.
-  // |emitted| parameter receives the number of values pushed onto the stack.
   [[nodiscard]] bool emitDestructuringLHSRef(ParseNode* target,
-                                             size_t* emitted);
+                                             DestructuringFlavor flav,
+                                             DestructuringLHSRef& lref);
 
   // emitSetOrInitializeDestructuring assumes the lhs expression's reference
   // and the to-be-destructured value has been pushed on the stack.  It emits
   // code to destructure a single lhs expression (either a name or a compound
   // []/{} expression).
-  [[nodiscard]] bool emitSetOrInitializeDestructuring(ParseNode* target,
-                                                      DestructuringFlavor flav);
+  [[nodiscard]] bool emitSetOrInitializeDestructuring(
+      ParseNode* target, DestructuringFlavor flav, DestructuringLHSRef& lref);
 
   // emitDestructuringObjRestExclusionSet emits the property exclusion set
   // for the rest-property in an object pattern.
-  [[nodiscard]] bool emitDestructuringObjRestExclusionSet(ListNode* pattern);
+  [[nodiscard]] bool emitDestructuringObjRestExclusionSet(ListNode* pattern,
+                                                          uint8_t setSize);
 
   // emitDestructuringOps assumes the to-be-destructured value has been
   // pushed on the stack and emits code to destructure each part of a [] or
   // {} lhs expression.
   [[nodiscard]] bool emitDestructuringOps(ListNode* pattern,
-                                          DestructuringFlavor flav);
+                                          DestructuringFlavor flav,
+                                          SelfHostedIter selfHostedIter);
   [[nodiscard]] bool emitDestructuringOpsArray(ListNode* pattern,
-                                               DestructuringFlavor flav);
+                                               DestructuringFlavor flav,
+                                               SelfHostedIter selfHostedIter);
   [[nodiscard]] bool emitDestructuringOpsObject(ListNode* pattern,
                                                 DestructuringFlavor flav);
 
@@ -822,7 +828,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // two in the latter case) elements from the stack.
   [[nodiscard]] bool emitCopyDataProperties(CopyOption option);
 
-  JSOp getIterCallOp(JSOp callOp, SelfHostedIter selfHostedIter);
+  JSOp getIterCallOp(JSOp callOp, SelfHostedIter selfHostedIter) const;
 
   // Push the operands for emit(Async)Iterator onto the stack.
   [[nodiscard]] bool emitIterable(ParseNode* value,
@@ -838,17 +844,15 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // Pops iterator from the top of the stack. Pushes the result of |.next()|
   // onto the stack.
   [[nodiscard]] bool emitIteratorNext(
-      const mozilla::Maybe<uint32_t>& callSourceCoordOffset,
-      IteratorKind kind = IteratorKind::Sync,
-      SelfHostedIter selfHostedIter = SelfHostedIter::Deny);
-  [[nodiscard]] bool emitIteratorCloseInScope(
-      EmitterScope& currentScope, IteratorKind iterKind = IteratorKind::Sync,
-      CompletionKind completionKind = CompletionKind::Normal,
-      SelfHostedIter selfHostedIter = SelfHostedIter::Deny);
+      const mozilla::Maybe<uint32_t>& callSourceCoordOffset, IteratorKind kind,
+      SelfHostedIter selfHostedIter);
+  [[nodiscard]] bool emitIteratorCloseInScope(EmitterScope& currentScope,
+                                              IteratorKind iterKind,
+                                              CompletionKind completionKind,
+                                              SelfHostedIter selfHostedIter);
   [[nodiscard]] bool emitIteratorCloseInInnermostScope(
-      IteratorKind iterKind = IteratorKind::Sync,
-      CompletionKind completionKind = CompletionKind::Normal,
-      SelfHostedIter selfHostedIter = SelfHostedIter::Deny) {
+      IteratorKind iterKind, CompletionKind completionKind,
+      SelfHostedIter selfHostedIter) {
     return emitIteratorCloseInScope(*innermostEmitterScope(), iterKind,
                                     completionKind, selfHostedIter);
   }
@@ -872,7 +876,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitAnonymousFunctionWithComputedName(
       ParseNode* node, FunctionPrefixKind prefixKind);
 
-  [[nodiscard]] bool setFunName(FunctionBox* fun, TaggedParserAtomIndex name);
+  void setFunName(FunctionBox* fun, TaggedParserAtomIndex name) const;
   [[nodiscard]] bool emitInitializer(ParseNode* initializer,
                                      ParseNode* pattern);
 
@@ -929,6 +933,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   [[nodiscard]] bool emitUnary(UnaryNode* unaryNode);
   [[nodiscard]] bool emitRightAssociative(ListNode* node);
+  [[nodiscard]] bool tryEmitConstantEq(ListNode* node, JSOp op, bool* emitted);
   [[nodiscard]] bool emitLeftAssociative(ListNode* node);
   [[nodiscard]] bool emitPrivateInExpr(ListNode* node);
   [[nodiscard]] bool emitShortCircuit(ListNode* node, ValueUsage valueUsage);
@@ -942,7 +947,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   [[nodiscard]] ParseNode* getCoordNode(ParseNode* callNode,
                                         ParseNode* calleeNode, JSOp op,
-                                        ListNode* argsList);
+                                        ListNode* argsList) const;
 
   [[nodiscard]] bool emitArguments(ListNode* argsList, bool isCall,
                                    bool isSpread, CallOrNewEmitter& cone);
@@ -969,6 +974,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitSelfHostedSetCanonicalName(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedArgumentsLength(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedGetArgument(CallNode* callNode);
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+  enum class DisposalKind : bool { Sync, Async };
+  [[nodiscard]] bool emitSelfHostedDisposeResources(CallNode* callNode,
+                                                    DisposalKind kind);
+#endif
 #ifdef DEBUG
   void assertSelfHostedExpectedTopLevel(ParseNode* node);
   void assertSelfHostedUnsafeGetReservedSlot(ListNode* argsList);
@@ -997,23 +1007,13 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitLexicalInitialization(NameNode* name);
   [[nodiscard]] bool emitLexicalInitialization(TaggedParserAtomIndex name);
 
-  // Emit bytecode for the spread operator.
+  // Emit bytecode for the array spread operator.
   //
-  // emitSpread expects some values representing the spread target (an array or
-  // a tuple), the iterator and it's next() method to be on the stack in that
-  // order (iterator's next() on the bottom).
-  // The number of values representing the spread target is
-  // `spreadeeStackItems`: it's 2 for arrays (one for the array and one for the
-  // index) and 1 for tuples (the tuple itself).
-  // Since arrays and tuples use different opcodes to initialize new elements,
-  // it must be specified using `storeElementOp`.
-  // When emitSpread() finishes, the stack only contains the values representing
-  // the spread target.
-  [[nodiscard]] bool emitSpread(SelfHostedIter selfHostedIter,
-                                int spreadeeStackItems, JSOp storeElementOp);
-  // This shortcut can be used when spreading into arrays, as it assumes
-  // `spreadeeStackItems = 2` (|ARRAY INDEX|) and `storeElementOp =
-  // JSOp::InitElemInc`
+  // emitSpread expects some values representing the spread target (an array),
+  // the iterator and its next() method to be on the stack in that order
+  // (iterator's next() on the bottom).
+  // When emitSpread() finishes, the stack only contains the spread target and
+  // the final index.
   [[nodiscard]] bool emitSpread(SelfHostedIter selfHostedIter);
 
   enum class ClassNameKind {
@@ -1032,11 +1032,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
       TaggedParserAtomIndex nameForAnonymousClass =
           TaggedParserAtomIndex::null());
 
-  [[nodiscard]] bool emitSuperElemOperands(
-      PropertyByValue* elem, EmitElemOption opts = EmitElemOption::Get);
-  [[nodiscard]] bool emitSuperGetElem(PropertyByValue* elem,
-                                      bool isCall = false);
-
   [[nodiscard]] bool emitCalleeAndThis(ParseNode* callee, CallNode* maybeCall,
                                        CallOrNewEmitter& cone);
 
@@ -1044,11 +1039,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
                                                CallNode* call,
                                                CallOrNewEmitter& cone,
                                                OptionalEmitter& oe);
-
-#ifdef ENABLE_RECORD_TUPLE
-  [[nodiscard]] bool emitRecordLiteral(ListNode* record);
-  [[nodiscard]] bool emitTupleLiteral(ListNode* tuple);
-#endif
 
   [[nodiscard]] bool emitExportDefault(BinaryNode* exportNode);
 
@@ -1063,9 +1053,6 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitNewPrivateName(TaggedParserAtomIndex bindingName,
                                         TaggedParserAtomIndex symbolName);
 
-  template <class ClassMemberType>
-  [[nodiscard]] bool emitNewPrivateNames(ListNode* classMembers);
-
   [[nodiscard]] bool emitNewPrivateNames(TaggedParserAtomIndex privateBrandName,
                                          ListNode* classMembers);
 
@@ -1076,7 +1063,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 #endif
 
  private:
-  [[nodiscard]] SelfHostedIter getSelfHostedIterFor(ParseNode* parseNode);
+  [[nodiscard]] SelfHostedIter getSelfHostedIterFor(ParseNode* parseNode) const;
 
   [[nodiscard]] bool emitSelfHostedGetBuiltinConstructorOrPrototype(
       CallNode* callNode, bool isConstructor);

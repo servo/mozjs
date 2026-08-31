@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -20,10 +18,11 @@
 #ifdef MALLOC_H
 #  include MALLOC_H
 #endif
+
 #include "mozmemory_wrap.h"
-#include "mozilla/Attributes.h"
 #include "mozilla/Types.h"
 #include "mozjemalloc_types.h"
+#include "malloc_decls.h"
 #include "stdbool.h"
 
 #ifdef MOZ_MEMORY

@@ -266,15 +266,7 @@
     fun:_gdk_x11_display_create_window_impl
     fun:gdk_window_ensure_native
     fun:gdk_x11_window_get_xid
-    fun:GetX11Window
-    ...
-    fun:gtk_widget_map
-    fun:gtk_window_map
-    ...
-    fun:gtk_widget_map
-    fun:gtk_window_show
-    ...
-    fun:gtk_widget_show
+    fun:_ZN8nsWindow6CreateEP9nsIWidgetRKN7mozilla3gfx12IntRectTypedINS2_17LayoutDevicePixelEEERKNS2_6widget8InitDataE
     ...
 }
 
@@ -1072,4 +1064,20 @@
    Memcheck:Cond
    fun:drop_in_place<core::option::Option<cssparser::cow_rc_str::CowRcStr>>
    fun:_ZN5style6values9specified5color5Color14parse_internal*
+}
+{
+   False positive Conditional jump or move depends on uninitialised value(s) at len_utf8 / encode_utf8_raw / encode_utf8 / push_char
+   Memcheck:Cond
+   fun:len_utf8
+   fun:encode_utf8_raw
+   fun:encode_utf8
+   fun:push_char
+   ...
+   fun:_ZN7mozilla10extensions13MatchGlobCoreC1ERK12nsTSubstringIcEbbRNS_11ErrorResultE
+}
+{
+   False positive in animation parsing after bug 2035572
+   Memcheck:Cond
+   fun:drop_in_place<core::option::Option<style::values::generics::animation::GenericAnimationDuration<style::values::specified::time::Time>>>
+   fun:parse_one_animation
 }

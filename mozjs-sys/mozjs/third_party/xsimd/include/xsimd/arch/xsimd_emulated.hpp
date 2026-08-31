@@ -12,15 +12,13 @@
 #ifndef XSIMD_EMULATED_HPP
 #define XSIMD_EMULATED_HPP
 
-#include <complex>
-#include <limits>
-#include <numeric>
-#include <type_traits>
-
 #include "../arch/xsimd_scalar.hpp"
-
 #include "../types/xsimd_emulated_register.hpp"
 #include "../types/xsimd_utils.hpp"
+
+#include <complex>
+#include <numeric>
+#include <type_traits>
 
 namespace xsimd
 {
@@ -28,7 +26,7 @@ namespace xsimd
     struct batch_bool_constant;
 
     template <class T_out, class T_in, class A>
-    inline batch<T_out, A> bitwise_cast(batch<T_in, A> const& x) noexcept;
+    XSIMD_INLINE batch<T_out, A> bitwise_cast(batch<T_in, A> const& x) noexcept;
 
     template <typename T, class A, T... Values>
     struct batch_constant;
@@ -39,34 +37,34 @@ namespace xsimd
 
         // fwd
         template <class A, class T, size_t I>
-        inline batch<T, A> insert(batch<T, A> const& self, T val, index<I>, requires_arch<generic>) noexcept;
+        XSIMD_INLINE batch<T, A> insert(batch<T, A> const& self, T val, index<I>, requires_arch<common>) noexcept;
         template <class A, typename T, typename ITy, ITy... Indices>
-        inline batch<T, A> shuffle(batch<T, A> const& x, batch<T, A> const& y, batch_constant<ITy, A, Indices...>, requires_arch<generic>) noexcept;
+        XSIMD_INLINE batch<T, A> shuffle(batch<T, A> const& x, batch<T, A> const& y, batch_constant<ITy, A, Indices...>, requires_arch<common>) noexcept;
 
         namespace detail
         {
             template <size_t I, class F, class... Bs>
-            auto emulated_apply(F func, Bs const&... bs) -> decltype(func(bs.data[I]...))
+            auto emulated_apply(F func, Bs const&... bs)
             {
                 return func(bs.data[I]...);
             }
 
             template <class F, class B, class... Bs, size_t... Is>
-            auto emulated_apply(F func, ::xsimd::detail::index_sequence<Is...>, B const& b, Bs const&... bs) -> std::array<decltype(func(b.data[0], bs.data[0]...)), B::size>
+            auto emulated_apply(F func, std::index_sequence<Is...>, B const& b, Bs const&... bs) -> std::array<decltype(func(b.data[0], bs.data[0]...)), B::size>
             {
                 return { emulated_apply<Is>(func, b, bs...)... };
             }
 
             template <class B, class F, class... Bs>
-            auto emulated_apply(F func, B const& b, Bs const&... bs) -> std::array<decltype(func(b.data[0], bs.data[0]...)), B::size>
+            auto emulated_apply(F func, B const& b, Bs const&... bs)
             {
-                return emulated_apply(func, ::xsimd::detail::make_index_sequence<B::size>(), b, bs...);
+                return emulated_apply(func, std::make_index_sequence<B::size>(), b, bs...);
             }
         }
 
         // abs
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> abs(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> abs(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
                                           { return xsimd::abs(v); },
@@ -75,7 +73,7 @@ namespace xsimd
 
         // add
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> add(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> add(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::add(v0, v1); },
@@ -84,7 +82,7 @@ namespace xsimd
 
         // all
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline bool all(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE bool all(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return std::all_of(self.data.begin(), self.data.end(), [](T v)
                                { return bool(v); });
@@ -92,7 +90,7 @@ namespace xsimd
 
         // any
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline bool any(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE bool any(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return std::any_of(self.data.begin(), self.data.end(), [](T v)
                                { return bool(v); });
@@ -100,14 +98,14 @@ namespace xsimd
 
         // batch_bool_cast
         template <class A, class T_out, class T_in, size_t N = 8 * sizeof(T_in) * batch<T_in, A>::size>
-        inline batch_bool<T_out, A> batch_bool_cast(batch_bool<T_in, A> const& self, batch_bool<T_out, A> const&, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T_out, A> batch_bool_cast(batch_bool<T_in, A> const& self, batch_bool<T_out, A> const&, requires_arch<emulated<N>>) noexcept
         {
             return { self.data };
         }
 
         // bitwise_and
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> bitwise_and(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> bitwise_and(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::bitwise_and(v0, v1); },
@@ -115,7 +113,7 @@ namespace xsimd
         }
 
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> bitwise_and(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> bitwise_and(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v0, bool v1)
                                           { return xsimd::bitwise_and(v0, v1); },
@@ -124,7 +122,7 @@ namespace xsimd
 
         // bitwise_andnot
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> bitwise_andnot(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> bitwise_andnot(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::bitwise_andnot(v0, v1); },
@@ -132,7 +130,7 @@ namespace xsimd
         }
 
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> bitwise_andnot(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> bitwise_andnot(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v0, bool v1)
                                           { return xsimd::bitwise_andnot(v0, v1); },
@@ -141,7 +139,7 @@ namespace xsimd
 
         // bitwise_lshift
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> bitwise_lshift(batch<T, A> const& self, int32_t other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> bitwise_lshift(batch<T, A> const& self, int32_t other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([other](T v)
                                           { return xsimd::bitwise_lshift(v, other); },
@@ -150,7 +148,7 @@ namespace xsimd
 
         // bitwise_not
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> bitwise_not(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> bitwise_not(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
                                           { return xsimd::bitwise_not(v); },
@@ -158,7 +156,7 @@ namespace xsimd
         }
 
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> bitwise_not(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> bitwise_not(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v)
                                           { return xsimd::bitwise_not(v); },
@@ -167,7 +165,7 @@ namespace xsimd
 
         // bitwise_or
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> bitwise_or(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> bitwise_or(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::bitwise_or(v0, v1); },
@@ -175,7 +173,7 @@ namespace xsimd
         }
 
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> bitwise_or(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> bitwise_or(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v0, bool v1)
                                           { return xsimd::bitwise_or(v0, v1); },
@@ -184,7 +182,7 @@ namespace xsimd
 
         // bitwise_rshift
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> bitwise_rshift(batch<T, A> const& self, int32_t other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> bitwise_rshift(batch<T, A> const& self, int32_t other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([other](T v)
                                           { return xsimd::bitwise_rshift(v, other); },
@@ -193,7 +191,7 @@ namespace xsimd
 
         // bitwise_xor
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> bitwise_xor(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> bitwise_xor(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::bitwise_xor(v0, v1); },
@@ -201,7 +199,7 @@ namespace xsimd
         }
 
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> bitwise_xor(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> bitwise_xor(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v0, bool v1)
                                           { return xsimd::bitwise_xor(v0, v1); },
@@ -210,7 +208,7 @@ namespace xsimd
 
         // bitwise_cast
         template <class A, class T_in, class T_out, size_t N = 8 * sizeof(T_in) * batch<T_in, A>::size>
-        inline batch<T_out, A> bitwise_cast(batch<T_in, A> const& self, batch<T_out, A> const&, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T_out, A> bitwise_cast(batch<T_in, A> const& self, batch<T_out, A> const&, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T_out, A>::size;
             std::array<T_out, size> result;
@@ -222,7 +220,7 @@ namespace xsimd
 
         // broadcast
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        batch<T, A> inline broadcast(T val, requires_arch<emulated<N>>) noexcept
+        batch<T, A> XSIMD_INLINE broadcast(T val, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<T, size> r;
@@ -230,12 +228,33 @@ namespace xsimd
             return r;
         }
 
+        // first
+        template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
+        T XSIMD_INLINE first(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        {
+            return self.data[0];
+        }
+
+#if 0
+        // count
+        template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
+        XSIMD_INLINE size_t count(batch_bool<T, A> const& x, requires_arch<emulated<N>>) noexcept
+        {
+            uint64_t m = x.mask();
+            // https://graphics.stanford.edu/~seander/bithacks.html#CountBitsSetParallel
+            m = m - ((m >> 1) & (uint64_t) ~(uint64_t)0 / 3); // temp
+            m = (m & (uint64_t) ~(uint64_t)0 / 15 * 3) + ((m >> 2) & (uint64_t) ~(uint64_t)0 / 15 * 3); // temp
+            m = (m + (m >> 4)) & (uint64_t) ~(uint64_t)0 / 255 * 15; // temp
+            return (m * ((uint64_t) ~(uint64_t)0 / 255)) >> (sizeof(uint64_t) - 1) * CHAR_BIT; // count
+        }
+#endif
+
         // store_complex
         namespace detail
         {
             // complex_low
             template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-            inline batch<T, A> complex_low(batch<std::complex<T>, A> const& self, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<T, A> complex_low(batch<std::complex<T>, A> const& self, requires_arch<emulated<N>>) noexcept
             {
                 constexpr size_t size = batch<T, A>::size;
                 std::array<T, size> result;
@@ -248,7 +267,7 @@ namespace xsimd
             }
             // complex_high
             template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-            inline batch<T, A> complex_high(batch<std::complex<T>, A> const& self, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<T, A> complex_high(batch<std::complex<T>, A> const& self, requires_arch<emulated<N>>) noexcept
             {
                 constexpr size_t size = batch<T, A>::size;
                 std::array<T, size> result;
@@ -263,14 +282,14 @@ namespace xsimd
 
         // decr_if
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> decr_if(batch<T, A> const& self, batch_bool<T, A> const& mask, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> decr_if(batch<T, A> const& self, batch_bool<T, A> const& mask, requires_arch<emulated<N>>) noexcept
         {
             return self - batch<T, A>(mask.data);
         }
 
         // div
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> div(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> div(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::div(v0, v1); },
@@ -281,7 +300,7 @@ namespace xsimd
         namespace detail
         {
             template <class A, size_t N = 8 * sizeof(float) * batch<float, A>::size>
-            inline batch<float, A> fast_cast(batch<int32_t, A> const& self, batch<float, A> const&, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<float, A> fast_cast(batch<int32_t, A> const& self, batch<float, A> const&, requires_arch<emulated<N>>) noexcept
             {
                 return detail::emulated_apply([](int32_t v)
                                               { return float(v); },
@@ -289,7 +308,7 @@ namespace xsimd
             }
 
             template <class A, size_t N = 8 * sizeof(float) * batch<float, A>::size>
-            inline batch<float, A> fast_cast(batch<uint32_t, A> const& self, batch<float, A> const&, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<float, A> fast_cast(batch<uint32_t, A> const& self, batch<float, A> const&, requires_arch<emulated<N>>) noexcept
             {
                 return detail::emulated_apply([](uint32_t v)
                                               { return float(v); },
@@ -297,7 +316,7 @@ namespace xsimd
             }
 
             template <class A, size_t N = 8 * sizeof(double) * batch<double, A>::size>
-            inline batch<double, A> fast_cast(batch<int64_t, A> const& self, batch<double, A> const&, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<double, A> fast_cast(batch<int64_t, A> const& self, batch<double, A> const&, requires_arch<emulated<N>>) noexcept
             {
                 return detail::emulated_apply([](int64_t v)
                                               { return double(v); },
@@ -305,7 +324,7 @@ namespace xsimd
             }
 
             template <class A, size_t N = 8 * sizeof(double) * batch<double, A>::size>
-            inline batch<double, A> fast_cast(batch<uint64_t, A> const& self, batch<double, A> const&, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<double, A> fast_cast(batch<uint64_t, A> const& self, batch<double, A> const&, requires_arch<emulated<N>>) noexcept
             {
                 return detail::emulated_apply([](uint64_t v)
                                               { return double(v); },
@@ -313,7 +332,7 @@ namespace xsimd
             }
 
             template <class A, size_t N = 8 * sizeof(int32_t) * batch<int32_t, A>::size>
-            inline batch<int32_t, A> fast_cast(batch<float, A> const& self, batch<int32_t, A> const&, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<int32_t, A> fast_cast(batch<float, A> const& self, batch<int32_t, A> const&, requires_arch<emulated<N>>) noexcept
             {
                 return detail::emulated_apply([](float v)
                                               { return int32_t(v); },
@@ -321,7 +340,7 @@ namespace xsimd
             }
 
             template <class A, size_t N = 8 * sizeof(double) * batch<double, A>::size>
-            inline batch<int64_t, A> fast_cast(batch<double, A> const& self, batch<int64_t, A> const&, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<int64_t, A> fast_cast(batch<double, A> const& self, batch<int64_t, A> const&, requires_arch<emulated<N>>) noexcept
             {
                 return detail::emulated_apply([](double v)
                                               { return int64_t(v); },
@@ -331,7 +350,7 @@ namespace xsimd
 
         // eq
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, emulated<N>> eq(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, emulated<N>> eq(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::eq(v0, v1); },
@@ -339,7 +358,7 @@ namespace xsimd
         }
 
         template <class A, class T, size_t N = 8 * sizeof(T) * batch_bool<T, A>::size>
-        inline batch_bool<T, emulated<N>> eq(batch_bool<T, emulated<N>> const& self, batch_bool<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, emulated<N>> eq(batch_bool<T, emulated<N>> const& self, batch_bool<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v0, bool v1)
                                           { return xsimd::eq(v0, v1); },
@@ -348,7 +367,7 @@ namespace xsimd
 
         // from_bool
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> from_bool(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> from_bool(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v)
                                           { return T(v); },
@@ -357,7 +376,7 @@ namespace xsimd
 
         // from_mask
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> from_mask(batch_bool<T, A> const&, uint64_t mask, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> from_mask(batch_bool<T, A> const&, uint64_t mask, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<bool, size> vmask;
@@ -368,7 +387,7 @@ namespace xsimd
 
         // ge
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, emulated<N>> ge(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, emulated<N>> ge(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::ge(v0, v1); },
@@ -377,7 +396,7 @@ namespace xsimd
 
         // gt
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, emulated<N>> gt(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, emulated<N>> gt(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::gt(v0, v1); },
@@ -386,7 +405,7 @@ namespace xsimd
 
         // haddp
         template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> haddp(batch<T, A> const* row, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> haddp(batch<T, A> const* row, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<T, size> r;
@@ -397,14 +416,14 @@ namespace xsimd
 
         // incr_if
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> incr_if(batch<T, A> const& self, batch_bool<T, A> const& mask, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> incr_if(batch<T, A> const& self, batch_bool<T, A> const& mask, requires_arch<emulated<N>>) noexcept
         {
             return self + batch<T, A>(mask.data);
         }
 
         // insert
         template <class A, class T, size_t I, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> insert(batch<T, A> const& self, T val, index<I>, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> insert(batch<T, A> const& self, T val, index<I>, requires_arch<emulated<N>>) noexcept
         {
             batch<T, A> other = self;
             other.data[I] = val;
@@ -412,8 +431,8 @@ namespace xsimd
         }
 
         // isnan
-        template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size, class = typename std::enable_if<std::is_floating_point<T>::value, void>::type>
-        inline batch_bool<T, A> isnan(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size, class = std::enable_if_t<std::is_floating_point<T>::value>>
+        XSIMD_INLINE batch_bool<T, A> isnan(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
                                           { return xsimd::isnan(v); },
@@ -422,7 +441,7 @@ namespace xsimd
 
         // load_aligned
         template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> load_aligned(T const* mem, convert<T>, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> load_aligned(T const* mem, convert<T>, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<T, size> res;
@@ -432,7 +451,7 @@ namespace xsimd
 
         // load_unaligned
         template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> load_unaligned(T const* mem, convert<T>, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> load_unaligned(T const* mem, convert<T>, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<T, size> res;
@@ -444,7 +463,7 @@ namespace xsimd
         namespace detail
         {
             template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-            inline batch<std::complex<T>, A> load_complex(batch<T, A> const& hi, batch<T, A> const& lo, requires_arch<emulated<N>>) noexcept
+            XSIMD_INLINE batch<std::complex<T>, A> load_complex(batch<T, A> const& hi, batch<T, A> const& lo, requires_arch<emulated<N>>) noexcept
             {
                 constexpr size_t size = batch<T, A>::size;
                 std::array<T, size> real, imag;
@@ -464,7 +483,7 @@ namespace xsimd
 
         // le
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, emulated<N>> le(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, emulated<N>> le(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::le(v0, v1); },
@@ -473,7 +492,7 @@ namespace xsimd
 
         // lt
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, emulated<N>> lt(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, emulated<N>> lt(batch<T, emulated<N>> const& self, batch<T, emulated<N>> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::lt(v0, v1); },
@@ -482,18 +501,18 @@ namespace xsimd
 
         // mask
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline uint64_t mask(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE uint64_t mask(batch_bool<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             uint64_t res = 0;
             for (size_t i = 0; i < size; ++i)
-                res |= (self.data[i] ? 1u : 0u) << i;
+                res |= (uint64_t)(self.data[i] ? 1u : 0u) << i;
             return res;
         }
 
         // max
         template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> max(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> max(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::max(v0, v1); },
@@ -502,7 +521,7 @@ namespace xsimd
 
         // min
         template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> min(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> min(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::min(v0, v1); },
@@ -511,7 +530,7 @@ namespace xsimd
 
         // mul
         template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> mul(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> mul(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::mul(v0, v1); },
@@ -520,8 +539,8 @@ namespace xsimd
 
         // nearbyint_as_int
         template <class A, typename T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<as_integer_t<T>, A> nearbyint_as_int(batch<T, A> const& self,
-                                                          requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<as_integer_t<T>, A> nearbyint_as_int(batch<T, A> const& self,
+                                                                requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
                                           { return xsimd::nearbyint_as_int(v); },
@@ -530,7 +549,7 @@ namespace xsimd
 
         // neg
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> neg(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> neg(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
                                           { return xsimd::neg(v); },
@@ -539,7 +558,7 @@ namespace xsimd
 
         // neq
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> neq(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> neq(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::neq(v0, v1); },
@@ -547,7 +566,7 @@ namespace xsimd
         }
 
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch_bool<T, A> neq(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch_bool<T, A> neq(batch_bool<T, A> const& self, batch_bool<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool v0, bool v1)
                                           { return xsimd::neq(v0, v1); },
@@ -556,7 +575,7 @@ namespace xsimd
 
         // reduce_add
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline T reduce_add(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE T reduce_add(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<T, size> buffer;
@@ -566,7 +585,7 @@ namespace xsimd
 
         // reduce_max
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline T reduce_max(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE T reduce_max(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return std::accumulate(self.data.begin() + 1, self.data.end(), *self.data.begin(), [](T const& x, T const& y)
                                    { return xsimd::max(x, y); });
@@ -574,15 +593,25 @@ namespace xsimd
 
         // reduce_min
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline T reduce_min(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE T reduce_min(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return std::accumulate(self.data.begin() + 1, self.data.end(), *self.data.begin(), [](T const& x, T const& y)
                                    { return xsimd::min(x, y); });
         }
 
+        // reduce_mul
+        template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
+        XSIMD_INLINE T reduce_mul(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        {
+            constexpr size_t size = batch<T, A>::size;
+            std::array<T, size> buffer;
+            self.store_unaligned(buffer.data());
+            return std::accumulate(buffer.begin() + 1, buffer.end(), *buffer.begin(), std::multiplies<T>());
+        }
+
         // rsqrt
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> rsqrt(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> rsqrt(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
                                           { return xsimd::rsqrt(v); },
@@ -591,7 +620,7 @@ namespace xsimd
 
         // select
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> select(batch_bool<T, A> const& cond, batch<T, A> const& true_br, batch<T, A> const& false_br, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> select(batch_bool<T, A> const& cond, batch<T, A> const& true_br, batch<T, A> const& false_br, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](bool c, T t, T f)
                                           { return xsimd::select(c, t, f); },
@@ -599,7 +628,7 @@ namespace xsimd
         }
 
         template <class A, class T, bool... Values>
-        inline batch<T, A> select(batch_bool_constant<T, A, Values...> const& cond, batch<T, A> const& true_br, batch<T, A> const& false_br, requires_arch<emulated<8 * sizeof(T) * batch<T, A>::size>>) noexcept
+        XSIMD_INLINE batch<T, A> select(batch_bool_constant<T, A, Values...> const& cond, batch<T, A> const& true_br, batch<T, A> const& false_br, requires_arch<emulated<8 * sizeof(T) * batch<T, A>::size>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             static_assert(sizeof...(Values) == size, "consistent init");
@@ -608,7 +637,7 @@ namespace xsimd
 
         // shuffle
         template <class A, typename T, class ITy, ITy... Is>
-        inline batch<T, A> shuffle(batch<T, A> const& x, batch<float, A> const& y, batch_constant<ITy, A, Is...> mask, requires_arch<emulated<batch<T, A>::size>>) noexcept
+        XSIMD_INLINE batch<T, A> shuffle(batch<T, A> const& x, batch<float, A> const& y, batch_constant<ITy, A, Is...> mask, requires_arch<emulated<batch<T, A>::size>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             batch<ITy, A> bmask = mask;
@@ -620,7 +649,7 @@ namespace xsimd
 
         // sqrt
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> sqrt(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> sqrt(batch<T, A> const& self, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v)
                                           { return xsimd::sqrt(v); },
@@ -629,7 +658,7 @@ namespace xsimd
 
         // slide_left
         template <size_t M, class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> slide_left(batch<T, A> const& x, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> slide_left(batch<T, A> const& x, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<T, size> result;
@@ -641,7 +670,7 @@ namespace xsimd
 
         // slide_right
         template <size_t M, class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> slide_right(batch<T, A> const& x, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> slide_right(batch<T, A> const& x, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             std::array<T, size> result;
@@ -653,7 +682,7 @@ namespace xsimd
 
         // sadd
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> sadd(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> sadd(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::sadd(v0, v1); },
@@ -662,14 +691,14 @@ namespace xsimd
 
         // set
         template <class A, class T, size_t N, class... Values>
-        inline batch<T, emulated<N>> set(batch<T, emulated<N>> const&, requires_arch<emulated<N>>, Values... values) noexcept
+        XSIMD_INLINE batch<T, emulated<N>> set(batch<T, emulated<N>> const&, requires_arch<emulated<N>>, Values... values) noexcept
         {
             static_assert(sizeof...(Values) == batch<T, emulated<N>>::size, "consistent init");
             return { typename batch<T, emulated<N>>::register_type { static_cast<T>(values)... } };
         }
 
         template <class A, class T, size_t N, class... Values>
-        inline batch_bool<T, emulated<N>> set(batch_bool<T, emulated<N>> const&, requires_arch<emulated<N>>, Values... values) noexcept
+        XSIMD_INLINE batch_bool<T, emulated<N>> set(batch_bool<T, emulated<N>> const&, requires_arch<emulated<N>>, Values... values) noexcept
         {
             static_assert(sizeof...(Values) == batch<T, emulated<N>>::size, "consistent init");
             return { std::array<bool, sizeof...(Values)> { static_cast<bool>(values)... } };
@@ -677,7 +706,7 @@ namespace xsimd
 
         // ssub
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> ssub(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> ssub(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::ssub(v0, v1); },
@@ -686,21 +715,21 @@ namespace xsimd
 
         // store_aligned
         template <class A, class T, size_t N>
-        inline void store_aligned(T* mem, batch<T, emulated<N>> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE void store_aligned(T* mem, batch<T, emulated<N>> const& self, requires_arch<emulated<N>>) noexcept
         {
             std::copy(self.data.begin(), self.data.end(), mem);
         }
 
         // store_unaligned
         template <class A, class T, size_t N>
-        inline void store_unaligned(T* mem, batch<T, emulated<N>> const& self, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE void store_unaligned(T* mem, batch<T, emulated<N>> const& self, requires_arch<emulated<N>>) noexcept
         {
             std::copy(self.data.begin(), self.data.end(), mem);
         }
 
         // sub
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> sub(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> sub(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             return detail::emulated_apply([](T v0, T v1)
                                           { return xsimd::sub(v0, v1); },
@@ -710,7 +739,7 @@ namespace xsimd
         // swizzle
 
         template <class A, typename T, class ITy, ITy... Is>
-        inline batch<T, A> swizzle(batch<T, A> const& self, batch_constant<ITy, A, Is...> mask, requires_arch<emulated<8 * sizeof(T) * batch<T, A>::size>>) noexcept
+        XSIMD_INLINE batch<T, A> swizzle(batch<T, A> const& self, batch_constant<ITy, A, Is...> mask, requires_arch<emulated<8 * sizeof(T) * batch<T, A>::size>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             batch<ITy, A> bmask = mask;
@@ -722,7 +751,7 @@ namespace xsimd
 
         // zip_hi
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> zip_hi(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> zip_hi(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             // Note: irregular behavior for odd numbers.
@@ -742,7 +771,7 @@ namespace xsimd
 
         // zip_lo
         template <class A, class T, size_t N = 8 * sizeof(T) * batch<T, A>::size>
-        inline batch<T, A> zip_lo(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
+        XSIMD_INLINE batch<T, A> zip_lo(batch<T, A> const& self, batch<T, A> const& other, requires_arch<emulated<N>>) noexcept
         {
             constexpr size_t size = batch<T, A>::size;
             // Note: irregular behavior for odd numbers.

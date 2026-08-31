@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,18 +5,19 @@
 #ifndef Utils_h
 #define Utils_h
 
+#include <cstring>
 #include <type_traits>
+#include <limits.h>
+
+#ifdef XP_WIN
+#  include <io.h>  // for _write()
+#endif
 
 #include "mozilla/CheckedInt.h"
-#include "mozilla/TemplateLib.h"
+#include "mozilla/MathAlgorithms.h"
 
 // Helper for log2 of powers of 2 at compile time.
-template <size_t N>
-struct Log2 : mozilla::tl::CeilingLog2<N> {
-  using mozilla::tl::CeilingLog2<N>::value;
-  static_assert(1ULL << value == N, "Number is not a power of 2");
-};
-#define LOG2(N) Log2<N>::value
+constexpr size_t LOG2(size_t N) { return mozilla::CeilingLog2(N); }
 
 enum class Order {
   eLess = -1,
@@ -111,5 +110,118 @@ class Fraction {
   size_t mNumerator;
   size_t mDenominator;
 };
+
+// Fast division
+//
+// During deallocation we want to divide by the size class.  This class
+// provides a routine and sets up a constant as follows.
+//
+// To divide by a number D that is not a power of two we multiply by (2^17 /
+// D) and then right shift by 17 positions.
+//
+//   X / D
+//
+// becomes
+//
+//   (X * m) >> p
+//
+// Where m is calculated during the FastDivisor constructor similarly to:
+//
+//   m = 2^p / D
+//
+template <typename T>
+class FastDivisor {
+ private:
+  // The shift amount (p) is chosen to minimise the size of m while
+  // working for divisors up to 65536 in steps of 16.  I arrived at 17
+  // experimentally.  I wanted a low number to minimise the range of m
+  // so it can fit in a uint16_t, 16 didn't work but 17 worked perfectly.
+  //
+  // We'd need to increase this if we allocated memory on smaller boundaries
+  // than 16.
+  static const unsigned p = 17;
+
+  // We can fit the inverted divisor in 16 bits, but we template it here for
+  // convenience.
+  T m;
+
+ public:
+  // Needed so mBins can be constructed.
+  FastDivisor() : m(0) {}
+
+  FastDivisor(unsigned div, unsigned max) {
+    MOZ_ASSERT(div <= max);
+
+    // divide_inv_shift is large enough.
+    MOZ_ASSERT((1U << p) >= div);
+
+    // The calculation here for m is formula 26 from Section
+    // 10-9 "Unsigned Division by Divisors >= 1" in
+    // Henry S. Warren, Jr.'s Hacker's Delight, 2nd Ed.
+    unsigned m_ = ((1U << p) + div - 1 - (((1U << p) - 1) % div)) / div;
+
+    // Make sure that max * m does not overflow.
+    MOZ_DIAGNOSTIC_ASSERT(max < UINT_MAX / m_);
+
+    MOZ_ASSERT(m_ <= std::numeric_limits<T>::max());
+    m = static_cast<T>(m_);
+
+    // Initialisation made m non-zero.
+    MOZ_ASSERT(m);
+
+    // Test that all the divisions in the range we expected would work.
+#ifdef MOZ_DEBUG
+    for (unsigned num = 0; num < max; num += div) {
+      MOZ_ASSERT(num / div == divide(num));
+    }
+#endif
+  }
+
+  // Note that this always occurs in uint32_t regardless of m's type.  If m is
+  // a uint16_t it will be zero-extended before the multiplication.  We also use
+  // uint32_t rather than something that could possibly be larger because it is
+  // most-likely the cheapest multiplication.
+  inline uint32_t divide(uint32_t num) const {
+    // Check that m was initialised.
+    MOZ_ASSERT(m);
+    return (num * m) >> p;
+  }
+};
+
+template <typename T>
+unsigned inline operator/(unsigned num, FastDivisor<T> divisor) {
+  return divisor.divide(num);
+}
+
+// Return the offset between a and the nearest aligned address at or below a.
+#define ALIGNMENT_ADDR2OFFSET(a, alignment) \
+  ((size_t)((uintptr_t)(a) & ((alignment) - 1)))
+
+// Return the smallest alignment multiple that is >= s.
+#define ALIGNMENT_CEILING(s, alignment) \
+  (((s) + ((alignment) - 1)) & (~((alignment) - 1)))
+
+#define ALIGNMENT_FLOOR(s, alignment) ((s) & (~((alignment) - 1)))
+
+static inline const char* _getprogname(void) { return "<jemalloc>"; }
+
+#ifdef XP_WIN
+#  define STDERR_FILENO 2
+#else
+#  define _write write
+#endif
+inline void _malloc_message(const char* p) {
+  // Pretend to check _write() errors to suppress gcc warnings about
+  // warn_unused_result annotations in some versions of glibc headers.
+  if (_write(STDERR_FILENO, p, (unsigned int)strlen(p)) < 0) {
+    return;
+  }
+}
+
+template <typename... Args>
+static void _malloc_message(const char* p, Args... args) {
+  _malloc_message(p);
+  _malloc_message(args...);
+}
 
 #endif

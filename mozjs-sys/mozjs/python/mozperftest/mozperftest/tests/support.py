@@ -17,6 +17,7 @@ HERE = Path(__file__).parent
 ROOT = Path(HERE, "..", "..", "..", "..").resolve()
 EXAMPLE_TESTS_DIR = os.path.join(HERE, "data", "samples")
 EXAMPLE_TEST = os.path.join(EXAMPLE_TESTS_DIR, "perftest_example.js")
+EXAMPLE_DYNAMIC_TEST = os.path.join(EXAMPLE_TESTS_DIR, "perftest_example_dynamic.js")
 EXAMPLE_XPCSHELL_TEST = Path(EXAMPLE_TESTS_DIR, "test_xpcshell.js")
 EXAMPLE_XPCSHELL_TEST2 = Path(EXAMPLE_TESTS_DIR, "test_xpcshell_flavor2.js")
 EXAMPLE_MOCHITEST_TEST = Path(EXAMPLE_TESTS_DIR, "test_mochitest.html")
@@ -27,8 +28,8 @@ BT_DATA = Path(HERE, "data", "browsertime-results", "browsertime.json")
 BT_DATA_VIDEO = Path(HERE, "data", "browsertime-results-video", "browsertime.json")
 DMG = Path(HERE, "data", "firefox.dmg")
 MOZINFO = Path(HERE, "data", "mozinfo.json")
-EXAMPLE_ANDROID_STARTUP_TEST = Path(
-    EXAMPLE_TESTS_DIR, "test_perftest_android_startup.js"
+MOCHITEST_DATA = Path(
+    HERE, "data", "perfherder-metrics-samples", "mochitest-metrics-sample.json"
 )
 
 
@@ -101,8 +102,7 @@ def requests_content(chunks=None):
     def _content(*args, **kw):
         class Resp:
             def iter_content(self, **kw):
-                for chunk in chunks:
-                    yield chunk
+                yield from chunks
 
         return Resp()
 
@@ -121,3 +121,36 @@ def running_on_try(on_try=True):
             yield
     finally:
         utils.ON_TRY = old
+
+
+class FakeDevice:
+    def __init__(self, **args):
+        self.apps = []
+        self._logger = MagicMock()
+        self._have_su = True
+        self._have_android_su = True
+        self._have_root_shell = True
+        self.is_rooted = True
+
+    def clear_logcat(self, *args, **kwargs):
+        return True
+
+    def shell_output(self, *args, **kwargs):
+        return "A Fake Device"
+
+    def shell_bool(self, *args, **kwargs):
+        return True
+
+    def uninstall_app(self, apk_name):
+        return True
+
+    def install_app(self, apk, replace=True):
+        if apk not in self.apps:
+            self.apps.append(apk)
+
+    def install_app_baseline_profile(self, apk, replace=True):
+        if apk not in self.apps:
+            self.apps.append(apk)
+
+    def is_app_installed(self, app_name):
+        return True

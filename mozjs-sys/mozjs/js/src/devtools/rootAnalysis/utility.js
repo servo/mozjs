@@ -2,23 +2,74 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* -*- indent-tabs-mode: nil; js-indent-level: 4 -*- */
 
 "use strict";
 
 loadRelativeToScript('dumpCFG.js');
 
-// Attribute bits - each call edge may carry a set of 'attrs' bits, saying eg
-// that the edge takes place within a scope where GC is suppressed, for
-// example.
-var ATTR_GC_SUPPRESSED     = 1 << 0;
-var ATTR_CANSCRIPT_BOUNDED = 1 << 1; // Unimplemented
-var ATTR_DOM_ITERATING     = 1 << 2; // Unimplemented
-var ATTR_NONRELEASING      = 1 << 3; // ~RefPtr of value whose refcount will not go to zero
-var ATTR_REPLACED          = 1 << 4; // Ignore edge, it was replaced by zero or more better edges.
-var ATTR_SYNTHETIC         = 1 << 5; // Call was manufactured in some way.
+// Set properties on the global named <prefix><name> to ascending powers of two.
+// Add an extra value named <prefix><last> to the final one.
+//
+// Example: makeEnumBits('flag_', ['flag_SYSTEM', 'flag_PUBLIC', 'flag_UNSAFE'])
+// will produce the equivalent of:
+//
+//   globalThis.flag_SYSTEM = 1;
+//   globalThis.flag_PUBLIC = 2;
+//   globalThis.flag_UNSAFE = 4;
+//   globalThis.flag_LAST = globalThis.flag_UNSAFE;
+//   function flag_toString(n) { ... }
+//   flag_Names = { 1: "SYSTEM", 2: "PUBLIC", 4: "UNSAFE" };
+//
+// where flag_toString(5) would return "SYSTEM | UNSAFE".
+// 
+function makeEnumBits(prefix, names, last="LAST", toName="Names", toString="toString") {
+    let i = 0;
+    const toNameTable = {};
+    for (const fullname of names) {
+        assert(fullname.startsWith(prefix));
+        const name = fullname.substr(prefix.length);
+        const value = 1 << i;
+        globalThis[fullname] = value;
+        toNameTable[value] = name;
+        i++;
+    }
+    globalThis[prefix + last] = 1 << (i - 1);
 
-var ATTR_LAST              = 1 << 5;
+    globalThis[prefix + toName] = toNameTable;
+
+    globalThis[prefix + toString] = n => {
+        const descriptors = [];
+        for (const [value, name] of Object.entries(toNameTable)) {
+            if (n & value) {
+                descriptors.push(name);
+            }
+        }
+        const remainder = n & ~((1 << i) - 1);
+        if (remainder) {
+            descriptors.push(remainder);
+        }
+        return descriptors.join("|");
+    }
+}
+
+// Attribute bits - each call edge may carry a set of 'attrs' bits, saying eg
+// that the edge takes place within a scope where GC is suppressed.
+//
+// This will create global properties named
+//  - (eg) ATTR_GC_SUPPRESSED : bit value of the GC_SUPPRESSED attr (eg 2^4)
+//  - ATTR_LAST : matching the last attribute listed
+//  - ATTR_Names : a map from numeric bit value eg 2^4 to a string name like "REPLACED"
+//  - ATTR_toString : a function that converts a numeric value to a string
+//                    representing all attributes set.
+makeEnumBits("ATTR_", [
+    "ATTR_GC_SUPPRESSED",      // GC is suppressed during this call.
+    "ATTR_CANSCRIPT_BOUNDED",  // Unimplemented
+    "ATTR_DOM_ITERATING",      // Unimplemented
+    "ATTR_NONRELEASING",       // ~RefPtr of value whose refcount will not go to zero
+    "ATTR_REPLACED",           // Ignore edge, it was replaced by zero or more better edges.
+    "ATTR_SYNTHETIC",          // Call was manufactured in some way.
+]);
+
 var ATTRS_NONE             = 0;
 var ATTRS_ALL              = (ATTR_LAST << 1) - 1; // All possible bits set
 

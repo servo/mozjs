@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -26,9 +24,11 @@ struct JS_PUBLIC_API JSContext;
 
 namespace js {
 
+extern bool ConstantStrictEqual(const JS::Value& val, uint16_t operand);
+
 /** Computes |lval === rval|. */
-extern bool StrictlyEqual(JSContext* cx, JS::Handle<JS::Value> lval,
-                          JS::Handle<JS::Value> rval, bool* equal);
+extern bool StrictlyEqual(JSContext* cx, const JS::Value& lval,
+                          const JS::Value& rval, bool* equal);
 
 /** Computes |lval == rval|. */
 extern bool LooselyEqual(JSContext* cx, JS::Handle<JS::Value> lval,
@@ -38,23 +38,15 @@ extern bool LooselyEqual(JSContext* cx, JS::Handle<JS::Value> lval,
  * Computes |SameValue(v1, v2)| -- strict equality except that NaNs are
  * considered equal and opposite-signed zeroes are considered unequal.
  */
-extern bool SameValue(JSContext* cx, JS::Handle<JS::Value> v1,
-                      JS::Handle<JS::Value> v2, bool* same);
-
-#ifdef ENABLE_RECORD_TUPLE
-/**
- * Computes |SameValue(v1, v2)|, but it expects that strings, records and
- * tuples are all linear.
- */
-extern bool SameValueZeroLinear(const JS::Value& lval, const JS::Value& rval);
-#endif
+extern bool SameValue(JSContext* cx, const JS::Value& v1, const JS::Value& v2,
+                      bool* same);
 
 /**
  * Computes |SameValueZero(v1, v2)| -- strict equality except that NaNs are
  * considered equal. Opposite-signed zeroes are considered equal.
  */
-extern bool SameValueZero(JSContext* cx, JS::Handle<JS::Value> v1,
-                          JS::Handle<JS::Value> v2, bool* same);
+extern bool SameValueZero(JSContext* cx, const JS::Value& v1,
+                          const JS::Value& v2, bool* same);
 
 /*
  * Whether strict equality of a JS::Value (with any other JS::Value) can be

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
+    <title>${app_name}</title>
     <pkg-ref id="${CFBundleIdentifier}">
         <bundle-version>
             <bundle CFBundleShortVersionString="${CFBundleShortVersionString}" CFBundleVersion="${CFBundleVersion}" id="${CFBundleIdentifier}" path="${app_name}.app"/>

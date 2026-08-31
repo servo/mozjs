@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -47,7 +45,7 @@ class JSONPrinter {
 
   void boolProperty(const char* name, bool value);
 
-  void property(const char* name, JSLinearString* value);
+  void property(const char* name, const JSLinearString* value);
   void property(const char* name, const char* value);
   void property(const char* name, int32_t value);
   void property(const char* name, uint32_t value);
@@ -86,10 +84,6 @@ class JSONPrinter {
   void endObject();
   void endList();
   void endInlineList();
-
-  // Notify the output that the caller has detected OOM and should transition
-  // to its saw-OOM state.
-  void outOfMemory() { out_.reportOutOfMemory(); }
 
  protected:
   void beginInline();

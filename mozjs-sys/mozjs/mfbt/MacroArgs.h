@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,12 +22,6 @@
  *   MOZ_ARG_COUNT(a) expands to 1
  *   MOZ_ARG_COUNT(a, b) expands to 2
  *
- * Implementation notes:
- * The `##__VA_ARGS__` form is a GCC extension that removes the comma if
- * __VA_ARGS__ is empty. It is supported by Clang too. MSVC ignores ##,
- * and its default behavior is already to strip the comma when __VA_ARGS__
- * is empty.
- *
  * So MOZ_MACROARGS_ARG_COUNT_HELPER() expands to
  *   (_, 50, 49, ...)
  * MOZ_MACROARGS_ARG_COUNT_HELPER(a) expands to
@@ -40,9 +32,9 @@
   MOZ_MACROARGS_ARG_COUNT_HELPER2(MOZ_MACROARGS_ARG_COUNT_HELPER(__VA_ARGS__))
 
 #define MOZ_MACROARGS_ARG_COUNT_HELPER(...)                                    \
-  (_, ##__VA_ARGS__, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37,   \
-   36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, \
-   17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+  (_ __VA_OPT__(, ) __VA_ARGS__, 50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40,   \
+   39, 38, 37, 36, 35, 34, 33, 32, 31, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21, \
+   20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
 
 #define MOZ_MACROARGS_ARG_COUNT_HELPER2(aArgs) \
   MOZ_MACROARGS_ARG_COUNT_HELPER3 aArgs

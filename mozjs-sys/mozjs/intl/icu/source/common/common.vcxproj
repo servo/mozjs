@@ -35,7 +35,6 @@
     </Midl>
     <ClCompile>
       <PreprocessorDefinitions>U_ATTRIBUTE_DEPRECATED=;U_COMMON_IMPLEMENTATION;U_PLATFORM_USES_ONLY_WIN32_API=1;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <DisableLanguageExtensions>false</DisableLanguageExtensions>
       <WarningLevel>Level3</WarningLevel>
       <CompileAs>Default</CompileAs>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -54,7 +53,6 @@
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
       <PreprocessorDefinitions>RBBI_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <BrowseInformation>true</BrowseInformation>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -167,6 +165,7 @@
     <ClCompile Include="uidna.cpp" />
     <ClCompile Include="uts46.cpp" />
     <ClCompile Include="localebuilder.cpp" />
+    <ClCompile Include="ulocbuilder.cpp" />
     <ClCompile Include="localematcher.cpp" />
     <ClCompile Include="localeprioritylist.cpp" />
     <ClCompile Include="locavailable.cpp" />
@@ -185,6 +184,7 @@
     <ClCompile Include="ucat.cpp" />
     <ClCompile Include="uloc.cpp" />
     <ClCompile Include="uloc_tag.cpp" />
+    <ClCompile Include="ulocale.cpp" />
     <ClCompile Include="ures_cnv.cpp" />
     <ClCompile Include="uresbund.cpp" />
     <ClCompile Include="uresdata.cpp" />
@@ -274,6 +274,7 @@
     <ClCompile Include="utf_impl.cpp" />
     <ClCompile Include="static_unicode_sets.cpp" />
     <ClCompile Include="restrace.cpp" />
+    <ClCompile Include="fixedstring.cpp" />
     <ClInclude Include="localsvc.h" />
     <ClInclude Include="msvcres.h" />
     <ClInclude Include="pluralmap.h" />
@@ -392,6 +393,7 @@
     <ClInclude Include="static_unicode_sets.h" />
     <ClInclude Include="capi_helper.h" />
     <ClInclude Include="restrace.h" />
+    <ClInclude Include="fixedstring.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="common.rc" />

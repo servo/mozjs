@@ -5,6 +5,7 @@
 import copy
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -33,7 +34,7 @@ def popenCleanupHack(isWin):
             subprocess._cleanup = savedCleanup
 
 
-class Http3Server(object):
+class Http3Server:
     """
     Class which encapsulates the Http3 server
     """
@@ -95,27 +96,30 @@ class Http3Server(object):
                 )
             self._http3ServerProc["http3Server"] = process
 
-            # Check to make sure the server starts properly by waiting for it to
-            # tell us it's started
-            msg = process.stdout.readline()
-            self._log.info("mozserve | http3 server msg: %s" % msg)
             name = "http3server"
-            t1 = Thread(
-                target=self.read_streams,
-                args=(name, process, process.stdout),
-                daemon=True,
-            )
-            t1.start()
+            # Start the stderr reader before reading stdout so that any stderr
+            # output that happens before the server is ready does not fill the
+            # pipe buffer and deadlock the process before it can print to stdout.
             t2 = Thread(
                 target=self.read_streams,
                 args=(name, process, process.stderr),
                 daemon=True,
             )
             t2.start()
+            # Check to make sure the server starts properly by waiting for it to
+            # tell us it's started
+            msg = process.stdout.readline()
+            self._log.info("mozserve | http3 server msg: %s" % msg)
+            t1 = Thread(
+                target=self.read_streams,
+                args=(name, process, process.stdout),
+                daemon=True,
+            )
+            t1.start()
             if "server listening" in msg:
                 searchObj = re.search(
-                    r"HTTP3 server listening on ports ([0-9]+), ([0-9]+), ([0-9]+), ([0-9]+) and ([0-9]+)."
-                    " EchConfig is @([\x00-\x7F]+)@",
+                    r"HTTP3 server listening on ports ([0-9]+), ([0-9]+), ([0-9]+), ([0-9]+), ([0-9]+) and ([0-9]+)."
+                    " EchConfig is @([\x00-\x7f]+)@",
                     msg,
                     0,
                 )
@@ -125,9 +129,10 @@ class Http3Server(object):
                     self._ports["MOZHTTP3_PORT_ECH"] = searchObj.group(3)
                     self._ports["MOZHTTP3_PORT_PROXY"] = searchObj.group(4)
                     self._ports["MOZHTTP3_PORT_NO_RESPONSE"] = searchObj.group(5)
-                    self._echConfig = searchObj.group(6)
+                    self._ports["MOZHTTP3_PORT_MASQUE"] = searchObj.group(6)
+                    self._echConfig = searchObj.group(7)
             else:
-                self._log.error("http3server failed to start?")
+                self._log.info("http3server failed to start?")
         except OSError as e:
             # This occurs if the subprocess couldn't be started
             self._log.error("Could not run the http3 server: %s" % (str(e)))
@@ -153,7 +158,7 @@ class Http3Server(object):
         self._http3ServerProc = {}
 
 
-class NodeHttp2Server(object):
+class NodeHttp2Server:
     """
     Class which encapsulates a Node Http/2 server
     """
@@ -187,9 +192,9 @@ class NodeHttp2Server(object):
         )
 
         if not os.path.exists(self._nodeBin) or not os.path.isfile(self._nodeBin):
-            raise Exception("node not found at path %s" % (self._nodeBin))
+            raise Exception(f"node not found at path {self._nodeBin}")
 
-        self._log.info("Found node at %s" % (self._nodeBin))
+        self._log.info(f"Found node at {self._nodeBin}")
 
         try:
             # We pipe stdin to node because the server will exit when its
@@ -199,9 +204,9 @@ class NodeHttp2Server(object):
                     [
                         self._nodeBin,
                         self._serverPath,
-                        "serverPort={}".format(self._dstServerPort),
-                        "listeningPort={}".format(self._port),
-                        "alpn={}".format(self._alpn),
+                        f"serverPort={self._dstServerPort}",
+                        f"listeningPort={self._port}",
+                        f"alpn={self._alpn}",
                     ],
                     stdin=PIPE,
                     stdout=PIPE,
@@ -231,7 +236,7 @@ class NodeHttp2Server(object):
         """
         if self._nodeProc is not None:
             if self._nodeProc.poll() is not None:
-                self._log.info("Node server already dead %s" % (self._nodeProc.poll()))
+                self._log.info(f"Node server already dead {self._nodeProc.poll()}")
             else:
                 self._nodeProc.terminate()
 
@@ -240,7 +245,7 @@ class NodeHttp2Server(object):
                 for msg in fd:
                     if firstTime:
                         firstTime = False
-                        self._log.info("Process %s" % label)
+                        self._log.info(f"Process {label}")
                     self._log.info(msg)
 
             dumpOutput(self._nodeProc.stdout, "stdout")
@@ -249,7 +254,7 @@ class NodeHttp2Server(object):
             self._nodeProc = None
 
 
-class DoHServer(object):
+class DoHServer:
     """
     Class which encapsulates the DoH server
     """
@@ -268,7 +273,7 @@ class DoHServer(object):
         self._server.stop()
 
 
-class Http2Server(object):
+class Http2Server:
     """
     Class which encapsulates the Http2 server
     """
@@ -287,3 +292,113 @@ class Http2Server(object):
 
     def stop(self):
         self._server.stop()
+
+
+class MozHttp2Server:
+    """
+    Class which encapsulates the moz-http2 server for xpcshell tests
+    """
+
+    def __init__(self, options, env, logger):
+        if isinstance(options, Namespace):
+            options = vars(options)
+        self._log = logger
+        self._nodeBin = options["nodeBin"]
+        self._serverPath = options["serverPath"]
+        self._env = copy.deepcopy(env)
+        self._isWin = options["isWin"]
+        self._nodeProc = None
+        self._ports = {}
+
+    def ports(self):
+        return self._ports
+
+    def read_streams(self, name, proc, pipe):
+        output = "stdout" if pipe == proc.stdout else "stderr"
+        for line in iter(pipe.readline, ""):
+            self._log.info(f"node {name} [{output}] {line}")
+
+    def start(self):
+        if not os.path.exists(self._serverPath):
+            raise Exception(f"moz-http2 server not found at {self._serverPath}")
+
+        self._log.info(f"mozserve | Found moz-http2 server path: {self._serverPath}")
+
+        if not os.path.exists(self._nodeBin) or not os.path.isfile(self._nodeBin):
+            raise Exception(f"node not found at path {self._nodeBin}")
+
+        self._log.info(f"Found node at {self._nodeBin}")
+
+        try:
+            with popenCleanupHack(self._isWin):
+                process = Popen(
+                    [self._nodeBin, self._serverPath],
+                    stdin=PIPE,
+                    stdout=PIPE,
+                    stderr=PIPE,
+                    env=self._env,
+                    cwd=os.getcwd(),
+                    universal_newlines=True,
+                    start_new_session=True,
+                )
+            self._nodeProc = process
+
+            msg = process.stdout.readline()
+            self._log.info(f"mozserve | moz-http2 server msg: {msg}")
+            if "server listening" in msg:
+                searchObj = re.search(
+                    r"HTTP2 server listening on ports ([0-9]+),([0-9]+)", msg, 0
+                )
+                if searchObj:
+                    self._ports["MOZHTTP2_PORT"] = searchObj.group(1)
+                    self._ports["MOZNODE_EXEC_PORT"] = searchObj.group(2)
+                    self._log.info(
+                        f"moz-http2 server started on ports "
+                        f"{self._ports['MOZHTTP2_PORT']}, "
+                        f"{self._ports['MOZNODE_EXEC_PORT']}"
+                    )
+
+            name = "moz-http2"
+            t1 = Thread(
+                target=self.read_streams,
+                args=(name, process, process.stdout),
+                daemon=True,
+            )
+            t1.start()
+            t2 = Thread(
+                target=self.read_streams,
+                args=(name, process, process.stderr),
+                daemon=True,
+            )
+            t2.start()
+        except OSError as e:
+            self._log.error(f"Could not run moz-http2 server: {e}")
+            raise
+
+    def stop(self):
+        """
+        Shut down our node process, if it exists
+        """
+        if self._nodeProc is not None:
+            if self._nodeProc.poll() is not None:
+                self._log.info(f"Node server already dead {self._nodeProc.poll()}")
+            elif sys.platform != "win32":
+                try:
+                    os.killpg(self._nodeProc.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+            else:
+                self._nodeProc.terminate()
+
+            def dumpOutput(fd, label):
+                firstTime = True
+                for msg in fd:
+                    if firstTime:
+                        firstTime = False
+                        self._log.info(f"Process {label}")
+                    self._log.info(msg)
+
+            dumpOutput(self._nodeProc.stdout, "stdout")
+            dumpOutput(self._nodeProc.stderr, "stderr")
+
+            self._nodeProc = None

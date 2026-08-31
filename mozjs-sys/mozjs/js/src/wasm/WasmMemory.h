@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,6 +20,7 @@
 #include "mozilla/CheckedInt.h"
 #include "mozilla/Maybe.h"
 
+#include <compare>  // std::strong_ordering
 #include <stdint.h>
 
 #include "js/Value.h"
@@ -32,27 +31,51 @@
 namespace js {
 namespace wasm {
 
-// Limits are parameterized by an IndexType which is used to index the
+// Limits are parameterized by an AddressType which is used to index the
 // underlying resource (either a Memory or a Table). Tables are restricted to
 // I32, while memories may use I64 when memory64 is enabled.
 
-enum class IndexType : uint8_t { I32, I64 };
+enum class AddressType : uint8_t { I32, I64 };
 
-inline ValType ToValType(IndexType it) {
-  return it == IndexType::I64 ? ValType::I64 : ValType::I32;
+inline ValType ToValType(AddressType at) {
+  return at == AddressType::I64 ? ValType::I64 : ValType::I32;
 }
 
-extern bool ToIndexType(JSContext* cx, HandleValue value, IndexType* indexType);
+inline AddressType MinAddressType(AddressType a, AddressType b) {
+  return (a == AddressType::I32 || b == AddressType::I32) ? AddressType::I32
+                                                          : AddressType::I64;
+}
 
-extern const char* ToString(IndexType indexType);
+extern bool ToAddressType(JSContext* cx, HandleValue value,
+                          AddressType* addressType);
 
-// Pages is a typed unit representing a multiple of wasm::PageSize. We
-// generally use pages as the unit of length when representing linear memory
+extern bool ToPageSize(JSContext* cx, HandleValue value, PageSize* pageSize);
+
+extern const char* ToString(AddressType addressType);
+
+static constexpr unsigned PageSizeInBytes(PageSize sz) {
+  return 1U << static_cast<uint8_t>(sz);
+}
+
+static constexpr unsigned StandardPageSizeBytes =
+    PageSizeInBytes(PageSize::Standard);
+static_assert(StandardPageSizeBytes == 64 * 1024);
+
+// By spec, see
+// https://github.com/WebAssembly/spec/issues/1895#issuecomment-2895078022
+static_assert((StandardPageSizeBytes * MaxMemory64StandardPagesValidation) <=
+              (uint64_t(1) << 53) - 1);
+
+// Pages is a typed unit representing a multiple of the page size, which
+// defaults to wasm::StandardPageSizeBytes. The page size can be customized
+// only if the custom page sizes proposal is enabled.
+//
+// We generally use pages as the unit of length when representing linear memory
 // lengths so as to avoid overflow when the specified initial or maximum pages
 // would overflow the native word size.
 //
-// Modules may specify pages up to 2^48 inclusive and so Pages is 64-bit on all
-// platforms.
+// Modules may specify pages up to 2^48 (or 2^64 - 1 with tiny pages) inclusive
+// and so Pages is 64-bit on all platforms.
 //
 // We represent byte lengths using the native word size, as it is assumed that
 // consumers of this API will only need byte lengths once it is time to
@@ -63,84 +86,126 @@ struct Pages {
  private:
   // Pages are specified by limit fields, which in general may be up to 2^48,
   // so we must use uint64_t here.
-  uint64_t value_;
+  uint64_t pageCount_;
+  PageSize pageSize_;
+
+  constexpr Pages(uint64_t pageCount, PageSize pageSize)
+      : pageCount_(pageCount), pageSize_(pageSize) {}
 
  public:
-  constexpr Pages() : value_(0) {}
-  constexpr explicit Pages(uint64_t value) : value_(value) {}
+  static constexpr Pages fromPageCount(uint64_t pageCount, PageSize pageSize) {
+    return Pages(pageCount, pageSize);
+  }
 
-  // Get the wrapped page value. Only use this if you must, prefer to use or
-  // add new APIs to Page.
-  uint64_t value() const { return value_; }
+  static constexpr Pages forPageSize(PageSize pageSize) {
+    return Pages(0, pageSize);
+  }
+
+  static constexpr bool byteLengthIsMultipleOfPageSize(size_t byteLength,
+                                                       PageSize pageSize) {
+    return byteLength % PageSizeInBytes(pageSize) == 0;
+  }
 
   // Converts from a byte length to pages, assuming that the length is an
   // exact multiple of the page size.
-  static Pages fromByteLengthExact(size_t byteLength) {
-    MOZ_ASSERT(byteLength % PageSize == 0);
-    return Pages(byteLength / PageSize);
+  static constexpr Pages fromByteLengthExact(size_t byteLength,
+                                             PageSize pageSize) {
+    MOZ_RELEASE_ASSERT(byteLengthIsMultipleOfPageSize(byteLength, pageSize));
+    return Pages(byteLength / PageSizeInBytes(pageSize), pageSize);
   }
+
+  Pages& operator=(const Pages& other) {
+    MOZ_RELEASE_ASSERT(other.pageSize_ == pageSize_);
+    pageCount_ = other.pageCount_;
+    return *this;
+  }
+
+  // Get the wrapped page count and size. Only use this if you must, prefer to
+  // use or add new APIs to Page.
+  uint64_t pageCount() const { return pageCount_; }
+  PageSize pageSize() const { return pageSize_; }
 
   // Return whether the page length may overflow when converted to a byte
   // length in the native word size.
   bool hasByteLength() const {
-    mozilla::CheckedInt<size_t> length(value_);
-    length *= PageSize;
+    mozilla::CheckedInt<size_t> length(pageCount_);
+    length *= PageSizeInBytes(pageSize_);
     return length.isValid();
   }
 
   // Converts from pages to byte length in the native word size. Users must
   // check for overflow, or be assured else-how that overflow cannot happen.
   size_t byteLength() const {
-    mozilla::CheckedInt<size_t> length(value_);
-    length *= PageSize;
+    mozilla::CheckedInt<size_t> length(pageCount_);
+    length *= PageSizeInBytes(pageSize_);
+    return length.value();
+  }
+
+  // Return the byteLength for a 64-bits memory.
+  uint64_t byteLength64() const {
+    mozilla::CheckedInt<uint64_t> length(pageCount_);
+    length *= PageSizeInBytes(pageSize_);
     return length.value();
   }
 
   // Increment this pages by delta and return whether the resulting value
   // did not overflow. If there is no overflow, then this is set to the
   // resulting value.
-  bool checkedIncrement(Pages delta) {
-    mozilla::CheckedInt<uint64_t> newValue = value_;
-    newValue += delta.value_;
+  bool checkedIncrement(uint64_t delta) {
+    mozilla::CheckedInt<uint64_t> newValue = pageCount_;
+    newValue += delta;
     if (!newValue.isValid()) {
       return false;
     }
-    value_ = newValue.value();
+    pageCount_ = newValue.value();
     return true;
   }
 
   // Implement pass-through comparison operators so that Pages can be compared.
 
-  bool operator==(Pages other) const { return value_ == other.value_; }
-  bool operator!=(Pages other) const { return value_ != other.value_; }
-  bool operator<=(Pages other) const { return value_ <= other.value_; }
-  bool operator<(Pages other) const { return value_ < other.value_; }
-  bool operator>=(Pages other) const { return value_ >= other.value_; }
-  bool operator>(Pages other) const { return value_ > other.value_; }
+  constexpr auto operator<=>(const Pages& other) const {
+    MOZ_RELEASE_ASSERT(other.pageSize_ == pageSize_);
+    return pageCount_ <=> other.pageCount_;
+  }
+  constexpr auto operator==(const Pages& other) const {
+    MOZ_RELEASE_ASSERT(other.pageSize_ == pageSize_);
+    return pageCount_ == other.pageCount_;
+  }
 };
 
 // The largest number of pages the application can request.
-extern Pages MaxMemoryPages(IndexType t);
+extern Pages MaxMemoryPages(AddressType t, PageSize pageSize);
 
 // The byte value of MaxMemoryPages(t).
-static inline size_t MaxMemoryBytes(IndexType t) {
-  return MaxMemoryPages(t).byteLength();
+static inline size_t MaxMemoryBytes(AddressType t, PageSize pageSize) {
+  return MaxMemoryPages(t, pageSize).byteLength();
 }
 
-// A value at least as large as MaxMemoryBytes(t) representing the largest valid
-// bounds check limit on the system.  (It can be larger than MaxMemoryBytes()
-// because bounds check limits are rounded up to fit formal requirements on some
-// platforms.  Also see ComputeMappedSize().)
-extern size_t MaxMemoryBoundsCheckLimit(IndexType t);
+// A value representing the largest valid value for boundsCheckLimit.
+extern size_t MaxMemoryBoundsCheckLimit(AddressType t, PageSize pageSize);
 
-static inline uint64_t MaxMemoryLimitField(IndexType indexType) {
-  return indexType == IndexType::I32 ? MaxMemory32LimitField
-                                     : MaxMemory64LimitField;
+static inline uint64_t MaxMemoryPagesValidation(AddressType addressType,
+                                                PageSize pageSize) {
+#ifdef ENABLE_WASM_CUSTOM_PAGE_SIZES
+  if (pageSize == PageSize::Tiny) {
+    return addressType == AddressType::I32 ? MaxMemory32TinyPagesValidation
+                                           : MaxMemory64TinyPagesValidation;
+  }
+#endif
+
+  MOZ_ASSERT(pageSize == PageSize::Standard);
+  return addressType == AddressType::I32 ? MaxMemory32StandardPagesValidation
+                                         : MaxMemory64StandardPagesValidation;
+}
+
+static inline uint64_t MaxTableElemsValidation(AddressType addressType) {
+  return addressType == AddressType::I32 ? MaxTable32ElemsValidation
+                                         : MaxTable64ElemsValidation;
 }
 
 // Compute the 'clamped' maximum size of a memory. See
 // 'WASM Linear Memory structure' in ArrayBufferObject.cpp for background.
-extern Pages ClampedMaxPages(IndexType t, Pages initialPages,
+extern Pages ClampedMaxPages(AddressType t, Pages initialPages,
                              const mozilla::Maybe<Pages>& sourceMaxPages,
                              bool useHugeMemory);
 
@@ -150,20 +215,11 @@ extern Pages ClampedMaxPages(IndexType t, Pages initialPages,
 // vm/ArrayBufferObject.cpp.
 extern size_t ComputeMappedSize(Pages clampedMaxPages);
 
-extern size_t GetMaxOffsetGuardLimit(bool hugeMemory);
-
-// Return whether the given immediate satisfies the constraints of the platform.
-extern bool IsValidBoundsCheckImmediate(uint32_t i);
-
-// Return whether the given immediate is valid on arm.
-extern bool IsValidARMImmediate(uint32_t i);
+extern uint64_t GetMaxOffsetGuardLimit(bool hugeMemory, PageSize sz);
 
 // Return the next higher valid immediate that satisfies the constraints of the
 // platform.
 extern uint64_t RoundUpToNextValidBoundsCheckImmediate(uint64_t i);
-
-// Return the next higher valid immediate for arm.
-extern uint64_t RoundUpToNextValidARMImmediate(uint64_t i);
 
 #ifdef WASM_SUPPORTS_HUGE_MEMORY
 // On WASM_SUPPORTS_HUGE_MEMORY platforms, every asm.js or WebAssembly 32-bit
@@ -181,7 +237,7 @@ static const uint64_t HugeIndexRange = uint64_t(UINT32_MAX) + 1;
 // modules.
 static const uint64_t HugeOffsetGuardLimit = 1 << 25;
 // Reserve a wasm page (64KiB) to support slop on unaligned accesses.
-static const uint64_t HugeUnalignedGuardPage = PageSize;
+static const uint64_t HugeUnalignedGuardPage = StandardPageSizeBytes;
 
 // Compute the total memory reservation.
 static const uint64_t HugeMappedSize =
@@ -189,12 +245,12 @@ static const uint64_t HugeMappedSize =
 
 // Try to keep the memory reservation aligned to the wasm page size. This
 // ensures that it's aligned to the system page size.
-static_assert(HugeMappedSize % PageSize == 0);
+static_assert(HugeMappedSize % StandardPageSizeBytes == 0);
 
 #endif
 
 // The size of the guard page for non huge-memories.
-static const size_t GuardSize = PageSize;
+static const size_t GuardSize = StandardPageSizeBytes;
 
 // The size of the guard page that included NULL pointer. Reserve a smallest
 // range for typical hardware, to catch near NULL pointer accesses, e.g.

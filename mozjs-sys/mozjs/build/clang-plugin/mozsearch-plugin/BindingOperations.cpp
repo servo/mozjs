@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -20,23 +19,24 @@
 
 #ifdef __cpp_lib_optional
 #include <optional>
-template<typename T> using optional = std::optional<T>;
+template <typename T> using optional = std::optional<T>;
 #else
 #include <llvm/ADT/Optional.h>
-template<typename T> using optional = clang::Optional<T>;
+template <typename T> using optional = clang::Optional<T>;
 #endif
 
 using namespace clang;
 
 namespace {
 
-template<typename InputIt>
-bool hasReverseQualifiedName(InputIt first, InputIt last, const NamedDecl &tag)
-{
+template <typename InputIt>
+bool hasReverseQualifiedName(InputIt first, InputIt last,
+                             const NamedDecl &tag) {
   const NamedDecl *currentDecl = &tag;
   InputIt currentName;
   for (currentName = first; currentName != last; currentName++) {
-    if (!currentDecl || !currentDecl->getIdentifier() || currentDecl->getName() != *currentName)
+    if (!currentDecl || !currentDecl->getIdentifier() ||
+        currentDecl->getName() != *currentName)
       return false;
 
     currentDecl = dyn_cast<NamedDecl>(currentDecl->getDeclContext());
@@ -50,20 +50,21 @@ bool hasReverseQualifiedName(InputIt first, InputIt last, const NamedDecl &tag)
   return true;
 }
 
-bool isMozillaJniObjectBase(const CXXRecordDecl &klass)
-{
-  const auto qualifiedName = std::array<StringRef, 3>{"mozilla", "jni", "ObjectBase"};
-  return hasReverseQualifiedName(qualifiedName.crbegin(), qualifiedName.crend(), klass);
+bool isMozillaJniObjectBase(const CXXRecordDecl &klass) {
+  const auto qualifiedName =
+      std::array<StringRef, 3>{"mozilla", "jni", "ObjectBase"};
+  return hasReverseQualifiedName(qualifiedName.crbegin(), qualifiedName.crend(),
+                                 klass);
 }
 
-bool isMozillaJniNativeImpl(const CXXRecordDecl &klass)
-{
-  const auto qualifiedName = std::array<StringRef, 3>{"mozilla", "jni", "NativeImpl"};
-  return hasReverseQualifiedName(qualifiedName.crbegin(), qualifiedName.crend(), klass);
+bool isMozillaJniNativeImpl(const CXXRecordDecl &klass) {
+  const auto qualifiedName =
+      std::array<StringRef, 3>{"mozilla", "jni", "NativeImpl"};
+  return hasReverseQualifiedName(qualifiedName.crbegin(), qualifiedName.crend(),
+                                 klass);
 }
 
-const NamedDecl *fieldNamed(StringRef name, const RecordDecl &strukt)
-{
+const NamedDecl *fieldNamed(StringRef name, const RecordDecl &strukt) {
   for (const auto *decl : strukt.decls()) {
     const auto *namedDecl = dyn_cast<VarDecl>(decl);
     if (!namedDecl)
@@ -78,8 +79,7 @@ const NamedDecl *fieldNamed(StringRef name, const RecordDecl &strukt)
   return {};
 }
 
-optional<StringRef> nameFieldValue(const RecordDecl &strukt)
-{
+optional<StringRef> nameFieldValue(const RecordDecl &strukt) {
   const auto *nameField = dyn_cast_or_null<VarDecl>(fieldNamed("name", strukt));
   if (!nameField)
     return {};
@@ -103,22 +103,18 @@ struct AbstractBinding {
   };
   static constexpr size_t LangLength = 2;
   static constexpr std::array<StringRef, LangLength> langNames = {
-    "cpp",
-    "jvm",
+      "cpp",
+      "jvm",
   };
 
-  static optional<Lang> langFromString(StringRef langName)
-  {
+  static optional<Lang> langFromString(StringRef langName) {
     const auto it = std::find(langNames.begin(), langNames.end(), langName);
     if (it == langNames.end())
       return {};
 
     return Lang(it - langNames.begin());
   }
-  static StringRef stringFromLang(Lang lang)
-  {
-    return langNames[size_t(lang)];
-  }
+  static StringRef stringFromLang(Lang lang) { return langNames[size_t(lang)]; }
 
   // Subset of tools/analysis/BindingSlotKind
   enum class Kind {
@@ -130,34 +126,28 @@ struct AbstractBinding {
   };
   static constexpr size_t KindLength = 5;
   static constexpr std::array<StringRef, KindLength> kindNames = {
-    "class",
-    "method",
-    "getter",
-    "setter",
-    "const",
+      "class", "method", "getter", "setter", "const",
   };
 
-  static optional<Kind> kindFromString(StringRef kindName)
-  {
+  static optional<Kind> kindFromString(StringRef kindName) {
     const auto it = std::find(kindNames.begin(), kindNames.end(), kindName);
     if (it == kindNames.end())
       return {};
 
     return Kind(it - kindNames.begin());
   }
-  static StringRef stringFromKind(Kind kind)
-  {
-    return kindNames[size_t(kind)];
-  }
+  static StringRef stringFromKind(Kind kind) { return kindNames[size_t(kind)]; }
 
   Lang lang;
   Kind kind;
   StringRef symbol;
 };
 constexpr size_t AbstractBinding::KindLength;
-constexpr std::array<StringRef, AbstractBinding::KindLength> AbstractBinding::kindNames;
+constexpr std::array<StringRef, AbstractBinding::KindLength>
+    AbstractBinding::kindNames;
 constexpr size_t AbstractBinding::LangLength;
-constexpr std::array<StringRef, AbstractBinding::LangLength> AbstractBinding::langNames;
+constexpr std::array<StringRef, AbstractBinding::LangLength>
+    AbstractBinding::langNames;
 
 struct BindingTo : public AbstractBinding {
   BindingTo(AbstractBinding b) : AbstractBinding(std::move(b)) {}
@@ -171,25 +161,26 @@ struct BoundAs : public AbstractBinding {
 };
 constexpr StringRef BoundAs::ANNOTATION;
 
-template<typename B>
-void setBindingAttr(ASTContext &C, Decl &decl, B binding)
-{
+template <typename B>
+void setBindingAttr(ASTContext &C, Decl &decl, B binding) {
 #if CLANG_VERSION_MAJOR >= 18
   auto utf8 = StringLiteralKind::UTF8;
 #else
   auto utf8 = StringLiteral::UTF8;
 #endif
   // recent LLVM: CreateImplicit then setDelayedArgs
-  Expr *langExpr = StringLiteral::Create(C, AbstractBinding::stringFromLang(binding.lang), utf8, false, {}, {});
-  Expr *kindExpr = StringLiteral::Create(C, AbstractBinding::stringFromKind(binding.kind), utf8, false, {}, {});
-  Expr *symbolExpr = StringLiteral::Create(C, binding.symbol, utf8, false, {}, {});
+  Expr *langExpr = StringLiteral::Create(
+      C, AbstractBinding::stringFromLang(binding.lang), utf8, false, {}, {});
+  Expr *kindExpr = StringLiteral::Create(
+      C, AbstractBinding::stringFromKind(binding.kind), utf8, false, {}, {});
+  Expr *symbolExpr =
+      StringLiteral::Create(C, binding.symbol, utf8, false, {}, {});
   auto **args = new (C, 16) Expr *[3]{langExpr, kindExpr, symbolExpr};
   auto *attr = AnnotateAttr::CreateImplicit(C, B::ANNOTATION, args, 3);
   decl.addAttr(attr);
 }
 
-optional<AbstractBinding> readBinding(const AnnotateAttr &attr)
-{
+optional<AbstractBinding> readBinding(const AnnotateAttr &attr) {
   if (attr.args_size() != 3)
     return {};
 
@@ -199,9 +190,12 @@ optional<AbstractBinding> readBinding(const AnnotateAttr &attr)
   if (!langExpr || !kindExpr || !symbolExpr)
     return {};
 
-  const auto *langName = dyn_cast<StringLiteral>(langExpr->IgnoreUnlessSpelledInSource());
-  const auto *kindName = dyn_cast<StringLiteral>(kindExpr->IgnoreUnlessSpelledInSource());
-  const auto *symbol = dyn_cast<StringLiteral>(symbolExpr->IgnoreUnlessSpelledInSource());
+  const auto *langName =
+      dyn_cast<StringLiteral>(langExpr->IgnoreUnlessSpelledInSource());
+  const auto *kindName =
+      dyn_cast<StringLiteral>(kindExpr->IgnoreUnlessSpelledInSource());
+  const auto *symbol =
+      dyn_cast<StringLiteral>(symbolExpr->IgnoreUnlessSpelledInSource());
   if (!langName || !kindName || !symbol)
     return {};
 
@@ -211,15 +205,14 @@ optional<AbstractBinding> readBinding(const AnnotateAttr &attr)
   if (!lang || !kind)
     return {};
 
-  return AbstractBinding {
-    .lang = *lang,
-    .kind = *kind,
-    .symbol = symbol->getString(),
+  return AbstractBinding{
+      .lang = *lang,
+      .kind = *kind,
+      .symbol = symbol->getString(),
   };
 }
 
-optional<BindingTo> getBindingTo(const Decl &decl)
-{
+optional<BindingTo> getBindingTo(const Decl &decl) {
   for (const auto *attr : decl.specific_attrs<AnnotateAttr>()) {
     if (attr->getAnnotation() != BindingTo::ANNOTATION)
       continue;
@@ -234,8 +227,7 @@ optional<BindingTo> getBindingTo(const Decl &decl)
 }
 
 // C++23: turn into generator
-std::vector<BoundAs> getBoundAs(const Decl &decl)
-{
+std::vector<BoundAs> getBoundAs(const Decl &decl) {
   std::vector<BoundAs> found;
 
   for (const auto *attr : decl.specific_attrs<AnnotateAttr>()) {
@@ -252,8 +244,7 @@ std::vector<BoundAs> getBoundAs(const Decl &decl)
   return found;
 }
 
-class FindCallCall : private RecursiveASTVisitor<FindCallCall>
-{
+class FindCallCall : private RecursiveASTVisitor<FindCallCall> {
 public:
   struct Result {
     using Kind = AbstractBinding::Kind;
@@ -262,8 +253,7 @@ public:
     StringRef name;
   };
 
-  static optional<Result> search(Stmt *statement)
-  {
+  static optional<Result> search(Stmt *statement) {
     FindCallCall finder;
     finder.TraverseStmt(statement);
     return finder.result;
@@ -274,8 +264,9 @@ private:
 
   friend RecursiveASTVisitor<FindCallCall>;
 
-  optional<Result> tryParseCallCall(CallExpr *callExpr){
-    const auto *callee = dyn_cast_or_null<CXXMethodDecl>(callExpr->getDirectCallee());
+  optional<Result> tryParseCallCall(CallExpr *callExpr) {
+    const auto *callee =
+        dyn_cast_or_null<CXXMethodDecl>(callExpr->getDirectCallee());
     if (!callee)
       return {};
 
@@ -287,7 +278,8 @@ private:
     if (action != "Call" && action != "Get" && action != "Set")
       return {};
 
-    const auto *parentClass = dyn_cast_or_null<ClassTemplateSpecializationDecl>(callee->getParent());
+    const auto *parentClass =
+        dyn_cast_or_null<ClassTemplateSpecializationDecl>(callee->getParent());
 
     if (!parentClass)
       return {};
@@ -318,7 +310,8 @@ private:
       return {};
     }
 
-    const auto *templateArg = parentClass->getTemplateArgs().get(0).getAsType()->getAsRecordDecl();
+    const auto *templateArg =
+        parentClass->getTemplateArgs().get(0).getAsType()->getAsRecordDecl();
 
     if (!templateArg)
       return {};
@@ -327,23 +320,22 @@ private:
     if (!name)
       return {};
 
-    return Result {
-      .kind = kind,
-      .name = *name,
+    return Result{
+        .kind = kind,
+        .name = *name,
     };
 
     return {};
   }
-  bool VisitCallExpr(CallExpr *callExpr)
-  {
+  bool VisitCallExpr(CallExpr *callExpr) {
     return !(result = tryParseCallCall(callExpr));
   }
 };
 
 constexpr StringRef JVM_SCIP_SYMBOL_PREFIX = "S_jvm_";
 
-std::string javaScipSymbol(StringRef prefix, StringRef name, AbstractBinding::Kind kind)
-{
+std::string javaScipSymbol(StringRef prefix, StringRef name,
+                           AbstractBinding::Kind kind) {
   auto symbol = (prefix + name).str();
 
   switch (kind) {
@@ -364,8 +356,7 @@ std::string javaScipSymbol(StringRef prefix, StringRef name, AbstractBinding::Ki
   return symbol;
 }
 
-void addSlotOwnerAttribute(llvm::json::OStream &J, const Decl &decl)
-{
+void addSlotOwnerAttribute(llvm::json::OStream &J, const Decl &decl) {
   if (const auto bindingTo = getBindingTo(decl)) {
     J.attributeBegin("slotOwner");
     J.objectBegin();
@@ -377,8 +368,7 @@ void addSlotOwnerAttribute(llvm::json::OStream &J, const Decl &decl)
     J.attributeEnd();
   }
 }
-void addBindingSlotsAttribute(llvm::json::OStream &J, const Decl &decl)
-{
+void addBindingSlotsAttribute(llvm::json::OStream &J, const Decl &decl) {
   const auto allBoundAs = getBoundAs(decl);
   if (!allBoundAs.empty()) {
     J.attributeBegin("bindingSlots");
@@ -396,7 +386,8 @@ void addBindingSlotsAttribute(llvm::json::OStream &J, const Decl &decl)
   }
 }
 
-// The mangling scheme is documented at https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/design.html
+// The mangling scheme is documented at
+// https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/design.html
 // The main takeaways are:
 // - _0xxxx is the utf16 code unit xxxx
 // - _1 is _
@@ -405,75 +396,77 @@ void addBindingSlotsAttribute(llvm::json::OStream &J, const Decl &decl)
 // - __ is the separator between function name and overload specification
 // - _ is otherwise the separator between packages/classes/methods
 //
-// This method takes a StringRef & and mutates it and can be called twice on a Jnicall function name to get
+// This method takes a StringRef & and mutates it and can be called twice on a
+// Jnicall function name to get
 //  first the demangled name
 //  second the demangled overload specification
-// But we don't use the later for now because we have no way to map that to how SCIP resolves overloads.
-optional<std::string> demangleJnicallPart(StringRef &remainder)
-{
+// But we don't use the later for now because we have no way to map that to how
+// SCIP resolves overloads.
+optional<std::string> demangleJnicallPart(StringRef &remainder) {
   std::string demangled;
 
   std::mbstate_t ps = {};
 
   while (!remainder.empty()) {
     switch (remainder[0]) {
-      case '0': {
-        remainder = remainder.drop_front(1);
+    case '0': {
+      remainder = remainder.drop_front(1);
 
-        uint16_t codeUnit;
-        const auto ok = remainder.substr(1, 4).getAsInteger(16, codeUnit);
-        remainder = remainder.drop_front(4);
+      uint16_t codeUnit;
+      const auto ok = remainder.substr(1, 4).getAsInteger(16, codeUnit);
+      remainder = remainder.drop_front(4);
 
-        if (!ok) // failed reading xxxx as hexadecimal from _0xxxx
-          return {};
+      if (!ok) // failed reading xxxx as hexadecimal from _0xxxx
+        return {};
 
-        std::array<char, MB_LEN_MAX> codePoint;
-        const auto mbLen = std::c16rtomb(codePoint.data(), codeUnit, &ps);
+      std::array<char, MB_LEN_MAX> codePoint;
+      const auto mbLen = std::c16rtomb(codePoint.data(), codeUnit, &ps);
 
-        if (mbLen == -1) // failed converting utf16 to utf8
-          return {};
+      if (mbLen == -1) // failed converting utf16 to utf8
+        return {};
 
-        demangled += StringRef(codePoint.begin(), mbLen);
-        break;
-      }
+      demangled += StringRef(codePoint.begin(), mbLen);
+      break;
+    }
+    case '1':
+      remainder = remainder.drop_front(1);
+      ps = {};
+      demangled += '_';
+      break;
+    case '2':
+      remainder = remainder.drop_front(1);
+      ps = {};
+      demangled += ';';
+      break;
+    case '3':
+      remainder = remainder.drop_front(1);
+      ps = {};
+      demangled += '[';
+      break;
+    case '_':
+      remainder = remainder.drop_front(1);
+      ps = {};
+      if (remainder.empty()) // the string ends with _
+        return {};
+
+      switch (remainder[0]) {
+      case '0':
       case '1':
-        remainder = remainder.drop_front(1);
-        ps = {};
-        demangled += '_';
-        break;
       case '2':
-        remainder = remainder.drop_front(1);
-        ps = {};
-        demangled += ';';
-        break;
       case '3':
-        remainder = remainder.drop_front(1);
-        ps = {};
-        demangled += '[';
-        break;
-      case '_':
-        remainder = remainder.drop_front(1);
-        ps = {};
-        if (remainder.empty()) // the string ends with _
-          return {};
-
-        switch (remainder[0]) {
-          case '0':
-          case '1':
-          case '2':
-          case '3':
-            demangled += '.';
-            break;
-          default:
-            // either:
-            // * the string began with _[^0-3], which is not supposed to happen; or
-            // * we reached __[^0-3] meaning we finished the first part of the name and remainder holds the overload specification
-            return demangled;
-        }
-      default:
-        ps = {};
         demangled += '.';
         break;
+      default:
+        // either:
+        // * the string began with _[^0-3], which is not supposed to happen; or
+        // * we reached __[^0-3] meaning we finished the first part of the name
+        // and remainder holds the overload specification
+        return demangled;
+      }
+    default:
+      ps = {};
+      demangled += '.';
+      break;
     }
     StringRef token;
     std::tie(token, remainder) = remainder.split('_');
@@ -483,8 +476,8 @@ optional<std::string> demangleJnicallPart(StringRef &remainder)
   return demangled;
 }
 
-optional<std::string> scipSymbolFromJnicallFunctionName(StringRef functionName)
-{
+optional<std::string>
+scipSymbolFromJnicallFunctionName(StringRef functionName) {
   if (!functionName.consume_front("Java_"))
     return {};
 
@@ -493,7 +486,8 @@ optional<std::string> scipSymbolFromJnicallFunctionName(StringRef functionName)
   if (!demangledName || demangledName->empty())
     return {};
 
-  // demangleJavaName returns something like .some.package.Class$InnerClass.method
+  // demangleJavaName returns something like
+  // .some.package.Class$InnerClass.method
   // - prepend S_jvm_
   // - remove the leading dot
   // - replace the last dot with a #
@@ -508,8 +502,10 @@ optional<std::string> scipSymbolFromJnicallFunctionName(StringRef functionName)
   std::replace(symbol.begin(), symbol.end(), '.', '/');
   std::replace(symbol.begin(), symbol.end(), '$', '#');
 
-  // Keep track of how many times we have seen this method, to build the ([+overloadNumber]). suffix.
-  // This assumes this function is called on C function definitions in the same order the matching overloads are declared in Java.
+  // Keep track of how many times we have seen this method, to build the
+  // ([+overloadNumber]). suffix. This assumes this function is called on C
+  // function definitions in the same order the matching overloads are declared
+  // in Java.
   static std::unordered_map<std::string, uint> jnicallFunctions;
   auto &overloadNumber = jnicallFunctions[symbol];
 
@@ -530,8 +526,7 @@ optional<std::string> scipSymbolFromJnicallFunctionName(StringRef functionName)
 // {
 //   static constexpr char name[] = "[nameFieldValue]";
 // }
-void findBindingToJavaClass(ASTContext &C, CXXRecordDecl &klass)
-{
+void findBindingToJavaClass(ASTContext &C, CXXRecordDecl &klass) {
   for (const auto &baseSpecifier : klass.bases()) {
     const auto *base = baseSpecifier.getType()->getAsCXXRecordDecl();
     if (!base)
@@ -544,11 +539,12 @@ void findBindingToJavaClass(ASTContext &C, CXXRecordDecl &klass)
     if (!name)
       continue;
 
-    const auto symbol = javaScipSymbol(JVM_SCIP_SYMBOL_PREFIX, *name, BindingTo::Kind::Class);
-    const auto binding = BindingTo {{
-      .lang = BindingTo::Lang::Jvm,
-      .kind = BindingTo::Kind::Class,
-      .symbol = symbol,
+    const auto symbol =
+        javaScipSymbol(JVM_SCIP_SYMBOL_PREFIX, *name, BindingTo::Kind::Class);
+    const auto binding = BindingTo{{
+        .lang = BindingTo::Lang::Jvm,
+        .kind = BindingTo::Kind::Class,
+        .symbol = symbol,
     }};
 
     setBindingAttr(C, klass, binding);
@@ -556,10 +552,10 @@ void findBindingToJavaClass(ASTContext &C, CXXRecordDecl &klass)
   }
 }
 
-// When a Java method is marked as native, the JRE looks by default for a function
-// named Java_<mangled method name>[__<mangled overload specification>].
-void findBindingToJavaFunction(ASTContext &C, FunctionDecl &function)
-{
+// When a Java method is marked as native, the JRE looks by default for a
+// function named Java_<mangled method name>[__<mangled overload
+// specification>].
+void findBindingToJavaFunction(ASTContext &C, FunctionDecl &function) {
   const auto *identifier = function.getIdentifier();
   if (!identifier)
     return;
@@ -569,10 +565,10 @@ void findBindingToJavaFunction(ASTContext &C, FunctionDecl &function)
   if (!symbol)
     return;
 
-  const auto binding = BoundAs {{
-    .lang = BindingTo::Lang::Jvm,
-    .kind = BindingTo::Kind::Method,
-    .symbol = *symbol,
+  const auto binding = BoundAs{{
+      .lang = BindingTo::Lang::Jvm,
+      .kind = BindingTo::Kind::Method,
+      .symbol = *symbol,
   }};
 
   setBindingAttr(C, function, binding);
@@ -590,8 +586,7 @@ void findBindingToJavaFunction(ASTContext &C, FunctionDecl &function)
 //     ...
 //   }
 // }
-void findBindingToJavaMember(ASTContext &C, CXXMethodDecl &method)
-{
+void findBindingToJavaMember(ASTContext &C, CXXMethodDecl &method) {
   const auto *parent = method.getParent();
   if (!parent)
     return;
@@ -607,11 +602,12 @@ void findBindingToJavaMember(ASTContext &C, CXXMethodDecl &method)
   if (!found)
     return;
 
-  const auto symbol = javaScipSymbol(classBinding->symbol, found->name, found->kind);
-  const auto binding = BindingTo {{
-    .lang = BindingTo::Lang::Jvm,
-    .kind = found->kind,
-    .symbol = symbol,
+  const auto symbol =
+      javaScipSymbol(classBinding->symbol, found->name, found->kind);
+  const auto binding = BindingTo{{
+      .lang = BindingTo::Lang::Jvm,
+      .kind = found->kind,
+      .symbol = symbol,
   }};
 
   setBindingAttr(C, method, binding);
@@ -629,8 +625,7 @@ void findBindingToJavaMember(ASTContext &C, CXXMethodDecl &method)
 //     ...
 //   }
 // }
-void findBindingToJavaConstant(ASTContext &C, VarDecl &field)
-{
+void findBindingToJavaConstant(ASTContext &C, VarDecl &field) {
   const auto *parent = dyn_cast_or_null<CXXRecordDecl>(field.getDeclContext());
   if (!parent)
     return;
@@ -639,11 +634,12 @@ void findBindingToJavaConstant(ASTContext &C, VarDecl &field)
   if (!classBinding)
     return;
 
-  const auto symbol = javaScipSymbol(classBinding->symbol, field.getName(), BindingTo::Kind::Const);
-  const auto binding = BindingTo {{
-    .lang = BindingTo::Lang::Jvm,
-    .kind = BindingTo::Kind::Const,
-    .symbol = symbol,
+  const auto symbol = javaScipSymbol(classBinding->symbol, field.getName(),
+                                     BindingTo::Kind::Const);
+  const auto binding = BindingTo{{
+      .lang = BindingTo::Lang::Jvm,
+      .kind = BindingTo::Kind::Const,
+      .symbol = symbol,
   }};
 
   setBindingAttr(C, field, binding);
@@ -667,22 +663,23 @@ void findBindingToJavaConstant(ASTContext &C, VarDecl &field)
 //     }
 //   }
 // }
-void findBoundAsJavaClasses(ASTContext &C, CXXRecordDecl &klass)
-{
+void findBoundAsJavaClasses(ASTContext &C, CXXRecordDecl &klass) {
   for (const auto &baseSpecifier : klass.bases()) {
     const auto *base = baseSpecifier.getType()->getAsCXXRecordDecl();
     if (!base)
       continue;
 
     for (const auto &baseBaseSpecifier : base->bases()) {
-      const auto *baseBase = dyn_cast_or_null<ClassTemplateSpecializationDecl>(baseBaseSpecifier.getType()->getAsCXXRecordDecl());
+      const auto *baseBase = dyn_cast_or_null<ClassTemplateSpecializationDecl>(
+          baseBaseSpecifier.getType()->getAsCXXRecordDecl());
       if (!baseBase)
         continue;
 
       if (!isMozillaJniNativeImpl(*baseBase))
         continue;
 
-      const auto *wrapper = baseBase->getTemplateArgs().get(0).getAsType()->getAsCXXRecordDecl();
+      const auto *wrapper =
+          baseBase->getTemplateArgs().get(0).getAsType()->getAsCXXRecordDecl();
 
       if (!wrapper)
         continue;
@@ -691,15 +688,17 @@ void findBoundAsJavaClasses(ASTContext &C, CXXRecordDecl &klass)
       if (!name)
         continue;
 
-      const auto javaClassSymbol = javaScipSymbol(JVM_SCIP_SYMBOL_PREFIX, *name, BoundAs::Kind::Class);
-      const auto classBinding = BoundAs {{
-        .lang = BoundAs::Lang::Jvm,
-        .kind = BoundAs::Kind::Class,
-        .symbol = javaClassSymbol,
+      const auto javaClassSymbol =
+          javaScipSymbol(JVM_SCIP_SYMBOL_PREFIX, *name, BoundAs::Kind::Class);
+      const auto classBinding = BoundAs{{
+          .lang = BoundAs::Lang::Jvm,
+          .kind = BoundAs::Kind::Class,
+          .symbol = javaClassSymbol,
       }};
       setBindingAttr(C, klass, classBinding);
 
-      const auto *methodsDecl = dyn_cast_or_null<VarDecl>(fieldNamed("methods", *base));
+      const auto *methodsDecl =
+          dyn_cast_or_null<VarDecl>(fieldNamed("methods", *base));
       if (!methodsDecl)
         continue;
 
@@ -714,7 +713,8 @@ void findBoundAsJavaClasses(ASTContext &C, CXXRecordDecl &klass)
       std::set<const CXXMethodDecl *> alreadyBound;
 
       for (const auto *init : inits->inits()) {
-        const auto *call = dyn_cast<CallExpr>(init->IgnoreUnlessSpelledInSource());
+        const auto *call =
+            dyn_cast<CallExpr>(init->IgnoreUnlessSpelledInSource());
         if (!call)
           continue;
 
@@ -726,15 +726,18 @@ void findBoundAsJavaClasses(ASTContext &C, CXXRecordDecl &klass)
         if (!templateArgs)
           continue;
 
-        const auto *strukt = dyn_cast_or_null<RecordDecl>(templateArgs->get(0).getAsType()->getAsRecordDecl());
+        const auto *strukt = dyn_cast_or_null<RecordDecl>(
+            templateArgs->get(0).getAsType()->getAsRecordDecl());
         if (!strukt)
           continue;
 
-        const auto *wrapperRef = dyn_cast_or_null<DeclRefExpr>(call->getArg(0)->IgnoreUnlessSpelledInSource());
+        const auto *wrapperRef = dyn_cast_or_null<DeclRefExpr>(
+            call->getArg(0)->IgnoreUnlessSpelledInSource());
         if (!wrapperRef)
           continue;
 
-        const auto *boundRef = dyn_cast_or_null<UnaryOperator>(wrapperRef->template_arguments().front().getArgument().getAsExpr());
+        const auto *boundRef = dyn_cast_or_null<UnaryOperator>(
+            wrapperRef->template_arguments().front().getArgument().getAsExpr());
         if (!boundRef)
           continue;
 
@@ -752,25 +755,30 @@ void findBoundAsJavaClasses(ASTContext &C, CXXRecordDecl &klass)
           }
           javaMethodSymbol += ").";
 
-          const auto binding = BoundAs {{
-            .lang = BoundAs::Lang::Jvm,
-            .kind = BoundAs::Kind::Method,
-            .symbol = javaMethodSymbol,
+          const auto binding = BoundAs{{
+              .lang = BoundAs::Lang::Jvm,
+              .kind = BoundAs::Kind::Method,
+              .symbol = javaMethodSymbol,
           }};
           setBindingAttr(C, boundDecl, binding);
         };
 
-        if (auto *bound = dyn_cast_or_null<DeclRefExpr>(boundRef->getSubExpr())) {
+        if (auto *bound =
+                dyn_cast_or_null<DeclRefExpr>(boundRef->getSubExpr())) {
           auto *method = dyn_cast_or_null<CXXMethodDecl>(bound->getDecl());
           if (!method)
             continue;
           addToBound(*method, 0);
-        } else if (const auto *bound = dyn_cast_or_null<UnresolvedLookupExpr>(boundRef->getSubExpr())) {
+        } else if (const auto *bound = dyn_cast_or_null<UnresolvedLookupExpr>(
+                       boundRef->getSubExpr())) {
           // XXX This is hackish
           // In case of overloads it's not obvious which one we should use
           // this expects the declaration order between C++ and Java to match
-          auto declarations = std::vector<Decl*>(bound->decls_begin(), bound->decls_end());
-          auto byLocation = [](Decl *a, Decl *b){ return a->getLocation() < b->getLocation(); };
+          auto declarations =
+              std::vector<Decl *>(bound->decls_begin(), bound->decls_end());
+          auto byLocation = [](Decl *a, Decl *b) {
+            return a->getLocation() < b->getLocation();
+          };
           std::sort(declarations.begin(), declarations.end(), byLocation);
 
           uint i = 0;
@@ -791,8 +799,7 @@ void findBoundAsJavaClasses(ASTContext &C, CXXRecordDecl &klass)
   }
 }
 
-void emitBindingAttributes(llvm::json::OStream &J, const Decl &decl)
-{
+void emitBindingAttributes(llvm::json::OStream &J, const Decl &decl) {
   addSlotOwnerAttribute(J, decl);
   addBindingSlotsAttribute(J, decl);
 }

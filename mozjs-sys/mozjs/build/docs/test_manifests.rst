@@ -163,15 +163,10 @@ fail-if
    Conditions can be specified on multiple lines (see ``skip-if``).
 
 run-sequentially
-   If present, the test should not be run in parallel with other tests.
+   Run test sequentially if the specified condition is true.
+   See :ref:`manifest_filter_language`.
 
-   Some test harnesses support parallel test execution on separate processes
-   and/or threads (behavior varies by test harness). If this key is present,
-   the test harness should not attempt to run this test in parallel with any
-   other test.
-
-   By convention, the value of this key is a string describing why the test
-   can't be run in parallel.
+   To always run a test sequentially, use ``run-sequentially = ["true"]``.
 
 scheme
    Changes the scheme and domain from which the test runs. (Only used in mochitest suites)
@@ -198,6 +193,7 @@ See
 `the source <https://hg.mozilla.org/mozilla-central/file/default/testing/mozbase/manifestparser/manifestparser/manifestparser.py>`_ for the full documentation of the
 expression syntax until it is documented here.
 
+.. rstcheck: ignore-directives=todo
 .. todo::
 
    Document manifest filter language.

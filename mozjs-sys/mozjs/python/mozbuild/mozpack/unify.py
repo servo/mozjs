@@ -245,11 +245,17 @@ class UnifiedBuildFinder(UnifiedFinder):
             # they exist, or strip them if only one file has a target platform.
             content1, content2 = (
                 FIND_TARGET_PLATFORM_ATTR.sub(
-                    lambda m: m.group("tag")
-                    + m.group("attrs")
-                    + m.group("otherattrs")
-                    + "<%stargetPlatform>%s</%stargetPlatform>"
-                    % (m.group("ns") or "", m.group("platform"), m.group("ns") or ""),
+                    lambda m: (
+                        m.group("tag")
+                        + m.group("attrs")
+                        + m.group("otherattrs")
+                        + "<%stargetPlatform>%s</%stargetPlatform>"
+                        % (
+                            m.group("ns") or "",
+                            m.group("platform"),
+                            m.group("ns") or "",
+                        )
+                    ),
                     f.open().read().decode("utf-8"),
                 )
                 for f in (file1, file2)

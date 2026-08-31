@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -61,9 +59,11 @@ class EnumeratedArray {
   MOZ_IMPLICIT constexpr EnumeratedArray(Args&&... aArgs)
       : mArray{std::forward<Args>(aArgs)...} {}
 
-  ValueType& operator[](Enum aIndex) { return mArray[size_t(aIndex)]; }
+  constexpr ValueType& operator[](Enum aIndex) {
+    return mArray[size_t(aIndex)];
+  }
 
-  const ValueType& operator[](Enum aIndex) const {
+  constexpr const ValueType& operator[](Enum aIndex) const {
     return mArray[size_t(aIndex)];
   }
 
@@ -79,6 +79,9 @@ class EnumeratedArray {
   iterator end() { return mArray.end(); }
   const_iterator end() const { return mArray.end(); }
   const_iterator cend() const { return mArray.cend(); }
+
+  // Method for std::size.
+  constexpr size_t size() const { return mArray.size(); }
 
   // Methods for reverse iterating.
   reverse_iterator rbegin() { return mArray.rbegin(); }

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,6 +6,7 @@
 #define mozilla_SIMD_h
 
 #include "mozilla/Types.h"
+#include <cstdint>
 
 namespace mozilla {
 // A collection of SIMD-implemented algorithms. Some of these exist in the CRT.
@@ -53,6 +52,15 @@ class SIMD {
   // This function just restricts our execution to the AVX2 path
   static MFBT_API const char16_t* memchr16AVX2(const char16_t* ptr,
                                                char16_t value, size_t length);
+
+  // Search through `ptr[0..length]` for the first occurrence of `value` and
+  // return the pointer to it, or nullptr if it cannot be found.
+  static MFBT_API const uint32_t* memchr32(const uint32_t* ptr, uint32_t value,
+                                           size_t length);
+
+  // This function just restricts our execution to the AVX2 path
+  static MFBT_API const uint32_t* memchr32AVX2(const uint32_t* ptr,
+                                               uint32_t value, size_t length);
 
   // Search through `ptr[0..length]` for the first occurrence of `value` and
   // return the pointer to it, or nullptr if it cannot be found.

@@ -1,4 +1,3 @@
-# coding: utf-8
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -62,6 +61,12 @@ SOURCES += [
 EXPORTS.bob.carol = [
     "/third_party/jpeg-xl/lib/jxl/header1.hpp",
     "/third_party/jpeg-xl/lib/jxl/header2.h",
+]
+"""
+
+SAMPLE_SINGLE_SOURCE_MOZBUILD = """
+UNIFIED_SOURCES += [
+    "stub.cpp",
 ]
 """
 
@@ -509,6 +514,26 @@ class TestUtils(unittest.TestCase):
                 print(expected_output)
                 print("-------------------")
             self.assertEqual(contents, expected_output)
+
+    def test_mozbuild_adding_already_present(self):
+        mozbuild_path = "third_party/somelib/megazords/full/moz.build"
+        file_to_add = "third_party/somelib/megazords/full/stub.cpp"
+
+        startdir = os.getcwd()
+        try:
+            mozbuild_dir = _make_mozbuild_directory_structure(
+                mozbuild_path, SAMPLE_SINGLE_SOURCE_MOZBUILD
+            )
+            os.chdir(mozbuild_dir.name)
+
+            mu.add_file_to_moz_build_file(file_to_add)
+
+            with open(os.path.join(mozbuild_dir.name, mozbuild_path)) as f:
+                contents = f.read()
+
+            self.assertEqual(contents, SAMPLE_SINGLE_SOURCE_MOZBUILD)
+        finally:
+            os.chdir(startdir)
 
 
 if __name__ == "__main__":

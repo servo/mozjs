@@ -1,14 +1,13 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef builtin_TestingUtility_h
 #define builtin_TestingUtility_h
 
-#include "js/RootingAPI.h"  // JS::Handle, JS::MutableHandle
-#include "js/Utility.h"     // JS::UniqueChars
+#include "js/experimental/JSStencil.h"  // JS::Stencil
+#include "js/RootingAPI.h"              // JS::Handle, JS::MutableHandle
+#include "js/Utility.h"                 // JS::UniqueChars
 
 struct JSContext;
 class JSObject;
@@ -65,12 +64,19 @@ JSObject* CreateScriptPrivate(JSContext* cx,
 
 [[nodiscard]] JS::UniqueChars StringToLocale(JSContext* cx,
                                              JS::Handle<JSObject*> callee,
-                                             JS::Handle<JSString*> str_);
+                                             JS::Handle<JSString*> str);
+
+enum class AllowTimeZoneLink : bool { No, Yes };
+
+[[nodiscard]] JS::UniqueChars StringToTimeZone(JSContext* cx,
+                                               JS::Handle<JSObject*> callee,
+                                               JS::Handle<JSString*> str,
+                                               AllowTimeZoneLink allowLink);
 
 // Validate the option for lazy-parsing agrees between the current global and
 // the stencil.
-bool ValidateLazinessOfStencilAndGlobal(
-    JSContext* cx, const frontend::CompilationStencil& stencil);
+bool ValidateLazinessOfStencilAndGlobal(JSContext* cx,
+                                        const JS::Stencil* stencil);
 
 bool ValidateModuleCompileOptions(JSContext* cx, JS::CompileOptions& options);
 

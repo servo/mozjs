@@ -2,15 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifdef JS_HAS_TEMPORAL_API
+#ifdef JS_HAS_INTL_API
 
 #  include <cmath>
 #  include <stdint.h>
 
-#  include "builtin/temporal/Int128.h"
 #  include "builtin/temporal/Temporal.h"
 #  include "jsapi-tests/tests.h"
+#  include "vm/Int128.h"
 
+using namespace js;
 using namespace js::temporal;
 
 // Simple test using numerators and denominators where the result can be

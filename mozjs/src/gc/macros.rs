@@ -1,27 +1,24 @@
-// Creates a C string literal `$str`.
-#[macro_export]
-macro_rules! c_str {
-    ($str:expr) => {
-        concat!($str, "\0").as_ptr() as *const ::std::os::raw::c_char
-    };
-}
-
 #[macro_export]
 macro_rules! rooted {
+    (&in($cx:expr) $($t:tt)*) => {
+        rooted!(in(unsafe {$cx.raw_cx_no_gc()}) $($t)*);
+    };
 	(in($cx:expr) let $($var:ident)+ = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
+        let mut __root = ::std::mem::MaybeUninit::uninit();
         let $($var)+ = $crate::gc::RootedGuard::new($cx, &mut __root, $init);
     };
 	(in($cx:expr) let $($var:ident)+: $type:ty = $init:expr) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
+        let mut __root = ::std::mem::MaybeUninit::uninit();
         let $($var)+: $crate::gc::RootedGuard<$type> = $crate::gc::RootedGuard::new($cx, &mut __root, $init);
     };
 	(in($cx:expr) let $($var:ident)+: $type:ty) => {
-        let mut __root = $crate::jsapi::Rooted::new_unrooted();
+        let mut __root = ::std::mem::MaybeUninit::uninit();
+        // SAFETY:
+        // We're immediately storing the initial value in a rooted location.
         let $($var)+: $crate::gc::RootedGuard<$type> = $crate::gc::RootedGuard::new(
             $cx,
             &mut __root,
-            <$type as $crate::gc::GCMethods>::initial(),
+            unsafe { <$type as $crate::gc::GCMethods>::initial() },
         );
     };
 }
@@ -32,24 +29,21 @@ macro_rules! rooted_vec {
         let mut __root = $crate::gc::RootableVec::new_unrooted();
         let mut $name = $crate::gc::RootedVec::new(&mut __root);
     };
-    (let mut $name:ident: $type:ty) => {
+    (let $name:ident <- $iter:expr) => {
         let mut __root = $crate::gc::RootableVec::new_unrooted();
-        let mut $name: $crate::gc::RootedVec<$type> = $crate::gc::RootedVec::new(&mut __root);
+        let $name = $crate::gc::RootedVec::from_iter(&mut __root, $iter);
     };
-    (let mut $name:ident = $init:expr) => {
+    (let mut $name:ident <- $iter:expr) => {
         let mut __root = $crate::gc::RootableVec::new_unrooted();
-        let mut $name = $crate::gc::RootedVec::new(&mut __root);
-        ::std::iter::Extend::extend(&mut $name, $init);
-    };
-    (let mut $name:ident: $type:ty = $init:expr) => {
-        let mut __root = $crate::gc::RootableVec::new_unrooted();
-        let mut $name: $crate::gc::RootedVec<$type> = $crate::gc::RootedVec::new(&mut __root);
-        ::std::iter::Extend::extend(&mut $name, $init);
+        let mut $name = $crate::gc::RootedVec::from_iter(&mut __root, $iter);
     };
 }
 
 #[macro_export]
 macro_rules! auto_root {
+    (&in($cx:expr) $($t:tt)*) => {
+        auto_root!(in(unsafe {$cx.raw_cx_no_gc()}) $($t)*);
+    };
     (in($cx:expr) let $($var:ident)+ = $init:expr) => {
         let mut __root = $crate::gc::CustomAutoRooter::new($init);
         let $($var)+ = __root.root($cx);

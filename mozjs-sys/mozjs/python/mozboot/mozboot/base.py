@@ -16,7 +16,6 @@ from packaging.version import Version
 from mozboot import rust
 from mozboot.util import (
     MINIMUM_RUST_VERSION,
-    get_mach_virtualenv_binary,
     http_download_and_save,
 )
 
@@ -153,7 +152,7 @@ MODERN_MERCURIAL_VERSION = Version("4.9")
 MODERN_RUST_VERSION = Version(MINIMUM_RUST_VERSION)
 
 
-class BaseBootstrapper(object):
+class BaseBootstrapper:
     """Base class for system bootstrappers."""
 
     def __init__(self, no_interactive=False, no_system_changes=False):
@@ -169,12 +168,6 @@ class BaseBootstrapper(object):
         Platform-specific implementations should check the environment and offer advice/warnings
         to the user, if necessary.
         """
-
-    def suggest_install_pip3(self):
-        """Called if pip3 can't be found."""
-        print(
-            "Try installing pip3 with your system's package manager.", file=sys.stderr
-        )
 
     def install_system_packages(self):
         """
@@ -332,45 +325,8 @@ class BaseBootstrapper(object):
         """
         pass
 
-    def install_toolchain_artifact(self, toolchain_job, no_unpack=False):
-        if no_unpack:
-            return self.install_toolchain_artifact_impl(
-                self.state_dir, toolchain_job, no_unpack
-            )
+    def install_toolchain_artifact(self, toolchain_job):
         bootstrap_toolchain(toolchain_job)
-
-    def install_toolchain_artifact_impl(
-        self, install_dir: Path, toolchain_job, no_unpack=False
-    ):
-        if type(self.srcdir) is str:
-            mach_binary = Path(self.srcdir) / "mach"
-        else:
-            mach_binary = (self.srcdir / "mach").resolve()
-        if not mach_binary.exists():
-            raise ValueError(f"mach not found at {mach_binary}")
-
-        if not self.state_dir:
-            raise ValueError(
-                "Need a state directory (e.g. ~/.mozbuild) to download " "artifacts"
-            )
-        python_location = get_mach_virtualenv_binary()
-        if not python_location.exists():
-            raise ValueError(f"python not found at {python_location}")
-
-        cmd = [
-            str(python_location),
-            str(mach_binary),
-            "artifact",
-            "toolchain",
-            "--bootstrap",
-            "--from-build",
-            toolchain_job,
-        ]
-
-        if no_unpack:
-            cmd += ["--no-unpack"]
-
-        subprocess.check_call(cmd, cwd=str(install_dir))
 
     def auto_bootstrap(self, application, exclude=[]):
         args = ["--with-ccache=sccache"]
@@ -410,7 +366,7 @@ class BaseBootstrapper(object):
 
         if self.no_interactive:
             print(prompt)
-            print('Selecting "{}" because context is not interactive.'.format(default))
+            print(f'Selecting "{default}" because context is not interactive.')
             return default
 
         while True:
@@ -476,8 +432,9 @@ class BaseBootstrapper(object):
 
         process = subprocess.run(
             [str(path), version_param],
+            check=False,
             env=env,
-            universal_newlines=True,
+            text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
         )
@@ -704,18 +661,16 @@ class BaseBootstrapper(object):
             rustup_init.chmod(mode | stat.S_IRWXU)
             print("Ok")
             print("Running rustup-init...")
-            subprocess.check_call(
-                [
-                    str(rustup_init),
-                    "-y",
-                    "--default-toolchain",
-                    "stable",
-                    "--default-host",
-                    platform,
-                    "--component",
-                    "rustfmt",
-                ]
-            )
+            subprocess.check_call([
+                str(rustup_init),
+                "-y",
+                "--default-toolchain",
+                "stable",
+                "--default-host",
+                platform,
+                "--component",
+                "rustfmt",
+            ])
             cargo_home, cargo_bin = self.cargo_home()
             self.print_rust_path_advice(RUST_INSTALL_COMPLETE, cargo_home, cargo_bin)
         finally:
@@ -724,3 +679,43 @@ class BaseBootstrapper(object):
             except OSError as e:
                 if e.errno != errno.ENOENT:
                     raise
+
+    CARGO_TOOLS = (
+        "searchfox-cli",
+        "socorro-cli",
+        "stmo-cli",
+        "treeherder-cli",
+        "webspec-index",
+    )
+
+    def cargo_tools_installed(self):
+        """Return True if all cargo developer tools are already installed."""
+        _, cargo_bin = self.cargo_home()
+        extra = [str(cargo_bin)]
+        return all(which(tool, extra_search_dirs=extra) for tool in self.CARGO_TOOLS)
+
+    def ensure_cargo_tools(self):
+        """Install cargo-binstall and required developer tools."""
+        cargo_home, cargo_bin = self.cargo_home()
+        extra = [str(cargo_bin)]
+
+        cargo = to_optional_path(which("cargo", extra_search_dirs=extra))
+        if not cargo:
+            print(
+                "cargo is required to install agentic coding tools but was not found. "
+                "Please install Rust from https://rustup.rs/ and re-run bootstrap."
+            )
+            return
+
+        binstall = cargo_bin / ("cargo-binstall" + rust.exe_suffix())
+        if not binstall.exists():
+            print("Installing cargo-binstall...")
+            subprocess.check_call([str(cargo), "install", "cargo-binstall"])
+
+        print("Installing cargo tools: {}...".format(", ".join(self.CARGO_TOOLS)))
+        subprocess.check_call([
+            str(cargo),
+            "binstall",
+            "--no-confirm",
+            *self.CARGO_TOOLS,
+        ])

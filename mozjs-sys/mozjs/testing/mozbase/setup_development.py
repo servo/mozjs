@@ -186,9 +186,9 @@ def main(args=sys.argv[1:]):
         packages = sorted(mozbase_packages)
 
     # ensure specified packages are in the list
-    assert set(packages).issubset(
-        mozbase_packages
-    ), "Packages should be in %s (You gave: %s)" % (mozbase_packages, packages)
+    assert set(packages).issubset(mozbase_packages), (
+        "Packages should be in %s (You gave: %s)" % (mozbase_packages, packages)
+    )
 
     if options.list_dependencies:
         # list the package dependencies

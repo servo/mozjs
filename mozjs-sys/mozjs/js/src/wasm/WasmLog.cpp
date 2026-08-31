@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2021 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,15 +22,19 @@
 #include "js/Printf.h"
 #include "js/Utility.h"
 #include "vm/JSContext.h"
+#include "vm/Logging.h"
 #include "vm/Warnings.h"
 
 using namespace js;
 using namespace js::wasm;
 
 void wasm::Log(JSContext* cx, const char* fmt, ...) {
-  MOZ_ASSERT(!cx->isExceptionPending());
+  MOZ_ASSERT(!cx->isExceptionPending() || cx->isThrowingOutOfMemory());
 
-  if (!cx->options().wasmVerbose()) {
+  bool shouldWarn = JS::Prefs::wasm_trace_api();
+  bool shouldLog = wasmApiModule.shouldLog(LogLevel::Info);
+
+  if (cx->isThrowingOutOfMemory() || (!shouldWarn && !shouldLog)) {
     return;
   }
 
@@ -40,9 +42,15 @@ void wasm::Log(JSContext* cx, const char* fmt, ...) {
   va_start(args, fmt);
 
   if (UniqueChars chars = JS_vsmprintf(fmt, args)) {
-    WarnNumberASCII(cx, JSMSG_WASM_VERBOSE, chars.get());
-    if (cx->isExceptionPending()) {
-      cx->clearPendingException();
+    if (shouldWarn) {
+      WarnNumberASCII(cx, JSMSG_WASM_VERBOSE, chars.get());
+      if (cx->isExceptionPending()) {
+        cx->clearPendingException();
+      }
+    }
+    if (shouldLog) {
+      wasmApiModule.interface.logPrint(wasmApiModule.logger, LogLevel::Info,
+                                       "%s", chars.get());
     }
   }
 
@@ -50,10 +58,17 @@ void wasm::Log(JSContext* cx, const char* fmt, ...) {
 }
 
 void wasm::LogOffThread(const char* fmt, ...) {
-  va_list ap;
-  va_start(ap, fmt);
-  vfprintf(stderr, fmt, ap);
-  va_end(ap);
+  if (!wasmApiModule.shouldLog(LogLevel::Info)) {
+    return;
+  }
+
+  va_list args;
+  va_start(args, fmt);
+  if (UniqueChars chars = JS_vsmprintf(fmt, args)) {
+    wasmApiModule.interface.logPrint(wasmApiModule.logger, LogLevel::Info, "%s",
+                                     chars.get());
+  }
+  va_end(args);
 }
 
 #ifdef WASM_CODEGEN_DEBUG

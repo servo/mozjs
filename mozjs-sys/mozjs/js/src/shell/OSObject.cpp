@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,7 +6,6 @@
 
 #include "shell/OSObject.h"
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/TextUtils.h"
 
@@ -19,13 +16,14 @@
 #  include <process.h>
 #  include <string.h>
 #  include <wchar.h>
-#  include <windows.h>
+#  include "util/WindowsWrapper.h"
 #elif __wasi__
 #  include <dirent.h>
 #  include <sys/types.h>
 #  include <unistd.h>
 #else
 #  include <dirent.h>
+#  include <signal.h>
 #  include <sys/types.h>
 #  include <sys/wait.h>
 #  include <unistd.h>
@@ -47,9 +45,10 @@
 #include "shell/jsshell.h"
 #include "shell/StringUtils.h"
 #include "util/GetPidProvider.h"  // getpid()
-#include "util/StringBuffer.h"
+#include "util/StringBuilder.h"
 #include "util/Text.h"
 #include "util/WindowsWrapper.h"
+#include "vm/ArrayBufferObject.h"
 #include "vm/JSObject.h"
 #include "vm/TypedArrayObject.h"
 
@@ -120,6 +119,7 @@ static UniqueChars DirectoryName(JSContext* cx, const char* path) {
   char dirName[PATH_MAX + 1];
   strncpy(dirName, narrowPath.get(), PATH_MAX);
   if (dirName[PATH_MAX - 1] != '\0') {
+    JS_ReportErrorASCII(cx, "Path is too long");
     return nullptr;
   }
 
@@ -194,11 +194,10 @@ JSString* ResolvePath(JSContext* cx, HandleString filenameStr,
   JS::AutoFilename scriptFilename;
   if (resolveMode == ScriptRelative) {
     // Get the currently executing script's name.
-    if (!DescribeScriptedCaller(cx, &scriptFilename)) {
-      return nullptr;
-    }
 
-    if (!scriptFilename.get()) {
+    if (!DescribeScriptedCaller(&scriptFilename, cx) || !scriptFilename.get()) {
+      JS_ReportErrorASCII(
+          cx, "cannot resolve path due to hidden or unscripted caller");
       return nullptr;
     }
 
@@ -332,20 +331,8 @@ JSObject* FileAsTypedArray(JSContext* cx, JS::HandleString pathnameStr) {
   }
 
   js::TypedArrayObject& ta = obj->as<js::TypedArrayObject>();
-  if (ta.isSharedMemory()) {
-    // Must opt in to use shared memory.  For now, don't.
-    //
-    // (It is incorrect to read into the buffer without
-    // synchronization since that can create a race.  A
-    // lock here won't fix it - both sides must
-    // participate.  So what one must do is to create a
-    // temporary buffer, read into that, and use a
-    // race-safe primitive to copy memory into the
-    // buffer.)
-    JS_ReportErrorUTF8(cx, "can't read %s: shared memory buffer",
-                       pathname.get());
-    return nullptr;
-  }
+  MOZ_RELEASE_ASSERT(!ta.isSharedMemory(),
+                     "JS_NewUint8Array returns non-shared typed array");
 
   char* buf = static_cast<char*>(ta.dataPointerUnshared());
   if (!ReadFile(cx, pathname.get(), file, buf, len)) {
@@ -353,6 +340,45 @@ JSObject* FileAsTypedArray(JSContext* cx, JS::HandleString pathnameStr) {
   }
 
   return obj;
+}
+
+JSObject* FileAsImmutableTypedArray(JSContext* cx,
+                                    JS::HandleString pathnameStr) {
+  UniqueChars pathname = JS_EncodeStringToUTF8(cx, pathnameStr);
+  if (!pathname) {
+    return nullptr;
+  }
+
+  FILE* file = OpenFile(cx, pathname.get(), "rb");
+  if (!file) {
+    return nullptr;
+  }
+  AutoCloseFile autoClose(file);
+
+  size_t len;
+  if (!FileSize(cx, pathname.get(), file, &len)) {
+    return nullptr;
+  }
+
+  if (len > ArrayBufferObject::ByteLengthLimit) {
+    JS_ReportErrorUTF8(cx, "file %s is too large for an ArrayBuffer",
+                       pathname.get());
+    return nullptr;
+  }
+
+  JS::Rooted<ImmutableArrayBufferObject*> obj(
+      cx, ImmutableArrayBufferObject::createZeroed(cx, len));
+  if (!obj) {
+    return nullptr;
+  }
+  MOZ_RELEASE_ASSERT(obj->byteLength() == len);
+
+  auto* buf = reinterpret_cast<char*>(obj->dataPointer());
+  if (!ReadFile(cx, pathname.get(), file, buf, len)) {
+    return nullptr;
+  }
+
+  return JS_NewUint8ArrayWithBuffer(cx, obj, 0, len);
 }
 
 /**
@@ -459,7 +485,7 @@ static bool ListDir(JSContext* cx, unsigned argc, Value* vp,
 
   UniqueChars pathname = JS_EncodeStringToUTF8(cx, str);
   if (!pathname) {
-    JS_ReportErrorASCII(cx, "os.file.listDir cannot convert path to Latin1");
+    JS_ReportErrorASCII(cx, "os.file.listDir cannot convert path to UTF8");
     return false;
   }
 
@@ -479,8 +505,8 @@ static bool ListDir(JSContext* cx, unsigned argc, Value* vp,
   {
     DIR* dir = opendir(pathname.get());
     if (!dir) {
-      JS_ReportErrorASCII(cx, "os.file.listDir is unable to open: %s",
-                          pathname.get());
+      JS_ReportErrorUTF8(cx, "os.file.listDir is unable to open: %s",
+                         pathname.get());
       return false;
     }
     auto close = mozilla::MakeScopeExit([&] {
@@ -507,6 +533,11 @@ static bool ListDir(JSContext* cx, unsigned argc, Value* vp,
 
     WIN32_FIND_DATAA FindFileData;
     HANDLE hFind = FindFirstFileA(pattern.begin(), &FindFileData);
+    if (hFind == INVALID_HANDLE_VALUE) {
+      JS_ReportErrorUTF8(cx, "os.file.listDir is unable to open: %s",
+                         pathname.get());
+      return false;
+    }
     auto close = mozilla::MakeScopeExit([&] {
       if (!FindClose(hFind)) {
         MOZ_CRASH("Could not close Find");
@@ -572,7 +603,13 @@ static bool osfile_writeTypedArrayToFile(JSContext* cx, unsigned argc,
   if (obj->isSharedMemory()) {
     // Must opt in to use shared memory.  For now, don't.
     //
-    // See further comments in FileAsTypedArray, above.
+    // (It is incorrect to read into the buffer without
+    // synchronization since that can create a race.  A
+    // lock here won't fix it - both sides must
+    // participate.  So what one must do is to create a
+    // temporary buffer, read into that, and use a
+    // race-safe primitive to copy memory into the
+    // buffer.)
     JS_ReportErrorUTF8(cx, "can't write %s: shared memory buffer",
                        filename.get());
     return false;
@@ -665,23 +702,15 @@ class FileObject : public NativeObject {
 };
 
 static const JSClassOps FileObjectClassOps = {
-    nullptr,               // addProperty
-    nullptr,               // delProperty
-    nullptr,               // enumerate
-    nullptr,               // newEnumerate
-    nullptr,               // resolve
-    nullptr,               // mayResolve
-    FileObject::finalize,  // finalize
-    nullptr,               // call
-    nullptr,               // construct
-    nullptr,               // trace
+    .finalize = FileObject::finalize,
 };
 
 const JSClass FileObject::class_ = {
     "File",
     JSCLASS_HAS_RESERVED_SLOTS(FileObject::NUM_SLOTS) |
         JSCLASS_FOREGROUND_FINALIZE,
-    &FileObjectClassOps};
+    &FileObjectClassOps,
+};
 
 static FileObject* redirect(JSContext* cx, HandleString relFilename,
                             RCFile** globalFile) {
@@ -898,7 +927,7 @@ static bool ospath_join(JSContext* cx, unsigned argc, Value* vp) {
     }
 
     if (IsAbsolutePath(str)) {
-      MOZ_ALWAYS_TRUE(buffer.resize(0));
+      buffer.clear();
     } else if (i != 0) {
       UniqueChars path = JS_EncodeStringToUTF8(cx, str);
       if (!path) {
@@ -994,14 +1023,14 @@ UniqueChars SystemErrorMessage(JSContext* cx, int errnum) {
 #if defined(XP_WIN)
   wchar_t buffer[200];
   const wchar_t* errstr = buffer;
-  if (_wcserror_s(buffer, mozilla::ArrayLength(buffer), errnum) != 0) {
+  if (_wcserror_s(buffer, std::size(buffer), errnum) != 0) {
     errstr = L"unknown error";
   }
   return JS::EncodeWideToUtf8(cx, errstr);
 #else
   char buffer[200];
-  const char* errstr = strerror_message(
-      strerror_r(errno, buffer, mozilla::ArrayLength(buffer)), buffer);
+  const char* errstr =
+      strerror_message(strerror_r(errno, buffer, std::size(buffer)), buffer);
   if (!errstr) {
     errstr = "unknown error";
   }
@@ -1307,3 +1336,8 @@ bool DefineOS(JSContext* cx, HandleObject global, bool fuzzingSafe,
 
 }  // namespace shell
 }  // namespace js
+
+#ifdef XP_WIN
+#  undef PATH_MAX
+#  undef getcwd
+#endif

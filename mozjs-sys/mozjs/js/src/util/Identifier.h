@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,7 +20,7 @@ namespace js {
  *
  * This returns true even if str is a keyword like "if".
  */
-bool IsIdentifier(JSLinearString* str);
+bool IsIdentifier(const JSLinearString* str);
 
 /*
  * As above, but taking chars + length.
@@ -44,7 +42,7 @@ bool IsIdentifierASCII(char c1, char c2);
  *
  * This returns true even if str is a keyword like "if".
  */
-bool IsIdentifierNameOrPrivateName(JSLinearString* str);
+bool IsIdentifierNameOrPrivateName(const JSLinearString* str);
 
 /*
  * As above, but taking chars + length.

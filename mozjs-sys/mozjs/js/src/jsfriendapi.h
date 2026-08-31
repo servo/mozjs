@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -13,6 +11,7 @@
 #include "js/Class.h"
 #include "js/ColumnNumber.h"  // JS::LimitedColumnNumberOneOrigin
 #include "js/GCAPI.h"
+#include "js/GCVector.h"
 #include "js/HeapAPI.h"
 #include "js/Object.h"           // JS::GetClass
 #include "js/shadow/Function.h"  // JS::shadow::Function
@@ -20,20 +19,6 @@
 #include "js/TypeDecls.h"
 
 class JSJitInfo;
-
-/*
- * Set a callback used to trace gray roots.
- *
- * The callback is called after the first slice of GC so the embedding must
- * implement appropriate barriers on its gray roots to ensure correctness.
- *
- * This callback may be called multiple times for different sets of zones. Use
- * JS::ZoneIsGrayMarking() to determine whether roots from a particular zone are
- * required.
- */
-extern JS_PUBLIC_API void JS_SetGrayGCRootsTracer(JSContext* cx,
-                                                  JSGrayRootsTracer traceOp,
-                                                  void* data);
 
 extern JS_PUBLIC_API JSObject* JS_FindCompilationScope(JSContext* cx,
                                                        JS::HandleObject obj);
@@ -78,38 +63,9 @@ extern JS_PUBLIC_API bool JS_IsDeadWrapper(JSObject* obj);
 extern JS_PUBLIC_API JSObject* JS_NewDeadWrapper(
     JSContext* cx, JSObject* origObject = nullptr);
 
-namespace js {
-
-/**
- * Get the script private value associated with an object, if any.
- *
- * The private value is set with SetScriptPrivate() or SetModulePrivate() and is
- * internally stored on the relevant ScriptSourceObject.
- *
- * This is used by the cycle collector to trace through
- * ScriptSourceObjects. This allows private values to contain an nsISupports
- * pointer and hence support references to cycle collected C++ objects.
- */
-JS_PUBLIC_API JS::Value MaybeGetScriptPrivate(JSObject* object);
-
-}  // namespace js
-
-/*
- * Used by the cycle collector to trace through a shape or object group and
- * all cycle-participating data it reaches, using bounded stack space.
- */
-extern JS_PUBLIC_API void JS_TraceShapeCycleCollectorChildren(
-    JS::CallbackTracer* trc, JS::GCCellPtr shape);
-extern JS_PUBLIC_API void JS_TraceObjectGroupCycleCollectorChildren(
-    JS::CallbackTracer* trc, JS::GCCellPtr group);
-
 extern JS_PUBLIC_API JSPrincipals* JS_GetScriptPrincipals(JSScript* script);
 
 extern JS_PUBLIC_API bool JS_ScriptHasMutedErrors(JSScript* script);
-
-extern JS_PUBLIC_API JSObject* JS_CloneObject(JSContext* cx,
-                                              JS::HandleObject obj,
-                                              JS::HandleObject proto);
 
 /**
  * Copy the own properties of src to dst in a fast way.  src and dst must both
@@ -165,17 +121,6 @@ extern JS_PUBLIC_API bool GetDebuggerObservesWasm(JS::Realm* realm);
 
 }  // namespace JS
 
-/**
- * Copies all own properties and private fields from |obj| to |target|. Both
- * |obj| and |target| must not be cross-compartment wrappers because we have to
- * enter their realms.
- *
- * This function immediately enters a realm, and does not impose any
- * restrictions on the realm of |cx|.
- */
-extern JS_PUBLIC_API bool JS_CopyOwnPropertiesAndPrivateFields(
-    JSContext* cx, JS::HandleObject target, JS::HandleObject obj);
-
 extern JS_PUBLIC_API bool JS_WrapPropertyDescriptor(
     JSContext* cx, JS::MutableHandle<JS::PropertyDescriptor> desc);
 
@@ -228,14 +173,6 @@ extern JS_PUBLIC_API JSObject* GetJobsInInternalJobQueue(JSContext* cx);
 #endif
 
 /**
- * Enqueue |job| on the internal job queue.
- *
- * This is useful in tests for creating situations where a call occurs with no
- * other JavaScript on the stack.
- */
-extern JS_PUBLIC_API bool EnqueueJob(JSContext* cx, JS::HandleObject job);
-
-/**
  * Instruct the runtime to stop draining the internal job queue.
  *
  * Useful if the embedding is in the process of quitting in reaction to a
@@ -262,50 +199,8 @@ extern JS_PUBLIC_API bool IsSystemCompartment(JS::Compartment* comp);
 
 extern JS_PUBLIC_API bool IsSystemZone(JS::Zone* zone);
 
-struct WeakMapTracer {
-  JSRuntime* runtime;
-
-  explicit WeakMapTracer(JSRuntime* rt) : runtime(rt) {}
-
-  // Weak map tracer callback, called once for every binding of every
-  // weak map that was live at the time of the last garbage collection.
-  //
-  // m will be nullptr if the weak map is not contained in a JS Object.
-  //
-  // The callback should not GC (and will assert in a debug build if it does
-  // so.)
-  virtual void trace(JSObject* m, JS::GCCellPtr key, JS::GCCellPtr value) = 0;
-};
-
-extern JS_PUBLIC_API void TraceWeakMaps(WeakMapTracer* trc);
-
-extern JS_PUBLIC_API bool AreGCGrayBitsValid(JSRuntime* rt);
-
-extern JS_PUBLIC_API bool ZoneGlobalsAreAllGray(JS::Zone* zone);
-
 extern JS_PUBLIC_API bool IsCompartmentZoneSweepingOrCompacting(
     JS::Compartment* comp);
-
-using IterateGCThingCallback = void (*)(void*, JS::GCCellPtr,
-                                        const JS::AutoRequireNoGC&);
-
-extern JS_PUBLIC_API void TraceGrayWrapperTargets(JSTracer* trc,
-                                                  JS::Zone* zone);
-
-/**
- * Invoke cellCallback on every gray JSObject in the given zone.
- */
-extern JS_PUBLIC_API void IterateGrayObjects(
-    JS::Zone* zone, IterateGCThingCallback cellCallback, void* data);
-
-#if defined(JS_GC_ZEAL) || defined(DEBUG)
-// Trace the heap and check there are no black to gray edges. These are
-// not allowed since the cycle collector could throw away the gray thing and
-// leave a dangling pointer.
-//
-// This doesn't trace weak maps as these are handled separately.
-extern JS_PUBLIC_API bool CheckGrayMarkingState(JSRuntime* rt);
-#endif
 
 // Note: this returns nullptr iff |zone| is the atoms zone.
 extern JS_PUBLIC_API JS::Realm* GetAnyRealmInZone(JS::Zone* zone);
@@ -356,6 +251,10 @@ JS_PUBLIC_API bool ShouldIgnorePropertyDefinition(JSContext* cx, JSProtoKey key,
                                                   jsid id);
 
 JS_PUBLIC_API bool IsFunctionObject(JSObject* obj);
+
+// If |obj| is a ModuleObject or ModuleEnvironmentObject, return the
+// module's filename. Otherwise return nullptr.
+JS_PUBLIC_API const char* MaybeGetModuleFilename(JSObject* obj);
 
 JS_PUBLIC_API bool UninlinedIsCrossCompartmentWrapper(const JSObject* obj);
 
@@ -446,6 +345,18 @@ JS_PUBLIC_API bool AppendUnique(JSContext* cx, JS::MutableHandleIdVector base,
                                 JS::HandleIdVector others);
 
 /**
+ * Direct embedder access for retrieving a copy of all entries in a Set or Map
+ * object.
+ */
+JS_PUBLIC_API bool GetSetObjectKeys(
+    JSContext* cx, JS::HandleObject obj,
+    JS::MutableHandle<JS::GCVector<JS::Value>> keys);
+
+JS_PUBLIC_API bool GetMapObjectKeysAndValuesInterleaved(
+    JSContext* cx, JS::HandleObject obj,
+    JS::MutableHandle<JS::GCVector<JS::Value>> entries);
+
+/**
  * Determine whether the given string is an array index in the sense of
  * <https://tc39.github.io/ecma262/#array-index>.
  *
@@ -453,7 +364,8 @@ JS_PUBLIC_API bool AppendUnique(JSContext* cx, JS::MutableHandleIdVector base,
  *
  * If it is, returns true and outputs the index in *indexp.
  */
-JS_PUBLIC_API bool StringIsArrayIndex(JSLinearString* str, uint32_t* indexp);
+JS_PUBLIC_API bool StringIsArrayIndex(const JSLinearString* str,
+                                      uint32_t* indexp);
 
 /**
  * Overload of StringIsArrayIndex taking a (char16_t*,length) pair. Behaves
@@ -465,6 +377,8 @@ JS_PUBLIC_API bool StringIsArrayIndex(const char16_t* str, uint32_t length,
 JS_PUBLIC_API void SetPreserveWrapperCallbacks(
     JSContext* cx, PreserveWrapperCallback preserveWrapper,
     HasReleasedWrapperCallback hasReleasedWrapper);
+
+JS_PUBLIC_API void CommitPendingWrapperPreservations(JSContext* cx);
 
 JS_PUBLIC_API bool IsObjectInContextCompartment(JSObject* obj,
                                                 const JSContext* cx);
@@ -483,8 +397,17 @@ JS_PUBLIC_API bool IsObjectInContextCompartment(JSObject* obj,
 
 using DOMInstanceClassHasProtoAtDepth = bool (*)(const JSClass*, uint32_t,
                                                  uint32_t);
+using DOMInstanceClassIsError = bool (*)(const JSClass*);
+
+using DOMExtractExceptionInfo = bool (*)(JSContext*, JS::HandleObject, bool*,
+                                         JS::MutableHandle<JSString*>,
+                                         uint32_t*, uint32_t*,
+                                         JS::MutableHandle<JSString*>);
+
 struct JSDOMCallbacks {
   DOMInstanceClassHasProtoAtDepth instanceClassMatchesProto;
+  DOMInstanceClassIsError instanceClassIsError;
+  DOMExtractExceptionInfo extractExceptionInfo;
 };
 using DOMCallbacks = struct JSDOMCallbacks;
 
@@ -504,45 +427,6 @@ extern JS_PUBLIC_API JSObject* GetTestingFunctions(JSContext* cx);
 extern JS_PUBLIC_API JSLinearString* GetErrorTypeName(JSContext* cx,
                                                       int16_t exnType);
 
-/* Implemented in CrossCompartmentWrapper.cpp. */
-typedef enum NukeReferencesToWindow {
-  NukeWindowReferences,
-  DontNukeWindowReferences
-} NukeReferencesToWindow;
-
-typedef enum NukeReferencesFromTarget {
-  NukeAllReferences,
-  NukeIncomingReferences,
-} NukeReferencesFromTarget;
-
-/*
- * These filters are designed to be ephemeral stack classes, and thus don't
- * do any rooting or holding of their members.
- */
-struct CompartmentFilter {
-  virtual bool match(JS::Compartment* c) const = 0;
-};
-
-struct AllCompartments : public CompartmentFilter {
-  virtual bool match(JS::Compartment* c) const override { return true; }
-};
-
-struct SingleCompartment : public CompartmentFilter {
-  JS::Compartment* ours;
-  explicit SingleCompartment(JS::Compartment* c) : ours(c) {}
-  virtual bool match(JS::Compartment* c) const override { return c == ours; }
-};
-
-extern JS_PUBLIC_API bool NukeCrossCompartmentWrappers(
-    JSContext* cx, const CompartmentFilter& sourceFilter, JS::Realm* target,
-    NukeReferencesToWindow nukeReferencesToWindow,
-    NukeReferencesFromTarget nukeReferencesFromTarget);
-
-extern JS_PUBLIC_API bool AllowNewWrapper(JS::Compartment* target,
-                                          JSObject* obj);
-
-extern JS_PUBLIC_API bool NukedObjectRealm(JSObject* obj);
-
 /* Implemented in jsdate.cpp. */
 
 /** Detect whether the internal date value is NaN. */
@@ -553,16 +437,8 @@ extern JS_PUBLIC_API bool DateGetMsecSinceEpoch(JSContext* cx,
                                                 JS::HandleObject obj,
                                                 double* msecSinceEpoch);
 
-} /* namespace js */
-
-namespace js {
-
 /* Implemented in vm/StructuredClone.cpp. */
 extern JS_PUBLIC_API uint64_t GetSCOffset(JSStructuredCloneWriter* writer);
-
-}  // namespace js
-
-namespace js {
 
 /* Statically asserted in FunctionFlags.cpp. */
 static const unsigned JS_FUNCTION_INTERPRETED_BITS = 0x0060;
@@ -708,8 +584,8 @@ extern JS_PUBLIC_API bool IsSavedFrame(JSObject* obj);
 #if defined(XP_WIN)
 // Parameters use void* types to avoid #including windows.h. The return value of
 // this function is returned from the exception handler.
-typedef long (*JitExceptionHandler)(void* exceptionRecord,  // PEXECTION_RECORD
-                                    void* context);         // PCONTEXT
+using JitExceptionHandler = long (*)(void* exceptionRecord,  // PEXECTION_RECORD
+                                     void* context);         // PCONTEXT
 
 /**
  * Windows uses "structured exception handling" to handle faults. When a fault
@@ -786,11 +662,8 @@ using SharedMemoryMap =
 extern JS_PUBLIC_API const gc::SharedMemoryMap& GetSharedMemoryUsageForZone(
     JS::Zone* zone);
 
-/**
- * This function only reports GC heap memory,
- * and not malloc allocated memory associated with GC things.
- * It reports the total of all memory for the whole Runtime.
- */
+// Get the total amount of GC heap memory used by the runtime, including malloc
+// memory.
 extern JS_PUBLIC_API uint64_t GetGCHeapUsage(JSContext* cx);
 
 class JS_PUBLIC_API CompartmentTransplantCallback {

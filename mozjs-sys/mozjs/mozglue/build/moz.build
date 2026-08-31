@@ -1,5 +1,3 @@
-# -*- Mode: python; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -20,21 +18,6 @@ if CONFIG["OS_TARGET"] == "Android":
         "BionicGlue.cpp",
     ]
 
-if CONFIG["MOZ_ASAN"]:
-    SOURCES += [
-        "AsanOptions.cpp",
-    ]
-
-if CONFIG["MOZ_UBSAN"]:
-    SOURCES += [
-        "UbsanOptions.cpp",
-    ]
-
-if CONFIG["MOZ_TSAN"]:
-    SOURCES += [
-        "TsanOptions.cpp",
-    ]
-
 if CONFIG["OS_TARGET"] == "WINNT":
     if CONFIG["MOZ_MEMORY"]:
         DEFFILE = "mozglue.def"
@@ -49,6 +32,7 @@ if CONFIG["OS_TARGET"] == "WINNT":
     # dependencies on user32.dll.
     DELAYLOAD_DLLS += [
         "advapi32.dll",
+        "crypt32.dll",
         "dbghelp.dll",
         "oleaut32.dll",
         "ole32.dll",
@@ -98,10 +82,6 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"]:
         USE_LIBS += [
             "zlib",
         ]
-
-USE_LIBS += [
-    "mfbt",
-]
 
 LIBRARY_DEFINES["IMPL_MFBT"] = True
 LIBRARY_DEFINES["MOZ_HAS_MOZGLUE"] = True

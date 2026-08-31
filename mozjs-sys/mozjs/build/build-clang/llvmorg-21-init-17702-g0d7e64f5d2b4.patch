@@ -1,0 +1,295 @@
+From 7eb91b30bedfda404e7b68d94e7ab770b774846a Mon Sep 17 00:00:00 2001
+From: David Justo <david.justo.1996@gmail.com>
+Date: Wed, 2 Jul 2025 15:37:28 -0700
+Subject: [PATCH] [ASan][Windows] Honor asan config flags on windows when set
+ through the user function (#122990)
+
+**Related to:** https://github.com/llvm/llvm-project/issues/117925
+**Follow up to:** https://github.com/llvm/llvm-project/pull/117929
+
+**Context:**
+As noted in the linked issue, some ASan configuration flags are not
+honored on Windows when set through the `__asan_default_options` user
+function. The reason for this is that `__asan_default_options` is not
+available by the time `AsanInitInternal` executes, which is responsible
+for applying the ASan flags.
+
+To fix this properly, we'll probably need a deep re-design of ASan
+initialization so that it is consistent across OS'es.
+In the meantime, this PR offers a practical workaround.
+
+**This PR:** refactors part of `AsanInitInternal` so that **idempotent**
+flag-applying steps are extracted into a new function `ApplyOptions`.
+This function is **also** invoked in the "weak function callback" on
+Windows (which gets called when `__asan_default_options` is available)
+so that, if any flags were set through the user-function, they are
+safely applied _then_.
+
+Today, `ApplyOptions` contains only a subset of flags. My hope is that
+`ApplyOptions` will over time, through incremental refactorings
+`AsanInitInternal` so that **all** flags are eventually honored.
+
+Other minor changes:
+* The introduction of a `ApplyAllocatorOptions` helper method, needed to
+implement `ApplyOptions` for allocator options without re-initializing
+the entire allocator. Reinitializing the entire allocator is expensive,
+as it may do a whole pass over all the marked memory. To my knowledge,
+this isn't needed for the options captured in `ApplyAllocatorOptions`.
+* Rename `ProcessFlags` to `ValidateFlags`, which seems like a more
+accurate name to what that function does, and prevents confusion when
+compared to the new `ApplyOptions` function.
+---
+ compiler-rt/lib/asan/asan_allocator.cpp       | 12 ++++-
+ compiler-rt/lib/asan/asan_allocator.h         |  1 +
+ compiler-rt/lib/asan/asan_flags.cpp           | 32 +++++-------
+ compiler-rt/lib/asan/asan_internal.h          |  1 +
+ compiler-rt/lib/asan/asan_rtl.cpp             | 52 +++++++++++++++----
+ .../Windows/alloc_dealloc_mismatch.cpp        | 29 +++++++++++
+ 6 files changed, 98 insertions(+), 29 deletions(-)
+ create mode 100644 compiler-rt/test/asan/TestCases/Windows/alloc_dealloc_mismatch.cpp
+
+diff --git a/compiler-rt/lib/asan/asan_allocator.cpp b/compiler-rt/lib/asan/asan_allocator.cpp
+index 3a55c2af6565..d3c0288285b8 100644
+--- a/compiler-rt/lib/asan/asan_allocator.cpp
++++ b/compiler-rt/lib/asan/asan_allocator.cpp
+@@ -424,10 +424,15 @@ struct Allocator {
+     PoisonShadow(chunk, allocated_size, kAsanHeapLeftRedzoneMagic);
+   }
+ 
+-  void ReInitialize(const AllocatorOptions &options) {
++  // Apply provided AllocatorOptions to an Allocator
++  void ApplyOptions(const AllocatorOptions &options) {
+     SetAllocatorMayReturnNull(options.may_return_null);
+     allocator.SetReleaseToOSIntervalMs(options.release_to_os_interval_ms);
+     SharedInitCode(options);
++  }
++
++  void ReInitialize(const AllocatorOptions &options) {
++    ApplyOptions(options);
+ 
+     // Poison all existing allocation's redzones.
+     if (CanPoisonMemory()) {
+@@ -977,6 +982,11 @@ void ReInitializeAllocator(const AllocatorOptions &options) {
+   instance.ReInitialize(options);
+ }
+ 
++// Apply provided AllocatorOptions to an Allocator
++void ApplyAllocatorOptions(const AllocatorOptions &options) {
++  instance.ApplyOptions(options);
++}
++
+ void GetAllocatorOptions(AllocatorOptions *options) {
+   instance.GetOptions(options);
+ }
+diff --git a/compiler-rt/lib/asan/asan_allocator.h b/compiler-rt/lib/asan/asan_allocator.h
+index db8dc3bebfc6..a94ef958aa75 100644
+--- a/compiler-rt/lib/asan/asan_allocator.h
++++ b/compiler-rt/lib/asan/asan_allocator.h
+@@ -47,6 +47,7 @@ struct AllocatorOptions {
+ void InitializeAllocator(const AllocatorOptions &options);
+ void ReInitializeAllocator(const AllocatorOptions &options);
+ void GetAllocatorOptions(AllocatorOptions *options);
++void ApplyAllocatorOptions(const AllocatorOptions &options);
+ 
+ class AsanChunkView {
+  public:
+diff --git a/compiler-rt/lib/asan/asan_flags.cpp b/compiler-rt/lib/asan/asan_flags.cpp
+index 9cfb70bd00c7..190a89345dd1 100644
+--- a/compiler-rt/lib/asan/asan_flags.cpp
++++ b/compiler-rt/lib/asan/asan_flags.cpp
+@@ -144,6 +144,7 @@ static void InitializeDefaultFlags() {
+   DisplayHelpMessages(&asan_parser);
+ }
+ 
++// Validate flags and report incompatible configurations
+ static void ProcessFlags() {
+   Flags *f = flags();
+ 
+@@ -217,11 +218,12 @@ void InitializeFlags() {
+   ProcessFlags();
+ 
+ #if SANITIZER_WINDOWS
+-  // On Windows, weak symbols are emulated by having the user program
+-  // register which weak functions are defined.
+-  // The ASAN DLL will initialize flags prior to user module initialization,
+-  // so __asan_default_options will not point to the user definition yet.
+-  // We still want to ensure we capture when options are passed via
++  // On Windows, weak symbols (such as the `__asan_default_options` function)
++  // are emulated by having the user program register which weak functions are
++  // defined. The ASAN DLL will initialize flags prior to user module
++  // initialization, so __asan_default_options will not point to the user
++  // definition yet. We still want to ensure we capture when options are passed
++  // via
+   // __asan_default_options, so we add a callback to be run
+   // when it is registered with the runtime.
+ 
+@@ -232,21 +234,13 @@ void InitializeFlags() {
+   // __sanitizer_register_weak_function.
+   AddRegisterWeakFunctionCallback(
+       reinterpret_cast<uptr>(__asan_default_options), []() {
+-        FlagParser asan_parser;
+-
+-        RegisterAsanFlags(&asan_parser, flags());
+-        RegisterCommonFlags(&asan_parser);
+-        asan_parser.ParseString(__asan_default_options());
+-
+-        DisplayHelpMessages(&asan_parser);
++        // We call `InitializeDefaultFlags` again, instead of just parsing
++        // `__asan_default_options` directly, to ensure that flags set through
++        // `ASAN_OPTS` take precedence over those set through
++        // `__asan_default_options`.
++        InitializeDefaultFlags();
+         ProcessFlags();
+-
+-        // TODO: Update other globals and data structures that may need to change
+-        // after initialization due to new flags potentially being set changing after
+-        // `__asan_default_options` is registered.
+-        // See GH issue 'https://github.com/llvm/llvm-project/issues/117925' for
+-        // details.
+-        SetAllocatorMayReturnNull(common_flags()->allocator_may_return_null);
++        ApplyFlags();
+       });
+ 
+ #  if CAN_SANITIZE_UB
+diff --git a/compiler-rt/lib/asan/asan_internal.h b/compiler-rt/lib/asan/asan_internal.h
+index 06dfc4b17733..464faad56f32 100644
+--- a/compiler-rt/lib/asan/asan_internal.h
++++ b/compiler-rt/lib/asan/asan_internal.h
+@@ -61,6 +61,7 @@ using __sanitizer::StackTrace;
+ 
+ void AsanInitFromRtl();
+ bool TryAsanInitFromRtl();
++void ApplyFlags();
+ 
+ // asan_win.cpp
+ void InitializePlatformExceptionHandlers();
+diff --git a/compiler-rt/lib/asan/asan_rtl.cpp b/compiler-rt/lib/asan/asan_rtl.cpp
+index 19c6c210b564..1564a8f5164c 100644
+--- a/compiler-rt/lib/asan/asan_rtl.cpp
++++ b/compiler-rt/lib/asan/asan_rtl.cpp
+@@ -390,6 +390,39 @@ void PrintAddressSpaceLayout() {
+           kHighShadowBeg > kMidMemEnd);
+ }
+ 
++// Apply most options specified either through the ASAN_OPTIONS
++// environment variable, or through the `__asan_default_options` user function.
++//
++// This function may be called multiple times, once per weak reference callback
++// on Windows, so it needs to be idempotent.
++//
++// Context:
++// For maximum compatibility on Windows, it is necessary for ASan options to be
++// configured/registered/applied inside this method (instead of in
++// ASanInitInternal, for example). That's because, on Windows, the user-provided
++// definition for `__asan_default_opts` may not be bound when `ASanInitInternal`
++// is invoked (it is bound later).
++//
++// To work around the late binding on windows, `ApplyOptions` will be called,
++// again, after binding to the user-provided `__asan_default_opts` function.
++// Therefore, any flags not configured here are not guaranteed to be
++// configurable through `__asan_default_opts` on Windows.
++//
++//
++// For more details on this issue, see:
++// https://github.com/llvm/llvm-project/issues/117925
++void ApplyFlags() {
++  SetCanPoisonMemory(flags()->poison_heap);
++  SetMallocContextSize(common_flags()->malloc_context_size);
++
++  __asan_option_detect_stack_use_after_return =
++      flags()->detect_stack_use_after_return;
++
++  AllocatorOptions allocator_options;
++  allocator_options.SetFrom(flags(), common_flags());
++  ApplyAllocatorOptions(allocator_options);
++}
++
+ static bool AsanInitInternal() {
+   if (LIKELY(AsanInited()))
+     return true;
+@@ -397,8 +430,9 @@ static bool AsanInitInternal() {
+ 
+   CacheBinaryName();
+ 
+-  // Initialize flags. This must be done early, because most of the
+-  // initialization steps look at flags().
++  // Initialize flags. On Windows it also also register weak function callbacks.
++  // This must be done early, because most of the initialization steps look at
++  // flags().
+   InitializeFlags();
+ 
+   WaitForDebugger(flags()->sleep_before_init, "before init");
+@@ -416,9 +450,6 @@ static bool AsanInitInternal() {
+   AsanCheckDynamicRTPrereqs();
+   AvoidCVE_2016_2143();
+ 
+-  SetCanPoisonMemory(flags()->poison_heap);
+-  SetMallocContextSize(common_flags()->malloc_context_size);
+-
+   InitializePlatformExceptionHandlers();
+ 
+   InitializeHighMemEnd();
+@@ -429,10 +460,6 @@ static bool AsanInitInternal() {
+   SetPrintfAndReportCallback(AppendToErrorMessageBuffer);
+ 
+   __sanitizer_set_report_path(common_flags()->log_path);
+-
+-  __asan_option_detect_stack_use_after_return =
+-      flags()->detect_stack_use_after_return;
+-
+   __sanitizer::InitializePlatformEarly();
+ 
+   // Setup internal allocator callback.
+@@ -460,6 +487,13 @@ static bool AsanInitInternal() {
+   allocator_options.SetFrom(flags(), common_flags());
+   InitializeAllocator(allocator_options);
+ 
++  // Apply ASan flags.
++  // NOTE: In order for options specified through `__asan_default_options` to be
++  // honored on Windows, it is necessary for those options to be configured
++  // inside the `ApplyOptions` method. See the function-level comment for
++  // `ApplyFlags` for more details.
++  ApplyFlags();
++
+   if (SANITIZER_START_BACKGROUND_THREAD_IN_ASAN_INTERNAL)
+     MaybeStartBackgroudThread();
+ 
+diff --git a/compiler-rt/test/asan/TestCases/Windows/alloc_dealloc_mismatch.cpp b/compiler-rt/test/asan/TestCases/Windows/alloc_dealloc_mismatch.cpp
+new file mode 100644
+index 000000000000..c7d62f15c3c3
+--- /dev/null
++++ b/compiler-rt/test/asan/TestCases/Windows/alloc_dealloc_mismatch.cpp
+@@ -0,0 +1,29 @@
++// RUN: %clangxx_asan -O0 %s -o %t
++// RUN: %env_asan_opts=alloc_dealloc_mismatch=1 not %run %t 2>&1 | FileCheck %s --check-prefix=CHECK-MISMATCH
++// RUN: %env_asan_opts=alloc_dealloc_mismatch=0 %run %t 2>&1 | FileCheck %s --check-prefix=CHECK-SUCCESS
++
++// RUN: %clangxx_asan -O0 %s -o %t -DUSER_FUNCTION
++// RUN: not %run %t 2>&1 | FileCheck %s --check-prefix=CHECK-MISMATCH
++
++// It is expected that ASAN_OPTS will override the value set through the user function.
++// RUN: %env_asan_opts=alloc_dealloc_mismatch=0 %run %t 2>&1 | FileCheck %s --check-prefix=CHECK-SUCCESS
++
++#if USER_FUNCTION
++// It's important to test the `alloc_dealloc_mismatch` flag set through the user function because, on Windows,
++// flags configured through the user-defined function `__asan_default_options` are not always be honored.
++// See: https://github.com/llvm/llvm-project/issues/117925
++extern "C" __declspec(dllexport) extern const char *__asan_default_options() {
++  return "alloc_dealloc_mismatch=1";
++}
++#endif
++
++#include <cstdio>
++#include <cstdlib>
++
++// Tests the `alloc_dealloc_mismatch` flag set both via user function and through the environment variable.
++int main() {
++  // In the 'CHECK-MISMATCH' case, we simply check that the AddressSanitizer reports an error.
++  delete (new int[10]); // CHECK-MISMATCH: AddressSanitizer:
++  printf("Success");    // CHECK-SUCCESS: Success
++  return 0;
++}
+\ No newline at end of file
+-- 
+2.51.0.1.g7a422dac74
+

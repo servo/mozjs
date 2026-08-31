@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -63,14 +61,6 @@ class LIRGeneratorNone : public LIRGeneratorShared {
                           MDefinition* v = nullptr) {
     MOZ_CRASH();
   }
-  void lowerForBitAndAndBranch(LBitAndAndBranch*, MInstruction*, MDefinition*,
-                               MDefinition*) {
-    MOZ_CRASH();
-  }
-  void lowerForCompareI64AndBranch(MTest*, MCompare*, JSOp, MDefinition*,
-                                   MDefinition*, MBasicBlock*, MBasicBlock*) {
-    MOZ_CRASH();
-  }
 
   void lowerConstantDouble(double, MInstruction*) { MOZ_CRASH(); }
   void lowerConstantFloat32(float, MInstruction*) { MOZ_CRASH(); }
@@ -91,11 +81,11 @@ class LIRGeneratorNone : public LIRGeneratorShared {
   void lowerWasmBuiltinDivI64(MWasmBuiltinDivI64* div) { MOZ_CRASH(); }
   void lowerModI64(MMod*) { MOZ_CRASH(); }
   void lowerWasmBuiltinModI64(MWasmBuiltinModI64* mod) { MOZ_CRASH(); }
-  void lowerNegI(MInstruction*, MDefinition*) { MOZ_CRASH(); }
-  void lowerNegI64(MInstruction*, MDefinition*) { MOZ_CRASH(); }
   void lowerMulI(MMul*, MDefinition*, MDefinition*) { MOZ_CRASH(); }
   void lowerUDiv(MDiv*) { MOZ_CRASH(); }
   void lowerUMod(MMod*) { MOZ_CRASH(); }
+  void lowerUDivI64(MDiv*) { MOZ_CRASH(); }
+  void lowerUModI64(MMod*) { MOZ_CRASH(); }
   void lowerWasmSelectI(MWasmSelect* select) { MOZ_CRASH(); }
   void lowerWasmSelectI64(MWasmSelect* select) { MOZ_CRASH(); }
   void lowerWasmCompareAndSelect(MWasmSelect* ins, MDefinition* lhs,
@@ -108,21 +98,19 @@ class LIRGeneratorNone : public LIRGeneratorShared {
     MOZ_CRASH();
   }
 
-  void lowerBigIntLsh(MBigIntLsh*) { MOZ_CRASH(); }
-  void lowerBigIntRsh(MBigIntRsh*) { MOZ_CRASH(); }
-  void lowerBigIntDiv(MBigIntDiv*) { MOZ_CRASH(); }
-  void lowerBigIntMod(MBigIntMod*) { MOZ_CRASH(); }
+  void lowerBigIntPtrLsh(MBigIntPtrLsh*) { MOZ_CRASH(); }
+  void lowerBigIntPtrRsh(MBigIntPtrRsh*) { MOZ_CRASH(); }
+  void lowerBigIntPtrDiv(MBigIntPtrDiv*) { MOZ_CRASH(); }
+  void lowerBigIntPtrMod(MBigIntPtrMod*) { MOZ_CRASH(); }
 
   void lowerAtomicLoad64(MLoadUnboxedScalar*) { MOZ_CRASH(); }
   void lowerAtomicStore64(MStoreUnboxedScalar*) { MOZ_CRASH(); }
 
-  LTableSwitch* newLTableSwitch(LAllocation, LDefinition, MTableSwitch*) {
-    MOZ_CRASH();
-  }
-  LTableSwitchV* newLTableSwitchV(MTableSwitch*) { MOZ_CRASH(); }
+  LTableSwitch* newLTableSwitch(LAllocation, LDefinition) { MOZ_CRASH(); }
+  LTableSwitchV* newLTableSwitchV(const LBoxAllocation&) { MOZ_CRASH(); }
 };
 
-typedef LIRGeneratorNone LIRGeneratorSpecific;
+using LIRGeneratorSpecific = LIRGeneratorNone;
 
 }  // namespace jit
 }  // namespace js

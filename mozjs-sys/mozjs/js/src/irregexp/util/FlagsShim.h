@@ -87,6 +87,30 @@ class Flags final {
   mask_type mask_;
 };
 
+#define DEFINE_OPERATORS_FOR_FLAGS(Type)                                      \
+  inline constexpr Type operator&(Type::flag_type lhs, Type::flag_type rhs) { \
+    return Type(lhs) & rhs;                                                   \
+  }                                                                           \
+  inline constexpr Type operator&(Type::flag_type lhs, const Type& rhs) {     \
+    return rhs & lhs;                                                         \
+  }                                                                           \
+  inline void operator&(Type::flag_type lhs, Type::mask_type rhs) {}          \
+  inline constexpr Type operator|(Type::flag_type lhs, Type::flag_type rhs) { \
+    return Type(lhs) | rhs;                                                   \
+  }                                                                           \
+  inline constexpr Type operator|(Type::flag_type lhs, const Type& rhs) {     \
+    return rhs | lhs;                                                         \
+  }                                                                           \
+  inline void operator|(Type::flag_type lhs, Type::mask_type rhs) {}          \
+  inline constexpr Type operator^(Type::flag_type lhs, Type::flag_type rhs) { \
+    return Type(lhs) ^ rhs;                                                   \
+  }                                                                           \
+  inline constexpr Type operator^(Type::flag_type lhs, const Type& rhs) {     \
+    return rhs ^ lhs;                                                         \
+  }                                                                           \
+  inline void operator^(Type::flag_type lhs, Type::mask_type rhs) {}          \
+  inline constexpr Type operator~(Type::flag_type val) { return ~Type(val); }
+
 }  // namespace base
 }  // namespace v8
 

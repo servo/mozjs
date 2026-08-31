@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -23,29 +21,7 @@
 #include "js/Utility.h"      // js_new, js_delete
 #include "js/Vector.h"       // Vector
 
-namespace js {
-
-namespace detail {
-
-// For InlineMap<TrivialTaggedParserAtomIndex>.
-// See DefaultKeyPolicy definition in InlineTable.h for more details.
-template <>
-class DefaultKeyPolicy<frontend::TrivialTaggedParserAtomIndex> {
- public:
-  DefaultKeyPolicy() = delete;
-  DefaultKeyPolicy(const frontend::TrivialTaggedParserAtomIndex&) = delete;
-
-  static bool isTombstone(const frontend::TrivialTaggedParserAtomIndex& atom) {
-    return atom.isNull();
-  }
-  static void setToTombstone(frontend::TrivialTaggedParserAtomIndex& atom) {
-    atom = frontend::TrivialTaggedParserAtomIndex::null();
-  }
-};
-
-}  // namespace detail
-
-namespace frontend {
+namespace js::frontend {
 
 class FunctionBox;
 
@@ -449,7 +425,6 @@ class PooledVectorPtr : public PooledCollectionPtr<Vector, PooledVectorPtr> {
   }
 };
 
-}  // namespace frontend
-}  // namespace js
+}  // namespace js::frontend
 
 #endif  // frontend_NameCollections_h

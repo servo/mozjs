@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -15,15 +13,15 @@ using namespace js;
 using namespace js::gc;
 
 void ShapeZone::fixupPropMapShapeTableAfterMovingGC() {
-  for (PropMapShapeSet::Enum e(propMapShapes); !e.empty(); e.popFront()) {
-    SharedShape* shape = MaybeForwarded(e.front().unbarrieredGet());
+  for (auto iter = propMapShapes.modIter(); !iter.done(); iter.next()) {
+    SharedShape* shape = MaybeForwarded(iter.get().unbarrieredGet());
     SharedPropMap* map = shape->propMapMaybeForwarded();
     BaseShape* base = MaybeForwarded(shape->base());
 
     PropMapShapeSet::Lookup lookup(base, shape->numFixedSlots(), map,
                                    shape->propMapLength(),
                                    shape->objectFlags());
-    e.rekeyFront(lookup, shape);
+    iter.rekey(lookup, shape);
   }
 }
 
@@ -103,6 +101,15 @@ void ShapeZone::purgeShapeCaches(JS::GCContext* gcx) {
     MaybeForwarded(shape)->purgeCache(gcx);
   }
   shapesWithCache.clearAndFree();
+}
+
+bool ShapeZone::useDictionaryModeTeleportation() {
+  if (reshapeCounter > RESHAPE_MAX) {
+    return false;
+  }
+
+  reshapeCounter++;
+  return true;
 }
 
 void ShapeZone::addSizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf,

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright (C) 2008 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,7 +28,6 @@
 
 #include "mozilla/EnumeratedArray.h"
 
-#include <limits>
 #include <stddef.h>  // for ptrdiff_t
 
 #include "jit/ProcessExecutableMemory.h"
@@ -95,6 +92,9 @@ class ExecutablePool {
 
   ~ExecutablePool();
 
+  ExecutablePool(const ExecutablePool&) = delete;
+  void operator=(const ExecutablePool&) = delete;
+
   void mark() {
     MOZ_ASSERT(!m_mark);
     m_mark = true;
@@ -106,9 +106,6 @@ class ExecutablePool {
   bool isMarked() const { return m_mark; }
 
  private:
-  ExecutablePool(const ExecutablePool&) = delete;
-  void operator=(const ExecutablePool&) = delete;
-
   void* alloc(size_t n, CodeKind kind);
 
   size_t available() const;
@@ -133,12 +130,15 @@ struct JitPoisonRange {
       : pool(pool), start(start), size(size) {}
 };
 
-typedef Vector<JitPoisonRange, 0, SystemAllocPolicy> JitPoisonRangeVector;
+using JitPoisonRangeVector = Vector<JitPoisonRange, 0, SystemAllocPolicy>;
 
 class ExecutableAllocator {
  public:
   ExecutableAllocator() = default;
   ~ExecutableAllocator();
+
+  ExecutableAllocator(const ExecutableAllocator&) = delete;
+  void operator=(const ExecutableAllocator&) = delete;
 
   void purge();
 
@@ -182,21 +182,18 @@ class ExecutableAllocator {
   static void poisonCode(JSRuntime* rt, JitPoisonRangeVector& ranges);
 
  private:
-  ExecutableAllocator(const ExecutableAllocator&) = delete;
-  void operator=(const ExecutableAllocator&) = delete;
-
   // These are strong references;  they keep pools alive.
   static const size_t maxSmallPools = 4;
-  typedef js::Vector<ExecutablePool*, maxSmallPools, js::SystemAllocPolicy>
-      SmallExecPoolVector;
+  using SmallExecPoolVector =
+      js::Vector<ExecutablePool*, maxSmallPools, js::SystemAllocPolicy>;
   SmallExecPoolVector m_smallPools;
 
   // All live pools are recorded here, just for stats purposes.  These are
   // weak references;  they don't keep pools alive.  When a pool is destroyed
   // its reference is removed from m_pools.
-  typedef js::HashSet<ExecutablePool*, js::DefaultHasher<ExecutablePool*>,
-                      js::SystemAllocPolicy>
-      ExecPoolHashSet;
+  using ExecPoolHashSet =
+      js::HashSet<ExecutablePool*, js::DefaultHasher<ExecutablePool*>,
+                  js::SystemAllocPolicy>;
   ExecPoolHashSet m_pools;  // All pools, just for stats purposes.
 };
 

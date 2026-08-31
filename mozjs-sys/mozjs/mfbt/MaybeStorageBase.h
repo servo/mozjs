@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -31,7 +29,7 @@ struct MaybeStorageBase<T, false> {
   using NonConstT = std::remove_const_t<T>;
 
   union Union {
-    Union() {}
+    constexpr Union() : empty{} {}
     explicit Union(const T& aVal) : val{aVal} {}
     template <typename U,
               typename = std::enable_if_t<std::is_move_constructible_v<U>>>
@@ -43,10 +41,11 @@ struct MaybeStorageBase<T, false> {
     ~Union() {}
 
     NonConstT val;
+    char empty;  // needed to make default constructor constexpr
   } mStorage;
 
  public:
-  MaybeStorageBase() = default;
+  constexpr MaybeStorageBase() = default;
   explicit MaybeStorageBase(const T& aVal) : mStorage{aVal} {}
   explicit MaybeStorageBase(T&& aVal) : mStorage{std::move(aVal)} {}
   template <typename... Args>
@@ -63,7 +62,7 @@ struct MaybeStorageBase<T, true> {
   using NonConstT = std::remove_const_t<T>;
 
   union Union {
-    constexpr Union() : dummy() {}
+    constexpr Union() : empty() {}
     constexpr explicit Union(const T& aVal) : val{aVal} {}
     constexpr explicit Union(T&& aVal) : val{std::move(aVal)} {}
     template <typename... Args>
@@ -71,7 +70,7 @@ struct MaybeStorageBase<T, true> {
         : val{std::forward<Args>(aArgs)...} {}
 
     NonConstT val;
-    char dummy;
+    char empty;
   } mStorage;
 
  public:

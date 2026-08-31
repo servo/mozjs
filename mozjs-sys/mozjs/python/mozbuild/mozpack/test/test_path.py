@@ -56,9 +56,11 @@ class TestPath(unittest.TestCase):
 
     def test_commonprefix(self):
         self.assertEqual(
-            commonprefix(
-                [self.SEP.join(("foo", "bar", "baz")), "foo/qux", "foo/baz/qux"]
-            ),
+            commonprefix([
+                self.SEP.join(("foo", "bar", "baz")),
+                "foo/qux",
+                "foo/baz/qux",
+            ]),
             "foo/",
         )
         self.assertEqual(

@@ -7,7 +7,6 @@ import os
 import pathlib
 import re
 import shutil
-import sys
 from pathlib import Path
 
 from mozperftest.test.browsertime.visualtools import get_dependencies, xvfb
@@ -88,24 +87,13 @@ class BrowsertimeRunner(NodeRunner):
     }
 
     def __init__(self, env, mach_cmd):
-        super(BrowsertimeRunner, self).__init__(env, mach_cmd)
+        super().__init__(env, mach_cmd)
         self.topsrcdir = mach_cmd.topsrcdir
         self._mach_context = mach_cmd._mach_context
         self.virtualenv_manager = mach_cmd.virtualenv_manager
         self._created_dirs = []
         self._test_script = None
-        self._setup_helper = None
         self.get_binary_path = mach_cmd.get_binary_path
-
-    @property
-    def setup_helper(self):
-        if self._setup_helper is not None:
-            return self._setup_helper
-        sys.path.append(str(Path(self.topsrcdir, "tools", "lint", "eslint")))
-        import setup_helper
-
-        self._setup_helper = setup_helper
-        return self._setup_helper
 
     @property
     def artifact_cache_path(self):
@@ -198,7 +186,7 @@ class BrowsertimeRunner(NodeRunner):
         if node is not None:
             os.environ["NODEJS"] = node
 
-        super(BrowsertimeRunner, self).setup()
+        super().setup()
         install_url = self.get_arg("install-url")
 
         # installing Python deps on the fly
@@ -235,9 +223,7 @@ class BrowsertimeRunner(NodeRunner):
             expr = r"/tarball/[a-f0-9]{40}$"
             if not re.search(expr, install_url):
                 raise ValueError(
-                    "New upstream URL does not end with {}: '{}'".format(
-                        expr[:-1], install_url
-                    )
+                    f"New upstream URL does not end with {expr[:-1]}: '{install_url}'"
                 )
 
             with package_json_path.open() as f:
@@ -254,7 +240,9 @@ class BrowsertimeRunner(NodeRunner):
 
     def _setup_node_packages(self, package_json_path):
         # Install the browsertime Node.js requirements.
-        if not self.setup_helper.check_node_executables_valid():
+        from mozbuild.nodeutil import check_node_executables_valid, package_setup
+
+        if not check_node_executables_valid():
             return
 
         should_clobber = self.get_arg("clobber")
@@ -273,7 +261,7 @@ class BrowsertimeRunner(NodeRunner):
         )
         install_url = self.get_arg("install-url")
 
-        self.setup_helper.package_setup(
+        package_setup(
             str(self.state_path),
             "browsertime",
             should_update=install_url is not None,
@@ -301,22 +289,21 @@ class BrowsertimeRunner(NodeRunner):
             binary = self.get_arg("browsertime_binary")
             if binary is not None:
                 extra_args.extend(("--firefox.binaryPath", binary))
-            else:
-                # If --firefox.binaryPath is not specified, default to the objdir binary
-                # Note: --firefox.release is not a real browsertime option, but it will
-                #       silently ignore it instead and default to a release installation.
-                if (
-                    not matches(
-                        args,
-                        "--firefox.binaryPath",
-                        "--firefox.release",
-                        "--firefox.nightly",
-                        "--firefox.beta",
-                        "--firefox.developer",
-                    )
-                    and extract_browser_name(args) != "chrome"
-                ):
-                    extra_args.extend(("--firefox.binaryPath", self.get_binary_path()))
+            # If --firefox.binaryPath is not specified, default to the objdir binary
+            # Note: --firefox.release is not a real browsertime option, but it will
+            #       silently ignore it instead and default to a release installation.
+            elif (
+                not matches(
+                    args,
+                    "--firefox.binaryPath",
+                    "--firefox.release",
+                    "--firefox.nightly",
+                    "--firefox.beta",
+                    "--firefox.developer",
+                )
+                and extract_browser_name(args) != "chrome"
+            ):
+                extra_args.extend(("--firefox.binaryPath", self.get_binary_path()))
 
         geckodriver = self.get_arg("geckodriver")
         if geckodriver is not None:
@@ -354,7 +341,7 @@ class BrowsertimeRunner(NodeRunner):
         msg = msg.replace("{", "{{").replace("}", "}}")
         level = level.lower()
         if "error" in level:
-            self.error("Mozperftest failed to run: {}".format(msg), msg)
+            self.error(f"Mozperftest failed to run: {msg}", msg)
         elif "warning" in level:
             self.warning(msg)
         else:
@@ -366,9 +353,10 @@ class BrowsertimeRunner(NodeRunner):
 
         existing = self.get_arg("browsertime-existing-results")
         if existing:
-            metadata.add_result(
-                {"results": existing, "name": self._test_script["name"]}
-            )
+            metadata.add_result({
+                "results": existing,
+                "name": self._test_script["name"],
+            })
             return metadata
 
         cycles = self.get_arg("cycles", 1)
@@ -466,7 +454,7 @@ class BrowsertimeRunner(NodeRunner):
         extra = self.extra_default_args(args=args)
 
         command = [str(self.browsertime_js)] + extra + args
-        self.info("Running browsertime with this command %s" % " ".join(command))
+        self.info(f"Running browsertime with this command {' '.join(command)}")
 
         if visualmetrics and self.get_arg("xvfb"):
             with xvfb():
@@ -477,8 +465,9 @@ class BrowsertimeRunner(NodeRunner):
         if exit_code != 0:
             raise NodeException(exit_code)
 
-        metadata.add_result(
-            {"results": str(result_dir), "name": self._test_script["name"]}
-        )
+        metadata.add_result({
+            "results": str(result_dir),
+            "name": self._test_script["name"],
+        })
 
         return metadata

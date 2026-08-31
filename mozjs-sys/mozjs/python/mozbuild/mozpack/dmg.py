@@ -7,7 +7,6 @@ import platform
 import shutil
 import subprocess
 from pathlib import Path
-from typing import List
 
 import mozfile
 
@@ -53,15 +52,13 @@ def generate_hfs_file(
     size = int(output.split()[0]) / 1000  # Get in MB
     size = int(size * 1.02)  # Bump the used size slightly larger.
     # Setup a proper file sized out with zero's
-    subprocess.check_call(
-        [
-            "dd",
-            "if=/dev/zero",
-            "of={}".format(hfs),
-            "bs=1M",
-            "count={}".format(size),
-        ]
-    )
+    subprocess.check_call([
+        "dd",
+        "if=/dev/zero",
+        f"of={hfs}",
+        "bs=1M",
+        f"count={size}",
+    ])
     subprocess.check_call([mkfshfs_tool, "-v", volume_name, hfs])
 
 
@@ -87,8 +84,14 @@ def create_dmg_from_staged(
     dmg_tool: Path = None,
     mkfshfs_tool: Path = None,
     attribution_sentinel: str = None,
+    compression: str = None,
 ):
     "Given a prepared directory stagedir, produce a DMG at output_dmg."
+    if compression is None:
+        # Easier to put the default here once, than in every place that takes default args
+        compression = "bzip2"
+    if compression not in ["bzip2", "lzma"]:
+        raise Exception("Don't know how to handle %s compression" % (compression,))
 
     if is_linux:
         # The dmg tool doesn't create the destination directories, and silently
@@ -101,18 +104,26 @@ def create_dmg_from_staged(
         if attribution_sentinel:
             while len(attribution_sentinel) < 1024:
                 attribution_sentinel += "\t"
-            subprocess.check_call(
-                [
-                    hfs_tool,
-                    hfs,
-                    "setattr",
-                    f"{volume_name}.app",
-                    "com.apple.application-instance",
-                    attribution_sentinel,
-                ]
-            )
+            subprocess.check_call([
+                hfs_tool,
+                hfs,
+                "setattr",
+                f"{volume_name}.app",
+                "com.apple.application-instance",
+                attribution_sentinel,
+            ])
             subprocess.check_call(["cp", hfs, str(Path(output_dmg).parent)])
             dmg_cmd.append(attribution_sentinel)
+
+        if compression == "lzma":
+            dmg_cmd.extend([
+                "--compression",
+                "lzma",
+                "--level",
+                "5",
+                "--run-sectors",
+                "2048",
+            ])
 
         subprocess.check_call(
             dmg_cmd,
@@ -120,47 +131,48 @@ def create_dmg_from_staged(
             stdout=subprocess.DEVNULL,
         )
     elif is_osx:
+        format = "UDBZ"
+        if compression == "lzma":
+            format = "ULMO"
+
         hybrid = tmpdir / "hybrid.dmg"
-        subprocess.check_call(
-            [
-                "hdiutil",
-                "makehybrid",
-                "-hfs",
-                "-hfs-volume-name",
-                volume_name,
-                "-hfs-openfolder",
-                stagedir,
-                "-ov",
-                stagedir,
-                "-o",
-                hybrid,
-            ]
-        )
-        subprocess.check_call(
-            [
-                "hdiutil",
-                "convert",
-                "-format",
-                "UDBZ",
-                "-imagekey",
-                "bzip2-level=9",
-                "-ov",
-                hybrid,
-                "-o",
-                output_dmg,
-            ]
-        )
+        subprocess.check_call([
+            "hdiutil",
+            "makehybrid",
+            "-hfs",
+            "-hfs-volume-name",
+            volume_name,
+            "-hfs-openfolder",
+            stagedir,
+            "-ov",
+            stagedir,
+            "-o",
+            hybrid,
+        ])
+        subprocess.check_call([
+            "hdiutil",
+            "convert",
+            "-format",
+            format,
+            "-imagekey",
+            "bzip2-level=9",
+            "-ov",
+            hybrid,
+            "-o",
+            output_dmg,
+        ])
 
 
 def create_dmg(
     source_directory: Path,
     output_dmg: Path,
     volume_name: str,
-    extra_files: List[tuple],
+    extra_files: list[tuple],
     dmg_tool: Path,
     hfs_tool: Path,
     mkfshfs_tool: Path,
     attribution_sentinel: str = None,
+    compression: str = None,
 ):
     """
     Create a DMG disk image at the path output_dmg from source_directory.
@@ -200,6 +212,7 @@ def create_dmg(
             dmg_tool,
             mkfshfs_tool,
             attribution_sentinel,
+            compression,
         )
 
 

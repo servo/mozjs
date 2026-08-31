@@ -14,7 +14,7 @@ from mozilla.prettyprinters import pretty_printer, ptr_pretty_printer
 mozilla.prettyprinters.clear_module_printers(__name__)
 
 
-class JSOpTypeCache(object):
+class JSOpTypeCache:
     # Cache information about the JSOp type for this objfile.
     def __init__(self, cache):
         self.tJSOp = gdb.lookup_type("JSOp")
@@ -27,7 +27,7 @@ class JSOpTypeCache(object):
 
 
 @pretty_printer("JSOp")
-class JSOp(object):
+class JSOp:
     def __init__(self, value, cache):
         self.value = value
         self.cache = cache
@@ -39,17 +39,17 @@ class JSOp(object):
         #
         # https://sourceware.org/bugzilla/show_bug.cgi?id=25325
         idx = int(self.value.cast(self.jotc.tJSOp.target()))
-        assert 0 <= idx and idx <= 255
+        assert 0 <= idx <= 255
         fields = self.jotc.tJSOp.fields()
         if idx < len(fields):
             return fields[idx].name
-        return "(JSOp) {:d}".format(idx)
+        return f"(JSOp) {idx:d}"
 
 
 @ptr_pretty_printer("jsbytecode")
 class JSBytecodePtr(mozilla.prettyprinters.Pointer):
     def __init__(self, value, cache):
-        super(JSBytecodePtr, self).__init__(value, cache)
+        super().__init__(value, cache)
         self.jotc = JSOpTypeCache.get_or_create(cache)
 
     def to_string(self):
@@ -57,4 +57,4 @@ class JSBytecodePtr(mozilla.prettyprinters.Pointer):
             opcode = str(self.value.dereference().cast(self.jotc.tJSOp))
         except Exception:
             opcode = "bad pc"
-        return "{} ({})".format(self.value.cast(self.cache.void_ptr_t), opcode)
+        return f"{self.value.cast(self.cache.void_ptr_t)} ({opcode})"

@@ -9,13 +9,11 @@
 #include "mozilla/intl/ICU4CGlue.h"
 #include "mozilla/intl/ICUError.h"
 #include "mozilla/Result.h"
-#include "mozilla/Span.h"
 #include "mozilla/UniquePtr.h"
 
 #include <iterator>
 #include <stddef.h>
 #include <stdint.h>
-#include <utility>
 
 struct UResourceBundle;
 

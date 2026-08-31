@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,7 +7,7 @@
 
 #include <stdint.h>
 
-#include "js/TypeDecls.h"  // IF_RECORD_TUPLE
+#include "js/TypeDecls.h"  // IF_DECORATORS
 
 /*
  * List of token kinds and their ranges.
@@ -70,10 +68,8 @@
   MACRO(TripleDot, "'...'") /* rest arguments and spread operator */   \
   MACRO(OptionalChain, "'?.'")                                         \
   MACRO(LeftBracket, "'['")                                            \
-  IF_RECORD_TUPLE(MACRO(HashBracket, "'#['"))                          \
   MACRO(RightBracket, "']'")                                           \
   MACRO(LeftCurly, "'{'")                                              \
-  IF_RECORD_TUPLE(MACRO(HashCurly, "'#{'"))                            \
   MACRO(RightCurly, "'}'")                                             \
   MACRO(LeftParen, "'('")                                              \
   MACRO(RightParen, "')'")                                             \
@@ -131,7 +127,6 @@
   RANGE(ContextualKeywordFirst, As)                                    \
   /* TODO: Move to alphabetical order when IF_DECORATORS is removed */ \
   IF_DECORATORS(MACRO(Accessor, "'accessor'"))                         \
-  MACRO(Assert, "'assert'")                                            \
   MACRO(Async, "'async'")                                              \
   MACRO(Await, "'await'")                                              \
   MACRO(Each, "'each'")                                                \
@@ -142,6 +137,7 @@
   MACRO(Of, "'of'")                                                    \
   MACRO(Set, "'set'")                                                  \
   MACRO(Static, "'static'")                                            \
+  MACRO(Source, "'source'")                                            \
   MACRO(Target, "'target'")                                            \
   IF_EXPLICIT_RESOURCE_MANAGEMENT(MACRO(Using, "'using'"))             \
   MACRO(Yield, "'yield'")                                              \

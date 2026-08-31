@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -19,9 +17,10 @@ enum DeadObjectProxyFlags {
   DeadObjectProxyIsBackgroundFinalized = 1 << 2
 };
 
-class DeadObjectProxy : public BaseProxyHandler {
+class DeadObjectProxy : public NurseryAllocableProxyHandler {
  public:
-  explicit constexpr DeadObjectProxy() : BaseProxyHandler(&family) {}
+  explicit constexpr DeadObjectProxy()
+      : NurseryAllocableProxyHandler(&family) {}
 
   /* Standard internal methods. */
   virtual bool getOwnPropertyDescriptor(
@@ -81,6 +80,8 @@ class DeadObjectProxy : public BaseProxyHandler {
   virtual bool finalizeInBackground(const JS::Value& priv) const override {
     return priv.toInt32() & DeadObjectProxyIsBackgroundFinalized;
   }
+
+  bool mayBeSwapped() const override { return true; }
 
   static const DeadObjectProxy singleton;
   static const char family;

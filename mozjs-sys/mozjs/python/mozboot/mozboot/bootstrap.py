@@ -6,7 +6,6 @@ import os
 import platform
 import re
 import shutil
-import stat
 import subprocess
 import sys
 import time
@@ -22,13 +21,13 @@ from mach.util import (
     UserError,
     get_state_dir,
     to_optional_path,
-    to_optional_str,
-    win_to_msys_path,
 )
 from mozbuild.base import MozbuildObject
 from mozfile import which
+from mozversioncontrol import get_repository_object
 from packaging.version import Version
 
+from mozboot.aerynos import AerynOsBootstrapper
 from mozboot.archlinux import ArchlinuxBootstrapper
 from mozboot.base import MODERN_RUST_VERSION
 from mozboot.centosfedora import CentOSFedoraBootstrapper
@@ -59,15 +58,13 @@ Please choose the version of Firefox you want to build (see note above):
 %s
 Your choice: """
 
-APPLICATIONS = OrderedDict(
-    [
-        ("Firefox for Desktop Artifact Mode", "browser_artifact_mode"),
-        ("Firefox for Desktop", "browser"),
-        ("GeckoView/Firefox for Android Artifact Mode", "mobile_android_artifact_mode"),
-        ("GeckoView/Firefox for Android", "mobile_android"),
-        ("SpiderMonkey JavaScript engine", "js"),
-    ]
-)
+APPLICATIONS = OrderedDict([
+    ("Firefox for Desktop Artifact Mode", "browser_artifact_mode"),
+    ("Firefox for Desktop", "browser"),
+    ("GeckoView/Firefox for Android Artifact Mode", "mobile_android_artifact_mode"),
+    ("GeckoView/Firefox for Android", "mobile_android"),
+    ("SpiderMonkey JavaScript engine", "js"),
+])
 
 FINISHED = """
 Your system should be ready to build %s!
@@ -105,9 +102,6 @@ Would you like to run a configuration wizard to ensure Mercurial is
 optimally configured? (This will also ensure 'version-control-tools' is up-to-date)"""
 
 CONFIGURE_GIT = """
-Mozilla recommends using git-cinnabar to work with mozilla-central (or
-mozilla-unified).
-
 Would you like to run a few configuration steps to ensure Git is
 optimally configured?"""
 
@@ -123,6 +117,7 @@ DEBIAN_DISTROS = (
     "pureos",
     "deepin",
     "tuxedo",
+    "zorin",
 )
 
 FEDORA_DISTROS = (
@@ -132,17 +127,8 @@ FEDORA_DISTROS = (
     "nobara",
     "oracle",
     "fedora-asahi-remix",
+    "ultramarine",
 )
-
-ADD_GIT_CINNABAR_PATH = """
-To add git-cinnabar to the PATH, edit your shell initialization script, which
-may be called {prefix}/.bash_profile or {prefix}/.profile, and add the following
-lines:
-
-    export PATH="{cinnabar_dir}:$PATH"
-
-Then restart your shell.
-"""
 
 
 OLD_REVISION_WARNING = """
@@ -153,14 +139,6 @@ and is not guaranteed to bring your machine to any working state in particular.
 Proceed at your own peril.
 """
 
-
-# Version 2.24 changes the "core.commitGraph" setting to be "True" by default.
-MINIMUM_RECOMMENDED_GIT_VERSION = Version("2.24")
-OLD_GIT_WARNING = """
-You are running an older version of git ("{old_version}").
-We recommend upgrading to at least version "{minimum_recommended_version}" to improve
-performance.
-""".strip()
 
 # Dev Drives were added in 22621.2338 and should be available in all subsequent versions
 DEV_DRIVE_MINIMUM_VERSION = Version("10.0.22621.2338")
@@ -192,14 +170,17 @@ def check_for_hgrc_state_dir_mismatch(state_dir):
     import subprocess
 
     result = subprocess.run(
-        ["hg", "config", "--source", "-T", "json"], capture_output=True, text=True
+        ["hg", "config", "--source", "-T", "json"],
+        check=False,
+        capture_output=True,
+        text=True,
     )
 
     if result.returncode:
         print("Failed to run 'hg config'. hg configuration checks will be skipped.")
         return
 
-    import json
+    from mozfile import json
 
     try:
         json_data = json.loads(result.stdout)
@@ -250,7 +231,7 @@ def check_for_hgrc_state_dir_mismatch(state_dir):
         raise Exception(hgrc_state_dir_mismatch_error_message)
 
 
-class Bootstrapper(object):
+class Bootstrapper:
     """Main class that performs system bootstrap."""
 
     def __init__(
@@ -277,9 +258,8 @@ class Bootstrapper(object):
         if sys.platform.startswith("linux"):
             # distro package provides reliable ids for popular distributions so
             # we use those instead of the full distribution name
-            dist_id, version, codename = distro.linux_distribution(
-                full_distribution_name=False
-            )
+            dist_id = distro.id()
+            version = distro.version()
 
             if dist_id in FEDORA_DISTROS:
                 cls = CentOSFedoraBootstrapper
@@ -287,13 +267,14 @@ class Bootstrapper(object):
             elif dist_id in DEBIAN_DISTROS:
                 cls = DebianBootstrapper
                 args["distro"] = dist_id
-                args["codename"] = codename
             elif dist_id in ("gentoo", "funtoo"):
                 cls = GentooBootstrapper
             elif dist_id in ("solus"):
                 cls = SolusBootstrapper
-            elif dist_id in ("arch") or Path("/etc/arch-release").exists():
+            elif dist_id in ("arch", "kaos") or Path("/etc/arch-release").exists():
                 cls = ArchlinuxBootstrapper
+            elif dist_id in ("aerynos"):
+                cls = AerynOsBootstrapper
             elif dist_id in ("void"):
                 cls = VoidBootstrapper
             elif dist_id in (
@@ -337,7 +318,7 @@ class Bootstrapper(object):
                 cls = WindowsBootstrapper
         if cls is None:
             raise NotImplementedError(
-                "Bootstrap support is not yet available " "for your OS."
+                "Bootstrap support is not yet available for your OS."
             )
 
         self.instance = cls(**args)
@@ -351,26 +332,47 @@ class Bootstrapper(object):
         self.instance.auto_bootstrap(application, self.exclude)
         self.instance.install_toolchain_artifact("fix-stacks")
         self.instance.install_toolchain_artifact("minidump-stackwalk")
+        self.instance.install_toolchain_artifact("samply")
+        self.instance.install_toolchain_artifact("profiler-node-tools")
         if not self.instance.artifact_mode:
             self.instance.install_toolchain_artifact("clang-tools/clang-tidy")
             self.instance.ensure_sccache_packages()
         # Like 'ensure_browser_packages' or 'ensure_mobile_android_packages'
         getattr(self.instance, "ensure_%s_packages" % application)()
 
-    def check_code_submission(self, checkout_root: Path):
-        if self.instance.no_interactive or which("moz-phab"):
+    def check_agentic_tools(self):
+        if self.instance.no_interactive:
             return
 
-        # Skip moz-phab install until bug 1696357 is fixed and makes it to a moz-phab
-        # release.
-        if sys.platform.startswith("darwin") and platform.machine() == "arm64":
+        if not self.instance.cargo_tools_installed():
+            if not self.instance.prompt_yesno(
+                "Will you be using agentic coding tools to work on Firefox?"
+            ):
+                return
+
+        self.instance.ensure_cargo_tools()
+
+    def check_code_submission(self, checkout_root: Path):
+        if self.instance.no_interactive or which("moz-phab"):
             return
 
         if not self.instance.prompt_yesno("Will you be submitting commits to Mozilla?"):
             return
 
         mach_binary = checkout_root / "mach"
-        subprocess.check_call((sys.executable, str(mach_binary), "install-moz-phab"))
+        try:
+            subprocess.check_call((
+                sys.executable,
+                str(mach_binary),
+                "install-moz-phab",
+            ))
+        except subprocess.CalledProcessError as e:
+            print(
+                f"WARNING: './mach install-moz-phab' failed with exit code "
+                f"{e.returncode}. You can retry with './mach install-moz-phab "
+                f"--force'.",
+                file=sys.stderr,
+            )
 
     def bootstrap(self, settings):
         state_dir = Path(get_state_dir())
@@ -387,8 +389,8 @@ class Bootstrapper(object):
             labels = [
                 "%s. %s" % (i, name) for i, name in enumerate(applications.keys(), 1)
             ]
-            choices = ["  {} [default]".format(labels[0])]
-            choices += ["  {}".format(label) for label in labels[1:]]
+            choices = [f"  {labels[0]} [default]"]
+            choices += [f"  {label}" for label in labels[1:]]
             prompt = APPLICATION_CHOICE % "\n".join(choices)
             prompt_choice = self.instance.prompt_int(
                 prompt=prompt, low=1, high=len(applications)
@@ -434,12 +436,14 @@ class Bootstrapper(object):
             env=self.instance._hg_cleanenv(load_hgrc=True),
             hg=hg,
         )
+        repo = get_repository_object(checkout_root)
         self.instance.srcdir = checkout_root
         self.instance.validate_environment()
-        self._validate_python_environment(checkout_root)
+        self._populate_optional_packages(checkout_root)
 
         if sys.platform.startswith("win"):
             self._check_for_dev_drive(checkout_root)
+            self._add_microsoft_defender_antivirus_exclusions(checkout_root, state_dir)
 
         if self.instance.no_system_changes:
             self.maybe_install_private_packages_or_exit(application, checkout_type)
@@ -453,6 +457,8 @@ class Bootstrapper(object):
 
         if not self.instance.artifact_mode:
             self.instance.ensure_rust_modern()
+
+        self.check_agentic_tools()
 
         git = to_optional_path(which("git"))
 
@@ -468,7 +474,7 @@ class Bootstrapper(object):
                 configure_hg = self.hg_configure
 
             if configure_hg:
-                configure_mercurial(hg, state_dir)
+                repo.configure(state_dir)
 
         # Offer to configure Git, if the current checkout or repo type is Git.
         elif git and checkout_type == "git":
@@ -480,12 +486,7 @@ class Bootstrapper(object):
                 should_configure_git = self.hg_configure
 
             if should_configure_git:
-                configure_git(
-                    git,
-                    to_optional_path(which("git-cinnabar")),
-                    state_dir,
-                    checkout_root,
-                )
+                repo.configure(state_dir)
 
         self.maybe_install_private_packages_or_exit(application, checkout_type)
         self.check_code_submission(checkout_root)
@@ -522,54 +523,48 @@ class Bootstrapper(object):
 
         print("Checking for Dev Drive...")
 
+        if not shutil.which("powershell"):
+            print(
+                "PowerShell is not available on the system path. Unable to check for Dev Drive."
+            )
+            return
+
         try:
-            ver_output = subprocess.run(
-                ["cmd.exe", "/c", "ver"], capture_output=True, text=True, check=True
-            ).stdout
+            ver_output = subprocess.check_output(["cmd.exe", "/c", "ver"], text=True)
             current_windows_version = extract_windows_version_number(ver_output)
 
             if current_windows_version < DEV_DRIVE_MINIMUM_VERSION:
                 return
 
-            topsrcdir_drive_letter = Path(topsrcdir).drive[0]
-
-            volume_info = subprocess.run(
+            file_system_info = subprocess.check_output(
                 [
                     "powershell",
-                    "-command",
+                    "Get-Item",
+                    "-Path",
+                    topsrcdir,
+                    "|",
                     "Get-Volume",
-                    "-DriveLetter",
-                    topsrcdir_drive_letter,
+                    "|",
+                    "Select-Object",
+                    "FileSystem",
                 ],
-                capture_output=True,
                 text=True,
-                check=True,
-            ).stdout
-            volume_info = volume_info.lstrip().rstrip().split("\n")
-            type_index = volume_info[0].find("FileSystemType")
-            file_system_type = volume_info[2][type_index : type_index + 4]
-            drive_letter_index = volume_info[0].find("DriveLetter")
-            drive_letter = volume_info[2][drive_letter_index]
+            )
 
-            if topsrcdir_drive_letter == drive_letter:
-                if file_system_type == "ReFS":
-                    print(" The Firefox source repository is on a Dev Drive.")
-                else:
-                    print(
-                        DEV_DRIVE_SUGGESTION.format(
-                            topsrcdir, file_system_type, current_windows_version
-                        )
-                    )
-                    if self.instance.no_interactive:
-                        pass
-                    else:
-                        input("\nPress enter to continue.")
+            file_system_type = file_system_info.strip().split("\n")[2]
+
+            if file_system_type == "ReFS":
+                print(" The Firefox source repository is on a Dev Drive.")
             else:
                 print(
-                    DEV_DRIVE_DETECTION_ERROR.format(
-                        "Drive letter mismatch. Did 'Get-Volume' output change?"
+                    DEV_DRIVE_SUGGESTION.format(
+                        topsrcdir, file_system_type, current_windows_version
                     )
                 )
+                if self.instance.no_interactive:
+                    pass
+                else:
+                    input("\nPress enter to continue.")
 
         except subprocess.CalledProcessError as error:
             print(
@@ -577,12 +572,75 @@ class Bootstrapper(object):
             )
             pass
 
+    def _add_microsoft_defender_antivirus_exclusions(
+        self, topsrcdir: Path, state_dir: Path
+    ):
+        if self.no_system_changes:
+            return
+
+        if os.environ.get("MOZ_AUTOMATION"):
+            return
+
+        # This will trigger a UAC prompt, and since it really only needs to be done
+        # once, we can put a flag_file in the state_dir once we've done it and check
+        # for its existence to prevent us from doing it again.
+        flag_file = state_dir / ".ANTIVIRUS_EXCLUSIONS_DONE"
+        if flag_file.exists():
+            return
+
+        powershell_exe = which("powershell")
+
+        if not powershell_exe:
+            return
+
+        import ctypes
+
+        powershell_exe = str(powershell_exe)
+        paths = []
+
+        # checkout root
+        paths.append(topsrcdir)
+
+        # MOZILLABUILD
+        mozillabuild_dir = os.getenv("MOZILLABUILD")
+        if mozillabuild_dir:
+            paths.append(mozillabuild_dir)
+
+        # .mozbuild
+        paths.append(state_dir)
+
+        joined_paths = "\n".join(f" '{p}'" for p in paths)
+        print(
+            "Attempting to add exclusion paths to Microsoft Defender Antivirus for:\n"
+            f"{joined_paths}"
+        )
+        print(
+            "Note: This will trigger a UAC prompt. If you decline, no exclusions will be added."
+        )
+        print(
+            f"This step will not run again unless you delete the following file: '{flag_file}'\n"
+        )
+
+        args = ";".join(f"Add-MpPreference -ExclusionPath '{path}'" for path in paths)
+        command = f'-Command "{args}"'
+
+        # This will attempt to run as administrator by triggering a UAC prompt
+        # for admin credentials. If "No" is selected, no exclusions are added.
+        ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", powershell_exe, command, None, 0
+        )
+
+        try:
+            flag_file.touch(exist_ok=True)
+        except OSError as e:
+            print(f"Could not write flag_file '{flag_file}': {e}")
+
     def _default_mozconfig_path(self):
         return Path(self.mach_context.topdir) / "mozconfig"
 
     def _read_default_mozconfig(self):
         path = self._default_mozconfig_path()
-        with open(path, "r") as mozconfig_file:
+        with open(path) as mozconfig_file:
             return mozconfig_file.read()
 
     def _write_default_mozconfig(self, raw_mozconfig):
@@ -592,11 +650,12 @@ class Bootstrapper(object):
             print(f'Your requested configuration has been written to "{path}".')
 
     def _show_mozconfig_suggestion(self, raw_mozconfig):
-        suggestion = MOZCONFIG_SUGGESTION_TEMPLATE % (
-            self._default_mozconfig_path(),
-            raw_mozconfig,
-        )
-        print(suggestion, end="")
+        if raw_mozconfig:
+            suggestion = MOZCONFIG_SUGGESTION_TEMPLATE % (
+                self._default_mozconfig_path(),
+                raw_mozconfig,
+            )
+            print(suggestion, end="")
 
     def _check_default_mozconfig_mismatch(
         self, current_mozconfig_info, expected_application, expected_raw_mozconfig
@@ -656,23 +715,7 @@ class Bootstrapper(object):
             # No mozconfig file exists yet
             self._write_default_mozconfig(raw_mozconfig)
 
-    def _validate_python_environment(self, topsrcdir):
-        valid = True
-        pip3 = to_optional_path(which("pip3"))
-        if not pip3:
-            print("ERROR: Could not find pip3.", file=sys.stderr)
-            self.instance.suggest_install_pip3()
-            valid = False
-        if not valid:
-            print(
-                "ERROR: Your Python installation will not be able to run "
-                "`mach bootstrap`. `mach bootstrap` cannot maintain your "
-                "Python environment for you; fix the errors shown here, and "
-                "then re-run `mach bootstrap`.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-
+    def _populate_optional_packages(self, topsrcdir):
         mach_site = MachSiteManager.from_environment(
             topsrcdir,
             lambda: os.path.normpath(get_state_dir(True, topsrcdir=topsrcdir)),
@@ -680,77 +723,15 @@ class Bootstrapper(object):
         mach_site.attempt_populate_optional_packages()
 
 
-def update_vct(hg: Path, root_state_dir: Path):
-    """Ensure version-control-tools in the state directory is up to date."""
-    vct_dir = root_state_dir / "version-control-tools"
-
-    # Ensure the latest revision of version-control-tools is present.
-    update_mercurial_repo(
-        hg, "https://hg.mozilla.org/hgcustom/version-control-tools", vct_dir, "@"
-    )
-
-    return vct_dir
-
-
-def configure_mercurial(hg: Optional[Path], root_state_dir: Path):
-    """Run the Mercurial configuration wizard."""
-    vct_dir = update_vct(hg, root_state_dir)
-
-    hg = to_optional_str(hg)
-
-    # Run the config wizard from v-c-t.
-    args = [
-        hg,
-        "--config",
-        f"extensions.configwizard={vct_dir}/hgext/configwizard",
-        "configwizard",
-    ]
-    subprocess.call(args)
-
-
-def update_mercurial_repo(hg: Path, url, dest: Path, revision):
-    """Perform a clone/pull + update of a Mercurial repository."""
-    # Disable common extensions whose older versions may cause `hg`
-    # invocations to abort.
-    pull_args = [str(hg)]
-    if dest.exists():
-        pull_args.extend(["pull", url])
-        cwd = dest
-    else:
-        pull_args.extend(["clone", "--noupdate", url, str(dest)])
-        cwd = "/"
-
-    update_args = [str(hg), "update", "-r", revision]
-
-    print("=" * 80)
-    print(f"Ensuring {url} is up to date at {dest}")
-
-    env = os.environ.copy()
-    env.update(
-        {
-            "HGPLAIN": "1",
-            "HGRCPATH": "!",
-        }
-    )
-
-    try:
-        subprocess.check_call(pull_args, cwd=str(cwd), env=env)
-        subprocess.check_call(update_args, cwd=str(dest), env=env)
-    finally:
-        print("=" * 80)
-
-
 def current_firefox_checkout(env, hg: Optional[Path] = None):
     """Determine whether we're in a Firefox checkout.
 
     Returns one of None, ``git``, or ``hg``.
     """
-    HG_ROOT_REVISIONS = set(
-        [
-            # From mozilla-unified.
-            "8ba995b74e18334ab3707f27e9eb8f4e37ba3d29"
-        ]
-    )
+    HG_ROOT_REVISIONS = set([
+        # From mozilla-unified.
+        "8ba995b74e18334ab3707f27e9eb8f4e37ba3d29"
+    ])
 
     path = Path.cwd()
     while path:
@@ -794,138 +775,12 @@ def current_firefox_checkout(env, hg: Optional[Path] = None):
     )
 
 
-def update_git_tools(git: Optional[Path], root_state_dir: Path):
-    """Update git tools, hooks and extensions"""
-    # Ensure git-cinnabar is up to date.
-    cinnabar_dir = root_state_dir / "git-cinnabar"
-    cinnabar_exe = cinnabar_dir / "git-cinnabar"
-
-    if sys.platform.startswith(("win32", "msys")):
-        cinnabar_exe = cinnabar_exe.with_suffix(".exe")
-
-    # Older versions of git-cinnabar can't do self-update. So if we start
-    # from such a version, we remove it and start over.
-    # The first version that supported self-update is also the first version
-    # that wasn't a python script, so we can just look for a hash-bang.
-    # Or, on Windows, the .exe didn't exist.
-    start_over = cinnabar_dir.exists() and not cinnabar_exe.exists()
-    if cinnabar_exe.exists():
-        try:
-            with cinnabar_exe.open("rb") as fh:
-                start_over = fh.read(2) == b"#!"
-        except Exception:
-            # If we couldn't read the binary, let's just try to start over.
-            start_over = True
-
-    if start_over:
-        # git sets pack files read-only, which causes problems removing
-        # them on Windows. To work around that, we use an error handler
-        # on rmtree that retries to remove the file after chmod'ing it.
-        def onerror(func, path, exc):
-            if func == os.unlink:
-                os.chmod(path, stat.S_IRWXU)
-                func(path)
-            else:
-                raise
-
-        shutil.rmtree(str(cinnabar_dir), onerror=onerror)
-
-    # If we already have an executable, ask it to update itself.
-    exists = cinnabar_exe.exists()
-    if exists:
-        try:
-            subprocess.check_call([str(cinnabar_exe), "self-update"])
-        except subprocess.CalledProcessError as e:
-            print(e)
-
-    # git-cinnabar 0.6.0rc1 self-update had a bug that could leave an empty
-    # file. If that happens, install from scratch.
-    if not exists or cinnabar_exe.stat().st_size == 0:
-        from urllib.request import urlopen
-
-        import certifi
-
-        if not cinnabar_dir.exists():
-            cinnabar_dir.mkdir()
-
-        cinnabar_url = "https://github.com/glandium/git-cinnabar/"
-        download_py = cinnabar_dir / "download.py"
-        with open(download_py, "wb") as fh:
-            shutil.copyfileobj(
-                urlopen(
-                    f"{cinnabar_url}/raw/master/download.py", cafile=certifi.where()
-                ),
-                fh,
-            )
-
-        try:
-            subprocess.check_call(
-                [sys.executable, str(download_py)], cwd=str(cinnabar_dir)
-            )
-        except subprocess.CalledProcessError as e:
-            print(e)
-        finally:
-            download_py.unlink()
-
-    return cinnabar_dir
-
-
-def configure_git(
-    git: Optional[Path],
-    cinnabar: Optional[Path],
-    root_state_dir: Path,
-    top_src_dir: Path,
-):
-    """Run the Git configuration steps."""
-
-    git_str = to_optional_str(git)
-
-    match = re.search(
-        r"(\d+\.\d+\.\d+)",
-        subprocess.check_output([git_str, "--version"], universal_newlines=True),
-    )
-    if not match:
-        raise Exception("Could not find git version")
-    git_version = Version(match.group(1))
-
-    if git_version < MINIMUM_RECOMMENDED_GIT_VERSION:
-        print(
-            OLD_GIT_WARNING.format(
-                old_version=git_version,
-                minimum_recommended_version=MINIMUM_RECOMMENDED_GIT_VERSION,
-            )
-        )
-
-    if git_version >= Version("2.17"):
-        # "core.untrackedCache" has a bug before 2.17
-        subprocess.check_call(
-            [git_str, "config", "core.untrackedCache", "true"], cwd=str(top_src_dir)
-        )
-
-    cinnabar_dir = str(update_git_tools(git, root_state_dir))
-
-    if not cinnabar:
-        if "MOZILLABUILD" in os.environ:
-            # Slightly modify the path on Windows to be correct
-            # for the copy/paste into the .bash_profile
-            cinnabar_dir = win_to_msys_path(cinnabar_dir)
-
-            print(
-                ADD_GIT_CINNABAR_PATH.format(
-                    prefix="%USERPROFILE%", cinnabar_dir=cinnabar_dir
-                )
-            )
-        else:
-            print(ADD_GIT_CINNABAR_PATH.format(prefix="~", cinnabar_dir=cinnabar_dir))
-
-
 def _warn_if_risky_revision(path: Path):
     # Warn the user if they're trying to bootstrap from an obviously old
     # version of tree as reported by the version control system (a month in
     # this case). This is an approximate calculation but is probably good
     # enough for our purposes.
     NUM_SECONDS_IN_MONTH = 60 * 60 * 24 * 30
-    from mozversioncontrol import get_repository_object
 
     repo = get_repository_object(path)
     if (time.time() - repo.get_commit_time()) >= NUM_SECONDS_IN_MONTH:
@@ -935,6 +790,7 @@ def _warn_if_risky_revision(path: Path):
 def _macos_is_running_under_rosetta():
     proc = subprocess.run(
         ["sysctl", "-n", "sysctl.proc_translated"],
+        check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )

@@ -1,10 +1,8 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "BaseProfilerSharedLibraries.h"
+#include "mozilla/SharedLibraries.h"
 
 #define PATH_MAX_TOSTRING(x) #x
 #define PATH_MAX_STRING(x) PATH_MAX_TOSTRING(x)
@@ -27,6 +25,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <vector>
+#include <optional>
 
 #if defined(GP_OS_linux) || defined(GP_OS_android) || defined(GP_OS_freebsd)
 #  include <link.h>  // dl_phdr_info, ElfW()
@@ -56,7 +55,7 @@ extern "C" MOZ_EXPORT __attribute__((weak)) int dl_iterate_phdr(
 // libc functions, and is thus safer to use in a crashed environment.
 class MemoryRange {
  public:
-  MemoryRange() : data_(NULL), length_(0) {}
+  MemoryRange() : data_(nullptr), length_(0) {}
 
   MemoryRange(const void* data, size_t length) { Set(data, length); }
 
@@ -68,7 +67,7 @@ class MemoryRange {
 
   // Resets to an empty range.
   void Reset() {
-    data_ = NULL;
+    data_ = nullptr;
     length_ = 0;
   }
 
@@ -94,7 +93,7 @@ class MemoryRange {
   // |sub_offset| bytes of this memory range, or NULL if the subrange
   // is out of bounds.
   const void* GetData(size_t sub_offset, size_t sub_length) const {
-    return Covers(sub_offset, sub_length) ? (data_ + sub_offset) : NULL;
+    return Covers(sub_offset, sub_length) ? (data_ + sub_offset) : nullptr;
   }
 
   // Same as the two-argument version of GetData() but uses sizeof(DataType)
@@ -154,7 +153,7 @@ class MemoryRange {
 // directly making system calls for open, close, mmap, and munmap.
 class MemoryMappedFile {
  public:
-  MemoryMappedFile() {}
+  MemoryMappedFile() = default;
 
   // Constructor that calls Map() to map a file at |path| into memory.
   // If Map() fails, the object behaves as if it is default constructed.
@@ -163,7 +162,7 @@ class MemoryMappedFile {
   MemoryMappedFile(const MemoryMappedFile&) = delete;
   MemoryMappedFile& operator=(const MemoryMappedFile&) = delete;
 
-  ~MemoryMappedFile() {}
+  ~MemoryMappedFile() { Unmap(); }
 
   // Maps a file at |path| into memory, which can then be accessed via
   // content() as a MemoryRange object or via data(), and returns true on
@@ -202,7 +201,7 @@ class MemoryMappedFile {
       return true;
     }
 
-    void* data = mmap(NULL, file_len, PROT_READ, MAP_PRIVATE, fd, offset);
+    void* data = mmap(nullptr, file_len, PROT_READ, MAP_PRIVATE, fd, offset);
     close(fd);
     if (data == MAP_FAILED) {
       return false;
@@ -217,7 +216,7 @@ class MemoryMappedFile {
   void Unmap() {
     if (content_.data()) {
       munmap(const_cast<uint8_t*>(content_.data()), content_.length());
-      content_.Set(NULL, 0);
+      content_.Set(nullptr, 0);
     }
   }
 
@@ -260,7 +259,7 @@ const size_t kMDGUIDSize = sizeof(MDGUID);
 class FileID {
  public:
   explicit FileID(const char* path) : path_(path) {}
-  ~FileID() {}
+  ~FileID() = default;
 
   // Load the identifier for the elf file path specified in the constructor into
   // |identifier|.
@@ -320,11 +319,11 @@ class FileID {
       const typename ElfClass::Shdr* sections, const char* section_names,
       const char* names_end, int nsection) {
     if (!name || !sections || nsection == 0) {
-      return NULL;
+      return nullptr;
     }
 
     int name_len = strlen(name);
-    if (name_len == 0) return NULL;
+    if (name_len == 0) return nullptr;
 
     for (int i = 0; i < nsection; ++i) {
       const char* section_name = section_names + sections[i].sh_name;
@@ -334,7 +333,7 @@ class FileID {
         return sections + i;
       }
     }
-    return NULL;
+    return nullptr;
   }
 
   struct ElfSegment {
@@ -407,6 +406,12 @@ class FileID {
       return false;
     }
 
+    if (elf_header->e_shoff == 0) {
+      *section_start = nullptr;
+      *section_size = 0;
+      return false;
+    }
+
     const Shdr* sections =
         GetOffset<ElfClass, Shdr>(elf_header, elf_header->e_shoff);
     const Shdr* section_names = sections + elf_header->e_shstrndx;
@@ -418,7 +423,7 @@ class FileID {
         FindElfSectionByName<ElfClass>(section_name, section_type, sections,
                                        names, names_end, elf_header->e_shnum);
 
-    if (section != NULL && section->sh_size > 0) {
+    if (section != nullptr && section->sh_size > 0) {
       *section_start = elf_base + section->sh_offset;
       *section_size = section->sh_size;
     }
@@ -480,7 +485,7 @@ class FileID {
       return false;
     }
 
-    *section_start = NULL;
+    *section_start = nullptr;
     *section_size = 0;
 
     if (!IsValidElf(elf_mapped_base)) return false;
@@ -492,12 +497,12 @@ class FileID {
       return FindElfClassSection<ElfClass32>(elf_base, section_name,
                                              section_type, section_start,
                                              section_size) &&
-             *section_start != NULL;
+             *section_start != nullptr;
     } else if (cls == ELFCLASS64) {
       return FindElfClassSection<ElfClass64>(elf_base, section_name,
                                              section_type, section_start,
                                              section_size) &&
-             *section_start != NULL;
+             *section_start != nullptr;
     }
 
     return false;
@@ -553,8 +558,6 @@ class FileID {
   // a simple hash by XORing the first page worth of bytes into |identifier|.
   static bool HashElfTextSection(const void* elf_mapped_base,
                                  std::vector<uint8_t>& identifier) {
-    identifier.resize(kMDGUIDSize);
-
     void* text_section;
     size_t text_size;
     if (!FindElfSection(elf_mapped_base, ".text", SHT_PROGBITS,
@@ -565,6 +568,7 @@ class FileID {
 
     // Only provide |kMDGUIDSize| bytes to keep identifiers produced by this
     // function backwards-compatible.
+    identifier.resize(kMDGUIDSize);
     memset(&identifier[0], 0, kMDGUIDSize);
     const uint8_t* ptr = reinterpret_cast<const uint8_t*>(text_section);
     const uint8_t* ptr_end =
@@ -639,16 +643,19 @@ class FileID {
 struct LoadedLibraryInfo {
   LoadedLibraryInfo(const char* aName, unsigned long aBaseAddress,
                     unsigned long aFirstMappingStart,
-                    unsigned long aLastMappingEnd)
+                    unsigned long aLastMappingEnd,
+                    std::optional<std::vector<uint8_t>>&& aElfFileIdentifier)
       : mName(aName),
         mBaseAddress(aBaseAddress),
         mFirstMappingStart(aFirstMappingStart),
-        mLastMappingEnd(aLastMappingEnd) {}
+        mLastMappingEnd(aLastMappingEnd),
+        mElfFileIdentifier(std::move(aElfFileIdentifier)) {}
 
   std::string mName;
   unsigned long mBaseAddress;
   unsigned long mFirstMappingStart;
   unsigned long mLastMappingEnd;
+  std::optional<std::vector<uint8_t>> mElfFileIdentifier;
 };
 
 static std::string IDtoUUIDString(const std::vector<uint8_t>& aIdentifier) {
@@ -664,45 +671,59 @@ static std::string IDtoString(const std::vector<uint8_t>& aIdentifier) {
   return uuid;
 }
 
-// Get the breakpad Id for the binary file pointed by bin_name
-static std::string getBreakpadId(const char* bin_name) {
+// Get the ELF file identifier from file, which will be used for getting the
+// breakpad Id and code Id for the binary file pointed by bin_name.
+static std::optional<std::vector<uint8_t>> getElfFileIdentifierFromFile(
+    const char* bin_name) {
   std::vector<uint8_t> identifier;
   identifier.reserve(kDefaultBuildIdSize);
 
   FileID file_id(bin_name);
   if (file_id.ElfFileIdentifier(identifier)) {
-    return IDtoUUIDString(identifier);
+    return identifier;
   }
 
   return {};
 }
 
-// Get the code Id for the binary file pointed by bin_name
-static std::string getCodeId(const char* bin_name) {
-  std::vector<uint8_t> identifier;
-  identifier.reserve(kDefaultBuildIdSize);
-
-  FileID file_id(bin_name);
-  if (file_id.ElfFileIdentifier(identifier)) {
-    return IDtoString(identifier);
+// Get the breakpad Id for the ELF file identifier.
+static std::string getBreakpadId(
+    const std::optional<std::vector<uint8_t>>& aIdentifier) {
+  if (aIdentifier) {
+    return IDtoUUIDString(aIdentifier.value());
   }
 
   return {};
 }
 
-static SharedLibrary SharedLibraryAtPath(const char* path,
-                                         unsigned long libStart,
-                                         unsigned long libEnd,
-                                         unsigned long offset = 0) {
+// Get the code Id for the ELF file identifier.
+static std::string getCodeId(
+    const std::optional<std::vector<uint8_t>>& aIdentifier) {
+  if (aIdentifier) {
+    return IDtoString(aIdentifier.value());
+  }
+
+  return {};
+}
+
+static SharedLibrary SharedLibraryAtPath(
+    const char* path, unsigned long libStart, unsigned long libEnd,
+    unsigned long offset = 0,
+    const std::optional<std::vector<uint8_t>>& elfFileIdentifier =
+        std::nullopt) {
   std::string pathStr = path;
 
-  size_t pos = pathStr.rfind('\\');
+  size_t pos = pathStr.rfind('/');
   std::string nameStr =
       (pos != std::string::npos) ? pathStr.substr(pos + 1) : pathStr;
 
-  return SharedLibrary(libStart, libEnd, offset, getBreakpadId(path),
-                       getCodeId(path), nameStr, pathStr, nameStr, pathStr,
-                       std::string{}, "");
+  const auto identifier = elfFileIdentifier
+                              ? elfFileIdentifier
+                              : getElfFileIdentifierFromFile(path);
+
+  return SharedLibrary(libStart, libEnd, offset, getBreakpadId(identifier),
+                       getCodeId(identifier), nameStr, pathStr, nameStr,
+                       pathStr, std::string{}, "");
 }
 
 static int dl_iterate_callback(struct dl_phdr_info* dl_info, size_t size,
@@ -712,25 +733,56 @@ static int dl_iterate_callback(struct dl_phdr_info* dl_info, size_t size,
   if (dl_info->dlpi_phnum <= 0) return 0;
 
   unsigned long baseAddress = dl_info->dlpi_addr;
+
+  // Skip entries with null base address.
+  // Correct implementations of dl_iterate_phdr should never pass a null base
+  // address here, but we have a custom implementation of dl_iterate_phdr in
+  // in our custom linker which is used on Android 22 and older, and this
+  // implementation can sometimes pass null, e.g., from SystemElf::GetBase(). We
+  // can remove this workaround once we remove the custom linker when we drop
+  // support for those Android versions.
+  if (baseAddress == 0) {
+    return 0;
+  }
+
   unsigned long firstMappingStart = -1;
   unsigned long lastMappingEnd = 0;
+  std::vector<uint8_t> elfFileIdentifier;
 
   for (size_t i = 0; i < dl_info->dlpi_phnum; i++) {
-    if (dl_info->dlpi_phdr[i].p_type != PT_LOAD) {
-      continue;
+    // Find the mapping start and end.
+    if (dl_info->dlpi_phdr[i].p_type == PT_LOAD) {
+      unsigned long start = dl_info->dlpi_addr + dl_info->dlpi_phdr[i].p_vaddr;
+      unsigned long end = start + dl_info->dlpi_phdr[i].p_memsz;
+      if (start < firstMappingStart) {
+        firstMappingStart = start;
+      }
+      if (end > lastMappingEnd) {
+        lastMappingEnd = end;
+      }
     }
-    unsigned long start = dl_info->dlpi_addr + dl_info->dlpi_phdr[i].p_vaddr;
-    unsigned long end = start + dl_info->dlpi_phdr[i].p_memsz;
-    if (start < firstMappingStart) {
-      firstMappingStart = start;
-    }
-    if (end > lastMappingEnd) {
-      lastMappingEnd = end;
+
+    // Try to find the ELF file identifier from memory by looking at the
+    // PT_NOTE segments.
+    if (dl_info->dlpi_phdr[i].p_type == PT_NOTE && elfFileIdentifier.empty()) {
+      const void* section_start = reinterpret_cast<const void*>(
+          dl_info->dlpi_addr + dl_info->dlpi_phdr[i].p_vaddr);
+      size_t section_length = dl_info->dlpi_phdr[i].p_memsz;
+      FileID::ElfClassBuildIDNoteIdentifier(section_start, section_length,
+                                            elfFileIdentifier);
     }
   }
 
-  libInfoList->push_back(LoadedLibraryInfo(dl_info->dlpi_name, baseAddress,
-                                           firstMappingStart, lastMappingEnd));
+  auto optionalElfFileId =
+      elfFileIdentifier.size() > 0
+          ? std::make_optional(std::move(elfFileIdentifier))
+          : std::nullopt;
+  // Check in case it's a nullptr, as we will construct a std::string with it.
+  // It's UB to pass nullptr to the std::string constructor.
+  const char* libName = dl_info->dlpi_name ? dl_info->dlpi_name : "";
+  libInfoList->push_back(LoadedLibraryInfo(libName, baseAddress,
+                                           firstMappingStart, lastMappingEnd,
+                                           std::move(optionalElfFileId)));
 
   return 0;
 }
@@ -823,33 +875,28 @@ SharedLibraryInfo SharedLibraryInfo::GetInfoForSelf() {
   // We collect the bulk of the library info using dl_iterate_phdr.
   dl_iterate_phdr(dl_iterate_callback, &libInfoList);
 
-  for (const auto& libInfo : libInfoList) {
-    info.AddSharedLibrary(
-        SharedLibraryAtPath(libInfo.mName.c_str(), libInfo.mFirstMappingStart,
-                            libInfo.mLastMappingEnd,
-                            libInfo.mFirstMappingStart - libInfo.mBaseAddress));
-  }
-
 #if defined(GP_OS_linux)
-  // Make another pass over the information we just harvested from
-  // dl_iterate_phdr.  If we see a nameless object mapped at what we earlier
-  // established to be the main executable's load address, attach the
-  // executable's name to that entry.
-  for (size_t i = 0; i < info.GetSize(); i++) {
-    SharedLibrary& lib = info.GetMutableEntry(i);
-    if (lib.GetStart() <= exeExeAddr && exeExeAddr <= lib.GetEnd() &&
-        lib.GetDebugPath().empty()) {
-      lib = SharedLibraryAtPath(exeName, lib.GetStart(), lib.GetEnd(),
-                                lib.GetOffset());
-
-      // We only expect to see one such entry.
-      break;
-    }
-  }
+  bool exeNameAssigned = false;
 #endif
+  for (const auto& libInfo : libInfoList) {
+    const char* libraryName = libInfo.mName.c_str();
+#if defined(GP_OS_linux)
+    // If we see a nameless object mapped at what we earlier established to be
+    // the main executable's load address, use the executable's name instead.
+    if (!exeNameAssigned && libInfo.mFirstMappingStart <= exeExeAddr &&
+        exeExeAddr <= libInfo.mLastMappingEnd && libInfo.mName.empty()) {
+      libraryName = exeName;
+      exeNameAssigned = true;
+    }
+#endif
+
+    info.AddSharedLibrary(SharedLibraryAtPath(
+        libraryName, libInfo.mFirstMappingStart, libInfo.mLastMappingEnd,
+        libInfo.mFirstMappingStart - libInfo.mBaseAddress,
+        libInfo.mElfFileIdentifier));
+  }
 
   return info;
 }
 
-void SharedLibraryInfo::Initialize() { /* do nothing */
-}
+void SharedLibraryInfo::Initialize() { /* do nothing */ }

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -27,15 +25,13 @@
 #include "proxy/DeadObjectProxy.h"
 #include "proxy/DOMProxy.h"
 #include "vm/JSContext.h"
-#ifdef ENABLE_RECORD_TUPLE
-#  include "vm/RecordTupleShared.h"
-#endif
 #include "vm/WrapperObject.h"
 
 #include "gc/Marking-inl.h"
 #include "gc/WeakMap-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/Realm-inl.h"
+#include "vm/StringType-inl.h"
 
 using namespace js;
 
@@ -51,11 +47,11 @@ Compartment::Compartment(Zone* zone, bool invisibleToDebugger)
 #ifdef JSGC_HASH_TABLE_CHECKS
 
 void Compartment::checkObjectWrappersAfterMovingGC() {
-  for (ObjectWrapperEnum e(this); !e.empty(); e.popFront()) {
-    auto key = e.front().key();
+  for (auto iter = objectWrapperMappings(); !iter.done(); iter.next()) {
+    auto key = iter.get().key();
     CheckGCThingAfterMovingGC(key.get());  // Keys may be in a different zone.
-    CheckGCThingAfterMovingGC(e.front().value().unbarrieredGet(), zone());
-    CheckTableEntryAfterMovingGC(crossCompartmentObjectWrappers, e, key);
+    CheckGCThingAfterMovingGC(iter.get().value().unbarrieredGet(), zone());
+    CheckTableEntryAfterMovingGC(crossCompartmentObjectWrappers, iter, key);
   }
 }
 
@@ -104,6 +100,20 @@ JSString* js::CopyStringPure(JSContext* cx, JSString* str) {
   size_t len = str->length();
   JSString* copy;
   if (str->isLinear()) {
+    // If the string has a refcounted StringBuffer, we can share it.
+    if (str->hasStringBuffer()) {
+      RefPtr<mozilla::StringBuffer> buffer(str->asLinear().stringBuffer());
+      if (str->hasLatin1Chars()) {
+        Rooted<JSString::OwnedChars<Latin1Char>> owned(cx, std::move(buffer),
+                                                       len);
+        return JSLinearString::newValidLength<CanGC, Latin1Char>(
+            cx, &owned, gc::Heap::Default);
+      }
+      Rooted<JSString::OwnedChars<char16_t>> owned(cx, std::move(buffer), len);
+      return JSLinearString::newValidLength<CanGC, char16_t>(cx, &owned,
+                                                             gc::Heap::Default);
+    }
+
     /* Only use AutoStableStringChars if the NoGC allocation fails. */
     if (str->hasLatin1Chars()) {
       JS::AutoCheckCannotGC nogc;
@@ -247,6 +257,13 @@ bool Compartment::getNonWrapperObjectForCurrentCompartment(
 
     MOZ_ASSERT(IsWindowProxy(obj) || IsDOMRemoteProxyObject(obj));
 
+    // The WindowProxy may live in a different (nuked) realm than the Window we
+    // checked above, so re-check AllowNewWrapper.
+    if (obj->compartment() != this && !AllowNewWrapper(this, obj)) {
+      obj.set(NewDeadProxyObject(cx, obj));
+      return !!obj;
+    }
+
     // We crossed a compartment boundary there, so may now have a gray object.
     // This function is not allowed to return gray objects, so don't do that.
     ExposeObjectToActiveJS(obj);
@@ -266,11 +283,11 @@ bool Compartment::getNonWrapperObjectForCurrentCompartment(
   // We're a bit worried about infinite recursion here, so we do a check -
   // see bug 809295.
   auto preWrap = cx->runtime()->wrapObjectCallbacks->preWrap;
-  AutoCheckRecursionLimit recursion(cx);
-  if (!recursion.checkSystem(cx)) {
-    return false;
-  }
   if (preWrap) {
+    AutoCheckRecursionLimit recursion(cx);
+    if (!recursion.checkSystem(cx)) {
+      return false;
+    }
     preWrap(cx, cx->global(), origObj, obj, objectPassedToWrap, obj);
     if (!obj) {
       return false;
@@ -299,9 +316,10 @@ bool Compartment::getOrCreateWrapper(JSContext* cx, HandleObject existing,
 
   // If we're wrapping an object which emulates undefined then the runtime fuse
   // should already have been popped.
-  MOZ_ASSERT_IF(
-      obj->getClass()->emulatesUndefined(),
-      !cx->runtime()->hasSeenObjectEmulateUndefinedFuse.ref().intact());
+  MOZ_ASSERT_IF(obj->getClass()->emulatesUndefined(),
+                !cx->runtime()
+                     ->runtimeFuses.ref()
+                     .hasSeenObjectEmulateUndefinedFuse.intact());
 
   // Create a new wrapper for the object.
   auto wrap = cx->runtime()->wrapObjectCallbacks->wrap;
@@ -330,36 +348,12 @@ bool Compartment::getOrCreateWrapper(JSContext* cx, HandleObject existing,
   return true;
 }
 
-#ifdef ENABLE_RECORD_TUPLE
-bool Compartment::wrapExtendedPrimitive(JSContext* cx,
-                                        MutableHandleObject obj) {
-  MOZ_ASSERT(IsExtendedPrimitive(*obj));
-  MOZ_ASSERT(cx->compartment() == this);
-
-  if (obj->compartment() == this) {
-    return true;
-  }
-
-  JSObject* copy = CopyExtendedPrimitive(cx, obj);
-  if (!copy) {
-    return false;
-  }
-
-  obj.set(copy);
-  return true;
-}
-#endif
-
 bool Compartment::wrap(JSContext* cx, MutableHandleObject obj) {
   MOZ_ASSERT(cx->compartment() == this);
 
   if (!obj) {
     return true;
   }
-
-#ifdef ENABLE_RECORD_TUPLE
-  MOZ_ASSERT(!IsExtendedPrimitive(*obj));
-#endif
 
   AutoDisableProxyCheck adpc;
 
@@ -494,14 +488,14 @@ void Compartment::traceWrapperTargetsInCollectedZones(JSTracer* trc,
   MOZ_ASSERT(!zone()->isCollectingFromAnyThread() ||
              trc->runtime()->gc.isHeapCompacting());
 
-  for (WrappedObjectCompartmentEnum c(this); !c.empty(); c.popFront()) {
-    Zone* zone = c.front()->zone();
+  for (auto c = wrappedObjectCompartments(); !c.done(); c.next()) {
+    Zone* zone = c.get()->zone();
     if (!zone->isCollectingFromAnyThread()) {
       continue;
     }
 
-    for (ObjectWrapperEnum e(this, c); !e.empty(); e.popFront()) {
-      JSObject* obj = e.front().value().unbarrieredGet();
+    for (auto iter = objectWrapperMappingsTo(c); !iter.done(); iter.next()) {
+      JSObject* obj = iter.get().value().unbarrieredGet();
       ProxyObject* wrapper = &obj->as<ProxyObject>();
       if (ShouldTraceWrapper(wrapper, whichEdges)) {
         ProxyObject::traceEdgeToTarget(trc, wrapper);

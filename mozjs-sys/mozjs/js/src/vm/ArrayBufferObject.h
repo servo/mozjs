@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -28,6 +26,7 @@ class JSONPrinter;
 
 class ArrayBufferViewObject;
 class AutoSetNewObjectMetadata;
+class FixedLengthTypedArrayObject;
 class WasmArrayRawBuffer;
 
 namespace wasm {
@@ -38,7 +37,7 @@ struct MemoryDesc;
 // of size `initialCommittedSize`.  Both arguments denote bytes and must be
 // multiples of the page size, with `initialCommittedSize` <= `mappedSize`.
 // Returns nullptr on failure.
-void* MapBufferMemory(wasm::IndexType, size_t mappedSize,
+void* MapBufferMemory(wasm::AddressType, wasm::PageSize, size_t mappedSize,
                       size_t initialCommittedSize);
 
 // Commit additional memory in an existing mapping.  `dataEnd` must be the
@@ -47,17 +46,10 @@ void* MapBufferMemory(wasm::IndexType, size_t mappedSize,
 // size.  Returns false on failure.
 bool CommitBufferMemory(void* dataEnd, size_t delta);
 
-// Extend an existing mapping by adding uncommited pages to it.  `dataStart`
-// must be the pointer to the start of the existing mapping, `mappedSize` the
-// size of the existing mapping, and `newMappedSize` the size of the extended
-// mapping (sizes in bytes), with `mappedSize` <= `newMappedSize`.  Both sizes
-// must be divisible by the page size.  Returns false on failure.
-bool ExtendBufferMapping(void* dataStart, size_t mappedSize,
-                         size_t newMappedSize);
-
 // Remove an existing mapping.  `dataStart` must be the pointer to the start of
 // the mapping, and `mappedSize` the size of that mapping.
-void UnmapBufferMemory(wasm::IndexType t, void* dataStart, size_t mappedSize);
+void UnmapBufferMemory(wasm::AddressType t, void* dataStart, size_t mappedSize,
+                       size_t committedSize);
 
 // Return the number of bytes currently reserved for WebAssembly memory
 uint64_t WasmReservedBytes();
@@ -72,6 +64,7 @@ uint64_t WasmReservedBytes();
 //       - ArrayBufferObject
 //         - FixedLengthArrayBufferObject
 //         - ResizableArrayBufferObject
+//         - ImmutableArrayBufferObject
 //       - SharedArrayBufferObject
 //         - FixedLengthSharedArrayBufferObject
 //         - GrowableSharedArrayBufferObject
@@ -79,6 +72,7 @@ uint64_t WasmReservedBytes();
 //       - DataViewObject
 //         - FixedLengthDataViewObject
 //         - ResizableDataViewObject
+//         - ImmutableDataViewObject
 //       - TypedArrayObject (declared in vm/TypedArrayObject.h)
 //         - FixedLengthTypedArrayObject
 //           - FixedLengthTypedArrayObjectTemplate<NativeType>, also inheriting
@@ -92,13 +86,20 @@ uint64_t WasmReservedBytes();
 //             - ResizableTypedArrayObjectTemplate<int8_t>
 //             - ResizableTypedArrayObjectTemplate<uint8_t>
 //             - ...
+//         - ImmutableTypedArrayObject
+//           - ImmutableTypedArrayObjectTemplate<NativeType>, also inheriting
+//             from TypedArrayObjectTemplate<NativeType>
+//             - ImmutableTypedArrayObjectTemplate<int8_t>
+//             - ImmutableTypedArrayObjectTemplate<uint8_t>
+//             - ...
 //
-// Note that |{FixedLength,Resizable}TypedArrayObjectTemplate| is just an
-// implementation detail that makes implementing its various subclasses easier.
+// Note that |{FixedLength,Resizable,Immutable}TypedArrayObjectTemplate| is just
+// an implementation detail that makes implementing its various subclasses
+// easier.
 //
-// FixedLengthArrayBufferObject and ResizableArrayBufferObject are also
-// implementation specific types to differentiate between fixed-length and
-// resizable ArrayBuffers.
+// FixedLengthArrayBufferObject, ResizableArrayBufferObject, and
+// ImmutableArrayBufferObject are also implementation specific types to
+// differentiate between fixed-length, resizable, and immutable ArrayBuffers.
 //
 // ArrayBufferObject and SharedArrayBufferObject are unrelated data types:
 // the racy memory of the latter cannot substitute for the non-racy memory of
@@ -130,8 +131,9 @@ uint64_t WasmReservedBytes();
 
 class ArrayBufferObjectMaybeShared;
 
-wasm::IndexType WasmArrayBufferIndexType(
+wasm::AddressType WasmArrayBufferAddressType(
     const ArrayBufferObjectMaybeShared* buf);
+wasm::PageSize WasmArrayBufferPageSize(const ArrayBufferObjectMaybeShared* buf);
 wasm::Pages WasmArrayBufferPages(const ArrayBufferObjectMaybeShared* buf);
 wasm::Pages WasmArrayBufferClampedMaxPages(
     const ArrayBufferObjectMaybeShared* buf);
@@ -144,6 +146,7 @@ class ArrayBufferObjectMaybeShared : public NativeObject {
   inline size_t byteLength() const;
   inline bool isDetached() const;
   inline bool isResizable() const;
+  inline bool isImmutable() const;
   inline SharedMem<uint8_t*> dataPointerEither();
 
   inline bool pinLength(bool pin);
@@ -152,9 +155,10 @@ class ArrayBufferObjectMaybeShared : public NativeObject {
   // Note: the eventual goal is to remove this from ArrayBuffer and have
   // (Shared)ArrayBuffers alias memory owned by some wasm::Memory object.
 
-  wasm::IndexType wasmIndexType() const {
-    return WasmArrayBufferIndexType(this);
+  wasm::AddressType wasmAddressType() const {
+    return WasmArrayBufferAddressType(this);
   }
+  wasm::PageSize wasmPageSize() const { return WasmArrayBufferPageSize(this); }
   wasm::Pages wasmPages() const { return WasmArrayBufferPages(this); }
   wasm::Pages wasmClampedMaxPages() const {
     return WasmArrayBufferClampedMaxPages(this);
@@ -170,6 +174,7 @@ class ArrayBufferObjectMaybeShared : public NativeObject {
 
 class FixedLengthArrayBufferObject;
 class ResizableArrayBufferObject;
+class ImmutableArrayBufferObject;
 
 /*
  * ArrayBufferObject
@@ -179,8 +184,9 @@ class ResizableArrayBufferObject;
  * used to construct an ArrayBufferView, or can be created lazily when it is
  * first accessed for a TypedArrayObject that doesn't have an explicit buffer.
  *
- * ArrayBufferObject is an abstract base class and has exactly two concrete
- * subclasses, FixedLengthArrayBufferObject and ResizableArrayBufferObject.
+ * ArrayBufferObject is an abstract base class and has exactly three concrete
+ * subclasses: FixedLengthArrayBufferObject, ResizableArrayBufferObject, and
+ * ImmutableArrayBufferObject.
  *
  * ArrayBufferObject (or really the underlying memory) /is not racy/: the
  * memory is private to a single worker.
@@ -190,9 +196,19 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   static bool maxByteLengthGetterImpl(JSContext* cx, const CallArgs& args);
   static bool resizableGetterImpl(JSContext* cx, const CallArgs& args);
   static bool detachedGetterImpl(JSContext* cx, const CallArgs& args);
+#ifdef NIGHTLY_BUILD
+  static bool immutableGetterImpl(JSContext* cx, const CallArgs& args);
+#endif
+  static bool sliceImpl(JSContext* cx, const CallArgs& args);
+#ifdef NIGHTLY_BUILD
+  static bool sliceToImmutableImpl(JSContext* cx, const CallArgs& args);
+#endif
   static bool resizeImpl(JSContext* cx, const CallArgs& args);
   static bool transferImpl(JSContext* cx, const CallArgs& args);
   static bool transferToFixedLengthImpl(JSContext* cx, const CallArgs& args);
+#ifdef NIGHTLY_BUILD
+  static bool transferToImmutableImpl(JSContext* cx, const CallArgs& args);
+#endif
 
  public:
   static const uint8_t DATA_SLOT = 0;
@@ -216,7 +232,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   static constexpr size_t ByteLengthLimitForSmallBuffer = INT32_MAX;
 #ifdef JS_64BIT
   static constexpr size_t ByteLengthLimit =
-      size_t(8) * 1024 * 1024 * 1024;  // 8 GB.
+      size_t(16) * 1024 * 1024 * 1024;  // 16 GB.
 #else
   static constexpr size_t ByteLengthLimit = ByteLengthLimitForSmallBuffer;
 #endif
@@ -280,12 +296,19 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
     // The length is temporarily pinned, so it should not be detached. In the
     // future, this will also prevent GrowableArrayBuffer/ResizeableArrayBuffer
     // from modifying the length while this is set.
-    PINNED_LENGTH = 0b100'0000
+    PINNED_LENGTH = 0b100'0000,
+
+    // Immutable ArrayBuffer.
+    IMMUTABLE = 0b1000'0000,
   };
 
   static_assert(JS_ARRAYBUFFER_DETACHED_FLAG == DETACHED,
                 "self-hosted code with burned-in constants must use the "
                 "correct DETACHED bit value");
+
+  static_assert(JS_ARRAYBUFFER_IMMUTABLE_FLAG == IMMUTABLE,
+                "self-hosted code with burned-in constants must use the "
+                "correct IMMUTABLE bit value");
 
  protected:
   enum class FillContents { Zero, Uninitialized };
@@ -296,8 +319,8 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
                                    AutoSetNewObjectMetadata&,
                                    JS::Handle<JSObject*> proto);
 
-  template <FillContents FillType>
-  static std::tuple<ArrayBufferObject*, uint8_t*> createBufferAndData(
+  template <class ArrayBufferType, FillContents FillType>
+  static std::tuple<ArrayBufferType*, uint8_t*> createBufferAndData(
       JSContext* cx, size_t nbytes, AutoSetNewObjectMetadata& metadata,
       JS::Handle<JSObject*> proto = nullptr);
 
@@ -310,6 +333,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
     friend class ArrayBufferObject;
     friend class ResizableArrayBufferObject;
+    friend class ImmutableArrayBufferObject;
 
     BufferContents(uint8_t* data, BufferKind kind,
                    JS::BufferContentsFreeFunc freeFunc = nullptr,
@@ -427,7 +451,17 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   static bool detachedGetter(JSContext* cx, unsigned argc, Value* vp);
 
+#ifdef NIGHTLY_BUILD
+  static bool immutableGetter(JSContext* cx, unsigned argc, Value* vp);
+#endif
+
   static bool fun_isView(JSContext* cx, unsigned argc, Value* vp);
+
+  static bool slice(JSContext* cx, unsigned argc, Value* vp);
+
+#ifdef NIGHTLY_BUILD
+  static bool sliceToImmutable(JSContext* cx, unsigned argc, Value* vp);
+#endif
 
   static bool resize(JSContext* cx, unsigned argc, Value* vp);
 
@@ -435,37 +469,44 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   static bool transferToFixedLength(JSContext* cx, unsigned argc, Value* vp);
 
-  static bool class_constructor(JSContext* cx, unsigned argc, Value* vp);
+#ifdef NIGHTLY_BUILD
+  static bool transferToImmutable(JSContext* cx, unsigned argc, Value* vp);
+#endif
 
-  static bool isOriginalByteLengthGetter(Native native) {
-    return native == byteLengthGetter;
-  }
+  static bool class_constructor(JSContext* cx, unsigned argc, Value* vp);
 
   static ArrayBufferObject* createForContents(JSContext* cx, size_t nbytes,
                                               BufferContents contents);
 
-  static ArrayBufferObject* copy(JSContext* cx, size_t newByteLength,
-                                 JS::Handle<ArrayBufferObject*> source);
+  static ArrayBufferObject* createFromTypedArrayMallocedElements(
+      JSContext* cx, Handle<FixedLengthTypedArrayObject*> tarray);
 
-  static ArrayBufferObject* copyAndDetach(
-      JSContext* cx, size_t newByteLength,
-      JS::Handle<ArrayBufferObject*> source);
+ protected:
+  template <class ArrayBufferType>
+  static ArrayBufferType* copy(JSContext* cx, size_t newByteLength,
+                               JS::Handle<ArrayBufferObject*> source);
+
+  template <class ArrayBufferType>
+  static ArrayBufferType* copyAndDetach(JSContext* cx, size_t newByteLength,
+                                        JS::Handle<ArrayBufferObject*> source);
 
  private:
-  static ArrayBufferObject* copyAndDetachSteal(
+  template <class ArrayBufferType>
+  static ArrayBufferType* copyAndDetachSteal(
       JSContext* cx, JS::Handle<ArrayBufferObject*> source);
 
-  static ArrayBufferObject* copyAndDetachRealloc(
+  template <class ArrayBufferType>
+  static ArrayBufferType* copyAndDetachRealloc(
       JSContext* cx, size_t newByteLength,
       JS::Handle<ArrayBufferObject*> source);
 
  public:
-  static ArrayBufferObject* createZeroed(JSContext* cx, size_t nbytes,
-                                         HandleObject proto = nullptr);
+  static FixedLengthArrayBufferObject* createZeroed(
+      JSContext* cx, size_t nbytes, HandleObject proto = nullptr);
 
   // Create an ArrayBufferObject that is safely finalizable and can later be
   // initialize()d to become a real, content-visible ArrayBufferObject.
-  static ArrayBufferObject* createEmpty(JSContext* cx);
+  static FixedLengthArrayBufferObject* createEmpty(JSContext* cx);
 
   // Create an ArrayBufferObject using the provided buffer and size.  Assumes
   // ownership of |buffer| even in case of failure, i.e. on failure |buffer|
@@ -473,6 +514,13 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   static ArrayBufferObject* createFromNewRawBuffer(JSContext* cx,
                                                    WasmArrayRawBuffer* buffer,
                                                    size_t initialSize);
+
+  // Create an ArrayBufferObject object (resizable or fixed-length) based
+  // on the existing donor object. The |buffer| will be removed from the
+  // latter, and its ownership will be assumed by the new object.
+  template <typename ArrayBufferType>
+  static ArrayBufferType* createFromWasmObject(
+      JSContext* cx, Handle<ArrayBufferObject*> donor);
 
   static void copyData(ArrayBufferObject* toBuffer, size_t toIndex,
                        ArrayBufferObject* fromBuffer, size_t fromIndex,
@@ -568,6 +616,7 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
   bool isResizable() const { return flags() & RESIZABLE; }
   bool isLengthPinned() const { return flags() & PINNED_LENGTH; }
   bool isPreparedForAsmJS() const { return flags() & FOR_ASMJS; }
+  bool isImmutable() const { return flags() & IMMUTABLE; }
 
   // Only WASM and asm.js buffers have a non-undefined [[ArrayBufferDetachKey]].
   //
@@ -584,16 +633,17 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
 
   size_t wasmMappedSize() const;
 
-  wasm::IndexType wasmIndexType() const;
+  wasm::AddressType wasmAddressType() const;
+  wasm::PageSize wasmPageSize() const;
   wasm::Pages wasmPages() const;
   wasm::Pages wasmClampedMaxPages() const;
   mozilla::Maybe<wasm::Pages> wasmSourceMaxPages() const;
 
   [[nodiscard]] static ArrayBufferObject* wasmGrowToPagesInPlace(
-      wasm::IndexType t, wasm::Pages newPages,
+      wasm::AddressType t, wasm::Pages newPages,
       Handle<ArrayBufferObject*> oldBuf, JSContext* cx);
   [[nodiscard]] static ArrayBufferObject* wasmMovingGrowToPages(
-      wasm::IndexType t, wasm::Pages newPages,
+      wasm::AddressType t, wasm::Pages newPages,
       Handle<ArrayBufferObject*> oldBuf, JSContext* cx);
   static void wasmDiscard(Handle<ArrayBufferObject*> buf, uint64_t byteOffset,
                           uint64_t byteLength);
@@ -613,13 +663,19 @@ class ArrayBufferObject : public ArrayBufferObjectMaybeShared {
    */
   inline size_t maxByteLength() const;
 
+  size_t wasmClampedMaxByteLength() const {
+    MOZ_ASSERT(isWasm());
+    return wasmClampedMaxPages().byteLength();
+  }
+
   size_t associatedBytes() const;
 
   uint32_t flags() const;
   void setFlags(uint32_t flags);
 
   void setIsDetached() {
-    MOZ_ASSERT(!(flags() & PINNED_LENGTH));
+    MOZ_ASSERT(!isLengthPinned());
+    MOZ_ASSERT(!isImmutable());
     setFlags(flags() | DETACHED);
   }
   void setIsPreparedForAsmJS() {
@@ -671,6 +727,20 @@ class FixedLengthArrayBufferObject : public ArrayBufferObject {
       (NativeObject::MAX_FIXED_SLOTS - RESERVED_SLOTS) * sizeof(JS::Value);
 
   static const JSClass class_;
+
+  static FixedLengthArrayBufferObject* copy(
+      JSContext* cx, size_t newByteLength,
+      JS::Handle<ArrayBufferObject*> source) {
+    return ArrayBufferObject::copy<FixedLengthArrayBufferObject>(
+        cx, newByteLength, source);
+  }
+
+  static FixedLengthArrayBufferObject* copyAndDetach(
+      JSContext* cx, size_t newByteLength,
+      JS::Handle<ArrayBufferObject*> source) {
+    return ArrayBufferObject::copyAndDetach<FixedLengthArrayBufferObject>(
+        cx, newByteLength, source);
+  }
 };
 
 /**
@@ -722,6 +792,7 @@ class ResizableArrayBufferObject : public ArrayBufferObject {
 
   // Resize this buffer.
   void resize(size_t newByteLength);
+  void notifyViewsAfterResize();
 
   static ResizableArrayBufferObject* copy(
       JSContext* cx, size_t newByteLength,
@@ -752,6 +823,66 @@ class ResizableArrayBufferObject : public ArrayBufferObject {
       JS::Handle<ResizableArrayBufferObject*> source);
 };
 
+/**
+ * ImmutableArrayBufferObject
+ *
+ * ArrayBuffer object with immutable length and contents. Supports all possible
+ * memory stores for ArrayBuffer objects, including inline data, malloc'ed
+ * memory, mapped memory, and user-owner memory.
+ *
+ * Immutable ArrayBuffers can neither be used for asm.js nor WebAssembly.
+ */
+class ImmutableArrayBufferObject : public ArrayBufferObject {
+  friend class ArrayBufferObject;
+
+  static ImmutableArrayBufferObject* createEmpty(JSContext* cx);
+
+ public:
+  static ImmutableArrayBufferObject* createZeroed(
+      JSContext* cx, size_t byteLength, Handle<JSObject*> proto = nullptr);
+
+ private:
+  uint8_t* inlineDataPointer() const;
+
+  bool hasInlineData() const { return dataPointer() == inlineDataPointer(); }
+
+  void initialize(size_t byteLength, BufferContents contents) {
+    MOZ_ASSERT(contents.isAligned(byteLength));
+    setByteLength(byteLength);
+    setFlags(IMMUTABLE);
+    setFirstView(nullptr);
+    setDataPointer(contents);
+  }
+
+ public:
+  // Immutable ArrayBuffer objects don't have any additional reserved slots.
+  static const uint8_t RESERVED_SLOTS = ArrayBufferObject::RESERVED_SLOTS;
+
+  /** The largest number of bytes that can be stored inline. */
+  static constexpr size_t MaxInlineBytes =
+      (NativeObject::MAX_FIXED_SLOTS - RESERVED_SLOTS) * sizeof(JS::Value);
+
+  static const JSClass class_;
+
+  static ImmutableArrayBufferObject* copy(
+      JSContext* cx, size_t newByteLength,
+      JS::Handle<ArrayBufferObject*> source) {
+    return ArrayBufferObject::copy<ImmutableArrayBufferObject>(
+        cx, newByteLength, source);
+  }
+
+  static ImmutableArrayBufferObject* copyAndDetach(
+      JSContext* cx, size_t newByteLength,
+      JS::Handle<ArrayBufferObject*> source) {
+    return ArrayBufferObject::copyAndDetach<ImmutableArrayBufferObject>(
+        cx, newByteLength, source);
+  }
+
+  static ImmutableArrayBufferObject* slice(
+      JSContext* cx, size_t newByteLength,
+      JS::Handle<ArrayBufferObject*> source, size_t sourceByteOffset);
+};
+
 size_t ArrayBufferObject::maxByteLength() const {
   if (isResizable()) {
     return as<ResizableArrayBufferObject>().maxByteLength();
@@ -760,7 +891,7 @@ size_t ArrayBufferObject::maxByteLength() const {
 }
 
 // Create a buffer for a wasm memory, whose type is determined by
-// memory.indexType().
+// memory.addressType().
 ArrayBufferObjectMaybeShared* CreateWasmBuffer(JSContext* cx,
                                                const wasm::MemoryDesc& memory);
 
@@ -857,29 +988,36 @@ class MutableWrappedPtrOperations<InnerViewTable, Wrapper>
 };
 
 class WasmArrayRawBuffer {
-  wasm::IndexType indexType_;
+  wasm::AddressType addressType_;
+  wasm::PageSize pageSize_;
   wasm::Pages clampedMaxPages_;
   mozilla::Maybe<wasm::Pages> sourceMaxPages_;
-  size_t mappedSize_;  // Not including the header page
+  size_t mappedSize_;  // See comment on mappedSize().
   size_t length_;
 
  protected:
-  WasmArrayRawBuffer(wasm::IndexType indexType, uint8_t* buffer,
-                     wasm::Pages clampedMaxPages,
+  WasmArrayRawBuffer(wasm::AddressType addressType, wasm::PageSize pageSize,
+                     uint8_t* buffer, wasm::Pages clampedMaxPages,
                      const mozilla::Maybe<wasm::Pages>& sourceMaxPages,
                      size_t mappedSize, size_t length)
-      : indexType_(indexType),
+      : addressType_(addressType),
+        pageSize_(pageSize),
         clampedMaxPages_(clampedMaxPages),
         sourceMaxPages_(sourceMaxPages),
         mappedSize_(mappedSize),
         length_(length) {
+    // Assert that this WasmArrayRawBuffer was allocated in the correct place
+    // relative to its data.
     MOZ_ASSERT(buffer == dataPointer());
+    MOZ_ASSERT(pageSize == clampedMaxPages.pageSize());
+    MOZ_ASSERT_IF(sourceMaxPages.isSome(),
+                  (pageSize == sourceMaxPages->pageSize()));
   }
 
  public:
   static WasmArrayRawBuffer* AllocateWasm(
-      wasm::IndexType indexType, wasm::Pages initialPages,
-      wasm::Pages clampedMaxPages,
+      wasm::AddressType addressType, wasm::PageSize pageSize,
+      wasm::Pages initialPages, wasm::Pages clampedMaxPages,
       const mozilla::Maybe<wasm::Pages>& sourceMaxPages,
       const mozilla::Maybe<size_t>& mappedSize);
   static void Release(void* mem);
@@ -899,29 +1037,59 @@ class WasmArrayRawBuffer {
                                                  sizeof(WasmArrayRawBuffer));
   }
 
-  wasm::IndexType indexType() const { return indexType_; }
+  wasm::AddressType addressType() const { return addressType_; }
+  wasm::PageSize pageSize() const { return pageSize_; }
 
   uint8_t* basePointer() { return dataPointer() - gc::SystemPageSize(); }
 
+  /*
+   * The actual mmapped size. Access in the range [0, mappedSize) will either
+   * succeed, or be handled by the wasm signal handlers. The mapped size will be
+   * aligned to the system allocation granularity such that we can
+   * optimistically map other regions following it, in order to reduce copies
+   * when growing memory.
+   *
+   * Note that this does NOT include the header page in which this buffer itself
+   * is allocated.
+   */
   size_t mappedSize() const { return mappedSize_; }
 
+  /*
+   * The wasm-visible current length of the buffer in bytes. Accesses in the
+   * range [0, byteLength) will succeed. May only increase.
+   *
+   * For more info see "WASM Linear Memory structure" in ArrayBufferObject.cpp.
+   */
   size_t byteLength() const { return length_; }
 
   wasm::Pages pages() const {
-    return wasm::Pages::fromByteLengthExact(length_);
+    return wasm::Pages::fromByteLengthExact(length_, pageSize());
   }
 
+  /*
+   * The maximum size on how far the byteLength can grow in pages. This value
+   * respects implementation limits and is always representable as a byte
+   * length. Every memory has a clampedMaxSize, even if no maximum was specified
+   * in source. When a memory has no sourceMaxSize, the clampedMaxSize will be
+   * the maximum amount of memory that can be grown to while still respecting
+   * implementation limits.
+   *
+   * For more info see "WASM Linear Memory structure" in ArrayBufferObject.cpp.
+   */
   wasm::Pages clampedMaxPages() const { return clampedMaxPages_; }
 
+  /*
+   * The optional declared limit on how far byteLength can grow in pages. This
+   * is the unmodified maximum size from the source module or JS-API invocation.
+   * This may not be representable in byte lengths, nor feasible for a module to
+   * actually grow to due to implementation limits. It is used for correct
+   * linking checks and js-types reflection.
+   *
+   * For more info see "WASM Linear Memory structure" in ArrayBufferObject.cpp.
+   */
   mozilla::Maybe<wasm::Pages> sourceMaxPages() const { return sourceMaxPages_; }
 
   [[nodiscard]] bool growToPagesInPlace(wasm::Pages newPages);
-
-  [[nodiscard]] bool extendMappedSize(wasm::Pages maxPages);
-
-  // Try and grow the mapped region of memory. Does not change current size.
-  // Does not move memory if no space to grow.
-  void tryGrowMaxPagesInPlace(wasm::Pages deltaMaxPages);
 
   // Discard a region of memory, zeroing the pages and releasing physical memory
   // back to the operating system. byteOffset and byteLen must be wasm page
@@ -934,7 +1102,8 @@ class WasmArrayRawBuffer {
 template <>
 inline bool JSObject::is<js::ArrayBufferObject>() const {
   return is<js::FixedLengthArrayBufferObject>() ||
-         is<js::ResizableArrayBufferObject>();
+         is<js::ResizableArrayBufferObject>() ||
+         is<js::ImmutableArrayBufferObject>();
 }
 
 template <>

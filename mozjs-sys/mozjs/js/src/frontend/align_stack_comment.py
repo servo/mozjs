@@ -4,13 +4,13 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-""" Usage: align_stack_comment.py FILE
+"""Usage: align_stack_comment.py FILE
 
-    This script aligns the stack transition comment in BytecodeEmitter and
-    its helper classes.
+This script aligns the stack transition comment in BytecodeEmitter and
+its helper classes.
 
-    The stack transition comment looks like the following:
-      //        [stack] VAL1 VAL2 VAL3
+The stack transition comment looks like the following:
+  //        [stack] VAL1 VAL2 VAL3
 """
 
 import re
@@ -38,9 +38,9 @@ def align_stack_comment(path):
         for line in f:
             line_num += 1
             # Python includes \n in lines.
-            line = line.rstrip("\n")
+            stripped_line = line.rstrip("\n")
 
-            m = stack_comment_pat.search(line)
+            m = stack_comment_pat.search(stripped_line)
             if m:
                 head = m.group(1) + " "
                 head_len = len(head)
@@ -49,18 +49,14 @@ def align_stack_comment(path):
 
                 if head_len > ALIGNMENT_COLUMN:
                     print(
-                        "Warning: line {} overflows from alignment column {}: {}".format(
-                            line_num, ALIGNMENT_COLUMN, head_len
-                        ),
+                        f"Warning: line {line_num} overflows from alignment column {ALIGNMENT_COLUMN}: {head_len}",
                         file=sys.stderr,
                     )
 
                 line_len = max(head_len, ALIGNMENT_COLUMN) + comment_len
                 if line_len > MAX_CHARS_PER_LINE:
                     print(
-                        "Warning: line {} overflows from {} chars: {}".format(
-                            line_num, MAX_CHARS_PER_LINE, line_len
-                        ),
+                        f"Warning: line {line_num} overflows from {MAX_CHARS_PER_LINE} chars: {line_len}",
                         file=sys.stderr,
                     )
 
@@ -70,23 +66,23 @@ def align_stack_comment(path):
                 spaces = max(ALIGNMENT_COLUMN - head_len, 0)
                 formatted = head + " " * spaces + comment
 
-                if formatted != line:
+                if formatted != stripped_line:
                     changed = True
 
                 lines.append(formatted)
             else:
-                lines.append(line)
+                lines.append(stripped_line)
 
         print(
-            "Info: Minimum column number for [stack]: {}".format(max_head_len),
+            f"Info: Minimum column number for [stack]: {max_head_len}",
             file=sys.stderr,
         )
         print(
-            "Info: Alignment column number for [stack]: {}".format(ALIGNMENT_COLUMN),
+            f"Info: Alignment column number for [stack]: {ALIGNMENT_COLUMN}",
             file=sys.stderr,
         )
         print(
-            "Info: Max length of stack transition comments: {}".format(max_comment_len),
+            f"Info: Max length of stack transition comments: {max_comment_len}",
             file=sys.stderr,
         )
 

@@ -106,8 +106,10 @@ class Disassembler: public DecoderVisitor {
   int64_t CodeRelativeAddress(const void* instr);
 
  private:
-  void Format(
-      const Instruction* instr, const char* mnemonic, const char* format);
+  void Format(const Instruction* instr,
+                const char* mnemonic,
+                const char* format0,
+                const char* format1 = NULL);
   void Substitute(const Instruction* instr, const char* string);
   int SubstituteField(const Instruction* instr, const char* format);
   int SubstituteRegisterField(const Instruction* instr, const char* format);
@@ -125,6 +127,8 @@ class Disassembler: public DecoderVisitor {
   int SubstituteBarrierField(const Instruction* instr, const char* format);
   int SubstituteSysOpField(const Instruction* instr, const char* format);
   int SubstituteCrField(const Instruction* instr, const char* format);
+  int SubstituteIntField(const Instruction *instr, const char *format);
+
   bool RdIsZROrSP(const Instruction* instr) const {
     return (instr->Rd() == kZeroRegCode);
   }

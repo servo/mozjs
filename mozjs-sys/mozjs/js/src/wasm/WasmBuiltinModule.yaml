@@ -9,6 +9,7 @@
   symbolic_address:
     name: IntrI8VecMul
     type: Args_Int32_GeneralInt32Int32Int32Int32General
+    needs_thunk: false
   entry: Instance::intrI8VecMul
   export: i8vecmul
   params:
@@ -17,6 +18,7 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 #if defined(ENABLE_WASM_MOZ_INTGEMM)
@@ -37,6 +39,7 @@
   symbolic_address:
     name: IntrI8PrepareB
     type: Args_Int32_GeneralInt32Float32Float32Int32Int32Int32General
+    needs_thunk: false
   entry: intgemm::IntrI8PrepareB
   export: int8_prepare_b
   params:
@@ -47,6 +50,7 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 
@@ -62,6 +66,7 @@
   symbolic_address:
     name: IntrI8PrepareBFromTransposed
     type: Args_Int32_GeneralInt32Float32Float32Int32Int32Int32General
+    needs_thunk: false
   entry: intgemm::IntrI8PrepareBFromTransposed
   export: int8_prepare_b_from_transposed
   params:
@@ -72,6 +77,7 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 
@@ -87,6 +93,7 @@
   symbolic_address:
     name: IntrI8PrepareBFromQuantizedTransposed
     type: Args_Int32_GeneralInt32Int32Int32Int32General
+    needs_thunk: false
   entry: intgemm::IntrI8PrepareBFromQuantizedTransposed
   export: int8_prepare_b_from_quantized_transposed
   params:
@@ -95,6 +102,7 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 
@@ -107,12 +115,13 @@
 #  The final prepared A can be used as an input to matrix multiply intrinsic
 #  (`int8_multiply_and_add_bias`).
 #
-# int8_prepare_a(const float* inputMatrixA, float scale, float zeroPoint, uint32_t rowsA, uint32_t colsA, int8_t* outputMatrixA)
+# int8_prepare_a(const float* inputMatrixA, float scale, float zeroPoint, uint32_t rowsA, uint32_t colsA, uint8_t* outputMatrixA)
 # int8_prepare_a(inputMatrixA: i32, scale: f32, zeroPoint: f32, rowsA: i32, colsA: i32, outputMatrixA: i32)
 - op: I8PrepareA
   symbolic_address:
     name: IntrI8PrepareA
     type: Args_Int32_GeneralInt32Float32Float32Int32Int32Int32General
+    needs_thunk: false
   entry: intgemm::IntrI8PrepareA
   export: int8_prepare_a
   params:
@@ -123,6 +132,7 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 
@@ -139,6 +149,7 @@
   symbolic_address:
     name: IntrI8PrepareBias
     type: Args_Int32_GeneralInt32Float32Float32Float32Float32Int32Int32Int32Int32General
+    needs_thunk: false
   entry: intgemm::IntrI8PrepareBias
   export: int8_prepare_bias
   params:
@@ -152,6 +163,7 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 
@@ -162,7 +174,7 @@
 #  The inputs of this intrinsic must be obtained by using `int8_prepare_A`,
 #  one of the `int8_prepare_b*` and `int8_prepare_bias` intrinsics respectively.
 #
-# int8_multiply_and_add_bias(const int8_t* inputMatrixAPrepared, float scaleA, float zeroPointA,
+# int8_multiply_and_add_bias(const uint8_t* inputMatrixAPrepared, float scaleA, float zeroPointA,
 #                      const int8_t* inputMatrixBPrepared, float scaleB, float zeroPointB,
 #                      const float* inputBiasPrepared, float unquantMultiplier,
 #                      uint32_t rowsA, uint32_t width, uint32_t colsB, float* output)
@@ -174,6 +186,7 @@
   symbolic_address:
     name: IntrI8MultiplyAndAddBias
     type: Args_Int32_GeneralInt32Float32Float32Int32Float32Float32Int32Float32Int32Int32Int32Int32General
+    needs_thunk: false
   entry: intgemm::IntrI8MultiplyAndAddBias
   export: int8_multiply_and_add_bias
   params:
@@ -190,6 +203,7 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 
@@ -203,6 +217,7 @@
   symbolic_address:
     name: IntrI8SelectColumnsOfB
     type: Args_Int32_GeneralInt32Int32Int32Int32Int32Int32General
+    needs_thunk: false
   entry: intgemm::IntrI8SelectColumnsOfB
   export: int8_select_columns_of_b
   params:
@@ -213,17 +228,18 @@
     - 'i32'
     - 'i32'
   fail_mode: FailOnNegI32
+  fail_trap: OutOfBounds
   uses_memory: true
 
 #endif // ENABLE_WASM_MOZ_INTGEMM
-
-#if defined(ENABLE_WASM_JS_STRING_BUILTINS)
 
 - op: StringTest
   symbolic_address:
     name: StringTest
     type: Args_Int32_GeneralGeneral
+    needs_thunk: true
   entry: Instance::stringTest
+  inline_op: StringTest
   export: test
   params:
     - 'externref'
@@ -235,7 +251,9 @@
   symbolic_address:
     name: StringCast
     type: Args_General2
+    needs_thunk: true
   entry: Instance::stringCast
+  inline_op: StringCast
   export: cast
   params:
     - 'externref'
@@ -249,6 +267,7 @@
   symbolic_address:
     name: StringFromCharCodeArray
     type: Args_General_GeneralGeneralInt32Int32
+    needs_thunk: true
   entry: Instance::stringFromCharCodeArray
   export: fromCharCodeArray
   params:
@@ -266,6 +285,7 @@
   symbolic_address:
     name: StringIntoCharCodeArray
     type: Args_Int32_GeneralGeneralGeneralInt32
+    needs_thunk: true
   entry: Instance::stringIntoCharCodeArray
   export: intoCharCodeArray
   params:
@@ -281,6 +301,7 @@
   symbolic_address:
     name: StringFromCharCode
     type: Args_General_GeneralInt32
+    needs_thunk: true
   entry: Instance::stringFromCharCode
   export: fromCharCode
   params:
@@ -295,6 +316,7 @@
   symbolic_address:
     name: StringFromCodePoint
     type: Args_General_GeneralInt32
+    needs_thunk: true
   entry: Instance::stringFromCodePoint
   export: fromCodePoint
   params:
@@ -309,6 +331,7 @@
   symbolic_address:
     name: StringCharCodeAt
     type: Args_Int32_GeneralGeneralInt32
+    needs_thunk: true
   entry: Instance::stringCharCodeAt
   export: charCodeAt
   params:
@@ -322,6 +345,7 @@
   symbolic_address:
     name: StringCodePointAt
     type: Args_Int32_GeneralGeneralInt32
+    needs_thunk: true
   entry: Instance::stringCodePointAt
   export: codePointAt
   params:
@@ -335,7 +359,9 @@
   symbolic_address:
     name: StringLength
     type: Args_Int32_GeneralGeneral
+    needs_thunk: true
   entry: Instance::stringLength
+  inline_op: StringLength
   export: length
   params:
     - 'externref'
@@ -347,6 +373,7 @@
   symbolic_address:
     name: StringConcat
     type: Args_General3
+    needs_thunk: true
   entry: Instance::stringConcat
   export: concat
   params:
@@ -362,6 +389,7 @@
   symbolic_address:
     name: StringSubstring
     type: Args_General_GeneralGeneralInt32Int32
+    needs_thunk: true
   entry: Instance::stringSubstring
   export: substring
   params:
@@ -378,6 +406,7 @@
   symbolic_address:
     name: StringEquals
     type: Args_Int32_GeneralGeneralGeneral
+    needs_thunk: true
   entry: Instance::stringEquals
   export: equals
   params:
@@ -391,6 +420,7 @@
   symbolic_address:
     name: StringCompare
     type: Args_Int32_GeneralGeneralGeneral
+    needs_thunk: true
   entry: Instance::stringCompare
   export: compare
   params:
@@ -400,55 +430,70 @@
   fail_mode: FailOnMaxI32
   uses_memory: false
 
-#endif // ENABLE_WASM_JS_STRING_BUILTINS
-
 #if defined(ENABLE_WASM_JSPI)
-
-- op: CheckSuspender
+- op: CreatePromise
   symbolic_address:
-    name: CheckSuspender
-    type: Args_General2
-  entry: CheckSuspender
-  export: suspenderCheck
-  params:
-    - 'externref'
+    name: CreatePromise
+    type: Args_General1
+    needs_thunk: true
+  entry: CreatePromise
+  export: createPromise
   result: 'externref'
   fail_mode: FailOnNullPtr
   uses_memory: false
 
-- op: CurrentSuspender
+- op: GetPromiseResults
   symbolic_address:
-    name: CurrentSuspender
-    type: Args_General_GeneralInt32
-  entry: CurrentSuspender
-  export: currentSuspender
+    name: GetPromiseResults
+    type: Args_General_GeneralGeneralInt32
+    needs_thunk: true
+  entry: GetPromiseResults
+  export: getPromiseResults
   params:
+    - 'externref'
     - 'i32'
-  result: 'externref'
-  fail_mode: FailOnNullPtr
-  uses_memory: false
-
-- op: GetSuspendingPromiseResult
-  symbolic_address:
-    name: GetSuspendingPromiseResult
-    type: Args_General2
-  entry: GetSuspendingPromiseResult
-  export: getSuspendingPromiseResult
-  params:
-    - 'externref'
   result: 'anyref'
   fail_mode: FailOnNullPtr
   uses_memory: false
 
-- op: SetPromisingPromiseResults
+- op: AddPromiseReactions
   symbolic_address:
-    name: SetPromisingPromiseResults
-    type: Args_Int32_GeneralGeneralGeneral
-  entry: SetPromisingPromiseResults
-  export: setPromisingPromiseResults
+    name: AddPromiseReactions
+    type: Args_Int32_GeneralGeneralGeneralGeneralGeneral
+    needs_thunk: true
+  entry: AddPromiseReactions
+  export: addPromiseReactions
   params:
     - 'externref'
+    - 'contref'
+    - 'funcref'
+    - 'externref'
+  fail_mode: FailOnNegI32
+  uses_memory: false
+
+- op: PromiseResolve
+  symbolic_address:
+    name: PromiseResolve
+    type: Args_General2
+    needs_thunk: true
+  entry: PromiseResolve
+  export: promiseResolve
+  params:
+    - 'externref'
+  result: 'externref'
+  fail_mode: FailOnNullPtr
+  uses_memory: false
+
+- op: ResolvePromiseWithResults
+  symbolic_address:
+    name: ResolvePromiseWithResults
+    type: Args_General3
+    needs_thunk: true
+  entry: ResolvePromiseWithResults
+  export: resolvePromiseWithResults
+  params:
     - 'anyref'
+    - 'externref'
   fail_mode: FailOnNegI32
   uses_memory: false
 

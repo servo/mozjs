@@ -7,8 +7,6 @@
 #include "mozilla/intl/ICU4CGlue.h"
 #include "mozilla/intl/NumberFormat.h"
 #include "mozilla/intl/NumberRangeFormat.h"
-#include "mozilla/Utf8.h"
-#include "mozilla/PodOperations.h"
 #include "mozilla/Span.h"
 #include "ScopedICUObject.h"
 
@@ -29,7 +27,7 @@ PluralRules::PluralRules(UPluralRules*& aPluralRules,
 }
 
 Result<UniquePtr<PluralRules>, ICUError> PluralRules::TryCreate(
-    const std::string_view aLocale, const PluralRulesOptions& aOptions) {
+    std::string_view aLocale, const PluralRulesOptions& aOptions) {
   auto numberFormat =
       NumberFormat::TryCreate(aLocale, aOptions.ToNumberFormatOptions());
 
@@ -60,7 +58,21 @@ Result<UniquePtr<PluralRules>, ICUError> PluralRules::TryCreate(
 }
 
 Result<PluralRules::Keyword, ICUError> PluralRules::Select(
-    const double aNumber) const {
+    double aNumber) const {
+  char16_t keyword[MAX_KEYWORD_LENGTH];
+
+  auto lengthResult = mNumberFormat->selectFormatted(
+      aNumber, keyword, MAX_KEYWORD_LENGTH, mPluralRules);
+
+  if (lengthResult.isErr()) {
+    return Err(lengthResult.unwrapErr());
+  }
+
+  return KeywordFromUtf16(Span(keyword, lengthResult.unwrap()));
+}
+
+Result<PluralRules::Keyword, ICUError> PluralRules::Select(
+    std::string_view aNumber) const {
   char16_t keyword[MAX_KEYWORD_LENGTH];
 
   auto lengthResult = mNumberFormat->selectFormatted(
@@ -75,6 +87,20 @@ Result<PluralRules::Keyword, ICUError> PluralRules::Select(
 
 Result<PluralRules::Keyword, ICUError> PluralRules::SelectRange(
     double aStart, double aEnd) const {
+  char16_t keyword[MAX_KEYWORD_LENGTH];
+
+  auto lengthResult = mNumberRangeFormat->selectForRange(
+      aStart, aEnd, keyword, MAX_KEYWORD_LENGTH, mPluralRules);
+
+  if (lengthResult.isErr()) {
+    return Err(lengthResult.unwrapErr());
+  }
+
+  return KeywordFromUtf16(Span(keyword, lengthResult.unwrap()));
+}
+
+Result<PluralRules::Keyword, ICUError> PluralRules::SelectRange(
+    std::string_view aStart, std::string_view aEnd) const {
   char16_t keyword[MAX_KEYWORD_LENGTH];
 
   auto lengthResult = mNumberRangeFormat->selectForRange(

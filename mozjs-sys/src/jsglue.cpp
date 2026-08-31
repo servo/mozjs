@@ -26,16 +26,17 @@
 #include "js/Proxy.h"
 #include "js/RegExp.h"
 #include "js/ScalarType.h"
-#include "js/Stream.h"
 #include "js/StructuredClone.h"
 #include "js/Wrapper.h"
 #include "js/experimental/JSStencil.h"
 #include "js/experimental/JitInfo.h"
 #include "js/experimental/TypedData.h"
+#include "js/friend/DumpFunctions.h"
 #include "js/friend/ErrorMessages.h"
+#include "js/friend/MicroTask.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
-#include "mozilla/Unused.h"
+#include "mozilla/PodOperations.h"
 
 typedef bool (*WantToMeasure)(JSObject* obj);
 typedef size_t (*GetSize)(JSObject* obj);
@@ -43,104 +44,143 @@ typedef size_t (*GetSize)(JSObject* obj);
 WantToMeasure gWantToMeasure = nullptr;
 
 struct JobQueueTraps {
-  JSObject* (*getIncumbentGlobal)(const void* queue, JSContext* cx);
-  bool (*enqueuePromiseJob)(const void* queue, JSContext* cx,
-                            JS::HandleObject promise, JS::HandleObject job,
-                            JS::HandleObject allocationSite,
-                            JS::HandleObject incumbentGlobal) = 0;
-  bool (*empty)(const void* queue);
+  bool (*getHostDefinedData)(
+      JSContext* cx, JS::MutableHandle<JSObject*> incumbentGlobal,
+      JS::MutableHandle<JSObject*> optionalHostDefinedData);
+  bool (*getHostDefinedGlobal)(JSContext* cx,
+                               JS::MutableHandle<JSObject*> data);
+  void (*runJobs)(const void* queue, JSContext* cx);
+  void (*traceNonGCThingMicroTask)(JSTracer* trc, JS::Value* valuePtr);
+
+  // Create a new queue, push it onto an embedder-side stack, and return the new
+  // queue.
+  const void* (*pushNewInterruptQueue)(void* aInterruptQueues);
+  // Destroy the queue most recently created by pushNewInterruptQueue(),
+  // returning its address so we can check if we are restoring the saved queue
+  // over the correct queue.
+  const void* (*popInterruptQueue)(void* aInterruptQueues);
+  // Destroy the embedder-side stack of interrupt queues.
+  void (*dropInterruptQueues)(void* aInterruptQueues);
 };
 
 class RustJobQueue : public JS::JobQueue {
   JobQueueTraps mTraps;
   const void* mQueue;
+  void* mInterruptQueues;
 
  public:
-  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue)
-      : mTraps(aTraps), mQueue(aQueue) {}
+  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue,
+               void* aInterruptQueues)
+      : mTraps(aTraps), mQueue(aQueue), mInterruptQueues(aInterruptQueues) {}
 
-  virtual JSObject* getIncumbentGlobal(JSContext* cx) {
-    return mTraps.getIncumbentGlobal(mQueue, cx);
+  ~RustJobQueue() override { mTraps.dropInterruptQueues(mInterruptQueues); }
+
+  virtual bool getHostDefinedData(
+      JSContext* cx, JS::MutableHandle<JSObject*> incumbentGlobal,
+      JS::MutableHandle<JSObject*> optionalHostDefinedData) const override {
+    return mTraps.getHostDefinedData(cx, incumbentGlobal,
+                                     optionalHostDefinedData);
   }
-
-  virtual bool enqueuePromiseJob(JSContext* cx, JS::HandleObject promise,
-                                 JS::HandleObject job,
-                                 JS::HandleObject allocationSite,
-                                 JS::HandleObject incumbentGlobal) {
-    return mTraps.enqueuePromiseJob(mQueue, cx, promise, job, allocationSite,
-                                    incumbentGlobal);
+  virtual bool getHostDefinedGlobal(
+      JSContext* cx, JS::MutableHandle<JSObject*> data) const override {
+    return mTraps.getHostDefinedGlobal(cx, data);
   }
-
-  virtual bool empty() const { return mTraps.empty(mQueue); }
-
-  virtual void runJobs(JSContext* cx) {
-    MOZ_ASSERT(false, "runJobs should not be invoked");
-  }
+  virtual void runJobs(JSContext* cx) override { mTraps.runJobs(mQueue, cx); }
 
   bool isDrainingStopped() const override { return false; }
 
+  virtual void traceNonGCThingMicroTask(JSTracer* trc,
+                                        JS::Value* valuePtr) override {
+    mTraps.traceNonGCThingMicroTask(trc, valuePtr);
+  }
+
  private:
-  virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) {
-    MOZ_ASSERT(false, "saveJobQueue should not be invoked");
-    return nullptr;
+  class SavedQueue : public JS::JobQueue::SavedJobQueue {
+   public:
+    explicit SavedQueue(const JobQueueTraps& aTraps, void* aInterruptQueues,
+                        const void** aCurrentQueue, const void* aNewQueue,
+                        JSContext* cx)
+        : mTraps(aTraps),
+          cx(cx),
+          mInterruptQueues(aInterruptQueues),
+          mCurrentQueue(aCurrentQueue),
+          mNewQueue(aNewQueue),
+          mSavedQueue(*aCurrentQueue) {
+      // TODO: assert that the context’s jobQueue hasn’t been cleared with
+      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
+      // with only an opaque JSContext decl. Are we allowed to #include
+      // "vm/JSContext.h"?
+      //
+      // MOZ_ASSERT(cx->jobQueue.ref());
+      mSavedMicroTaskQueue = JS::SaveMicroTaskQueue(cx);
+
+      // Set the current queue to mNewQueue.
+      // We need to take care of this, so that we can save the old queue in the
+      // member initializers above.
+      *mCurrentQueue = mNewQueue;
+    }
+
+    ~SavedQueue() {
+      // TODO: assert that the context’s jobQueue hasn’t been cleared with
+      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
+      // with only an opaque JSContext decl. Are we allowed to #include
+      // "vm/JSContext.h"?
+      //
+      // MOZ_ASSERT(cx->jobQueue.ref());
+
+      // Check that the current queue is empty, as required by the SavedJobQueue
+      // contract.
+      MOZ_ASSERT(JS::GetRegularMicroTaskCount(cx) == 0);
+
+      JS::RestoreMicroTaskQueue(cx, std::move(mSavedMicroTaskQueue));
+
+      // Destroy the topmost queue, checking that it was the queue this
+      // SavedQueue expects to restore from. Imagine we have normal queue A,
+      // then we switch to B (SavedQueue from B to A), then we switch to C
+      // (SavedQueue from C to B). If the SavedQueue from B to A is restored
+      // before the SavedQueue from C to B, the embedder will destroy both C and
+      // B, but in the end, the queue will be set to B, a freed queue.
+      MOZ_ASSERT(mTraps.popInterruptQueue(mInterruptQueues) == mNewQueue);
+
+      *mCurrentQueue = mSavedQueue;
+    }
+
+   private:
+    // Required for embedder FFI.
+    JobQueueTraps mTraps;
+    JSContext* cx;
+    js::UniquePtr<JS::SavedMicroTaskQueue> mSavedMicroTaskQueue;
+
+    void* mInterruptQueues;
+
+    // Pointer to the RustJobQueue::mQueue field to write to when switching.
+    const void** mCurrentQueue;
+
+    // The queue to switch to when saving.
+    const void* mNewQueue;
+
+    // The queue to switch to when restoring.
+    const void* mSavedQueue;
+  };
+
+  virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
+    auto newQueue = mTraps.pushNewInterruptQueue(mInterruptQueues);
+    // Servo uses infallible allocation here, so it should never return nullptr.
+    MOZ_ASSERT(!!newQueue);
+
+    auto result = js::MakeUnique<SavedQueue>(mTraps, mInterruptQueues, &mQueue,
+                                             newQueue, cx);
+    if (!result) {
+      // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
+      // and return a null UniquePtr.”
+      //
+      // When the allocation in MakeUnique() fails, the SavedQueue constructor
+      // is never called, so this->mQueue is still set to the old queue.
+      js::ReportOutOfMemory(cx);
+      return nullptr;
+    }
+    return result;
   }
-};
-
-struct ReadableStreamUnderlyingSourceTraps {
-  void (*requestData)(const void* source, JSContext* cx,
-                      JS::HandleObject stream, size_t desiredSize);
-  void (*writeIntoReadRequestBuffer)(const void* source, JSContext* cx,
-                                     JS::HandleObject stream,
-                                     JS::HandleObject chunk, size_t length,
-                                     size_t* bytesWritten);
-  void (*cancel)(const void* source, JSContext* cx, JS::HandleObject stream,
-                 JS::HandleValue reason, JS::Value* resolve_to);
-  void (*onClosed)(const void* source, JSContext* cx, JS::HandleObject stream);
-  void (*onErrored)(const void* source, JSContext* cx, JS::HandleObject stream,
-                    JS::HandleValue reason);
-  void (*finalize)(JS::ReadableStreamUnderlyingSource* source);
-};
-
-class RustReadableStreamUnderlyingSource
-    : public JS::ReadableStreamUnderlyingSource {
-  ReadableStreamUnderlyingSourceTraps mTraps;
-  const void* mSource;
-
- public:
-  RustReadableStreamUnderlyingSource(
-      const ReadableStreamUnderlyingSourceTraps& aTraps, const void* aSource)
-      : mTraps(aTraps), mSource(aSource) {}
-
-  virtual void requestData(JSContext* cx, JS::HandleObject stream,
-                           size_t desiredSize) {
-    return mTraps.requestData(mSource, cx, stream, desiredSize);
-  }
-
-  virtual void writeIntoReadRequestBuffer(JSContext* cx,
-                                          JS::HandleObject stream,
-                                          JS::HandleObject chunk, size_t length,
-                                          size_t* bytesWritten) {
-    return mTraps.writeIntoReadRequestBuffer(mSource, cx, stream, chunk, length,
-                                             bytesWritten);
-  }
-
-  virtual JS::Value cancel(JSContext* cx, JS::HandleObject stream,
-                           JS::HandleValue reason) {
-    JS::Value resolve_to;
-    mTraps.cancel(mSource, cx, stream, reason, &resolve_to);
-    return resolve_to;
-  }
-
-  virtual void onClosed(JSContext* cx, JS::HandleObject stream) {
-    return mTraps.onClosed(mSource, cx, stream);
-  }
-
-  virtual void onErrored(JSContext* cx, JS::HandleObject stream,
-                         JS::HandleValue reason) {
-    return mTraps.onErrored(mSource, cx, stream, reason);
-  }
-
-  virtual void finalize() { return mTraps.finalize(this); }
 };
 
 struct JSExternalStringCallbacksTraps {
@@ -254,6 +294,42 @@ struct ProxyTraps {
   // weakmapKeyDelegate
   // isScripted
 };
+
+typedef void (*InvokeScriptPreparerHook)(
+    JS::HandleObject global, js::ScriptEnvironmentPreparer::Closure& closure);
+
+struct RustEnvironmentPreparer : public js::ScriptEnvironmentPreparer {
+  explicit RustEnvironmentPreparer(InvokeScriptPreparerHook hook)
+      : invokeScriptPreparerHook(hook) {}
+  void invoke(JS::HandleObject global, Closure& closure) override {
+    MOZ_ASSERT(JS_IsGlobalObject(global));
+
+    if (invokeScriptPreparerHook) {
+      invokeScriptPreparerHook(global, closure);
+    }
+  }
+
+ private:
+  InvokeScriptPreparerHook invokeScriptPreparerHook;
+};
+
+void RegisterScriptEnvironmentPreparer(JSContext* cx,
+                                       InvokeScriptPreparerHook hook) {
+  js::SetScriptEnvironmentPreparer(cx, new RustEnvironmentPreparer(hook));
+}
+
+bool RunScriptEnvironmentPreparerClosure(
+    JSContext* cx, js::ScriptEnvironmentPreparer::Closure& closure) {
+  MOZ_ASSERT(!JS_IsExceptionPending(cx));
+
+  bool result = closure(cx);
+
+  if (result) {
+    MOZ_ASSERT(!JS_IsExceptionPending(cx));
+  }
+
+  return result;
+}
 
 static int HandlerFamily;
 
@@ -482,7 +558,6 @@ class ForwardingProxyHandler : public js::BaseProxyHandler {
       desc.set(mozilla::Some(pd.get()));
     }
     return result;
-    return result;
   }
 
   virtual bool defineProperty(JSContext* cx, JS::HandleObject proxy,
@@ -540,7 +615,8 @@ class ServoDOMVisitor : public JS::ObjectPrivateVisitor {
 
 struct JSPrincipalsCallbacks {
   bool (*write)(JSPrincipals*, JSContext* cx, JSStructuredCloneWriter* writer);
-  bool (*isSystemOrAddonPrincipal)(JSPrincipals*);
+  bool (*isSystemPrincipal)(JSPrincipals*);
+  bool (*isAddonPrincipal)(JSPrincipals*);
 };
 
 class RustJSPrincipals final : public JSPrincipals {
@@ -558,8 +634,12 @@ class RustJSPrincipals final : public JSPrincipals {
                                  : false;
   }
 
-  bool isSystemOrAddonPrincipal() override {
-    return this->callbacks.isSystemOrAddonPrincipal(this);
+  bool isSystemPrincipal() override {
+    return this->callbacks.isSystemPrincipal(this);
+  }
+
+  bool isAddonPrincipal() override {
+    return this->callbacks.isAddonPrincipal(this);
   }
 };
 
@@ -624,11 +704,24 @@ bool CallJitGetterOp(const JSJitInfo* info, JSContext* cx,
   return info->getter(cx, thisObj, specializedThis, JSJitGetterCallArgs(args));
 }
 
+// https://searchfox.org/firefox-main/rev/45e3c8634099e0f57fa0e7660dba85580a5dd8e7/dom/bindings/BindingUtils.cpp#3242
 bool CallJitSetterOp(const JSJitInfo* info, JSContext* cx,
                      JS::HandleObject thisObj, void* specializedThis,
                      unsigned argc, JS::Value* vp) {
   JS::CallArgs args = JS::CallArgsFromVp(argc, vp);
-  return info->setter(cx, thisObj, specializedThis, JSJitSetterCallArgs(args));
+  // https://webidl.spec.whatwg.org/#dfn-attribute-setter
+  //
+  // Step 4.1.  Let |V| be <emu-val>undefined</emu-val>.
+  // Step 4.2.  If any arguments were passed, then set |V| to the value of the
+  //            first argument passed.
+  if (args.length() == 0) {
+    JS::Rooted<JS::Value> undef(cx);
+    return info->setter(cx, thisObj, specializedThis,
+                        JSJitSetterCallArgs(&undef));
+  } else {
+    return info->setter(cx, thisObj, specializedThis,
+                        JSJitSetterCallArgs(args));
+  }
 }
 
 bool CallJitMethodOp(const JSJitInfo* info, JSContext* cx,
@@ -703,7 +796,8 @@ JSObject* WrapperNew(JSContext* aCx, JS::HandleObject aObj,
 }
 
 const JSClass WindowProxyClass = PROXY_CLASS_DEF(
-    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(1)); /* additional class flags */
+    "Proxy", JSCLASS_HAS_RESERVED_SLOTS(
+                 js::SwappableProxyReservedSlots)); /* additional class flags */
 
 const JSClass* GetWindowProxyClass() { return &WindowProxyClass; }
 
@@ -852,8 +946,10 @@ bool AppendToRootedObjectVector(JS::PersistentRootedObjectVector* v,
 
 void DeleteRootedObjectVector(JS::PersistentRootedObjectVector* v) { delete v; }
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__wasi__)
 #  include <malloc.h>
+#elif defined(__FreeBSD__)
+#  include <malloc_np.h>
 #elif defined(__APPLE__)
 #  include <malloc/malloc.h>
 #elif defined(__MINGW32__) || defined(__MINGW64__)
@@ -866,7 +962,7 @@ void DeleteRootedObjectVector(JS::PersistentRootedObjectVector* v) { delete v; }
 
 // SpiderMonkey-in-Rust currently uses system malloc, not jemalloc.
 static size_t MallocSizeOf(const void* aPtr) {
-#if defined(__linux__)
+#if defined(__linux__) || defined(__wasi__) || defined(__FreeBSD__)
   return malloc_usable_size((void*)aPtr);
 #elif defined(__APPLE__)
   return malloc_size((void*)aPtr);
@@ -943,6 +1039,10 @@ void CallValueRootTracer(JSTracer* trc, JS::Value* valp, const char* name) {
   JS::TraceRoot(trc, valp, name);
 }
 
+void CallPropertyDescriptorTracer(JSTracer* trc, JS::PropertyDescriptor* desc) {
+  desc->trace(trc);
+}
+
 bool IsDebugBuild() {
 #ifdef JS_DEBUG
   return true;
@@ -1012,6 +1112,11 @@ bool WriteBytesToJSStructuredCloneData(const uint8_t* src, size_t len,
 // to ensure the calling convention is right.
 // https://web.archive.org/web/20180929193700/https://mozilla.logbot.info/jsapi/20180622#c14918658
 
+void JS_DequeueNextMicroTask(JSContext* cx,
+                             JS::MutableHandle<JS::GenericMicroTask> task) {
+  task.set(JS::DequeueNextMicroTask(cx));
+}
+
 void JS_GetPromiseResult(JS::HandleObject promise,
                          JS::MutableHandleValue dest) {
   dest.set(JS::GetPromiseResult(promise));
@@ -1019,10 +1124,6 @@ void JS_GetPromiseResult(JS::HandleObject promise,
 
 void JS_GetScriptPrivate(JSScript* script, JS::MutableHandleValue dest) {
   dest.set(JS::GetScriptPrivate(script));
-}
-
-void JS_MaybeGetScriptPrivate(JSObject* obj, JS::MutableHandleValue dest) {
-  dest.set(js::MaybeGetScriptPrivate(obj));
 }
 
 void JS_GetModulePrivate(JSObject* module, JS::MutableHandleValue dest) {
@@ -1065,21 +1166,12 @@ JSString* JS_ForgetStringLinearness(JSLinearString* str) {
   return JS_FORGET_STRING_LINEARNESS(str);
 }
 
-JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue) {
-  return new RustJobQueue(*aTraps, aQueue);
+JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue,
+                             void* aInterruptQueues) {
+  return new RustJobQueue(*aTraps, aQueue, aInterruptQueues);
 }
 
 void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
-
-JS::ReadableStreamUnderlyingSource* CreateReadableStreamUnderlyingSource(
-    const ReadableStreamUnderlyingSourceTraps* aTraps, const void* aSource) {
-  return new RustReadableStreamUnderlyingSource(*aTraps, aSource);
-}
-
-void DeleteReadableStreamUnderlyingSource(
-    JS::ReadableStreamUnderlyingSource* source) {
-  delete source;
-}
 
 JSExternalStringCallbacks* CreateJSExternalStringCallbacks(
     const JSExternalStringCallbacksTraps* aTraps, void* privateData) {
@@ -1090,9 +1182,44 @@ void DeleteJSExternalStringCallbacks(JSExternalStringCallbacks* callbacks) {
   delete static_cast<RustJSExternalStringCallbacks*>(callbacks);
 }
 
-void DispatchableRun(JSContext* cx, JS::Dispatchable* ptr,
+struct DispatchablePointer {
+  js::UniquePtr<JS::Dispatchable> ptr;
+};
+
+typedef bool (*RustDispatchToEventLoopCallback)(void* closure,
+                                                DispatchablePointer* ptr);
+
+struct EventLoopCallbackData {
+  RustDispatchToEventLoopCallback dispatchCallback;
+  void* closure;
+};
+
+bool DispatchToEventLoop(void* closure,
+                         js::UniquePtr<JS::Dispatchable>&& dispatchable) {
+  DispatchablePointer* wrapper =
+      new DispatchablePointer{std::move(dispatchable)};
+  auto data = static_cast<EventLoopCallbackData*>(closure);
+  return data->dispatchCallback(data->closure, wrapper);
+}
+
+void SetUpEventLoopDispatch(JSContext* cx,
+                            RustDispatchToEventLoopCallback callback,
+                            JS::AsyncTaskStartedCallback startedCallback,
+                            JS::AsyncTaskFinishedCallback finishedCallback,
+                            void* closure) {
+  // Intentionally leaked; this data needs to live as long as the JS runtime.
+  EventLoopCallbackData* data = new EventLoopCallbackData{
+      callback,
+      closure,
+  };
+  JS::InitAsyncTaskCallbacks(cx, DispatchToEventLoop, nullptr, startedCallback,
+                             finishedCallback, data);
+}
+
+void DispatchableRun(JSContext* cx, DispatchablePointer* ptr,
                      JS::Dispatchable::MaybeShuttingDown mb) {
-  ptr->run(cx, mb);
+  JS::Dispatchable::Run(cx, std::move(ptr->ptr), mb);
+  delete ptr;
 }
 
 bool StreamConsumerConsumeChunk(JS::StreamConsumer* sc, const uint8_t* begin,
@@ -1116,12 +1243,50 @@ bool DescribeScriptedCaller(JSContext* cx, char* buffer, size_t buflen,
                             uint32_t* line, uint32_t* col) {
   JS::AutoFilename filename;
   JS::ColumnNumberOneOrigin column;
-  if (!JS::DescribeScriptedCaller(cx, &filename, line, &column)) {
+  if (!JS::DescribeScriptedCaller(&filename, cx, line, &column)) {
     return false;
   }
   *col = column.oneOriginValue() - 1;
   strncpy(buffer, filename.get(), buflen);
   return true;
+}
+
+typedef void (*StringCallback)(const char* ptr, size_t len, void* target);
+
+bool PendingExceptionStackInfo(JSContext* cx, StringCallback callback,
+                               void* message_target, void* filename_target,
+                               uint32_t* line, uint32_t* col,
+                               JS::MutableHandleValue dest) {
+  JS::ExceptionStack stack(cx);
+  JS::ErrorReportBuilder builder(cx);
+  if (JS::StealPendingExceptionStack(cx, &stack) &&
+      builder.init(cx, stack, JS::ErrorReportBuilder::WithSideEffects)) {
+    JSErrorReport* aReport = builder.report();
+
+    if (!aReport || aReport->isWarning()) {
+      return false;
+    }
+
+    const char* message = aReport->message().c_str();
+    if (!message) {
+      message = builder.toStringResult().c_str();
+    }
+
+    callback(message, strlen(message), message_target);
+
+    const char* filename = aReport->filename.c_str();
+    if (filename) {
+      callback(filename, strlen(filename), filename_target);
+    }
+
+    *line = aReport->lineno;
+    *col = aReport->column.oneOriginValue();
+    dest.set(stack.exception());
+
+    return true;
+  }
+
+  return false;
 }
 
 void SetDataPropertyDescriptor(JS::MutableHandle<JS::PropertyDescriptor> desc,
@@ -1133,6 +1298,38 @@ void SetAccessorPropertyDescriptor(
     JS::MutableHandle<JS::PropertyDescriptor> desc, JS::HandleObject getter,
     JS::HandleObject setter, uint32_t attrs) {
   desc.set(JS::PropertyDescriptor::Accessor(getter, setter, attrs));
+}
+
+void DumpJSStack(JSContext* cx, bool showArgs, bool showLocals,
+                 bool showThisProps) {
+  JS::AutoSaveExceptionState state(cx);
+
+  JS::UniqueChars buf =
+      JS::FormatStackDump(cx, showArgs, showLocals, showThisProps);
+
+  state.restore();
+
+  printf("%s\n", buf.get());
+}
+
+uint32_t StackGCVectorValueLength(
+    JS::Handle<JS::StackGCVector<JS::Value>> vec) {
+  return vec.length();
+}
+
+uint32_t StackGCVectorStringLength(
+    JS::Handle<JS::StackGCVector<JSString*>> vec) {
+  return vec.length();
+}
+
+const JS::Value* StackGCVectorValueAtIndex(
+    JS::Handle<JS::StackGCVector<JS::Value>> vec, uint32_t index) {
+  return vec.begin() + index;
+}
+
+JSString* const* StackGCVectorStringAtIndex(
+    JS::Handle<JS::StackGCVector<JSString*>> vec, uint32_t index) {
+  return vec.begin() + index;
 }
 
 }  // extern "C"

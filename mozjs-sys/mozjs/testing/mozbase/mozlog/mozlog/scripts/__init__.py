@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -6,10 +5,8 @@
 
 import argparse
 
-import format as formatlog
-import logmerge
-import six
-import unstable
+from . import format as formatlog
+from . import logmerge, unstable
 
 
 def get_parser():
@@ -25,7 +22,7 @@ def get_parser():
 
     sub_parser = parser.add_subparsers(title="Subcommands")
 
-    for command, (parser_func, main_func) in six.iteritems(commands):
+    for command, (parser_func, main_func) in commands.items():
         parent = parser_func(False)
         command_parser = sub_parser.add_parser(
             command, description=parent.description, parents=[parent]

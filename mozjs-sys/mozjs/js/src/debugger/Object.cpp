@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -12,9 +10,8 @@
 #include "mozilla/Vector.h"  // for Vector
 
 #include <algorithm>
-#include <string.h>     // for size_t, strlen
-#include <type_traits>  // for remove_reference<>::type
-#include <utility>      // for move
+#include <string.h>  // for size_t, strlen
+#include <utility>   // for move
 
 #include "jsapi.h"  // for CallArgs, RootedObject, Rooted
 
@@ -26,6 +23,7 @@
 #include "debugger/Script.h"     // for DebuggerScript
 #include "debugger/Source.h"     // for DebuggerSource
 #include "gc/Tracer.h"        // for TraceManuallyBarrieredCrossCompartmentEdge
+#include "jit/JitOptions.h"   // for jit::HasJitBackend
 #include "js/ColumnNumber.h"  // JS::ColumnNumberOneOrigin
 #include "js/CompilationAndEvaluation.h"  //  for Compile
 #include "js/Conversions.h"               // for ToObject
@@ -86,20 +84,14 @@ using mozilla::Nothing;
 using mozilla::Some;
 
 const JSClassOps DebuggerObject::classOps_ = {
-    nullptr,                          // addProperty
-    nullptr,                          // delProperty
-    nullptr,                          // enumerate
-    nullptr,                          // newEnumerate
-    nullptr,                          // resolve
-    nullptr,                          // mayResolve
-    nullptr,                          // finalize
-    nullptr,                          // call
-    nullptr,                          // construct
-    CallTraceMethod<DebuggerObject>,  // trace
+    .trace = CallTraceMethod<DebuggerObject>,
 };
 
 const JSClass DebuggerObject::class_ = {
-    "Object", JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS), &classOps_};
+    "Object",
+    JSCLASS_HAS_RESERVED_SLOTS(RESERVED_SLOTS),
+    &classOps_,
+};
 
 void DebuggerObject::trace(JSTracer* trc) {
   // There is a barrier on private pointers, so the Unbarriered marking
@@ -165,6 +157,7 @@ struct MOZ_STACK_CLASS DebuggerObject::CallData {
   bool boundArgumentsGetter();
   bool allocationSiteGetter();
   bool isErrorGetter();
+  bool isMutedErrorGetter();
   bool errorMessageNameGetter();
   bool errorNotesGetter();
   bool errorLineNumberGetter();
@@ -502,6 +495,11 @@ bool DebuggerObject::CallData::errorMessageNameGetter() {
 
 bool DebuggerObject::CallData::isErrorGetter() {
   args.rval().setBoolean(object->isError());
+  return true;
+}
+
+bool DebuggerObject::CallData::isMutedErrorGetter() {
+  args.rval().setBoolean(object->isMutedError(cx));
   return true;
 }
 
@@ -1269,46 +1267,61 @@ bool DebuggerObject::CallData::createSource() {
 
   bool isScriptElement = ToBoolean(v);
 
-  JS::CompileOptions compileOptions(cx);
-  compileOptions.lineno = startLine;
-  compileOptions.column = JS::ColumnNumberOneOrigin(startColumn);
-
-  if (!JS::StringHasLatin1Chars(url)) {
-    JS_ReportErrorASCII(cx, "URL must be a narrow string");
+  if (!JS_GetProperty(cx, options, "forceEnableAsmJS", &v)) {
     return false;
   }
 
-  UniqueChars urlChars = JS_EncodeStringToUTF8(cx, url);
-  if (!urlChars) {
-    return false;
-  }
-  compileOptions.setFile(urlChars.get());
-
-  Vector<char16_t> sourceMapURLChars(cx);
-  if (sourceMapURL) {
-    if (!CopyStringToVector(cx, sourceMapURL, sourceMapURLChars)) {
-      return false;
-    }
-    compileOptions.setSourceMapURL(sourceMapURLChars.begin());
-  }
-
-  if (isScriptElement) {
-    // The introduction type must be a statically allocated string.
-    compileOptions.setIntroductionType("inlineScript");
-  }
-
-  AutoStableStringChars linearChars(cx);
-  if (!linearChars.initTwoByte(cx, text)) {
-    return false;
-  }
-  JS::SourceText<char16_t> srcBuf;
-  if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
+  bool forceEnableAsmJS = ToBoolean(v);
+  if (forceEnableAsmJS && !jit::HasJitBackend()) {
+    JS_ReportErrorASCII(cx,
+                        "forceEnableAsmJS cannot be used with no JIT backend");
     return false;
   }
 
   RootedScript script(cx);
   {
     AutoRealm ar(cx, referent);
+
+    JS::CompileOptions compileOptions(cx);
+    compileOptions.lineno = startLine;
+    compileOptions.column = JS::ColumnNumberOneOrigin(startColumn);
+    if (forceEnableAsmJS) {
+      compileOptions.setAsmJSOption(JS::AsmJSOption::Enabled);
+    }
+
+    if (!JS::StringHasLatin1Chars(url)) {
+      JS_ReportErrorASCII(cx, "URL must be a narrow string");
+      return false;
+    }
+
+    UniqueChars urlChars = JS_EncodeStringToUTF8(cx, url);
+    if (!urlChars) {
+      return false;
+    }
+    compileOptions.setFile(urlChars.get());
+
+    Vector<char16_t> sourceMapURLChars(cx);
+    if (sourceMapURL) {
+      if (!CopyStringToVector(cx, sourceMapURL, sourceMapURLChars)) {
+        return false;
+      }
+      compileOptions.setSourceMapURL(sourceMapURLChars.begin());
+    }
+
+    if (isScriptElement) {
+      // The introduction type must be a statically allocated string.
+      compileOptions.setIntroductionType("inlineScript");
+    }
+
+    AutoStableStringChars linearChars(cx);
+    if (!linearChars.initTwoByte(cx, text)) {
+      return false;
+    }
+    JS::SourceText<char16_t> srcBuf;
+    if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
+      return false;
+    }
+
     script = JS::Compile(cx, compileOptions, srcBuf);
     if (!script) {
       return false;
@@ -1501,6 +1514,7 @@ const JSPropertySpec DebuggerObject::properties_[] = {
     JS_DEBUG_PSG("boundArguments", boundArgumentsGetter),
     JS_DEBUG_PSG("allocationSite", allocationSiteGetter),
     JS_DEBUG_PSG("isError", isErrorGetter),
+    JS_DEBUG_PSG("isMutedError", isMutedErrorGetter),
     JS_DEBUG_PSG("errorMessageName", errorMessageNameGetter),
     JS_DEBUG_PSG("errorNotes", errorNotesGetter),
     JS_DEBUG_PSG("errorLineNumber", errorLineNumberGetter),
@@ -1508,7 +1522,8 @@ const JSPropertySpec DebuggerObject::properties_[] = {
     JS_DEBUG_PSG("isProxy", isProxyGetter),
     JS_DEBUG_PSG("proxyTarget", proxyTargetGetter),
     JS_DEBUG_PSG("proxyHandler", proxyHandlerGetter),
-    JS_PS_END};
+    JS_PS_END,
+};
 
 const JSPropertySpec DebuggerObject::promiseProperties_[] = {
     JS_DEBUG_PSG("isPromise", isPromiseGetter),
@@ -1521,7 +1536,8 @@ const JSPropertySpec DebuggerObject::promiseProperties_[] = {
     JS_DEBUG_PSG("promiseResolutionSite", promiseResolutionSiteGetter),
     JS_DEBUG_PSG("promiseID", promiseIDGetter),
     JS_DEBUG_PSG("promiseDependentPromises", promiseDependentPromisesGetter),
-    JS_PS_END};
+    JS_PS_END,
+};
 
 const JSFunctionSpec DebuggerObject::methods_[] = {
     JS_DEBUG_FN("isExtensible", isExtensibleMethod, 0),
@@ -1557,7 +1573,8 @@ const JSFunctionSpec DebuggerObject::methods_[] = {
     JS_DEBUG_FN("unsafeDereference", unsafeDereferenceMethod, 0),
     JS_DEBUG_FN("unwrap", unwrapMethod, 0),
     JS_DEBUG_FN("getPromiseReactions", getPromiseReactionsMethod, 0),
-    JS_FS_END};
+    JS_FS_END,
+};
 
 /* static */
 NativeObject* DebuggerObject::initClass(JSContext* cx,
@@ -1672,6 +1689,31 @@ bool DebuggerObject::isError() const {
   }
 
   return referent->is<ErrorObject>();
+}
+
+bool DebuggerObject::isMutedError(JSContext* cx) const {
+  JS::Rooted<JSObject*> referent(cx, this->referent());
+
+  if (IsCrossCompartmentWrapper(referent)) {
+    // We only check for error classes, so CheckedUnwrapStatic is OK.
+    referent = CheckedUnwrapStatic(referent);
+    if (!referent) {
+      return false;
+    }
+  }
+
+  if (!referent->is<ErrorObject>()) {
+    return false;
+  }
+
+  JSErrorReport* report = referent->as<ErrorObject>().getErrorReport();
+  if (!report) {
+    // If the error report was missing, isMuted field can never be true,
+    // and just returning false is OK.
+    return false;
+  }
+
+  return report->isMuted;
 }
 
 /* static */
@@ -2513,6 +2555,7 @@ bool DebuggerObject::forceLexicalInitializationByName(
         v.whyMagic() == JS_UNINITIALIZED_LEXICAL) {
       globalLexical->as<NativeObject>().setSlot(propInfo.slot(),
                                                 UndefinedValue());
+      cx->hasDebuggerForcedLexicalInit = true;
       result = true;
     }
   }

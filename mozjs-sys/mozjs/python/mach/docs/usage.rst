@@ -147,4 +147,4 @@ The settings file follows the ``ini`` format, e.g:
     default = fuzzy
 
 
-.. _bash completion: https://searchfox.org/mozilla-central/source/python/mach/bash-completion.sh
+.. _bash completion: :searchfox:`python/mach/bash-completion.sh`

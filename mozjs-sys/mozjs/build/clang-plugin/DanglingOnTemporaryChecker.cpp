@@ -86,21 +86,20 @@ void DanglingOnTemporaryChecker::registerMatchers(MatchFinder *AstMatcher) {
           // and which is marked as no dangling on temporaries.
           callee(cxxMethodDecl(noDanglingOnTemporaries())),
 
-          expr().bind("memberCallExpr"),
-
           // We optionally match a parent call expression or a parent construct
           // expression because using a temporary inside a call is fine as long
           // as the pointer doesn't escape the function call.
-          anyOf(
+          optionally(
+            anyOf(
               // This is the case where the call is the direct parent, so we
               // know that the member call expression is the argument.
               allOf(hasParentCall, expr().bind("parentCallArg")),
 
               // This is the case where the call is not the direct parent, so we
               // get its child to know in which argument tree we are.
-              hasAncestor(expr(hasParentCall, expr().bind("parentCallArg"))),
-              // To make it optional.
-              anything())),
+              hasAncestor(expr(hasParentCall, expr().bind("parentCallArg")))
+             ))
+            ).bind("memberCallExpr"),
       this);
 }
 

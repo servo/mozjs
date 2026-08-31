@@ -1,0 +1,41 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Adding a new metric? We have docs for that!
+# https://firefox-source-docs.mozilla.org/toolkit/components/glean/user/new_definitions_file.html
+
+---
+$schema: moz://mozilla.org/schemas/glean/metrics/2-0-0
+$tags:
+  - 'Core :: JavaScript Engine'
+
+
+javascript.self_hosted_cache:
+  hits:
+    type: rate
+    description: >
+      The proportion of self-hosted cache accesses that found an existing entry.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1780686
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1780686
+    data_sensitivity:
+      - technical
+    notification_emails:
+      - bthrall@mozilla.com
+    expires: never
+    denominator_metric: javascript.self_hosted_cache.total
+  total:
+    type: counter
+    description: >
+      How many self-hosted cache accesses are performed.
+    bugs:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1780686
+    data_reviews:
+      - https://bugzilla.mozilla.org/show_bug.cgi?id=1780686
+    data_sensitivity:
+      - technical
+    notification_emails:
+      - bthrall@mozilla.com
+    expires: never

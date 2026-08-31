@@ -1,13 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/arm64/Assembler-arm64.h"
 
 #include "mozilla/DebugOnly.h"
-#include "mozilla/MathAlgorithms.h"
 #include "mozilla/Maybe.h"
 
 #include "gc/Marking.h"
@@ -17,17 +14,14 @@
 #include "jit/AutoWritableJitCode.h"
 #include "jit/ExecutableAllocator.h"
 #include "vm/Realm.h"
+#include "wasm/WasmFrame.h"
 
 #include "gc/StoreBuffer-inl.h"
 
 using namespace js;
 using namespace js::jit;
 
-using mozilla::CountLeadingZeroes32;
 using mozilla::DebugOnly;
-
-// Note this is used for inter-wasm calls and may pass arguments and results
-// in floating point registers even if the system ABI does not.
 
 ABIArg ABIArgGenerator::next(MIRType type) {
   switch (type) {
@@ -35,6 +29,7 @@ ABIArg ABIArgGenerator::next(MIRType type) {
     case MIRType::Int64:
     case MIRType::Pointer:
     case MIRType::WasmAnyRef:
+    case MIRType::WasmArrayData:
     case MIRType::StackResults:
       if (intRegIndex_ == NumIntArgRegs) {
         current_ = ABIArg(stackOffset_);
@@ -121,6 +116,9 @@ BufferOffset Assembler::emitExtendedJumpTable() {
     return BufferOffset();
   }
 
+  // Prevent nop sequences in the jump table.
+  AutoForbidNops afn(this);
+
   armbuffer_.flushPool();
   armbuffer_.align(SizeOfJumpTableEntry);
 
@@ -205,20 +203,17 @@ void Assembler::executableCopy(uint8_t* buffer) {
 }
 
 BufferOffset Assembler::immPool(ARMRegister dest, uint8_t* value,
-                                vixl::LoadLiteralOp op, const LiteralDoc& doc,
-                                ARMBuffer::PoolEntry* pe) {
+                                vixl::LoadLiteralOp op, const LiteralDoc& doc) {
   uint32_t inst = op | Rt(dest);
   const size_t numInst = 1;
   const unsigned sizeOfPoolEntryInBytes = 4;
   const unsigned numPoolEntries = sizeof(value) / sizeOfPoolEntryInBytes;
   return allocLiteralLoadEntry(numInst, numPoolEntries, (uint8_t*)&inst, value,
-                               doc, pe);
+                               doc);
 }
 
-BufferOffset Assembler::immPool64(ARMRegister dest, uint64_t value,
-                                  ARMBuffer::PoolEntry* pe) {
-  return immPool(dest, (uint8_t*)&value, vixl::LDR_x_lit, LiteralDoc(value),
-                 pe);
+BufferOffset Assembler::immPool64(ARMRegister dest, uint64_t value) {
+  return immPool(dest, (uint8_t*)&value, vixl::LDR_x_lit, LiteralDoc(value));
 }
 
 BufferOffset Assembler::fImmPool(ARMFPRegister dest, uint8_t* value,
@@ -271,6 +266,7 @@ void Assembler::bind(Label* label, BufferOffset targetOffset) {
     ptrdiff_t relativeByteOffset =
         targetOffset.getOffset() - branchOffset.getOffset();
     Instruction* link = getInstructionAt(branchOffset);
+    MOZ_ASSERT(link->IsImmBranch() || link->IsPCRelAddressing());
 
     // This branch may still be registered for callbacks. Stop tracking it.
     vixl::ImmBranchType branchType = link->BranchType();

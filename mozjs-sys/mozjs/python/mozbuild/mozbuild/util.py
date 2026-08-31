@@ -11,16 +11,28 @@ import copy
 import difflib
 import functools
 import hashlib
-import io
 import itertools
+import logging
 import os
 import re
+import subprocess
 import sys
+import time
 from io import BytesIO, StringIO
+from pathlib import Path
 
-import six
+try:
+    # FIXME: requires python 3.10
+    from types import NoneType
+except ImportError:
+    NoneType = type(None)
 
 from mozbuild.dirutils import ensureParentDir
+
+try:
+    import psutil
+except Exception:
+    psutil = None
 
 MOZBUILD_METRICS_PATH = os.path.abspath(
     os.path.join(__file__, "..", "..", "metrics.yaml")
@@ -32,10 +44,63 @@ else:
     system_encoding = "utf-8"
 
 
+def sanitize_shell_env(env):
+    """Return a copy of env with SHELLOPTS removed for bash subprocess calls.
+
+    SHELLOPTS being exported can cause various problems in subprocess shell
+    execution, so we remove it entirely to prevent unexpected behavior.
+    """
+    env = dict(env)
+    env.pop("SHELLOPTS", None)
+    return env
+
+
+LOG_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
+
+
+def get_latest_file(directory, prefix):
+    """Find the most recent file in a directory that starts with prefix, or None."""
+    log_dir = Path(directory)
+    try:
+        files = [f for f in log_dir.iterdir() if f.name.startswith(prefix)]
+    except OSError:
+        return None
+    if not files:
+        return None
+    return max(files, key=lambda f: f.stat().st_mtime)
+
+
+def construct_log_filename(prefix, suffix=".json"):
+    """Generate a timestamped log filename."""
+    timestamp = time.strftime(LOG_TIMESTAMP_FORMAT)
+    return f"{prefix}_log_{timestamp}{suffix}"
+
+
+class MissingL10nError(Exception):
+    """Raised when the l10n repositories haven’t been checked out."""
+
+    pass
+
+
+class NotAGitRepositoryError(Exception):
+    """Raised when the directory isn’t a git repository."""
+
+    pass
+
+
+def is_running_under_coding_agent():
+    return bool(
+        os.environ.get("CLAUDECODE")
+        or os.environ.get("CODEX_SANDBOX")
+        or os.environ.get("GEMINI_CLI")
+        or os.environ.get("OPENCODE")
+    )
+
+
 def _open(path, mode):
     if "b" in mode:
-        return io.open(path, mode)
-    return io.open(path, mode, encoding="utf-8", newline="\n")
+        return open(path, mode)
+    return open(path, mode, encoding="utf-8", newline="\n")
 
 
 def hash_file(path, hasher=None):
@@ -57,7 +122,7 @@ def hash_file(path, hasher=None):
     return h.hexdigest()
 
 
-class EmptyValue(six.text_type):
+class EmptyValue(str):
     """A dummy type that behaves like an empty string and sequence.
 
     This type exists in order to support
@@ -66,15 +131,15 @@ class EmptyValue(six.text_type):
     """
 
     def __init__(self):
-        super(EmptyValue, self).__init__()
+        super().__init__()
 
 
-class ReadOnlyNamespace(object):
+class ReadOnlyNamespace:
     """A class for objects with immutable attributes set at initialization."""
 
     def __init__(self, **kwargs):
-        for k, v in six.iteritems(kwargs):
-            super(ReadOnlyNamespace, self).__setattr__(k, v)
+        for k, v in kwargs.items():
+            super().__setattr__(k, v)
 
     def __delattr__(self, key):
         raise Exception("Object does not support deletion.")
@@ -127,7 +192,7 @@ class ReadOnlyDict(dict):
         return (self.__class__, (dict(self),))
 
 
-class undefined_default(object):
+class undefined_default:
     """Represents an undefined argument value that isn't None."""
 
 
@@ -185,8 +250,8 @@ class FileAvoidWrite(BytesIO):
     def __init__(self, filename, capture_diff=False, dry_run=False, readmode="r"):
         BytesIO.__init__(self)
         self.name = filename
-        assert type(capture_diff) == bool
-        assert type(dry_run) == bool
+        assert type(capture_diff) is bool
+        assert type(dry_run) is bool
         assert "r" in readmode
         self._capture_diff = capture_diff
         self._write_to_file = not dry_run
@@ -195,7 +260,9 @@ class FileAvoidWrite(BytesIO):
         self._binary_mode = "b" in readmode
 
     def write(self, buf):
-        BytesIO.write(self, six.ensure_binary(buf))
+        if isinstance(buf, str):
+            buf = buf.encode()
+        BytesIO.write(self, buf)
 
     def avoid_writing_to_file(self):
         self._write_to_file = False
@@ -212,8 +279,12 @@ class FileAvoidWrite(BytesIO):
         of the result.
         """
         # Use binary data if the caller explicitly asked for it.
-        ensure = six.ensure_binary if self._binary_mode else six.ensure_text
-        buf = ensure(self.getvalue())
+        buf = self.getvalue()
+        if self._binary_mode:
+            if isinstance(buf, str):
+                buf = buf.encode()
+        elif isinstance(buf, bytes):
+            buf = buf.decode()
 
         BytesIO.close(self)
         existed = False
@@ -222,14 +293,14 @@ class FileAvoidWrite(BytesIO):
         try:
             existing = _open(self.name, self.mode)
             existed = True
-        except IOError:
+        except OSError:
             pass
         else:
             try:
                 old_content = existing.read()
                 if old_content == buf:
                     return True, False
-            except IOError:
+            except OSError:
                 pass
             finally:
                 existing.close()
@@ -241,10 +312,11 @@ class FileAvoidWrite(BytesIO):
             writemode = "w"
             if self._binary_mode:
                 writemode += "b"
-                buf = six.ensure_binary(buf)
-            else:
-                buf = six.ensure_text(buf)
-            with _open(self.name, writemode) as file:
+            path = Path(self.name)
+            if path.is_symlink():
+                # Migration to code autogeneration can encounter with existing symlinks, e.g. bug 1953858.
+                path.unlink()
+            with _open(path, writemode) as file:
                 file.write(buf)
 
         self._generate_diff(buf, old_content)
@@ -376,28 +448,22 @@ class List(list):
             raise ValueError("List can only be created from other list instances.")
 
         self._kwargs = kwargs
-        super(List, self).__init__(iterable)
+        super().__init__(iterable)
 
     def extend(self, l):
         if not isinstance(l, list):
             raise ValueError("List can only be extended with other list instances.")
 
-        return super(List, self).extend(l)
+        return super().extend(l)
 
     def __setitem__(self, key, val):
         if isinstance(key, slice):
             if not isinstance(val, list):
-                raise ValueError(
-                    "List can only be sliced with other list " "instances."
-                )
+                raise ValueError("List can only be sliced with other list instances.")
             if key.step:
-                raise ValueError("List cannot be sliced with a nonzero step " "value")
-            # Python 2 and Python 3 do this differently for some reason.
-            if six.PY2:
-                return super(List, self).__setslice__(key.start, key.stop, val)
-            else:
-                return super(List, self).__setitem__(key, val)
-        return super(List, self).__setitem__(key, val)
+                raise ValueError("List cannot be sliced with a nonzero step value")
+            return super().__setitem__(key, val)
+        return super().__setitem__(key, val)
 
     def __setslice__(self, i, j, sequence):
         return self.__setitem__(slice(i, j), sequence)
@@ -405,7 +471,7 @@ class List(list):
     def __add__(self, other):
         # Allow None and EmptyValue is a special case because it makes undefined
         # variable references in moz.build behave better.
-        other = [] if isinstance(other, (type(None), EmptyValue)) else other
+        other = [] if isinstance(other, (NoneType, EmptyValue)) else other
         if not isinstance(other, list):
             raise ValueError("Only lists can be appended to lists.")
 
@@ -414,11 +480,11 @@ class List(list):
         return new_list
 
     def __iadd__(self, other):
-        other = [] if isinstance(other, (type(None), EmptyValue)) else other
+        other = [] if isinstance(other, (NoneType, EmptyValue)) else other
         if not isinstance(other, list):
             raise ValueError("Only lists can be appended to lists.")
 
-        return super(List, self).__iadd__(other)
+        return super().__iadd__(other)
 
 
 class UnsortedError(Exception):
@@ -476,27 +542,27 @@ class StrictOrderingOnAppendList(List):
 
         StrictOrderingOnAppendList.ensure_sorted(iterable)
 
-        super(StrictOrderingOnAppendList, self).__init__(iterable, **kwargs)
+        super().__init__(iterable, **kwargs)
 
     def extend(self, l):
         StrictOrderingOnAppendList.ensure_sorted(l)
 
-        return super(StrictOrderingOnAppendList, self).extend(l)
+        return super().extend(l)
 
     def __setitem__(self, key, val):
         if isinstance(key, slice):
             StrictOrderingOnAppendList.ensure_sorted(val)
-        return super(StrictOrderingOnAppendList, self).__setitem__(key, val)
+        return super().__setitem__(key, val)
 
     def __add__(self, other):
         StrictOrderingOnAppendList.ensure_sorted(other)
 
-        return super(StrictOrderingOnAppendList, self).__add__(other)
+        return super().__add__(other)
 
     def __iadd__(self, other):
         StrictOrderingOnAppendList.ensure_sorted(other)
 
-        return super(StrictOrderingOnAppendList, self).__iadd__(other)
+        return super().__iadd__(other)
 
 
 class ImmutableStrictOrderingOnAppendList(StrictOrderingOnAppendList):
@@ -540,9 +606,7 @@ class StrictOrderingOnAppendListWithAction(StrictOrderingOnAppendList):
                 "with another list"
             )
         iterable = [self._action(i) for i in iterable]
-        super(StrictOrderingOnAppendListWithAction, self).__init__(
-            iterable, action=action
-        )
+        super().__init__(iterable, action=action)
 
     def extend(self, l):
         if not isinstance(l, list):
@@ -551,7 +615,7 @@ class StrictOrderingOnAppendListWithAction(StrictOrderingOnAppendList):
                 "with another list"
             )
         l = [self._action(i) for i in l]
-        return super(StrictOrderingOnAppendListWithAction, self).extend(l)
+        return super().extend(l)
 
     def __setitem__(self, key, val):
         if isinstance(key, slice):
@@ -561,7 +625,7 @@ class StrictOrderingOnAppendListWithAction(StrictOrderingOnAppendList):
                     "with another list"
                 )
             val = [self._action(item) for item in val]
-        return super(StrictOrderingOnAppendListWithAction, self).__setitem__(key, val)
+        return super().__setitem__(key, val)
 
     def __add__(self, other):
         if not isinstance(other, list):
@@ -569,7 +633,7 @@ class StrictOrderingOnAppendListWithAction(StrictOrderingOnAppendList):
                 "StrictOrderingOnAppendListWithAction can only be added with "
                 "another list"
             )
-        return super(StrictOrderingOnAppendListWithAction, self).__add__(other)
+        return super().__add__(other)
 
     def __iadd__(self, other):
         if not isinstance(other, list):
@@ -578,7 +642,7 @@ class StrictOrderingOnAppendListWithAction(StrictOrderingOnAppendList):
                 "another list"
             )
         other = [self._action(i) for i in other]
-        return super(StrictOrderingOnAppendListWithAction, self).__iadd__(other)
+        return super().__iadd__(other)
 
 
 class MozbuildDeletionError(Exception):
@@ -597,12 +661,12 @@ def FlagsFactory(flags):
     assert isinstance(flags, dict)
     assert all(isinstance(v, type) for v in flags.values())
 
-    class Flags(object):
+    class Flags:
         __slots__ = flags.keys()
         _flags = flags
 
         def update(self, **kwargs):
-            for k, v in six.iteritems(kwargs):
+            for k, v in kwargs.items():
                 setattr(self, k, v)
 
         def __getattr__(self, name):
@@ -657,11 +721,12 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
     .. code-block:: python
 
         FooList = StrictOrderingOnAppendListWithFlagsFactory({
-            'foo': bool, 'bar': unicode
+            "foo": bool,
+            "bar": unicode,
         })
-        foo = FooList(['a', 'b', 'c'])
-        foo['a'].foo = True
-        foo['b'].bar = 'bar'
+        foo = FooList(["a", "b", "c"])
+        foo["a"].foo = True
+        foo["b"].bar = "bar"
     """
 
     class StrictOrderingOnAppendListWithFlagsSpecialization(
@@ -687,9 +752,7 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
                     "'%s' object does not support item assignment"
                     % self.__class__.__name__
                 )
-            result = super(
-                StrictOrderingOnAppendListWithFlagsSpecialization, self
-            ).__setitem__(name, value)
+            result = super().__setitem__(name, value)
             # We may have removed items.
             for k in set(self._flags.keys()) - set(self):
                 del self._flags[k]
@@ -712,17 +775,13 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
             self._flags.update(other._flags)
 
         def extend(self, l):
-            result = super(
-                StrictOrderingOnAppendListWithFlagsSpecialization, self
-            ).extend(l)
+            result = super().extend(l)
             if isinstance(l, StrictOrderingOnAppendListWithFlags):
                 self._update_flags(l)
             return result
 
         def __add__(self, other):
-            result = super(
-                StrictOrderingOnAppendListWithFlagsSpecialization, self
-            ).__add__(other)
+            result = super().__add__(other)
             if isinstance(other, StrictOrderingOnAppendListWithFlags):
                 # Result has flags from other but not from self, since
                 # internally we duplicate self and then extend with other, and
@@ -734,9 +793,7 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
             return result
 
         def __iadd__(self, other):
-            result = super(
-                StrictOrderingOnAppendListWithFlagsSpecialization, self
-            ).__iadd__(other)
+            result = super().__iadd__(other)
             if isinstance(other, StrictOrderingOnAppendListWithFlags):
                 self._update_flags(other)
             return result
@@ -744,7 +801,7 @@ def StrictOrderingOnAppendListWithFlagsFactory(flags):
     return StrictOrderingOnAppendListWithFlagsSpecialization
 
 
-class HierarchicalStringList(object):
+class HierarchicalStringList:
     """A hierarchy of lists of strings.
 
     Each instance of this object contains a list of strings, which can be set or
@@ -862,7 +919,7 @@ class HierarchicalStringList(object):
         if not isinstance(value, list):
             raise ValueError("Expected a list of strings, not %s" % type(value))
         for v in value:
-            if not isinstance(v, six.string_types):
+            if not isinstance(v, str):
                 raise ValueError(
                     "Expected a list of strings, not an element of %s" % type(v)
                 )
@@ -884,52 +941,6 @@ class KeyedDefaultDict(dict):
 
 class ReadOnlyKeyedDefaultDict(KeyedDefaultDict, ReadOnlyDict):
     """Like KeyedDefaultDict, but read-only."""
-
-
-class memoize(dict):
-    """A decorator to memoize the results of function calls depending
-    on its arguments.
-    Both functions and instance methods are handled, although in the
-    instance method case, the results are cache in the instance itself.
-    """
-
-    def __init__(self, func):
-        self.func = func
-        functools.update_wrapper(self, func)
-
-    def __call__(self, *args):
-        if args not in self:
-            self[args] = self.func(*args)
-        return self[args]
-
-    def method_call(self, instance, *args):
-        name = "_%s" % self.func.__name__
-        if not hasattr(instance, name):
-            setattr(instance, name, {})
-        cache = getattr(instance, name)
-        if args not in cache:
-            cache[args] = self.func(instance, *args)
-        return cache[args]
-
-    def __get__(self, instance, cls):
-        return functools.update_wrapper(
-            functools.partial(self.method_call, instance), self.func
-        )
-
-
-class memoized_property(object):
-    """A specialized version of the memoize decorator that works for
-    class instance properties.
-    """
-
-    def __init__(self, func):
-        self.func = func
-
-    def __get__(self, instance, cls):
-        name = "_%s" % self.func.__name__
-        if not hasattr(instance, name):
-            setattr(instance, name, self.func(instance))
-        return getattr(instance, name)
 
 
 def TypedNamedTuple(name, fields):
@@ -964,7 +975,7 @@ def TypedNamedTuple(name, fields):
             if len(args) == 1 and not kwargs and isinstance(args[0], tuple):
                 args = args[0]
 
-            return super(TypedTuple, klass).__new__(klass, *args, **kwargs)
+            return super().__new__(klass, *args, **kwargs)
 
         def __init__(self, *args, **kwargs):
             for i, (fname, ftype) in enumerate(self._fields):
@@ -981,7 +992,34 @@ def TypedNamedTuple(name, fields):
     return TypedTuple
 
 
-@memoize
+class CompilerFlag(str):
+    """
+    A compiler Flag that cannot be a warning.
+    """
+
+    def __new__(cls, f):
+        if f.startswith("-W") and not f.startswith("-Wno-"):
+            ishost = cls.__name__.startswith("Host")
+            iscxx = cls.__name__.endswith("CxxCompilerFlag")
+            raise ValueError(
+                f"Warning flag '{f}' must be added to {'HOST_' if ishost else ''}COMPILE_FLAGS['WARNINGS_C{'XX' if iscxx else ''}FLAGS']"
+            )
+        return super().__new__(cls, f)
+
+
+class CCompilerFlag(CompilerFlag): ...
+
+
+class CxxCompilerFlag(CompilerFlag): ...
+
+
+class HostCCompilerFlag(CompilerFlag): ...
+
+
+class HostCxxCompilerFlag(CompilerFlag): ...
+
+
+@functools.cache
 def TypedList(type, base_class=List):
     """A list with type coercion.
 
@@ -1012,27 +1050,29 @@ def TypedList(type, base_class=List):
                 iterable = []
             iterable = self._ensure_type(iterable)
 
-            super(_TypedList, self).__init__(iterable, **kwargs)
+            super().__init__(iterable, **kwargs)
 
         def extend(self, l):
             l = self._ensure_type(l)
 
-            return super(_TypedList, self).extend(l)
+            return super().extend(l)
 
         def __setitem__(self, key, val):
             val = self._ensure_type(val)
 
-            return super(_TypedList, self).__setitem__(key, val)
+            return super().__setitem__(key, val)
 
         def __add__(self, other):
+            other = [] if isinstance(other, (NoneType, EmptyValue)) else other
             other = self._ensure_type(other)
 
-            return super(_TypedList, self).__add__(other)
+            return super().__add__(other)
 
         def __iadd__(self, other):
+            other = [] if isinstance(other, (NoneType, EmptyValue)) else other
             other = self._ensure_type(other)
 
-            return super(_TypedList, self).__iadd__(other)
+            return super().__iadd__(other)
 
         def append(self, other):
             self += [other]
@@ -1047,9 +1087,9 @@ def group_unified_files(files, unified_prefix, unified_suffix, files_per_unified
     ``a.cpp``, ``b.cpp``, and ``c.cpp`` separately, we compile a single file
     that looks approximately like::
 
-       #include "a.cpp"
-       #include "b.cpp"
-       #include "c.cpp"
+       # include "a.cpp"
+       # include "b.cpp"
+       # include "c.cpp"
 
     This function handles the details of generating names for the unified
     files, and determining which original source files go in which unified
@@ -1061,13 +1101,13 @@ def group_unified_files(files, unified_prefix, unified_suffix, files_per_unified
     dummy_fill_value = ("dummy",)
 
     def filter_out_dummy(iterable):
-        return six.moves.filter(lambda x: x != dummy_fill_value, iterable)
+        return filter(lambda x: x != dummy_fill_value, iterable)
 
     # From the itertools documentation, slightly modified:
     def grouper(n, iterable):
         "grouper(3, 'ABCDEFG', 'x') --> ABC DEF Gxx"
         args = [iter(iterable)] * n
-        return six.moves.zip_longest(fillvalue=dummy_fill_value, *args)
+        return itertools.zip_longest(fillvalue=dummy_fill_value, *args)
 
     for i, unified_group in enumerate(grouper(files_per_unified_file, files)):
         just_the_filenames = list(filter_out_dummy(unified_group))
@@ -1083,7 +1123,7 @@ def pair(iterable):
         [(1,2), (3,4), (5,6)]
     """
     i = iter(iterable)
-    return six.moves.zip_longest(i, i)
+    return itertools.zip_longest(i, i)
 
 
 def pairwise(iterable):
@@ -1110,15 +1150,42 @@ def expand_variables(s, variables):
     If a variable value is not a string, it is iterated and its items are
     joined with a whitespace."""
     result = ""
-    for s, name in pair(VARIABLES_RE.split(s)):
-        result += s
+    for text_part, name in pair(VARIABLES_RE.split(s)):
+        result += text_part
         value = variables.get(name)
         if not value:
             continue
-        if not isinstance(value, six.string_types):
+        if not isinstance(value, str):
             value = " ".join(value)
         result += value
     return result
+
+
+class ForwardingArgumentParser(argparse.ArgumentParser):
+    """
+    An argument parser with customized help generation when forwarding
+    arguments.
+    """
+
+    def add_forwarding_group(
+        self, title, dest, help, forwarding_help, default_type=list, **kwargs
+    ):
+        """
+        Add a group that captures all remaining arguments in order to pass them
+        down to another program.
+        """
+        group = self.add_argument_group(
+            title, description=f"-- --help {forwarding_help}", **kwargs
+        )
+
+        group.add_argument(
+            dest,
+            nargs=argparse.REMAINDER,
+            default=default_type(),
+            metavar=f"[--] {dest}...",
+            help=help,
+        )
+        return group
 
 
 class DefinesAction(argparse.Action):
@@ -1143,7 +1210,7 @@ class EnumStringComparisonError(Exception):
     pass
 
 
-class EnumString(six.text_type):
+class EnumString(str):
     """A string type that only can have a limited set of values, similarly to
     an Enum, and can only be compared against that set of values.
 
@@ -1166,13 +1233,13 @@ class EnumString(six.text_type):
                 "Can only compare with %s"
                 % ", ".join("'%s'" % v for v in self.POSSIBLE_VALUES)
             )
-        return super(EnumString, self).__eq__(other)
+        return super().__eq__(other)
 
     def __ne__(self, other):
         return not (self == other)
 
     def __hash__(self):
-        return super(EnumString, self).__hash__()
+        return super().__hash__()
 
     def __repr__(self):
         return f"{self.__class__.__name__}({str(self)!r})"
@@ -1183,17 +1250,17 @@ def _escape_char(c):
     # quoting could be done with either ' or ".
     if c == "'":
         return "\\'"
-    return six.text_type(c.encode("unicode_escape"))
+    return str(c.encode("unicode_escape"))
 
 
 def ensure_bytes(value, encoding="utf-8"):
-    if isinstance(value, six.text_type):
+    if isinstance(value, str):
         return value.encode(encoding)
     return value
 
 
 def ensure_unicode(value, encoding="utf-8"):
-    if isinstance(value, six.binary_type):
+    if isinstance(value, bytes):
         return value.decode(encoding)
     return value
 
@@ -1202,8 +1269,7 @@ def hexdump(buf):
     """
     Returns a list of hexdump-like lines corresponding to the given input buffer.
     """
-    assert six.PY3
-    off_format = "%0{}x ".format(len(str(len(buf))))
+    off_format = f"%0{len(str(len(buf)))}x "
     lines = []
     for off in range(0, len(buf), 16):
         line = off_format % off
@@ -1227,3 +1293,181 @@ def hexdump(buf):
         line += "|\n"
         lines.append(line)
     return lines
+
+
+def cpu_count():
+    """
+    Returns the number of CPUs available to us. This may be different than
+    `os.cpu_count()` because of affinity.
+
+    See the Python documentation for `os.cpu_count()`.
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        pass
+    if psutil:
+        try:
+            return len(psutil.Process().cpu_affinity())
+        except (AttributeError, OSError):
+            pass
+    return os.cpu_count()
+
+
+def macos_performance_cores():
+    """
+    Returns the number of performance cores on Mac OS
+
+    See the Python documentation for `os.cpu_count()`.
+    """
+    proc = subprocess.run(
+        ["sysctl", "-n", "hw.perflevel0.logicalcpu_max"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return -1
+    return int(proc.stdout.decode("ascii", "replace").strip())
+
+
+def ensure_l10n_central(command_context):
+    command_context.log(
+        logging.INFO,
+        "ensure_l10n_central",
+        {},
+        "Ensuring that the l10n-central repository exists and is up to date.",
+    )
+
+    # For nightly builds, we automatically check out missing localizations
+    # from firefox-l10n.  We never automatically check out in automation:
+    # automation builds check out revisions that have been signed-off by
+    # l10n drivers prior to use.
+    l10n_base_dir = Path(command_context.substs["L10NBASEDIR"])
+    moz_automation = os.environ.get("MOZ_AUTOMATION")
+    if moz_automation:
+        if not l10n_base_dir.exists():
+            raise MissingL10nError(
+                f"Automation requires l10n repositories to be checked out: {l10n_base_dir}"
+            )
+        else:
+            command_context.log(
+                logging.INFO,
+                "ensure_l10n_central",
+                {"l10n_base_dir": str(l10n_base_dir)},
+                f"Detected existing l10n-central checkout at {l10n_base_dir}",
+            )
+
+    nightly_build = command_context.substs.get("NIGHTLY_BUILD")
+    if nightly_build:
+        git = os.environ.get("GIT", "git")
+        if not l10n_base_dir.exists():
+            l10n_base_dir.mkdir(parents=True)
+            subprocess.run(
+                [
+                    git,
+                    "clone",
+                    "https://github.com/mozilla-l10n/firefox-l10n.git",
+                    str(l10n_base_dir),
+                    "--depth",
+                    "1",
+                ],
+                check=True,
+            )
+            command_context.log(
+                logging.INFO,
+                "ensure_l10n_central",
+                {"l10n_base_dir": str(l10n_base_dir)},
+                f"Successfully cloned firefox-l10n into {l10n_base_dir}",
+            )
+        elif not moz_automation:
+            command_context.log(
+                logging.INFO,
+                "ensure_l10n_central",
+                {"l10n_base_dir": str(l10n_base_dir)},
+                f"Detected existing l10n-central checkout at {l10n_base_dir}",
+            )
+        if not moz_automation:
+            if (l10n_base_dir / ".git").exists():
+                command_context.log(
+                    logging.INFO,
+                    "ensure_l10n_central",
+                    {"l10n_base_dir": str(l10n_base_dir)},
+                    f"Pulling latest l10n-central updates in {l10n_base_dir}",
+                )
+                subprocess.run(
+                    [git, "-C", str(l10n_base_dir), "pull", "--quiet"], check=True
+                )
+                command_context.log(
+                    logging.INFO,
+                    "ensure_l10n_central",
+                    {"l10n_base_dir": str(l10n_base_dir)},
+                    f"Successfully pulled latest updates in {l10n_base_dir}",
+                )
+            else:
+                raise NotAGitRepositoryError(
+                    f"Directory is not a git repository: {l10n_base_dir}"
+                )
+
+
+# Taskcluster API root URL (Firefox's production instance)
+TASKCLUSTER_ROOT_URL = "https://firefox-ci-tc.services.mozilla.com"
+
+
+def get_root_url(block_proxy=False):
+    if "TASKCLUSTER_PROXY_URL" in os.environ and not block_proxy:
+        return os.environ["TASKCLUSTER_PROXY_URL"].rstrip("/")
+
+    if "TASKCLUSTER_ROOT_URL" in os.environ:
+        return os.environ["TASKCLUSTER_ROOT_URL"].rstrip("/")
+
+    return TASKCLUSTER_ROOT_URL
+
+
+def get_taskcluster_client(service: str, block_proxy=False):
+    import taskcluster
+
+    if "TASKCLUSTER_PROXY_URL" in os.environ and not block_proxy:
+        options = {"rootUrl": os.environ["TASKCLUSTER_PROXY_URL"].rstrip("/")}
+    else:
+        options = taskcluster.optionsFromEnvironment({
+            "rootUrl": get_root_url(block_proxy)
+        })
+    return getattr(taskcluster, service[0].upper() + service[1:])(options)
+
+
+def find_task_from_index(index_paths):
+    """Search the Taskcluster index for an existing task.
+
+    Args:
+        index_paths: List of index paths to search
+
+    Returns:
+        str: Task ID if found and valid
+        None: If no valid task found
+    """
+    from taskcluster.exceptions import TaskclusterRestFailure
+
+    for index_path in index_paths:
+        try:
+            index = get_taskcluster_client("index")
+            task = index.findTask(index_path)
+            task_id = task["taskId"]
+
+            queue = get_taskcluster_client("queue")
+            response = queue.status(task_id)
+            status = response.get("status", {}) if response else {}
+
+            if not status or status.get("state") in ("exception", "failed"):
+                continue
+
+            return task_id
+        except (KeyError, TaskclusterRestFailure):
+            pass
+
+    return None
+
+
+def set_taskcluster_root_url():
+    if "TASKCLUSTER_ROOT_URL" not in os.environ:
+        os.environ["TASKCLUSTER_ROOT_URL"] = TASKCLUSTER_ROOT_URL

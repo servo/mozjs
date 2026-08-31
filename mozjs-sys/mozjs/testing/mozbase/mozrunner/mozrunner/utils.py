@@ -7,50 +7,12 @@
 """Utility functions for mozrunner"""
 
 import os
+import subprocess
 import sys
 
 import mozinfo
 
-__all__ = ["findInPath", "get_metadata_from_egg"]
-
-
-# python package method metadata by introspection
-try:
-    import pkg_resources
-
-    def get_metadata_from_egg(module):
-        ret = {}
-        try:
-            dist = pkg_resources.get_distribution(module)
-        except pkg_resources.DistributionNotFound:
-            return {}
-        if dist.has_metadata("PKG-INFO"):
-            key = None
-            value = ""
-            for line in dist.get_metadata("PKG-INFO").splitlines():
-                # see http://www.python.org/dev/peps/pep-0314/
-                if key == "Description":
-                    # descriptions can be long
-                    if not line or line[0].isspace():
-                        value += "\n" + line
-                        continue
-                    else:
-                        key = key.strip()
-                        value = value.strip()
-                        ret[key] = value
-
-                key, value = line.split(":", 1)
-                key = key.strip()
-                value = value.strip()
-                ret[key] = value
-        if dist.has_metadata("requires.txt"):
-            ret["Dependencies"] = "\n" + dist.get_metadata("requires.txt")
-        return ret
-
-except ImportError:
-    # package resources not avaialable
-    def get_metadata_from_egg(module):
-        return {}
+__all__ = ["findInPath"]
 
 
 def findInPath(fileName, path=os.environ["PATH"]):
@@ -104,7 +66,7 @@ def test_environment(
         ldLibraryPath = xrePath
 
     envVar = None
-    if mozinfo.isUnix:
+    if mozinfo.isLinux:
         envVar = "LD_LIBRARY_PATH"
     elif mozinfo.isMac:
         envVar = "DYLD_LIBRARY_PATH"
@@ -139,11 +101,12 @@ def test_environment(
     # override the user's choice here.  See bug 1049688.
     env.setdefault("MOZ_DISABLE_NONLOCAL_CONNECTIONS", "1")
 
-    # Set WebRTC logging in case it is not set yet
-    env.setdefault("MOZ_LOG", "signaling:3,mtransport:4,DataChannel:4,jsep:4")
-    env.setdefault("R_LOG_LEVEL", "6")
-    env.setdefault("R_LOG_DESTINATION", "stderr")
-    env.setdefault("R_LOG_VERBOSE", "1")
+    # Only enable verbose WebRTC logging in CI.
+    if "MOZ_AUTOMATION" in os.environ:
+        env.setdefault("MOZ_LOG", "signaling:3,mtransport:4,DataChannel:3,jsep:4")
+        env.setdefault("R_LOG_LEVEL", "6")
+        env.setdefault("R_LOG_DESTINATION", "stderr")
+        env.setdefault("R_LOG_VERBOSE", "1")
 
     # Ask NSS to use lower-security password encryption. See Bug 1594559
     env.setdefault("NSS_MAX_MP_PBE_ITERATION_COUNT", "10")
@@ -174,15 +137,13 @@ def test_environment(
 
             # Returns total system memory in kilobytes.
             if mozinfo.isWin:
-                # pylint --py3k W1619
-                totalMemory = (
-                    int(
-                        os.popen(
-                            "wmic computersystem get TotalPhysicalMemory"
-                        ).readlines()[1]
-                    )
-                    / 1024
-                )
+                argstring = "(Get-CimInstance -ClassName Win32_ComputerSystem).TotalPhysicalMemory / 1024"
+                args = ["powershell.exe", "-c", argstring]
+                output = subprocess.run(
+                    args, text=True, capture_output=True, check=True
+                ).stdout
+
+                totalMemory = int(output.strip())
             elif mozinfo.isMac:
                 # pylint --py3k W1619
                 totalMemory = (
@@ -210,7 +171,7 @@ def test_environment(
                 # lsanOptions.append("report_objects=1")
                 env["LSAN_OPTIONS"] = ":".join(lsanOptions)
 
-            if len(asanOptions):
+            if asanOptions:
                 env["ASAN_OPTIONS"] = ":".join(asanOptions)
 
         except OSError as err:
@@ -257,7 +218,7 @@ def get_stack_fixer_function(utilityPath, symbolsPath, hideErrors=False):
     if not mozinfo.info.get("debug"):
         return None
 
-    if os.getenv("MOZ_DISABLE_STACK_FIX", 0):
+    if os.getenv("MOZ_DISABLE_STACK_FIX"):
         print(
             "WARNING: No stack-fixing will occur because MOZ_DISABLE_STACK_FIX is set"
         )

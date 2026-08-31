@@ -1,5 +1,3 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -92,7 +90,13 @@ def try_link(
 #   conditional on the value of that function.
 @template
 def check_header(
-    header, language="C++", flags=None, includes=None, when=None, onerror=lambda: None
+    header,
+    language="C++",
+    body="",
+    flags=None,
+    includes=None,
+    when=None,
+    onerror=lambda: None,
 ):
     if when is None:
         when = always
@@ -105,6 +109,7 @@ def check_header(
 
     have_header = try_compile(
         includes=includes,
+        body=body,
         language=language,
         flags=flags,
         check_msg="for %s" % header,
@@ -300,7 +305,6 @@ def check_and_add_flags(
         elif mode == "assemble":
             lang, list_of_flags = {
                 c_compiler: ("C", flags_collection.asflags),
-                host_c_compiler: ("host C", flags_collection.host_asflags),
             }[c]
         elif mode == "link":
             lang, list_of_flags = {
@@ -331,6 +335,9 @@ def check_and_add_flags(
                         return c.try_link(host_linker_ldflags, *args, **kwargs)
 
                 tool = "linker"
+            elif mode == "assemble":
+                runner = c.try_compile
+                tool = "assembler"
             else:
                 runner = c.try_compile
                 tool = "compiler"
@@ -368,7 +375,7 @@ def warnings_flags():
 #   adds it to the list of warning flags unconditionally. This is only meant
 #   for add_warning().
 @template
-def check_and_add_warning(warning, compiler=None, when=None, check=True):
+def check_and_add_warning_impl(warning, compiler=None, when=None, check=True):
     # GCC and clang will fail if given an unknown warning option like
     # -Wfoobar. But later versions won't fail if given an unknown negated
     # warning option like -Wno-foobar. So when we are checking for support
@@ -386,6 +393,23 @@ def check_and_add_warning(warning, compiler=None, when=None, check=True):
     )
 
 
+# When changing this version, please check that no warning support have been
+# removed.
+clang_latest_release = dependable("22.1.0")
+
+
+@depends(c_compiler, clang_latest_release, when=moz_automation)
+def check_latest_release_version(compiler, clang_latest_release):
+    if (
+        compiler.type in ("clang", "clang-cl")
+        and compiler.version > clang_latest_release
+        # Don't error out on automation when using clang trunk (18.x is the first
+        # version where trunk is always y.0, and release y.1.*)
+        and not (compiler.version.major >= 18 and compiler.version.minor == 0)
+    ):
+        configure_error("latest clang release version must be updated")
+
+
 # Add the given warning to the list of warning flags for the build.
 # - `warning` is the warning flag (e.g. -Wfoo)
 # - `compiler` (optional) is the compiler to add the flag for (c_compiler or
@@ -393,17 +417,59 @@ def check_and_add_warning(warning, compiler=None, when=None, check=True):
 #   is added for both compilers.
 # - `when` (optional) is a @depends function or option name conditioning
 #   when the warning flag is wanted.
-
-
 @template
 def add_warning(warning, compiler=None, when=None):
-    check_and_add_warning(warning, compiler, when, check=False)
+    check_and_add_warning_impl(warning, compiler, when, check=False)
+
+
+# Add the given warning to the list of warning flags for the build.
+# - `warning` is the warning flag (e.g. -Wfoo)
+# - `compiler` (optional) is the compiler to add the flag for (c_compiler or
+#   cxx_compiler, from toolchain.configure). When omitted, the warning flag
+#   is added for both compilers.
+# - `when` (optional) is a @depends function or option name conditioning
+#   when the warning flag is wanted.
+# - if min_clang_version is set, do not run the check for clang compiler, use
+#   know result instead. Possibly rely on max_clang_version in that case to
+#   bound the version check.
+@template
+def check_and_add_warning(
+    warning, compiler=None, when=None, max_clang_version=None, min_clang_version=None
+):
+    if when is None:
+        when = always
+    if min_clang_version is None and max_clang_version is None:
+        return check_and_add_warning_impl(warning, compiler, when, check=True)
+
+    min_clang_version = min_clang_version or "0.0.0"
+    max_clang_version = (
+        dependable(max_clang_version) if max_clang_version else clang_latest_release
+    )
+    is_compatible_clang = depends(c_compiler, max_clang_version)(
+        lambda c, max_clang_version: c.type in ("clang", "clang-cl")
+        and min_clang_version <= c.version <= max_clang_version
+    )
+    is_clang = depends(c_compiler.type)(lambda t: t in ("clang", "clang-cl"))
+    res_clang = check_and_add_warning_impl(
+        warning, compiler, when & is_compatible_clang, check=False
+    )
+    res_other = check_and_add_warning_impl(
+        warning, compiler, when & (building_with_gcc | ~is_compatible_clang), check=True
+    )
+    return res_clang + res_other
 
 
 # Like the warning checks above, but for general compilation flags.
 @dependable
 def compilation_flags():
-    return namespace(cflags=[], cxxflags=[], host_cflags=[], host_cxxflags=[])
+    return namespace(
+        cflags=[],
+        cxxflags=[],
+        host_cflags=[],
+        host_cxxflags=[],
+        cmflags=[],
+        cmmflags=[],
+    )
 
 
 # Tests whether GCC or clang support the given compilation flag; if the flag
@@ -441,7 +507,7 @@ def add_flag(warning, compiler=None, when=None):
 # Like the compilation checks above, but for asm flags.
 @dependable
 def asm_flags():
-    return namespace(asflags=[], host_asflags=[])
+    return namespace(asflags=[])
 
 
 # Tests the given assembler flag is supported; if the flag
@@ -470,6 +536,11 @@ def linker_flags():
     return namespace(ldflags=[], host_ldflags=[])
 
 
+@dependable
+def dso_flags():
+    return namespace(ldopts=[])
+
+
 # Tests the given linker flag is supported; if the flag
 # is supported, add it to the list of compilation flags for the build.
 # - `flag` is the flag to test
@@ -484,6 +555,7 @@ def check_and_add_linker_flag(flag, compiler=None, when=None, check=True):
         flag,
         linker_flags,
         [flag],
+        compiler=compiler,
         when=when,
         check=check,
         mode="link",
@@ -502,6 +574,7 @@ def check_and_add_linker_optimize_flag(flag, compiler=None, when=None, check=Tru
         flag,
         linker_optimize_flags,
         [flag],
+        compiler=compiler,
         when=when,
         check=check,
         mode="link",

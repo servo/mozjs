@@ -11,6 +11,7 @@
 
 #if !UCONFIG_NO_FORMATTING
 
+#include "gregoimp.h"
 #include "umutex.h"
 #include "coptccal.h"
 #include "cecal.h"
@@ -57,102 +58,19 @@ CopticCalendar::getType() const
 //-------------------------------------------------------------------------
 
 int32_t
-CopticCalendar::handleGetExtendedYear()
+CopticCalendar::handleGetExtendedYear(UErrorCode& status)
 {
-    int32_t eyear;
-    if (newerField(UCAL_EXTENDED_YEAR, UCAL_YEAR) == UCAL_EXTENDED_YEAR) {
-        eyear = internalGet(UCAL_EXTENDED_YEAR, 1); // Default to year 1
-    } else {
-        // The year defaults to the epoch start, the era to CE
-        int32_t era = internalGet(UCAL_ERA, CE);
-        if (era == BCE) {
-            eyear = 1 - internalGet(UCAL_YEAR, 1); // Convert to extended year
-        } else {
-            eyear = internalGet(UCAL_YEAR, 1); // Default to year 1
-        }
-    }
-    return eyear;
-}
-
-void
-CopticCalendar::handleComputeFields(int32_t julianDay, UErrorCode &/*status*/)
-{
-    int32_t eyear, month, day, era, year;
-    jdToCE(julianDay, getJDEpochOffset(), eyear, month, day);
-
-    if (eyear <= 0) {
-        era = BCE;
-        year = 1 - eyear;
-    } else {
-        era = CE;
-        year = eyear;
-    }
-
-    internalSet(UCAL_EXTENDED_YEAR, eyear);
-    internalSet(UCAL_ERA, era);
-    internalSet(UCAL_YEAR, year);
-    internalSet(UCAL_MONTH, month);
-    internalSet(UCAL_ORDINAL_MONTH, month);
-    internalSet(UCAL_DATE, day);
-    internalSet(UCAL_DAY_OF_YEAR, (30 * month) + day);
-}
-
-constexpr uint32_t kCopticRelatedYearDiff = 284;
-
-int32_t CopticCalendar::getRelatedYear(UErrorCode &status) const
-{
-    int32_t year = get(UCAL_EXTENDED_YEAR, status);
     if (U_FAILURE(status)) {
         return 0;
     }
-    return year + kCopticRelatedYearDiff;
-}
-
-void CopticCalendar::setRelatedYear(int32_t year)
-{
-    // set extended year
-    set(UCAL_EXTENDED_YEAR, year - kCopticRelatedYearDiff);
-}
-
-/**
- * The system maintains a static default century start date and Year.  They are
- * initialized the first time they are used.  Once the system default century date 
- * and year are set, they do not change.
- */
-static UDate           gSystemDefaultCenturyStart       = DBL_MIN;
-static int32_t         gSystemDefaultCenturyStartYear   = -1;
-static icu::UInitOnce  gSystemDefaultCenturyInit        {};
-
-
-static void U_CALLCONV initializeSystemDefaultCentury() {
-    UErrorCode status = U_ZERO_ERROR;
-    CopticCalendar calendar(Locale("@calendar=coptic"), status);
-    if (U_SUCCESS(status)) {
-        calendar.setTime(Calendar::getNow(), status);
-        calendar.add(UCAL_YEAR, -80, status);
-        gSystemDefaultCenturyStart = calendar.getTime(status);
-        gSystemDefaultCenturyStartYear = calendar.get(UCAL_YEAR, status);
+    if (newerField(UCAL_EXTENDED_YEAR, UCAL_YEAR) == UCAL_EXTENDED_YEAR) {
+        return internalGet(UCAL_EXTENDED_YEAR, 1); // Default to year 1
     }
-    // We have no recourse upon failure unless we want to propagate the failure
-    // out.
+    // The year defaults to the epoch start
+    return internalGet(UCAL_YEAR, 1); // Default to year 1
 }
 
-UDate
-CopticCalendar::defaultCenturyStart() const
-{
-    // lazy-evaluate systemDefaultCenturyStart
-    umtx_initOnce(gSystemDefaultCenturyInit, &initializeSystemDefaultCentury);
-    return gSystemDefaultCenturyStart;
-}
-
-int32_t
-CopticCalendar::defaultCenturyStartYear() const
-{
-    // lazy-evaluate systemDefaultCenturyStart
-    umtx_initOnce(gSystemDefaultCenturyInit, &initializeSystemDefaultCentury);
-    return gSystemDefaultCenturyStartYear;
-}
-
+IMPL_SYSTEM_DEFAULT_CENTURY(CopticCalendar, "@calendar=coptic")
 
 int32_t
 CopticCalendar::getJDEpochOffset() const
@@ -160,21 +78,29 @@ CopticCalendar::getJDEpochOffset() const
     return COPTIC_JD_EPOCH_OFFSET;
 }
 
+int32_t CopticCalendar::extendedYearToEra(int32_t extendedYear) const {
+    return CE;
+}
 
-#if 0
-// We do not want to introduce this API in ICU4C.
-// It was accidentally introduced in ICU4J as a public API.
-
-//-------------------------------------------------------------------------
-// Calendar system Conversion methods...
-//-------------------------------------------------------------------------
+int32_t CopticCalendar::extendedYearToYear(int32_t extendedYear) const {
+    return extendedYear;
+}
 
 int32_t
-CopticCalendar::copticToJD(int32_t year, int32_t month, int32_t day)
+CopticCalendar::handleGetLimit(UCalendarDateFields field, ELimitType limitType) const
 {
-    return CECalendar::ceToJD(year, month, day, COPTIC_JD_EPOCH_OFFSET);
+    if (field == UCAL_ERA) {
+        return 1; // Only one era, era is always 1
+    }
+    return CECalendar::handleGetLimit(field, limitType);
 }
-#endif
+
+int32_t
+CopticCalendar::getRelatedYearDifference() const {
+    constexpr int32_t kCopticCalendarRelatedYearDifference = 284;
+    return kCopticCalendarRelatedYearDifference;
+}
+
 
 U_NAMESPACE_END
 

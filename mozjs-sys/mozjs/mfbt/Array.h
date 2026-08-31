@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,7 +7,7 @@
 #ifndef mozilla_Array_h
 #define mozilla_Array_h
 
-#include <stddef.h>
+#include <cstddef>
 
 #include <iterator>
 #include <ostream>
@@ -22,7 +20,7 @@
 namespace mozilla {
 
 template <typename T, size_t _Length>
-class Array {
+class MOZ_GSL_OWNER Array {
   T mArr[_Length];
 
  public:
@@ -39,14 +37,14 @@ class Array {
                   "parameter Length");
   }
 
-  T& operator[](size_t aIndex) {
+  constexpr T& operator[](size_t aIndex) MOZ_LIFETIME_BOUND {
     if (MOZ_UNLIKELY(aIndex >= Length)) {
       detail::InvalidArrayIndex_CRASH(aIndex, Length);
     }
     return mArr[aIndex];
   }
 
-  const T& operator[](size_t aIndex) const {
+  constexpr const T& operator[](size_t aIndex) const MOZ_LIFETIME_BOUND {
     if (MOZ_UNLIKELY(aIndex >= Length)) {
       detail::InvalidArrayIndex_CRASH(aIndex, Length);
     }
@@ -74,6 +72,9 @@ class Array {
   iterator end() { return mArr + Length; }
   constexpr const_iterator end() const { return mArr + Length; }
   constexpr const_iterator cend() const { return end(); }
+
+  // Method for std::size.
+  constexpr size_t size() const { return Length; }
 
   // Methods for reverse iterating.
   reverse_iterator rbegin() { return reverse_iterator(end()); }

@@ -64,7 +64,6 @@ void AssemblerRISCVA::amomaxu_w(bool aq, bool rl, Register rd, Register rs1,
 }
 
 // RV64A Standard Extension (in addition to RV32A)
-#ifdef JS_CODEGEN_RISCV64
 void AssemblerRISCVA::lr_d(bool aq, bool rl, Register rd, Register rs1) {
   GenInstrRAtomic(0b00010, aq, rl, 0b011, rd, rs1, zero_reg);
 }
@@ -118,6 +117,6 @@ void AssemblerRISCVA::amomaxu_d(bool aq, bool rl, Register rd, Register rs1,
                                 Register rs2) {
   GenInstrRAtomic(0b11100, aq, rl, 0b011, rd, rs1, rs2);
 }
-#endif
+
 }  // namespace jit
 }  // namespace js

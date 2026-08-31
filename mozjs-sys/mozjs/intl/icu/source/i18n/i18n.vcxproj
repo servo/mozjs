@@ -35,9 +35,8 @@
     </Midl>
     <ClCompile>
       <PreprocessorDefinitions>U_ATTRIBUTE_DEPRECATED=;U_I18N_IMPLEMENTATION;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <DisableLanguageExtensions>false</DisableLanguageExtensions>
       <WarningLevel>Level3</WarningLevel>
-      <AdditionalIncludeDirectories>..\..\include;..\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\common;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <CompileAs>Default</CompileAs>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
       <PrecompiledHeaderOutputFile>$(OutDir)/icuin.pch</PrecompiledHeaderOutputFile>
@@ -55,7 +54,6 @@
   <!-- Options that are common to all 'Debug' project configurations -->
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
-      <BrowseInformation>true</BrowseInformation>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
     </ClCompile>
     <Link>
@@ -174,6 +172,17 @@
     <ClCompile Include="measunit.cpp" />
     <ClCompile Include="measunit_extra.cpp" />
     <ClCompile Include="measure.cpp" />
+    <ClCompile Include="messageformat2.cpp" />
+    <ClCompile Include="messageformat2_arguments.cpp" />
+    <ClCompile Include="messageformat2_checker.cpp" />
+    <ClCompile Include="messageformat2_data_model.cpp" />
+    <ClCompile Include="messageformat2_errors.cpp" />
+    <ClCompile Include="messageformat2_evaluation.cpp" />
+    <ClCompile Include="messageformat2_formattable.cpp" />
+    <ClCompile Include="messageformat2_formatter.cpp" />
+    <ClCompile Include="messageformat2_function_registry.cpp" />
+    <ClCompile Include="messageformat2_parser.cpp" />
+    <ClCompile Include="messageformat2_serializer.cpp" />
     <ClCompile Include="msgfmt.cpp" />
     <ClCompile Include="nfrs.cpp" />
     <ClCompile Include="nfrule.cpp" />

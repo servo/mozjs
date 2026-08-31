@@ -6,24 +6,20 @@
 #include "CustomMatchers.h"
 
 void TrivialCtorDtorChecker::registerMatchers(MatchFinder *AstMatcher) {
-  AstMatcher->addMatcher(cxxRecordDecl(hasTrivialCtorDtor()).bind("node"),
-                         this);
+  // We need to accept non-constexpr trivial constructors as well. This occurs
+  // when a struct contains pod members, which will not be initialized. As
+  // constexpr values are initialized, the constructor is non-constexpr.
+  AstMatcher->addMatcher(
+      cxxRecordDecl(hasTrivialCtorDtor(), hasDefinition(),
+                    unless(allOf(hasTrivialDestructor(),
+                                 anyOf(hasTrivialDefaultConstructor(),
+                                       hasConstexprDefaultConstructor()))))
+          .bind("node"),
+      this);
 }
 
 void TrivialCtorDtorChecker::check(const MatchFinder::MatchResult &Result) {
   const char *Error = "class %0 must have trivial constructors and destructors";
   const CXXRecordDecl *Node = Result.Nodes.getNodeAs<CXXRecordDecl>("node");
-
-  if (!Node->hasDefinition()) {
-    return;
-  }
-
-  // We need to accept non-constexpr trivial constructors as well. This occurs
-  // when a struct contains pod members, which will not be initialized. As
-  // constexpr values are initialized, the constructor is non-constexpr.
-  bool BadCtor = !(Node->hasConstexprDefaultConstructor() ||
-                   Node->hasTrivialDefaultConstructor());
-  bool BadDtor = !Node->hasTrivialDestructor();
-  if (BadCtor || BadDtor)
-    diag(Node->getBeginLoc(), Error, DiagnosticIDs::Error) << Node;
+  diag(Node->getBeginLoc(), Error, DiagnosticIDs::Error) << Node;
 }

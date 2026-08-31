@@ -10,10 +10,9 @@ from collections.abc import Iterable
 import gyp
 import gyp.msvs_emulation
 import mozpack.path as mozpath
-import six
+import mozshellutil
 from mozpack.files import FileFinder
 
-from mozbuild import shellutil
 from mozbuild.util import expand_variables
 
 from .context import VARIABLES, ObjDirPath, SourcePath, TemplateContext
@@ -74,7 +73,7 @@ class GypContext(TemplateContext):
     """
 
     def __init__(self, config, relobjdir):
-        self._relobjdir = relobjdir
+        self.relobjdir = relobjdir
         TemplateContext.__init__(
             self, template="Gyp", allowed_variables=VARIABLES, config=config
         )
@@ -227,7 +226,7 @@ def process_gyp_result(
         elif spec["type"] in ("static_library", "shared_library", "executable"):
             # Remove leading 'lib' from the target_name if any, and use as
             # library name.
-            name = six.ensure_text(spec["target_name"])
+            name = spec["target_name"]
             if spec["type"] in ("static_library", "shared_library"):
                 if name.startswith("lib"):
                     name = name[3:]
@@ -346,6 +345,7 @@ def process_gyp_result(
                 }
                 variables = (suffix_map[e] for e in extensions if e in suffix_map)
                 for var in variables:
+                    pending_flag = None
                     for f in flags:
                         # We may be getting make variable references out of the
                         # gyp data, and we don't want those in emitted data, so
@@ -353,11 +353,30 @@ def process_gyp_result(
                         f = expand_variables(f, config.substs).split()
                         if not f:
                             continue
+
+                        def add_flag(context, flag):
+                            nonlocal pending_flag
+
+                            if flag == "-Xclang":
+                                assert pending_flag is None
+                                pending_flag = flag
+                                return
+
+                            if not var.startswith("CM") and flag.startswith("-W"):
+                                dest = context["COMPILE_FLAGS"][f"WARNINGS_{var}"]
+                            else:
+                                dest = context[var]
+                            if pending_flag:
+                                dest.append(pending_flag)
+                                pending_flag = None
+                            dest.append(flag)
+
                         # the result may be a string or a list.
-                        if isinstance(f, six.string_types):
-                            context[var].append(f)
+                        if isinstance(f, str):
+                            add_flag(context, f)
                         else:
-                            context[var].extend(f)
+                            for elem in f:
+                                add_flag(context, elem)
         else:
             # Ignore other types because we don't have
             # anything using them, and we're not testing them. They can be
@@ -398,7 +417,7 @@ def load_gyp(*args):
     return flat_list, targets, data
 
 
-class GypProcessor(object):
+class GypProcessor:
     """Reads a gyp configuration in the background using the given executor and
     emits GypContexts for the backend to process.
 
@@ -432,12 +451,10 @@ class GypProcessor(object):
         if config.substs["CC_TYPE"] == "clang-cl":
             # This isn't actually used anywhere in this generator, but it's needed
             # to override the registry detection of VC++ in gyp.
-            os.environ.update(
-                {
-                    "GYP_MSVS_OVERRIDE_PATH": "fake_path",
-                    "GYP_MSVS_VERSION": config.substs["MSVS_VERSION"],
-                }
-            )
+            os.environ.update({
+                "GYP_MSVS_OVERRIDE_PATH": "fake_path",
+                "GYP_MSVS_VERSION": config.substs["MSVS_VERSION"],
+            })
 
         params = {
             "parallel": False,
@@ -449,7 +466,7 @@ class GypProcessor(object):
         # floating-point ABI on arm.
         os.environ.update(
             CC=config.substs["CC"],
-            CFLAGS=shellutil.quote(*config.substs["CC_BASE_FLAGS"]),
+            CFLAGS=mozshellutil.quote(*config.substs["CC_BASE_FLAGS"]),
         )
 
         if gyp_dir_attrs.no_chromium:

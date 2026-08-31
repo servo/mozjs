@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -82,7 +80,12 @@ class MOZ_STACK_CLASS LexicalScopeEmitter {
   const EmitterScope& emitterScope() const { return *emitterScope_; }
 
   [[nodiscard]] bool emitScope(ScopeKind kind,
-                               LexicalScope::ParserData* bindings);
+                               LexicalScope::ParserData* bindings
+#ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
+                               ,
+                               BlockKind blockKind = BlockKind::Other
+#endif
+  );
   [[nodiscard]] bool emitEmptyScope();
 
   [[nodiscard]] bool emitEnd();

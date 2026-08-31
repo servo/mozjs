@@ -26,7 +26,7 @@ def relativize(path, base=None):
     return os.path.relpath(path, base)
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def files_in(path):
     return {p.lower(): os.path.join(path, p) for p in os.listdir(path)}
 
@@ -46,16 +46,9 @@ def search_path(paths, path):
 # Filter-out -std= flag from the preprocessor command, as we're not preprocessing
 # C or C++, and the command would fail with the flag.
 def filter_preprocessor(cmd):
-    prev = None
     for arg in cmd:
-        if arg == "-Xclang":
-            prev = arg
-            continue
-        if not arg.startswith("-std="):
-            if prev:
-                yield prev
+        if not arg.startswith(("-std=", "-std:")):
             yield arg
-        prev = None
 
 
 # Preprocess all the direct and indirect inputs of midl, and put all the
@@ -114,7 +107,7 @@ def preprocess(base, input, flags):
         subprocess.run(command, stdout=open(preprocessed, "wb"), check=True)
         # Read the resulting file, and search for imports, that we'll want to
         # preprocess as well.
-        with open(preprocessed, "r") as fh:
+        with open(preprocessed) as fh:
             for line in fh:
                 if not line.startswith("import"):
                     continue
@@ -164,7 +157,7 @@ def midl(out, input, *flags):
         command.append("-Oicf")
         command.append(relativize(input, base))
         print("Executing:", " ".join(command))
-        result = subprocess.run(command, cwd=base)
+        result = subprocess.run(command, check=False, cwd=base)
         return result.returncode
     finally:
         if tmpdir:
@@ -211,7 +204,7 @@ def merge_dlldata(out, *inputs):
             # If for some reason, we don't get lines that are entirely different
             # from each other, we have some unexpected input.
             print(
-                "Error while merging dlldata. Last lines read: {}".format(lines),
+                f"Error while merging dlldata. Last lines read: {lines}",
                 file=sys.stderr,
             )
             return 1

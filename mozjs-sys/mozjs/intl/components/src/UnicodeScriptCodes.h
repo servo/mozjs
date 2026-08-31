@@ -9,35 +9,30 @@
  */
 
 /*
- * Created on Tue Oct 25 06:53:25 2022 from UCD data files with version info:
+ * Created on Mon Dec 15 17:23:16 2025 from UCD data files with version info:
  *
 
 # Unicode Character Database
-# Date: 2022-09-02
-# © 2022 Unicode®, Inc.
+# Date: 2025-08-15
+# © 2025 Unicode®, Inc.
 # Unicode and the Unicode Logo are registered trademarks of Unicode, Inc. in the U.S. and other countries.
-# For terms of use, see https://www.unicode.org/terms_of_use.html
+# For terms of use and license, see https://www.unicode.org/terms_of_use.html
 #
 # For documentation, see the following:
 # NamesList.html
 # UAX #38, "Unicode Han Database (Unihan)"
+# UAX #42, "Unicode Character Database in XML"
 # UAX #44, "Unicode Character Database"
 # UTS #51, "Unicode Emoji"
+# UAX #57, "Unicode Egyptian Hieroglyph Database"
 #
-# The UAXes and UTS #51 can be accessed at https://www.unicode.org/versions/Unicode15.0.0/
+# The UAXes and UTS #51 can be accessed at https://www.unicode.org/versions/Unicode17.0.0/
 
-This directory contains the final data files
-for the Unicode Character Database, for Version 15.0.0 of the Unicode Standard.
+This directory contains final data files
+for the Unicode Character Database, for Version 17.0.0 of the Unicode Standard.
 
-# IdentifierStatus.txt
-# Date: 2022-08-26, 16:49:09 GMT
-
-#
 # Unihan_Variants.txt
-# Date: 2022-08-01 16:36:07 GMT [JHJ]
-
-# VerticalOrientation-17.txt
-# Date: 2016-10-20, 07:00:00 GMT [EM, KI, LI]
+# Date: 2025-07-24 00:00:00 GMT [KL]
 
  *
  * * * * * This file contains MACHINE-GENERATED DATA, do not edit! * * * * *
@@ -248,8 +243,21 @@ enum class Script : int16_t {
   VITHKUQI = 197,
   KAWI = 198,
   NAG_MUNDARI = 199,
+  ARABIC_NASTALIQ = 200,
+  GARAY = 201,
+  GURUNG_KHEMA = 202,
+  KIRAT_RAI = 203,
+  OL_ONAL = 204,
+  SUNUWAR = 205,
+  TODHRI = 206,
+  TULU_TIGALARI = 207,
+  BERIA_ERFE = 208,
+  SIDETIC = 209,
+  TAI_YO = 210,
+  TOLONG_SIKI = 211,
+  TRADITIONAL_HAN_WITH_LATIN = 212,
 
-  NUM_SCRIPT_CODES = 200,
+  NUM_SCRIPT_CODES = 213,
 
   INVALID = -1
 };

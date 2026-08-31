@@ -3,14 +3,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-ifeq (,$(MAKE_VERSION))
-$(error GNU Make is required)
-endif
-make_min_ver := 3.81
-ifneq ($(make_min_ver),$(firstword $(sort $(make_min_ver) $(MAKE_VERSION))))
-$(error GNU Make $(make_min_ver) or higher is required)
-endif
-
 export TOPLEVEL_BUILD := 1
 
 default::
@@ -24,18 +16,14 @@ endif
 include $(topsrcdir)/config/config.mk
 
 ifneq (mobile/android,$(MOZ_BUILD_APP))
-# We only want to generate buildid.h once, during the export phase.
-ifeq ($(MAKECMDGOALS),buildid.h)
-$(MDDEPDIR)/buildid.h.stub: FORCE
-endif
-ifeq ($(MAKECMDGOALS),source-repo.h)
-$(MDDEPDIR)/source-repo.h.stub: FORCE
+# We only want to generate buildid.h once, during the (recurse) export phase.
+# faster make build the files explicitly so also match thoses
+ifneq ($(filter $(MAKECMDGOALS),recurse_export buildid.h source-repo.h),)
+$(MDDEPDIR)/buildid.h.stub $(MDDEPDIR)/source-repo.h.stub: FORCE
 endif
 endif
 source-repo.h: $(MDDEPDIR)/source-repo.h.stub
 buildid.h: $(MDDEPDIR)/buildid.h.stub
-# Add explicit dependencies that moz.build can't declare yet.
-build/$(MDDEPDIR)/application.ini.stub: source-repo.h buildid.h
 
 BUILD_BACKEND_FILES := $(addprefix backend.,$(addsuffix Backend,$(BUILD_BACKENDS)))
 
@@ -55,53 +43,11 @@ CLOBBER: $(topsrcdir)/CLOBBER
 	@exit 1
 endif
 
-install_manifests := \
-  $(addprefix dist/,branding include public private xpi-stage) \
-  _tests \
-  $(NULL)
-# Skip the dist/bin install manifest when using the hybrid
-# FasterMake/RecursiveMake backend. This is a hack until bug 1241744 moves
-# xpidl handling to FasterMake in that case, mechanically making the dist/bin
-# install manifest non-existent (non-existent manifests being skipped)
-ifeq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
-install_manifests += dist/bin
-endif
+# Consumed by backend-emitted install manifest rules.
 install_manifest_depends = \
   CLOBBER \
   $(BUILD_BACKEND_FILES) \
   $(NULL)
-
-.PHONY: install-manifests
-install-manifests: $(addprefix install-,$(install_manifests))
-
-# If we're using the hybrid FasterMake/RecursiveMake backend, we want
-# to recurse in the faster/ directory in parallel of install manifests.
-ifneq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
-install-manifests: faster
-.PHONY: faster
-faster:
-	$(MAKE) -C faster FASTER_RECURSIVE_MAKE=1
-endif
-
-.PHONY: $(addprefix install-,$(install_manifests))
-$(addprefix install-,$(install_manifests)): install-%: $(install_manifest_depends)
-ifneq (,$(filter FasterMake+RecursiveMake,$(BUILD_BACKENDS)))
-	@# If we're using the hybrid FasterMake/RecursiveMake backend, we want
-	@# to ensure the FasterMake end doesn't have install manifests for the
-	@# same directory, because that would blow up
-	$(if $(wildcard _build_manifests/install/$(subst /,_,$*)),$(if $(wildcard faster/install_$(subst /,_,$*)*),$(error FasterMake and RecursiveMake ends of the hybrid build system want to handle $*)))
-endif
-	$(foreach manifest,$(wildcard _build_manifests/install/$(subst /,_,$*)),$(call py_action,process_install_manifest $*,$(if $(filter copy,$(NSDISTMODE)),--no-symlinks )--track install_$(subst /,_,$*).track $* $(manifest)))
-
-# Dummy wrapper rule to allow the faster backend to piggy back
-$(addprefix install-,$(subst /,_,$(filter dist/%,$(install_manifests)))): install-dist_%: install-dist/% ;
-
-.PHONY: install-tests
-install-tests: install-test-files
-
-.PHONY: install-test-files
-install-test-files:
-	$(call py_action,process_install_manifest test/files,$(if $(filter copy,$(NSDISTMODE)),--no-symlinks )--track install__test_files.track _tests _build_manifests/install/_test_files)
 
 include $(topsrcdir)/build/moz-automation.mk
 
@@ -112,7 +58,7 @@ recurse_pre-export:
 # the interesting ones to be done.
 recurse_pre-export: install-manifests
 binaries::
-	@$(MAKE) install-manifests install_manifests=dist/include
+	@$(MAKE) install-manifests-binaries
 
 ifdef BUILD_VERBOSE_LOG
 verbose_flag = -v
@@ -123,11 +69,10 @@ recurse_artifact:
 
 ifdef MOZ_ANDROID_FAT_AAR_ARCHITECTURES
 recurse_android-fat-aar-artifact:
-	$(call py_action,fat_aar,\
-    $(addprefix --armeabi-v7a $(MOZ_FETCHES_DIR)/,$(MOZ_ANDROID_FAT_AAR_ARMEABI_V7A)) \
-    $(addprefix --arm64-v8a $(MOZ_FETCHES_DIR)/,$(MOZ_ANDROID_FAT_AAR_ARM64_V8A)) \
-    $(addprefix --x86 $(MOZ_FETCHES_DIR)/,$(MOZ_ANDROID_FAT_AAR_X86)) \
-    $(addprefix --x86-64 $(MOZ_FETCHES_DIR)/,$(MOZ_ANDROID_FAT_AAR_X86_64)) \
+	$(call py_action,fat_aar,$(MOZ_ANDROID_FAT_AAR_ARCHITECTURES) \
+    $(if $(MOZ_ANDROID_FAT_AAR_ARMEABI_V7A),--armeabi-v7a $(MOZ_ANDROID_FAT_AAR_ARMEABI_V7A)) \
+    $(if $(MOZ_ANDROID_FAT_AAR_ARM64_V8A),--arm64-v8a $(MOZ_ANDROID_FAT_AAR_ARM64_V8A)) \
+    $(if $(MOZ_ANDROID_FAT_AAR_X86_64),--x86-64 $(MOZ_ANDROID_FAT_AAR_X86_64)) \
     --distdir $(abspath $(DIST)/fat-aar))
 endif
 
@@ -136,7 +81,7 @@ ifeq ($(MOZ_BUILD_APP),mobile/android)
 recurse_android-stage-package: stage-package
 
 recurse_android-archive-geckoview:
-	GRADLE_INVOKED_WITHIN_MACH_BUILD=1 $(topsrcdir)/mach --log-no-times android archive-geckoview
+	GRADLE_INVOKED_WITHIN_MACH_BUILD=1 $(topsrcdir)/mach --log-no-times android archive-geckoview  $(if $(MOZ_AUTOMATION),--no-configuration-cache)
 endif
 
 ifdef MOZ_WIDGET_TOOLKIT
@@ -186,21 +131,21 @@ symbolsarchive: prepsymbolsarchive
 	$(call py_action,symbols_archive $(SYMBOL_ARCHIVE_BASENAME).zip,'$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip' \
                                      $(abspath $(DIST)/crashreporter-symbols))
 
-ifdef MOZ_CRASHREPORTER
 # Set MOZ_ENABLE_FULL_SYMBOLS to enable generation and upload of the full
 # crashreporter symbols archives
 ifdef MOZ_ENABLE_FULL_SYMBOLS
 buildsymbols: symbolsfullarchive symbolsarchive
 else
+ifdef MOZ_CRASHREPORTER
 buildsymbols: symbolsarchive
-endif # MOZ_ENABLE_FULL_SYMBOLS
 else
 buildsymbols:
 	@echo "Skipping symbols generation because MOZ_CRASHREPORTER is not set."
-endif
+endif # MOZ_CRASHREPORTER
+endif # MOZ_ENABLE_FULL_SYMBOLS
 
 uploadsymbols:
-ifdef MOZ_CRASHREPORTER
+ifdef MOZ_ENABLE_FULL_SYMBOLS
 	$(PYTHON3) -u $(topsrcdir)/toolkit/crashreporter/tools/upload_symbols.py '$(DIST)/$(PKG_PATH)$(SYMBOL_FULL_ARCHIVE_BASENAME).tar.zst'
 endif
 
@@ -213,7 +158,7 @@ ifdef JS_STANDALONE
 check-%:
 	$(MAKE) -C js/src $@
 
-source-package install:
+install:
 	$(MAKE) -C js/src $@
 
 # Every export rule depends on config/export, but the rule for config/export

@@ -1,5 +1,3 @@
-# -*- Mode: python; c-basic-offset: 4; indent-tabs-mode: nil; tab-width: 40 -*-
-# vim: set filetype=python:
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -124,7 +122,7 @@ with only_when(building_with_gnu_compatible_cc):
     def check_std_atomic_requirements(flag=None, when=None):
         return try_link(
             includes=["cstdint", "atomic"],
-            body="std::atomic<uint64_t> foo; foo = 1;",
+            body="std::atomic<double> foo; foo = 1;",
             flags=flag or [],
             when=when,
         )

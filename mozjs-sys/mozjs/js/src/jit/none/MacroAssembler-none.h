@@ -1,16 +1,13 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_none_MacroAssembler_none_h
 #define jit_none_MacroAssembler_none_h
 
-#include <iterator>
-
 #include "jit/MoveResolver.h"
 #include "jit/none/Assembler-none.h"
+#include "jit/shared/IonAssemblerBuffer.h"
 #include "wasm/WasmCodegenTypes.h"
 #include "wasm/WasmTypeDecls.h"
 
@@ -65,6 +62,8 @@ class MacroAssemblerNone : public Assembler {
   static bool SupportsFloatingPoint() { return false; }
   static bool SupportsUnalignedAccesses() { return false; }
   static bool SupportsFastUnalignedFPAccesses() { return false; }
+  static bool SupportsFloat64To16() { return false; }
+  static bool SupportsFloat32To16() { return false; }
 
   void executableCopy(void*, bool = true) { MOZ_CRASH(); }
   void copyJumpRelocationTable(uint8_t*) { MOZ_CRASH(); }
@@ -95,7 +94,7 @@ class MacroAssemblerNone : public Assembler {
   void nop() { MOZ_CRASH(); }
   void breakpoint() { MOZ_CRASH(); }
   void abiret() { MOZ_CRASH(); }
-  void ret() { MOZ_CRASH(); }
+  BufferOffset ret() { MOZ_CRASH(); }
 
   CodeOffset toggledJump(Label*) { MOZ_CRASH(); }
   CodeOffset toggledCall(JitCode*, bool) { MOZ_CRASH(); }
@@ -225,6 +224,10 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T>
+  FaultingCodeOffset loadFloat16(T, FloatRegister, Register) {
+    MOZ_CRASH();
+  }
+  template <typename T>
   FaultingCodeOffset loadFloat32(T, FloatRegister) {
     MOZ_CRASH();
   }
@@ -333,6 +336,7 @@ class MacroAssemblerNone : public Assembler {
 
   void boxDouble(FloatRegister, ValueOperand, FloatRegister) { MOZ_CRASH(); }
   void boxNonDouble(JSValueType, Register, ValueOperand) { MOZ_CRASH(); }
+  void boxNonDouble(Register, Register, ValueOperand) { MOZ_CRASH(); }
   template <typename T>
   void boxDouble(FloatRegister src, const T& dest) {
     MOZ_CRASH();
@@ -384,10 +388,6 @@ class MacroAssemblerNone : public Assembler {
 
   void getWasmAnyRefGCThingChunk(Register, Register) { MOZ_CRASH(); }
 
-  template <typename T>
-  void unboxObjectOrNull(const T& src, Register dest) {
-    MOZ_CRASH();
-  }
   void notBoolean(ValueOperand) { MOZ_CRASH(); }
   [[nodiscard]] Register extractObject(Address, Register) { MOZ_CRASH(); }
   [[nodiscard]] Register extractObject(ValueOperand, Register) { MOZ_CRASH(); }
@@ -419,10 +419,11 @@ class MacroAssemblerNone : public Assembler {
   }
   void convertFloat32ToDouble(FloatRegister, FloatRegister) { MOZ_CRASH(); }
 
-  void boolValueToDouble(ValueOperand, FloatRegister) { MOZ_CRASH(); }
-  void boolValueToFloat32(ValueOperand, FloatRegister) { MOZ_CRASH(); }
-  void int32ValueToDouble(ValueOperand, FloatRegister) { MOZ_CRASH(); }
-  void int32ValueToFloat32(ValueOperand, FloatRegister) { MOZ_CRASH(); }
+  void convertDoubleToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertFloat16ToDouble(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertFloat32ToFloat16(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertFloat16ToFloat32(FloatRegister, FloatRegister) { MOZ_CRASH(); }
+  void convertInt32ToFloat16(Register, FloatRegister) { MOZ_CRASH(); }
 
   void loadConstantDouble(double, FloatRegister) { MOZ_CRASH(); }
   void loadConstantFloat32(float, FloatRegister) { MOZ_CRASH(); }
@@ -438,16 +439,11 @@ class MacroAssemblerNone : public Assembler {
   void storeUnboxedValue(const ConstantOrRegister&, MIRType, T) {
     MOZ_CRASH();
   }
-  template <typename T>
-  void storeUnboxedPayload(ValueOperand value, T, size_t, JSValueType) {
-    MOZ_CRASH();
-  }
 
   void convertUInt32ToDouble(Register, FloatRegister) { MOZ_CRASH(); }
   void convertUInt32ToFloat32(Register, FloatRegister) { MOZ_CRASH(); }
   void incrementInt32Value(Address) { MOZ_CRASH(); }
-  void ensureDouble(ValueOperand, FloatRegister, Label*) { MOZ_CRASH(); }
-  void handleFailureWithHandlerTail(Label*, Label*) { MOZ_CRASH(); }
+  void handleFailureWithHandlerTail(Label*, Label*, uint32_t*) { MOZ_CRASH(); }
 
   void buildFakeExitFrame(Register, uint32_t*) { MOZ_CRASH(); }
   bool buildOOLFakeExitFrame(void*) { MOZ_CRASH(); }
@@ -467,7 +463,7 @@ class MacroAssemblerNone : public Assembler {
 #endif
 };
 
-typedef MacroAssemblerNone MacroAssemblerSpecific;
+using MacroAssemblerSpecific = MacroAssemblerNone;
 
 static inline bool GetTempRegForIntArg(uint32_t, uint32_t, Register*) {
   MOZ_CRASH();

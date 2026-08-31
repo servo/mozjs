@@ -14,6 +14,7 @@ from mozperftest.tests.support import (
     BT_DATA,
     EXAMPLE_TEST,
     HERE,
+    MOCHITEST_DATA,
     get_running_env,
     temp_file,
 )
@@ -78,6 +79,125 @@ def test_perfherder():
         assert "firstPaint" in subtest["name"]
 
 
+def test_perfherder_subtest_threshold():
+    options = {
+        "perfherder": True,
+        "perfherder-stats": True,
+        "perfherder-prefix": "",
+        "perfherder-metrics": [
+            metric_fields("name:firstPaint,alertThreshold:5.0"),
+            metric_fields("name:resource"),
+        ],
+        "perfherder-timestamp": 1.0,
+    }
+
+    metrics, metadata, env = setup_env(options)
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    # Check some metadata
+    assert output["application"]["name"] == "firefox"
+    assert output["framework"]["name"] == "mozperftest"
+    assert output["pushTimestamp"] == 1.0
+
+    # Check some numbers in our data
+    assert len(output["suites"]) == 1
+    assert len(output["suites"][0]["subtests"]) == 30
+    assert not any("value" in suite for suite in output["suites"])
+
+    # Check alert threshold settings
+    for suite in output["suites"]:
+        assert suite["alertThreshold"] == 2.0
+
+        for subtest in suite["subtests"]:
+            if "firstPaint" in subtest["name"]:
+                assert subtest["alertThreshold"] == 5.0
+            else:
+                assert subtest["alertThreshold"] == 2.0
+
+
+def test_perfherder_test_settings():
+    options = {
+        "perfherder": True,
+        "perfherder-stats": True,
+        "perfherder-prefix": "",
+        "perfherder-metrics": [
+            metric_fields(
+                "name:mochitest-metric1,shouldAlert:True,lowerIsBetter:False,unit:cli-unit"
+            ),
+            metric_fields("mochitest-metric2"),
+            metric_fields("name:mochitest-metric3,lowerIsBetter:True"),
+            metric_fields("mochitest-metric4"),
+            metric_fields("mochitest-metric5"),
+        ],
+        "perfherder-timestamp": 1.0,
+    }
+
+    print(options)
+    metrics, metadata, env = setup_env(options)
+
+    metadata.clear_results()
+    with MOCHITEST_DATA.open() as f:
+        metadata.add_result(json.loads(f.read()))
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    # Check some metadata
+    assert output["application"]["name"] == "firefox"
+    assert output["framework"]["name"] == "mozperftest"
+    assert output["pushTimestamp"] == 1.0
+
+    # Check some numbers in our data
+    assert len(output["suites"]) == 1
+    assert len(output["suites"][0]["subtests"]) == 5
+    assert not any("value" in suite for suite in output["suites"])
+
+    # Check if only mochitest metrics were obtained
+    checked = 0
+    for subtest in output["suites"][0]["subtests"]:
+        assert "mochitest-metric" in subtest["name"]
+
+        if subtest["name"] == "mochitest-metric1":
+            assert subtest.get("value") == 227.67
+            assert subtest.get("unit") == "cli-unit"
+            assert subtest.get("shouldAlert")
+            assert not subtest.get("lowerIsBetter")
+            checked += 1
+        elif subtest["name"] == "mochitest-metric2":
+            # Default with no CLI arg is False
+            assert subtest.get("value") == 1662.995
+            assert subtest.get("unit") == "metric-unit"
+            checked += 1
+        elif subtest["name"] == "mochitest-metric3":
+            # CLI args should be overriden
+            assert not subtest.get("shouldAlert")
+            assert not subtest.get("lowerIsBetter")
+            checked += 1
+        elif subtest["name"] == "mochitest-metric4":
+            # Setting from test should be False
+            assert not subtest.get("shouldAlert")
+            assert subtest.get("lowerIsBetter")
+            checked += 1
+        elif subtest["name"] == "mochitest-metric5":
+            # Setting from test should be True
+            assert subtest.get("shouldAlert")
+            checked += 1
+
+    assert checked == 5
+
+
 def test_perfherder_simple_names():
     options = {
         "perfherder": True,
@@ -109,14 +229,12 @@ def test_perfherder_simple_names():
 
     # Check if only firstPaint/resource metrics were obtained and
     # that simplifications occurred
-    assert all(
-        [
-            "firstPaint" in subtest["name"]
-            or "duration" in subtest["name"]
-            or "count" in subtest["name"]
-            for subtest in output["suites"][0]["subtests"]
-        ]
-    )
+    assert all([
+        "firstPaint" in subtest["name"]
+        or "duration" in subtest["name"]
+        or "count" in subtest["name"]
+        for subtest in output["suites"][0]["subtests"]
+    ])
 
     found_all = {"firstPaint": False, "count": False, "duration": False}
     for subtest in output["suites"][0]["subtests"]:
@@ -129,27 +247,23 @@ def test_perfherder_simple_names():
         assert "statistics" in subtest["name"]
 
     for entry, value in found_all.items():
-        assert found_all[entry], f"Failed finding metric simplification for {entry}"
+        assert value, f"Failed finding metric simplification for {entry}"
 
     # Statistics are not simplified by default
     assert (
-        len(
-            [
-                subtest
-                for subtest in output["suites"][0]["subtests"]
-                if "statistics" in subtest["name"]
-            ]
-        )
+        len([
+            subtest
+            for subtest in output["suites"][0]["subtests"]
+            if "statistics" in subtest["name"]
+        ])
         == 27
     )
     assert (
-        len(
-            [
-                subtest
-                for subtest in output["suites"][0]["subtests"]
-                if "statistics" not in subtest["name"]
-            ]
-        )
+        len([
+            subtest
+            for subtest in output["suites"][0]["subtests"]
+            if "statistics" not in subtest["name"]
+        ])
         == 3
     )
 
@@ -185,14 +299,12 @@ def test_perfherder_names_simplified_with_no_exclusions():
     # In this case, some metrics will be called "median", "mean", etc.
     # since those are the simplifications of the first statistics entries
     # that were found.
-    assert not all(
-        [
-            "firstPaint" in subtest["name"]
-            or "duration" in subtest["name"]
-            or "count" in subtest["name"]
-            for subtest in output["suites"][0]["subtests"]
-        ]
-    )
+    assert not all([
+        "firstPaint" in subtest["name"]
+        or "duration" in subtest["name"]
+        or "count" in subtest["name"]
+        for subtest in output["suites"][0]["subtests"]
+    ])
 
     found_all = {"firstPaint": False, "count": False, "duration": False}
     for subtest in output["suites"][0]["subtests"]:
@@ -201,30 +313,56 @@ def test_perfherder_names_simplified_with_no_exclusions():
             continue
 
     for entry, value in found_all.items():
-        assert found_all[entry], f"Failed finding metric simplification for {entry}"
+        assert value, f"Failed finding metric simplification for {entry}"
 
     # Only a portion of the metrics should still have statistics in
     # their name due to a naming conflict that only emits a warning
     assert (
-        len(
-            [
-                subtest
-                for subtest in output["suites"][0]["subtests"]
-                if "statistics" in subtest["name"]
-            ]
-        )
+        len([
+            subtest
+            for subtest in output["suites"][0]["subtests"]
+            if "statistics" in subtest["name"]
+        ])
         == 18
     )
     assert (
-        len(
-            [
-                subtest
-                for subtest in output["suites"][0]["subtests"]
-                if "statistics" not in subtest["name"]
-            ]
-        )
+        len([
+            subtest
+            for subtest in output["suites"][0]["subtests"]
+            if "statistics" not in subtest["name"]
+        ])
         == 12
     )
+
+
+def test_perfherder_with_extra_metadata_options():
+    options = {
+        "perfherder": True,
+        "perfherder-stats": True,
+        "perfherder-prefix": "",
+        "perfherder-metrics": [
+            metric_fields("name:firstPaint,extraOptions:['option']"),
+            metric_fields("name:resource,extraOptions:['second-option']"),
+        ],
+    }
+
+    metrics, metadata, env = setup_env(options)
+    metadata.add_extra_options(["simpleperf"])
+
+    with temp_file() as output:
+        env.set_arg("output", output)
+        with metrics as m, silence():
+            m(metadata)
+        output_file = metadata.get_output()
+        with open(output_file) as f:
+            output = json.loads(f.read())
+
+    assert len(output["suites"]) == 1
+    assert sorted(output["suites"][0]["extraOptions"]) == sorted([
+        "option",
+        "second-option",
+        "simpleperf",
+    ])
 
 
 def test_perfherder_with_extra_options():
@@ -249,9 +387,10 @@ def test_perfherder_with_extra_options():
             output = json.loads(f.read())
 
     assert len(output["suites"]) == 1
-    assert sorted(output["suites"][0]["extraOptions"]) == sorted(
-        ["option", "second-option"]
-    )
+    assert sorted(output["suites"][0]["extraOptions"]) == sorted([
+        "option",
+        "second-option",
+    ])
 
 
 def test_perfherder_with_alerting():
@@ -277,20 +416,16 @@ def test_perfherder_with_alerting():
 
     assert len(output["suites"]) == 1
     assert sorted(output["suites"][0]["extraOptions"]) == sorted(["option"])
-    assert all(
-        [
-            subtest["shouldAlert"]
-            for subtest in output["suites"][0]["subtests"]
-            if "resource" in subtest["name"]
-        ]
-    )
-    assert not all(
-        [
-            subtest["shouldAlert"]
-            for subtest in output["suites"][0]["subtests"]
-            if "firstPaint" in subtest["name"]
-        ]
-    )
+    assert all([
+        subtest["shouldAlert"]
+        for subtest in output["suites"][0]["subtests"]
+        if "resource" in subtest["name"]
+    ])
+    assert not all([
+        subtest["shouldAlert"]
+        for subtest in output["suites"][0]["subtests"]
+        if "firstPaint" in subtest["name"]
+    ])
 
 
 def test_perfherder_with_subunits():
@@ -315,20 +450,16 @@ def test_perfherder_with_subunits():
             output = json.loads(f.read())
 
     assert len(output["suites"]) == 1
-    assert all(
-        [
-            subtest["unit"] == "a-unit"
-            for subtest in output["suites"][0]["subtests"]
-            if "resource" in subtest["name"]
-        ]
-    )
-    assert all(
-        [
-            subtest["unit"] == "ms"
-            for subtest in output["suites"][0]["subtests"]
-            if "firstPaint" in subtest["name"]
-        ]
-    )
+    assert all([
+        subtest["unit"] == "a-unit"
+        for subtest in output["suites"][0]["subtests"]
+        if "resource" in subtest["name"]
+    ])
+    assert all([
+        subtest["unit"] == "ms"
+        for subtest in output["suites"][0]["subtests"]
+        if "firstPaint" in subtest["name"]
+    ])
 
 
 def test_perfherder_with_supraunits():
@@ -355,20 +486,16 @@ def test_perfherder_with_supraunits():
 
     assert len(output["suites"]) == 1
     assert output["suites"][0]["unit"] == "new-unit"
-    assert all(
-        [
-            subtest["unit"] == "a-unit"
-            for subtest in output["suites"][0]["subtests"]
-            if "resource" in subtest["name"]
-        ]
-    )
-    assert all(
-        [
-            subtest["unit"] == "new-unit"
-            for subtest in output["suites"][0]["subtests"]
-            if "firstPaint" in subtest["name"]
-        ]
-    )
+    assert all([
+        subtest["unit"] == "a-unit"
+        for subtest in output["suites"][0]["subtests"]
+        if "resource" in subtest["name"]
+    ])
+    assert all([
+        subtest["unit"] == "new-unit"
+        for subtest in output["suites"][0]["subtests"]
+        if "firstPaint" in subtest["name"]
+    ])
 
 
 def test_perfherder_transforms():
@@ -412,18 +539,16 @@ def test_perfherder_logcat():
         return (float(groups[0]) * 1000) + float(groups[1])
 
     re_w_group = r".*Displayed.*org\.mozilla\.fennec_aurora.*\+([\d]+)s([\d]+)ms.*"
-    metadata.add_result(
-        {
-            "results": str(HERE / "data" / "home_activity.txt"),
-            "transformer": "LogCatTimeTransformer",
-            "transformer-options": {
-                "first-timestamp": re_w_group,
-                "processor": processor,
-                "transform-subtest-name": "TimeToDisplayed",
-            },
-            "name": "LogCat",
-        }
-    )
+    metadata.add_result({
+        "results": str(HERE / "data" / "home_activity.txt"),
+        "transformer": "LogCatTimeTransformer",
+        "transformer-options": {
+            "first-timestamp": re_w_group,
+            "processor": processor,
+            "transform-subtest-name": "TimeToDisplayed",
+        },
+        "name": "LogCat",
+    })
 
     with temp_file() as output:
         env.set_arg("output", output)
@@ -505,7 +630,7 @@ def test_perfherder_metrics_filtering():
             with metrics as m, silence():
                 m(metadata)
 
-            assert not pathlib.Path(output, "perfherder-data.json").exists()
+            assert not any(pathlib.Path(output).glob("perfherder-data*.json"))
 
 
 def test_perfherder_exlude_stats():

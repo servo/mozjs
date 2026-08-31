@@ -1,11 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "threading/ProtectedData.h"
 
+#include "threading/Mutex.h"
 #include "vm/HelperThreads.h"
 #include "vm/JSContext.h"
 
@@ -20,7 +19,7 @@ template <AllowedHelperThread Helper>
 static inline bool OnHelperThread() {
   if (Helper == AllowedHelperThread::IonCompile ||
       Helper == AllowedHelperThread::GCTaskOrIonCompile) {
-    if (CurrentThreadIsIonCompiling()) {
+    if (CurrentThreadIsOffThreadCompiling()) {
       return true;
     }
   }
@@ -52,6 +51,8 @@ void CheckContextLocal::check() const {
   MOZ_ASSERT(CurrentThreadCanAccessRuntime(cx->runtime()));
   MOZ_ASSERT(cx_ == cx);
 }
+
+void CheckMutexHeld::check() const { mutex_.assertOwnedByCurrentThread(); }
 
 template <AllowedHelperThread Helper>
 void CheckMainThread<Helper>::check() const {

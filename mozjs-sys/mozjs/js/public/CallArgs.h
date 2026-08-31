@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -161,17 +159,12 @@ class MOZ_STACK_CLASS MOZ_NON_PARAM CallArgsBase {
   // CALLING/CONSTRUCTING-DIFFERENTIATIONS
 
   bool isConstructing() const {
-    if (!argv_[-1].isMagic()) {
-      return false;
-    }
-
 #ifdef JS_DEBUG
-    if (!this->usedRval()) {
+    if (constructing_ && !this->usedRval()) {
       CheckIsValidConstructible(calleev());
     }
 #endif
-
-    return true;
+    return constructing_;
   }
 
   bool ignoresReturnValue() const { return ignoresReturnValue_; }
@@ -210,7 +203,7 @@ class MOZ_STACK_CLASS MOZ_NON_PARAM CallArgsBase {
 
   /* Returns the i-th zero-indexed argument. */
   MutableHandleValue operator[](unsigned i) const {
-    MOZ_ASSERT(i < argc_);
+    MOZ_RELEASE_ASSERT(i < argc_);
     return MutableHandleValue::fromMarkedLocation(&this->argv_[i]);
   }
 

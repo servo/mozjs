@@ -4,34 +4,32 @@
 
 # This modules provides functionality for dealing with compiler warnings.
 
-import errno
-import io
 import json
 import os
 import re
 
 import mozpack.path as mozpath
-import six
 
 from mozbuild.util import hash_file
 
-# Regular expression to strip ANSI color sequences from a string. This is
-# needed to properly analyze Clang compiler output, which may be colorized.
-# It assumes ANSI escape sequences.
-RE_STRIP_COLORS = re.compile(r"\x1b\[[\d;]+m")
+# Regular expression to strip ANSI escape sequences from a string. This is
+# needed to properly analyze compiler output, which may be colorized.
+RE_STRIP_COLORS = re.compile(r"\x1b\[[\d;]*[mK]")
 
 # This captures Clang diagnostics with the standard formatting.
+# The file pattern handles Windows paths with drive letters (e.g.: D:/path/file.cpp)
 RE_CLANG_WARNING_AND_ERROR = re.compile(
     r"""
-    (?P<file>[^:]+)
+    (?P<file>(?:[A-Za-z]:)?[^:]+)
     :
     (?P<line>\d+)
     :
     (?P<column>\d+)
     :
-    \s(?P<type>warning|error):\s
-    (?P<message>.+)
-    \[(?P<flag>[^\]]+)
+    \s(?:fatal\s+)?(?P<type>warning|error):\s
+    (?P<message>.+?)
+    (?:\[(?P<flag>[^\]]+)\])?
+    $
     """,
     re.X,
 )
@@ -41,9 +39,10 @@ RE_CLANG_CL_WARNING_AND_ERROR = re.compile(
     r"""
     (?P<file>.*)
     \((?P<line>\d+),(?P<column>\d+)\)
-    \s?:\s+(?P<type>warning|error):\s
-    (?P<message>.*)
-    \[(?P<flag>[^\]]+)
+    \s?:\s+(?:fatal\s+)?(?P<type>warning|error):\s
+    (?P<message>.+?)
+    (?:\[(?P<flag>[^\]]+)\])?
+    $
     """,
     re.X,
 )
@@ -105,7 +104,7 @@ class CompilerWarning(dict):
         return hash(tuple(sorted(self.items())))
 
 
-class WarningsDatabase(object):
+class WarningsDatabase:
     """Holds a collection of warnings.
 
     The warnings database is a semi-intelligent container that holds warnings
@@ -142,8 +141,7 @@ class WarningsDatabase(object):
 
     def __iter__(self):
         for value in self._files.values():
-            for warning in value["warnings"]:
-                yield warning
+            yield from value["warnings"]
 
     def __contains__(self, item):
         for value in self._files.values():
@@ -157,8 +155,7 @@ class WarningsDatabase(object):
     def warnings(self):
         """All the CompilerWarning instances in this database."""
         for value in self._files.values():
-            for w in value["warnings"]:
-                yield w
+            yield from value["warnings"]
 
     def type_counts(self, dirpath=None):
         """Returns a mapping of warning types to their counts."""
@@ -186,8 +183,7 @@ class WarningsDatabase(object):
         """Obtain the warnings for the specified file."""
         f = self._files.get(filename, {"warnings": []})
 
-        for warning in f["warnings"]:
-            yield warning
+        yield from f["warnings"]
 
     def insert(self, warning, compute_hash=True):
         assert isinstance(warning, CompilerWarning)
@@ -227,7 +223,7 @@ class WarningsDatabase(object):
         """
 
         # Need to calculate up front since we are mutating original object.
-        filenames = list(six.iterkeys(self._files))
+        filenames = list(self._files.keys())
         for filename in filenames:
             if not os.path.exists(filename):
                 del self._files[filename]
@@ -246,16 +242,16 @@ class WarningsDatabase(object):
         obj = {"files": {}}
 
         # All this hackery because JSON can't handle sets.
-        for k, v in six.iteritems(self._files):
+        for k, v in self._files.items():
             obj["files"][k] = {}
 
-            for k2, v2 in six.iteritems(v):
+            for k2, v2 in v.items():
                 normalized = v2
                 if isinstance(v2, set):
                     normalized = list(v2)
                 obj["files"][k][k2] = normalized
 
-        to_write = six.ensure_text(json.dumps(obj, indent=2))
+        to_write = json.dumps(obj, indent=2)
         fh.write(to_write)
 
     def deserialize(self, fh):
@@ -265,7 +261,7 @@ class WarningsDatabase(object):
         self._files = obj["files"]
 
         # Normalize data types.
-        for filename, value in six.iteritems(self._files):
+        for filename, value in self._files.items():
             if "warnings" in value:
                 normalized = set()
                 for d in value["warnings"]:
@@ -277,22 +273,18 @@ class WarningsDatabase(object):
 
     def load_from_file(self, filename):
         """Load the database from a file."""
-        with io.open(filename, "r", encoding="utf-8") as fh:
+        with open(filename, encoding="utf-8") as fh:
             self.deserialize(fh)
 
     def save_to_file(self, filename):
         """Save the database to a file."""
-        try:
-            # Ensure the directory exists
-            os.makedirs(os.path.dirname(filename))
-        except OSError as e:
-            if e.errno != errno.EEXIST:
-                raise
-        with io.open(filename, "w", encoding="utf-8", newline="\n") as fh:
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        with open(filename, "w", encoding="utf-8", newline="\n") as fh:
             self.serialize(fh)
 
 
-class WarningsCollector(object):
+class WarningsCollector:
     """Collects warnings from text data.
 
     Instances of this class receive data (usually the output of compiler

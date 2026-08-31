@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -31,6 +29,9 @@ class Symbol
   friend class js::gc::CellAllocator;
 
  public:
+  Symbol(const Symbol&) = delete;
+  void operator=(const Symbol&) = delete;
+
   // User description of symbol, stored in the cell header.
   JSAtom* description() const { return headerPtr(); }
 
@@ -43,9 +44,6 @@ class Symbol
 
   Symbol(SymbolCode code, js::HashNumber hash, Handle<JSAtom*> desc)
       : CellWithTenuredGCPointer(desc), code_(code), hash_(hash) {}
-
-  Symbol(const Symbol&) = delete;
-  void operator=(const Symbol&) = delete;
 
   static Symbol* newInternal(JSContext* cx, SymbolCode code,
                              js::HashNumber hash, Handle<JSAtom*> description);
@@ -91,7 +89,6 @@ class Symbol
   static const JS::TraceKind TraceKind = JS::TraceKind::Symbol;
 
   void traceChildren(JSTracer* trc);
-  void finalize(JS::GCContext* gcx) {}
 
   // Override base class implementation to tell GC about well-known symbols.
   bool isPermanentAndMayBeShared() const { return isWellKnownSymbol(); }
@@ -111,6 +108,7 @@ class Symbol
 #endif
 
   static constexpr size_t offsetOfHash() { return offsetof(Symbol, hash_); }
+  static constexpr size_t offsetOfCode() { return offsetof(Symbol, code_); }
 };
 
 } /* namespace JS */

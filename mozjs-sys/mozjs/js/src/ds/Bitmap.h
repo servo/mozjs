@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -10,7 +8,6 @@
 #include "mozilla/Array.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
-#include "mozilla/MemoryChecking.h"
 
 #include <algorithm>
 #include <stddef.h>
@@ -47,9 +44,16 @@ class DenseBitmap {
     return data.appendN(0, numWords);
   }
 
+  size_t count() const { return numWords() * JS_BITS_PER_WORD; }
+
   size_t numWords() const { return data.length(); }
   uintptr_t word(size_t i) const { return data[i]; }
   uintptr_t& word(size_t i) { return data[i]; }
+
+  bool getBit(size_t bit) const {
+    return word(bit / JS_BITS_PER_WORD) &
+           (uintptr_t(1) << (bit % JS_BITS_PER_WORD));
+  }
 
   template <typename T>
   typename std::enable_if_t<std::is_convertible_v<T, uintptr_t>, void>
@@ -63,8 +67,23 @@ class DenseBitmap {
   template <typename T>
   typename std::enable_if_t<std::is_convertible_v<T, uintptr_t>, void>
   bitwiseOrRangeInto(size_t wordStart, size_t numWords, T* target) const {
+    if (wordStart >= data.length()) {
+      return;
+    }
+
+    // Does not support copying partial blocks.
+    MOZ_ASSERT(wordStart + numWords <= data.length());
+
     for (size_t i = 0; i < numWords; i++) {
       target[i] |= data[wordStart + i];
+    }
+  }
+
+  template <typename F>
+  void forEachWord(size_t wordStart, size_t numWords, F&& func) {
+    MOZ_ASSERT(wordStart + numWords <= data.length());
+    for (size_t i = 0; i < numWords; i++) {
+      func(data[wordStart + i]);
     }
   }
 };
@@ -94,11 +113,8 @@ class SparseBitmap {
   // are in |other|.
   static size_t wordIntersectCount(size_t blockWord, const DenseBitmap& other) {
     long count = other.numWords() - blockWord;
-    return std::min<size_t>((size_t)WordsInBlock, std::max<long>(count, 0));
+    return static_cast<size_t>(std::clamp(count, 0l, (long)WordsInBlock));
   }
-
-  BitBlock& createBlock(Data::AddPtr p, size_t blockId,
-                        AutoEnterOOMUnsafeRegion& oomUnsafe);
 
   BitBlock* createBlock(Data::AddPtr p, size_t blockId);
 
@@ -107,24 +123,12 @@ class SparseBitmap {
     return p ? p->value() : nullptr;
   }
 
-  MOZ_ALWAYS_INLINE const BitBlock* readonlyThreadsafeGetBlock(
-      size_t blockId) const {
+  MOZ_ALWAYS_INLINE BitBlock* readonlyThreadsafeGetBlock(size_t blockId) const {
     Data::Ptr p = data.readonlyThreadsafeLookup(blockId);
     return p ? p->value() : nullptr;
   }
 
-  MOZ_ALWAYS_INLINE BitBlock& getOrCreateBlock(size_t blockId) {
-    // The lookupForAdd() needs protection against injected OOMs, as does
-    // the add() within createBlock().
-    AutoEnterOOMUnsafeRegion oomUnsafe;
-    Data::AddPtr p = data.lookupForAdd(blockId);
-    if (p) {
-      return *p->value();
-    }
-    return createBlock(p, blockId, oomUnsafe);
-  }
-
-  MOZ_ALWAYS_INLINE BitBlock* getOrCreateBlockFallible(size_t blockId) {
+  MOZ_ALWAYS_INLINE BitBlock* getOrCreateBlock(size_t blockId) {
     Data::AddPtr p = data.lookupForAdd(blockId);
     if (p) {
       return p->value();
@@ -137,17 +141,10 @@ class SparseBitmap {
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf);
 
-  MOZ_ALWAYS_INLINE void setBit(size_t bit) {
+  [[nodiscard]] MOZ_ALWAYS_INLINE bool setBit(size_t bit) {
     size_t word = bit / JS_BITS_PER_WORD;
     size_t blockWord = blockStartWord(word);
-    BitBlock& block = getOrCreateBlock(blockWord / WordsInBlock);
-    block[word - blockWord] |= bitMask(bit);
-  }
-
-  MOZ_ALWAYS_INLINE bool setBitFallible(size_t bit) {
-    size_t word = bit / JS_BITS_PER_WORD;
-    size_t blockWord = blockStartWord(word);
-    BitBlock* block = getOrCreateBlockFallible(blockWord / WordsInBlock);
+    BitBlock* block = getOrCreateBlock(blockWord / WordsInBlock);
     if (!block) {
       return false;
     }
@@ -155,11 +152,20 @@ class SparseBitmap {
     return true;
   }
 
+  void atomicSetExistingBit(size_t bit) {
+    size_t word = bit / JS_BITS_PER_WORD;
+    size_t blockWord = blockStartWord(word);
+    BitBlock* block = readonlyThreadsafeGetBlock(blockWord / WordsInBlock);
+    MOZ_ASSERT(block);
+    uintptr_t* ptr = &(*block)[word - blockWord];
+    __atomic_fetch_or(ptr, bitMask(bit), __ATOMIC_RELAXED);
+  }
+
   bool getBit(size_t bit) const;
   bool readonlyThreadsafeGetBit(size_t bit) const;
 
   void bitwiseAndWith(const DenseBitmap& other);
-  void bitwiseOrWith(const SparseBitmap& other);
+  [[nodiscard]] bool bitwiseOrWith(const SparseBitmap& other);
   void bitwiseOrInto(DenseBitmap& other) const;
 
   // Currently, the following APIs only supports a range of words that is in a
@@ -195,6 +201,22 @@ class SparseBitmap {
     if (block) {
       for (size_t i = 0; i < numWords; i++) {
         target[i] |= (*block)[wordStart - blockWord + i];
+      }
+    }
+  }
+
+  template <typename F>
+  void forEachWord(size_t wordStart, size_t numWords, F&& func) {
+    size_t blockWord = blockStartWord(wordStart);
+
+    // We only support using a single bit block in this API.
+    MOZ_ASSERT(numWords &&
+               (blockWord == blockStartWord(wordStart + numWords - 1)));
+
+    BitBlock* block = getBlock(blockWord / WordsInBlock);
+    if (block) {
+      for (size_t i = 0; i < numWords; i++) {
+        func((*block)[wordStart - blockWord + i]);
       }
     }
   }

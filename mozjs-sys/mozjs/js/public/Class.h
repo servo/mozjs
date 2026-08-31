@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -489,7 +487,11 @@ static constexpr const js::ObjectOps* JS_NULL_OBJECT_OPS = nullptr;
 
 // Classes, objects, and properties.
 
-// (1 << 0 is unused)
+// Must call a callback when the first property is added to an object of this
+// class. If this is set, the object must store a pointer at
+// JS_OBJECT_WRAPPER_SLOT to the C++ wrapper as a PrivateValue or
+// UndefinedValue() if the object does not have a wrapper.
+static const uint32_t JSCLASS_PRESERVES_WRAPPER = 1 << 0;
 
 // Class's initialization code will call `SetNewObjectMetadata` itself.
 static const uint32_t JSCLASS_DELAY_METADATA_BUILDER = 1 << 1;
@@ -592,6 +594,9 @@ static_assert(JSProto_LIMIT <= (JSCLASS_CACHED_PROTO_MASK + 1),
 static constexpr uint32_t JSCLASS_HAS_CACHED_PROTO(JSProtoKey key) {
   return uint32_t(key) << JSCLASS_CACHED_PROTO_SHIFT;
 }
+
+// See JSCLASS_PRESERVES_WRAPPER.
+static constexpr size_t JS_OBJECT_WRAPPER_SLOT = 0;
 
 struct MOZ_STATIC_CLASS JSClassOps {
   /* Function pointer members (may be null). */
@@ -706,6 +711,8 @@ struct alignas(js::gc::JSClassAlignBytes) JSClass {
 
   bool slot0IsISupports() const { return flags & JSCLASS_SLOT0_IS_NSISUPPORTS; }
 
+  bool preservesWrapper() const { return flags & JSCLASS_PRESERVES_WRAPPER; }
+
   static size_t offsetOfFlags() { return offsetof(JSClass, flags); }
 
   // Internal / friend API accessors:
@@ -812,11 +819,6 @@ enum class ESClass {
   Error,
   BigInt,
   Function,  // Note: Only JSFunction objects.
-
-#ifdef ENABLE_RECORD_TUPLE
-  Record,
-  Tuple,
-#endif
 
   /** None of the above. */
   Other

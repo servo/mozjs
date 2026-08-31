@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,6 +7,7 @@
 
 #include "gc/Barrier.h"
 #include "gc/Cell.h"
+#include "gc/Policy.h"
 #include "js/TypeDecls.h"
 #include "js/UbiNode.h"
 #include "js/Utility.h"  // JS::UniqueChars
@@ -325,17 +324,17 @@ class PropMapTable {
   Set set_;
 
   void setCacheEntry(PropertyKey key, PropMapAndIndex entry) {
-    for (uint32_t i = 0; i < NumCacheEntries; i++) {
-      if (cacheEntries_[i].key == key) {
-        cacheEntries_[i].result = entry;
+    for (auto& cacheEntry : cacheEntries_) {
+      if (cacheEntry.key == key) {
+        cacheEntry.result = entry;
         return;
       }
     }
   }
   bool lookupInCache(PropertyKey key, PropMapAndIndex* result) const {
-    for (uint32_t i = 0; i < NumCacheEntries; i++) {
-      if (cacheEntries_[i].key == key) {
-        *result = cacheEntries_[i].result;
+    for (const auto& cacheEntry : cacheEntries_) {
+      if (cacheEntry.key == key) {
+        *result = cacheEntry.result;
 #ifdef DEBUG
         auto p = lookupRaw(key);
         MOZ_ASSERT(*result == (p ? *p : PropMapAndIndex()));
@@ -391,8 +390,8 @@ class PropMapTable {
   }
 
   void purgeCache() {
-    for (uint32_t i = 0; i < NumCacheEntries; i++) {
-      cacheEntries_[i] = CacheEntry();
+    for (auto& cacheEntry : cacheEntries_) {
+      cacheEntry = CacheEntry();
     }
   }
 
@@ -897,14 +896,6 @@ class NormalPropMap final : public SharedPropMap {
     linkedData_.propInfos[index] = prop;
   }
 
-  bool isDictionary() const = delete;
-  bool isShared() const = delete;
-  bool isCompact() const = delete;
-  bool isNormal() const = delete;
-  bool isLinked() const = delete;
-  NormalPropMap* asNormal() = delete;
-  const NormalPropMap* asNormal() const = delete;
-
   SharedPropMap* previous() const {
     return static_cast<SharedPropMap*>(linkedData_.previous.get());
   }
@@ -916,6 +907,15 @@ class NormalPropMap final : public SharedPropMap {
     static_assert(offsetof(NormalPropMap, linkedData_) ==
                   offsetof(LinkedPropMap, data_));
   }
+
+ public:
+  bool isDictionary() const = delete;
+  bool isShared() const = delete;
+  bool isCompact() const = delete;
+  bool isNormal() const = delete;
+  bool isLinked() const = delete;
+  NormalPropMap* asNormal() = delete;
+  const NormalPropMap* asNormal() const = delete;
 };
 
 class DictionaryPropMap final : public PropMap {
@@ -932,6 +932,11 @@ class DictionaryPropMap final : public PropMap {
   // Number of holes for removed properties in this and previous maps. Used by
   // compacting heuristics.
   uint32_t holeCount_ = 0;
+
+  // Empty Dictionary prop map used during reshape.
+  explicit DictionaryPropMap(std::nullptr_t) : linkedData_(nullptr) {
+    setHeaderFlagBits(IsDictionaryFlag | CanHaveTableFlag);
+  }
 
   DictionaryPropMap(JS::Handle<DictionaryPropMap*> prev, PropertyKey key,
                     PropertyInfo prop)
@@ -1011,6 +1016,9 @@ class DictionaryPropMap final : public PropMap {
     MOZ_ASSERT(hasKey(index));
     return linkedData_.propInfos[index];
   }
+
+  // Create an empty prop map for dictionary mode teleporting
+  static DictionaryPropMap* createEmpty(JSContext* cx);
 
   // Add a new property to this map. Returns the new map/mapLength and object
   // flags. The caller is responsible for generating a new dictionary shape.
@@ -1166,6 +1174,44 @@ struct SharedChildrenHasher {
     uint32_t newIndex = SharedPropMap::indexOfNextProperty(index);
     return index == l.index && map->matchProperty(newIndex, l.key, l.prop);
   }
+};
+
+// An iterator that walks a shared prop map in property definition order
+class MOZ_RAII SharedPropMapIter {
+ public:
+  // Iterate over all properties of propMap.
+  SharedPropMapIter(JSContext* cx, SharedPropMapAndIndex propMap);
+
+  // Iterate over all properties after (but not including) startAfter.
+  SharedPropMapIter(JSContext* cx, SharedPropMapAndIndex startAfter,
+                    SharedPropMapAndIndex end);
+
+  PropertyKey key() const {
+    MOZ_ASSERT(!done());
+    return maps_[mapIdx_]->getKey(propIdx_);
+  }
+  PropertyInfo prop() const {
+    MOZ_ASSERT(!done());
+    return maps_[mapIdx_]->getPropertyInfo(propIdx_);
+  }
+
+  bool done() const { return mapIdx_ == 0 && propIdx_ > endIdx_; }
+  void next() {
+    MOZ_ASSERT(!done());
+    if (++propIdx_ == PropMap::Capacity && mapIdx_ > 0) {
+      propIdx_ = 0;
+      mapIdx_--;
+    }
+  }
+
+ private:
+  SharedPropMapIter(JSContext* cx, mozilla::Maybe<SharedPropMapAndIndex> start,
+                    SharedPropMapAndIndex end);
+
+  JS::RootedVector<SharedPropMap*> maps_;
+  uint32_t mapIdx_;
+  uint32_t propIdx_;
+  uint32_t endIdx_;
 };
 
 }  // namespace js

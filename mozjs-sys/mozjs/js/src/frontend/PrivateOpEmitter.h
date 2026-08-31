@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -114,8 +112,7 @@ class MOZ_STACK_CLASS PrivateOpEmitter {
 #ifdef DEBUG
   // The state of this emitter.
   //
-  //            emitReference
-  // +-------+  skipReference  +-----------+
+  // +-------+  emitReference  +-----------+
   // | Start |---------------->| Reference |
   // +-------+                 +-----+-----+
   //                                 |
@@ -144,7 +141,7 @@ class MOZ_STACK_CLASS PrivateOpEmitter {
     // The initial state.
     Start,
 
-    // After calling emitReference or skipReference.
+    // After calling emitReference.
     Reference,
 
     // After calling emitGet.
@@ -216,13 +213,12 @@ class MOZ_STACK_CLASS PrivateOpEmitter {
   [[nodiscard]] bool emitBrandCheck();
 
   [[nodiscard]] bool emitReference();
-  [[nodiscard]] bool skipReference();
   [[nodiscard]] bool emitGet();
   [[nodiscard]] bool emitGetForCallOrNew();
   [[nodiscard]] bool emitAssignment();
   [[nodiscard]] bool emitIncDec(ValueUsage valueUsage);
 
-  [[nodiscard]] size_t numReferenceSlots() { return 2; }
+  size_t numReferenceSlots() const { return 2; }
 };
 
 } /* namespace frontend */

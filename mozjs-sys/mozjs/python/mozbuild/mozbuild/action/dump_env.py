@@ -10,7 +10,13 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-from shellutil import quote
+from mozshellutil import quote
 
-for key, value in os.environ.items():
-    print("%s=%s" % (key, quote(value)))
+
+def main():
+    for key, value in os.environ.items():
+        print(f"{key}={quote(value)}")
+
+
+if __name__ == "__main__":
+    main()

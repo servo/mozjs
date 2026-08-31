@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Test function name binding.
  */
 /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -11,6 +9,7 @@
 
 #include "js/CallAndConstruct.h"
 #include "js/CompilationAndEvaluation.h"  // JS::CompileFunction
+#include "js/EnvironmentChain.h"          // JS::EnvironmentChain
 #include "js/SourceText.h"                // JS::Source{Ownership,Text}
 #include "jsapi-tests/tests.h"
 #include "util/Text.h"
@@ -23,7 +22,7 @@ BEGIN_TEST(test_functionBinding) {
   JS::CompileOptions options(cx);
   options.setFileAndLine(__FILE__, __LINE__);
 
-  JS::RootedObjectVector emptyScopeChain(cx);
+  JS::EnvironmentChain emptyEnvChain(cx, JS::SupportUnscopables::No);
 
   // Named function shouldn't have it's binding.
   {
@@ -33,7 +32,7 @@ BEGIN_TEST(test_functionBinding) {
     CHECK(srcBuf.init(cx, s1chars, js_strlen(s1chars),
                       JS::SourceOwnership::Borrowed));
 
-    fun = JS::CompileFunction(cx, emptyScopeChain, options, "s1", 0, nullptr,
+    fun = JS::CompileFunction(cx, emptyEnvChain, options, "s1", 0, nullptr,
                               srcBuf);
     CHECK(fun);
   }
@@ -52,7 +51,7 @@ BEGIN_TEST(test_functionBinding) {
     CHECK(srcBuf.init(cx, s2chars, js_strlen(s2chars),
                       JS::SourceOwnership::Borrowed));
 
-    fun = JS::CompileFunction(cx, emptyScopeChain, options, "s2", 0, nullptr,
+    fun = JS::CompileFunction(cx, emptyEnvChain, options, "s2", 0, nullptr,
                               srcBuf);
     CHECK(fun);
   }
@@ -69,7 +68,7 @@ BEGIN_TEST(test_functionBinding) {
     CHECK(srcBuf.init(cx, s3chars, js_strlen(s3chars),
                       JS::SourceOwnership::Borrowed));
 
-    fun = JS::CompileFunction(cx, emptyScopeChain, options, nullptr, 0, nullptr,
+    fun = JS::CompileFunction(cx, emptyEnvChain, options, nullptr, 0, nullptr,
                               srcBuf);
     CHECK(fun);
   }

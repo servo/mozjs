@@ -1,20 +1,18 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef frontend_TryEmitter_h
 #define frontend_TryEmitter_h
 
-#include "mozilla/Attributes.h"  // MOZ_STACK_CLASS
-#include "mozilla/Maybe.h"       // mozilla::Maybe, mozilla::Nothing
+#include "mozilla/Maybe.h"  // mozilla::Maybe, mozilla::Nothing
 
 #include <stdint.h>  // uint32_t
 
 #include "frontend/BytecodeControlStructures.h"  // TryFinallyControl
 #include "frontend/BytecodeOffset.h"             // BytecodeOffset
 #include "frontend/JumpList.h"                   // JumpList, JumpTarget
+#include "js/UniquePtr.h"                        // js::UniquePtr
 
 namespace js {
 namespace frontend {
@@ -55,7 +53,7 @@ struct BytecodeEmitter;
 //     emit(finally_block);
 //     tryCatch.emitEnd();
 //
-class MOZ_STACK_CLASS TryEmitter {
+class TryEmitter {
  public:
   enum class Kind { TryCatch, TryCatchFinally, TryFinally };
 
@@ -108,7 +106,17 @@ class MOZ_STACK_CLASS TryEmitter {
   //
   // For syntactic try-catch-finally, Syntactic should be used.
   // For non-syntactic try-catch-finally, NonSyntactic should be used.
-  enum class ControlKind { Syntactic, NonSyntactic };
+  // For non-syntactic try-catch-finally for Explicit Resource Management
+  // Disposal kind should be used.
+  enum class ControlKind {
+    Syntactic,
+    NonSyntactic,
+
+    // Disposal kind is exactly same in behaviour of Syntactic kind, it is
+    // used enabling try-finally scope for Explicit Resource Management
+    // Proposal. (https://arai-a.github.io/ecma262-compare/?pr=3000)
+    Disposal,
+  };
 
  private:
   BytecodeEmitter* bce_;
@@ -132,7 +140,7 @@ class MOZ_STACK_CLASS TryEmitter {
   // Additionally, a finally block may be emitted for non-syntactic
   // try-catch-finally, even if the kind is TryCatch, because JSOp::Goto is
   // not emitted.
-  mozilla::Maybe<TryFinallyControl> controlInfo_;
+  js::UniquePtr<TryFinallyControl> controlInfo_;
 
   // The stack depth before emitting JSOp::Try.
   int depth_;
@@ -187,13 +195,14 @@ class MOZ_STACK_CLASS TryEmitter {
     return kind_ == Kind::TryCatchFinally || kind_ == Kind::TryFinally;
   }
 
+  bool requiresControlInfo() const {
+    return controlKind_ == ControlKind::Syntactic ||
+           controlKind_ == ControlKind::Disposal;
+  }
+
   BytecodeOffset offsetAfterTryOp() const {
     return tryOpOffset_ + BytecodeOffsetDiff(JSOpLength_Try);
   }
-
-  // Returns true if catch and finally blocks should handle the frame's
-  // return value.
-  bool shouldUpdateRval() const;
 
   // Jump to the finally block. After the finally block executes,
   // fall through to the code following the finally block.
@@ -201,6 +210,14 @@ class MOZ_STACK_CLASS TryEmitter {
 
  public:
   TryEmitter(BytecodeEmitter* bce, Kind kind, ControlKind controlKind);
+
+  // Returns true if catch and finally blocks should handle the frame's
+  // return value.
+  bool shouldUpdateRval() const;
+
+#ifdef DEBUG
+  bool hasControlInfo();
+#endif
 
   [[nodiscard]] bool emitTry();
 

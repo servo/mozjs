@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -21,10 +19,9 @@ namespace jit {
 inline void FlushICache(void* code, size_t size) {
   // No-op. Code and data caches are coherent on x86 and x64.
 }
-
-#elif (defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)) ||   \
-    (defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)) || \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
+#elif (defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64)) ||  \
+    defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
+    defined(JS_CODEGEN_RISCV64)
 
 // Invalidate the given code range from the icache. This will also flush the
 // execution context for this core. If this code is to be executed on another
@@ -40,9 +37,9 @@ inline void FlushICache(void* code, size_t size) { MOZ_CRASH(); }
 #  error "Unknown architecture!"
 #endif
 
-#if (defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)) ||       \
-    (defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64)) || \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_RISCV64)
+#if (defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)) ||      \
+    defined(JS_CODEGEN_MIPS64) || defined(JS_CODEGEN_LOONG64) || \
+    defined(JS_CODEGEN_RISCV64)
 
 inline void FlushExecutionContext() {
   // No-op. Execution context is coherent with instruction cache.

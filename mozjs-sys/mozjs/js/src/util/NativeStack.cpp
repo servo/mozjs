@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -95,17 +93,16 @@ void* js::GetNativeStackBaseImpl() {
   pthread_t thread = pthread_self();
   pthread_attr_t sattr;
   pthread_attr_init(&sattr);
-  pthread_getattr_np(thread, &sattr);
+  int rc = pthread_getattr_np(thread, &sattr);
+  MOZ_RELEASE_ASSERT(rc == 0, "pthread_getattr_np failed");
 
   // stackBase will be the *lowest* address on all architectures.
   void* stackBase = nullptr;
   size_t stackSize = 0;
-  int rc = pthread_attr_getstack(&sattr, &stackBase, &stackSize);
-  if (rc) {
-    MOZ_CRASH(
-        "call to pthread_attr_getstack failed, unable to setup stack range for "
-        "JS");
-  }
+  rc = pthread_attr_getstack(&sattr, &stackBase, &stackSize);
+  MOZ_RELEASE_ASSERT(rc == 0,
+                     "call to pthread_attr_getstack failed, unable to setup "
+                     "stack range for JS");
   MOZ_RELEASE_ASSERT(stackBase,
                      "invalid stack base, unable to setup stack range for JS");
   pthread_attr_destroy(&sattr);
@@ -148,7 +145,8 @@ void* js::GetNativeStackBaseImpl() {
    * FIXME: this function is non-portable;
    * other POSIX systems may have different np alternatives
    */
-  pthread_getattr_np(thread, &sattr);
+  MOZ_RELEASE_ASSERT(pthread_getattr_np(thread, &sattr) == 0,
+                     "pthread_getattr_np failed");
 #    endif
 
   void* stackBase = 0;

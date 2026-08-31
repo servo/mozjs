@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,23 +7,19 @@
 
 #include "vm/Interpreter.h"
 
-#include "jslibmath.h"
-#include "jsmath.h"
-#include "jsnum.h"
+#include "mozilla/CheckedArithmetic.h"
 
+#include "builtin/Math.h"
+#include "builtin/Number.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
-#include "util/CheckedArithmetic.h"
-#include "vm/ArgumentsObject.h"
+#include "util/PortableMath.h"
 #include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"  // JSDVG_SEARCH_STACK
 #include "vm/JSAtomUtils.h"   // AtomizeString
 #include "vm/Realm.h"
-#include "vm/SharedStencil.h"  // GCThingIndex
 #include "vm/StaticStrings.h"
 #include "vm/ThrowMsgKind.h"
-#ifdef ENABLE_RECORD_TUPLE
-#  include "vm/RecordTupleShared.h"
-#endif
+#include "vm/Watchtower.h"
 
 #include "vm/GlobalObject-inl.h"
 #include "vm/JSAtomUtils-inl.h"  // PrimitiveValueToId, TypeName
@@ -44,7 +38,7 @@ namespace js {
  * uninitialized let declaration, represented by the magic value
  * JS_UNINITIALIZED_LEXICAL.
  */
-static inline bool IsUninitializedLexical(const Value& val) {
+static inline bool IsUninitializedLexical(Value val) {
   // Use whyMagic here because JS_OPTIMIZED_OUT could flow into here.
   return val.isMagic() && val.whyMagic() == JS_UNINITIALIZED_LEXICAL;
 }
@@ -70,41 +64,14 @@ static inline bool IsUninitializedLexicalSlot(HandleObject obj,
       obj->as<NativeObject>().getSlot(propInfo.slot()));
 }
 
-static inline bool CheckUninitializedLexical(JSContext* cx, PropertyName* name_,
+static inline bool CheckUninitializedLexical(JSContext* cx,
+                                             Handle<PropertyName*> name,
                                              HandleValue val) {
   if (IsUninitializedLexical(val)) {
-    Rooted<PropertyName*> name(cx, name_);
     ReportRuntimeLexicalError(cx, JSMSG_UNINITIALIZED_LEXICAL, name);
     return false;
   }
   return true;
-}
-
-inline bool GetLengthProperty(const Value& lval, MutableHandleValue vp) {
-  /* Optimize length accesses on strings, arrays, and arguments. */
-  if (lval.isString()) {
-    vp.setInt32(lval.toString()->length());
-    return true;
-  }
-  if (lval.isObject()) {
-    JSObject* obj = &lval.toObject();
-    if (obj->is<ArrayObject>()) {
-      vp.setNumber(obj->as<ArrayObject>().length());
-      return true;
-    }
-
-    if (obj->is<ArgumentsObject>()) {
-      ArgumentsObject* argsobj = &obj->as<ArgumentsObject>();
-      if (!argsobj->hasOverriddenLength()) {
-        uint32_t length = argsobj->initialLength();
-        MOZ_ASSERT(length < INT32_MAX);
-        vp.setInt32(int32_t(length));
-        return true;
-      }
-    }
-  }
-
-  return false;
 }
 
 enum class GetNameMode { Normal, TypeOf };
@@ -126,7 +93,8 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
 
   /* Take the slow path if shape was not found in a native object. */
   if (!receiver->is<NativeObject>() || !holder->is<NativeObject>() ||
-      receiver->is<WithEnvironmentObject>()) {
+      (receiver->is<WithEnvironmentObject>() &&
+       receiver->as<WithEnvironmentObject>().supportUnscopables())) {
     Rooted<jsid> id(cx, NameToId(name));
     if (!GetProperty(cx, receiver, receiver, id, vp)) {
       return false;
@@ -137,8 +105,11 @@ inline bool FetchName(JSContext* cx, HandleObject receiver, HandleObject holder,
       /* Fast path for Object instance properties. */
       vp.set(holder->as<NativeObject>().getSlot(propInfo.slot()));
     } else {
+      // Unwrap 'with' environments for reasons given in
+      // GetNameBoundInEnvironment.
+      RootedObject normalized(cx, MaybeUnwrapWithEnvironment(receiver));
       RootedId id(cx, NameToId(name));
-      if (!NativeGetExistingProperty(cx, receiver, holder.as<NativeObject>(),
+      if (!NativeGetExistingProperty(cx, normalized, holder.as<NativeObject>(),
                                      id, propInfo, vp)) {
         return false;
       }
@@ -175,9 +146,8 @@ inline bool GetEnvironmentName(JSContext* cx, HandleObject envChain,
                                MutableHandleValue vp) {
   {
     PropertyResult prop;
-    JSObject* obj = nullptr;
     NativeObject* pobj = nullptr;
-    if (LookupNameNoGC(cx, name, envChain, &obj, &pobj, &prop)) {
+    if (LookupNameNoGC(cx, name, envChain, &pobj, &prop)) {
       if (FetchNameNoGC(pobj, prop, vp.address())) {
         return true;
       }
@@ -284,11 +254,25 @@ inline void InitGlobalLexicalOperation(
                 lexicalEnv == &cx->global()->lexicalEnvironment());
   MOZ_ASSERT(JSOp(*pc) == JSOp::InitGLexical);
 
-  mozilla::Maybe<PropertyInfo> prop =
-      lexicalEnv->lookup(cx, script->getName(pc));
+  PropertyName* name = script->getName(pc);
+  mozilla::Maybe<PropertyInfo> prop = lexicalEnv->lookup(cx, name);
   MOZ_ASSERT(prop.isSome());
-  MOZ_ASSERT(IsUninitializedLexical(lexicalEnv->getSlot(prop->slot())));
 
+  // We usually don't have to call Watchtower::watchPropertyValueChange because
+  // this is an initialization instead of a mutation, and we don't optimize
+  // loads of uninitialized lexicals in the JIT.
+  //
+  // The Debugger API allows initializing lexical bindings using
+  // forceLexicalInitializationByName before we get here, so we use a slow path
+  // if that feature has been used.
+  if (MOZ_UNLIKELY(cx->hasDebuggerForcedLexicalInit)) {
+    if (!IsUninitializedLexical(lexicalEnv->getSlot(prop->slot()))) {
+      Watchtower::watchPropertyValueChange<AllowGC::NoGC>(
+          cx, lexicalEnv, NameToId(name), value, *prop);
+    }
+  } else {
+    MOZ_ASSERT(IsUninitializedLexical(lexicalEnv->getSlot(prop->slot())));
+  }
   lexicalEnv->setSlot(prop->slot(), value);
 }
 
@@ -321,7 +305,7 @@ static MOZ_ALWAYS_INLINE bool NegOperation(JSContext* cx,
     return BigInt::negValue(cx, val, res);
   }
 
-  res.setNumber(-val.toNumber());
+  res.setNumberAssumeCanonicalNaN(-val.toNumber());
   return true;
 }
 
@@ -334,7 +318,7 @@ static MOZ_ALWAYS_INLINE bool IncOperation(JSContext* cx, HandleValue val,
   }
 
   if (val.isNumber()) {
-    res.setNumber(val.toNumber() + 1);
+    res.setNumberAssumeCanonicalNaN(val.toNumber() + 1);
     return true;
   }
 
@@ -351,7 +335,7 @@ static MOZ_ALWAYS_INLINE bool DecOperation(JSContext* cx, HandleValue val,
   }
 
   if (val.isNumber()) {
-    res.setNumber(val.toNumber() - 1);
+    res.setNumberAssumeCanonicalNaN(val.toNumber() - 1);
     return true;
   }
 
@@ -396,8 +380,7 @@ static MOZ_ALWAYS_INLINE bool GetObjectElementOperation(
     }
 
     if (key.isString()) {
-      JSString* str = key.toString();
-      JSAtom* name = str->isAtom() ? &str->asAtom() : AtomizeString(cx, str);
+      JSAtom* name = AtomizeString(cx, key.toString());
       if (!name) {
         return false;
       }
@@ -429,19 +412,6 @@ static MOZ_ALWAYS_INLINE bool GetObjectElementOperation(
 static MOZ_ALWAYS_INLINE bool GetPrimitiveElementOperation(
     JSContext* cx, JS::HandleValue receiver, int receiverIndex, HandleValue key,
     MutableHandleValue res) {
-#ifdef ENABLE_RECORD_TUPLE
-  if (receiver.isExtendedPrimitive()) {
-    RootedId id(cx);
-    if (!ToPropertyKey(cx, key, &id)) {
-      return false;
-    }
-    RootedObject obj(cx, &receiver.toExtendedPrimitive());
-    if (!ExtendedPrimitiveGetProperty(cx, obj, receiver, id, res)) {
-      return false;
-    }
-  }
-#endif
-
   // FIXME: Bug 1234324 We shouldn't be boxing here.
   RootedObject boxed(
       cx, ToObjectFromStackForPropertyAccess(cx, receiver, receiverIndex, key));
@@ -463,8 +433,7 @@ static MOZ_ALWAYS_INLINE bool GetPrimitiveElementOperation(
     }
 
     if (key.isString()) {
-      JSString* str = key.toString();
-      JSAtom* name = str->isAtom() ? &str->asAtom() : AtomizeString(cx, str);
+      JSAtom* name = AtomizeString(cx, key.toString());
       if (!name) {
         return false;
       }
@@ -544,10 +513,6 @@ static MOZ_ALWAYS_INLINE bool InitElemOperation(JSContext* cx, jsbytecode* pc,
   }
 
   unsigned flags = GetInitDataPropAttrs(JSOp(*pc));
-  if (id.isPrivateName()) {
-    // Clear enumerate flag off of private names.
-    flags &= ~JSPROP_ENUMERATE;
-  }
   return DefineDataProperty(cx, obj, id, val, flags);
 }
 
@@ -658,7 +623,7 @@ static MOZ_ALWAYS_INLINE bool AddOperation(JSContext* cx,
   if (lhs.isInt32() && rhs.isInt32()) {
     int32_t l = lhs.toInt32(), r = rhs.toInt32();
     int32_t t;
-    if (MOZ_LIKELY(SafeAdd(l, r, &t))) {
+    if (MOZ_LIKELY(mozilla::SafeAdd(l, r, &t))) {
       res.setInt32(t);
       return true;
     }
@@ -716,7 +681,7 @@ static MOZ_ALWAYS_INLINE bool AddOperation(JSContext* cx,
     return BigInt::addValue(cx, lhs, rhs, res);
   }
 
-  res.setNumber(lhs.toNumber() + rhs.toNumber());
+  res.setNumberAssumeCanonicalNaN(lhs.toNumber() + rhs.toNumber());
   return true;
 }
 
@@ -732,7 +697,7 @@ static MOZ_ALWAYS_INLINE bool SubOperation(JSContext* cx,
     return BigInt::subValue(cx, lhs, rhs, res);
   }
 
-  res.setNumber(lhs.toNumber() - rhs.toNumber());
+  res.setNumberAssumeCanonicalNaN(lhs.toNumber() - rhs.toNumber());
   return true;
 }
 
@@ -748,7 +713,7 @@ static MOZ_ALWAYS_INLINE bool MulOperation(JSContext* cx,
     return BigInt::mulValue(cx, lhs, rhs, res);
   }
 
-  res.setNumber(lhs.toNumber() * rhs.toNumber());
+  res.setNumberAssumeCanonicalNaN(lhs.toNumber() * rhs.toNumber());
   return true;
 }
 
@@ -764,7 +729,7 @@ static MOZ_ALWAYS_INLINE bool DivOperation(JSContext* cx,
     return BigInt::divValue(cx, lhs, rhs, res);
   }
 
-  res.setNumber(NumberDiv(lhs.toNumber(), rhs.toNumber()));
+  res.setNumberAssumeCanonicalNaN(NumberDiv(lhs.toNumber(), rhs.toNumber()));
   return true;
 }
 
@@ -788,7 +753,7 @@ static MOZ_ALWAYS_INLINE bool ModOperation(JSContext* cx,
     return BigInt::modValue(cx, lhs, rhs, res);
   }
 
-  res.setNumber(NumberMod(lhs.toNumber(), rhs.toNumber()));
+  res.setNumberAssumeCanonicalNaN(NumberMod(lhs.toNumber(), rhs.toNumber()));
   return true;
 }
 
@@ -804,7 +769,7 @@ static MOZ_ALWAYS_INLINE bool PowOperation(JSContext* cx,
     return BigInt::powValue(cx, lhs, rhs, res);
   }
 
-  res.setNumber(ecmaPow(lhs.toNumber(), rhs.toNumber()));
+  res.setNumberAssumeCanonicalNaN(ecmaPow(lhs.toNumber(), rhs.toNumber()));
   return true;
 }
 
@@ -956,7 +921,7 @@ static MOZ_ALWAYS_INLINE void InitElemArrayOperation(JSContext* cx,
 }
 
 /*
- * As an optimization, the interpreter creates a handful of reserved Rooted<T>
+ * As an optimization, the interpreter creates a handful of reserved rooted
  * variables at the beginning, thus inserting them into the Rooted list once
  * upon entry. ReservedRooted "borrows" a reserved Rooted variable and uses it
  * within a local scope, resetting the value to nullptr (or the appropriate
@@ -964,29 +929,26 @@ static MOZ_ALWAYS_INLINE void InitElemArrayOperation(JSContext* cx,
  * from the rooter list, while preventing stale values from being kept alive
  * unnecessarily.
  */
-
 template <typename T>
 class ReservedRooted : public RootedOperations<T, ReservedRooted<T>> {
-  Rooted<T>* savedRoot;
+  MutableHandle<T> savedRoot;
 
  public:
-  ReservedRooted(Rooted<T>* root, const T& ptr) : savedRoot(root) {
-    *root = ptr;
+  ReservedRooted(MutableHandle<T> root, const T& ptr) : savedRoot(root) {
+    root.set(ptr);
   }
 
-  explicit ReservedRooted(Rooted<T>* root) : savedRoot(root) {
-    *root = JS::SafelyInitialized<T>::create();
-  }
+  explicit ReservedRooted(MutableHandle<T> root) : savedRoot(root) { clear(); }
 
-  ~ReservedRooted() { *savedRoot = JS::SafelyInitialized<T>::create(); }
+  ~ReservedRooted() { clear(); }
 
-  void set(const T& p) const { *savedRoot = p; }
-  operator Handle<T>() { return *savedRoot; }
-  operator Rooted<T>&() { return *savedRoot; }
-  MutableHandle<T> operator&() { return &*savedRoot; }
+  void clear() { savedRoot.set(JS::SafelyInitialized<T>::create()); }
+  void set(const T& p) { savedRoot.set(p); }
+  operator Handle<T>() { return savedRoot; }
+  MutableHandle<T> operator&() { return savedRoot; }
 
-  DECLARE_NONPOINTER_ACCESSOR_METHODS(savedRoot->get())
-  DECLARE_NONPOINTER_MUTABLE_ACCESSOR_METHODS(savedRoot->get())
+  DECLARE_NONPOINTER_ACCESSOR_METHODS(savedRoot.get())
+  DECLARE_NONPOINTER_MUTABLE_ACCESSOR_METHODS(savedRoot.get())
   DECLARE_POINTER_CONSTREF_OPS(T)
   DECLARE_POINTER_ASSIGN_OPS(ReservedRooted, T)
 };

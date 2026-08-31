@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -17,8 +15,9 @@
  *   2) They implement this functionality *safely*, without invoking signed
  *      integer overflow that has undefined behavior in C++.
  *   3) They play nice with compiler-based integer-overflow sanitizers (see
- *      build/autoconf/sanitize.m4), that in appropriately configured builds
- *      verify at runtime that integral arithmetic doesn't overflow.
+ *      build/moz.configure/toolchain.configure), that in appropriately
+ * configured builds verify at runtime that integral arithmetic doesn't
+ * overflow.
  */
 
 #ifndef mozilla_WrappingOperations_h

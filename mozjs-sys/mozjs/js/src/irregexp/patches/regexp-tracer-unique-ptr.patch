@@ -1,0 +1,34 @@
+diff --git a/js/src/irregexp/imported/regexp-macro-assembler-tracer.cc b/js/src/irregexp/imported/regexp-macro-assembler-tracer.cc
+--- a/imported/regexp-macro-assembler-tracer.cc
++++ b/imported/regexp-macro-assembler-tracer.cc
+@@ -11,7 +11,7 @@
+ namespace internal {
+
+ RegExpMacroAssemblerTracer::RegExpMacroAssemblerTracer(
+-    std::unique_ptr<RegExpMacroAssembler>&& assembler)
++    js::UniquePtr<RegExpMacroAssembler>&& assembler)
+     : RegExpMacroAssembler(*assembler), assembler_(std::move(assembler)) {
+   PrintF("RegExpMacroAssembler%s();\n",
+          ImplementationToString(assembler_->Implementation()));
+diff --git a/js/src/irregexp/imported/regexp-macro-assembler-tracer.h b/js/src/irregexp/imported/regexp-macro-assembler-tracer.h
+index 4af9a4efa6..63d0c1ec37 100644
+--- a/imported/regexp-macro-assembler-tracer.h
++++ b/imported/regexp-macro-assembler-tracer.h
+@@ -15,7 +15,7 @@
+ class RegExpMacroAssemblerTracer: public RegExpMacroAssembler {
+  public:
+   explicit RegExpMacroAssemblerTracer(
+-      std::unique_ptr<RegExpMacroAssembler>&& assembler);
++      js::UniquePtr<RegExpMacroAssembler>&& assembler);
+   ~RegExpMacroAssemblerTracer() override;
+   void AbortedCodeGeneration() override;
+   void AdvanceCurrentPosition(int by) override;    // Signed cp change.
+@@ -120,7 +120,7 @@
+   void set_can_fallback(bool val) override;
+
+  private:
+-  std::unique_ptr<RegExpMacroAssembler> assembler_;
++  js::UniquePtr<RegExpMacroAssembler> assembler_;
+ };
+
+ }  // namespace internal

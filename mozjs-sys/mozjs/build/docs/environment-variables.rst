@@ -25,6 +25,11 @@ MACH_NO_TERMINAL_FOOTER
    If defined, the terminal footer displayed when building with mach in
    a TTY is disabled.
 
+MACH_NO_FUNC_CACHE
+   If defined, disables mach's persistent function result cache. This
+   cache speeds up operations like configure by avoiding redundant
+   expensive computations when input files haven't changed.
+
 MACH_NO_WRITE_TIMES
    If defined, mach commands will not prefix output lines with the
    elapsed time since program start. This option is equivalent to

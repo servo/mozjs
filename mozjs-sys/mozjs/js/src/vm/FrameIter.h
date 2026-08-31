@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -18,7 +16,7 @@
 
 #include "jit/JSJitFrameIter.h"  // js::jit::{InlineFrameIterator,JSJitFrameIter}
 #include "js/ColumnNumber.h"     // JS::TaggedColumnNumberOneOrigin
-#include "js/RootingAPI.h"       // JS::Handle, JS::Rooted
+#include "js/RootingAPI.h"       // JS::Handle
 #include "js/TypeDecls.h"  // jsbytecode, JSContext, JSAtom, JSFunction, JSObject, JSScript
 #include "js/Value.h"       // JS::Value
 #include "vm/Activation.h"  // js::InterpreterActivation
@@ -243,9 +241,9 @@ class FrameIter {
   explicit FrameIter(JSContext* cx,
                      DebuggerEvalOption = FOLLOW_DEBUGGER_EVAL_PREV_LINK);
   FrameIter(JSContext* cx, DebuggerEvalOption, JSPrincipals*);
-  FrameIter(const FrameIter& iter);
+  FrameIter(const FrameIter& iter) = delete;
   MOZ_IMPLICIT FrameIter(const Data& data);
-  MOZ_IMPLICIT FrameIter(AbstractFramePtr frame);
+  explicit FrameIter(mozilla::UniquePtr<Data> data) : FrameIter(*data) {}
 
   bool done() const { return data_.state_ == DONE; }
 
@@ -370,7 +368,7 @@ class FrameIter {
   // -----------------------------------------------------------
 
   AbstractFramePtr abstractFramePtr() const;
-  Data* copyData() const;
+  mozilla::UniquePtr<Data> copyData() const;
 
   // This can only be called when isInterp():
   inline InterpreterFrame* interpFrame() const;
@@ -383,6 +381,11 @@ class FrameIter {
 
   bool inPrologue() const;
 
+  const wasm::WasmFrameIter& wasmFrame() const {
+    return data_.jitFrames_.asWasm();
+  }
+  wasm::WasmFrameIter& wasmFrame() { return data_.jitFrames_.asWasm(); }
+
  private:
   Data data_;
   jit::InlineFrameIterator ionInlineFrames_;
@@ -390,12 +393,8 @@ class FrameIter {
   const jit::JSJitFrameIter& jsJitFrame() const {
     return data_.jitFrames_.asJSJit();
   }
-  const wasm::WasmFrameIter& wasmFrame() const {
-    return data_.jitFrames_.asWasm();
-  }
 
   jit::JSJitFrameIter& jsJitFrame() { return data_.jitFrames_.asJSJit(); }
-  wasm::WasmFrameIter& wasmFrame() { return data_.jitFrames_.asWasm(); }
 
   bool isIonScripted() const {
     return isJSJit() && jsJitFrame().isIonScripted();
@@ -489,8 +488,9 @@ class NonBuiltinScriptFrameIter : public ScriptFrameIter {
 };
 
 /*
- * Blindly iterate over all frames in the current thread's stack. These frames
- * can be from different contexts and compartments, so beware.
+ * Iterates over all frames in the current thread's stack. This is very similar
+ * to FrameIter, but AllFramesIter passes IGNORE_DEBUGGER_EVAL_PREV_LINK to
+ * ignore evalInFramePrev links for debugger-eval frames.
  */
 class AllFramesIter : public FrameIter {
  public:

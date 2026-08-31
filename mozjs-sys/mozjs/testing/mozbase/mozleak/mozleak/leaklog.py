@@ -40,7 +40,7 @@ def process_single_leak_file(
         r"^\s*\d+ \|"
         r"(?P<name>[^|]+)\|"
         r"\s*(?P<size>-?\d+)\s+(?P<bytesLeaked>-?\d+)\s*\|"
-        r"\s*-?\d+\s+(?P<numLeaked>-?\d+)"
+        r"\s*(?P<totalInstances>-?\d+)\s+(?P<numLeaked>-?\d+)"
     )
     # The class name can contain spaces. We remove trailing whitespace later.
 
@@ -58,7 +58,7 @@ def process_single_leak_file(
     header = []
     log.info("leakcheck | Processing leak log file %s" % leakLogFileName)
 
-    with open(leakLogFileName, "r") as leaks:
+    with open(leakLogFileName) as leaks:
         for line in leaks:
             if line.find("purposefully crash") > -1:
                 crashedOnPurpose = True
@@ -75,6 +75,7 @@ def process_single_leak_file(
             name = matches.group("name").rstrip()
             size = int(matches.group("size"))
             bytesLeaked = int(matches.group("bytesLeaked"))
+            totalInstances = int(matches.group("totalInstances"))
             numLeaked = int(matches.group("numLeaked"))
             # Output the raw line from the leak log table if it is for an object
             # row that has been leaked.
@@ -118,16 +119,29 @@ def process_single_leak_file(
                 continue
             if name != "TOTAL" and numLeaked != 0 and recordLeakedObjects:
                 leakedObjectNames.append(name)
-                leakedObjectAnalysis.append((numLeaked, name))
+                leakedObjectAnalysis.append((
+                    numLeaked,
+                    name,
+                    size,
+                    bytesLeaked,
+                    totalInstances,
+                ))
 
-    for numLeaked, name in leakedObjectAnalysis:
+    for numLeaked, name, size, bytesLeaked, totalInstances in leakedObjectAnalysis:
         leak_allowed = False
         if name in allowed:
             limit = leak_allowed[name]
             leak_allowed = limit is None or numLeaked <= limit
 
         log.mozleak_object(
-            processType, numLeaked, name, scope=scope, allowed=leak_allowed
+            processType,
+            numLeaked,
+            name,
+            scope=scope,
+            allowed=leak_allowed,
+            bytes_per_inst=size,
+            bytes_leaked=bytesLeaked,
+            total_instances=totalInstances,
         )
 
     log.mozleak_total(

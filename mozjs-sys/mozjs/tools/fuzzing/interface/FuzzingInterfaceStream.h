@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,8 +7,8 @@
  * support
  */
 
-#ifndef FuzzingInterfaceStream_h__
-#define FuzzingInterfaceStream_h__
+#ifndef FuzzingInterfaceStream_h_
+#define FuzzingInterfaceStream_h_
 
 #ifdef JS_STANDALONE
 #  error "FuzzingInterfaceStream.h cannot be used in JS standalone builds."
@@ -23,8 +22,6 @@
 #include "nsDirectoryServiceDefs.h"
 #include "nsStreamUtils.h"
 #include "nsStringStream.h"
-
-#include <fstream>
 
 #include "FuzzingInterface.h"
 
@@ -78,4 +75,4 @@ typedef int (*FuzzingTestFuncStream)(nsCOMPtr<nsIInputStream>);
   MOZ_LIBFUZZER_INTERFACE_STREAM(initFunc, testFunc, moduleName);    \
   MOZ_AFL_INTERFACE_STREAM(initFunc, testFunc, moduleName);
 
-#endif  // FuzzingInterfaceStream_h__
+#endif  // FuzzingInterfaceStream_h_

@@ -40,34 +40,6 @@
 #error U_USER_ATOMICS and U_USER_MUTEX_H are not supported
 #endif
 
-#ifndef __wasi__
-
-// Export an explicit template instantiation of std::atomic<int32_t>. 
-// When building DLLs for Windows this is required as it is used as a data member of the exported SharedObject class.
-// See digitlst.h, pluralaffix.h, datefmt.h, and others for similar examples.
-//
-// Similar story for std::atomic<std::mutex *>, and the exported UMutex class.
-#if U_PF_WINDOWS <= U_PLATFORM && U_PLATFORM <= U_PF_CYGWIN && !defined(U_IN_DOXYGEN)
-#if defined(__clang__) || defined(_MSC_VER)
-  #if defined(__clang__)
-    // Suppress the warning that the explicit instantiation after explicit specialization has no effect.
-    #pragma clang diagnostic push
-    #pragma clang diagnostic ignored "-Winstantiation-after-specialization"
-  #endif
-template struct U_COMMON_API std::atomic<int32_t>;
-template struct U_COMMON_API std::atomic<std::mutex *>;
-  #if defined(__clang__)
-    #pragma clang diagnostic pop
-  #endif
-#elif defined(__GNUC__)
-// For GCC this class is already exported/visible, so no need for U_COMMON_API.
-template struct std::atomic<int32_t>;
-template struct std::atomic<std::mutex *>;
-#endif
-#endif
-
-#endif
-
 U_NAMESPACE_BEGIN
 
 /****************************************************************************
@@ -99,7 +71,6 @@ inline int32_t umtx_atomic_dec(u_atomic_int32_t *var) {
 #else
 
 typedef int32_t u_atomic_int32_t;
-#define ATOMIC_INT32_T_INITIALIZER(val) val
 
 inline int32_t umtx_loadAcquire(u_atomic_int32_t &var) {
     return var;
@@ -125,11 +96,22 @@ inline int32_t umtx_atomic_dec(u_atomic_int32_t *var) {
  *
  *************************************************************************************************/
 
-struct U_COMMON_API UInitOnce {
-    u_atomic_int32_t   fState {0};
-    UErrorCode       fErrCode {U_ZERO_ERROR};
-    void reset() {fState = 0;}
-    UBool isReset() {return umtx_loadAcquire(fState) == 0;}
+struct U_COMMON_API_CLASS UInitOnce {
+private:
+    friend U_COMMON_API UBool U_EXPORT2 umtx_initImplPreInit(UInitOnce&);
+    friend U_COMMON_API void U_EXPORT2 umtx_initImplPostInit(UInitOnce&);
+    template <typename T> friend void umtx_initOnce(UInitOnce&, T*, void (T::*)());
+    friend void umtx_initOnce(UInitOnce&, void (*)());
+    friend void umtx_initOnce(UInitOnce&, void (*)(UErrorCode&), UErrorCode&);
+    template <typename T> friend void umtx_initOnce(UInitOnce&, void (*)(T), T);
+    template <typename T> friend void umtx_initOnce(UInitOnce&, void (*)(T, UErrorCode&), T, UErrorCode&);
+
+    u_atomic_int32_t fState{0};
+    UErrorCode fErrCode{U_ZERO_ERROR};
+
+public:
+    U_COMMON_API void reset() { fState = 0; }
+    U_COMMON_API UBool isReset() { return umtx_loadAcquire(fState) == 0; }
 // Note: isReset() is used by service registration code.
 //                 Thread safety of this usage needs review.
 };
@@ -246,30 +228,30 @@ template<class T> void umtx_initOnce(UInitOnce &uio, void (U_CALLCONV *fp)(T, UE
  *    }         // myMutex is released when lock goes out of scope.
  */
 
-class U_COMMON_API UMutex {
+class U_COMMON_API_CLASS UMutex {
 public:
-    UMUTEX_CONSTEXPR UMutex() {}
-    ~UMutex() = default;
+    U_COMMON_API UMUTEX_CONSTEXPR UMutex() {}
+    U_COMMON_API ~UMutex() = default;
 
-    UMutex(const UMutex &other) = delete;
-    UMutex &operator =(const UMutex &other) = delete;
-    void *operator new(size_t) = delete;
+    UMutex(const UMutex& other) = delete;
+    UMutex& operator=(const UMutex& other) = delete;
+    void* operator new(size_t) = delete;
 
     // requirements for C++ BasicLockable, allows UMutex to work with std::lock_guard
-    void lock() {
+    U_COMMON_API void lock() {
 #ifndef __wasi__
         std::mutex *m = fMutex.load(std::memory_order_acquire);
         if (m == nullptr) { m = getMutex(); }
         m->lock();
 #endif
     }
-    void unlock() {
+    U_COMMON_API void unlock() {
 #ifndef __wasi__
         fMutex.load(std::memory_order_relaxed)->unlock();
 #endif
     }
 
-    static void cleanup();
+    U_COMMON_API static void cleanup();
 
 private:
 #ifndef __wasi__

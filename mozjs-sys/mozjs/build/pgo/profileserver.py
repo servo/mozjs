@@ -5,14 +5,13 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import glob
-import json
 import os
 import subprocess
 import sys
 
 import mozcrash
 from mozbuild.base import BinaryNotFoundException, MozbuildObject
-from mozfile import TemporaryDirectory
+from mozfile import TemporaryDirectory, json
 from mozhttpd import MozHttpd
 from mozprofile import FirefoxProfile, Preferences
 from mozprofile.permissions import ServerLocations
@@ -59,8 +58,29 @@ def get_crashreports(directory, name=None):
     return rc
 
 
+class ProfileServerCLI(CLI):
+    def __init__(self, args=sys.argv[1:]):
+        CLI.__init__(self, args=args)
+
+    def add_options(self, parser):
+        CLI.add_options(self, parser)
+
+        # add profileserver options
+        parser.add_option(
+            "-e",
+            "--extended-corpus",
+            dest="extended_corpus_dir",
+            help="Directory of the optional extended corpus.",
+            metavar=None,
+            default=None,
+        )
+
+    def extended_corpus_dir(self):
+        return self.options.extended_corpus_dir
+
+
 if __name__ == "__main__":
-    cli = CLI()
+    cli = ProfileServerCLI()
     debug_args, interactive = cli.debugger_arguments()
     runner_args = cli.runner_args()
 
@@ -71,9 +91,12 @@ if __name__ == "__main__":
         try:
             binary = build.get_binary_path(where="staged-package")
         except BinaryNotFoundException as e:
-            print("{}\n\n{}\n".format(e, e.help()))
+            print(f"{e}\n\n{e.help()}\n")
             sys.exit(1)
     binary = os.path.normpath(os.path.abspath(binary))
+
+    extended_corpus_dir = cli.extended_corpus_dir()
+    has_extended_corpus = extended_corpus_dir is not None
 
     path_mappings = {
         k: os.path.join(build.topsrcdir, v) for k, v in PATH_MAPPINGS.items()
@@ -85,6 +108,8 @@ if __name__ == "__main__":
     )
     httpd.start(block=False)
 
+    # Speedometer3 must run in its own server. The benchmark assumes that it
+    # is in a root path, and will fail if it's not.
     sp3_httpd = MozHttpd(
         port=8000,
         docroot=os.path.join(
@@ -94,6 +119,23 @@ if __name__ == "__main__":
     )
     sp3_httpd.start(block=False)
     print("started SP3 server on port 8000")
+
+    if has_extended_corpus:
+        js3_dir = os.path.join(extended_corpus_dir, "JetStream")
+
+        if not os.path.exists(js3_dir):
+            print(f"Error: JetStream directory does not exist at {js3_dir}")
+            sys.exit(1)
+
+        # JetStream3 must run in its own server. The benchmark assumes that it
+        # is in a root path, and will fail if it's not.
+        js3_httpd = MozHttpd(
+            port=8001,
+            docroot=js3_dir,
+        )
+        js3_httpd.start(block=False)
+        print("started JS3 server on port 8001")
+
     locations = ServerLocations()
     locations.add_host(host="127.0.0.1", port=PORT, options="primary,privileged")
 
@@ -104,7 +146,7 @@ if __name__ == "__main__":
     with TemporaryDirectory() as profilePath:
         # TODO: refactor this into mozprofile
         profile_data_dir = os.path.join(build.topsrcdir, "testing", "profiles")
-        with open(os.path.join(profile_data_dir, "profiles.json"), "r") as fh:
+        with open(os.path.join(profile_data_dir, "profiles.json")) as fh:
             base_profiles = json.load(fh)["profileserver"]
 
         prefpaths = [
@@ -138,18 +180,12 @@ if __name__ == "__main__":
         env["MOZ_CRASHREPORTER_NO_REPORT"] = "1"
         env["MOZ_CRASHREPORTER_SHUTDOWN"] = "1"
         env["XPCOM_DEBUG_BREAK"] = "warn"
-        # We disable sandboxing to make writing profiling data actually work
-        # Bug 1553850 considers fixing this.
-        env["MOZ_DISABLE_CONTENT_SANDBOX"] = "1"
-        env["MOZ_DISABLE_RDD_SANDBOX"] = "1"
-        env["MOZ_DISABLE_SOCKET_PROCESS_SANDBOX"] = "1"
-        env["MOZ_DISABLE_GPU_SANDBOX"] = "1"
-        env["MOZ_DISABLE_GMP_SANDBOX"] = "1"
-        env["MOZ_DISABLE_NPAPI_SANDBOX"] = "1"
-        env["MOZ_DISABLE_VR_SANDBOX"] = "1"
 
         # Ensure different pids write to different files
-        env["LLVM_PROFILE_FILE"] = "default_%p_random_%m.profraw"
+        # Use absolute path to ensure that Sandbox computes the correct permissions
+        env["LLVM_PROFILE_FILE"] = os.path.join(
+            os.getcwd(), "default_%p_random_%m.profraw"
+        )
 
         # Write to an output file if we're running in automation
         process_args = {"universal_newlines": True}
@@ -162,7 +198,7 @@ if __name__ == "__main__":
         runner = FirefoxRunner(
             profile=profile,
             binary=binary,
-            cmdargs=["data:text/html,<script>Quitter.quit()</script>"],
+            cmdargs=[f"http://localhost:{PORT}/quit.html"],
             env=env,
             process_args=process_args,
         )
@@ -176,6 +212,8 @@ if __name__ == "__main__":
                 with open(logfile) as f:
                     print(f.read())
             sp3_httpd.stop()
+            if has_extended_corpus:
+                js3_httpd.stop()
             httpd.stop()
             get_crashreports(profilePath, name="Profile initialization")
             sys.exit(ret)
@@ -191,7 +229,10 @@ if __name__ == "__main__":
             process_args["logfile"] = os.path.join(
                 env["UPLOAD_PATH"], "profile-run-2.log"
             )
-        cmdargs = ["http://localhost:%d/index.html" % PORT]
+        cmdargs = [
+            "http://localhost:%d/index.html?extendedCorpus=%s"
+            % (PORT, str(has_extended_corpus).lower())
+        ]
         runner = FirefoxRunner(
             profile=profile,
             binary=binary,
@@ -202,6 +243,8 @@ if __name__ == "__main__":
         runner.start(debug_args=debug_args, interactive=interactive)
         ret = runner.wait()
         sp3_httpd.stop()
+        if has_extended_corpus:
+            js3_httpd.stop()
         httpd.stop()
         if ret:
             print("Firefox exited with code %d during profiling" % ret)
@@ -212,6 +255,21 @@ if __name__ == "__main__":
                     print(f.read())
             get_crashreports(profilePath, name="Profiling run")
             sys.exit(ret)
+
+        if "UPLOAD_PATH" in env:
+            should_err = False
+            print("Verify log for LLVM Profile Error")
+            for n in range(1, 2):
+                log = os.path.join(env["UPLOAD_PATH"], f"profile-run-{n}.log")
+                with open(log) as f:
+                    for line in f.readlines():
+                        if "LLVM Profile Error" in line:
+                            print(f"Error [{log}]: '{line.strip()}'")
+                            should_err = True
+
+            if should_err:
+                print("Found some LLVM Profile Error in logs, see above.")
+                sys.exit(1)
 
         # Try to move the crash reports to the artifacts even if Firefox appears
         # to exit successfully, in case there's a crash that doesn't set the

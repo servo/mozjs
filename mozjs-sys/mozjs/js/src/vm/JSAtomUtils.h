@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -15,6 +13,7 @@
 #include "gc/MaybeRooted.h"
 #include "js/TypeDecls.h"
 #include "js/Utility.h"
+#include "vm/StringType.h"
 
 namespace js {
 
@@ -81,7 +80,16 @@ extern JSAtom* PermanentlyAtomizeCharsNonStaticValidLength(
 extern JSAtom* AtomizeUTF8Chars(JSContext* cx, const char* utf8Chars,
                                 size_t utf8ByteLength);
 
-extern JSAtom* AtomizeString(JSContext* cx, JSString* str);
+extern JSAtom* AtomizeStringSlow(JSContext* cx, JSString* str);
+
+MOZ_ALWAYS_INLINE JSAtom* AtomizeString(JSContext* cx, JSString* str) {
+  // Inlined fast path for atoms. This covers ~71% of calls to this function on
+  // Speedometer 3.
+  if (str->isAtom()) {
+    return &str->asAtom();
+  }
+  return AtomizeStringSlow(cx, str);
+}
 
 template <AllowGC allowGC>
 extern JSAtom* ToAtom(JSContext* cx,
@@ -93,10 +101,6 @@ extern JSAtom* ToAtom(JSContext* cx,
  * This function does not GC.
  */
 extern bool PinAtom(JSContext* cx, JSAtom* atom);
-
-#ifdef ENABLE_RECORD_TUPLE
-extern bool EnsureAtomized(JSContext* cx, MutableHandleValue v, bool* updated);
-#endif
 
 extern JS::Handle<PropertyName*> ClassName(JSProtoKey key, JSContext* cx);
 

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -15,6 +13,7 @@
 
 #include "gc/NurseryAwareHashMap.h"
 #include "gc/ZoneAllocator.h"
+#include "js/friend/Wrapper.h"
 #include "vm/Iteration.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
@@ -38,80 +37,79 @@ class ObjectWrapperMap {
   Zone* zone;
 
  public:
-  class Enum {
-    Enum(const Enum&) = delete;
-    void operator=(const Enum&) = delete;
-
+  class ModIterator {
     void goToNext() {
       if (outer.isNothing()) {
         return;
       }
-      for (; !outer->empty(); outer->popFront()) {
-        JS::Compartment* c = outer->front().key();
+      for (; !outer->done(); outer->next()) {
+        JS::Compartment* c = outer->get().key();
         MOZ_ASSERT(c);
         if (filter && !filter->match(c)) {
           continue;
         }
-        InnerMap& m = outer->front().value();
+        InnerMap& m = outer->get().value();
         if (!m.empty()) {
           if (inner.isSome()) {
             inner.reset();
           }
-          inner.emplace(m);
-          outer->popFront();
+          inner.emplace(m.modIter());
+          outer->next();
           return;
         }
       }
+      inner.reset();
     }
 
-    mozilla::Maybe<OuterMap::Enum> outer;
-    mozilla::Maybe<InnerMap::Enum> inner;
+    mozilla::Maybe<OuterMap::Iterator> outer;
+    mozilla::Maybe<InnerMap::ModIterator> inner;
     const CompartmentFilter* filter;
 
    public:
-    explicit Enum(ObjectWrapperMap& m) : filter(nullptr) {
-      outer.emplace(m.map);
+    explicit ModIterator(ObjectWrapperMap& m) : filter(nullptr) {
+      outer.emplace(m.map.iter());
       goToNext();
     }
 
-    Enum(ObjectWrapperMap& m, const CompartmentFilter& f) : filter(&f) {
-      outer.emplace(m.map);
+    ModIterator(ObjectWrapperMap& m, const CompartmentFilter& f) : filter(&f) {
+      outer.emplace(m.map.iter());
       goToNext();
     }
 
-    Enum(ObjectWrapperMap& m, JS::Compartment* target) {
+    ModIterator(ObjectWrapperMap& m, JS::Compartment* target) {
       // Leave the outer map as nothing and only iterate the inner map we
       // find here.
       auto p = m.map.lookup(target);
       if (p) {
-        inner.emplace(p->value());
+        inner.emplace(p->value().modIter());
       }
     }
 
-    bool empty() const {
-      return (outer.isNothing() || outer->empty()) &&
-             (inner.isNothing() || inner->empty());
+    ModIterator(const ModIterator&) = delete;
+    void operator=(const ModIterator&) = delete;
+
+    bool done() const {
+      return (outer.isNothing() || outer->done()) &&
+             (inner.isNothing() || inner->done());
     }
 
-    InnerMap::Entry& front() const {
-      MOZ_ASSERT(inner.isSome() && !inner->empty());
-      return inner->front();
+    InnerMap::Entry& get() const {
+      MOZ_ASSERT(inner.isSome() && !inner->done());
+      return inner->get();
     }
 
-    void popFront() {
-      MOZ_ASSERT(!empty());
-      if (!inner->empty()) {
-        inner->popFront();
-        if (!inner->empty()) {
-          return;
-        }
+    void next() {
+      MOZ_ASSERT(!done());
+      inner->next();
+      if (!inner->done()) {
+        return;
       }
       goToNext();
     }
 
-    void removeFront() {
-      MOZ_ASSERT(inner.isSome());
-      inner->removeFront();
+    void remove() {
+      MOZ_ASSERT(inner.isSome() && !inner->done());
+      inner->remove();
     }
   };
 
@@ -125,28 +123,31 @@ class ObjectWrapperMap {
   };
 
   // Iterator over compartments that the ObjectWrapperMap has wrappers for.
-  class WrappedCompartmentEnum {
-    OuterMap::Enum iter;
+  class WrappedCompartmentIterator {
+    OuterMap::Iterator iter;
 
     void settle() {
       // It's possible for InnerMap to be empty after wrappers have been
       // removed, e.g. by being nuked.
-      while (!iter.empty() && iter.front().value().empty()) {
-        iter.popFront();
+      while (!iter.done() && iter.get().value().empty()) {
+        iter.next();
       }
     }
 
    public:
-    explicit WrappedCompartmentEnum(ObjectWrapperMap& map) : iter(map.map) {
+    explicit WrappedCompartmentIterator(const ObjectWrapperMap& map)
+        : iter(map.map.iter()) {
       settle();
     }
-    bool empty() const { return iter.empty(); }
-    JS::Compartment* front() const { return iter.front().key(); }
-    operator JS::Compartment*() const { return front(); }
-    void popFront() {
-      iter.popFront();
+    bool done() const { return iter.done(); }
+    JS::Compartment* get() const { return iter.get().key(); }
+    void next() {
+      iter.next();
       settle();
     }
+    operator JS::Compartment*() const { return get(); }
+    JS::Compartment* operator->() const { return get(); }
+    JS::Compartment& operator*() const { return *get(); }
   };
 
   explicit ObjectWrapperMap(Zone* zone) : map(zone), zone(zone) {}
@@ -156,8 +157,8 @@ class ObjectWrapperMap {
     if (map.empty()) {
       return true;
     }
-    for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
-      if (!e.front().value().empty()) {
+    for (auto iter = map.iter(); !iter.done(); iter.next()) {
+      if (!iter.get().value().empty()) {
         return false;
       }
     }
@@ -195,26 +196,22 @@ class ObjectWrapperMap {
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) {
     size_t size = map.shallowSizeOfExcludingThis(mallocSizeOf);
-    for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
-      size += e.front().value().sizeOfExcludingThis(mallocSizeOf);
+    for (auto iter = map.iter(); !iter.done(); iter.next()) {
+      size += iter.get().value().sizeOfExcludingThis(mallocSizeOf);
     }
     return size;
   }
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
-    size_t size = map.shallowSizeOfIncludingThis(mallocSizeOf);
-    for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
-      size += e.front().value().sizeOfIncludingThis(mallocSizeOf);
-    }
-    return size;
+    return mallocSizeOf(this) + sizeOfExcludingThis(mallocSizeOf);
   }
 
   bool hasNurseryAllocatedWrapperEntries(const CompartmentFilter& f) {
-    for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
-      JS::Compartment* c = e.front().key();
+    for (auto iter = map.iter(); !iter.done(); iter.next()) {
+      JS::Compartment* c = iter.get().key();
       if (c && !f.match(c)) {
         continue;
       }
-      InnerMap& m = e.front().value();
+      InnerMap& m = iter.get().value();
       if (m.hasNurseryEntries()) {
         return true;
       }
@@ -223,23 +220,24 @@ class ObjectWrapperMap {
   }
 
   void sweepAfterMinorGC(JSTracer* trc) {
-    for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
-      InnerMap& m = e.front().value();
+    for (auto iter = map.modIter(); !iter.done(); iter.next()) {
+      InnerMap& m = iter.get().value();
       m.sweepAfterMinorGC(trc);
       if (m.empty()) {
-        e.removeFront();
+        iter.remove();
       }
     }
   }
 
   void traceWeak(JSTracer* trc) {
-    for (OuterMap::Enum e(map); !e.empty(); e.popFront()) {
-      InnerMap& m = e.front().value();
+    for (auto iter = map.modIter(); !iter.done(); iter.next()) {
+      InnerMap& m = iter.get().value();
       m.traceWeak(trc);
       if (m.empty()) {
-        e.removeFront();
+        iter.remove();
       }
     }
+    map.compact();
   }
 };
 
@@ -317,10 +315,10 @@ class JS::Compartment {
   RealmVector& realms() { return realms_; }
 
   // Cross-compartment wrappers are shared by all realms in the compartment, but
-  // they still have a per-realm ObjectGroup etc. To prevent us from having
-  // multiple realms, each with some cross-compartment wrappers potentially
-  // keeping the realm alive longer than necessary, we always allocate CCWs in
-  // the first realm.
+  // are still associated with a realm. To prevent us from having multiple
+  // realms, each with some cross-compartment wrappers potentially keeping the
+  // realm alive longer than necessary, we always allocate CCWs in the first
+  // realm.
   js::GlobalObject& firstGlobal() const;
   js::GlobalObject& globalForNewCCW() const { return firstGlobal(); }
 
@@ -364,10 +362,6 @@ class JS::Compartment {
       JS::MutableHandle<mozilla::Maybe<JS::PropertyDescriptor>> desc);
   [[nodiscard]] bool wrap(JSContext* cx,
                           JS::MutableHandle<JS::GCVector<JS::Value>> vec);
-#ifdef ENABLE_RECORD_TUPLE
-  [[nodiscard]] bool wrapExtendedPrimitive(JSContext* cx,
-                                           JS::MutableHandleObject obj);
-#endif
   [[nodiscard]] bool rewrap(JSContext* cx, JS::MutableHandleObject obj,
                             JS::HandleObject existing);
 
@@ -389,27 +383,25 @@ class JS::Compartment {
     return crossCompartmentObjectWrappers.hasNurseryAllocatedWrapperEntries(f);
   }
 
-  // Iterator over |wrapped -> wrapper| entries for object CCWs in a given
-  // compartment. Can be optionally restricted by target compartment.
-  struct ObjectWrapperEnum : public js::ObjectWrapperMap::Enum {
-    explicit ObjectWrapperEnum(Compartment* c)
-        : js::ObjectWrapperMap::Enum(c->crossCompartmentObjectWrappers) {}
-    explicit ObjectWrapperEnum(Compartment* c, const js::CompartmentFilter& f)
-        : js::ObjectWrapperMap::Enum(c->crossCompartmentObjectWrappers, f) {}
-    explicit ObjectWrapperEnum(Compartment* c, Compartment* target)
-        : js::ObjectWrapperMap::Enum(c->crossCompartmentObjectWrappers,
-                                     target) {
-      MOZ_ASSERT(target);
-    }
-  };
+  // Iterators over |wrapped -> wrapper| entries for object CCWs in this
+  // compartment. Entires can be restricted with a filter or target compartment.
+  using ObjectWrapperIter = js::ObjectWrapperMap::ModIterator;
+  ObjectWrapperIter objectWrapperMappings() {
+    return ObjectWrapperIter(crossCompartmentObjectWrappers);
+  }
+  ObjectWrapperIter objectWrapperMappings(const js::CompartmentFilter& f) {
+    return ObjectWrapperIter(crossCompartmentObjectWrappers, f);
+  }
+  ObjectWrapperIter objectWrapperMappingsTo(Compartment* target) {
+    return ObjectWrapperIter(crossCompartmentObjectWrappers, target);
+  }
 
   // Iterator over compartments that this compartment has CCWs for.
-  struct WrappedObjectCompartmentEnum
-      : public js::ObjectWrapperMap::WrappedCompartmentEnum {
-    explicit WrappedObjectCompartmentEnum(Compartment* c)
-        : js::ObjectWrapperMap::WrappedCompartmentEnum(
-              c->crossCompartmentObjectWrappers) {}
-  };
+  using WrappedObjectCompartmentIterator =
+      js::ObjectWrapperMap::WrappedCompartmentIterator;
+  WrappedObjectCompartmentIterator wrappedObjectCompartments() const {
+    return WrappedObjectCompartmentIterator(crossCompartmentObjectWrappers);
+  }
 
   /*
    * These methods mark pointers that cross compartment boundaries. They are
@@ -487,17 +479,17 @@ inline void SetCompartmentHasMarkedCells(JSScript* thing) {
  */
 struct WrapperValue {
   /*
-   * We use unsafeGet() in the constructors to avoid invoking a read barrier
-   * on the wrapper, which may be dead (see the comment about bug 803376 in
-   * gc/GC.cpp regarding this). If there is an incremental GC while the
-   * wrapper is in use, the AutoWrapper rooter will ensure the wrapper gets
+   * We use unbarrieredGet() in the constructors to avoid invoking a read
+   * barrier on the wrapper, which may be dead (see the comment about bug
+   * 803376 in gc/GC.cpp regarding this). If there is an incremental GC while
+   * the wrapper is in use, the AutoWrapper rooter will ensure the wrapper gets
    * marked.
    */
   explicit WrapperValue(const ObjectWrapperMap::Ptr& ptr)
-      : value(*ptr->value().unsafeGet()) {}
+      : value(ptr->value().unbarrieredGet()) {}
 
-  explicit WrapperValue(const ObjectWrapperMap::Enum& e)
-      : value(*e.front().value().unsafeGet()) {}
+  explicit WrapperValue(const ObjectWrapperMap::ModIterator& e)
+      : value(e.get().value().unbarrieredGet()) {}
 
   JSObject*& get() { return value; }
   JSObject* get() const { return value; }

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -11,9 +9,6 @@
 #include "mozilla/Assertions.h"
 #if JS_HAS_INTL_API
 #  include "mozilla/intl/ICU4CLibrary.h"
-#  if MOZ_ICU4X
-#    include "mozilla/intl/ICU4XGeckoDataProvider.h"
-#  endif
 #endif
 #include "mozilla/TextUtils.h"
 
@@ -276,10 +271,7 @@ static void ShutdownImpl(JS::detail::FrontendOnly frontendOnly) {
 
 #if JS_HAS_INTL_API
   mozilla::intl::ICU4CLibrary::Cleanup();
-#  if MOZ_ICU4X
-  mozilla::intl::CleanupDataProvider();
-#  endif  // MOZ_ICU4X
-#endif    // JS_HAS_INTL_API
+#endif  // JS_HAS_INTL_API
 
   if (frontendOnly == FrontendOnly::No) {
 #ifdef MOZ_VTUNE
@@ -296,6 +288,10 @@ static void ShutdownImpl(JS::detail::FrontendOnly frontendOnly) {
   MOZ_ASSERT_IF(!JSRuntime::hasLiveRuntimes(), !js::WasmReservedBytes());
 
   js::ShutDownMallocAllocator();
+
+  if (!JSRuntime::hasLiveRuntimes()) {
+    js::gc::CheckMemorySubsystemOnShutDown();
+  }
 
   libraryInitState = InitState::ShutDown;
 }

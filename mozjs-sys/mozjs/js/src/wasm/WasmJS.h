@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,15 +22,16 @@
 
 #include <stdint.h>  // int32_t, int64_t, uint32_t
 
-#include "gc/Barrier.h"        // HeapPtr
-#include "gc/ZoneAllocator.h"  // ZoneAllocPolicy
-#include "js/AllocPolicy.h"    // SystemAllocPolicy
-#include "js/Class.h"          // JSClassOps, ClassSpec
-#include "js/GCHashTable.h"    // GCHashMap, GCHashSet
-#include "js/GCVector.h"       // GCVector
-#include "js/PropertySpec.h"   // JSPropertySpec, JSFunctionSpec
-#include "js/RootingAPI.h"     // StableCellHasher
-#include "js/SweepingAPI.h"    // JS::WeakCache
+#include "gc/Barrier.h"         // HeapPtr
+#include "gc/ZoneAllocator.h"   // ZoneAllocPolicy
+#include "js/AllocPolicy.h"     // SystemAllocPolicy
+#include "js/Class.h"           // JSClassOps, ClassSpec
+#include "js/CompileOptions.h"  // JS::ReadOnlyCompileOptions
+#include "js/GCHashTable.h"     // GCHashMap, GCHashSet
+#include "js/GCVector.h"        // GCVector
+#include "js/PropertySpec.h"    // JSPropertySpec, JSFunctionSpec
+#include "js/RootingAPI.h"      // StableCellHasher
+#include "js/SweepingAPI.h"     // JS::WeakCache
 #include "js/TypeDecls.h"  // HandleValue, HandleObject, MutableHandleObject, MutableHandleFunction
 #include "js/Vector.h"  // JS::Vector
 #include "js/WasmFeatures.h"
@@ -93,26 +92,18 @@ struct ImportValues;
 // WebAssembly.Module object.
 
 [[nodiscard]] bool CompileAndSerialize(JSContext* cx,
-                                       const ShareableBytes& bytecode,
+                                       const BytecodeSource& source,
                                        Bytes* serialized);
 
 [[nodiscard]] bool DeserializeModule(JSContext* cx, const Bytes& serialized,
                                      MutableHandleObject module);
 
-// A WebAssembly "Exported Function" is the spec name for the JS function
-// objects created to wrap wasm functions. This predicate returns false
-// for asm.js functions which are semantically just normal JS functions
-// (even if they are implemented via wasm under the hood). The accessor
-// functions for extracting the instance and func-index of a wasm function
-// can be used for both wasm and asm.js, however.
-
-bool IsWasmExportedFunction(JSFunction* fun);
-
-Instance& ExportedFunctionToInstance(JSFunction* fun);
-WasmInstanceObject* ExportedFunctionToInstanceObject(JSFunction* fun);
-uint32_t ExportedFunctionToFuncIndex(JSFunction* fun);
-
 bool IsSharedWasmMemoryObject(JSObject* obj);
+
+[[nodiscard]] bool CompileForESM(JSContext* cx,
+                                 const JS::ReadOnlyCompileOptions& options,
+                                 const BytecodeSource& source,
+                                 MutableHandleObject moduleObj);
 
 }  // namespace wasm
 
@@ -143,6 +134,33 @@ class WasmModuleObject : public NativeObject {
   const wasm::Module& module() const;
 };
 
+#ifdef ENABLE_WASM_COMPONENTS
+// The class of WebAssembly.Component.
+// TODO(wasm-cm): Leave a more descriptive comment. See WasmModuleObject for
+// comparison.
+
+class WasmComponentObject : public NativeObject {
+  static const unsigned COMPONENT_SLOT = 0;
+  static const JSClassOps classOps_;
+  static const ClassSpec classSpec_;
+  static void finalize(JS::GCContext* gcx, JSObject* obj);
+
+ public:
+  static const unsigned RESERVED_SLOTS = 1;
+  static const JSClass class_;
+  static const JSClass& protoClass_;
+  static const JSPropertySpec properties[];
+  static const JSFunctionSpec methods[];
+  static const JSFunctionSpec static_methods[];
+  static bool construct(JSContext*, unsigned, Value*);
+
+  static WasmComponentObject* create(JSContext* cx,
+                                     const wasm::Component& component,
+                                     HandleObject proto);
+  const wasm::Component& component() const;
+};
+#endif
+
 // The class of WebAssembly.Global.  This wraps a storage location, and there is
 // a per-agent one-to-one relationship between the WasmGlobalObject and the
 // storage location (the Cell) it wraps: if a module re-exports an imported
@@ -167,7 +185,7 @@ class WasmGlobalObject : public NativeObject {
   static bool valueSetterImpl(JSContext* cx, const CallArgs& args);
   static bool valueSetter(JSContext* cx, unsigned argc, Value* vp);
 
-  wasm::GCPtrVal& mutableVal();
+  wasm::HeapPtrVal& mutableVal();
 
  public:
   static const unsigned RESERVED_SLOTS = 2;
@@ -184,7 +202,7 @@ class WasmGlobalObject : public NativeObject {
 
   bool isMutable() const;
   wasm::ValType type() const;
-  const wasm::GCPtrVal& val() const;
+  const wasm::HeapPtrVal& val() const;
   void setVal(wasm::HandleVal value);
   void* addressOfCell() const;
 };
@@ -196,10 +214,9 @@ class WasmGlobalObject : public NativeObject {
 class WasmInstanceObject : public NativeObject {
   static const unsigned INSTANCE_SLOT = 0;
   static const unsigned EXPORTS_OBJ_SLOT = 1;
-  static const unsigned EXPORTS_SLOT = 2;
-  static const unsigned SCOPES_SLOT = 3;
-  static const unsigned INSTANCE_SCOPE_SLOT = 4;
-  static const unsigned GLOBALS_SLOT = 5;
+  static const unsigned SCOPES_SLOT = 2;
+  static const unsigned INSTANCE_SCOPE_SLOT = 3;
+  static const unsigned GLOBALS_SLOT = 4;
 
   static const JSClassOps classOps_;
   static const ClassSpec classSpec_;
@@ -209,20 +226,12 @@ class WasmInstanceObject : public NativeObject {
   static void finalize(JS::GCContext* gcx, JSObject* obj);
   static void trace(JSTracer* trc, JSObject* obj);
 
-  // ExportMap maps from function index to exported function object.
-  // This allows the instance to lazily create exported function
-  // objects on demand (instead up-front for all table elements) while
-  // correctly preserving observable function object identity.
-  using ExportMap = GCHashMap<uint32_t, HeapPtr<JSFunction*>,
-                              DefaultHasher<uint32_t>, CellAllocPolicy>;
-  ExportMap& exports() const;
-
   // See the definition inside WasmJS.cpp.
   class UnspecifiedScopeMap;
   UnspecifiedScopeMap& scopes() const;
 
  public:
-  static const unsigned RESERVED_SLOTS = 6;
+  static const unsigned RESERVED_SLOTS = 5;
   static const JSClass class_;
   static const JSClass& protoClass_;
   static const JSPropertySpec properties[];
@@ -245,13 +254,11 @@ class WasmInstanceObject : public NativeObject {
 
   wasm::Instance& instance() const;
   JSObject& exportsObj() const;
+  WasmFunctionScope* getExistingFunctionScope(uint32_t funcIndex) const;
 
   [[nodiscard]] static bool getExportedFunction(
       JSContext* cx, Handle<WasmInstanceObject*> instanceObj,
       uint32_t funcIndex, MutableHandleFunction fun);
-
-  const wasm::CodeRange& getExportedFunctionCodeRange(JSFunction* fun,
-                                                      wasm::Tier tier);
 
   static WasmInstanceScope* getScope(JSContext* cx,
                                      Handle<WasmInstanceObject*> instanceObj);
@@ -283,6 +290,10 @@ class WasmMemoryObject : public NativeObject {
   static bool discardImpl(JSContext* cx, const CallArgs& args);
   static bool discard(JSContext* cx, unsigned argc, Value* vp);
   static uint64_t growShared(Handle<WasmMemoryObject*> memory, uint64_t delta);
+  static bool toFixedLengthBufferImpl(JSContext* cx, const CallArgs& args);
+  static bool toFixedLengthBuffer(JSContext* cx, unsigned argc, Value* vp);
+  static bool toResizableBufferImpl(JSContext* cx, const CallArgs& args);
+  static bool toResizableBuffer(JSContext* cx, unsigned argc, Value* vp);
 
   using InstanceSet = JS::WeakCache<GCHashSet<
       WeakHeapPtr<WasmInstanceObject*>,
@@ -290,6 +301,13 @@ class WasmMemoryObject : public NativeObject {
   bool hasObservers() const;
   InstanceSet& observers() const;
   InstanceSet* getOrCreateObservers(JSContext* cx);
+
+  // The spec requires that the buffer property will create a new fixed length
+  // SAB if the underlying raw buffer's length has changed. The method creates
+  // new objects and updates the BUFFER_SLOT slot.
+  static ArrayBufferObjectMaybeShared* refreshBuffer(
+      JSContext* cx, Handle<WasmMemoryObject*> memoryObj,
+      Handle<ArrayBufferObjectMaybeShared*> buffer);
 
  public:
   static const unsigned RESERVED_SLOTS = 3;
@@ -328,11 +346,12 @@ class WasmMemoryObject : public NativeObject {
   wasm::Pages clampedMaxPages() const;
   mozilla::Maybe<wasm::Pages> sourceMaxPages() const;
 
-  wasm::IndexType indexType() const;
+  wasm::AddressType addressType() const;
   bool isShared() const;
   bool isHuge() const;
   bool movingGrowable() const;
   size_t boundsCheckLimit() const;
+  wasm::PageSize pageSize() const;
 
   // If isShared() is true then obtain the underlying buffer object.
   WasmSharedArrayRawBuffer* sharedArrayRawBuffer() const;
@@ -378,9 +397,8 @@ class WasmTableObject : public NativeObject {
   // Note that, after creation, a WasmTableObject's table() is not initialized
   // and must be initialized before use.
 
-  static WasmTableObject* create(JSContext* cx, uint32_t initialLength,
-                                 mozilla::Maybe<uint32_t> maximumLength,
-                                 wasm::RefType tableType, HandleObject proto);
+  static WasmTableObject* create(JSContext* cx, const wasm::TableType& type,
+                                 HandleObject proto);
   wasm::Table& table() const;
 
   // Perform the standard `ToWebAssemblyValue` coercion on `value` and fill the
@@ -417,7 +435,6 @@ class WasmTagObject : public NativeObject {
 
   const wasm::TagType* tagType() const;
   const wasm::ValTypeVector& valueTypes() const;
-  wasm::ResultType resultType() const;
 };
 
 // The class of WebAssembly.Exception. This class is used for
@@ -472,6 +489,15 @@ class WasmExceptionObject : public NativeObject {
   bool isWrappedJSValue() const;
   Value wrappedJSValue() const;
 
+  // Returns the exception value that JS would see if this was thrown. This
+  // will unwrap if `isWrappedJSValue`.
+  Value toJSValue() {
+    if (isWrappedJSValue()) {
+      return wrappedJSValue();
+    }
+    return JS::ObjectValue(*this);
+  }
+
   static size_t offsetOfData() {
     return NativeObject::getFixedSlotOffset(DATA_SLOT);
   }
@@ -483,7 +509,10 @@ class WasmNamespaceObject : public NativeObject {
  public:
   static const JSClass class_;
   static const unsigned JS_VALUE_TAG_SLOT = 0;
-  static const unsigned RESERVED_SLOTS = 1;
+#ifdef ENABLE_WASM_JSPI
+  static const unsigned JS_PROMISE_TAG_SLOT = 1;
+#endif
+  static const unsigned RESERVED_SLOTS = 2;
 
   WasmTagObject* wrappedJSValueTag() const {
     return &getReservedSlot(JS_VALUE_TAG_SLOT)
@@ -493,6 +522,16 @@ class WasmNamespaceObject : public NativeObject {
   void setWrappedJSValueTag(WasmTagObject* tag) {
     return setReservedSlot(JS_VALUE_TAG_SLOT, ObjectValue(*tag));
   }
+#ifdef ENABLE_WASM_JSPI
+  WasmTagObject* jsPromiseTag() const {
+    return &getReservedSlot(JS_PROMISE_TAG_SLOT)
+                .toObjectOrNull()
+                ->as<WasmTagObject>();
+  }
+  void setJSPromiseTag(WasmTagObject* tag) {
+    return setReservedSlot(JS_PROMISE_TAG_SLOT, ObjectValue(*tag));
+  }
+#endif
 
   static WasmNamespaceObject* getOrCreate(JSContext* cx);
 

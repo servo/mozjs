@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -104,6 +102,7 @@ static constexpr Register InstanceReg{Registers::invalid_reg};
 static constexpr Register WasmJitEntryReturnScratch{Registers::invalid_reg};
 static constexpr Register WasmCallRefCallScratchReg0{Registers::invalid_reg};
 static constexpr Register WasmCallRefCallScratchReg1{Registers::invalid_reg};
+static constexpr Register WasmCallRefCallScratchReg2{Registers::invalid_reg};
 static constexpr Register WasmCallRefReg{Registers::invalid_reg};
 static constexpr Register WasmTailCallInstanceScratchReg{
     Registers::invalid_reg};
@@ -207,11 +206,10 @@ class Operand {
 
 class ABIArgGenerator {
  public:
-  ABIArgGenerator() { MOZ_CRASH(); }
+  explicit ABIArgGenerator(ABIKind) { MOZ_CRASH(); }
   ABIArg next(MIRType) { MOZ_CRASH(); }
   ABIArg& current() { MOZ_CRASH(); }
   uint32_t stackBytesConsumedSoFar() const { MOZ_CRASH(); }
-  void increaseStackOffset(uint32_t) { MOZ_CRASH(); }
 };
 
 }  // namespace jit

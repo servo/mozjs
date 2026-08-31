@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -50,10 +48,10 @@
  *
  * Indicate success with `return Ok();`.
  *
- * If the function returns a value on success, use `MOZ_TRY_VAR` to get it:
+ * If the function returns a value on success, use `MOZ_TRY` to get it:
  *
  *     RootedValue thrug(cx);
- *     MOZ_TRY_VAR(thrug, GetObjectThrug(cx, obj));
+ *     thrug = MOZ_TRY(GetObjectThrug(cx, obj));
  *
  * This behaves the same as `MOZ_TRY` on error. On success, the success
  * value of `GetObjectThrug(cx, obj)` is assigned to the variable `thrug`.
@@ -65,7 +63,7 @@
  * responsibility to check for errors and root the object before continuing:
  *
  *     RootedObject wrapper(cx);
- *     MOZ_TRY_VAR(wrapper, Enwrapify(cx, thing));
+ *     wrapper = MOZ_TRY(Enwrapify(cx, thing));
  *
  * This is ideal. On error, there is no object to root; on success, the
  * assignment to wrapper roots it. GC safety is ensured.

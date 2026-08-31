@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -33,7 +31,7 @@ class ValueNumberer {
       static void rekey(Key& k, Key newKey);
     };
 
-    typedef HashSet<MDefinition*, ValueHasher, JitAllocPolicy> ValueSet;
+    using ValueSet = HashSet<MDefinition*, ValueHasher, JitAllocPolicy>;
 
     ValueSet set_;  // Set of visible values
 
@@ -54,10 +52,10 @@ class ValueNumberer {
 #endif
   };
 
-  typedef Vector<MBasicBlock*, 4, JitAllocPolicy> BlockWorklist;
-  typedef Vector<MDefinition*, 4, JitAllocPolicy> DefWorklist;
+  using BlockWorklist = Vector<MBasicBlock*, 4, JitAllocPolicy>;
+  using DefWorklist = Vector<MDefinition*, 4, JitAllocPolicy>;
 
-  MIRGenerator* const mir_;
+  const MIRGenerator* const mir_;
   MIRGraph& graph_;
   VisibleValues values_;           // Numbered values
   DefWorklist deadDefs_;           // Worklist for deleting values
@@ -107,7 +105,7 @@ class ValueNumberer {
   [[nodiscard]] bool cleanupOSRFixups();
 
  public:
-  ValueNumberer(MIRGenerator* mir, MIRGraph& graph);
+  ValueNumberer(const MIRGenerator* mir, MIRGraph& graph);
 
   enum UpdateAliasAnalysisFlag { DontUpdateAliasAnalysis, UpdateAliasAnalysis };
 

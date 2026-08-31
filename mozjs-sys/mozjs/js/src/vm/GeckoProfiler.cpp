@@ -1,11 +1,10 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "vm/GeckoProfiler-inl.h"
 
+#include "mozilla/DebugOnly.h"
 #include "mozilla/Sprintf.h"
 
 #include "gc/GC.h"
@@ -15,21 +14,30 @@
 #include "jit/JitRuntime.h"
 #include "jit/JSJitFrameIter.h"
 #include "jit/PerfSpewer.h"
-#include "js/ProfilingStack.h"
+#include "js/experimental/SourceHook.h"
 #include "vm/FrameIter.h"  // js::OnlyJSJitFrameIter
 #include "vm/JitActivation.h"
 #include "vm/JSScript.h"
+#include "vm/MutexIDs.h"
 
 #include "gc/Marking-inl.h"
 #include "jit/JSJitFrameIter-inl.h"
 
 using namespace js;
+using mozilla::Utf8Unit;
 
 GeckoProfilerThread::GeckoProfilerThread()
     : profilingStack_(nullptr), profilingStackIfEnabled_(nullptr) {}
 
 GeckoProfilerRuntime::GeckoProfilerRuntime(JSRuntime* rt)
-    : rt(rt), slowAssertions(false), enabled_(false), eventMarker_(nullptr) {
+    : rt(rt),
+      scriptSources_(mutexid::GeckoProfilerScriptSources),
+      slowAssertions(false),
+      enabled_(false),
+      eventMarker_(nullptr),
+      intervalMarker_(nullptr),
+      flowMarker_(nullptr),
+      terminatingFlowMarker_(nullptr) {
   MOZ_ASSERT(rt != nullptr);
 }
 
@@ -39,9 +47,25 @@ void GeckoProfilerThread::setProfilingStack(ProfilingStack* profilingStack,
   profilingStackIfEnabled_ = enabled ? profilingStack : nullptr;
 }
 
-void GeckoProfilerRuntime::setEventMarker(void (*fn)(const char*,
+void GeckoProfilerRuntime::setEventMarker(void (*fn)(mozilla::MarkerCategory,
+                                                     const char*,
                                                      const char*)) {
   eventMarker_ = fn;
+}
+
+void GeckoProfilerRuntime::setIntervalMarker(void (*fn)(
+    mozilla::MarkerCategory, const char*, mozilla::TimeStamp, const char*)) {
+  intervalMarker_ = fn;
+}
+
+void GeckoProfilerRuntime::setFlowMarker(void (*fn)(mozilla::MarkerCategory,
+                                                    const char*, uint64_t)) {
+  flowMarker_ = fn;
+}
+
+void GeckoProfilerRuntime::setTerminatingFlowMarker(
+    void (*fn)(mozilla::MarkerCategory, const char*, uint64_t)) {
+  terminatingFlowMarker_ = fn;
 }
 
 // Get a pointer to the top-most profiling frame, given the exit frame pointer.
@@ -97,7 +121,12 @@ void GeckoProfilerRuntime::enable(bool enabled) {
     cx->jitActivation->setLastProfilingCallSite(nullptr);
   }
 
+  // Enable/disable JIT code info collection for the Gecko Profiler.
+  jit::ResetPerfSpewer(enabled);
+
   enabled_ = enabled;
+
+  scriptSources_.writeLock()->clear();
 
   /* Toggle Gecko Profiler-related jumps on baseline jitcode.
    * The call to |ReleaseAllJITCode| above will release most baseline jitcode,
@@ -149,41 +178,76 @@ void GeckoProfilerRuntime::enable(bool enabled) {
 /* Lookup the string for the function/script, creating one if necessary */
 const char* GeckoProfilerRuntime::profileString(JSContext* cx,
                                                 BaseScript* script) {
-  ProfileStringMap::AddPtr s = strings().lookupForAdd(script);
+  JS::Zone* zone = script->zone();
+  if (!zone->profilerStrings) {
+    auto map = cx->make_unique<JS::WeakCache<ProfileStringMap>>(zone);
+    if (!map) {
+      return nullptr;
+    }
+    zone->profilerStrings = std::move(map);
+  }
 
-  if (!s) {
+  ProfileStringMap& map = zone->profilerStrings->get();
+  ProfileStringMap::AddPtr ptr = map.lookupForAdd(script);
+
+  if (!ptr) {
     UniqueChars str = allocProfileString(cx, script);
     if (!str) {
       return nullptr;
     }
     MOZ_ASSERT(script->hasBytecode());
-    if (!strings().add(s, script, std::move(str))) {
+    if (!map.add(ptr, script, std::move(str))) {
       ReportOutOfMemory(cx);
       return nullptr;
     }
   }
 
-  return s->value().get();
+  return ptr->value().get();
 }
 
-void GeckoProfilerRuntime::onScriptFinalized(BaseScript* script) {
-  /*
-   * This function is called whenever a script is destroyed, regardless of
-   * whether profiling has been turned on, so don't invoke a function on an
-   * invalid hash set. Also, even if profiling was enabled but then turned
-   * off, we still want to remove the string, so no check of enabled() is
-   * done.
-   */
-  if (ProfileStringMap::Ptr entry = strings().lookup(script)) {
-    strings().remove(entry);
-  }
-}
-
-void GeckoProfilerRuntime::markEvent(const char* event, const char* details) {
+void GeckoProfilerRuntime::markEvent(const char* event, const char* details,
+                                     JS::ProfilingCategoryPair jsPair) {
   MOZ_ASSERT(enabled());
   if (eventMarker_) {
     JS::AutoSuppressGCAnalysis nogc;
-    eventMarker_(event, details);
+    mozilla::MarkerCategory category(
+        static_cast<mozilla::baseprofiler::ProfilingCategoryPair>(jsPair));
+    eventMarker_(category, event, details);
+  }
+}
+
+void GeckoProfilerRuntime::markInterval(const char* event,
+                                        mozilla::TimeStamp start,
+                                        const char* details,
+                                        JS::ProfilingCategoryPair jsPair) {
+  MOZ_ASSERT(enabled());
+  if (intervalMarker_) {
+    JS::AutoSuppressGCAnalysis nogc;
+    mozilla::MarkerCategory category(
+        static_cast<mozilla::baseprofiler::ProfilingCategoryPair>(jsPair));
+    intervalMarker_(category, event, start, details);
+  }
+}
+
+void GeckoProfilerRuntime::markFlow(const char* markerName, uint64_t flowId,
+                                    JS::ProfilingCategoryPair jsPair) {
+  MOZ_ASSERT(enabled());
+  if (flowMarker_) {
+    JS::AutoSuppressGCAnalysis nogc;
+    mozilla::MarkerCategory category(
+        static_cast<mozilla::baseprofiler::ProfilingCategoryPair>(jsPair));
+    flowMarker_(category, markerName, flowId);
+  }
+}
+
+void GeckoProfilerRuntime::markTerminatingFlow(
+    const char* markerName, uint64_t flowId, JS::ProfilingCategoryPair jsPair) {
+  MOZ_ASSERT(enabled());
+  if (terminatingFlowMarker_) {
+    JS::AutoSuppressGCAnalysis nogc;
+    mozilla::MarkerCategory category(
+        static_cast<mozilla::baseprofiler::ProfilingCategoryPair>(jsPair));
+    terminatingFlowMarker_(category, markerName, flowId);
   }
 }
 
@@ -191,6 +255,12 @@ bool GeckoProfilerThread::enter(JSContext* cx, JSScript* script) {
   const char* dynamicString =
       cx->runtime()->geckoProfiler().profileString(cx, script);
   if (dynamicString == nullptr) {
+    return false;
+  }
+
+  if (!cx->runtime()->geckoProfiler().insertScriptSource(
+          script->scriptSource())) {
+    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -210,7 +280,8 @@ bool GeckoProfilerThread::enter(JSContext* cx, JSScript* script) {
 
   profilingStack_->pushJsFrame(
       "", dynamicString, script, script->code(),
-      script->realm()->creationOptions().profilerRealmID());
+      script->realm()->creationOptions().profilerRealmID(),
+      script->scriptSource()->id());
   return true;
 }
 
@@ -260,21 +331,16 @@ void GeckoProfilerThread::exit(JSContext* cx, JSScript* script) {
 UniqueChars GeckoProfilerRuntime::allocProfileString(JSContext* cx,
                                                      BaseScript* script) {
   // Note: this profiler string is regexp-matched by
-  // devtools/client/profiler/cleopatra/js/parserWorker.js.
+  // profiler code. Most recently at
+  // https://github.com/firefox-devtools/profiler/blob/245b1a400c5c368ccc13641d0335398bafa0e870/src/profile-logic/process-profile.js#L520-L525
 
   // If the script has a function, try calculating its name.
-  bool hasName = false;
+  JSAtom* name = nullptr;
   size_t nameLength = 0;
-  UniqueChars nameStr;
   JSFunction* func = script->function();
   if (func && func->fullDisplayAtom()) {
-    nameStr = StringToNewUTF8CharsZ(cx, *func->fullDisplayAtom());
-    if (!nameStr) {
-      return nullptr;
-    }
-
-    nameLength = strlen(nameStr.get());
-    hasName = true;
+    name = func->fullDisplayAtom();
+    nameLength = JS::GetDeflatedUTF8StringLength(name);
   }
 
   // Calculate filename length. We cap this to a reasonable limit to avoid
@@ -287,7 +353,7 @@ UniqueChars GeckoProfilerRuntime::allocProfileString(JSContext* cx,
   bool hasLineAndColumn = false;
   size_t lineAndColumnLength = 0;
   char lineAndColumnStr[30];
-  if (hasName || script->isFunction() || script->isForEval()) {
+  if (name || script->isFunction() || script->isForEval()) {
     lineAndColumnLength =
         SprintfLiteral(lineAndColumnStr, "%u:%u", script->lineno(),
                        script->column().oneOriginValue());
@@ -303,7 +369,7 @@ UniqueChars GeckoProfilerRuntime::allocProfileString(JSContext* cx,
 
   // Calculate full string length.
   size_t fullLength = 0;
-  if (hasName) {
+  if (name) {
     MOZ_ASSERT(hasLineAndColumn);
     fullLength = nameLength + 2 + filenameLength + 1 + lineAndColumnLength + 1;
   } else if (hasLineAndColumn) {
@@ -321,8 +387,10 @@ UniqueChars GeckoProfilerRuntime::allocProfileString(JSContext* cx,
   size_t cur = 0;
 
   // Fill string with function name if needed.
-  if (hasName) {
-    memcpy(str.get() + cur, nameStr.get(), nameLength);
+  if (name) {
+    mozilla::DebugOnly<size_t> written = JS::DeflateStringToUTF8Buffer(
+        name, mozilla::Span(str.get() + cur, nameLength));
+    MOZ_ASSERT(written == nameLength);
     cur += nameLength;
     str[cur++] = ' ';
     str[cur++] = '(';
@@ -340,7 +408,7 @@ UniqueChars GeckoProfilerRuntime::allocProfileString(JSContext* cx,
   }
 
   // Terminal ')' if necessary.
-  if (hasName) {
+  if (name) {
     str[cur++] = ')';
   }
 
@@ -359,30 +427,155 @@ void GeckoProfilerThread::trace(JSTracer* trc) {
   }
 }
 
-void GeckoProfilerRuntime::fixupStringsMapAfterMovingGC() {
-  for (ProfileStringMap::Enum e(strings()); !e.empty(); e.popFront()) {
-    BaseScript* script = e.front().key();
-    if (IsForwarded(script)) {
-      script = Forwarded(script);
-      e.rekeyFront(script);
+size_t GeckoProfilerRuntime::stringsCount() {
+  size_t count = 0;
+  for (AllZonesIter zone(rt); !zone.done(); zone.next()) {
+    if (zone->profilerStrings) {
+      count += zone->profilerStrings->get().count();
+    }
+  }
+  return count;
+}
+
+void GeckoProfilerRuntime::stringsReset() {
+  for (AllZonesIter zone(rt); !zone.done(); zone.next()) {
+    if (zone->profilerStrings) {
+      zone->profilerStrings->get().clear();
     }
   }
 }
 
-#ifdef JSGC_HASH_TABLE_CHECKS
-void GeckoProfilerRuntime::checkStringsMapAfterMovingGC() {
-  CheckTableAfterMovingGC(strings(), [](const auto& entry) {
-    BaseScript* script = entry.key();
-    CheckGCThingAfterMovingGC(script);
-    return script;
-  });
+// Get all script sources as a list of ProfilerJSSourceData.
+js::ProfilerJSSources GeckoProfilerRuntime::getProfilerScriptSources(
+    bool gatherSourceText) {
+  js::ProfilerJSSources result;
+
+  auto guard = scriptSources_.readLock();
+  for (auto iter = guard->iter(); !iter.done(); iter.next()) {
+    const RefPtr<ScriptSource>& scriptSource = iter.get();
+    MOZ_ASSERT(scriptSource);
+
+    bool hasSourceText;
+    bool retrievableSource;
+    ScriptSource::getSourceProperties(scriptSource, &hasSourceText,
+                                      &retrievableSource);
+
+    uint32_t sourceId = scriptSource->id();
+
+    // Get filename for all source types. Create single copy to be moved.
+    const char* filename = scriptSource->filename();
+    size_t filenameLen = 0;
+    JS::UniqueChars filenameCopy;
+    if (filename) {
+      filenameLen = strlen(filename);
+      filenameCopy.reset(static_cast<char*>(js_malloc(filenameLen + 1)));
+      if (filenameCopy) {
+        strcpy(filenameCopy.get(), filename);
+      }
+    }
+
+    // Get the start line and column for inline scripts.
+    uint32_t startLine = scriptSource->startLine();
+    uint32_t startColumn = scriptSource->startColumn().oneOriginValue();
+
+    // Get sourceMapURL for all source types. Create single copy to be moved.
+    const char16_t* sourceMapURL = nullptr;
+    size_t sourceMapURLLen = 0;
+    JS::UniqueTwoByteChars sourceMapURLCopy;
+    if (scriptSource->hasSourceMapURL()) {
+      sourceMapURL = scriptSource->sourceMapURL();
+      sourceMapURLLen = js_strlen(sourceMapURL);
+      sourceMapURLCopy.reset(static_cast<char16_t*>(
+          js_malloc((sourceMapURLLen + 1) * sizeof(char16_t))));
+      if (sourceMapURLCopy) {
+        js_memcpy(sourceMapURLCopy.get(), sourceMapURL,
+                  sourceMapURLLen * sizeof(char16_t));
+        sourceMapURLCopy[sourceMapURLLen] = 0;
+      } else {
+        sourceMapURLLen = 0;
+      }
+    }
+
+    // If not gathering source text, just store metadata
+    if (!gatherSourceText) {
+      (void)result.append(ProfilerJSSourceData(
+          sourceId, std::move(filenameCopy), filenameLen, startLine,
+          startColumn, std::move(sourceMapURLCopy), sourceMapURLLen));
+      continue;
+    }
+
+    if (retrievableSource) {
+      (void)result.append(ProfilerJSSourceData::CreateRetrievableFile(
+          sourceId, std::move(filenameCopy), filenameLen, startLine,
+          startColumn, std::move(sourceMapURLCopy), sourceMapURLLen));
+      continue;
+    }
+
+    if (!hasSourceText) {
+      (void)result.append(ProfilerJSSourceData(
+          sourceId, std::move(filenameCopy), filenameLen, startLine,
+          startColumn, std::move(sourceMapURLCopy), sourceMapURLLen));
+      continue;
+    }
+
+    size_t sourceLength = scriptSource->length();
+    if (sourceLength == 0) {
+      (void)result.append(ProfilerJSSourceData(
+          sourceId, JS::UniqueTwoByteChars(), 0, std::move(filenameCopy),
+          filenameLen, startLine, startColumn, std::move(sourceMapURLCopy),
+          sourceMapURLLen));
+      continue;
+    }
+
+    SubstringCharsResult sourceResult(JS::UniqueChars(nullptr));
+    size_t charsLength = 0;
+
+    if (scriptSource->shouldUnwrapEventHandlerBody()) {
+      sourceResult = scriptSource->functionBodyStringChars(&charsLength);
+
+      if (charsLength == 0) {
+        (void)result.append(ProfilerJSSourceData(
+            sourceId, JS::UniqueTwoByteChars(), 0, std::move(filenameCopy),
+            filenameLen, startLine, startColumn, std::move(sourceMapURLCopy),
+            sourceMapURLLen));
+        continue;
+      }
+    } else {
+      sourceResult = scriptSource->substringChars(0, sourceLength);
+      charsLength = sourceLength;
+    }
+
+    // Convert SubstringCharsResult to ProfilerJSSourceData.
+    // Note: The returned buffers are NOT null-terminated. The length is
+    // tracked separately in charsLength and passed to ProfilerJSSourceData.
+    if (sourceResult.is<JS::UniqueChars>()) {
+      auto& utf8Chars = sourceResult.as<JS::UniqueChars>();
+      if (!utf8Chars) {
+        continue;
+      }
+      (void)result.append(ProfilerJSSourceData(
+          sourceId, std::move(utf8Chars), charsLength, std::move(filenameCopy),
+          filenameLen, startLine, startColumn, std::move(sourceMapURLCopy),
+          sourceMapURLLen));
+    } else {
+      auto& utf16Chars = sourceResult.as<JS::UniqueTwoByteChars>();
+      if (!utf16Chars) {
+        continue;
+      }
+      (void)result.append(ProfilerJSSourceData(
+          sourceId, std::move(utf16Chars), charsLength, std::move(filenameCopy),
+          filenameLen, startLine, startColumn, std::move(sourceMapURLCopy),
+          sourceMapURLLen));
+    }
+  }
+
+  return result;
 }
-#endif
 
 void ProfilingStackFrame::trace(JSTracer* trc) {
   if (isJsFrame()) {
     JSScript* s = rawScript();
-    TraceNullableRoot(trc, &s, "ProfilingStackFrame script");
+    TraceRoot(trc, &s, "ProfilingStackFrame script");
     spOrScript = s;
   }
 }
@@ -434,7 +627,7 @@ JS_PUBLIC_API JSScript* ProfilingStackFrame::script() const {
     return nullptr;
   }
 
-  // If profiling is supressed then we can't trust the script pointers to be
+  // If profiling is suppressed then we can't trust the script pointers to be
   // valid as they could be in the process of being moved by a compacting GC
   // (although it's still OK to get the runtime from them).
   JSContext* cx = script->runtimeFromAnyThread()->mainContextFromAnyThread();
@@ -474,6 +667,10 @@ void ProfilingStackFrame::setPC(jsbytecode* pc) {
   pcOffsetIfJS_ = pcToOffset(script, pc);
 }
 
+JS_PUBLIC_API uint32_t ProfilingStackFrame::sourceId() const {
+  return sourceId_;
+}
+
 JS_PUBLIC_API void js::SetContextProfilingStack(
     JSContext* cx, ProfilingStack* profilingStack) {
   cx->geckoProfiler().setProfilingStack(
@@ -486,10 +683,57 @@ JS_PUBLIC_API void js::EnableContextProfilingStack(JSContext* cx,
   cx->runtime()->geckoProfiler().enable(enabled);
 }
 
-JS_PUBLIC_API void js::RegisterContextProfilingEventMarker(
-    JSContext* cx, void (*fn)(const char*, const char*)) {
+JS_PUBLIC_API void js::RegisterContextProfilerMarkers(
+    JSContext* cx,
+    void (*eventMarker)(mozilla::MarkerCategory, const char*, const char*),
+    void (*intervalMarker)(mozilla::MarkerCategory, const char*,
+                           mozilla::TimeStamp, const char*),
+    void (*flowMarker)(mozilla::MarkerCategory, const char*, uint64_t),
+    void (*terminatingFlowMarker)(mozilla::MarkerCategory, const char*,
+                                  uint64_t)) {
   MOZ_ASSERT(cx->runtime()->geckoProfiler().enabled());
-  cx->runtime()->geckoProfiler().setEventMarker(fn);
+  cx->runtime()->geckoProfiler().setEventMarker(eventMarker);
+  cx->runtime()->geckoProfiler().setIntervalMarker(intervalMarker);
+  cx->runtime()->geckoProfiler().setFlowMarker(flowMarker);
+  cx->runtime()->geckoProfiler().setTerminatingFlowMarker(
+      terminatingFlowMarker);
+}
+
+JS_PUBLIC_API js::ProfilerJSSources js::GetProfilerScriptSources(
+    JSRuntime* rt, bool gatherSourceText) {
+  return rt->geckoProfiler().getProfilerScriptSources(gatherSourceText);
+}
+
+JS_PUBLIC_API ProfilerJSSourceData
+js::RetrieveProfilerSourceContent(JSContext* cx, const char* filename) {
+  MOZ_ASSERT(filename && strlen(filename));
+  if (!cx) {
+    return ProfilerJSSourceData();  // Return unavailable
+  }
+
+  // Check if source hook is available
+  if (!cx->runtime()->sourceHook.ref()) {
+    return ProfilerJSSourceData();  // Return unavailable
+  }
+
+  size_t sourceLength = 0;
+  char* utf8Source = nullptr;
+
+  bool loadSuccess = cx->runtime()->sourceHook->load(
+      cx, filename, nullptr, &utf8Source, &sourceLength);
+
+  if (!loadSuccess) {
+    // Clear the pending exception that have been set by the source hook.
+    JS_ClearPendingException(cx);
+    return ProfilerJSSourceData();  // Return unavailable
+  }
+
+  if (utf8Source) {
+    return ProfilerJSSourceData(JS::UniqueChars(utf8Source), sourceLength);
+  }
+
+  // Hook returned success but no source data. Return unavailable.
+  return ProfilerJSSourceData();
 }
 
 AutoSuppressProfilerSampling::AutoSuppressProfilerSampling(JSContext* cx)
@@ -549,7 +793,7 @@ const ProfilingCategoryPairInfo sProfilingCategoryPairInfo[] = {
 JS_PUBLIC_API const ProfilingCategoryPairInfo& GetProfilingCategoryPairInfo(
     ProfilingCategoryPair aCategoryPair) {
   static_assert(
-      MOZ_ARRAY_LENGTH(sProfilingCategoryPairInfo) ==
+      std::size(sProfilingCategoryPairInfo) ==
           uint32_t(ProfilingCategoryPair::COUNT),
       "sProfilingCategoryPairInfo and ProfilingCategory need to have the "
       "same order and the same length");

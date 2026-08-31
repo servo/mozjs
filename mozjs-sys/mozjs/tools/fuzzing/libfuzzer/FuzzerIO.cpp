@@ -8,7 +8,6 @@
 // IO functions.
 //===----------------------------------------------------------------------===//
 
-#include "mozilla/Unused.h"
 #include "FuzzerDefs.h"
 #include "FuzzerExtFunctions.h"
 #include "FuzzerIO.h"
@@ -23,6 +22,14 @@
 namespace fuzzer {
 
 static FILE *OutputFile = stderr;
+
+FILE *GetOutputFile() {
+  return OutputFile;
+}
+
+void SetOutputFile(FILE *NewOutputFile) {
+  OutputFile = NewOutputFile;
+}
 
 long GetEpoch(const std::string &Path) {
   struct stat St;
@@ -58,7 +65,7 @@ std::string FileToString(const std::string &Path) {
 }
 
 void CopyFileToErr(const std::string &Path) {
-  Printf("%s", FileToString(Path).c_str());
+  Puts(FileToString(Path).c_str());
 }
 
 void WriteToFile(const Unit &U, const std::string &Path) {
@@ -74,17 +81,29 @@ void WriteToFile(const uint8_t *Data, size_t Size, const std::string &Path) {
   // Use raw C interface because this function may be called from a sig handler.
   FILE *Out = fopen(Path.c_str(), "wb");
   if (!Out) return;
-  mozilla::Unused << fwrite(Data, sizeof(Data[0]), Size, Out);
+  fwrite(Data, sizeof(Data[0]), Size, Out);
   fclose(Out);
 }
 
-void ReadDirToVectorOfUnits(const char *Path, Vector<Unit> *V,
-                            long *Epoch, size_t MaxSize, bool ExitOnError) {
+void AppendToFile(const std::string &Data, const std::string &Path) {
+  AppendToFile(reinterpret_cast<const uint8_t *>(Data.data()), Data.size(),
+               Path);
+}
+
+void AppendToFile(const uint8_t *Data, size_t Size, const std::string &Path) {
+  FILE *Out = fopen(Path.c_str(), "a");
+  if (!Out)
+    return;
+  fwrite(Data, sizeof(Data[0]), Size, Out);
+  fclose(Out);
+}
+
+void ReadDirToVectorOfUnits(const char *Path, std::vector<Unit> *V, long *Epoch,
+                            size_t MaxSize, bool ExitOnError,
+                            std::vector<std::string> *VPaths) {
   long E = Epoch ? *Epoch : 0;
-  Vector<std::string> Files;
-  int Res = ListFilesInDirRecursive(Path, Epoch, &Files, /*TopDir*/true);
-  if (ExitOnError && Res != 0)
-    exit(Res);
+  std::vector<std::string> Files;
+  ListFilesInDirRecursive(Path, Epoch, &Files, /*TopDir*/true);
   size_t NumLoaded = 0;
   for (size_t i = 0; i < Files.size(); i++) {
     auto &X = Files[i];
@@ -93,21 +112,20 @@ void ReadDirToVectorOfUnits(const char *Path, Vector<Unit> *V,
     if ((NumLoaded & (NumLoaded - 1)) == 0 && NumLoaded >= 1024)
       Printf("Loaded %zd/%zd files from %s\n", NumLoaded, Files.size(), Path);
     auto S = FileToVector(X, MaxSize, ExitOnError);
-    if (!S.empty())
+    if (!S.empty()) {
       V->push_back(S);
+      if (VPaths)
+        VPaths->push_back(X);
+    }
   }
 }
 
-
-int GetSizedFilesFromDir(const std::string &Dir, Vector<SizedFile> *V) {
-  Vector<std::string> Files;
-  int Res = ListFilesInDirRecursive(Dir, 0, &Files, /*TopDir*/true);
-  if (Res != 0)
-    return Res;
+void GetSizedFilesFromDir(const std::string &Dir, std::vector<SizedFile> *V) {
+  std::vector<std::string> Files;
+  ListFilesInDirRecursive(Dir, 0, &Files, /*TopDir*/true);
   for (auto &File : Files)
     if (size_t Size = FileSize(File))
       V->push_back({File, Size});
-  return 0;
 }
 
 std::string DirPlusFile(const std::string &DirPath,
@@ -133,6 +151,11 @@ void CloseStdout() {
   DiscardOutput(1);
 }
 
+void Puts(const char *Str) {
+  fputs(Str, OutputFile);
+  fflush(OutputFile);
+}
+
 void Printf(const char *Fmt, ...) {
   va_list ap;
   va_start(ap, Fmt);
@@ -148,6 +171,38 @@ void VPrintf(bool Verbose, const char *Fmt, ...) {
   vfprintf(OutputFile, Fmt, ap);
   va_end(ap);
   fflush(OutputFile);
+}
+
+static bool MkDirRecursiveInner(const std::string &Leaf) {
+  // Prevent chance of potential infinite recursion
+  if (Leaf == ".")
+    return true;
+
+  const std::string &Dir = DirName(Leaf);
+
+  if (IsDirectory(Dir)) {
+    MkDir(Leaf);
+    return IsDirectory(Leaf);
+  }
+
+  bool ret = MkDirRecursiveInner(Dir);
+  if (!ret) {
+    // Give up early if a previous MkDir failed
+    return ret;
+  }
+
+  MkDir(Leaf);
+  return IsDirectory(Leaf);
+}
+
+bool MkDirRecursive(const std::string &Dir) {
+  if (Dir.empty())
+    return false;
+
+  if (IsDirectory(Dir))
+    return true;
+
+  return MkDirRecursiveInner(Dir);
 }
 
 void RmDirRecursive(const std::string &Dir) {

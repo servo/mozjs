@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -77,12 +75,6 @@ extern void InterruptRunningCode(JSContext* cx);
 // interrupt request for all wasm Instances to avoid spurious trapping.
 
 void ResetInterruptState(JSContext* cx);
-
-#ifdef ENABLE_WASM_JSPI
-void UpdateInstanceStackLimitsForSuspendableStack(JSContext* cx,
-                                                  JS::NativeStackLimit limit);
-void ResetInstanceStackLimits(JSContext* cx);
-#endif
 
 }  // namespace wasm
 }  // namespace js

@@ -17,7 +17,7 @@ def get_prerelease_suffix(version):
     """Returns the prerelease suffix from the version string argument"""
 
     def mfunc(m):
-        return " {0} {1} {2}".format(
+        return " {} {} {}".format(
             m.group("prefix"),
             {"a": "Alpha", "b": "Beta"}[m.group("c")],
             m.group("suffix"),

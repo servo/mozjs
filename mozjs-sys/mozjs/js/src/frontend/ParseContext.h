@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -40,14 +38,14 @@ bool DeclarationKindIsParameter(DeclarationKind kind);
  * parsed. When the parser encounters a function definition, it creates a new
  * ParseContext, makes it the new current context.
  */
-class ParseContext : public Nestable<ParseContext> {
+class MOZ_STACK_CLASS ParseContext : public Nestable<ParseContext> {
  public:
   // The intra-function statement stack.
   //
   // Used for early error checking that depend on the nesting structure of
   // statements, such as continue/break targets, labels, and unbraced
   // lexical declarations.
-  class Statement : public Nestable<Statement> {
+  class MOZ_STACK_CLASS Statement : public Nestable<Statement> {
     StatementKind kind_;
 
    public:
@@ -92,7 +90,7 @@ class ParseContext : public Nestable<ParseContext> {
   // The intra-function scope stack.
   //
   // Tracks declared and used names within a scope.
-  class Scope : public Nestable<Scope> {
+  class MOZ_STACK_CLASS Scope : public Nestable<Scope> {
     // Names declared in this scope. Corresponds to the union of
     // VarDeclaredNames and LexicallyDeclaredNames in the ES spec.
     //
@@ -217,7 +215,7 @@ class ParseContext : public Nestable<ParseContext> {
       return declared_.acquire(pc->sc()->fc_);
     }
 
-    bool isEmpty() const { return declared_->all().empty(); }
+    bool isEmpty() const { return declared_->empty(); }
 
     uint32_t declaredCount() const {
       size_t count = declared_->count();
@@ -313,12 +311,12 @@ class ParseContext : public Nestable<ParseContext> {
     class BindingIter {
       friend class Scope;
 
-      DeclaredNameMap::Range declaredRange_;
+      DeclaredNameMap::Iterator declaredIter_;
       mozilla::DebugOnly<uint32_t> count_;
       bool isVarScope_;
 
       BindingIter(Scope& scope, bool isVarScope)
-          : declaredRange_(scope.declared_->all()),
+          : declaredIter_(scope.declared_->iter()),
             count_(0),
             isVarScope_(isVarScope) {
         settle();
@@ -337,29 +335,29 @@ class ParseContext : public Nestable<ParseContext> {
           return;
         }
 
-        // Otherwise, only lexically declared names are binding. Pop the range
-        // until we find such a name.
-        while (!declaredRange_.empty()) {
+        // Otherwise, only lexically declared names are binding. Advance through
+        // the declared names until we find one.
+        while (!declaredIter_.done()) {
           if (isLexicallyDeclared()) {
             break;
           }
-          declaredRange_.popFront();
+          declaredIter_.next();
         }
       }
 
      public:
-      bool done() const { return declaredRange_.empty(); }
+      bool done() const { return declaredIter_.done(); }
 
       explicit operator bool() const { return !done(); }
 
       TaggedParserAtomIndex name() {
         MOZ_ASSERT(!done());
-        return declaredRange_.front().key();
+        return declaredIter_.get().key();
       }
 
       DeclarationKind declarationKind() {
         MOZ_ASSERT(!done());
-        return declaredRange_.front().value()->kind();
+        return declaredIter_.get().value()->kind();
       }
 
       BindingKind kind() {
@@ -368,18 +366,18 @@ class ParseContext : public Nestable<ParseContext> {
 
       bool closedOver() {
         MOZ_ASSERT(!done());
-        return declaredRange_.front().value()->closedOver();
+        return declaredIter_.get().value()->closedOver();
       }
 
       void setClosedOver() {
         MOZ_ASSERT(!done());
-        return declaredRange_.front().value()->setClosedOver();
+        return declaredIter_.get().value()->setClosedOver();
       }
 
       void operator++(int) {
         MOZ_ASSERT(!done());
         MOZ_ASSERT(count_ != UINT32_MAX);
-        declaredRange_.popFront();
+        declaredIter_.next();
         settle();
       }
     };
@@ -598,7 +596,14 @@ class ParseContext : public Nestable<ParseContext> {
   }
 
 #ifdef ENABLE_EXPLICIT_RESOURCE_MANAGEMENT
-  bool isUsingSyntaxAllowed() { return !atGlobalLevel() || atModuleTopLevel(); }
+  bool isUsingSyntaxAllowed() {
+    if (innermostStatement() &&
+        innermostStatement()->kind() == StatementKind::Switch) {
+      return false;
+    }
+
+    return innermostStatement_ || sc_->isFunction() || sc_->isModule();
+  }
 #endif
 
   void setSuperScopeNeedsHomeObject() {

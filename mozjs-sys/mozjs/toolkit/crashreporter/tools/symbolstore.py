@@ -23,7 +23,7 @@
 
 import ctypes
 import errno
-import io
+import functools
 import os
 import platform
 import re
@@ -41,10 +41,15 @@ from mozbuild.generated_sources import (
     get_filename_with_digest,
     get_s3_region_and_bucket,
 )
-from mozbuild.util import memoize
 from mozpack import executables
 from mozpack.copier import FileRegistry
 from mozpack.manifests import InstallManifest, UnreadableInstallManifest
+from variables import get_buildid
+
+# Global variables
+
+RUST_GITHUB = "github.com/rust-lang/rust"
+FIREFOX_GITHUB = "github.com/mozilla-firefox/firefox"
 
 # Utility classes
 
@@ -320,11 +325,27 @@ def IsInDir(file, dir):
         return False
 
 
+def TryGetGitRepoInfoFromHg(srcdir):
+    rev = os.environ.get("MOZ_SOURCE_CHANGESET")
+    if rev:
+        git_commit = read_output(
+            "hg", "-R", srcdir, "log", "-r", rev, "-T", "{extras.git_commit}"
+        )
+        if git_commit:
+            git_root = f"https://{FIREFOX_GITHUB}"
+            return GitRepoInfo(srcdir, git_commit, git_root)
+    return None
+
+
 def GetVCSFilenameFromSrcdir(file, srcdir):
     if srcdir not in Dumper.srcdirRepoInfo:
-        # Not in cache, so find it adnd cache it
+        # Not in cache, so find it and cache it
         if os.path.isdir(os.path.join(srcdir, ".hg")):
-            Dumper.srcdirRepoInfo[srcdir] = HGRepoInfo(srcdir)
+            git_repo_info = TryGetGitRepoInfoFromHg(srcdir)
+            if git_repo_info:
+                Dumper.srcdirRepoInfo[srcdir] = git_repo_info
+            else:
+                Dumper.srcdirRepoInfo[srcdir] = HGRepoInfo(srcdir)
         else:
             # Unknown VCS or file is not in a repo.
             return None
@@ -373,17 +394,17 @@ def validate_install_manifests(install_manifest_args):
         bits = arg.split(",")
         if len(bits) != 2:
             raise ValueError(
-                "Invalid format for --install-manifest: " "specify manifest,target_dir"
+                "Invalid format for --install-manifest: specify manifest,target_dir"
             )
         manifest_file, destination = [os.path.abspath(b) for b in bits]
         if not os.path.isfile(manifest_file):
-            raise IOError(errno.ENOENT, "Manifest file not found", manifest_file)
+            raise OSError(errno.ENOENT, "Manifest file not found", manifest_file)
         if not os.path.isdir(destination):
-            raise IOError(errno.ENOENT, "Install directory not found", destination)
+            raise OSError(errno.ENOENT, "Install directory not found", destination)
         try:
             manifest = InstallManifest(manifest_file)
         except UnreadableInstallManifest:
-            raise IOError(errno.EINVAL, "Error parsing manifest file", manifest_file)
+            raise OSError(errno.EINVAL, "Error parsing manifest file", manifest_file)
         args.append((manifest, destination))
     return args
 
@@ -402,20 +423,21 @@ def make_file_mapping(install_manifests):
     return file_mapping
 
 
-@memoize
+@functools.cache
 def get_generated_file_s3_path(filename, rel_path, bucket):
     """Given a filename, return a path formatted similarly to
     GetVCSFilename but representing a file available in an s3 bucket."""
     with open(filename, "rb") as f:
         path = get_filename_with_digest(rel_path, f.read())
-        return "s3:{bucket}:{path}:".format(bucket=bucket, path=path)
+        return f"s3:{bucket}:{path}:"
 
 
-def GetPlatformSpecificDumper(**kwargs):
+def GetPlatformSpecificDumper(platform=None, **kwargs):
     """This function simply returns a instance of a subclass of Dumper
     that is appropriate for the current platform."""
+    platform = platform or buildconfig.substs["OS_ARCH"]
     return {"WINNT": Dumper_Win32, "Linux": Dumper_Linux, "Darwin": Dumper_Mac}[
-        buildconfig.substs["OS_ARCH"]
+        platform
     ](**kwargs)
 
 
@@ -432,7 +454,8 @@ def SourceIndex(fileStream, outputPath, vcs_root, s3_bucket):
         + "VERCTRL=http\r\n"
         + "SRCSRV: variables ------------------------------------------\r\n"
         + "SRCSRVVERCTRL=http\r\n"
-        + "RUST_GITHUB_TARGET=https://github.com/rust-lang/rust/raw/%var4%/%var3%\r\n"
+        + f"RUST_GITHUB_TARGET=https://{RUST_GITHUB}/raw/%var4%/%var3%\r\n"
+        + f"FIREFOX_GITHUB_TARGET=https://{FIREFOX_GITHUB}/raw/%var4%/%var3%\r\n"
     )
     pdbStreamFile.write("HGSERVER=" + vcs_root + "\r\n")
     pdbStreamFile.write("HG_TARGET=%hgserver%/raw-file/%var4%/%var3%\r\n")
@@ -442,7 +465,7 @@ def SourceIndex(fileStream, outputPath, vcs_root, s3_bucket):
         pdbStreamFile.write("S3_TARGET=https://%s3_bucket%.s3.amazonaws.com/%var3%\r\n")
 
     # Allow each entry to choose its template via "var2".
-    # Possible values for var2 are: HG_TARGET / S3_TARGET / RUST_GITHUB_TARGET
+    # Possible values for var2 are: HG_TARGET / S3_TARGET / RUST_GITHUB_TARGET / FIREFOX_GITHUB_TARGET
     pdbStreamFile.write("SRCSRVTRG=%fnvar%(%var2%)\r\n")
 
     pdbStreamFile.write(
@@ -485,6 +508,8 @@ class Dumper:
         srcsrv=False,
         s3_bucket=None,
         file_mapping=None,
+        include_moz_extra_info=True,
+        map_rust_sources=True,
     ):
         # popen likes absolute paths, at least on windows
         self.dump_syms = os.path.abspath(dump_syms)
@@ -501,14 +526,16 @@ class Dumper:
         self.srcsrv = srcsrv
         self.s3_bucket = s3_bucket
         self.file_mapping = file_mapping or {}
-        # Add a static mapping for Rust sources. Since Rust 1.30 official Rust builds map
-        # source paths to start with "/rust/<sha>/".
-        rust_sha = buildconfig.substs["RUSTC_COMMIT"]
-        rust_srcdir = "/rustc/" + rust_sha
-        self.srcdirs.append(rust_srcdir)
-        Dumper.srcdirRepoInfo[rust_srcdir] = GitRepoInfo(
-            rust_srcdir, rust_sha, "https://github.com/rust-lang/rust/"
-        )
+        self.include_moz_extra_info = include_moz_extra_info
+        if map_rust_sources:
+            # Add a static mapping for Rust sources. Since Rust 1.30 official Rust builds map
+            # source paths to start with "/rustc/<sha>/".
+            rust_sha = buildconfig.substs["RUSTC_COMMIT"]
+            rust_srcdir = "/rustc/" + rust_sha
+            self.srcdirs.append(rust_srcdir)
+            Dumper.srcdirRepoInfo[rust_srcdir] = GitRepoInfo(
+                rust_srcdir, rust_sha, f"https://{RUST_GITHUB}/"
+            )
 
     # subclasses override this
     def ShouldProcess(self, file):
@@ -557,7 +584,8 @@ class Dumper:
             "--inlines",
         ]
 
-        cmdline.extend(self.dump_syms_extra_info())
+        if self.include_moz_extra_info:
+            cmdline.extend(self.dump_syms_extra_info())
         cmdline.append(file)
 
         return cmdline
@@ -575,31 +603,24 @@ class Dumper:
         ]
 
         if buildconfig.substs.get("MOZ_APP_VENDOR") is not None:
-            cmdline.extend(
-                [
-                    "--extra-info",
-                    "VENDOR " + buildconfig.substs["MOZ_APP_VENDOR"],
-                ]
-            )
+            cmdline.extend([
+                "--extra-info",
+                "VENDOR " + buildconfig.substs["MOZ_APP_VENDOR"],
+            ])
 
         if buildconfig.substs.get("MOZ_APP_BASENAME") is not None:
-            cmdline.extend(
-                [
-                    "--extra-info",
-                    "PRODUCTNAME " + buildconfig.substs["MOZ_APP_BASENAME"],
-                ]
-            )
+            cmdline.extend([
+                "--extra-info",
+                "PRODUCTNAME " + buildconfig.substs["MOZ_APP_BASENAME"],
+            ])
 
         # Add the build ID if it's present
-        path = os.path.join(buildconfig.topobjdir, "buildid.h")
         try:
-            buildid = io.open(path, "r", encoding="utf-8").read().split()[2]
-            cmdline.extend(
-                [
-                    "--extra-info",
-                    "BUILDID " + buildid,
-                ]
-            )
+            buildid = get_buildid()
+            cmdline.extend([
+                "--extra-info",
+                "BUILDID " + buildid,
+            ])
         except Exception:
             pass
 
@@ -686,9 +707,13 @@ class Dumper:
                             (vcs, bucket, source_file, nothing) = filename.split(":", 3)
                             sourceFileStream += sourcepath + "*S3_TARGET*"
                             sourceFileStream += source_file + "\r\n"
-                        elif filename.startswith("git:github.com/rust-lang/rust:"):
+                        elif filename.startswith(f"git:{RUST_GITHUB}:"):
                             (vcs, repo, source_file, revision) = filename.split(":", 3)
                             sourceFileStream += sourcepath + "*RUST_GITHUB_TARGET*"
+                            sourceFileStream += source_file + "*" + revision + "\r\n"
+                        elif filename.startswith(f"git:{FIREFOX_GITHUB}:"):
+                            (vcs, repo, source_file, revision) = filename.split(":", 3)
+                            sourceFileStream += sourcepath + "*FIREFOX_GITHUB_TARGET*"
                             sourceFileStream += source_file + "*" + revision + "\r\n"
                         f.write("FILE %s %s\n" % (index, filename))
                     elif line.startswith("INFO CODE_ID "):
@@ -778,6 +803,12 @@ class Dumper:
                 print(
                     "PERFHERDER_DATA: %s" % json.dumps(perfherder_data), file=sys.stderr
                 )
+                if "MOZ_AUTOMATION" in os.environ or "MOZ_SNAP_BUILD" in os.environ:
+                    upload_dir = Path(os.environ.get("UPLOAD_DIR"))
+                    upload_dir.mkdir(parents=True, exist_ok=True)
+                    upload_path = upload_dir / "perfherder-data-compiler-metrics.json"
+                    with upload_path.open("w", encoding="utf-8") as f:
+                        json.dump(perfherder_data, f)
 
         elapsed = time.time() - t_start
         print("Finished processing %s in %.2fs" % (file, elapsed), file=sys.stderr)
@@ -896,15 +927,13 @@ class Dumper_Linux(Dumper):
         file_dbg = file + ".dbg"
         if (
             subprocess.call([self.objcopy, "--only-keep-debug", file, file_dbg]) == 0
-            and subprocess.call(
-                [
-                    self.objcopy,
-                    "--remove-section",
-                    ".gnu_debuglink",
-                    "--add-gnu-debuglink=%s" % file_dbg,
-                    file,
-                ]
-            )
+            and subprocess.call([
+                self.objcopy,
+                "--remove-section",
+                ".gnu_debuglink",
+                "--add-gnu-debuglink=%s" % file_dbg,
+                file,
+            ])
             == 0
         ):
             rel_path = os.path.join(debug_file, guid, debug_file + ".dbg")
@@ -956,15 +985,14 @@ class Dumper_Mac(Dumper):
             cmdline = [self.dump_syms]
 
             cmdline.extend(arch.split())
-            cmdline.extend(
-                [
-                    "--inlines",
-                    "-j",
-                    "2",
-                ]
-            )
+            cmdline.extend([
+                "--inlines",
+                "-j",
+                "2",
+            ])
 
-            cmdline.extend(self.dump_syms_extra_info())
+            if self.include_moz_extra_info:
+                cmdline.extend(self.dump_syms_extra_info())
             cmdline.extend([dsymbundle, file])
 
             return cmdline
@@ -1118,6 +1146,33 @@ to canonical locations in the source repository. Specify
         default=False,
         help="Count static initializers",
     )
+    parser.add_option(
+        "--platform",
+        action="store",
+        dest="platform",
+        default=None,
+        help="Force a specific platform for processing symbols. "
+        + "Valid values: `WINNT`, `Linux`, `Darwin`. "
+        + "Useful for processing cross-compiled symbols. If unset, require `OS_ARCH` to be set "
+        + "either through build config. or through environment variables.",
+    )
+    parser.add_option(
+        "--no-moz-extra-info",
+        action="store_true",
+        dest="no_moz_extra_info",
+        default=True,
+        help="Whether to include Mozilla-specific application build metadata. "
+        + "If unset, require `MOZ_UPDATE_CHANNEL` and `MOZ_APP_VERSION` to be set "
+        + "either through build config. or through environment variables.",
+    )
+    parser.add_option(
+        "--no-rust",
+        action="store_true",
+        dest="no_rust",
+        default=False,
+        help="Whether to map Rust sources. If unset, require `RUSTC_COMMIT` to be set "
+        + "either through build config. or through environment variables",
+    )
     (options, args) = parser.parse_args()
 
     # check to see if the pdbstr.exe exists
@@ -1132,7 +1187,7 @@ to canonical locations in the source repository. Specify
 
     try:
         manifests = validate_install_manifests(options.install_manifests)
-    except (IOError, ValueError) as e:
+    except (OSError, ValueError) as e:
         parser.error(str(e))
         sys.exit(1)
     file_mapping = make_file_mapping(manifests)
@@ -1147,6 +1202,9 @@ to canonical locations in the source repository. Specify
         srcsrv=options.srcsrv,
         s3_bucket=bucket,
         file_mapping=file_mapping,
+        platform=options.platform,
+        include_moz_extra_info=not options.no_moz_extra_info,
+        map_rust_sources=not options.no_rust,
     )
 
     dumper.Process(args[2], options.count_ctors)

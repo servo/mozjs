@@ -221,7 +221,8 @@ struct StructuredCloneTestPrincipals final : public JSPrincipals {
     return JS_WriteUint32Pair(writer, rank, 0);
   }
 
-  bool isSystemOrAddonPrincipal() override { return true; }
+  bool isSystemPrincipal() override { return true; }
+  bool isAddonPrincipal() override { return true; }
 
   static bool read(JSContext* cx, JSStructuredCloneReader* reader,
                    JSPrincipals** outPrincipals) {
@@ -258,6 +259,7 @@ struct StructuredCloneTestPrincipals final : public JSPrincipals {
 
 JSSecurityCallbacks StructuredCloneTestPrincipals::securityCallbacks = {
     nullptr,  // contentSecurityPolicyAllows
+    nullptr,  // codeForEvalGets
     subsumes};
 
 BEGIN_TEST(testStructuredClone_SavedFrame) {

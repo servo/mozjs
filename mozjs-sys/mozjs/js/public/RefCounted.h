@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -14,11 +12,7 @@
 
 // These types implement the same interface as mozilla::(Atomic)RefCounted and
 // must be used instead of mozilla::(Atomic)RefCounted for everything in
-// SpiderMonkey. There are two reasons:
-//  - Release() needs to call js_delete, not delete
-//  - SpiderMonkey does not have MOZILLA_INTERNAL_API defined which can lead
-//    to ODR violations that show up as spurious leak reports when ref-counted
-//    types are allocated by SpiderMonkey and released by Gecko (or vice versa).
+// SpiderMonkey. This is because Release() needs to call js_delete, not delete.
 
 namespace js {
 

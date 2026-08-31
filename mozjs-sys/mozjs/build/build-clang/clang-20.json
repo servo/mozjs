@@ -1,0 +1,25 @@
+{
+    "patches": [
+        "allow-unversioned-android.patch",
+        "find_symbolizer_linux_clang_15.patch",
+        "android-mangling-error_clang_12.patch",
+        "unpoison-thread-stacks_clang_10.patch",
+        "downgrade-mangling-error_clang_12.patch",
+        "fuzzing_ccov_build_clang_12.patch",
+        "revert-llvmorg-16-init-11301-g163bb6d64e5f_clang_20.patch",
+        "revert-llvmorg-15-init-13446-g7524fe962e47.patch",
+        "llvmorg-21-init-2651-gbac417107339.patch",
+        "llvmorg-21-init-12122-g59c6d70ed812.patch",
+        "llvmorg-21-init-17702-g0d7e64f5d2b4.patch",
+        "llvmorg-22-init-1937-g2672719a09cf.patch",
+        "llvmorg-22-init-2380-gd9971be83e5d.patch",
+        "llvmorg-22-init-4745-gbe179d069664.patch",
+        "llvmorg-22-init-11861-gfbcd82aab5ff.patch",
+        "llvmorg-22-init-14556-g6a8943942335.patch",
+        "android-hardware-buffer-header-workaround.patch",
+        "arm64e-hack.patch",
+        "no-no-rosegment.patch",
+        "sanitizer_deadlock_suppression.patch",
+        "compiler-rt-rss-limit-heap-profile.patch"
+    ]
+}

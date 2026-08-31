@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -402,7 +400,7 @@ static void SkipInterpreterFrameEntries(
   *start = entryIndex;
 }
 
-static bool RecompileBaselineScriptForDebugMode(
+bool js::jit::RecompileBaselineScriptForDebugMode(
     JSContext* cx, JSScript* script, DebugAPI::IsObserving observing) {
   // If a script is on the stack multiple times, it may have already
   // been recompiled.
@@ -419,8 +417,11 @@ static bool RecompileBaselineScriptForDebugMode(
   BaselineScript* oldBaselineScript =
       script->jitScript()->clearBaselineScript(cx->gcContext(), script);
 
-  MethodStatus status =
-      BaselineCompile(cx, script, /* forceDebugMode = */ observing);
+  BaselineOptions options({BaselineOption::ForceMainThreadCompilation});
+  if (observing) {
+    options.setFlag(BaselineOption::ForceDebugInstrumentation);
+  }
+  MethodStatus status = BaselineCompile(cx, script, options);
   if (status != Method_Compiled) {
     // We will only fail to recompile for debug mode due to OOM. Restore
     // the old baseline script in case something doesn't properly
@@ -432,13 +433,12 @@ static bool RecompileBaselineScriptForDebugMode(
 
   // Don't destroy the old baseline script yet, since if we fail any of the
   // recompiles we need to rollback all the old baseline scripts.
-  MOZ_ASSERT(script->baselineScript()->hasDebugInstrumentation() == observing);
   return true;
 }
 
 static bool InvalidateScriptsInZone(JSContext* cx, Zone* zone,
                                     const Vector<DebugModeOSREntry>& entries) {
-  RecompileInfoVector invalid;
+  IonScriptKeyVector invalid;
   for (UniqueScriptOSREntryIter iter(entries); !iter.done(); ++iter) {
     JSScript* script = iter.entry().script;
     if (script->zone() != zone) {
@@ -517,9 +517,8 @@ bool jit::RecompileOnStackBaselineScriptsForDebugMode(
       return false;
     }
   } else {
-    using ZoneRange = DebugAPI::ExecutionObservableSet::ZoneRange;
-    for (ZoneRange r = obs.zones()->all(); !r.empty(); r.popFront()) {
-      if (!InvalidateScriptsInZone(cx, r.front(), entries)) {
+    for (auto iter = obs.zones()->iter(); !iter.done(); iter.next()) {
+      if (!InvalidateScriptsInZone(cx, iter.get(), entries)) {
         return false;
       }
     }

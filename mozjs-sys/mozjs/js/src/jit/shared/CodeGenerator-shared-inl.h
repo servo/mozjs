@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -45,6 +43,20 @@ static inline int32_t ToInt32(const LAllocation* a) {
     intptr_t val = cst->toIntPtr();
     MOZ_ASSERT(INT32_MIN <= val && val <= INT32_MAX);
     return int32_t(val);
+  }
+  if (a->isConstantIndex()) {
+    return a->toConstantIndex()->index();
+  }
+  MOZ_CRASH("this is not a constant!");
+}
+
+static inline intptr_t ToIntPtr(const LAllocation* a) {
+  if (a->isConstantValue()) {
+    const MConstant* cst = a->toConstant();
+    if (cst->type() == MIRType::Int32) {
+      return cst->toInt32();
+    }
+    return cst->toIntPtr();
   }
   if (a->isConstantIndex()) {
     return a->toConstantIndex()->index();
@@ -112,6 +124,15 @@ static inline Register64 ToOutRegister64(LInstruction* ins) {
 #endif
 }
 
+static inline bool IsRegister64(const LInt64Allocation& a) {
+#if JS_BITS_PER_WORD == 32
+  MOZ_ASSERT(a.low().isGeneralReg() == a.high().isGeneralReg());
+  return a.low().isGeneralReg();
+#else
+  return a.value().isGeneralReg();
+#endif
+}
+
 static inline Register64 ToRegister64(const LInt64Allocation& a) {
 #if JS_BITS_PER_WORD == 32
   return Register64(ToRegister(a.high()), ToRegister(a.low()));
@@ -145,10 +166,6 @@ static inline Register64 ToTempRegister64OrInvalid(
 
 static inline Register ToTempUnboxRegister(const LDefinition* def) {
   return ToTempRegisterOrInvalid(def);
-}
-
-static inline Register ToRegisterOrInvalid(const LDefinition* a) {
-  return a ? ToRegister(a) : InvalidReg;
 }
 
 static inline FloatRegister ToFloatRegister(const LAllocation& a) {
@@ -199,12 +216,22 @@ static inline ValueOperand ToOutValue(LInstruction* ins) {
 #endif
 }
 
-static inline ValueOperand GetTempValue(Register type, Register payload) {
+static inline ValueOperand ToValue(const LBoxAllocation& a) {
 #if defined(JS_NUNBOX32)
-  return ValueOperand(type, payload);
+  return ValueOperand(ToRegister(a.type()), ToRegister(a.payload()));
 #elif defined(JS_PUNBOX64)
-  (void)type;
-  return ValueOperand(payload);
+  return ValueOperand(ToRegister(a.value()));
+#else
+#  error "Unknown"
+#endif
+}
+
+static inline ValueOperand ToValue(const LBoxDefinition& a) {
+#if defined(JS_NUNBOX32)
+  return ValueOperand(ToRegister(a.pointerType()),
+                      ToRegister(a.pointerPayload()));
+#elif defined(JS_PUNBOX64)
+  return ValueOperand(ToRegister(a.pointer()));
 #else
 #  error "Unknown"
 #endif
@@ -280,14 +307,24 @@ Address CodeGeneratorShared::ToAddress(const LAllocation* a) const {
   return ToAddress<Base>(*a);
 }
 
+template <BaseRegForAddress Base>
+Address CodeGeneratorShared::ToAddress(const LInt64Allocation& a) const {
+#if JS_BITS_PER_WORD == 32
+  Address low = ToAddress<Base>(a.low());
+  MOZ_ASSERT(HighWord(low) == ToAddress<Base>(a.high()));
+  return low;
+#else
+  return ToAddress<Base>(a.value());
+#endif
+}
+
 // static
 Address CodeGeneratorShared::ToAddress(Register elements,
                                        const LAllocation* index,
-                                       Scalar::Type type,
-                                       int32_t offsetAdjustment) {
+                                       Scalar::Type type) {
   int32_t idx = ToInt32(index);
   int32_t offset;
-  MOZ_ALWAYS_TRUE(ArrayOffsetFitsInInt32(idx, type, offsetAdjustment, &offset));
+  MOZ_ALWAYS_TRUE(ArrayOffsetFitsInInt32(idx, type, &offset));
   return Address(elements, offset);
 }
 
@@ -330,9 +367,9 @@ void CodeGeneratorShared::restoreLiveVolatile(LInstruction* ins) {
 }
 
 inline bool CodeGeneratorShared::isGlobalObject(JSObject* object) {
-  // Calling object->is<GlobalObject>() is racy because this relies on
-  // checking the group and this can be changed while we are compiling off the
-  // main thread. Note that we only check for the script realm's global here.
+  // Calling object->is<GlobalObject>() is racy because it reads object->shape
+  // and that can change while we are compiling off the main thread. Note that
+  // we only check for the script realm's global here.
   return object == gen->realm->maybeGlobal();
 }
 

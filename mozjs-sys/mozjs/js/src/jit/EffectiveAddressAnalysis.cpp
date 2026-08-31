@@ -1,256 +1,208 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "jit/EffectiveAddressAnalysis.h"
 
 #include "jit/IonAnalysis.h"
+#include "jit/MIR-wasm.h"
 #include "jit/MIR.h"
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
-#include "util/CheckedArithmetic.h"
 
 using namespace js;
 using namespace jit;
 
-static void AnalyzeLsh(TempAllocator& alloc, MLsh* lsh) {
-  if (lsh->type() != MIRType::Int32) {
-    return;
-  }
+// This is a very simple pass that tries to merge 32-bit shift-and-add into a
+// single MIR node.  It results from a lot of experimentation with more
+// aggressive load-effective-address formation, as documented in bug 1970035.
+//
+// This implementation only covers the two-addend form
+// `base + (index << {1,2,3})` (and the same the other way around).  Previous
+// experimentation showed that, while the 3-addend form
+// `base + (index << {1,2,3}) + constant` can be reliably identified and merged
+// into a single node, it doesn't reliably produce faster code.  Also, the
+// implementation complexity is much higher than what is below.
+//
+// 3-addend LEAs can be completed in a single cycle on high-end Intels, but
+// take 2 cycles on lower end Intels.  By comparison the 2-addend form is
+// believed to take a single cycle on all Intels.  On arm64, the 3-addend form
+// is not supported in a single machine instruction, and so can require zero,
+// one or two extra instructions, depending on the size of the constant,
+// possibly an extra register, and consequently some number of extra cycles.
+//
+// Because of this, restricting the transformation to the 2-addend case
+// simplifies both the implementation and more importantly the cost-tradeoff
+// landscape.  It gains much of the wins of the 3-addend case while more
+// reliably producing nodes that can execute in a single cycle on all primary
+// targets.
 
+// =====================================================================
+
+// On non-x86/x64 targets, incorporating any non-zero constant (displacement)
+// in an EffectiveAddress2 node is not free, because the constant may have to
+// be synthesised into a register in the back end.  Worse, on all such targets,
+// arbitrary 32-bit constants will take two instructions to synthesise, which
+// can lead to a net performance loss.
+//
+// `OffsetIsSmallEnough` is used in the logic below to restrict constants to
+// single-instruction forms.  It is necessarily target-dependent.  Note this is
+// merely a heuristic -- the resulting code should be *correct* on all targets
+// regardless of the value returned.
+
+static bool OffsetIsSmallEnough(int32_t imm) {
+#if defined(JS_CODEGEN_X86) || defined(JS_CODEGEN_X64)
+  // For x86_32 and x86_64 we have the luxury of being able to roll in any
+  // 32-bit `imm` value for free.
+  return true;
+#elif defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_ARM)
+  // On arm64, this can be synthesised in one insn as `movz #imm` or
+  // `movn #imm`.  arm32 is similar.
+  return imm >= -0xFFFF && imm <= 0xFFFF;
+#elif defined(JS_CODEGEN_RISCV64) || defined(JS_CODEGEN_LOONG64) || \
+    defined(JS_CODEGEN_MIPS64)
+  return imm >= -0xFFF && imm <= 0xFFF;
+#elif defined(JS_CODEGEN_WASM32) || defined(JS_CODEGEN_NONE)
+  return true;
+#else
+#  error "This needs to be filled in for your platform"
+#endif
+}
+
+// If `def` is of the form `x << {1,2,3}`, return `x` and the shift value.
+// Otherwise return the pair `(nullptr, 0)`.
+static std::pair<MDefinition*, int32_t> IsShiftBy123(MDefinition* def) {
+  MOZ_ASSERT(def->type() == MIRType::Int32);
+  if (!def->isLsh()) {
+    return std::pair(nullptr, 0);
+  }
+  MLsh* lsh = def->toLsh();
   if (lsh->isRecoveredOnBailout()) {
-    return;
+    return std::pair(nullptr, 0);
   }
-
-  MDefinition* index = lsh->lhs();
-  MOZ_ASSERT(index->type() == MIRType::Int32);
-
-  MConstant* shiftValue = lsh->rhs()->maybeConstantValue();
-  if (!shiftValue) {
-    return;
+  MDefinition* shamt = lsh->rhs();
+  MOZ_ASSERT(shamt->type() == MIRType::Int32);
+  MConstant* con = shamt->maybeConstantValue();
+  if (!con || con->toInt32() < 1 || con->toInt32() > 3) {
+    return std::pair(nullptr, 0);
   }
+  return std::pair(lsh->lhs(), con->toInt32());
+}
 
-  if (shiftValue->type() != MIRType::Int32 ||
-      !IsShiftInScaleRange(shiftValue->toInt32())) {
-    return;
-  }
+// Try to convert `base + (index << {1,2,3})` into either an MEffectiveAddress2
+// node (if base is a constant) or an MEffectiveAddress3 node with zero
+// displacement (if base is non-constant).
+static void TryMatchShiftAdd(TempAllocator& alloc, MAdd* root) {
+  MOZ_ASSERT(root->isAdd());
+  MOZ_ASSERT(root->type() == MIRType::Int32);
+  MOZ_ASSERT(root->hasUses());
 
-  Scale scale = ShiftToScale(shiftValue->toInt32());
+  // Try to match
+  //
+  //   base + (index << {1,2,3})
+  //
+  // in which the addends can appear in either order.  Obviously the shift
+  // amount must be a constant, but `base` and `index` can be anything.
 
-  int32_t displacement = 0;
-  MInstruction* last = lsh;
   MDefinition* base = nullptr;
-  while (true) {
-    if (!last->hasOneUse()) {
-      break;
-    }
+  MDefinition* index = nullptr;
+  int32_t shift = 0;
 
-    MUseIterator use = last->usesBegin();
-    if (!use->consumer()->isDefinition() ||
-        !use->consumer()->toDefinition()->isAdd()) {
-      break;
-    }
-
-    MAdd* add = use->consumer()->toDefinition()->toAdd();
-    if (add->type() != MIRType::Int32 || !add->isTruncated()) {
-      break;
-    }
-
-    MDefinition* other = add->getOperand(1 - add->indexOf(*use));
-
-    if (MConstant* otherConst = other->maybeConstantValue()) {
-      displacement += otherConst->toInt32();
-    } else {
-      if (base) {
-        break;
-      }
-      base = other;
-    }
-
-    last = add;
-    if (last->isRecoveredOnBailout()) {
-      return;
+  auto pair = IsShiftBy123(root->rhs());
+  MOZ_ASSERT((pair.first == nullptr) == (pair.second == 0));
+  if (pair.first) {
+    base = root->lhs();
+    index = pair.first;
+    shift = pair.second;
+  } else {
+    pair = IsShiftBy123(root->lhs());
+    MOZ_ASSERT((pair.first == nullptr) == (pair.second == 0));
+    if (pair.first) {
+      base = root->rhs();
+      index = pair.first;
+      shift = pair.second;
     }
   }
 
   if (!base) {
-    uint32_t elemSize = 1 << ScaleToShift(scale);
-    if (displacement % elemSize != 0) {
+    return;
+  }
+  MOZ_ASSERT(shift >= 1 && shift <= 3);
+
+  // IsShiftBy123 ensures that the MLsh node is not `recoveredOnBailout`, and
+  // this test takes care of the MAdd node.
+  if (root->isRecoveredOnBailout()) {
+    return;
+  }
+
+  // Pattern matching succeeded.
+  Scale scale = ShiftToScale(shift);
+  MOZ_ASSERT(scale != TimesOne);
+
+  MInstruction* replacement = nullptr;
+  if (base->maybeConstantValue()) {
+    int32_t baseValue = base->maybeConstantValue()->toInt32();
+    if (baseValue == 0) {
+      // We'd only be rolling one operation -- the shift -- into the result, so
+      // don't bother.
       return;
     }
-
-    if (!last->hasOneUse()) {
+    if (!OffsetIsSmallEnough(baseValue)) {
+      // `baseValue` would take more than one insn to get into a register,
+      // which makes the change less likely to be a win.  See bug 1979829.
       return;
     }
-
-    MUseIterator use = last->usesBegin();
-    if (!use->consumer()->isDefinition() ||
-        !use->consumer()->toDefinition()->isBitAnd()) {
-      return;
-    }
-
-    MBitAnd* bitAnd = use->consumer()->toDefinition()->toBitAnd();
-    if (bitAnd->isRecoveredOnBailout()) {
-      return;
-    }
-
-    MDefinition* other = bitAnd->getOperand(1 - bitAnd->indexOf(*use));
-    MConstant* otherConst = other->maybeConstantValue();
-    if (!otherConst || otherConst->type() != MIRType::Int32) {
-      return;
-    }
-
-    uint32_t bitsClearedByShift = elemSize - 1;
-    uint32_t bitsClearedByMask = ~uint32_t(otherConst->toInt32());
-    if ((bitsClearedByShift & bitsClearedByMask) != bitsClearedByMask) {
-      return;
-    }
-
-    bitAnd->replaceAllUsesWith(last);
-    return;
+    replacement = MEffectiveAddress2::New(alloc, index, scale, baseValue);
+  } else {
+    replacement = MEffectiveAddress3::New(alloc, base, index, scale, 0);
   }
 
-  if (base->isRecoveredOnBailout()) {
-    return;
-  }
+  root->replaceAllUsesWith(replacement);
+  root->block()->insertAfter(root, replacement);
 
-  MEffectiveAddress* eaddr =
-      MEffectiveAddress::New(alloc, base, index, scale, displacement);
-  last->replaceAllUsesWith(eaddr);
-  last->block()->insertAfter(last, eaddr);
-}
-
-// Transform:
-//
-//   [AddI]
-//   addl       $9, %esi
-//   [LoadUnboxedScalar]
-//   movsd      0x0(%rbx,%rsi,8), %xmm4
-//
-// into:
-//
-//   [LoadUnboxedScalar]
-//   movsd      0x48(%rbx,%rsi,8), %xmm4
-//
-// This is possible when the AddI is only used by the LoadUnboxedScalar opcode.
-static void AnalyzeLoadUnboxedScalar(MLoadUnboxedScalar* load) {
-  if (load->isRecoveredOnBailout()) {
-    return;
-  }
-
-  if (!load->getOperand(1)->isAdd()) {
-    return;
-  }
-
-  JitSpew(JitSpew_EAA, "analyze: %s%u", load->opName(), load->id());
-
-  MAdd* add = load->getOperand(1)->toAdd();
-
-  if (add->type() != MIRType::Int32 || !add->hasUses() ||
-      add->truncateKind() != TruncateKind::Truncate) {
-    return;
-  }
-
-  MDefinition* lhs = add->lhs();
-  MDefinition* rhs = add->rhs();
-  MDefinition* constant = nullptr;
-  MDefinition* node = nullptr;
-
-  if (lhs->isConstant()) {
-    constant = lhs;
-    node = rhs;
-  } else if (rhs->isConstant()) {
-    constant = rhs;
-    node = lhs;
-  } else
-    return;
-
-  MOZ_ASSERT(constant->type() == MIRType::Int32);
-
-  size_t storageSize = Scalar::byteSize(load->storageType());
-  int32_t c1 = load->offsetAdjustment();
-  int32_t c2 = 0;
-  if (!SafeMul(constant->maybeConstantValue()->toInt32(), storageSize, &c2)) {
-    return;
-  }
-
-  int32_t offset = 0;
-  if (!SafeAdd(c1, c2, &offset)) {
-    return;
-  }
-
-  JitSpew(JitSpew_EAA, "set offset: %d + %d = %d on: %s%u", c1, c2, offset,
-          load->opName(), load->id());
-  load->setOffsetAdjustment(offset);
-  load->replaceOperand(1, node);
-
-  if (!add->hasLiveDefUses() && DeadIfUnused(add) &&
-      add->canRecoverOnBailout()) {
-    JitSpew(JitSpew_EAA, "mark as recovered on bailout: %s%u", add->opName(),
-            add->id());
-    add->setRecoveredOnBailoutUnchecked();
+  if (JitSpewEnabled(JitSpew_EAA)) {
+    AutoJitSpewMessage msg(JitSpew_EAA, "  create: '");
+    DumpMIRDefinition(msg.printer(), replacement, /*showDetails=*/false);
+    msg.append("'");
   }
 }
 
-template <typename AsmJSMemoryAccess>
-void EffectiveAddressAnalysis::analyzeAsmJSHeapAccess(AsmJSMemoryAccess* ins) {
-  MDefinition* base = ins->base();
-
-  if (base->isConstant()) {
-    // If the index is within the minimum heap length, we can optimize away the
-    // bounds check.  Asm.js accesses always have an int32 base, the memory is
-    // always a memory32.
-    int32_t imm = base->toConstant()->toInt32();
-    if (imm >= 0) {
-      int32_t end = (uint32_t)imm + ins->byteSize();
-      if (end >= imm && (uint32_t)end <= mir_->minWasmMemory0Length()) {
-        ins->removeBoundsCheck();
-      }
-    }
-  }
-}
-
-// This analysis converts patterns of the form:
-//   truncate(x + (y << {0,1,2,3}))
-//   truncate(x + (y << {0,1,2,3}) + imm32)
-// into a single lea instruction, and patterns of the form:
-//   asmload(x + imm32)
-//   asmload(x << {0,1,2,3})
-//   asmload((x << {0,1,2,3}) + imm32)
-//   asmload((x << {0,1,2,3}) & mask)            (where mask is redundant
-//                                                with shift)
-//   asmload(((x << {0,1,2,3}) + imm32) & mask)  (where mask is redundant
-//                                                with shift + imm32)
-// into a single asmload instruction (and for asmstore too).
+// =====================================================================
 //
-// Additionally, we should consider the general forms:
-//   truncate(x + y + imm32)
-//   truncate((y << {0,1,2,3}) + imm32)
+// Top level driver.
+
 bool EffectiveAddressAnalysis::analyze() {
   JitSpew(JitSpew_EAA, "Begin");
+
   for (ReversePostorderIterator block(graph_.rpoBegin());
        block != graph_.rpoEnd(); block++) {
-    for (MInstructionIterator i = block->begin(); i != block->end(); i++) {
-      if (!graph_.alloc().ensureBallast()) {
+    // Traverse backwards through `block`, trying to rewrite each MIR node if
+    // we can.  Rewriting may cause nodes to become dead.  We do not try to
+    // remove those here, but leave them for a later DCE pass to clear up.
+
+    MInstructionReverseIterator ri(block->rbegin());
+    while (ri != block->rend()) {
+      // Nodes are added immediately after `curr`, so the iterator won't
+      // traverse them, since we're iterating backwards.
+      MInstruction* curr = *ri;
+      ri++;
+
+      if (MOZ_LIKELY(!curr->isAdd())) {
+        continue;
+      }
+      if (curr->type() != MIRType::Int32 || !curr->hasUses()) {
+        continue;
+      }
+
+      // This check needs to precede any allocation done in this loop.
+      if (MOZ_UNLIKELY(!graph_.alloc().ensureBallast())) {
         return false;
       }
 
-      // Note that we don't check for MWasmCompareExchangeHeap
-      // or MWasmAtomicBinopHeap, because the backend and the OOB
-      // mechanism don't support non-zero offsets for them yet
-      // (TODO bug 1254935).
-      if (i->isLsh()) {
-        AnalyzeLsh(graph_.alloc(), i->toLsh());
-      } else if (i->isLoadUnboxedScalar()) {
-        AnalyzeLoadUnboxedScalar(i->toLoadUnboxedScalar());
-      } else if (i->isAsmJSLoadHeap()) {
-        analyzeAsmJSHeapAccess(i->toAsmJSLoadHeap());
-      } else if (i->isAsmJSStoreHeap()) {
-        analyzeAsmJSHeapAccess(i->toAsmJSStoreHeap());
-      }
+      TryMatchShiftAdd(graph_.alloc(), curr->toAdd());
     }
   }
+
+  JitSpew(JitSpew_EAA, "End");
   return true;
 }

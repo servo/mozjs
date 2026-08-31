@@ -19,9 +19,9 @@ class MachEnvironment(MachLogger):
     def __init__(self, mach_cmd, flavor="desktop-browser", hooks=None, **kwargs):
         MachLogger.__init__(self, mach_cmd)
         self._mach_cmd = mach_cmd
-        self._mach_args = dict(
-            [(self._normalize(key), value) for key, value in kwargs.items()]
-        )
+        self._mach_args = dict([
+            (self._normalize(key), value) for key, value in kwargs.items()
+        ])
         self.layers = []
         if flavor not in FLAVORS:
             raise NotImplementedError(flavor)
@@ -59,7 +59,7 @@ class MachEnvironment(MachLogger):
         if res is marker:
             # trying with the name prefixed with the layer name
             if layer is not None and not name.startswith(layer.name):
-                name = "%s_%s" % (layer.name, name)
+                name = f"{layer.name}_{name}"
                 return self._mach_args.get(name, default)
             return default
         return res

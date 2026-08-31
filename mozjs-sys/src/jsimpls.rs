@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::jsapi::glue::JS_ForOfIteratorInit;
-use crate::jsapi::glue::JS_ForOfIteratorNext;
+use crate::jsapi::glue::{
+    JS_ForOfIteratorInit, JS_ForOfIteratorNext, JS_ForOfIteratorValueIsIterable,
+};
 use crate::jsapi::jsid;
 use crate::jsapi::mozilla;
 use crate::jsapi::JSAutoRealm;
@@ -20,14 +21,12 @@ use crate::jsapi::JSPropertySpec_Kind;
 use crate::jsapi::JSPropertySpec_Name;
 use crate::jsapi::JS;
 use crate::jsapi::JS::Scalar::Type;
-use crate::jsgc::RootKind;
+use crate::jsgc::{RootKind, Rooted, RootedBase, ValueArray};
 use crate::jsid::VoidId;
-use crate::jsval::UndefinedValue;
+use crate::jsval::{JSVal, UndefinedValue};
 
 use std::marker::PhantomData;
 use std::ops::Deref;
-use std::ops::DerefMut;
-use std::os::raw::c_void;
 use std::ptr;
 
 impl<T> Deref for JS::Handle<T> {
@@ -43,12 +42,6 @@ impl<T> Deref for JS::MutableHandle<T> {
 
     fn deref<'a>(&'a self) -> &'a T {
         unsafe { &*self.ptr }
-    }
-}
-
-impl<T> DerefMut for JS::MutableHandle<T> {
-    fn deref_mut<'a>(&'a mut self) -> &'a mut T {
-        unsafe { &mut *self.ptr }
     }
 }
 
@@ -119,6 +112,13 @@ impl<T> JS::MutableHandle<T> {
     {
         unsafe { *self.ptr = v }
     }
+
+    /// The returned pointer is aliased by a pointer that the GC will read
+    /// through, and thus `&mut` references created from it must not be held
+    /// across GC pauses.
+    pub fn as_ptr(self) -> *mut T {
+        self.ptr
+    }
 }
 
 impl JS::HandleValue {
@@ -132,17 +132,37 @@ impl JS::HandleValue {
 }
 
 impl JS::HandleValueArray {
-    pub fn new() -> JS::HandleValueArray {
+    pub fn empty() -> JS::HandleValueArray {
         JS::HandleValueArray {
             length_: 0,
             elements_: ptr::null(),
         }
     }
+}
 
-    pub unsafe fn from_rooted_slice(values: &[JS::Value]) -> JS::HandleValueArray {
+impl<const N: usize> From<&Rooted<ValueArray<N>>> for JS::HandleValueArray {
+    fn from(array: &Rooted<ValueArray<N>>) -> JS::HandleValueArray {
         JS::HandleValueArray {
-            length_: values.len(),
-            elements_: values.as_ptr(),
+            length_: N,
+            elements_: array.data.get_ptr(),
+        }
+    }
+}
+
+impl From<&JS::CallArgs> for JS::HandleValueArray {
+    fn from(args: &JS::CallArgs) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: args.argc_ as usize,
+            elements_: args.argv_ as *const _,
+        }
+    }
+}
+
+impl From<JS::Handle<JSVal>> for JS::HandleValueArray {
+    fn from(handle: JS::Handle<JSVal>) -> JS::HandleValueArray {
+        JS::HandleValueArray {
+            length_: 1,
+            elements_: handle.ptr,
         }
     }
 }
@@ -180,7 +200,7 @@ impl JS::AutoGCRooter {
         #[allow(non_snake_case)]
         let autoGCRooters: *mut _ = {
             let rooting_cx = cx as *mut JS::RootingContext;
-            &mut (*rooting_cx).autoGCRooters_[self.kind_ as usize]
+            &raw mut (*rooting_cx).autoGCRooters_.0[self.kind_ as usize]
         };
         self.stackTop = autoGCRooters as *mut *mut _;
         self.down = *autoGCRooters as *mut _;
@@ -383,42 +403,50 @@ impl JSNativeWrapper {
     }
 }
 
-impl<T> JS::Rooted<T> {
-    pub fn new_unrooted() -> JS::Rooted<T> {
-        JS::Rooted {
-            stack: ptr::null_mut(),
-            prev: ptr::null_mut(),
-            ptr: unsafe { std::mem::zeroed() },
-        }
+impl RootedBase {
+    unsafe fn add_to_root_stack(this: *mut Self, cx: *mut JSContext, kind: JS::RootKind) {
+        let stack = Self::get_root_stack(cx, kind);
+        (*this).stack = stack;
+        (*this).prev = *stack;
+
+        *stack = this as usize as _;
+    }
+
+    unsafe fn remove_from_root_stack(&mut self) {
+        assert!(*self.stack == self as *mut _ as usize as _);
+        *self.stack = self.prev;
+    }
+
+    unsafe fn get_root_stack(cx: *mut JSContext, kind: JS::RootKind) -> *mut *mut RootedBase {
+        let kind = kind as usize;
+        let rooting_cx = Self::get_rooting_context(cx);
+        &raw mut (*rooting_cx).stackRoots_.0[kind] as *mut _ as *mut _
     }
 
     unsafe fn get_rooting_context(cx: *mut JSContext) -> *mut JS::RootingContext {
         cx as *mut JS::RootingContext
     }
+}
 
-    unsafe fn get_root_stack(cx: *mut JSContext) -> *mut *mut JS::Rooted<*mut c_void>
-    where
-        T: RootKind,
-    {
-        let kind = T::rootKind() as usize;
-        let rooting_cx = Self::get_rooting_context(cx);
-        &mut (*rooting_cx).stackRoots_[kind] as *mut _ as *mut _
+impl<T: RootKind> JS::Rooted<T> {
+    pub fn new_unrooted(initial: T) -> JS::Rooted<T> {
+        JS::Rooted {
+            vtable: T::VTABLE,
+            base: RootedBase {
+                stack: ptr::null_mut(),
+                prev: ptr::null_mut(),
+            },
+            data: initial,
+        }
     }
 
-    pub unsafe fn add_to_root_stack(&mut self, cx: *mut JSContext)
-    where
-        T: RootKind,
-    {
-        let stack = Self::get_root_stack(cx);
-        self.stack = stack;
-        self.prev = *stack;
-
-        *stack = self as *mut _ as usize as _;
+    pub unsafe fn add_to_root_stack(this: *mut Self, cx: *mut JSContext) {
+        let base = unsafe { &raw mut (*this).base };
+        RootedBase::add_to_root_stack(base, cx, T::KIND)
     }
 
     pub unsafe fn remove_from_root_stack(&mut self) {
-        assert!(*self.stack == self as *mut _ as usize as _);
-        *self.stack = self.prev;
+        self.base.remove_from_root_stack()
     }
 }
 
@@ -549,6 +577,10 @@ impl JS::ForOfIterator {
 
     pub unsafe fn next(&mut self, val: JS::MutableHandleValue, done: *mut bool) -> bool {
         JS_ForOfIteratorNext(self, val, done)
+    }
+
+    pub fn is_iterable(&self) -> bool {
+        unsafe { JS_ForOfIteratorValueIsIterable(self) }
     }
 }
 

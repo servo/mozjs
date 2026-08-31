@@ -1,0 +1,982 @@
+---
+
+Algorithm.h:
+  functions:
+    - TransformIfAbortOnErr
+    - TransformAbortOnErr
+
+Alignment.h:
+  types:
+    - AlignedElem
+    - AlignedStorage2
+
+AllocPolicy.h:
+  types:
+    - MallocAllocPolicy
+    - NeverAllocPolicy
+
+AlreadyAddRefed.h:
+  types:
+    - unused_t
+    - already_AddRefed
+
+Array.h:
+  types:
+    - Array
+
+ArrayUtils.h:
+  functions:
+    - PointerRangeSize
+    - ArrayEqual
+    - IsInRange
+
+Assertions.h:
+  functions:
+    - MakeCompilerAssumeUnreachableFakeValue
+    - InvalidArrayIndex_CRASH
+    - MOZ_CrashPrintf
+    - MOZ_Crash
+    - MOZ_NoReturn
+    - TerminateProcess
+  macros:
+    - MOZ_ASSUME_UNREACHABLE_MARKER
+    - MOZ_CRASH_UNLESS_FUZZING
+    - MOZ_ASSERT_UNLESS_FUZZING
+    - MOZ_ALWAYS_ERR
+    - MOZ_ALWAYS_OK
+    - MOZ_ALWAYS_FALSE
+    - MOZ_ALWAYS_TRUE
+    - MOZ_FALLTHROUGH_ASSERT
+    - MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE
+    - MOZ_ASSERT_UNREACHABLE
+    - MOZ_DIAGNOSTIC_ASSERT_IF
+    - MOZ_ASSERT_IF
+    - MOZ_ASSERT_DEBUG_OR_FUZZING
+    - MOZ_DIAGNOSTIC_ASSERT
+    - MOZ_ASSERT
+    - MOZ_RELEASE_ASSERT
+    - MOZ_CRASH_UNSAFE_PRINTF
+    - MOZ_DIAGNOSTIC_CRASH
+    - MOZ_CRASH
+    - MOZ_CRASH_WRITE_ADDR
+
+AtomicBitfields.h:
+  macros:
+    - MOZ_ATOMIC_BITFIELDS
+
+Atomics.h:
+  types:
+    - MemoryOrdering
+    - Atomic
+  functions:
+    - cpu_pause
+
+Attributes.h:
+  macros:
+    - MOZ_ALWAYS_INLINE_EVEN_DEBUG
+    - MOZ_TRIVIAL_ABI
+    - MOZ_NO_UNIQUE_ADDRESS
+    - MOZ_ALWAYS_INLINE
+    - MOZ_NEVER_INLINE
+    - MOZ_NEVER_INLINE_DEBUG
+    - MOZ_NOPROFILE
+    - MOZ_NORETURN_PTR
+    - MOZ_NOINSTRUMENT
+    - MOZ_NAKED
+    - MOZ_COLD
+    - MOZ_NOMERGE
+    - MOZ_NONNULL
+    - MOZ_NONNULL_RETURN
+    - MOZ_RAII
+    - MOZ_PRETEND_NORETURN_FOR_STATIC_ANALYSIS
+    - MOZ_ASAN_IGNORE
+    - MOZ_TSAN_IGNORE
+    - MOZ_NO_SANITIZE_UNSIGNED_OVERFLOW
+    - MOZ_NO_SANITIZE_SIGNED_OVERFLOW
+    - MOZ_ALLOCATOR
+    - MOZ_INFALLIBLE_ALLOCATOR
+    - MOZ_NO_STACK_PROTECTOR
+    - MOZ_GSL_OWNER
+    - MOZ_GSL_POINTER
+    - MOZ_LIFETIME_BOUND
+    - MOZ_LIFETIME_CAPTURE_BY
+    - MOZ_STANDALONE_DEBUG
+    - MOZ_NULL_AFTER_MOVE
+    - MOZ_PUSH_DISABLE_NONTRIVIAL_UNION_WARNINGS
+    - MOZ_POP_DISABLE_NONTRIVIAL_UNION_WARNINGS
+    - MOZ_CAN_RUN_SCRIPT
+    - MOZ_CAN_RUN_SCRIPT_FOR_DEFINITION
+    - MOZ_CAN_RUN_SCRIPT_BOUNDARY
+    - MOZ_MUST_OVERRIDE
+    - MOZ_STATIC_CLASS
+    - MOZ_RUNINIT
+    - MOZ_GLOBINIT
+    - MOZ_STATIC_LOCAL_CLASS
+    - MOZ_STACK_CLASS
+    - MOZ_NONHEAP_CLASS
+    - MOZ_HEAP_CLASS
+    - MOZ_NON_TEMPORARY_CLASS
+    - MOZ_TEMPORARY_CLASS
+    - MOZ_TRIVIAL_CTOR_DTOR
+    - MOZ_ALLOW_TEMPORARY
+    - MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS
+    - MOZ_IMPLICIT
+    - MOZ_IS_SMARTPTR_TO_REFCOUNTED
+    - MOZ_IS_REFPTR
+    - MOZ_NO_ARITHMETIC_EXPR_IN_ARGUMENT
+    - MOZ_HEAP_ALLOCATOR
+    - MOZ_OWNING_REF
+    - MOZ_NON_OWNING_REF
+    - MOZ_UNSAFE_REF
+    - MOZ_NO_ADDREF_RELEASE_ON_RETURN
+    - MOZ_NEEDS_NO_VTABLE_TYPE
+    - MOZ_NON_MEMMOVABLE
+    - MOZ_NEEDS_MEMMOVABLE_TYPE
+    - MOZ_NEEDS_MEMMOVABLE_MEMBERS
+    - MOZ_NO_DANGLING_ON_TEMPORARIES
+    - MOZ_INHERIT_TYPE_ANNOTATIONS_FROM_TEMPLATE_ARGS
+    - MOZ_INIT_OUTSIDE_CTOR
+    - MOZ_IS_CLASS_INIT
+    - MOZ_NON_PARAM
+    - MOZ_NON_AUTOABLE
+    - MOZ_REQUIRED_BASE_METHOD
+    - MOZ_MUST_RETURN_FROM_CALLER_IF_THIS_IS_ARG
+    - MOZ_MAY_CALL_AFTER_MUST_RETURN
+    - MOZ_KNOWN_LIVE
+    - MOZ_UNANNOTATED
+    - MOZ_ANNOTATED
+    - MOZ_ENUM_SERIALIZER_ALLOW_SENTINEL_UPPER_BOUND
+    - MOZ_ENUM_SERIALIZER_ALLOW_MIN_MISMATCH
+    - MOZ_FORMAT_PRINTF
+    - MOZ_FORMAT_WPRINTF
+    - MOZ_XPCOM_ABI
+    - MOZ_EMPTY_BASES
+    - MOZ_CAN_RUN_SCRIPT_BOUNDARY_LAMBDA
+    - MOZ_REINITIALIZES
+
+BinarySearch.h:
+  functions:
+    - BinarySearchIf
+    - BinarySearch
+    - LowerBound
+    - UpperBound
+    - EqualRange
+
+BitSet.h:
+  types:
+    - BitSet
+
+BloomFilter.h:
+  types:
+    - BitBloomFilter
+    - CountingBloomFilter
+
+BoundedMPSCQueue.h:
+  variables:
+    - MPSC_DEBUG
+  types:
+    - MPSCRingBufferBase
+    - BoundedMPSCQueue
+
+Buffer.h:
+  types:
+    - Buffer
+
+BufferList.h:
+  types:
+    - BufferList
+
+Casting.h:
+  functions:
+    - BitwiseCast
+    - AssertedCast
+    - ReleaseAssertedCast
+    - SaturatingCast
+    - LazyAssertedCast
+
+ChaosMode.h:
+  types:
+    - ChaosFeature
+    - ChaosMode
+
+Char16.h:
+  macros:
+    - MOZ_USE_CHAR16_WRAPPER
+  types:
+    - char16ptr_t
+
+CheckedArithmetic.h:
+  functions:
+    - SafeAdd
+    - SafeSub
+    - SafeMul
+
+CheckedInt.h:
+  functions:
+    - castToCheckedInt
+  types:
+    - CheckedInt
+    - CheckedInt8
+    - CheckedUint8
+    - CheckedInt16
+    - CheckedUint16
+    - CheckedInt32
+    - CheckedUint32
+    - CheckedInt64
+    - CheckedUint64
+
+CompactPair.h:
+  types:
+    - CompactPair
+  functions:
+    - MakeCompactPair
+
+Compiler.h:
+  macros:
+    - MOZ_IS_GCC
+    - MOZ_GCC_VERSION_AT_LEAST
+    - MOZ_GCC_VERSION_AT_MOST
+
+DbgMacro.h:
+  macros:
+    - MOZ_DBG
+    - MOZ_DEFINE_DBG
+  functions:
+    - DebugValue
+
+DebugOnly.h:
+  types:
+    - DebugOnly
+
+DefineEnum.h:
+  macros:
+    - MOZ_DEFINE_ENUM
+    - MOZ_DEFINE_ENUM_WITH_BASE
+    - MOZ_DEFINE_ENUM_CLASS
+    - MOZ_DEFINE_ENUM_CLASS_WITH_BASE
+    - MOZ_DEFINE_ENUM_CLASS_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_CLASS_WITH_BASE_AND_TOSTRING
+    - MOZ_DEFINE_ENUM_WITH_TOSTRING_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_CLASS_WITH_BASE_AND_TOSTRING_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_WITH_BASE_AND_TOSTRING_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_WITH_BASE_AND_TOSTRING
+    - MOZ_DEFINE_ENUM_CLASS_WITH_BASE_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_CLASS_WITH_TOSTRING
+    - MOZ_DEFINE_ENUM_CLASS_WITH_TOSTRING_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_WITH_BASE_AT_CLASS_SCOPE
+    - MOZ_DEFINE_ENUM_TO_ENUM_TEXT
+    - MOZ_DEFINE_ENUM_TOSTRING_FUNC
+    - MOZ_DEFINE_ENUM_TOSTRING_FUNC_IN_CLASS
+
+DoublyLinkedList.h:
+  types:
+    - DoublyLinkedListElement
+    - GetDoublyLinkedListElement
+    - DoublyLinkedList
+    - SafeDoublyLinkedList
+
+EndianUtils.h:
+  functions:
+    - byteswap
+
+  types:
+    - LittleEndian
+    - BigEndian
+    - NetworkEndian
+    - NativeEndian
+
+EnumeratedArray.h:
+  types:
+    - EnumeratedArray
+
+EnumeratedRange.h:
+  functions:
+    - MakeEnumeratedRange
+    - MakeInclusiveEnumeratedRange
+
+EnumSet.h:
+  types:
+    - EnumSet
+
+EnumTypeTraits.h:
+  types:
+    - EnumTypeFitsWithin
+    - MinContiguousEnumValue
+    - MaxContiguousEnumValue
+    - MaxEnumValue
+    - ContiguousEnumValues
+    - ContiguousEnumSize
+
+  functions:
+    - UnderlyingValue
+
+FastBernoulliTrial.h:
+  types:
+    - FastBernoulliTrial
+
+FloatingPoint.h:
+  types:
+    - FloatingPoint
+    - FloatingPointTrait
+    - InfinityBits
+    - SpecificNaNBits
+    - SpecificFloatingPointBits
+    - FuzzyEqualsEpsilon
+
+  functions:
+    - IsNegative
+    - IsNegativeZero
+    - IsPositiveZero
+    - ToZeroIfNonfinite
+    - ExponentComponent
+    - PositiveInfinity
+    - NegativeInfinity
+    - SpecificNaN
+    - MinNumberValue
+    - MaxNumberValue
+    - NumberIsInt32
+    - NumberIsInt64
+    - NumberEqualsInt32
+    - NumberEqualsInt64
+    - UnspecifiedNaN
+    - NumbersAreIdentical
+    - NumbersAreBitwiseIdentical
+    - EqualOrBothNaN
+    - NaNSafeMin
+    - NaNSafeMax
+    - FuzzyEqualsAdditive
+    - FuzzyEqualsMultiplicative
+    - IsFloat32Representable
+#
+FStream.h:
+  types:
+    - IFStream
+    - OFStream
+
+FunctionRef.h:
+  types:
+    - FunctionRef
+
+FunctionTypeTraits.h:
+  types:
+    - FunctionTypeTraits
+
+Fuzzing.h:
+  macros:
+    - MOZ_FUZZING_NYX_RELEASE
+    - MOZ_FUZZING_NYX_GUARD
+    - MOZ_FUZZING_NYX_PRINT
+    - MOZ_FUZZING_NYX_PRINTF
+    - MOZ_FUZZING_NYX_DEBUG
+    - MOZ_FUZZING_NYX_ABORT
+    - MOZ_FUZZING_HANDLE_CRASH_EVENT2
+    - MOZ_FUZZING_HANDLE_CRASH_EVENT4
+
+HashFunctions.h:
+  types:
+    - HashNumber
+    - HashCodeScrambler
+  variables:
+    - kHashNumberBits
+    - kGoldenRatioU32
+  functions:
+    - ScrambleHashCode
+    - AddToHash
+    - HashGeneric
+    - HashStringUntilZero
+    - HashStringKnownLength
+    - HashString
+    - HashBytes
+
+HashTable.h:
+  types:
+    - HashMapEntry
+    - Generation
+    - HashMap
+    - HashSet
+    - PointerHasher
+    - DefaultHasher
+    - FallibleHashMethods
+
+  functions:
+    - MaybeGetHash
+    - EnsureHash
+
+HelperMacros.h:
+  macros:
+    - MOZ_STRINGIFY
+    - MOZ_STRINGIFY_NO_EXPANSION
+
+InitializedOnce.h:
+  types:
+    - InitializedOnce
+    - InitializedOnceNotNull
+    - LazyInitializedOnce
+    - LazyInitializedOnceNotNull
+    - LazyInitializedOnceEarlyDestructible
+    - LazyInitializedOnceNotNullEarlyDestructible
+  functions:
+    - do_Init
+
+IntegerRange.h:
+  functions:
+    - IntegerRange
+
+IntegerTypeTraits.h:
+  types:
+    - UnsignedStdintTypeForSize
+    - SignedStdintTypeForSize
+    - PositionOfSignBit
+
+JSONWriter.h:
+  types:
+    - JSONWriter
+  functions:
+    - JSONWriteFunc
+
+JsRust.h:
+  macros:
+    - MOZ_HAS_JSRUST
+
+Latin1.h:
+  functions:
+    - IsNonAsciiLatin1
+    - IsUtf16Latin1
+    - IsUtf8Latin1
+    - UnsafeIsValidUtf8Latin1
+    - Utf8Latin1UpTo
+    - UnsafeValidUtf8Lati1UpTo
+    - LossyConvertUtf16toLatin1
+    - LossyConvertUtf8toLatin1
+    - ConvertLatin1toUtf8
+    - ConvertLatin1toUtf8Partial
+    - ConvertLatin1toUtf16
+
+Likely.h:
+  macros:
+    - MOZ_LIKELY
+    - MOZ_UNLIKELY
+
+LinkedList.h:
+  types:
+    - LinkedList
+    - LinkedListElement
+    - AutoCleanLinkedList
+  functions:
+    - RangeSizeEstimate
+
+Literals.h:
+  literals:
+    - _KiB
+    - _MiB
+    - _percent
+
+MacroArgs.h:
+  macros:
+    - MOZ_CONCAT
+    - MOZ_ARG_COUNT
+    - MOZ_PASTE_PREFIX_AND_ARG_COUNT
+    - MOZ_ARGS_AFTER_1
+    - MOZ_ARGS_AFTER_2
+    - MOZ_ARG_1
+    - MOZ_ARG_2
+    - MOZ_ARG_3
+    - MOZ_ARG_4
+    - MOZ_ARG_5
+    - MOZ_ARG_6
+    - MOZ_ARG_7
+    - MOZ_ARG_8
+    - MOZ_ARG_9
+
+MacroForEach.h:
+  macros:
+    - MOZ_FOR_EACH
+    - MOZ_FOR_EACH_SEPARATED
+
+MathAlgorithms.h:
+  functions:
+    - Abs
+    - CeilingLog2
+    - CeilingLog2Size
+    - FindMostSignificantBit
+    - FloorLog2
+    - FloorLog2Size
+    - RoundUpPow2
+    - RotateLeft
+    - RotateRight
+    - GCD
+
+Maybe.h:
+  types:
+    - Nothing
+    - Maybe
+  functions:
+    - Some
+    - SomeRef
+    - ToMaybeRef
+    - ToMaybe
+
+MaybeOneOf.h:
+  types:
+    - MaybeOneOf
+
+MaybeStorageBase.h:
+  types:
+    - MaybeStorageBase
+  variables:
+    - IsTriviallyDestructibleAndCopyable
+
+MemoryChecking.h:
+  macros:
+    - MOZ_HAVE_MEM_CHECKS
+    - MOZ_ASAN_VISIBILITY
+    - MOZ_MAKE_MEM_NOACCESS
+    - MOZ_MAKE_MEM_UNDEFINED
+    - MOZ_MAKE_MEM_DEFINED
+    - MOZ_LSAN_INTENTIONALLY_LEAK_OBJECT
+
+MemoryReporting.h:
+  types:
+    - MallocSizeOf
+    - MozMallocSizeOf
+
+MoveOnlyFunction.h:
+  macros:
+    - FU2_WITH_LIMITED_EMPTY_PROPAGATION
+  types:
+    - MoveOnlyFunction
+
+MruCache.h:
+  types:
+    - MruCache
+
+NeverDestroyed.h:
+  types:
+    - NeverDestroyed
+
+NonDereferenceable.h:
+  types:
+    - NonDereferenceable
+
+NotNull.h:
+  types:
+    - MovingNotNull
+    - NotNull
+  functions:
+    - WrapNotNull
+    - WrapNotNullUnchecked
+    - WrapMovingNotNull
+    - WrapMovingNotNullUnchecked
+    - MakeNotNull
+
+Opaque.h:
+  types:
+    - Opaque
+
+OperatorNewExtensions.h:
+  types:
+    - NotNullTag
+    - KnownNotNull
+
+PairHash.h:
+  functions:
+    - HashPair
+    - HashCompactPair
+  types:
+    - PairHasher
+    - CompactPairHasher
+
+Path.h:
+  types:
+    - Path
+
+PodOperations.h:
+  functions:
+    - PodZero
+    - PodArrayZero
+    - PodCopy
+    - PodArrayCopy
+    - PodMove
+
+Poison.h:
+  variables:
+    - gMozillaPoisonValue
+    - gMozillaPoisonBase
+    - gMozillaPoisonSize
+  functions:
+    - mozPoisonValue
+    - mozWritePoison
+  types:
+    - CorruptionCanary
+    - CorruptionCanaryForStatics
+
+RandomNum.h:
+  functions:
+    - GenerateRandomBytesFromOS
+    - RandomUint64
+    - RandomUint64OrDie
+
+RangedArray.h:
+  types:
+    - RangedArray
+
+RangedPtr.h:
+  types:
+    - RangedPtr
+
+Range.h:
+  types:
+    - Range
+
+ReentrancyGuard.h:
+  types:
+    - ReentrancyGuard
+
+RefCounted.h:
+  macros:
+    - MOZ_REFCOUNTED_LEAK_CHECKING
+    - MOZ_DECLARE_REFCOUNTED_TYPENAME
+  types:
+    - RefCounted
+    - AtomicRefCounted
+
+RefCountType.h:
+  types:
+    - MozRefCountType
+    - MozExternalRefCountType
+
+RefPtr.h:
+  types:
+    - RefPtrTraits
+    - RefPtr
+    - nsCycleCollectionTraversalCallback
+    - RefPtrGetterAddRefs
+  functions:
+    - CycleCollectionNoteChild
+    - ImplCycleCollectionUnlink
+    - ImplCycleCollectionTraverse
+    - address_of
+    - getter_AddRefs
+    - do_AddRef
+    - MakeAndAddRef
+    - MakeRefPtr
+
+ResultExtensions.h:
+  types:
+    - Result
+    - GenericErrorResult
+    - ResultTypeTraits
+
+  functions:
+    - ToResult
+    - ToResultInvoke
+    - ToResultInvokeMember
+
+  macros:
+    - MOZ_TO_RESULT_INVOKE_MEMBER
+    - MOZ_TO_RESULT_INVOKE_MEMBER_TYPED
+
+Result.h:
+  types:
+    - Ok
+    - ErrorPropagationTag
+    - Result
+    - GenericErrorResult
+    - PackingStrategy
+  functions:
+    - ToResult
+    - Err
+
+ResultVariant.h:
+  types:
+    - Result
+    - Variant
+
+ReverseIterator.h:
+  types:
+    - IteratorRange
+    - ReverseIterator
+  functions:
+    - Reversed
+
+RollingMean.h:
+  types:
+    - RollingMean
+
+Saturate.h:
+  types:
+    - Saturate
+    - SaturateInt8
+    - SaturateInt16
+    - SaturateInt32
+    - SaturateIntPtr
+    - SaturateUint8
+    - SaturateUint16
+    - SaturateUint32
+    - SaturateUintPtr
+
+ScopeExit.h:
+  types:
+    - ScopeExit
+  functions:
+    - MakeScopeExit
+
+SegmentedVector.h:
+  types:
+    - SegmentedVector
+
+SHA1.h:
+  types:
+    - SHA1Sum
+
+SharedLibrary.h:
+  functions:
+    - LoadLibraryWithFlags
+
+SmallPointerArray.h:
+  types:
+    - SmallPointerArray
+
+Span.h:
+  functions:
+    - narrow_cast
+    - AsBytes
+    - AsChars
+    - AsWritableBytes
+    - AsWritableChars
+    - MakeStringSpan
+  variables:
+    - dynamic_extent
+  types:
+    - Span
+    - calculate_byte_size
+
+SplayTree.h:
+  types:
+    - SplayTree
+    - SplayTreeNode
+
+SPSCQueue.h:
+  types:
+    - SPSCRingBufferBase
+    - SPSCQueue
+
+StaticAnalysisFunctions.h:
+  macros:
+    - MOZ_CONSTEXPR
+    - MOZ_CHECK_ASSERT_ASSIGNMENT
+    - MOZ_KnownLive
+  functions:
+    - MOZ_KnownLive
+    - MOZ_AssertAssignmentTest
+
+StringBuffer.h:
+  types:
+    - StringBuffer
+
+TaggedAnonymousMemory.h:
+  functions:
+    - MozTagAnonymousMemory
+    - MozTaggedAnonymousMmap
+
+Tainting.h:
+  types:
+    - Tainted
+  macros:
+    - MOZ_VALIDATE_AND_GET
+    - MOZ_IS_VALID
+    - MOZ_VALIDATE_OR
+    - MOZ_FIND_AND_VALIDATE
+    - MOZ_NO_VALIDATE
+
+TextUtils.h:
+  functions:
+    - encoding_ascii_valid_up_to
+    - IsAscii
+    - IsAsciiNullTerminated
+    - AsciiValidUpTo
+    - Utf16ValidUpTo
+    - EnsureUtf16ValiditySpan
+    - ConvertAsciitoUtf16
+    - IsAsciiWhitespace
+    - IsAsciiLowercaseAlpha
+    - IsAsciiUppercaseAlpha
+    - IsAsciiAlpha
+    - IsAsciiDigit
+    - IsAsciiHexDigit
+    - IsAsciiAlphanumeric
+    - AsciiAlphanumericToNumber
+
+ThreadLocal.h:
+  macros:
+    - MOZ_THREAD_LOCAL
+
+ThreadSafety.h:
+  macros:
+    - MOZ_PUSH_IGNORE_THREAD_SAFETY
+    - MOZ_POP_THREAD_SAFETY
+    - MOZ_GUARDED_BY
+    - MOZ_GUARDED_VAR
+    - MOZ_PT_GUARDED_BY
+    - MOZ_PT_GUARDED_VAR
+    - MOZ_ACQUIRED_AFTER
+    - MOZ_ACQUIRED_BEFORE
+    - MOZ_REQUIRES
+    - MOZ_REQUIRES_SHARED
+    - MOZ_EXCLUDES
+    - MOZ_RETURN_CAPABILITY
+    - MOZ_CAPABILITY
+    - MOZ_SCOPED_CAPABILITY
+    - MOZ_CAPABILITY_ACQUIRE
+    - MOZ_EXCLUSIVE_RELEASE
+    - MOZ_ACQUIRE_SHARED
+    - MOZ_TRY_ACQUIRE
+    - MOZ_SHARED_TRYLOCK_FUNCTION
+    - MOZ_CAPABILITY_RELEASE
+    - MOZ_NO_THREAD_SAFETY_ANALYSIS
+    - MOZ_ASSERT_CAPABILITY
+    - MOZ_ASSERT_SHARED_CAPABILITY
+    - MOZ_RELEASE_SHARED
+    - MOZ_RELEASE_GENERIC
+    - MOZ_SCOPED_UNLOCK_RELEASE
+    - MOZ_SCOPED_UNLOCK_REACQUIRE
+
+ThreadSafeWeakPtr.h:
+  types:
+    - ThreadSafeWeakPtr
+    - SupportsThreadSafeWeakPtr
+
+ToString.h:
+  functions:
+    - ToString
+
+Try.h:
+  macros:
+    - MOZ_TRY
+
+TypedEnumBits.h:
+  types:
+    - CastableTypedEnumResult
+  macros:
+    - MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS
+
+Types.h:
+  macros:
+    - MOZ_EXPORT
+    - MOZ_IMPORT_API
+    - MOZ_IMPORT_DATA
+    - MFBT_API
+    - MFBT_DATA
+    - MOZ_BEGIN_EXTERN_C
+    - MOZ_END_EXTERN_C
+
+UniquePtrExtensions.h:
+  functions:
+    - MakeUniqueFallible
+    - MakeUniqueForOverwrite
+    - MakeUniqueForOverwriteFallible
+    - DuplicateFileHandle
+    - RetainMachSendRight
+    - getter_Transfers
+  types:
+    - UniqueFreePtr
+    - UniqueFileHandle
+    - UniqueMachSendRight
+    - UniqueMachReceiveRight
+    - UniqueMachPortSet
+
+UniquePtr.h:
+  types:
+    - DefaultDelete
+    - UniquePtr
+  functions:
+    - MakeUnique
+    - WrapUnique
+    - TempPtrToSetter
+
+Utf8.h:
+  functions:
+    - encoding_utf8_valid_up_to
+    - Utf8AsUnsignedChars
+    - IsAscii
+    - IsUtf8
+    - Utf8ValidUpTo
+    - ConvertUtf16toUtf8
+    - ConvertUtf16toUtf8Partial
+    - ConvertUtf8toUtf16
+    - UnsafeConvertValidUtf8toUtf16
+    - ConvertUtf8toUtf16WithoutReplacement
+    - IsTrailingUnit
+    - DecodeOneUtf8CodePointInline
+    - DecodeOneUtf8CodePoint
+  types:
+    - Utf8Unit
+
+Variant.h:
+  types:
+    - Variant
+    - VariantType
+    - VariantIndex
+  functions:
+    - AsVariant
+
+Vector.h:
+  types:
+    - Vector
+  macros:
+    - MOZ_REENTRANCY_GUARD_ET_AL
+
+WasiAtomic.h:
+  types:
+    - atomic
+    - memory_order
+    - atomic_uint8_t
+    - atomic_uint16_t
+    - atomic_uint32_t
+    - atomic_uint64_t
+  variables:
+    - memory_order_relaxed
+    - memory_order_consume
+    - memory_order_acquire
+    - memory_order_release
+    - memory_order_acq_rel
+    - memory_order_seq_cst
+
+WeakPtr.h:
+  macros:
+    - MOZ_WEAKPTR_DECLARE_THREAD_SAFETY_CHECK
+    - MOZ_WEAKPTR_INIT_THREAD_SAFETY_CHECK
+    - MOZ_WEAKPTR_ASSERT_THREAD_SAFETY
+    - MOZ_WEAKPTR_ASSERT_THREAD_SAFETY_DELEGATED
+    - MOZ_WEAKPTR_ASSERT_THREAD_SAFETY_DELEGATED_IF
+    - MOZ_WEAKPTR_THREAD_SAFETY_CHECKING
+    - NS_IMPL_CYCLE_COLLECTION_UNLINK_WEAK_PTR
+    - NS_IMPL_CYCLE_COLLECTION_WEAK_PTR
+    - NS_IMPL_CYCLE_COLLECTION_WEAK_PTR_INHERITED
+
+  types:
+    - WeakPtr
+    - SupportsWeakPtr
+    - MainThreadWeakPtr
+
+WindowsVersion.h:
+  functions:
+    - IsWindows10BuildOrLater
+    - IsWin10AnniversaryUpdateOrLater
+    - IsWin10CreatorsUpdateOrLater
+    - IsWin10FallCreatorsUpdateOrLater
+    - IsWin10Sep2018UpdateOrLater
+    - IsWin11OrLater
+    - IsWin1122H2OrLater
+
+WrappingOperations.h:
+  functions:
+    - WrapToSigned
+    - WrappingAdd
+    - WrappingSubtract
+    - WrappingMultiply
+
+XorShift128PlusRNG.h:
+  types:
+    - XorShift128PlusRNG

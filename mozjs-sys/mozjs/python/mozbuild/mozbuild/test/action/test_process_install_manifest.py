@@ -1,5 +1,3 @@
-# -*- coding: utf-8 -*-
-
 # Any copyright is dedicated to the Public Domain.
 # http://creativecommons.org/publicdomain/zero/1.0/
 
@@ -9,7 +7,7 @@ import mozunit
 from mozpack.manifests import InstallManifest
 from mozpack.test.test_files import TestWithTmpDir
 
-import mozbuild.action.process_install_manifest as process_install_manifest
+from mozbuild.action import process_install_manifest
 
 
 class TestGenerateManifest(TestWithTmpDir):

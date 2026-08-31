@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- *
+/*
  * Copyright 2016 Mozilla Foundation
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,35 +17,35 @@
 #include "wasm/WasmTable.h"
 
 #include "mozilla/CheckedInt.h"
-#include "mozilla/PodOperations.h"
 
 #include "vm/JSContext.h"
-#include "vm/Realm.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmJS.h"
 #include "wasm/WasmValue.h"
 
 #include "gc/StableCellHasher-inl.h"
+#include "vm/Realm-inl.h"
 #include "wasm/WasmInstance-inl.h"
 
 using namespace js;
 using namespace js::wasm;
 using mozilla::CheckedInt;
-using mozilla::PodZero;
 
 Table::Table(JSContext* cx, const TableDesc& desc,
              Handle<WasmTableObject*> maybeObject, FuncRefVector&& functions)
     : maybeObject_(maybeObject),
       observers_(cx->zone()),
       functions_(std::move(functions)),
-      elemType_(desc.elemType),
+      addressType_(desc.addressType()),
+      elemType_(desc.elemType()),
       isAsmJS_(desc.isAsmJS),
-      length_(desc.initialLength),
-      maximum_(desc.maximumLength) {
+      length_(desc.initialLength()),
+      maximum_(desc.maximumLength()) {
   // Acquire a strong reference to the type definition this table may be
   // referencing.
   elemType_.AddRef();
   MOZ_ASSERT(repr() == TableRepr::Func);
+  MOZ_ASSERT(length_ <= MaxTableElemsRuntime);
 }
 
 Table::Table(JSContext* cx, const TableDesc& desc,
@@ -55,14 +53,16 @@ Table::Table(JSContext* cx, const TableDesc& desc,
     : maybeObject_(maybeObject),
       observers_(cx->zone()),
       objects_(std::move(objects)),
-      elemType_(desc.elemType),
+      addressType_(desc.addressType()),
+      elemType_(desc.elemType()),
       isAsmJS_(desc.isAsmJS),
-      length_(desc.initialLength),
-      maximum_(desc.maximumLength) {
+      length_(desc.initialLength()),
+      maximum_(desc.maximumLength()) {
   // Acquire a strong reference to the type definition this table may be
   // referencing.
   elemType_.AddRef();
   MOZ_ASSERT(repr() == TableRepr::Ref);
+  MOZ_ASSERT(length_ <= MaxTableElemsRuntime);
 }
 
 Table::~Table() {
@@ -76,10 +76,10 @@ SharedTable Table::create(JSContext* cx, const TableDesc& desc,
   // Tables are initialized with init_expr values at Instance::init or
   // WasmTableObject::create.
 
-  switch (desc.elemType.tableRepr()) {
+  switch (desc.elemType().tableRepr()) {
     case TableRepr::Func: {
       FuncRefVector functions;
-      if (!functions.resize(desc.initialLength)) {
+      if (!functions.resize(desc.initialLength())) {
         ReportOutOfMemory(cx);
         return nullptr;
       }
@@ -88,7 +88,7 @@ SharedTable Table::create(JSContext* cx, const TableDesc& desc,
     }
     case TableRepr::Ref: {
       TableAnyRefVector objects;
-      if (!objects.resize(desc.initialLength)) {
+      if (!objects.resize(desc.initialLength())) {
         ReportOutOfMemory(cx);
         return nullptr;
       }
@@ -104,7 +104,7 @@ void Table::tracePrivate(JSTracer* trc) {
   // WasmTableObject's trace hook so maybeObject_ must already be marked.
   // TraceEdge is called so that the pointer can be updated during a moving
   // GC.
-  TraceNullableEdge(trc, &maybeObject_, "wasm table object");
+  TraceEdge(trc, &maybeObject_, "wasm table object");
 
   switch (repr()) {
     case TableRepr::Func: {
@@ -154,16 +154,16 @@ uint8_t* Table::instanceElements() const {
   return (uint8_t*)functions_.begin();
 }
 
-const FunctionTableElem& Table::getFuncRef(uint32_t index) const {
+const FunctionTableElem& Table::getFuncRef(uint32_t address) const {
   MOZ_ASSERT(isFunction());
-  return functions_[index];
+  return functions_[address];
 }
 
-bool Table::getFuncRef(JSContext* cx, uint32_t index,
+bool Table::getFuncRef(JSContext* cx, uint32_t address,
                        MutableHandleFunction fun) const {
   MOZ_ASSERT(isFunction());
 
-  const FunctionTableElem& elem = getFuncRef(index);
+  const FunctionTableElem& elem = getFuncRef(address);
   if (!elem.code) {
     fun.set(nullptr);
     return true;
@@ -171,13 +171,11 @@ bool Table::getFuncRef(JSContext* cx, uint32_t index,
 
   Instance& instance = *elem.instance;
   const CodeRange& codeRange = *instance.code().lookupFuncRange(elem.code);
-
-  Rooted<WasmInstanceObject*> instanceObj(cx, instance.object());
-  return instanceObj->getExportedFunction(cx, instanceObj,
-                                          codeRange.funcIndex(), fun);
+  AutoRealmUnchecked ar(cx, instance.realm());
+  return instance.getExportedFunction(cx, codeRange.funcIndex(), fun);
 }
 
-void Table::setFuncRef(uint32_t index, JSFunction* fun) {
+void Table::setFuncRef(uint32_t address, JSFunction* fun) {
   MOZ_ASSERT(isFunction());
   MOZ_ASSERT(fun->isWasm());
 
@@ -186,19 +184,13 @@ void Table::setFuncRef(uint32_t index, JSFunction* fun) {
   // must set the element to the function's underlying
   // CodeRange.funcCheckedCallEntry and Instance so that Table.get()s always
   // produce the same function object as was imported.
-  WasmInstanceObject* instanceObj = ExportedFunctionToInstanceObject(fun);
-  Instance& instance = instanceObj->instance();
-  Tier tier = instance.code().bestTier();
-  const CodeRange& calleeCodeRange =
-      instanceObj->getExportedFunctionCodeRange(fun, tier);
-  void* code = instance.codeBase(tier) + calleeCodeRange.funcCheckedCallEntry();
-  setFuncRef(index, code, &instance);
+  setFuncRef(address, fun->wasmCheckedCallEntry(), &fun->wasmInstance());
 }
 
-void Table::setFuncRef(uint32_t index, void* code, Instance* instance) {
+void Table::setFuncRef(uint32_t address, void* code, Instance* instance) {
   MOZ_ASSERT(isFunction());
 
-  FunctionTableElem& elem = functions_[index];
+  FunctionTableElem& elem = functions_[address];
   if (elem.instance) {
     gc::PreWriteBarrier(elem.instance->objectUnbarriered());
   }
@@ -214,76 +206,60 @@ void Table::setFuncRef(uint32_t index, void* code, Instance* instance) {
   }
 }
 
-void Table::fillFuncRef(uint32_t index, uint32_t fillCount, FuncRef ref,
+void Table::fillFuncRef(uint32_t address, uint32_t fillCount, FuncRef ref,
                         JSContext* cx) {
   MOZ_ASSERT(isFunction());
 
   if (ref.isNull()) {
-    for (uint32_t i = index, end = index + fillCount; i != end; i++) {
+    for (uint32_t i = address, end = address + fillCount; i != end; i++) {
       setNull(i);
     }
     return;
   }
 
   RootedFunction fun(cx, ref.asJSFunction());
-  MOZ_RELEASE_ASSERT(IsWasmExportedFunction(fun));
-
-  Rooted<WasmInstanceObject*> instanceObj(
-      cx, ExportedFunctionToInstanceObject(fun));
-  uint32_t funcIndex = ExportedFunctionToFuncIndex(fun);
-
-#ifdef DEBUG
-  RootedFunction f(cx);
-  MOZ_ASSERT(instanceObj->getExportedFunction(cx, instanceObj, funcIndex, &f));
-  MOZ_ASSERT(fun == f);
-#endif
-
-  Instance& instance = instanceObj->instance();
-  Tier tier = instance.code().bestTier();
-  const MetadataTier& metadata = instance.metadata(tier);
-  const CodeRange& codeRange =
-      metadata.codeRange(metadata.lookupFuncExport(funcIndex));
-  void* code = instance.codeBase(tier) + codeRange.funcCheckedCallEntry();
-  for (uint32_t i = index, end = index + fillCount; i != end; i++) {
+  void* code = fun->wasmCheckedCallEntry();
+  Instance& instance = fun->wasmInstance();
+  for (uint32_t i = address, end = address + fillCount; i != end; i++) {
     setFuncRef(i, code, &instance);
   }
 }
 
-AnyRef Table::getAnyRef(uint32_t index) const {
+AnyRef Table::getAnyRef(uint32_t address) const {
   MOZ_ASSERT(!isFunction());
-  return objects_[index];
+  return objects_[address];
 }
 
-void Table::setAnyRef(uint32_t index, AnyRef ref) {
+void Table::setAnyRef(uint32_t address, AnyRef ref) {
   MOZ_ASSERT(!isFunction());
-  objects_[index] = ref;
+  objects_[address] = ref;
 }
 
-void Table::fillAnyRef(uint32_t index, uint32_t fillCount, AnyRef ref) {
+void Table::fillAnyRef(uint32_t address, uint32_t fillCount, AnyRef ref) {
   MOZ_ASSERT(!isFunction());
-  for (uint32_t i = index, end = index + fillCount; i != end; i++) {
+  for (uint32_t i = address, end = address + fillCount; i != end; i++) {
     objects_[i] = ref;
   }
 }
 
-void Table::setRef(uint32_t index, AnyRef ref) {
+void Table::setRef(uint32_t address, AnyRef ref) {
   if (ref.isNull()) {
-    setNull(index);
+    setNull(address);
   } else if (isFunction()) {
     JSFunction* func = &ref.toJSObject().as<JSFunction>();
-    setFuncRef(index, func);
+    setFuncRef(address, func);
   } else {
-    setAnyRef(index, ref);
+    setAnyRef(address, ref);
   }
 }
 
-bool Table::getValue(JSContext* cx, uint32_t index,
+bool Table::getValue(JSContext* cx, uint32_t address,
                      MutableHandleValue result) const {
   switch (repr()) {
     case TableRepr::Func: {
       MOZ_RELEASE_ASSERT(!isAsmJS());
       RootedFunction fun(cx);
-      if (!getFuncRef(cx, index, &fun)) {
+      if (!getFuncRef(cx, address, &fun)) {
         return false;
       }
       result.setObjectOrNull(fun);
@@ -295,18 +271,18 @@ bool Table::getValue(JSContext* cx, uint32_t index,
                                  JSMSG_WASM_BAD_VAL_TYPE);
         return false;
       }
-      return ToJSValue(cx, &objects_[index], ValType(elemType_), result);
+      return ToJSValue(cx, &objects_[address], ValType(elemType_), result);
     }
     default:
       MOZ_CRASH();
   }
 }
 
-void Table::setNull(uint32_t index) {
+void Table::setNull(uint32_t address) {
   switch (repr()) {
     case TableRepr::Func: {
       MOZ_RELEASE_ASSERT(!isAsmJS_);
-      FunctionTableElem& elem = functions_[index];
+      FunctionTableElem& elem = functions_[address];
       if (elem.instance) {
         gc::PreWriteBarrier(elem.instance->objectUnbarriered());
       }
@@ -316,19 +292,21 @@ void Table::setNull(uint32_t index) {
       break;
     }
     case TableRepr::Ref: {
-      setAnyRef(index, AnyRef::null());
+      setAnyRef(address, AnyRef::null());
       break;
     }
   }
 }
 
-bool Table::copy(JSContext* cx, const Table& srcTable, uint32_t dstIndex,
-                 uint32_t srcIndex) {
+void Table::copy(const Table& srcTable, uint32_t dstIndex, uint32_t srcIndex) {
   MOZ_RELEASE_ASSERT(!srcTable.isAsmJS_);
+
+  // Validation for table.copy rejects copying between TableRepr::Func and
+  // TableRepr::Ref.
+  MOZ_RELEASE_ASSERT(srcTable.repr() == repr());
+
   switch (repr()) {
     case TableRepr::Func: {
-      MOZ_RELEASE_ASSERT(elemType().isFuncHierarchy() &&
-                         srcTable.elemType().isFuncHierarchy());
       FunctionTableElem& dst = functions_[dstIndex];
       if (dst.instance) {
         gc::PreWriteBarrier(dst.instance->objectUnbarriered());
@@ -347,28 +325,10 @@ bool Table::copy(JSContext* cx, const Table& srcTable, uint32_t dstIndex,
       }
       break;
     }
-    case TableRepr::Ref: {
-      switch (srcTable.repr()) {
-        case TableRepr::Ref: {
-          setAnyRef(dstIndex, srcTable.getAnyRef(srcIndex));
-          break;
-        }
-        case TableRepr::Func: {
-          MOZ_RELEASE_ASSERT(srcTable.elemType().isFuncHierarchy());
-          // Upcast.
-          RootedFunction fun(cx);
-          if (!srcTable.getFuncRef(cx, srcIndex, &fun)) {
-            // OOM, so just pass it on.
-            return false;
-          }
-          setAnyRef(dstIndex, AnyRef::fromJSObject(*fun));
-          break;
-        }
-      }
+    case TableRepr::Ref:
+      setAnyRef(dstIndex, srcTable.getAnyRef(srcIndex));
       break;
-    }
   }
-  return true;
 }
 
 uint32_t Table::grow(uint32_t delta) {
@@ -382,7 +342,7 @@ uint32_t Table::grow(uint32_t delta) {
 
   CheckedInt<uint32_t> newLength = oldLength;
   newLength += delta;
-  if (!newLength.isValid() || newLength.value() > MaxTableLength) {
+  if (!newLength.isValid() || newLength.value() > MaxTableElemsRuntime) {
     return -1;
   }
 
@@ -418,8 +378,8 @@ uint32_t Table::grow(uint32_t delta) {
     AddCellMemory(object, gcMallocBytes(), MemoryUse::WasmTableTable);
   }
 
-  for (InstanceSet::Range r = observers_.all(); !r.empty(); r.popFront()) {
-    r.front()->instance().onMovingGrowTable(this);
+  for (auto iter = observers_.iter(); !iter.done(); iter.next()) {
+    iter.get()->instance().onMovingGrowTable(this);
   }
 
   return oldLength;
@@ -443,51 +403,51 @@ bool Table::addMovingGrowObserver(JSContext* cx, WasmInstanceObject* instance) {
   return true;
 }
 
-void Table::fillUninitialized(uint32_t index, uint32_t fillCount,
+void Table::fillUninitialized(uint32_t address, uint32_t fillCount,
                               HandleAnyRef ref, JSContext* cx) {
 #ifdef DEBUG
-  assertRangeNull(index, fillCount);
+  assertRangeNull(address, fillCount);
 #endif  // DEBUG
   switch (repr()) {
     case TableRepr::Func: {
       MOZ_RELEASE_ASSERT(!isAsmJS_);
-      fillFuncRef(index, fillCount, FuncRef::fromAnyRefUnchecked(ref), cx);
+      fillFuncRef(address, fillCount, FuncRef::fromAnyRefUnchecked(ref), cx);
       break;
     }
     case TableRepr::Ref: {
-      fillAnyRef(index, fillCount, ref);
+      fillAnyRef(address, fillCount, ref);
       break;
     }
   }
 }
 
 #ifdef DEBUG
-void Table::assertRangeNull(uint32_t index, uint32_t length) const {
+void Table::assertRangeNull(uint32_t address, uint32_t length) const {
   switch (repr()) {
     case TableRepr::Func:
-      for (uint32_t i = index; i < index + length; i++) {
+      for (uint32_t i = address; i < address + length; i++) {
         MOZ_ASSERT(getFuncRef(i).instance == nullptr);
         MOZ_ASSERT(getFuncRef(i).code == nullptr);
       }
       break;
     case TableRepr::Ref:
-      for (uint32_t i = index; i < index + length; i++) {
+      for (uint32_t i = address; i < address + length; i++) {
         MOZ_ASSERT(getAnyRef(i).isNull());
       }
       break;
   }
 }
 
-void Table::assertRangeNotNull(uint32_t index, uint32_t length) const {
+void Table::assertRangeNotNull(uint32_t address, uint32_t length) const {
   switch (repr()) {
     case TableRepr::Func:
-      for (uint32_t i = index; i < index + length; i++) {
+      for (uint32_t i = address; i < address + length; i++) {
         MOZ_ASSERT_IF(!isAsmJS_, getFuncRef(i).instance != nullptr);
         MOZ_ASSERT(getFuncRef(i).code != nullptr);
       }
       break;
     case TableRepr::Ref:
-      for (uint32_t i = index; i < index + length; i++) {
+      for (uint32_t i = address; i < address + length; i++) {
         MOZ_ASSERT(!getAnyRef(i).isNull());
       }
       break;
@@ -495,7 +455,7 @@ void Table::assertRangeNotNull(uint32_t index, uint32_t length) const {
 }
 #endif  // DEBUG
 
-size_t Table::sizeOfExcludingThis(MallocSizeOf mallocSizeOf) const {
+size_t Table::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
   if (isFunction()) {
     return functions_.sizeOfExcludingThis(mallocSizeOf);
   }

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,11 +6,13 @@
 #define builtin_intl_Segmenter_h
 
 #include <stdint.h>
+#include <type_traits>
 
 #include "builtin/SelfHostingDefines.h"
 #include "js/Class.h"
 #include "js/Value.h"
 #include "vm/NativeObject.h"
+#include "vm/StringType.h"
 
 struct JS_PUBLIC_API JSContext;
 class JSString;
@@ -21,7 +21,7 @@ namespace JS {
 class GCContext;
 }
 
-namespace js {
+namespace js::intl {
 
 enum class SegmenterGranularity : int8_t { Grapheme, Word, Sentence };
 
@@ -30,26 +30,35 @@ class SegmenterObject : public NativeObject {
   static const JSClass class_;
   static const JSClass& protoClass_;
 
-  static constexpr uint32_t INTERNALS_SLOT = 0;
-  static constexpr uint32_t LOCALE_SLOT = 1;
-  static constexpr uint32_t GRANULARITY_SLOT = 2;
-  static constexpr uint32_t SEGMENTER_SLOT = 3;
-  static constexpr uint32_t SLOT_COUNT = 4;
+  static constexpr uint32_t LOCALE_SLOT = 0;
+  static constexpr uint32_t GRANULARITY_SLOT = 1;
+  static constexpr uint32_t SEGMENTER_SLOT = 2;
+  static constexpr uint32_t SLOT_COUNT = 3;
 
-  static_assert(INTERNALS_SLOT == INTL_INTERNALS_OBJECT_SLOT,
-                "INTERNALS_SLOT must match self-hosting define for internals "
-                "object slot");
+  bool isLocaleResolved() const { return getFixedSlot(LOCALE_SLOT).isString(); }
 
-  JSString* getLocale() const {
+  JSObject* getRequestedLocales() const {
     const auto& slot = getFixedSlot(LOCALE_SLOT);
     if (slot.isUndefined()) {
       return nullptr;
     }
-    return slot.toString();
+    return &slot.toObject();
   }
 
-  void setLocale(JSString* locale) {
-    setFixedSlot(LOCALE_SLOT, StringValue(locale));
+  void setRequestedLocales(JSObject* requestedLocales) {
+    setFixedSlot(LOCALE_SLOT, JS::ObjectValue(*requestedLocales));
+  }
+
+  JSLinearString* getLocale() const {
+    const auto& slot = getFixedSlot(LOCALE_SLOT);
+    if (slot.isUndefined()) {
+      return nullptr;
+    }
+    return &slot.toString()->asLinear();
+  }
+
+  void setLocale(JSLinearString* locale) {
+    setFixedSlot(LOCALE_SLOT, JS::StringValue(locale));
   }
 
   SegmenterGranularity getGranularity() const {
@@ -82,6 +91,66 @@ class SegmenterObject : public NativeObject {
   static const JSClassOps classOps_;
 
   static void finalize(JS::GCContext* gcx, JSObject* obj);
+};
+
+class SegmentsStringChars final {
+  uintptr_t tagged_ = 0;
+
+  enum Tag {
+    Latin1 = 0,
+    TwoByte = 1,
+
+    TagMask = TwoByte,
+  };
+
+  static uintptr_t toTagged(const void* chars, Tag tag) {
+    MOZ_ASSERT(chars != nullptr, "can't tag nullptr");
+
+    auto ptr = reinterpret_cast<uintptr_t>(chars);
+    MOZ_ASSERT((ptr & TagMask) == 0, "pointer already tagged");
+
+    return ptr | tag;
+  }
+
+  Tag tag() const { return static_cast<Tag>(tagged_ & TagMask); }
+
+  uintptr_t untagged() const { return tagged_ & ~TagMask; }
+
+  explicit SegmentsStringChars(const void* taggedChars)
+      : tagged_(reinterpret_cast<uintptr_t>(taggedChars)) {}
+
+ public:
+  SegmentsStringChars() = default;
+
+  explicit SegmentsStringChars(const JS::Latin1Char* chars)
+      : tagged_(toTagged(chars, Latin1)) {}
+
+  explicit SegmentsStringChars(const char16_t* chars)
+      : tagged_(toTagged(chars, TwoByte)) {}
+
+  static auto fromTagged(const void* taggedChars) {
+    return SegmentsStringChars{taggedChars};
+  }
+
+  explicit operator bool() const { return tagged_ != 0; }
+
+  template <typename CharT>
+  bool has() const {
+    if constexpr (std::is_same_v<CharT, JS::Latin1Char>) {
+      return tag() == Latin1;
+    } else {
+      static_assert(std::is_same_v<CharT, char16_t>);
+      return tag() == TwoByte;
+    }
+  }
+
+  template <typename CharT>
+  CharT* data() const {
+    MOZ_ASSERT(has<CharT>());
+    return reinterpret_cast<CharT*>(untagged());
+  }
+
+  uintptr_t tagged() const { return tagged_; }
 };
 
 class SegmentsObject : public NativeObject {
@@ -125,20 +194,21 @@ class SegmentsObject : public NativeObject {
     return !getFixedSlot(STRING_CHARS_SLOT).isUndefined();
   }
 
-  void* getStringChars() const {
+  SegmentsStringChars getStringChars() const {
     const auto& slot = getFixedSlot(STRING_CHARS_SLOT);
     if (slot.isUndefined()) {
-      return nullptr;
+      return SegmentsStringChars{};
     }
-    return slot.toPrivate();
+    return SegmentsStringChars::fromTagged(slot.toPrivate());
   }
 
-  void setLatin1Chars(JS::Latin1Char* chars) {
-    setFixedSlot(STRING_CHARS_SLOT, PrivateValue(chars));
+  void setStringChars(SegmentsStringChars chars) {
+    setFixedSlot(STRING_CHARS_SLOT, PrivateValue(chars.tagged()));
   }
 
-  void setTwoByteChars(char16_t* chars) {
-    setFixedSlot(STRING_CHARS_SLOT, PrivateValue(chars));
+  bool hasLatin1StringChars() const {
+    MOZ_ASSERT(hasStringChars());
+    return getStringChars().has<JS::Latin1Char>();
   }
 
   int32_t getIndex() const {
@@ -226,20 +296,21 @@ class SegmentIteratorObject : public NativeObject {
     return !getFixedSlot(STRING_CHARS_SLOT).isUndefined();
   }
 
-  void* getStringChars() const {
+  SegmentsStringChars getStringChars() const {
     const auto& slot = getFixedSlot(STRING_CHARS_SLOT);
     if (slot.isUndefined()) {
-      return nullptr;
+      return SegmentsStringChars{};
     }
-    return slot.toPrivate();
+    return SegmentsStringChars::fromTagged(slot.toPrivate());
   }
 
-  void setLatin1Chars(JS::Latin1Char* chars) {
-    setFixedSlot(STRING_CHARS_SLOT, PrivateValue(chars));
+  void setStringChars(SegmentsStringChars chars) {
+    setFixedSlot(STRING_CHARS_SLOT, PrivateValue(chars.tagged()));
   }
 
-  void setTwoByteChars(char16_t* chars) {
-    setFixedSlot(STRING_CHARS_SLOT, PrivateValue(chars));
+  bool hasLatin1StringChars() const {
+    MOZ_ASSERT(hasStringChars());
+    return getStringChars().has<JS::Latin1Char>();
   }
 
   int32_t getIndex() const {
@@ -283,13 +354,9 @@ class SegmentIteratorObject : public NativeObject {
   static void finalize(JS::GCContext* gcx, JSObject* obj);
 };
 
-/**
- * Create a new Segments object.
- *
- * Usage: segment = intl_CreateSegmentsObject(segmenter, string)
- */
-[[nodiscard]] extern bool intl_CreateSegmentsObject(JSContext* cx,
-                                                    unsigned argc, Value* vp);
+}  // namespace js::intl
+
+namespace js {
 
 /**
  * Create a new Segment Iterator object.

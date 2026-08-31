@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -16,7 +14,7 @@
 
 #include "gc/AllocKind.h"   // js::gc::AllocKind
 #include "js/CallArgs.h"    // JS::CallArgs
-#include "js/RootingAPI.h"  // JS::Handle, JS::Rooted
+#include "js/RootingAPI.h"  // JS::Handle
 #include "js/Value.h"       // JS::ObjectValue
 #include "vm/JSContext.h"   // JSContext
 #include "vm/JSFunction.h"  // JSFunction, js::Native, js::NewNativeFunction
@@ -42,9 +40,8 @@ static_assert(HandlerFunctionSlot_Extra < FunctionExtended::NUM_EXTENDED_SLOTS,
   cx->check(target);
 
   JS::Handle<PropertyName*> funName = cx->names().empty_;
-  JS::Rooted<JSFunction*> handlerFun(
-      cx, NewNativeFunction(cx, handler, 0, funName,
-                            gc::AllocKind::FUNCTION_EXTENDED, GenericObject));
+  JSFunction* handlerFun = NewNativeFunction(
+      cx, handler, 0, funName, gc::AllocKind::FUNCTION_EXTENDED, GenericObject);
   if (!handlerFun) {
     return nullptr;
   }

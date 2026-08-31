@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -15,7 +13,6 @@ namespace js {
 namespace jit {
 
 class CodeGeneratorRiscv64;
-class OutOfLineBailout;
 class OutOfLineTableSwitch;
 
 using OutOfLineWasmTruncateCheck =
@@ -25,20 +22,10 @@ class CodeGeneratorRiscv64 : public CodeGeneratorShared {
   friend class MoveResolverLA;
 
  protected:
-  CodeGeneratorRiscv64(MIRGenerator* gen, LIRGraph* graph,
-                       MacroAssembler* masm);
+  CodeGeneratorRiscv64(MIRGenerator* gen, LIRGraph* graph, MacroAssembler* masm,
+                       const wasm::CodeMetadata* wasmCodeMeta);
 
   NonAssertingLabel deoptLabel_;
-
-  Operand ToOperand(const LAllocation& a);
-  Operand ToOperand(const LAllocation* a);
-  Operand ToOperand(const LDefinition* def);
-
-#ifdef JS_PUNBOX64
-  Operand ToOperandOrRegister64(const LInt64Allocation input);
-#else
-  Register64 ToOperandOrRegister64(const LInt64Allocation input);
-#endif
 
   MoveOperand toMoveOperand(LAllocation a) const;
 
@@ -63,25 +50,11 @@ class CodeGeneratorRiscv64 : public CodeGeneratorShared {
     masm.branchPtr(c, lhs, rhs, &bail);
     bailoutFrom(&bail, snapshot);
   }
-  void bailoutTestPtr(Assembler::Condition c, Register lhs, Register rhs,
-                      LSnapshot* snapshot) {
-    // TODO(riscv64) Didn't use branchTestPtr due to '-Wundefined-inline'.
-    MOZ_ASSERT(c == Assembler::Zero || c == Assembler::NonZero ||
-               c == Assembler::Signed || c == Assembler::NotSigned);
-    Label bail;
-    if (lhs == rhs) {
-      masm.ma_b(lhs, rhs, &bail, c);
-    } else {
-      ScratchRegisterScope scratch(masm);
-      masm.and_(scratch, lhs, rhs);
-      masm.ma_b(scratch, scratch, &bail, c);
-    }
-    bailoutFrom(&bail, snapshot);
-  }
   void bailoutIfFalseBool(Register reg, LSnapshot* snapshot) {
     Label bail;
-    ScratchRegisterScope scratch(masm);
-    masm.ma_and(scratch, reg, Imm32(0xFF));
+    UseScratchRegisterScope temps(&masm);
+    Register scratch = temps.Acquire();
+    masm.andi(scratch, reg, 0xFF);
     masm.ma_b(scratch, scratch, &bail, Assembler::Zero);
     bailoutFrom(&bail, snapshot);
   }
@@ -96,6 +69,8 @@ class CodeGeneratorRiscv64 : public CodeGeneratorShared {
                      Assembler::Condition cond) {
     masm.ma_b(lhs, rhs, skipTrivialBlocks(mir)->lir()->label(), cond);
   }
+
+  enum FloatFormat { SingleFloat, DoubleFloat };
   void branchToBlock(FloatFormat fmt, FloatRegister lhs, FloatRegister rhs,
                      MBasicBlock* mir, Assembler::DoubleCondition cond);
 
@@ -111,18 +86,9 @@ class CodeGeneratorRiscv64 : public CodeGeneratorShared {
       jumpToBlock(mirTrue);
     }
   }
-  void testZeroEmitBranch(Assembler::Condition cond, Register reg,
-                          MBasicBlock* ifTrue, MBasicBlock* ifFalse) {
-    emitBranch(reg, Imm32(0), cond, ifTrue, ifFalse);
-  }
 
   void emitTableSwitchDispatch(MTableSwitch* mir, Register index,
                                Register base);
-
-  template <typename T>
-  void emitWasmLoad(T* ins);
-  template <typename T>
-  void emitWasmStore(T* ins);
 
   void generateInvalidateEpilogue();
 
@@ -143,66 +109,22 @@ class CodeGeneratorRiscv64 : public CodeGeneratorShared {
 
  public:
   // Out of line visitors.
-  void visitOutOfLineBailout(OutOfLineBailout* ool);
   void visitOutOfLineTableSwitch(OutOfLineTableSwitch* ool);
   void visitOutOfLineWasmTruncateCheck(OutOfLineWasmTruncateCheck* ool);
 
  protected:
-  void testNullEmitBranch(Assembler::Condition cond, const ValueOperand& value,
-                          MBasicBlock* ifTrue, MBasicBlock* ifFalse) {
-    UseScratchRegisterScope temps(&masm);
-    Register scratch = temps.Acquire();
-    masm.splitTag(value.valueReg(), scratch);
-    emitBranch(scratch, ImmTag(JSVAL_TAG_NULL), cond, ifTrue, ifFalse);
-  }
-  void testUndefinedEmitBranch(Assembler::Condition cond,
-                               const ValueOperand& value, MBasicBlock* ifTrue,
-                               MBasicBlock* ifFalse) {
-    UseScratchRegisterScope temps(&masm);
-    Register scratch = temps.Acquire();
-    masm.splitTag(value.valueReg(), scratch);
-    emitBranch(scratch, ImmTag(JSVAL_TAG_UNDEFINED), cond, ifTrue, ifFalse);
-  }
-  void testObjectEmitBranch(Assembler::Condition cond,
-                            const ValueOperand& value, MBasicBlock* ifTrue,
-                            MBasicBlock* ifFalse) {
-    UseScratchRegisterScope temps(&masm);
-    Register scratch = temps.Acquire();
-    masm.splitTag(value.valueReg(), scratch);
-    emitBranch(scratch, ImmTag(JSVAL_TAG_OBJECT), cond, ifTrue, ifFalse);
-  }
-
-  void emitBigIntDiv(LBigIntDiv* ins, Register dividend, Register divisor,
-                     Register output, Label* fail);
-  void emitBigIntMod(LBigIntMod* ins, Register dividend, Register divisor,
-                     Register output, Label* fail);
-
   template <typename T>
   void emitWasmLoadI64(T* ins);
   template <typename T>
   void emitWasmStoreI64(T* ins);
 
-  ValueOperand ToValue(LInstruction* ins, size_t pos);
-  ValueOperand ToTempValue(LInstruction* ins, size_t pos);
-
-  // Functions for LTestVAndBranch.
-  void splitTagForTest(const ValueOperand& value, ScratchTagScope& tag);
+  void emitBigIntPtrDiv(LBigIntPtrDiv* ins, Register dividend, Register divisor,
+                        Register output);
+  void emitBigIntPtrMod(LBigIntPtrMod* ins, Register dividend, Register divisor,
+                        Register output);
 };
 
 typedef CodeGeneratorRiscv64 CodeGeneratorSpecific;
-
-// An out-of-line bailout thunk.
-class OutOfLineBailout : public OutOfLineCodeBase<CodeGeneratorRiscv64> {
- protected:
-  LSnapshot* snapshot_;
-
- public:
-  OutOfLineBailout(LSnapshot* snapshot) : snapshot_(snapshot) {}
-
-  void accept(CodeGeneratorRiscv64* codegen) override;
-
-  LSnapshot* snapshot() const { return snapshot_; }
-};
 
 }  // namespace jit
 }  // namespace js

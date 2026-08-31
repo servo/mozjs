@@ -4,12 +4,10 @@
 
 #ifndef jit_riscv64_extension_Extension_riscv_m_h_
 #define jit_riscv64_extension_Extension_riscv_m_h_
-#include "mozilla/Assertions.h"
 
-#include <stdint.h>
-
-#include "jit/riscv64/extension/base-assembler-riscv.h"
+#include "jit/riscv64/base/base-assembler-riscv.h"
 #include "jit/riscv64/Register-riscv64.h"
+
 namespace js {
 namespace jit {
 class AssemblerRISCVM : public AssemblerRiscvBase {
@@ -23,14 +21,13 @@ class AssemblerRISCVM : public AssemblerRiscvBase {
   void divu(Register rd, Register rs1, Register rs2);
   void rem(Register rd, Register rs1, Register rs2);
   void remu(Register rd, Register rs1, Register rs2);
-#ifdef JS_CODEGEN_RISCV64
+
   // RV64M Standard Extension (in addition to RV32M)
   void mulw(Register rd, Register rs1, Register rs2);
   void divw(Register rd, Register rs1, Register rs2);
   void divuw(Register rd, Register rs1, Register rs2);
   void remw(Register rd, Register rs1, Register rs2);
   void remuw(Register rd, Register rs1, Register rs2);
-#endif
 };
 }  // namespace jit
 }  // namespace js

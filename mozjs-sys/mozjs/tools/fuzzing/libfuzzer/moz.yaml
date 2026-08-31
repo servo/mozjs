@@ -12,9 +12,9 @@ origin:
 
   url: https://llvm.org/docs/LibFuzzer.html
 
-  release: 76d07503f0c69f6632e6d8d4736e2a4cb4055a92 (2020-07-30T12:42:56Z).
+  release: 5b7a5f7c5f3c1dcd8ea9debf56983b85e393bc86 (2025-11-03T16:03:54Z).
 
-  revision: 76d07503f0c69f6632e6d8d4736e2a4cb4055a92
+  revision: 5b7a5f7c5f3c1dcd8ea9debf56983b85e393bc86
 
   license: Apache-2.0
   license-file: LICENSE.TXT
@@ -30,6 +30,7 @@ vendoring:
     - "**"
 
   include:
+    - "compiler-rt/include/fuzzer/*.h"
     - "compiler-rt/lib/fuzzer/*.h"
     - "compiler-rt/lib/fuzzer/*.cpp"
     - "compiler-rt/lib/fuzzer/*.def"
@@ -39,12 +40,14 @@ vendoring:
     - patches/11-callback-rv.patch
     - patches/12-custom-mutator-fail.patch
     - patches/13-unused-write.patch
-    - patches/14-explicit-allocator.patch
     - patches/15-return-to-exit.patch
 
   update-actions:
     - action: move-dir
       from: '{yaml_dir}/compiler-rt/lib/fuzzer'
+      to: '{yaml_dir}'
+    - action: move-dir
+      from: '{yaml_dir}/compiler-rt/include/fuzzer'
       to: '{yaml_dir}'
     - action: delete-path
       path: '{yaml_dir}/FuzzerMain*'

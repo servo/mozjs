@@ -1,59 +1,28 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jit/InterpreterEntryTrampoline.h"
+#include "gc/PublicIterators.h"
+#include "gc/Zone.h"
 #include "jit/JitRuntime.h"
+#include "jit/JitZone.h"
 #include "jit/Linker.h"
 #include "vm/Interpreter.h"
 
 #include "gc/Marking-inl.h"
+#include "gc/WeakMap-inl.h"
 #include "jit/MacroAssembler-inl.h"
 
 using namespace js;
 using namespace js::jit;
 
-void js::ClearInterpreterEntryMap(JSRuntime* runtime) {
-  if (runtime->hasJitRuntime() &&
-      runtime->jitRuntime()->hasInterpreterEntryMap()) {
-    runtime->jitRuntime()->getInterpreterEntryMap()->clear();
+EntryTrampolineMap* JitZone::getOrCreateInterpreterEntryMap(JS::Zone* zone) {
+  if (!interpreterEntryMap) {
+    interpreterEntryMap = js::MakeUnique<EntryTrampolineMap>(zone);
   }
-}
 
-void EntryTrampolineMap::traceTrampolineCode(JSTracer* trc) {
-  for (jit::EntryTrampolineMap::Enum e(*this); !e.empty(); e.popFront()) {
-    EntryTrampoline& trampoline = e.front().value();
-    trampoline.trace(trc);
-  }
+  return interpreterEntryMap.get();
 }
-
-void EntryTrampolineMap::updateScriptsAfterMovingGC(void) {
-  for (jit::EntryTrampolineMap::Enum e(*this); !e.empty(); e.popFront()) {
-    BaseScript* script = e.front().key();
-    if (IsForwarded(script)) {
-      script = Forwarded(script);
-      e.rekeyFront(script);
-    }
-  }
-}
-
-#ifdef JSGC_HASH_TABLE_CHECKS
-void EntryTrampoline::checkTrampolineAfterMovingGC() const {
-  JitCode* trampoline = entryTrampoline_;
-  CheckGCThingAfterMovingGC(trampoline);
-}
-
-void EntryTrampolineMap::checkScriptsAfterMovingGC() {
-  gc::CheckTableAfterMovingGC(*this, [](const auto& entry) {
-    BaseScript* script = entry.key();
-    CheckGCThingAfterMovingGC(script);
-    entry.value().checkTrampolineAfterMovingGC();
-    return script;
-  });
-}
-#endif
 
 void JitRuntime::generateBaselineInterpreterEntryTrampoline(
     MacroAssembler& masm) {
@@ -86,14 +55,15 @@ void JitRuntime::generateBaselineInterpreterEntryTrampoline(
                        &notFunction);
 
     // CalleeToken is a function, load |nformals| into scratch
-    masm.movePtr(callee, scratch);
-    masm.andPtr(Imm32(uint32_t(CalleeTokenMask)), scratch);
+    masm.andPtr(Imm32(uint32_t(CalleeTokenMask)), callee, scratch);
     masm.loadFunctionArgCount(scratch, scratch);
 
     // Take max(nformals, argc).
     Label noUnderflow;
     masm.branch32(Assembler::AboveOrEqual, nargs, scratch, &noUnderflow);
-    { masm.movePtr(scratch, nargs); }
+    {
+      masm.movePtr(scratch, nargs);
+    }
     masm.bind(&noUnderflow);
 
     // Add 1 to nargs if constructing.
@@ -166,8 +136,8 @@ void JitRuntime::generateInterpreterEntryTrampoline(MacroAssembler& masm) {
   masm.push(lr, FramePointer);
   masm.moveStackPtrTo(FramePointer);
 
-  // Save the PSP register (r28), and a scratch (r19).
-  masm.push(r19, r28);
+  // Save the PSP register (r20), and a scratch (r19).
+  masm.push(r19, r20);
 
   // Setup the PSP so we can use callWithABI below.
   masm.SetStackPointer64(PseudoStackPointer64);
@@ -191,6 +161,9 @@ void JitRuntime::generateInterpreterEntryTrampoline(MacroAssembler& masm) {
   masm.loadPtr(cxAddr, arg0);
   masm.loadPtr(stateAddr, arg1);
 #else
+#  ifdef JS_USE_LINK_REGISTER
+  masm.pushReturnAddress();
+#  endif
   masm.push(FramePointer);
   masm.moveStackPtrTo(FramePointer);
 
@@ -213,8 +186,8 @@ void JitRuntime::generateInterpreterEntryTrampoline(MacroAssembler& masm) {
   masm.syncStackPtr();
   masm.SetStackPointer64(sp);
 
-  // Restore r28 and r19.
-  masm.pop(r28, r19);
+  // Restore r20 and r19.
+  masm.pop(r20, r19);
 
   // Restore old fp and pop lr for return.
   masm.pop(FramePointer, lr);

@@ -4,7 +4,8 @@
 
 use std::cell::Cell;
 
-use mozjs::jsapi::{GCReason, JSTracer, JS_GC};
+use mozjs::jsapi::{GCReason, JSTracer};
+use mozjs::rust::wrappers2::JS_GC;
 use mozjs::rust::{CustomAutoRooter, CustomTrace, JSEngine, Runtime};
 
 struct TraceCheck {
@@ -31,11 +32,11 @@ unsafe impl CustomTrace for TraceCheck {
 #[test]
 fn virtual_trace_called() {
     let engine = JSEngine::init().unwrap();
-    let runtime = Runtime::new(engine.handle());
+    let mut runtime = Runtime::new(engine.handle());
     let context = runtime.cx();
 
     let mut rooter = CustomAutoRooter::new(TraceCheck::new());
-    let guard = rooter.root(context);
+    let guard = rooter.root(unsafe { context.raw_cx() });
 
     unsafe {
         JS_GC(context, GCReason::API);

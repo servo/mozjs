@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -8,7 +6,6 @@
 #define jit_loong64_Assembler_loong64_h
 
 #include "mozilla/Sprintf.h"
-#include <iterator>
 
 #include "jit/CompactBuffer.h"
 #include "jit/JitCode.h"
@@ -100,20 +97,9 @@ static constexpr FloatRegister ReturnFloat32Reg{FloatRegisters::f0,
 static constexpr FloatRegister ReturnDoubleReg = f0;
 static constexpr FloatRegister ReturnSimd128Reg = InvalidFloatReg;
 
-static constexpr Register ScratchRegister = t7;
-static constexpr Register SecondScratchReg = t8;
-
-// Helper classes for ScratchRegister usage. Asserts that only one piece
-// of code thinks it has exclusive ownership of each scratch register.
-struct ScratchRegisterScope : public AutoRegisterScope {
-  explicit ScratchRegisterScope(MacroAssembler& masm)
-      : AutoRegisterScope(masm, ScratchRegister) {}
-};
-
-struct SecondScratchRegisterScope : public AutoRegisterScope {
-  explicit SecondScratchRegisterScope(MacroAssembler& masm)
-      : AutoRegisterScope(masm, SecondScratchReg) {}
-};
+// Scratch register used for runtime call patching.
+// See MacroAssembler::patchNopToCall and MacroAssembler::PatchWrite_NearCall.
+static constexpr Register SavedScratchRegister = s8;
 
 static constexpr FloatRegister ScratchFloat32Reg{FloatRegisters::f23,
                                                  FloatRegisters::Single};
@@ -128,6 +114,29 @@ struct ScratchFloat32Scope : public AutoFloatRegisterScope {
 struct ScratchDoubleScope : public AutoFloatRegisterScope {
   explicit ScratchDoubleScope(MacroAssembler& masm)
       : AutoFloatRegisterScope(masm, ScratchDoubleReg) {}
+};
+
+class Assembler;
+
+class UseScratchRegisterScope {
+ public:
+  explicit UseScratchRegisterScope(Assembler& assembler);
+  explicit UseScratchRegisterScope(Assembler* assembler);
+  ~UseScratchRegisterScope();
+
+  Register Acquire();
+  void Release(const Register& reg);
+  bool hasAvailable() const;
+  void Include(const GeneralRegisterSet& list) {
+    *available_ = GeneralRegisterSet::Union(*available_, list);
+  }
+  void Exclude(const GeneralRegisterSet& list) {
+    *available_ = GeneralRegisterSet::Subtract(*available_, list);
+  }
+
+ private:
+  GeneralRegisterSet* available_;
+  GeneralRegisterSet old_available_;
 };
 
 // Use arg reg from EnterJIT function as OsrFrameReg.
@@ -151,7 +160,6 @@ static constexpr Register IntArgReg4 = a4;
 static constexpr Register IntArgReg5 = a5;
 static constexpr Register IntArgReg6 = a6;
 static constexpr Register IntArgReg7 = a7;
-static constexpr Register HeapReg = s7;
 
 // Registers used by RegExpMatcher and RegExpExecMatch stubs (do not use
 // JSReturnOperand).
@@ -173,32 +181,29 @@ static constexpr Register JSReturnReg_Data = a2;
 static constexpr Register JSReturnReg = a2;
 static constexpr ValueOperand JSReturnOperand = ValueOperand(JSReturnReg);
 
-// These registers may be volatile or nonvolatile.
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReg0 = t0;
 static constexpr Register ABINonArgReg1 = t1;
 static constexpr Register ABINonArgReg2 = t2;
 static constexpr Register ABINonArgReg3 = t3;
 
-// These registers may be volatile or nonvolatile.
-// Note: these three registers are all guaranteed to be different
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReturnReg0 = t0;
 static constexpr Register ABINonArgReturnReg1 = t1;
 static constexpr Register ABINonVolatileReg = s0;
 
-// This register is guaranteed to be clobberable during the prologue and
-// epilogue of an ABI call which must preserve both ABI argument, return
-// and non-volatile registers.
+// See "ABI special registers" in Assembler-shared.h for more information.
 static constexpr Register ABINonArgReturnVolatileReg = ra;
 
-// This register may be volatile or nonvolatile.
+// See "ABI special registers" in Assembler-shared.h for more information.
 // Avoid f23 which is the scratch register.
 static constexpr FloatRegister ABINonArgDoubleReg{FloatRegisters::f21,
                                                   FloatRegisters::Double};
 
-// Instance pointer argument register for WebAssembly functions. This must not
-// alias any other register used for passing function arguments or return
-// values. Preserved by WebAssembly functions. Must be nonvolatile.
+// See "ABI special registers" in Assembler-shared.h, and "The WASM ABIs" in
+// WasmFrame.h for more information.
 static constexpr Register InstanceReg = s4;
+static constexpr Register HeapReg = s7;
 
 // Registers used for wasm table calls. These registers must be disjoint
 // from the ABI argument registers, InstanceReg and each other.
@@ -210,6 +215,7 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // Registers used for ref calls.
 static constexpr Register WasmCallRefCallScratchReg0 = ABINonArgReg0;
 static constexpr Register WasmCallRefCallScratchReg1 = ABINonArgReg1;
+static constexpr Register WasmCallRefCallScratchReg2 = ABINonArgReg2;
 static constexpr Register WasmCallRefReg = ABINonArgReg3;
 
 // Registers used for wasm tail calls operations.
@@ -668,7 +674,7 @@ class BOffImm16 {
   bool isInvalid() { return data == INVALID; }
   Instruction* getDest(Instruction* src) const;
 
-  BOffImm16(InstImm inst);
+  explicit BOffImm16(InstImm inst);
 };
 
 // A JOffImm26 is a 26 bit immediate that is used for unconditional jumps.
@@ -710,7 +716,7 @@ class Imm16 {
 
  public:
   Imm16();
-  Imm16(uint32_t imm) : value(imm) {}
+  explicit Imm16(uint32_t imm) : value(imm) {}
   uint32_t encode() { return value; }
   int32_t decodeSigned() { return value; }
   uint32_t decodeUnsigned() { return value; }
@@ -727,7 +733,7 @@ class Imm8 {
 
  public:
   Imm8();
-  Imm8(uint32_t imm) : value(imm) {}
+  explicit Imm8(uint32_t imm) : value(imm) {}
   uint32_t encode(uint32_t shift) { return value << shift; }
   int32_t decodeSigned() { return value; }
   uint32_t decodeUnsigned() { return value; }
@@ -751,9 +757,9 @@ class Operand {
   int32_t offset;
 
  public:
-  Operand(Register reg_) : tag(REG), reg(reg_.code()) {}
+  MOZ_IMPLICIT Operand(Register reg_) : tag(REG), reg(reg_.code()) {}
 
-  Operand(FloatRegister freg) : tag(FREG), reg(freg.code()) {}
+  explicit Operand(FloatRegister freg) : tag(FREG), reg(freg.code()) {}
 
   Operand(Register base, Imm32 off)
       : tag(MEM), reg(base.code()), offset(off.value) {}
@@ -761,7 +767,7 @@ class Operand {
   Operand(Register base, int32_t off)
       : tag(MEM), reg(base.code()), offset(off) {}
 
-  Operand(const Address& addr)
+  explicit Operand(const Address& addr)
       : tag(MEM), reg(addr.base.code()), offset(addr.offset) {}
 
   Tag getTag() const { return tag; }
@@ -801,23 +807,18 @@ class Operand {
 };
 
 // int check.
-inline bool is_intN(int32_t x, unsigned n) {
+inline constexpr bool is_intN(int64_t x, unsigned n) {
   MOZ_ASSERT((0 < n) && (n < 64));
-  int32_t limit = static_cast<int32_t>(1) << (n - 1);
+  int64_t limit = static_cast<int64_t>(1) << (n - 1);
   return (-limit <= x) && (x < limit);
 }
 
-inline bool is_uintN(int32_t x, unsigned n) {
-  MOZ_ASSERT((0 < n) && (n < (sizeof(x) * 8)));
+inline constexpr bool is_uintN(int64_t x, unsigned n) {
+  MOZ_ASSERT((0 < n) && (n < 64));
   return !(x >> n);
 }
 
-inline Imm32 Imm64::firstHalf() const { return low(); }
-
-inline Imm32 Imm64::secondHalf() const { return hi(); }
-
-static constexpr int32_t SliceSize = 1024;
-typedef js::jit::AssemblerBuffer<SliceSize, Instruction> LOONGBuffer;
+typedef js::jit::AssemblerBuffer<Instruction> LOONGBuffer;
 
 class LOONGBufferWithExecutableCopy : public LOONGBuffer {
  public:
@@ -825,21 +826,12 @@ class LOONGBufferWithExecutableCopy : public LOONGBuffer {
     if (this->oom()) {
       return;
     }
-
-    for (Slice* cur = head; cur != nullptr; cur = cur->getNext()) {
-      memcpy(buffer, &cur->instructions, cur->length());
-      buffer += cur->length();
-    }
+    memcpy(buffer, this->data(), this->size());
   }
 
   bool appendRawCode(const uint8_t* code, size_t numBytes) {
     if (this->oom()) {
       return false;
-    }
-    while (numBytes > SliceSize) {
-      this->putBytes(SliceSize, code);
-      numBytes -= SliceSize;
-      code += SliceSize;
     }
     this->putBytes(numBytes, code);
     return !this->oom();
@@ -968,14 +960,15 @@ class AssemblerLOONG64 : public AssemblerShared {
 #ifdef JS_JITSPEW
         printer(nullptr),
 #endif
-        isFinished(false) {
+        isFinished(false),
+        scratch_register_list_((1 << t7.code()) | (1 << t8.code())) {
   }
 
   static Condition InvertCondition(Condition cond);
   static DoubleCondition InvertCondition(DoubleCondition cond);
   // This is changing the condition codes for cmp a, b to the same codes for cmp
   // b, a.
-  static Condition InvertCmpCondition(Condition cond);
+  static Condition SwapCmpOperandsCondition(Condition cond);
 
   // As opposed to x86/x64 version, the data relocation has to be executed
   // before to recover the pointer, and not after.
@@ -1014,7 +1007,7 @@ class AssemblerLOONG64 : public AssemblerShared {
     if (MOZ_UNLIKELY(printer || JitSpewEnabled(JitSpew_Codegen))) {
       va_list va;
       va_start(va, fmt);
-      spew(fmt, va);
+      spewVA(fmt, va);
       va_end(va);
     }
   }
@@ -1025,7 +1018,7 @@ class AssemblerLOONG64 : public AssemblerShared {
 #endif
 
 #ifdef JS_JITSPEW
-  MOZ_COLD void spew(const char* fmt, va_list va) MOZ_FORMAT_PRINTF(2, 0) {
+  MOZ_COLD void spewVA(const char* fmt, va_list va) MOZ_FORMAT_PRINTF(2, 0) {
     // Buffer to hold the formatted string. Note that this may contain
     // '%' characters, so do not pass it directly to printf functions.
     char buf[200];
@@ -1454,6 +1447,8 @@ class AssemblerLOONG64 : public AssemblerShared {
   }
   static bool SupportsUnalignedAccesses() { return true; }
   static bool SupportsFastUnalignedFPAccesses() { return true; }
+  static bool SupportsFloat64To16() { return false; }
+  static bool SupportsFloat32To16() { return false; }
 
   static bool HasRoundInstruction(RoundingMode mode) { return false; }
 
@@ -1493,6 +1488,14 @@ class AssemblerLOONG64 : public AssemblerShared {
                                    const Disassembler::HeapAccess& heapAccess) {
     // Implement this if we implement a disassembler.
   }
+
+ private:
+  GeneralRegisterSet scratch_register_list_;
+
+ public:
+  GeneralRegisterSet* GetScratchRegisterList() {
+    return &scratch_register_list_;
+  }
 };  // AssemblerLOONG64
 
 // andi r0, r0, 0
@@ -1506,7 +1509,7 @@ class Instruction {
 
  protected:
   // Standard constructor
-  Instruction(uint32_t data_) : data(data_) {}
+  explicit Instruction(uint32_t data_) : data(data_) {}
   // You should never create an instruction directly.  You should create a
   // more specific instruction which will eventually call one of these
   // constructors for you.
@@ -1784,20 +1787,20 @@ class InstJump : public Instruction {
   }
 };
 
-class ABIArgGenerator {
+class ABIArgGenerator : public ABIArgGeneratorShared {
  public:
-  ABIArgGenerator()
-      : intRegIndex_(0), floatRegIndex_(0), stackOffset_(0), current_() {}
+  explicit ABIArgGenerator(ABIKind kind)
+      : ABIArgGeneratorShared(kind),
+        intRegIndex_(0),
+        floatRegIndex_(0),
+        current_() {}
 
   ABIArg next(MIRType argType);
   ABIArg& current() { return current_; }
-  uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
-  void increaseStackOffset(uint32_t bytes) { stackOffset_ += bytes; }
 
  protected:
   unsigned intRegIndex_;
   unsigned floatRegIndex_;
-  uint32_t stackOffset_;
   ABIArg current_;
 };
 

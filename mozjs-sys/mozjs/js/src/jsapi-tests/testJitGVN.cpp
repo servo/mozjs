@@ -1,6 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -40,7 +37,7 @@ BEGIN_TEST(testJitGVN_FixupOSROnlyLoop) {
   MBasicBlock* outerBackedge = func.createBlock(innerHeader);
   MBasicBlock* exit = func.createBlock(outerHeader);
 
-  MConstant* c = MConstant::New(func.alloc, BooleanValue(false));
+  MConstant* c = MConstant::NewBoolean(func.alloc, false);
   entry->add(c);
   entry->end(MTest::New(func.alloc, c, outerHeader, exit));
   osrEntry->end(MGoto::New(func.alloc, merge));
@@ -48,14 +45,14 @@ BEGIN_TEST(testJitGVN_FixupOSROnlyLoop) {
   merge->end(MGoto::New(func.alloc, innerHeader));
 
   // Use Beta nodes to hide the constants and suppress folding.
-  MConstant* x = MConstant::New(func.alloc, BooleanValue(false));
+  MConstant* x = MConstant::NewBoolean(func.alloc, false);
   outerHeader->add(x);
   MBeta* xBeta =
       MBeta::New(func.alloc, x, Range::NewInt32Range(func.alloc, 0, 1));
   outerHeader->add(xBeta);
   outerHeader->end(MTest::New(func.alloc, xBeta, merge, exit));
 
-  MConstant* y = MConstant::New(func.alloc, BooleanValue(false));
+  MConstant* y = MConstant::NewBoolean(func.alloc, false);
   innerHeader->add(y);
   MBeta* yBeta =
       MBeta::New(func.alloc, y, Range::NewInt32Range(func.alloc, 0, 1));
@@ -65,7 +62,7 @@ BEGIN_TEST(testJitGVN_FixupOSROnlyLoop) {
   innerBackedge->end(MGoto::New(func.alloc, innerHeader));
   outerBackedge->end(MGoto::New(func.alloc, outerHeader));
 
-  MConstant* u = MConstant::New(func.alloc, UndefinedValue());
+  MConstant* u = MConstant::NewUndefined(func.alloc);
   exit->add(u);
   exit->end(MReturn::New(func.alloc, u));
 
@@ -130,7 +127,7 @@ BEGIN_TEST(testJitGVN_FixupOSROnlyLoopNested) {
   MBasicBlock* outerBackedge = func.createBlock(middleHeader);
   MBasicBlock* exit = func.createBlock(outerHeader);
 
-  MConstant* c = MConstant::New(func.alloc, BooleanValue(false));
+  MConstant* c = MConstant::NewBoolean(func.alloc, false);
   entry->add(c);
   entry->end(MTest::New(func.alloc, c, outerHeader, exit));
   osrEntry->end(MGoto::New(func.alloc, merge));
@@ -138,21 +135,21 @@ BEGIN_TEST(testJitGVN_FixupOSROnlyLoopNested) {
   merge->end(MGoto::New(func.alloc, innerHeader));
 
   // Use Beta nodes to hide the constants and suppress folding.
-  MConstant* x = MConstant::New(func.alloc, BooleanValue(false));
+  MConstant* x = MConstant::NewBoolean(func.alloc, false);
   outerHeader->add(x);
   MBeta* xBeta =
       MBeta::New(func.alloc, x, Range::NewInt32Range(func.alloc, 0, 1));
   outerHeader->add(xBeta);
   outerHeader->end(MTest::New(func.alloc, xBeta, middleHeader, exit));
 
-  MConstant* y = MConstant::New(func.alloc, BooleanValue(false));
+  MConstant* y = MConstant::NewBoolean(func.alloc, false);
   middleHeader->add(y);
   MBeta* yBeta =
       MBeta::New(func.alloc, y, Range::NewInt32Range(func.alloc, 0, 1));
   middleHeader->add(yBeta);
   middleHeader->end(MTest::New(func.alloc, yBeta, merge, outerBackedge));
 
-  MConstant* w = MConstant::New(func.alloc, BooleanValue(false));
+  MConstant* w = MConstant::NewBoolean(func.alloc, false);
   innerHeader->add(w);
   MBeta* wBeta =
       MBeta::New(func.alloc, w, Range::NewInt32Range(func.alloc, 0, 1));
@@ -164,7 +161,7 @@ BEGIN_TEST(testJitGVN_FixupOSROnlyLoopNested) {
   middleBackedge->end(MGoto::New(func.alloc, middleHeader));
   outerBackedge->end(MGoto::New(func.alloc, outerHeader));
 
-  MConstant* u = MConstant::New(func.alloc, UndefinedValue());
+  MConstant* u = MConstant::NewUndefined(func.alloc);
   exit->add(u);
   exit->end(MReturn::New(func.alloc, u));
 
@@ -239,10 +236,10 @@ BEGIN_TEST(testJitGVN_PinnedPhis) {
 
   MParameter* p = func.createParameter();
   entry->add(p);
-  MConstant* z0 = MConstant::New(func.alloc, Int32Value(0));
-  MConstant* z1 = MConstant::New(func.alloc, Int32Value(1));
-  MConstant* z2 = MConstant::New(func.alloc, Int32Value(2));
-  MConstant* z3 = MConstant::New(func.alloc, Int32Value(2));
+  MConstant* z0 = MConstant::NewInt32(func.alloc, 0);
+  MConstant* z1 = MConstant::NewInt32(func.alloc, 1);
+  MConstant* z2 = MConstant::NewInt32(func.alloc, 2);
+  MConstant* z3 = MConstant::NewInt32(func.alloc, 2);
   MOZ_RELEASE_ASSERT(phi0->addInputSlow(z0));
   MOZ_RELEASE_ASSERT(phi1->addInputSlow(z1));
   MOZ_RELEASE_ASSERT(phi2->addInputSlow(z2));
@@ -261,16 +258,16 @@ BEGIN_TEST(testJitGVN_PinnedPhis) {
 
   outerBlock->end(MGoto::New(func.alloc, innerHeader));
 
-  MConstant* true_ = MConstant::New(func.alloc, BooleanValue(true));
+  MConstant* true_ = MConstant::NewBoolean(func.alloc, true);
   innerHeader->add(true_);
   innerHeader->end(MTest::New(func.alloc, true_, innerBackedge, exit));
 
   innerBackedge->end(MGoto::New(func.alloc, innerHeader));
 
   MInstruction* z4 = MAdd::New(func.alloc, phi0, phi1, MIRType::Int32);
-  MConstant* z5 = MConstant::New(func.alloc, Int32Value(4));
+  MConstant* z5 = MConstant::NewInt32(func.alloc, 4);
   MInstruction* z6 = MAdd::New(func.alloc, phi2, phi3, MIRType::Int32);
-  MConstant* z7 = MConstant::New(func.alloc, Int32Value(6));
+  MConstant* z7 = MConstant::NewInt32(func.alloc, 6);
   MOZ_RELEASE_ASSERT(phi0->addInputSlow(z4));
   MOZ_RELEASE_ASSERT(phi1->addInputSlow(z5));
   MOZ_RELEASE_ASSERT(phi2->addInputSlow(z6));

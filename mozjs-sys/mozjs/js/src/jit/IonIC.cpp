@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -75,9 +73,11 @@ Register IonIC::scratchRegisterForEntryJump() {
     case CacheKind::TypeOf:
     case CacheKind::TypeOfEq:
     case CacheKind::ToBool:
-    case CacheKind::GetIntrinsic:
+    case CacheKind::LazyConstant:
     case CacheKind::NewArray:
     case CacheKind::NewObject:
+    case CacheKind::Lambda:
+    case CacheKind::GetImport:
       MOZ_CRASH("Unsupported IC");
   }
 
@@ -172,15 +172,29 @@ bool IonGetPropertyIC::update(JSContext* cx, HandleScript outerScript,
   MOZ_ASSERT(!val.isMagic());
 
   TryAttachIonStub<GetPropIRGenerator>(cx, ic, ionScript, ic->kind(), val,
-                                       idVal);
+                                       idVal, val);
 
   if (ic->kind() == CacheKind::GetProp) {
     Rooted<PropertyName*> name(cx, idVal.toString()->asAtom().asPropertyName());
-    if (!GetProperty(cx, val, name, res)) {
-      return false;
+
+    JSOp op = JSOp(*ic->pc());
+    if (op == JSOp::GetBoundName) {
+      RootedObject env(cx, &val.toObject());
+      RootedId id(cx, NameToId(name));
+      if (!GetNameBoundInEnvironment(cx, env, id, res)) {
+        return false;
+      }
+    } else {
+      MOZ_ASSERT(op == JSOp::GetProp || op == JSOp::GetElem);
+
+      if (!GetProperty(cx, val, name, res)) {
+        return false;
+      }
     }
   } else {
     MOZ_ASSERT(ic->kind() == CacheKind::GetElem);
+    MOZ_ASSERT(JSOp(*ic->pc()) == JSOp::GetElem);
+
     if (!GetElementOperation(cx, val, idVal, res)) {
       return false;
     }
@@ -203,7 +217,7 @@ bool IonGetPropSuperIC::update(JSContext* cx, HandleScript outerScript,
   RootedValue val(cx, ObjectValue(*obj));
 
   TryAttachIonStub<GetPropIRGenerator>(cx, ic, ionScript, ic->kind(), val,
-                                       idVal);
+                                       idVal, receiver);
 
   if (ic->kind() == CacheKind::GetPropSuper) {
     Rooted<PropertyName*> name(cx, idVal.toString()->asAtom().asPropertyName());
@@ -263,6 +277,9 @@ bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
         deferType = gen.deferType();
         MOZ_ASSERT(deferType != DeferType::None);
         break;
+    }
+    if (deferType == DeferType::None && !attached) {
+      ic->state().trackNotAttached();
     }
   }
 
@@ -340,9 +357,9 @@ bool IonSetPropertyIC::update(JSContext* cx, HandleScript outerScript,
         MOZ_ASSERT_UNREACHABLE("Invalid attach result");
         break;
     }
-  }
-  if (!attached && canAttachStub) {
-    ic->state().trackNotAttached();
+    if (!attached) {
+      ic->state().trackNotAttached();
+    }
   }
 
   return true;
@@ -377,16 +394,18 @@ JSObject* IonBindNameIC::update(JSContext* cx, HandleScript outerScript,
                                 IonBindNameIC* ic, HandleObject envChain) {
   IonScript* ionScript = outerScript->ionScript();
   jsbytecode* pc = ic->pc();
+  JSOp op = JSOp(*pc);
+  MOZ_ASSERT(op == JSOp::BindName || op == JSOp::BindUnqualifiedName ||
+             op == JSOp::BindUnqualifiedGName);
+
   Rooted<PropertyName*> name(cx, ic->script()->getName(pc));
 
   TryAttachIonStub<BindNameIRGenerator>(cx, ic, ionScript, envChain, name);
 
-  RootedObject holder(cx);
-  if (!LookupNameUnqualified(cx, name, envChain, &holder)) {
-    return nullptr;
+  if (op == JSOp::BindName) {
+    return LookupNameWithGlobalDefault(cx, name, envChain);
   }
-
-  return holder;
+  return LookupNameUnqualified(cx, name, envChain);
 }
 
 /* static */
@@ -396,12 +415,7 @@ JSObject* IonGetIteratorIC::update(JSContext* cx, HandleScript outerScript,
 
   TryAttachIonStub<GetIteratorIRGenerator>(cx, ic, ionScript, value);
 
-  PropertyIteratorObject* iterObj = ValueToIterator(cx, value);
-  if (!iterObj) {
-    return nullptr;
-  }
-
-  return iterObj;
+  return ValueToIterator(cx, value);
 }
 
 /* static */
@@ -499,7 +513,8 @@ bool IonOptimizeGetIteratorIC::update(JSContext* cx, HandleScript outerScript,
 
   TryAttachIonStub<OptimizeGetIteratorIRGenerator>(cx, ic, ionScript, value);
 
-  return OptimizeGetIterator(cx, value, result);
+  *result = OptimizeGetIterator(value, cx);
+  return true;
 }
 
 /*  static */

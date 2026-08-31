@@ -1,13 +1,9 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jit_mips64_Assembler_mips64_h
 #define jit_mips64_Assembler_mips64_h
-
-#include <iterator>
 
 #include "jit/mips-shared/Assembler-mips-shared.h"
 
@@ -19,48 +15,42 @@ namespace jit {
 static constexpr Register CallTempReg4 = a4;
 static constexpr Register CallTempReg5 = a5;
 
-static constexpr Register CallTempNonArgRegs[] = {t0, t1, t2, t3};
+static constexpr Register CallTempNonArgRegs[] = {t4, t5, t6, t7};
 static const uint32_t NumCallTempNonArgRegs = std::size(CallTempNonArgRegs);
 
-class ABIArgGenerator {
+class ABIArgGenerator : public ABIArgGeneratorShared {
   unsigned regIndex_;
-  uint32_t stackOffset_;
   ABIArg current_;
 
  public:
-  ABIArgGenerator();
+  explicit ABIArgGenerator(ABIKind kind)
+      : ABIArgGeneratorShared(kind), regIndex_(0) {}
+
   ABIArg next(MIRType argType);
   ABIArg& current() { return current_; }
-
-  uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
-  void increaseStackOffset(uint32_t bytes) { stackOffset_ += bytes; }
 };
 
-// These registers may be volatile or nonvolatile.
-static constexpr Register ABINonArgReg0 = t0;
-static constexpr Register ABINonArgReg1 = t1;
-static constexpr Register ABINonArgReg2 = t2;
-static constexpr Register ABINonArgReg3 = t3;
+// See "ABI special registers" in Assembler-shared.h for more information.
+static constexpr Register ABINonArgReg0 = t4;
+static constexpr Register ABINonArgReg1 = t5;
+static constexpr Register ABINonArgReg2 = t6;
+static constexpr Register ABINonArgReg3 = t7;
 
-// This register may be volatile or nonvolatile. Avoid f23 which is the
-// ScratchDoubleReg.
+// See "ABI special registers" in Assembler-shared.h for more information.
+// Avoid f23 which is the ScratchDoubleReg.
 static constexpr FloatRegister ABINonArgDoubleReg{FloatRegisters::f21,
                                                   FloatRegisters::Double};
 
-// These registers may be volatile or nonvolatile.
-// Note: these three registers are all guaranteed to be different
-static constexpr Register ABINonArgReturnReg0 = t0;
-static constexpr Register ABINonArgReturnReg1 = t1;
+// See "ABI special registers" in Assembler-shared.h for more information.
+static constexpr Register ABINonArgReturnReg0 = t4;
+static constexpr Register ABINonArgReturnReg1 = t5;
 static constexpr Register ABINonVolatileReg = s0;
 
-// This register is guaranteed to be clobberable during the prologue and
-// epilogue of an ABI call which must preserve both ABI argument, return
-// and non-volatile registers.
-static constexpr Register ABINonArgReturnVolatileReg = t0;
+// See "ABI special registers" in Assembler-shared.h for more information.
+static constexpr Register ABINonArgReturnVolatileReg = t4;
 
-// TLS pointer argument register for WebAssembly functions. This must not alias
-// any other register used for passing function arguments or return values.
-// Preserved by WebAssembly functions.
+// See "ABI special registers" in Assembler-shared.h, and "The WASM ABIs" in
+// WasmFrame.h for more information.
 static constexpr Register InstanceReg = s5;
 
 // Registers used for wasm table calls. These registers must be disjoint
@@ -73,6 +63,7 @@ static constexpr Register WasmTableCallIndexReg = ABINonArgReg3;
 // Registers used for ref calls.
 static constexpr Register WasmCallRefCallScratchReg0 = ABINonArgReg0;
 static constexpr Register WasmCallRefCallScratchReg1 = ABINonArgReg1;
+static constexpr Register WasmCallRefCallScratchReg2 = ABINonArgReg2;
 static constexpr Register WasmCallRefReg = ABINonArgReg3;
 
 // Registers used for wasm tail calls operations.
@@ -83,22 +74,22 @@ static constexpr Register WasmTailCallFPScratchReg = ABINonArgReg3;
 // Register used as a scratch along the return path in the fast js -> wasm stub
 // code. This must not overlap ReturnReg, JSReturnOperand, or InstanceReg.
 // It must be a volatile register.
-static constexpr Register WasmJitEntryReturnScratch = t1;
+static constexpr Register WasmJitEntryReturnScratch = t5;
 
-static constexpr Register InterpreterPCReg = t5;
+static constexpr Register InterpreterPCReg = a5;
 
 static constexpr Register JSReturnReg = v1;
 static constexpr Register JSReturnReg_Type = JSReturnReg;
 static constexpr Register JSReturnReg_Data = JSReturnReg;
 static constexpr Register64 ReturnReg64(ReturnReg);
-static constexpr FloatRegister ReturnFloat32Reg = {FloatRegisters::f0,
-                                                   FloatRegisters::Single};
-static constexpr FloatRegister ReturnDoubleReg = {FloatRegisters::f0,
-                                                  FloatRegisters::Double};
-static constexpr FloatRegister ScratchFloat32Reg = {FloatRegisters::f23,
-                                                    FloatRegisters::Single};
-static constexpr FloatRegister ScratchDoubleReg = {FloatRegisters::f23,
-                                                   FloatRegisters::Double};
+static constexpr FloatRegister ReturnFloat32Reg{FloatRegisters::f0,
+                                                FloatRegisters::Single};
+static constexpr FloatRegister ReturnDoubleReg{FloatRegisters::f0,
+                                               FloatRegisters::Double};
+static constexpr FloatRegister ScratchFloat32Reg{FloatRegisters::f23,
+                                                 FloatRegisters::Single};
+static constexpr FloatRegister ScratchDoubleReg{FloatRegisters::f23,
+                                                FloatRegisters::Double};
 
 struct ScratchFloat32Scope : public AutoFloatRegisterScope {
   explicit ScratchFloat32Scope(MacroAssembler& masm)
@@ -110,70 +101,38 @@ struct ScratchDoubleScope : public AutoFloatRegisterScope {
       : AutoFloatRegisterScope(masm, ScratchDoubleReg) {}
 };
 
-static constexpr FloatRegister f0 = {FloatRegisters::f0,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f1 = {FloatRegisters::f1,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f2 = {FloatRegisters::f2,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f3 = {FloatRegisters::f3,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f4 = {FloatRegisters::f4,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f5 = {FloatRegisters::f5,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f6 = {FloatRegisters::f6,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f7 = {FloatRegisters::f7,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f8 = {FloatRegisters::f8,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f9 = {FloatRegisters::f9,
-                                     FloatRegisters::Double};
-static constexpr FloatRegister f10 = {FloatRegisters::f10,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f11 = {FloatRegisters::f11,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f12 = {FloatRegisters::f12,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f13 = {FloatRegisters::f13,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f14 = {FloatRegisters::f14,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f15 = {FloatRegisters::f15,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f16 = {FloatRegisters::f16,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f17 = {FloatRegisters::f17,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f18 = {FloatRegisters::f18,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f19 = {FloatRegisters::f19,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f20 = {FloatRegisters::f20,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f21 = {FloatRegisters::f21,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f22 = {FloatRegisters::f22,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f23 = {FloatRegisters::f23,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f24 = {FloatRegisters::f24,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f25 = {FloatRegisters::f25,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f26 = {FloatRegisters::f26,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f27 = {FloatRegisters::f27,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f28 = {FloatRegisters::f28,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f29 = {FloatRegisters::f29,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f30 = {FloatRegisters::f30,
-                                      FloatRegisters::Double};
-static constexpr FloatRegister f31 = {FloatRegisters::f31,
-                                      FloatRegisters::Double};
+static constexpr FloatRegister f0{FloatRegisters::f0, FloatRegisters::Double};
+static constexpr FloatRegister f1{FloatRegisters::f1, FloatRegisters::Double};
+static constexpr FloatRegister f2{FloatRegisters::f2, FloatRegisters::Double};
+static constexpr FloatRegister f3{FloatRegisters::f3, FloatRegisters::Double};
+static constexpr FloatRegister f4{FloatRegisters::f4, FloatRegisters::Double};
+static constexpr FloatRegister f5{FloatRegisters::f5, FloatRegisters::Double};
+static constexpr FloatRegister f6{FloatRegisters::f6, FloatRegisters::Double};
+static constexpr FloatRegister f7{FloatRegisters::f7, FloatRegisters::Double};
+static constexpr FloatRegister f8{FloatRegisters::f8, FloatRegisters::Double};
+static constexpr FloatRegister f9{FloatRegisters::f9, FloatRegisters::Double};
+static constexpr FloatRegister f10{FloatRegisters::f10, FloatRegisters::Double};
+static constexpr FloatRegister f11{FloatRegisters::f11, FloatRegisters::Double};
+static constexpr FloatRegister f12{FloatRegisters::f12, FloatRegisters::Double};
+static constexpr FloatRegister f13{FloatRegisters::f13, FloatRegisters::Double};
+static constexpr FloatRegister f14{FloatRegisters::f14, FloatRegisters::Double};
+static constexpr FloatRegister f15{FloatRegisters::f15, FloatRegisters::Double};
+static constexpr FloatRegister f16{FloatRegisters::f16, FloatRegisters::Double};
+static constexpr FloatRegister f17{FloatRegisters::f17, FloatRegisters::Double};
+static constexpr FloatRegister f18{FloatRegisters::f18, FloatRegisters::Double};
+static constexpr FloatRegister f19{FloatRegisters::f19, FloatRegisters::Double};
+static constexpr FloatRegister f20{FloatRegisters::f20, FloatRegisters::Double};
+static constexpr FloatRegister f21{FloatRegisters::f21, FloatRegisters::Double};
+static constexpr FloatRegister f22{FloatRegisters::f22, FloatRegisters::Double};
+static constexpr FloatRegister f23{FloatRegisters::f23, FloatRegisters::Double};
+static constexpr FloatRegister f24{FloatRegisters::f24, FloatRegisters::Double};
+static constexpr FloatRegister f25{FloatRegisters::f25, FloatRegisters::Double};
+static constexpr FloatRegister f26{FloatRegisters::f26, FloatRegisters::Double};
+static constexpr FloatRegister f27{FloatRegisters::f27, FloatRegisters::Double};
+static constexpr FloatRegister f28{FloatRegisters::f28, FloatRegisters::Double};
+static constexpr FloatRegister f29{FloatRegisters::f29, FloatRegisters::Double};
+static constexpr FloatRegister f30{FloatRegisters::f30, FloatRegisters::Double};
+static constexpr FloatRegister f31{FloatRegisters::f31, FloatRegisters::Double};
 
 // MIPS64 CPUs can only load multibyte data that is "naturally"
 // eight-byte-aligned, sp register should be sixteen-byte-aligned.

@@ -1,0 +1,214 @@
+[
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": 1775602,
+          "id": 1699069,
+          "internal_id": 1958097,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | Test timed out -",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1775602,
+          "id": 1992802,
+          "internal_id": 1967959,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Perma [tier 2] browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | single tracking bug",
+          "whiteboard": "[collect_confirm_failure]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1775602,
+          "id": 1712870,
+          "internal_id": 1957345,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | application terminated with exit code 1",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1775602,
+          "internal_id": 1775602,
+          "keywords": "intermittent-failure,intermittent-testcase,leave-open",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 242,
+    "failure_new_in_rev": false,
+    "line_number": 1596,
+    "path_end": "browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js",
+    "search": "TEST-UNEXPECTED-FAIL | browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | Uncaught exception in test bound test_with_newtabpage_disabled - at chrome://mochitests/content/browser/browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js:258 - TypeError: can't access property \"firstElementChild\", content.document.body is null",
+    "search_terms": ["browser_aboutNewTab_bookmarksToolbar.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": 1775602,
+          "id": 1699069,
+          "internal_id": 1958097,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | Test timed out -",
+          "whiteboard": ""
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1775602,
+          "id": 1992802,
+          "internal_id": 1967959,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Perma [tier 2] browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | single tracking bug",
+          "whiteboard": "[collect_confirm_failure]"
+        },
+        {
+          "crash_signature": "",
+          "dupe_of": 1775602,
+          "id": 1712870,
+          "internal_id": 1957345,
+          "keywords": "intermittent-failure",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | application terminated with exit code 1",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1775602,
+          "internal_id": 1775602,
+          "keywords": "intermittent-failure,intermittent-testcase,leave-open",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ]
+    },
+    "counter": 242,
+    "failure_new_in_rev": false,
+    "line_number": 1620,
+    "path_end": "browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js",
+    "search": "TEST-UNEXPECTED-FAIL | browser/base/content/test/about/browser_aboutNewTab_bookmarksToolbar.js | Found an unexpected tab at the end of test run: about:newtab -",
+    "search_terms": ["browser_aboutNewTab_bookmarksToolbar.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": 1877642,
+          "id": 1784875,
+          "internal_id": 1959044,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent  dom/html/test/browser_fullscreen-tab-close-race.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1877642,
+          "internal_id": 1877642,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent dom/base/test/fullscreen/browser_fullscreen-tab-close-race.js | single tracking bug",
+          "whiteboard": "[stockwell disabled]"
+        }
+      ]
+    },
+    "counter": 41,
+    "failure_new_in_rev": false,
+    "line_number": 8678,
+    "path_end": "dom/base/test/fullscreen/browser_fullscreen-tab-close-race.js",
+    "search": "TEST-UNEXPECTED-FAIL | dom/base/test/fullscreen/browser_fullscreen-tab-close-race.js | Test timed out -",
+    "search_terms": ["browser_fullscreen-tab-close-race.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [
+        {
+          "crash_signature": "",
+          "dupe_of": 1877642,
+          "id": 1784875,
+          "internal_id": 1959044,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "DUPLICATE",
+          "status": "RESOLVED",
+          "summary": "Intermittent  dom/html/test/browser_fullscreen-tab-close-race.js | single tracking bug",
+          "whiteboard": ""
+        }
+      ],
+      "open_recent": [
+        {
+          "crash_signature": "",
+          "dupe_of": null,
+          "id": 1877642,
+          "internal_id": 1877642,
+          "keywords": "intermittent-failure,intermittent-testcase",
+          "occurrences": null,
+          "resolution": "",
+          "status": "REOPENED",
+          "summary": "Intermittent dom/base/test/fullscreen/browser_fullscreen-tab-close-race.js | single tracking bug",
+          "whiteboard": "[stockwell disabled]"
+        }
+      ]
+    },
+    "counter": 41,
+    "failure_new_in_rev": false,
+    "line_number": 8698,
+    "path_end": "dom/base/test/fullscreen/browser_fullscreen-tab-close-race.js",
+    "search": "TEST-UNEXPECTED-FAIL | dom/base/test/fullscreen/browser_fullscreen-tab-close-race.js | Application shut down (without crashing) in the middle of a test!",
+    "search_terms": ["browser_fullscreen-tab-close-race.js"]
+  },
+  {
+    "bugs": {
+      "all_others": [],
+      "open_recent": []
+    },
+    "counter": 0,
+    "failure_new_in_rev": false,
+    "line_number": 14877,
+    "path_end": null,
+    "search": "[taskcluster:error] <nil>",
+    "search_terms": ["[taskcluster:error] <nil>"]
+  }
+]

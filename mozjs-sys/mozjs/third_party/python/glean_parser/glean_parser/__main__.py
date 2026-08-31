@@ -18,7 +18,6 @@ import json
 import glean_parser
 
 
-from . import coverage as mod_coverage
 from . import data_review as mod_data_review
 from . import lint
 from . import translate as mod_translate
@@ -166,7 +165,15 @@ def check(schema):
     is_flag=True,
     help=("Require tags to be specified for metrics and pings."),
 )
-def glinter(input, allow_reserved, allow_missing_files, require_tags):
+@click.option(
+    "--expire-by-version",
+    help="Expire metrics by version, with the provided major version.",
+    type=click.INT,
+    required=False,
+)
+def glinter(
+    input, allow_reserved, allow_missing_files, require_tags, expire_by_version
+):
     """
     Runs a linter over the metrics.
     """
@@ -177,6 +184,7 @@ def glinter(input, allow_reserved, allow_missing_files, require_tags):
                 "allow_reserved": allow_reserved,
                 "allow_missing_files": allow_missing_files,
                 "require_tags": require_tags,
+                "expire_by_version": expire_by_version,
             },
         )
     )
@@ -244,57 +252,6 @@ def dump(input, allow_reserved, allow_missing_files, require_tags):
 
 
 @click.command()
-@click.option(
-    "-c",
-    "--coverage_file",
-    type=click.Path(exists=True, dir_okay=False, file_okay=True, readable=True),
-    required=True,
-    multiple=True,
-)
-@click.argument(
-    "metrics_files",
-    type=click.Path(exists=True, dir_okay=False, file_okay=True, readable=True),
-    nargs=-1,
-)
-@click.option(
-    "-o",
-    "--output",
-    type=click.Path(exists=False, dir_okay=False, file_okay=True, writable=True),
-    required=True,
-)
-@click.option(
-    "--format",
-    "-f",
-    type=click.Choice(list(mod_coverage.OUTPUTTERS.keys())),
-    required=True,
-)
-@click.option(
-    "--allow-reserved",
-    is_flag=True,
-    help=(
-        "If provided, allow the use of reserved fields. "
-        "Should only be set when building the Glean library itself."
-    ),
-)
-def coverage(coverage_file, metrics_files, format, output, allow_reserved):
-    """
-    Produce a coverage analysis file given raw coverage output and a set of
-    metrics.yaml files.
-    """
-    sys.exit(
-        mod_coverage.coverage(
-            [Path(x) for x in coverage_file],
-            [Path(x) for x in metrics_files],
-            format,
-            Path(output),
-            {
-                "allow_reserved": allow_reserved,
-            },
-        )
-    )
-
-
-@click.command()
 @click.argument("bug", type=str)
 @click.argument(
     "metrics_files",
@@ -327,7 +284,6 @@ main.add_command(translate)
 main.add_command(check)
 main.add_command(glinter)
 main.add_command(dump)
-main.add_command(coverage)
 main.add_command(data_review_request, "data-review")
 
 

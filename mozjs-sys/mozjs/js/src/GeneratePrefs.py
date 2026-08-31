@@ -4,8 +4,9 @@
 
 # This script generates js/public/PrefsGenerated.h from StaticPrefList.yaml
 
+import io
+
 import buildconfig
-import six
 import yaml
 from mozbuild.preprocessor import Preprocessor
 
@@ -39,7 +40,7 @@ def load_yaml(yaml_path):
     if buildconfig.substs.get("MOZ_DEBUG"):
         pp.context["DEBUG"] = "1"
 
-    pp.out = six.StringIO()
+    pp.out = io.StringIO()
     pp.do_filter("substitution")
     pp.do_include(yaml_path)
     contents = pp.out.getvalue()
@@ -56,7 +57,7 @@ def get_cpp_type(type):
         return "uint32_t"
     if type in ("int32_t", "RelaxedAtomicInt32"):
         return "int32_t"
-    raise Exception("Unexpected type: {}".format(type))
+    raise Exception(f"Unexpected type: {type}")
 
 
 # Returns a C++ expression for the default pref value. Booleans in the YAML file
@@ -106,6 +107,16 @@ def generate_prefs_header(c_out, yaml_path):
 
         is_startup_pref = pref["set_spidermonkey_pref"] == "startup"
 
+        fuzzing_safe = pref.get("fuzzing_safe", True)
+        if not isinstance(fuzzing_safe, bool):
+            raise Exception(f"fuzzing_safe must be a boolean for {pref['name']}")
+
+        # Prefs that are enabled by default must be fuzzing-safe.
+        if pref["value"] is True and not fuzzing_safe:
+            raise Exception(
+                f"Pref {pref['name']} is enabled by default and must be fuzzing_safe"
+            )
+
         cpp_name = name.replace(".", "_").replace("-", "_")
         type = get_cpp_type(pref["type"])
         init_value = get_cpp_init_value(pref["value"])
@@ -116,20 +127,20 @@ def generate_prefs_header(c_out, yaml_path):
         # after startup.
         field_type = type
         if not is_startup_pref:
-            field_type = "mozilla::Atomic<{}, mozilla::Relaxed>".format(field_type)
-        class_fields.append("static {} {}_;".format(field_type, cpp_name))
+            field_type = f"mozilla::Atomic<{field_type}, mozilla::Relaxed>"
+        class_fields.append(f"static {field_type} {cpp_name}_;")
         class_fields_inits.append(
-            "{} JS::Prefs::{}_{{{}}};".format(field_type, cpp_name, init_value)
+            f"{field_type} JS::Prefs::{cpp_name}_{{{init_value}}};"
         )
 
         is_startup_pref_bool = "true" if is_startup_pref else "false"
+        fuzzing_safe_bool = "true" if fuzzing_safe else "false"
 
         # Generate a MACRO invocation like this:
-        #   MACRO("arraybuffer_transfer", arraybuffer_transfer, bool, setAtStartup_arraybuffer_transfer, true)
+        #   MACRO("arraybuffer_transfer", arraybuffer_transfer, bool, setAtStartup_arraybuffer_transfer, true, true)
         macro_entries.append(
-            'MACRO("{}", {}, {}, {}, {})'.format(
-                name, cpp_name, type, setter_name, is_startup_pref_bool
-            )
+            f'MACRO("{name}", {cpp_name}, {type}, {setter_name}, '
+            f"{is_startup_pref_bool}, {fuzzing_safe_bool})"
         )
 
         # Generate a C++ statement to set the JS pref based on Gecko's StaticPrefs:
@@ -138,9 +149,7 @@ def generate_prefs_header(c_out, yaml_path):
         if pref.get("do_not_use_directly", False):
             browser_pref_cpp_name += "_DoNotUseDirectly"
 
-        statement = "JS::Prefs::{}(mozilla::StaticPrefs::{}());".format(
-            setter_name, browser_pref_cpp_name
-        )
+        statement = f"JS::Prefs::{setter_name}(mozilla::StaticPrefs::{browser_pref_cpp_name}());"
         browser_set_statements.append(statement)
 
         # For non-startup prefs, also generate code to update the pref after startup.
@@ -150,25 +159,23 @@ def generate_prefs_header(c_out, yaml_path):
     contents = ""
 
     contents += "#define JS_PREF_CLASS_FIELDS \\\n"
-    contents += "".join(map(lambda s: "  {}\\\n".format(s), class_fields))
+    contents += "".join(map(lambda s: f"  {s}\\\n", class_fields))
     contents += "\n\n"
 
     contents += "#define JS_PREF_CLASS_FIELDS_INIT \\\n"
-    contents += "".join(map(lambda s: "  {}\\\n".format(s), class_fields_inits))
+    contents += "".join(map(lambda s: f"  {s}\\\n", class_fields_inits))
     contents += "\n\n"
 
     contents += "#define FOR_EACH_JS_PREF(MACRO) \\\n"
-    contents += "".join(map(lambda s: "  {}\\\n".format(s), macro_entries))
+    contents += "".join(map(lambda s: f"  {s}\\\n", macro_entries))
     contents += "\n\n"
 
     contents += "#define SET_JS_PREFS_FROM_BROWSER_PREFS \\\n"
-    contents += "".join(map(lambda s: "  {}\\\n".format(s), browser_set_statements))
+    contents += "".join(map(lambda s: f"  {s}\\\n", browser_set_statements))
     contents += "\n\n"
 
     contents += "#define SET_NON_STARTUP_JS_PREFS_FROM_BROWSER_PREFS \\\n"
-    contents += "".join(
-        map(lambda s: "  {}\\\n".format(s), browser_set_non_startup_statements)
-    )
+    contents += "".join(map(lambda s: f"  {s}\\\n", browser_set_non_startup_statements))
     contents += "\n\n"
 
     c_out.write(

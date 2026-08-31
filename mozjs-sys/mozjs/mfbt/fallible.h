@@ -9,10 +9,13 @@
 
 /* Explicit fallible allocation
  *
+ * mozilla::fallible_t and mozilla::fallible_t provide aliases to
+ * std::nothrow_t and std::nothrow from the C++ standard header <new>.
+ *
  * Memory allocation (normally) defaults to abort in case of failed
  * allocation. That is, it never returns NULL, and crashes instead.
  *
- * Code can explicitely request for fallible memory allocation thanks
+ * Code can explicitly request for fallible memory allocation thanks
  * to the declarations below.
  *
  * The typical use of the mozilla::fallible const is with placement new,

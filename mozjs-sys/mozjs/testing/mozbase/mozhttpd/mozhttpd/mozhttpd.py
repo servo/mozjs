@@ -15,13 +15,11 @@ import threading
 import time
 import traceback
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
+from http.server import HTTPServer, SimpleHTTPRequestHandler
+from socketserver import ThreadingMixIn
+from urllib.parse import unquote, urlsplit
 
 import moznetwork
-from six import ensure_binary, iteritems
-from six.moves.BaseHTTPServer import HTTPServer
-from six.moves.SimpleHTTPServer import SimpleHTTPRequestHandler
-from six.moves.socketserver import ThreadingMixIn
-from six.moves.urllib.parse import unquote, urlsplit
 
 
 class EasyServer(ThreadingMixIn, HTTPServer):
@@ -44,7 +42,7 @@ class EasyServer(ThreadingMixIn, HTTPServer):
             traceback.print_exc()
 
 
-class Request(object):
+class Request:
     """Details of a request."""
 
     # attributes from urlsplit that this class also sets
@@ -79,9 +77,11 @@ class RequestHandler(SimpleHTTPRequestHandler):
 
     def _try_handler(self, method):
         if self.log_requests:
-            self.request_log.append(
-                {"method": method, "path": self.request.path, "time": time.time()}
-            )
+            self.request_log.append({
+                "method": method,
+                "path": self.request.path,
+                "time": time.time(),
+            })
 
         handlers = [
             handler for handler in self.urlhandlers if handler["method"] == method
@@ -93,10 +93,12 @@ class RequestHandler(SimpleHTTPRequestHandler):
                     self.request, *m.groups()
                 )
                 self.send_response(response_code)
-                for keyword, value in iteritems(headerdict):
+                for keyword, value in headerdict.items():
                     self.send_header(keyword, value)
                 self.end_headers()
-                self.wfile.write(ensure_binary(data))
+                if isinstance(data, str):
+                    data = data.encode()
+                self.wfile.write(data)
 
                 return True
 
@@ -107,7 +109,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
         using self.path_mappings and self.docroot.
         Return (url_path, disk_path)."""
         path_components = list(filter(None, self.request.path.split("/")))
-        for prefix, disk_path in iteritems(self.path_mappings):
+        for prefix, disk_path in self.path_mappings.items():
             prefix_components = list(filter(None, prefix.split("/")))
             if len(path_components) < len(prefix_components):
                 continue
@@ -182,7 +184,7 @@ class RequestHandler(SimpleHTTPRequestHandler):
         pass
 
 
-class MozHttpd(object):
+class MozHttpd:
     """
     :param host: Host from which to serve (default 127.0.0.1)
     :param port: Port from which to serve (default 8888)

@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -15,6 +13,7 @@
 #include "frontend/Stencil.h"       // js::frontend::StencilModuleEntry
 #include "frontend/TaggedParserAtomIndexHasher.h"  // frontend::TaggedParserAtomIndexHasher
 #include "js/GCVector.h"                           // JS::GCVector
+#include "js/HashTable.h"
 
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSAtom;
@@ -44,7 +43,13 @@ class MOZ_STACK_CLASS ModuleBuilder {
   bool processExport(frontend::ParseNode* exportNode);
   bool processExportFrom(frontend::BinaryNode* exportNode);
 
-  bool hasExportedName(frontend::TaggedParserAtomIndex name) const;
+  enum class NoteExportedNameResult {
+    OutOfMemory,
+    Success,
+    AlreadyDeclared,
+  };
+
+  NoteExportedNameResult noteExportedName(frontend::TaggedParserAtomIndex name);
 
   bool buildTables(frontend::StencilModuleMetadata& metadata);
 
@@ -62,6 +67,10 @@ class MOZ_STACK_CLASS ModuleBuilder {
 
   using AtomSet = HashSet<frontend::TaggedParserAtomIndex,
                           frontend::TaggedParserAtomIndexHasher>;
+  using ModuleRequestMap =
+      HashMap<frontend::StencilModuleRequest, uint32_t,
+              frontend::StencilModuleRequestHasher, js::SystemAllocPolicy>;
+  using RequestedModuleSet = HashSet<uint32_t, DefaultHasher<uint32_t>>;
   using ExportEntryVector = Vector<frontend::StencilModuleEntry>;
   using ImportEntryMap =
       HashMap<frontend::TaggedParserAtomIndex, frontend::StencilModuleEntry,
@@ -72,7 +81,9 @@ class MOZ_STACK_CLASS ModuleBuilder {
 
   // These are populated while parsing.
   ModuleRequestVector moduleRequests_;
-  AtomSet requestedModuleSpecifiers_;
+  ModuleRequestMap moduleRequestIndexes_;
+  // The set contains the ModuleRequestIndexes in requestedModules_.
+  RequestedModuleSet requestedModuleIndexes_;
   RequestedModuleVector requestedModules_;
   ImportEntryMap importEntries_;
   ExportEntryVector exportEntries_;
@@ -90,7 +101,8 @@ class MOZ_STACK_CLASS ModuleBuilder {
 
   MaybeModuleRequestIndex appendModuleRequest(
       frontend::TaggedParserAtomIndex specifier,
-      frontend::ListNode* attributeList);
+      frontend::ListNode* attributeList,
+      ImportPhase phase = ImportPhase::Evaluation);
 
   bool appendExportEntry(frontend::TaggedParserAtomIndex exportName,
                          frontend::TaggedParserAtomIndex localName,
@@ -106,10 +118,6 @@ class MOZ_STACK_CLASS ModuleBuilder {
 
   [[nodiscard]] bool isAttributeSupported(frontend::TaggedParserAtomIndex key);
 };
-
-template <typename T>
-ArrayObject* CreateArray(JSContext* cx,
-                         const JS::Rooted<JS::GCVector<T>>& vector);
 
 }  // namespace js
 

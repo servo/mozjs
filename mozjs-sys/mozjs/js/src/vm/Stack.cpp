@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,11 +7,11 @@
 #include "mozilla/Maybe.h"  // mozilla::Maybe
 
 #include <algorithm>  // std::max
-#include <iterator>   // std::size
 #include <stddef.h>   // size_t
 #include <stdint.h>   // uint8_t, uint32_t
 
 #include "gc/Tracer.h"  // js::TraceRoot
+#include "jit/InlineScriptTree.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitRuntime.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_*
@@ -150,7 +148,8 @@ static inline void AssertScopeMatchesEnvironment(Scope* scope,
   //
   // In the case of a syntactic env chain, the outermost env is always a
   // GlobalObject.
-  MOZ_ASSERT(env->is<GlobalObject>() || IsGlobalLexicalEnvironment(env) ||
+  MOZ_ASSERT(env->is<GlobalObject>() ||
+             env->is<GlobalLexicalEnvironmentObject>() ||
              env->is<DebugEnvironmentProxy>());
 #endif
 }
@@ -373,20 +372,19 @@ void InterpreterFrame::traceValues(JSTracer* trc, unsigned start,
   }
 }
 
-static void TraceInterpreterActivation(JSTracer* trc,
-                                       InterpreterActivation* act) {
-  for (InterpreterFrameIterator frames(act); !frames.done(); ++frames) {
+void InterpreterActivation::trace(JSTracer* trc) {
+  traceCommon(trc);
+
+  for (InterpreterFrameIterator frames(this); !frames.done(); ++frames) {
     InterpreterFrame* fp = frames.frame();
     fp->trace(trc, frames.sp(), frames.pc());
   }
 }
 
-void js::TraceInterpreterActivations(JSContext* cx, JSTracer* trc) {
+void js::TraceActivations(JSContext* cx, JSTracer* trc) {
   for (ActivationIterator iter(cx); !iter.done(); ++iter) {
     Activation* act = iter.activation();
-    if (act->isInterpreter()) {
-      TraceInterpreterActivation(trc, act->asInterpreter());
-    }
+    act->trace(trc);
   }
 }
 
@@ -636,16 +634,20 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(
   void* stackAddr = stackAddress();
 
   MOZ_DIAGNOSTIC_ASSERT(endStackAddress_);
+#ifndef ENABLE_WASM_JSPI
+  // The stack addresses are monotonically increasing, except when
+  // cont stacks are present (e.g. when JS PI is enabled).
   MOZ_DIAGNOSTIC_ASSERT(stackAddr >= endStackAddress_);
+#endif
 
   if (isWasm()) {
     Frame frame;
     switch (wasmIter().category()) {
-      case wasm::ProfilingFrameIterator::Baseline: {
+      case wasm::ProfilingFrameIterator::Category::Baseline: {
         frame.kind = FrameKind::Frame_WasmBaseline;
         break;
       }
-      case wasm::ProfilingFrameIterator::Ion: {
+      case wasm::ProfilingFrameIterator::Category::Ion: {
         frame.kind = FrameKind::Frame_WasmIon;
         break;
       }
@@ -662,6 +664,9 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(
     frame.interpreterScript = nullptr;
     // TODO: get the realm ID of wasm frames. Bug 1596235.
     frame.realmID = 0;
+    frame.sourceId = 0;
+    frame.line = 0;
+    frame.column = 0;
     return mozilla::Some(frame);
   }
 
@@ -685,8 +690,8 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(
   // fallible ones.  The proper solution to this problem is to fix all
   // the jitcode to use frame-pointers and reliably walk the stack with those.
   if (samplePositionInProfilerBuffer_) {
-    *entry = table->lookupForSampler(returnAddr, cx_->runtime(),
-                                     *samplePositionInProfilerBuffer_);
+    *entry =
+        table->lookupForSampler(returnAddr, *samplePositionInProfilerBuffer_);
   } else {
     *entry = table->lookup(returnAddr);
   }
@@ -704,7 +709,7 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(
   Frame frame;
   if ((*entry)->isBaselineInterpreter()) {
     frame.kind = Frame_BaselineInterpreter;
-  } else if ((*entry)->isBaseline()) {
+  } else if ((*entry)->isBaseline() || (*entry)->isRealmIndependentShared()) {
     frame.kind = Frame_Baseline;
   } else {
     MOZ_ASSERT((*entry)->isIon() || (*entry)->isIonIC());
@@ -713,8 +718,9 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(
   frame.stackAddress = stackAddr;
   if ((*entry)->isBaselineInterpreter()) {
     frame.label = jsJitIter().baselineInterpreterLabel();
-    jsJitIter().baselineInterpreterScriptPC(
-        &frame.interpreterScript, &frame.interpreterPC_, &frame.realmID);
+    jsJitIter().baselineInterpreterScriptPC(&frame.interpreterScript,
+                                            &frame.interpreterPC_,
+                                            &frame.realmID, &frame.sourceId);
     MOZ_ASSERT(frame.interpreterScript);
     MOZ_ASSERT(frame.interpreterPC_);
   } else {
@@ -722,9 +728,14 @@ JS::ProfilingFrameIterator::getPhysicalFrameAndEntry(
     frame.returnAddress_ = returnAddr;
     frame.label = nullptr;
     frame.realmID = 0;
+    frame.sourceId = 0;
   }
   frame.activation = activation_;
   frame.endStackAddress = endStackAddress_;
+  // Initialize line and column info (will be populated later during
+  // extractStack)
+  frame.line = 0;
+  frame.column = 0;
   return mozilla::Some(frame);
 }
 
@@ -754,18 +765,21 @@ uint32_t JS::ProfilingFrameIterator::extractStack(Frame* frames,
     return 1;
   }
 
-  // Extract the stack for the entry.  Assume maximum inlining depth is <64
-  const char* labels[64];
+  // Extract the stack for the entry.
+  jit::CallStackFrameInfo frameInfos[jit::InlineScriptTree::MaxDepth];
   uint32_t depth = entry->callStackAtAddr(cx_->runtime(),
                                           jsJitIter().resumePCinCurrentFrame(),
-                                          labels, std::size(labels));
-  MOZ_ASSERT(depth < std::size(labels));
+                                          frameInfos, std::size(frameInfos));
+  MOZ_ASSERT(depth <= std::size(frameInfos));
   for (uint32_t i = 0; i < depth; i++) {
     if (offset + i >= end) {
       return i;
     }
     frames[offset + i] = physicalFrame.value();
-    frames[offset + i].label = labels[i];
+    frames[offset + i].label = frameInfos[i].label;
+    frames[offset + i].sourceId = frameInfos[i].sourceId;
+    frames[offset + i].line = frameInfos[i].line;
+    frames[offset + i].column = frameInfos[i].column;
   }
 
   return depth;

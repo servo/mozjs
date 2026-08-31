@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -16,6 +14,9 @@ MFBT_API void SetWin32kLockedDownInPolicy();
 MFBT_API bool IsDynamicCodeDisabled();
 MFBT_API bool IsEafPlusEnabled();
 MFBT_API bool IsUserShadowStackEnabled();
+MFBT_API bool IsPreferLoadFromSystem32Available();
+MFBT_API bool IsPreferLoadFromSystem32Enabled();
+MFBT_API bool EnablePreferLoadFromSystem32();
 
 }  // namespace mozilla
 

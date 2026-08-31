@@ -34,7 +34,7 @@ class Layer(MachLogger):
         if name.startswith("--"):
             name = name[2:]
         if not name.startswith(self.name):
-            name = "%s-%s" % (self.name, name)
+            name = f"{self.name}-{name}"
         return name.replace("-", "_")
 
     def get_arg_names(self):
@@ -44,27 +44,25 @@ class Layer(MachLogger):
         """Sets the argument"""
         name = self._normalize_arg(name)
         if name not in self.get_arg_names():
-            raise KeyError(
-                "%r tried to set %r, but does not own it" % (self.name, name)
-            )
+            raise KeyError(f"{self.name!r} tried to set {name!r}, but does not own it")
         return self.env.set_arg(name, value)
 
     def get_arg(self, name, default=None):
         return self.env.get_arg(name, default, self)
 
     def __enter__(self):
-        self.info("Running %s:setup" % self.name)
+        self.info(f"Running {self.name}:setup")
         self.setup()
         return self
 
     def __exit__(self, type, value, traceback):
         # XXX deal with errors here
-        self.info("Running %s:teardown" % self.name)
+        self.info(f"Running {self.name}:teardown")
         self.teardown()
 
     def __call__(self, metadata):
         has_exc_handler = self.env.hooks.exists("on_exception")
-        self.info("Running %s:run" % self.name)
+        self.info(f"Running {self.name}:run")
         try:
             metadata = self.run(metadata)
         except Exception as e:
@@ -92,7 +90,7 @@ class Layer(MachLogger):
 
 class Layers(Layer):
     def __init__(self, env, mach_command, factories):
-        super(Layers, self).__init__(env, mach_command)
+        super().__init__(env, mach_command)
 
         def _active(layer):
             # if it's activated by default, see if we need to deactivate
@@ -144,12 +142,12 @@ class Layers(Layer):
 
     def setup(self):
         for layer in self.layers:
-            self.debug("Running %s:setup" % layer.name)
+            self.debug(f"Running {layer.name}:setup")
             layer.setup()
 
     def teardown(self):
         for layer in self.layers:
-            self.debug("Running %s:teardown" % layer.name)
+            self.debug(f"Running {layer.name}:teardown")
             layer.teardown()
 
     def __call__(self, metadata):
@@ -167,9 +165,7 @@ class Layers(Layer):
                 break
 
         if not found:
-            raise KeyError(
-                "%r tried to set %r, but does not own it" % (self.name, name)
-            )
+            raise KeyError(f"{self.name!r} tried to set {name!r}, but does not own it")
 
         return self.env.set_arg(name, value)
 

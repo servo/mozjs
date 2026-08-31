@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,10 +8,9 @@
  * and stdio.h/stdlib.h.
  */
 
-#ifndef FuzzerTestHarness_h__
-#define FuzzerTestHarness_h__
+#ifndef FuzzerTestHarness_h_
+#define FuzzerTestHarness_h_
 
-#include "mozilla/ArrayUtils.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/IntegerPrintfMacros.h"
 
@@ -136,19 +134,18 @@ class ScopedXPCOM final : public nsIDirectoryServiceProvider2 {
   }
 
   already_AddRefed<nsIFile> GetGREDirectory() {
-    if (mGRED) {
-      nsCOMPtr<nsIFile> copy = mGRED;
-      return copy.forget();
+    if (!mGRED) {
+      char* env = PR_GetEnv("MOZ_XRE_DIR");
+      if (!env) {
+        return nullptr;
+      }
+
+      nsresult rv =
+          NS_NewNativeLocalFile(nsDependentCString(env), getter_AddRefs(mGRED));
+      NS_ENSURE_SUCCESS(rv, nullptr);
     }
 
-    char* env = PR_GetEnv("MOZ_XRE_DIR");
-    nsCOMPtr<nsIFile> greD;
-    if (env) {
-      NS_NewLocalFile(NS_ConvertUTF8toUTF16(env), false, getter_AddRefs(greD));
-    }
-
-    mGRED = greD;
-    return greD.forget();
+    return do_AddRef(mGRED);
   }
 
   already_AddRefed<nsIFile> GetGREBinDirectory() {
@@ -254,4 +251,4 @@ ScopedXPCOM::Release() { return 1; }
 
 }  // namespace
 
-#endif  // FuzzerTestHarness_h__
+#endif  // FuzzerTestHarness_h_

@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -7,12 +5,13 @@
 #ifndef mozilla_WasiAtomic_h
 #define mozilla_WasiAtomic_h
 
+#include <cstddef>  // For _LIBCPP_VERSION and ptrdiff_t
+
 // Clang >= 14 supports <atomic> for wasm targets.
 #if _LIBCPP_VERSION >= 14000
 #  include <atomic>
 #else
 
-#  include <cstddef>  // For ptrdiff_t
 #  include <cstdint>
 
 // WASI doesn't support <atomic> and we use it as single-threaded for now.

@@ -29,8 +29,8 @@ Config file format
 build-clang.py accepts a JSON config format with the following fields:
 
 * stages: Use 1, 2, 3 or 4 to select different compiler stages.  The default is 2.
-* cc: Path to the bootsraping C Compiler.
-* cxx: Path to the bootsraping C++ Compiler.
+* cc: Path to the bootstraping C Compiler.
+* cxx: Path to the bootstraping C++ Compiler.
 * as: Path to the assembler tool.
 * ar: Path to the library archiver tool.
 * ranlib: Path to the ranlib tool (optional).
@@ -50,4 +50,23 @@ Environment Variables
 
 The following environment variables are used for cross-compile builds targeting OS X on Linux.
 
-* CROSS_SYSROOT: Path to the OS X SDK directory for cross compile builds.
+* OSX_SYSROOT: Path to the OS X SDK directory for cross compile builds.
+
+Writing Patches
+---------------
+
+Patches to Clang should be registered in ``clang-$n.json`` for patches to Clang ``$n.x``. They are applied in order.
+
+When backporting patches from upstream, please use the output of ``git describe $rev`` to name the patch file, where ``$rev`` is the original revision upstream. Please apply the patch to all the clang versions older to the version the patch is backported from that we have a ``clang-$n.json`` file for.
+
+When reverting a commit from upstream, say ``$reverted_rev``, please name the patch ``revert-$(git describe $reverted_rev)``.
+
+When adjusting a patch for a specific version of Clang, please suffix the patch with ``_clang_$n.patch``, where ``$n`` is the first version of Clang for which that patch needs to be adjusted. In the very common situation where the patch needs to be adjusted on the ``main`` branch, use the current development version number of Clang as ``$n``.
+
+Patches in ``clang-$n.json`` are ordered following the following rules:
+
+1. Patches that start with ``revert-llvmorg`` are in *reverse* `natural sort order <https://en.wikipedia.org/wiki/Natural_sort_order>`_.
+2. Patches that start with ``llvmorg`` are in natural sort order.
+3. Patches that correspond to an upstream *revert* come before the *cherry-picked* ones.
+
+Other patches do not follow any specific ordering rule.

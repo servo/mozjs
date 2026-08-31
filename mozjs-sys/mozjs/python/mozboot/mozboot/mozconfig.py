@@ -28,7 +28,7 @@ class MozconfigFindException(Exception):
     """Raised when a mozconfig location is not defined properly."""
 
 
-class MozconfigBuilder(object):
+class MozconfigBuilder:
     def __init__(self):
         self._lines = []
 
@@ -117,7 +117,7 @@ def find_mozconfig(topsrcdir: Union[str, Path], env=os.environ):
 
         if not env_path.is_file():
             raise MozconfigFindException(
-                "MOZCONFIG environment variable refers to a " f"non-file: {env_path}"
+                f"MOZCONFIG environment variable refers to a non-file: {env_path}"
             )
 
     srcdir_paths = [topsrcdir / p for p in DEFAULT_TOPSRCDIR_PATHS]
@@ -133,7 +133,7 @@ def find_mozconfig(topsrcdir: Union[str, Path], env=os.environ):
 
     if env_path is not None:
         path = env_path
-    elif len(existing):
+    elif existing:
         assert len(existing) == 1
         path = existing[0]
 

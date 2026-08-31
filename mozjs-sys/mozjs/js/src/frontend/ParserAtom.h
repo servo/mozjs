@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -45,7 +43,7 @@ namespace js {
 class AtomSet;
 class JS_PUBLIC_API GenericPrinter;
 class LifoAlloc;
-class StringBuffer;
+class StringBuilder;
 
 namespace frontend {
 
@@ -786,7 +784,7 @@ class ParserAtomsTable {
   JSAtom* toWellKnownJSAtom(JSContext* cx, TaggedParserAtomIndex index) const;
 
  public:
-  bool appendTo(StringBuffer& buffer, TaggedParserAtomIndex index) const;
+  bool appendTo(StringBuilder& sb, TaggedParserAtomIndex index) const;
 
  public:
 #if defined(DEBUG) || defined(JS_JITSPEW)

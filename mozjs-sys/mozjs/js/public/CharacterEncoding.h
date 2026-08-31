@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -262,23 +260,12 @@ UTF8CharsToNewTwoByteCharsZ(JSContext* cx, const UTF8Chars& utf8,
                             size_t* outlen, arena_id_t destArenaId);
 
 /*
- * Like UTF8CharsToNewTwoByteCharsZ, but for ConstUTF8CharsZ.
- */
-extern JS_PUBLIC_API TwoByteCharsZ
-UTF8CharsToNewTwoByteCharsZ(JSContext* cx, const ConstUTF8CharsZ& utf8,
-                            size_t* outlen, arena_id_t destArenaId);
-
-/*
  * The same as UTF8CharsToNewTwoByteCharsZ(), except that any malformed UTF-8
  * characters will be replaced by \uFFFD. No exception will be thrown for
  * malformed UTF-8 input.
  */
 extern JS_PUBLIC_API TwoByteCharsZ
 LossyUTF8CharsToNewTwoByteCharsZ(JSContext* cx, const UTF8Chars& utf8,
-                                 size_t* outlen, arena_id_t destArenaId);
-
-extern JS_PUBLIC_API TwoByteCharsZ
-LossyUTF8CharsToNewTwoByteCharsZ(JSContext* cx, const ConstUTF8CharsZ& utf8,
                                  size_t* outlen, arena_id_t destArenaId);
 
 /*
@@ -328,15 +315,6 @@ JS_PUBLIC_API SmallestEncoding FindSmallestEncoding(const UTF8Chars& utf8);
 extern JS_PUBLIC_API Latin1CharsZ
 UTF8CharsToNewLatin1CharsZ(JSContext* cx, const UTF8Chars& utf8, size_t* outlen,
                            arena_id_t destArenaId);
-
-/*
- * Return a null-terminated Latin-1 string copied from the input string,
- * storing its length (excluding null terminator) in |*outlen|.  Non-Latin-1
- * codepoints are replaced by '?'.  Returns Latin1CharsZ() on failure.
- */
-extern JS_PUBLIC_API Latin1CharsZ
-LossyUTF8CharsToNewLatin1CharsZ(JSContext* cx, const UTF8Chars& utf8,
-                                size_t* outlen, arena_id_t destArenaId);
 
 /*
  * Returns true if all characters in the given null-terminated string are

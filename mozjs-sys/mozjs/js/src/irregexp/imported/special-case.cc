@@ -16,6 +16,7 @@
 #include "unicode/uniset.h"
 namespace v8 {
 namespace internal {
+namespace regexp {
 
 icu::UnicodeSet BuildIgnoreSet() {
   icu::UnicodeSet set;
@@ -47,7 +48,7 @@ struct IgnoreSetData {
 };
 
 //static
-const icu::UnicodeSet& RegExpCaseFolding::IgnoreSet() {
+const icu::UnicodeSet& CaseFolding::IgnoreSet() {
   static base::LazyInstance<IgnoreSetData>::type set =
       LAZY_INSTANCE_INITIALIZER;
   return set.Pointer()->set;
@@ -76,13 +77,14 @@ struct SpecialAddSetData {
 };
 
 //static
-const icu::UnicodeSet& RegExpCaseFolding::SpecialAddSet() {
+const icu::UnicodeSet& CaseFolding::SpecialAddSet() {
   static base::LazyInstance<SpecialAddSetData>::type set =
       LAZY_INSTANCE_INITIALIZER;
   return set.Pointer()->set;
 }
 
 
+}  // namespace regexp
 }  // namespace internal
 }  // namespace v8
 #endif  // V8_INTL_SUPPORT

@@ -1,0 +1,4 @@
+requires-python:>=3.9
+# Required by mach ide vscode
+pypi-optional:json5==0.10.0:extended json syntax support disabled
+pypi-optional:taskcluster-taskgraph==24.1.1:toolchain artifacts will not be bootstrapped
