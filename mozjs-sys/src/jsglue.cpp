@@ -140,7 +140,7 @@ class RustJobQueue : public JS::JobQueue {
       // (SavedQueue from C to B). If the SavedQueue from B to A is restored
       // before the SavedQueue from C to B, the embedder will destroy both C and
       // B, but in the end, the queue will be set to B, a freed queue.
-      MOZ_ASSERT(mTraps.popInterruptQueue(mInterruptQueues) == mNewQueue);
+      MOZ_RELEASE_ASSERT(mTraps.popInterruptQueue(mInterruptQueues) == mNewQueue);
 
       *mCurrentQueue = mSavedQueue;
     }
