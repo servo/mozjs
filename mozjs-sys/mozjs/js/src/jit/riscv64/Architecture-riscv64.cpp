@@ -305,24 +305,55 @@ static RVExtensions ComputeRVExtensions() {
   // Simulator supports all RVA23U64 extensions.
   extensions += ExtensionsFromProfile(RVProfile::RVA23U64);
 #elif defined(USE_HWPROBE)
+  // Copies the RISCV_HWPROBE_* bits to allow detecting newer features even if
+  // the toolchain doesn't yet know about them.
+  enum RV_HWProbe : uint64_t {
+    RV_HWPROBE_EXT_ZBA = (1 << 3),
+    RV_HWPROBE_EXT_ZBB = (1 << 4),
+    RV_HWPROBE_EXT_ZBS = (1 << 5),
+    RV_HWPROBE_EXT_ZFHMIN = (1 << 28),
+    RV_HWPROBE_EXT_ZFA = (1ULL << 32),
+    RV_HWPROBE_EXT_ZICOND = (1ULL << 35),
+  };
+
+  // Assert the hardcoded features bits match RISCV_HWPROBE_*.
+#  ifdef RISCV_HWPROBE_EXT_ZBA
+  static_assert(RISCV_HWPROBE_EXT_ZBA == RV_HWPROBE_EXT_ZBA);
+#  endif
+#  ifdef RISCV_HWPROBE_EXT_ZBB
+  static_assert(RISCV_HWPROBE_EXT_ZBB == RV_HWPROBE_EXT_ZBB);
+#  endif
+#  ifdef RISCV_HWPROBE_EXT_ZBS
+  static_assert(RISCV_HWPROBE_EXT_ZBS == RV_HWPROBE_EXT_ZBS);
+#  endif
+#  ifdef RISCV_HWPROBE_EXT_ZFHMIN
+  static_assert(RISCV_HWPROBE_EXT_ZFHMIN == RV_HWPROBE_EXT_ZFHMIN);
+#  endif
+#  ifdef RISCV_HWPROBE_EXT_ZFA
+  static_assert(RISCV_HWPROBE_EXT_ZFA == RV_HWPROBE_EXT_ZFA);
+#  endif
+#  ifdef RISCV_HWPROBE_EXT_ZICOND
+  static_assert(RISCV_HWPROBE_EXT_ZICOND == RV_HWPROBE_EXT_ZICOND);
+#  endif
+
   riscv_hwprobe probe[1] = {{RISCV_HWPROBE_KEY_IMA_EXT_0, 0}};
   if (syscall(__NR_riscv_hwprobe, probe, 1, 0, nullptr, 0) == 0) {
-    if (probe[0].value & RISCV_HWPROBE_EXT_ZBA) {
+    if (probe[0].value & RV_HWPROBE_EXT_ZBA) {
       extensions += RVExtension::Zba;
     }
-    if (probe[0].value & RISCV_HWPROBE_EXT_ZBB) {
+    if (probe[0].value & RV_HWPROBE_EXT_ZBB) {
       extensions += RVExtension::Zbb;
     }
-    if (probe[0].value & RISCV_HWPROBE_EXT_ZBS) {
+    if (probe[0].value & RV_HWPROBE_EXT_ZBS) {
       extensions += RVExtension::Zbs;
     }
-    if (probe[0].value & RISCV_HWPROBE_EXT_ZFHMIN) {
+    if (probe[0].value & RV_HWPROBE_EXT_ZFHMIN) {
       extensions += RVExtension::Zfhmin;
     }
-    if (probe[0].value & RISCV_HWPROBE_EXT_ZFA) {
+    if (probe[0].value & RV_HWPROBE_EXT_ZFA) {
       extensions += RVExtension::Zfa;
     }
-    if (probe[0].value & RISCV_HWPROBE_EXT_ZICOND) {
+    if (probe[0].value & RV_HWPROBE_EXT_ZICOND) {
       extensions += RVExtension::Zicond;
     }
   }

@@ -114,12 +114,41 @@ WasmFrameIter::WasmFrameIter(JitActivation* activation, wasm::Frame* fp)
     void* unwoundPC = trapData.unwoundPC;
 
     code_ = &instance_->code();
-    MOZ_ASSERT(code_ == LookupCode(unwoundPC));
 
-    const CodeRange* codeRange = code_->lookupFuncRange(unwoundPC);
+    const wasm::CodeRange* unwoundCodeRange = nullptr;
+    const wasm::Code* unwoundCode = LookupCode(unwoundPC, &unwoundCodeRange);
+    MOZ_RELEASE_ASSERT(unwoundCode);
+    MOZ_RELEASE_ASSERT(unwoundCodeRange);
+
+#ifdef ENABLE_WASM_JSPI
+    MOZ_RELEASE_ASSERT(unwoundCodeRange->isFunction() ||
+                       unwoundCodeRange->isContBaseFrame());
+    if (unwoundCodeRange->isContBaseFrame()) {
+      // A return_call_indirect signature mismatch in a continuation stack's
+      // entry function tears down its frame, leaving the unwound PC in the
+      // ContBaseFrame stub rather than a Function CodeRange. No wasm frame
+      // remains on this stack, so switch to the resume target on the parent
+      // stack, like popFrame() does at a continuation base frame.
+      //
+      // Since no frame is reported here, HandleExceptionWasm would not free
+      // this stack. Record it so the unwinder frees it first. The stub's
+      // instance (the cont.new creator) can differ from instance_, so
+      // popContBaseFrame() re-derives the parent stack's instance and code.
+      MOZ_RELEASE_ASSERT(trapData.trap == Trap::IndirectCallBadSig);
+      MOZ_RELEASE_ASSERT(contStack_);
+      unwoundContStack_ = contStack_;
+      popContBaseFrame();
+      MOZ_ASSERT(!done());
+      return;
+    }
+#endif
+
+    // For a Function code range the unwound PC is in the trapping function,
+    // which runs with instance_, so its code must match.
+    MOZ_RELEASE_ASSERT(unwoundCode == code_);
     lineOrBytecode_ = trapData.trapSite.bytecodeOffset.offset();
     funcIndex_ =
-        FuncIndexForLineOrBytecode(*code_, lineOrBytecode_, *codeRange);
+        FuncIndexForLineOrBytecode(*code_, lineOrBytecode_, *unwoundCodeRange);
     inlinedCallerOffsets_ = trapData.trapSite.inlinedCallerOffsetsSpan();
     failedUnwindSignatureMismatch_ = trapData.failedUnwindSignatureMismatch;
 #ifdef ENABLE_WASM_JSPI
@@ -248,7 +277,44 @@ static inline void AssertDirectJitCall(const void* fp) {
   AssertJitExitFrame(fp, jit::ExitFrameType::DirectWasmJitCall);
 }
 
+#ifdef ENABLE_WASM_JSPI
+void WasmFrameIter::popContBaseFrame() {
+  ContStack* stack = ContStack::fromBaseFrameFP(fp_);
+  MOZ_ASSERT(cx()->wasm().findStackForAddress(
+                 cx(), reinterpret_cast<uintptr_t>(fp_)) == stack);
+  MOZ_ASSERT(stack == contStack_);
+
+  const Handlers* handlers = stack->handlers();
+  fp_ = (wasm::Frame*)handlers->returnTarget.framePointer;
+  uint8_t* returnAddress = (uint8_t*)handlers->returnTarget.resumePC;
+  instance_ = handlers->returnTarget.instance;
+  const CodeRange* codeRange;
+  code_ = LookupCode(returnAddress, &codeRange);
+  resumePCinCurrentFrame_ = returnAddress;
+
+  CallSite site;
+  MOZ_ALWAYS_TRUE(code_->lookupCallSite(returnAddress, &site));
+  MOZ_ASSERT(site.kind() == CallSiteKind::StackSwitch);
+
+  funcIndex_ =
+      FuncIndexForLineOrBytecode(*code_, site.lineOrBytecode(), *codeRange);
+  inlinedCallerOffsets_ = site.inlinedCallerOffsetsSpan();
+  failedUnwindSignatureMismatch_ = false;
+
+  // This was a stack switch, we're now on our handler's stack.
+  currentFrameStackSwitched_ = true;
+  contStack_ = handlers->returnTarget.stack->stack;
+
+  MOZ_ASSERT(!done());
+}
+#endif  // ENABLE_WASM_JSPI
+
 void WasmFrameIter::popFrame(bool isLeavingFrame) {
+#ifdef ENABLE_WASM_JSPI
+  // Clearing unwound continuation stack here.
+  unwoundContStack_ = nullptr;
+#endif
+
   // If we're visiting inlined frames, see if this frame was inlined.
   if (enableInlinedFrames_ && inlinedCallerOffsets_.size() > 0) {
     // We do not support inlining and debugging. If we did we'd need to support
@@ -393,30 +459,7 @@ void WasmFrameIter::popFrame(bool isLeavingFrame) {
 
 #ifdef ENABLE_WASM_JSPI
   if (codeRange->isContBaseFrame()) {
-    ContStack* stack = ContStack::fromBaseFrameFP(fp_);
-    MOZ_ASSERT(cx()->wasm().findStackForAddress(
-                   cx(), reinterpret_cast<uintptr_t>(fp_)) == stack);
-    MOZ_ASSERT(stack == contStack_);
-
-    const Handlers* handlers = stack->handlers();
-    fp_ = (wasm::Frame*)handlers->returnTarget.framePointer;
-    returnAddress = (uint8_t*)handlers->returnTarget.resumePC;
-    instance_ = handlers->returnTarget.instance;
-    code_ = LookupCode(returnAddress, &codeRange);
-    resumePCinCurrentFrame_ = returnAddress;
-
-    CallSite site;
-    MOZ_ALWAYS_TRUE(code_->lookupCallSite(returnAddress, &site));
-    MOZ_ASSERT(site.kind() == CallSiteKind::StackSwitch);
-
-    funcIndex_ =
-        FuncIndexForLineOrBytecode(*code_, site.lineOrBytecode(), *codeRange);
-    inlinedCallerOffsets_ = site.inlinedCallerOffsetsSpan();
-    failedUnwindSignatureMismatch_ = false;
-
-    // This was a stack switch, we're now on our handler's stack.
-    currentFrameStackSwitched_ = true;
-    contStack_ = handlers->returnTarget.stack->stack;
+    popContBaseFrame();
 
     if (isLeavingFrame) {
       // Any future frame iteration will start by popping the exitFP, so setting

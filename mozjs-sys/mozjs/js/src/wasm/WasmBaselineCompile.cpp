@@ -4614,6 +4614,24 @@ bool BaseCompiler::emitTryTable() {
     return true;
   }
 
+  // The block params are consumed by the try body, so keep them off the value
+  // stack while emitting the landing pad and restore them for the body, the way
+  // endTryCatch does for its results. sync() above spilled them, so the saved
+  // entries hold no registers.
+  MOZ_ASSERT(stk_.length() >= controlItem().stackSize);
+  StkVector savedParams;
+  if (!savedParams.append(stk_.begin() + controlItem().stackSize, stk_.end())) {
+    return false;
+  }
+  for (const Stk& v : savedParams) {
+    MOZ_ASSERT(v.kind() < Stk::RegFirst || v.kind() > Stk::RegLast);
+    if (v.kind() == Stk::MemRef) {
+      stackMapGenerator_.memRefsOnStk--;
+    }
+  }
+  stk_.shrinkTo(controlItem().stackSize);
+  MOZ_ASSERT(stk_.length() == controlItem().stackSize);
+
   // Emit a landing pad that exceptions will jump into. Jump over it for now.
   Label skipLandingPad;
   masm.jump(&skipLandingPad);
@@ -4804,6 +4822,16 @@ bool BaseCompiler::emitTryTable() {
   // Reset stack height for skipLandingPad, and bind it
   fr.setStackHeight(prePadHeight);
   masm.bind(&skipLandingPad);
+
+  // Restore the block params removed above, for the try body.
+  if (!stk_.appendAll(savedParams)) {
+    return false;
+  }
+  for (const Stk& v : savedParams) {
+    if (v.kind() == Stk::MemRef) {
+      stackMapGenerator_.memRefsOnStk++;
+    }
+  }
 
   // Start the try note for this try block, after the landing pad
   if (!startTryNote(&controlItem().tryNoteIndex)) {

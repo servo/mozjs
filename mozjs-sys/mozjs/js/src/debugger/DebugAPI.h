@@ -279,7 +279,10 @@ class DebugAPI {
 
   // Notify any Debugger instances observing this promise's global that a new
   // promise was allocated.
-  static inline void onNewPromise(JSContext* cx,
+  //
+  // If the hook code modifies the Promise state, this throws an error and
+  // returns false.
+  static inline bool onNewPromise(JSContext* cx,
                                   Handle<PromiseObject*> promise);
 
   // Notify any Debugger instances observing this promise's global that the
@@ -398,7 +401,7 @@ class DebugAPI {
                                                       AbstractFramePtr frame);
   static void slowPathOnNewWasmInstance(
       JSContext* cx, Handle<WasmInstanceObject*> wasmInstance);
-  static void slowPathOnNewPromise(JSContext* cx,
+  static bool slowPathOnNewPromise(JSContext* cx,
                                    Handle<PromiseObject*> promise);
   static void slowPathOnPromiseSettled(JSContext* cx,
                                        Handle<PromiseObject*> promise);

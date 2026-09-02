@@ -647,12 +647,9 @@ void SMRegExpMacroAssembler::CheckPosition(int cp_offset,
                     ImmWord(-cp_offset * char_size()),
                     LabelOrBacktrack(on_outside_input));
   } else {
-    // Compute offset position
-    masm_.computeEffectiveAddress(
-        Address(current_position_, cp_offset * char_size()), temp0_);
-
-    // Compare to start of input.
-    masm_.branchPtr(Assembler::GreaterThan, inputStart(), temp0_,
+    masm_.loadPtr(inputStart(), temp0_);
+    masm_.subPtr(Imm32(cp_offset * char_size()), temp0_);
+    masm_.branchPtr(Assembler::LessThan, current_position_, temp0_,
                     LabelOrBacktrack(on_outside_input));
   }
 }

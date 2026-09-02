@@ -762,6 +762,24 @@ inline bool IsConcurrentMarkingTracer(JSTracer* trc) {
          GCMarker::fromTracer(trc)->isConcurrentMarking();
 }
 
+// Records the source zone for marking in situations where it might not
+// otherwise bet set, for example root marking.
+//
+// See also AutoSetTracingSource.
+class MOZ_RAII AutoSetMarkingZone {
+  GCMarker* marker = nullptr;
+  Zone* prevZone = nullptr;
+
+ public:
+  AutoSetMarkingZone(GCMarker* marker, Zone* zone)
+      : marker(marker), prevZone(marker->tracingZone) {
+    MOZ_ASSERT_IF(prevZone, prevZone == zone);
+    marker->tracingZone = zone;
+  }
+
+  ~AutoSetMarkingZone() { marker->tracingZone = prevZone; }
+};
+
 namespace gc {
 
 enum class AllowGrayMarkingBeforeEndOfBlackMarking : bool {

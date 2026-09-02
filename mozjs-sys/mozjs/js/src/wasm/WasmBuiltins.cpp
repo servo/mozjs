@@ -843,7 +843,11 @@ void wasm::HandleExceptionWasm(JSContext* cx, JitFrameIter& iter,
 #ifdef ENABLE_WASM_JSPI
   // Track the previous stack we were on so that we can free it once we've
   // unwound past it.
-  wasm::ContStack* wasmPreviousStack = nullptr;
+  // Initialize it with any continuation stack the trap unwound out
+  // of without leaving a frame to visit (a return_call signature mismatch
+  // in a continuation's entry function): it has no iterated frame, so it must
+  // be freed when we cross the first stack switch.
+  wasm::ContStack* wasmPreviousStack = iter.asWasm().unwoundContStack();
 #endif
 
   for (; !iter.done() && iter.isWasm(); ++iter) {

@@ -7037,10 +7037,12 @@ static bool HandleInstantiationFailure(
 
   ScriptSource* source = codeMetaForAsmJS.maybeScriptSource();
 
+  mozilla::Maybe<ScriptSource::DataReader> reader;
+
   // Source discarding is allowed to affect JS semantics because it is never
   // enabled for normal JS content.
   bool haveSource;
-  if (!ScriptSource::loadSource(cx, source, &haveSource)) {
+  if (!source->tryLoadSource(cx, reader, &haveSource)) {
     return false;
   }
   if (!haveSource) {
@@ -7051,7 +7053,8 @@ static bool HandleInstantiationFailure(
 
   uint32_t begin = codeMetaForAsmJS.toStringStart;
   uint32_t end = codeMetaForAsmJS.srcEndAfterCurly();
-  Rooted<JSLinearString*> src(cx, source->substringDontDeflate(cx, begin, end));
+  Rooted<JSLinearString*> src(cx,
+                              (*reader)->substringDontDeflate(cx, begin, end));
   if (!src) {
     return false;
   }
@@ -7343,8 +7346,10 @@ JSString* js::AsmJSModuleToString(JSContext* cx, HandleFunction fun,
     return nullptr;
   }
 
+  mozilla::Maybe<ScriptSource::DataReader> reader;
+
   bool haveSource;
-  if (!ScriptSource::loadSource(cx, source, &haveSource)) {
+  if (!source->tryLoadSource(cx, reader, &haveSource)) {
     return nullptr;
   }
 
@@ -7359,7 +7364,7 @@ JSString* js::AsmJSModuleToString(JSContext* cx, HandleFunction fun,
       return nullptr;
     }
   } else {
-    Rooted<JSLinearString*> src(cx, source->substring(cx, begin, end));
+    Rooted<JSLinearString*> src(cx, (*reader)->substring(cx, begin, end));
     if (!src) {
       return nullptr;
     }
@@ -7394,8 +7399,10 @@ JSString* js::AsmJSFunctionToString(JSContext* cx, HandleFunction fun) {
     return nullptr;
   }
 
+  mozilla::Maybe<ScriptSource::DataReader> reader;
+
   bool haveSource;
-  if (!ScriptSource::loadSource(cx, source, &haveSource)) {
+  if (!source->tryLoadSource(cx, reader, &haveSource)) {
     return nullptr;
   }
 
@@ -7409,7 +7416,7 @@ JSString* js::AsmJSFunctionToString(JSContext* cx, HandleFunction fun) {
       return nullptr;
     }
   } else {
-    Rooted<JSLinearString*> src(cx, source->substring(cx, begin, end));
+    Rooted<JSLinearString*> src(cx, (*reader)->substring(cx, begin, end));
     if (!src) {
       return nullptr;
     }

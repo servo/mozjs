@@ -11,13 +11,22 @@ install:: $(LIBRARY_NAME).pc
 	$(SYSINSTALL) $(JS_LIBRARY_NAME).pc $(DESTDIR)$(libdir)/pkgconfig
 
 install:: ../js-config.h
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)
+	$(SYSINSTALL) -m 644 $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)
 
-# Install the profiling category list into both js/ and the root include
-# directory, for use with both js-specific and base profilers.
+# Install generated headers that the install manifest doesn't copy.
 install:: ../../../mozglue/baseprofiler/public/ProfilingCategoryList.h
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)/js
-	$(SYSINSTALL) $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)
+	$(SYSINSTALL) -m 644 $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)/mozilla
+
+install:: ../../public/PrefsGenerated.h
+	$(SYSINSTALL) -m 644 $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)/js
+
+ifdef JS_HAS_INTL_API
+install:: ../builtin/intl/collator_glue/collator_glue.h
+	$(SYSINSTALL) -m 644 $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)/mozilla/intl
+
+install:: ../../../intl/bidi/unicode_bidi_ffi_generated.h
+	$(SYSINSTALL) -m 644 $^ $(DESTDIR)$(includedir)/$(JS_LIBRARY_NAME)/mozilla/intl
+endif
 
 ######################################################
 # BEGIN SpiderMonkey header installation

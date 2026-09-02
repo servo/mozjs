@@ -2157,7 +2157,9 @@ enum GetCapabilitiesExecutorSlots {
 
   // Let the Debugger know about this Promise, after we've set
   // flags and slots.
-  DebugAPI::onNewPromise(cx, promise);
+  if (!DebugAPI::onNewPromise(cx, promise)) {
+    return nullptr;
+  }
 
   // Step 11. Return promise.
   return promise;
@@ -2188,7 +2190,9 @@ enum GetCapabilitiesExecutorSlots {
 
   // Let the Debugger know about this Promise. Do this after we've set
   // flags and functions
-  DebugAPI::onNewPromise(cx, promise);
+  if (!DebugAPI::onNewPromise(cx, promise)) {
+    return nullptr;
+  }
 
   // Step 11. Return promise.
   return promise;
@@ -3510,7 +3514,9 @@ PromiseObject* PromiseObject::create(JSContext* cx, HandleObject executor,
   }
 
   // Let the Debugger know about this Promise.
-  DebugAPI::onNewPromise(cx, promise);
+  if (!DebugAPI::onNewPromise(cx, promise)) {
+    return nullptr;
+  }
 
   // Step 11. Return promise.
   return promise;

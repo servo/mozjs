@@ -6270,21 +6270,23 @@ bool JS::IsStencilCacheable(JS::Stencil* stencil) {
 }
 
 JS_PUBLIC_API size_t JS::GetScriptSourceLength(JS::Stencil* stencil) {
-  const ScriptSource* source = stencil->getInitial()->source;
-  if (!source->hasSourceText()) {
+  ScriptSource* source = stencil->getInitial()->source;
+  ScriptSource::DataReader reader(source);
+  if (!reader.hasSourceText()) {
     return 0;
   }
-  return source->length();
+  return reader->length();
 }
 
 JS_PUBLIC_API bool JS::GetScriptSourceText(
     JSContext* cx, JS::Stencil* stencil, JS::MutableHandle<JS::Value> result) {
   ScriptSource* source = stencil->getInitial()->source;
-  if (!source->hasSourceText()) {
+  ScriptSource::DataReader reader(source);
+  if (!reader.hasSourceText()) {
     result.setUndefined();
     return true;
   }
-  JSLinearString* s = source->substring(cx, 0, source->length());
+  JSLinearString* s = reader->substring(cx, 0, reader->length());
   if (!s) {
     return false;
   }

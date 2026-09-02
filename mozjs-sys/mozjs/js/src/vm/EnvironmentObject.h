@@ -5,6 +5,8 @@
 #ifndef vm_EnvironmentObject_h
 #define vm_EnvironmentObject_h
 
+#include "mozilla/FunctionRef.h"
+
 #include <type_traits>
 
 #include "frontend/NameAnalysisTypes.h"
@@ -1560,6 +1562,13 @@ class DebugEnvironments {
   static void onPopWith(AbstractFramePtr frame);
   static void onPopModule(JSContext* cx, const EnvironmentIter& ei);
   static void onPopWasm(JSContext* cx, AbstractFramePtr frame);
+#ifdef ENABLE_WASM_JSPI
+  // Purge entries whose wasm frame lives on a discarded suspended
+  // continuation stack (identified by stackHasAddress) that is about to be
+  // freed.
+  static void onDiscardWasmCont(
+      JSRuntime* rt, mozilla::FunctionRef<bool(uintptr_t)> stackHasAddress);
+#endif
   static void onRealmUnsetIsDebuggee(Realm* realm);
 };
 

@@ -164,9 +164,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.69"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "224afbd727c3d6e4b90103ece64b8d1b67fbb1973b1046c2281eed3f3803f800"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "app_collator_glue"
@@ -1474,15 +1474,11 @@ dependencies = [
 
 [[package]]
 name = "crossbeam-epoch"
-version = "0.9.14"
+version = "0.9.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46bd5f3f85273295a9d14aedfb86f6aadbff6d8f5295c4a9edb08e819dcf5695"
+checksum = "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f"
 dependencies = [
- "autocfg",
- "cfg-if",
  "crossbeam-utils",
- "memoffset 0.8.999",
- "scopeguard",
 ]
 
 [[package]]
@@ -4595,9 +4591,9 @@ checksum = "78ca9ab1a0babb1e7d5695e3530886289c18cf2f87ec19a575a0abdce112e3a3"
 
 [[package]]
 name = "memmap2"
-version = "0.9.3"
+version = "0.9.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45fd3a57831bf88bc63f8cebc0cf956116276e97fef3966103e96416209f7c92"
+checksum = "d1219ed1b7f229ee7104d281dd01d6802fe28bb6e95d292942c4daacdeb798c0"
 dependencies = [
  "libc",
 ]
@@ -5309,7 +5305,7 @@ checksum = "a2983372caf4480544083767bf2d27defafe32af49ab4df3a0b7fc90793a3664"
 [[package]]
 name = "naga"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=1ff557ddf68731c825bcc9f74a30fe519e968089#1ff557ddf68731c825bcc9f74a30fe519e968089"
+source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -5603,8 +5599,8 @@ dependencies = [
 
 [[package]]
 name = "nss-rs"
-version = "0.13.2"
-source = "git+https://github.com/mozilla/nss-rs#a77e4287a92ba310b1542be2f53fcde3552a79e3"
+version = "0.13.4"
+source = "git+https://github.com/mozilla/nss-rs#da11b438d142cdcb71a2b152a9c5d13efe59d8b6"
 dependencies = [
  "bindgen 0.72.0",
  "enum-map",
@@ -7335,13 +7331,16 @@ name = "shell_windows"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "futures",
  "log",
  "moz_task",
  "nserror",
  "nsstring",
+ "scopeguard",
  "sha2",
  "thin-vec",
  "windows",
+ "windows-core",
  "xpcom",
 ]
 
@@ -7861,7 +7860,7 @@ checksum = "8f50febec83f5ee1df3015341d8bd429f2d1cc62bcba7ea2076759d315084683"
 [[package]]
 name = "test-fixture"
 version = "0.1.0"
-source = "git+https://github.com/mozilla/nss-rs#a77e4287a92ba310b1542be2f53fcde3552a79e3"
+source = "git+https://github.com/mozilla/nss-rs#da11b438d142cdcb71a2b152a9c5d13efe59d8b6"
 dependencies = [
  "log",
  "nss-rs",
@@ -9013,7 +9012,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=1ff557ddf68731c825bcc9f74a30fe519e968089#1ff557ddf68731c825bcc9f74a30fe519e968089"
+source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
 dependencies = [
  "arrayvec",
  "bit-set",
@@ -9046,7 +9045,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-apple"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=1ff557ddf68731c825bcc9f74a30fe519e968089#1ff557ddf68731c825bcc9f74a30fe519e968089"
+source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
 dependencies = [
  "wgpu-hal",
 ]
@@ -9054,7 +9053,7 @@ dependencies = [
 [[package]]
 name = "wgpu-core-deps-windows-linux-android"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=1ff557ddf68731c825bcc9f74a30fe519e968089#1ff557ddf68731c825bcc9f74a30fe519e968089"
+source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
 dependencies = [
  "wgpu-hal",
 ]
@@ -9062,7 +9061,7 @@ dependencies = [
 [[package]]
 name = "wgpu-hal"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=1ff557ddf68731c825bcc9f74a30fe519e968089#1ff557ddf68731c825bcc9f74a30fe519e968089"
+source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
 dependencies = [
  "android_system_properties",
  "arrayvec",
@@ -9103,7 +9102,7 @@ dependencies = [
 [[package]]
 name = "wgpu-naga-bridge"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=1ff557ddf68731c825bcc9f74a30fe519e968089#1ff557ddf68731c825bcc9f74a30fe519e968089"
+source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
 dependencies = [
  "naga",
  "wgpu-types",
@@ -9112,7 +9111,7 @@ dependencies = [
 [[package]]
 name = "wgpu-types"
 version = "29.0.0"
-source = "git+https://github.com/gfx-rs/wgpu?rev=1ff557ddf68731c825bcc9f74a30fe519e968089#1ff557ddf68731c825bcc9f74a30fe519e968089"
+source = "git+https://github.com/gfx-rs/wgpu?rev=385b700740049f2059afda726f1b6afa7a5a48a7#385b700740049f2059afda726f1b6afa7a5a48a7"
 dependencies = [
  "bitflags 2.10.0",
  "bytemuck",

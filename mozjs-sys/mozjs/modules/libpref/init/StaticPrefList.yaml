@@ -2032,6 +2032,12 @@
   mirror: once
   do_not_use_directly: true
 
+# Enables file IO for testing Windows shortcut and shortcut log.
+- name: browser.shell.shortcut.test
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Whether to show an about:blank window as early as possible for quick startup feedback.
 # Held to nightly on Linux due to bug 1450626.
 # Disabled on Mac because the bouncing dock icon already provides feedback.
@@ -3837,6 +3843,13 @@
 - name: dom.media.autoplay-policy-detection.enabled
   type: RelaxedAtomicBool
   value: true
+  mirror: always
+
+# Whether the muted content attribute acts as a live fallback for the muted
+# state. Gated to Nightly while other engines have not shipped this behavior.
+- name: dom.media.muted-state.enabled
+  type: bool
+  value: @IS_NIGHTLY_BUILD@
   mirror: always
 
 # Media element pseudo-classes
@@ -8520,7 +8533,7 @@
 #ifdef XP_MACOSX
 - name: gfx.webrender.enable-client-storage
   type: bool
-  value: true
+  value: false
   mirror: once
 #endif
 
@@ -11619,7 +11632,7 @@
 # Per-domain blocklist for ::-webkit-scrollbar pseudo element
 - name: layout.css.fake-webkit-scrollbar.disabled-domains
   type: DataMutexString
-  value: "discord.com,shitposter.world"
+  value: "discord.com,shitposter.world,gemini.google.com,content.powerapps.com"
   mirror: always
   rust: true
 
@@ -14201,6 +14214,14 @@
   value: true
   mirror: always
 
+# When true, Negotiate authentication sends a tls-server-end-point channel
+# binding token, as required by servers with Windows Extended Protection
+# enabled. Only has an effect when the SSPI auth module is in use.
+- name: network.auth.negotiate_channel_binding
+  type: RelaxedAtomicBool
+  value: true
+  mirror: always
+
 # Chunk size for BackgroundFileSaver async copy operations. Should be a power
 # of 2 for optimal performance.
 - name: network.backgroundfilesaver.async_copy_chunk_size
@@ -15426,9 +15447,11 @@
 # When true, block LNA requests from insecure contexts (http:// origins that
 # are not localhost or .local). Uses IsPotentiallyTrustworthyOrigin to
 # determine if the origin is trustworthy.
+# The spec requires this, but it is disabled by default until Chrome ships the
+# same restriction, to avoid breaking sites that only work in Firefox.
 - name: network.lna.block_insecure_contexts
   type: RelaxedAtomicBool
-  value: true
+  value: false
   mirror: always
 
 
@@ -18125,6 +18148,13 @@
   value: false
   mirror: always
 
+# Don't enable this! Temporary rollout pref to always allow unsafe
+# Services.scriptloader.loadSubScript() uses.
+- name: security.allow_unsafe_subscript_loads
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Pref to block mixed scripts (fonts, plugin content, scripts, stylesheets,
 # iframes, websockets, XHR).
 - name: security.mixed_content.block_active_content
@@ -18482,6 +18512,16 @@
 - name: security.nocertdb
   type: RelaxedAtomicBool
   value: false
+  mirror: always
+
+# How long (in milliseconds) security-sensitive notifications delay before
+# their buttons become enabled, to guard against clickjacking. Native file
+# pickers reuse this value to ignore a confirmation that arrives too soon after
+# the picker is shown, keeping the picker open instead of accepting it. Set to
+# 0 to disable.
+- name: security.notification_enable_delay
+  type: RelaxedAtomicUint32
+  value: 500
   mirror: always
 
 # Whether or not to import and trust third party root certificates from the OS.

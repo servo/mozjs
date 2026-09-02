@@ -545,7 +545,7 @@ void BaseStackFrame::zeroLocals(BaseRegAlloc* ra) {
     masm.storePtr(zero, Address(p, -(wordSize * i)));
   }
   masm.subPtr(Imm32(UNROLL_LIMIT * wordSize), p);
-  masm.branchPtr(Assembler::LessThan, lim, p, &again);
+  masm.branchPtr(Assembler::Below, lim, p, &again);
 
   // The tail.
   for (uint32_t i = 0; i < tailWords; ++i) {

@@ -3174,16 +3174,34 @@ bool ArrayBufferObject::ensureNonInline(JSContext* cx,
     return true;
   }
 
+  BufferContents inlineContents = buffer->contents();
+  if (inlineContents.kind() != INLINE_DATA) {
+    // The data is already out-of-line, so there is nothing to move and the pin
+    // (if any) does not block us. A pin here means this call is nested inside
+    // another pinned access of the same buffer, which is memory-safe (the pin
+    // keeps the out-of-line data stable and prevents detach/resize). But it
+    // usually means unintended re-entrancy -- e.g. running script while a
+    // buffer is pinned. To make it get noticed, crash in brittle mode (which is
+    // set during operations where we want to see the exact reason for certain
+    // failures) in a diagnostic build. In other situations, allow it to succeed
+    // without doing anything.
+    MOZ_DIAGNOSTIC_ASSERT(
+        !(buffer->isLengthPinned() && cx->brittleMode),
+        "nested pin of out-of-line ArrayBuffer: safe, but suggests unexpected "
+        "re-entrant access to the buffer outside the enclosing pinned region");
+    return true;
+  }
+
   if (buffer->isLengthPinned()) {
+    // The data is inline and its length is pinned, so we genuinely cannot move
+    // it out-of-line. Unlike the out-of-line case above, this is neither benign
+    // nor merely a violation of convention. Pinning only sets a flag without
+    // moving data, so a buffer can be both inline and pinned (e.g. wasm's
+    // AutoPinBufferSourceLength). Throw a JS exception.
     JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                               JSMSG_ARRAYBUFFER_LENGTH_PINNED);
     MOZ_DIAGNOSTIC_ASSERT(!cx->brittleMode, "ArrayBuffer length pinned");
     return false;
-  }
-
-  BufferContents inlineContents = buffer->contents();
-  if (inlineContents.kind() != INLINE_DATA) {
-    return true;
   }
 
   size_t nbytes = buffer->maxByteLength();
