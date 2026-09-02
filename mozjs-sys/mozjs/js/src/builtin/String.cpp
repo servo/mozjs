@@ -42,7 +42,7 @@
 #if !JS_HAS_INTL_API
 #  include "js/LocaleSensitive.h"
 #endif
-#include "js/normalizer_glue.h"
+#include "normalizer_glue.h"
 #include "js/Prefs.h"
 #include "js/Printer.h"
 #include "js/PropertyAndElement.h"  // JS_DefineFunctions
