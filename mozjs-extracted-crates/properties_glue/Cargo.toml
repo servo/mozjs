@@ -4,13 +4,13 @@ description = "copy of properties_glue for mozjs-sys"
 links = "properties_glue"
 repository = "https://github.com/servo/mozjs"
 name = "mozjs_properties_glue"
-version = "153.0.0"
+version = "153.2.0.0"
 edition = "2021"
 rust-version.workspace = true
 
 [dependencies]
 icu_properties = "2.1.2"
-icu_collections = { features = ["alloc"], package = "mozjs_icu_collections", version = "=153.0.0", path = "../icu_collections" }
+icu_collections = { features = ["alloc"], package = "mozjs_icu_collections", version = "=153.2.0.0", path = "../icu_collections" }
 icu_casemap = "2"
 
 [build-dependencies.cbindgen]
