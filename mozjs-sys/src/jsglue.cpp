@@ -43,37 +43,24 @@ typedef size_t (*GetSize)(JSObject* obj);
 
 WantToMeasure gWantToMeasure = nullptr;
 
+class RustJobQueue;
+
 struct JobQueueTraps {
   bool (*getHostDefinedData)(
       JSContext* cx, JS::MutableHandle<JSObject*> incumbentGlobal,
       JS::MutableHandle<JSObject*> optionalHostDefinedData);
   bool (*getHostDefinedGlobal)(JSContext* cx,
                                JS::MutableHandle<JSObject*> data);
-  void (*runJobs)(const void* queue, JSContext* cx);
+  void (*runJobs)(JSContext* cx);
   void (*traceNonGCThingMicroTask)(JSTracer* trc, JS::Value* valuePtr);
-
-  // Create a new queue, push it onto an embedder-side stack, and return the new
-  // queue.
-  const void* (*pushNewInterruptQueue)(void* aInterruptQueues);
-  // Destroy the queue most recently created by pushNewInterruptQueue(),
-  // returning its address so we can check if we are restoring the saved queue
-  // over the correct queue.
-  const void* (*popInterruptQueue)(void* aInterruptQueues);
-  // Destroy the embedder-side stack of interrupt queues.
-  void (*dropInterruptQueues)(void* aInterruptQueues);
 };
 
 class RustJobQueue : public JS::JobQueue {
   JobQueueTraps mTraps;
-  const void* mQueue;
-  void* mInterruptQueues;
+  bool draining;
 
  public:
-  RustJobQueue(const JobQueueTraps& aTraps, const void* aQueue,
-               void* aInterruptQueues)
-      : mTraps(aTraps), mQueue(aQueue), mInterruptQueues(aInterruptQueues) {}
-
-  ~RustJobQueue() override { mTraps.dropInterruptQueues(mInterruptQueues); }
+  RustJobQueue(const JobQueueTraps& aTraps) : mTraps(aTraps), draining(false) {}
 
   virtual bool getHostDefinedData(
       JSContext* cx, JS::MutableHandle<JSObject*> incumbentGlobal,
@@ -85,7 +72,7 @@ class RustJobQueue : public JS::JobQueue {
       JSContext* cx, JS::MutableHandle<JSObject*> data) const override {
     return mTraps.getHostDefinedGlobal(cx, data);
   }
-  virtual void runJobs(JSContext* cx) override { mTraps.runJobs(mQueue, cx); }
+  virtual void runJobs(JSContext* cx) override { mTraps.runJobs(cx); }
 
   bool isDrainingStopped() const override { return false; }
 
@@ -97,36 +84,20 @@ class RustJobQueue : public JS::JobQueue {
  private:
   class SavedQueue : public JS::JobQueue::SavedJobQueue {
    public:
-    explicit SavedQueue(const JobQueueTraps& aTraps, void* aInterruptQueues,
-                        const void** aCurrentQueue, const void* aNewQueue,
-                        JSContext* cx)
-        : mTraps(aTraps),
-          cx(cx),
-          mInterruptQueues(aInterruptQueues),
-          mCurrentQueue(aCurrentQueue),
-          mNewQueue(aNewQueue),
-          mSavedQueue(*aCurrentQueue) {
-      // TODO: assert that the context’s jobQueue hasn’t been cleared with
-      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
-      // with only an opaque JSContext decl. Are we allowed to #include
-      // "vm/JSContext.h"?
-      //
-      // MOZ_ASSERT(cx->jobQueue.ref());
-      mSavedMicroTaskQueue = JS::SaveMicroTaskQueue(cx);
+    explicit SavedQueue(JSContext* cx, RustJobQueue* queue)
+        : cx(cx), mQueue(queue) {
+      // assert that the context’s jobQueue hasn’t been changed or cleared with
+      // SetJobQueue(nullptr) or DestroyContext().
+      MOZ_ASSERT(JS::GetJobQueue(cx) == mQueue);
 
-      // Set the current queue to mNewQueue.
-      // We need to take care of this, so that we can save the old queue in the
-      // member initializers above.
-      *mCurrentQueue = mNewQueue;
+      mSavedMicroTaskQueue = JS::SaveMicroTaskQueue(cx);
+      draining = mQueue->draining;
     }
 
     ~SavedQueue() {
-      // TODO: assert that the context’s jobQueue hasn’t been cleared with
-      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
-      // with only an opaque JSContext decl. Are we allowed to #include
-      // "vm/JSContext.h"?
-      //
-      // MOZ_ASSERT(cx->jobQueue.ref());
+      // assert that the context’s jobQueue hasn’t been changed or cleared with
+      // SetJobQueue(nullptr) or DestroyContext().
+      MOZ_ASSERT(JS::GetJobQueue(cx) == mQueue);
 
       // Check that the current queue is empty, as required by the SavedJobQueue
       // contract.
@@ -134,42 +105,18 @@ class RustJobQueue : public JS::JobQueue {
 
       JS::RestoreMicroTaskQueue(cx, std::move(mSavedMicroTaskQueue));
 
-      // Destroy the topmost queue, checking that it was the queue this
-      // SavedQueue expects to restore from. Imagine we have normal queue A,
-      // then we switch to B (SavedQueue from B to A), then we switch to C
-      // (SavedQueue from C to B). If the SavedQueue from B to A is restored
-      // before the SavedQueue from C to B, the embedder will destroy both C and
-      // B, but in the end, the queue will be set to B, a freed queue.
-      MOZ_ASSERT(mTraps.popInterruptQueue(mInterruptQueues) == mNewQueue);
-
-      *mCurrentQueue = mSavedQueue;
+      mQueue->draining = draining;
     }
 
    private:
-    // Required for embedder FFI.
-    JobQueueTraps mTraps;
     JSContext* cx;
     js::UniquePtr<JS::SavedMicroTaskQueue> mSavedMicroTaskQueue;
-
-    void* mInterruptQueues;
-
-    // Pointer to the RustJobQueue::mQueue field to write to when switching.
-    const void** mCurrentQueue;
-
-    // The queue to switch to when saving.
-    const void* mNewQueue;
-
-    // The queue to switch to when restoring.
-    const void* mSavedQueue;
+    RustJobQueue* mQueue;
+    bool draining;
   };
 
   virtual js::UniquePtr<SavedJobQueue> saveJobQueue(JSContext* cx) override {
-    auto newQueue = mTraps.pushNewInterruptQueue(mInterruptQueues);
-    // Servo uses infallible allocation here, so it should never return nullptr.
-    MOZ_ASSERT(!!newQueue);
-
-    auto result = js::MakeUnique<SavedQueue>(mTraps, mInterruptQueues, &mQueue,
-                                             newQueue, cx);
+    auto result = js::MakeUnique<SavedQueue>(cx, this);
     if (!result) {
       // “On OOM, this should call JS_ReportOutOfMemory on the given JSContext,
       // and return a null UniquePtr.”
@@ -1166,12 +1113,11 @@ JSString* JS_ForgetStringLinearness(JSLinearString* str) {
   return JS_FORGET_STRING_LINEARNESS(str);
 }
 
-JS::JobQueue* CreateJobQueue(const JobQueueTraps* aTraps, const void* aQueue,
-                             void* aInterruptQueues) {
-  return new RustJobQueue(*aTraps, aQueue, aInterruptQueues);
+RustJobQueue* CreateJobQueue(const JobQueueTraps* aTraps) {
+  return new RustJobQueue(*aTraps);
 }
 
-void DeleteJobQueue(JS::JobQueue* queue) { delete queue; }
+void DeleteJobQueue(RustJobQueue* queue) { delete queue; }
 
 JSExternalStringCallbacks* CreateJSExternalStringCallbacks(
     const JSExternalStringCallbacksTraps* aTraps, void* privateData) {

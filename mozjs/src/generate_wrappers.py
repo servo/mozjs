@@ -91,6 +91,7 @@ def grep_heur2(file_path: Path) -> list[str]:
             or "CurrentGlobal" in sig
             or "DescribeScriptedCaller" in sig
             or "JS_DequeueNextMicroTask" in sig
+            or "GetJobQueue" in sig
         ):
             sig = sig.replace("&mut JSContext", "&JSContext")
         return sig
