@@ -86,24 +86,18 @@ class RustJobQueue : public JS::JobQueue {
    public:
     explicit SavedQueue(JSContext* cx, RustJobQueue* queue)
         : cx(cx), mQueue(queue) {
-      // TODO: assert that the context’s jobQueue hasn’t been cleared with
-      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
-      // with only an opaque JSContext decl. Are we allowed to #include
-      // "vm/JSContext.h"?
-      //
-      // MOZ_ASSERT(cx->jobQueue.ref());
+      // assert that the context’s jobQueue hasn’t been changed or cleared with
+      // SetJobQueue(nullptr) or DestroyContext().
+      MOZ_ASSERT(JS::GetJobQueue(cx) == mQueue);
 
       mSavedMicroTaskQueue = JS::SaveMicroTaskQueue(cx);
       draining = mQueue->draining;
     }
 
     ~SavedQueue() {
-      // TODO: assert that the context’s jobQueue hasn’t been cleared with
-      // SetJobQueue(nullptr) or DestroyContext(). Don’t know how to do this
-      // with only an opaque JSContext decl. Are we allowed to #include
-      // "vm/JSContext.h"?
-      //
-      // MOZ_ASSERT(cx->jobQueue.ref());
+      // assert that the context’s jobQueue hasn’t been changed or cleared with
+      // SetJobQueue(nullptr) or DestroyContext().
+      MOZ_ASSERT(JS::GetJobQueue(cx) == mQueue);
 
       // Check that the current queue is empty, as required by the SavedJobQueue
       // contract.
