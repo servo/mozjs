@@ -2862,6 +2862,11 @@ JS_PUBLIC_API void JS::SetJobQueue(JSContext* cx, JobQueue* queue) {
   cx->jobQueue = queue;
 }
 
+JS_PUBLIC_API JS::JobQueue* JS::GetJobQueue(JSContext* cx) {
+  MOZ_ASSERT(cx->jobQueue.ref());
+  return cx->jobQueue;
+}
+
 extern JS_PUBLIC_API void JS::SetPromiseRejectionTrackerCallback(
     JSContext* cx, PromiseRejectionTrackerCallback callback,
     void* data /* = nullptr */) {
