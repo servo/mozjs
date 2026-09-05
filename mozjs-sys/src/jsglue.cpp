@@ -51,7 +51,7 @@ struct JobQueueTraps {
       JS::MutableHandle<JSObject*> optionalHostDefinedData);
   bool (*getHostDefinedGlobal)(JSContext* cx,
                                JS::MutableHandle<JSObject*> data);
-  void (*runJobs)(RustJobQueue* queue, JSContext* cx);
+  void (*runJobs)(JSContext* cx);
   void (*traceNonGCThingMicroTask)(JSTracer* trc, JS::Value* valuePtr);
 };
 
@@ -72,7 +72,7 @@ class RustJobQueue : public JS::JobQueue {
       JSContext* cx, JS::MutableHandle<JSObject*> data) const override {
     return mTraps.getHostDefinedGlobal(cx, data);
   }
-  virtual void runJobs(JSContext* cx) override { mTraps.runJobs(this, cx); }
+  virtual void runJobs(JSContext* cx) override { mTraps.runJobs(cx); }
 
   bool isDrainingStopped() const override { return false; }
 
