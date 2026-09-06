@@ -278,6 +278,7 @@ wrap!(jsapi: pub fn IsArray(cx: &mut JSContext, obj: Handle<*mut JSObject>, isAr
 wrap!(jsapi: pub fn IsArray1(cx: &mut JSContext, obj: Handle<*mut JSObject>, answer: *mut IsArrayAnswer) -> bool);
 wrap!(jsapi: pub fn GetBuiltinClass(cx: &mut JSContext, obj: Handle<*mut JSObject>, cls: *mut ESClass) -> bool);
 wrap!(jsapi: pub fn SetJobQueue(cx: &JSContext, queue: *mut JobQueue));
+wrap!(jsapi: pub fn GetJobQueue(cx: &JSContext) -> *mut JobQueue);
 wrap!(jsapi: pub fn SetPromiseRejectionTrackerCallback(cx: &JSContext, callback: PromiseRejectionTrackerCallback, data: *mut ::std::os::raw::c_void));
 wrap!(jsapi: pub fn JobQueueIsEmpty(cx: &JSContext));
 wrap!(jsapi: pub fn JobQueueMayNotBeEmpty(cx: &JSContext));
