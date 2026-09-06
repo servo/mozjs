@@ -59,7 +59,7 @@ def extract_tarball(tarball, commit):
                     for line in f:
                         line = line.strip()
                         if line and not line.startswith("#"):
-                            if line.count(".") != 3:
+                            if line.count(".") != 2:
                                 line += ".0"
                             return line
             return None
