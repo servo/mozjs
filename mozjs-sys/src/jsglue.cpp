@@ -92,6 +92,7 @@ class RustJobQueue : public JS::JobQueue {
 
       mSavedMicroTaskQueue = JS::SaveMicroTaskQueue(cx);
       draining = mQueue->draining;
+      mQueue->draining = false;
     }
 
     ~SavedQueue() {
