@@ -910,6 +910,12 @@ void DeleteRootedObjectVector(JS::PersistentRootedObjectVector* v) { delete v; }
 
 // SpiderMonkey-in-Rust currently uses system malloc, not jemalloc.
 static size_t MallocSizeOf(const void* aPtr) {
+  // Passing a null pointer to `_msize` ends the process through the invalid
+  // parameter handler.
+  if (!aPtr) {
+    return 0;
+  }
+
 #if defined(__linux__) || defined(__wasi__) || defined(__FreeBSD__)
   return malloc_usable_size((void*)aPtr);
 #elif defined(__APPLE__)
