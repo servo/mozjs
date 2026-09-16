@@ -1000,7 +1000,16 @@ void ProxyObject::renew(const BaseProxyHandler* handler, const Value& priv) {
   MOZ_ASSERT(hasDynamicPrototype());
 
   setHandler(handler);
+
   setCrossCompartmentPrivate(priv);
+  // The post barrier may add a store buffer entry but since this may be called
+  // on a dying object we don't know if they will survive GC. Therefore we need
+  // to set a flag to ensure we clear out the nursery before doing any sweeping.
+  if (isTenured() && zone()->wasGCStarted() && priv.isGCThing() &&
+      !priv.toGCThing()->isTenured()) {
+    runtimeFromMainThread()->gc.storeBuffer().setMayHavePointersToDeadCells();
+  }
+
   for (size_t i = 0; i < numReservedSlots(); i++) {
     setReservedSlot(i, UndefinedValue());
   }

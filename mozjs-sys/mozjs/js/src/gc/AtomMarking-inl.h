@@ -109,31 +109,80 @@ inline void AtomMarkingRuntime::maybeUnmarkGrayAtomically(Zone* zone,
   MOZ_ASSERT(getAtomMarkColor(zone, symbol) == CellColor::Black);
 }
 
-inline bool GCRuntime::isSymbolReferencedByUncollectedZone(JS::Symbol* sym,
-                                                           MarkColor color) {
-  MOZ_ASSERT(sym->zone()->isAtomsZone());
+template <typename T>
+inline void GCRuntime::maybeMarkWeaklyHeldAtom(T* atom) {
+  // To effectively refine atom references we do it at the end of collection
+  // before marking atoms referenced from uncollected zones in
+  // GCRuntime::updateAtomsBitmap. The refinement step is to AND each zone's
+  // references with the atoms currently marked.
+  //
+  // Conceptually, it would be simplest to mark references from uncollected
+  // zones at the start of collection. Delaying this ensures that references
+  // from uncollected zones don't stop us removing dead references from
+  // collected zones (otherwise we would require all zones with references to
+  // that atom to be collected at the same time to drop them).
+  //
+  // The problem is weak references: we need to keep the zone's reference but we
+  // never directly mark the atom. To fix this we mark atoms referenced by
+  // uncollected zones when we encounter weak references to them. This would
+  // have happened later anyway so the final mark state is not affected. Doing
+  // this means the atom is marked before the refinement step which then keeps
+  // the reference.
+
+  static_assert(std::is_same_v<T, JSAtom> || std::is_same_v<T, JS::Symbol>);
+
+  Zone* zone = atom->zoneFromAnyThread();
+  MOZ_ASSERT(zone->isAtomsZone());
+  if (!zone->isGCMarkingOrSweeping()) {
+    return;
+  }
+
+  CellColor refColor = isAtomReferencedByUncollectedZone(&atom->asTenured());
+  if (refColor == CellColor::White) {
+    return;
+  }
+
+  // Set the mark bits directly since this may be called after normal marking
+  // has finished. Implicitly marked edges are handled via weakmap marking which
+  // happens after this.
+  MarkColor color = AsMarkColor(refColor);
+  (void)atom->asTenured().markIfUnmarked(color);
+  if constexpr (std::is_same_v<T, JS::Symbol>) {
+    if (JSAtom* description = atom->description()) {
+      (void)description->asTenured().markIfUnmarked(color);
+    }
+  }
+}
+
+inline CellColor GCRuntime::isAtomReferencedByUncollectedZone(
+    TenuredCell* atom) {
+  MOZ_ASSERT(atom->zoneFromAnyThread()->isAtomsZone());
 
   if (!atomsUsedByUncollectedZones.ref()) {
-    return false;
+    return CellColor::White;
   }
 
   MOZ_ASSERT(atomsZone()->wasGCStarted());
 
-  size_t bit = AtomMarkingRuntime::getAtomBit(sym);
+  size_t bit = AtomMarkingRuntime::getAtomBit(atom);
   size_t blackBit = bit + size_t(ColorBit::BlackBit);
   size_t grayOrBlackBit = bit + size_t(ColorBit::GrayOrBlackBit);
   MOZ_ASSERT(grayOrBlackBit / JS_BITS_PER_WORD < atomMarking.allocatedWords);
 
   const DenseBitmap& bitmap = *atomsUsedByUncollectedZones.ref();
   if (grayOrBlackBit >= bitmap.count()) {
-    return false;  // Atom created during collection.
+    return CellColor::White;  // Atom created during collection.
   }
 
   if (bitmap.getBit(blackBit)) {
-    return true;
+    return CellColor::Black;
   }
 
-  return color == MarkColor::Gray && bitmap.getBit(grayOrBlackBit);
+  if (bitmap.getBit(grayOrBlackBit)) {
+    return CellColor::Gray;
+  }
+
+  return CellColor::White;
 }
 
 void AtomMarkingRuntime::markChildren(Zone* zone, JSAtom*) {}

@@ -101,11 +101,18 @@ static JSFunction* EvaluateChars(JSContext* cx, Source<Unit> chars, size_t len,
 static void CompressSourceSync(JS::Handle<JSFunction*> fun, JSContext* cx) {
   JS::Rooted<JSScript*> script(cx, JSFunction::getOrCreateScript(cx, fun));
   MOZ_RELEASE_ASSERT(script);
-  MOZ_RELEASE_ASSERT(script->scriptSource()->hasSourceText());
+  {
+    js::ScriptSource::DataReader reader(script->scriptSource());
+    MOZ_RELEASE_ASSERT(reader.hasSourceText());
+  }
 
   MOZ_RELEASE_ASSERT(js::SynchronouslyCompressSource(cx, script));
 
-  MOZ_RELEASE_ASSERT(script->scriptSource()->hasCompressedSource());
+  {
+    js::ScriptSource::DataReader reader(script->scriptSource());
+    MOZ_RELEASE_ASSERT(reader.hasSourceText());
+    MOZ_RELEASE_ASSERT(reader->hasCompressedSource());
+  }
 }
 
 static constexpr char FunctionStart[] = "function @() {";
@@ -487,7 +494,8 @@ BEGIN_TEST(testScriptSourceCompression_automatic) {
   // remain uncompressed.
   js::RunPendingSourceCompressions(cx->runtime());
   bool expected = js::IsOffThreadSourceCompressionEnabled();
-  CHECK(script->scriptSource()->hasCompressedSource() == expected);
+  js::ScriptSource::DataReader reader(script->scriptSource());
+  CHECK(reader->hasCompressedSource() == expected);
 
   return true;
 }
