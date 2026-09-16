@@ -79,7 +79,7 @@ main(["mozjs.tar.xz"])
 
 os.remove("mozjs.tar.xz")
 
-subprocess.check_call(["git", "add", "mozjs-sys/mozjs"])
+subprocess.check_call(["git", "add", "mozjs-sys/mozjs", "mozjs-extracted-crates"])
 subprocess.check_call(["git", "commit", "-m", "Apply patches", "--signoff"])
 
 version = f"{ESR}.{minor}.{patch}-0"
