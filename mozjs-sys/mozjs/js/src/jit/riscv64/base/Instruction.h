@@ -124,13 +124,13 @@ class InstructionBase {
   }
 
   // Accessors for the different named fields used in the RISC-V encoding.
-  inline BaseOpcode BaseOpcodeValue() const {
+  inline enum BaseOpcode BaseOpcodeValue() const {
     return static_cast<enum BaseOpcode>(
         Bits(kBaseOpcodeShift + kBaseOpcodeBits - 1, kBaseOpcodeShift));
   }
 
   // Return the fields at their original place in the instruction encoding.
-  inline BaseOpcode BaseOpcodeFieldRaw() const {
+  inline enum BaseOpcode BaseOpcodeFieldRaw() const {
     return static_cast<enum BaseOpcode>(InstructionBits() & kBaseOpcodeMask);
   }
 

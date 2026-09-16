@@ -322,7 +322,6 @@ class RootCompiler {
   // The current stack of bytecode offsets of the caller functions of the
   // function currently being inlined.
   BytecodeOffsetVector inlinedCallerOffsets_;
-  InlinedCallerOffsetIndex inlinedCallerOffsetsIndex_;
 
   // Compilation statistics for this function.
   CompileStats funcStats_;
@@ -390,17 +389,15 @@ class RootCompiler {
 
   [[nodiscard]] bool generate();
 
-  InlinedCallerOffsetIndex inlinedCallerOffsetsIndex() const {
-    return inlinedCallerOffsetsIndex_;
-  }
-
   // Add a compile info for an inlined function. This keeps the inlined
   // function's compile info alive for the outermost function's
-  // compilation.
+  // compilation. On success, `*inlinedCallerOffsetsIndex` is set to the
+  // index the inlined callee should use for its call and trap sites.
   [[nodiscard]] CompileInfo* startInlineCall(
       uint32_t callerFuncIndex, BytecodeOffset callerOffset,
       uint32_t calleeFuncIndex, uint32_t numLocals, size_t inlineeBytecodeSize,
-      InliningHeuristics::CallKind callKind);
+      InliningHeuristics::CallKind callKind,
+      InlinedCallerOffsetIndex* inlinedCallerOffsetsIndex);
   void finishInlineCall();
 
   // Add a try note and return the index.
@@ -441,6 +438,10 @@ class FunctionCompiler {
   // second inlinee, etc.
   const FunctionCompiler* callerCompiler_;
   const uint32_t inliningDepth_;
+
+  // The index of the inlined caller offsets for this function's call and trap
+  // sites. This is 'none' for the root function and set per inlined callee.
+  const InlinedCallerOffsetIndex inlinedCallerOffsetsIndex_;
 
   // Information about this function's bytecode and parsing state
   IonOpIter iter_;
@@ -499,6 +500,7 @@ class FunctionCompiler {
       : rootCompiler_(rootCompiler),
         callerCompiler_(nullptr),
         inliningDepth_(0),
+        inlinedCallerOffsetsIndex_(),
         iter_(rootCompiler.codeMeta(), decoder, locals),
         functionBodyOffset_(decoder.beginOffset()),
         func_(func),
@@ -517,10 +519,12 @@ class FunctionCompiler {
   // Construct a FunctionCompiler for an inlined callee of a compilation
   FunctionCompiler(const FunctionCompiler* callerCompiler, Decoder& decoder,
                    const FuncCompileInput& func, const ValTypeVector& locals,
-                   const CompileInfo& compileInfo)
+                   const CompileInfo& compileInfo,
+                   InlinedCallerOffsetIndex inlinedCallerOffsetsIndex)
       : rootCompiler_(callerCompiler->rootCompiler_),
         callerCompiler_(callerCompiler),
         inliningDepth_(callerCompiler_->inliningDepth() + 1),
+        inlinedCallerOffsetsIndex_(inlinedCallerOffsetsIndex),
         iter_(rootCompiler_.codeMeta(), decoder, locals),
         functionBodyOffset_(decoder.beginOffset()),
         func_(func),
@@ -559,16 +563,16 @@ class FunctionCompiler {
   MBasicBlock* getCurBlock() const { return curBlock_; }
   BytecodeOffset bytecodeOffset() const { return iter_.bytecodeOffset(); }
   CallSiteDesc callSiteDesc(CallSiteKind kind) {
-    return CallSiteDesc(bytecodeOffset().offset(),
-                        rootCompiler_.inlinedCallerOffsetsIndex(), kind);
+    return CallSiteDesc(bytecodeOffset().offset(), inlinedCallerOffsetsIndex_,
+                        kind);
   }
   TrapSiteDesc trapSiteDesc() {
     return TrapSiteDesc(wasm::BytecodeOffset(bytecodeOffset()),
-                        rootCompiler_.inlinedCallerOffsetsIndex());
+                        inlinedCallerOffsetsIndex_);
   }
   TrapSiteDesc trapSiteDescWithCallSiteLineNumber() {
     return TrapSiteDesc(wasm::BytecodeOffset(readCallSiteLineOrBytecode()),
-                        rootCompiler_.inlinedCallerOffsetsIndex());
+                        inlinedCallerOffsetsIndex_);
   }
   FeatureUsage featureUsage() const { return iter_.featureUsage(); }
 
@@ -2876,7 +2880,7 @@ class FunctionCompiler {
     MOZ_ASSERT(!inDeadCode());
 
     CallCompileState callState(ABIKind::Wasm);
-    CallSiteDesc desc(lineOrBytecode, rootCompiler_.inlinedCallerOffsetsIndex(),
+    CallSiteDesc desc(lineOrBytecode, inlinedCallerOffsetsIndex_,
                       CallSiteKind::Func);
     ResultType resultType = ResultType::Vector(funcType.results());
     auto callee = CalleeDesc::function(funcIndex);
@@ -3030,7 +3034,7 @@ class FunctionCompiler {
       }
     }
 
-    CallSiteDesc desc(lineOrBytecode, rootCompiler_.inlinedCallerOffsetsIndex(),
+    CallSiteDesc desc(lineOrBytecode, inlinedCallerOffsetsIndex_,
                       CallSiteKind::Indirect);
     ArgTypeVector argTypes(funcType);
     ResultType resultType = ResultType::Vector(funcType.results());
@@ -3047,7 +3051,7 @@ class FunctionCompiler {
     MOZ_ASSERT(!inDeadCode());
 
     CallCompileState callState(ABIKind::Wasm);
-    CallSiteDesc desc(lineOrBytecode, rootCompiler_.inlinedCallerOffsetsIndex(),
+    CallSiteDesc desc(lineOrBytecode, inlinedCallerOffsetsIndex_,
                       CallSiteKind::Import);
     auto callee = CalleeDesc::import(instanceDataOffset);
     ArgTypeVector argTypes(funcType);
@@ -3069,7 +3073,7 @@ class FunctionCompiler {
 
     MOZ_ASSERT(builtin.failureMode == FailureMode::Infallible);
 
-    CallSiteDesc desc(lineOrBytecode, rootCompiler_.inlinedCallerOffsetsIndex(),
+    CallSiteDesc desc(lineOrBytecode, inlinedCallerOffsetsIndex_,
                       CallSiteKind::Symbolic);
     auto callee = CalleeDesc::builtin(builtin.identity);
 
@@ -3149,7 +3153,7 @@ class FunctionCompiler {
       return true;
     }
 
-    CallSiteDesc desc(lineOrBytecode, rootCompiler_.inlinedCallerOffsetsIndex(),
+    CallSiteDesc desc(lineOrBytecode, inlinedCallerOffsetsIndex_,
                       CallSiteKind::Symbolic);
     if (builtin.failureMode != FailureMode::Infallible &&
         !beginCatchableCall(callState)) {
@@ -3315,7 +3319,7 @@ class FunctionCompiler {
 
     CallCompileState callState(ABIKind::Wasm);
     CalleeDesc callee = CalleeDesc::wasmFuncRef();
-    CallSiteDesc desc(lineOrBytecode, rootCompiler_.inlinedCallerOffsetsIndex(),
+    CallSiteDesc desc(lineOrBytecode, inlinedCallerOffsetsIndex_,
                       CallSiteKind::FuncRef);
     ArgTypeVector argTypes(funcType);
     ResultType resultType = ResultType::Vector(funcType.results());
@@ -6505,14 +6509,16 @@ bool FunctionCompiler::emitInlineCall(const FuncType& funcType,
     return false;
   }
 
+  InlinedCallerOffsetIndex inlinedCallerOffsetsIndex;
   CompileInfo* compileInfo = rootCompiler().startInlineCall(
       this->funcIndex(), bytecodeOffset(), funcIndex, locals.length(),
-      funcRange.size(), callKind);
+      funcRange.size(), callKind, &inlinedCallerOffsetsIndex);
   if (!compileInfo) {
     return false;
   }
 
-  FunctionCompiler calleeCompiler(this, d, func, locals, *compileInfo);
+  FunctionCompiler calleeCompiler(this, d, func, locals, *compileInfo,
+                                  inlinedCallerOffsetsIndex);
   if (!calleeCompiler.initInline(args)) {
     MOZ_ASSERT(!error);
     return false;
@@ -11339,7 +11345,8 @@ bool RootCompiler::generate() {
 CompileInfo* RootCompiler::startInlineCall(
     uint32_t callerFuncIndex, BytecodeOffset callerOffset,
     uint32_t calleeFuncIndex, uint32_t numLocals, size_t inlineeBytecodeSize,
-    InliningHeuristics::CallKind callKind) {
+    InliningHeuristics::CallKind callKind,
+    InlinedCallerOffsetIndex* inlinedCallerOffsetsIndex) {
   if (callKind == InliningHeuristics::CallKind::Direct) {
     inliningStats_.inlinedDirectBytecodeSize += inlineeBytecodeSize;
     inliningStats_.inlinedDirectFunctions += 1;
@@ -11377,7 +11384,7 @@ CompileInfo* RootCompiler::startInlineCall(
   }
 
   if (!inliningContext_.append(std::move(inlinedCallerOffsets),
-                               &inlinedCallerOffsetsIndex_)) {
+                               inlinedCallerOffsetsIndex)) {
     return nullptr;
   }
 

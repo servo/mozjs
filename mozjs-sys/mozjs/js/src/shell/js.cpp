@@ -948,6 +948,23 @@ JSObject* NewShellWindowProxy(JSContext* cx, JS::HandleObject global) {
   return obj;
 }
 
+// A wrap callback that matches the behavior of the browser which reuses an
+// existing wrapper object via Wrapper::Renew when one is supplied. This allows
+// exercising Wrapper::Renew.
+static JSObject* ShellWrapObjectCallback(JSContext* cx,
+                                         JS::HandleObject existing,
+                                         JS::HandleObject obj) {
+  MOZ_ASSERT(!obj->is<js::WrapperObject>() || js::IsWindowProxy(obj));
+  if (existing) {
+    return js::Wrapper::Renew(existing, obj,
+                              &js::CrossCompartmentWrapper::singleton);
+  }
+  return js::Wrapper::New(cx, obj, &js::CrossCompartmentWrapper::singleton);
+}
+
+static const JSWrapObjectCallbacks ShellWrapObjectCallbacks = {
+    ShellWrapObjectCallback, nullptr};
+
 /*
  * A toy principals type for the shell.
  *
@@ -12728,6 +12745,8 @@ int main(int argc, char** argv) {
 
   JS_SetTrustedPrincipals(cx, &ShellPrincipals::fullyTrusted);
   JS_SetSecurityCallbacks(cx, &ShellPrincipals::securityCallbacks);
+
+  JS_SetWrapObjectCallbacks(cx, &ShellWrapObjectCallbacks);
 
   JS_AddInterruptCallback(cx, ShellInterruptCallback);
 

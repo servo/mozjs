@@ -42,7 +42,8 @@ namespace gc {
 void MarkSymbolForWeakMapReadBarrier(JS::Zone* zone, JS::Symbol* sym);
 
 #if defined(JS_GC_ZEAL) || defined(DEBUG)
-// Check whether a weak map entry is marked correctly.
+// Check whether a weak map / entry is marked correctly.
+bool CheckWeakMapMapMarking(const WeakMapBase* map);
 bool CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key, Cell* value);
 #endif
 
@@ -229,6 +230,7 @@ class WeakMapBase : public SlimLinkedListElement<WeakMapBase> {
 #ifdef JS_GC_ZEAL
   virtual bool checkMarking() const = 0;
   virtual bool allowKeysInOtherZones() const { return false; }
+  friend bool gc::CheckWeakMapMapMarking(const WeakMapBase*);
   friend bool gc::CheckWeakMapEntryMarking(const WeakMapBase*, gc::Cell*,
                                            gc::Cell*);
 #endif

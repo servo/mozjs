@@ -1647,7 +1647,10 @@ void GlobalHelperThreadState::createAndSubmitCompressionTasks(
   size_t currentBatchLength = 0;
 
   rt->pendingCompressions().eraseIf([&](const auto& entry) {
-    MOZ_ASSERT(entry.source()->hasUncompressedSource());
+    ScriptSource::DataReader reader(entry.source());
+
+    MOZ_ASSERT(reader.hasSourceText());
+    MOZ_ASSERT(reader->hasUncompressedSource());
 
     // If the script source has no other references then remove it from the
     // vector and don't compress it.
@@ -1664,7 +1667,7 @@ void GlobalHelperThreadState::createAndSubmitCompressionTasks(
 
     // Add this entry to the current batch if the total length doesn't exceed
     // MaxBatchLength.
-    size_t length = entry.source()->length();
+    size_t length = reader->length();
     if (currentBatch && currentBatchLength + length <= MaxBatchLength) {
       if (!currentBatch->addEntry(entry.source())) {
         return false;
