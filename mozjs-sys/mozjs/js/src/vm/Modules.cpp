@@ -169,6 +169,55 @@ JS_PUBLIC_API bool JS::FinishLoadingImportedModule(
                                usePromise);
 }
 
+JS_PUBLIC_API bool JS::FinishLoadingDynamicImportedModule(
+    JSContext* cx, Handle<JSScript*> referrer, Handle<JSObject*> moduleRequest,
+    Handle<Value> payload, Handle<JSObject*> result) {
+  AssertHeapIsIdle();
+  CHECK_THREAD(cx);
+  cx->check(referrer, moduleRequest, payload, result);
+
+  MOZ_ASSERT(moduleRequest->is<ModuleRequestObject>());
+  MOZ_ASSERT(result);
+  Rooted<ModuleObject*> module(cx, &result->as<ModuleObject>());
+
+  // TODO: Until we support evaluation phase imports of wasm modules, we need to
+  // guard against first importing a wasm module as source, and then
+  // subsequently as evaluation phase. The module will be retrieved from the
+  // module map, and then we'll attempt to link it, which isn't currently
+  // supported. See Bug 2030454.
+  if (moduleRequest->as<ModuleRequestObject>().phase() ==
+          ImportPhase::Evaluation &&
+      module->moduleSource()) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_WASM_ESM_EVAL_NOT_SUPPORTED);
+    return FinishLoadingImportedModuleFailedWithPendingException(cx, payload);
+  }
+
+  if (referrer && referrer->isModule()) {
+    // |loadedModules| is only required to be stored on modules.
+
+    // Step 1. If result is a normal completion, then
+    // Step 1.a. If referrer.[[LoadedModules]] contains a Record whose
+    //           [[Specifier]] is specifier, then
+    LoadedModuleMap& loadedModules = referrer->module()->loadedModules();
+    if (auto record = loadedModules.lookup(moduleRequest)) {
+      //  Step 1.a.i. Assert: That Record's [[Module]] is result.[[Value]].
+      MOZ_ASSERT(record->value() == module);
+    } else {
+      // Step 1.b. Else, append the Record { moduleRequest.[[Specifer]],
+      //           [[Attributes]]: moduleRequest.[[Attributes]],
+      //           [[Module]]: result.[[Value]] } to referrer.[[LoadedModules]].
+      if (!loadedModules.putNew(moduleRequest, module)) {
+        ReportOutOfMemory(cx);
+        return FinishLoadingImportedModuleFailedWithPendingException(cx,
+                                                                     payload);
+      }
+    }
+  }
+
+  return true;
+}
+
 // https://tc39.es/ecma262/#sec-FinishLoadingImportedModule
 // Failure path where |result| is a throw completion, supplied as |error|.
 JS_PUBLIC_API bool JS::FinishLoadingImportedModuleFailed(
