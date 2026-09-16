@@ -4,11 +4,11 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-import re
 
 TARGET = "mozjs-sys/mozjs"
 
@@ -251,6 +251,18 @@ impl icu_casemap::ClosureSink for CodePointInversionListBuilder {
         extract_rust_crate("third_party/rust", "icu_collections", cbindgen=False)
         extract_rust_crate("third_party/rust", "utf8_iter", cbindgen=False)
         extract_rust_crate("third_party/rust", "utf16_iter", cbindgen=False)
+
+        # patch mozjs-sys/Cargo.toml versions
+        cargo_toml_file = Path(os.path.join("mozjs-sys", "Cargo.toml"))
+        cargo_toml_contents = cargo_toml_file.read_text()
+        # ... version = "=153.1.1" ...
+        cargo_toml_contents = re.sub(
+            r'version = "=.*", path',
+            f'version = "={milestone_version}", path',
+            cargo_toml_contents,
+            flags=re.MULTILINE,
+        )
+        cargo_toml_file.write_text(cargo_toml_contents)
 
         subprocess.check_call(
             [
