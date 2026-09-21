@@ -765,9 +765,11 @@ class GCRuntime {
   static void* refillFreeList(JS::Zone* zone, AllocKind thingKind);
   void attemptLastDitchGC();
 
-  // Return whether |sym| is marked at least |color| in the atom marking state
-  // for uncollected zones.
-  bool isSymbolReferencedByUncollectedZone(JS::Symbol* sym, MarkColor color);
+  // Return the mark color for |sym| in the atom marking state for uncollected
+  // zones, or MarkColor::White if it's not referenced.
+  CellColor isAtomReferencedByUncollectedZone(TenuredCell* atom);
+  template <typename T>
+  void maybeMarkWeaklyHeldAtom(T* atom);
 
   // Test mark queue.
 #ifdef DEBUG
@@ -914,7 +916,7 @@ class GCRuntime {
   std::tuple<JS::SliceBudget, JS::SliceBudget> budgetConcurrentMarking(
       const JS::SliceBudget& requestedBudget);
   void maybeStartConcurrentMarking(JS::SliceBudget& budget);
-  void finishAnyConcurrentMarking(JS::SliceBudget& budget);
+  bool finishAnyConcurrentMarking(JS::SliceBudget& budget);
   friend class BackgroundMarkTask;
   enum ParallelMarking : bool {
     NoParallelMarking = false,
@@ -956,7 +958,6 @@ class GCRuntime {
 
   template <class ZoneIterT>
   IncrementalProgress markWeakReferences(JS::SliceBudget& budget);
-  void markIncomingGraySymbolEdgesFromUncollectedZones();
   IncrementalProgress markWeakReferencesInCurrentGroup(JS::SliceBudget& budget);
   IncrementalProgress markGrayRoots(JS::SliceBudget& budget,
                                     gcstats::PhaseKind phase);

@@ -3804,10 +3804,14 @@ template <typename TextChar>
 static ArrayObject* SplitSingleCharHelper(JSContext* cx,
                                           Handle<JSLinearString*> str,
                                           char16_t patCh) {
+  static constexpr bool isTwoByteChar = std::is_same_v<TextChar, char16_t>;
+
   // Count the number of occurrences of |patCh| within |str|.
   uint32_t count = 0;
   if (patCh <= std::numeric_limits<TextChar>::max()) {
     JS::AutoCheckCannotGC nogc;
+
+    MOZ_RELEASE_ASSERT(str->hasTwoByteChars() == isTwoByteChar);
 
     auto text = str->range<TextChar>(nogc);
 
@@ -3837,11 +3841,13 @@ static ArrayObject* SplitSingleCharHelper(JSContext* cx,
     {
       JS::AutoCheckCannotGC nogc;
 
+      MOZ_RELEASE_ASSERT(str->hasTwoByteChars() == isTwoByteChar);
+
       auto text = str->range<TextChar>(nogc);
 
       auto* p = std::find(text.begin().get() + lastEndIndex, text.end().get(),
                           static_cast<TextChar>(patCh));
-      MOZ_ASSERT(p != text.end().get());
+      MOZ_RELEASE_ASSERT(p != text.end().get());
 
       index = std::distance(text.begin().get(), p);
     }

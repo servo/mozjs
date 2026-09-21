@@ -1137,8 +1137,10 @@ class MInstruction : public MDefinition, public InlineListNode<MInstruction> {
 //     NAMED_OPERANDS((0, lhs), (1, rhs))
 //
 // The above example defines 2 accessors, one named "lhs" accessing the first
-// operand, and a one named "rhs" accessing the second operand.
-#define NAMED_OPERAND_ACCESSOR(Index, Name) \
+// operand, and a one named "rhs" accessing the second operand. It also defines
+// the operand indices as |lhsOperand| and |rhsOperand|.
+#define NAMED_OPERAND_ACCESSOR(Index, Name)      \
+  static constexpr size_t Name##Operand = Index; \
   MDefinition* Name() const { return getOperand(Index); }
 #define NAMED_OPERAND_ACCESSOR_APPLY(Args) NAMED_OPERAND_ACCESSOR Args
 #define NAMED_OPERANDS(...) \

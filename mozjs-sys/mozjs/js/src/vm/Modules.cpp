@@ -1629,6 +1629,20 @@ static bool ModuleInitializeEnvironment(JSContext* cx,
   return ModuleObject::instantiateFunctionDeclarations(cx, module);
 }
 
+// Reject the load with the pending exception instead of unwinding out of it.
+// ContinueModuleLoading sets state.[[IsLoading]] to false and calls the state
+// record's rejected handler.
+static bool FailWithPendingException(
+    JSContext* cx, Handle<GraphLoadingStateRecordObject*> state) {
+  JS::ExceptionStack exnStack(cx);
+  if (!JS::StealPendingExceptionStack(cx, &exnStack)) {
+    return false;
+  }
+
+  return ContinueModuleLoading(cx, state, nullptr, ImportPhase::Evaluation,
+                               exnStack.exception());
+}
+
 static bool FailWithUnsupportedAttributeException(
     JSContext* cx, Handle<GraphLoadingStateRecordObject*> state,
     Handle<ModuleRequestObject*> moduleRequest) {
@@ -1639,13 +1653,7 @@ static bool FailWithUnsupportedAttributeException(
       JSMSG_IMPORT_ATTRIBUTES_STATIC_IMPORT_UNSUPPORTED_ATTRIBUTE,
       printableKey ? printableKey.get() : "");
 
-  JS::ExceptionStack exnStack(cx);
-  if (!JS::StealPendingExceptionStack(cx, &exnStack)) {
-    return false;
-  }
-
-  return ContinueModuleLoading(cx, state, nullptr, ImportPhase::Evaluation,
-                               exnStack.exception());
+  return FailWithPendingException(cx, state);
 }
 
 // https://tc39.es/proposal-source-phase-imports/#sec-InnerModuleLoading
@@ -1660,7 +1668,7 @@ static bool InnerModuleLoading(JSContext* cx,
 
   AutoCheckRecursionLimit recursion(cx);
   if (!recursion.check(cx)) {
-    return false;
+    return FailWithPendingException(cx, state);
   }
 
   // Step 1. Assert: state.[[IsLoading]] is true.
@@ -1674,7 +1682,7 @@ static bool InnerModuleLoading(JSContext* cx,
     // Step 2.a. Append module to state.[[Visited]].
     if (!state->visited().putNew(module)) {
       ReportOutOfMemory(cx);
-      return false;
+      return FailWithPendingException(cx, state);
     }
 
     // Step 2.b. Let requestedModulesCount be the number of elements in
@@ -1829,7 +1837,15 @@ bool js::LoadRequestedModules(JSContext* cx, Handle<ModuleObject*> module,
   }
 
   // Step 4. Perform InnerModuleLoading(state, module, recursive-load).
-  return InnerModuleLoading(cx, state, module, LoadType::RecursiveLoad);
+  if (!InnerModuleLoading(cx, state, module, LoadType::RecursiveLoad)) {
+    // Returning false means the load was abandoned without notifying the
+    // caller through |resolved| or |rejected|, i.e. an OOM occurred.
+    // Deactivate the state.[[IsLoading]] accordingly.
+    state->setIsLoading(false);
+    return false;
+  }
+
+  return true;
 }
 
 bool js::LoadRequestedModules(JSContext* cx, Handle<ModuleObject*> module,
@@ -1861,6 +1877,10 @@ bool js::LoadRequestedModules(JSContext* cx, Handle<ModuleObject*> module,
 
   // Step 4. Perform InnerModuleLoading(state, module, recursive-load).
   if (!InnerModuleLoading(cx, state, module, LoadType::RecursiveLoad)) {
+    // Returning false means the load was abandoned without notifying the
+    // caller through |resolved| or |rejected|, i.e. an OOM occurred.
+    // Deactivate the state.[[IsLoading]] accordingly.
+    state->setIsLoading(false);
     return false;
   }
 
