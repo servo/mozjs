@@ -49,11 +49,11 @@ icu_capi = { version = "=2.1.2", default-features = false, features = [
   "segmenter",
   "calendar",
 ], optional = true }
-mozjs_unicode_bidi_ffi = { version = "=153.0.0", path = "../mozjs-extracted-crates/unicode_bidi_ffi", optional = true }
-mozjs_normalizer_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/normalizer_glue" }
-mozjs_properties_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/properties_glue", optional = true }
-mozjs_collator_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/collator_glue", optional = true }
-mozjs_locale_glue = { version = "=153.0.0", path = "../mozjs-extracted-crates/locale_glue", optional = true }
+mozjs_unicode_bidi_ffi = { version = "=153.3.0", path = "../mozjs-extracted-crates/unicode_bidi_ffi", optional = true }
+mozjs_normalizer_glue = { version = "=153.3.0", path = "../mozjs-extracted-crates/normalizer_glue" }
+mozjs_properties_glue = { version = "=153.3.0", path = "../mozjs-extracted-crates/properties_glue", optional = true }
+mozjs_collator_glue = { version = "=153.3.0", path = "../mozjs-extracted-crates/collator_glue", optional = true }
+mozjs_locale_glue = { version = "=153.3.0", path = "../mozjs-extracted-crates/locale_glue", optional = true }
 
 libz-rs-sys = { version = "0.6", features = [
   "export-symbols",

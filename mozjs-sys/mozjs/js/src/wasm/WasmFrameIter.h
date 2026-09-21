@@ -89,6 +89,10 @@ class WasmFrameIter {
   bool currentFrameStackSwitched_ = false;
 #ifdef ENABLE_WASM_JSPI
   ContStack* contStack_ = nullptr;
+  // A continuation stack that the trap occurred on but which has no frame in
+  // this iteration (its only frame was torn down by a trapping return_call).
+  // Exception unwinding must free it even though no iterated frame is on it.
+  ContStack* unwoundContStack_ = nullptr;
 #endif
 
   //
@@ -109,6 +113,13 @@ class WasmFrameIter {
   // just popped. This is normally equal to `isLeavingFrames_`, but is
   // different for the very first `popFrame` of a wasm exit frame.
   void popFrame(bool isLeavingFrame);
+
+#ifdef ENABLE_WASM_JSPI
+  // Switch iteration from a continuation's base frame (`fp_` must point at the
+  // ContBaseFrame) to the resume target on the parent stack, leaving the
+  // iterator positioned at the resuming frame.
+  void popContBaseFrame();
+#endif
 
  public:
   // See comment above this class definition.
@@ -193,6 +204,10 @@ class WasmFrameIter {
     MOZ_ASSERT(!done());
     return contStack_;
   }
+
+  // See unwoundContStack_. Null in all cases except the trapping return_call
+  // described there.
+  ContStack* unwoundContStack() const { return unwoundContStack_; }
 #endif
 
   //

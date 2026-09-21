@@ -169,55 +169,6 @@ JS_PUBLIC_API bool JS::FinishLoadingImportedModule(
                                usePromise);
 }
 
-JS_PUBLIC_API bool JS::FinishLoadingDynamicImportedModule(
-    JSContext* cx, Handle<JSScript*> referrer, Handle<JSObject*> moduleRequest,
-    Handle<Value> payload, Handle<JSObject*> result) {
-  AssertHeapIsIdle();
-  CHECK_THREAD(cx);
-  cx->check(referrer, moduleRequest, payload, result);
-
-  MOZ_ASSERT(moduleRequest->is<ModuleRequestObject>());
-  MOZ_ASSERT(result);
-  Rooted<ModuleObject*> module(cx, &result->as<ModuleObject>());
-
-  // TODO: Until we support evaluation phase imports of wasm modules, we need to
-  // guard against first importing a wasm module as source, and then
-  // subsequently as evaluation phase. The module will be retrieved from the
-  // module map, and then we'll attempt to link it, which isn't currently
-  // supported. See Bug 2030454.
-  if (moduleRequest->as<ModuleRequestObject>().phase() ==
-          ImportPhase::Evaluation &&
-      module->moduleSource()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_WASM_ESM_EVAL_NOT_SUPPORTED);
-    return FinishLoadingImportedModuleFailedWithPendingException(cx, payload);
-  }
-
-  if (referrer && referrer->isModule()) {
-    // |loadedModules| is only required to be stored on modules.
-
-    // Step 1. If result is a normal completion, then
-    // Step 1.a. If referrer.[[LoadedModules]] contains a Record whose
-    //           [[Specifier]] is specifier, then
-    LoadedModuleMap& loadedModules = referrer->module()->loadedModules();
-    if (auto record = loadedModules.lookup(moduleRequest)) {
-      //  Step 1.a.i. Assert: That Record's [[Module]] is result.[[Value]].
-      MOZ_ASSERT(record->value() == module);
-    } else {
-      // Step 1.b. Else, append the Record { moduleRequest.[[Specifer]],
-      //           [[Attributes]]: moduleRequest.[[Attributes]],
-      //           [[Module]]: result.[[Value]] } to referrer.[[LoadedModules]].
-      if (!loadedModules.putNew(moduleRequest, module)) {
-        ReportOutOfMemory(cx);
-        return FinishLoadingImportedModuleFailedWithPendingException(cx,
-                                                                     payload);
-      }
-    }
-  }
-
-  return true;
-}
-
 // https://tc39.es/ecma262/#sec-FinishLoadingImportedModule
 // Failure path where |result| is a throw completion, supplied as |error|.
 JS_PUBLIC_API bool JS::FinishLoadingImportedModuleFailed(
@@ -1629,6 +1580,20 @@ static bool ModuleInitializeEnvironment(JSContext* cx,
   return ModuleObject::instantiateFunctionDeclarations(cx, module);
 }
 
+// Reject the load with the pending exception instead of unwinding out of it.
+// ContinueModuleLoading sets state.[[IsLoading]] to false and calls the state
+// record's rejected handler.
+static bool FailWithPendingException(
+    JSContext* cx, Handle<GraphLoadingStateRecordObject*> state) {
+  JS::ExceptionStack exnStack(cx);
+  if (!JS::StealPendingExceptionStack(cx, &exnStack)) {
+    return false;
+  }
+
+  return ContinueModuleLoading(cx, state, nullptr, ImportPhase::Evaluation,
+                               exnStack.exception());
+}
+
 static bool FailWithUnsupportedAttributeException(
     JSContext* cx, Handle<GraphLoadingStateRecordObject*> state,
     Handle<ModuleRequestObject*> moduleRequest) {
@@ -1639,13 +1604,7 @@ static bool FailWithUnsupportedAttributeException(
       JSMSG_IMPORT_ATTRIBUTES_STATIC_IMPORT_UNSUPPORTED_ATTRIBUTE,
       printableKey ? printableKey.get() : "");
 
-  JS::ExceptionStack exnStack(cx);
-  if (!JS::StealPendingExceptionStack(cx, &exnStack)) {
-    return false;
-  }
-
-  return ContinueModuleLoading(cx, state, nullptr, ImportPhase::Evaluation,
-                               exnStack.exception());
+  return FailWithPendingException(cx, state);
 }
 
 // https://tc39.es/proposal-source-phase-imports/#sec-InnerModuleLoading
@@ -1660,7 +1619,7 @@ static bool InnerModuleLoading(JSContext* cx,
 
   AutoCheckRecursionLimit recursion(cx);
   if (!recursion.check(cx)) {
-    return false;
+    return FailWithPendingException(cx, state);
   }
 
   // Step 1. Assert: state.[[IsLoading]] is true.
@@ -1674,7 +1633,7 @@ static bool InnerModuleLoading(JSContext* cx,
     // Step 2.a. Append module to state.[[Visited]].
     if (!state->visited().putNew(module)) {
       ReportOutOfMemory(cx);
-      return false;
+      return FailWithPendingException(cx, state);
     }
 
     // Step 2.b. Let requestedModulesCount be the number of elements in
@@ -1829,7 +1788,15 @@ bool js::LoadRequestedModules(JSContext* cx, Handle<ModuleObject*> module,
   }
 
   // Step 4. Perform InnerModuleLoading(state, module, recursive-load).
-  return InnerModuleLoading(cx, state, module, LoadType::RecursiveLoad);
+  if (!InnerModuleLoading(cx, state, module, LoadType::RecursiveLoad)) {
+    // Returning false means the load was abandoned without notifying the
+    // caller through |resolved| or |rejected|, i.e. an OOM occurred.
+    // Deactivate the state.[[IsLoading]] accordingly.
+    state->setIsLoading(false);
+    return false;
+  }
+
+  return true;
 }
 
 bool js::LoadRequestedModules(JSContext* cx, Handle<ModuleObject*> module,
@@ -1861,6 +1828,10 @@ bool js::LoadRequestedModules(JSContext* cx, Handle<ModuleObject*> module,
 
   // Step 4. Perform InnerModuleLoading(state, module, recursive-load).
   if (!InnerModuleLoading(cx, state, module, LoadType::RecursiveLoad)) {
+    // Returning false means the load was abandoned without notifying the
+    // caller through |resolved| or |rejected|, i.e. an OOM occurred.
+    // Deactivate the state.[[IsLoading]] accordingly.
+    state->setIsLoading(false);
     return false;
   }
 

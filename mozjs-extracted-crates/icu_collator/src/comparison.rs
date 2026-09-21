@@ -1562,9 +1562,13 @@ impl<'data> CollatorBorrowed<'data> {
                                 && ((left_ce32.tag_checked() == Some(Tag::Digit)
                                     && left_ce32.digit() == 0)
                                     || (right_ce32.tag_checked() == Some(Tag::Digit)
-                                        && right_ce32.digit() == 0))
+                                        && right_ce32.digit() == 0)
+                                    || ((left_ce32.tag_checked() == Some(Tag::Digit))
+                                        ^ (right_ce32.tag_checked() == Some(Tag::Digit))))
                             {
-                                // Avoid giving the zero the leading zero treatment.
+                                // Avoid giving the zero the leading zero treatment
+                                // and also reject the case where only one of
+                                // right and left is a digit.
                                 break;
                             }
 

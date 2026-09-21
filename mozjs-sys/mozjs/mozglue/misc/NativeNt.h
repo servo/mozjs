@@ -11,6 +11,7 @@
 #include <winternl.h>
 
 #include <algorithm>
+#include <type_traits>
 #include <utility>
 
 #include "mozilla/Attributes.h"
@@ -540,6 +541,27 @@ struct CodeViewRecord70 {
   char pdbFileName[1];
 };
 
+// The size of the object that T points at, used to bounds-check a pointer
+// against the mapped image.
+//
+// void and function pointees have no meaningful compile-time extent (the
+// former is opaque and the latter is machine code) so they fall back to a
+// one-byte "this address is inside the image" check, which is all the caller
+// can meaningfully assert.
+template <typename T>
+constexpr size_t PointeeSize() {
+  static_assert(std::is_pointer_v<T>,
+                "RVAToPtr and friends resolve an RVA to a pointer, so T must "
+                "be a pointer type");
+
+  using Pointee = std::remove_pointer_t<T>;
+  if constexpr (std::is_void_v<Pointee> || std::is_function_v<Pointee>) {
+    return 1;
+  } else {
+    return sizeof(Pointee);
+  }
+}
+
 class MOZ_RAII PEHeaders final {
   /**
    * This structure is documented on MSDN as VS_VERSIONINFO, but is not present
@@ -620,23 +642,51 @@ class MOZ_RAII PEHeaders final {
   }
 
   /**
-   * This overload computes a result by adding aRva to aBase, but also ensures
+   * This overload computes a result by adding aRva to aBase and ensures
    * that the resulting pointer falls within the bounds of this binary's memory
    * mapping.
    */
-  template <typename T, typename R>
+  template <typename T, typename R, size_t Size = PointeeSize<T>()>
   T RVAToPtr(void* aBase, R aRva) const {
     if (!mImageLimit) {
       return nullptr;
     }
 
+    // aBase is not always the image base (some callers resolve offsets that
+    // are relative to a resource directory or to the optional header), so
+    // convert back to an image-relative RVA before bounds checking.
+    char* imageBase = reinterpret_cast<char*>(mMzHeader);
     char* absAddress = reinterpret_cast<char*>(aBase) + aRva;
-    if (absAddress < reinterpret_cast<char*>(mMzHeader) ||
-        absAddress > reinterpret_cast<char*>(mImageLimit)) {
+    if (absAddress < imageBase) {
       return nullptr;
     }
 
-    return reinterpret_cast<T>(absAddress);
+    return RVAToPtrChecked<T>(static_cast<uintptr_t>(absAddress - imageBase),
+                              Size);
+  }
+
+  /**
+   * Like RVAToPtr, but ensures that the whole range [aRva, aRva + aSize) --
+   * not just its first byte -- falls within the bounds of this binary's memory
+   * mapping. Use this whenever the caller is going to dereference more than a
+   * single byte at the resulting address.
+   */
+  template <typename T, typename R>
+  T RVAToPtrChecked(R aRva, size_t aSize) const {
+    if (!mImageLimit || !aSize) {
+      return nullptr;
+    }
+
+    uintptr_t base = reinterpret_cast<uintptr_t>(mMzHeader);
+    // mImageLimit points at the last valid byte of the mapping.
+    uintptr_t available = reinterpret_cast<uintptr_t>(mImageLimit) - base + 1u;
+
+    uintptr_t rva = static_cast<uintptr_t>(aRva);
+    if (rva >= available || aSize > available - rva) {
+      return nullptr;
+    }
+
+    return reinterpret_cast<T>(base + rva);
   }
 
   Maybe<Range<const uint8_t>> GetBounds() const {
@@ -933,16 +983,45 @@ class MOZ_RAII PEHeaders final {
   }
 
   const CodeViewRecord70* GetPdbInfo() const {
-    PIMAGE_DEBUG_DIRECTORY debugDirectory =
-        GetImageDirectoryEntry<PIMAGE_DEBUG_DIRECTORY>(
-            IMAGE_DIRECTORY_ENTRY_DEBUG);
+    PIMAGE_DATA_DIRECTORY dirEntry =
+        GetImageDirectoryEntryPtr(IMAGE_DIRECTORY_ENTRY_DEBUG);
+    if (!dirEntry || dirEntry->Size < sizeof(IMAGE_DEBUG_DIRECTORY)) {
+      return nullptr;
+    }
+
+    auto debugDirectory = RVAToPtrChecked<PIMAGE_DEBUG_DIRECTORY>(
+        dirEntry->VirtualAddress, sizeof(IMAGE_DEBUG_DIRECTORY));
     if (!debugDirectory) {
       return nullptr;
     }
 
-    const CodeViewRecord70* debugInfo =
-        RVAToPtr<CodeViewRecord70*>(debugDirectory->AddressOfRawData);
-    return (debugInfo && debugInfo->signature == 'SDSR') ? debugInfo : nullptr;
+    // The record needs to be big enough for the fixed-size fields plus at
+    // least the null terminator of pdbFileName.
+    constexpr size_t kMinRecordSize =
+        offsetof(CodeViewRecord70, pdbFileName) + 1;
+    if (debugDirectory->SizeOfData < kMinRecordSize) {
+      return nullptr;
+    }
+
+    auto debugInfo = RVAToPtrChecked<const CodeViewRecord70*>(
+        debugDirectory->AddressOfRawData, debugDirectory->SizeOfData);
+    if (!debugInfo || debugInfo->signature != 'SDSR') {
+      return nullptr;
+    }
+
+    // Callers treat pdbFileName as a C string, so it must be terminated inside
+    // the record.
+    const size_t nameCapacity =
+        debugDirectory->SizeOfData - offsetof(CodeViewRecord70, pdbFileName);
+    for (size_t i = 0; i < nameCapacity; ++i) {
+      if (!debugInfo->pdbFileName[i]) {
+        // terminated, so succeed
+        return debugInfo;
+      }
+    }
+
+    // not terminated, so fail
+    return nullptr;
   }
 
  private:

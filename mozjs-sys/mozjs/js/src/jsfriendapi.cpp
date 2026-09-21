@@ -722,11 +722,23 @@ AutoAssertNoContentJS::~AutoAssertNoContentJS() {
 
 JS_PUBLIC_API void js::EnableCodeCoverage() { js::coverage::EnableLCov(); }
 
-JS_PUBLIC_API uint64_t js::GetMemoryUsageForZone(Zone* zone) {
+JS_PUBLIC_API size_t js::GetMemoryUsageForZone(Zone* zone) {
   // We do not include zone->sharedMemoryUseCounts since that's already included
   // in zone->mallocHeapSize.
-  return zone->gcHeapSize.bytes() + zone->mallocHeapSize.bytes() +
-         zone->jitHeapSize.bytes();
+  return GetGCHeapSizeForZone(zone) + GetMallocHeapSizeForZone(zone) +
+         GetJITHeapSizeForZone(zone);
+}
+
+JS_PUBLIC_API size_t js::GetGCHeapSizeForZone(Zone* zone) {
+  return zone->gcHeapSize.bytes();
+}
+
+JS_PUBLIC_API size_t js::GetMallocHeapSizeForZone(Zone* zone) {
+  return zone->mallocHeapSize.bytes();
+}
+
+JS_PUBLIC_API size_t js::GetJITHeapSizeForZone(Zone* zone) {
+  return zone->jitHeapSize.bytes();
 }
 
 JS_PUBLIC_API const gc::SharedMemoryMap& js::GetSharedMemoryUsageForZone(

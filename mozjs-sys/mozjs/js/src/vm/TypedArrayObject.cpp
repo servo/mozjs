@@ -682,6 +682,7 @@ class TypedArrayObjectTemplate {
   static TypedArrayObject* fromBufferSameCompartment(
       JSContext* cx, Handle<ArrayBufferObjectMaybeShared*> buffer,
       uint64_t byteOffset, uint64_t lengthIndex, HandleObject proto) {
+    cx->releaseCheck(buffer);
     // Steps 6-9.
     size_t length = 0;
     auto autoLength = AutoLength::No;
