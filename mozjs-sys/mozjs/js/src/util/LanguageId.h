@@ -230,7 +230,7 @@ class LanguageId final {
 
  private:
   template <char... separators, typename CharT>
-  static constexpr mozilla::Maybe<std::pair<LanguageId, size_t>> from(
+  static /* constexpr */ mozilla::Maybe<std::pair<LanguageId, size_t>> from(
       std::basic_string_view<CharT> localeId) {
     // Return true iff |sv| starts with a subtag of length |len|.
     auto hasSubtag = [](std::basic_string_view<CharT> sv, size_t len) {
@@ -312,7 +312,7 @@ class LanguageId final {
    *
    * Subtags in ICU and Unicode locale identifiers are separated by "-" or "_".
    */
-  static constexpr auto fromId(std::string_view localeId) {
+  static auto fromId(std::string_view localeId) {
     return from<'-', '_'>(localeId);
   }
 
@@ -326,7 +326,7 @@ class LanguageId final {
    *
    * Subtags in ICU and Unicode locale identifiers are separated by "-" or "_".
    */
-  static constexpr auto fromId(mozilla::Span<const char> localeId) {
+  static auto fromId(mozilla::Span<const char> localeId) {
     return fromId(std::string_view{localeId.data(), localeId.size()});
   }
 
@@ -340,7 +340,7 @@ class LanguageId final {
    *
    * Subtags in BCP 47 locale identifiers are separated by "-".
    */
-  static constexpr auto fromBcp49(std::string_view localeId) {
+  static auto fromBcp49(std::string_view localeId) {
     return from<'-'>(localeId);
   }
 
@@ -354,7 +354,7 @@ class LanguageId final {
    *
    * Subtags in BCP 47 locale identifiers are separated by "-".
    */
-  static constexpr auto fromBcp49(std::u16string_view localeId) {
+  static auto fromBcp49(std::u16string_view localeId) {
     return from<u'-'>(localeId);
   }
 
@@ -369,7 +369,7 @@ class LanguageId final {
    * Subtags in BCP 47 locale identifiers are separated by "-".
    */
   template <typename CharT>
-  static constexpr auto fromBcp49(mozilla::Span<const CharT> localeId) {
+  static auto fromBcp49(mozilla::Span<const CharT> localeId) {
     return fromBcp49(std::basic_string_view{localeId.data(), localeId.size()});
   }
 
@@ -380,7 +380,7 @@ class LanguageId final {
    *
    * Subtags in BCP 47 locale identifiers are separated by "-".
    */
-  static consteval auto fromValidBcp49(std::string_view localeId) {
+  static auto fromValidBcp49(std::string_view localeId) {
     return fromBcp49(localeId)->first;
   }
 
@@ -407,8 +407,8 @@ class LanguageId final {
   /**
    * Return the language identifier for the undetermined locale "und".
    */
-  static constexpr auto und() {
-    constexpr LanguageId locale = fromValidBcp49("und");
+  static auto und() {
+    LanguageId locale = fromValidBcp49("und");
     return locale;
   }
 
