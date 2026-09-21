@@ -66,11 +66,15 @@ except subprocess.CalledProcessError:
     os.remove("allFunctions.txt.gz")
     os.remove("gcFunctions.txt.gz")
 
-commit_file = os.path.join(script_dir, "COMMIT")
-with open(commit_file, "w") as f:
-    f.write(changeset)
+commit_file_path = os.path.join(script_dir, "COMMIT")
+commit_file = Path(commit_file_path)
+old_changeset = commit_file.read_text().strip()
+if old_changeset == changeset:
+    print(f"COMMIT file already contains the latest changeset: {changeset}")
+    sys.exit(0)
+commit_file.write_text(changeset)
 
-subprocess.check_call(["git", "add", f"{commit_file}"])
+subprocess.check_call(["git", "add", f"{commit_file_path}"])
 subprocess.check_call(["git", "commit", "-m", "Update COMMIT", "--signoff"])
 
 download_gh_artifact("mozjs.tar.xz")
