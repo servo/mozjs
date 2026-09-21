@@ -22,15 +22,6 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 minor, patch, tag, changeset = get_latest_mozjs_tag_changeset()
 print(f"Latest tag: {tag}, changeset: {changeset}")
 
-try:
-    subprocess.check_call(
-        ["gh", "release", "view", f"mozjs-source-{changeset}", "--repo", "servo/mozjs"],
-    )
-    print(f"Release mozjs-source-{changeset} already exists, skipping SM bumps")
-    sys.exit(0)
-except subprocess.CalledProcessError:
-    pass
-
 if GITHUB_OUTPUT := os.getenv("GITHUB_OUTPUT"):
     with open(GITHUB_OUTPUT, "a") as github_output_file:
         print(f"tag={tag}", file=github_output_file)
@@ -38,43 +29,52 @@ if GITHUB_OUTPUT := os.getenv("GITHUB_OUTPUT"):
         print(f"version={ESR}.{minor}.{patch}", file=github_output_file)
         print(f"esr={ESR}", file=github_output_file)
 
+try:
+    subprocess.check_call(
+        ["gh", "release", "view", f"mozjs-source-{changeset}", "--repo", "servo/mozjs"],
+    )
+    print(f"Release mozjs-source-{changeset} already exists")
+except subprocess.CalledProcessError:
+    # Build the SpiderMonkey source tarball locally from the upstream git mirror.
+    # The Taskcluster artifact is not reliably available for ESR releases (see #747).
+    build_sm_package_from_git(tag, Path("mozjs.tar.xz"))
 
-# Build the SpiderMonkey source tarball locally from the upstream git mirror.
-# The Taskcluster artifact is not reliably available for ESR releases (see #747).
-build_sm_package_from_git(tag, Path("mozjs.tar.xz"))
+    verify_tarball_version("mozjs.tar.xz", f"{ESR}.{minor}.{patch}")
 
-verify_tarball_version("mozjs.tar.xz", f"{ESR}.{minor}.{patch}")
+    download_hazard_artifacts_from_taskcluster(changeset)
 
-download_hazard_artifacts_from_taskcluster(changeset)
+    subprocess.check_call(
+        [
+            "gh",
+            "release",
+            "create",
+            f"mozjs-source-{changeset}",
+            "mozjs.tar.xz",
+            "allFunctions.txt.gz",
+            "gcFunctions.txt.gz",
+            "--repo",
+            "servo/mozjs",
+            "--title",
+            f"SpiderMonkey {tag}",
+            "--latest=false",
+            "--notes",
+            f"Source code for SpiderMonkey {tag} (changeset: [{changeset}](https://hg.mozilla.org/releases/{REPO}/rev/{changeset}))",
+        ]
+    )
 
-subprocess.check_call(
-    [
-        "gh",
-        "release",
-        "create",
-        f"mozjs-source-{changeset}",
-        "mozjs.tar.xz",
-        "allFunctions.txt.gz",
-        "gcFunctions.txt.gz",
-        "--repo",
-        "servo/mozjs",
-        "--title",
-        f"SpiderMonkey {tag}",
-        "--latest=false",
-        "--notes",
-        f"Source code for SpiderMonkey {tag} (changeset: [{changeset}](https://hg.mozilla.org/releases/{REPO}/rev/{changeset}))",
-    ]
-)
+    os.remove("mozjs.tar.xz")
+    os.remove("allFunctions.txt.gz")
+    os.remove("gcFunctions.txt.gz")
 
-os.remove("mozjs.tar.xz")
-os.remove("allFunctions.txt.gz")
-os.remove("gcFunctions.txt.gz")
+commit_file_path = os.path.join(script_dir, "COMMIT")
+commit_file = Path(commit_file_path)
+old_changeset = commit_file.read_text().strip()
+if old_changeset == changeset:
+    print(f"COMMIT file already contains the latest changeset: {changeset}")
+    sys.exit(0)
+commit_file.write_text(changeset)
 
-commit_file = os.path.join(script_dir, "COMMIT")
-with open(commit_file, "w") as f:
-    f.write(changeset)
-
-subprocess.check_call(["git", "add", f"{commit_file}"])
+subprocess.check_call(["git", "add", f"{commit_file_path}"])
 subprocess.check_call(["git", "commit", "-m", "Update COMMIT", "--signoff"])
 
 download_gh_artifact("mozjs.tar.xz")
