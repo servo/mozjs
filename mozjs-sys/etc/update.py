@@ -279,7 +279,8 @@ impl icu_casemap::ClosureSink for CodePointInversionListBuilder {
 
     if commit:
         subprocess.check_call(
-            ["git", "add", "--all", TARGET], stdout=subprocess.DEVNULL
+            ["git", "add", "--all", TARGET, "mozjs-extracted-crates"],
+            stdout=subprocess.DEVNULL,
         )
         subprocess.check_call(
             ["git", "commit", "-s", "-m", "Update SpiderMonkey"],
