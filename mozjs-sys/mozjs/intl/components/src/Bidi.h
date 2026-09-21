@@ -13,7 +13,7 @@
 #define USE_RUST_UNICODE_BIDI 1
 
 #if USE_RUST_UNICODE_BIDI
-#  include "mozilla/intl/unicode_bidi_ffi_generated.h"
+#  include "unicode_bidi_ffi_generated.h"
 #else
 struct UBiDi;
 #endif
