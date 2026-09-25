@@ -43,7 +43,7 @@ diff --git a/moz.configure b/moz.configure
 index 8c2fa0563..0cd93dc80 100755
 --- a/moz.configure
 +++ b/moz.configure
-@@ -908,51 +908,23 @@ check_prog(
+@@ -908,51 +908,24 @@ check_prog(
      validate=validate_strip,
  )
  
@@ -98,7 +98,8 @@ index 8c2fa0563..0cd93dc80 100755
 -    help="Use libz-rs-sys instead of zlib",
 -    when=toolkit & ~with_system_zlib_option,
 -)
-+pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_system_zlib)
++# The OpenHarmony sysroot has zlib, but no pkg-config files.
++pkg_check_modules("MOZ_ZLIB", "zlib >= 1.2.3", when=use_system_zlib & ~target_is_ohos)
  
 -set_config("USE_LIBZ_RS", True, when="USE_LIBZ_RS")
 +set_config("MOZ_SYSTEM_ZLIB", True, when=use_system_zlib)
