@@ -132,10 +132,18 @@ ifneq ($(HOST),$(TARGET))
 	endif
 
 	ifeq ($(WINDOWS),)
-		CC ?= $(TARGET)-gcc
-		CPP ?= $(TARGET)-gcc -E
-		CXX ?= $(TARGET)-g++
-		AR ?= $(TARGET)-ar
+		ifneq (,$(findstring apple-darwin,$(TARGET)))
+			# Apple's cc builds every architecture, so a darwin cross target needs no prefixed gcc.
+			CC ?= cc
+			CPP ?= cc -E
+			CXX ?= c++
+			AR ?= ar
+		else
+			CC ?= $(TARGET)-gcc
+			CPP ?= $(TARGET)-gcc -E
+			CXX ?= $(TARGET)-g++
+			AR ?= $(TARGET)-ar
+		endif
 		CONFIGURE_FLAGS += --target=$(TARGET)
 	endif
 
