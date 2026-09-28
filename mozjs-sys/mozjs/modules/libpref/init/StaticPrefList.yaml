@@ -3174,6 +3174,12 @@
   value: false
   mirror: always
 
+# Whether or not system IndexedDB access from a content process is allowed.
+- name: dom.indexedDB.testing.allowContentSystem
+  type: RelaxedAtomicBool
+  value: false
+  mirror: always
+
 # Whether or not indexedDB experimental features are enabled.
 - name: dom.indexedDB.experimental
   type: RelaxedAtomicBool

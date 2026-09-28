@@ -201,6 +201,24 @@ endif
 # Those need to depend on config/export for system wrappers.
 $(addprefix build/unix/stdc++compat/,target host) build/clang-plugin/host: config/export
 
+# Rust targets, and export targets that run cbindgen need
+# $topobjdir/.cargo/config.toml to be preprocessed first. Ideally, we'd only set it
+# as a dependency of the rust targets, but unfortunately, that pushes Make to
+# execute them much later than we'd like them to be when the file doesn't exist
+# prior to Make running. So we also set it as a dependency of pre-export, which
+# ensures it exists before recursing the rust targets and the export targets
+# that run cbindgen, tricking Make into keeping them early.
+# When $topobjdir/.cargo/config exists from an old build, we also remove it because
+# cargo will prefer to use it rather than config.toml.
+CARGO_CONFIG_DEPS = $(DEPTH)/.cargo/config.toml
+ifneq (,$(wildcard $(DEPTH)/.cargo/config))
+CARGO_CONFIG_DEPS += $(MDDEPDIR)/cargo-config-cleanup.stub
+endif
+$(rust_targets): $(CARGO_CONFIG_DEPS)
+ifndef TEST_MOZBUILD
+recurse_pre-export: $(CARGO_CONFIG_DEPS)
+endif
+
 $(MDDEPDIR)/cargo-config-cleanup.stub:
 	rm $(DEPTH)/.cargo/config
 	touch $@
