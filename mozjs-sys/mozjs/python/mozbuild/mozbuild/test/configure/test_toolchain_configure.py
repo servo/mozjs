@@ -1993,6 +1993,15 @@ def gen_invoke_rustc(version, rustup_wrapper=False):
                     "wasm32v1-none",
                 ]
                 rust_targets.remove("wasm32-wasi")
+            # Additional targets from 1.98
+            if Version(version) >= "1.98.0":
+                rust_targets += [
+                    "aarch64-oe-linux-gnu",
+                    "armv7-oe-linux-gnueabihf",
+                    "i686-oe-linux-gnu",
+                    "riscv64-oe-linux-gnu",
+                    "x86_64-oe-linux-gnu",
+                ]
 
             return 0, "\n".join(sorted(rust_targets)), ""
         if (
@@ -2089,6 +2098,7 @@ class RustTest(BaseConfigureTest):
             ("x86_64-unknown-linux-android", "x86_64-linux-android"),
             ("x86_64-unknown-linux-android21", "x86_64-linux-android"),
             ("x86_64-pc-linux-gnu", "x86_64-unknown-linux-gnu"),
+            ("riscv64-unknown-linux-gnu", "riscv64gc-unknown-linux-gnu"),
             ("sparcv9-sun-solaris2", "sparcv9-sun-solaris"),
             (
                 "x86_64-sun-solaris2",
@@ -2239,6 +2249,11 @@ class Rust184Test(RustTest):
 
     def test_rust_wasi_target(self):
         self.assertEqual(self.get_rust_target("wasm32-unknown-wasi"), "wasm32-wasip1")
+
+
+# Exercises the vendor-specific *-oe-linux-* targets added in rust 1.98.
+class Rust198Test(Rust184Test):
+    VERSION = "1.98.0"
 
 
 if __name__ == "__main__":

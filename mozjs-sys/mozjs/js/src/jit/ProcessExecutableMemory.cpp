@@ -584,15 +584,9 @@ static unsigned ProtectionSettingToFlags(ProtectionSetting protection) {
 #    endif
   return true;
 #  else
-  unsigned prot_flags = ProtectionSettingToFlags(protection);
-  int flags = MAP_FIXED | MAP_PRIVATE | MAP_ANON;
-#    ifdef XP_OHOS
-  // Required for JIT code on HarmonyOS.
-  // Since MAP_EXECUTABLE is documented to be ignored on Linux, we
-  // unconditionally enable it for all OpenHarmony distributions.
-  flags |= MAP_EXECUTABLE;
-#    endif
-  void* p = MozTaggedAnonymousMmap(addr, bytes, prot_flags, flags, -1, 0,
+  unsigned flags = ProtectionSettingToFlags(protection);
+  void* p = MozTaggedAnonymousMmap(addr, bytes, flags,
+                                   MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0,
                                    "js-executable-memory");
   if (p == MAP_FAILED) {
     return false;
