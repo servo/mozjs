@@ -134,7 +134,7 @@ class UTF8CharsZ : public mozilla::RangedPtr<unsigned char> {
  * to others.  This differs from UTF8CharsZ in that the chars are
  * const and it disallows assignment.
  */
-class JS_PUBLIC_API ConstUTF8CharsZ {
+class JS_PUBLIC_API __attribute__((__packed__)) ConstUTF8CharsZ {
   const char* data_;
 
  public:
