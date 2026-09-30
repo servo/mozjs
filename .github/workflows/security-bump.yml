@@ -24,7 +24,7 @@ jobs:
             - uses: dtolnay/rust-toolchain@master
               with:
                   toolchain: 1.88.0
-                  components: "rustfmt"
+                  components: "clippy, rustfmt"
             - run: pip install requests
             - run: |
                   git config user.name "github-actions[bot]"
