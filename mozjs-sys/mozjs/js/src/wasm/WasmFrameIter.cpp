@@ -178,6 +178,11 @@ WasmFrameIter::WasmFrameIter(JitActivation* activation, wasm::Frame* fp)
   // indicated by the returnAddress of the exit stub's frame. If the caller
   // was Ion, we can just skip the wasm frames.
 
+  // The exit frame is about to be skipped, so no iterated frame will report
+  // the instance whose stub is running at this exit. Remember it so GC can
+  // keep its code alive.
+  exitInstance_ = instance_;
+
   // Skip the exit frame.
   popFrame(/*isLeavingFrame=*/false);
   MOZ_ASSERT(!done() || unwoundCallerFP_);

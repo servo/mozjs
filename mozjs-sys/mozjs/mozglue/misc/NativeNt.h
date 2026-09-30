@@ -106,6 +106,13 @@ NTSTATUS NTAPI NtReadVirtualMemory(HANDLE aProcessHandle, PVOID aBaseAddress,
                                    PVOID aBuffer, SIZE_T aNumBytesToRead,
                                    PSIZE_T aNumBytesRead);
 
+NTSTATUS NTAPI NtDuplicateObject(HANDLE aSourceProcessHandle,
+                                 HANDLE aSourceHandle,
+                                 HANDLE aTargetProcessHandle,
+                                 PHANDLE aTargetHandle,
+                                 ACCESS_MASK aDesiredAccess,
+                                 ULONG aHandleAttributes, ULONG aOptions);
+
 NTSTATUS NTAPI LdrLoadDll(PWCHAR aDllPath, PULONG aFlags,
                           PUNICODE_STRING aDllName, PHANDLE aOutHandle);
 
@@ -1753,6 +1760,51 @@ class RtlAllocPolicy {
   void reportAllocOverflow() const {}
 
   [[nodiscard]] bool checkSimulatedOOM() const { return true; }
+};
+
+/**
+ * A minimal owning wrapper for a handle, closed with NtClose.
+ *
+ * Code reachable from the DLL blocklist hooks cannot use nsAutoHandle (XPCOM)
+ * or UniqueFileHandle, whose deleters call kernel32's CloseHandle: those hooks
+ * can run before kernel32.dll is available, which is why
+ * Kernel32ExportsSolver exists. NtClose is in ntdll and is always callable,
+ * in the launcher process and inside XUL alike.
+ */
+class AutoHandle final {
+ public:
+  AutoHandle() : mHandle(nullptr) {}
+  explicit AutoHandle(HANDLE aHandle) : mHandle(aHandle) {}
+  ~AutoHandle() { reset(); }
+
+  AutoHandle(AutoHandle&& aOther) : mHandle(aOther.mHandle) {
+    aOther.mHandle = nullptr;
+  }
+
+  AutoHandle& operator=(AutoHandle&& aOther) {
+    if (this != &aOther) {
+      reset();
+      mHandle = aOther.mHandle;
+      aOther.mHandle = nullptr;
+    }
+    return *this;
+  }
+
+  AutoHandle(const AutoHandle&) = delete;
+  AutoHandle& operator=(const AutoHandle&) = delete;
+
+  HANDLE get() const { return mHandle; }
+  explicit operator bool() const { return !!mHandle; }
+
+  void reset() {
+    if (mHandle) {
+      ::NtClose(mHandle);
+      mHandle = nullptr;
+    }
+  }
+
+ private:
+  HANDLE mHandle;
 };
 
 class AutoMappedView final {

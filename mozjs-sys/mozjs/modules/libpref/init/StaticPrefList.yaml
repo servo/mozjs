@@ -18288,6 +18288,12 @@
     value: true
     mirror: always
 
+# If enabled, excepts all JOB_OBJECT_UILIMIT_* flags from the GPU process's job.
+-   name: security.sandbox.gpu.disable-job-uilimits
+    type: RelaxedAtomicBool
+    value: false
+    mirror: always
+
 -   name: security.sandbox.gmp.shadow-stack.enabled
     type: RelaxedAtomicBool
     value: true

@@ -1949,6 +1949,10 @@ static bool GenerateImportFunction(jit::MacroAssembler& masm,
   MoveSPForJitABI(masm);
   masm.wasmCallImport(desc, CalleeDesc::import(funcImportInstanceOffset));
 
+  // The call may not have preserved the stack pointer, so recover it from FP
+  // before reading the instance slot.
+  masm.freeStackTo(framePushed);
+
   // Restore the instance register and pinned regs, per wasm function ABI.
   masm.loadPtr(
       Address(masm.getStackPointer(), framePushed - sizeOfInstanceSlot),

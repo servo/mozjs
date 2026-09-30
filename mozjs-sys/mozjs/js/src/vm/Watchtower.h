@@ -116,6 +116,8 @@ class Watchtower {
     return watchPropertyRemoveSlow(cx, obj, id, propInfo,
                                    wasTrackedObjectFuseProp);
   }
+  static void finishPropertyRemove(JSContext* cx, NativeObject* obj,
+                                   PropertyInfo propInfo);
   static bool watchPropertyFlagsChange(JSContext* cx, Handle<NativeObject*> obj,
                                        HandleId id, PropertyInfo propInfo,
                                        PropertyFlags newFlags) {

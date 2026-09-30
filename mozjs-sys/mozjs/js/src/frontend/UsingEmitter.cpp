@@ -1177,16 +1177,13 @@ bool UsingEmitter::emitEnd() {
 bool NonLocalIteratorCloseUsingEmitter::prepareForIteratorClose(
     EmitterScope& es) {
   MOZ_ASSERT(state_ == State::Start);
+  MOZ_ASSERT(es.hasDisposables());
+  MOZ_ASSERT(es.blockKind() == BlockKind::ForOf);
+
   // In this function we prepare for the closure of the iterator but first
   // emitting the dispose loop and preseving exceptions on the stack and after
   // that emitting a try to wrap the iterator closure code that shall come after
   // this.
-  if (!es.hasDisposables()) {
-#ifdef DEBUG
-    state_ = State::IteratorClose;
-#endif
-    return true;
-  }
 
   setHasAwaitUsing(es.hasAsyncDisposables());
 
@@ -1287,13 +1284,7 @@ bool NonLocalIteratorCloseUsingEmitter::emitEnd() {
   // }
   //
   MOZ_ASSERT(state_ == State::IteratorClose);
-
-  if (!tryClosingIterator_) {
-#ifdef DEBUG
-    state_ = State::End;
-#endif
-    return true;
-  }
+  MOZ_ASSERT(tryClosingIterator_);
 
   // [stack] EXC-DISPOSE DISPOSE-THROWING ITER
 
