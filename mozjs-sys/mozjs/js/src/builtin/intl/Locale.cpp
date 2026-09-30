@@ -28,7 +28,7 @@
 #include "builtin/Boolean.h"
 #include "builtin/intl/CommonFunctions.h"
 #include "builtin/intl/FormatBuffer.h"
-#include "locale_glue.h"
+#include "builtin/intl/glue/Locale.h"
 #include "builtin/intl/LanguageTag.h"
 #include "builtin/intl/LocaleNegotiation.h"
 #include "builtin/intl/ParameterNegotiation.h"

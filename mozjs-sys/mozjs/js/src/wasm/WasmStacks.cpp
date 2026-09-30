@@ -659,6 +659,9 @@ void ContStack::traceSuspended(JSTracer* trc) {
       static_cast<FrameWithInstances*>(resumeTarget_->framePointer),
       resumeTarget_->resumePC);
 
+  // Make sure we don't have a pending exitInstance.
+  MOZ_RELEASE_ASSERT(!iter.exitInstance());
+
   // If the iter is done, then we're a stack that's never been resumed. We just
   // need to trace our fields and return.
   if (iter.done()) {
