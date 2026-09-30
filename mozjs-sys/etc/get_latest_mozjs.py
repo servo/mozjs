@@ -3,10 +3,13 @@
 import os
 import sys
 import re
+from pathlib import Path
+
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from get_taskcluster_mozjs import download_from_taskcluster, ESR, REPO
+from get_taskcluster_mozjs import ESR, REPO, download_hazard_artifacts_from_taskcluster
+from get_git_mozjs import build_sm_package_from_git
 
 
 # Returns minor, patch, tag, changeset.
@@ -53,4 +56,5 @@ if __name__ == "__main__":
     minor, patch, tag, changeset = get_latest_mozjs_tag_changeset()
     print(f"Latest tag: {tag}, changeset: {changeset}")
 
-    download_from_taskcluster(changeset)
+    build_sm_package_from_git(tag, Path("mozjs.tar.xz"))
+    download_hazard_artifacts_from_taskcluster(changeset)

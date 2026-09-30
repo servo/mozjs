@@ -246,6 +246,14 @@ void js::jit::JitActivation::startWasmTrap(wasm::Trap trap,
   const wasm::Code& code = wasm::GetNearestEffectiveInstance(fp)->code();
   MOZ_RELEASE_ASSERT(&code == wasm::LookupCode(pc));
 
+  // The cross-instance return_call switched cx->realm to the callee and
+  // collapsed the caller, so on unwind no live frame keeps that realm alive.
+  // Restore it to the frame we unwound to, as the exception handler will.
+  if (unwound) {
+    cx()->setRealmForJitExceptionHandler(
+        wasm::GetNearestEffectiveInstance(fp)->realm());
+  }
+
   // Keep the trapping code alive across a GC. For an IndirectCallBadSig trap
   // reached through a tail call, this code can belong to a different instance
   // than the effective one above, whose frame has already been unwound. Nothing

@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "mozjs"
-version = "0.15.19"
+version = "0.15.20"
 dependencies = [
  "bindgen",
  "cc",
@@ -969,7 +969,7 @@ dependencies = [
 
 [[package]]
 name = "mozjs_sys"
-version = "140.16.0-0-lts"
+version = "140.17.0-0-lts"
 dependencies = [
  "bindgen",
  "cc",
