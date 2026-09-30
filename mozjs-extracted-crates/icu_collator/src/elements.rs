@@ -520,7 +520,11 @@ impl CollationElement32 {
     ///
     /// A return value of zero means no primary.
     #[inline(always)]
-    pub(crate) fn to_primary_in_quick_check_numeric(self, data: &CollationData, numeric: bool) -> u32 {
+    pub(crate) fn to_primary_in_quick_check_numeric(
+        self,
+        data: &CollationData,
+        numeric: bool,
+    ) -> u32 {
         let mut ce32 = self;
         loop {
             let t = ce32.low_byte();
