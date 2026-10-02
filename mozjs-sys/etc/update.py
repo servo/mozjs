@@ -264,6 +264,8 @@ impl icu_casemap::ClosureSink for CodePointInversionListBuilder {
         )
         cargo_toml_file.write_text(cargo_toml_contents)
 
+        subprocess.check_call(["cargo", "fmt"])
+
         subprocess.check_call(
             [
                 "rsync",
