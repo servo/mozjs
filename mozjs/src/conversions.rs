@@ -864,6 +864,25 @@ impl FromJSValConvertible for *mut JS::Symbol {
     }
 }
 
+impl<T> FromJSValConvertible for Box<Heap<T>>
+where
+    T: FromJSValConvertible + crate::gc::GCMethods + Copy,
+    Heap<T>: Default,
+{
+    type Config = T::Config;
+
+    fn from_jsval(
+        cx: &mut JSContext,
+        value: HandleValue,
+        config: Self::Config,
+    ) -> Result<ConversionResult<Self>, ()> {
+        T::from_jsval(cx, value, config).map(|result| match result {
+            ConversionResult::Success(inner) => ConversionResult::Success(Heap::boxed(inner)),
+            ConversionResult::Failure(msg) => ConversionResult::Failure(msg),
+        })
+    }
+}
+
 /// A wrapper type over [`crate::jsapi::UTF8Chars`]. This is created to help transferring
 /// a rust string to mozjs. The inner [`crate::jsapi::UTF8Chars`] can be accessed via the
 /// [`std::ops::Deref`] trait.
